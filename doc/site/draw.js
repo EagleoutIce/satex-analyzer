@@ -13,7 +13,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   // compare alike. Two outlines are as far apart as the mean distance of each one's points to the
   // other (chamfer distance), plus how much their aspects and their numbers of dots differ. Strokes
   // drawn apart are no dots: a `⇒` drawn in three strokes is one shape, `÷` has two dots.
-  const DRAW = { side: 32, glyph: 96, pen: 9, bitmap: 0.6, outline: 1, stroke: 1.5, either: 0, grid: 8, bins: 4, orient: 24, shortlist: 1500, refine: 5000, off: ['emoji', 'twemojis'], pixel: 1.5, known: 0.2, plain: 0.1, call: 0.2, shown: 14, foreign: 1.12, variant: 0.25, icon: 0.1, aspect: 0.6, dots: 0.8, dot: 4, batch: 300, again: 120, more: 30 };
+  const DRAW = { side: 32, glyph: 96, pen: 9, bitmap: 0.6, outline: 1, stroke: 1.5, either: 0, grid: 8, bins: 4, orient: 24, shortlist: 1500, refine: 5000, off: ['emoji', 'twemojis'], workers: 4, cut: 1.8, pixel: 1.5, known: 0.2, plain: 0.1, call: 0.2, shown: 14, foreign: 1.12, variant: 0.25, icon: 0.1, aspect: 0.6, dots: 0.8, dot: 4, batch: 300, again: 120, more: 30 };
   const $ = (id) => root.querySelector(`#${id}`), escape = esc;
   const pad = $('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true });
   let drawTable = null, drawn = false;
@@ -164,7 +164,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       g.putImageData(img, 0, 0);
       return c;
     }
-    let fonts = [], rows = [], bitmaps = [], feats = [], req = null, deadline = 0, busy = false, sent = 0, spent = 0;
+    let fonts = [], rows = [], bitmaps = [], feats = [], req = null, deadline = 0, busy = false, sent = 0, spent = 0, part = [0, 1];
     const faces = [];
     const face = (i) => (faces[i] ??= fonts[i].url == null ? Promise.resolve() : new FontFace(fonts[i].family, `url(${fonts[i].url})`).load().then((f) => { fontSet.add(f); }));
     /** The glyphs of `list` (row numbers, all of one font) drawn and measured; a bitmap is set as big as a font's glyph is: its longer side at DRAW.bitmap of the canvas. */
@@ -211,11 +211,14 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       if (req) rank(true);
     }
     const on = (m) => {
-      if (m.type === 'init') ({ fonts, rows, bitmaps } = m), feats = new Array(rows.length);
+      if (m.type === 'init') ({ fonts, rows, bitmaps } = m), (part = m.part ?? [0, 1]), (feats = new Array(rows.length));
       else if (m.type === 'tune') Object.assign(DRAW, m.draw);
       else if (m.type === 'match') {
         if (m.fresh || !req) deadline = now() + DRAW.refine;
-        req = m;
+        // this matcher's share of the rows: every n-th, so each font's glyphs are spread over the matchers
+        const mine = [];
+        m.want.forEach((j, k) => { if (j % part[1] === part[0]) mine.push(k); });
+        req = { ...m, want: Int32Array.from(mine, (k) => m.want[k]), mul: Float32Array.from(mine, (k) => m.mul[k]), add: Float32Array.from(mine, (k) => m.add[k]) };
         for (const i of new Set(m.want.filter((j) => feats[j] === undefined).map((j) => rows[j][0]))) face(i).catch(() => {});
         rank(false);
         pump();
@@ -228,19 +231,28 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   const local = engine(DRAW, mkDoc, (m) => arrive(m), document.fonts, idle, () => performance.now());
   const { features, apart, bitmapCanvas } = local;
   // the matching runs in a worker; without one (no OffscreenCanvas, no fonts in workers) the same engine runs here, between frames
+  // several workers share the glyphs, each its every n-th row; their rankings merge as they come
   const last = {};
-  let worker = null;
-  const send = (m) => { if (m.type !== 'tune') last[m.type] = m; if (worker) worker.postMessage(m); else local.on(m); };
+  let workers = [];
+  const send = (m) => {
+    if (m.type !== 'tune') last[m.type] = m;
+    if (workers.length) workers.forEach((w, k) => w.postMessage(m.type === 'init' ? { ...m, part: [k, workers.length] } : m));
+    else local.on(m);
+  };
   try {
     if (typeof OffscreenCanvas !== 'undefined' && self.Worker) {
       const code = `const e = (${engine})(${JSON.stringify(DRAW)}, (w, h) => new OffscreenCanvas(w, h), (m, t) => postMessage(m, t), self.fonts, () => new Promise((r) => setTimeout(r)), () => performance.now());\nonmessage = (v) => e.on(v.data);\npostMessage({ type: 'hello', ok: !!self.fonts && typeof FontFace === 'function' });`;
-      const w = new Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
-      const fail = () => { if (worker !== w) return; worker = null; w.terminate(); for (const m of Object.values(last)) local.on(m); };
-      w.onmessage = (e) => (e.data.type === 'hello' ? e.data.ok || fail() : arrive(e.data));
-      w.onerror = fail;
-      worker = w;
+      const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+      const n = Math.max(1, Math.min(DRAW.workers, (navigator.hardwareConcurrency ?? 2) - 1));
+      const fail = () => { if (!workers.length) return; workers.forEach((w) => w.terminate()); workers = []; for (const m of Object.values(last)) local.on(m); };
+      workers = Array.from({ length: n }, (_, k) => {
+        const w = new Worker(url);
+        w.onmessage = (e) => (e.data.type === 'hello' ? e.data.ok || fail() : arrive({ ...e.data, part: k }));
+        w.onerror = fail;
+        return w;
+      });
     }
-  } catch { worker = null; }
+  } catch { workers = []; }
   /** The symbol table; each font's glyphs are measured once a candidate in it is wanted. */
   async function symbolsLoad() {
     drawTable ??= fetch(`${base}${symbols}`).then((r) => r.json()).then(async ({ fonts, rows, glyphs, weight }) => {
@@ -374,9 +386,16 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       mul: Float32Array.from(wanted, (s) => (force.has(s.name) ? 1 : DRAW.foreign) * (s.bitmap ? DRAW.pixel : 1) * trust(s)), add: Float32Array.from(wanted, (s) => (ranked.get(s) * 0.05 + prior(s)) * trust(s)) });
   }
   /** The matcher's answer for the latest request: shown unless it is older. */
+  const shares = new Map();
   function arrive(m) {
     if (m.type !== 'ranked' || m.id !== current?.id) return;
-    result = m;
+    if (shares.get('id') !== m.id) { shares.clear(); shares.set('id', m.id); }
+    shares.set(m.part ?? 0, m);
+    // the workers' shares as one ranking, best first
+    const all = [...shares.values()].filter((x) => typeof x === 'object');
+    const order = all.flatMap((x) => Array.from(x.idx, (i, k) => [i, x.score[k], x.head[k]])).sort((a, b) => a[1] - b[1]);
+    result = { id: m.id, idx: Int32Array.from(order, (o) => o[0]), score: Float32Array.from(order, (o) => o[1]), head: Int32Array.from(order, (o) => o[2]),
+      pending: all.length < Math.max(1, workers.length) || all.some((x) => x.pending) };
     render();
   }
   /** The list: one row per picture, best first, from the latest ranking. */
@@ -386,7 +405,9 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     if (f) {
       // nothing measured yet: the list stays as it was
       if (!result || (!result.idx.length && result.pending)) return;
-      best = Array.from(result.idx, (i, k) => ({ s: table.rows[i], i, head: result.head[k] }));
+      // only what looks enough like the best match: within DRAW.cut of its distance
+      const bound = result.score.length ? result.score[0] * DRAW.cut + 0.05 : Infinity;
+      best = Array.from(result.idx, (i, k) => ({ s: table.rows[i], i, head: result.head[k], score: result.score[k] })).filter((b) => b.score <= bound);
     } else best = wanted.map((s) => ({ s, i: s.i, head: s.i, score: ranked.get(s) + s.name.length / 100 })).sort((a, b) => a.score - b.score);
     // rows of one picture follow its first, and so do a family's later glyphs (`\varpropto`, `\leftpropto` after `\propto`)
     const twins = new Map(), family = new Map();
@@ -422,7 +443,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       const act = (title, icon, extra = '', x = main, xp = pkg) => `<button type="button" class="pill draw-put" data-name="${escape(x.name)}" data-pkg="${escape(xp)}"${extra} title="${escape(title)}" aria-label="${escape(title)}">${icon}</button>`;
       rows.push(`<li class="draw-row">${glyph(s, table)}` +
         `<span class="draw-what">${chip(main)}${s.bitmap ? '<span class="draw-px" title="a picture from the symbol list: no font sets it">px</span>' : ''}<span class="lib-pkg${doc && !have ? ' draw-off' : ''}" title="${doc && !have ? `not loaded: ${escape(use)}` : escape([main, ...same].map(from).join(', '))}">${pkgs([main, ...same])}</span>` +
-        (others.length ? `<button type="button" class="draw-more-pill" aria-expanded="false" title="other commands that set it">+${plural(others.length, 'alias')}</button>` : '') + '</span>' +
+        (others.length ? `<button type="button" class="draw-more-pill" aria-expanded="false" title="${escape(others.map((xs) => `${xs[0].name} (${[...new Set(xs.map(from))].join(', ')})`).join('\n'))}">+${plural(others.length, 'alias')}</button>` : '') + '</span>' +
         `<span class="draw-acts">${act(`${label} ${main.name}`, ICON[label] ?? ICON.Insert)}` +
         (usepackage && !have && !loaded(pkg) ? act(`${label} ${main.name} with ${use}`, ICON.package, ` data-use="${escape(use)}"`) : '') + '</span>' +
         (others.length ? `<ul class="draw-more" hidden>${others.map((xs) => `<li>${chip(xs[0])} <span class="lib-pkg${off(xs[0])}">${pkgs(xs)}${doc && !force.has(xs[0].name) ? ', not loaded' : ''}</span><span class="draw-acts">${act(`${label} ${xs[0].name}`, ICON[label] ?? ICON.Insert, '', xs[0], from(xs[0]))}</span></li>`).join('')}</ul>` : '') + '</li>');
@@ -456,6 +477,19 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     else el.title = `${s.name}: ${does}, ${s.pkg}`;
   });
   $('draw-list').addEventListener('mouseout', (e) => { if (e.target.closest('[data-sym]')) self.satexTip?.card.hide(150); });
+  // a glyph under the mouse, large in a card of its own, centred on it
+  const zoom = Object.assign(document.createElement('div'), { className: 'draw-zoom', hidden: true });
+  root.append(zoom);
+  $('draw-list').addEventListener('mouseover', (e) => {
+    const g = e.target.closest('.draw-glyph');
+    if (!g) return;
+    const b = g.getBoundingClientRect();
+    zoom.replaceChildren(g.cloneNode(true));
+    Object.assign(zoom.style, { left: `${b.left + b.width / 2}px`, top: `${b.top + b.height / 2}px` });
+    zoom.hidden = false;
+  });
+  $('draw-list').addEventListener('mouseout', (e) => { if (e.target.closest('.draw-glyph')) zoom.hidden = true; });
+  $('draw-list').addEventListener('scroll', () => { zoom.hidden = true; }, { passive: true });
   {
     const clear = () => { pen.clearRect(0, 0, pad.width, pad.height); drawn = false; drawMatch(); };
     let last = null;

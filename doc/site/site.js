@@ -948,9 +948,9 @@
   const knows = [...document.querySelectorAll('[data-knows]')];
   const dots = document.querySelector('.claim-dots');
   if (knows.length > 1 && dots) {
-    // typed out and erased like an editor, code parts marked as a linter would once a claim stands
-    // a claim's `<template>` is the sketch shown once it stands: what the run computes for it
-    const mocks = knows.map((k) => k.querySelector('template')?.innerHTML ?? null);
+    // typed out and erased like an editor; once a claim stands it shows what the run computes for it: its
+    // `<template>` as a sketch under it, or its `data-effect` on its own words (completion, category codes, ligatures)
+    const mocks = knows.map((k) => k.querySelector('template')?.innerHTML ?? null), effects = knows.map((k) => k.dataset.effect ?? '');
     const parts = knows.map((k) => [...k.childNodes].filter((n) => n.nodeName !== 'TEMPLATE')
       .map((n) => ({ text: n.textContent, code: n.nodeName === 'CODE', href: n.nodeName === 'A' ? n.getAttribute('href') : null })));
     const typed = (i, n) => {
@@ -967,37 +967,58 @@
     line.classList.add('typing');
     let shown = 0, paused = false, timer = 0;
     dots.innerHTML = knows.map((k, i) => `<button type="button" role="tab" aria-selected="${!i}" aria-label="${parts[i].map((p) => p.text).join('')}"></button>`).join('');
-    const run = (i, n, step, then) => {
+    // a typist's rhythm: quick within a word, a beat after a space or a comma
+    const text = (i) => parts[i].map((p) => p.text).join('');
+    const run = (i, n, then) => {
       line.innerHTML = typed(i, n);
-      if (step > 0 ? n >= length(i) : n <= 0) return then();
-      timer = setTimeout(() => run(i, n + step, step, then), step > 0 ? 28 + Math.random() * 40 : 12);
+      if (n >= length(i)) return then();
+      const c = text(i)[n - 1] ?? '';
+      timer = setTimeout(() => run(i, n + 1, then), 18 + Math.random() * 28 + (c === ' ' ? 45 : c === ',' ? 160 : 0));
+    };
+    // erased as an editor does it: the line selected, then gone
+    const erase = (then) => {
+      line.classList.add('selected');
+      timer = setTimeout(() => { line.classList.remove('selected'); line.innerHTML = ''; then(); }, 260);
     };
     // a typed `\command` opens a sketch of the editor's completion: the examples' own commands, as their cards write them
     const own = [...document.querySelectorAll('.ex-data')].flatMap((s) => { try { const d = JSON.parse(s.textContent); return Object.values(d.cs).flat().filter((r) => r.path === d.name && r.effective && r.effective !== r.name); } catch { return []; } });
     const offered = [...new Map(own.map((r) => [r.name, r])).values()].slice(0, 3);
-    const complete = () => {
-      const chip = line.querySelector('code'), mock = mocks[shown];
-      if (!chip || !mock || mock.trim() === 'complete' && !offered.length) return false;
-      const body = mock.trim() === 'complete' ? offered.map((r) => `<li><code class="usage">${usage(r.effective, typesOf(r)).html}</code><span>${esc(r.file ?? r.path ?? '')}</span></li>`).join('') : mock;
-      chip.insertAdjacentHTML('afterend', `<ul class="claim-complete" aria-hidden="true" style="left:${chip.offsetLeft}px">${body}</ul>`);
-      const pop = line.querySelector('.claim-complete');
-      setTimeout(() => pop.classList.add('on'), 1000);
+    // TeX's category codes of what a name is spelled with once `@` is a letter
+    const CODES = { '\\': 0, '{': 1, '}': 2, '$': 3, '&': 4, '#': 6, '^': 7, '_': 8, ' ': 10, '%': 14 };
+    const catcode = (c) => CODES[c] ?? (/[A-Za-z@]/.test(c) ? 11 : 12);
+    const effect = () => {
+      const chip = line.querySelector('code');
+      if (effects[shown] === 'catcodes' && chip) {
+        chip.innerHTML = [...chip.textContent].map((c) => `<span class="cc${c === '@' ? ' cc-hot' : ''}" title="category ${catcode(c)}">${esc(c)}<sub>${catcode(c)}</sub></span>`).join('');
+        return true;
+      }
+      if (effects[shown] === 'ligatures') {
+        line.innerHTML = line.innerHTML.replace(/fi(?=ne)/, '<span class="claim-lig" title="f and i set as one glyph, ﬁ"><span>fi</span><span>ﬁ</span></span>');
+        return true;
+      }
+      const mock = effects[shown] === 'complete' && offered.length
+        ? offered.map((r) => `<li><code class="usage">${usage(r.effective, typesOf(r)).html}</code><span>${esc(r.file ?? r.path ?? '')}</span></li>`).join('') : mocks[shown];
+      if (!mock || !chip) return false;
+      line.insertAdjacentHTML('beforeend', `<ul class="claim-complete" aria-hidden="true" style="margin-left:${chip.offsetLeft}px">${mock}</ul>`);
       return true;
     };
-    const settle = () => { if (!complete()) line.classList.add('linted'); timer = setTimeout(() => paused || show((shown + 1) % knows.length), 3200); };
+    const settle = () => {
+      timer = setTimeout(() => {
+        if (effect()) requestAnimationFrame(() => line.classList.add('shows'));
+        timer = setTimeout(() => paused || show((shown + 1) % knows.length), 3400);
+      }, 700);
+    };
     const show = (i) => {
       clearTimeout(timer);
-      line.classList.remove('linted');
-      const pop = line.querySelector('.claim-complete');
-      pop?.classList.remove('on');
+      line.classList.remove('shows');
       [...dots.children].forEach((d, j) => d.setAttribute('aria-selected', String(j === i)));
-      timer = setTimeout(() => run(shown, length(shown), -1, () => { shown = i; run(i, 0, 1, settle); }), pop ? 320 : 0);
+      erase(() => { shown = i; run(i, 0, settle); });
     };
     dots.onclick = (e) => { const b = e.target.closest('button'); if (b) show([...dots.children].indexOf(b)); };
     const claim = line.closest('.claim');
-    for (const el of [claim, dots]) { el.onmouseenter = () => (paused = true); el.onmouseleave = () => { paused = false; if (line.classList.contains('linted') || line.querySelector('.claim-complete')) { clearTimeout(timer); timer = setTimeout(() => paused || show((shown + 1) % knows.length), 1500); } }; }
+    for (const el of [claim, dots]) { el.onmouseenter = () => (paused = true); el.onmouseleave = () => { paused = false; if (line.classList.contains('shows')) { clearTimeout(timer); timer = setTimeout(() => paused || show((shown + 1) % knows.length), 1500); } }; }
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) line.innerHTML = typed(0, length(0));
-    else settle();
+    else { line.innerHTML = ''; run(0, 0, settle); }
   }
   for (const [tabs, key] of [['.contrast', 'case'], ['.install-tabs', 'way']]) {
     const row = document.querySelector(tabs);
