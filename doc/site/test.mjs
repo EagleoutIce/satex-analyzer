@@ -487,7 +487,9 @@ async function browser() {
         }
         // the match of the whole drawing: one per stroke ended, the last one shown
         await until(`return document.querySelectorAll('#draw-list li .draw-glyph').length > 2`, 60000);
-        await sleep(1500);
+        // the matcher refines in a worker: the answer stands once it is done
+        await until(`return !document.querySelector('#draw-list.refining')`, 60000);
+        await sleep(300);
         got[name] = await js(`return [...document.querySelectorAll('#draw-list > li')].map((li) => li.querySelector('.draw-glyph').textContent + ' ' + li.querySelector('.draw-what').textContent)`);
         await shot(`draw-${name}`);
       }

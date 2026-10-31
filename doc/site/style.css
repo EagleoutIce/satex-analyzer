@@ -104,6 +104,11 @@ body.home .side, body.home .toc { display: none; }
 .sev::before, .cm-diagnostic::before { content: var(--glyph) " "; color: var(--sev); }
 td .sev { font-size: 0; } td .sev::before { font-size: 1rem; content: var(--glyph); }
 pre.mermaid { background: none; border: 0; box-shadow: none; text-align: center; overflow-x: auto; }
+/* edges and arrowheads follow the theme: Mermaid's own greys vanish on the night background */
+pre.mermaid .flowchart-link { stroke: var(--fg) !important; stroke-width: 1.5px !important; opacity: .75; }
+pre.mermaid .marker, pre.mermaid .arrowMarkerPath { fill: var(--fg) !important; stroke: var(--fg) !important; }
+pre.mermaid .edgeLabel, pre.mermaid .edgeLabel * { background-color: var(--bg) !important; color: var(--fg) !important; }
+pre.mermaid .cluster rect { fill: none !important; stroke: var(--border) !important; }
 .fix-safe { color: var(--safe); } .fix-unsafe { color: var(--unsafe); border-style: dashed; }
 
 /* motion: one easing, short durations, only transform and opacity animate */

@@ -16,3 +16,4 @@ The playground's drawing pad finds the command that sets a symbol you draw.
 - They are drawn in Latin Modern Math, unicode-math's default font (GUST e-foundry), GUST Font License.
 - The icons come from the mapping files of the `fontawesome` package (Xavier Danaux), `fontawesome5` (Marcel Krüger) and `fontawesome6` and `fontawesome7` (Daniel Nagel), LaTeX Project Public License. They are drawn in the Font Awesome Free fonts these packages include (Dave Gandy, Fonticons), SIL Open Font License 1.1.
 - The `academicons` icons come from that package's files, LaTeX Project Public License, and are drawn in the Academicons font by James Walsh, SIL Open Font License 1.1.
+- The names of the `emoji` package (Xiangdong Zeng) come from its `emoji-table.def`, LaTeX Project Public License. They are drawn in the Noto Emoji font (Google), SIL Open Font License 1.1.
