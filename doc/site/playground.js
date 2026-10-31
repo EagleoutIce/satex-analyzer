@@ -594,6 +594,18 @@
       update: (deco, tr) => tr.effects.reduce((d, e) => e.is(marks) ? view.Decoration.set(e.value.map(([f, t]) => view.Decoration.mark({ class: 'cm-refmark' }).range(f, t)), true) : d, deco.map(tr.changes)),
       provide: (f) => view.EditorView.decorations.from(f),
     });
+    // A swatch before each color the server resolved (`textDocument/documentColor`), as editors show them.
+    class Swatch extends view.WidgetType {
+      constructor(css) { super(); this.css = css; }
+      eq(o) { return o.css === this.css; }
+      toDOM() { return Object.assign(document.createElement('span'), { className: 'cm-swatch', title: this.css, style: `background:${this.css}` }); }
+    }
+    const swatches = st.StateEffect.define();
+    const swatchField = st.StateField.define({
+      create: () => view.Decoration.none,
+      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(swatches) ? view.Decoration.set(e.value.map(([at, css]) => view.Decoration.widget({ widget: new Swatch(css), side: -1 }).range(at)), true) : d, deco.map(tr.changes)),
+      provide: (f) => view.EditorView.decorations.from(f),
+    });
     // A `\begin` name and its `\end` name, from the server's linked editing:
     // while the cursor is in one, what is typed there is typed in both.
     const linkedSet = st.StateEffect.define();
@@ -671,10 +683,10 @@
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
         span.innerHTML = (use ? cards.usage(use).html : '') + (from ? ` <span class="muted">${escape(from)}</span>` : '');
         // what the item draws (a line width, dash pattern, arrow tip or pattern), from the server
-        if (c.preview) span.prepend(Object.assign(document.createElement('img'), { src: `data:image/svg+xml;utf8,${encodeURIComponent(c.preview)}`, alt: '', style: 'vertical-align:middle;margin-right:.5em' }));
+        if (c.preview) span.prepend(Object.assign(document.createElement('img'), { className: 'cm-preview', src: `data:image/svg+xml;utf8,${encodeURIComponent(c.preview)}`, alt: '' }));
         return span;
       } }] }),
-        linkField, markField, linkedField, heatField, heatGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
+        linkField, markField, swatchField, linkedField, heatField, heatGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
         EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([])],
     });
     // the site's light/dark choice (site.js) picks the editor's theme
@@ -763,6 +775,7 @@
         };
       }))),
       complete: () => ac.startCompletion(ev),
+      colors: (list) => ev.dispatch({ effects: swatches.of(list.map(([p, css]) => [at(doc(), p), css]).filter(([a]) => a != null && a <= doc().length)) }),
       heat: (lines) => ev.dispatch({ effects: heatSet.of(lines?.size ? { lines, most: Math.max(...lines.values()) } : null) }),
       cursor: () => [ev.state.selection.main.anchor, ev.state.selection.main.head],
       select: ([anchor, head] = [0, 0]) => { const n = doc().length; ev.dispatch({ selection: { anchor: Math.min(anchor, n), head: Math.min(head, n) }, scrollIntoView: true }); },
@@ -3112,6 +3125,12 @@
     }).catch(() => {});
   }
 
+  /** The colors of the open file as swatches; none when the server offers none. */
+  async function colorize() {
+    const found = await lsp('textDocument/documentColor', { textDocument: { uri: uri() } }).catch(() => null);
+    const css = ({ red, green, blue, alpha }) => `rgba(${[red, green, blue].map((x) => Math.round(x * 255)).join(',')},${alpha})`;
+    editor?.colors?.((found ?? []).map((c) => [c.range.start, css(c.color)]));
+  }
   /** Files the run looked for and did not find (`\IfFileExists`, listings' language files) that a
    * bundle holds: fetched, then the check starts over. A probe of a file no bundle has stays as it is. */
   async function fetchAbsent() {
@@ -3403,7 +3422,7 @@
           show(m.params.uri, m.params.diagnostics);
           typeset(m.params.uri);
           outline();
-          if (m.params.uri === uri()) fetchAbsent();
+          if (m.params.uri === uri()) { fetchAbsent(); colorize(); }
           if (m.params.uri === uri()) prefetchCommands();
           loadCaches(); // the status bar's count, and the table if open
           if (m.params.uri === uri(state.root ?? state.file)) written(m.params.uri);
