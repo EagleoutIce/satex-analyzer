@@ -194,6 +194,26 @@ fn a_misspelled_command_suggests_the_nearest_name() {
     );
 }
 
+/// expl3's `\int_mod:nn` of an unknown number that may be 0 stays below the
+/// divisor: on the path where the test found it 0, `x - (0/d)*d` is 0.
+#[test]
+fn a_remainder_of_an_unknown_stays_below_its_divisor() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\begin{document}
+\tl_set:Ne \l_tmpa_tl {\int_eval:n{\int_rand:n{65535}/16}}
+\int_compare:nNnTF {\int_mod:nn{\l_tmpa_tl}{16}} < {16} {in}{out}
+\end{document}",
+    );
+    let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+    let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
+    assert!(texts.contains(&"in"), "{texts:?}");
+}
+
 /// An arrow tip a TikZ library declares, used without it: the error names
 /// the library that declares it and the fix loads it.
 #[test]

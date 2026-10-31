@@ -1361,6 +1361,22 @@ enum Form {
     Rem(Sym, i64, i64, (i64, i64)),
 }
 
+impl Machine<'_> {
+    /// An expression `x + c` of one unknown read earlier: what `x` holds now
+    /// bounds it, as an arm of a test on `x` read since may have narrowed it
+    /// (`x - (0/d)*d` where the test found `x` is 0).
+    fn as_now(&self, form: Form, value: Num) -> Num {
+        let Form::Lin(x, c) = form else { return value };
+        let now = self.typed_digits_of(x).or_else(|| self.env.slot(x).and_then(|b| b.value.num()).map(|(_, n)| n));
+        match now {
+            Some(n) if n.lo.saturating_add(c).max(value.lo) <= n.hi.saturating_add(c).min(value.hi) => {
+                Num::range(n.lo.saturating_add(c).max(value.lo), n.hi.saturating_add(c).min(value.hi))
+            }
+            _ => value,
+        }
+    }
+}
+
 /// The range of `y - round(y/d)*d` for `y` in `[lo, hi]`.  Ties round
 /// away from zero (e-TeX's `\numexpr`), so for an even `|d|` the
 /// remainder `|d|/2` needs `y <= -|d|/2` and `-|d|/2` needs `y >= |d|/2`.
@@ -1776,7 +1792,7 @@ impl Machine<'_> {
                     if o != ExprOp::None {
                         continue 'next;
                     }
-                    let Some(saved) = stack.pop() else { break 'restart (e, ea, ea_x) };
+                    let Some(saved) = stack.pop() else { break 'restart (e, self.as_now(ef, ea), ea_x) };
                     f = e;
                     fa = ea;
                     fa_x = ea_x;
