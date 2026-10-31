@@ -2601,6 +2601,8 @@ impl<'a> Machine<'a> {
             // Only a file the run read, or looked for, sends it round again.
             // Still goes to the overlay, as TeX leaves it on disk.
             let looked = checkpoints.looked();
+            let read_files: Vec<&Path> = analysis.files.iter().map(|f| Path::new(&f.path)).collect();
+            let missing = |at: &Path| !read_files.iter().any(|p| p.components().eq(at.components()));
             // Files this run left changed, and whether that means another run.
             let mut changed: Vec<(PathBuf, String, bool)> = analysis
                 .written
@@ -2613,13 +2615,13 @@ impl<'a> Machine<'a> {
                     // The run's own copy only: one on disk is an engine's.
                     let now = crate::overlay::text(&at);
                     // A file not there yet is an empty one. One the run looked
-                    // for and found empty gets read whole next time: the commands
+                    // for and did not find gets read whole next time: the commands
                     // in it (`\contentsline`) were never expanded, so no line of it
                     // can be judged by what the run read.
                     let again = text.as_ref().is_none_or(|new| {
                         let old = now.as_deref().unwrap_or_default();
                         looked.iter().any(|p| p.components().eq(at.components()))
-                            && (old.trim().is_empty() && !new.trim().is_empty() || matters(old, new))
+                            && (missing(&at) && !new.trim().is_empty() || matters(old, new))
                     });
                     // A line a rerun changed again (a label's page that moves on),
                     // or anything before the last run, is read as the join of both
