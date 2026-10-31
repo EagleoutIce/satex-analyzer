@@ -44,7 +44,7 @@ struct Cli {
 
     /// Overrides an option of `satex.yaml` by its dotted path, the value
     /// written as there: `--set limits.memory=8GiB --set load.inputs=false`.
-    /// Repeatable. The flags below win over it.
+    /// `PATH+` appends to a list: `--set lint_off+=[unused-label]`. Repeatable. The flags below win over it.
     #[arg(long = "set", global = true, value_name = "PATH=VALUE", help_heading = "Input")]
     #[cfg_attr(not(target_os = "emscripten"), arg(add = clap_complete::ArgValueCandidates::new(|| {
         satex::config::keys().into_iter().map(|(k, _)| k).map(|k| clap_complete::CompletionCandidate::new(format!("{k}="))).collect::<Vec<_>>()

@@ -106,7 +106,7 @@ Input:
           Which defaults to apply (usually auto-detected): document, package, class, literate or plain
 
       --set <PATH=VALUE>
-          Overrides an option of `satex.yaml` by its dotted path, the value written as there: `--set limits.memory=8GiB --set load.inputs=false`. Repeatable. The flags below win over it
+          Overrides an option of `satex.yaml` by its dotted path, the value written as there: `--set limits.memory=8GiB --set load.inputs=false`. `PATH+` appends to a list: `--set lint_off+=[unused-label]`. Repeatable. The flags below win over it
 
       --no-packages
           Do not load packages. Analyze the document and the kernel only

@@ -1760,13 +1760,19 @@ impl Config {
         let parsed: Value = serde_yaml_ng::from_str(value).map_err(|e| format!("{migrated}: {e}"))?;
         let mut tree = serde_yaml_ng::to_value(&*self).map_err(|e| e.to_string())?;
         let mut slot = &mut tree;
-        for key in migrated.split('.') {
+        // `key+` appends to a list, as in a satex.yaml (`merge_value`)
+        let (keys, append) = migrated.strip_suffix('+').map_or((migrated.as_str(), false), |k| (k, true));
+        for key in keys.split('.') {
             slot = slot
                 .as_mapping_mut()
                 .and_then(|map| map.get_mut(key))
                 .ok_or_else(|| format!("no option `{migrated}` in {FILE_NAME}"))?;
         }
-        *slot = parsed;
+        match (append, slot, parsed) {
+            (true, Value::Sequence(list), Value::Sequence(more)) => list.extend(more),
+            (true, ..) => return Err(format!("{migrated}: only a list takes `+`")),
+            (false, slot, parsed) => *slot = parsed,
+        }
         let source = self.source.take();
         *self = serde_yaml_ng::from_value(tree).map_err(|e| format!("{migrated}: {e}"))?;
         self.source = source;
@@ -2111,6 +2117,10 @@ mod tests {
         assert_eq!(cfg.limits.trace, 10);
         assert!(!cfg.load.inputs);
         assert!(cfg.set("limits.bogus", "1").is_err());
+        let before = cfg.lint_off.len();
+        cfg.set("lint_off+", "[unused-label]").unwrap();
+        assert_eq!((cfg.lint_off.len(), cfg.lint_off.last().map(String::as_str)), (before + 1, Some("unused-label")));
+        assert!(cfg.set("limits.trace+", "[1]").is_err());
         assert!(cfg.set("limits.trace", "many").is_err());
     }
 
