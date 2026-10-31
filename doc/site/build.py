@@ -195,7 +195,7 @@ def sidebar(table):
 
 
 MERMAID = ('<script type="module">import m from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";'
-           'm.initialize({ startOnLoad: false, theme: "neutral" }); m.run();</script>')
+           'm.initialize({ startOnLoad: false, theme: "neutral", flowchart: { nodeSpacing: 14, rankSpacing: 26, padding: 6, curve: "basis", useMaxWidth: false } }); m.run();</script>')
 
 
 def markdown(text):
@@ -397,7 +397,9 @@ def bundle(satex, work):
     every = listed_names + more
     for kernel, names in absent.items():
         print(f"playground: {len(names)} packages not offered under {kernel} (they do not load there)", file=sys.stderr)
-    for path in set().union(*reads.values()):  # the build tree: every file any of them reads
+    # the code points the typeset text reads encodings through (`query.rs` `encoding_slots`)
+    unicode = Path(run("kpsewhich", "tuenc.def").strip())
+    for path in set().union(*reads.values()) | ({unicode.resolve()} if unicode.is_file() else set()):  # the build tree: every file any of them reads
         target = tree / path.relative_to(dist)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
@@ -838,7 +840,7 @@ def playground(satex, wasm, work, out):
                  for r in json.loads(run(str(satex), "lint", "--rules", "--format", "json"))}
         return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json"))
     queries, filtered, rules, completion = memo(work, "facts", [BINARY, tree_digest(project)], facts)
-    table, files = memo(work, "symbols", [BINARY, ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(symbols), inspect.getsource(comprehensive), GLYPH],
+    table, files = memo(work, "symbols", [BINARY, ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(emoji), inspect.getsource(symbols), inspect.getsource(comprehensive), GLYPH],
                         lambda: symbols(satex, project, dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))))
     # every rule's card on any page (site.js), from the same records the playground's findings show
     (out / "rules.json").write_text(json.dumps(rules))
@@ -881,6 +883,21 @@ def icons(dist, package):
            re.findall(r'\\__fontawesome_def_icon:nnnnn\{(\\\w+)\}\{([\w-]+)\}\{(\w+)\}\{\d+\}\{"([0-9A-Fa-f]+)\}', texts)]
     codes = dict(re.findall(r'\\csname \w+@([\w-]+)\\endcsname\{+(?:\\\w+)?\\symbol\{"([0-9A-Fa-f]+)\}', texts))
     out += [[cmd, int(codes[name], 16), fonts[0], name] for cmd, name in re.findall(r'\\def(\\\w+)\{+\\\w+icon\{([\w-]+)\}\}', texts) if name in codes]
+    return out
+
+
+def emoji(dist):
+    r"""[codepoint, name, description] of each emoji of the `emoji` package that is one character (a variation selector aside):
+    `\emoji{name}` sets it, drawn here in the monochrome Noto Emoji font. Empty without the package or the font."""
+    table, font = run("kpsewhich", "emoji-table.def").strip(), dist / "fonts/truetype/google/noto-emoji/NotoEmoji-Regular.ttf"
+    if not table or not font.is_file():
+        return []
+    found = re.findall(r"\\__emoji_def:nnnnn \{([^}]*)\} \{([^}]*)\} \{([^}]*)\} \{([^}]*)\}", Path(table).read_text(errors="replace"))
+    out = []
+    for chars, name, aliases, about in found:
+        codes = [int(c, 16) for c in re.findall(r"\^+([0-9a-fA-F]+)", chars) if int(c, 16) != 0xFE0F]
+        if len(codes) == 1:
+            out.append([codes[0], name, " ".join([about.replace("~", " ").lower(), *re.split(r",\s*", aliases)]).strip()])
     return out
 
 
@@ -1058,6 +1075,9 @@ def symbols(satex, project, env):
     for package in ICON_PACKAGES:
         # the icon's own name (`skull-crossbones`) is what a search finds it by
         rows += [[code, cmd, "icon", name.replace("-", " "), font(path), package] for cmd, code, path, name in icons(dist, package)]
+    # the emoji package's, a set of its own that the drawing pad leaves out unless asked (draw.js `DRAW.off`)
+    noto = dist / "fonts/truetype/google/noto-emoji/NotoEmoji-Regular.ttf"
+    rows += [[code, f"\\emoji{{{name}}}", "icon", about, font(noto), "emoji"] for code, name, about in emoji(dist)]
     # the symbol list's rows: a command a font already sets only gains the packages the list gives it; the
     # rest (text characters and commands, accents, other fonts' symbols) are drawn from the list's own page
     known, taken, glyphs = {}, {(r[1], r[5]) for r in rows}, {}
