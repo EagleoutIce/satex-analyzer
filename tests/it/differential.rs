@@ -630,3 +630,27 @@ fn text_of_parted_paths_stays_alternatives() {
         rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
     assert!(matches!(text[..], ["Z{By|Ax}Q"] | ["Z{Ax|By}Q"]), "{text:?}");
 }
+
+/// At a use, a name paths defined differently holds one of their texts:
+/// `explain --at` lists each definition the use read.
+#[test]
+fn a_use_after_a_join_names_every_definition_it_read() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("explain-one-of");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("j.tex"),
+        "\\catcode`\\{=1 \\catcode`\\}=2\n\\def\\t{Ax}\\ifodd\\year \\def\\t{By}\\fi\nZ\\t Q\\par\n\\end\n",
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["explain", "\\t", "--at", "3", "--format", "json", "-f", "j.tex", "--set", "limits.seconds=0"])
+        .args(["--set", "engine=tex", "--set", "kernel=plain", "--set", "clock=unknown"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let mut bodies: Vec<&str> =
+        rows[0]["one_of"].as_array().into_iter().flatten().filter_map(|a| a["body"].as_str()).collect();
+    bodies.sort_unstable();
+    assert_eq!(bodies, ["Ax", "By"], "{rows:?}");
+}

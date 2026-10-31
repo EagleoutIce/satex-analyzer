@@ -260,6 +260,16 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
         } else if let Some(usage) = mined.and_then(|m| m.usage.as_deref()) {
             markdown.push_str(&format!("`{usage}`\n\n"));
         }
+        if let Some(one_of) = record.get("one_of").and_then(Json::as_array) {
+            markdown.push_str("Here it holds one of, by path:\n");
+            for alt in one_of {
+                let body = alt.get("body").and_then(Json::as_str).unwrap_or_default();
+                let line = alt.get("line").and_then(Json::as_u64).unwrap_or_default();
+                let shown = if body.is_empty() { "(empty)".to_string() } else { format!("`{body}`") };
+                markdown.push_str(&format!("- {shown} (line {line})\n"));
+            }
+            markdown.push('\n');
+        }
         let types = arg_types(record);
         for (arg, ty) in &types {
             markdown.push_str(&format!("- `{arg}` {ty}\n"));

@@ -3623,6 +3623,25 @@ fn explain_boundary(analysis: &Analysis, at: &ExplainAt) -> Result<Option<NodeId
     }
 }
 
+/// The definitions of `sym` the use at `node` read on some path, in order:
+/// more than one where paths that defined it differently joined.
+fn defs_reaching(analysis: &Analysis, sym: Sym, node: NodeId) -> Vec<&crate::facts::Definition> {
+    let read: std::collections::HashSet<NodeId> = analysis
+        .graph
+        .outgoing(node)
+        .iter()
+        .filter(|(_, kind)| kind.intersects(crate::graph::EdgeKind::READS))
+        .map(|(n, _)| *n)
+        .collect();
+    let mut defs: Vec<_> = analysis.facts.defs.iter().filter(|d| d.name == sym && read.contains(&d.node)).collect();
+    defs.sort_by_key(|d| d.node);
+    defs
+}
+
+fn def_body(analysis: &Analysis, def: &crate::facts::Definition) -> String {
+    def.mac.as_ref().map(|m| detokenize(&m.replacement_text, &analysis.interner)).unwrap_or_default()
+}
+
 /// The latest definition of `sym` at or before `boundary`; `None` for the
 /// boundary means no cutoff, so the latest definition overall.
 fn def_at(analysis: &Analysis, sym: Sym, boundary: Option<NodeId>) -> Option<&crate::facts::Definition> {
@@ -3941,6 +3960,20 @@ pub fn explain_at(
                 Some(def) => {
                     let mut record = record_for_def(analysis, def, window);
                     record.insert("when".into(), json!(at.to_string()));
+                    let nodes = match at {
+                        ExplainAt::At(a) => at_position(analysis, a),
+                        _ => boundary.into_iter().collect(),
+                    };
+                    let mut reached: Vec<_> = nodes.into_iter().flat_map(|n| defs_reaching(analysis, sym, n)).collect();
+                    reached.sort_by_key(|d| d.node);
+                    reached.dedup_by_key(|d| d.node);
+                    if reached.len() > 1 {
+                        let one_of: Vec<serde_json::Value> = reached
+                            .iter()
+                            .map(|d| json!({ "line": d.span.line, "body": def_body(analysis, d) }))
+                            .collect();
+                        record.insert("one_of".into(), json!(one_of));
+                    }
                     out.push(record);
                 }
                 // No definition at that point: the kernel's own meaning is
