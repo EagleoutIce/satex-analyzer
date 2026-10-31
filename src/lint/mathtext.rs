@@ -36,6 +36,7 @@ Fix by writing `\\[ … \\]`.",
             Ref { source: Source::Source2e, at: "ltmath.dtx" },
         ],
         fixes: &[Applicability::Safe],
+        engines: &[],
         run: math_shift_dollars,
     },
     Rule {
@@ -59,6 +60,7 @@ Fix by putting the script between `{` and `}`.",
             Ref { source: Source::TeXbook, at: "chapter 16" },
         ],
         fixes: &[Applicability::Safe],
+        engines: &[],
         run: math_script_braces,
     },
     Rule {
@@ -79,6 +81,7 @@ Fix by writing `\\{` and `\\}` for brace delimiters, or `\\left.` where no
 delimiter is wanted.",
         references: &[Ref { source: Source::Chktex, at: "43" }, Ref { source: Source::TeXWeb, at: "1161" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: delimiter_not_followed,
     },
     Rule {
@@ -99,6 +102,7 @@ It reports one finding, never both.
 Fix by closing the formula.",
         references: &[Ref { source: Source::Chktex, at: "16" }, Ref { source: Source::TeXWeb, at: "1047" }],
         fixes: &[],
+        engines: &[],
         run: math_still_open,
     },
     Rule {
@@ -119,6 +123,7 @@ source and misses both.
 Fix by pairing each delimiter with its own partner.",
         references: &[Ref { source: Source::Chktex, at: "49" }, Ref { source: Source::Source2e, at: "ltmath.dtx" }],
         fixes: &[],
+        engines: &[],
         run: math_mode_mismatch,
     },
     Rule {
@@ -139,6 +144,7 @@ and `\\mathrm{sin}` is left alone.
 Fix by writing the command.",
         references: &[Ref { source: Source::Chktex, at: "35" }, Ref { source: Source::TeXbook, at: "chapter 18" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: math_operator_name,
     },
     Rule {
@@ -158,6 +164,7 @@ operators chktex lists.
 Fix by writing the command.",
         references: &[Ref { source: Source::Chktex, at: "11" }, Ref { source: Source::TeXbook, at: "chapter 18" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: ellipsis_dots,
     },
     Rule {
@@ -176,6 +183,7 @@ already in math mode and `$\\times$` where it was in text.
 Fix by writing the operator.",
         references: &[Ref { source: Source::Chktex, at: "29" }, Ref { source: Source::TeXbook, at: "chapter 16" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: dimension_times,
     },
     Rule {
@@ -195,6 +203,7 @@ only `\\]` and `$$`.
 Fix by moving the punctuation to the other side of the delimiter.",
         references: &[Ref { source: Source::Chktex, at: "40" }, Ref { source: Source::TeXbook, at: "chapter 18" }],
         fixes: &[],
+        engines: &[],
         run: math_punctuation,
     },
 ];

@@ -22,6 +22,7 @@ every variable and do not count.
 Fix by renaming the variable or using the function of the other scope.",
         references: &[Ref { source: Source::Interface3, at: "Naming functions and variables" }],
         fixes: &[],
+        engines: &[],
         run: scope,
     },
     Rule {
@@ -38,6 +39,7 @@ functions on them are fine.
 Fix by renaming the variable or using the functions of its type.",
         references: &[Ref { source: Source::Interface3, at: "Naming functions and variables" }],
         fixes: &[],
+        engines: &[],
         run: types,
     },
     Rule {
@@ -52,6 +54,7 @@ or `\\…_new:N`, and never set. The run set this one again.
 Fix by making it a variable (`\\l_…` or `\\g_…`) or by not changing it.",
         references: &[Ref { source: Source::Interface3, at: "Naming functions and variables" }],
         fixes: &[],
+        engines: &[],
         run: constants,
     },
 ];

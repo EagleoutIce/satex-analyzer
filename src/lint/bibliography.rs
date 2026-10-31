@@ -28,6 +28,7 @@ while a file of the document was not read.
 Fix by adding the entry, or by correcting the key.",
         references: &[Ref { source: Source::Source2e, at: "ltbibl.dtx" }],
         fixes: &[],
+        engines: &[],
         run: undefined_citation,
     },
     Rule {
@@ -43,6 +44,7 @@ BibTeX stop with `Repeated entry`.
 Fix by renaming or deleting one of them.",
         references: &[Ref { source: Source::Bibtex, at: "Using BibTeX" }],
         fixes: &[],
+        engines: &[],
         run: duplicate_bibliography_entry,
     },
     Rule {
@@ -58,6 +60,7 @@ database only contributes what is cited, so its entries are not reported.
 Fix by citing the entry, or by deleting it.",
         references: &[Ref { source: Source::Bibtex, at: "Using BibTeX" }],
         fixes: &[],
+        engines: &[],
         run: unused_bibitem,
     },
     Rule {
@@ -77,6 +80,7 @@ Fix by deleting `\\bibliographystyle` (choose a style with
 `\\bibliography` with an `\\addbibresource` per database in the preamble.",
         references: &[Ref { source: Source::Biblatex, at: "§3.7" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: bibtex_command_under_biblatex,
     },
 ];

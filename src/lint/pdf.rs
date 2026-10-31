@@ -5,6 +5,7 @@
 use std::collections::BTreeSet;
 
 use crate::builtins::OccKind;
+use crate::config::Engine;
 use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
 use crate::machine::Analysis;
 use crate::plugin::pdf::{Operator, Payload, classify, names, operators};
@@ -32,6 +33,7 @@ Fix by closing what is opened in the same group, or by using one environment
 for both ends.",
         references: &[Ref { source: Source::Pdf, at: "8.4.2" }, Ref { source: Source::Pdf, at: "14.6" }],
         fixes: &[],
+        engines: &[Engine::PdfTeX, Engine::LuaTeX, Engine::XeTeX],
         run: unbalanced_pdf_content,
     },
     Rule {
@@ -49,6 +51,7 @@ while the run observed no such resources at all.
 Fix by declaring the group, or by correcting the name.",
         references: &[Ref { source: Source::Pdf, at: "8.11.3.2" }],
         fixes: &[],
+        engines: &[],
         run: undefined_optional_content,
     },
 ];

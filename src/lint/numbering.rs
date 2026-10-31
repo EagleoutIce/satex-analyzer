@@ -38,6 +38,7 @@ not, the fix also loads it, after the last `\\usepackage` of the preamble.
 Fix by writing `\\Cref{sec:x}` and loading cleveref.",
         references: &[Ref { source: Source::Cleveref, at: "2" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: prefer_cleveref,
     },
     Rule {
@@ -60,6 +61,7 @@ Fix by writing the starred environment and dropping the label that nothing
 reads.",
         references: &[Ref { source: Source::Amsmath, at: "3.1" }, Ref { source: Source::Clsguide, at: "counters" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: unreferenced_numbered_display,
     },
 ];

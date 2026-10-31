@@ -20,6 +20,7 @@ with `Glossary entry ... has not been defined`.
 Fix by declaring the entry, or by correcting the key.",
         references: &[Ref { source: Source::Glossaries, at: "Defining glossary entries" }],
         fixes: &[],
+        engines: &[],
         run: undefined_glossary_entry,
     },
     Rule {
@@ -36,6 +37,7 @@ the three this build is.
 Fix by running with the flag the document needs, or by removing the call.",
         references: &[Ref { source: Source::Pdftex, at: "-shell-escape" }],
         fixes: &[],
+        engines: &[],
         run: shell_escape,
     },
     Rule {
@@ -52,6 +54,7 @@ follows the output.
 Fix by adding the file, or by producing the format the driver reads.",
         references: &[Ref { source: Source::Graphics, at: "pdftex.def" }],
         fixes: &[],
+        engines: &[],
         run: missing_graphic,
     },
     Rule {
@@ -73,6 +76,7 @@ Fix by renaming the function to the signature it has, or its parameter
 text.",
         references: &[Ref { source: Source::Interface3, at: "Naming conventions" }],
         fixes: &[],
+        engines: &[],
         run: expl3_signature_mismatch,
     },
     Rule {
@@ -90,6 +94,7 @@ holds.  A real run expands until TeX runs out of memory:
 Fix by adding the test that stops it, or by removing the self-reference.",
         references: &[],
         fixes: &[],
+        engines: &[],
         run: unguarded_recursion,
     },
     Rule {
@@ -106,6 +111,7 @@ Fix by loading the package that provides it, defining it before the use, or
 correcting the spelling.",
         references: &[Ref { source: Source::TeXbook, at: "chapter 27" }],
         fixes: &[],
+        engines: &[],
         run: undefined_control_sequences,
     },
     Rule {
@@ -123,6 +129,7 @@ A runaway in package code over an argument the document leaves open is the
 document's error too: it is shown at the call that opens it.",
         references: &[],
         fixes: &[],
+        engines: &[],
         run: raised_errors,
     },
     Rule {
@@ -144,6 +151,7 @@ echo, as TeX's recovery left a state that may not be TeX's.  The finding is
 then a warning that names the earlier error.",
         references: &[Ref { source: Source::TeXbook, at: "chapter 27" }],
         fixes: &[],
+        engines: &[],
         run: caused_library_errors,
     },
     Rule {
@@ -159,6 +167,7 @@ Fix by loading the package that provides the environment or by defining it with
 `\\newenvironment{name}{…}{…}`.",
         references: &[Ref { source: Source::Source2e, at: "ltmiscen.dtx" }],
         fixes: &[],
+        engines: &[],
         run: undefined_environments,
     },
     Rule {
@@ -177,6 +186,7 @@ Fix by installing the package, adding its directory to `search_paths` in
 (for case mismatches) renaming the file to match the requested name.",
         references: &[Ref { source: Source::Chktex, at: "27" }],
         fixes: &[],
+        engines: &[],
         run: unresolved_files,
     },
     Rule {
@@ -192,6 +202,7 @@ Fix by giving all the options to the first load, or by using
 `\\PassOptionsToPackage` before it.",
         references: &[Ref { source: Source::Source2e, at: "ltclass.dtx" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: option_clash,
     },
     Rule {
@@ -205,6 +216,7 @@ Fix by giving all the options to the first load, or by using
 Fix with `\\renewcommand` if the redefinition is intended, or pick another name.",
         references: &[Ref { source: Source::Source2e, at: "ltdefns.dtx" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: already_defined,
     },
     Rule {
@@ -225,6 +237,7 @@ Fix by giving the declaration the name it was meant to have (a conditional's
 name begins with `if`), or by declaring the argument it lacks.",
         references: &[Ref { source: Source::Source2e, at: "ltdefns.dtx" }],
         fixes: &[],
+        engines: &[],
         run: new_redefines,
     },
     Rule {
@@ -239,6 +252,7 @@ name begins with `if`), or by declaring the argument it lacks.",
 Fix with `\\newcommand`, or load the package that was supposed to define it.",
         references: &[Ref { source: Source::Source2e, at: "ltdefns.dtx" }],
         fixes: &[Applicability::Safe],
+        engines: &[],
         run: not_defined,
     },
     Rule {
@@ -254,6 +268,7 @@ there: the finding is then a precision note.
 Fix by adding the `\\label`, or by correcting the key.",
         references: &[Ref { source: Source::Source2e, at: "ltxref.dtx" }],
         fixes: &[],
+        engines: &[],
         run: undefined_reference,
     },
     Rule {
@@ -271,6 +286,7 @@ package writes to the `.aux` file twice, such as a tikzmark, is not checked.
 Fix by renaming one of them.",
         references: &[Ref { source: Source::Source2e, at: "ltxref.dtx" }],
         fixes: &[],
+        engines: &[],
         run: duplicate_label,
     },
     Rule {
@@ -287,6 +303,7 @@ Fix by wrapping the change in `{…}` or `\\begingroup…\\endgroup`, or by rest
 the old value explicitly.  `satex query catcodes` shows the current table.",
         references: &[Ref { source: Source::TeXbook, at: "chapter 5" }],
         fixes: &[],
+        engines: &[],
         run: catcode_escapes_group,
     },
     Rule {
@@ -316,6 +333,7 @@ environments first.",
             Ref { source: Source::Source2e, at: "ltmiscen.dtx" },
         ],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: environment_mismatch,
     },
     Rule {
@@ -330,6 +348,7 @@ ordinary text stops working.
 Fix by adding `\\ExplSyntaxOff` after the code that needs it.",
         references: &[Ref { source: Source::Source2e, at: "ltfiles.dtx" }],
         fixes: &[],
+        engines: &[],
         run: expl_syntax_left_on,
     },
 ];

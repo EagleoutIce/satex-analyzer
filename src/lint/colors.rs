@@ -4,6 +4,7 @@
 
 use crate::fixed::HashMap;
 
+use crate::config::Engine;
 use crate::facts::{ColorDef, CsnameRole, StackOp};
 use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
 use crate::machine::Analysis;
@@ -24,6 +25,7 @@ it.
 Fix by defining the color first, or by correcting its name.",
         references: &[Ref { source: Source::Xcolor, at: "2.5" }],
         fixes: &[],
+        engines: &[],
         run: undefined_color,
     },
     Rule {
@@ -40,6 +42,7 @@ Silent for a color a package defines: a library may define more colors
 than any one document uses.",
         references: &[Ref { source: Source::Xcolor, at: "2.5" }],
         fixes: &[],
+        engines: &[],
         run: unused_color,
     },
     Rule {
@@ -55,6 +58,7 @@ Fix by giving the second color its own name, or by removing the earlier
 definition.",
         references: &[Ref { source: Source::Xcolor, at: "2.5" }],
         fixes: &[],
+        engines: &[],
         run: conflicting_color_definition,
     },
     Rule {
@@ -70,6 +74,7 @@ one name likely means to be the other.
 Silent unless the run could read both colors back exactly.",
         references: &[Ref { source: Source::Xcolor, at: "2.5" }],
         fixes: &[],
+        engines: &[],
         run: duplicate_color_value,
     },
     Rule {
@@ -87,6 +92,7 @@ push or pop belongs to.
 Fix by balancing every push with a pop in the same group.",
         references: &[Ref { source: Source::Pdftex, at: "8.9.8" }],
         fixes: &[],
+        engines: &[Engine::PdfTeX, Engine::LuaTeX],
         run: unbalanced_color_stack,
     },
 ];

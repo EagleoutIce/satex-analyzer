@@ -19,6 +19,7 @@ Fix by naming what the file expects in `load.expect`, or by loading it with
 `\\RequirePackage` in the file itself.",
         references: &[],
         fixes: &[],
+        engines: &[],
         run: expected_load,
     },
     Rule {
@@ -36,6 +37,7 @@ There is nothing to fix in the document.  Raising the limits in `satex.yaml` or
 narrowing the analysis with `load.packages: false` can reduce it.",
         references: &[],
         fixes: &[],
+        engines: &[],
         run: imprecision,
     },
 ];

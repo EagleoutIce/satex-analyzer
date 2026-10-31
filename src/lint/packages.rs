@@ -28,6 +28,7 @@ runs as part of `lint --fix`.  The question is off by default because it reads
 the package repository: turn on `plugins.packages` in `satex.yaml`.",
     references: &[Ref { source: Source::TexLive, at: "tlmgr" }, Ref { source: Source::MikTeX, at: "miktex packages" }],
     fixes: &[],
+    engines: &[],
     run: uninstalled_packages,
 }];
 

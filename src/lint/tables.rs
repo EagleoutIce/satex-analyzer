@@ -26,6 +26,7 @@ The rule reads the table's source: a column whose cells below the header are
 all numbers, three or more, set in a column that does not align them.",
         references: &[Ref { source: Source::Siunitx, at: "7.12" }],
         fixes: &[],
+        engines: &[],
         run: numbers_not_aligned,
     },
     Rule {
@@ -40,6 +41,7 @@ column of [siunitx](https://ctan.org/pkg/siunitx) rounds them with
 `round-mode = places, round-precision = …`.",
         references: &[Ref { source: Source::Siunitx, at: "4.6" }],
         fixes: &[],
+        engines: &[],
         run: inconsistent_precision,
     },
     Rule {
@@ -56,6 +58,7 @@ and pushes the numbers out of alignment.  The
 over an `S` column of bare numbers.",
         references: &[Ref { source: Source::SiBrochure, at: "5.4.1" }, Ref { source: Source::Siunitx, at: "\\unit" }],
         fixes: &[],
+        engines: &[],
         run: unit_in_cells,
     },
     Rule {
@@ -72,6 +75,7 @@ too close to the text.  A table of fewer rows than `lints.table-rules.rows`
 (3) is left alone.",
         references: &[Ref { source: Source::Booktabs, at: "2" }],
         fixes: &[],
+        engines: &[],
         run: table_rules,
     },
 ];

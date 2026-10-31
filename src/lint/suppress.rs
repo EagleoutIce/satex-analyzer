@@ -4,7 +4,7 @@
 //! line of code) suppresses that same line, `% satex-disable CODE…` and
 //! `% satex-enable CODE…` open and close a region, and `%
 //! satex-disable-file CODE…` suppresses everywhere in the file.  Leaving
-//! off the codes means every code. A rule's number (`S012`) names it too.  [`apply`] runs once, after every rule
+//! off the codes means every code. A rule's number (`C012`) names it too.  [`apply`] runs once, after every rule
 //! has produced its findings, so every output format and `--fix` (which
 //! relints after each round) see the same filtered set.
 
@@ -34,6 +34,7 @@ never existed.",
     // ordinary rule pass would just repeat that scan.
     references: &[],
     fixes: &[],
+    engines: &[],
     run: |_| {},
 }];
 

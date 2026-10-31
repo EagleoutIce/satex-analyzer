@@ -24,6 +24,11 @@ paths:  # kpathsea variables' fallback list: tried after the
   output_directory: ''  # -output-directory: a relative name opened at run time is looked up here first
 at_letter: false  # start with @ a letter, as .sty files do
 lint_off: [analysis-imprecision]  # rule codes that never fire, a profile fills this in
+style_prompt:  # an editor asks whether a rule the project breaks often is its style
+  enabled: true  # false: never ask
+  min_findings: 10  # findings of one rule in the project's own files before it is asked about
+  categories: [style]  # rule categories a project may call its style
+  keep: []  # rules the project keeps and is never asked about again
 project:
   frozen: []  # globs of files read and analyzed, but with no findings and no fixes inside, relative to this file
   freeze_other_repositories: true  # files of another git repository (a submodule, a nested clone) count as frozen too

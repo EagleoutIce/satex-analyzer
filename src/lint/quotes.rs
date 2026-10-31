@@ -32,6 +32,7 @@ Fix by opening with two backticks and closing with two apostrophes, or with
             Ref { source: Source::TeXbook, at: "chapter 2" },
         ],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: wrong_quote_character,
     },
     Rule {
@@ -57,6 +58,7 @@ Fix by turning the mark the right way round.",
             Ref { source: Source::TeXbook, at: "chapter 2" },
         ],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: quote_direction,
     },
     Rule {
@@ -76,6 +78,7 @@ Fix by putting a thin space `\\,` between the double mark and the single one,
 with the double mark on the outside.",
         references: &[Ref { source: Source::Chktex, at: "23" }, Ref { source: Source::TeXbook, at: "chapter 2" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: quote_ligature,
     },
     Rule {
@@ -94,6 +97,7 @@ suggestion.
 Fix by moving the punctuation after the closing mark.",
         references: &[Ref { source: Source::Chktex, at: "38" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: quote_punctuation,
     },
     Rule {
@@ -112,6 +116,7 @@ loaded.  Apostrophes inside a word and primes in math do not count.
 Fix by loading `\\usepackage{csquotes}` and writing `\\enquote{…}`.",
         references: &[Ref { source: Source::Chktex, at: "18" }, Ref { source: Source::Csquotes, at: "3.1" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: csquotes_available,
     },
 ];

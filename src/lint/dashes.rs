@@ -27,6 +27,7 @@ math is a minus sign.
 Fix by writing the run of hyphens the surrounding text calls for.",
     references: &[Ref { source: Source::Chktex, at: "8" }, Ref { source: Source::TeXbook, at: "chapter 2" }],
     fixes: &[Applicability::Unsafe],
+    engines: &[],
     run: wrong_dash,
 }];
 

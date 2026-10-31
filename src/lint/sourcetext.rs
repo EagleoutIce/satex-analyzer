@@ -34,6 +34,7 @@ first bracket left over.
 Fix by adding the bracket that is missing.",
         references: &[Ref { source: Source::Chktex, at: "17" }, Ref { source: Source::TeXbook, at: "chapter 2" }],
         fixes: &[],
+        engines: &[],
         run: unbalanced_brackets,
     },
     Rule {
@@ -56,6 +57,7 @@ Fix by writing what the project's own rule asks for, or by removing the
 pattern from `satex.yaml`.",
         references: &[Ref { source: Source::Chktex, at: "20" }, Ref { source: Source::Chktex, at: "44" }],
         fixes: &[],
+        engines: &[],
         run: user_pattern,
     },
     Rule {
@@ -75,6 +77,7 @@ and where the run really did set that mark there.
 Fix by removing the backslash.",
         references: &[Ref { source: Source::Chktex, at: "21" }, Ref { source: Source::TeXbook, at: "chapter 9" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: unintended_escape,
     },
     Rule {
@@ -95,6 +98,7 @@ a character, not a comment.
 Fix by doing what the note asks and deleting it.",
         references: &[Ref { source: Source::Chktex, at: "22" }],
         fixes: &[],
+        engines: &[],
         run: comment_marker,
     },
     Rule {
@@ -114,6 +118,7 @@ code of `\\`, and reports the tail only where the run set none of it.
 Fix by moving the text to the next line.",
         references: &[Ref { source: Source::Chktex, at: "31" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: ignored_verbatim_tail,
     },
 ];

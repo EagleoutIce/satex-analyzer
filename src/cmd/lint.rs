@@ -24,6 +24,7 @@ pub struct Selection<'a> {
     pub rules: bool,
     pub explain: Option<&'a str>,
     pub chktex: bool,
+    pub style: bool,
 }
 
 pub fn run(
@@ -32,7 +33,7 @@ pub fn run(
     fixing: Fixing,
     out: &mut impl Write,
 ) -> Result<Output, String> {
-    let Selection { filter, all, rules, explain, chktex } = selection;
+    let Selection { filter, all, rules, explain, chktex, style } = selection;
     if rules {
         return Ok(Output::Records(lint::rules()));
     }
@@ -45,6 +46,7 @@ pub fn run(
             Format::Json => serde_json::to_string_pretty(&serde_json::json!({
                 "code": rule.code,
                 "number": rule.number(),
+                "engines": rule.engines.iter().map(|e| e.as_str()).collect::<Vec<_>>(),
                 "category": rule.category.as_str(),
                 "severity": rule.severity.as_str(),
                 "summary": rule.summary,
@@ -86,6 +88,9 @@ pub fn run(
         .into_iter()
         .filter(|r| select(r))
         .collect();
+    if style {
+        return Ok(Output::Records(lint::style_candidates(&records, &context.analysis.settings.style_prompt)));
+    }
     if !fixing.fix && !fixing.diff {
         return Ok(Output::Lint(records));
     }

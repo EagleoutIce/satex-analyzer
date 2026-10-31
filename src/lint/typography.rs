@@ -36,6 +36,7 @@ Fix by loading `\\usepackage[T1]{fontenc}`.",
             Ref { source: Source::TeXbook, at: "appendix H" },
         ],
         fixes: &[Applicability::Unsafe],
+        engines: &[Engine::PdfTeX],
         run: ot1_font_encoding,
     },
     Rule {
@@ -56,6 +57,7 @@ Fix by loading `\\usepackage{lmodern}`, or by making sure cm-super is
 installed.",
         references: &[Ref { source: Source::Lmodern, at: "Latin Modern" }, Ref { source: Source::Fntguide, at: "5" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[Engine::PdfTeX],
         run: computer_modern_in_t1,
     },
     Rule {
@@ -79,6 +81,7 @@ Fix by loading `\\usepackage{microtype}`.",
             Ref { source: Source::Pdftex, at: "\\pdfprotrudechars" },
         ],
         fixes: &[Applicability::Unsafe],
+        engines: &[Engine::PdfTeX, Engine::LuaTeX],
         run: microtype_available,
     },
 ];

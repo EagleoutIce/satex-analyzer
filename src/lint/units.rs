@@ -28,6 +28,7 @@ set it itself.
 Fix by loading `\\usepackage{siunitx}` and writing `\\qty{⟨number⟩}{⟨unit⟩}`.",
     references: &[Ref { source: Source::SiBrochure, at: "5.4.3" }, Ref { source: Source::Siunitx, at: "\\qty" }],
     fixes: &[Applicability::Unsafe],
+    engines: &[],
     run: hand_set_quantity,
 }];
 

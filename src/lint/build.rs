@@ -38,6 +38,7 @@ Fix by adding `-shell-escape` to the command, e.g.
             Ref { source: Source::Arara, at: "The official rules" },
         ],
         fixes: &[],
+        engines: &[],
         run: shell_escape_missing,
     },
     Rule {
@@ -54,6 +55,7 @@ Fix by removing `-shell-escape` from the engine command (or `shell: yes` from
 the arara directive).",
         references: &[Ref { source: Source::Pdftex, at: "-shell-escape" }],
         fixes: &[],
+        engines: &[],
         run: shell_escape_unneeded,
     },
     Rule {
@@ -72,6 +74,7 @@ than latexmk waits for.
 Fix by setting `$pdf_mode` to the engine the document is written for.",
         references: &[Ref { source: Source::Latexmk, at: "$pdf_mode" }],
         fixes: &[],
+        engines: &[],
         run: engine_mismatch,
     },
     Rule {
@@ -88,6 +91,7 @@ Fix by removing the setting.  latexmk's default, 1, runs them whenever the
 `.bib` files exist.",
         references: &[Ref { source: Source::Latexmk, at: "$bibtex_use" }],
         fixes: &[],
+        engines: &[],
         run: bibliography_disabled,
     },
     Rule {
@@ -103,6 +107,7 @@ never takes effect (latexmk(1), `$bibtex_use`).
 Fix by removing the setting.",
         references: &[Ref { source: Source::Latexmk, at: "$bibtex_use" }],
         fixes: &[],
+        engines: &[],
         run: bibliography_unneeded,
     },
     Rule {
@@ -124,6 +129,7 @@ The glossaries manual gives the rule, e.g.
             Ref { source: Source::Glossaries, at: "bib2gls" },
         ],
         fixes: &[],
+        engines: &[],
         run: missing_custom_dependency,
     },
     Rule {
@@ -140,6 +146,7 @@ DEPENDENCIES\").  The document writes no glossary or index, and no file with the
 Fix by removing the rule, or keep it if another document of the project needs it.",
         references: &[Ref { source: Source::Latexmk, at: "CUSTOM DEPENDENCIES" }],
         fixes: &[],
+        engines: &[],
         run: unused_custom_dependency,
     },
     Rule {
@@ -156,6 +163,7 @@ without `%S` compiles nothing, and one without `%O` loses `-jobname`,
 Fix by ending the command with `%O %S`.",
         references: &[Ref { source: Source::Latexmk, at: "FORMAT OF COMMAND SPECIFICATIONS" }],
         fixes: &[],
+        engines: &[],
         run: command_placeholders,
     },
     Rule {
@@ -175,6 +183,7 @@ Fix by adding them to the command, e.g.
             Ref { source: Source::Luatex, at: "-synctex" },
         ],
         fixes: &[],
+        engines: &[],
         run: engine_options,
     },
 ];

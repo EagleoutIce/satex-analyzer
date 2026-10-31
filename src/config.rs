@@ -302,6 +302,92 @@ impl Default for PluginSwitches {
     }
 }
 
+/// `style_prompt:` in `satex.yaml`: when an editor asks whether a rule
+/// that fires often in the project is its style, to turn that rule off.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StylePrompt {
+    pub enabled: bool,
+    /// Findings of one rule in the project's own files before it is asked about.
+    pub min_findings: usize,
+    /// The rule categories a project may call its style.
+    pub categories: Vec<String>,
+    /// Rules the project keeps and is never asked about again.
+    pub keep: Vec<String>,
+}
+
+impl Default for StylePrompt {
+    fn default() -> StylePrompt {
+        StylePrompt { enabled: true, min_findings: 10, categories: vec!["style".into()], keep: Vec::new() }
+    }
+}
+
+/// What a project answered when asked whether a rule is its style.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StyleChoice {
+    /// The rule goes into `lint_off`.
+    Off,
+    /// The rule goes into `style_prompt.keep`.
+    Keep,
+}
+
+/// Records `choice` for `code` in `dir`'s `satex.yaml`, made if missing.
+/// The text is edited in place, so the file's comments stay.
+pub fn record_style_choice(dir: &Path, code: &str, choice: StyleChoice) -> Result<PathBuf, String> {
+    let path = dir.join(FILE_NAME);
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let text = match choice {
+        StyleChoice::Off => with_listed(&text, None, "lint_off", code),
+        StyleChoice::Keep => with_listed(&text, Some("style_prompt"), "keep", code),
+    }
+    .ok_or_else(|| format!("{}: no flow list to add `{code}` to", path.display()))?;
+    std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// `text` with `item` in the flow list of `key` (or `key+`), under the
+/// top-level mapping `section` when one is named. A missing list is
+/// added as `key+`, so it extends what other layers set. `None` when the
+/// key is there but not as a one-line `[…]` list.
+fn with_listed(text: &str, section: Option<&str>, key: &str, item: &str) -> Option<String> {
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let header = section.map(|s| lines.iter().position(|l| l.trim_end() == format!("{s}:")));
+    let (from, indent) = match header {
+        None => (0, String::new()),
+        Some(None) => {
+            lines.push(format!("{}:", section.unwrap_or_default()));
+            (lines.len(), "  ".to_string())
+        }
+        Some(Some(at)) => {
+            let child = lines[at + 1..].iter().find(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'));
+            let indent = child.filter(|l| l.starts_with(' ')).map_or("  ", |l| &l[..l.len() - l.trim_start().len()]);
+            (at + 1, indent.to_string())
+        }
+    };
+    let inside = |l: &String| l.starts_with(&indent) && (indent.is_empty() || !l[indent.len()..].starts_with(' '));
+    let mut end = from;
+    while end < lines.len() && (section.is_none() || lines[end].trim().is_empty() || lines[end].starts_with(&indent)) {
+        end += 1;
+    }
+    let found = (from..end).find(|&i| {
+        let rest = lines[i].strip_prefix(&indent).unwrap_or_default();
+        inside(&lines[i]) && (rest.starts_with(&format!("{key}:")) || rest.starts_with(&format!("{key}+:")))
+    });
+    match found {
+        Some(i) => {
+            let line = &lines[i];
+            let (open, close) = (line.find('[')?, line.find(']')?);
+            let listed = line[open + 1..close].split(',').map(str::trim).any(|c| c == item);
+            if !listed {
+                let sep = if line[open + 1..close].trim().is_empty() { "" } else { ", " };
+                lines[i] = format!("{}{sep}{item}{}", line[..close].trim_end(), &line[close..]);
+            }
+        }
+        None => lines.insert(end, format!("{indent}{key}+: [{item}]")),
+    }
+    Some(lines.join("\n") + "\n")
+}
+
 /// `lsp:` in `satex.yaml`: how `satex lsp` listens and re-analyzes.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -1004,6 +1090,9 @@ pub struct Config {
     /// How `satex lsp` listens and re-analyzes.
     #[serde(default)]
     pub lsp: LspConfig,
+    /// When an editor asks whether a frequent finding is the project's style.
+    #[serde(default)]
+    pub style_prompt: StylePrompt,
 }
 
 impl Default for Config {
@@ -1055,6 +1144,7 @@ impl Default for Config {
             record_arguments: false,
             depp: Default::default(),
             lsp: LspConfig::default(),
+            style_prompt: StylePrompt::default(),
         }
     }
 }

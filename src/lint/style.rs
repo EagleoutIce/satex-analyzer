@@ -22,6 +22,7 @@ every path, so this is not a conditional fallback.
 Fix by deleting the first definition, or by checking which one was meant.",
         references: &[],
         fixes: &[Applicability::Safe, Applicability::Unsafe],
+        engines: &[],
         run: dead_definition,
     },
     Rule {
@@ -33,6 +34,7 @@ Fix by deleting the first definition, or by checking which one was meant.",
 Fix by deleting the `\\label`, or by checking the `\\ref` that was meant to use it.",
         references: &[],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: unused_label,
     },
     Rule {
@@ -48,6 +50,7 @@ Fix by moving the definition out of the group, or by prefixing it with
 `\\global`.",
         references: &[Ref { source: Source::TeXbook, at: "chapter 5" }],
         fixes: &[],
+        engines: &[],
         run: group_local_definition,
     },
     Rule {
@@ -69,6 +72,7 @@ has it.
 Fix by using LaTeX's interface for the same job.",
         references: &[Ref { source: Source::Chktex, at: "41" }, Ref { source: Source::L2tabu, at: "1" }],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: primitive_tex_command,
     },
     Rule {
@@ -82,6 +86,7 @@ Nothing expands this name.
 Fix by deleting it, or by checking why nothing calls it yet.",
         references: &[],
         fixes: &[Applicability::Unsafe],
+        engines: &[],
         run: unused_definition,
     },
     Rule {
@@ -101,6 +106,7 @@ every reading was horizontal, and that it *may* where some might have been.
 Fix by writing `%` at the end of that line.",
         references: &[Ref { source: Source::TeXWeb, at: "347" }, Ref { source: Source::TeXWeb, at: "1043" }],
         fixes: &[Applicability::Safe],
+        engines: &[],
         run: stray_space,
     },
 ];

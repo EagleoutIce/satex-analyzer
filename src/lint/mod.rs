@@ -75,6 +75,18 @@ pub enum Category {
 }
 
 impl Category {
+    /// The first letter of its rules' numbers (`C012`). Security and style
+    /// share an initial, so security takes `X`, and precision `A` (analysis).
+    pub fn letter(self) -> char {
+        match self {
+            Category::Correctness => 'C',
+            Category::Security => 'X',
+            Category::Style => 'S',
+            Category::Performance => 'P',
+            Category::Precision => 'A',
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Category::Correctness => "correctness",
@@ -288,11 +300,13 @@ pub struct Rule {
     pub references: &'static [Ref],
     /// The quick-fix kinds its findings can carry; empty when none.
     pub fixes: &'static [fix::Applicability],
+    /// The engines whose primitives or output the rule is about, empty for every engine.
+    pub engines: &'static [crate::config::Engine],
     pub run: fn(&mut Report),
 }
 
 impl Rule {
-    /// The rule's stable number, `S001` and on, from `numbers.txt`.
+    /// The rule's stable number, `C001` and on, from `numbers.txt`.
     pub fn number(&self) -> &'static str {
         number(self.code).unwrap_or_default()
     }
@@ -315,7 +329,7 @@ pub fn number(code: &str) -> Option<&'static str> {
     numbers().iter().find(|(_, c)| *c == code).map(|(n, _)| *n)
 }
 
-/// `S012 raised-error`: how output names a finding's rule.
+/// `C012 raised-error`: how output names a finding's rule.
 pub fn label(code: &str) -> String {
     number(code).map_or_else(|| code.to_string(), |n| format!("{n} {code}"))
 }
@@ -665,6 +679,7 @@ pub fn rules() -> Vec<Record> {
             record.insert("message".into(), json!(rule.summary));
             record.insert("reference".into(), json!(cites(rule)));
             record.insert("fixes".into(), json!(rule.fixes.iter().map(|a| a.as_str()).collect::<Vec<_>>()));
+            record.insert("engines".into(), json!(rule.engines.iter().map(|e| e.as_str()).collect::<Vec<_>>()));
             record
         })
         .collect()
@@ -675,6 +690,82 @@ pub fn cites(rule: &Rule) -> String {
     rule.references.iter().map(Ref::cite).collect::<Vec<_>>().join(", ")
 }
 
+/// The rules whose findings in the project's own files are so many that
+/// they may be its style: one record each, with the count and the question
+/// an editor asks. Empty when `prompt` is off.
+pub fn style_candidates(records: &[Record], prompt: &crate::config::StylePrompt) -> Vec<Record> {
+    if !prompt.enabled {
+        return Vec::new();
+    }
+    let text = |r: &Record, key: &str| r.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let mut by_rule: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for r in records.iter().filter(|r| text(r, "origin") == "document") {
+        if prompt.categories.contains(&text(r, "category")) && !prompt.keep.contains(&text(r, "code")) {
+            by_rule.entry(text(r, "code")).or_default().push(text(r, "name"));
+        }
+    }
+    by_rule
+        .into_iter()
+        .filter(|(_, names)| names.len() >= prompt.min_findings)
+        .filter_map(|(code, names)| {
+            let rule = explanation(&code)?;
+            let mut record = serde_json::Map::new();
+            record.insert("number".into(), json!(rule.number()));
+            record.insert("code".into(), json!(rule.code));
+            record.insert("count".into(), json!(names.len()));
+            record.insert("summary".into(), json!(rule.summary));
+            record.insert("question".into(), json!(style_question(&label(rule.code), &names)));
+            Some(record)
+        })
+        .collect()
+}
+
+/// `Your project uses `\hskip` 12 times. Treat this as …?`, naming the
+/// construct when most findings are about one.
+fn style_question(rule: &str, names: &[String]) -> String {
+    let mut counts: std::collections::BTreeMap<&str, usize> = Default::default();
+    for name in names.iter().filter(|n| !n.is_empty()) {
+        *counts.entry(name).or_default() += 1;
+    }
+    let top = counts.into_iter().max_by_key(|(_, n)| *n).filter(|(_, n)| 2 * n > names.len());
+    let uses = match top {
+        Some((name, n)) => format!("Your project uses `{name}` {n} times."),
+        None => format!("Your project has {} findings of `{rule}`.", names.len()),
+    };
+    format!("{uses} Treat this as the project's style and turn off `{rule}`?")
+}
+
+/// A rule's card in Markdown, as an editor's hover over one of its
+/// findings shows it: the site's card has the same parts in the same order.
+pub fn rule_markdown(rule: &Rule) -> String {
+    let shape = match rule.severity {
+        Severity::Error => "◆",
+        Severity::Warning => "▲",
+        Severity::Info => "●",
+    };
+    let engines: Vec<&str> = rule.engines.iter().map(|e| e.as_str()).collect();
+    let mut badges = vec![
+        format!("`{}`", rule.number()),
+        format!("{shape} default: {}", rule.severity.as_str()),
+        rule.category.as_str().to_string(),
+    ];
+    badges.extend((!engines.is_empty()).then(|| format!("only {}", engines.join(", "))));
+    badges.extend(rule.fixes.iter().map(|f| format!("{} fix", f.as_str())));
+    let mut out = format!(
+        "#### [{}]({})\n\n{}\n\n**{}**\n\n{}",
+        rule.code,
+        url(rule.code),
+        badges.join(" · "),
+        rule.summary,
+        cite::linkify_citations(rule.explanation).trim()
+    );
+    if !rule.references.is_empty() {
+        let refs: Vec<String> = rule.references.iter().map(|r| format!("[{}]({})", r.cite(), r.url())).collect();
+        out.push_str(&format!("\n\nSee {}.", refs.join(", ")));
+    }
+    out
+}
+
 /// The rule named by its code or its number.
 pub fn explanation(code: &str) -> Option<&'static Rule> {
     all().find(|rule| rule.code == code || rule.number() == code)
@@ -683,16 +774,23 @@ pub fn explanation(code: &str) -> Option<&'static Rule> {
 #[cfg(test)]
 mod tests {
 
-    /// `numbers.txt` counts up from `S001` with no gap, names each code
+    /// `numbers.txt` counts up from 001 per category letter with no gap, names each code
     /// once, lists every rule, and marks each line no rule has as retired:
     /// a number is never given twice.
     #[test]
     fn rule_numbers_are_stable() {
+        use super::Category::{self, *};
         let lines: Vec<&str> = include_str!("numbers.txt").lines().filter(|l| !l.starts_with('#')).collect();
         let mut codes = std::collections::HashSet::new();
-        for (i, line) in lines.iter().enumerate() {
+        let mut counts: std::collections::HashMap<char, usize> = Default::default();
+        let letters = [Correctness, Security, Style, Performance, Precision].map(Category::letter);
+        for line in &lines {
             let words: Vec<&str> = line.split_whitespace().collect();
-            assert_eq!(words[0], format!("S{:03}", i + 1), "numbers.txt counts up by one: {line}");
+            let letter = words[0].chars().next().unwrap_or_default();
+            assert!(letters.contains(&letter), "numbers.txt: {line} starts with no category's letter");
+            let count = counts.entry(letter).or_default();
+            *count += 1;
+            assert_eq!(words[0], format!("{letter}{:03}", count), "numbers.txt counts up by one per letter: {line}");
             assert!(codes.insert(words[1]), "numbers.txt names `{}` twice", words[1]);
             let retired = words.get(2) == Some(&"retired");
             assert_eq!(super::all().any(|r| r.code == words[1]), !retired, "a rule's line is not retired: {line}");
