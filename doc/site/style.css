@@ -1087,3 +1087,5 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
   border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 24px rgb(0 0 0 / .22); pointer-events: none; animation: zoom-in .12s var(--ease); }
 .draw-zoom[hidden] { display: none; } .draw-zoom .draw-glyph { width: auto; font-size: 3.4rem; } .draw-zoom .draw-bmp { width: 4rem; height: 4rem; }
 @keyframes zoom-in { from { opacity: 0; scale: .7; } }
+.claim-rot .claim-lint { text-decoration: underline wavy transparent; text-underline-offset: .22em; text-decoration-thickness: 2px; transition: text-decoration-color .5s var(--ease); }
+.claim-rot > span.shows .claim-lint { text-decoration-color: var(--error); }
