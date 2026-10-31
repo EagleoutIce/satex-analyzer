@@ -1077,6 +1077,8 @@ impl Accum {
 
 /// How deeply expansion may nest inside scans before the run stops.
 const MAX_NESTING: u32 = 300;
+/// How deep [`Machine::may_run`] follows the macros skipped code reaches.
+const MAY_RUN_LEVELS: u8 = 3;
 
 /// How much of the Rust stack nested steps may take before the run stops,
 /// whatever each level costs: half the 2 MiB a spawned thread gets.
@@ -12731,8 +12733,11 @@ impl Machine<'_> {
     pub(crate) fn may_run(&mut self, by: Sym, named: &[Sym], texts: &[&[Token]], span: Span) {
         use crate::tex::RegKind;
         let mut seen: HashSet<Sym> = named.iter().copied().collect();
-        let mut queue = named.to_vec();
+        let mut queue: Vec<(Sym, u8)> = named.iter().map(|&s| (s, 1)).collect();
         let (mut fresh, mut regs) = (Vec::new(), Vec::new());
+        // Names the code may give another meaning, with that meaning: a
+        // `\let` to a known name its meaning, anything else unknown.
+        let mut redefined: Vec<(Sym, Meaning)> = Vec::new();
         // The code reached is read up to this many tokens.
         let mut left = self.cfg.limits.expansion_tokens;
         // The text's own names come in no order: with a defining command
@@ -12751,20 +12756,23 @@ impl Machine<'_> {
                 _ => {}
             }
         }
-        let mut texts: Vec<Rc<[Token]>> = texts.iter().map(|t| Rc::from(*t)).collect();
+        let mut texts: Vec<(Rc<[Token]>, u8)> = texts.iter().map(|t| (Rc::from(*t), 0)).collect();
         loop {
-            let text = match texts.pop() {
+            let (text, level) = match texts.pop() {
                 Some(text) => text,
                 None => match queue.pop() {
-                    Some(sym) => match self.env.meaning(sym) {
-                        Meaning::Macro(m) => m.replacement_text.clone(),
+                    Some((sym, level)) => match self.env.meaning(sym) {
+                        Meaning::Macro(m) => (m.replacement_text.clone(), level),
                         _ => continue,
                     },
                     None => break,
                 },
             };
             let (mut defines, mut numbered) = (false, None::<(RegKind, i64)>);
-            for t in text.iter() {
+            // A definition inside a group the text opens and closes is gone
+            // when it ends; a `\global` one is not.
+            let (mut grouped, mut global, mut definer) = (0usize, false, None::<Primitive>);
+            for (i, t) in text.iter().enumerate() {
                 left = left.saturating_sub(1);
                 if let Some((kind, n)) = numbered {
                     match t.tok {
@@ -12779,10 +12787,35 @@ impl Machine<'_> {
                         }
                     }
                 }
+                match t.tok {
+                    Tok::Chr(_, Catcode::Begin) => grouped += 1,
+                    Tok::Chr(_, Catcode::End) => grouped = grouped.saturating_sub(1),
+                    _ => {}
+                }
                 let Some(cs) = t.cs() else { continue };
-                match self.env.meaning(cs) {
+                let meaning = self.env.meaning(cs);
+                match meaning.prim() {
+                    Some(Primitive::BeginGroup) => grouped += 1,
+                    Some(Primitive::EndGroup) => grouped = grouped.saturating_sub(1),
+                    _ => {}
+                }
+                if let Some(how) = definer.take()
+                    && !matches!(meaning, Meaning::Undefined)
+                    && (grouped == 0 || std::mem::take(&mut global))
+                {
+                    let source = text[i + 1..].iter().find(|t| !matches!(t.tok, Tok::Chr('=' | ' ', _)));
+                    let new = match (how, source.and_then(|s| s.cs())) {
+                        (Primitive::Let { .. }, Some(from)) => self.env.meaning(from),
+                        _ => Meaning::Unknown,
+                    };
+                    redefined.push((cs, new));
+                }
+                if matches!(meaning.prim(), Some(Primitive::Prefix(crate::builtins::Prefix::Global))) {
+                    global = true;
+                }
+                match meaning {
                     Meaning::Undefined if defines => fresh.push(cs),
-                    Meaning::Macro(_) if seen.insert(cs) => queue.push(cs),
+                    Meaning::Macro(_) if level < MAY_RUN_LEVELS && seen.insert(cs) => queue.push((cs, level + 1)),
                     Meaning::Register(kind @ (RegKind::Count | RegKind::Dimen), _) => {
                         regs.push((self.storage(cs), kind))
                     }
@@ -12797,6 +12830,9 @@ impl Machine<'_> {
                     _ => {}
                 }
                 defines = defining(self, cs);
+                if defines {
+                    definer = meaning.prim();
+                }
             }
             if left == 0 {
                 break;
@@ -12811,6 +12847,14 @@ impl Machine<'_> {
             self.prefixes.global = true;
             self.define(name, Meaning::Unknown, by, DefMode::Declare, span);
         }
+        redefined.retain(|(name, new)| self.env.meaning(*name) != *new);
+        for (name, new) in &redefined {
+            let old = self.env.get(*name).cloned();
+            let joined = crate::env::join_slot(old, Some(crate::env::Binding::builtin(new.clone())), self.env.sets);
+            if let Some(joined) = joined {
+                self.env.set(*name, joined, true);
+            }
+        }
         for &(reg, kind) in &regs {
             let (quantity, num) = match kind {
                 RegKind::Dimen => (crate::value::Quantity::Dimen, crate::value::Num::full(true)),
@@ -12821,7 +12865,7 @@ impl Machine<'_> {
             };
             self.env.set_value(reg, crate::value::Value::Num { quantity, num }, true);
         }
-        if fresh.is_empty() && regs.is_empty() && left > 0 {
+        if fresh.is_empty() && regs.is_empty() && redefined.is_empty() && left > 0 {
             return;
         }
         let names: Vec<String> = fresh.iter().map(|&n| format!("\\{}", self.name(n))).collect();

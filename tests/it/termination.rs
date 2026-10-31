@@ -989,6 +989,25 @@ Some text with microtype protrusion and expansion.
         assert!(crate::support::defined(&a, "Zero") && crate::support::defined(&a, "One"), "{codes:?}");
         assert!(a.forks <= 64 * 2, "{} forks", a.forks);
     }
+
+    /// A loop whose flag a macro in a widened conditional clears
+    /// (scrlayer-notecolumn's `\ifeof\slnc@file\@tempswafalse\fi` over a
+    /// joined stream): the flag may be false after it, so the loop may end.
+    #[test]
+    fn a_widened_conditional_may_clear_a_loop_flag() {
+        let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6
+\\def\\stop{\\let\\ifgo\\iffalse}\\let\\ifgo\\iftrue
+\\def\\x{\\ifgo\\ifnum\\pdfuniformdeviate2=0 \\stop\\fi\\expandafter\\x\\fi}\\x
+\\def\\Next{}
+";
+        let mut cfg = super::cfg(20_000_000);
+        cfg.limits.site_forks = 1;
+        let a = Machine::analyze(source, None, &cfg);
+        let codes: Vec<&str> = a.facts.diagnostics.iter().map(|d| d.code).collect();
+        assert!(codes.contains(&"undecided-condition"), "{codes:?}");
+        assert!(!codes.contains(&"line-budget-cut"), "{codes:?}");
+        assert!(crate::support::defined(&a, "Next"), "{codes:?}");
+    }
 }
 
 /// A line-budget cut that drops no list (the lists left called the
