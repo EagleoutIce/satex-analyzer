@@ -1063,3 +1063,4 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .claim-cc .cc sub { font-size: .6rem; color: var(--muted); }
 .tr-bar { position: sticky; top: 0; z-index: 2; background: var(--panel); padding: .3rem 0; } #trace-step { font-variant-numeric: tabular-nums; min-width: 9ch; }
 .tip-more > summary { cursor: pointer; color: var(--muted); font-size: .78rem; margin: .3rem 0 0; }
+.loc-file { color: var(--muted); font-weight: 400; margin-right: .1rem; }

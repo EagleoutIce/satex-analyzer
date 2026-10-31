@@ -951,20 +951,24 @@
     drawTree();
   }
   /** Each finding: its severity, place, rule and message once. */
+  /** The findings the panel lists: the open file's, then every other project file's, each with its file. */
+  let listed = [];
   function render() {
     const ds = diagnostics[uri()] ?? [];
     editor.diagnostics(ds);
+    const others = Object.entries(diagnostics).filter(([u]) => u !== uri()).flatMap(([u, rs]) => rs.map((d) => ({ ...d, file: u.split('/').pop(), target: u })));
+    listed = [...ds, ...others];
     if (retryCompletion && !running) { retryCompletion = false; asked.clear(); editor.complete?.(); }
-    count.textContent = ds.length;
+    count.textContent = listed.length;
     pills(ds);
     if (checkStart) { timing('t-check', secs(performance.now() - checkStart), 'the language server analyzed the open file'); shownTime(secs(performance.now() - checkStart)); }
     checkStart = 0;
     phase();
-    lspStatus.textContent = state.file in state.ro ? 'read-only file' : ds.length ? '' : 'none';
+    lspStatus.textContent = state.file in state.ro ? 'read-only file' : listed.length ? '' : 'none';
     const fixButton = (f, j) => `<button class="small apply fix-${f.safety}" data-j="${j}" title="${escape(f.title)}">Fix (${f.safety})</button>`;
     const item = (d, i) => `<li class="f-${sev(d)}${unfolded.has(key(d)) ? ' open' : ''}" data-i="${i}" tabindex="0">` +
       `<span class="msg" title="${escape(d.message ?? '')}">${d.number ? `<code class="rno" title="rule number">${escape(d.number)}</code> ` : ''}<b class="rn">${escape(d.code ?? '')}</b>: ${commandRefs(inline(d.message))}</span>` +
-      `<span class="where"><b class="loc">${d.range.start.line + 1}:${d.range.start.character + 1}</b><span class="shape" title="${sev(d)}" aria-label="${sev(d)}"></span></span>` +
+      `<span class="where"><b class="loc">${d.file ? `<span class="loc-file">${escape(d.file)}:</span>` : ''}${d.range.start.line + 1}:${d.range.start.character + 1}</b><span class="shape" title="${sev(d)}" aria-label="${sev(d)}"></span></span>` +
       `<span class="acts">${d.fixes.map(fixButton).join('')}<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
       (unfolded.has(key(d)) ? explanation(d) : '') + '</li>';
     /** Findings of one object (`group`, "table@12:1") fold together under a header; a lone one stays flat. */
@@ -983,7 +987,7 @@
     // grouped by the rule's category, as the command line prints them: a header with
     // the category's icon, its count and severities, folding its findings
     const groups = new Map(CATEGORIES.map(([cat]) => [cat, []]));
-    ds.forEach((d, i) => {
+    listed.forEach((d, i) => {
       const cat = manifest.rules[d.code]?.category ?? 'other';
       groups.set(cat, [...(groups.get(cat) ?? []), [d, i]]);
     });
@@ -1013,7 +1017,7 @@
   }, true);
   const unfolded = new Set();
   function unfold(i, toggle = true) {
-    const d = diagnostics[uri()]?.[i];
+    const d = listed[i];
     if (!d) return;
     if (toggle && unfolded.has(key(d))) unfolded.delete(key(d)); else unfolded.add(key(d));
     const cat = manifest.rules[d.code]?.category ?? 'other';
@@ -1031,10 +1035,12 @@
   list.onclick = (e) => {
     const li = e.target.closest('li[data-i]');
     if (!li) return;
-    const d = diagnostics[uri()][li.dataset.i];
+    const d = listed[li.dataset.i];
     const apply = e.target.closest('.apply');
     if (apply) return fix(d.fixes[apply.dataset.j]);
     if (e.target.closest('.explain a')) return;
+    // another file's finding opens that file at its place
+    if (d.target && !e.target.closest('.why')) return openPlace(Object.keys(state.texts).find((n) => d.target.endsWith(`/${n}`)) ?? d.file, d.range.start);
     if (!e.target.closest('.why')) editor.focus(d.range);
     unfold(+li.dataset.i);
   };
