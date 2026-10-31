@@ -578,14 +578,34 @@ fn raised_errors(report: &mut Report) {
             Some(name) => format!("reading {name}: {text}"),
             None => text,
         };
-        match crate::lint::shared::doubt(analysis, i) {
-            Some(cause) => report.add_doubted(span, "", message, &cause),
-            None => report.add(span, "", message, None),
+        // A pgf or TikZ error about a name a library declares (`Unknown arrow tip kind 'Kite'`,
+        // a key `/tikz/x`): the library's load is the fix.
+        let named = regex_quoted(&message).map(|q| q.rsplit('/').next().unwrap_or(q).to_string());
+        let library = named.as_deref().and_then(|n| crate::lint::shared::providing_library(analysis, n));
+        match (crate::lint::shared::doubt(analysis, i), library) {
+            (Some(cause), _) => report.add_doubted(span, "", message, &cause),
+            (None, Some(load)) => {
+                let edits =
+                    report.edits().insert_before(crate::lint::shared::document_start(analysis).unwrap_or(span), &load);
+                let fix = super::fix::Fix::new(
+                    format!("add `{load}`, which declares it"),
+                    super::fix::Applicability::Safe,
+                    edits,
+                );
+                report.add_fix(span, "", format!("{message} `{load}` declares it"), fix);
+            }
+            (None, None) => report.add(span, "", message, None),
         }
     }
     for (span, message) in own {
         report.add(span, "", message, None);
     }
+}
+
+/// The word an error quotes in `'…'`.
+fn regex_quoted(message: &str) -> Option<&str> {
+    let (_, rest) = message.split_once('\'')?;
+    rest.split_once('\'').map(|(q, _)| q).filter(|q| !q.is_empty() && !q.contains(' '))
 }
 
 /// An engine error raised on a path the analysis followed exactly.

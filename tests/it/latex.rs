@@ -194,6 +194,28 @@ fn a_misspelled_command_suggests_the_nearest_name() {
     );
 }
 
+/// An arrow tip a TikZ library declares, used without it: the error names
+/// the library that declares it and the fix loads it.
+#[test]
+fn an_unknown_arrow_tip_names_its_library() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{tikz}
+\begin{document}
+\tikz\draw[-Kite] (0,0) -- (1,1);
+\end{document}",
+    );
+    let found: Vec<String> = satex::lint::lint(&analysis)
+        .iter()
+        .filter(|f| f.get("message").and_then(|m| m.as_str()).is_some_and(|m| m.contains("'Kite'")))
+        .map(|f| f["fix"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(found, ["add `\\usetikzlibrary{arrows.meta}`, which declares it"]);
+}
+
 /// A name read with `{` a letter is TeX's error where the category codes
 /// are known, but not where a cut made the analysis assume them back
 /// (`region-catcodes`): there it is reported as possible only.

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fixed::{HashMap, HashSet};
 
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Exports {
@@ -136,6 +136,12 @@ impl Exports {
         let mut exports = Exports { version: VERSION, stamps, definers: definers.to_vec(), ..Exports::default() };
         let mut found: Vec<(String, PathBuf)> = crate::distribution::files_with(roots, ".sty");
         found.extend(crate::distribution::files_with(roots, ".cls"));
+        // pgf's and TikZ's libraries, which declare arrow tips, shapes and keys
+        found.extend(
+            crate::distribution::files_with(roots, ".code.tex")
+                .into_iter()
+                .filter(|(name, _)| name.starts_with("tikzlibrary") || name.starts_with("pgflibrary")),
+        );
         let position: HashMap<String, u32> =
             found.iter().enumerate().map(|(i, (name, _))| (name.clone(), i as u32)).collect();
         let definers: HashSet<&str> = definers.iter().map(String::as_str).collect();
@@ -145,7 +151,11 @@ impl Exports {
                 exports.loads.push(Vec::new());
                 continue;
             };
-            let (defined, loaded) = scan(&String::from_utf8_lossy(&bytes), &definers);
+            let text = String::from_utf8_lossy(&bytes);
+            let (mut defined, loaded) = scan(&text, &definers);
+            if name.ends_with(".code.tex") {
+                defined.extend(declared(&text));
+            }
             for name in defined {
                 let files = exports.defines.entry(name).or_default();
                 if files.last() != Some(&(i as u32)) {
@@ -240,6 +250,21 @@ fn scan(text: &str, definers: &HashSet<&str>) -> (Vec<String>, Vec<String>) {
         loaded.extend(group(&tokens[i + 1..]).split(',').map(|n| format!("{}{ext}", n.trim())));
     }
     (defined.map(|(_, _, name)| names.name(name).to_string()).collect(), loaded)
+}
+
+/// The names a pgf or TikZ library declares besides macros: arrow tips
+/// (`\pgfdeclarearrow{name = Kite, …}`), shapes (`\pgfdeclareshape{x}`) and
+/// keys (`kite/.style`), each as the word an error about it names.
+fn declared(text: &str) -> Vec<String> {
+    static FORMS: std::sync::LazyLock<[regex::Regex; 3]> = std::sync::LazyLock::new(|| {
+        [
+            regex::Regex::new(r"\\pgfdeclarearrow\s*\{\s*name\s*=\s*([^,}]+?)\s*[,}]").expect("arrow regex"),
+            regex::Regex::new(r"\\pgfdeclareshape\s*\{([^}]+)\}").expect("shape regex"),
+            regex::Regex::new(r"(?m)(?:^|[{,\s])([A-Za-z][\w -]*?)/\.(?:style|code|tip|pic|append style)\b")
+                .expect("key regex"),
+        ]
+    });
+    FORMS.iter().flat_map(|re| re.captures_iter(text).map(|c| c[1].trim().to_string())).collect()
 }
 
 /// The text of the group after `[options]` that `tokens` start with; a
