@@ -1766,6 +1766,13 @@
     const out = (o, pad) => Object.entries(o).map(([k, v]) => v && typeof v === 'object' && !Array.isArray(v) ? `${pad}${k}:\n${out(v, `${pad}  `)}` : `${pad}${k}: ${yamlValue(v)}`).join('\n');
     return out(tree, '');
   };
+  /** Every key at its default, as the YAML view shows them: the changed ones replace theirs. */
+  const yamlDefaults = (keys) => Object.fromEntries(keys.filter((k) => !k.extra && k.def != null && !k.key.startsWith('profiles.')).map((k) => [k.key, k.def]));
+  /** The settings a YAML text changes: its keys at their default are no change. */
+  const yamlChanges = (set, keys) => {
+    const defaults = yamlDefaults(keys);
+    return Object.fromEntries(Object.entries(set).filter(([k, v]) => !(k in defaults) || !sameValue(v, defaults[k])));
+  };
   /** The YAML view's text as settings: nested keys by indentation, each value as JSON or else as text; null when it does not read. */
   const configFromYaml = (text) => {
     const set = {}, stack = [];
@@ -1801,7 +1808,7 @@
     $('cfg-yaml').hidden = $('cfg-yaml-ed').hidden = true;
     $('cfg-list').hidden = cfgYaml;
     if (cfgYaml) {
-      const v = await yamlEditor(), box = v ? $('cfg-yaml-ed') : $('cfg-yaml'), text = configYamlOf(configSet);
+      const v = await yamlEditor(), box = v ? $('cfg-yaml-ed') : $('cfg-yaml'), text = configYamlOf({ ...yamlDefaults(all), ...configSet });
       box.hidden = false;
       if (v) { if (!v.hasFocus && v.state.doc.toString() !== text) { yamlSetting = true; v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: text } }); yamlSetting = false; } v.requestMeasure(); }
       else if (document.activeElement !== box) box.value = text;
@@ -1828,7 +1835,7 @@
       const example = k.example == null ? '' : `<details class="cfg-example"><summary>example</summary>${configExample(k)}</details>`;
       const links = [...(top ? [`overrides ${link(top, `<code>${escape(top)}</code>`)}`] : []), ...(overrides.get(k.key) ?? []).map(([p, key]) => `overridden in ${link(key, `<code>profiles.${escape(p)}</code>`)}`)];
       const wide = k.type === 'array';
-      return `<li class="cfg-row${wide ? ' cfg-wide' : ''}${changed ? ' cfg-changed' : ''}${rejected ? ' cfg-bad' : ''}" data-key="${escape(k.key)}"><div class="cfg-what"${rejected ? ` data-why="not applied: ${escape(configRejected.why)}"` : ''}><span class="cfg-name"><code>${k.key.includes('.') ? `<span class="cfg-prefix">${escape(k.key.slice(0, k.key.lastIndexOf('.') + 1))}</span>` : ''}${escape(k.key.slice(k.key.lastIndexOf('.') + 1))}</code>${badges}</span><span class="muted">${escape(k.about)}</span>` +
+      return `<li class="cfg-row${cfgOpened.has(k.key) ? ' cfg-open' : ''}${wide ? ' cfg-wide' : ''}${changed ? ' cfg-changed' : ''}${rejected ? ' cfg-bad' : ''}" data-key="${escape(k.key)}"><div class="cfg-what"${rejected ? ` data-why="not applied: ${escape(configRejected.why)}"` : ''}><span class="cfg-name"><code>${k.key.includes('.') ? `<span class="cfg-prefix">${escape(k.key.slice(0, k.key.lastIndexOf('.') + 1))}</span>` : ''}${escape(k.key.slice(k.key.lastIndexOf('.') + 1))}</code>${badges}</span><span class="muted cfg-about">${escape(k.about)}</span>` +
         `${added ? `<span class="muted">adds ${added.map((x) => `<code>${escape(x)}</code>`).join(', ')}</span>` : ''}${links.length ? `<span class="cfg-links muted">${links.join(' · ')}</span>` : ''}${example}</div>` +
         (wide ? `<div class="cfg-value">${configList(k, value)}</div>` : `<label class="${k.type === 'boolean' ? 'ts-toggle ' : ''}cfg-value">${configInput(k, value)}</label>`) +
         `<button type="button" class="ghost small" data-reset="${escape(k.key)}"${changed || k.extra ? '' : ' hidden'} title="${k.extra ? 'remove this override' : `back to the default: ${escape(yamlValue(k.def ?? ''))}`}">${k.extra ? 'Remove' : 'Reset'}</button></li>`;
@@ -1856,6 +1863,22 @@
     const n = Object.keys(configSet).length;
     $('cfg-total').textContent = n ? `${plural(n, 'setting')} changed` : 'every setting at its default';
   }
+  /** Compact: the rows show their key and value only, a click on a row opens its description and example. */
+  let cfgCompact = false;
+  try { cfgCompact = localStorage.getItem('satex-config-compact') === '1'; } catch {}
+  const cfgOpened = new Set();
+  $('cfg-compact').checked = cfgCompact;
+  $('cfg-list').classList.toggle('cfg-compact', cfgCompact);
+  $('cfg-compact').onchange = (e) => {
+    cfgCompact = e.target.checked;
+    try { localStorage.setItem('satex-config-compact', cfgCompact ? '1' : '0'); } catch {}
+    $('cfg-list').classList.toggle('cfg-compact', cfgCompact);
+  };
+  $('cfg-list').addEventListener('click', (e) => {
+    const row = e.target.closest('.cfg-row');
+    if (!cfgCompact || !row || e.target.closest('input, select, button, a, summary, label, .cfg-example')) return;
+    row.classList.toggle('cfg-open', !cfgOpened.delete(row.dataset.key) && !!cfgOpened.add(row.dataset.key));
+  });
   let configTimer = 0;
   const configApply = (set) => { configKeep(set); configShow(); clearTimeout(configTimer); configTimer = setTimeout(() => restart(), 600); };
   $('cfg-open').onclick = () => { $('play-config').showModal(); configShow(); $('cfg-search').focus(); };
@@ -1876,7 +1899,7 @@
   const yamlChanged = () => {
     clearTimeout(yamlTimer);
     yamlTimer = setTimeout(async () => {
-      const text = yamlGet(), set = configFromYaml(text), why = set ? await configRefused(set) : 'it does not read as `key: value` lines';
+      const text = yamlGet(), read = configFromYaml(text), set = read && yamlChanges(read, await configLoad()), why = set ? await configRefused(set) : 'it does not read as `key: value` lines';
       (yamlView ? $('cfg-yaml-ed') : $('cfg-yaml')).classList.toggle('cfg-yaml-bad', !!why);
       $('cfg-total').textContent = why ? `not applied: ${why}` : '';
       yamlWhy = { text, why };
@@ -1978,7 +2001,7 @@
         return out;
       };
       yamlLint = (v) => lint.forceLinting(v);
-      yamlView = new EditorView({ parent: $('cfg-yaml-ed'), doc: configYamlOf(configSet), extensions: [basicSetup, mode, language.syntaxHighlighting(highlighter), ac.autocompletion({ override: [complete] }), hover,
+      yamlView = new EditorView({ parent: $('cfg-yaml-ed'), doc: configYamlOf({ ...yamlDefaults(keys), ...configSet }), extensions: [basicSetup, mode, language.syntaxHighlighting(highlighter), ac.autocompletion({ override: [complete] }), hover,
         lint.linter(check, { delay: 250 }), EditorView.updateListener.of((u) => { if (u.docChanged && !yamlSetting) yamlChanged(); })] });
       return yamlView;
     } catch (e) { console.warn('settings YAML editor:', e); return null; }
@@ -2726,7 +2749,7 @@
       items = rank(found, cur.replace(/^\\/, '')).map((i) => [`\\${i.label}`, i.detail]);
     } else if (node.name === 'fix') items = [...new Set((diagnostics[uri()] ?? []).filter((d) => d.fixes.some((f) => f.safety === 'safe')).map((d) => d.code))].map((c) => [c, manifest.rules[c]?.message]);
     else if (node.name === 'rename') items = [];
-    else if (node.name === 'query' && !toks.some((t) => manifest.queries.includes(t))) items = manifest.queries.map((q) => [q, 'query']);
+    else if (node.name === 'query' && !toks.some((t) => manifest.queries.includes(t))) items = manifest.queries.map((q) => [q, manifest.queryAbout?.[q] ?? 'query']);
     else items = node.subcommands.map((c) => [c.name, c.about]);
     const seen = new Set();
     choices = items.filter(([l]) => l.startsWith(cur) && l !== cur && !seen.has(l) && seen.add(l)).slice(0, 50).map(([l, d]) => [l, d, cur]);

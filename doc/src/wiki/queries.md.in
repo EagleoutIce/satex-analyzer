@@ -36,7 +36,9 @@ Package and class identification banners, passed options, and other one-off even
 
 Macros that call themselves, directly or through another macro.
 
-{{run(6): satex query recursion -f samples/paper.tex}}
+`doc/src/wiki/queries/demo.tex` defines `\countdown`, which calls itself:
+
+{{run(6): satex query recursion -f doc/src/wiki/queries/demo.tex --filter 'name=\countdown'}}
 
 ## calls
 
@@ -48,7 +50,7 @@ The call graph: which control sequences a macro's replacement text invokes.
 
 The dependency graph as records. `satex dependencies` renders it as DOT or JSON.
 
-{{run(6): satex query dependency-graph -f samples/paper.tex}}
+{{run(6): satex query dependency-graph -f samples/paper.tex --filter 'file=paper.tex'}}
 
 ## trace
 
@@ -80,15 +82,15 @@ The detected TeX installation: provider, version, and the texmf trees searched.
 
 ## catcodes
 
-Explicit category code assignments (`\catcode`) the document makes. `samples/paper.tex` does not change any, so this query returns nothing for it:
+Explicit category code assignments (`\catcode`) the document makes. `doc/src/wiki/queries/demo.tex` makes `!` active:
 
-{{run: satex query catcodes -f samples/paper.tex}}
+{{run: satex query catcodes -f doc/src/wiki/queries/demo.tex}}
 
 ## side-effects
 
 Definitions and assignments a macro makes as a side effect of being called, rather than through `\def` or `\newcommand` directly at that point.
 
-{{run(6): satex query side-effects -f samples/paper.tex}}
+{{run(6): satex query side-effects -f samples/paper.tex --filter 'file=paper.tex'}}
 
 ## project
 
@@ -112,7 +114,7 @@ The pgfkeys keys defined at the end of the run and what each does (`initial`, `c
 
 Lists the places the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `gaps.log` use the same list.
 
-{{run(6): satex query gaps -f samples/mypackage.sty}}
+{{run(6): satex query gaps -f doc/src/wiki/challenges/06-unknown.tex}}
 
 ## options
 
@@ -132,7 +134,9 @@ The text satex computes the document typesets, one row per paragraph, then the n
 
 ## previews
 
-The arrow tips and fill patterns the run declared, each drawn by TeX (`latex` and `dvisvgm`) as SVG. The names are `arrow:SPEC` and `pattern:NAME`. The pictures are kept in `previews.json` in the cache directory, where completion reads them.
+The arrow tips and fill patterns the run declared, each drawn by TeX (`latex` and `dvisvgm`) as SVG. The names are `arrow:SPEC` and `pattern:NAME`. The pictures are kept in `previews.json` in the cache directory, where completion reads them. `doc/src/wiki/queries/demo.tex` loads the `arrows.meta` and `patterns` libraries:
+
+{{run(6): satex query previews -f doc/src/wiki/queries/demo.tex}}
 
 ## produces
 

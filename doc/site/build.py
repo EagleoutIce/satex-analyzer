@@ -836,7 +836,9 @@ def playground(satex, wasm, work, out):
                       "files": [[path, len(data)] for path, data in files.items()]})
     def facts():
         """What satex says about itself: its queries, which of them name their file, its rules, its completions."""
-        queries = [line.split()[0] for line in run(str(satex), "query", "--list").splitlines()[1:] if line.strip()]
+        listed = json.loads(run(str(satex), "query", "--list", "--format", "json"))
+        queries = [q["name"] for q in listed]
+        about = {q["name"]: q["about"] for q in listed}
         env = dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))
         sample = (EXAMPLES / roots(EXAMPLES)[0]).name
 
@@ -850,8 +852,8 @@ def playground(satex, wasm, work, out):
                 return False
         rules = {r["code"]: {**r, **json.loads(run(str(satex), "lint", "--explain", r["code"], "--format", "json"))}
                  for r in json.loads(run(str(satex), "lint", "--rules", "--format", "json"))}
-        return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json"))
-    queries, filtered, rules, completion = memo(work, "facts", [BINARY, tree_digest(project)], facts)
+        return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json")), about
+    queries, filtered, rules, completion, query_about = memo(work, "facts", [BINARY, tree_digest(project)], facts)
     table, files = memo(work, "symbols", [BINARY, ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(emoji), inspect.getsource(symbols), inspect.getsource(comprehensive), inspect.getsource(categories), GLYPH],
                         lambda: symbols(satex, project, dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))))
     # every rule's card on any page (site.js), from the same records the playground's findings show
@@ -859,7 +861,7 @@ def playground(satex, wasm, work, out):
     manifest = {
         "js": emit_local(out, "play/satex.js", (wasm / "satex.js").read_bytes()),
         "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
-        "kernels": kernels, "packages": extra, "preload": first_download(), "unavailable": UNAVAILABLE, "queries": queries, "filtered": filtered, "rules": rules,
+        "kernels": kernels, "packages": extra, "preload": first_download(), "unavailable": UNAVAILABLE, "queries": queries, "queryAbout": query_about, "filtered": filtered, "rules": rules,
         "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
         "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(), "plugins": plugins(),
         "symbols": emit(out, "play/symbols.json", json.dumps({**table, "glyphs": emit(out, "play/glyphs.bin.gz", gzip.compress(table["glyphs"], 9, mtime=0)),

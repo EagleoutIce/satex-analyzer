@@ -6,27 +6,27 @@
 
 `satex query NAME -f FILE` runs a query and prints its records. `satex query --list` names them all. Every query takes `--filter EXPR` (e.g. `'tag=macro and arity>0'`) and `--format json`/`csv`. The examples analyze `samples/paper.tex`.
 
-- [definitions](#definitions)
-- [expansions](#expansions)
-- [dependencies](#dependencies)
-- [occurrences](#occurrences)
-- [recursion](#recursion)
-- [calls](#calls)
-- [dependency-graph](#dependency-graph)
-- [trace](#trace)
-- [files](#files)
-- [diagnostics](#diagnostics)
-- [distribution](#distribution)
-- [catcodes](#catcodes)
-- [side-effects](#side-effects)
-- [project](#project)
-- [plugins](#plugins)
-- [produces](#produces)
-- [gaps](#gaps)
-- [pgfkeys](#pgfkeys)
-- [options](#options)
-- [typeset](#typeset)
-- [previews](#previews)
+- [definitions](#definitions): every macro, environment and register the document or its packages define
+- [expansions](#expansions): how often each macro was expanded during the run
+- [dependencies](#dependencies): files, packages and classes read, and what loaded each
+- [occurrences](#occurrences): package banners, passed options and other one-off events
+- [recursion](#recursion): macros that call themselves, directly or through others
+- [calls](#calls): which control sequences each macro's body invokes
+- [dependency-graph](#dependency-graph): the dependency graph between files and packages as records
+- [trace](#trace): every step: macro expansions, primitives run, changes made
+- [files](#files): every file read, in the order it was opened
+- [diagnostics](#diagnostics): what satex noticed while interpreting, apart from lint rules
+- [distribution](#distribution): the detected TeX installation, version and searched trees
+- [catcodes](#catcodes): explicit \catcode assignments the document makes
+- [side-effects](#side-effects): definitions and assignments a macro makes when called
+- [project](#project): document class, engine and build settings detected or assumed
+- [plugins](#plugins): what each plugin chose for this run, and why
+- [produces](#produces): where a given text can come from, expanded or not
+- [gaps](#gaps): constructs the run could not interpret, grouped by cause
+- [pgfkeys](#pgfkeys): pgfkeys defined at the end of the run and what each does
+- [options](#options): the keys an environment or command's optional argument accepts
+- [typeset](#typeset): the text the document typesets, one row per paragraph
+- [previews](#previews): arrow tips and patterns the run declared, drawn by TeX
 
 ## definitions
 
@@ -92,15 +92,12 @@ identification  amsgen                1999/11/30 v2.0 gener…  amsgen.sty      
 
 Macros that call themselves, directly or through another macro.
 
+`doc/src/wiki/queries/demo.tex` defines `\countdown`, which calls itself:
+
 ```text
-$ satex query recursion -f samples/paper.tex
-kind    name                          file            
-direct  \KV@do                        keyval.sty      @ keyval.sty:31:6
-direct  \do                           amsgen.sty      @ amsgen.sty:115:5
-direct  \XC@if@                       xcolor.sty      @ xcolor.sty:128:8
-direct  \XC@cl@@n                     xcolor.sty      @ xcolor.sty:359:3
-direct  \@@mptopdf@@stripnewabove     supp-pdf.mkii   @ supp-pdf.mkii:127:5
-… 2 more lines omitted
+$ satex query recursion -f doc/src/wiki/queries/demo.tex --filter 'name=\countdown'
+kind    name        file      
+direct  \countdown  demo.tex  @ demo.tex:8:12
 ```
 
 ## calls
@@ -123,14 +120,14 @@ name        callee
 The dependency graph as records. `satex dependencies` renders it as DOT or JSON.
 
 ```text
-$ satex query dependency-graph -f samples/paper.tex
-tag                  name      file                           
-macro-call           \show@r…  latex.ltx                      @ latex.ltx:731:7
-macro-call           \fmtname  latex.ltx                      @ latex.ltx:731:26
-macro-call           \space    latex.ltx                      @ latex.ltx:731:34
-macro-call           \fmtver…  latex.ltx                      @ latex.ltx:731:42
-use                  LaTeX2e…  latex.ltx                      @ latex.ltx:129:24
-… 40134 more lines omitted
+$ satex query dependency-graph -f samples/paper.tex --filter 'file=paper.tex'
+tag                  name                                                          file       
+macro-call           \documentclass                                                paper.tex  @ paper.tex:1:1
+variable-definition  \pkgcls@targetdate                                            paper.tex  @ paper.tex:1:1
+use                  @                                                             paper.tex  @ paper.tex:1:1
+use                  11pt                                                          paper.tex  @ paper.tex:1:1
+macro-call           \value                                                        paper.tex  @ paper.tex:0:0
+… 568 more lines omitted
 ```
 
 ## trace
@@ -169,7 +166,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    texsys.aux                                
 4    input    expl3.ltx                                 
-… 289 more lines omitted
+… 291 more lines omitted
 ```
 
 ## diagnostics
@@ -178,13 +175,13 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 
 ```text
 $ satex query diagnostics -f samples/paper.tex
-severity     code                      count  message                  file            
-imprecision  paths-joined-at           1      2 paths arrived at a j…  paper.tex       @ paper.tex:56:13
-imprecision  argument-ends-in-unknown  1      a delimited argument r…  latex.ltx       @ latex.ltx:20534:3
-imprecision  unknown-name              6      a name built from unkn…  latex.ltx       @ latex.ltx:20322:31
-imprecision  unknown-name              6      a name built from unkn…  latex.ltx       @ latex.ltx:20322:41
-imprecision  mismatched-group          1      extra }, or forgotten …  latex.ltx       @ latex.ltx:20534:3
-… 10 more lines omitted
+severity     code                          count  message              file            
+imprecision  paths-joined-at               1      2 paths arrived at…  paper.tex       @ paper.tex:56:13
+imprecision  call-summarized               1      a call with unknow…  latex.ltx       @ latex.ltx:16142:22
+imprecision  argument-ends-in-unknown      1      a delimited argume…  latex.ltx       @ latex.ltx:20534:3
+imprecision  unknown-name                  6      a name built from …  latex.ltx       @ latex.ltx:20322:31
+imprecision  unknown-name                  6      a name built from …  latex.ltx       @ latex.ltx:20322:41
+… 12 more lines omitted
 ```
 
 ## distribution
@@ -204,10 +201,12 @@ texmf-tree                                                                      
 
 ## catcodes
 
-Explicit category code assignments (`\catcode`) the document makes. `samples/paper.tex` does not change any, so this query returns nothing for it:
+Explicit category code assignments (`\catcode`) the document makes. `doc/src/wiki/queries/demo.tex` makes `!` active:
 
 ```text
-$ satex query catcodes -f samples/paper.tex
+$ satex query catcodes -f doc/src/wiki/queries/demo.tex
+code  kind    key  detail     
+13    Active  !    was Other  
 ```
 
 ## side-effects
@@ -215,14 +214,14 @@ $ satex query catcodes -f samples/paper.tex
 Definitions and assignments a macro makes as a side effect of being called, rather than through `\def` or `\newcommand` directly at that point.
 
 ```text
-$ satex query side-effects -f samples/paper.tex
-tag                  name      detail    file                 
-variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:2104:42
-variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
-variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
-variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
-variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
-… 1829 more lines omitted
+$ satex query side-effects -f samples/paper.tex --filter 'file=paper.tex'
+tag                  name                       detail                       file       
+macro-call           \documentclass             while expanding at 731:7     paper.tex  @ paper.tex:1:1
+variable-definition  \ifdraft                   while expanding at 3:1       paper.tex  @ paper.tex:3:7
+variable-definition  \drafttrue                 while expanding at 3:1       paper.tex  @ paper.tex:3:7
+variable-definition  \draftfalse                while expanding at 3:1       paper.tex  @ paper.tex:3:7
+macro-call           \usepackage                while expanding at 1:1       paper.tex  @ paper.tex:4:1
+… 114 more lines omitted
 ```
 
 ## project
@@ -275,7 +274,9 @@ code args  /demo/label                                          \def \demol…  
 Lists the places the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `gaps.log` use the same list.
 
 ```text
-$ satex query gaps -f samples/mypackage.sty
+$ satex query gaps -f doc/src/wiki/challenges/06-unknown.tex
+severity     code                    count  message                        file            
+unsupported  unbalanced-conditional  1      end of 06-unknown.tex occurr…  06-unknown.tex  @ 06-unknown.tex:0:0
 ```
 
 ## options
@@ -304,7 +305,18 @@ assumption  clock-assumed
 
 ## previews
 
-The arrow tips and fill patterns the run declared, each drawn by TeX (`latex` and `dvisvgm`) as SVG. The names are `arrow:SPEC` and `pattern:NAME`. The pictures are kept in `previews.json` in the cache directory, where completion reads them.
+The arrow tips and fill patterns the run declared, each drawn by TeX (`latex` and `dvisvgm`) as SVG. The names are `arrow:SPEC` and `pattern:NAME`. The pictures are kept in `previews.json` in the cache directory, where completion reads them. `doc/src/wiki/queries/demo.tex` loads the `arrows.meta` and `patterns` libraries:
+
+```text
+$ satex query previews -f doc/src/wiki/queries/demo.tex
+name                                      
+arrow:-.                                  
+arrow:-<                                  
+arrow:->                                  
+arrow:->|                                 
+arrow:-Bar                                
+… 100 more lines omitted
+```
 
 ## produces
 

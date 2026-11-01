@@ -20,7 +20,9 @@ pub fn run(
     out: &mut impl Write,
 ) -> Result<Output, String> {
     if list {
-        let names = Query::ALL.iter().map(|(name, _)| Record::from_iter([("name".to_string(), json!(*name))]));
+        let names = Query::ALL.iter().map(|(name, query)| {
+            Record::from_iter([("name".to_string(), json!(*name)), ("about".to_string(), json!(query.about()))])
+        });
         return Ok(Output::Records(names.collect()));
     }
     let name = name.ok_or("expected a query name. Try --list")?;

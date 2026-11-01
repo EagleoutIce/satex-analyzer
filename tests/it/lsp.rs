@@ -1957,12 +1957,12 @@ fn hover_shows_the_mined_manual() {
     until(
         "\\@latex@error",
         &[
-            "for use in the LaTeX core. *(from the source2e manual)*",
+            "for use in the LaTeX core. *(from the [source2e manual](https://texdoc.org/serve/source2e/0))*",
             "[texdoc source2e](https://texdoc.org/serve/source2e/0)",
         ],
     );
     until("\\tl_set:Nn", &["Sets ⟨tl var⟩ to contain ⟨tokens⟩", "texdoc interface3"]);
-    let package = ["you can add new commands", "*(from the xspace manual)*", "[texdoc xspace]"];
+    let package = ["you can add new commands", "*(from the [xspace manual](https://texdoc.org/", "[texdoc xspace]"];
     until("\\xspaceaddexceptions", &package);
     // An authored description stays first: the manual adds the link.
     until("\\ifthenelse", &["Tests a condition and chooses code.\n", "[texdoc ifthen]"]);
@@ -2251,6 +2251,46 @@ fn document_colors_cover_named_and_defined_colors() {
     assert_eq!((red["color"]["red"].as_f64(), red["color"]["blue"].as_f64()), (Some(1.0), Some(0.0)), "{found}");
     let mine = at(4, "mine").unwrap_or_else(|| panic!("mine has a color: {found}"));
     assert_eq!((mine["color"]["red"].as_f64(), mine["color"]["blue"].as_f64()), (Some(0.0), Some(1.0)), "{found}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A swatch sits on a word the run used as a color, never on an anchor
+/// (`satex.north`) or a key, which a color test only asked about.
+#[test]
+fn document_colors_skip_words_only_tested() {
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}[every node/.style={draw}]\n\\node[fill=red] (satex) {a};\n\\node at (satex.north) {b};\n\\end{tikzpicture}\n\\end{document}\n";
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-colors2-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    std::fs::write(&main, text).unwrap();
+    let uri = fixture_uri(&main);
+    let mut server = Server::start_with(&dir, &dir, &["--set", "limits.seconds=0"]);
+    let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+    server.response(id);
+    server.notify("initialized", json!({}));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
+    );
+    server.notification("textDocument/publishDiagnostics");
+    let id = server.request("textDocument/documentColor", json!({ "textDocument": { "uri": uri } }));
+    let found = server.response(id)["result"].clone();
+    let words: Vec<&str> = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            let (l, s, e) = (
+                c["range"]["start"]["line"].as_u64(),
+                c["range"]["start"]["character"].as_u64(),
+                c["range"]["end"]["character"].as_u64(),
+            );
+            &text.lines().nth(l.unwrap() as usize).unwrap()[s.unwrap() as usize..e.unwrap() as usize]
+        })
+        .collect();
+    assert!(words.contains(&"red"), "red is a color the run used: {words:?}");
+    assert!(words.iter().all(|w| *w == "red"), "only colors get a swatch: {words:?}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }

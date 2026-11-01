@@ -190,7 +190,7 @@ fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
         .filter(|_| analysis.settings.plugins.docs)
         .and_then(|p| crate::plugin::docs::index(&analysis.settings.docs).lookup(std::path::Path::new(&p), key));
     if let Some((m, does)) = mined.as_ref().and_then(|m| Some((m, m.text.as_deref()?))) {
-        markdown.push_str(&format!("{does} {}\n\n", extracted(&format!("from the {} manual", m.from))));
+        markdown.push_str(&format!("{does} {}\n\n", extracted_from_manual(&m.from, m.link.as_ref())));
     }
     let default = text(record, "default").map(|d| match d.contains("pgfkeysvaluerequired") {
         true => "needs a value".to_string(),
@@ -369,7 +369,7 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
             markdown.push_str(&format!("{does}\n\n"));
         } else if let Some((m, does)) = mined.and_then(|m| Some((m, m.text.as_deref()?))) {
             let manual = m.link.as_ref().and_then(|(l, _)| l.strip_prefix("texdoc ")).unwrap_or(&m.from);
-            markdown.push_str(&format!("{does} {}\n\n", extracted(&format!("from the {manual} manual"))));
+            markdown.push_str(&format!("{does} {}\n\n", extracted_from_manual(manual, m.link.as_ref())));
         }
         if n == 0 {
             markdown.push_str(&typesets(analysis, name));
@@ -398,7 +398,14 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
         }
         if let Some(doc) = documented(record) {
             if !doc.text.is_empty() {
-                markdown.push_str(&format!("{} {}\n\n", doc.text, extracted("from the source comment")));
+                let place =
+                    text("path").map(|p| format!(" `{p}:{}`", record.get("line").and_then(Json::as_u64).unwrap_or(1)));
+                markdown.push_str(&format!(
+                    "{} {}{}\n\n",
+                    doc.text,
+                    extracted("from the source comment"),
+                    place.unwrap_or_default()
+                ));
             }
             for (n, text) in &doc.params {
                 markdown.push_str(&format!("- `⟨arg{n}⟩` {text}\n"));
@@ -505,6 +512,14 @@ fn arg_types(record: &Record) -> Vec<(String, String)> {
 /// The label that sets text satex extracted apart from what it authored.
 fn extracted(origin: &str) -> String {
     format!("*({origin})*")
+}
+
+/// The same for a mined manual, linked to where it can be read.
+fn extracted_from_manual(manual: &str, link: Option<&(String, String)>) -> String {
+    match link {
+        Some((_, url)) => extracted(&format!("from the [{manual} manual]({url})")),
+        None => extracted(&format!("from the {manual} manual")),
+    }
 }
 
 /// The comment block above the definition a record names.
@@ -1531,9 +1546,14 @@ fn node_items(analysis: &Analysis, before: &str) -> Option<Vec<CompletionItem>> 
     static AT: OnceLock<Regex> = OnceLock::new();
     let at = AT.get_or_init(|| Regex::new(r"\\[A-Za-z]+\b[^;]*\(([^()\s]*)$").expect("node regex"));
     let typed = at.captures(before)?.get(1)?.as_str();
-    let names: BTreeSet<&str> = (0..analysis.interner.len() as u32)
-        .filter_map(|i| analysis.interner.name(crate::tex::Sym(i)).strip_prefix("pgf@sh@ns@"))
-        .filter(|n| n.starts_with(typed) && !n.is_empty())
+    // Only the nodes the document made: pgf's own (`current subpath start`) are defined by its library code.
+    let names: BTreeSet<&str> = analysis
+        .facts
+        .defs
+        .iter()
+        .filter(|d| crate::query::origin(analysis, d.span.file) == "document")
+        .filter_map(|d| analysis.interner.name(d.name).strip_prefix("pgf@sh@ns@"))
+        .filter(|n| n.starts_with(typed) && !n.is_empty() && !analysis.settings.conventions.is_internal(n))
         .collect();
     Some(
         names.into_iter().map(|n| item(n.to_string(), CompletionItemKind::REFERENCE, Some("node".into()), 0)).collect(),
@@ -2335,14 +2355,17 @@ pub fn document_colors(analysis: &Analysis, doc: &Text, path: &str) -> Vec<lsp_t
         analysis.facts.colors.iter().rev().find(|c| c.name == name).and_then(|c| c.value.as_ref()).and_then(rgba)
     };
     let mut out = Vec::new();
-    for u in analysis.facts.color_uses.iter().filter(|u| file(u.span.file)) {
+    // A test (`\ifcsname color@.north\endcsname`) only asks whether a word is a color.
+    let used =
+        |u: &&crate::facts::ColorUse| matches!(u.role, crate::facts::CsnameRole::Use | crate::facts::CsnameRole::LetTo);
+    for u in analysis.facts.color_uses.iter().filter(used).filter(|u| file(u.span.file)) {
         let Some(color) = value(&u.name) else { continue };
         // `Text::line` counts from 1, LSP positions from 0
         let line = u.span.line.saturating_sub(1);
         let text = doc.line(u.span.line);
         let from = (u.span.col as usize).min(text.len());
         // the reader stands past the call's argument: the name is the last one before it, else the next
-        let Some(at) = text[..from].rfind(&u.name).or_else(|| text[from..].find(&u.name).map(|i| from + i)) else {
+        let Some(at) = word_before(text, from, &u.name).or_else(|| word_after(text, from, &u.name)) else {
             continue;
         };
         let range = Range::new(Position::new(line, at as u32), Position::new(line, (at + u.name.len()) as u32));
@@ -2351,6 +2374,22 @@ pub fn document_colors(analysis: &Analysis, doc: &Text, path: &str) -> Vec<lsp_t
         }
     }
     out
+}
+
+/// Where `name` stands in `text` as a whole word: not inside a longer name or a key (`x` in `satex`).
+fn words<'a>(text: &'a str, name: &'a str) -> impl Iterator<Item = usize> + 'a {
+    let word = |c: char| c.is_alphanumeric() || matches!(c, '.' | '_' | '@' | '/');
+    text.match_indices(name).map(|(i, _)| i).filter(move |&i| {
+        !text[..i].chars().next_back().is_some_and(word) && !text[i + name.len()..].chars().next().is_some_and(word)
+    })
+}
+
+fn word_before(text: &str, from: usize, name: &str) -> Option<usize> {
+    words(text, name).filter(|&i| i < from).last()
+}
+
+fn word_after(text: &str, from: usize, name: &str) -> Option<usize> {
+    words(text, name).find(|&i| i >= from)
 }
 
 /// A color xcolor holds exactly, as red, green and blue (xcolor § 6.3's

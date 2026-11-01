@@ -1428,7 +1428,7 @@ fn chktex_table() -> Result<String, String> {
 
 fn queries_list() -> Result<String, String> {
     let output = Command::new(bin())
-        .args(["query", "--list"])
+        .args(["query", "--list", "--format", "json"])
         .output()
         .map_err(|e| format!("running `satex query --list`: {e}"))?;
     if !output.status.success() {
@@ -1438,12 +1438,11 @@ fn queries_list() -> Result<String, String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
     let mut out = String::new();
-    for name in String::from_utf8_lossy(&output.stdout).lines().map(str::trim) {
-        // The listing's header row is not a query.
-        if !name.is_empty() && name != "name" {
-            let _ = writeln!(out, "- [{name}](#{name})");
-        }
+    for row in rows {
+        let (name, about) = (row["name"].as_str().unwrap_or(""), row["about"].as_str().unwrap_or(""));
+        let _ = writeln!(out, "- [{name}](#{name}): {about}");
     }
     Ok(out)
 }
