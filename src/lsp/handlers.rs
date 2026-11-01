@@ -144,6 +144,9 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
     if let Some(markdown) = cite_hover(analysis, doc.line(pos.line), pos.col) {
         return Some(markdown_hover(markdown));
     }
+    if let Some(markdown) = key_hover(analysis, doc.line(pos.line), pos.col) {
+        return Some(markdown_hover(markdown));
+    }
     let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
     let markdown = if is_command {
         placed(analysis, command_hover(analysis, &name, active_at(analysis, &name, path, pos))?, &name, path, pos)
@@ -151,6 +154,81 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
         load_hover(analysis, path, pos, &name).or_else(|| bib_style_hover(analysis, path, pos, &name))?
     };
     Some(markdown_hover(markdown))
+}
+
+/// The key under column `col` in the option list of a command (`\\captionsetup{aboveskip=}`):
+/// the family and package that define it, its type, default and choices as the run stored them
+/// ([`query::options`]), and what the mined manual says of it.
+fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
+    let at = crate::source::byte_of_col(line, col).min(line.len());
+    let start = line[..at].rfind([',', '[', '{']).map_or(0, |i| i + 1);
+    let end = at + line[at..].find(['=', ',', ']', '}']).unwrap_or(line.len() - at);
+    // a value, not a key: the `=` stands before the cursor
+    if line[start..at].contains('=') {
+        return None;
+    }
+    let key = line[start..end].trim();
+    if key.is_empty() || key.contains(['\\', ' ']) {
+        return None;
+    }
+    let arg = argument_at(&line[..start - 1])?;
+    let target = match arg.cmd {
+        "begin" => arg.groups.trim().trim_start_matches('{').split('}').next()?.to_string(),
+        cmd => cmd.to_string(),
+    };
+    let options = query::options(analysis, &target);
+    let text = |r: &Record, f: &str| r.get(f).and_then(Json::as_str).filter(|v| !v.is_empty()).map(str::to_string);
+    let relative = |r: &Record| {
+        let (full, family) = (text(r, "key")?, text(r, "family").unwrap_or_default());
+        Some(full.strip_prefix(&family).map_or(full.clone(), |k| k.trim_start_matches('/').to_string()))
+    };
+    let record = options.iter().find(|r| relative(r).as_deref() == Some(key))?;
+    let mut markdown = format!("### `{key}`: key of `\\{}`\n\n", target.trim_start_matches('\\'));
+    let mined = text(record, "path")
+        .filter(|_| analysis.settings.plugins.docs)
+        .and_then(|p| crate::plugin::docs::index().lookup(std::path::Path::new(&p), key));
+    if let Some((m, does)) = mined.as_ref().and_then(|m| Some((m, m.text.as_deref()?))) {
+        markdown.push_str(&format!("{does} {}\n\n", extracted(&format!("from the {} manual", m.from))));
+    }
+    let default = text(record, "default").map(|d| match d.contains("pgfkeysvaluerequired") {
+        true => "needs a value".to_string(),
+        false => format!("default `{d}`"),
+    });
+    let kind = text(record, "kind").filter(|k| k != "code");
+    let line_of = |r: &Record| r.get("line").and_then(Json::as_u64);
+    let from = text(record, "package")
+        .or_else(|| text(record, "path").map(|p| p.rsplit('/').next().unwrap_or(&p).to_string()));
+    let facts: Vec<String> = [
+        kind,
+        default,
+        text(record, "family").map(|f| format!("family `{f}`")),
+        from.map(|p| format!("defined in `{p}`")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    markdown.push_str(&format!("{}\n\n", facts.join(" · ")));
+    if let Some(full) = text(record, "key") {
+        let choices: Vec<String> = query::stored_keys(analysis, Some(&format!("{full}/")))
+            .iter()
+            .filter_map(|r| text(r, "key")?.strip_prefix(&format!("{full}/")).map(str::to_string))
+            .filter(|c| !c.starts_with('.') && !c.contains('/'))
+            .chain(query::key_values(analysis, &target, key))
+            .collect();
+        if !choices.is_empty() {
+            markdown.push_str(&format!(
+                "Values: {}\n\n",
+                choices.iter().map(|c| format!("`{c}`")).collect::<Vec<_>>().join(", ")
+            ));
+        }
+    }
+    if let (Some(path), Some(n)) = (text(record, "path"), line_of(record)) {
+        markdown.push_str(&format!("`{path}:{n}`\n\n"));
+    }
+    if let Some((doc, url)) = mined.and_then(|m| m.link) {
+        markdown.push_str(&format!("[{doc}]({url})\n\n"));
+    }
+    Some(markdown)
 }
 
 /// What satex did with the magic comment (`% !TeX program = …`, `% arara: …`)
@@ -1085,7 +1163,13 @@ pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> Comple
             CompletionResponse::Array(items)
         }
         _ => {
-            let typed = cs_re().find(before).map_or("", |m| &m.as_str()[1..]);
+            // the name typed, with the letters of that place (`_` and `:` under `\ExplSyntaxOn`)
+            let letters = analysis.facts.letters_at(analysis.main_file, pos.line, pos.col);
+            let typed = before
+                .rfind('\\')
+                .map(|i| &before[i + 1..])
+                .filter(|t| t.chars().all(|c| c.is_alphabetic() || letters.contains(&c)))
+                .unwrap_or("");
             let (mut items, more) = command_items(analysis, pos, typed);
             // In an argument TeX reads as a quantity, the names holding one
             // that fits come first.
@@ -1276,7 +1360,9 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
         && occs.iter().all(|k| matches!(k, OccKind::Key | OccKind::KeyUse))
     {
         let keys = key_items(analysis, doc, arg, pos);
-        if !keys.is_empty() {
+        // after `key=` only values: nothing else fits a known key's value
+        let valued = arg.inside.rsplit(',').next().is_some_and(|k| k.contains('='));
+        if !keys.is_empty() || (valued && !query::options(analysis, arg.cmd).is_empty()) {
             return keys;
         }
     }
@@ -1526,6 +1612,8 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
             );
             out.extend(drawn_items(analysis, path, &[Stroke::Arrows, Stroke::Pattern]));
         }
+        let values = query::key_values(analysis, arg.cmd, key.trim());
+        out.extend(values.into_iter().map(|v| item(v, CompletionItemKind::ENUM_MEMBER, Some(key.trim().into()), 0)));
         return out;
     }
     if typed.starts_with('/') {

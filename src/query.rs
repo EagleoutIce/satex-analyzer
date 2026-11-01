@@ -477,7 +477,11 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let mut keys: std::collections::VecDeque<(&str, &str)> = Default::default();
     let mut next_key: std::collections::HashMap<FileId, usize> = Default::default();
     let (glyphs, joined) = glyphs(analysis);
-    let mut boxes = drawn_boxes(analysis).into_iter().peekable();
+    let (empty, set): (Vec<Drawn>, Vec<Drawn>) = drawn_boxes(analysis).into_iter().partition(|d| d.4);
+    let mut boxes = empty.into_iter().map(|(at, label, sketch, ..)| (at, label, sketch)).peekable();
+    let pictures: Vec<(Span, Span, Json)> =
+        set.into_iter().map(|(from, _, sketch, to, _)| (from, to, sketch)).collect();
+    let mut sketches: Vec<Json> = Vec::new();
     // the environment of the user's text each character was set in (a figure, a listing): a paragraph
     // ends where it changes, and says which one it was set in
     let envs = environments(analysis);
@@ -490,6 +494,15 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         })
     };
     let mut env: Option<&str> = None;
+    let mut flush = |i: usize, line: &mut String, keys: &mut std::collections::VecDeque<_>| {
+        while let Some((_, mark)) = aligns.next_if(|a| a.0.0 as usize <= i) {
+            line.push(KEY);
+            keys.push_back((ALIGN, mark.as_str()));
+        }
+        while let Some(&(_, rule)) = rules.next_if(|r| r.0 as usize <= i) {
+            line.push_str(&note(rule.glyph()));
+        }
+    };
     for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
         let site = Span {
             file: text.site.get(i).map_or(spot.span.file, |s| s.file),
@@ -510,10 +523,11 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         }
         next_key.insert(site.file, upto);
         // A picture or graphic the document set before this character.
-        while let Some((_, label)) =
-            boxes.next_if(|(at, _)| (at.file, at.line, at.col) < (site.file, site.line, site.col))
+        while let Some((_, label, sketch)) =
+            boxes.next_if(|(at, ..)| (at.file, at.line, at.col) < (site.file, site.line, site.col))
         {
             line.push_str(&note(&format!("▢ {label}")));
+            sketches.push(sketch);
         }
         let arm = arms.next_if(|a| a.0 as usize <= i).filter(|a| a.0 as usize == i);
         let boxed = !on_page[i]
@@ -533,6 +547,10 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         }
         let piece = if boxed { format!("{}{c}{}", note("⟦"), note("⟧")) } else { c };
         let here = env_at(site);
+        // the rules and marks closing an environment belong to it
+        if env.is_some() && here != env {
+            flush(i, &mut line, &mut keys);
+        }
         if (text.pars.binary_search(&(i as u32)).is_ok() || here != env) && !line.trim().is_empty() {
             close(&mut line, &mut choice, &mut causes);
             let mut record = paragraph(
@@ -545,8 +563,10 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             if text.kept.binary_search(&(i as u32)).is_ok() {
                 record.insert("kept".into(), json!(true));
             }
+            attach_sketches(&mut record, &mut sketches);
             if let Some(name) = env {
                 record.insert("env".into(), json!(name));
+                attach_picture(analysis, &mut record, &pictures);
             }
             out.push(record);
             style = "";
@@ -555,13 +575,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         if !piece.trim().is_empty() {
             first.get_or_insert(site);
         }
-        while let Some((_, mark)) = aligns.next_if(|a| a.0.0 as usize <= i) {
-            line.push(KEY);
-            keys.push_back((ALIGN, mark.as_str()));
-        }
-        while let Some(&(_, rule)) = rules.next_if(|r| r.0 as usize <= i) {
-            line.push_str(&note(rule.glyph()));
-        }
+        flush(i, &mut line, &mut keys);
         match arm {
             Some(&(_, on, taken)) => {
                 if choice.as_ref().is_some_and(|(n, _)| *n != on) {
@@ -587,8 +601,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         }
     }
     close(&mut line, &mut choice, &mut causes);
-    for (_, label) in boxes {
+    for (_, label, sketch) in boxes {
         line.push_str(&note(&format!("▢ {label}")));
+        sketches.push(sketch);
     }
     for (_, mark) in aligns {
         line.push(KEY);
@@ -599,8 +614,10 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     }
     if !line.trim().is_empty() {
         let mut record = paragraph(analysis, first.unwrap_or_default(), &line, causes, &mut keys);
+        attach_sketches(&mut record, &mut sketches);
         if let Some(name) = env {
             record.insert("env".into(), json!(name));
+            attach_picture(analysis, &mut record, &pictures);
         }
         out.push(record);
     }
@@ -649,16 +666,14 @@ const PREVIEW: usize = 100;
 /// at most [`PREVIEW`] characters, then `…`.
 pub fn typeset_by(analysis: &Analysis, at: Span) -> Option<String> {
     let text = &analysis.facts.text;
-    let after = |s: &Span| s.file == at.file && (s.line, s.col) > (at.line, at.col);
-    // The next call the file itself makes, not one inside this call's expansion: the reader stands at most there.
+    let pos = |s: &Span| (s.line, s.col);
+    // the next call the file itself makes, not one inside this call's expansion: the reader stands at most there
     let next = analysis
         .facts
         .expansions
         .iter()
-        .filter(|e| e.within.is_none())
-        .map(|e| e.span)
-        .filter(after)
-        .map(|s| (s.line, s.col))
+        .filter(|e| e.within.is_none() && e.span.file == at.file && pos(&e.span) > pos(&at))
+        .map(|e| pos(&e.span))
         .min();
     let mut on_page = vec![false; text.at.len()];
     for &(from, to) in &text.placed {
@@ -672,22 +687,29 @@ pub fn typeset_by(analysis: &Analysis, at: Span) -> Option<String> {
                 .modes
                 .within(crate::mode::Modes::INTERNAL_VERTICAL.union(crate::mode::Modes::RESTRICTED_HORIZONTAL))
     };
-    let first = (0..text.site.len()).find(|&i| after(&text.site[i]) && !boxed(i))?;
-    let site = text.site[first];
-    if next.is_some_and(|n| (site.line, site.col) > n) {
+    // what it sets: the text this file's reader set right after it, and all read from other files (a `.toc`,
+    // an `\input`) on the way
+    let here = |i: usize| text.site[i].file == at.file;
+    let n = text.site.len().min(text.at.len());
+    let start = (0..n).rev().find(|&i| here(i) && pos(&text.site[i]) <= pos(&at)).map_or(0, |i| i + 1);
+    let own = (start..n).find(|&i| here(i) && !boxed(i)).map(|i| pos(&text.site[i]))?;
+    if next.is_some_and(|n| own > n) {
         return None;
     }
+    let end = (start..n).find(|&i| here(i) && pos(&text.site[i]) > own).unwrap_or(n);
     // runs of plain text and of alternatives, each alternative's arms by the arm taken
     let mut runs: Vec<(Option<crate::env::NodeId>, [String; 2])> = Vec::new();
     let mut shown = 0;
-    for (i, c) in text.chars.chars().enumerate().skip(first).take_while(|(i, _)| text.site.get(*i) == Some(&site)) {
+    for (i, c) in text.chars.chars().enumerate().take(end).skip(start) {
         if shown == PREVIEW {
             break;
         }
-        if boxed(i) {
+        if boxed(i) || here(i) && pos(&text.site[i]) != own {
             continue;
         }
         let c = if crate::tex::is_unknown_char(c) { "⟨?⟩".to_string() } else { public(c) };
+        // a new paragraph (each line of a table of contents) reads apart from the last
+        let c = if i > start && text.pars.binary_search(&(i as u32)).is_ok() { format!(" {c}") } else { c };
         shown += c.chars().count();
         let arm = text.arms.binary_search_by_key(&(i as u32), |a| a.0).ok().map(|k| text.arms[k]);
         let on = arm.map(|(_, on, _)| on);
@@ -697,7 +719,7 @@ pub fn typeset_by(analysis: &Analysis, at: Span) -> Option<String> {
         let last = runs.last_mut().expect("pushed");
         last.1[usize::from(arm.is_some_and(|(_, _, taken)| !taken))].push_str(&c);
     }
-    let code = |s: &str| format!("`{}`", s.replace('`', "ˋ"));
+    let code = |s: &str| format!("`{}`", s.trim().replace('`', "ˋ"));
     let mut out: String = runs
         .iter()
         .filter(|(_, [a, b])| !a.trim().is_empty() || !b.trim().is_empty())
@@ -721,10 +743,14 @@ enum Cause {
     Unknown(Span),
 }
 
+/// A picture or graphic: where it begins, its label, its sketch (or `null`), where it ends, and
+/// whether the run set no character in it.
+type Drawn = (Span, String, Json, Span, bool);
+
 /// What the document's own files set that holds no character the run saw:
 /// an environment with none between its `\begin` and `\end` (a
 /// `tikzpicture`), a graphic. Each where it begins, in reading order.
-fn drawn_boxes(analysis: &Analysis) -> Vec<(Span, String)> {
+fn drawn_boxes(analysis: &Analysis) -> Vec<Drawn> {
     let text = &analysis.facts.text;
     let mut sites: Vec<(FileId, u32, u32)> = text.site.iter().map(|s| (s.file, s.line, s.col)).collect();
     sites.sort_unstable();
@@ -735,27 +761,68 @@ fn drawn_boxes(analysis: &Analysis) -> Vec<(Span, String)> {
     };
     let mut out = Vec::new();
     let mut open: Vec<(&str, Span)> = Vec::new();
+    let mut files: HashMap<FileId, Option<String>> = HashMap::default();
+    let mut sketched = |name: &str, from: Span, to: Span| -> Json {
+        let source =
+            files.entry(from.file).or_insert_with(|| std::fs::read_to_string(analysis.file_name(from.file)).ok());
+        let picture = |source: &str| {
+            let mut rows: Vec<String> = source
+                .lines()
+                .skip(from.line as usize - 1)
+                .take((to.line - from.line) as usize + 1)
+                .map(String::from)
+                .collect();
+            let last = rows.last_mut()?;
+            *last = last.chars().take(to.col as usize - 1).collect();
+            rows[0] = rows[0].chars().skip(from.col as usize - 1).collect();
+            crate::sketch::sketch(&rows.join("\n"))
+        };
+        source.as_deref().filter(|_| name == "tikzpicture").and_then(picture).unwrap_or(Json::Null)
+    };
     for o in analysis.facts.occurrences.iter().filter(|o| origin(analysis, o.span.file) == "document") {
         match o.kind {
             OccKind::BeginEnvironment => open.push((o.key.as_str(), o.span)),
             OccKind::EndEnvironment => {
                 if let Some(k) = open.iter().rposition(|(name, _)| *name == o.key) {
                     let (name, from) = open.remove(k);
-                    if from.file == o.span.file && empty(from, o.span) {
+                    let sketch = if from.file == o.span.file { sketched(name, from, o.span) } else { Json::Null };
+                    if from.file == o.span.file && (empty(from, o.span) || !sketch.is_null()) {
                         // An empty one holding others (a figure of one picture) stands for them.
-                        out.retain(|(f, _, t): &(Span, String, Span)| !(key(*f) > key(from) && key(*t) < key(o.span)));
-                        out.push((from, name.to_string(), o.span));
+                        out.retain(|d: &Drawn| !(key(d.0) > key(from) && key(d.3) < key(o.span)));
+                        out.push((from, name.to_string(), sketch, o.span, empty(from, o.span)));
                     }
                 }
             }
-            OccKind::Graphics => out.push((o.span, o.key.clone(), o.span)),
+            OccKind::Graphics => out.push((o.span, o.key.clone(), Json::Null, o.span, true)),
             _ => {}
         }
     }
-    let mut out: Vec<(Span, String)> = out.into_iter().map(|(f, name, _)| (f, name)).collect();
-    out.sort_by_key(|(s, _)| key(*s));
-    out.dedup();
+    out.sort_by_key(|d| key(d.0));
+    out.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
     out
+}
+
+/// The sketches of the pictures a paragraph's `▢` notes stand for, in order, `null` for one without.
+fn attach_sketches(record: &mut Record, sketches: &mut Vec<Json>) {
+    let drawn = std::mem::take(sketches);
+    if drawn.iter().any(|s| !s.is_null()) {
+        record.insert("sketches".into(), Json::Array(drawn));
+    }
+}
+
+/// The `sketch` of the picture a paragraph set inside, from the pictures with text.
+fn attach_picture(analysis: &Analysis, record: &mut Record, pictures: &[(Span, Span, Json)]) {
+    let at = |key: &str| record.get(key).and_then(Json::as_u64).unwrap_or(0) as u32;
+    let (line, col) = (at("line"), at("col"));
+    let path = record.get("path").and_then(Json::as_str).unwrap_or("");
+    let inside = |(from, to, _): &&(Span, Span, Json)| {
+        analysis.file_name(from.file) == path
+            && (from.line, from.col) <= (line, col)
+            && (line, col) <= (to.line, to.col)
+    };
+    if let Some((.., sketch)) = pictures.iter().find(inside) {
+        record.insert("sketch".into(), sketch.clone());
+    }
 }
 
 /// The environments of the user's files, `document` aside, as the places they begin and end.
@@ -2362,8 +2429,6 @@ fn offered_options(analysis: &Analysis, all: bool) -> Vec<Record> {
 /// passes options to: what its options set the key to (`a4paper` is `paper=a4`), and the words its
 /// key's code compares the value with (`\Ifstr{#1}{landscape}`).
 pub fn option_values(analysis: &Analysis, package: &str, key: &str) -> Vec<String> {
-    static COMPARED: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    let compared = COMPARED.get_or_init(|| Regex::new(r"\{#1\}\s*\{([A-Za-z][\w.-]*)\}").expect("valid regex"));
     let set =
         Regex::new(&format!(r"(?:^|[,{{\s]){}\s*=\s*([A-Za-z0-9][\w.:-]*)", regex::escape(key))).expect("valid regex");
     let mut packages = BTreeSet::from([package.to_string()]);
@@ -2400,7 +2465,7 @@ pub fn option_values(analysis: &Analysis, package: &str, key: &str) -> Vec<Strin
         }
         out.extend(set.captures_iter(&body).map(|c| c[1].to_string()));
         if name.ends_with(&format!("@{key}")) && name.contains("KV@") {
-            out.extend(compared.captures_iter(&body).map(|c| c[1].to_string()));
+            out.extend(handler_values(analysis, &body));
             // `paper={a4paper}` handing its value to `\setkeys`: the family's flag keys are its values
             if body.contains("\\setkeys") && body.contains("{#1}") {
                 out.extend(
@@ -2413,6 +2478,68 @@ pub fn option_values(analysis: &Analysis, package: &str, key: &str) -> Vec<Strin
         }
     }
     out.into_iter().collect()
+}
+
+/// The words a key handler's `body` selects its value among: those it compares `#1` with
+/// (`\Ifstr{#1}{landscape}`), the cases of a switch (`\lstKV@SwitchCases{#1}{fixed:…\\flexible:…}`),
+/// and the names that follow the prefix of a `\csname⟨prefix⟩#1\endcsname` it calls (`lst@column@`:
+/// the macros the run defined by that prefix).
+fn handler_values(analysis: &Analysis, body: &str) -> BTreeSet<String> {
+    static COMPARED: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static CASES: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static SELECT: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static CS: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let compared = COMPARED.get_or_init(|| Regex::new(r"\{#1\}\s*\{([A-Za-z][\w.-]*)\}").expect("valid regex"));
+    let cases = CASES.get_or_init(|| Regex::new(r"SwitchCases\s*\{#+\d\}\s*\{").expect("valid regex"));
+    let select = SELECT.get_or_init(|| {
+        Regex::new(r"\\csname\s*((?:[^#\\{}]|\\[A-Za-z@]+\s?)*)#+\d\s*\\endcsname").expect("valid regex")
+    });
+    let cs = CS.get_or_init(|| Regex::new(r"\\([A-Za-z@]+)\s?").expect("valid regex"));
+    let mut out: BTreeSet<String> = compared.captures_iter(body).map(|c| c[1].to_string()).collect();
+    for m in cases.find_iter(body) {
+        let (mut depth, rest) = (1, &body[m.end()..]);
+        let end = rest.char_indices().find_map(|(i, c)| {
+            depth += (c == '{') as i32 - (c == '}') as i32;
+            (depth == 0).then_some(i)
+        });
+        let text = end.map_or(rest, |e| &rest[..e]);
+        let word = |c: &str| c.split_once(':').map(|(w, _)| w.trim().to_string());
+        out.extend(text.split("\\\\").filter_map(word).filter(|w| w.chars().all(|c| c.is_alphanumeric() || c == '-')));
+    }
+    for c in select.captures_iter(body) {
+        // the prefix with the macros in it read as the text they hold (`\@lst` is `lst`)
+        let mut known = true;
+        let prefix = cs.replace_all(&c[1], |m: &regex::Captures| {
+            let text = analysis.interner.lookup(&m[1]).and_then(|s| {
+                Some(detokenize(&analysis.env.meaning(s).as_macro()?.replacement_text, &analysis.interner))
+            });
+            known &= text.is_some();
+            text.unwrap_or_default()
+        });
+        let prefix: String = prefix.split_whitespace().collect();
+        if !known || prefix.is_empty() {
+            continue;
+        }
+        out.extend(analysis.facts.defs.iter().filter_map(|d| {
+            let rest = analysis.interner.name(d.name).strip_prefix(&prefix)?;
+            (!rest.is_empty() && rest.chars().all(|c| c.is_alphanumeric() || c == '-')).then(|| rest.to_string())
+        }));
+    }
+    out
+}
+
+/// The values `cmd`'s key `key` takes when its handler is a keyval macro, as [`handler_values`]
+/// reads them off the code the run stored for it.
+pub fn key_values(analysis: &Analysis, cmd: &str, key: &str) -> Vec<String> {
+    let records = options(analysis, cmd);
+    let store = records.iter().find_map(|r| {
+        (r.get("key")?.as_str()? == key).then_some(())?;
+        Some(format!("{}{key}", r.get("store")?.as_str()?))
+    });
+    let Some(store) = store.filter(|s| s != key) else { return Vec::new() };
+    let bodies = analysis.facts.defs.iter().filter(|d| analysis.interner.name(d.name) == store);
+    let bodies = bodies.filter_map(|d| Some(detokenize(&d.mac.as_ref()?.replacement_text, &analysis.interner)));
+    bodies.flat_map(|b| handler_values(analysis, &b)).collect::<BTreeSet<_>>().into_iter().collect()
 }
 
 /// The options `package` (a class or package name) declares, each with its
@@ -4894,6 +5021,7 @@ fn family_keys(analysis: &Analysis, dialect: KeyDialect<'_>, families: Vec<Strin
                 let mut record = place(analysis, def.span);
                 record.insert("family".into(), json!(family));
                 record.insert("key".into(), json!(key));
+                record.insert("store".into(), json!(format!("{prefix}{family}@")));
                 record.insert("default".into(), default.map_or(Json::Null, |d| json!(d)));
                 record.insert("package".into(), symbol(analysis, def.package));
                 record

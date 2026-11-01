@@ -507,13 +507,21 @@ fn load_fix(report: &Report, name: &str) -> Option<Fix> {
 /// (`\draw` in a `tikzpicture`), or in a group at a line of it.
 fn defined_elsewhere(analysis: &crate::machine::Analysis, name: crate::tex::Sym) -> Option<String> {
     analysis.facts.defs.iter().find(|d| d.name == name && !d.global)?;
-    let at = crate::query::defined_at(analysis, name);
+    // where a use of it found it defined, else where it was defined
+    let defined = |m: &MeaningKind| !matches!(m, MeaningKind::Undefined | MeaningKind::UndefinedApproximated);
+    let sites: Vec<crate::tex::Span> = (analysis.facts.expansions.iter())
+        .filter(|e| e.name == name && defined(&e.meaning))
+        .map(|e| e.span)
+        .chain(std::iter::once(crate::query::defined_at(analysis, name)))
+        .collect();
     let envs = crate::query::environments(analysis);
-    let inside =
-        envs.iter().rfind(|(f, t, _)| f.file == at.file && (f.line, f.col) <= (at.line, at.col) && at.line <= t.line);
-    Some(match inside {
+    let around = |at: &crate::tex::Span| {
+        envs.iter().rfind(|(f, t, _)| f.file == at.file && (f.line, f.col) <= (at.line, at.col) && at.line <= t.line)
+    };
+    // an environment that holds a definition says more than the group it opened
+    Some(match sites.iter().find_map(around) {
         Some((f, _, env)) => format!("inside `{env}` (line {})", f.line),
-        None => format!("in a group at line {}", at.line),
+        None => format!("in a group at line {}", sites.first()?.line),
     })
 }
 

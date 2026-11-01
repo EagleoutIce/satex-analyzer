@@ -69,6 +69,7 @@ pub mod rename;
 pub mod render;
 pub mod roles;
 pub mod scan;
+pub mod sketch;
 pub mod source;
 pub mod tex;
 pub mod tfm;

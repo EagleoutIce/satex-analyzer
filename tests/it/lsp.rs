@@ -1673,6 +1673,25 @@ fn l3keys_complete_keys_and_choices() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Hovering a key of an option list names its module, type and choices.
+#[test]
+fn hovering_a_key_shows_its_definition() {
+    let text = "\\documentclass{article}\n\\ExplSyntaxOn\n\\keys_define:nn {zmod} { size .choice:, size/big .code:n = {}, size/small .code:n = {}, width .tl_set:N = \\l_tmpa_tl }\n\\NewDocumentCommand\\zset{m}{\\keys_set:nn{zmod}{#1}}\n\\ExplSyntaxOff\n\\begin{document}\n\\zset{width=1, size=big}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("keyhover", text);
+    let mut hover = |character: u32| {
+        let id = server.request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": 6, "character": character } }),
+        );
+        server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
+    };
+    let size = hover(15);
+    assert!(size.contains("key of `\\zset`") && size.contains("`big`") && size.contains("`small`"), "{size}");
+    assert!(hover(12).is_empty() || !hover(12).contains("key of"), "a value is no key");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// The rows of `satex/typeset` for a root with an `\input` file and a bibliography.
 fn typeset_of_a_root(tag: &str) -> Vec<Value> {
     typeset_after_edit(tag, None, "A Title")
@@ -2072,8 +2091,9 @@ fn an_expl3_signature_completes_its_letters() {
     let items = complete(&mut server, &uri, 2, 9);
     let letter = items.iter().find(|i| i["label"] == "tl_set:Nn");
     assert!(letter.is_some(), "{:?}", labels(&items));
-    let v = items.iter().find(|i| i["label"] == "tl_set:NV").map(|i| i["detail"].to_string()).unwrap_or_default();
-    assert!(v.contains("value of a variable"), "{v}");
+    // a letter no defined name ends with yet says what it means
+    let w = items.iter().find(|i| i["label"] == "tl_set:Nw").map(|i| i["detail"].to_string()).unwrap_or_default();
+    assert!(w.contains("delimiter"), "{w}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -2088,6 +2108,57 @@ fn a_tikz_path_completes_node_names() {
     let (mut server, uri, _, dir) = open_loaded("nodes", text);
     let items = complete(&mut server, &uri, 5, 9);
     assert!(labels(&items).contains(&"alpha"), "{:?}", labels(&items));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `\tableofcontents` typesets every line of the contents, read from the
+/// `.toc` file, not only the last one.
+#[test]
+fn a_contents_hover_shows_every_line() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\section{Alpha}\n\\section{Beta}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("typesets-toc", text);
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": 3 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(hover.contains("Alpha") && hover.contains("Beta"), "{hover}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// After `key=` of a keyval key whose handler selects among macros or cases, the choices are
+/// offered and no command names: listings' `columns` (`\csname lst@column@#1\endcsname`).
+#[test]
+fn key_values_come_from_the_handler() {
+    if !crate::support::installed() {
+        return;
+    }
+    let text = "\\documentclass{article}\n\\usepackage{listings}\n\\begin{document}\n\\lstset{basicstyle=\\ttfamily\\small, columns=, aboveskip=}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("keyvalues", text);
+    let line = text.lines().nth(3).unwrap();
+    let items = complete(&mut server, &uri, 3, (line.find("columns=").unwrap() + "columns=".len()) as u32);
+    let got = labels(&items);
+    for v in ["fixed", "flexible", "fullflexible", "spaceflexible"] {
+        assert!(got.contains(&v), "{v} missing: {got:?}");
+    }
+    assert!(got.iter().all(|l| !l.chars().next().is_some_and(|c| c.is_uppercase())), "{got:?}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The same for a document's own keyval family: the macros named by `\csname fam@mode@#1\endcsname`.
+#[test]
+fn key_values_are_the_macros_a_csname_selects() {
+    if !crate::support::installed() {
+        return;
+    }
+    let text = "\\documentclass{article}\n\\usepackage{keyval}\n\\makeatletter\n\\define@key{fam}{mode}{\\csname fam@mode@#1\\endcsname}\n\\def\\fam@mode@draft{}\\def\\fam@mode@final{}\n\\newcommand\\famset[1]{\\setkeys{fam}{#1}}\n\\makeatother\n\\begin{document}\n\\famset{mode=}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("keyvalues-own", text);
+    let line = text.lines().nth(8).unwrap();
+    let items = complete(&mut server, &uri, 8, line.len() as u32 - 1);
+    assert_eq!(labels(&items), ["draft", "final"], "{:?}", labels(&items));
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
