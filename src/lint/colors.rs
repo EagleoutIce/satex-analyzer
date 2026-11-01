@@ -110,11 +110,18 @@ fn undefined_color(report: &mut Report) {
     if !definitions_matter(analysis) {
         return;
     }
+    // xcolor looks a whole expression (`green!50!blue`) up as a name before it parses it: only a
+    // lookup the run answered with an error at that call was a color that does not exist
+    let raised: Vec<crate::tex::Span> = (analysis.facts.occurrences.iter())
+        .filter(|o| crate::lint::shared::is_error(analysis, o))
+        .map(|o| o.span)
+        .collect();
+    let failed = |at: &crate::tex::Span| raised.iter().any(|e| (e.file, e.line) == (at.file, at.line));
     for use_ in &analysis.facts.color_uses {
         // A `\ifx`/`\@ifundefinedcolor`-style test deliberately asks
         // whether the color exists. Only reading or aliasing it assumes
         // that it does.
-        if use_.defined || matches!(use_.role, CsnameRole::Test) {
+        if use_.defined || matches!(use_.role, CsnameRole::Test) || !failed(&use_.span) {
             continue;
         }
         let severity = if use_.certain { Severity::Error } else { Severity::Warning };

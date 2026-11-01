@@ -56,6 +56,17 @@ fn a_colour_defined_and_used_raises_nothing() {
     assert!(f.is_empty(), "{f:?}");
 }
 
+/// xcolor looks a mix (`green!50!blue`) up as a name before it parses it as an expression: that
+/// lookup is no use of an undefined color.
+#[test]
+fn a_colour_mix_is_no_undefined_colour() {
+    if !installed() {
+        return;
+    }
+    let f = findings("mix", "undefined-color", "\\usepackage{xcolor}", "\\textcolor{green!50!blue}{x}");
+    assert!(f.is_empty(), "{f:?}");
+}
+
 #[test]
 fn a_defined_colour_never_read_back_is_reported() {
     if !installed() {
@@ -130,4 +141,25 @@ fn a_balanced_pdfcolorstack_raises_nothing() {
     let f =
         findings("balanced", "unbalanced-color-stack", "", "\\pdfcolorstack 3 push {1 0 0 rg}\\pdfcolorstack 3 pop");
     assert!(f.is_empty(), "{f:?}");
+}
+
+/// beamer's color themes look their colors up (`fg`, `itemize/enumerate body.fg`) without any of
+/// them being an error: no undefined color.
+#[test]
+fn beamers_color_lookups_are_no_undefined_colours() {
+    if !installed() {
+        return;
+    }
+    let directory = scratch("beamer");
+    let document = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{T}\n\\begin{itemize}\n\\item<1-> A\n\\end{itemize}\n\\end{frame}\n\\end{document}\n";
+    let main = directory.join("main.tex");
+    std::fs::write(&main, document).unwrap();
+    let analysis = Machine::analyze(document, Some(&main), &crate::support::config());
+    let found: Vec<String> = satex::lint::lint(&analysis)
+        .into_iter()
+        .filter(|record| record["code"] == "undefined-color")
+        .map(|record| record["name"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert!(found.is_empty(), "{found:?}");
+    let _ = std::fs::remove_dir_all(&directory);
 }
