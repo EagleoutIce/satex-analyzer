@@ -19,7 +19,6 @@ const RUNS: usize = 64;
 /// a join loses (a [`Tag`]).  Running on usually settles such a difference
 /// (`\leavevmode` on one path, the next character on the other).
 const PARTITIONS: usize = 2;
-/// Fresh entries per loop point before an entry counts as a re-entry.
 
 /// A choice the running command met: how many arms it has and which one
 /// this run takes.
