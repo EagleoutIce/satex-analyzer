@@ -185,9 +185,8 @@ fn generated_docs_have_no_machine_specific_paths() {
 fn prose_has_no_semicolons_or_em_dashes() {
     let masks = [
         Regex::new(r"(?s)```.*?```").unwrap(),
-        // A table's empty cell, twice for neighbors sharing a `|`.
-        Regex::new(r"<td[^>]*>\s*—\s*</td>|\|\s*—\s*\|").unwrap(),
-        Regex::new(r"\|\s*—\s*\|").unwrap(),
+        // A table's empty cell; the dash alone after its `|`, so neighbors sharing one match too.
+        Regex::new(r"<td[^>]*>\s*—\s*</td>|\|[ \t]*—[ \t]*").unwrap(),
         Regex::new(r"(?s)<pre.*?</pre>|<code.*?</code>|<script.*?</script>|<style.*?</style>").unwrap(),
         Regex::new(r"`[^`\n]*`").unwrap(),
         Regex::new(r"<[^>\n]*>").unwrap(),
