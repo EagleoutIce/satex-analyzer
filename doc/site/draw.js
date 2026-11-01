@@ -13,7 +13,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   // compare alike. Two outlines are as far apart as the mean distance of each one's points to the
   // other (chamfer distance), plus how much their aspects and their numbers of dots differ. Strokes
   // drawn apart are no dots: a `⇒` drawn in three strokes is one shape, `÷` has two dots.
-  const DRAW = { side: 32, glyph: 96, pen: 9, bitmap: 0.6, outline: 1, stroke: 1.5, either: 0, grid: 8, bins: 4, orient: 24, shortlist: 1500, refine: 5000, off: ['emoji', 'twemojis'], workers: 4, cut: 2.6, least: 12, on: ['worldflags'], pixel: 1.5, alias: 0.03, known: 0.2, plain: 0.1, call: 0.2, shown: 14, foreign: 1.12, variant: 0.4, icon: 0.1, aspect: 0.6, dots: 0.8, dot: 4, batch: 300, again: 120, more: 30 };
+  const DRAW = { side: 32, glyph: 96, pen: 9, bitmap: 0.6, outline: 1, stroke: 1.5, either: 0, grid: 8, bins: 4, orient: 24, shortlist: 1500, refine: 5000, off: ['emoji', 'twemojis'], workers: 4, cut: 2.6, least: 12, on: ['worldflags'], pixel: 1.5, typed: 0.35, alias: 0.03, known: 0.2, plain: 0.1, call: 0.2, shown: 14, foreign: 1.12, variant: 0.4, icon: 0.1, aspect: 0.6, dots: 0.8, dot: 4, batch: 300, again: 120, more: 30 };
   const $ = (id) => root.querySelector(`#${id}`);
   const pad = $('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true });
   let drawTable = null, drawn = false;
@@ -306,7 +306,8 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   // a math alphabet's variant (`\mbfsansalpha`) ranks after the letter itself (`\alpha`, set from the same block)
   // a math alphabet's letters (`\mbfsansf`, `\Bbbf`), named apart from the letter they restyle
   const ALPHABET = /^\\(?:m(?:up|it|bf|sans|tt|scr|frak|bb)+|Bbb)(?=[A-Za-z])/;
-  const prior = (s) => (ALPHABET.test(s.name) ? DRAW.variant : s.cls === 'icon' ? DRAW.icon : s.bitmap ? DRAW.plain + (s.name.includes('{') ? DRAW.call : 0) : 0);
+  // a letter or digit one can type ranks after the symbols: no one draws an `L` to find it
+  const prior = (s) => (/^[A-Za-z0-9]$/.test(s.ch) ? DRAW.typed : ALPHABET.test(s.name) ? DRAW.variant : s.cls === 'icon' ? DRAW.icon : s.bitmap ? DRAW.plain + (s.name.includes('{') ? DRAW.call : 0) : 0);
   const drawKind = (s) => (s.cls === 'alpha' ? 'letter' : 'symbol');
   const drawMode = (s) => (s.cls === 'icon' || s.cls === 'text' || s.cls === 'other' ? 'text' : 'math');
   /** Whether `a` and `b` are at most one edit apart. */
