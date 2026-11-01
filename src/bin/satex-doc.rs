@@ -1554,7 +1554,7 @@ fn primitives_table() -> Result<String, String> {
             let _ = writeln!(
                 rows,
                 "| {display} | [`{p:?}`][{label}] | {verdict} | {} |",
-                sentence(&detail).replace('|', "\\|")
+                sentence(detail).replace('|', "\\|")
             );
         }
         let status = match sound == map.len() {
