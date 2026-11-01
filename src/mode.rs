@@ -2115,6 +2115,10 @@ impl Machine<'_> {
                 self.build_page(span);
             }
         } else if nest.code == Some(group::INSERT) {
+            if nest.part != 1 {
+                let now = self.out.facts.text.at.len() as u32;
+                self.out.facts.text.inserts.push((nest.from, now));
+            }
             // An ins (4) or adjust (6) node: no size, the list's tail, and to the
             // line breaker an item before glue as a whatsit is (§§ 147, 866).
             self.append_item(Item::Node(if nest.part == 1 { 6 } else { 4 }));

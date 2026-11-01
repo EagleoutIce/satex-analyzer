@@ -1283,3 +1283,10 @@ button.draw-cat { border: 0; font: inherit; font-size: .68rem; cursor: pointer; 
 .cfg-row > .cfg-what { max-width: none; }
 .cfg-row > .ts-toggle.cfg-value { justify-self: end; margin-left: 0; }
 .cfg-example pre { overflow-x: auto; max-width: 100%; box-sizing: border-box; }
+
+.cfg-compact .cfg-row:not(.cfg-open) .cfg-about, .cfg-compact .cfg-row:not(.cfg-open) .cfg-example { display: none; }
+.cfg-compact .cfg-row { cursor: pointer; }
+
+/* a footnote: the insert's text at the foot, small, after a short rule (TeX's \footnoterule) */
+p.ts.ts-foot { font-size: .8em; margin-top: .4em; padding-top: .3em; position: relative; }
+p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 2.5em; border-top: 1px solid var(--muted); }

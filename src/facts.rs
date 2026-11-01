@@ -383,6 +383,9 @@ pub struct Text {
     /// Character ranges (start, end) of boxes placed on a list or shipped,
     /// so their text reaches the page.
     pub placed: Vec<(u32, u32)>,
+    /// Character ranges (start, end) set in an `\insert` (a footnote's text): the page
+    /// places them at its foot, not where they were set.
+    pub inserts: Vec<(u32, u32)>,
     /// Rules set between characters (tex.web § 463): the number of
     /// characters set before each, and its kind.
     pub rules: Vec<(u32, Rule)>,

@@ -315,6 +315,33 @@ impl Query {
     pub fn name(self) -> &'static str {
         Self::ALL.iter().find(|(_, q)| *q == self).map(|(n, _)| *n).unwrap_or("query")
     }
+
+    /// What the query answers, in a few words: the one place `--list`, the wiki and the playground read.
+    pub fn about(self) -> &'static str {
+        match self {
+            Query::Definitions => "every macro, environment and register the document or its packages define",
+            Query::Expansions => "how often each macro was expanded during the run",
+            Query::Dependencies => "files, packages and classes read, and what loaded each",
+            Query::Occurrences => "package banners, passed options and other one-off events",
+            Query::Recursion => "macros that call themselves, directly or through others",
+            Query::Calls => "which control sequences each macro's body invokes",
+            Query::DependencyGraph => "the dependency graph between files and packages as records",
+            Query::Trace => "every step: macro expansions, primitives run, changes made",
+            Query::Files => "every file read, in the order it was opened",
+            Query::Diagnostics => "what satex noticed while interpreting, apart from lint rules",
+            Query::Distribution => "the detected TeX installation, version and searched trees",
+            Query::Catcodes => "explicit \\catcode assignments the document makes",
+            Query::SideEffects => "definitions and assignments a macro makes when called",
+            Query::Project => "document class, engine and build settings detected or assumed",
+            Query::Plugins => "what each plugin chose for this run, and why",
+            Query::Produces => "where a given text can come from, expanded or not",
+            Query::Gaps => "constructs the run could not interpret, grouped by cause",
+            Query::Pgfkeys => "pgfkeys defined at the end of the run and what each does",
+            Query::Options => "the keys an environment or command's optional argument accepts",
+            Query::Typeset => "the text the document typesets, one row per paragraph",
+            Query::Previews => "arrow tips and patterns the run declared, drawn by TeX",
+        }
+    }
 }
 
 /// What the run could not follow, one row per cause with how often it
@@ -495,6 +522,16 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         })
     };
     let mut env: Option<&str> = None;
+    let mut foot = String::new();
+    let push_foot = |out: &mut Vec<Record>, foot: &mut String, at: Span, keys: &mut Keys<'_>| {
+        if foot.trim().is_empty() {
+            foot.clear();
+            return;
+        }
+        let mut record = paragraph(analysis, at, &std::mem::take(foot), Vec::new(), keys);
+        record.insert("footnote".into(), json!(true));
+        out.push(record);
+    };
     // the source line the paragraph's text stands on now
     let mut on_line: Option<(FileId, u32)> = None;
     // where the paragraph being set began: its `\parskip` is the one in force there
@@ -561,6 +598,11 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             );
         }
         let piece = if boxed { format!("{}{c}{}", note("⟦"), note("⟧")) } else { c };
+        // an insert's text (a footnote) goes to the foot, after the paragraph that set it
+        if text.inserts.iter().any(|&(a, b)| (a..b).contains(&(i as u32))) {
+            foot.push_str(&piece);
+            continue;
+        }
         let here = env_at(site);
         // the rules and marks closing an environment belong to it
         if env.is_some() && here != env {
@@ -587,6 +629,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                 attach_picture(analysis, &mut record, &pictures);
             }
             out.push(record);
+            push_foot(&mut out, &mut foot, site, &mut keys);
             style = "";
             on_line = None;
         }
@@ -654,6 +697,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         }
         out.push(record);
     }
+    push_foot(&mut out, &mut foot, first.unwrap_or_default(), &mut keys);
     // A kernel read only partly leaves the document names the engine's
     // format defines (`\documentclass` set as text), so none of the text is
     // sure; a run that stopped early never set the rest.

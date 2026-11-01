@@ -636,7 +636,7 @@
   // card, so nothing on the page moves; a click on a command pins its full card.
   const { card } = tips, tip = card.el;
   /** Typeset paragraphs as the playground's Typeset panel draws them. */
-  const paragraphs = (rows) => rows.map((r) => `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}"${typeof r.skip === 'number' && !r.heading ? ` style="--skip: ${Math.max(r.skip, 0)}pt"` : ''}${r.env ? ` data-env="${esc(r.env)}"` : ''}><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`).join('')
+  const paragraphs = (rows) => rows.map((r) => `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}${r.footnote ? ' ts-foot' : ''}"${typeof r.skip === 'number' && !r.heading ? ` style="--skip: ${Math.max(r.skip, 0)}pt"` : ''}${r.env ? ` data-env="${esc(r.env)}"` : ''}><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`).join('')
     || '<p class="muted">It sets no paragraph.</p>';
   const lintCard = (d) => {
     const diff = d.typo ? (d.edits ?? []).map((e) => ` <span class="diff"><del>${esc(e.from) || '␣'}</del>→<ins>${esc(e.to) || '∅'}</ins></span>`).join('') : '';

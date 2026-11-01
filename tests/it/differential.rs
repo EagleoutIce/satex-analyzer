@@ -811,3 +811,24 @@ fn bold_text_is_the_series_the_run_selected_whatever_selected_it() {
         .collect();
     assert_eq!(bold, [0, 3], "{row}");
 }
+
+/// A footnote's text is set in an insert: it follows its paragraph as a record of its own, not
+/// inside the paragraph's text.
+#[test]
+fn a_footnote_follows_its_paragraph() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-footnote");
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = "\\documentclass{article}\n\\begin{document}\nMain\\footnote{Aside} text.\n\\end{document}\n";
+    std::fs::write(dir.join("f.tex"), source).unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "f.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let detail = |r: &serde_json::Value| r["detail"].as_str().unwrap_or_default().to_string();
+    let main = rows.iter().find(|r| detail(r).contains("Main")).expect("the paragraph");
+    assert!(!detail(main).contains("Aside"), "{main}");
+    let foot = rows.iter().find(|r| r["footnote"] == true).expect("the footnote");
+    assert!(detail(foot).contains("Aside"), "{foot}");
+}
