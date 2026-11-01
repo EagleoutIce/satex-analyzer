@@ -388,6 +388,12 @@ pub struct Text {
     /// in the line and leaders between characters: the number of characters
     /// set before each.
     pub align: Vec<(u32, Align)>,
+    /// For a character set in math mode: its index and the math code
+    /// (`\mathcode`: class, family and slot) it was set with, ascending.
+    pub math: Vec<(u32, u16)>,
+    /// For the first character of a paragraph: the width of `\parskip` (sp)
+    /// the run had there, when it was exactly one value.
+    pub skips: Vec<(u32, crate::value::Scaled)>,
 }
 
 /// Where an alignment begins, ends a cell (`&`) or a row (`\cr`), and

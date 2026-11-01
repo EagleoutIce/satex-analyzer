@@ -52,6 +52,8 @@ fn color_use(m: &mut Machine, full: &str, color_name: &str, role: CsnameRole, sp
     if m.out.facts.color_uses.len() >= m.cfg.limits.facts {
         return;
     }
+    // the document's call, not the package macro that formed the name
+    let span = m.call_site(span);
     let defined =
         m.out.interner.lookup(full).is_some_and(|sym| !matches!(m.env.meaning(sym), crate::tex::Meaning::Undefined));
     m.out.facts.color_uses.push(crate::facts::ColorUse {
@@ -1399,6 +1401,21 @@ fn set(m: &mut Machine, c: char, span: Span) {
             text.repeats.push(last);
         }
         return;
+    }
+    let mathematical = m.mode.within(crate::mode::Modes::ANY_MATH);
+    let code = if mathematical { m.char_code_known(crate::builtins::CodeTable::Math, c) } else { None };
+    let starts = {
+        let text = &m.out.facts.text;
+        let at = text.at.len() as u32;
+        (at == 0 || text.pars.last() == Some(&at)) && text.skips.last().is_none_or(|s| s.0 != at)
+    };
+    let skip = if starts { m.glue_parameter("parskip").map(|g| g.width) } else { None };
+    let text = &mut m.out.facts.text;
+    if let Some(skip) = skip {
+        text.skips.push((text.at.len() as u32, skip));
+    }
+    if let Some(code) = code.and_then(|v| u16::try_from(v).ok()) {
+        text.math.push((text.at.len() as u32, code));
     }
     let side_by_side = text
         .at

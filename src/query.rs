@@ -477,6 +477,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let mut keys: std::collections::VecDeque<(&str, &str)> = Default::default();
     let mut next_key: std::collections::HashMap<FileId, usize> = Default::default();
     let (glyphs, joined) = glyphs(analysis);
+    let math = math_atoms(text, &analysis.settings.conventions.math_symbols);
     let (empty, set): (Vec<Drawn>, Vec<Drawn>) = drawn_boxes(analysis).into_iter().partition(|d| d.4);
     let mut boxes = empty.into_iter().map(|(at, label, sketch, ..)| (at, label, sketch)).peekable();
     let pictures: Vec<(Span, Span, Json)> =
@@ -494,6 +495,8 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         })
     };
     let mut env: Option<&str> = None;
+    // where the paragraph being set began: its `\parskip` is the one in force there
+    let mut began = 0usize;
     let mut flush = |i: usize, line: &mut String, keys: &mut std::collections::VecDeque<_>| {
         while let Some((_, mark)) = aligns.next_if(|a| a.0.0 as usize <= i) {
             line.push(KEY);
@@ -545,6 +548,16 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         if text.hyphens.binary_search(&(i as u32)).is_ok() {
             c = format!("{}{c}", note("·"));
         }
+        if text.math.binary_search_by_key(&(i as u32), |m| m.0).is_ok() && c_is_space(&c) {
+            c.clear();
+        } else if let Some(&(tag, glyph)) = math.get(&i).filter(|_| !unknown) {
+            c = format!(
+                "{}{}{}",
+                note(&format!("{MATH}{tag}")),
+                glyph.map_or(c, String::from),
+                note(&MATH.to_string())
+            );
+        }
         let piece = if boxed { format!("{}{c}{}", note("⟦"), note("⟧")) } else { c };
         let here = env_at(site);
         // the rules and marks closing an environment belong to it
@@ -563,6 +576,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             if text.kept.binary_search(&(i as u32)).is_ok() {
                 record.insert("kept".into(), json!(true));
             }
+            if let Ok(k) = text.skips.binary_search_by_key(&(began as u32), |s| s.0) {
+                record.insert("skip".into(), json!(text.skips[k].1 as f64 / f64::from(1 << 16)));
+            }
             attach_sketches(&mut record, &mut sketches);
             if let Some(name) = env {
                 record.insert("env".into(), json!(name));
@@ -570,6 +586,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             }
             out.push(record);
             style = "";
+        }
+        if text.pars.binary_search(&(i as u32)).is_ok() {
+            began = i;
         }
         env = here;
         if !piece.trim().is_empty() {
@@ -614,6 +633,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     }
     if !line.trim().is_empty() {
         let mut record = paragraph(analysis, first.unwrap_or_default(), &line, causes, &mut keys);
+        if let Ok(k) = text.skips.binary_search_by_key(&(began as u32), |s| s.0) {
+            record.insert("skip".into(), json!(text.skips[k].1 as f64 / f64::from(1 << 16)));
+        }
         attach_sketches(&mut record, &mut sketches);
         if let Some(name) = env {
             record.insert("env".into(), json!(name));
@@ -991,7 +1013,9 @@ fn clip(s: &str) -> String {
     if s.chars().count() <= 60 { s.to_string() } else { format!("{}…", s.chars().take(60).collect::<String>()) }
 }
 
-const NOTE: (char, char) = ('\u{E000}', '\u{E001}');
+const NOTE: (char, char) = (NOTE_OPEN, NOTE_CLOSE);
+const NOTE_OPEN: char = '\u{E000}';
+const NOTE_CLOSE: char = '\u{E001}';
 
 /// Where a key [`typeset`] lists stands in the text, removed by [`paragraph`].
 const KEY: char = '\u{E002}';
@@ -1036,13 +1060,81 @@ fn font_styles(analysis: &Analysis) -> Vec<String> {
         .collect()
 }
 
+fn c_is_space(c: &str) -> bool {
+    c == " "
+}
+
+/// The kind of a note that marks math: the class of the atom set next, `i` for
+/// an italic letter, then an empty note closes it.
+const MATH: char = '\u{6}';
+
+/// The slot of the symbol family (OMS, family 2) a math code names, as the character it draws.
+/// Math classes of an atom (tex.web § 1151).
+const BINARY: u16 = 2;
+const RELATION: u16 = 3;
+const OPENING: u16 = 4;
+const CLOSING: u16 = 5;
+const PUNCTUATION: u16 = 6;
+/// The class of a math code that takes its family from `\fam` (tex.web § 1151) acts as ordinary.
+const VARIABLE: u16 = 7;
+
+/// How each character set in math stands in its formula: the class of its atom and the glyph its
+/// math code draws, when that is not the character. A binary operator at the start of a formula
+/// or after another operator, relation, opening or punctuation, or before a relation, closing or
+/// punctuation, is ordinary (tex.web § 728). A letter of the math italic family is tagged `i`.
+fn math_atoms(
+    text: &crate::facts::Text,
+    symbols: &std::collections::BTreeMap<u32, char>,
+) -> HashMap<usize, (char, Option<char>)> {
+    let mut out = HashMap::default();
+    let mut formulas: Vec<Vec<(usize, u16)>> = Vec::new();
+    let chars: Vec<char> = text.chars.chars().collect();
+    for &(at, code) in &text.math {
+        let at = at as usize;
+        match formulas.last_mut() {
+            Some(f) if f.last().is_some_and(|&(p, _)| p + 1 == at) => f.push((at, code)),
+            _ => formulas.push(vec![(at, code)]),
+        }
+    }
+    for formula in formulas {
+        // math ignores spaces (tex.web § 1045): they are no atoms
+        let formula: Vec<(usize, u16)> = formula.into_iter().filter(|&(at, _)| chars[at] != ' ').collect();
+        let classes: Vec<u16> = formula.iter().map(|&(_, c)| (c >> 12).min(VARIABLE)).collect();
+        let mut before: Option<u16> = None;
+        for (k, &(at, code)) in formula.iter().enumerate() {
+            let mut class = if classes[k] == VARIABLE { 0 } else { classes[k] };
+            let starts = before.is_none_or(|b| matches!(b, BINARY | RELATION | OPENING | PUNCTUATION));
+            let ends = classes.get(k + 1).is_none_or(|n| matches!(*n, RELATION | CLOSING | PUNCTUATION));
+            if class == BINARY && (starts || ends) {
+                class = 0;
+            }
+            before = Some(class);
+            let family = (code >> 8) & 0xf;
+            let glyph = (family == 2).then(|| symbols.get(&u32::from(code & 0xff)).copied()).flatten();
+            let tag = if class == 0 && family == 1 { 'i' } else { char::from(b'0' + class as u8) };
+            out.insert(at, (tag, glyph));
+        }
+    }
+    out
+}
+
 /// `s` as satex's own notation, not a typeset character.
 fn note(s: &str) -> String {
     format!("{}{s}{}", NOTE.0, NOTE.1)
 }
 
 fn unmarked(s: &str) -> String {
-    s.chars().filter(|c| !matches!(*c, '\u{E000}' | '\u{E001}')).collect()
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            // a math note holds no text of its own
+            NOTE_OPEN if chars.peek() == Some(&MATH) => chars.by_ref().take_while(|&c| c != NOTE_CLOSE).for_each(drop),
+            NOTE_OPEN | NOTE_CLOSE => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// A paragraph record: `detail` is plain, `marked` wraps the notation in
@@ -4463,9 +4555,9 @@ pub fn docs(analysis: &Analysis) -> Vec<Record> {
         if !path.extension().is_some_and(|e| e == "sty" || e == "cls") {
             continue;
         }
-        let Some(dirs) = Dirs::of(path).filter(|d| seen.insert(d.clone())) else { continue };
+        let Some(dirs) = Dirs::of(&analysis.settings.docs, path).filter(|d| seen.insert(d.clone())) else { continue };
         let Some(dir) = dirs.doc.clone().or_else(|| dirs.source.clone()) else { continue };
-        for entry in mine(PLUGINS, &dirs).values() {
+        for entry in mine(PLUGINS, &analysis.settings.docs, &dirs).values() {
             let Json::Object(mut record) = mined::row(entry) else { continue };
             record.insert("dir".into(), json!(dir.display().to_string()));
             record.insert("package_file".into(), json!(file.path));
