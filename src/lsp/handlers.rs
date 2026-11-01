@@ -151,7 +151,9 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
     let markdown = if is_command {
         placed(analysis, command_hover(analysis, &name, active_at(analysis, &name, path, pos))?, &name, path, pos)
     } else {
-        load_hover(analysis, path, pos, &name).or_else(|| bib_style_hover(analysis, path, pos, &name))?
+        super::argument_hover::argument_hover(analysis, doc.line(pos.line), path, pos)
+            .or_else(|| load_hover(analysis, path, pos, &name))
+            .or_else(|| bib_style_hover(analysis, path, pos, &name))?
     };
     Some(markdown_hover(markdown))
 }
@@ -326,7 +328,7 @@ pub fn markdown_hover(markdown: String) -> Hover {
     }
 }
 
-fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Option<String> {
+pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Option<String> {
     let (mut records, _) = query::explain(analysis, &[name.to_string()], false).ok()?;
     // The definition in force at the cursor first, the others after it.
     let place = |r: &Record| (r.get("path").cloned(), r.get("line").cloned());
@@ -748,7 +750,7 @@ pub(super) fn style_file(analysis: &Analysis, path: &str, file: &str, shipped: O
 /// `\documentclass`: its file and `\Provides…` line, the options it offers
 /// and the ones passed, what it defines, what it loads, and the run's
 /// diagnostics inside it.
-fn load_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<String> {
+pub(super) fn load_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<String> {
     let load = analysis
         .facts
         .loads
@@ -1207,16 +1209,16 @@ pub(super) fn cs_re() -> &'static Regex {
 
 /// The argument the cursor is in: the command it belongs to, its opening
 /// delimiter, the complete groups between them and the column of the `\`.
-struct Arg<'a> {
-    cmd: &'a str,
-    open: char,
-    groups: &'a str,
-    col: u32,
+pub(super) struct Arg<'a> {
+    pub(super) cmd: &'a str,
+    pub(super) open: char,
+    pub(super) groups: &'a str,
+    pub(super) col: u32,
     /// The argument's text up to the cursor.
-    inside: &'a str,
+    pub(super) inside: &'a str,
 }
 
-fn argument_at(before: &str) -> Option<Arg<'_>> {
+pub(super) fn argument_at(before: &str) -> Option<Arg<'_>> {
     static HEAD: OnceLock<Regex> = OnceLock::new();
     let head = HEAD.get_or_init(|| Regex::new(r"\\([A-Za-z@]+)\*?((?:\s*(?:\[[^\[\]]*\]|\{[^{}]*\}))*)\s*$").unwrap());
     let mut depth = 0u32;

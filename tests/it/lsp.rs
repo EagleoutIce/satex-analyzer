@@ -2162,3 +2162,57 @@ fn key_values_are_the_macros_a_csname_selects() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The hover over the typed argument at `line`/`character` of `text`.
+fn argument_hover(tag: &str, text: &str, line: u32, character: u32) -> String {
+    let (mut server, uri, _, dir) = open_loaded(tag, text);
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": character } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+    hover
+}
+
+const TYPED: &str = "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\begin{itemize}\n\\item a\n\\end{itemize}\n\\input{chapter}\n\\end{document}\n";
+
+#[test]
+fn hover_names_the_class() {
+    let hover = argument_hover("hclass", TYPED, 0, 18);
+    assert!(hover.contains("article") && hover.contains("class"), "{hover}");
+}
+
+#[test]
+fn hover_names_the_package() {
+    let hover = argument_hover("hpkg", TYPED, 1, 14);
+    assert!(hover.contains("amsmath") && hover.contains("package"), "{hover}");
+}
+
+#[test]
+fn hover_pairs_begin_and_end() {
+    let hover = argument_hover("henv", TYPED, 5, 8);
+    assert!(hover.contains("itemize") && hover.contains("environment"), "{hover}");
+    assert!(hover.contains("`\\begin` on line 4, `\\end` on line 6"), "{hover}");
+    let document = argument_hover("hdoc", TYPED, 2, 10);
+    assert!(document.contains("document") && document.contains("environment"), "{document}");
+}
+
+#[test]
+fn hover_resolves_the_input_file() {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-hinput-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.tex"), TYPED).unwrap();
+    std::fs::write(dir.join("chapter.tex"), "Hello.\n").unwrap();
+    let mut server = serve(&dir, true);
+    let (uri, _) = open_file(&mut server, &dir, "main.tex");
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 6, "character": 9 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(hover.contains("chapter.tex"), "{hover}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}

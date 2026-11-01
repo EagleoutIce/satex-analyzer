@@ -25,6 +25,7 @@
 // lsp_types::Uri's interior mutability is a cache with no bearing on Eq/Hash; safe as a map key.
 #![allow(clippy::mutable_key_type)]
 
+mod argument_hover;
 mod bib;
 mod doccomment;
 mod handlers;
