@@ -13,18 +13,29 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   // compare alike. Two outlines are as far apart as the mean distance of each one's points to the
   // other (chamfer distance), plus how much their aspects and their numbers of dots differ. Strokes
   // drawn apart are no dots: a `⇒` drawn in three strokes is one shape, `÷` has two dots.
-  const DRAW = { side: 32, glyph: 96, pen: 9, bitmap: 0.6, outline: 1, stroke: 1.5, either: 0, grid: 8, bins: 4, orient: 24, shortlist: 1500, refine: 5000, off: ['emoji', 'twemojis'], workers: 4, cut: 2.6, least: 12, pixel: 1.5, known: 0.2, plain: 0.1, call: 0.2, shown: 14, foreign: 1.12, variant: 0.25, icon: 0.1, aspect: 0.6, dots: 0.8, dot: 4, batch: 300, again: 120, more: 30 };
+  const DRAW = { side: 32, glyph: 96, pen: 9, bitmap: 0.6, outline: 1, stroke: 1.5, either: 0, grid: 8, bins: 4, orient: 24, shortlist: 1500, refine: 5000, off: ['emoji', 'twemojis'], workers: 4, cut: 2.6, least: 12, on: ['worldflags'], pixel: 1.5, alias: 0.03, known: 0.2, plain: 0.1, call: 0.2, shown: 14, foreign: 1.12, variant: 0.4, icon: 0.1, aspect: 0.6, dots: 0.8, dot: 4, batch: 300, again: 120, more: 30 };
   const $ = (id) => root.querySelector(`#${id}`);
   const pad = $('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true });
   let drawTable = null, drawn = false;
-  const drawFilter = { from: 'all', kind: '', mode: '', shape: '' };
-  // the packages in use, as this viewer last chose them; those of DRAW.off (emoji) are left out until chosen
+  // the filters and the packages chosen apart from the default, kept in the address (`?kind=symbol&pkgs=-twemojis+emoji`)
+  // so a link or a reload brings them back, and in this browser for the next visit
+  const query = new URLSearchParams(location.search);
+  const drawFilter = { from: 'all', kind: query.get('kind') ?? '', mode: query.get('mode') ?? '', shape: query.get('shape') ?? '' };
   let chosen = {};
   try { chosen = JSON.parse(localStorage.getItem('satex-draw-pkgs') ?? '{}'); } catch {}
-  // a package only pictures stand for starts off too: its fonts set nothing to match crisply
+  for (const m of (query.get('pkgs') ?? '').matchAll(/([+-])([^+-]+)/g)) chosen[m[2]] = m[1] === '+';
+  // a package only pictures stand for starts off too (its fonts set nothing to match crisply), unless DRAW.on names it
   const pictured = new Set();
-  const used = (p) => chosen[p] ?? !(DRAW.off.includes(p) || pictured.has(p));
-  const choose = (ps, on) => { for (const p of ps) chosen[p] = on; try { localStorage.setItem('satex-draw-pkgs', JSON.stringify(chosen)); } catch {} };
+  const used = (p) => chosen[p] ?? (DRAW.on.includes(p) || !(DRAW.off.includes(p) || pictured.has(p)));
+  const remember = () => {
+    const q = new URLSearchParams(location.search);
+    for (const k of ['kind', 'mode', 'shape']) if (drawFilter[k]) q.set(k, drawFilter[k]); else q.delete(k);
+    const pkgs = Object.entries(chosen).map(([p, on]) => `${on ? '+' : '-'}${p}`).join('');
+    if (pkgs) q.set('pkgs', pkgs); else q.delete('pkgs');
+    if (root.classList.contains('draw-solo')) history.replaceState(null, '', `${location.pathname}${q.size ? `?${q}` : ''}${location.hash}`);
+    try { localStorage.setItem('satex-draw-pkgs', JSON.stringify(chosen)); } catch {}
+  };
+  const choose = (ps, on) => { for (const p of ps) chosen[p] = on; remember(); };
   /** The matcher as a function of its surroundings, so one source runs in a Web Worker (this text, in a Blob)
    * or, where that cannot, on the page: `mk(w, h)` makes a canvas, `post(message, transfer)` answers,
    * `fontSet` takes the loaded fonts, `pause()` yields between batches, `now()` is the clock.
@@ -293,7 +304,9 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   };
   /** Plain symbols over the styled copies of alphabets (math alphanumerics) and over icons. */
   // a math alphabet's variant (`\mbfsansalpha`) ranks after the letter itself (`\alpha`, set from the same block)
-  const prior = (s) => (s.code >= 0x1d400 && s.code < 0x1d800 && /^\\m(?:it|up|bf|sans|tt|scr|frak|Bbb)/.test(s.name) ? DRAW.variant : s.cls === 'icon' ? DRAW.icon : s.bitmap ? DRAW.plain + (s.name.includes('{') ? DRAW.call : 0) : 0);
+  // a math alphabet's letters (`\mbfsansf`, `\Bbbf`), named apart from the letter they restyle
+  const ALPHABET = /^\\(?:m(?:up|it|bf|sans|tt|scr|frak|bb)+|Bbb)(?=[A-Za-z])/;
+  const prior = (s) => (ALPHABET.test(s.name) ? DRAW.variant : s.cls === 'icon' ? DRAW.icon : s.bitmap ? DRAW.plain + (s.name.includes('{') ? DRAW.call : 0) : 0);
   const drawKind = (s) => (s.cls === 'alpha' ? 'letter' : 'symbol');
   const drawMode = (s) => (s.cls === 'icon' || s.cls === 'text' || s.cls === 'other' ? 'text' : 'math');
   /** Whether `a` and `b` are at most one edit apart. */
@@ -379,7 +392,9 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     result = null;
     if (!f) { render(); return; }
     // the more a package is relied on (build.py `established`), the lower its symbols score
-    const trust = (s) => 1 - DRAW.known * (table.weight?.[s.pkg] ?? 0);
+    // the more packages and names set a glyph, the more it is used: a little lower for each, up to five
+    const setters = (table.setters ??= table.rows.reduce((m, x) => m.set(x.ch, (m.get(x.ch) ?? 0) + 1), new Map()));
+    const trust = (s) => (1 - DRAW.known * (table.weight?.[s.pkg] ?? 0)) * (1 - DRAW.alias * Math.min(5, (setters.get(s.ch) ?? 1) - 1));
     send({ type: 'match', id: mine, fresh, f, want: Int32Array.from(wanted, (s) => s.i),
       // a picture scores half again worse: a font's glyph of the shape wins
       mul: Float32Array.from(wanted, (s) => (force.has(s.name) ? 1 : DRAW.foreign) * (s.bitmap ? DRAW.pixel : 1) * trust(s)), add: Float32Array.from(wanted, (s) => (ranked.get(s) * 0.05 + prior(s)) * trust(s)) });
@@ -410,7 +425,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     } else best = wanted.map((s) => ({ s, i: s.i, head: s.i, score: ranked.get(s) + s.name.length / 100 })).sort((a, b) => a.score - b.score);
     // rows of one picture follow its first, and so do a family's later glyphs (`\varpropto`, `\leftpropto` after `\propto`)
     const twins = new Map(), family = new Map();
-    const kin = (name) => name.replace(/^\\/, '').replace(/^(?:var|left|right|big|small|text|math|mup|mit|mbf|msans|mtt)+(?=[a-z])/i, '').replace(/\{.*$/, '');
+    const kin = (name) => name.replace(ALPHABET, '\\').replace(/^\\/, '').replace(/^(?:var|left|right|big|small|text|math)+(?=[a-z])/i, '').replace(/\{.*$/, '');
     best = best.map((b) => {
       if (b.head !== b.i) return b;
       const first = family.get(kin(b.s.name));
@@ -532,6 +547,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       ['shape', 'any source', [['font', 'fonts'], ['pixel', 'pictures']]]];
     $('draw-filters').innerHTML = FILTERS.map(([f, all, options]) => `<select class="dropdown" data-f="${f}" aria-label="${all}"><option value="">${all}</option>` +
       options.map(([v, label]) => `<option value="${v}">${label}</option>`).join('') + '</select>').join('');
+    for (const sel of $('draw-filters').querySelectorAll('select[data-f]')) sel.value = drawFilter[sel.dataset.f] ?? '';
     root.querySelector('.draw-top')?.append($('draw-filters'));
     // the package filter: a button with a list under it
     $('draw-filters').insertAdjacentHTML('beforeend', '<span class="draw-pkg-wrap"><button type="button" class="lib-kind" id="draw-pkgs" aria-expanded="false" aria-controls="draw-pkg-list">packages</button><div id="draw-pkg-list" class="draw-pkg-list" hidden></div></span>');
@@ -557,6 +573,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       const f = e.target.dataset?.f;
       if (!f) return;
       drawFilter[f] = e.target.value;
+      remember();
       drawMatch();
     });
     $('draw-list').addEventListener('click', (e) => {
