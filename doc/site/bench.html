@@ -28,7 +28,7 @@
   const COLORS = ["#0b3d91", "#c2410c", "#15803d", "#a21caf", "#0e7490", "#b45309", "#be123c", "#4d7c0f", "#6d28d9", "#475569"];
   let data;
   try { data = await (await fetch("{{root}}bench/data.json")).json(); } catch { data = []; }
-  if (!data.length) { $("b-note").textContent = "No results yet."; return; }
+  if (!data.length) { $("b-note").textContent = "No benchmark data yet. Run python3 scripts/bench.py --build in the repository and reload."; return; }
   const fill = (id, items) => { $(id).replaceChildren(...items.map(([v, t]) => Object.assign(document.createElement("option"), { value: v, textContent: t }))); };
   const runs = data.flatMap(e => e.runs);
   const kernels = [...new Set(runs.map(r => r.kernel))], docs = [...new Set(runs.map(r => r.doc))];

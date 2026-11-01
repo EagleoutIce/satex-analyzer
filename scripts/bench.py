@@ -2,8 +2,14 @@
 """Runs the benchmark documents (benches/docs.txt) under every kernel and
 records one entry of doc/site/bench/data.json.
 
-  scripts/bench.py --satex target/release/satex --version 0.1.1 [--date D]
-                   [--docs benches/docs.txt] [--data doc/site/bench/data.json]
+  python3 scripts/bench.py [--build] [--satex target/release/satex] [--version V]
+                           [--docs benches/docs.txt] [--data doc/site/bench/data.json]
+  python3 scripts/bench.py --merge NEW.json [--data doc/site/bench/data.json]
+
+With no options it benchmarks target/release/satex as the Cargo.toml version
+and the current commit. `--build` builds the release binary first. An entry
+replaces the one of the same version in the data file. `--merge` only folds
+the entries of another file in (CI does this on main).
 
 Per run: a cold run builds the caches, the second run is measured."""
 import argparse, json, re, subprocess, sys, time
@@ -51,17 +57,38 @@ def run(satex, doc, kernel, timeout):
     }
 
 
+def merge(data, new):
+    old = json.loads(data.read_text()) if data.exists() else []
+    keep = {e["version"] for e in new}
+    data.parent.mkdir(parents=True, exist_ok=True)
+    data.write_text(json.dumps([e for e in old if e["version"] not in keep] + new, indent=1) + "\n")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--satex", required=True)
-    ap.add_argument("--version", required=True)
+    ap.add_argument("--satex", default="target/release/satex")
+    ap.add_argument("--build", action="store_true", help="cargo build --release --bin satex first")
+    ap.add_argument("--merge", help="fold the entries of this file into --data and stop")
+    ap.add_argument("--version", default=None)
     ap.add_argument("--date", default=time.strftime("%Y-%m-%d"))
-    ap.add_argument("--commit", default="")
+    ap.add_argument("--commit", default=None)
     ap.add_argument("--docs", default="benches/docs.txt")
     ap.add_argument("--data", default="doc/site/bench/data.json")
     ap.add_argument("--kernels", nargs="*", default=KERNELS)
     ap.add_argument("--timeout", type=int, default=120)
     args = ap.parse_args()
+    data = Path(args.data)
+    if args.merge:
+        return merge(data, json.loads(Path(args.merge).read_text()))
+    if args.build:
+        subprocess.run(["cargo", "build", "--locked", "--release", "--bin", "satex"], check=True)
+    if not Path(args.satex).exists():
+        sys.exit(f"{args.satex} not found, build it or pass --build")
+    if args.version is None:
+        args.version = re.search(r'^version\s*=\s*"([^"]+)"', Path("Cargo.toml").read_text(), re.M).group(1)
+    if args.commit is None:
+        git = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True)
+        args.commit = git.stdout.strip()
 
     # a line is a document, then `-kernel` for each kernel it is not run under
     lines = [l.split() for l in Path(args.docs).read_text().splitlines() if l.strip()]
@@ -74,12 +101,8 @@ def main():
             print(json.dumps(r), file=sys.stderr, flush=True)
             runs.append(r)
 
-    data = Path(args.data)
-    entries = json.loads(data.read_text()) if data.exists() else []
-    entries = [e for e in entries if e["version"] != args.version]
-    entries.append({"version": args.version, "date": args.date, "commit": args.commit, "runs": runs})
-    data.parent.mkdir(parents=True, exist_ok=True)
-    data.write_text(json.dumps(entries, indent=1) + "\n")
+    merge(data, [{"version": args.version, "date": args.date, "commit": args.commit, "runs": runs}])
+    print(f"wrote {data}", file=sys.stderr)
 
 
 if __name__ == "__main__":

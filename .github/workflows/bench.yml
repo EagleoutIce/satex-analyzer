@@ -29,6 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     container: texlive/texlive:latest
+    outputs:
+      version: ${{ steps.bench.outputs.version }}
     steps:
       - name: Install the build tools
         run: |
@@ -48,10 +50,12 @@ jobs:
       - run: cargo build --locked --release --bin satex
 
       - name: Benchmark
+        id: bench
         env:
           VERSION: ${{ inputs.version || github.event.release.tag_name || 'unreleased' }}
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "version=${VERSION#v}" >> "$GITHUB_OUTPUT"
           python3 scripts/bench.py --satex target/release/satex --version "${VERSION#v}" --commit "$(git rev-parse --short HEAD)" --data bench-data.json
 
       - uses: actions/upload-artifact@v4
@@ -73,20 +77,12 @@ jobs:
           name: bench
       - name: Append the entry
         run: |
-          python3 - <<'EOF'
-          import json, pathlib
-          dst = pathlib.Path("doc/site/bench/data.json")
-          old = json.loads(dst.read_text()) if dst.exists() else []
-          new = json.loads(pathlib.Path("bench-data.json").read_text())
-          keep = {e["version"] for e in new}
-          dst.parent.mkdir(parents=True, exist_ok=True)
-          dst.write_text(json.dumps([e for e in old if e["version"] not in keep] + new, indent=1) + "\n")
-          EOF
+          python3 scripts/bench.py --merge bench-data.json
           rm bench-data.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add doc/site/bench/data.json
-          git diff --cached --quiet || git commit -m "chore(bench): results"
+          git diff --cached --quiet || git commit -m "perf(bench): results for ${{ needs.bench.outputs.version }}"
           git push
           gh workflow run pages.yml --ref main
         env:
