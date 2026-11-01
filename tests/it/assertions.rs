@@ -66,6 +66,18 @@ fn an_assumption_narrows_what_follows() {
     assert!(found.iter().any(|f| f.starts_with("assertion-proved")), "{found:?}");
 }
 
+/// The proof names the range the operand was proved to lie in.
+#[test]
+fn a_proof_shows_the_range_it_rests_on() {
+    let analysis = analyze(
+        "\\countdef\\x=10 \\x=\\pdfuniformdeviate 10\n%\\satex@assume{\\x < 5}\n%\\satex@assert{\\x <= 4}\n\\relax\n"
+            .replace("\\\\", "\\")
+            .as_str(),
+    );
+    let found = outcomes(&analysis).into_iter().find(|f| f.starts_with("assertion-proved")).unwrap_or_default();
+    assert!(found.contains("holds on every path") && found.contains("`\\x` is in ["), "{found}");
+}
+
 /// An assumption false on the path drops it: nothing after it runs there.
 #[test]
 fn a_false_assumption_drops_the_path() {

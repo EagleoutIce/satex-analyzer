@@ -102,6 +102,14 @@ fn outcomes(analysis: &Analysis) -> BTreeMap<Span, BTreeMap<&'static str, Vec<St
     out
 }
 
+/// The path's message with "on every path" after the condition: `c` holds on every path: what it read.
+fn proof(message: &str) -> String {
+    match message.split_once("` holds") {
+        Some((cond, rest)) => format!("{cond}` holds on every path{rest}"),
+        None => format!("{message} on every path"),
+    }
+}
+
 fn first(messages: Option<&Vec<String>>) -> Option<String> {
     let messages = messages?;
     let more = messages.len().saturating_sub(1);
@@ -121,7 +129,7 @@ pub fn verdicts(analysis: &Analysis) -> Vec<(Span, &'static str, String)> {
         let assertion = match (by.contains_key(FAILS), by.contains_key(OPEN), by.contains_key(HOLDS)) {
             (true, ..) => first(by.get(FAILS)).map(|m| ("assertion-refuted", m)),
             (_, true, _) => first(by.get(OPEN)).map(|m| ("assertion-unknown", m)),
-            (.., true) => first(by.get(HOLDS)).map(|m| ("assertion-proved", format!("{m} on every path"))),
+            (.., true) => first(by.get(HOLDS)).map(|m| ("assertion-proved", proof(&m))),
             _ => unreached().map(|m| ("assertion-unknown", m)),
         };
         let assumed = by.get(ASSUMED).map(|m| ("assumption-made", m.join(". ")));

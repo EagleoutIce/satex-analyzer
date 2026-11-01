@@ -118,7 +118,7 @@ impl Machine<'_> {
     fn assert(&mut self, span: Span, text: &str) {
         let Some(atoms) = self.condition(span, text) else { return };
         let (code, message) = match combine(&atoms) {
-            Some(true) => (HOLDS, format!("`{text}` holds")),
+            Some(true) => (HOLDS, format!("`{text}` holds{}", self.witness(&atoms))),
             Some(false) if self.exact_path() => (FAILS, format!("`{text}` fails{}", self.witness(&atoms))),
             Some(false) => {
                 (OPEN, format!("`{text}` fails on a path the analysis approximated{}", self.witness(&atoms)))
