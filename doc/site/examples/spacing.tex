@@ -1,6 +1,12 @@
 \documentclass{article}
 \usepackage{amsmath}
 \usepackage{amsmath}
+\usepackage{tikz}
 \begin{document}
 See pages 10-12, e.g. the first table of the office files.
+\begin{tikzpicture}
+  \node (a) {\TeX{} file};
+  \node (b) [right=of a] {findings};
+  \draw[->] (a) -- (b);
+\end{tikzpicture}
 \end{document}

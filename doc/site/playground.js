@@ -874,8 +874,23 @@
     if (!b) return;
     const id = b.dataset.id;
     if (!outlineFolded.delete(id)) outlineFolded.add(id);
-    outline();
+    applyFolds();
   });
+  /** Hides the rows under a folded section and flips the fold buttons, on the rows already there. */
+  function applyFolds() {
+    const stack = [];
+    for (const li of outlineBody.querySelectorAll('li.o-sec[data-id]')) {
+      const depth = +li.style.getPropertyValue('--d');
+      while (stack.length && stack.at(-1)[0] >= depth) stack.pop();
+      li.hidden = stack.some(([, id]) => outlineFolded.has(id));
+      const folded = outlineFolded.has(li.dataset.id), button = li.firstElementChild;
+      if (button?.classList.contains('o-fold')) {
+        button.setAttribute('aria-expanded', String(!folded));
+        button.title = `${folded ? 'show' : 'hide'} the subsections`;
+      }
+      stack.push([depth, li.dataset.id]);
+    }
+  }
   const LEVELS = ['part', 'chapter', 'section', 'subsection', 'subsubsection', 'paragraph', 'subparagraph'];
   async function outline() {
     // an edit in an included file leaves the held analysis of the root stale: a config forces a fresh one
@@ -914,7 +929,7 @@
       while (stack.length && stack.at(-1)[0] >= depth) stack.pop();
       const hidden = stack.some(([, f]) => outlineFolded.has(f)), folded = outlineFolded.has(id);
       stack.push([depth, id]);
-      return `<li class="o-sec${kids ? ' o-parent' : ''}" style="--d:${depth}"${hidden ? ' hidden' : ''}>${kids ? `<button type="button" class="o-fold" data-id="${escape(id)}" aria-expanded="${!folded}" title="${folded ? 'show' : 'hide'} the subsections"></button>` : ''}` + (body
+      return `<li class="o-sec${kids ? ' o-parent' : ''}" data-id="${escape(id)}" style="--d:${depth}"${hidden ? ' hidden' : ''}>${kids ? `<button type="button" class="o-fold" data-id="${escape(id)}" aria-expanded="${!folded}" title="${folded ? 'show' : 'hide'} the subsections"></button>` : ''}` + (body
       ? `<details class="o-row" data-id="${escape(id)}"${outlineOpen.has(id) ? ' open' : ''}><summary>${head}</summary>${body}</details>` : `<div class="o-row o-flat">${head}</div>`) + '</li>';
     };
     const chips = (list) => list.length ? `<span class="o-labels">${list.join('')}</span>` : '';

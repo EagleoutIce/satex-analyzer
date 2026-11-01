@@ -951,7 +951,7 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 /* the landing page: open bands instead of boxes, a rotating claim, tabbed contrasts */
 .claim { display: grid; justify-items: center; gap: .1rem; margin: clamp(1.4rem, 4vh, 2.4rem) auto .2rem; max-width: 46rem; text-align: center; }
 .claim-lead { font-size: .98rem; color: color-mix(in srgb, var(--fg) 72%, var(--bg)); text-wrap: balance; }
-.claim-rot { display: grid; width: 100%; min-height: 2.6em; align-items: center; font-size: clamp(.95rem, 2.6vw, 1.45rem); font-weight: 600; letter-spacing: -.01em; }
+.claim-rot { display: grid; width: 100%; min-height: calc(1.6em + 5.8rem); align-items: start; font-size: clamp(.95rem, 2.6vw, 1.45rem); font-weight: 600; letter-spacing: -.01em; }
 @media (min-width: 700px) { .claim-rot { white-space: nowrap; } }
 .claim-rot code { font: inherit; font-family: ui-monospace, Menlo, monospace; font-weight: 600; background: none; padding: 0; color: inherit; }
 .claim-dots { display: flex; justify-content: center; gap: .3rem; margin: .7rem 0 1.6rem; }
@@ -1094,10 +1094,11 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .draw-px { flex: none; font: 600 .6rem ui-monospace, Menlo, monospace; color: var(--muted); border: 1px solid var(--border); border-radius: 3px; padding: 0 .2rem; margin-left: .3rem; }
 
 /* the claim: erased as a selection, its sketch in the flow under it (the dots move down only while one shows), its effects in its words */
-.claim-rot > span.selected { background: color-mix(in srgb, var(--accent) 30%, transparent); border-radius: 3px; }
 .claim-rot > span.shows .claim-complete { opacity: 1; transform: none; }
+.claim-rot .cc-w { display: inline-block; white-space: nowrap; }
+@media (max-width: 699px) { .claim-rot { min-height: calc(4.8em + 5.8rem); } }
 .claim-rot .cc { display: inline-flex; flex-direction: column; align-items: center; line-height: 1; }
-.claim-rot .cc sub { font: 600 .42em ui-monospace, Menlo, monospace; color: var(--muted); opacity: 0; transform: translateY(-.3em); transition: opacity .4s var(--ease), transform .4s var(--ease); }
+.claim-rot .cc sub { font: 600 .48em ui-monospace, Menlo, monospace; color: var(--muted); opacity: 0; transform: translateY(-.3em); transition: opacity .4s var(--ease), transform .4s var(--ease); }
 .claim-rot .cc-hot sub { color: var(--accent); }
 .claim-rot > span.shows .cc sub { opacity: 1; transform: none; }
 .claim-rot > span.shows .cc:nth-child(n) sub { transition-delay: calc(var(--i, 0) * 40ms); }
@@ -1159,3 +1160,37 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
   .draw-acts:not(.open) > :not(.draw-acts-toggle) { display: none; }
   .draw-acts.open { flex-wrap: wrap; justify-content: flex-end; max-width: 4.6rem; }
 }
+/* the draw page's header: icon buttons, search and dropdowns share one height, border, radius, font and chevron */
+.draw-top { --ctl: 2rem; --chev: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); }
+.draw-top .draw-tools .pill, .draw-top .search input, .draw-top select.dropdown, .draw-top #draw-pkgs {
+  height: var(--ctl); margin: 0; border: 1px solid var(--border); border-radius: 999px; background-color: var(--sunk); color: var(--fg);
+  font: 400 .8rem/1 system-ui, sans-serif; }
+.draw-top .draw-tools .pill { width: var(--ctl); padding: 0; justify-content: center; }
+.draw-top select.dropdown, .draw-top #draw-pkgs { max-width: 9.5rem; padding: 0 1.6rem 0 .75rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  background-image: var(--chev); background-position: calc(100% - .95rem) 55%, calc(100% - .65rem) 55%; background-size: .3rem .3rem; background-repeat: no-repeat; }
+.draw-top .search input { padding: 0 .9rem 0 2rem; font-size: .85rem; }
+.draw-top :is(.pill, select.dropdown, #draw-pkgs):hover, .draw-top #draw-pkgs[aria-expanded=true] { border-color: var(--accent); }
+@media (max-width: 36rem) { .draw-top select.dropdown, .draw-top #draw-pkgs { max-width: none; } }
+/* a row's category filters by it */
+button.draw-cat { border: 0; font: inherit; font-size: .68rem; cursor: pointer; } button.draw-cat:hover { color: var(--accent); }
+/* a look-alike's name beside its glyph where the list is wide */
+.draw-alike-glyph { gap: .25rem; grid-auto-flow: column; } .draw-alike-name { display: none; font-size: .7rem; color: var(--muted); font-family: var(--mono, monospace); }
+@container drawlist (min-width: 36rem) { .draw-alike-name { display: inline; } }
+/* the draw widget's scale: every spacing, text size, chip and glyph size below comes from these */
+:is(.draw-solo, .draw-dialog, #draw) { --d-1: .25rem; --d-2: .5rem; --d-3: .75rem; --d-text: .82rem; --d-small: .72rem; --d-tiny: .66rem;
+  --d-glyph: 1.5rem; --d-glyph-s: 1.15rem; --d-chip-h: 1.25rem; --d-chip-bg: color-mix(in srgb, var(--fg) 6%, transparent); }
+.draw-list { font-size: var(--d-text); }
+.draw-row > .draw-glyph, .draw-more li > .draw-glyph { font-size: var(--d-glyph); } .draw-row > .draw-bmp, .draw-more li > .draw-bmp { height: var(--d-glyph); }
+.draw-what { gap: var(--d-2); } .draw-what .lib-pkg { font-size: var(--d-small); }
+/* chips: category, alias count, px mark */
+.draw-cat, .draw-more-pill, .draw-px { display: inline-flex; align-items: center; height: var(--d-chip-h); padding: 0 var(--d-2); border-radius: 999px;
+  border: 1px solid transparent; background: var(--d-chip-bg); color: var(--muted); font: 400 var(--d-tiny)/1 system-ui, sans-serif; }
+.draw-more-pill { border-color: var(--border); background: none; font-weight: 600; } .draw-more-pill[aria-expanded=true] { color: var(--accent); border-color: var(--accent); }
+/* under the name: a name's other packages' glyphs and its look-alikes, one wrapping line of equal boxes */
+.draw-under { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--d-1); margin: var(--d-1) 0 var(--d-2); }
+.draw-under .draw-alike, .draw-under .draw-fonts { display: contents; }
+.draw-under .draw-fonts > .draw-glyph, .draw-alike-glyph { display: inline-grid; grid-auto-flow: column; place-items: center; gap: var(--d-1); min-width: calc(var(--d-glyph-s) + var(--d-2));
+  height: calc(var(--d-glyph-s) + var(--d-2)); padding: 0 var(--d-1); margin: 0; border: 1px solid var(--border); border-radius: 6px; background: none; color: inherit; opacity: 1; }
+.draw-under .draw-fonts > .draw-glyph { width: auto; font-size: var(--d-glyph-s); border-style: dashed; }
+.draw-alike-glyph .draw-glyph { width: auto; font-size: var(--d-glyph-s); } .draw-alike-glyph .draw-bmp, .draw-under .draw-fonts > .draw-bmp { width: var(--d-glyph-s); height: var(--d-glyph-s); }
+.draw-alike-name { font-size: var(--d-tiny); }

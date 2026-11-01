@@ -1,5 +1,5 @@
 # The examples the landing page shows, in this order: at most four. The playground offers every one.
 macros.tex
-leapyear.tex
 thesis.tex
 spacing.tex
+leapyear.tex
