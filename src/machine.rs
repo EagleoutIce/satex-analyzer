@@ -6283,6 +6283,10 @@ will look undefined",
             };
             // A trial run reads no file of the document: no share of it is done.
             let (read, all) = if probing.is_some() { (0, 0) } else { self.frame_read(frame).unwrap_or((1, 1)) };
+            // Past the last line there is no share left to show: the steps show it moving.
+            let past = all > 0 && read >= all && probing.is_none();
+            let (read, all) = if past { (0, 0) } else { (read, all) };
+            let label = if past { format!("{label} · {} steps", compact_count(self.out.steps)) } else { label };
             let limit = self.cfg.limits.seconds;
             let clock = (limit > 0).then(|| (self.started.elapsed().as_secs(), limit));
             // Lines read so far: the furthest line seen in every file.
