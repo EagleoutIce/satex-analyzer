@@ -17,7 +17,8 @@
     try { sessionStorage.setItem('satex-note', 'The stored layout, settings and caches did not fit this version of the playground: they were reset.'); } catch {}
     location.reload();
   };
-  addEventListener('error', (e) => { if (!booted) recover(e.error ?? e.message); });
+  // the browser's layout notice (`ResizeObserver loop …`) is no failure: it carries no error object
+  addEventListener('error', (e) => { if (!booted && e.error) recover(e.error); });
   addEventListener('unhandledrejection', (e) => { if (!booted) recover(e.reason); });
   try { const note = sessionStorage.getItem('satex-note'); if (note) { sessionStorage.removeItem('satex-note'); setTimeout(() => self.satexToast?.(note) ?? console.warn(note), 2000); } } catch {}
   window.satexTypeList = manifest.completion?.types;
@@ -176,7 +177,10 @@
     }, keep);
   }
   // The worker's code comes with the page: file:// pages cannot start a worker from a file.
-  const worker = new Worker(URL.createObjectURL(new Blob([manifest.worker], { type: 'text/javascript' })));
+  const newWorker = () => new Worker(URL.createObjectURL(new Blob([manifest.worker], { type: 'text/javascript' })));
+  let worker = newWorker();
+  worker.onmessage = (e) => onWorkerMessage(e);
+  worker.onerror = (e) => onWorkerError(e);
   const escape = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   const SEVERITY = ['', 'error', 'warning', 'info', 'hint'];
   const sev = (d) => SEVERITY[d.severity] || 'info';
@@ -297,12 +301,65 @@
   const waiting = {}; // reply type -> resolver; runs, reads and kernel loads go one at a time, in order
   const REPLY = { run: 'result', bundle: 'bundle', bundles: 'bundle', init: 'ready', read: 'file', caches: 'caches', uncache: 'caches' };
   let line_ = Promise.resolve();
-  // a dead worker fails its waiters instead of hanging them
-  worker.onerror = (e) => {
+  // a dead worker fails its waiters instead of hanging them, and is replaced
+  function onWorkerError(e) {
     e.preventDefault?.();
-    const error = new Error(e.message || 'the worker stopped');
+    failWaiters(new Error(e.message || 'the worker stopped'));
+    recoverWorker(e.message || 'the worker stopped');
+  }
+  function failWaiters(error) {
     for (const [k, w] of Object.entries(waiting)) { delete waiting[k]; w.reject(error); }
-  };
+  }
+  /** How long the worker may stay silent while it owes an answer before it counts as stuck. A slow run can be
+   * silent for long, so each restart for silence doubles it until a run finishes. */
+  const HANG_MS = 120000;
+  let hang = HANG_MS;
+  const hangLimit = () => self.satexHangMs ?? hang;
+  let lastHeard = performance.now(), recovering = false;
+  /** A stuck or dead worker is replaced: the new one gets the kernel, bundles and files the old one had,
+   * then the language server starts again on them. What the page shows from the last finished run stays. */
+  async function recoverWorker(why, note = `The language server stopped (${why}). Restarting it, the findings shown are from its last run.`) {
+    if (recovering || !booted) return;
+    recovering = true;
+    if (why.startsWith('no answer')) hang *= 2;
+    const old = worker;
+    try {
+      old.terminate();
+      failWaiters(new Error(why));
+      for (const p of pending.values()) p.resolve(null);
+      pending.clear();
+      order.length = 0; running = 0;
+      if (!mirrorable) { busy('Stopped', 'The worker stopped. Reload the page to start it again.'); status.dataset.done = 'error'; return; }
+      toast(note);
+      busy('Restarting', 'Restarting the language server…');
+      const w = newWorker();
+      const replies = {};
+      w.onmessage = ({ data }) => (data.type === 'error' ? replies[REPLY[data.of]]?.reject(new Error(data.message.split('\n')[0])) : replies[data.type]?.resolve(data));
+      const send = (msg) => new Promise((resolve, reject) => {
+        const reply = REPLY[msg.type];
+        if (reply) replies[reply] = { resolve, reject }; else resolve(null);
+        w.postMessage(msg);
+      });
+      for (const msg of mirrored) await send(msg);
+      await send({ type: 'project', dir: runnerFiles.dir, files: runnerFiles.files, replace: true });
+      w.onmessage = (e) => onWorkerMessage(e);
+      w.onerror = (e) => onWorkerError(e);
+      worker = w;
+      lastHeard = performance.now();
+      recovering = false;
+      synced = 0;
+      await restart();
+    } catch (e) {
+      busy('Stopped', `The language server could not be restarted: ${e.message}`);
+      status.dataset.done = 'error';
+    } finally {
+      recovering = false;
+    }
+  }
+  setInterval(() => {
+    if (!recovering && performance.now() - lastHeard > hangLimit() && (running > 0 || pending.size || Object.keys(waiting).length))
+      recoverWorker(`no answer for ${Math.round(hangLimit() / 1000)} s`);
+  }, 2000);
   const ask = (msg, transfer = []) => {
     const asked = line_.then(() => new Promise((resolve, reject) => {
       waiting[REPLY[msg.type]] = { resolve, reject };
@@ -470,7 +527,20 @@
       analyze(); explainSoon();
     }
   }
-  function analyze() { checking(); lsp('satex/analyze', {}, true); }
+  /** An analysis wanted while one runs is not queued behind it in the worker: one follows it, on the newest text,
+   * however many edits came meanwhile (the worker cannot stop a run, so the stale ones are never started). */
+  let analysisQueued = false;
+  function analyze() {
+    if (running > 0) { analysisQueued = true; return; }
+    checking();
+    lsp('satex/analyze', {}, true);
+  }
+  function drainAnalysis() {
+    if (running === 0) hang = HANG_MS;
+    if (running > 0 || !analysisQueued) return;
+    analysisQueued = false;
+    analyze();
+  }
   /** A running check shows in the status bar like any other work (`busy`); the worker reports how much of the file is read once the engine says. */
   const phase = (text, done = null) => text ? busy('Analyzing', text[0].toUpperCase() + text.slice(1), { done }) : idle();
   function checking() { phase(`Analyzing ${state.file}…`); checkStart = performance.now(); }
@@ -965,8 +1035,13 @@
     if (bib.length || where) html.push(row('bibliography', 0, `<a href="#" class="o-go" ${at(where ?? bib[0])}><span class="o-kind">bibliography</span>${bib.length} entr${bib.length === 1 ? 'y' : 'ies'}</a>`,
       chips(bib.map((r) => `<span class="o-label o-bib" title="${escape((r.file ?? '') + ':' + r.line)}">${escape(r.key)}</span>`))));
     $('outline-count').textContent = String(sections.length || '');
-    outlineBody.innerHTML = html.length ? `<ul class="outline-list">${html.join('')}</ul>` : '<p class="muted">No sections, labels or bibliography yet.</p>';
+    const outlineHtml = html.length ? `<ul class="outline-list">${html.join('')}</ul>` : '<p class="muted">No sections, labels or bibliography yet.</p>';
+    // an unchanged outline keeps its DOM: no rebuild, no lost hover or scroll
+    if (outlineHtml === outlineShown) return;
+    outlineShown = outlineHtml;
+    outlineBody.innerHTML = outlineHtml;
   }
+  let outlineShown = '';
   outlineBody.addEventListener('click', (e) => {
     const a = e.target.closest('.o-go');
     if (!a) return;
@@ -3801,7 +3876,8 @@
     status.title = names.join(', ');
   }
 
-  worker.onmessage = async ({ data }) => {
+  async function onWorkerMessage({ data }) {
+    lastHeard = performance.now();
     if (data.type === 'lsp') {
       running -= order.shift() ? 1 : 0;
       for (const m of data.out) {
@@ -3838,6 +3914,7 @@
           fetchMissing(unresolved);
         }
       }
+      drainAnalysis();
     } else if (data.type === 'status') {
       traceLive?.(data);
       if (data.text && act.phase === 'Analyzing') phase(data.text, data.total ? Math.min(data.reached / data.total, 1) : null);
@@ -3848,12 +3925,13 @@
       running -= order.shift() ? 1 : 0;
       for (const p of pending.values()) p.resolve(null);
       pending.clear();
+      drainAnalysis();
     } else if (data.type === 'error') {
       waiting[REPLY[data.of]]?.reject(new Error(data.message.split('\n')[0]));
     } else {
       waiting[data.type]?.resolve(data);
     }
-  };
+  }
 
   /** A build file's bytes on file://, where fetch fails: build.py's `.js` copy sets them as base64. */
   async function local(file) {
