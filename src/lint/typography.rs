@@ -86,9 +86,6 @@ Fix by loading `\\usepackage{microtype}`.",
     },
 ];
 
-/// The kernel's roman family, which a font package replaces (fntguide § 2.3).
-const KERNEL_ROMAN: &str = "cmr";
-
 /// The characters a document set in one NFSS shape: how many there are,
 /// where the first one stands, and the lines they cover.
 #[derive(Default)]
@@ -104,6 +101,7 @@ struct Set {
 /// `family` when one is asked for (fntguide § 2).
 fn set_in(report: &Report, view: &View, encoding: &str, family: Option<&str>) -> Set {
     let index = report.index();
+    let roman = &report.analysis().settings.conventions.fonts.roman;
     let mut out = Set::default();
     for i in 0..view.len() {
         let Some(font) = view.font(i) else { continue };
@@ -121,7 +119,7 @@ fn set_in(report: &Report, view: &View, encoding: &str, family: Option<&str>) ->
         out.count += 1;
         out.first.get_or_insert(span);
         out.lines.insert((span.file, span.line));
-        out.kernel_roman |= &*font.family == KERNEL_ROMAN;
+        out.kernel_roman |= &*font.family == roman.as_str();
     }
     out
 }
@@ -178,7 +176,7 @@ fn computer_modern_in_t1(report: &mut Report) {
     if crate::lint::shared::loaded(analysis, "lmodern") {
         return;
     }
-    let ec = set_in(report, report.text(), "T1", Some(KERNEL_ROMAN));
+    let ec = set_in(report, report.text(), "T1", Some(&analysis.settings.conventions.fonts.roman));
     let Some(first) = ec.first else { return };
     let span = document_start(analysis).unwrap_or(first);
     let edits = report.edits().ensure_package("lmodern");

@@ -208,7 +208,14 @@ impl<'a> Fonts<'a> {
 /// The shapes LaTeX's font selection gives a slanted face: `\itdefault` and
 /// `\sldefault` (fntguide § 2.5), read from the kernel rather than assumed.
 fn slanted_shapes(analysis: &Analysis) -> Vec<String> {
-    ["itdefault", "sldefault"].iter().filter_map(|name| crate::lint::shared::macro_text(analysis, name)).collect()
+    analysis
+        .settings
+        .conventions
+        .fonts
+        .slanted
+        .iter()
+        .filter_map(|name| crate::lint::shared::macro_text(analysis, name))
+        .collect()
 }
 
 /// A width in scaled points, as `pt` (tex.web § 101: 65536 sp to the point).
@@ -452,7 +459,8 @@ fn accent_on_dotted_letter(report: &mut Report) {
     let analysis = report.analysis;
     let sym = |name: &str| analysis.interner.lookup(name);
     let protect = sym("protect");
-    let math_accents: Vec<Sym> = ["mathaccent", "Umathaccent"].iter().filter_map(|name| sym(name)).collect();
+    let math_accents: Vec<Sym> =
+        analysis.settings.conventions.math.accents.iter().filter_map(|name| sym(name)).collect();
     let view = report.text();
     let ours = |span: Span| view.document(span.file);
     let mut sites: Vec<(Span, bool)> = analysis

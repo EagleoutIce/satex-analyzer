@@ -80,10 +80,6 @@ too close to the text.  A table of fewer rows than `lints.table-rules.rows`
     },
 ];
 
-/// The environments read as tables, and how many arguments come before the
-/// column specification.
-const TABLES: [(&str, usize); 5] = [("tabular", 0), ("tabular*", 1), ("tabularx", 1), ("longtable", 0), ("array", 0)];
-
 /// One table as its source has it.
 struct Table {
     begin: Span,
@@ -112,7 +108,7 @@ fn tables(report: &Report) -> Vec<Table> {
         if occurrence.kind != OccKind::BeginEnvironment || !occurrence.certain {
             continue;
         }
-        let Some((_, skip)) = TABLES.iter().find(|(name, _)| *name == occurrence.key) else { continue };
+        let Some(skip) = analysis.settings.conventions.tables.environments.get(&occurrence.key) else { continue };
         let Some((_, text)) = report.edits().text(occurrence.span.file) else { continue };
         if let Some(table) = read(&text, occurrence.span, *skip) {
             out.push(table);
@@ -263,7 +259,7 @@ fn columns(spec: &str, depth: usize) -> Option<(Vec<char>, bool)> {
 
 /// A cell that is a number: digits, a decimal mark and more digits, a sign,
 /// a unit after it; `$…$` around it as math.
-fn number(cell: &str) -> Option<Number> {
+fn number(cell: &str, unit_length: usize) -> Option<Number> {
     let cell = cell.strip_prefix('$').and_then(|c| c.strip_suffix('$')).unwrap_or(cell).trim();
     let cell = cell.strip_prefix(['-', '+', '\u{2212}']).unwrap_or(cell);
     let digits = cell.chars().take_while(char::is_ascii_digit).count();
@@ -282,7 +278,7 @@ fn number(cell: &str) -> Option<Number> {
     let rest = rest.trim_start_matches([' ', '~']).trim_start_matches("\\,").trim_start_matches("\\ ").trim();
     let unit = (!rest.is_empty()).then(|| rest.replace("\\%", "%"));
     let unit_like =
-        |u: &str| u.chars().all(|c| c.is_alphabetic() || "%°/^\u{b5}".contains(c)) && u.chars().count() <= 6;
+        |u: &str| u.chars().all(|c| c.is_alphabetic() || "%°/^\u{b5}".contains(c)) && u.chars().count() <= unit_length;
     match &unit {
         Some(u) if !unit_like(u) => None,
         _ => Some(Number { digits, decimals, unit }),
@@ -293,7 +289,8 @@ fn number(cell: &str) -> Option<Number> {
 /// first stands, and its header. A column is one of numbers when, below the
 /// rows heading it, every cell that has text is a number, two or more: two
 /// can already stand apart.
-fn number_columns(table: &Table) -> Vec<(usize, char, Vec<Number>, Pos, String)> {
+fn number_columns(table: &Table, conv: &crate::config::Tables) -> Vec<(usize, char, Vec<Number>, Pos, String)> {
+    let number = |text: &str| number(text, conv.unit_length);
     let mut out = Vec::new();
     for (j, &kind) in table.columns.iter().enumerate() {
         let cells: Vec<&(String, Pos)> = table.rows.iter().filter_map(|row| row.get(j)).collect();
@@ -301,7 +298,7 @@ fn number_columns(table: &Table) -> Vec<(usize, char, Vec<Number>, Pos, String)>
         let Some(first) = first else { continue };
         let numbers: Option<Vec<Number>> =
             cells[first..].iter().filter(|(text, _)| !text.is_empty()).map(|(text, _)| number(text)).collect();
-        if let Some(numbers) = numbers.filter(|n| n.len() >= 2) {
+        if let Some(numbers) = numbers.filter(|n| n.len() >= conv.numbers) {
             let header = cells[..first].iter().rev().find(|(text, _)| !text.is_empty());
             let header = header.map_or("Header", |(text, _)| text.as_str()).to_string();
             out.push((j + 1, kind, numbers, cells[first].1, header));
@@ -321,7 +318,9 @@ fn all_equal<T: PartialEq>(mut values: impl Iterator<Item = T>) -> bool {
 
 fn numbers_not_aligned(report: &mut Report) {
     for table in tables(report) {
-        for (column, kind, numbers, at, header) in number_columns(&table) {
+        for (column, kind, numbers, at, header) in
+            number_columns(&table, &report.analysis().settings.conventions.tables)
+        {
             if !matches!(kind, 'l' | 'c' | 'r' | 'p' | 'X') {
                 continue;
             }
@@ -356,7 +355,7 @@ fn numbers_not_aligned(report: &mut Report) {
 
 fn inconsistent_precision(report: &mut Report) {
     for table in tables(report) {
-        for (column, _, numbers, at, _) in number_columns(&table) {
+        for (column, _, numbers, at, _) in number_columns(&table, &report.analysis().settings.conventions.tables) {
             let places = numbers.iter().map(|n| n.decimals.unwrap_or(0));
             let (low, high) = (places.clone().min().unwrap_or(0), places.max().unwrap_or(0));
             if low == high {
@@ -376,7 +375,7 @@ fn inconsistent_precision(report: &mut Report) {
 
 fn unit_in_cells(report: &mut Report) {
     for table in tables(report) {
-        for (column, _, numbers, at, header) in number_columns(&table) {
+        for (column, _, numbers, at, header) in number_columns(&table, &report.analysis().settings.conventions.tables) {
             let Some(unit) = numbers[0].unit.clone() else { continue };
             if numbers.iter().all(|n| n.unit.as_deref() == Some(unit.as_str())) {
                 report.add(
@@ -416,6 +415,7 @@ mod tests {
     #[test]
     fn a_cell_is_a_number_with_its_decimals_and_unit() {
         let n = |d, decimals, unit: Option<&str>| Some(Number { digits: d, decimals, unit: unit.map(str::to_string) });
+        let number = |cell| number(cell, crate::config::Tables::default().unit_length);
         assert_eq!(number("12.5"), n(2, Some(1), None));
         assert_eq!(number("$-3,25$"), n(1, Some(2), None));
         assert_eq!(number("4 ms"), n(1, None, Some("ms")));

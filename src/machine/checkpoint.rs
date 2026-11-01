@@ -310,7 +310,7 @@ fn setup_key(cfg: &Config, source: &str, path: &Path) -> u64 {
     if cfg.plugins.discovery {
         format!("{:?}", crate::plugin::discovery::scan_with(&base, cfg.limits.thread_count())).hash(&mut hasher);
     }
-    format!("{:?}", crate::plugin::magic::scan(source)).hash(&mut hasher);
+    format!("{:?}", crate::plugin::magic::scan_with(source, &cfg.magic)).hash(&mut hasher);
     format!("{:?}", crate::plugin::Kernel::detect(source)).hash(&mut hasher);
     format!("{:?}", crate::config::Profile::of_name(Some(path), source)).hash(&mut hasher);
     source.lines().next().hash(&mut hasher);

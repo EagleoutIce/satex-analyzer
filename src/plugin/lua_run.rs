@@ -63,12 +63,28 @@ const DISPATCH: &str = "satex.dispatch";
 const FUNCTIONS: &str = "satex.functions";
 /// Lua instructions one step of `limits.steps` pays for.
 const INSTRUCTIONS_A_STEP: u32 = 1000;
-/// Steps one run may take at most, whatever the limit leaves.
-const RUN_STEPS: u64 = 200_000;
-const MEMORY: u64 = 256 << 20;
-/// How deep runs nest (Lua scanning TeX that runs Lua) and modules load.
-const RUN_DEPTH: usize = 16;
-const MODULE_DEPTH: usize = 8;
+
+/// `lua:` in `satex.yaml`: whether and how far `\directlua` code runs.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LuaConfig {
+    /// Run the code. Off, every run's result is unknown.
+    pub run: bool,
+    /// Steps one run may take at most, whatever `limits.steps` leaves.
+    pub steps: u64,
+    /// The state's memory, at most a quarter of `limits.memory`. A file
+    /// read is at most a quarter of it.
+    pub memory: bytesize::ByteSize,
+    /// How deep runs nest (Lua scanning TeX that runs Lua) and modules load.
+    pub depth: usize,
+    pub modules: usize,
+}
+
+impl Default for LuaConfig {
+    fn default() -> LuaConfig {
+        LuaConfig { run: true, steps: 200_000, memory: bytesize::ByteSize::mib(256), depth: 16, modules: 8 }
+    }
+}
 /// Names made for tokens `token.create(n, cmd)` makes without a name.
 const ANONYMOUS: char = '\u{4}';
 
@@ -188,11 +204,11 @@ fn dispatch(lua: &State, k: usize, mut args: MultiValue) -> R<MultiValue> {
 }
 
 /// Sets Lua's library functions, the LuaTeX globals and the prelude up.
-fn new_state(memory: u64) -> R<State> {
+fn new_state(memory: u64, steps: u64) -> R<State> {
     let libs = StdLib::STRING | StdLib::TABLE | StdLib::MATH | StdLib::UTF8 | StdLib::COROUTINE;
     let lua = State::new_with(libs, LuaOptions::new())?;
-    lua.set_app_data(Shared { limit: Cell::new(RUN_STEPS), ..Shared::default() });
-    lua.set_memory_limit(usize::try_from(memory.min(MEMORY)).unwrap_or(usize::MAX))?;
+    lua.set_app_data(Shared { limit: Cell::new(steps), ..Shared::default() });
+    lua.set_memory_limit(usize::try_from(memory).unwrap_or(usize::MAX))?;
     lua.set_hook(HookTriggers::new().every_nth_instruction(INSTRUCTIONS_A_STEP), |lua, _| {
         let shared = lua.app_data_ref::<Shared>().expect("shared");
         shared.used.set(shared.used.get() + 1);
@@ -279,8 +295,8 @@ fn new_state(memory: u64) -> R<State> {
 /// The state of this machine, made on first use.
 fn state(m: &mut Machine) -> Option<State> {
     if m.lua.state.is_none() {
-        let memory = m.cfg.limits.memory.as_u64() / 4;
-        let lua = new_state(memory).ok()?;
+        let memory = (m.cfg.limits.memory.as_u64() / 4).min(m.cfg.lua.memory.as_u64());
+        let lua = new_state(memory, m.cfg.lua.steps).ok()?;
         // The platform the document is built on, as kpathsea lookups assume.
         let kind = match m.out.plugins.platform {
             super::Platform::Linux | super::Platform::Macos => "unix",
@@ -426,7 +442,7 @@ fn enter(
     origin: Option<(String, usize, usize)>,
     work: impl FnOnce(&State) -> R<()>,
 ) -> Option<Vec<Token>> {
-    if m.lua.depth >= RUN_DEPTH {
+    if m.lua.depth >= m.cfg.lua.depth || !m.cfg.lua.run {
         return None;
     }
     let lua = state(m)?;
@@ -439,7 +455,7 @@ fn enter(
         if outer {
             let left = m.cfg.limits.steps.saturating_sub(m.out.steps);
             shared.used.set(0);
-            shared.limit.set(left.min(RUN_STEPS));
+            shared.limit.set(left.min(m.cfg.lua.steps));
         }
         shared.failed.replace(false)
     };
@@ -1297,7 +1313,7 @@ fn read_file<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue) 
     };
     let Some(path) = path else { return ret(lua, (LV::Nil, format!("{name}: No such file or directory"))) };
     match std::fs::metadata(&path) {
-        Ok(meta) if meta.len() <= MEMORY / 4 => {}
+        Ok(meta) if meta.len() <= run.m.cfg.lua.memory.as_u64() / 4 => {}
         _ => return unknown(lua),
     }
     match crate::overlay::read_bytes(path.as_ref()) {
@@ -1342,7 +1358,7 @@ fn loadfile<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue) -
 fn enter_file<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue) -> R<MultiValue> {
     let file = int(lua, &arg(&args, 0))?;
     let mut run = run.borrow_mut();
-    if run.files.len() >= MODULE_DEPTH {
+    if run.files.len() >= run.m.cfg.lua.modules {
         return unknown(lua);
     }
     run.files.push(file as crate::tex::FileId);

@@ -275,7 +275,7 @@ impl Plugins {
         if let Some(engine) = cfg.engine {
             return engine;
         }
-        magic::scan(source)
+        magic::scan_with(source, &cfg.magic)
             .iter()
             .find(|m| m.key.eq_ignore_ascii_case("TeX program"))
             .and_then(|m| Engine::from_program(&m.value))
@@ -284,8 +284,8 @@ impl Plugins {
 
     /// What the source itself says: magic comments, and — since they name the
     /// program — the engine they ask for.
-    pub fn read_magic(&mut self, source: &str) {
-        self.magic = magic::scan(source);
+    pub fn read_magic(&mut self, source: &str, cfg: &magic::MagicConfig) {
+        self.magic = magic::scan_with(source, cfg);
         let Some(program) =
             self.magic.iter().find(|m| m.key.eq_ignore_ascii_case("TeX program")).map(|m| m.value.clone())
         else {
@@ -369,14 +369,20 @@ impl Plugins {
 
     /// The auxiliary tools a build runs: what the packages imply, what the
     /// build configuration names, and what the output target needs.
-    pub fn read_tools(&mut self, loads: &[(String, Vec<String>)], project: &Project) {
+    /// biblatex's backend is `% !BIB program`, else `backend`.
+    pub fn read_tools(&mut self, loads: &[(String, Vec<String>)], project: &Project, backend: bib::Backend) {
+        let magic = self.magic.iter().find(|m| m.key.eq_ignore_ascii_case("BIB program"));
+        let backend = magic
+            .and_then(|m| tool::Tool::bib(&m.value))
+            .or(tool::Tool::bib(backend.as_str()))
+            .unwrap_or(tool::Tool::Biber);
         let add = |tool: tool::Tool, tools: &mut Vec<tool::Tool>| {
             if !tools.contains(&tool) {
                 tools.push(tool);
             }
         };
         for (name, options) in loads {
-            if let Some(tool) = tool::Tool::implied_by(name, options) {
+            if let Some(tool) = tool::Tool::implied_by(name, options, backend) {
                 add(tool, &mut self.tools);
             }
         }

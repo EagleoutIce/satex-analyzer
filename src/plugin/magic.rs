@@ -15,42 +15,38 @@ pub struct Magic {
 /// - BibTeX selection: `% !BIB program = <tool>`
 /// - Arara directives: `% arara: <rule> { <options> }`
 ///
-/// Returns magic comments found only in the leading comment block plus any
-/// line matching the pattern, in order. No execution.
+/// Returns them in order. No execution.
 pub fn scan(source: &str) -> Vec<Magic> {
-    let mut results = Vec::new();
-    let mut non_comment_seen = false;
-
-    for (line_num, line) in source.lines().enumerate() {
-        let line_idx = line_num + 1;
-        let trimmed = line.trim();
-
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        if !trimmed.starts_with('%') {
-            non_comment_seen = true;
-            continue;
-        }
-
-        let comment_content = &trimmed[1..].trim_start();
-
-        if non_comment_seen && !is_magic_pattern(comment_content) {
-            continue;
-        }
-
-        if let Some((key, value)) = parse_magic_comment(comment_content) {
-            results.push(Magic { key, value, line: line_idx });
-        }
-    }
-
-    results
+    scan_with(source, &MagicConfig::default())
 }
 
-/// Check if a comment line matches a known magic pattern.
-fn is_magic_pattern(content: &str) -> bool {
-    directive(content, "!TeX ").is_some() || directive(content, "!BIB ").is_some() || content.starts_with("arara:")
+/// `magic:` in `satex.yaml`: which comments are magic.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MagicConfig {
+    /// Read `% arara:` directives as the build's steps.
+    pub arara: bool,
+    /// The heads of `key = value` comments, matched ignoring case: `!TeX`
+    /// gives `% !TeX program = lualatex` the key `TeX program`.
+    pub prefixes: Vec<String>,
+}
+
+impl Default for MagicConfig {
+    fn default() -> MagicConfig {
+        MagicConfig { arara: true, prefixes: vec!["!TeX".into(), "!BIB".into()] }
+    }
+}
+
+/// [`scan`] with the comments `cfg` makes magic.
+pub fn scan_with(source: &str, cfg: &MagicConfig) -> Vec<Magic> {
+    source
+        .lines()
+        .enumerate()
+        .filter_map(|(i, line)| {
+            let (key, value) = parse_magic_comment(line.trim().strip_prefix('%')?.trim_start(), cfg)?;
+            Some(Magic { key, value, line: i + 1 })
+        })
+        .collect()
 }
 
 /// `content` after `prefix`, ignoring case: editors write `!TeX`, `!TEX` and
@@ -60,32 +56,20 @@ fn directive<'a>(content: &'a str, prefix: &str) -> Option<&'a str> {
     head.eq_ignore_ascii_case(prefix).then(|| &content[prefix.len()..])
 }
 
-/// Parse a magic comment line into (key, value) if it matches a known pattern.
-fn parse_magic_comment(content: &str) -> Option<(String, String)> {
-    if let Some(rest) = directive(content, "!TeX ")
-        && let Some((key, value)) = rest.split_once('=')
-    {
-        // TeXShop's `TS-program` is TeXworks' `program`.
-        let key = key.trim();
-        let key = if key.eq_ignore_ascii_case("TS-program") { "program" } else { key };
-        let value = value.trim();
-        return Some((format!("TeX {}", key), value.to_string()));
+/// A magic comment's key and value, if `content` is one `cfg` knows.
+fn parse_magic_comment(content: &str, cfg: &MagicConfig) -> Option<(String, String)> {
+    for prefix in &cfg.prefixes {
+        if let Some(rest) = directive(content, &format!("{prefix} "))
+            && let Some((key, value)) = rest.split_once('=')
+        {
+            // TeXShop's `TS-program` is TeXworks' `program`.
+            let key = key.trim();
+            let key = if key.eq_ignore_ascii_case("TS-program") { "program" } else { key };
+            return Some((format!("{} {key}", prefix.trim_start_matches('!')), value.trim().to_string()));
+        }
     }
-
-    if let Some(rest) = directive(content, "!BIB ")
-        && let Some((key, value)) = rest.split_once('=')
-    {
-        let key = key.trim();
-        let value = value.trim();
-        return Some((format!("BIB {}", key), value.to_string()));
-    }
-
-    if let Some(directive) = content.strip_prefix("arara:") {
-        let directive = directive.trim();
-        return Some(("arara".to_string(), directive.to_string()));
-    }
-
-    None
+    let directive = content.strip_prefix("arara:").filter(|_| cfg.arara)?;
+    Some(("arara".to_string(), directive.trim().to_string()))
 }
 
 #[cfg(test)]
@@ -145,5 +129,13 @@ mod tests {
         assert_eq!(magics.len(), 2);
         assert_eq!(magics[0].key, "TeX program");
         assert_eq!(magics[1].key, "TeX root");
+    }
+
+    #[test]
+    fn arara_off_keeps_tex_program() {
+        let cfg = serde_yaml_ng::from_str::<crate::config::Config>("magic: {arara: false}").unwrap().magic;
+        let magics = scan_with("% arara: pdflatex\n% !TeX program = lualatex\n", &cfg);
+        assert_eq!(magics.len(), 1);
+        assert_eq!(magics[0].key, "TeX program");
     }
 }

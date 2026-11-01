@@ -2792,7 +2792,7 @@ impl<'a> Machine<'a> {
         }
         m.out.plugins.read_build(&m.cfg, &m.out.project, path);
         if m.cfg.plugins.magic {
-            m.out.plugins.read_magic(source);
+            m.out.plugins.read_magic(source, &m.cfg.magic);
         }
         m.out.plugins.read_shell_escape(&m.cfg, &m.out.project);
         m.out.plugins.read_kernel(&m.cfg, source);
@@ -2912,7 +2912,7 @@ impl<'a> Machine<'a> {
                 .map(|load| (load.name.clone(), load.options.clone()))
                 .collect();
             let project = m.out.project.clone();
-            m.out.plugins.read_tools(&loads, &project);
+            m.out.plugins.read_tools(&loads, &project, m.cfg.bib.backend);
         }
         crate::progress::clear();
         if let Some((key, at)) = m.degraded_at {

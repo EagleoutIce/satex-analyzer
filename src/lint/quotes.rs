@@ -157,17 +157,13 @@ impl Mark {
     }
 }
 
-/// babel's names for the dialects whose quotation marks are the ones `` and
-/// '' set (babel manual, `\selectlanguage`).  Every other language wants
-/// different marks, so the English advice is withheld.
-const ENGLISH: &[&str] =
-    &["english", "american", "USenglish", "canadian", "british", "UKenglish", "australian", "newzealand"];
-
 /// Whether the quotation marks of the language in force are the English
 /// ones.  Without babel the kernel leaves `\languagename` at `english`.
 fn english(analysis: &Analysis) -> bool {
     match macro_text(analysis, "languagename") {
-        Some(name) => ENGLISH.iter().any(|dialect| dialect.eq_ignore_ascii_case(name.trim())),
+        Some(name) => {
+            analysis.settings.conventions.quotes.english.iter().any(|dialect| dialect.eq_ignore_ascii_case(name.trim()))
+        }
         None => true,
     }
 }
@@ -409,7 +405,7 @@ fn quote_ligature(report: &mut Report) {
     let mut findings = Vec::new();
     for mark in marks(view) {
         let n = mark.len();
-        if n < 3 {
+        if n < analysis.settings.conventions.quotes.ligature {
             continue;
         }
         // The outer quotation is the double one, so the thin space goes
@@ -468,7 +464,7 @@ fn csquotes_available(report: &mut Report) {
         first = first.or_else(|| view.span(mark.start));
     }
     let Some(span) = first else { return };
-    let language = ["babel", "polyglossia"].iter().find(|name| loaded(analysis, name));
+    let language = analysis.settings.conventions.quotes.languages.iter().find(|name| loaded(analysis, name));
     let follows = match language {
         Some(package) => format!(", and `\\enquote` sets the marks {package} asks for in the language in force"),
         None => String::new(),

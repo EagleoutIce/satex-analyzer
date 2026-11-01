@@ -70,7 +70,7 @@ paths:  # where kpathsea looks, used after the environment and the project's lat
 at_letter: false  # treat @ as a letter from the start, as .sty files do
   #! affects: precision
   #! example: on: \@ifnextchar reads as one name in a file without \makeatletter
-lint_off: [analysis-imprecision]  # rules that never report, by code or number
+lint_off: [analysis-imprecision, assertion-proved]  # rules that never report, by code or number
   #! affects: output
   #! example: lint_off+: [unused-label]
   #! example: unused labels are no longer reported
@@ -106,6 +106,170 @@ conventions:  # how TeX is usually written, where the text alone does not say
     #! affects: precision
     #! example: definers: ['\defmacro']
     #! example: \defmacro\foo{...} then counts as a definition of \foo
+  signatures:  # what each letter after the : of an expl3 name says of its argument, offered when such a name is typed
+    #! affects: output
+    #! example: add a letter your own package uses in its names
+    N: one token, usually a control sequence
+    n: a braced token list, taken as it is
+    V: the value of a variable, given by its name
+    v: the value of a variable whose name is built as with \csname
+    o: a token list expanded once
+    e: 'a token list expanded fully, # kept'
+    x: a token list expanded fully, as \edef does
+    f: a token list expanded until the first unexpandable token
+    c: a control sequence name, built as with \csname
+    p: 'a parameter text, such as #1#2'
+    T: code run when the test is true
+    F: code run when the test is false
+    w: an argument read to a delimiter of its own
+    D: "do not use: a primitive's wrapper"
+  ties:  # where a tie, ~, belongs and where no space may stand
+    before: ['\ref', '\pageref', '\eqref', '\cite']  # commands a tie belongs in front of
+      #! affects: output
+      #! example: before+: ['\autocite']
+      #! example: Section \autocite{x} then asks for Section~\autocite{x}
+    naming: ['\cref', '\Cref', '\crefrange', '\Crefrange', '\cpageref', '\Cpageref', '\autoref', '\vref', '\Vref', '\vrefrange', '\nameref', '\Nameref']  # references that set the name in front of the number themselves, so no tie goes before them
+      #! affects: output
+      #! example: naming+: ['\zcref']
+    unspaced: ['\index']  # commands no space may stand in front of, beside \label
+      #! affects: output
+      #! example: unspaced+: ['\glsadd']
+    footnote: ['\footnote', '\footnotemark']  # footnote commands, which no space may stand in front of either
+      #! affects: output
+      #! example: footnote+: ['\tablefootnote']
+    hard: ['~', '\nobreakspace']  # what sets a hard space, so two in a row are reported
+      #! affects: output
+      #! example: hard+: ['\nbsp']
+    abbreviations: []  # abbreviations whose period ends no sentence, whatever follows, so they want \ after them
+      #! affects: output
+      #! example: abbreviations: [Dr., Fig., e.g., i.e.]
+      #! example: Dr. Smith then asks for Dr.\ Smith
+  quotes:  # how quotation marks are written
+    english: [english, american, USenglish, canadian, british, UKenglish, australian, newzealand]  # babel's names of the languages that quote with `` and ''
+      #! affects: output
+      #! example: english+: [irish]
+    languages: [babel, polyglossia]  # packages that set the language in force
+      #! affects: output
+      #! example: languages+: [translations]
+    ligature: 3  # quote characters in a row from which a thin space between them is advised
+      #! affects: output
+      #! example: ligature: 4
+      #! range: 2..10
+  units:  # how a quantity is written with siunitx
+    quantity: qty  # the command a quantity is written with
+      #! affects: output
+      #! example: quantity: SI
+      #! example: 5 kg then becomes \SI{5}{\kilo\gram}
+    legacy: SI  # the older name of quantity, used where only it is defined
+      #! affects: output
+      #! example: legacy: SI
+    # prefixes: {k: '\kilo', M: '\mega', da: '\deca', ...}  # SI prefixes with siunitx's macro for each, the SI brochure's table 7
+      #! affects: output
+      #! example: prefixes: {k: '\kilo'}
+    # symbols: {m: '\metre', g: '\gram', Hz: '\hertz', ...}  # unit symbols with siunitx's macro for each, the SI brochure's tables 1 to 4
+      #! affects: output
+      #! example: symbols: {m: '\metre', px: '\pixel'}
+    unprefixed: [min, h, d, ha, '%', °, °C]  # symbols no prefix may stand in front of
+      #! affects: output
+      #! example: unprefixed+: [px]
+    plural: 3  # digits from which a number before s is a plural such as 1980s, not seconds
+      #! affects: output
+      #! example: plural: 4
+      #! range: 1..10
+  tables:  # how tables are read
+    environments: {tabular: 0, tabular*: 1, tabularx: 1, longtable: 0, array: 0}  # environments read as tables, with the arguments before the column specification
+      #! affects: output
+      #! example: environments: {tabular: 0, tblr: 0}
+    unit_length: 6  # longest unit after a number in a cell
+      #! affects: output
+      #! example: unit_length: 3
+    numbers: 2  # numbers a column needs to count as a column of numbers
+      #! affects: output
+      #! example: numbers: 3
+      #! range: 1..100
+  math:  # how math is written
+    tags: [notag, nonumber, tag]  # commands that say whether a display line is numbered
+      #! affects: output
+      #! example: tags+: [mytag]
+    accents: [mathaccent, Umathaccent]  # commands that set a math accent
+      #! affects: output
+      #! example: accents+: [widehat]
+    lexemes: 400000  # source tokens a file is read for when looking for math delimiters
+      #! affects: output, speed
+      #! example: lexemes: 100000
+    near: 400  # tokens from a formula its delimiter is looked for
+      #! affects: output
+      #! example: near: 100
+    after: 24  # characters past a display its sentence's punctuation is looked for
+      #! affects: output
+      #! example: after: 8
+  csname:  # commands that do a \csname's job, the first one defined is advised
+    use: [csuse, '@nameuse']  # using a control sequence by name
+      #! affects: output
+      #! example: use: ['@nameuse']
+    def: [csdef, '@namedef']  # defining one by name
+      #! affects: output
+      #! example: def: ['@namedef']
+    gdef: [csgdef]  # defining one by name globally
+      #! affects: output
+      #! example: gdef: [csgdef]
+    edef: [csedef]  # defining one by name with \edef
+      #! affects: output
+      #! example: edef: [csedef]
+    xdef: [csxdef]  # defining one by name with \xdef
+      #! affects: output
+      #! example: xdef: [csxdef]
+    let: [cslet]  # letting one named by text
+      #! affects: output
+      #! example: let: [cslet]
+    let_to: [letcs]  # letting one to another named by text
+      #! affects: output
+      #! example: let_to: [letcs]
+    test: [ifcsundef, '@ifundefined']  # testing whether one is undefined
+      #! affects: output
+      #! example: test: ['@ifundefined']
+  fonts:  # how fonts are named
+    roman: cmr  # the kernel's roman family, which a font package replaces
+      #! affects: output
+      #! example: roman: lmr
+    slanted: [itdefault, sldefault]  # macros naming the shapes LaTeX gives a slanted face
+      #! affects: output
+      #! example: slanted+: [scdefault]
+  # alternatives: {hskip: '`\hspace`', vskip: '`\vspace`', ...}  # primitives LaTeX has a command for, with that command, as chktex's Primitives. latex_alternatives adds to it
+    #! affects: output
+    #! example: alternatives: {hskip: '`\hspace`'}
+  completion:  # what completion offers and in which order
+    shown: 300  # commands one answer lists. The editor asks again as more is typed
+      #! affects: output, speed
+      #! example: shown: 50
+    key_depth: 3  # levels below a key family that are listed, so a subkey is found by any part of its path
+      #! affects: output
+      #! example: key_depth: 1
+    identified: 400  # installed files whose identification line is read for the list
+      #! affects: output, speed
+      #! example: identified: 0 lists names only
+    calls: 4  # calls of a command its hover shows
+      #! affects: output
+      #! example: calls: 10
+    pick: [begin, end, usepackage, documentclass, ref, cref, cite]  # commands whose argument is picked from a list, so completion opens again inside the braces
+      #! affects: output
+      #! example: pick+: [autoref]
+    environment_arguments: {array: 1, minipage: 1, multicols: 1, tabular: 1, tabular*: 2, tabularx: 2, thebibliography: 1, wrapfigure: 2}  # environments whose \begin reads its arguments through an inner macro, with how many
+      #! affects: output
+      #! example: environment_arguments: {tabular: 1, tblr: 1}
+    tiers:  # the rank of each kind of command, lowest listed first
+      document: 0  # the project's own commands
+        #! affects: output
+        #! example: document: 1
+      package: 1  # documented commands of packages and the kernel
+        #! affects: output
+        #! example: package: 0
+      primitive: 2  # the engine's primitives
+        #! affects: output
+        #! example: primitive: 3
+      internal: 3  # internal names
+        #! affects: output
+        #! example: internal: 9
 lints:
   unused-definition:
     report_public: true  # also report an unused command with a public name. Off for packages, whose commands are their interface
@@ -202,20 +366,29 @@ profiles:
 #! affects: precision, output
 #! example: kernel: plain
 #! example: \count10=1 is plain TeX's way and gets no primitive-tex-command
+#! plugin: format
 # provider: texlive      # the TeX distribution: texlive, miktex or tectonic
 #! affects: precision
 #! example: provider: miktex looks files up the way MiKTeX does
+#! plugin: provider
 # platform: linux        # the operating system the build runs on: linux, macos or windows
 #! affects: precision
 #! example: platform: windows
 #! example: \input{Chapter} also finds chapter.tex, as on a case-insensitive disk
+#! plugin: platform
 # output: pdf            # what the build produces: pdf, dvi, ps or html
 #! affects: precision
 #! example: output: dvi
 #! example: \includegraphics{fig} looks for fig.eps, not fig.pdf
-# texlive: {root: /usr/local/texlive, year: 2026}  # where TeX Live is when kpsewhich cannot say
+#! plugin: pdf
+# texlive.root: /usr/local/texlive  # the folder that holds each year's TeX Live, used when kpsewhich cannot say where it is
 #! affects: precision
-#! example: texlive: {root: /opt/texlive, year: 2025}
+#! example: texlive.root: /opt/texlive
+#! plugin: provider
+# texlive.year: 2026  # which year's TeX Live under texlive.root to read
+#! affects: precision
+#! example: texlive.year: 2025
+#! plugin: provider
 
 texmf:
   roots: []  # TeX trees to search instead of the ones kpsewhich names
@@ -259,6 +432,7 @@ cache:
       #! affects: speed, memory
       #! example: off: only satex cache build fills the cache
 # preload: preamble.tex     # a preamble the build dumps as its own format, as mylatexformat does.
+#! plugin: preload
                             # A %& line or -fmt= in the build files names it otherwise
 #! affects: precision
 #! example: preload: preamble.tex
@@ -332,18 +506,81 @@ plugins:
   magic: true  # read % !TeX and % arara: lines
     #! affects: precision
     #! example: % !TeX program = lualatex makes the run use LuaTeX
+    #! plugin: magic
   tools: true  # work out which tools the build runs: biber, makeindex and others
     #! affects: precision, output
     #! example: off: a .bbl biber would write is not computed
+    #! plugin: tool
   preload: true  # honor %& lines and -fmt= in the build files
     #! affects: precision
     #! example: %&mypreamble reads mypreamble's dumped preamble first
+    #! plugin: preload
   discovery: true  # walk the project for other files, skipping what .gitignore excludes
     #! affects: precision, speed
     #! example: off: an \input file is analyzed alone, without its root document
+    #! plugin: discovery
   packages: false  # ask tlmgr which package ships a missing file. Needs the network
     #! affects: output, speed
     #! example: on: the missing-file finding says install the package mwe
+    #! plugin: packages
+  docs: true  # read the packages' manuals for what their commands do, in the background, for hovers
+    #! affects: output, speed
+    #! example: off: a hover says only what the run found
+    #! plugin: docs
+
+magic:  # which comments are magic
+  arara: true  # read % arara: lines as the build's steps
+    #! affects: precision
+    #! example: off: % arara: lualatex no longer picks the engine, % !TeX program still does
+    #! plugin: magic
+  prefixes: ['!TeX', '!BIB']  # heads of key = value comments, matched ignoring case
+    #! affects: precision
+    #! example: prefixes+: ['!SaTeX']
+    #! example: % !SaTeX root = main.tex names the root
+    #! plugin: magic
+
+depp:  # how the files a run reads map to TeX Live packages, for the dependency file depp writes
+  rules: ['.+/tex/[^/]+/([^/]+)', '.+/fonts/.+/([^/]+)']  # patterns over a file's folder whose last group names its package, tried in order
+    #! affects: output
+    #! example: rules+: ['.+/mytree/([^/]+)']
+    #! plugin: depp
+  renames: {base: latex}  # folder names that are not their package's name
+    #! affects: output
+    #! example: renames: {base: latex, graphics-def: graphics}
+    #! plugin: depp
+  # file: deps.txt  # the dependency file, when depp's options name none
+    #! affects: output
+    #! example: file: build/deps.txt
+    #! plugin: depp
+
+bib:  # the bibliography as the build makes it
+  backend: biber  # what makes a biblatex document's .bbl when neither its backend= option nor % !BIB program names one: biber or bibtex
+    #! affects: precision
+    #! example: backend: bibtex
+    #! example: \usepackage{biblatex} then runs bibtex in the build, not biber
+    #! plugin: bib
+
+lua:  # \directlua code, run by satex's own Lua 5.3 with no io, os or debug library
+  run: true  # run the code. Off, every \directlua result is unknown
+    #! affects: precision, speed
+    #! example: off: \directlua{tex.print("x")} prints something unknown
+    #! plugin: lua
+  steps: 200000  # steps one run may take, 1000 Lua instructions each, beside what limits.steps leaves
+    #! affects: precision, speed
+    #! example: steps: 1000 stops a long Lua loop early, its result unknown
+    #! plugin: lua_run
+  memory: 256MiB  # memory of the Lua state, at most a quarter of limits.memory. A file Lua reads is at most a quarter of it
+    #! affects: precision, memory
+    #! example: memory: 64MiB
+    #! plugin: lua_run
+  depth: 16  # how deep runs nest, as when Lua scans TeX that runs Lua again
+    #! affects: precision
+    #! example: depth: 1: Lua that calls \directlua again gets an unknown result
+    #! plugin: lua_run
+  modules: 8  # how deep modules may require each other
+    #! affects: precision
+    #! example: modules: 2: a third nested require gives an unknown module
+    #! plugin: lua_run
 
 lsp:  # how satex lsp serves an editor
   host: 127.0.0.1  # the address --port listens on
@@ -431,6 +668,7 @@ limits:
   build_runs: 5  # how many LaTeX runs satex simulates to settle .aux, .toc and the rest. 1 runs once with no earlier files
     #! affects: precision, speed
     #! example: 1: \ref and \tableofcontents read nothing from an earlier run
+    #! plugin: build
   recursion_depth: 100  # how deep an undecided recursion is followed before it is assumed to end
     #! affects: precision, speed
     #! example: a macro that calls itself while an \if is unknown stops at 100 levels

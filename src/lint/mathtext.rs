@@ -208,15 +208,6 @@ Fix by moving the punctuation to the other side of the delimiter.",
     },
 ];
 
-/// How many source tokens one file is lexed for.
-const LEXEMES: usize = 400_000;
-
-/// How far from a formula its delimiter is looked for.
-const NEAR: usize = 400;
-
-/// How far past a display the sentence's punctuation is looked for.
-const AFTER: usize = 24;
-
 /// A run of characters the document set in one known math mode, from one
 /// file and in ascending order there.
 struct Region {
@@ -272,18 +263,20 @@ struct Lexed {
     path: String,
     scan: Scan,
     tokens: Vec<Lexeme>,
+    /// How far from a formula its delimiter is looked for.
+    near: usize,
 }
 
 impl Lexed {
-    fn of(edits: &Edits, file: FileId) -> Option<Lexed> {
+    fn of(edits: &Edits, file: FileId, math: &crate::config::MathConventions) -> Option<Lexed> {
         let (path, text) = edits.text(file)?;
         let mut scan = Scan::at(&text, Pos::new(1, 1), CatcodeTable::latex())?;
         let mut tokens = Vec::new();
-        while tokens.len() < LEXEMES {
+        while tokens.len() < math.lexemes {
             let Some(lexeme) = scan.advance() else { break };
             tokens.push(lexeme);
         }
-        Some(Lexed { path, scan, tokens })
+        Some(Lexed { path, scan, tokens, near: math.near })
     }
 
     fn at(&self, at: Pos) -> usize {
@@ -310,7 +303,8 @@ struct Files(crate::fixed::HashMap<FileId, Option<Lexed>>);
 
 impl Files {
     fn get(&mut self, edits: &Edits, file: FileId) -> Option<&Lexed> {
-        self.0.entry(file).or_insert_with(|| Lexed::of(edits, file)).as_ref()
+        let math = &edits.analysis.settings.conventions.math;
+        self.0.entry(file).or_insert_with(|| Lexed::of(edits, file, math)).as_ref()
     }
 }
 
@@ -393,7 +387,7 @@ fn opening(lexed: &Lexed, region: &Region) -> Option<std::ops::Range<usize>> {
     };
     let stop = lexed.at(Pos::of(region.first));
     let mut run: Option<std::ops::Range<usize>> = None;
-    for index in from..stop.min(from + NEAR) {
+    for index in from..stop.min(from + lexed.near) {
         match (lexed.shift(index), run.take()) {
             (true, Some(range)) if range.end == index => run = Some(range.start..index + 1),
             (true, _) => run = Some(index..index + 1),
@@ -407,7 +401,7 @@ fn opening(lexed: &Lexed, region: &Region) -> Option<std::ops::Range<usize>> {
 /// character.
 fn closing(lexed: &Lexed, region: &Region) -> Option<std::ops::Range<usize>> {
     let from = lexed.exactly(Pos::of(region.last))? + 1;
-    let start = (from..(from + NEAR).min(lexed.tokens.len())).find(|index| lexed.shift(*index))?;
+    let start = (from..(from + lexed.near).min(lexed.tokens.len())).find(|index| lexed.shift(*index))?;
     let mut end = start;
     while lexed.shift(end) {
         end += 1;
@@ -834,8 +828,8 @@ fn dimension_times(report: &mut Report) {
 
 /// The first character the document set after a display, over the spaces
 /// and the equation number the class put between.
-fn following(view: &View, from: usize) -> Option<(usize, char)> {
-    let at = (from..view.len().min(from + AFTER))
+fn following(view: &View, from: usize, after: usize) -> Option<(usize, char)> {
+    let at = (from..view.len().min(from + after))
         .find(|i| view.char_at(*i).is_some_and(|c| c != ' ') && view.is_ours(*i))?;
     Some((at, view.char_at(at)?))
 }
@@ -868,7 +862,8 @@ fn math_punctuation(report: &mut Report) {
                 findings.extend(inside.map(|c| (last, c, false)));
             }
             Modes::DISPLAY_MATH => {
-                let outside = following(view, region.end).filter(|(i, c)| PUNCTUATION.contains(*c) && !view.math(*i));
+                let outside = following(view, region.end, report.analysis().settings.conventions.math.after)
+                    .filter(|(i, c)| PUNCTUATION.contains(*c) && !view.math(*i));
                 findings.extend(outside.map(|(i, c)| (i, c, true)));
             }
             _ => {}

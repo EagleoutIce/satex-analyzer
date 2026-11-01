@@ -1122,6 +1122,14 @@ impl Machine<'_> {
             settings.lint_off = Vec::new();
             settings.lints = defaults.lints.clone();
             settings.latex_alternatives = Default::default();
+            // conventions past these steer only reports and completion
+            let c = settings.conventions;
+            settings.conventions = crate::config::Conventions {
+                internal: c.internal,
+                definers: c.definers,
+                signatures: c.signatures,
+                ..defaults.conventions.clone()
+            };
             settings.profile = None;
             settings.profiles = defaults.profiles.clone();
             settings.depp = defaults.depp.clone();

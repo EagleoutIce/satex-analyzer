@@ -191,35 +191,6 @@ fn call(view: &View, open: usize) -> Option<usize> {
     (list && (args.contains(',') || !args.contains(char::is_whitespace))).then_some(close)
 }
 
-/// chktex's `Linker`: the commands a tie belongs in front of.  chktex's own
-/// policy, not a claim about what the names mean.
-const LINKER: &[&str] = &[r"\ref", r"\pageref", r"\eqref", r"\cite"];
-
-/// References that typeset the name in front of the number themselves
-/// (cleveref, hyperref, varioref), so the space before them is the word
-/// space of the sentence, not a tie.
-const NAMING: &[&str] = &[
-    r"\cref",
-    r"\Cref",
-    r"\crefrange",
-    r"\Crefrange",
-    r"\cpageref",
-    r"\Cpageref",
-    r"\autoref",
-    r"\vref",
-    r"\Vref",
-    r"\vrefrange",
-    r"\nameref",
-    r"\Nameref",
-];
-
-/// The command chktex's warning 24 names beside `\label`, which the run
-/// finds for itself.
-const INDEXING: &[&str] = &[r"\index"];
-
-/// chktex's `NotPreSpaced`, without `\/`, which the italics rules own.
-const FOOTNOTE: &[&str] = &[r"\footnote", r"\footnotemark"];
-
 /// tex.web § 1043: a space becomes glue only in horizontal mode.
 fn glue(modes: Modes) -> bool {
     !modes.is_empty() && modes.within(Modes::ANY_HORIZONTAL)
@@ -336,7 +307,7 @@ fn sites(
     analysis: &Analysis,
     view: &View,
     kinds: &[OccKind],
-    names: &[&[&str]],
+    names: &[&[String]],
     wrappers: bool,
 ) -> Vec<(Span, String)> {
     let mut seen: HashSet<Span> = HashSet::default();
@@ -370,7 +341,7 @@ fn sites(
             continue;
         }
         let name = analysis.interner.cs(expansion.name);
-        if names.iter().any(|group| group.contains(&name.as_str())) && seen.insert(expansion.span) {
+        if names.iter().any(|group| group.contains(&name)) && seen.insert(expansion.span) {
             out.push((expansion.span, name));
         }
     }
@@ -379,15 +350,16 @@ fn sites(
 
 fn missing_nonbreaking_space(report: &mut Report) {
     let analysis = report.analysis;
+    let ties = &analysis.settings.conventions.ties;
     let edits = report.edits();
     let naming: HashSet<Span> = analysis
         .facts
         .expansions
         .iter()
-        .filter(|e| NAMING.contains(&analysis.interner.cs(e.name).as_str()))
+        .filter(|e| ties.naming.contains(&analysis.interner.cs(e.name)))
         .map(|e| e.span)
         .collect();
-    for (span, what) in sites(analysis, report.text(), &[OccKind::Ref, OccKind::Cite], &[LINKER], false) {
+    for (span, what) in sites(analysis, report.text(), &[OccKind::Ref, OccKind::Cite], &[&ties.before], false) {
         if naming.contains(&span) {
             continue;
         }
@@ -450,10 +422,11 @@ fn sentence_spacing(report: &mut Report) {
             && view.joined(i);
         let word = view.word_before(i).to_string();
         let spelled = abbreviation(view, i);
-        if capitals && after.is_uppercase() {
+        let listed = report.analysis.settings.conventions.ties.abbreviations.contains(&spelled);
+        if capitals && after.is_uppercase() && !listed {
             let message = format!("the period after `{word}` set a word space, where a sentence ends");
             findings.push(rewrite_space(i..i + 1, "intersentence", message, r"\@."));
-        } else if (before.is_lowercase() || before.is_numeric()) && after.is_lowercase() {
+        } else if listed || (before.is_lowercase() || before.is_numeric()) && after.is_lowercase() {
             let message = format!("the period in `{spelled}` set a sentence space, where the sentence runs on");
             // `\ ` is a control space: the fix names it with its period, since
             // a lone backslash reads as a typo.
@@ -475,9 +448,10 @@ fn rewrite_space(range: std::ops::Range<usize>, name: &str, message: String, wan
 fn space_before_command(report: &mut Report) {
     let analysis = report.analysis;
     let edits = report.edits();
-    for (span, what) in sites(analysis, report.text(), &[OccKind::Label], &[INDEXING, FOOTNOTE], true) {
+    let ties = &analysis.settings.conventions.ties;
+    for (span, what) in sites(analysis, report.text(), &[OccKind::Label], &[&ties.unspaced, &ties.footnote], true) {
         let Some((path, _, at, width)) = glue_before(analysis, &edits, span) else { continue };
-        let footnote = FOOTNOTE.contains(&what.as_str());
+        let footnote = ties.footnote.contains(&what);
         let cost = match footnote {
             true => "so the mark can be set away from the word it belongs to",
             false => "so the mark can move to the next line, and `\\pageref` can then name the next page",
@@ -517,11 +491,6 @@ fn space_before_punctuation(report: &mut Report) {
     }
 }
 
-/// TeX's hard space: the tie, and the name LaTeX gives it.
-fn hard_space(name: &str) -> bool {
-    name == "~" || name == r"\nobreakspace"
-}
-
 fn double_space(report: &mut Report) {
     let analysis = report.analysis;
     let view = report.text();
@@ -532,7 +501,7 @@ fn double_space(report: &mut Report) {
         if expansion.package.is_some() || span.col == 0 || !view.document(span.file) {
             continue;
         }
-        if !hard_space(&analysis.interner.cs(expansion.name)) {
+        if !analysis.settings.conventions.ties.hard.contains(&analysis.interner.cs(expansion.name)) {
             continue;
         }
         let Some((path, source)) = edits.text(span.file) else { continue };

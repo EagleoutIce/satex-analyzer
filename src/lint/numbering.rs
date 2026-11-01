@@ -66,10 +66,6 @@ reads.",
     },
 ];
 
-/// amsmath § 3.2's own switches for a display's number: a display that
-/// touches one already decides for itself and is left alone.
-const TAG_COMMANDS: &[&str] = &["notag", "nonumber", "tag"];
-
 /// What the source says about one display: the `\label`s in its body, and
 /// whether it governs its own number.  Neither leaves a fact.
 struct Body {
@@ -121,7 +117,10 @@ fn unreferenced_numbered_display(report: &mut Report) {
         let Some((begin_star, from)) = star_of(&text, occurrence.span, "begin", name) else { continue };
         let Some(end) = closes.get(&occurrence.span) else { continue };
         let Some((end_star, _)) = star_of(&text, *end, "end", name) else { continue };
-        let Some(body) = read_body(&text, from, Pos::new(end.line, end.col)) else { continue };
+        let Some(body) = read_body(&text, from, Pos::new(end.line, end.col), &analysis.settings.conventions.math.tags)
+        else {
+            continue;
+        };
         if body.tagged {
             continue;
         }
@@ -195,7 +194,7 @@ fn star_of(text: &Rc<Text>, span: Span, cs: &str, name: &str) -> Option<(Pos, Po
 
 /// The body between a display's two halves, read the way TeX's mouth reads
 /// the file.
-fn read_body(text: &Rc<Text>, from: Pos, to: Pos) -> Option<Body> {
+fn read_body(text: &Rc<Text>, from: Pos, to: Pos, tags: &[String]) -> Option<Body> {
     let mut scan = Scan::at(text, from, CatcodeTable::latex())?;
     let mut body = Body { labels: Vec::new(), tagged: false };
     while let Some(lexeme) = scan.advance() {
@@ -203,7 +202,7 @@ fn read_body(text: &Rc<Text>, from: Pos, to: Pos) -> Option<Body> {
             break;
         }
         let (label, tag) = match scan.name(&lexeme) {
-            Some(cs) => (cs == "label", TAG_COMMANDS.contains(&cs)),
+            Some(cs) => (cs == "label", tags.iter().any(|t| *t == cs)),
             None => (false, false),
         };
         body.tagged |= tag;

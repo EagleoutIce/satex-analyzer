@@ -5,6 +5,25 @@ use std::path::{Path, PathBuf};
 
 use crate::machine::Analysis;
 
+named_enum! {
+    /// The tool that makes a biblatex document's `.bbl` when neither its
+    /// `backend=` option nor `% !BIB program` names one.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Deserialize, serde::Serialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum Backend {
+        #[default]
+        Biber => "biber",
+        Bibtex => "bibtex",
+    }
+}
+
+/// `bib:` in `satex.yaml`.
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BibConfig {
+    pub backend: Backend,
+}
+
 /// One entry of a `.bib` file: its key, the line its `@type{` opens on,
 /// its type and what completion shows of it.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]

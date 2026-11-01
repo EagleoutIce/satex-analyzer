@@ -284,29 +284,6 @@ fn group_local_definition(report: &mut Report) {
     }
 }
 
-/// The primitives chktex's warning 41 flags (chktexrc's `Primitives` list)
-/// for which LaTeX has a command that does the same job (usrguide, the LaTeX
-/// Companion).  `latex_alternatives` in `satex.yaml` adds to this or
-/// overrides an entry.
-const LATEX_ALTERNATIVES: &[(&str, &str)] = &[
-    ("above", "`\\frac`"),
-    ("advance", "`\\addtocounter` or `\\addtolength`"),
-    ("chardef", "`\\newcommand`"),
-    ("copy", "`\\usebox`"),
-    ("count", "`\\newcounter` and `\\value`"),
-    ("countdef", "`\\newcounter`"),
-    ("cr", "`\\\\`"),
-    ("crcr", "`\\\\`"),
-    ("csname", "`\\@nameuse`"),
-    ("dimen", "`\\newlength`"),
-    ("dimendef", "`\\newlength`"),
-    ("divide", "`\\setlength` with calc"),
-    ("font", "`\\newfont` or `\\selectfont`"),
-    ("hskip", "`\\hspace`"),
-    ("vskip", "`\\vspace`"),
-    ("openout", "`\\newwrite`"),
-];
-
 // chktex's other `Primitives` (`\catcode`, `\expandafter`, …) have no LaTeX
 // alternative: reported only when `latex_alternatives` names them.
 
@@ -322,7 +299,8 @@ fn primitive_tex_command(report: &mut Report) {
     let configured = &analysis.settings.latex_alternatives;
     // One lookup per expansion instead of a scan of the table per expansion.
     let mut table: BTreeMap<Sym, (&str, bool)> = BTreeMap::new();
-    for (primitive, alternative) in LATEX_ALTERNATIVES {
+    // chktex's warning 41 (chktexrc's `Primitives`), from `conventions.alternatives`.
+    for (primitive, alternative) in &analysis.settings.conventions.alternatives {
         if let Some(sym) = analysis.interner.lookup(primitive) {
             table.insert(sym, (alternative, false));
         }
@@ -393,23 +371,20 @@ fn primitive_tex_command(report: &mut Report) {
 /// when the run defined it (etoolbox manual §§ 3.1.1, 3.1.2, 3.6.1), else the
 /// kernel's (source2e, ltdefns.dtx).
 fn csname_alternative(analysis: &Analysis, role: CsnameRole) -> (&'static str, Option<Sym>) {
-    let (purpose, candidates): (&str, &[&str]) = match role {
-        CsnameRole::Use => ("uses a control sequence by name", &["csuse", "@nameuse"]),
-        CsnameRole::Define { global: false, expand: false } => {
-            ("defines a control sequence by name", &["csdef", "@namedef"])
-        }
-        CsnameRole::Define { global: true, expand: false } => {
-            ("defines a control sequence by name globally", &["csgdef"])
-        }
+    let c = &analysis.settings.conventions.csname;
+    let (purpose, candidates): (&str, &[String]) = match role {
+        CsnameRole::Use => ("uses a control sequence by name", &c.r#use),
+        CsnameRole::Define { global: false, expand: false } => ("defines a control sequence by name", &c.def),
+        CsnameRole::Define { global: true, expand: false } => ("defines a control sequence by name globally", &c.gdef),
         CsnameRole::Define { global: false, expand: true } => {
-            ("defines a control sequence by name with `\\edef`", &["csedef"])
+            ("defines a control sequence by name with `\\edef`", &c.edef)
         }
         CsnameRole::Define { global: true, expand: true } => {
-            ("defines a control sequence by name with `\\xdef`", &["csxdef"])
+            ("defines a control sequence by name with `\\xdef`", &c.xdef)
         }
-        CsnameRole::Let => ("lets a control sequence named by text", &["cslet"]),
-        CsnameRole::LetTo => ("lets a control sequence to one named by text", &["letcs"]),
-        CsnameRole::Test => ("tests whether a control sequence is undefined", &["ifcsundef", "@ifundefined"]),
+        CsnameRole::Let => ("lets a control sequence named by text", &c.r#let),
+        CsnameRole::LetTo => ("lets a control sequence to one named by text", &c.let_to),
+        CsnameRole::Test => ("tests whether a control sequence is undefined", &c.test),
     };
     let found =
         candidates.iter().filter_map(|name| analysis.interner.lookup(name)).find(|sym| analysis.env.is_defined(*sym));

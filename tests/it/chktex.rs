@@ -924,6 +924,17 @@ fn an_abbreviation_after_a_line_break_is_named_alone() {
     assert!(found.iter().any(|f| f.contains("`e.g.`")) && !found.iter().any(|f| f.contains("celle")), "{found:?}");
 }
 
+/// `conventions.ties.abbreviations`: a listed abbreviation wants a word space before a capital too.
+#[test]
+fn a_listed_abbreviation_before_a_capital_is_reported() {
+    let source = r"\begin{document}Ask Dr. Smith here.\end{document}";
+    assert!(findings(&analyze(source), "sentence-spacing").is_empty());
+    let mut cfg = crate::support::bare();
+    cfg.conventions.ties.abbreviations = vec!["Dr.".into()];
+    let found = findings(&Machine::analyze(source, None, &cfg), "sentence-spacing");
+    assert!(found.len() == 1 && found[0].contains("`Dr.`"), "{found:?}");
+}
+
 // chktex warning 13: `Intersentence spacing ('\@') should perhaps be used.`
 #[test]
 fn a_period_after_capitals_before_a_capital_is_reported() {

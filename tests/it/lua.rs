@@ -244,3 +244,15 @@ fn a_case_code_past_255_is_valid_under_luatex() {
     let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
     assert!(!codes.contains(&"invalid-code"), "{codes:?}");
 }
+
+/// `lua.run: false`: no chunk runs, so what it prints is unknown.
+#[test]
+fn lua_run_off_leaves_the_output_unknown() {
+    let source = "\\directlua{tex.print('\\string\\\\gdef\\string\\\\a{}')}";
+    assert!(defined(&primitives(source), "a"));
+    let mut cfg = Config { engine: Some(Engine::LuaTeX), kernel: Some(Kernel::None), ..crate::support::config() };
+    cfg.lua.run = false;
+    let analysis = Machine::analyze(&format!("\\catcode`\\{{=1 \\catcode`\\}}=2 {source}"), None, &cfg);
+    assert!(!defined(&analysis, "a"));
+    assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
+}

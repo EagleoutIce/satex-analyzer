@@ -294,11 +294,14 @@ pub struct PluginSwitches {
     /// database, so a lint run would reach the network (TeX Live manual,
     /// `tlmgr`).  `satex install` asks regardless, being the request itself.
     pub packages: bool,
+    /// Reading the packages' own manuals for what their commands do, in the
+    /// background, for hovers.
+    pub docs: bool,
 }
 
 impl Default for PluginSwitches {
     fn default() -> PluginSwitches {
-        PluginSwitches { magic: true, tools: true, preload: true, discovery: true, packages: false }
+        PluginSwitches { magic: true, tools: true, preload: true, discovery: true, packages: false, docs: true }
     }
 }
 
@@ -636,6 +639,190 @@ pub struct Conventions {
     /// sequence is the name they define, as the package files on disk are
     /// read for what they define.
     pub definers: Vec<String>,
+    /// What each letter after the `:` of an expl3 name says of its argument (interface3,
+    /// "Function and variable names"): offered when such a name is typed.
+    pub signatures: std::collections::BTreeMap<String, String>,
+    pub ties: Ties,
+    pub quotes: Quotes,
+    pub units: Units,
+    pub tables: Tables,
+    pub math: MathConventions,
+    pub csname: Csname,
+    pub fonts: Fonts,
+    /// Primitives LaTeX has a command for (chktex's `Primitives`), with it.
+    pub alternatives: BTreeMap<String, String>,
+    pub completion: Completion,
+}
+
+type BTreeMap<K, V> = std::collections::BTreeMap<K, V>;
+
+fn strs(all: &[&str]) -> Vec<String> {
+    all.iter().map(|s| s.to_string()).collect()
+}
+
+fn pairs<V: Clone>(all: &[(&str, V)]) -> BTreeMap<String, V> {
+    all.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+}
+
+/// Declares a `conventions:` area: a struct whose fields all have defaults.
+macro_rules! area {
+    ($(#[$m:meta])* $name:ident { $($(#[$fm:meta])* $field:ident: $ty:ty = $default:expr),+ $(,)? }) => {
+        $(#[$m])*
+        #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+        #[serde(default, deny_unknown_fields)]
+        pub struct $name { $($(#[$fm])* pub $field: $ty),+ }
+        impl Default for $name {
+            fn default() -> $name {
+                $name { $($field: $default),+ }
+            }
+        }
+    };
+}
+
+area! {
+    /// Where a tie belongs (chktex's `Linker` and the warnings beside it).
+    Ties {
+        /// Commands a tie belongs in front of.
+        before: Vec<String> = strs(&[r"\ref", r"\pageref", r"\eqref", r"\cite"]),
+        /// References that set the name before the number themselves.
+        naming: Vec<String> = strs(&[
+            r"\cref", r"\Cref", r"\crefrange", r"\Crefrange", r"\cpageref", r"\Cpageref", r"\autoref",
+            r"\vref", r"\Vref", r"\vrefrange", r"\nameref", r"\Nameref",
+        ]),
+        /// Commands no space goes in front of, beside `\label`.
+        unspaced: Vec<String> = strs(&[r"\index"]),
+        /// Footnote commands, which no space goes in front of either.
+        footnote: Vec<String> = strs(&[r"\footnote", r"\footnotemark"]),
+        /// What sets a hard space.
+        hard: Vec<String> = strs(&["~", r"\nobreakspace"]),
+        /// Abbreviations whose period ends no sentence, whatever follows.
+        abbreviations: Vec<String> = Vec::new(),
+    }
+}
+
+area! {
+    Quotes {
+        /// babel's names of the languages that quote with `` and ''.
+        english: Vec<String> = strs(&["english", "american", "USenglish", "canadian", "british", "UKenglish", "australian", "newzealand"]),
+        /// Packages that set the language in force.
+        languages: Vec<String> = strs(&["babel", "polyglossia"]),
+        /// Quote characters in a row that make a ligature worth a thin space.
+        ligature: usize = 3,
+    }
+}
+
+area! {
+    Units {
+        /// The siunitx command a quantity is written with.
+        quantity: String = "qty".into(),
+        /// Its name before siunitx 3, used where only that is defined.
+        legacy: String = "SI".into(),
+        /// SI prefixes with siunitx's macro (SI brochure, table 7).
+        prefixes: BTreeMap<String, String> = pairs(&[
+            ("da", r"\deca"), ("q", r"\quecto"), ("r", r"\ronto"), ("y", r"\yocto"), ("z", r"\zepto"),
+            ("a", r"\atto"), ("f", r"\femto"), ("p", r"\pico"), ("n", r"\nano"), ("u", r"\micro"),
+            ("\u{b5}", r"\micro"), ("\u{3bc}", r"\micro"), ("m", r"\milli"), ("c", r"\centi"), ("d", r"\deci"),
+            ("h", r"\hecto"), ("k", r"\kilo"), ("M", r"\mega"), ("G", r"\giga"), ("T", r"\tera"), ("P", r"\peta"),
+            ("E", r"\exa"), ("Z", r"\zetta"), ("Y", r"\yotta"), ("R", r"\ronna"), ("Q", r"\quetta"),
+        ].map(|(k, v)| (k, v.to_string()))),
+        /// Unit symbols with siunitx's macro (SI brochure, tables 1-4, § 4.1).
+        symbols: BTreeMap<String, String> = pairs(&[
+            ("m", r"\metre"), ("g", r"\gram"), ("s", r"\second"), ("A", r"\ampere"), ("K", r"\kelvin"),
+            ("mol", r"\mole"), ("cd", r"\candela"), ("Hz", r"\hertz"), ("N", r"\newton"), ("Pa", r"\pascal"),
+            ("J", r"\joule"), ("W", r"\watt"), ("C", r"\coulomb"), ("V", r"\volt"), ("F", r"\farad"),
+            ("S", r"\siemens"), ("Wb", r"\weber"), ("T", r"\tesla"), ("H", r"\henry"), ("lm", r"\lumen"),
+            ("lx", r"\lux"), ("Bq", r"\becquerel"), ("Gy", r"\gray"), ("Sv", r"\sievert"), ("kat", r"\katal"),
+            ("rad", r"\radian"), ("sr", r"\steradian"), ("min", r"\minute"), ("h", r"\hour"), ("d", r"\day"),
+            ("t", r"\tonne"), ("L", r"\litre"), ("l", r"\litre"), ("eV", r"\electronvolt"), ("Da", r"\dalton"),
+            ("Np", r"\neper"), ("B", r"\bel"), ("ha", r"\hectare"), ("bar", r"\bar"), ("\u{2126}", r"\ohm"),
+            ("\u{3a9}", r"\ohm"), ("%", r"\percent"), ("\u{b0}", r"\degree"), ("\u{b0}C", r"\degreeCelsius"),
+        ].map(|(k, v)| (k, v.to_string()))),
+        /// Symbols no prefix goes in front of.
+        unprefixed: Vec<String> = strs(&["min", "h", "d", "ha", "%", "\u{b0}", "\u{b0}C"]),
+        /// Digits from which a number before `s` is a plural (`1980s`), not seconds.
+        plural: usize = 3,
+    }
+}
+
+area! {
+    Tables {
+        /// Environments read as tables, with the arguments before the column specification.
+        environments: BTreeMap<String, usize> =
+            pairs(&[("tabular", 0), ("tabular*", 1), ("tabularx", 1), ("longtable", 0), ("array", 0)]),
+        /// Longest unit after a number in a cell.
+        unit_length: usize = 6,
+        /// Numbers a column needs to count as one of numbers.
+        numbers: usize = 2,
+    }
+}
+
+area! {
+    MathConventions {
+        /// Commands that say whether a display line is numbered.
+        tags: Vec<String> = strs(&["notag", "nonumber", "tag"]),
+        /// Commands that set a math accent.
+        accents: Vec<String> = strs(&["mathaccent", "Umathaccent"]),
+        /// Source tokens one file is lexed for.
+        lexemes: usize = 400_000,
+        /// How far from a formula its delimiter is looked for.
+        near: usize = 400,
+        /// How far past a display the sentence's punctuation is looked for.
+        after: usize = 24,
+    }
+}
+
+area! {
+    /// What replaces a `\csname` doing each job, the first one defined.
+    Csname {
+        r#use: Vec<String> = strs(&["csuse", "@nameuse"]),
+        def: Vec<String> = strs(&["csdef", "@namedef"]),
+        gdef: Vec<String> = strs(&["csgdef"]),
+        edef: Vec<String> = strs(&["csedef"]),
+        xdef: Vec<String> = strs(&["csxdef"]),
+        r#let: Vec<String> = strs(&["cslet"]),
+        let_to: Vec<String> = strs(&["letcs"]),
+        test: Vec<String> = strs(&["ifcsundef", "@ifundefined"]),
+    }
+}
+
+area! {
+    Fonts {
+        /// The kernel's roman family, which a font package replaces.
+        roman: String = "cmr".into(),
+        /// Macros naming the shapes LaTeX gives a slanted face.
+        slanted: Vec<String> = strs(&["itdefault", "sldefault"]),
+    }
+}
+
+area! {
+    Completion {
+        /// Commands one answer lists.
+        shown: usize = 300,
+        /// Levels below a directory key that are listed.
+        key_depth: usize = 3,
+        /// Installed files whose identification is read.
+        identified: usize = 400,
+        /// Calls of a command its hover shows.
+        calls: usize = 4,
+        /// Commands whose argument is a name to pick from a list.
+        pick: Vec<String> = strs(&["begin", "end", "usepackage", "documentclass", "ref", "cref", "cite"]),
+        /// Environments whose `\begin` reads arguments through an inner macro, with how many.
+        environment_arguments: BTreeMap<String, u8> = pairs(&[
+            ("array", 1), ("minipage", 1), ("multicols", 1), ("tabular", 1), ("tabular*", 2), ("tabularx", 2),
+            ("thebibliography", 1), ("wrapfigure", 2),
+        ]),
+        /// Rank of each kind of command, lowest first.
+        tiers: Tiers = Tiers::default(),
+    }
+}
+
+area! {
+    Tiers {
+        document: u8 = 0,
+        package: u8 = 1,
+        primitive: u8 = 2,
+        internal: u8 = 3,
+    }
 }
 
 impl Conventions {
@@ -658,7 +845,56 @@ impl Conventions {
 
 impl Default for Conventions {
     fn default() -> Conventions {
-        Conventions { internal: vec!["@".into(), "^__".into(), "_.*:".into()], definers: Vec::new() }
+        let signatures = [
+            ("N", "one token, usually a control sequence"),
+            ("n", "a braced token list, taken as it is"),
+            ("V", "the value of a variable, given by its name"),
+            ("v", "the value of a variable whose name is built as with \\csname"),
+            ("o", "a token list expanded once"),
+            ("e", "a token list expanded fully, # kept"),
+            ("x", "a token list expanded fully, as \\edef does"),
+            ("f", "a token list expanded until the first unexpandable token"),
+            ("c", "a control sequence name, built as with \\csname"),
+            ("p", "a parameter text, such as #1#2"),
+            ("T", "code run when the test is true"),
+            ("F", "code run when the test is false"),
+            ("w", "an argument read to a delimiter of its own"),
+            ("D", "do not use: a primitive's wrapper"),
+        ];
+        Conventions {
+            internal: vec!["@".into(), "^__".into(), "_.*:".into()],
+            definers: Vec::new(),
+            signatures: signatures.into_iter().map(|(k, v)| (k.into(), v.into())).collect(),
+            ties: Ties::default(),
+            quotes: Quotes::default(),
+            units: Units::default(),
+            tables: Tables::default(),
+            math: MathConventions::default(),
+            csname: Csname::default(),
+            fonts: Fonts::default(),
+            alternatives: pairs(
+                &[
+                    ("above", r"`\frac`"),
+                    ("advance", r"`\addtocounter` or `\addtolength`"),
+                    ("chardef", r"`\newcommand`"),
+                    ("copy", r"`\usebox`"),
+                    ("count", r"`\newcounter` and `\value`"),
+                    ("countdef", r"`\newcounter`"),
+                    ("cr", r"`\\`"),
+                    ("crcr", r"`\\`"),
+                    ("csname", r"`\@nameuse`"),
+                    ("dimen", r"`\newlength`"),
+                    ("dimendef", r"`\newlength`"),
+                    ("divide", r"`\setlength` with calc"),
+                    ("font", r"`\newfont` or `\selectfont`"),
+                    ("hskip", r"`\hspace`"),
+                    ("vskip", r"`\vspace`"),
+                    ("openout", r"`\newwrite`"),
+                ]
+                .map(|(k, v)| (k, v.to_string())),
+            ),
+            completion: Completion::default(),
+        }
     }
 }
 
@@ -1085,6 +1321,12 @@ pub struct Config {
     /// How the files a run reads map to TeX Live packages, for the
     /// dependency file depp writes.
     pub depp: crate::plugin::depp::DeppConfig,
+    /// Which comments are magic: `% !TeX`, `% arara:` and the rest.
+    pub magic: crate::plugin::magic::MagicConfig,
+    /// The bibliography backend assumed where the document names none.
+    pub bib: crate::plugin::bib::BibConfig,
+    /// Whether and how far `\directlua` code runs.
+    pub lua: crate::plugin::lua_run::LuaConfig,
     /// How `satex lsp` listens and re-analyzes.
     #[serde(default)]
     pub lsp: LspConfig,
@@ -1121,7 +1363,7 @@ impl Default for Config {
             platform: None,
             output: None,
             at_letter: false,
-            lint_off: vec!["analysis-imprecision".to_string()],
+            lint_off: vec!["analysis-imprecision".to_string(), "assertion-proved".to_string()],
             project: Project::default(),
             lints: Lints::default(),
             conventions: Conventions::default(),
@@ -1141,6 +1383,9 @@ impl Default for Config {
             arm_joins: true,
             record_arguments: false,
             depp: Default::default(),
+            magic: Default::default(),
+            bib: Default::default(),
+            lua: Default::default(),
             lsp: LspConfig::default(),
             style_prompt: StylePrompt::default(),
         }
@@ -2036,13 +2281,14 @@ pub fn keys() -> serde_json::Map<String, serde_json::Value> {
 /// What `documented`, the repository's own `satex.yaml`, says about each
 /// dotted key: its description (`key: value  # text`, a comment alone on a
 /// line goes on) and the `#! affects:`, `#! example:` and `#! range:` lines
-/// under it.
+/// under it, and `#! plugin:`, the plugin whose work the key steers.
 #[derive(Default)]
 struct Documented {
     description: String,
     affects: Vec<String>,
     example: Vec<String>,
     range: Option<(f64, f64)>,
+    plugin: Option<String>,
 }
 
 fn documented_keys(documented: &str) -> std::collections::HashMap<String, Documented> {
@@ -2056,6 +2302,7 @@ fn documented_keys(documented: &str) -> std::collections::HashMap<String, Docume
             match meta.trim().split_once(':').map(|(k, v)| (k.trim(), v.trim())) {
                 Some(("affects", v)) => entry.affects.extend(v.split(',').map(|a| a.trim().to_string())),
                 Some(("example", v)) => entry.example.push(v.to_string()),
+                Some(("plugin", v)) => entry.plugin = Some(v.to_string()),
                 Some(("range", v)) => {
                     entry.range = v.split_once("..").and_then(|(lo, hi)| Some((lo.parse().ok()?, hi.parse().ok()?)))
                 }
@@ -2091,7 +2338,9 @@ fn documented_keys(documented: &str) -> std::collections::HashMap<String, Docume
 /// Whether a comment's text is a setting, `key: value` with a plain key.
 fn setting_line(text: &str) -> bool {
     text.split_once(':').is_some_and(|(key, value)| {
-        !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !value.trim().is_empty()
+        !key.is_empty()
+            && key.chars().all(|c| c.is_ascii_alphanumeric() || "_.".contains(c))
+            && !value.trim().is_empty()
     })
 }
 
@@ -2107,6 +2356,7 @@ fn choices(path: &str) -> Option<Vec<&'static str>> {
         "output" => names(&crate::plugin::Output::ALL.iter().map(|o| o.as_str()).collect::<Vec<_>>()),
         "profile" => names(&Profile::ALL.iter().map(|p| p.as_str()).collect::<Vec<_>>()),
         "shell_escape" => names(&ShellEscape::ALL.iter().map(|s| s.as_str()).collect::<Vec<_>>()),
+        "bib.backend" => names(&crate::plugin::bib::Backend::ALL.iter().map(|b| b.as_str()).collect::<Vec<_>>()),
         "interaction" => names(&Interaction::ALL.iter().map(|i| i.as_str()).collect::<Vec<_>>()),
         _ => None,
     }
@@ -2172,6 +2422,9 @@ pub fn schema(documented: &str) -> serde_json::Value {
             if !doc.example.is_empty() {
                 out["x-example"] = json!(doc.example.join("\n"));
             }
+            if let Some(plugin) = &doc.plugin {
+                out["x-plugin"] = json!(plugin);
+            }
             if let Some((lo, hi)) = doc.range {
                 let bound = |x: f64| if x.fract() == 0.0 { json!(x as i64) } else { json!(x) };
                 out["minimum"] = bound(lo);
@@ -2199,6 +2452,27 @@ mod tests {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(FILE_NAME);
         let cfg = Config::read(&path).expect("repo satex.yaml reads as a Config");
         assert_eq!(cfg.limits, Limits::default());
+        assert_eq!(cfg.conventions, Conventions::default());
+    }
+
+    /// Every `conventions:` key the defaults have is described in the repo's `satex.yaml`.
+    #[test]
+    fn every_convention_is_documented() {
+        let documented = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(FILE_NAME)).unwrap();
+        let about = documented_keys(&documented);
+        let schema = schema(&documented);
+        let missing: Vec<String> = keys()
+            .keys()
+            .filter(|k| k.starts_with("conventions.") && !k.starts_with("conventions.signatures."))
+            .filter(|k| {
+                // a map's entries are documented by the map
+                let parts: Vec<&str> = k.split('.').collect();
+                !(2..=parts.len()).any(|n| about.get(&parts[..n].join(".")).is_some_and(|d| !d.description.is_empty()))
+            })
+            .cloned()
+            .collect();
+        assert!(missing.is_empty(), "undocumented: {missing:?}");
+        assert!(schema["properties"]["magic"]["properties"]["arara"]["x-plugin"] == "magic");
     }
 
     #[test]

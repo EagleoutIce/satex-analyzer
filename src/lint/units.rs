@@ -32,102 +32,24 @@ Fix by loading `\\usepackage{siunitx}` and writing `\\qty{⟨number⟩}{⟨unit�
     run: hand_set_quantity,
 }];
 
-/// The SI prefixes (SI brochure, 9th ed., table 7), longest first so that
-/// `da` is read before `d`.
-const PREFIXES: &[(&str, &str)] = &[
-    ("da", "\\deca"),
-    ("q", "\\quecto"),
-    ("r", "\\ronto"),
-    ("y", "\\yocto"),
-    ("z", "\\zepto"),
-    ("a", "\\atto"),
-    ("f", "\\femto"),
-    ("p", "\\pico"),
-    ("n", "\\nano"),
-    ("u", "\\micro"),
-    ("\u{b5}", "\\micro"),
-    ("\u{3bc}", "\\micro"),
-    ("m", "\\milli"),
-    ("c", "\\centi"),
-    ("d", "\\deci"),
-    ("h", "\\hecto"),
-    ("k", "\\kilo"),
-    ("M", "\\mega"),
-    ("G", "\\giga"),
-    ("T", "\\tera"),
-    ("P", "\\peta"),
-    ("E", "\\exa"),
-    ("Z", "\\zetta"),
-    ("Y", "\\yotta"),
-    ("R", "\\ronna"),
-    ("Q", "\\quetta"),
-];
-
-/// The unit symbols of the SI and the ones it accepts beside them (SI
-/// brochure, 9th ed., tables 1-4 and § 4.1), with siunitx's macro for each
-/// and whether a prefix may stand in front of it.
-const UNITS: &[(&str, &str, bool)] = &[
-    ("m", "\\metre", true),
-    ("g", "\\gram", true),
-    ("s", "\\second", true),
-    ("A", "\\ampere", true),
-    ("K", "\\kelvin", true),
-    ("mol", "\\mole", true),
-    ("cd", "\\candela", true),
-    ("Hz", "\\hertz", true),
-    ("N", "\\newton", true),
-    ("Pa", "\\pascal", true),
-    ("J", "\\joule", true),
-    ("W", "\\watt", true),
-    ("C", "\\coulomb", true),
-    ("V", "\\volt", true),
-    ("F", "\\farad", true),
-    ("S", "\\siemens", true),
-    ("Wb", "\\weber", true),
-    ("T", "\\tesla", true),
-    ("H", "\\henry", true),
-    ("lm", "\\lumen", true),
-    ("lx", "\\lux", true),
-    ("Bq", "\\becquerel", true),
-    ("Gy", "\\gray", true),
-    ("Sv", "\\sievert", true),
-    ("kat", "\\katal", true),
-    ("rad", "\\radian", true),
-    ("sr", "\\steradian", true),
-    ("min", "\\minute", false),
-    ("h", "\\hour", false),
-    ("d", "\\day", false),
-    ("t", "\\tonne", true),
-    ("L", "\\litre", true),
-    ("l", "\\litre", true),
-    ("eV", "\\electronvolt", true),
-    ("Da", "\\dalton", true),
-    ("Np", "\\neper", true),
-    ("B", "\\bel", true),
-    ("ha", "\\hectare", false),
-    ("bar", "\\bar", true),
-    ("\u{2126}", "\\ohm", true),
-    ("\u{3a9}", "\\ohm", true),
-    ("%", "\\percent", false),
-    ("\u{b0}", "\\degree", false),
-    ("\u{b0}C", "\\degreeCelsius", false),
-];
-
-/// siunitx's macros for a symbol, reading a prefix off it when it has one.
-fn siunitx(unit: &str) -> Option<String> {
-    if let Some((_, unit, _)) = UNITS.iter().find(|(symbol, ..)| *symbol == unit) {
-        return Some((*unit).to_string());
+/// siunitx's macros for a symbol, reading a prefix off it when it has one,
+/// the longest prefix first so that `da` is read before `d`.
+fn siunitx(units: &crate::config::Units, unit: &str) -> Option<String> {
+    if let Some(unit) = units.symbols.get(unit) {
+        return Some(unit.clone());
     }
-    PREFIXES.iter().find_map(|(prefix, macros)| {
-        let rest = unit.strip_prefix(prefix)?;
-        let (_, unit, _) = UNITS.iter().find(|(symbol, _, prefixable)| *symbol == rest && *prefixable)?;
+    let mut prefixes: Vec<_> = units.prefixes.iter().collect();
+    prefixes.sort_by_key(|(p, _)| std::cmp::Reverse(p.len()));
+    prefixes.into_iter().find_map(|(prefix, macros)| {
+        let rest = unit.strip_prefix(prefix.as_str())?;
+        let unit = units.symbols.get(rest).filter(|_| !units.unprefixed.iter().any(|u| u == rest))?;
         Some(format!("{macros}{unit}"))
     })
 }
 
 /// `1980s` and `100s` are a plural, not seconds.
-fn plural(number: &str, unit: &str) -> bool {
-    unit == "s" && number.len() >= 3 && number.chars().all(|c| c.is_ascii_digit())
+fn plural(units: &crate::config::Units, number: &str, unit: &str) -> bool {
+    unit == "s" && number.len() >= units.plural && number.chars().all(|c| c.is_ascii_digit())
 }
 
 fn spaced(q: &Quantity) -> bool {
@@ -136,12 +58,14 @@ fn spaced(q: &Quantity) -> bool {
         || q.unit_span.col != q.number_end.col + 1
 }
 
-/// `\qty` is siunitx 3's name for what version 2 called `\SI`.
+/// `units.quantity`, or `units.legacy` where only that is defined, as
+/// siunitx 2 called `\qty` `\SI`.
 fn call(analysis: &Analysis, number: &str, unit: &str) -> String {
+    let units = &analysis.settings.conventions.units;
     let defined = |name: &str| analysis.interner.lookup(name).is_some_and(|sym| analysis.env.is_defined(sym));
-    let name = match !defined("qty") && defined("SI") {
-        true => "SI",
-        false => "qty",
+    let name = match !defined(&units.quantity) && defined(&units.legacy) {
+        true => &units.legacy,
+        false => &units.quantity,
     };
     format!("\\{name}{{{number}}}{{{unit}}}")
 }
@@ -174,14 +98,14 @@ fn hand_set_quantity(report: &mut Report) {
                 && document(q.span.file)
                 && document(q.unit_span.file)
                 && !q.within.iter().any(|file| packages.contains(file))
-                && !plural(&q.number, &q.unit)
+                && !plural(&analysis.settings.conventions.units, &q.number, &q.unit)
         })
         .cloned()
         .collect();
     // Only the first finding brings the package in.  The rest would overlap it.
     let mut load = !loaded;
     for q in quantities {
-        let Some(unit) = siunitx(&q.unit) else { continue };
+        let Some(unit) = siunitx(&analysis.settings.conventions.units, &q.unit) else { continue };
         let call = call(analysis, &q.number, &unit);
         let via = q.via.map(|sym| report.cs(sym).trim_start_matches('\\').to_string());
         let mut edits = report.edits().quantity(&q, via.as_deref(), &call);
