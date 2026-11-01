@@ -1272,6 +1272,20 @@ button.draw-cat { border: 0; font: inherit; font-size: .68rem; cursor: pointer; 
 .claim-rot > span.shows .st-tk { animation: st-tk calc(var(--claim-t) * 1.2) var(--ease) calc(var(--i) * var(--claim-t) * .45 + var(--claim-t) * .3) both; }
 @keyframes st-tk { 0% { background: transparent; } 25% { background: color-mix(in srgb, var(--accent) 28%, transparent); box-shadow: 0 0 0 1px var(--accent); } 100% { background: transparent; box-shadow: none; } }
 @keyframes st-row { from { opacity: .45; } to { opacity: 1; } }
+/* draw: the stroke draws in, then the matching symbol and its command */
+.claim-draw { position: relative; z-index: 2; display: flex; align-items: center; gap: .6rem; width: max-content; max-width: 100%; margin: .6rem auto 0; padding: .3rem .7rem .3rem .4rem; text-decoration: none; color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font: 400 .8rem system-ui, sans-serif; opacity: 0; transform: translateY(-.2rem); transition: opacity .3s var(--ease), transform .3s var(--ease); }
+.claim-rot > span.shows .claim-draw { opacity: 1; transform: none; }
+.claim-draw svg { width: 2.6rem; height: 2.6rem; padding: .2rem; border: 1px dashed var(--border); border-radius: 6px; fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.claim-draw path { stroke-dasharray: 1; stroke-dashoffset: 1; }
+.claim-rot > span.shows .claim-draw path { animation: dr-stroke calc(var(--claim-t) * 1.8) var(--ease) calc(var(--claim-t) * .3) both; }
+.claim-draw .dr-sym { font: 400 1.7rem serif; line-height: 1; opacity: 0; translate: -.3em 0; }
+.claim-draw .dr-cmd { font: 400 .85rem ui-monospace, Menlo, monospace; color: var(--accent); opacity: 0; translate: -.3em 0; }
+.claim-rot > span.shows .claim-draw .dr-sym, .claim-rot > span.shows .claim-draw .dr-cmd { animation: dr-in var(--claim-t) var(--ease) calc(var(--claim-t) * 1.6) both; }
+.claim-rot > span.shows .claim-draw .dr-cmd { animation-delay: calc(var(--claim-t) * 2); }
+@keyframes dr-stroke { to { stroke-dashoffset: 0; } }
+@keyframes dr-in { to { opacity: 1; translate: 0 0; } }
+.claim-rot > span:has(.claim-draw)::after { display: none; }
+@media (prefers-reduced-motion: reduce) { .claim-draw path { stroke-dashoffset: 0; } .claim-draw .dr-sym, .claim-draw .dr-cmd { opacity: 1; translate: none; } }
 @media (prefers-reduced-motion: reduce) { .claim-rot *, .claim-rot *::before, .claim-rot *::after { transition: none !important; animation: none !important; } .claim-tag::after, .claim-fix::after { opacity: 1; } .claim-steps li:not(.st-head) { opacity: 1; } }
 /* math in the typeset view: TeX's italic letters and operator spacing (tex.web § 764: medium around a binary operator, thick around a relation, thin after punctuation) */
 .typeset .ts-mi { font-style: italic; } .typeset .ts-mbin { margin: 0 .222em; } .typeset .ts-mrel { margin: 0 .278em; } .typeset .ts-mpunct { margin-right: .167em; }

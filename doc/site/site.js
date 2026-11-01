@@ -1086,7 +1086,10 @@
       const rows = STEPS.map(([step, tokens]) => `<li style="--r:${at}"><span class="st-step">${step}</span>${tokens.map((t) => `<code class="st-tk" style="--i:${at++}">${esc(t)}</code>`).join('')}</li>`).join('');
       return `<ol class="claim-steps" aria-hidden="true"><li class="st-head"><span>satex trace</span><span>#1 = ab</span></li>${rows}</ol>`;
     };
+    // the drawing pad's answer: a stroke draws itself, then the symbol it matches and its command; the card links to /draw
+    const sketchPad = () => '<a class="claim-draw" href="draw/index.html" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 24 24"><path pathLength="1" d="M8 22V9C8 3 20 3 20 10c0 6-9 6-12 2"/></svg><span class="dr-sym">ρ</span><code class="dr-cmd">\\rho</code></a>';
     const effect = () => {
+      if (effects[shown] === 'draw') { line.insertAdjacentHTML('beforeend', sketchPad()); return true; }
       if (effects[shown] === 'stepper') { line.insertAdjacentHTML('beforeend', stepper()); return true; }
       const chip = line.querySelector('code');
       if (effects[shown] === 'catcodes') { annotate(); return true; }
