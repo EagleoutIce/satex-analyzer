@@ -940,7 +940,7 @@
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
     if (!rows || target !== uri()) return;
     const paragraphs = rows.filter((r) => r.kind === 'paragraph');
-    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}" data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures))}</span></p>`;
+    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"${r.env ? ` data-env="${escape(r.env)}" title="set in ${escape(r.env)}"` : ''} data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures))}</span></p>`;
     // the whole document in order: this file's paragraphs as they are, a run from another file folded into one line
     const html = [];
     for (let i = 0; i < paragraphs.length;) {
@@ -1574,7 +1574,7 @@
   let configKeys = null;
   /** Settings set aside at the start ({set, why}): shown in the dialog, never applied. */
   let configRejected = null;
-  const leaves = (props, at = '') => Object.entries(props ?? {}).flatMap(([k, p]) => (p.type === 'object' && p.properties
+  const leaves = (props, at = '') => Object.entries(props ?? {}).flatMap(([k, p]) => ((p.type ?? 'object') === 'object' && p.properties
     ? leaves(p.properties, `${at}${k}.`) : [{ key: at + k, type: [].concat(p.type ?? 'string')[0], options: p.enum, def: p.default, about: p.description ?? '',
       affects: [].concat(p['x-affects'] ?? []), example: p['x-example'], items: p.items, min: p.minimum, max: p.maximum,
       suggest: (p.oneOf ?? []).flatMap((o) => o.enum ?? []), pattern: (p.oneOf ?? []).find((o) => o.pattern)?.pattern }]));
