@@ -431,6 +431,8 @@ pub struct Analysis {
     /// The fewest arguments each defined name takes, for completion: built
     /// once, from the definitions query.
     pub takes: std::sync::OnceLock<crate::fixed::HashMap<String, u8>>,
+    /// What [`crate::roles`] reads of the sources: read once.
+    pub role_sources: std::sync::OnceLock<crate::roles::Sources>,
     /// The entries of the bibliography databases the document names, for
     /// completion: read once.
     pub bib: std::sync::OnceLock<Vec<crate::plugin::bib::Entry>>,
@@ -2243,6 +2245,7 @@ impl<'a> Machine<'a> {
                 probes: Default::default(),
                 context_probes: Default::default(),
                 takes: Default::default(),
+                role_sources: Default::default(),
                 bib: Default::default(),
             },
             env,

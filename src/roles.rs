@@ -426,14 +426,14 @@ const DEPTH: usize = 6;
 
 /// The roles of `cmd`'s arguments.
 pub fn roles(analysis: &Analysis, cmd: &str) -> Vec<Role> {
-    roles_typed(analysis, &typed(analysis), cmd)
+    roles_typed(analysis, &sources(analysis).typed, cmd)
 }
 
 /// The types the run read in `cmd`'s `[…]` arguments, by their place
 /// among those, joined per place.
 pub fn optional_types(analysis: &Analysis, cmd: &str) -> Vec<(usize, Ty)> {
     let mut out: Vec<(usize, Ty)> = Vec::new();
-    for (_, arg, ty, _) in typed(analysis).iter().filter(|(c, .., optional)| c == cmd && *optional) {
+    for (_, arg, ty, _) in sources(analysis).typed.iter().filter(|(c, .., optional)| c == cmd && *optional) {
         match out.iter_mut().find(|(a, _)| a == arg) {
             Some((_, t)) => *t = t.join(*ty),
             None => out.push((*arg, *ty)),
@@ -444,8 +444,8 @@ pub fn optional_types(analysis: &Analysis, cmd: &str) -> Vec<(usize, Ty)> {
 
 /// The roles of each of `cmds`, the run's typed tokens read once.
 pub fn roles_many(analysis: &Analysis, cmds: &[&str]) -> Vec<Vec<Role>> {
-    let typed = typed(analysis);
-    cmds.iter().map(|c| roles_typed(analysis, &typed, c)).collect()
+    let typed = &sources(analysis).typed;
+    cmds.iter().map(|c| roles_typed(analysis, typed, c)).collect()
 }
 
 fn roles_typed(analysis: &Analysis, typed: &Typed, cmd: &str) -> Vec<Role> {
@@ -654,9 +654,30 @@ fn roles_at(analysis: &Analysis, typed: &Typed, cmd: &str, depth: usize) -> Vec<
     out
 }
 
-/// The roles the run saw `cmd`'s calls take: each occurrence or load made
-/// by a call of `cmd`, at the braced argument that held its key.
-fn evidence(analysis: &Analysis, cmd: &str) -> Vec<Role> {
+/// What the roles read of the run's sources, once per analysis: the typed
+/// tokens, and the calls that made an occurrence or a load.
+#[derive(Clone, Default)]
+pub struct Sources {
+    typed: Typed,
+    calls: Vec<Call>,
+}
+
+/// An occurrence or a load: its key and kind, and the line from the `\` of
+/// the call that made it on, then from its own place on.
+#[derive(Clone)]
+struct Call {
+    lines: Vec<String>,
+    key: String,
+    kind: RoleKind,
+}
+
+fn sources(analysis: &Analysis) -> &Sources {
+    analysis.role_sources.get_or_init(|| Sources { typed: typed(analysis), calls: calls(analysis) })
+}
+
+/// Each occurrence and load, with the rest of the lines where a call may
+/// stand: each file read once.
+fn calls(analysis: &Analysis) -> Vec<Call> {
     let occurrences = analysis
         .facts
         .occurrences
@@ -664,19 +685,46 @@ fn evidence(analysis: &Analysis, cmd: &str) -> Vec<Role> {
         .map(|o| (o.call.map_or(o.span, |c| c.1), Some(o.span), o.key.as_str(), RoleKind::Occ(o.kind)));
     let loads =
         analysis.facts.loads.iter().map(|l| (l.call.unwrap_or(l.span), None, l.name.as_str(), RoleKind::Load(l.kind)));
-    let mut texts: crate::fixed::HashMap<crate::tex::FileId, Option<String>> = Default::default();
+    let mut texts: crate::fixed::HashMap<crate::tex::FileId, Option<(String, Vec<usize>)>> = Default::default();
     occurrences
         .chain(loads)
         .filter_map(|(at, own, key, kind)| {
-            let text = texts.entry(at.file).or_insert_with(|| {
-                let path = &analysis.files.get(usize::from(at.file))?.path;
-                crate::overlay::read_to_string(std::path::Path::new(path)).ok()
-            });
-            let text = text.as_deref()?;
+            let (text, starts) = texts
+                .entry(at.file)
+                .or_insert_with(|| {
+                    let path = &analysis.files.get(usize::from(at.file))?.path;
+                    let text = crate::overlay::read_to_string(std::path::Path::new(path)).ok()?;
+                    let starts = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).collect();
+                    Some((text, starts))
+                })
+                .as_ref()?;
             // A value written later (biblatex's `.bcf`, at the start of the
             // document) stands where the document's call gave it.
-            let held = [Some(at), own.filter(|o| o.file == at.file)].into_iter().flatten().find_map(|at| {
-                call_arguments(text, at, cmd)?.iter().enumerate().find_map(|(i, held)| {
+            let rest = |at: crate::tex::Span| {
+                let start = *starts.get(usize::try_from(at.line).ok()?.checked_sub(1)?)?;
+                let line = text[start..].lines().next()?;
+                Some(line.get(crate::source::byte_of_col(line, at.col)..)?).filter(|r| r.starts_with('\\'))
+            };
+            let lines: Vec<String> = [Some(at), own.filter(|o| o.file == at.file)]
+                .into_iter()
+                .flatten()
+                .filter_map(rest)
+                .map(String::from)
+                .collect();
+            (!lines.is_empty()).then(|| Call { lines, key: key.to_string(), kind })
+        })
+        .collect()
+}
+
+/// The roles the run saw `cmd`'s calls take: each occurrence or load made
+/// by a call of `cmd`, at the braced argument that held its key.
+fn evidence(analysis: &Analysis, cmd: &str) -> Vec<Role> {
+    sources(analysis)
+        .calls
+        .iter()
+        .filter_map(|Call { lines, key, kind }| {
+            let held = lines.iter().find_map(|line| {
+                call_arguments(line, cmd)?.iter().enumerate().find_map(|(i, held)| {
                     if let Some(prefix) = key.strip_suffix(held.as_str()).filter(|_| !held.is_empty()) {
                         return Some((i, prefix.to_string(), String::new()));
                     }
@@ -689,16 +737,15 @@ fn evidence(analysis: &Analysis, cmd: &str) -> Vec<Role> {
                 })
             });
             let (arg, prefix, suffix) = held?;
-            Some(Role { arg, kind, prefix, suffix })
+            Some(Role { arg, kind: *kind, prefix, suffix })
         })
         .collect()
 }
 
-/// The braced arguments of the call of `cmd` that stands at `at` in
-/// `text`; `None` where no call of `cmd` stands there.
-fn call_arguments(text: &str, at: crate::tex::Span, cmd: &str) -> Option<Vec<String>> {
-    let line = text.lines().nth(usize::try_from(at.line).ok()?.checked_sub(1)?)?;
-    let rest = line.get(crate::source::byte_of_col(line, at.col)..)?.strip_prefix('\\')?.strip_prefix(cmd)?;
+/// The braced arguments of a call of `cmd` that `line` starts with; `None`
+/// where it starts with none.
+fn call_arguments(line: &str, cmd: &str) -> Option<Vec<String>> {
+    let rest = line.strip_prefix('\\')?.strip_prefix(cmd)?;
     if rest.starts_with(|c: char| c.is_ascii_alphabetic() || c == '@') {
         return None;
     }
