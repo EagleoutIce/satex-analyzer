@@ -927,7 +927,11 @@
     const at = editor?.position()?.line + 1, own = [...typesetBody.querySelectorAll(':scope > p.ts[data-line]')];
     const here = own.filter((p) => +p.dataset.line <= at).at(-1) ?? null;
     for (const p of typesetBody.querySelectorAll('p.ts')) p.classList.toggle('ts-current', p === here);
-    typesetBody.classList.toggle('ts-only-here', !!$('typeset-here')?.checked && !!here);
+    const only = !!$('typeset-here')?.checked;
+    typesetBody.classList.toggle('ts-only-here', only);
+    // nothing set where the cursor stands: said so, not the whole document
+    typesetBody.querySelector('.ts-nothing')?.remove();
+    if (only && !here) typesetBody.insertAdjacentHTML('afterbegin', '<p class="muted ts-nothing">Nothing is set at the cursor.</p>');
   }
   $('typeset-here')?.addEventListener('change', typesetFollow);
   const withKeys = cards.withKeys;

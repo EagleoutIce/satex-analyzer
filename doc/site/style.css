@@ -1033,7 +1033,7 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .statusbar #cache-open { margin-left: auto; }
 
 .typeset p.ts-current { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
-.ts-only-here > :not(p.ts-current) { display: none; }
+.ts-only-here > :not(p.ts-current, .ts-nothing) { display: none; }
 /* in the playground a ligature is marked, not animated: that is the landing page's */
 :is(.play-split .show-ligs, #lib-out) .ts-lig::before { content: none; animation: none; }
 :is(.play-split .show-ligs, #lib-out) .ts-lig-to { max-width: none; opacity: 1; animation: none; }
