@@ -2557,8 +2557,9 @@ impl<'a> Machine<'a> {
         let mut run = 1;
         // `limits.seconds` bounds the build, not each run: a run starts only
         // while the time left would let one more as long as the last finish.
-        let started = std::time::Instant::now();
-        checkpoints.build_started = Some(started);
+        // The clock starts once the first run has its kernel in place.
+        checkpoints.build_started = None;
+        let elapsed = |c: &Checkpoints| c.build_started.map_or(std::time::Duration::ZERO, |s| s.elapsed());
         let budget = std::time::Duration::from_secs(cfg.limits.seconds);
         // Later runs replay the caches the first stored: the build reports the first.
         let mut caches = None;
@@ -2566,7 +2567,7 @@ impl<'a> Machine<'a> {
         let mut complete: Option<Analysis> = None;
         let mut history = Vec::new();
         let mut analysis = loop {
-            let before = started.elapsed();
+            let before = elapsed(checkpoints);
             crate::progress::set_run(run);
             let mut analysis = checkpoints.analyze(source, path);
             analysis.build_runs = run;
@@ -2577,8 +2578,8 @@ impl<'a> Machine<'a> {
             if analysis.exhausted {
                 break complete.take().unwrap_or(analysis);
             }
-            let took = started.elapsed() - before;
-            if cfg.limits.seconds > 0 && started.elapsed() + took > budget {
+            let took = elapsed(checkpoints) - before;
+            if cfg.limits.seconds > 0 && elapsed(checkpoints) + took > budget {
                 break analysis;
             }
             // What this run read that a build file defines: the keys it

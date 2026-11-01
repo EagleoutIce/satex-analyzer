@@ -160,7 +160,7 @@ pub struct Checkpoints<'a> {
     every: u64,
     /// The line the last run resumed at, if it did.
     pub resumed: Option<(String, u32)>,
-    /// When the build began: every run's `limits.seconds` counts from it.
+    /// When the build's first run had its kernel: every run's `limits.seconds` counts from it.
     pub build_started: Option<std::time::Instant>,
 }
 
@@ -215,9 +215,7 @@ impl<'a> Checkpoints<'a> {
                 (m, id)
             }
         };
-        if let Some(at) = self.build_started {
-            m.started = at;
-        }
+        m.started = *self.build_started.get_or_insert(m.started);
         let next = m.out.steps + self.every;
         let taking = Taking {
             list: std::mem::take(&mut self.list),
