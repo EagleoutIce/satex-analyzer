@@ -2583,3 +2583,18 @@ fn a_summarized_loop_keeps_the_bounds_no_pass_moved() {
     let defined = names(&analysis);
     assert!(!defined.contains(&"neg".to_string()), "{defined:?}");
 }
+
+/// Typed text that cannot hold a whole delimiter (other characters, and
+/// `|\End` names a control sequence) meets it only where it ends in its
+/// start: the argument never ends inside the text, so `\End` is not left
+/// behind to run (hyperref's `\HyPsd@RemoveMask` on an unknown page label).
+#[test]
+fn a_delimiter_only_straddles_text_that_cannot_hold_it() {
+    let analysis = analyze(
+        "\\catcode`\\|=12 \\count1=\\pdfuniformdeviate 100 \
+         \\def\\s{}\\def\\l{\\edef\\s{\\s|}\\advance\\count1 -1 \\ifnum\\count1>0 \\expandafter\\l\\fi}\\l \
+         \\def\\rm|#1|\\End#2{\\def#2{#1}}\\expandafter\\rm\\expandafter|\\s\\End\\r",
+    );
+    assert!(crate::support::defined(&analysis, "r"), "the argument ends where `|` ends the text");
+    assert!(!crate::support::defined(&analysis, "End"), "`\\End` is never an argument");
+}

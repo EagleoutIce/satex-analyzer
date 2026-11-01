@@ -214,12 +214,8 @@ pub struct Env {
     /// end undid is not widened.
     stamp: crate::fixed::Chunked<u64>,
     /// What the join the running path came from kept of its arms
-    /// ([`Corr`]), valid for names not written since `corr_at`.
+    /// ([`Corr`]), less the names written since.
     corr: Option<Rc<Corr>>,
-    corr_at: u64,
-    /// Slot writes so far, never undone, and per slot the last one.
-    writes: u64,
-    wrote: crate::fixed::Chunked<u64>,
     /// `\let\tex_escapechar:D\escapechar`: the engine primitive a name was
     /// made equal to, for primitives satex models alike (tex.web keeps the
     /// primitive's `chr` code in the copy). A parameter's value lives with
@@ -403,7 +399,6 @@ impl Env {
             level: crate::fixed::Chunked::filled(n, 0),
             trailed: crate::fixed::Chunked::filled(n, NONE),
             stamp: crate::fixed::Chunked::filled(n, 0),
-            wrote: crate::fixed::Chunked::filled(n, 0),
             ..Default::default()
         }
     }
@@ -416,7 +411,6 @@ impl Env {
             self.level.resize(n, 0);
             self.trailed.resize(n, NONE);
             self.stamp.resize(n, 0);
-            self.wrote.resize(n, 0);
         }
     }
 
@@ -1101,7 +1095,6 @@ impl Env {
             slots: self.slots.clone(),
             level: crate::fixed::Chunked::filled(self.level.len(), 0),
             stamp: crate::fixed::Chunked::filled(self.level.len(), 0),
-            wrote: crate::fixed::Chunked::filled(self.level.len(), 0),
             trailed: crate::fixed::Chunked::filled(self.level.len(), NONE),
             aliases: self.aliases.clone(),
             ..Default::default()
@@ -1291,8 +1284,7 @@ impl Env {
 
     #[inline]
     fn log(&mut self, i: usize) {
-        self.writes += 1;
-        self.wrote[i] = self.writes;
+        self.unpair(i);
         if self.tracking.get() {
             let mut reads = self.reads.borrow_mut();
             reads.touched.insert(i as u32);
@@ -1331,7 +1323,7 @@ impl Env {
             parted: false,
             journal: self.journal.snapshot(),
             marks: self.marks.clone(),
-            corr: self.live_corr(),
+            corr: self.corr.clone(),
         }
     }
 
@@ -1378,7 +1370,7 @@ impl Env {
         debug_assert_eq!(self.floors.get(fork.level), Some(&fork.trail), "the fork is open");
         let slots = self.changed.get(fork.level).cloned().unwrap_or_default();
         let low = self.lows.get(fork.level).copied().unwrap_or(fork.marks.len());
-        PathEnv { slots, journal: self.journal.clone(), marks: self.marks.clone(), low, corr: self.live_corr() }
+        PathEnv { slots, journal: self.journal.clone(), marks: self.marks.clone(), low, corr: self.corr.clone() }
     }
 
     /// Back to the bindings `fork` saw.
@@ -1420,7 +1412,7 @@ impl Env {
         }
         self.journal = fork.journal.clone();
         self.marks = fork.marks.clone();
-        (self.corr, self.corr_at) = (fork.corr.clone(), self.writes);
+        self.corr = fork.corr.clone();
     }
 
     /// Continue `path` from `fork`.
@@ -1433,6 +1425,7 @@ impl Env {
         // The fork's own map is the path's, shared: rebuilt per resume, every
         // head and parked path would hold a copy of its own.
         let own = (self.changed.len() == fork.level + 1).then(|| self.changed.pop()).flatten();
+        self.corr = None;
         for (sym, (slot, saved)) in path.slots.iter() {
             let i = *sym as usize;
             // A name the path left as the fork has it is not written since.
@@ -1454,7 +1447,7 @@ impl Env {
         for low in &mut self.lows {
             *low = (*low).min(path.low);
         }
-        (self.corr, self.corr_at) = (path.corr.clone(), self.writes);
+        self.corr = path.corr.clone();
     }
 
     /// `paths`, each a path from `fork`, made paths from where the running
@@ -1565,8 +1558,7 @@ impl Env {
         self.effective += 1;
         self.grow(sym);
         let i = sym.0 as usize;
-        self.writes += 1;
-        self.wrote[i] = self.writes;
+        self.unpair(i);
         self.slots[i] = Some(Binding { global: true, ..binding });
         self.level[i] = 0;
         self.note_write(sym.0, ReadKind::Meaning.bit() | ReadKind::Value.bit());
@@ -1785,22 +1777,20 @@ impl Env {
         rows.iter().all(|row| corr.arms.iter().any(|arm| arm.iter().zip(row).all(|(h, x)| within(h, x))))
     }
 
-    /// The running path's [`Corr`], without the names written since.
-    fn live_corr(&self) -> Option<Rc<Corr>> {
-        let corr = self.corr.as_ref()?;
-        let live: Vec<usize> =
-            (0..corr.syms.len()).filter(|&n| self.wrote[corr.syms[n] as usize] <= self.corr_at).collect();
-        match live.len() {
-            n if n == corr.syms.len() => Some(corr.clone()),
-            0 | 1 => None,
-            _ => Some(Rc::new(corr.project(&live))),
-        }
+    /// Slot `i` is written: the arms no longer tell its binding. Dropped
+    /// once here, not per fork and path that read the [`Corr`].
+    #[inline]
+    fn unpair(&mut self, i: usize) {
+        let Some(corr) = &self.corr else { return };
+        let Some(n) = corr.syms.iter().position(|&s| s as usize == i) else { return };
+        let keep: Vec<usize> = (0..corr.syms.len()).filter(|&m| m != n).collect();
+        self.corr = (keep.len() >= 2).then(|| Rc::new(corr.project(&keep)));
     }
 
     /// The bindings `sym` has in the arms of the join the running path
     /// came from ([`Corr`]): empty when they are not kept.
     pub fn arms(&self, sym: Sym) -> Vec<Option<Binding>> {
-        let Some(corr) = self.live_corr() else { return Vec::new() };
+        let Some(corr) = self.corr.clone() else { return Vec::new() };
         let Some(n) = corr.syms.iter().position(|&s| s == sym.0) else { return Vec::new() };
         corr.arms.iter().map(|arm| arm[n].clone()).collect()
     }
@@ -1808,12 +1798,13 @@ impl Env {
     /// Slot `i` is refined to what the arms flagged in `keep` allow: the
     /// other names of the running path's [`Corr`] are refined alike.
     fn correlate(&mut self, i: usize, keep: &[bool]) {
-        let Some(corr) = self.live_corr() else { return };
+        let Some(corr) = self.corr.clone() else { return };
         let Some(n) = corr.syms.iter().position(|&s| s as usize == i) else { return };
         let keep: Vec<usize> = (0..corr.arms.len()).filter(|&k| keep.get(k) == Some(&true)).collect();
         if keep.is_empty() || keep.len() == corr.arms.len() {
             return;
         }
+        self.corr = None;
         for m in (0..corr.syms.len()).filter(|&m| m != n) {
             let joined = keep.iter().map(|&k| corr.arms[k][m].clone()).reduce(|x, y| join(x, y, self.sets, None));
             let j = corr.syms[m] as usize;
@@ -1828,7 +1819,6 @@ impl Env {
         let corr =
             Corr { syms: corr.syms.clone(), arms: keep.iter().map(|&k| corr.arms[k].clone()).collect() }.project(&rest);
         self.corr = (rest.len() >= 2 && corr.arms.len() >= 2).then(|| Rc::new(corr));
-        self.corr_at = self.writes;
     }
 
     /// The save stacks of two paths from `fork` joined (tex.web §§ 268-283).

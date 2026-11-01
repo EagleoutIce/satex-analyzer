@@ -9923,16 +9923,17 @@ will look undefined",
             // text counts only where its class may hold a brace or `first`.
             let first = &delimiter[..1.min(delimiter.len())];
             // In a group no delimiter matches (tex.web § 392). Braceless typed
-            // text shorter than the delimiter can only straddle it
-            // ([`straddles`]), so it is read on as it is.
-            let short = match (depth, self.typed_text_of(t), self.text_len(t)) {
+            // text shorter than the delimiter, or of a class that cannot hold
+            // all of it, can only straddle it ([`straddles`]), so it is read
+            // on as it is.
+            let typed = self.typed_text_of(t).is_some() || self.one_of_members(t).is_some();
+            let short = match (depth, typed, self.text_len(t)) {
                 // one at a time: two close ones may hold it between them
-                (0, Some(_), Some(n))
-                    if (n as usize) < delimiter.len()
-                        && self.may_hold(t, &[]) == Some(false)
-                        && straddled.last().is_none_or(|&q| out.len() - q >= delimiter.len()) =>
-                {
-                    Some(n as usize)
+                (0, true, n) if straddled.last().is_none_or(|&q| out.len() - q >= delimiter.len()) => {
+                    let class = self.token_class(t, false);
+                    let holds =
+                        n.is_none_or(|n| n as usize >= delimiter.len()) && delimiter.iter().all(|d| class.may_be(*d));
+                    (!class.may_brace() && !holds).then(|| n.map_or(usize::MAX, |n| n as usize))
                 }
                 _ => None,
             };
@@ -9975,8 +9976,8 @@ will look undefined",
             // the delimiter may be among its texts. A path per text would
             // be exact, but multiplies the paths of every loop over such a
             // text (pgfmath's long division), so it is read as unknown text.
-            let mut passes = false;
-            if !unknown_text && depth == 0 && self.one_of_hides(t, delimiter, before) {
+            let mut passes = short.is_some();
+            if !passes && !unknown_text && depth == 0 && self.one_of_hides(t, delimiter, before) {
                 match self.scan_one_of(t, delimiter, &out, tail_free) {
                     OneOfScan::Argument(argument) => return argument,
                     OneOfScan::Pass => passes = true,
@@ -10098,12 +10099,14 @@ will look undefined",
                     Some(0) => {
                         let rest = out[p];
                         out.truncate(p - cut.0);
+                        // What the text holds before the delimiter.
                         if cut.0 == 0
-                            && let Some((class, _)) = self.typed_text_of(rest)
-                            && let Some(n) = self.text_len(rest).map(|n| n.saturating_sub(cut.1 as u32))
-                            && n > 0
+                            && let Some((class, _, len, cs)) = self.cover(&[&[rest]])
                         {
-                            out.push(self.unknown_text(Unk::Class(class, false, Some(n), &[]), rest.span));
+                            let n = len.map(|n| n.saturating_sub(cut.1 as u32));
+                            if n != Some(0) {
+                                out.push(self.unknown_text(Unk::Class(class, false, n, &cs), rest.span));
+                            }
                         }
                         self.delimiter_met = true;
                         if let Some(span) = fuzzy {
@@ -10151,7 +10154,7 @@ will look undefined",
     /// the delimiter and how many the text gives it.
     fn straddles(&self, out: &[Token], p: usize, delimiter: &[Tok]) -> Option<(usize, usize)> {
         let after = out.len().checked_sub(p + 1).filter(|&n| n > 0 && n < delimiter.len())?;
-        let len = self.text_len(out[p])? as usize;
+        let len = self.text_len(out[p]).map_or(usize::MAX, |n| n as usize);
         let class = self.token_class(out[p], false);
         if out[p + 1..].iter().zip(&delimiter[delimiter.len() - after..]).any(|(o, d)| o.tok != *d) {
             return None;
