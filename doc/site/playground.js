@@ -491,13 +491,27 @@
     // every name in force: what a `\\` completes from at once, beyond the server's best few hundred
     namesInForce(false).then((records) => scopeItems.set(uri(), records.map((r) => ({ label: r.name.replace(/^\\/, ''), detail: r.effective ?? r.name, kind: 3 }))));
     const text = editor?.text() ?? '';
-    for (const [re, place, skip] of [[/\\[A-Za-z@]/, '\\', 1], [/\\begin\{/, 'begin', 7]]) {
-      const at = text.search(re);
-      if (at < 0 || commandItems.has(`${uri()}|${place}`)) continue;
-      const before = text.slice(0, at + skip).split('\n');
+    for (const [place, offset] of askablePlaces(text)) {
+      if (commandItems.has(`${uri()}|${place}`)) continue;
+      const before = text.slice(0, offset).split('\n');
       completions({ line: before.length - 1, character: before.at(-1).length }, before.at(-1).length, place);
     }
   }
+  /** The kinds of place the text offers a completion in, each with one offset to ask at: after a `\\`,
+   * and after the first `{` or `[` of each command (`ref{`, `cite{`, `color{`, `usepackage[`…). */
+  const PREFETCH_PLACES = 40;
+  function askablePlaces(text) {
+    const places = new Map();
+    const first = text.search(/\\[A-Za-z@]/);
+    if (first >= 0) places.set('\\', first + 1);
+    for (const m of text.matchAll(/\\([A-Za-z@]+)\*?([{[])/g)) {
+      const place = argumentPlace(m[1], m[2]);
+      if (!places.has(place) && places.size < PREFETCH_PLACES) places.set(place, m.index + m[0].length);
+    }
+    return places;
+  }
+  /** The name of the kind of place inside the argument of `command` opened by `bracket`. */
+  const argumentPlace = (command, bracket) => bracket === '[' ? `${command}[` : command;
   /** Sends the buffer to the server unless it already has it: the text
    * only, so what is asked meanwhile is answered from the last analysis. */
   function push() {
@@ -559,6 +573,16 @@
   const rank = (items, typed) => items
     .map((i) => [i, tier(i), closeness(i, typed.toLowerCase())]).filter((x) => x[2] !== null)
     .sort((a, b) => a[1] - b[1] || a[2] - b[2] || (a[0].sortText ?? '').localeCompare(b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
+  /** The `#rrggbb` of a Color item (kind 16) whose documentation is one, else null. */
+  const colorOf = (item) => {
+    const doc = typeof item.documentation === 'string' ? item.documentation : item.documentation?.value;
+    return item.kind === 16 && /^#[0-9a-f]{6}$/i.test(doc ?? '') ? doc : null;
+  };
+  /** The kind of place at the end of `before`: the command whose open argument (or option list) it is in. */
+  function placeAt(before) {
+    const brace = before.match(/\\([A-Za-z@]+)\*?(?:\[[^\]]*\])*\{[^{}]*$/), option = before.match(/\\([A-Za-z@]+)\*?(?:\{[^{}]*\})*\[[^\]]*$/);
+    return brace ? argumentPlace(brace[1], '{') : option ? argumentPlace(option[1], '[') : null;
+  }
   /** The language server's completion items at `position`, kept per buffer version. While a run
    * keeps the server busy, the last items stand in only where they were asked for the same word. */
   const asked = new Map();
@@ -645,7 +669,7 @@
       push();
       const start = before === '\\' ? word.from : key.from;
       // the kind of place: a command name, or the argument of the command whose brace is open
-      const place = before === '\\' ? '\\' : line.text.slice(0, key.from - line.from).match(/\\([A-Za-z@]+)\*?(?:\[[^\]]*\])*\{[^{}]*$/)?.[1] ?? null;
+      const place = before === '\\' ? '\\' : placeAt(line.text.slice(0, key.from - line.from));
       const items = await completions(position(ctx.state.doc, ctx.pos), start - line.from, place);
       // typed before the server read it: analyze now, ask again when that run ends
       if (!items.length && !ctx.explicit) { retryCompletion = true; sync(); }
@@ -656,7 +680,7 @@
       return {
         from, to: edit ? Math.max(at(ctx.state.doc, edit.range.end), ctx.pos) : ctx.pos, filter: false,
         options: rank(items, typed).slice(0, 200).map((i) => ({
-          label: i.label, usage: i.detail, preview: i.data?.preview, type: KIND[i.kind] ?? 'text',
+          label: i.label, usage: i.detail, preview: i.data?.preview, color: colorOf(i), type: KIND[i.kind] ?? 'text',
           apply: i.insertTextFormat === 2 ? ac.snippet((i.insertText ?? i.textEdit?.newText ?? i.label).replace(/\$\{?(\d+)\}?/g, '#{$1}')) : i.textEdit?.newText ?? i.insertText ?? i.label,
         })),
       };
@@ -669,7 +693,7 @@
       const line = v.state.doc.lineAt(pos), word = wordAt(line.text, pos - line.from);
       const key = word?.[3] ? `${uri()}|${word[2]}` : null;
       const asking = lsp('textDocument/hover', { textDocument: { uri: uri() }, position: position(v.state.doc, pos) }).catch(() => null)
-        .then((r) => { if (key) keptHovers.set(key, r); return r; });
+        .then((r) => { if (key && r) keptHovers.set(key, r); return r; });
       const result = running && keptHovers.has(key) ? keptHovers.get(key) : await asking;
       const c = result?.contents;
       const value = typeof c === 'string' ? c : c?.value ?? (Array.isArray(c) ? c.map((x) => x.value ?? x).join('\n') : '');
@@ -788,6 +812,11 @@
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
         span.innerHTML = (use ? cards.usage(use).html : '') + (from ? ` <span class="muted">${escape(from)}</span>` : '');
         // what the item draws (a line width, dash pattern, arrow tip or pattern), from the server
+        if (c.color) {
+          const swatch = Object.assign(document.createElement('span'), { className: 'cm-swatch', title: c.color });
+          swatch.style.background = c.color;
+          span.prepend(swatch);
+        }
         if (c.preview) span.prepend(Object.assign(document.createElement('img'), { className: 'cm-preview', src: `data:image/svg+xml;utf8,${encodeURIComponent(c.preview)}`, alt: '' }));
         return span;
       } }] }),
