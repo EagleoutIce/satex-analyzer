@@ -1023,12 +1023,18 @@ self.satexDraw = (
         esc(cat)
       }</span>`;
     };
+    // a row's buttons; where the list is narrow, behind one toggle (style.css) that shows them
+    const actions = (buttons) => {
+      const toggle = '<button type="button" class="pill draw-acts-toggle" aria-expanded="false" ' +
+        'title="Actions" aria-label="Actions">⋯</button>';
+      return `<span class="draw-acts">${toggle}${buttons}</span>`;
+    };
     const variant = (xs, hidden) => {
       const x = xs[0];
       const note = missing(x) ? ', not loaded' : '';
       const where = `<span class="lib-pkg${off(x)}">${pkgs(xs)}${note}</span>`;
       const what = `<span class="draw-what">${chip(x)}${where}${fonts(xs)}</span>`;
-      const acts = `<span class="draw-acts">${like(x)}${put(x)}</span>`;
+      const acts = actions(like(x) + put(x));
       return `<li${hidden ? ' hidden' : ''}>${glyph(x, table)}${what}${acts}</li>`;
     };
     // the row's other names of its glyph: behind a pill, the first DRAW.few at once
@@ -1079,7 +1085,7 @@ self.satexDraw = (
       const withUse = needsUse
         ? put(main, `${label} ${main.name} with ${use}`, ICON.package, ` data-use="${esc(use)}"`)
         : '';
-      const acts = `<span class="draw-acts">${like(main)}${put(main)}${withUse}</span>`;
+      const acts = actions(like(main) + put(main) + withUse);
       const below = (aliases.length ? aliasList(aliases) : '') + (alike.length ? alikeStrip(alike) : '');
       return `<li class="draw-row">${glyph(s, table)}${what}${acts}${below}</li>`;
     };
@@ -1418,6 +1424,13 @@ self.satexDraw = (
         const open = more.getAttribute('aria-expanded') !== 'true';
         more.setAttribute('aria-expanded', String(open));
         more.closest('li').querySelector('.draw-more').hidden = !open;
+        return;
+      }
+      const toggle = e.target.closest('.draw-acts-toggle');
+      if (toggle) {
+        const open = toggle.getAttribute('aria-expanded') !== 'true';
+        toggle.setAttribute('aria-expanded', String(open));
+        toggle.parentElement.classList.toggle('open', open);
         return;
       }
       const shown = e.target.closest('[data-alike]');
