@@ -742,7 +742,9 @@ button.apply:hover:not(:disabled) { border-color: currentColor; }
 .cache-table .cache-sub > td > div { padding: .05rem 0 .05rem .95rem; }
 .cache-kind { --k: var(--c0); color: var(--k); background: color-mix(in srgb, var(--k) 14%, transparent); border: 1px solid color-mix(in srgb, var(--k) 40%, transparent);
   border-radius: 999px; padding: 0 .45rem; font-size: .7rem; white-space: nowrap; }
-.k-kernel { --k: var(--c4); } .k-class { --k: var(--c5); } .k-package { --k: var(--c2); } .k-index { --k: var(--c6); } .k-facts { --k: var(--c3); } .k-hashes { --k: var(--c0); }
+.k-kernel { --k: var(--c4); } .k-class { --k: var(--c5); } .k-package { --k: var(--c2); } .k-index { --k: var(--c6); } .k-facts { --k: var(--c3); } .k-hashes { --k: var(--c0); } .k-previews { --k: var(--c1); }
+.cache-colors summary { cursor: pointer; } .cache-colors ul { list-style: none; margin: .3rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: .2rem .8rem; max-height: 10rem; overflow: auto; font: .74rem ui-monospace, Menlo, monospace; }
+.cache-colors li { display: flex; align-items: center; gap: .3rem; } .cache-colors i { width: .9rem; height: .9rem; border-radius: 3px; border: 1px solid var(--border); } .cache-colors i.nocolor { background: repeating-linear-gradient(45deg, var(--border) 0 3px, transparent 3px 6px); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .cache-dirs { list-style: none; margin: .3rem 0 0; padding: 0; max-height: 12rem; overflow: auto; columns: 2 16rem; column-gap: 1.5rem; font: .74rem ui-monospace, Menlo, monospace; }
 .cache-dirs li { display: flex; justify-content: space-between; gap: .6rem; break-inside: avoid; padding: .05rem 0; } .cache-dirs span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .cache-dirs b { font-weight: 400; color: var(--muted); }
@@ -1085,7 +1087,7 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 
 .tr-bar { position: sticky; top: 0; z-index: 2; background: var(--panel); padding: .3rem 0; } #trace-step { font-variant-numeric: tabular-nums; min-width: 9ch; }
 .loc-file { color: var(--muted); font-weight: 400; margin-right: .1rem; }
-.cm-swatch { display: inline-block; width: .8em; height: .8em; margin: 0 .2em -.05em 0; border: 1px solid var(--border); border-radius: 2px; vertical-align: baseline; }
+.cm-swatch { display: inline-block; width: .8em; height: .8em; margin: 0 .2em -.05em 0; border: 1px solid var(--border); border-radius: 50%; vertical-align: baseline; }
 /* completion rows: the label, then what it draws in a column of its own, then where it comes from */
 .cm-tooltip-autocomplete ul li { display: flex; align-items: center; gap: .6em; }
 .cm-tooltip-autocomplete .cm-completionDetail { margin-left: auto; font-style: normal; font-size: .85em; color: var(--muted); display: inline-flex; align-items: center; gap: .6em; }
@@ -1102,17 +1104,11 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .claim-rot .cc-hot sub { color: var(--accent); }
 .claim-rot > span.shows .cc sub { opacity: 1; transform: none; }
 .claim-rot > span.shows .cc:nth-child(n) sub { transition-delay: calc(var(--i, 0) * 40ms); }
-.claim-lig { display: inline-grid; } .claim-lig > span { grid-area: 1 / 1; transition: opacity .5s var(--ease); }
-.claim-lig > span:last-child { opacity: 0; } .claim-rot > span.shows .claim-lig > span:first-child { opacity: 0; } .claim-rot > span.shows .claim-lig > span:last-child { opacity: 1; }
-.claim-rot > span.shows .claim-lig { background: color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 3px; box-shadow: inset 0 -2px 0 var(--accent); }
 
 .draw-zoom { position: fixed; z-index: 60; translate: -50% -50%; width: 5.5rem; height: 5.5rem; display: grid; place-items: center; background: var(--panel); color: var(--fg);
   border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 24px rgb(0 0 0 / .22); pointer-events: none; animation: zoom-in .12s var(--ease); }
 .draw-zoom[hidden] { display: none; } .draw-zoom .draw-glyph { width: auto; font-size: 3.4rem; } .draw-zoom .draw-bmp { width: 4rem; height: 4rem; }
 @keyframes zoom-in { from { opacity: 0; scale: .7; } }
-.claim-rot .claim-lint { text-decoration: underline wavy transparent; text-underline-offset: .22em; text-decoration-thickness: 2px; transition: text-decoration-color .5s var(--ease); }
-.claim-rot > span.shows .claim-lint { text-decoration-color: var(--error); }
-.claim-rot > span.shows .claim-lint.fixed { text-decoration-color: transparent; background: color-mix(in srgb, var(--safe, #3a3) 22%, transparent); border-radius: 3px; transition: background-color .6s var(--ease), text-decoration-color .3s; }
 .claim-rot > span:has(.claim-complete)::after { display: none; }
 .draw-solo .draw-box { flex: 1; min-height: 0; } .draw-results { overflow: hidden; } .draw-results .draw-list { flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0; }
 /* text set in an environment of the document (a figure, a listing) stands apart from the running text */
@@ -1211,3 +1207,78 @@ button.draw-cat { border: 0; font: inherit; font-size: .68rem; cursor: pointer; 
 }
 @media (max-width: 36rem) { .draw-top .draw-pkg-wrap { display: flex; } .draw-top #draw-pkgs { flex: 1 1 0; min-width: 0; text-align: left; } .draw-what { row-gap: 0; } .draw-under { margin: 0 0 var(--d-1); } }
 @media (max-width: 36rem) { .draw-top .draw-filters > select.dropdown, .draw-top .draw-filters > .draw-pkg-wrap { flex: 1 1 0; min-width: 0; } }
+
+/* the claims act out their words: appear, act, settle on one beat. The pip is the shared mark for "satex noticed this" */
+.claim-rot { --claim-t: .6s; --claim-act: .5s; --claim-lift: .62em; --claim-pip: color-mix(in srgb, var(--accent) 85%, var(--fg)); }
+.claim-pip, .claim-fix::after, .claim-tag::after { position: absolute; top: -.35em; right: -.5em; font: 600 .42em ui-monospace, Menlo, monospace; color: var(--accent); opacity: 0; line-height: 1; pointer-events: none; }
+.claim-fix, .claim-tag, .claim-fork, .claim-lig, .claim-opt { position: relative; }
+.claim-rot > span.shows .claim-tag::after, .claim-rot > span.shows .claim-fix::after { animation: pip-in var(--claim-t) var(--ease) var(--claim-act) both; }
+@keyframes pip-in { from { opacity: 0; translate: 0 .3em; } to { opacity: 1; } }
+/* a wrong text turns into the right one: crossfade, the width following */
+.claim-fix { display: inline-grid; justify-items: center; overflow: visible; text-decoration: none; white-space: pre; width: var(--from); transition: width var(--claim-t) var(--ease) var(--claim-act); }
+.claim-fix > span { grid-area: 1 / 1; transition: opacity var(--claim-t) var(--ease) var(--claim-act), translate var(--claim-t) var(--ease) var(--claim-act), color var(--claim-t) var(--ease); }
+.claim-fix > span:first-child { color: var(--error); }
+.claim-fix > span:last-child { opacity: 0; translate: 0 .35em; color: var(--c2); }
+.claim-fix::after { content: "✓"; color: var(--c2); }
+.claim-rot > span.shows .claim-fix { width: var(--to); }
+.claim-rot > span.shows .claim-fix > span:first-child { opacity: 0; translate: 0 -.35em; }
+.claim-rot > span.shows .claim-fix > span:last-child { opacity: 1; translate: none; }
+/* the undecided word shows both arms, moving apart vertically, and joins them again */
+.claim-arm { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.claim-fork::before { content: ""; position: absolute; left: -.3em; top: 50%; height: 0; width: 2px; translate: 0 -50%; border-radius: 2px; background: var(--accent); opacity: 0; }
+.claim-rot > span.shows .claim-fork::before { animation: fork-line calc(var(--claim-t) * 4) var(--ease) both; }
+.claim-rot > span.shows .claim-arm.up { animation: arm-up calc(var(--claim-t) * 4) var(--ease) both; }
+.claim-rot > span.shows .claim-arm.down { animation: arm-down calc(var(--claim-t) * 4) var(--ease) both; }
+@keyframes base-dim { 0%, 100% { opacity: 1; } 25%, 70% { opacity: .35; } }
+.claim-rot > span.shows .claim-base { animation: base-dim calc(var(--claim-t) * 4) var(--ease) both; }
+@keyframes arm-up { 0%, 100% { opacity: 0; translate: 0 0; } 25%, 70% { opacity: .9; translate: 0 calc(var(--claim-lift) * -1); } }
+@keyframes arm-down { 0%, 100% { opacity: 0; translate: 0 0; } 25%, 70% { opacity: .9; translate: 0 var(--claim-lift); } }
+@keyframes fork-line { 0%, 100% { height: 0; opacity: 0; } 25%, 70% { height: calc(var(--claim-lift) * 2 + 1em); opacity: .7; } }
+/* ligatures: the letters slide together, then the one glyph stands */
+.claim-lig { display: inline-grid; justify-items: center; }
+.claim-lig > span { grid-area: 1 / 1; transition: translate var(--claim-t) var(--ease) var(--claim-act), opacity var(--claim-t) var(--ease) calc(var(--claim-act) + var(--claim-t) * .6); }
+.claim-lig .lig-f { justify-self: start; } .claim-lig .lig-i { justify-self: end; } .claim-lig .lig-fi { opacity: 0; }
+.claim-rot > span.shows .claim-lig .lig-f { translate: .12em 0; } .claim-rot > span.shows .claim-lig .lig-i { translate: -.12em 0; }
+.claim-rot > span.shows .claim-lig .lig-f, .claim-rot > span.shows .claim-lig .lig-i { opacity: 0; }
+.claim-rot > span.shows .claim-lig .lig-fi { opacity: 1; }
+.claim-rot > span.shows .claim-lig { box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent) 60%, transparent); border-radius: 2px; transition: box-shadow var(--claim-t) var(--ease); }
+/* options: brackets open around the word. runs: a counter ticks. compiled yesterday and not today: a tick and a cross */
+.claim-opt::before, .claim-opt::after { position: absolute; top: 0; opacity: 0; color: var(--accent); font-weight: 400; transition: opacity var(--claim-t) var(--ease) var(--claim-act), translate var(--claim-t) var(--ease) var(--claim-act); }
+.claim-opt::before { content: "["; left: 0; translate: .3em 0; } .claim-opt::after { content: "]"; right: 0; translate: -.3em 0; }
+.claim-rot > span.shows .claim-opt::before { opacity: 1; translate: -.2em 0; } .claim-rot > span.shows .claim-opt::after { opacity: 1; translate: .2em 0; }
+.claim-count::after { content: "1"; }
+.claim-rot > span.shows .claim-count::after { animation: pip-in var(--claim-t) var(--ease) var(--claim-act) both, runs-count calc(var(--claim-t) * 3) steps(1) var(--claim-act) both; }
+@keyframes runs-count { 0% { content: "×1"; } 40% { content: "×2"; } 100% { content: "×2"; } }
+.claim-ok::after, .claim-bad::after { content: attr(data-tag); }
+.claim-ok::after { color: var(--c2); } .claim-bad::after { color: var(--error); animation-delay: calc(var(--claim-act) + var(--claim-t)) !important; }
+/* a link draws its underline like a hover, then a peek of its target opens under it, as an editor's go-to-definition does */
+.claim-host { position: relative; }
+.claim-host a { text-decoration: none; background: linear-gradient(currentColor, currentColor) 0 100% / 0 2px no-repeat; transition: background-size var(--claim-t) var(--ease) var(--claim-act); }
+.claim-rot > span.shows .claim-host a { background-size: 100% 2px; }
+.claim-peek { position: absolute; top: calc(100% + .5rem); left: 50%; display: grid; gap: .1rem; padding: .35rem .7rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); box-shadow: 0 6px 18px rgb(0 0 0 / .16); font-size: .72rem; font-weight: 400; color: var(--fg); white-space: nowrap; text-align: left; opacity: 0; translate: -50% .4em; pointer-events: none; transition: opacity var(--claim-t) var(--ease) calc(var(--claim-act) + var(--claim-t)), translate var(--claim-t) var(--ease) calc(var(--claim-act) + var(--claim-t)); }
+.claim-peek code { font-weight: 600; color: var(--accent); } .claim-peek span { color: var(--muted); }
+.claim-rot > span.shows .claim-peek { opacity: 1; translate: -50% 0; }
+/* stepper: a trace of one call, each token lit as the run passes it (rows follow the step order, --i is the token's turn) */
+.claim-steps { position: relative; z-index: 2; display: grid; gap: .1rem; width: max-content; max-width: 100%; margin: .6rem auto 0; padding: .3rem; list-style: none; text-align: left; pointer-events: none;
+  font: 400 .8rem system-ui, sans-serif; color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); opacity: 0; transform: translateY(-.2rem); transition: opacity .3s var(--ease), transform .3s var(--ease); }
+.claim-rot > span.shows .claim-steps { opacity: 1; transform: none; }
+.claim-steps li { display: flex; align-items: center; gap: .3rem; padding: .1rem .5rem; }
+.claim-steps .st-head { justify-content: space-between; gap: 1.5rem; color: var(--muted); font-size: .68rem; letter-spacing: .04em; }
+.claim-steps .st-step { width: 4.2rem; color: var(--muted); font-size: .72rem; }
+.claim-rot .claim-steps code.st-tk { font-size: .85rem; font-weight: 400; padding: .05rem .3rem; border-radius: 4px; color: var(--fg); }
+.claim-steps li:not(.st-head) { opacity: .45; }
+.claim-rot > span.shows .claim-steps li:not(.st-head) { animation: st-row calc(var(--claim-t) * 3) var(--ease) calc(var(--r) * var(--claim-t) * .9 + var(--claim-t) * .3) both; }
+.claim-rot > span.shows .st-tk { animation: st-tk calc(var(--claim-t) * 1.2) var(--ease) calc(var(--i) * var(--claim-t) * .45 + var(--claim-t) * .3) both; }
+@keyframes st-tk { 0% { background: transparent; } 25% { background: color-mix(in srgb, var(--accent) 28%, transparent); box-shadow: 0 0 0 1px var(--accent); } 100% { background: transparent; box-shadow: none; } }
+@keyframes st-row { from { opacity: .45; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .claim-rot *, .claim-rot *::before, .claim-rot *::after { transition: none !important; animation: none !important; } .claim-tag::after, .claim-fix::after { opacity: 1; } .claim-steps li:not(.st-head) { opacity: 1; } }
+/* math in the typeset view: TeX's italic letters and operator spacing (tex.web § 764: medium around a binary operator, thick around a relation, thin after punctuation) */
+.typeset .ts-mi { font-style: italic; } .typeset .ts-mbin { margin: 0 .222em; } .typeset .ts-mrel { margin: 0 .278em; } .typeset .ts-mpunct { margin-right: .167em; }
+/* the paragraph gap is the run's \parskip at that paragraph */
+.typeset .ts[style*="--skip"] { margin-top: var(--skip); margin-bottom: 0; }
+/* settings rows: fixed label / value / reset columns over the full width, so opening an example moves nothing */
+#cfg-list { scrollbar-gutter: stable; }
+.cfg-row { grid-template-columns: minmax(0, 1fr) 16rem 4.4rem; width: 100%; box-sizing: border-box; }
+.cfg-row > .cfg-what { max-width: none; }
+.cfg-row > .ts-toggle.cfg-value { justify-self: end; margin-left: 0; }
+.cfg-example pre { overflow-x: auto; max-width: 100%; box-sizing: border-box; }

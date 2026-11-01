@@ -496,7 +496,10 @@
   function notation(marked, sketches = [], picture = null) {
     let drawn = 0;
     // row: false while a row waits for its first character, true if an \hline rules it, null when one is open
-    let open = 0, font = '', table = 0, row = null, lig = null;
+    let open = 0, font = '', table = 0, row = null, lig = null, math = '';
+    // a math atom: `i` an italic letter, a class digit (2 binary, 3 relation, 6 punctuation) sets its spacing
+    const MATH_CLASS = { i: 'ts-mi', 2: 'ts-mbin', 3: 'ts-mrel', 6: 'ts-mpunct' };
+    const mathSpan = (html) => MATH_CLASS[math] ? `<span class="${MATH_CLASS[math]}">${html}</span>` : html;
     // a ligature: the characters the font joined, then the glyph it set (`.show-ligs` animates the join)
     const ligature = (from, to) => {
       const code = [...to].length === 1 ? ` (U+${to.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')})` : '';
@@ -535,8 +538,9 @@
       if (note === undefined) {
         if (row !== null && !part.trim()) return '';
         const tr = table ? opened() : '';
-        return tr + (font && part ? `<span class="${font}">${joined(part)}</span>` : joined(part));
+        return tr + mathSpan(font && part ? `<span class="${font}">${joined(part)}</span>` : joined(part));
       }
+      if (note[0] === '\u0006') { math = note.slice(1); return ''; }
       if (note[0] === '\u0003') return grid(note.slice(1));
       if (note[0] === '\u0005') { lig = note.slice(1).split('\u0001'); return ''; }
       if (note === '―' && table && row !== null) { row = true; return ''; }
@@ -631,7 +635,7 @@
   // card, so nothing on the page moves; a click on a command pins its full card.
   const { card } = tips, tip = card.el;
   /** Typeset paragraphs as the playground's Typeset panel draws them. */
-  const paragraphs = (rows) => rows.map((r) => `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}"${r.env ? ` data-env="${esc(r.env)}"` : ''}><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures), r.sketches, r.sketch)}</span></p>`).join('')
+  const paragraphs = (rows) => rows.map((r) => `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}"${typeof r.skip === 'number' && !r.heading ? ` style="--skip: ${Math.max(r.skip, 0)}pt"` : ''}${r.env ? ` data-env="${esc(r.env)}"` : ''}><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures), r.sketches, r.sketch)}</span></p>`).join('')
     || '<p class="muted">It sets no paragraph.</p>';
   const lintCard = (d) => {
     const diff = d.typo ? (d.edits ?? []).map((e) => ` <span class="diff"><del>${esc(e.from) || '␣'}</del>→<ins>${esc(e.to) || '∅'}</ins></span>`).join('') : '';
@@ -851,6 +855,16 @@
       if (place) live.view.dispatch({ selection: { anchor: doc.line(Math.min(place.line + 1, doc.lines)).from + place.col } });
       live.view.focus();
     });
+    // an edited example opens in the playground as it stands: its text travels in a share link, the playground's own format
+    fig.querySelector('.ex-acts a').addEventListener('click', async (e) => {
+      const text = live?.view.state.doc.toString();
+      if (text == null || text === data.source) return;
+      e.preventDefault();
+      const base = e.currentTarget.href.split('#')[0];
+      const packed = new Uint8Array(await new Response(new Blob([new TextEncoder().encode(JSON.stringify({ x: data.name, f: data.name, p: { [data.name]: text } }))]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer());
+      const bits = [...packed].map((b) => String.fromCharCode(b)).join('');
+      location.href = `${base}#s=${btoa(bits).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
+    });
     reset.addEventListener('click', () => {
       if (!live) return;
       const host = fig.querySelector('.live-src');
@@ -1008,12 +1022,13 @@
       .map((n) => ({ text: n.textContent, code: n.nodeName === 'CODE', lint: n.nodeName === 'U', fix: n.dataset?.fix ?? null, href: n.nodeName === 'A' ? n.getAttribute('href') : null })));
     const typed = (i, n) => {
       let left = n;
-      // a `<u>` is what a linter would mark there: its squiggle comes once the claim stands
-      // one with `data-fix` is then fixed as a quick fix would: the right text takes its place
+      // a `<u>` is a spot a linter would mark: with `data-fix` it holds the wrong text and the right one, the first turning into the second
       return parts[i].map(({ text, code, lint, fix, href }) => {
         const shown = text.slice(0, Math.max(0, left));
         left -= text.length;
-        return shown && (code ? `<code>${esc(shown)}</code>` : lint ? `<u class="claim-lint"${fix == null ? '' : ` data-fix="${esc(fix)}"`}>${esc(shown)}</u>` : href ? `<a href="${esc(href)}">${esc(shown)}</a>` : esc(shown));
+        if (!shown) return '';
+        if (lint) return `<u class="claim-fix"><span>${esc(shown)}</span><span>${esc(shown === text ? fix ?? '' : '')}</span></u>`;
+        return code ? `<code>${esc(shown)}</code>` : href ? `<a href="${esc(href)}">${esc(shown)}</a>` : esc(shown);
       }).join('');
     };
     const length = (i) => parts[i].reduce((sum, p) => sum + p.text.length, 0);
@@ -1051,28 +1066,45 @@
       let n = 0;
       for (const c of line.querySelectorAll('.cc')) c.style.setProperty('--i', String(n++));
     };
+    // each claim acts out its words in a few classes: the pip is the shared mark for "noticed", the rest is CSS
+    const tag = (cls, mark) => (w) => `<span class="claim-tag ${cls}" data-tag="${mark}">${w}</span>`;
+    const arm = (cls) => `<span class="claim-arm ${cls}" aria-hidden="true">branches</span>`;
+    const peek = '<span class="claim-peek" aria-hidden="true"><code>TikZpingus</code><span>written by the author of SaTeX</span></span>';
+    const WRAPS = {
+      peek: [[/(<a [^>]*>TikZpingus<\/a>)/, `<span class="claim-host">$1${peek}</span>`]],
+      branch: [[/branches/, `<span class="claim-fork">${arm('up')}<span class="claim-base">branches</span>${arm('down')}</span>`]],
+      options: [[/options/, '<span class="claim-opt">options</span>']],
+      runs: [[/runs/, tag('claim-count', '')]],
+      diff: [[/yesterday/, tag('claim-ok', '✓')], [/today/, tag('claim-bad', '✗')]],
+      ligatures: [[/fi(?=ne)/, '<span class="claim-lig" title="f and i set as one glyph, ﬁ"><span class="lig-f">f</span><span class="lig-i">i</span><span class="lig-fi">ﬁ</span></span>']],
+    };
+    // `satex trace` of `\def\twice#1{#1#1}\twice{ab}`: expand \twice, then its replacement `#1#1` with #1 = ab, then the tokens it hands on
+    const STEPS = [['expand', ['\\twice', '{ab}']], ['replace', ['#1', '#1']], ['read', ['a', 'b', 'a', 'b']]];
+    const stepper = () => {
+      let at = 0;
+      const rows = STEPS.map(([step, tokens]) => `<li style="--r:${at}"><span class="st-step">${step}</span>${tokens.map((t) => `<code class="st-tk" style="--i:${at++}">${esc(t)}</code>`).join('')}</li>`).join('');
+      return `<ol class="claim-steps" aria-hidden="true"><li class="st-head"><span>satex trace</span><span>#1 = ab</span></li>${rows}</ol>`;
+    };
     const effect = () => {
+      if (effects[shown] === 'stepper') { line.insertAdjacentHTML('beforeend', stepper()); return true; }
       const chip = line.querySelector('code');
       if (effects[shown] === 'catcodes') { annotate(); return true; }
-      if (effects[shown] === 'ligatures') {
-        line.innerHTML = line.innerHTML.replace(/fi(?=ne)/, '<span class="claim-lig" title="f and i set as one glyph, ﬁ"><span>fi</span><span>ﬁ</span></span>');
-        return true;
-      }
+      if (WRAPS[effects[shown]]) { for (const [re, wrap] of WRAPS[effects[shown]]) line.innerHTML = line.innerHTML.replace(re, wrap); return true; }
       const mock = effects[shown] === 'complete' && offered.length
         ? offered.map((r) => `<li><code class="usage">${usage(r.effective, typesOf(r)).html}</code><span>${esc(r.file ?? r.path ?? '')}</span></li>`).join('') : mocks[shown];
       if (!mock || !chip) return false;
       line.insertAdjacentHTML('beforeend', `<ul class="claim-complete" aria-hidden="true" style="margin-left:${chip.offsetLeft}px">${mock}</ul>`);
       return true;
     };
+    // appear (typed), act (SHOWS_AFTER), settle (the hold): the same beat for every claim
+    const SHOWS_AFTER = 700, HOLD = 3400;
+    const fits = () => { for (const u of line.querySelectorAll('.claim-fix')) { const [from, to] = [...u.children].map((s) => s.getBoundingClientRect().width); u.style.setProperty('--from', `${from}px`); u.style.setProperty('--to', `${to}px`); } };
     const settle = () => {
       timer = setTimeout(() => {
-        if (effect() || line.querySelector('.claim-lint')) requestAnimationFrame(() => line.classList.add('shows'));
-        // the quick fix lands on this claim's underline only: one timer chain, cleared when another claim shows
-        timer = setTimeout(() => {
-          for (const u of line.querySelectorAll('.claim-lint[data-fix]')) { u.textContent = u.dataset.fix; u.classList.add('fixed'); }
-          timer = setTimeout(() => paused || show((shown + 1) % knows.length), 2100);
-        }, 1300);
-      }, 700);
+        fits();
+        if (effect() || line.querySelector('.claim-fix')) requestAnimationFrame(() => line.classList.add('shows'));
+        timer = setTimeout(() => paused || show((shown + 1) % knows.length), HOLD);
+      }, SHOWS_AFTER);
     };
     const show = (i) => {
       clearTimeout(timer);
@@ -1083,7 +1115,7 @@
     dots.onclick = (e) => { const b = e.target.closest('button'); if (b) show([...dots.children].indexOf(b)); };
     const claim = line.closest('.claim');
     for (const el of [claim, dots]) { el.onmouseenter = () => (paused = true); el.onmouseleave = () => { paused = false; if (line.classList.contains('shows')) { clearTimeout(timer); timer = setTimeout(() => paused || show((shown + 1) % knows.length), 1500); } }; }
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) line.innerHTML = typed(0, length(0));
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { line.innerHTML = typed(0, length(0)); line.classList.add('shows'); }
     else { line.innerHTML = ''; run(0, 0, settle); }
   }
   for (const [tabs, key] of [['.contrast', 'case'], ['.install-tabs', 'way']]) {

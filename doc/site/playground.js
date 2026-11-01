@@ -3324,7 +3324,7 @@
   /** The cache entries the worker keeps (worker.js), each with what it stands for; dropping one
    * restarts the language server, so the next check analyses that part again. */
   const cacheBox = $('play-cache'), cacheList = $('cache-list');
-  const CACHE_KINDS = { format: ['kernel', 'kernel'], package: ['package', 'package'], index: ['file index', 'index'], probe: ['installation facts', 'facts'], 'content-hashes': ['file hashes', 'hashes'] };
+  const CACHE_KINDS = { format: ['kernel', 'kernel'], package: ['package', 'package'], index: ['file index', 'index'], probe: ['installation facts', 'facts'], 'content-hashes': ['file hashes', 'hashes'], 'previews.json': ['previews.json', 'previews'] };
   const cacheFilter = $('cache-filter');
   let cacheEntries = [];
   /** [kind, css class, name, needs] of an entry; the manifest tells a class from a package. */
@@ -3361,7 +3361,7 @@
     const hits = (verb, hit) => hit.length ? ` <span class="muted cache-hit">${verb} ${hit.slice(0, 3).map((n) => `<code>${escape(n.replace(/\.cls$/, ''))}</code>`).join(', ')}${hit.length > 3 ? ` +${hit.length - 3}` : ''}</span>` : '';
     cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs], u, hit, via }, i) =>
       `<tr title="${escape(e.path)}"><td>${cacheBadge(cls, kind)}</td>` +
-      `<td><button type="button" class="cache-name" aria-expanded="${via.length > 0}" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>${hits('defines', hit)}${hits('loads', via)}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
+      `<td><button type="button" class="cache-name" aria-expanded="${via.length > 0}" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>${hits('defines', hit)}${hits('loads', via)}${CACHE_NOTES[cls] ? ` <span class="muted cache-hit">${CACHE_NOTES[cls]}</span>` : ''}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
       `<td class="num">${size(e.size)}</td><td><button type="button" class="small ghost" data-path="${escape(e.path)}" aria-label="drop ${escape(what || kind)}">Drop</button></td></tr>` +
       `<tr class="cache-sub" id="cache-sub-${i}"${via.length ? '' : ' hidden'}><td></td><td colspan="5">${details(cls, what, needs)}</td></tr>`).join('') ||
       `<tr><td colspan="6" class="muted">${cacheEntries.length ? 'No match.' : 'Nothing cached yet.'}</td></tr>`;
@@ -3387,7 +3387,7 @@
     const mark = (text, title = '') => [true, `<span class="use use-yes" title="${escape(title)}">${text}</span>`];
     if (cls === 'kernel') return what.startsWith(manifest.kernels[state.kernel]?.id ?? '\0') ? mark('the run\'s format') : [false, ''];
     if (cls === 'index') return indexed ? mark('file lookups') : [false, ''];
-    if (cls === 'facts' || cls === 'hashes') return mark('every run');
+    if (cls === 'facts' || cls === 'hashes' || cls === 'previews') return mark('every run');
     const u = used.get(`${cls}:${what}`);
     if (!u) return [false, ''];
     const [yes, html] = u.own ? mark('by the document') : mark(`via ${escape([...u.by].slice(0, 2).join(', '))}${u.by.size > 2 ? ` +${u.by.size - 2}` : ''}`, `loaded by ${[...u.by].join(', ')}`);
@@ -3402,6 +3402,12 @@
     defined = new Map();
     for (const r of defs?.records ?? []) {
       const d = defined.get(r.package ?? null) ?? {};
+      if (r.tag === 'macro' && /^\\color@./.test(r.name)) {
+        (d.colorList ??= []).push([r.name.slice(7), swatchOf(r.body)]);
+        d.color = (d.color ?? 0) + 1;
+        defined.set(r.package ?? null, d);
+        continue;
+      }
       const internal = /[@_:]/.test(r.name);
       const k = r.tag === 'macro' ? (internal ? 'internal macro' : 'public command') : r.tag === 'alias' ? (internal ? 'internal alias' : 'public alias') : r.tag;
       d[k] = (d[k] ?? 0) + 1;
@@ -3411,6 +3417,23 @@
     indexed = (dist?.records ?? []).find((r) => r.indexed != null) ?? null;
     folders = (dist?.records ?? []).filter((r) => r.kind === 'directory');
   }
+  /** The CSS color of an xcolor store such as `\color {rgb}{1,0,0}` (core models only), else null. */
+  function swatchOf(body) {
+    const [, model, spec] = /\{(rgb|cmyk|cmy|gray)\}\s*\{([^}]*)\}/.exec(body ?? '') ?? [];
+    const v = (spec ?? '').split(',').map(Number);
+    if (!model || v.some(Number.isNaN)) return null;
+    const c = (x) => Math.round(255 * Math.min(1, Math.max(0, x)));
+    const [r, g, b] = model === 'rgb' ? v.map(c) : model === 'gray' ? [c(v[0]), c(v[0]), c(v[0])]
+      : model === 'cmy' ? v.map((x) => c(1 - x)) : [0, 1, 2].map((i) => c((1 - v[i]) * (1 - (v[3] ?? 0))));
+    return `rgb(${r} ${g} ${b})`;
+  }
+  const colorSwatches = (list) => `<details class="cache-colors"><summary>defines ${plural(list.length, 'color')}</summary><ul>${list.map(([n, css]) => `<li title="${escape(n)}"><i${css ? ` style="background:${css}"` : ' class="nocolor"'}></i>${escape(n)}</li>`).join('')}</ul></details>`;
+  /** One line for the entries whose name says little. */
+  const CACHE_NOTES = {
+    previews: 'Sprites of TikZ arrow tips, patterns and colors that TeX drew, shown in completion previews.',
+    hashes: 'Content hashes satex uses to tell whether a cached package or file changed.',
+    facts: 'What the installation is like (TeX Live version, engines), probed once.',
+  };
   const DEFINED = ['public command', 'internal macro', 'environment', 'option', 'register', 'counter', 'length', 'switch', 'public alias', 'internal alias'];
   /** The names a row's class or package (or the kernel) defined in the run that match `q`: containing
    * what follows a `\`, or else equal to it (`color` finds xcolor by name, not every name with `color` in it). */
@@ -3425,10 +3448,14 @@
     const parts = [];
     if (cls === 'index' && indexed) {
       parts.push(`${indexed.indexed} files indexed${indexed.message ? ` · ${escape(indexed.message)}` : ''}`);
-      if (folders.length) parts.push(`<ul class="cache-dirs">${folders.map((r) => `<li title="${escape(r.root)}/${escape(r.name)}"><span>${escape(r.name || '.')}</span><b>${r.count}</b></li>`).join('')}</ul>`);
+      parts.push('<span class="muted">The index lets <code>\\input</code> and <code>\\usepackage</code> find files the way kpsewhich does. The number beside a directory is how many files of it the index knows.</span>');
+      if (folders.length) parts.push(`<span class="muted">Files the index knows, by directory:</span><ul class="cache-dirs">${folders.map((r) => `<li title="${escape(r.root)}/${escape(r.name)}"><span>${escape(r.name || '.')}</span><b>${r.count}</b></li>`).join('')}</ul>`);
     }
     const d = definedOf(cls, what);
-    if (d) parts.push('defines ' + DEFINED.filter((k) => d[k]).map((k) => plural(d[k], k)).join(', '));
+    if (d) {
+      parts.push('defines ' + DEFINED.filter((k) => d[k]).map((k) => plural(d[k], k)).join(', '));
+      if (d.colorList) parts.push(colorSwatches(d.colorList));
+    }
     else if (cls === 'package' || cls === 'class') parts.push('<span class="muted">not used by this document</span>');
     if (needs.length) parts.push(`loads ${needs.map((n) => cacheBadge(n.endsWith('.cls') ? 'class' : 'package', n.replace(/\.cls$/, ''))).join(' ')}`);
     const docs = cls === 'kernel' ? 'https://texdoc.org/serve/source2e/0' : (cls === 'package' || cls === 'class') ? `https://texdoc.org/pkg/${encodeURIComponent(what)}` : null;
