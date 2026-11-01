@@ -367,11 +367,21 @@
   function lsp(method, params, notify = false) {
     const message = { jsonrpc: '2.0', method, params, ...(notify ? {} : { id: nextId++ }) };
     const runs = method === 'satex/analyze' || method === 'textDocument/didOpen';
+    // A read-only question asked while a run goes on is answered from the last finished one, never queued behind it.
+    const read = !notify && !runs && (method === 'workspace/executeCommand' ? params.command === 'satex/query' : /^textDocument\/(hover|documentSymbol|definition|references|documentHighlight|signatureHelp|foldingRange|inlayHint|documentLink)$/.test(method));
+    const key = read && method + JSON.stringify(params);
+    if (read && running > 0) {
+      if (answered.has(key)) return Promise.resolve(answered.get(key));
+      if (method === 'textDocument/hover') return Promise.resolve(null);
+    }
     order.push(runs);
     running += +runs;
     worker.postMessage({ type: 'lsp', message });
-    return notify ? null : new Promise((resolve, reject) => pending.set(message.id, { resolve, reject }));
+    if (notify) return null;
+    const reply = new Promise((resolve, reject) => pending.set(message.id, { resolve, reject }));
+    return read ? reply.then((r) => { if (answered.size > 300) answered.delete(answered.keys().next().value); answered.set(key, r); return r; }) : reply;
   }
+  const answered = new Map(); // read-only request -> its last finished answer
   const at = (doc, p) => Math.min(doc.line(Math.min(p.line + 1, doc.lines)).from + p.character, doc.length);
   const position = (doc, offset) => { const l = doc.lineAt(offset); return { line: l.number - 1, character: offset - l.from }; };
   /** `edits` (LSP TextEdits) applied to a plain text, for files not in the editor. */
@@ -501,6 +511,11 @@
   const INSTANT_MS = 50;
   function completions(position, start = position.character, place = null) {
     const k = `${uri()}|${version}|${position.line}:${position.character}`, word = `${uri()}|${position.line}:${start}`;
+    if (running && lastItems && lastWord === word) return lastItems;
+    const served = place && commandItems.get(`${uri()}|${place}`), names = place === '\\' && scopeItems.get(uri());
+    const kept = names ? [...(served ?? []), ...names.filter((n) => !served?.some((i) => i.label === n.label))] : served;
+    // the server is busy with a run: the last items answer, the question is not queued behind it
+    if (running && kept) return kept;
     if (!asked.has(k)) {
       asked.clear();
       asked.set(k, lsp('textDocument/completion', { textDocument: { uri: uri() }, position }).then((r) => {
@@ -509,9 +524,6 @@
         return lastItems;
       }).catch(() => []));
     }
-    if (running && lastItems && lastWord === word) return lastItems;
-    const served = place && commandItems.get(`${uri()}|${place}`), names = place === '\\' && scopeItems.get(uri());
-    const kept = names ? [...(served ?? []), ...names.filter((n) => !served?.some((i) => i.label === n.label))] : served;
     if (!kept) return asked.get(k);
     // a run keeps the server busy for seconds: the kept commands answer now, the server's items replace them when they come
     let early = false;
@@ -854,8 +866,16 @@
   const exSect = $('play-exsect');
   try { exSect.open = localStorage.getItem('satex-examples') === '1'; } catch {}
   exSect.addEventListener('toggle', () => { try { localStorage.setItem('satex-examples', exSect.open ? '1' : '0'); } catch {} });
-  const outlineBody = $('outline-body'), outlineOpen = new Set();
+  const outlineBody = $('outline-body'), outlineOpen = new Set(), outlineFolded = new Set();
   outlineBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) outlineOpen.add(id); else outlineOpen.delete(id); } }, true);
+  // a section's fold hides the deeper sections after it; kept across checks
+  outlineBody.addEventListener('click', (e) => {
+    const b = e.target.closest('.o-fold');
+    if (!b) return;
+    const id = b.dataset.id;
+    if (!outlineFolded.delete(id)) outlineFolded.add(id);
+    outline();
+  });
   const LEVELS = ['part', 'chapter', 'section', 'subsection', 'subsubsection', 'paragraph', 'subparagraph'];
   async function outline() {
     // an edit in an included file leaves the held analysis of the root stale: a config forces a fresh one
@@ -889,15 +909,21 @@
     const html = [];
     let open = null;
     // one line per part; labels, files and citations unfold under it
-    const row = (id, depth, head, body) => `<li class="o-sec" style="--d:${depth}">` + (body
+    const stack = [];
+    const row = (id, depth, head, body, kids = false) => {
+      while (stack.length && stack.at(-1)[0] >= depth) stack.pop();
+      const hidden = stack.some(([, f]) => outlineFolded.has(f)), folded = outlineFolded.has(id);
+      stack.push([depth, id]);
+      return `<li class="o-sec${kids ? ' o-parent' : ''}" style="--d:${depth}"${hidden ? ' hidden' : ''}>${kids ? `<button type="button" class="o-fold" data-id="${escape(id)}" aria-expanded="${!folded}" title="${folded ? 'show' : 'hide'} the subsections"></button>` : ''}` + (body
       ? `<details class="o-row" data-id="${escape(id)}"${outlineOpen.has(id) ? ' open' : ''}><summary>${head}</summary>${body}</details>` : `<div class="o-row o-flat">${head}</div>`) + '</li>';
+    };
     const chips = (list) => list.length ? `<span class="o-labels">${list.join('')}</span>` : '';
     const close = () => {
       if (!open) return;
       const files = [...open.files].filter((f) => /\.(tex|ltx)$/.test(f) && state.files.some((n) => String(f).endsWith(n)));
       const cites = [...open.cites.entries()].map(([k, c]) => `<a href="#" class="o-go o-label o-bib" ${at(c[0])} title="cited ${c.length}× in this part">${escape(k)}</a>`);
       const fileChips = files.length > 1 || (files.length && !String(files[0]).endsWith(state.root)) ? files.map((f) => `<span class="o-file" title="a file this part is set from">${escape(base(f))}</span>`) : [];
-      html.push(row(open.id, open.depth, open.head + (open.first ? `<span class="o-first" title="label ${escape(open.first)}">${escape(open.first)}</span>` : ''), chips(open.labels) + chips(fileChips) + chips(cites)));
+      html.push(row(open.id, open.depth, open.head + (open.first ? `<span class="o-first" title="label ${escape(open.first)}">${escape(open.first)}</span>` : ''), chips(open.labels) + chips(fileChips) + chips(cites), open.kids));
       open = null;
     };
     const placed = own.filter((r) => r.kind !== 'section').map((r) => [r, owner(r)]);
@@ -905,8 +931,9 @@
       ...placed.filter(([, o]) => o === i).map(([r]) => r).sort((a, b) => file(a) === file(b) ? (before(a, b) ? -1 : 1) : 0)])];
     for (const r of inOrder) {
       if (r.kind === 'section') {
-        close();
         const depth = Math.max(0, present.indexOf(LEVELS.indexOf(r.detail))), num = numberOf(r);
+        if (open && depth > open.depth) open.kids = true;
+        close();
         open = { first: null, labels: [], cites: new Map(), files: new Set([r.path ?? r.file]), id: `${r.path ?? r.file}:${r.line}`, depth,
           head: `<a href="#" class="o-go" ${at(r)} title="${escape(r.detail)} at ${escape((r.file ?? '') + ':' + r.line)}">${num ? `<span class="o-num">${num}</span>` : ''}${escape(r.key)}</a>` };
       } else if (open && r.kind !== 'bibitem') {
@@ -956,23 +983,25 @@
     if (!plain) return '';
     const src = editor.text().split('\n'), pos = editor.position(), from = +p.dataset.line - 1;
     const sel = (editor.selected?.() ?? '').trim(), w = wordAt(src[pos.line] ?? '', pos.character);
-    let needle = sel || (w && !w[3] ? w[2] : '');
-    // the n-th occurrence of it, as many as stand in the source before the cursor
+    const raw = sel || (w && !w[3] ? w[2] : ''), needle = raw.replace(/^\W+|\W+$/g, '') || raw;
+    // the n-th occurrence of it (soft hyphens between its letters allowed), as many as stand in the source before the cursor
     const upto = [...src.slice(from, pos.line), (src[pos.line] ?? '').slice(0, pos.character)].join('\n');
-    let a = -1;
+    let a = -1, b = -1;
     if (needle) {
-      let k = 0, i = -1;
+      const hits = [...plain.matchAll(new RegExp([...needle].map((ch) => ch.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')).join('·?'), 'g'))];
+      let k = 0;
       for (let at = upto.indexOf(needle); at >= 0; at = upto.indexOf(needle, at + 1)) k++;
-      for (let n = Math.max(k - 1, 0); n >= 0 && a < 0; n--) { i = -1; for (let j = 0; j <= n; j++) i = plain.indexOf(needle, i + 1); a = i; }
+      const hit = hits[Math.min(Math.max(k - 1, 0), hits.length - 1)];
+      if (hit) [a, b] = [hit.index, hit.index + hit[0].length];
     }
     if (a < 0) {
-      const share = upto.length / Math.max(upto.length + src.slice(pos.line).join('\n').length, 1);
+      const last = Math.max(+(p.nextElementSibling?.dataset?.line ?? src.length + 1) - 1, pos.line + 1);
+      const here = (src[pos.line] ?? '').slice(0, pos.character).length;
+      const share = upto.length / Math.max(upto.length + src.slice(pos.line, last).join('\n').length - here, 1);
       a = Math.min(Math.floor(share * plain.length), Math.max(plain.length - 1, 0));
-      const m = /\S+/g;
-      needle = '';
-      for (let x; (x = m.exec(plain));) if (x.index + x[0].length > a) { a = x.index; needle = x[0]; break; }
+      for (const x of plain.matchAll(/\S+/g)) if (x.index + x[0].length > a) { a = x.index; b = a + x[0].length; break; }
     }
-    const b = a + needle.length, word = (t) => t.match(/\S+\s*$/)?.[0] ?? '', next = (t) => t.match(/^\s*\S+/)?.[0] ?? '';
+    const word = (t) => t.match(/\S+\s*$/)?.[0] ?? '', next = (t) => t.match(/^\s*\S+/)?.[0] ?? '';
     const [pre, post] = [word(plain.slice(0, a)), next(plain.slice(b))];
     return `<p class="ts ts-excerpt"><span class="ts-at">${p.dataset.line}</span><span class="ts-text"><span class="ts-grey">${a > pre.length ? '… ' : ''}${escape(pre)}</span><mark>${escape(plain.slice(a, b))}</mark>` +
       `<span class="ts-grey">${escape(post)}${b + post.length < plain.length ? ' …' : ''}</span></span></p>`;
@@ -984,7 +1013,7 @@
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
     if (!rows || target !== uri()) return;
     const paragraphs = rows.filter((r) => r.kind === 'paragraph');
-    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"${r.env ? ` data-env="${escape(r.env)}" title="set in ${escape(r.env)}"` : ''} data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${escape(r.detail ?? '')}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures))}</span></p>`;
+    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"${r.env ? ` data-env="${escape(r.env)}" title="set in ${escape(r.env)}"` : ''} data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${escape(r.detail ?? '')}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures), r.sketches, r.sketch)}</span></p>`;
     // the whole document in order: this file's paragraphs as they are, a run from another file folded into one line
     const html = [];
     for (let i = 0; i < paragraphs.length;) {
@@ -1259,6 +1288,13 @@
     toast(`Link to line ${editor.position().line + 1} copied`);
     return link;
   }
+  /** `satex slice` on the cursor's line, or on the selected lines, backward and forward. */
+  function sliceItems() {
+    const text = editor.text(), [a, b] = editor.cursor().map((o) => text.slice(0, o).split('\n').length).sort((x, y) => x - y);
+    const place = a === b ? `${a}:1` : `${a}:1-${b}`, what = a === b ? 'line' : 'selection';
+    return [['Backward', ''], ['Forward', ' --forward']].map(([way, flag]) =>
+      [`${way} slice from this ${what}`, '', () => execute(`slice --at ${state.file === state.root ? '' : `${state.file}:`}${place}${flag}`)]);
+  }
   /** The editor's context menu at the cursor: the symbol's actions, the fixes there, a link to the line. */
   async function menuAt(x, y) {
     const w = editor.word(), p = editor.position();
@@ -1275,6 +1311,7 @@
       ...found.map((d) => [`Explain rule ${d.code}`, '', () => unfold(diagnostics[uri()].indexOf(d), false)]),
       ...(editable ? fixes.map((f) => [`Fix: ${f.title}`, f.safety, () => fix(f)]) : []),
       ...(editable ? rules.map((c) => [`Fix all ${c}`, `${(diagnostics[uri()] ?? []).filter((d) => d.code === c && d.fixes.length).length}×`, () => fixAll(c, true)]) : []),
+      ...sliceItems(),
       ['Copy link to this line', '', lineLink],
     ];
     if (!items.length) return false;
@@ -1596,7 +1633,7 @@
     const found = (ds?.records ?? []).filter(mine);
     const top = (tr?.records ?? []).filter((r) => mine(r) && r.inserts != null).slice(0, 12);
     $('try-status').textContent = `typeset in ${secs(performance.now() - t0)} · ${plural(set.length, 'paragraph')}${found.length ? ` · ${plural(found.length, 'finding')}` : ''}`;
-    out.innerHTML = `<div class="typeset">${set.map((r) => `<p class="ts"><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', [], r.fonts, r.align, r.ligatures))}</span></p>`).join('') || '<p class="muted">It sets no text.</p>'}</div>` +
+    out.innerHTML = `<div class="typeset">${set.map((r) => `<p class="ts"><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', [], r.fonts, r.align, r.ligatures), r.sketches, r.sketch)}</span></p>`).join('') || '<p class="muted">It sets no text.</p>'}</div>` +
       (found.length ? `<ul class="lib-found">${found.map((d) => `<li><b>${escape(d.severity)}</b> ${escape(d.message)}</li>`).join('')}</ul>` : '') +
       (top.length ? `<details class="lib-steps"><summary>${plural(top.length, 'expansion')}</summary><ul>${top.map((r) => `<li><code class="cs-ref" data-cs="${escape(r.name)}">${escape(r.name)}</code> → <code>${escape(String(r.inserts).slice(0, 160))}</code></li>`).join('')}</ul></details>` : '');
   }
@@ -3723,6 +3760,8 @@
             continue;
           }
           if (running > 0 && m.params.uri === uri()) continue; // intermediate: a newer text is in flight
+          // what was answered from the last run meanwhile is asked again of this one
+          explanations.clear(); scopeAsked.clear(); explained = ''; explainSoon();
           show(m.params.uri, m.params.diagnostics);
           typeset(m.params.uri);
           outline();

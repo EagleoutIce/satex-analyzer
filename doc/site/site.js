@@ -472,7 +472,28 @@
     put(Infinity);
     return out;
   }
-  function notation(marked) {
+  /** A picture's sketch (`satex typeset` records them in `sketches`) as an inline SVG: its nodes as labeled boxes, its paths as lines with their arrow tips. */
+  let sketchCount = 0;
+  const SKETCH_PX = 38, SKETCH_MAX = 520, SKETCH_PAD = 8;
+  function sketchSvg(sk) {
+    const xs = [...sk.nodes.flatMap((n) => [n.x - n.w / 2, n.x + n.w / 2]), ...sk.edges.flatMap((e) => [e.x1, e.x2])];
+    const ys = [...sk.nodes.flatMap((n) => [n.y - n.h / 2, n.y + n.h / 2]), ...sk.edges.flatMap((e) => [e.y1, e.y2])];
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    const scale = Math.min(SKETCH_PX, (SKETCH_MAX - 2 * SKETCH_PAD) / Math.max(x1 - x0, 0.5));
+    const X = (x) => ((x - x0) * scale + SKETCH_PAD).toFixed(1), Y = (y) => ((y1 - y) * scale + SKETCH_PAD).toFixed(1);
+    const size = (v) => (v * scale).toFixed(1), font = Math.max(7, Math.min(12, scale * 0.3)).toFixed(1);
+    const id = `sk${sketchCount++}`;
+    const lines = sk.edges.map((e) => `<line x1="${X(e.x1)}" y1="${Y(e.y1)}" x2="${X(e.x2)}" y2="${Y(e.y2)}"${e.arrow === 'end' || e.arrow === 'both' ? ` marker-end="url(#${id})"` : ''}${e.arrow === 'start' || e.arrow === 'both' ? ` marker-start="url(#${id})"` : ''}/>`).join('');
+    const boxes = sk.nodes.map((n) => {
+      const shape = n.round ? `<ellipse cx="${X(n.x)}" cy="${Y(n.y)}" rx="${size(n.w / 2)}" ry="${size(n.h / 2)}"/>` : `<rect x="${X(n.x - n.w / 2)}" y="${Y(n.y + n.h / 2)}" width="${size(n.w)}" height="${size(n.h)}" rx="2"/>`;
+      return `${shape}<text x="${X(n.x)}" y="${Y(n.y)}" font-size="${font}">${esc(n.text)}</text>`;
+    }).join('');
+    const width = ((x1 - x0) * scale + 2 * SKETCH_PAD).toFixed(0), height = ((y1 - y0) * scale + 2 * SKETCH_PAD).toFixed(0);
+    return `<svg class="ts-sketch" role="img" aria-label="rough sketch of a TikZ picture" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
+      `<defs><marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L8 4L0 8z"/></marker></defs>${lines}${boxes}</svg>`;
+  }
+  function notation(marked, sketches = [], picture = null) {
+    let drawn = 0;
     // row: false while a row waits for its first character, true if an \hline rules it, null when one is open
     let open = 0, font = '', table = 0, row = null, lig = null;
     // a ligature: the characters the font joined, then the glyph it set (`.show-ligs` animates the join)
@@ -523,12 +544,13 @@
       if (note === '⟦') { open++; return `${tr}<span class="ts-box" title="set in a box: on the page only if the box is used">`; }
       if (note === '⟧') { if (!open) return tr; open--; return `${tr}</span>`; }
       if (note[0] === '\u0001') { const [, kind, key] = note.split('\u0001'); return `${tr}<span class="ts-key ts-key-${esc(kind)}" title="${esc(kind)}">${esc(key)}</span>`; }
+      if (note[0] === '▢') { const sk = sketches?.[drawn++]; return sk ? tr + sketchSvg(sk) : `${tr}<span class="ts-note">${esc(note)}</span>`; }
       if (RULES[note]) return `${tr}<span class="${RULES[note][0]}" title="${RULES[note][1]}"></span>`;
       return `${tr}<span class="ts-note">${esc(note)}</span>`;
     }).join('').replace(/<span class="ts-boxto" style="[^"]*"><\/span>\u0000/g, '');
     // set boxes at both ends (a contents line, a label) align the line as a row
     const aligned = html.startsWith('<span class="ts-boxto"') && html.endsWith('\u0000') || html.includes('ts-leaders');
-    return (aligned ? '<i class="ts-row" hidden></i>' : '') + html.replaceAll('\u0000', '') + '</span>'.repeat(open + 2 * table + boxes);
+    return (picture ? sketchSvg(picture) : '') + (aligned ? '<i class="ts-row" hidden></i>' : '') + html.replaceAll('\u0000', '') + '</span>'.repeat(open + 2 * table + boxes);
   }
   /** The Markdown satex writes, for hovers and rule explanations: headings, paragraphs, lists,
    * fenced or indented code, links, emphasis. */
@@ -606,7 +628,7 @@
   // card, so nothing on the page moves; a click on a command pins its full card.
   const { card } = tips, tip = card.el;
   /** Typeset paragraphs as the playground's Typeset panel draws them. */
-  const paragraphs = (rows) => rows.map((r) => `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}"><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures))}</span></p>`).join('')
+  const paragraphs = (rows) => rows.map((r) => `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}"${r.env ? ` data-env="${esc(r.env)}"` : ''}><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures), r.sketches, r.sketch)}</span></p>`).join('')
     || '<p class="muted">It sets no paragraph.</p>';
   const lintCard = (d) => {
     const diff = d.typo ? (d.edits ?? []).map((e) => ` <span class="diff"><del>${esc(e.from) || '␣'}</del>→<ins>${esc(e.to) || '∅'}</ins></span>`).join('') : '';
