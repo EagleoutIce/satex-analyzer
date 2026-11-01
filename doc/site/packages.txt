@@ -4,10 +4,8 @@
 # satex.yaml's cache.index.common joins them. A name is a package; `name.cls`
 # is a class. The first download stays the samples' files.
 
-# with the first download: fetched while the editor loads
+# with the first download: fetched while the editor loads, the most used LaTeX packages among them
 tikz listings minted scrartcl.cls scrreprt.cls scrbook.cls scrlayer-scrpage
-
-# the most used LaTeX packages
 amsmath amssymb amsthm graphicx hyperref geometry xcolor babel fontenc inputenc
 booktabs float caption subcaption natbib multirow siunitx fancyhdr
 
