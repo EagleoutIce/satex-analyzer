@@ -1577,18 +1577,33 @@
   const leaves = (props, at = '') => Object.entries(props ?? {}).flatMap(([k, p]) => ((p.type ?? 'object') === 'object' && p.properties
     ? leaves(p.properties, `${at}${k}.`) : [{ key: at + k, type: [].concat(p.type ?? 'string')[0], options: p.enum, def: p.default, about: p.description ?? '',
       affects: [].concat(p['x-affects'] ?? []), example: p['x-example'], items: p.items, min: p.minimum, max: p.maximum,
-      suggest: (p.oneOf ?? []).flatMap((o) => o.enum ?? []), pattern: (p.oneOf ?? []).find((o) => o.pattern)?.pattern }]));
+      plugin: p['x-plugin'], suggest: (p.oneOf ?? []).flatMap((o) => o.enum ?? []), pattern: (p.oneOf ?? []).find((o) => o.pattern)?.pattern }]));
   /** A key's group: its first part (`limits`), or `general` for a key of one part. */
   const groupOf_ = (k) => (k.key.includes('.') ? k.key.split('.')[0] : 'general');
   /** The plugins (build.py `plugins`) and the keys each one reads: its own section, `plugins.<name>` its switch. */
   const PLUGINS = manifest.plugins ?? [];
-  const pluginOf = (k) => PLUGINS.find((p) => k.key === `plugins.${p.name}` || k.key.split('.')[0] === p.name)?.name ?? null;
+  const pluginOf = (k) => k.plugin ?? PLUGINS.find((p) => k.key === `plugins.${p.name}` || k.key.split('.')[0] === p.name)?.name ?? null;
   let cfgTab = 'core', cfgYaml = false;
   const configLoad = () => (configKeys ??= fetch(`${base}${manifest.schema}`).then((r) => r.json()).then((s) => leaves(s.properties)).catch(() => []));
   const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  /** The names a list of packages or classes completes from: by the key, its description or what its default holds. */
+  const NAMES = (() => {
+    const pk = new Set(), cls = new Set();
+    for (const p of manifest.packages ?? []) (/\.cls$/.test(p.label) ? cls : pk).add(p.label.replace(/\.cls$/, ''));
+    return { packages: [...pk].sort(), classes: [...cls].sort() };
+  })();
+  NAMES.both = [...new Set([...NAMES.packages, ...NAMES.classes])].sort();
+  const configNames = (k) => {
+    const text = `${k.key} ${k.about}`, known = new Set(NAMES.both), held = Array.isArray(k.def) && k.def.length && k.def.filter((x) => known.has(x)).length * 2 > k.def.length;
+    const pk = /package/i.test(text) || held, cl = /class/i.test(text);
+    return pk && cl ? 'both' : pk ? 'packages' : cl ? 'classes' : null;
+  };
+  /** The profile a key sits in and the top-level key it overrides: `profiles.package.load.packages` -> [package, load.packages]. */
+  const profileKey = (key) => key.match(/^profiles\.([^.]+)\.(.+)$/)?.slice(1) ?? null;
   function configInput(k, value) {
     if (k.type === 'boolean') return `<input type="checkbox" role="switch" data-cfg="${escape(k.key)}"${value ? ' checked' : ''}>`;
-    if (k.options) return `<select class="dropdown" data-cfg="${escape(k.key)}">${k.options.map((o) => `<option${sameValue(o, value) ? ' selected' : ''}>${escape(o)}</option>`).join('')}</select>`;
+    // an enum without a default is detected by satex: unset is a choice of its own
+    if (k.options) return `<select class="dropdown" data-cfg="${escape(k.key)}">${k.def === undefined ? `<option value=""${value == null ? ' selected' : ''}>unset (detected)</option>` : ''}${k.options.map((o) => `<option${sameValue(o, value) ? ' selected' : ''}>${escape(o)}</option>`).join('')}</select>`;
     const text = value == null ? '' : typeof value === 'string' ? value : JSON.stringify(value);
     // a value of a few names or a pattern (`clock`: now, unknown or a date) completes from the names and today
     const suggest = k.suggest?.length ? [...k.suggest, ...(k.pattern?.includes('\\d{4}') ? [new Date().toISOString().slice(0, 10)] : [])] : [];
@@ -1631,6 +1646,11 @@
   }
   /** A list's editor: a row per item, an object's fields side by side, remove and add. */
   function configList(k, value) {
+    if (!k.items?.properties && ['string', 'integer', 'number'].includes(k.items?.type ?? 'string')) {
+      const names = configNames(k), list = Array.isArray(value) ? value : [];
+      return `<div class="cfg-chips" data-cfg="${escape(k.key)}" data-chips="1"${['integer', 'number'].includes(k.items?.type) ? ' data-num' : ''}>${list.map((v) => `<span class="cfg-chip" data-v="${escape(JSON.stringify(v))}">${escape(String(v))}<button type="button" data-chip-drop aria-label="remove ${escape(String(v))}">×</button></span>`).join('')}` +
+        `<input class="cfg-chip-in" type="text" spellcheck="false" placeholder="${list.length ? '' : 'add…'}" aria-label="add to ${escape(k.key)}"${names ? ` list="cfg-dl-${names}"` : ''}></div>`;
+    }
     const fields = k.items?.properties ? Object.keys(k.items.properties) : null, list = Array.isArray(value) ? value : [];
     const item = (v, i) => `<li data-item="${i}">${fields ? fields.map((f) => `<input type="text" data-field="${escape(f)}" placeholder="${escape(f)}" value="${escape(v?.[f] ?? '')}" spellcheck="false">`).join('')
       : `<input type="text" value="${escape(typeof v === 'string' ? v : JSON.stringify(v))}" spellcheck="false">`}<button type="button" class="ghost small" data-drop="${i}" aria-label="remove">×</button></li>`;
@@ -1658,12 +1678,32 @@
     }
     return set;
   };
+  /** Overrides added to a profile (`profiles.package.engine`), shown as rows although nothing is set yet. */
+  const cfgAdded = new Set();
+  let cfgFocus = null;
+  /** The schema's keys and a row for each override of a top-level key that a profile holds (set, or just added). */
+  const withOverrides = (keys) => {
+    const have = new Set(keys.map((k) => k.key));
+    const extra = [...new Set([...Object.keys(configSet).map((x) => x.replace(/\+$/, '')), ...cfgAdded])].filter((x) => !have.has(x)).map((x) => {
+      const base = keys.find((k) => k.key === profileKey(x)?.[1]);
+      return base && { ...base, key: x, extra: true };
+    }).filter(Boolean);
+    return [...keys, ...extra];
+  };
+  /** A key's sub-group: a profile's own name, or the second part of a key of three or more. */
+  const subOf = (k) => { const p = k.key.split('.'); return p.length >= 3 || (p[0] === 'profiles' && p.length === 2) ? p[1] : null; };
   async function configShow() {
-    const keys = await configLoad(), q = $('cfg-search').value.trim().toLowerCase();
+    const all = withOverrides(await configLoad()), q = $('cfg-search').value.trim().toLowerCase();
     for (const t of $('cfg-tabs').querySelectorAll('[data-tab]')) t.setAttribute('aria-pressed', String(t.dataset.tab === (cfgYaml ? 'yaml' : cfgTab)));
-    $('cfg-yaml').hidden = !cfgYaml;
+    $('cfg-yaml').hidden = $('cfg-yaml-ed').hidden = true;
     $('cfg-list').hidden = cfgYaml;
-    if (cfgYaml) { if (document.activeElement !== $('cfg-yaml')) $('cfg-yaml').value = configYamlOf(configSet); }
+    if (cfgYaml) {
+      const v = await yamlEditor(), box = v ? $('cfg-yaml-ed') : $('cfg-yaml'), text = configYamlOf(configSet);
+      box.hidden = false;
+      if (v) { if (!v.hasFocus && v.state.doc.toString() !== text) { yamlSetting = true; v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: text } }); yamlSetting = false; } v.requestMeasure(); }
+      else if (document.activeElement !== box) box.value = text;
+    }
+    const keys = all;
     // the filters as chips under the search: what the keys of this tab can be narrowed by
     const tabKeys = keys.filter((k) => (cfgTab === 'plugins') === !!pluginOf(k));
     const groups = [...new Set(tabKeys.map(groupOf_))], affects = [...new Set(tabKeys.flatMap((k) => k.affects))];
@@ -1672,25 +1712,44 @@
     const filters = ['@changed', ...affects.map((a) => `@affects:${a}`), ...groups.map((g) => `@group:${g}`)].filter((f) => typing != null && f.startsWith(typing) && f !== typing);
     $('cfg-filters').hidden = !filters.length;
     $('cfg-filters').innerHTML = filters.map((f) => `<button type="button" class="lib-kind" data-filter="${escape(f)}">${escape(f)}</button>`).join('');
+    // a profile's key mirrors a top-level one: each row links to the other
+    const overrides = new Map();
+    for (const k of keys) { const [prof, base] = profileKey(k.key) ?? []; if (base && keys.some((x) => x.key === base)) overrides.set(base, [...(overrides.get(base) ?? []), [prof, k.key]]); }
+    const link = (key, text) => `<a href="#" class="cfg-link" data-goto="${escape(key)}">${text}</a>`;
     const row = (k) => {
       const added = configSet[`${k.key}+`], changed = k.key in configSet || !!added;
       const rejected = configRejected && k.key in configRejected.set && !(k.key in configSet);
-      const value = rejected ? configRejected.set[k.key] : k.key in configSet ? configSet[k.key] : k.def;
+      const [prof, base] = profileKey(k.key) ?? [], top = k.extra || (base && keys.some((x) => x.key === base)) ? base : null;
+      const value = rejected ? configRejected.set[k.key] : k.key in configSet ? configSet[k.key] : k.extra ? configSet[top] ?? keys.find((x) => x.key === top)?.def : k.def;
       const badges = k.affects.map((a) => `<span class="cfg-aff" title="changing it changes the ${escape(a)}">${escape(a)}</span>`).join('');
       const example = k.example == null ? '' : `<details class="cfg-example"><summary>example</summary>${configExample(k)}</details>`;
-      return `<li class="cfg-row${changed ? ' cfg-changed' : ''}${rejected ? ' cfg-bad' : ''}"><div class="cfg-what"${rejected ? ` data-why="not applied: ${escape(configRejected.why)}"` : ''}><span><code>${k.key.includes('.') ? `<span class="cfg-prefix">${escape(k.key.slice(0, k.key.lastIndexOf('.') + 1))}</span>` : ''}${escape(k.key.slice(k.key.lastIndexOf('.') + 1))}</code>${badges}</span><span class="muted">${escape(k.about)}</span>` +
-        `${added ? `<span class="muted">adds ${added.map((x) => `<code>${escape(x)}</code>`).join(', ')}</span>` : ''}${example}</div>` +
-        (k.type === 'array' ? `<div class="cfg-value">${configList(k, value)}</div>` : `<label class="${k.type === 'boolean' ? 'ts-toggle ' : ''}cfg-value">${configInput(k, value)}</label>`) +
-        `<button type="button" class="ghost small" data-reset="${escape(k.key)}"${changed ? '' : ' hidden'} title="back to the default: ${escape(yamlValue(k.def ?? ''))}">Reset</button></li>`;
+      const links = [...(top ? [`overrides ${link(top, `<code>${escape(top)}</code>`)}`] : []), ...(overrides.get(k.key) ?? []).map(([p, key]) => `overridden in ${link(key, `<code>profiles.${escape(p)}</code>`)}`)];
+      const wide = k.type === 'array';
+      return `<li class="cfg-row${wide ? ' cfg-wide' : ''}${changed ? ' cfg-changed' : ''}${rejected ? ' cfg-bad' : ''}" data-key="${escape(k.key)}"><div class="cfg-what"${rejected ? ` data-why="not applied: ${escape(configRejected.why)}"` : ''}><span class="cfg-name"><code>${k.key.includes('.') ? `<span class="cfg-prefix">${escape(k.key.slice(0, k.key.lastIndexOf('.') + 1))}</span>` : ''}${escape(k.key.slice(k.key.lastIndexOf('.') + 1))}</code>${badges}</span><span class="muted">${escape(k.about)}</span>` +
+        `${added ? `<span class="muted">adds ${added.map((x) => `<code>${escape(x)}</code>`).join(', ')}</span>` : ''}${links.length ? `<span class="cfg-links muted">${links.join(' · ')}</span>` : ''}${example}</div>` +
+        (wide ? `<div class="cfg-value">${configList(k, value)}</div>` : `<label class="${k.type === 'boolean' ? 'ts-toggle ' : ''}cfg-value">${configInput(k, value)}</label>`) +
+        `<button type="button" class="ghost small" data-reset="${escape(k.key)}"${changed || k.extra ? '' : ' hidden'} title="${k.extra ? 'remove this override' : `back to the default: ${escape(yamlValue(k.def ?? ''))}`}">${k.extra ? 'Remove' : 'Reset'}</button></li>`;
     };
     const changedIn = (ks) => ks.filter((k) => k.key in configSet || `${k.key}+` in configSet).length;
     const hits = tabKeys.filter((k) => configMatch(k, q));
+    // rows of a group, those of a sub-group (profiles.package, cache.index) under a small sticky header of its own
+    const rows = (g, ks) => {
+      const subs = new Map([[null, []]]);
+      for (const k of ks) { const s = subOf(k); if (!subs.has(s)) subs.set(s, []); subs.get(s).push(k); }
+      return [...subs].filter(([, rs]) => rs.length || g === 'profiles').map(([s, rs]) => s == null ? rs.map(row).join('')
+        : `<li class="cfg-sub" data-sub="${escape(`${g}.${s}`)}"><div class="cfg-subhead"><b><span class="cfg-prefix">${escape(g)}.</span>${escape(s)}</b>` +
+          `${g === 'profiles' ? `<input type="text" class="cfg-addkey" list="cfg-dl-top" data-addto="${escape(s)}" placeholder="add a key to this profile…" aria-label="add a key to profile ${escape(s)}" spellcheck="false">` : ''}</div><ul>${rs.map(row).join('')}</ul></li>`).join('');
+    };
     const section = (id, head, about, ks, open) => `<li class="cfg-group"><details${open ? ' open' : ''} data-group="${escape(id)}"><summary><b>${escape(head)}</b>` +
-      `${about ? ` <span class="muted">${escape(about)}</span>` : ''} <span class="muted">${plural(ks.length, 'key')}${changedIn(ks) ? `, ${changedIn(ks)} changed` : ''}</span></summary><ul>${ks.map(row).join('')}</ul></details></li>`;
+      `${about ? ` <span class="muted">${escape(about)}</span>` : ''} <span class="muted">${plural(ks.length, 'key')}${changedIn(ks) ? `, ${changedIn(ks)} changed` : ''}</span></summary><ul>${rows(id, ks)}</ul></details></li>`;
+    const lists = ['packages', 'classes', 'both'].map((n) => `<datalist id="cfg-dl-${n}">${NAMES[n].map((x) => `<option value="${escape(x)}">`).join('')}</datalist>`).join('') +
+      `<datalist id="cfg-dl-top">${tabKeys.filter((k) => !k.key.startsWith('profiles.') && !k.extra).map((k) => `<option value="${escape(k.key)}">`).join('')}</datalist>`;
     $('cfg-list').innerHTML = (cfgTab === 'plugins'
       ? configPlugins(hits, q, section, cfgClosed)
       : groups.map((g) => [g, hits.filter((k) => groupOf_(k) === g)]).filter(([, ks]) => ks.length).map(([g, ks]) => section(g, g, '', ks, !!q || changedIn(ks) > 0 || !cfgClosed.has(g)))).join('')
       || '<li class="muted">No setting matches.</li>';
+    $('cfg-list').insertAdjacentHTML('beforeend', lists);
+    if (cfgFocus) { const el = $('cfg-list').querySelector(`[data-cfg="${CSS.escape(cfgFocus)}"] .cfg-chip-in`); cfgFocus = null; el?.focus(); }
     const n = Object.keys(configSet).length;
     $('cfg-total').textContent = n ? `${plural(n, 'setting')} changed` : 'every setting at its default';
   }
@@ -1709,16 +1768,118 @@
     configShow();
   });
   // the YAML view: the whole of the changed settings as satex.yaml, read back and checked as it is typed
-  let yamlTimer = 0;
-  $('cfg-yaml').addEventListener('input', () => {
+  let yamlTimer = 0, yamlView = null, yamlLint = null, yamlSetting = false, yamlWhy = { text: null, why: null };
+  const yamlGet = () => (yamlView ? yamlView.state.doc.toString() : $('cfg-yaml').value);
+  const yamlChanged = () => {
     clearTimeout(yamlTimer);
     yamlTimer = setTimeout(async () => {
-      const box = $('cfg-yaml'), set = configFromYaml(box.value), why = set ? await configRefused(set) : 'it does not read as `key: value` lines';
-      box.classList.toggle('cfg-yaml-bad', !!why);
+      const text = yamlGet(), set = configFromYaml(text), why = set ? await configRefused(set) : 'it does not read as `key: value` lines';
+      (yamlView ? $('cfg-yaml-ed') : $('cfg-yaml')).classList.toggle('cfg-yaml-bad', !!why);
       $('cfg-total').textContent = why ? `not applied: ${why}` : '';
+      yamlWhy = { text, why };
+      if (yamlView) yamlLint(yamlView);
       if (!why && !sameValue(set, configSet)) configApply(set);
     }, 500);
-  });
+  };
+  $('cfg-yaml').addEventListener('input', yamlChanged);
+  /** The YAML tab's CodeMirror: keys, completion, hover and marks from the schema. Null (the textarea stays) when CodeMirror does not load. */
+  async function yamlEditor() {
+    if (yamlView) return yamlView;
+    try {
+      const [{ EditorView, basicSetup }, language, lint, ac, view] = await EDITOR, hl = (await self.siteCM()).highlight, keys = await configLoad(), t = hl.tags;
+      const leafMap = new Map(keys.map((k) => [k.key, k])), strip = (full) => full.replace(/^profiles\.[^.]+\./, '');
+      const leafOf = (full) => { full = full.replace(/\+$/, ''); return leafMap.get(full) ?? (full !== strip(full) ? leafMap.get(strip(full)) : undefined); };
+      /** What follows `prefix` in the keys: name -> 'group' or the leaf. A profile holds every top-level key too. */
+      const childrenOf = (prefix) => {
+        const out = new Map(), from = [prefix, ...(prefix.startsWith('profiles.') && strip(prefix) !== prefix ? [strip(prefix)] : [])];
+        from.forEach((pre, i) => { for (const k of keys) { if (!k.key.startsWith(pre) || (i && k.key.startsWith('profiles.'))) continue; const [h, ...r] = k.key.slice(pre.length).split('.'); if (!out.has(h)) out.set(h, r.length ? 'group' : k); } });
+        return out;
+      };
+      const known = (full) => { const f = full.replace(/\+$/, ''); return [f, strip(f)].some((c) => keys.some((k) => k.key.startsWith(`${c}.`))) || /^profiles\.[^.]+$/.test(f)
+        || f.split('.').slice(0, -1).some((_, i, p) => leafMap.get(p.slice(0, i + 1).join('.'))?.type === 'object'); };
+      const lineKey = (text) => text.match(/^(\s*)([\w.+-]+)(\s*:)(\s*)(.*)$/);
+      /** The keys that enclose line `n` by its indentation. */
+      const pathOf = (doc, n) => {
+        let need = doc.line(n).text.match(/^\s*/)[0].length;
+        const out = [];
+        for (let i = n - 1; i >= 1 && need > 0; i--) { const m = doc.line(i).text.match(/^(\s*)([\w.+-]+):\s*$/); if (m && m[1].length < need) { out.unshift(m[2]); need = m[1].length; } }
+        return out;
+      };
+      const mode = language.StreamLanguage.define({ token(st) {
+        if (st.sol()) { st.eatSpace(); if (st.peek() === '#') { st.skipToEnd(); return 'comment'; } if (st.match(/[\w.+-]+(?=\s*:(\s|$))/)) return 'propertyName'; }
+        if (st.eatSpace()) return null;
+        if (st.match(/"(?:[^"\\]|\\.)*"?/)) return 'string';
+        if (st.match(/-?\d+(\.\d+)?\b/)) return 'number';
+        if (st.match(/(true|false|null)\b/)) return 'bool';
+        if (st.match(/[[\]{},:]/)) return 'punctuation';
+        if (!st.match(/[^\s,[\]{}":]+/)) st.next();
+        return 'string';
+      } });
+      const highlighter = hl.tagHighlighter([[t.propertyName, 'yk'], [t.string, 'ys'], [t.number, 'yn'], [t.bool, 'yb'], [t.comment, 'yc'], [t.punctuation, 'yp']].map(([tag, c]) => ({ tag, class: c })));
+      const complete = (ctx) => {
+        const line = ctx.state.doc.lineAt(ctx.pos), before = line.text.slice(0, ctx.pos - line.from), path = pathOf(ctx.state.doc, line.number);
+        let m = before.match(/^(\s*)([\w.+-]*)$/);
+        if (m) {
+          if (!ctx.explicit && !m[2]) return null;
+          // a dotted start (`cache.in`) completes its last part
+          const dot = m[2].lastIndexOf('.') + 1;
+          return { from: ctx.pos - (m[2].length - dot), validFor: /^[\w+-]*$/, options: [...childrenOf(`${path.length ? `${path.join('.')}.` : ''}${m[2].slice(0, dot)}`)].map(([name, v]) => (v === 'group'
+            ? { label: name, type: 'namespace', apply: `${name}:\n${m[1]}  ` } : { label: name, type: 'property', detail: v.type, info: v.about, apply: `${name}: ` })) };
+        }
+        // inside a list of names: `[\"foo\", \"ba`
+        m = before.match(/^\s*([\w.+-]+):\s*\[(?:.*,)?\s*("?)([^",\]]*)$/);
+        if (m) {
+          const names = NAMES[configNames(leafOf([...path, m[1]].join('.')) ?? { key: '', about: '' }) ?? ''];
+          return names && { from: ctx.pos - m[3].length - m[2].length, options: names.map((n) => ({ label: `"${n}"`, type: 'text' })), validFor: /^"?[^",\]]*$/ };
+        }
+        m = before.match(/^\s*([\w.+-]+):\s+([^\s"[{]*)$/);
+        const k = m && leafOf([...path, m[1]].join('.'));
+        if (!k) return null;
+        const opts = k.options ?? (k.type === 'boolean' ? ['true', 'false'] : [...k.suggest, ...(k.def != null && typeof k.def !== 'object' ? [yamlValue(k.def)] : [])]);
+        return { from: ctx.pos - m[2].length, options: [...new Set(opts)].map((o) => ({ label: String(o), type: 'enum', detail: sameValue(o, k.def) ? 'default' : '' })) };
+      };
+      const hover = view.hoverTooltip((v, pos) => {
+        const line = v.state.doc.lineAt(pos), m = lineKey(line.text);
+        if (!m) return null;
+        const from = line.from + m[1].length, to = from + m[2].length;
+        if (pos < from || pos > to) return null;
+        const full = [...pathOf(v.state.doc, line.number), m[2]].join('.'), k = leafOf(full), dom = document.createElement('div');
+        dom.className = 'cfg-tip';
+        if (k) dom.innerHTML = `<code>${escape(full)}</code> <span class="muted">${escape(k.type)}${k.def !== undefined ? `, default ${escape(yamlValue(k.def).slice(0, 60))}` : ''}</span><p>${escape(k.about)}</p>`;
+        else if (known(full)) dom.innerHTML = `<code>${escape(full)}</code> <span class="muted">${plural(childrenOf(`${full}.`).size, 'setting')}</span>`;
+        else return null;
+        return { pos: from, end: to, above: true, create: () => ({ dom }) };
+      });
+      const check = (v) => {
+        const doc = v.state.doc, out = [];
+        for (let n = 1; n <= doc.lines; n++) {
+          const line = doc.line(n);
+          if (!line.text.trim() || /^\s*#/.test(line.text)) continue;
+          const m = lineKey(line.text);
+          if (!m) { out.push({ from: line.from, to: line.to, severity: 'error', message: 'not a `key: value` line' }); continue; }
+          const from = line.from + m[1].length, key = { from, to: from + m[2].length }, full = [...pathOf(doc, n), m[2]].join('.'), k = leafOf(full);
+          if (!k) { if (!known(full)) out.push({ ...key, severity: 'warning', message: `unknown setting ${full}` }); continue; }
+          if (!m[5]) continue;
+          let value; try { value = JSON.parse(m[5]); } catch { value = m[5]; }
+          const bad = (why) => out.push({ from: line.from + m[0].length - m[5].length, to: line.to, severity: 'error', message: why });
+          if (full.endsWith('+') || k.type === 'array') { if (!Array.isArray(value)) bad('a list: ["a", "b"]'); }
+          else if (k.options && !k.options.some((o) => sameValue(o, value))) bad(`one of ${k.options.join(', ')}`);
+          else if (k.type === 'boolean' && typeof value !== 'boolean') bad('true or false');
+          else if (['integer', 'number'].includes(k.type) && (typeof value !== 'number' || (k.type === 'integer' && !Number.isInteger(value)) || (k.min != null && value < k.min) || (k.max != null && value > k.max))) bad(`a${k.type === 'integer' ? 'n integer' : ' number'}${k.min != null ? `, at least ${k.min}` : ''}${k.max != null ? `, at most ${k.max}` : ''}`);
+        }
+        // what satex itself refused, set against the line that names the key
+        if (!out.length && yamlWhy.why && yamlWhy.text === doc.toString()) {
+          const at = [...Array(doc.lines)].map((_, i) => doc.line(i + 1)).find((l) => { const m = lineKey(l.text); return m && yamlWhy.why.includes(m[2]); }) ?? doc.line(1);
+          out.push({ from: at.from, to: at.to, severity: 'error', message: `not applied: ${yamlWhy.why}` });
+        }
+        return out;
+      };
+      yamlLint = (v) => lint.forceLinting(v);
+      yamlView = new EditorView({ parent: $('cfg-yaml-ed'), doc: configYamlOf(configSet), extensions: [basicSetup, mode, language.syntaxHighlighting(highlighter), ac.autocompletion({ override: [complete] }), hover,
+        lint.linter(check, { delay: 250 }), EditorView.updateListener.of((u) => { if (u.docChanged && !yamlSetting) yamlChanged(); })] });
+      return yamlView;
+    } catch (e) { console.warn('settings YAML editor:', e); return null; }
+  }
   // a list's rows: an item added or removed, any field changed, is the key's new value
   $('cfg-list').addEventListener('click', (e) => {
     const list = e.target.closest('[data-list]');
@@ -1727,15 +1888,17 @@
     else if (e.target.closest('[data-drop]')) { e.target.closest('li').remove(); list.dispatchEvent(new Event('change', { bubbles: true })); }
   });
   $('cfg-list').addEventListener('change', async (e) => {
-    const el = e.target.closest('[data-cfg]'), k = el && (await configLoad()).find((x) => x.key === el.dataset.cfg);
+    const el = e.target.closest('[data-cfg]'), k = el && withOverrides(await configLoad()).find((x) => x.key === el.dataset.cfg);
     if (!k) return;
+    // text left in a chips field when it loses focus is an item
+    if (e.target.classList.contains('cfg-chip-in')) { chipAdd(el, e.target.value); return; }
     const listOf = (ul) => [...ul.querySelectorAll('li[data-item]')].map((li) => {
       const fields = [...li.querySelectorAll('[data-field]')];
       if (fields.length) return Object.fromEntries(fields.filter((f) => f.value.trim()).map((f) => [f.dataset.field, f.value.trim()]));
       const v = li.querySelector('input').value.trim();
       try { return JSON.parse(v); } catch { return v; }
     }).filter((v) => v !== '' && !(typeof v === 'object' && !Object.keys(v).length));
-    let value = el.dataset.list ? listOf(el) : el.type === 'checkbox' ? el.checked : el.value;
+    let value = el.dataset.chips ? [...el.querySelectorAll('.cfg-chip')].map((c) => JSON.parse(c.dataset.v)) : el.dataset.list ? listOf(el) : el.type === 'checkbox' ? el.checked : el.value;
     el.setCustomValidity?.('');
     el.closest('.cfg-row').classList.remove('cfg-bad');
     const refuse = (why) => { el.setCustomValidity?.(why); el.reportValidity?.(); el.closest('.cfg-row').classList.add('cfg-bad'); el.closest('.cfg-row').querySelector('.cfg-what').dataset.why = why; };
@@ -1746,14 +1909,77 @@
       if (k.max != null && value > k.max) return refuse(`at most ${k.max}`);
     } else if (k.type === 'object' && !el.dataset.list) { try { value = JSON.parse(value); } catch { return refuse('JSON: {"key": "value"}'); } }
     const { [k.key]: _, ...rest } = configSet;
-    const next = sameValue(value, k.def) ? rest : { ...rest, [k.key]: value };
+    // unset (detected) and the default drop the key, an override of a profile stays whatever it holds
+    const next = el.tagName === 'SELECT' && el.value === '' || (!k.extra && sameValue(value, k.def)) ? rest : { ...rest, [k.key]: value };
     // a value satex refuses is shown, never applied: the language server would not start with it
     const why = await configRefused(next);
     if (why) return refuse(why);
     configApply(next);
   });
   $('cfg-list').addEventListener('click', (e) => { const u = e.target.closest('[data-use]'); if (u) { configApply({ ...configSet, [u.dataset.use]: JSON.parse(u.dataset.value) }); return; } });
-  $('cfg-list').addEventListener('click', (e) => { const b = e.target.closest('[data-reset]'); if (b) { const { [b.dataset.reset]: _, [`${b.dataset.reset}+`]: __, ...rest } = configSet; configApply(rest); } });
+  $('cfg-list').addEventListener('click', (e) => { const b = e.target.closest('[data-reset]'); if (b) { const { [b.dataset.reset]: _, [`${b.dataset.reset}+`]: __, ...rest } = configSet; cfgAdded.delete(b.dataset.reset); configApply(rest); } });
+  /** Scrolls to the row of a key (opening its group, clearing a search that hides it) and flashes it. */
+  async function cfgGoto(key) {
+    const keys = withOverrides(await configLoad()), k = keys.find((x) => x.key === key);
+    if (!k) return;
+    cfgYaml = false;
+    cfgTab = pluginOf(k) ? 'plugins' : 'core';
+    if (!$('cfg-list').querySelector(`[data-key="${CSS.escape(key)}"]`) || !configMatch(k, $('cfg-search').value.trim().toLowerCase())) $('cfg-search').value = '';
+    cfgClosed.delete(pluginOf(k) ?? groupOf_(k));
+    await configShow();
+    const row = $('cfg-list').querySelector(`[data-key="${CSS.escape(key)}"]`);
+    row?.closest('details')?.setAttribute('open', '');
+    row?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    row?.classList.add('cfg-flash');
+    setTimeout(() => row?.classList.remove('cfg-flash'), 1600);
+  }
+  $('cfg-list').addEventListener('click', (e) => { const g = e.target.closest('[data-goto]'); if (g) { e.preventDefault(); cfgGoto(g.dataset.goto); } });
+  // a key typed or picked in a profile's header becomes an override row of that profile
+  $('cfg-list').addEventListener('change', async (e) => {
+    const box = e.target.closest('[data-addto]');
+    if (!box) return;
+    const key = box.value.trim(), keys = await configLoad();
+    if (!keys.some((k) => k.key === key && !key.startsWith('profiles.'))) { box.setCustomValidity('a top-level setting'); box.reportValidity(); return; }
+    box.setCustomValidity('');
+    cfgAdded.add(`profiles.${box.dataset.addto}.${key}`);
+    cfgGoto(`profiles.${box.dataset.addto}.${key}`);
+  });
+  // chips: a list of names in one line, Enter or a comma adds, Backspace takes the last off
+  function chipAdd(box, text) {
+    const input = box.querySelector('.cfg-chip-in');
+    const words = text.split(',').map((w) => w.trim().replace(/^"|"$/g, '')).filter(Boolean);
+    input.value = '';
+    if (!words.length) return;
+    const numbers = 'num' in box.dataset;
+    for (const w of words) {
+      if (numbers && !Number.isFinite(Number(w))) { input.value = w; input.setCustomValidity('a number'); input.reportValidity(); return; }
+      const chip = Object.assign(document.createElement('span'), { className: 'cfg-chip' });
+      chip.dataset.v = JSON.stringify(numbers ? Number(w) : w);
+      chip.append(w, Object.assign(document.createElement('button'), { type: 'button', ariaLabel: `remove ${w}`, textContent: '×' }));
+      chip.lastChild.dataset.chipDrop = '';
+      input.before(chip);
+    }
+    input.setCustomValidity('');
+    cfgFocus = box.dataset.cfg;
+    box.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  $('cfg-list').addEventListener('keydown', (e) => {
+    const input = e.target.closest('.cfg-chip-in'), box = input?.closest('[data-chips]');
+    if (!box) return;
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); chipAdd(box, input.value); }
+    else if (e.key === 'Backspace' && !input.value && box.querySelector('.cfg-chip')) { box.querySelector('.cfg-chip:last-of-type').remove(); cfgFocus = box.dataset.cfg; box.dispatchEvent(new Event('change', { bubbles: true })); }
+  });
+  $('cfg-list').addEventListener('input', (e) => {
+    const input = e.target.closest('.cfg-chip-in');
+    if (input && (e.inputType === 'insertReplacementText' || input.value.includes(','))) chipAdd(input.closest('[data-chips]'), input.value);
+  });
+  $('cfg-list').addEventListener('click', (e) => {
+    const box = e.target.closest('[data-chips]');
+    if (!box) return;
+    const drop = e.target.closest('[data-chip-drop]');
+    if (drop) { drop.closest('.cfg-chip').remove(); cfgFocus = box.dataset.cfg; box.dispatchEvent(new Event('change', { bubbles: true })); }
+    else box.querySelector('.cfg-chip-in').focus();
+  });
   $('cfg-reset').onclick = () => configApply({});
 
   // ---------------------------------------------------------------- draw: a symbol drawn, the commands that set it
