@@ -458,11 +458,11 @@
   const RULES = { '│': ['ts-vrule', 'a \\vrule: a table\'s |'], '―': ['ts-hrule', 'an \\hrule: \\hline'], '▬': ['ts-bar', 'a \\rule'] };
   /** `marked` with each key and font change as a note of its own, where it stands. `at` counts every
    * character but the note brackets, a note's own (a hyphen's `·`) too, and a key never parts a note. */
-  function withKeys(marked, keys = [], fonts = [], align = [], ligatures = []) {
-    const at = [...(keys ?? []).filter((k) => k?.key != null), ...(fonts ?? []), ...(align ?? []), ...(ligatures ?? [])].sort((a, b) => a.at - b.at);
+  function withKeys(marked, keys = [], fonts = [], align = [], ligatures = [], lines = []) {
+    const at = [...(keys ?? []).filter((k) => k?.key != null), ...(fonts ?? []), ...(align ?? []), ...(ligatures ?? []), ...(lines ?? [])].sort((a, b) => a.at - b.at);
     if (!at.length) return marked;
     let out = '', seen = 0, i = 0, note = false;
-    const mark = (k) => k.style != null ? `\u0002${k.style}` : k.mark != null ? `\u0003${k.mark}` : k.from != null ? `\u0005${k.from}\u0001${k.to}` : `\u0001${k.kind ?? 'key'}\u0001${k.key}`;
+    const mark = (k) => k.style != null ? `\u0002${k.style}\u0001${k.color ?? ''}` : k.line != null ? `\u0007${k.line}` : k.mark != null ? `\u0003${k.mark}` : k.from != null ? `\u0005${k.from}\u0001${k.to}` : `\u0001${k.kind ?? 'key'}\u0001${k.key}`;
     const put = (n) => { while (i < at.length && at[i].at <= n) out += `\uE000${mark(at[i++])}\uE001`; };
     for (const c of marked) {
       if (c === '\uE000') { put(seen); note = true; } else if (c === '\uE001') note = false;
@@ -496,7 +496,7 @@
   function notation(marked, sketches = [], picture = null) {
     let drawn = 0;
     // row: false while a row waits for its first character, true if an \hline rules it, null when one is open
-    let open = 0, font = '', table = 0, row = null, lig = null, math = '';
+    let open = 0, font = '', ink = '', table = 0, row = null, lig = null, math = '';
     // a math atom: `i` an italic letter, a class digit (2 binary, 3 relation, 6 punctuation) sets its spacing
     const MATH_CLASS = { i: 'ts-mi', 2: 'ts-mbin', 3: 'ts-mrel', 6: 'ts-mpunct' };
     const mathSpan = (html) => MATH_CLASS[math] ? `<span class="${MATH_CLASS[math]}">${html}</span>` : html;
@@ -538,13 +538,14 @@
       if (note === undefined) {
         if (row !== null && !part.trim()) return '';
         const tr = table ? opened() : '';
-        return tr + mathSpan(font && part ? `<span class="${font}">${joined(part)}</span>` : joined(part));
+        return tr + mathSpan((font || ink) && part ? `<span${font ? ` class="${font}"` : ''}${ink ? ` style="color: ${esc(ink)}"` : ''}>${joined(part)}</span>` : joined(part));
       }
       if (note[0] === '\u0006') { math = note.slice(1); return ''; }
       if (note[0] === '\u0003') return grid(note.slice(1));
       if (note[0] === '\u0005') { lig = note.slice(1).split('\u0001'); return ''; }
       if (note === '―' && table && row !== null) { row = true; return ''; }
-      if (note[0] === '\u0002') { font = note.slice(1).split(' ').filter(Boolean).map((x) => `ts-${x}`).join(' '); return ''; }
+      if (note[0] === '\u0002') { const [style, color = ''] = note.slice(1).split('\u0001'); font = style.split(' ').filter(Boolean).map((x) => `ts-${x}`).join(' '); ink = color; return ''; }
+      if (note[0] === '\u0007') return `<span class="ts-ln" title="source line ${esc(note.slice(1))}">${esc(note.slice(1))}</span>`;
       if (note === '·') return '';
       const tr = table ? opened() : '';
       if (note === '⟦') { open++; return `${tr}<span class="ts-box" title="set in a box: on the page only if the box is used">`; }
@@ -635,7 +636,7 @@
   // card, so nothing on the page moves; a click on a command pins its full card.
   const { card } = tips, tip = card.el;
   /** Typeset paragraphs as the playground's Typeset panel draws them. */
-  const paragraphs = (rows) => rows.map((r) => `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}"${typeof r.skip === 'number' && !r.heading ? ` style="--skip: ${Math.max(r.skip, 0)}pt"` : ''}${r.env ? ` data-env="${esc(r.env)}"` : ''}><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures), r.sketches, r.sketch)}</span></p>`).join('')
+  const paragraphs = (rows) => rows.map((r) => `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}"${typeof r.skip === 'number' && !r.heading ? ` style="--skip: ${Math.max(r.skip, 0)}pt"` : ''}${r.env ? ` data-env="${esc(r.env)}"` : ''}><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`).join('')
     || '<p class="muted">It sets no paragraph.</p>';
   const lintCard = (d) => {
     const diff = d.typo ? (d.edits ?? []).map((e) => ` <span class="diff"><del>${esc(e.from) || '␣'}</del>→<ins>${esc(e.to) || '∅'}</ins></span>`).join('') : '';

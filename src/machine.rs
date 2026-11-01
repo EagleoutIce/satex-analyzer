@@ -214,13 +214,13 @@ pub type ContextProbes = HashMap<Sym, Vec<(Option<Sym>, Option<String>)>>;
 /// comparisons instead of five macro lookups.
 #[derive(Clone, Default)]
 pub(crate) struct FontWatch {
-    pub(crate) names: Option<[Option<Sym>; 5]>,
+    pub(crate) names: Option<[Option<Sym>; 6]>,
     /// Held, not just pointed at, so a freed body cannot be mistaken for
     /// an unchanged one through a reused address.
-    pub(crate) bodies: [Option<std::rc::Rc<[Token]>>; 5],
+    pub(crate) bodies: [Option<std::rc::Rc<[Token]>>; 6],
     /// The same bodies as bare addresses, which is what the per-character
     /// comparison reads.
-    pub(crate) at: [Option<*const u8>; 5],
+    pub(crate) at: [Option<*const u8>; 6],
     pub(crate) state: u16,
     /// `\pickup@font` and `\font@name`.
     pub(crate) pick: Option<(Sym, Sym, Sym)>,

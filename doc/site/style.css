@@ -496,6 +496,7 @@ main td .badges, main td .cat { white-space: nowrap; }
 .ts-toggle input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ts-toggle:hover { color: var(--fg); }
 .typeset .ts-at { flex: none; box-sizing: border-box; width: 3.5ch; color: var(--muted); font-family: var(--mono, monospace); font-size: 12px; text-align: right; }
+.typeset .ts-ln { color: var(--muted); font-family: var(--mono, monospace); font-size: 10px; vertical-align: super; margin: 0 .25ch; user-select: none; }
 /* Loading the playground: a thin bar before the status text. */
 /* the site's one progress bar: a share that grows smoothly, or a shimmer while the total is unknown */
 .sx-progress { position: relative; display: inline-block; flex: 0 0 auto; width: 7rem; height: .4rem; margin-right: .5rem; vertical-align: middle; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent); }

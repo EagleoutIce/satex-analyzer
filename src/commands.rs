@@ -22,8 +22,9 @@ const ENGINE: char = '\u{4}';
 /// `ENGINE` and `font`: the slot `\the\font` reads. A constant so reading it per character costs no formatting.
 const FONT_SLOT: &str = "\u{4}font";
 
-/// The five macros LaTeX keeps the current font in (fntguide § 2).
-pub(crate) const NFSS: [&str; 5] = ["cf@encoding", "f@family", "f@series", "f@shape", "f@size"];
+/// The five macros LaTeX keeps the current font in (fntguide § 2), then the
+/// one xcolor and color keep the current color in.
+pub(crate) const NFSS: [&str; 6] = ["cf@encoding", "f@family", "f@series", "f@shape", "f@size", "current@color"];
 /// etex_man § 3: `\eTeXversion` and `\eTeXrevision`.
 const ETEX_VERSION: i64 = 2;
 const ETEX_REVISION: &str = ".6";
@@ -1095,7 +1096,7 @@ impl Machine<'_> {
         if self.font_watch.names.is_none() {
             self.font_watch.names = Some(NFSS.map(|name| self.out.interner.lookup(name)));
         }
-        let names = self.font_watch.names.unwrap_or([None; 5]);
+        let names = self.font_watch.names.unwrap_or([None; 6]);
         let at = names.map(|name| self.nfss_at(name));
         if at == self.font_watch.at {
             return self.font_watch.state;
@@ -1111,6 +1112,7 @@ impl Machine<'_> {
             series: text(&bodies[2]),
             shape: text(&bodies[3]),
             size: text(&bodies[4]),
+            color: text(&bodies[5]),
             font: self.observed_font(),
         };
         let states = &mut self.out.font_states;

@@ -474,7 +474,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     named.sort_by_key(|(s, ..)| (s.file, s.line, s.col));
     let styles = font_styles(analysis);
     let mut style = "";
-    let mut keys: std::collections::VecDeque<(&str, &str)> = Default::default();
+    let mut keys: Keys<'_> = Default::default();
     let mut next_key: std::collections::HashMap<FileId, usize> = Default::default();
     let (glyphs, joined) = glyphs(analysis);
     let math = math_atoms(text, &analysis.settings.conventions.math_symbols);
@@ -495,12 +495,14 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         })
     };
     let mut env: Option<&str> = None;
+    // the source line the paragraph's text stands on now
+    let mut on_line: Option<(FileId, u32)> = None;
     // where the paragraph being set began: its `\parskip` is the one in force there
     let mut began = 0usize;
     let mut flush = |i: usize, line: &mut String, keys: &mut std::collections::VecDeque<_>| {
         while let Some((_, mark)) = aligns.next_if(|a| a.0.0 as usize <= i) {
             line.push(KEY);
-            keys.push_back((ALIGN, mark.as_str()));
+            keys.push_back((ALIGN, mark.as_str().into()));
         }
         while let Some(&(_, rule)) = rules.next_if(|r| r.0 as usize <= i) {
             line.push_str(&note(rule.glyph()));
@@ -518,7 +520,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                 .take_while(|(s, ..)| s.file == site.file && (s.line, s.col) < (site.line, site.col))
                 .count();
         for &(_, kind, key) in &named[from..upto] {
-            keys.push_back((kind, key));
+            keys.push_back((kind, key.into()));
             match choice.as_mut() {
                 Some((_, arms)) => arms[0].push(KEY),
                 None => line.push(KEY),
@@ -586,6 +588,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             }
             out.push(record);
             style = "";
+            on_line = None;
         }
         if text.pars.binary_search(&(i as u32)).is_ok() {
             began = i;
@@ -604,16 +607,24 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             }
             None => {
                 close(&mut line, &mut choice, &mut causes);
+                if !piece.trim().is_empty() {
+                    let here = (site.file, site.line);
+                    if on_line.is_some_and(|at| at != here) {
+                        line.push(KEY);
+                        keys.push_back((LINE, site.line.to_string().into()));
+                    }
+                    on_line = Some(here);
+                }
                 // a font set under an undecided conditional shows from the next sure character
                 let now = styles.get(usize::from(spot.font_state)).map_or("", String::as_str);
                 if now != style {
                     style = now;
                     line.push(KEY);
-                    keys.push_back((FONT, now));
+                    keys.push_back((FONT, now.into()));
                 }
                 if let Some(lig) = &joined[i] {
                     line.push(KEY);
-                    keys.push_back((LIG, lig.as_str()));
+                    keys.push_back((LIG, lig.as_str().into()));
                 }
                 line.push_str(&piece);
             }
@@ -626,7 +637,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     }
     for (_, mark) in aligns {
         line.push(KEY);
-        keys.push_back((ALIGN, mark.as_str()));
+        keys.push_back((ALIGN, mark.as_str().into()));
     }
     for &(_, rule) in rules {
         line.push_str(&note(rule.glyph()));
@@ -1023,6 +1034,12 @@ const KEY: char = '\u{E002}';
 /// The kind of a [`KEY`] that marks a font change, not a key.
 const FONT: &str = "font";
 
+/// The kind of a [`KEY`] that marks where the text moves on to another source line: the number.
+const LINE: &str = "line";
+
+/// The marks waiting for their [`KEY`] in a paragraph's text: kind and value.
+type Keys<'a> = std::collections::VecDeque<(&'a str, std::borrow::Cow<'a, str>)>;
+
 /// The kind of a [`KEY`] that marks an alignment's part, not a key.
 const ALIGN: &str = "align";
 
@@ -1047,17 +1064,48 @@ fn font_styles(analysis: &Analysis) -> Vec<String> {
         axis(&["itdefault", "sldefault", "scdefault"]),
     );
     let pick = |axis: &[(&'static str, String)], value: &str| axis.iter().find(|(_, d)| d == value).map(|(k, _)| *k);
+    // a series is the default's when its weight (the first letter) is: `\fontseries{b}` is as bold as `bx`
+    let weight = |value: &str| series.iter().find(|(_, d)| d.chars().next() == value.chars().next()).map(|(k, _)| *k);
     analysis
         .font_states
         .iter()
         .map(|s| {
-            [pick(&family, &s.family), pick(&series, &s.series), pick(&shape, &s.shape)]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join(" ")
+            let style = [
+                pick(&family, &s.family),
+                pick(&series, &s.series).or_else(|| weight(&s.series)),
+                pick(&shape, &s.shape),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ");
+            match css_color(&s.color) {
+                Some(color) => format!("{style}\u{1}{color}"),
+                None => style,
+            }
         })
         .collect()
+}
+
+/// The color a driver's `\current@color` sets as CSS `#rrggbb`, from the
+/// numbers it carries: `0 1 0 rg 0 1 0 RG` (pdfTeX), `color push rgb 0 1 0`
+/// (dvips), `pdf: bc [0 1 0]` (dvipdfmx). One number is a gray, three an
+/// RGB color, four CMYK. `None` for black or no color.
+fn css_color(spec: &str) -> Option<String> {
+    let number = |t: &str| t.trim_matches(['[', ']']).parse::<f64>().ok();
+    let words: Vec<&str> = spec.split_whitespace().collect();
+    let start = words.iter().position(|t| number(t).is_some())?;
+    let run: Vec<f64> = words[start..].iter().map_while(|t| number(t)).collect();
+    let rgb = match run[..] {
+        [g] => [g; 3],
+        [r, g, b] => [r, g, b],
+        [c, m, y, k] => [(1.0 - c) * (1.0 - k), (1.0 - m) * (1.0 - k), (1.0 - y) * (1.0 - k)],
+        _ => return None,
+    };
+    (rgb != [0.0; 3]).then(|| {
+        let [r, g, b] = rgb.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+        format!("#{r:02x}{g:02x}{b:02x}")
+    })
 }
 
 fn c_is_space(c: &str) -> bool {
@@ -1139,13 +1187,7 @@ fn unmarked(s: &str) -> String {
 
 /// A paragraph record: `detail` is plain, `marked` wraps the notation in
 /// private-use characters, `causes` says why each choice or unknown is there.
-fn paragraph(
-    analysis: &Analysis,
-    at: Span,
-    marked: &str,
-    causes: Vec<Cause>,
-    keys: &mut std::collections::VecDeque<(&str, &str)>,
-) -> Record {
+fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, keys: &mut Keys<'_>) -> Record {
     // marks (keys, an alignment's or a box's end) at the ends hold no space before or after them
     let ends = |chars: &mut dyn Iterator<Item = char>| {
         chars.take_while(|&c| c == KEY || c.is_whitespace()).filter(|&c| c == KEY).count()
@@ -1153,18 +1195,25 @@ fn paragraph(
     let core = marked.trim_matches(|c: char| c == KEY || c.is_whitespace());
     let (head, tail) = (ends(&mut marked.chars()), if core.is_empty() { 0 } else { ends(&mut marked.chars().rev()) });
     let marked = tidy(&format!("{}{core}{}", KEY.to_string().repeat(head), KEY.to_string().repeat(tail)));
-    let (mut placed, mut fonts, mut aligned, mut ligatures, mut offset) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0);
+    let (mut placed, mut fonts, mut aligned, mut ligatures, mut lines, mut offset) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0);
     for c in unmarked(&marked).chars() {
         if c != KEY {
             offset += 1;
         } else if let Some((kind, key)) = keys.pop_front() {
             if kind == FONT {
-                fonts.push(json!({ "style": key, "at": offset }));
+                let (style, color) = key.split_once('\u{1}').unwrap_or((&key, ""));
+                let mut font = json!({ "style": style, "at": offset });
+                if !color.is_empty() {
+                    font["color"] = json!(color);
+                }
+                fonts.push(font);
+            } else if kind == LINE {
+                lines.push(json!({ "line": key.parse::<u32>().unwrap_or(0), "at": offset }));
             } else if kind == ALIGN {
                 aligned.push(json!({ "mark": key, "at": offset }));
             } else if kind == LIG {
-                let (from, to) = key.split_once('\u{1}').unwrap_or((key, key));
+                let (from, to) = key.split_once('\u{1}').unwrap_or((&key, &key));
                 ligatures.push(json!({ "from": from, "to": to, "at": offset }));
             } else {
                 placed.push(json!({ "kind": kind, "key": key, "at": offset }));
@@ -1176,7 +1225,10 @@ fn paragraph(
     if !placed.is_empty() {
         record.insert("keys".into(), json!(placed));
     }
-    if fonts.iter().any(|f| f["style"] != "") {
+    if !lines.is_empty() {
+        record.insert("lines".into(), json!(lines));
+    }
+    if fonts.iter().any(|f| f["style"] != "" || f.get("color").is_some()) {
         record.insert("fonts".into(), json!(fonts));
     }
     if !aligned.is_empty() {
@@ -3894,6 +3946,13 @@ fn insert_call_shape(
         }) {
             types.push((*n, Ty::Options));
         }
+    }
+    // The release a command asks for in the optional argument its options do not fill
+    // (`\documentclass[⟨options⟩]{⟨class⟩}[⟨date⟩]`, `\NeedsTeXFormat{LaTeX2e}[⟨date⟩]`).
+    if crate::roles::takes_release(analysis, analysis.interner.name(sym))
+        && let Some(n) = optional.iter().rev().find(|n| !types.iter().any(|(m, _)| m == *n))
+    {
+        types.push((*n, Ty::Date));
     }
     // A control sequence the call defines as a conditional (`\newif`).
     let mut place_of = 0;

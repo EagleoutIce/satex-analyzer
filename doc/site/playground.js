@@ -1028,7 +1028,7 @@
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
     if (!rows || target !== uri()) return;
     const paragraphs = rows.filter((r) => r.kind === 'paragraph');
-    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"${r.env ? ` data-env="${escape(r.env)}" title="set in ${escape(r.env)}"` : ''} data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${escape(r.detail ?? '')}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures), r.sketches, r.sketch)}</span></p>`;
+    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"${r.env ? ` data-env="${escape(r.env)}" title="set in ${escape(r.env)}"` : ''} data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${escape(r.detail ?? '')}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`;
     // the whole document in order: this file's paragraphs as they are, a run from another file folded into one line
     const html = [];
     for (let i = 0; i < paragraphs.length;) {
@@ -1648,7 +1648,7 @@
     const found = (ds?.records ?? []).filter(mine);
     const top = (tr?.records ?? []).filter((r) => mine(r) && r.inserts != null).slice(0, 12);
     $('try-status').textContent = `typeset in ${secs(performance.now() - t0)} · ${plural(set.length, 'paragraph')}${found.length ? ` · ${plural(found.length, 'finding')}` : ''}`;
-    out.innerHTML = `<div class="typeset">${set.map((r) => `<p class="ts"><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', [], r.fonts, r.align, r.ligatures), r.sketches, r.sketch)}</span></p>`).join('') || '<p class="muted">It sets no text.</p>'}</div>` +
+    out.innerHTML = `<div class="typeset">${set.map((r) => `<p class="ts"><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', [], r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`).join('') || '<p class="muted">It sets no text.</p>'}</div>` +
       (found.length ? `<ul class="lib-found">${found.map((d) => `<li><b>${escape(d.severity)}</b> ${escape(d.message)}</li>`).join('')}</ul>` : '') +
       (top.length ? `<details class="lib-steps"><summary>${plural(top.length, 'expansion')}</summary><ul>${top.map((r) => `<li><code class="cs-ref" data-cs="${escape(r.name)}">${escape(r.name)}</code> → <code>${escape(String(r.inserts).slice(0, 160))}</code></li>`).join('')}</ul></details>` : '');
   }

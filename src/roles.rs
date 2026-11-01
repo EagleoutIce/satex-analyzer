@@ -13,7 +13,8 @@
 
 use crate::builtins::{LoadKind, OccKind};
 use crate::machine::Analysis;
-use crate::tex::{Catcode, RegKind, Tok, Token};
+use crate::tex::{Catcode, MacroDef, ParamItem, RegKind, Sym, Tok, Token};
+use std::rc::Rc;
 
 /// What one argument is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,6 +234,9 @@ pub enum Ty {
     Var(VarKind),
     /// The key list a loading command takes in its optional argument.
     Options,
+    /// A release date a body compares with the one a file provides
+    /// (`2020/01/01`, read as a number): the file must be at least that new.
+    Date,
     /// A definition's replacement text (tex.web § 473): code.
     Body,
     /// Balanced text of any kind, names and code alike.
@@ -250,8 +254,9 @@ impl Ty {
             .filter(|k| !matches!(k, RegKind::Char | RegKind::MathChar | RegKind::UMathChar));
         let keys = [KeyKind::Any, KeyKind::Label, KeyKind::Cite, KeyKind::Option, KeyKind::Environment];
         let files = FILE_KINDS.iter().map(|r| r.0).filter(|k| *k != FileKind::Any);
-        let mut out =
-            vec![Top, Quantity, Number, Dimen, Glue, MuGlue, Box, Register, Cs, Switch, Options, Text, Name, Body];
+        let mut out = vec![
+            Top, Quantity, Number, Dimen, Glue, MuGlue, Box, Register, Cs, Switch, Options, Date, Text, Name, Body,
+        ];
         out.extend(VarKind::ALL.map(Var));
         out.extend(regs.clone().map(Reg));
         out.extend(regs.map(Named));
@@ -287,7 +292,7 @@ impl Ty {
             Reg(RegKind::Dimen) => Dimen,
             Reg(RegKind::MuSkip) => MuGlue,
             Named(_) | Key(KeyKind::Any) | File(FileKind::Any) => Name,
-            Name | Body => Text,
+            Name | Body | Date => Text,
             Key(_) => Key(KeyKind::Any),
             File(_) => File(FileKind::Any),
             Switch
@@ -381,6 +386,7 @@ impl std::fmt::Display for Ty {
                 Ty::Switch => "conditional",
                 Ty::Var(_) => unreachable!("written above"),
                 Ty::Options => "options",
+                Ty::Date => "date, at least",
                 Ty::Body => "definition body",
                 Ty::Text => "text",
                 _ => "any",
@@ -906,4 +912,170 @@ fn seed(cmd: &str) -> Vec<Role> {
         c if c.contains("cite") => first(RoleKind::Occ(O::Cite)),
         _ => Vec::new(),
     }
+}
+
+/// Whether `cmd` reads a release date in an optional argument: some macro its
+/// body reaches compares that argument with a file's date, as `\@ifl@t@r`
+/// does with `\@parse@version`, which splits a date at its slashes. Found from
+/// the bodies alone, so the same holds for every command that reaches one.
+pub fn takes_release(analysis: &Analysis, cmd: &str) -> bool {
+    let Some(start) = analysis.interner.lookup(cmd) else { return false };
+    let bodies = Bodies(analysis);
+    let mut made: crate::fixed::HashMap<Sym, Vec<Rc<MacroDef>>> = Default::default();
+    for d in &analysis.facts.defs {
+        if let Some(mac) = &d.mac {
+            made.entry(d.name).or_default().push(mac.clone());
+        }
+    }
+    let mut seen = vec![start];
+    let mut next = 0;
+    while let Some(&sym) = seen.get(next).filter(|_| seen.len() < REACH) {
+        next += 1;
+        let Some(mac) = bodies.get(sym) else { continue };
+        let bracketed = |p: usize| {
+            mac.parameter_text.items.windows(3).any(|w| {
+                matches!(w, [ParamItem::Lit(Tok::Chr('[', _)), ParamItem::Param(n), ParamItem::Lit(Tok::Chr(']', _))] if usize::from(*n) == p + 1)
+            })
+        };
+        // fresh per macro: a cycle's partial result cut off by the depth must not stand for the macro
+        if date_slots(analysis, &bodies, sym, DATE_DEPTH, &mut Default::default()).into_iter().any(bracketed) {
+            return true;
+        }
+        // every body the name had: a `\let` alias the run replaced with an error later still reached the loader
+        let had = made.get(&sym).into_iter().flatten().cloned();
+        for t in had.chain(Some(mac)).flat_map(|m| m.replacement_text.to_vec()) {
+            if let Tok::Cs(c) = t.tok
+                && !seen.contains(&c)
+                && analysis.env.meaning(c).as_macro().is_some()
+            {
+                seen.push(c);
+            }
+        }
+    }
+    false
+}
+
+/// How many macros [`takes_release`] looks through.
+const REACH: usize = 400;
+
+/// The macros as the preamble sees them: the format's meaning where it has
+/// one, since the run replaces what only the preamble may use
+/// (`\@onlypreamble`) with an error, else the run's.
+struct Bodies<'a>(&'a Analysis);
+
+impl Bodies<'_> {
+    fn get(&self, sym: Sym) -> Option<Rc<MacroDef>> {
+        let kernel = self.0.kernel.as_ref().and_then(|k| k.meaning(sym).as_macro().cloned());
+        kernel.or_else(|| self.0.env.meaning(sym).as_macro().cloned())
+    }
+}
+/// How deep [`date_slots`] follows a body's calls.
+const DATE_DEPTH: usize = 6;
+
+/// The places among the arguments of `sym` (counting those a tail call
+/// reads past its own parameters) a body reads as a date: one whose text a
+/// macro with a `/`-delimited parameter splits, or one passed to a place
+/// that is itself such a date. A `\csname` forms a name, so no date.
+fn date_slots(
+    analysis: &Analysis,
+    bodies: &Bodies<'_>,
+    sym: Sym,
+    depth: usize,
+    known: &mut crate::fixed::HashMap<Sym, Vec<usize>>,
+) -> Vec<usize> {
+    if let Some(done) = known.get(&sym) {
+        return done.clone();
+    }
+    let Some(mac) = bodies.get(sym) else { return Vec::new() };
+    known.insert(sym, Vec::new());
+    let slash = |m: &MacroDef| m.parameter_text.items.iter().any(|i| matches!(i, ParamItem::Lit(Tok::Chr('/', _))));
+    if slash(&mac) {
+        known.insert(sym, vec![0]);
+        return vec![0];
+    }
+    let mut out: Vec<usize> = Vec::new();
+    if depth > 0 {
+        let toks: Vec<&Token> =
+            mac.replacement_text.iter().filter(|t| !matches!(t.tok, Tok::Chr(_, Catcode::Space))).collect();
+        let arity = usize::from(mac.arity());
+        let mut tail = None;
+        for (k, t) in toks.iter().enumerate() {
+            let Tok::Cs(c) = t.tok else { continue };
+            let Some(callee) = bodies.get(c) else { continue };
+            let slots = date_slots(analysis, bodies, c, depth - 1, known);
+            if slots.is_empty() {
+                continue;
+            }
+            let (args, end) =
+                call_args(analysis, &toks[k + 1..], slash(&callee), slots.iter().max().map_or(0, |m| m + 1));
+            for &p in &slots {
+                let Some(arg) = args.get(p) else { continue };
+                if arg.iter().any(|t| is_prim(analysis, t, crate::builtins::Primitive::Csname)) {
+                    continue;
+                }
+                out.extend(arg.iter().filter_map(|t| match t.tok {
+                    Tok::Param(n) => Some(usize::from(n).saturating_sub(1)),
+                    _ => None,
+                }));
+            }
+            // a call at the body's end reads the rest of its arguments from after this macro's own
+            if k + 1 + end == toks.len() {
+                tail = Some((slots, args.len()));
+            }
+        }
+        if let Some((slots, supplied)) = tail {
+            out.extend(slots.into_iter().filter(|q| *q >= supplied).map(|q| arity + q - supplied));
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    known.insert(sym, out.clone());
+    out
+}
+
+fn is_prim(analysis: &Analysis, t: &Token, p: crate::builtins::Primitive) -> bool {
+    matches!(t.tok, Tok::Cs(s) if analysis.env.meaning(s).prim() == Some(p))
+}
+
+/// The first `n` arguments written after a call, and where they end: the
+/// text up to the next `/` for a macro that splits at one, else a group, a
+/// `\csname…\endcsname` or a single token each, a group without its braces.
+fn call_args<'a>(analysis: &Analysis, toks: &[&'a Token], slashed: bool, n: usize) -> (Vec<Vec<&'a Token>>, usize) {
+    use crate::builtins::Primitive as P;
+    let mut out = Vec::new();
+    let mut i = 0;
+    while out.len() < n && i < toks.len() {
+        if slashed && out.is_empty() {
+            let end = toks[i..].iter().position(|t| matches!(t.tok, Tok::Chr('/', _))).map_or(toks.len(), |e| i + e);
+            out.push(toks[i..end].to_vec());
+            i = end;
+            continue;
+        }
+        let start = i;
+        if is_prim(analysis, toks[i], P::Csname) {
+            while i < toks.len() && !is_prim(analysis, toks[i], P::Endcsname) {
+                i += 1;
+            }
+            i = (i + 1).min(toks.len());
+            out.push(toks[start..i].to_vec());
+        } else if matches!(toks[i].tok, Tok::Chr(_, Catcode::Begin)) {
+            let mut depth = 0;
+            while let Some(t) = toks.get(i) {
+                match t.tok {
+                    Tok::Chr(_, Catcode::Begin) => depth += 1,
+                    Tok::Chr(_, Catcode::End) => depth -= 1,
+                    _ => {}
+                }
+                i += 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            out.push(toks[start + 1..i.saturating_sub(1).max(start + 1)].to_vec());
+        } else {
+            out.push(vec![toks[i]]);
+            i += 1;
+        }
+    }
+    (out, i)
 }

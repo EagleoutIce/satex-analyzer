@@ -2254,3 +2254,23 @@ fn document_colors_cover_named_and_defined_colors() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The optional argument after the class or package is a release date: the
+/// kernel compares it with the date the file provides, which the hover and
+/// the signature help say, from the loader's own body.
+#[test]
+fn a_loading_commands_last_optional_argument_is_a_release_date() {
+    let text = "\\documentclass{article}\n\\usepackage{xcolor}\n\\begin{document}\nx\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("release", text);
+    for line in [0, 1] {
+        let id = server.request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": 4 } }),
+        );
+        let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+        assert!(hover.contains("- `⟨arg3⟩` date, at least"), "line {line}: {hover}");
+        assert!(hover.contains("- `⟨arg1⟩` options"), "{hover}");
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}

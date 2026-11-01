@@ -748,3 +748,66 @@ fn a_forced_line_break_is_marked_in_its_paragraph() {
         .collect();
     assert_eq!(breaks, [3], "{row}");
 }
+
+/// The typeset record of a document body, run in a scratch directory.
+fn typeset_rows(tag: &str, preamble: &str, body: &str) -> Vec<serde_json::Value> {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("typeset-{tag}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = format!("\\documentclass{{article}}\n{preamble}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
+    std::fs::write(dir.join("t.tex"), source).unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "t.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    serde_json::from_slice(&out.stdout).expect("json")
+}
+
+/// A paragraph over several source lines says where each line's text starts,
+/// and the color the run had selected there is recorded, whatever command
+/// selected it.
+#[test]
+fn a_paragraph_records_its_source_lines_and_the_colors_the_run_set() {
+    let rows = typeset_rows(
+        "lines",
+        "\\usepackage{xcolor}\n\\def\\twice#1{#1#1}",
+        "\\twice{ab}\n\\textcolor{green}{Hey} {\\color[rgb]{1,0,0}red} plain",
+    );
+    let row = rows.iter().find(|r| r["detail"].as_str().is_some_and(|d| d.starts_with("abab"))).expect("paragraph");
+    let first = row["line"].as_u64().unwrap();
+    let (hey, red) = {
+        let text = row["detail"].as_str().unwrap();
+        (text.find("Hey").unwrap() as u64, text.find("red").unwrap() as u64)
+    };
+    let lines = row["lines"].as_array().expect("a line change");
+    assert_eq!(lines.len(), 1, "{row}");
+    assert_eq!((lines[0]["line"].as_u64().unwrap(), lines[0]["at"].as_u64().unwrap()), (first + 1, hey), "{row}");
+    let colors: Vec<(&str, u64)> = row["fonts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|f| Some((f["color"].as_str()?, f["at"].as_u64()?)))
+        .collect();
+    assert_eq!(colors, [("#00ff00", hey), ("#ff0000", red)], "{row}");
+}
+
+/// Bold comes from the font series the run selected, not from the name of
+/// the command that selected it: an alias of `\bfseries` and a macro that
+/// sets the series itself both make bold text.
+#[test]
+fn bold_text_is_the_series_the_run_selected_whatever_selected_it() {
+    let rows = typeset_rows(
+        "bold",
+        "\\let\\strong\\bfseries\n\\def\\loud{\\fontseries{b}\\selectfont}",
+        "{\\strong aa} {\\loud bb} cc",
+    );
+    let row = rows.iter().find(|r| r["detail"].as_str().is_some_and(|d| d.starts_with("aa"))).expect("paragraph");
+    let bold: Vec<u64> = row["fonts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["style"].as_str().is_some_and(|s| s.split(' ').any(|x| x == "bf")))
+        .filter_map(|f| f["at"].as_u64())
+        .collect();
+    assert_eq!(bold, [0, 3], "{row}");
+}

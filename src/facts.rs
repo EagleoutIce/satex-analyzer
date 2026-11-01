@@ -308,6 +308,8 @@ pub struct FontState {
     pub shape: Rc<str>,
     /// `\f@size`.
     pub size: Rc<str>,
+    /// `\current@color`: the driver code the run's color selection set.
+    pub color: Rc<str>,
     /// `\the\font`, 0 for none: what [`crate::machine::Analysis::fonts`]
     /// names the metrics of.  NFSS says what the document asked for, this
     /// says what the engine loaded, and a lint needs both.

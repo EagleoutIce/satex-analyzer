@@ -823,7 +823,8 @@ fn types_count_optional_arguments_and_type_a_control_sequence() {
     for (name, ty) in [("usepackage", "package (.sty)"), ("documentclass", "class (.cls)")] {
         let records = query::explain(&analysis, &[name.to_string()], false).unwrap().0;
         assert!(
-            records.iter().any(|r| r.get("types") == Some(&json!(["#1 options".to_string(), format!("#2 {ty}")]))),
+            records.iter().any(|r| r.get("types")
+                == Some(&json!(["#1 options".to_string(), format!("#2 {ty}"), "#3 date, at least".to_string()]))),
             "{name}: {records:?}"
         );
     }
