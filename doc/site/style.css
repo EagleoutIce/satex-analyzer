@@ -309,7 +309,7 @@ body.play main { padding: 0; height: 100%; display: grid; grid-template-rows: mi
 .output .err { color: var(--muted); }
 .statusbar { margin-top: auto; position: sticky; bottom: 0; display: flex; align-items: center; gap: .3rem .8rem; flex-wrap: nowrap; padding: .5rem 1.2rem; border-top: 1px solid var(--border); background: var(--panel); font: 12.5px ui-monospace, Menlo, monospace; }
 .statusbar .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#play-status { white-space: nowrap; } #play-status[data-done=error]:not([data-busy]) { color: var(--error); white-space: normal; }
+#play-status { white-space: nowrap; } #play-status[data-done=error]:not([data-busy]) { color: var(--error); }
 @media (max-width: 52rem) {
   body.play { height: auto; display: block; }
   .play-split { grid-template-columns: minmax(0, 1fr); } .divider { display: none; }
@@ -346,6 +346,8 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 /* status bar, toast, drop zone */
 .statusbar span:empty { display: none; }
 .statusbar #play-status { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#play-status:has(.st-msg) { display: flex; align-items: center; gap: .5rem; } #play-status .st-msg { overflow: hidden; text-overflow: ellipsis; min-width: 4rem; flex: 1 1 auto; } #play-status button { flex: 0 1 auto; min-width: 3.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#play-status:has(.st-msg) { flex: 1 1 9rem; }
 .pills { display: inline-flex; gap: .3rem; flex: none; margin-left: auto; }
 .pill-sev { font: 600 11.5px/1.5 system-ui, sans-serif; padding: 0 .55rem; border-radius: 999px; color: var(--sev); background: color-mix(in srgb, var(--sev) 14%, transparent); }
 .statdetail { position: relative; flex: none; }
@@ -390,6 +392,10 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .refs ul { list-style: none; margin: 0; padding: .2rem 0; max-height: 12rem; overflow: auto; }
 .refs li { padding: .15rem .6rem; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .refs li:hover, .refs li:focus { background: var(--sunk); }
+/* the cursor's line is tinted only while the editor has focus, so it never reads as a selection */
+#play-editor .cm-editor .cm-activeLine, #play-editor .cm-editor .cm-activeLineGutter { background: transparent; }
+#play-editor .cm-editor.cm-focused .cm-activeLine { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.cm-flash { animation: cm-flash 1.3s ease-out forwards; border-radius: 2px; } @keyframes cm-flash { from { background: color-mix(in srgb, var(--accent) 35%, transparent); } to { background: transparent; } }
 .cm-refmark { background: color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 2px; }
 .menu-wrap { position: relative; }
 .ctx { position: fixed; z-index: var(--z-menu); margin: 0; padding: .25rem; list-style: none; min-width: 12rem; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font-size: .88rem; animation: fade .12s var(--ease); }
@@ -758,11 +764,8 @@ a.ty { color: inherit; border-bottom: 1px dotted var(--muted); } a.ty:hover { co
 .o-cites > summary::before { content: ""; display: inline-block; margin-right: .4rem; vertical-align: .05em; border: solid transparent; border-width: .22rem 0 .22rem .36rem; border-left-color: var(--muted); transition: transform var(--quick); }
 .o-cites[open] > summary::before { transform: rotate(90deg); } .o-cites > summary:hover { color: var(--fg); } .o-cites .o-labels { padding-left: 0; }
 .o-files { padding-top: 0; }
-.sect summary:has(.ts-switches) { flex-wrap: wrap; row-gap: .25rem; }
-.ts-switches { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .2rem .9rem; margin-left: auto; min-width: 0; }
+.ts-switches { display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: .2rem .7rem; margin-left: auto; min-width: 0; }
 .ts-switches .ts-toggle { margin-left: 0; white-space: nowrap; }
-.tight .ts-toggle span[data-short] { font-size: 0; }
-.tight .ts-toggle span[data-short]::before { content: attr(data-short); font-size: .72rem; }
 .ts-file { color: var(--fg); font-weight: 600; }
 .typeset .ts-key { display: none; }
 .typeset.show-keys .ts-key { --k: var(--c6); display: inline; margin: 0 .15rem; padding: 0 .4rem; border-radius: 999px; font: .72rem ui-monospace, Menlo, monospace; white-space: nowrap; color: var(--k); background: color-mix(in srgb, var(--k) 12%, transparent); }
@@ -1052,7 +1055,9 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .statusbar #cache-open { margin-left: auto; }
 
 .typeset p.ts-current { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
-.ts-only-here > :not(p.ts-current, .ts-nothing) { display: none; }
+.ts-only-here > :not(p.ts-current, .ts-excerpt, .ts-nothing) { display: none; }
+.ts-excerpted > p.ts-current { display: none; }
+.ts-grey { color: var(--muted); opacity: .7; } .ts-excerpt mark { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; border-radius: 2px; }
 /* in the playground a ligature is marked, not animated: that is the landing page's */
 :is(.play-split .show-ligs, #lib-out) .ts-lig::before { content: none; animation: none; }
 :is(.play-split .show-ligs, #lib-out) .ts-lig-to { max-width: none; opacity: 1; animation: none; }

@@ -146,10 +146,10 @@
       grip.addEventListener('dblclick', () => { height(null); keep(); });
     }
 
-    // the file tree: a toggle in the tab row, a grip for its width; folded on narrow screens
+    // the file tree: a toggle in the tab row, a grip for its width; folded below 64rem
     const tree = $('play-tree'), toggle = $('play-treetoggle'), work = tree.parentElement;
     const showTree = (on) => { tree.hidden = !on; toggle.setAttribute('aria-expanded', on); };
-    showTree(kept.tree ?? !matchMedia('(max-width: 52rem)').matches);
+    showTree(kept.tree ?? !matchMedia('(max-width: 64rem)').matches);
     toggle.onclick = () => { showTree(tree.hidden); kept.tree = !tree.hidden; keep(); };
     if (kept.treeWidth) work.style.setProperty('--tree', `${kept.treeWidth}px`);
     drag($('play-treegrip'), () => tree.getBoundingClientRect().width, (m, e, w) => {
@@ -605,10 +605,16 @@
       provide: (f) => view.EditorView.decorations.from(f),
     });
     // The places Find references lists, marked in the open file.
-    const marks = st.StateEffect.define();
+    const marks = st.StateEffect.define(), flashes = st.StateEffect.define();
     const markField = st.StateField.define({
       create: () => view.Decoration.none,
       update: (deco, tr) => tr.effects.reduce((d, e) => e.is(marks) ? view.Decoration.set(e.value.map(([f, t]) => view.Decoration.mark({ class: 'cm-refmark' }).range(f, t)), true) : d, deco.map(tr.changes)),
+      provide: (f) => view.EditorView.decorations.from(f),
+    });
+    // A finding's place, flashed for a moment when its row is clicked; never a selection.
+    const flashField = st.StateField.define({
+      create: () => view.Decoration.none,
+      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(flashes) ? view.Decoration.set(e.value.map(([f, t]) => view.Decoration.mark({ class: 'cm-flash' }).range(f, t)), true) : d, deco.map(tr.changes)),
       provide: (f) => view.EditorView.decorations.from(f),
     });
     // A swatch before each color the server resolved (`textDocument/documentColor`), as editors show them.
@@ -703,7 +709,7 @@
         if (c.preview) span.prepend(Object.assign(document.createElement('img'), { className: 'cm-preview', src: `data:image/svg+xml;utf8,${encodeURIComponent(c.preview)}`, alt: '' }));
         return span;
       } }] }),
-        linkField, markField, swatchField, linkedField, heatField, heatGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
+        linkField, markField, flashField, swatchField, linkedField, heatField, heatGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
         EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([])],
     });
     // the site's light/dark choice (site.js) picks the editor's theme
@@ -797,11 +803,18 @@
       cursor: () => [ev.state.selection.main.anchor, ev.state.selection.main.head],
       select: ([anchor, head] = [0, 0]) => { const n = doc().length; ev.dispatch({ selection: { anchor: Math.min(anchor, n), head: Math.min(head, n) }, scrollIntoView: true }); },
       position: () => position(doc(), ev.state.selection.main.head),
+      selected: () => { const m = ev.state.selection.main; return doc().sliceString(m.from, m.to); },
       word: () => { const l = doc().lineAt(ev.state.selection.main.head); return wordAt(l.text, ev.state.selection.main.head - l.from); },
       coords: () => ev.coordsAtPos(ev.state.selection.main.head),
       mark: (ranges) => ev.dispatch({ effects: marks.of(ranges.map((r) => span(r)).filter(([f, t]) => t > f)) }),
       line: () => { const l = doc().lineAt(ev.state.selection.main.head); return [l.from, l.to]; },
-      focus: (r) => { const [from, to] = span(r); ev.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true }); ev.focus(); },
+      // the cursor goes to the start; the range only flashes
+      focus: (r, flash = false) => {
+        const [from, to] = span(r);
+        ev.dispatch({ selection: { anchor: from }, scrollIntoView: true, effects: flash && to > from ? flashes.of([[from, to]]) : [] });
+        ev.focus();
+        if (flash) setTimeout(() => ev.dispatch({ effects: flashes.of([]) }), 1300);
+      },
     };
   }
 
@@ -931,7 +944,38 @@
     typesetBody.classList.toggle('ts-only-here', only);
     // nothing set where the cursor stands: said so, not the whole document
     typesetBody.querySelector('.ts-nothing')?.remove();
+    typesetBody.querySelectorAll('.ts-excerpt').forEach((x) => x.remove());
     if (only && !here) typesetBody.insertAdjacentHTML('afterbegin', '<p class="muted ts-nothing">Nothing is set at the cursor.</p>');
+    else if (only) here.insertAdjacentHTML('afterend', excerpt(here));
+    typesetBody.classList.toggle('ts-excerpted', only && !!typesetBody.querySelector('.ts-excerpt'));
+  }
+  /** The selected characters (else the word at the cursor, else the cursor's share of the paragraph) in the paragraph's text,
+   * with a word of it before and after in grey. */
+  function excerpt(p) {
+    const plain = p.dataset.plain ?? '';
+    if (!plain) return '';
+    const src = editor.text().split('\n'), pos = editor.position(), from = +p.dataset.line - 1;
+    const sel = (editor.selected?.() ?? '').trim(), w = wordAt(src[pos.line] ?? '', pos.character);
+    let needle = sel || (w && !w[3] ? w[2] : '');
+    // the n-th occurrence of it, as many as stand in the source before the cursor
+    const upto = [...src.slice(from, pos.line), (src[pos.line] ?? '').slice(0, pos.character)].join('\n');
+    let a = -1;
+    if (needle) {
+      let k = 0, i = -1;
+      for (let at = upto.indexOf(needle); at >= 0; at = upto.indexOf(needle, at + 1)) k++;
+      for (let n = Math.max(k - 1, 0); n >= 0 && a < 0; n--) { i = -1; for (let j = 0; j <= n; j++) i = plain.indexOf(needle, i + 1); a = i; }
+    }
+    if (a < 0) {
+      const share = upto.length / Math.max(upto.length + src.slice(pos.line).join('\n').length, 1);
+      a = Math.min(Math.floor(share * plain.length), Math.max(plain.length - 1, 0));
+      const m = /\S+/g;
+      needle = '';
+      for (let x; (x = m.exec(plain));) if (x.index + x[0].length > a) { a = x.index; needle = x[0]; break; }
+    }
+    const b = a + needle.length, word = (t) => t.match(/\S+\s*$/)?.[0] ?? '', next = (t) => t.match(/^\s*\S+/)?.[0] ?? '';
+    const [pre, post] = [word(plain.slice(0, a)), next(plain.slice(b))];
+    return `<p class="ts ts-excerpt"><span class="ts-at">${p.dataset.line}</span><span class="ts-text"><span class="ts-grey">${a > pre.length ? '… ' : ''}${escape(pre)}</span><mark>${escape(plain.slice(a, b))}</mark>` +
+      `<span class="ts-grey">${escape(post)}${b + post.length < plain.length ? ' …' : ''}</span></span></p>`;
   }
   $('typeset-here')?.addEventListener('change', typesetFollow);
   const withKeys = cards.withKeys;
@@ -940,7 +984,7 @@
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
     if (!rows || target !== uri()) return;
     const paragraphs = rows.filter((r) => r.kind === 'paragraph');
-    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"${r.env ? ` data-env="${escape(r.env)}" title="set in ${escape(r.env)}"` : ''} data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures))}</span></p>`;
+    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"${r.env ? ` data-env="${escape(r.env)}" title="set in ${escape(r.env)}"` : ''} data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${escape(r.detail ?? '')}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures))}</span></p>`;
     // the whole document in order: this file's paragraphs as they are, a run from another file folded into one line
     const html = [];
     for (let i = 0; i < paragraphs.length;) {
@@ -1075,12 +1119,19 @@
     if (e.target.closest('.explain a')) return;
     // another file's finding opens that file at its place
     if (d.target && !e.target.closest('.why')) return openPlace(Object.keys(state.texts).find((n) => d.target.endsWith(`/${n}`)) ?? d.file, d.range.start);
-    if (!e.target.closest('.why')) editor.focus(d.range);
+    if (!e.target.closest('.why')) editor.focus(d.range, true);
     unfold(+li.dataset.i);
   };
   function fix(action) {
-    applyEdit(action.edit);
-    toast(`Applied: ${action.title}`);
+    const changes = { ...action.edit?.changes };
+    for (const d of action.edit?.documentChanges ?? []) if (d.edits) changes[d.textDocument.uri] = d.edits;
+    const files = Object.keys(changes).map((u) => u.split('/').pop());
+    if (!applyEdit(action.edit)) return toast(files.length ? `Not applied: it edits ${files.join(', ')}` : 'Not applied: the fix has no edit');
+    // a fix that edits other files only: said where, and that file opened at the edit
+    const elsewhere = Object.keys(changes).filter((u) => u !== uri());
+    toast(`Applied: ${action.title}${elsewhere.length ? ` (in ${elsewhere.map((u) => u.split('/').pop()).join(', ')})` : ''}`);
+    const away = !(uri() in changes) && elsewhere[0], name = away && Object.keys(state.texts).find((n) => uri(n) === away);
+    if (name) openPlace(name, changes[away][0].range.start);
   }
   /** Every safe fix of the open file, of one rule if given, in one edit; overlapping ones wait for the next check. */
   function fixAll(code, unsafe = false) {
@@ -2730,6 +2781,7 @@
     await fetchPackages(wanted_(named(Object.entries(state.texts).filter(([n]) => !(n in state.ro)).map(([, t]) => t))));
     store();
     opened.clear();
+    for (const u of Object.keys(diagnostics)) if (!u.startsWith(`file://${state.dir}/`)) delete diagnostics[u];
     asked.clear();
     for (const p of pending.values()) p.resolve(null);
     pending.clear();
@@ -2742,7 +2794,7 @@
     if (!started) {
       following = false;
       idle();
-      status.innerHTML = `The language server did not start${lspStatus.textContent ? `: ${escape(lspStatus.textContent)}` : ''}. <button type="button" class="small ghost" id="play-retry">Try again</button>` +
+      status.innerHTML = `<span class="st-msg">The language server did not start${lspStatus.textContent ? `: ${escape(lspStatus.textContent)}` : ''}.</span> <button type="button" class="small ghost" id="play-retry">Try again</button>` +
         (Object.keys(configSet).length ? ` <button type="button" class="small ghost" id="play-defaults">Start with the default settings</button>` : '');
       status.dataset.done = 'error';
       $('play-retry').onclick = () => restart();
