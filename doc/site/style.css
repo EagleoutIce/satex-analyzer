@@ -920,10 +920,23 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .draw-tools .pill[aria-pressed=true] { color: var(--accent); } .draw-meta { flex: 1; min-width: 0; margin-left: .2rem; font-size: .66rem; line-height: 1.25; }
 .draw-solo .draw-box > .draw-results { max-height: none; } .draw-results .search[hidden], .draw-filters[hidden] { display: none; } .draw-results .search { flex: none; z-index: 2; }
 /* one line per glyph: glyph, command with its packages, actions; other names fold out below */
-.draw-row { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr) auto; align-items: center; gap: .5rem; min-height: 2.3rem; padding: .1rem .3rem; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+/* the first track holds the row's height: glyph, name and buttons sit alike whether its variants are open or not */
+.draw-row { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr) auto; grid-template-rows: minmax(calc(2.1rem - 1px), auto); align-items: center; gap: 0 .5rem; padding: .1rem .3rem; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
 .draw-what { display: flex; align-items: center; gap: .45rem; min-width: 0; overflow: hidden; white-space: nowrap; } .draw-what .lib-pkg { margin: 0; overflow: hidden; text-overflow: ellipsis; }
 .draw-more-pill { flex: none; padding: 0 .45rem; border-radius: 999px; border: 1px solid var(--border); background: none; color: var(--muted); font-size: .7rem; cursor: pointer; }
-.draw-more { grid-column: 2 / -1; margin: 0 0 .3rem; padding: 0; list-style: none; font-size: .76rem; } .draw-more li { display: flex; gap: .5rem; align-items: center; } .draw-more .draw-acts { margin-left: auto; }
+/* a row's variants line up with it: glyph, name and packages, actions */
+.draw-more { grid-column: 1 / -1; margin: 0 0 .3rem; padding: 0; list-style: none; font-size: .8rem; } .draw-more li { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr) auto; gap: .5rem; align-items: center; min-height: 1.9rem; } .draw-more li[hidden] { display: none; }
+.draw-more .draw-glyph { font-size: 1.2rem; justify-self: center; } .draw-more .draw-bmp { height: 1.2rem; } .draw-more-rest { display: block !important; text-align: center; } .draw-more-pill[aria-expanded=true] { color: var(--accent); border-color: var(--accent); }
+.draw-row > .draw-glyph, .draw-more .draw-glyph { cursor: copy; }
+.draw-cat { flex: none; padding: 0 .4rem; border-radius: 999px; background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--muted); font-size: .68rem; }
+/* a row's look-alikes: a strip of their glyphs under it, a press shows one's name and buttons */
+.draw-alike { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: .15rem; margin: .1rem 0 .25rem; }
+.draw-alike-glyph { display: grid; place-items: center; min-width: 1.7rem; height: 1.7rem; padding: 0 .15rem; border: 1px solid transparent; border-radius: 6px; background: none; color: inherit; cursor: pointer; }
+.draw-alike-glyph:hover, .draw-alike-glyph[aria-pressed=true] { border-color: var(--border); background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.draw-alike-glyph[aria-pressed=true] { border-color: var(--accent); }
+.draw-alike-glyph .draw-glyph { width: auto; font-size: 1.05rem; cursor: pointer; } .draw-alike-glyph .draw-bmp { width: 1.05rem; height: 1.05rem; }
+.draw-fonts { display: flex; gap: .15rem; } .draw-fonts:empty { display: none; } .draw-fonts .draw-glyph { width: 1.2rem; font-size: .95rem; cursor: help; opacity: .8; } .draw-fonts .draw-bmp { height: .95rem; }
+.lib-pkg a, .draw-ctan { color: inherit; text-decoration: none; } .lib-pkg a:hover, .draw-ctan:hover { color: var(--accent); text-decoration: underline; } .draw-ctan { color: var(--muted); }
 .draw-acts { display: flex; gap: .25rem; } .draw-acts .pill { padding: .15rem .35rem; } .draw-acts .pill svg { width: .85rem; height: .85rem; }
 .draw-put.done svg { display: none; } .draw-put.done::before { content: "✓"; color: var(--safe); }
 
@@ -1104,3 +1117,38 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 /* text set in an environment of the document (a figure, a listing) stands apart from the running text */
 .typeset p.ts[data-env] { margin: .35rem 0 .35rem .8rem; padding: .1rem 0 .1rem .6rem; border-left: 2px solid color-mix(in srgb, var(--accent) 35%, transparent); }
 .typeset p.ts[data-env] + p.ts[data-env] { margin-top: -.35rem; }
+
+.o-sec { position: relative; } .o-sec[hidden] { display: none; }
+.o-fold { position: absolute; right: .25rem; top: .2rem; width: 1.2rem; height: 1.2rem; padding: 0; border: 0; background: none; cursor: pointer; border-radius: .25rem; }
+.o-fold::before { content: ""; position: absolute; left: .38rem; top: .35rem; width: .38rem; height: .38rem; border: solid var(--muted); border-width: 0 2px 2px 0; transform: rotate(45deg); transition: transform var(--quick); }
+.o-fold[aria-expanded="false"]::before { transform: rotate(-45deg); }
+.o-fold:hover { background: color-mix(in srgb, var(--border) 60%, transparent); }
+.typeset .ts-sketch { display: block; max-width: 100%; height: auto; margin: .3em 0; color: var(--fg, currentColor); }
+.typeset .ts-sketch rect, .typeset .ts-sketch ellipse { fill: none; stroke: var(--muted, currentColor); stroke-width: 1.2; }
+.typeset .ts-sketch line { stroke: currentColor; stroke-width: 1.2; }
+.typeset .ts-sketch marker path { fill: currentColor; }
+.typeset .ts-sketch text { fill: currentColor; text-anchor: middle; dominant-baseline: central; font-family: var(--mono, monospace); }
+.typeset .ts[data-env="tikzpicture"] .ts-text { color: var(--muted); font-size: .85em; }
+/* the draw page and widget on narrow screens: the bar wraps, the pad sits above the results, rows wrap */
+.draw-top { flex-wrap: wrap; row-gap: .4rem; } .draw-top .draw-filters { flex: 0 1 auto; min-width: 0; flex-wrap: wrap; row-gap: .3rem; }
+@media (max-width: 52rem) {
+  .draw-solo { height: auto; min-height: 100dvh; }
+  .draw-box { flex-direction: column; gap: .6rem; }
+  .draw-pad { width: min(100%, 44dvh, 24rem); align-self: center; }
+  .draw-solo .draw-list { max-height: none !important; overflow: visible; }
+  .draw-solo .draw-results { overflow: visible; }
+  .draw-what { flex-wrap: wrap; white-space: normal; row-gap: .1rem; }
+  .draw-what .lib-pkg { flex: 1 0 100%; order: 1; white-space: nowrap; }
+  .draw-what .draw-fonts, .draw-what .draw-cat { order: 2; }
+}
+@media (max-width: 36rem) {
+  .draw-top { margin: .4rem .6rem 0; } .draw-box { padding: .5rem .6rem .8rem; }
+  .draw-top .search { flex: 1 1 100%; order: 2; } .draw-top .draw-filters { order: 3; flex: 1 1 100%; }
+  .draw-top select.dropdown, #draw-pkgs { flex: 1 1 auto; min-width: 0; font-size: .74rem; }
+  .draw-pkg-list { right: auto; left: 0; max-width: calc(100vw - 1.2rem); }
+  .draw-row { grid-template-columns: 2rem minmax(0, 1fr) auto; gap: 0 .35rem; padding: .1rem; }
+  .draw-more li { grid-template-columns: 2rem minmax(0, 1fr) auto; gap: .35rem; }
+}
+.draw-top select.dropdown { max-width: 11rem; text-overflow: ellipsis; } .draw-cat { min-width: 0; max-width: 11rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draw-alike-info:not(:has(li:not([hidden]))) { display: none; }
+@media (max-width: 36rem) { .draw-top select.dropdown { max-width: none; } }

@@ -852,7 +852,7 @@ def playground(satex, wasm, work, out):
                  for r in json.loads(run(str(satex), "lint", "--rules", "--format", "json"))}
         return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json"))
     queries, filtered, rules, completion = memo(work, "facts", [BINARY, tree_digest(project)], facts)
-    table, files = memo(work, "symbols", [BINARY, ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(emoji), inspect.getsource(symbols), inspect.getsource(comprehensive), GLYPH],
+    table, files = memo(work, "symbols", [BINARY, ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(emoji), inspect.getsource(symbols), inspect.getsource(comprehensive), inspect.getsource(categories), GLYPH],
                         lambda: symbols(satex, project, dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))))
     # every rule's card on any page (site.js), from the same records the playground's findings show
     (out / "rules.json").write_text(json.dumps(rules))
@@ -1016,6 +1016,9 @@ def comprehensive(dist):
             k = GLYPH / max(ink.shape)
             img = Image.fromarray((ink * 255).astype("uint8")).resize((max(1, round(ink.shape[1] * k)), max(1, round(ink.shape[0] * k))), Image.LANCZOS)
             mask = numpy.asarray(img) > 90
+            # a sliver or a speck is a cut that missed the symbol: no glyph beats a blank one
+            if mask.sum() < 12 or (min(mask.shape) <= 2 and mask.sum() < max(mask.shape)):
+                continue
             out.append([tab, ("text", "math")[chapter == 3] if chapter in (2, 3) else "other", name, c["txt"],
                         bytes(mask.shape[::-1]) + numpy.packbits(mask).tobytes()])
         return out, (caps[-1][1] if caps else table), chapter
@@ -1033,6 +1036,22 @@ def comprehensive(dist):
                 seen.add((name, pkg))
                 result.append([name, pkg, kind, title, glyph])
     return result
+
+
+def categories(listing):
+    """The symbol list's table titles as categories, without the packages they name (`lilyglyphs Named
+    Noteheads`: Named Noteheads): the titles, and each name's category as an index into them, from the first table showing it."""
+    pkgs = {pkg for _, pkg, *_ in listing}
+    # a package's name leads in lowercase (`lilyglyphs Clefs`) or stands between slashes
+    clean = lambda t: re.sub(r"^(?:[a-z][\w-]*\s+)+", "", " ".join(w for w in t.split() if w not in pkgs and w != "/")).strip(" ,")
+    titles, kinds = [], {}
+    for name, _, _, title, _ in listing:
+        t = clean(title)
+        if t and name not in kinds:
+            if t not in titles:
+                titles.append(t)
+            kinds[name] = titles.index(t)
+    return titles, kinds
 
 
 def established(dist, packages):
@@ -1100,13 +1119,15 @@ def symbols(satex, project, env):
         known.setdefault(r[1], r)
     # a cell of these tables shows a sample (an accent on letters, `\arg` as a word), not a symbol to draw
     sample = re.compile(r"(?<!Musical )Accents|Log-like|Alphabets")
-    for name, pkg, kind, title, bitmap in comprehensive(dist):
+    listing = comprehensive(dist)
+    titles, kinds = categories(listing)
+    for name, pkg, kind, title, bitmap in listing:
         if (name, pkg) in taken or sample.search(title):
             continue
         taken.add((name, pkg))
         base = known.get(name)
         rows.append([*base[:5], pkg] if base and base[4] >= 0 else [0, name, kind, title, -1, pkg, glyphs.setdefault(bitmap, len(glyphs))])
-    return {"fonts": [p.name for p in fonts], "rows": rows, "glyphs": b"".join(glyphs),
+    return {"fonts": [p.name for p in fonts], "rows": rows, "glyphs": b"".join(glyphs), "categories": titles, "kinds": kinds,
             "weight": {**established(dist, sorted({r[5] for r in rows})), "kernel": 1, "unicode-math": 1}}, fonts
 
 
@@ -1208,10 +1229,12 @@ def main():
     (out / "draw").mkdir(exist_ok=True)
     (out / "draw/index.html").write_text(fill((SITE / "draw.html").read_text(), {**assets, "root": "../", "symbols": manifest["symbols"]}))
     data = SITE / "bench/data.json"
+    (out / "bench").mkdir(exist_ok=True)
     if data.exists():
-        (out / "bench").mkdir(exist_ok=True)
         shutil.copy2(data, out / "bench/data.json")
-        page("bench/index.html", "Benchmarks", fill((SITE / "bench.html").read_text(), {"root": "../", "repository": repo}), side=False)
+    else:
+        (out / "bench/data.json").write_text("[]\n")
+    page("bench/index.html", "Benchmarks", fill((SITE / "bench.html").read_text(), {"root": "../", "repository": repo}), side=False)
     (out / ".nojekyll").write_text("")
     if args.precompress:
         precompress(out)
