@@ -5,6 +5,21 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const manifest = JSON.parse($('satex-play').textContent);
+  let booted = false;
+  /** A start that fails on what an older page left (its stored layout and settings, its cached
+   * bundles): those are dropped and the page loads once more, with a note; a second failure is shown. */
+  const recover = (error) => {
+    let again = false;
+    try { again = sessionStorage.getItem('satex-recovered') === '1'; sessionStorage.setItem('satex-recovered', '1'); } catch {}
+    if (again) { document.getElementById('play-status').textContent = `The playground did not start: ${error?.message ?? error}`; return; }
+    try { for (const k of Object.keys(localStorage)) if (k.startsWith('satex')) localStorage.removeItem(k); } catch {}
+    try { indexedDB.deleteDatabase('satex-playground'); } catch {}
+    try { sessionStorage.setItem('satex-note', 'The stored layout, settings and caches did not fit this version of the playground: they were reset.'); } catch {}
+    location.reload();
+  };
+  addEventListener('error', (e) => { if (!booted) recover(e.error ?? e.message); });
+  addEventListener('unhandledrejection', (e) => { if (!booted) recover(e.reason); });
+  try { const note = sessionStorage.getItem('satex-note'); if (note) { sessionStorage.removeItem('satex-note'); setTimeout(() => self.satexToast?.(note) ?? console.warn(note), 2000); } } catch {}
   window.satexTypeList = manifest.completion?.types;
   const base = new URL(manifest.root, document.baseURI).href;
   const [tabs, args, button, status, output, lspStatus, list, count, cmd, kernelBox, toastBox, ctxMenu, treeBox, examplesBox] =
@@ -62,6 +77,10 @@
     const clamp = (x, lo, hi) => Math.min(Math.max(x, lo), hi);
     let kept = {};
     try { kept = JSON.parse(localStorage.getItem('satex-panes')) ?? {}; } catch {}
+    // a layout an older page stored in another shape is dropped, not read
+    const record = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
+    if (!record(kept)) kept = {};
+    for (const part of ['heights', 'open']) if (part in kept && !record(kept[part])) delete kept[part];
     const keep = () => { try { localStorage.setItem('satex-panes', JSON.stringify(kept)); } catch {} };
     /** Drags `grip`: `to(move, down, from())` sizes while it moves, `done(moved)` ends it. */
     const drag = (grip, from, to, done) => grip.addEventListener('pointerdown', (e) => {
@@ -207,6 +226,7 @@
     };
     toastBox.before(ask);
   }
+  self.satexToast = (text) => toast(text);
   function toast(text) {
     toastBox.textContent = text;
     toastBox.classList.add('on');
@@ -575,10 +595,7 @@
       if (!value && !found.length) return null;
       const range = result?.range, [from, to] = range ? [at(v.state.doc, range.start), at(v.state.doc, range.end)]
         : found.length ? span(found[0][0].range) : [pos, pos];
-      // over a finding its rule and the command's own card fold away: the finding says it first
-      const fold = (head, body) => body && found.length ? `<details class="tip-more"><summary>${head}</summary>${body}</details>` : body;
-      return { from, to, html: found.map(([d]) => findingCard(d) + fold(`about ${escape(d.number ?? '')} ${escape(d.code)}`, explanation(d))).join('') +
-        (value ? fold(`about ${escape(word?.[2] ? `\\${word[2]}` : 'this')}`, `<div class="hover">${card(value)}</div>`) : '') };
+      return { from, to, html: found.map(([d]) => findingCard(d) + explanation(d)).join('') + (value ? `<div class="hover">${card(value)}</div>` : '') };
     }
     // Ctrl (Cmd) held over a command underlines it as a link to its definition.
     const link = st.StateEffect.define();
@@ -3464,6 +3481,8 @@
       given = { js, wasm, bundle };
     }
     const ready = await ask({ type: 'init', base, manifest, given }, given ? Object.values(given).map((b) => b.buffer) : []);
+    booted = true;
+    try { sessionStorage.removeItem('satex-recovered'); } catch {}
     timing('t-init', secs(performance.now() - started), 'time to fetch satex and the pdfTeX kernel and set them up');
     idle();
     sampleTexts = ready.samples;

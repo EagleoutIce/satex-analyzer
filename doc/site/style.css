@@ -1047,7 +1047,6 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .draw-pad .draw-meta { flex: none; margin: 0; }
 
 .tr-bar { position: sticky; top: 0; z-index: 2; background: var(--panel); padding: .3rem 0; } #trace-step { font-variant-numeric: tabular-nums; min-width: 9ch; }
-.tip-more > summary { cursor: pointer; color: var(--muted); font-size: .78rem; margin: .3rem 0 0; }
 .loc-file { color: var(--muted); font-weight: 400; margin-right: .1rem; }
 .cm-swatch { display: inline-block; width: .8em; height: .8em; margin: 0 .2em -.05em 0; border: 1px solid var(--border); border-radius: 2px; vertical-align: baseline; }
 /* completion rows: the label, then what it draws in a column of its own, then where it comes from */
