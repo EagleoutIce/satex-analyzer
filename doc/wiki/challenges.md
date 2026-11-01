@@ -340,13 +340,13 @@ l.6 \ifdim\dimen2=0pt ⇒ undecided
 </details>
 
 **Where the model stands.**
-The line breaker is [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web)'s ([§§ 813](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L17438)) for a paragraph whose items, metrics and parameters are known.
+The line breaker is [tex.web](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web)'s ([§§ 813](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L17438)) for a paragraph whose items, metrics and parameters are known.
 Anything else keeps an interval of lines.
-A forced break mid-paragraph keeps one active node per fitness class ([§ 836](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16474)), so with `\adjdemerits` the lines after it may choose the lines before it.
+A forced break mid-paragraph keeps one active node per fitness class ([§ 836](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L16474)), so with `\adjdemerits` the lines after it may choose the lines before it.
 satex breaks such a segment only when one class ends it, as after `\\`, and keeps the interval otherwise.
 The page builder fires `\output` at forced breaks (`analysis.assume_forced_page_breaks`, an assumption, on by default).
 With the assumption off, a page that may have filled parts the run: one path fires `\output`, the other reads on.
-TeX's choice of the best break ([§§ 1005](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L19552)–[1010](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L19654)) is not modelled yet, so floats that TeX places on the next pages wait for `\clearpage` under the assumption.
+TeX's choice of the best break ([§§ 1005](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L19552)–[1010](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L19654)) is not modelled yet, so floats that TeX places on the next pages wait for `\clearpage` under the assumption.
 The float loops of LaTeX's output routine then run at the end, where unknown box sizes make them converge only by widening.
 
 ### 5. Packages are interpreters
@@ -791,7 +791,6 @@ The label was on page \pageref{x}.
 ```
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code></code></td><td><code> </code></td><td>✓</td></tr>
 <tr><td><code>The label was on page 1.</code></td><td><code>Here.</code></td><td>✗</td></tr>
 <tr><td><code>Here.</code></td><td><code></code></td><td>✗</td></tr>
 </table>
@@ -802,7 +801,7 @@ Differs: pdflatex ships `The label was on page 1.` where satex computes `Here.`.
 
 ```sh
 $ satex query typeset -f 11-fixpoint.tex --set limits.seconds=60
-6:11  paragraph   
+6:11  paragraph  
 6:11  paragraph  Here.
 3:1  assumption  unknown-text-run
 assumption  clock-assumed
@@ -854,7 +853,7 @@ A `\ref` to an unknown label in math in a tikz node, with the nodes placed by `p
 ```
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>B?? B?? B?? B??</code></td><td><code>B??B??B??B??</code></td><td>✓</td></tr>
+<tr><td><code>B?? B?? B?? B??</code></td><td><code><b>i</b>B<b></b>??<b>i</b>B<b></b>??<b>i</b>B<b></b>??<b>i</b>B<b></b>??</code></td><td>✓</td></tr>
 </table>
 
 <details><summary>Computed text</summary>
@@ -862,6 +861,7 @@ A `\ref` to an unknown label in math in a tikz node, with the nodes placed by `p
 ```sh
 $ satex query typeset -f s1-tikz-ref.tex --set limits.seconds=60
 7:16  paragraph  B??B??B??B??
+0:0  paragraph  
 assumption  clock-assumed
 ```
 
@@ -906,6 +906,7 @@ The height of a node with `text width` depends on the line breaker, and pgf's ro
 ```sh
 $ satex query typeset -f s2-rounded-paragraph.tex --set limits.seconds=60
 5:64  paragraph  files, de·pen·den·cies, more
+0:0  paragraph  
 assumption  clock-assumed
 ```
 

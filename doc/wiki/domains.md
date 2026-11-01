@@ -24,7 +24,7 @@ One invariant holds everywhere: a construct is followed **exactly**, or its resu
 | --- | --- | --- | --- |
 | count (`\count`, `\numexpr`) | `Int(i64)` | `Num { lo, hi }` | `[-MAX_INT, MAX_INT]` |
 | dimension (`\dimen`, `\dimexpr`) | `Dimen(Scaled)` | `Num`, in sp | `[-MAX_DIMEN, MAX_DIMEN]` |
-| glue, muglue (`\skip`, `\muskip`) | `Glue` | `GlueHull`: one `Num` per component ([tex.web § 150](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L3147)) | `GlueHull::full()` |
+| glue, muglue (`\skip`, `\muskip`) | `Glue` | `GlueHull`: one `Num` per component ([tex.web § 150](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L3147)) | `GlueHull::full()` |
 | token list (`\toks`) | `Toks` | common start and end around one typed unknown token | `Unknown` |
 | color (`\color@⟨name⟩`) | `Color`, every component a point | `Colors`, one `Num` per component | the model's full range |
 
@@ -33,7 +33,7 @@ The bounded set is `OneOf` for every kind (below). Code that does not inspect th
 - **Numbers through text.** `\the`, `\number` of a bounded number give one token of typed digits that carries its `Num`. A later scan reads the `Num` back, so a bound survives text and a recursion over it ends.
 - **Typed digits** stay inside the interval their name spells, even after a widening join.
 - **Tests.** `\ifnum` and `\ifdim` decide by the interval, `\ifpdfabsnum` by the interval of the absolute values.
-- **Token lists** past the set keep their frame: pgfmath's operand stacks with different tops join to one stack whose top is typed digits, so a delimited pop still finds its braces ([tex.web § 1227](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22968)).
+- **Token lists** past the set keep their frame: pgfmath's operand stacks with different tops join to one stack whose top is typed digits, so a delimited pop still finds its braces ([tex.web § 1227](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L22968)).
 
 ## The set lift: `OneOf`
 
@@ -44,7 +44,7 @@ The bounded set is `OneOf` for every kind (below). Code that does not inspect th
 | join | union of the members. Overlapping or touching intervals merge. At most `limits.value_set` (8) exact members, `limits.interval_set` (4) with an interval among them. |
 | widening | past `k`, or with an `Unknown` side: the hull of all members (`Value::join_hulls`). Only the gaps are lost. |
 | test | `\ifnum`/`\ifdim` decide member by member. When members disagree, each arm keeps the narrowed part that passes (`Num::narrow`). The arms rejoin at `\fi`. |
-| arithmetic | `Num::lift` on the hull: exact at a point, else the interval's corners (cut at zero). An overflow clips, a 32-bit wraparound ([tex.web § 1238](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L23134)) widens to the whole word range. |
+| arithmetic | `Num::lift` on the hull: exact at a point, else the interval's corners (cut at zero). An overflow clips, a 32-bit wraparound ([tex.web § 1238](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L23134)) widens to the whole word range. |
 
 Macro bodies use the same lift as [meaning sets](#meaning-sets-what-a-control-sequence-may-mean) (`limits.meaning_set`).
 
@@ -73,15 +73,15 @@ Every character has one of TeX's sixteen category codes ([The TeXbook, chapter 7
 
 ### Category sets as a lattice element
 
-A character whose category is not pinned keeps the set of categories it may have, one bit each (`CatcodeTable::unknown`, [tex.web § 232](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4811)). A join unions the sets, the save stack restores them (per group, only the first save of a slot on each path joins: it is what the group's end leaves), and `\the\catcode` reads them as a set of numbers. Callers ask `cats` or `is_unknown` before trusting `get`.
+A character whose category is not pinned keeps the set of categories it may have, one bit each (`CatcodeTable::unknown`, [tex.web § 232](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L4811)). A join unions the sets, the save stack restores them (per group, only the first save of a slot on each path joins: it is what the group's end leaves), and `\the\catcode` reads them as a set of numbers. Callers ask `cats` or `is_unknown` before trusting `get`.
 
 ## Character codes as sets
 
-Code table entries (`\lccode`, `\uccode`, `\sfcode`, `\mathcode`, `\delcode`, [tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L23040)) hold a `Value`, joined like registers.
+Code table entries (`\lccode`, `\uccode`, `\sfcode`, `\mathcode`, `\delcode`, [tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L23040)) hold a `Value`, joined like registers.
 
 - A ⟨number⟩ that is one of several characters reads as their hull plus the exact set (`abs_exact`, [`src/scan.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/scan.rs)).
 - A set with an invalid member, or any set for `\mathcode`, becomes `Unknown`.
-- `\lowercase`/`\uppercase` ([tex.web § 1288](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L23608)) turn a character with a few possible codes into one token for the shifted characters, categories kept. An unknown code gives unknown text.
+- `\lowercase`/`\uppercase` ([tex.web § 1288](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L23608)) turn a character with a few possible codes into one token for the shifted characters, categories kept. An unknown code gives unknown text.
 
 ## Colors: `Color` and `Colors`
 
@@ -99,7 +99,7 @@ After a join of paths that disagree, a `Binding` ([`src/env.rs`](https://github.
 | `\ifx`, `\ifdefined` | decided when every member agrees |
 | execute | splits the run into one path per meaning, `limits.meaning_splits` levels deep. Deeper, or inside an `\edef`, the meaning is unknown. |
 | `\ifx` against one meaning | splits by answer, each side keeping the members that give it |
-| `\if`, `\ifcat` | each member gives its operand, behind `\noexpand` too: a character its code and category, any other meaning a control sequence ([tex.web § 506](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9814)). Decided when every member agrees. Without `\noexpand` an expandable member leaves the operand unknown. |
+| `\if`, `\ifcat` | each member gives its operand, behind `\noexpand` too: a character its code and category, any other meaning a control sequence ([tex.web § 506](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L9814)). Decided when every member agrees. Without `\noexpand` an expandable member leaves the operand unknown. |
 | `\let` | copies the whole set |
 | widening | macros without parameters that differ only in digit runs become one macro with typed digits. Else macros with the same prefixes become one macro of unknown text, length-bounded when all are (`macro_hull`). A set with "undefined" keeps it. Anything else is an unknown meaning. |
 
@@ -109,20 +109,20 @@ A widened macro whose members all hold a token holds one too, so `\ifx` can stil
 
 ## Modes and box dimensions
 
-`Modes` ([`src/mode.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/mode.rs)) is the set of TeX's six modes the run may be in ([tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4220)). `\ifvmode`, `\ifhmode`, `\ifmmode` and `\ifinner` are decided when every mode agrees. Paths join by union.
+`Modes` ([`src/mode.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/mode.rs)) is the set of TeX's six modes the run may be in ([tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L4220)). `\ifvmode`, `\ifhmode`, `\ifmmode` and `\ifinner` are decided when every mode agrees. Paths join by union.
 
-`Dim { lo, hi }` is one length: box sizes, added up as `hpack` ([§ 649](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L12910)) and `vpack` ([§ 668](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L13152)) do. An item `satex` cannot follow widens the size to `Dim::ANY`. It is never left out.
+`Dim { lo, hi }` is one length: box sizes, added up as `hpack` ([§ 649](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L12910)) and `vpack` ([§ 668](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L13152)) do. An item `satex` cannot follow widens the size to `Dim::ANY`. It is never left out.
 
 The list's tail (`Last`) is what `\lastskip`, `\lastkern`, `\lastpenalty` and `\lastnodetype` read:
 
 | Tail item | Kept |
 | --- | --- |
-| glue | width as `Dim`, specification as `GlueHull`, whether it is mu glue ([§ 424](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8517)) |
-| character | its box, and whether it is a ligature (exact where the font's lig/kern program was followed, [§§ 1034](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20114)–[1040](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20271)) |
+| glue | width as `Dim`, specification as `GlueHull`, whether it is mu glue ([§ 424](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L8517)) |
+| character | its box, and whether it is a ligature (exact where the font's lig/kern program was followed, [§§ 1034](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20114)–[1040](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20271)) |
 | rule, insert, adjust, whatsit, math, noad | its `\lastnodetype` (3, 4, 6, 9, 10, 15) |
 | mixed kinds | `Last::Unknown`, still holding the join of each reading (zero where of another kind) |
 
-A list also counts the items it holds at least, so an internal vertical list with items left never reads `-1` ([§§ 1080](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20962), [1105](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21264)).
+A list also counts the items it holds at least, so an internal vertical list with items left never reads `-1` ([§§ 1080](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20962), [1105](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L21264)).
 
 ### Boxes
 
@@ -131,36 +131,36 @@ A box register holds width, height and depth as `Dim`s, read by `\wd`, `\ht`, `\
 | Material | How its size is followed |
 | --- | --- |
 | characters | TFM width, height, depth, kerns and ligatures. A font without metrics widens. |
-| `hpack` / `vpack` | height, depth (resp. width) start at zero ([tex.web §§ 649](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L12910), [668](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L13152)). `vpack` moves depth past `\boxmaxdepth` into the height. `\vtop` ([§ 1087](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21078)), `\vcenter` ([§ 736](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L14454)). |
-| inline math | characters, `\mathchardef` atoms, italic corrections, class spacing ([§§ 752](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L14748)–[766](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L15073)), `\mathsurround` ([§ 1196](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22455)). Binary atoms, operators, fractions and lost groups widen. `\left`/`\middle`/`\right` (etex.ch). |
-| `\unhbox`, `\unvbox` | the natural size recorded at packing ([§ 1110](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21332)), the tail kept |
-| `\write`, `\openout`, `\closeout` | nothing when `\immediate`, else a whatsit ([§§ 1352](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L24702), [1375](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L24937)) |
-| `\discretionary` | its unbroken text ([§§ 651](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L12946), [1119](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21419)) |
+| `hpack` / `vpack` | height, depth (resp. width) start at zero ([tex.web §§ 649](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L12910), [668](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L13152)). `vpack` moves depth past `\boxmaxdepth` into the height. `\vtop` ([§ 1087](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L21078)), `\vcenter` ([§ 736](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L14454)). |
+| inline math | characters, `\mathchardef` atoms, italic corrections, class spacing ([§§ 752](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L14748)–[766](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L15073)), `\mathsurround` ([§ 1196](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L22455)). Binary atoms, operators, fractions and lost groups widen. `\left`/`\middle`/`\right` (etex.ch). |
+| `\unhbox`, `\unvbox` | the natural size recorded at packing ([§ 1110](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L21332)), the tail kept |
+| `\write`, `\openout`, `\closeout` | nothing when `\immediate`, else a whatsit ([§§ 1352](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L24702), [1375](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L24937)) |
+| `\discretionary` | its unbroken text ([§§ 651](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L12946), [1119](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L21419)) |
 | unknown box | `Dim::ANY` for all sizes |
 
-- **Recorded lists.** A vertical list records its items (boxes, rules, interline glue, glue, kerns, penalties, whatsits, marks). With a record, `\vsplit` runs `vert_break` exactly ([§§ 968](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L18857)–[977](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L19032)). Without one, the split part is packed to the asked height and the rest is bounded.
-- **Forced breaks.** A vbox register knows whether it may hold one. `\vsplit` to `\maxdimen` of a list without one takes it whole ([§§ 972](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L18944)–[974](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L18983)).
-- **Main vertical list.** Tracked from the empty page ([§ 991](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L19369)): discardables on an empty page drop ([§ 1000](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L19481)), `\pagetotal` is bounded ([§ 1001](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L19509)), page dimensions read back until material arrives ([§§ 1004](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L19531), [1245](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L23248)). A page whose first box follows a whatsit can break at its `\topskip` ([§ 973](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L18964)), which LaTeX's `\clearpage` relies on.
-- **`\badness`** of a box packed to a size comes from its glue orders ([§§ 658](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L13045)–[667](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L13143)).
+- **Recorded lists.** A vertical list records its items (boxes, rules, interline glue, glue, kerns, penalties, whatsits, marks). With a record, `\vsplit` runs `vert_break` exactly ([§§ 968](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L18857)–[977](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L19032)). Without one, the split part is packed to the asked height and the rest is bounded.
+- **Forced breaks.** A vbox register knows whether it may hold one. `\vsplit` to `\maxdimen` of a list without one takes it whole ([§§ 972](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L18944)–[974](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L18983)).
+- **Main vertical list.** Tracked from the empty page ([§ 991](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L19369)): discardables on an empty page drop ([§ 1000](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L19481)), `\pagetotal` is bounded ([§ 1001](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L19509)), page dimensions read back until material arrives ([§§ 1004](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L19531), [1245](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L23248)). A page whose first box follows a whatsit can break at its `\topskip` ([§ 973](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L18964)), which LaTeX's `\clearpage` relies on.
+- **`\badness`** of a box packed to a size comes from its glue orders ([§§ 658](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L13045)–[667](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L13143)).
 
 ### Marks
 
-Marks are exact where the lists are recorded: `\topmarks`, `\firstmarks`, `\botmarks` per class from the page lists, the split marks from the part `\vsplit` took ([tex.web §§ 979](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L19081), [1012](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L19693)–[1014](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L19744)). Otherwise a class holds a `OneOf` of the texts given so far or empty. A mark of a class `satex` cannot name makes every class unknown.
+Marks are exact where the lists are recorded: `\topmarks`, `\firstmarks`, `\botmarks` per class from the page lists, the split marks from the part `\vsplit` took ([tex.web §§ 979](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L19081), [1012](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L19693)–[1014](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L19744)). Otherwise a class holds a `OneOf` of the texts given so far or empty. A mark of a class `satex` cannot name makes every class unknown.
 
 ### Paragraphs and line breaking
 
-A paragraph in a vertical box is broken as `line_break` does it ([tex.web §§ 813](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L17438)). `Para` holds the range of lines made so far.
+A paragraph in a vertical box is broken as `line_break` does it ([tex.web §§ 813](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L17438)). `Para` holds the range of lines made so far.
 
 | Case | Result |
 | --- | --- |
-| forced breaks (penalty ≤ -10000) | exact ([tex.web §§ 851](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16750), [879](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L17297)) |
-| all items known, plain parameters | Knuth-Plass in all three passes ([§ 863](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16982), `src/linebreak.rs`): line count, sizes and `\prevgraf` exact |
-| fits with infinite stretch, or badness bound low enough | one line ([§§ 817](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16090), [851](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16750)–[859](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16900)) |
+| forced breaks (penalty ≤ -10000) | exact ([tex.web §§ 851](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L16750), [879](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L17297)) |
+| all items known, plain parameters | Knuth-Plass in all three passes ([§ 863](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L16982), `src/linebreak.rs`): line count, sizes and `\prevgraf` exact |
+| fits with infinite stretch, or badness bound low enough | one line ([§§ 817](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L16090), [851](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L16750)–[859](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L16900)) |
 | otherwise | one line up to one per breakpoint, sizes between zero and the text's |
 
-- Line width is `\hsize`. With `\parshape` or `\hangindent` it is unknown ([§§ 847](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16676)–[848](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16702)).
-- At `\par`: final glue dropped, `\parfillskip` added ([§ 816](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16066)). Interline glue from `\baselineskip` or `\lineskip` ([§ 679](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L13312)), both joined when either may apply. `\prevdepth` ([§ 219](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4423)), `\parskip` ([§ 1091](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21111)).
-- **Hyphenation** ([§§ 919](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L18072)–[965](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L18820)) uses the format's own `\patterns` and `\hyphenation` (`src/hyph.rs`). Each found gap is a may-hyphen (`·` in the typeset view). A one-line paragraph gets none ([§ 902](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L17669)). An unknown language or `\lccode` marks every gap.
+- Line width is `\hsize`. With `\parshape` or `\hangindent` it is unknown ([§§ 847](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L16676)–[848](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L16702)).
+- At `\par`: final glue dropped, `\parfillskip` added ([§ 816](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L16066)). Interline glue from `\baselineskip` or `\lineskip` ([§ 679](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L13312)), both joined when either may apply. `\prevdepth` ([§ 219](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L4423)), `\parskip` ([§ 1091](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L21111)).
+- **Hyphenation** ([§§ 919](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L18072)–[965](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L18820)) uses the format's own `\patterns` and `\hyphenation` (`src/hyph.rs`). Each found gap is a may-hyphen (`·` in the typeset view). A one-line paragraph gets none ([§ 902](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L17669)). An unknown language or `\lccode` marks every gap.
 - Line parameters are read at `\par`. If they changed after a line was set, the sizes widen.
 
 ## Unknown text: the `TextClass` lattice
@@ -188,7 +188,7 @@ typed digits     d, with an interval [lo, hi]
 - **Why it matters.** A scan delimited by `}` finds nothing in text without `b`. One delimited by a space finds nothing without `_`. `\ifx` against a letter cannot match without `l`. Nothing without `c` is a control sequence.
 - **Typed digits** carry their `Num`: `\ifnum`, `\numexpr` and `\csname` read the interval back.
 - **Join** is the union of kinds. The text is non-empty only if both are. A run of unknown tokens collapses into one token of the run's class. Widening moves up and stops at the top.
-- **Printing.** `\detokenize` and `\string` give the printed class ([tex.web § 464](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9142)).
+- **Printing.** `\detokenize` and `\string` give the printed class ([tex.web § 464](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L9142)).
 - One constructor makes all unknown text: `Machine::unknown_text`.
 
 [Stubs](Configuration#stubs) name these elements: `nothing`, `number` / `{ number: [lo, hi] }`, `dimen`, `{ text: digits | number | dimension | cs-free | any }`, `box` / `{ box: { width, height, depth } }`.
@@ -201,18 +201,19 @@ typed digits     d, with an interval [lo, hi]
 | `UNKNOWN_DIGIT` | `0`–`9` |
 | `UNKNOWN_NONZERO` | `1`–`9` |
 
-`\the` never prints a leading zero ([tex.web §§ 103](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L2199)–[104](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L2225)). Reading the first digit of an unknown number splits into `-` (digits follow), `0` (nothing follows) and `1`–`9` (one digit fewer may follow), so a digit-stripping loop ends.
+`\the` never prints a leading zero ([tex.web §§ 103](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L2199)–[104](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L2225)). Reading the first digit of an unknown number splits into `-` (digits follow), `0` (nothing follows) and `1`–`9` (one digit fewer may follow), so a digit-stripping loop ends.
 
 - `\romannumeral` of an unknown number is typed text of class `o`. In a small interval it is one of its numerals.
 - At the end of a ⟨number⟩ scan, paths that differ only in numbers join to typed digits over the hull.
-- A number starting with a known digit has no sign: it lies in 0 to 2³¹-1 ([tex.web § 445](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8773)). A known last digit decides `\ifodd`.
-- `\the` of a dimension in a one-signed interval prints typed digits, a point, at most five digits and `pt`. Scanned back, it is an interval ([§§ 448](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8829)–[458](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9009)), so bounds survive `\pgf@sys@tonumber` and pgfmath's `round`, `floor`, `int`.
+- A number starting with a known digit has no sign: it lies in 0 to 2³¹-1 ([tex.web § 445](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L8773)). A known last digit decides `\ifodd`.
+- `\the` of a dimension in a one-signed interval prints typed digits, a point, at most five digits and `pt`. Scanned back, it is an interval ([§§ 448](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L8829)–[458](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L9009)), so bounds survive `\pgf@sys@tonumber` and pgfmath's `round`, `floor`, `int`.
+- `\the` of an unknown glue prints its width, then a one-of token for the parts that may be nonzero: nothing, ` plus ⟨d⟩⟨unit⟩`, ` minus ⟨d⟩⟨unit⟩` or both ([§ 178](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L3621)). A glue scan's `plus` and `minus` keywords split it per text, so `\vskip\the\skip@` never leaves part of it as typeset text.
 
 ### One-of tokens
 
 A one-of token stands for one of a few texts (a joined `\@currenvir`, `v` plus `a` or `b`).
 
-- A read that splits it (`\ifx`, `\csname`, a scan) narrows it on each path to the texts that path took (`split_one_of_groups`, [`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)). Every copy on that path, in a macro, an argument or a name being built, then holds those texts.
+- A read that splits it (`\ifx`, `\csname`, a scan, a keyword) narrows it on each path to the texts that path took (`split_one_of_groups`, [`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)). Every copy on that path, in a macro, an argument or a name being built, then holds those texts.
 - A `\csname` whose paths join inside the name keeps per name what each path took, and narrows again when it parts per name.
 - At a join, a copy narrowed to one text is that text, so arms that took different texts join as texts.
 - Only a token made once is narrowed. Made again, or once passes of a loop were joined since, its copies may stand for different choices.
@@ -223,8 +224,8 @@ Typed text may carry a maximum token count (`LEN_MARK`, at most 20).
 
 | Source | Bound |
 | --- | --- |
-| `\the`/`\number` of a count | 11 ([tex.web § 65](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L1613)) |
-| `\the` of a dimension | 14 ([§ 103](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L2199)) |
+| `\the`/`\number` of a count | 11 ([tex.web § 65](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L1613)) |
+| `\the` of a dimension | 14 ([§ 103](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L2199)) |
 | a value in an interval | the digits of its larger end |
 | the rest after reading one token | one less, 0 is no text |
 | a join | the larger bound, a collapsed run sums them |
@@ -233,7 +234,7 @@ A loop pass whose pending input strictly shrinks is not counted against `limits.
 
 ### Names from unknown text
 
-`Wild` ([`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)) holds the families of names a definition of a partly unknown name may have made ([tex.web § 372](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7745)): the known text around the unknown part, as in `\csname MT@inh@\x\endcsname`.
+`Wild` ([`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)) holds the families of names a definition of a partly unknown name may have made ([tex.web § 372](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L7745)): the known text around the unknown part, as in `\csname MT@inh@\x\endcsname`.
 
 - A name of such a family may be undefined, `\relax` (a `\csname` may have made it), or one of up to 8 meanings the family's writes gave. Families join by union. Past 1024 they widen to what they share.
 - A name around one number's typed digits is that number's own name: `\tl_map_inline:nn` defines and calls the same `__tl_map_⟨n⟩:w` exactly. Another definition that may hit the same name joins into it (a weak update).
@@ -243,8 +244,8 @@ A loop pass whose pending input strictly shrinks is not counted against `limits.
 
 [`src/roles.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/roles.rs) types each argument of a command by what TeX read it as. The record numbers them by their place in the usage line, optional ones counted.
 A type stands for the texts an argument may hold, so a type is below another when every text it admits the other admits too.
-The order follows [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web)'s scanners: `scan_int` ([§ 440](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8701)), `scan_dimen` ([§ 448](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8829)), `scan_glue` ([§ 461](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9064)), a register an assignment names ([§ 1224](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22902)), a box number ([§ 1079](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20936)), `get_r_token` ([§ 1215](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22784)).
-A register's name is text of its value's kind, because a scanner reads the register's value there ([§ 413](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8345)). A dimension is glue without stretch.
+The order follows [tex.web](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web)'s scanners: `scan_int` ([§ 440](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L8701)), `scan_dimen` ([§ 448](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L8829)), `scan_glue` ([§ 461](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L9064)), a register an assignment names ([§ 1224](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L22902)), a box number ([§ 1079](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20936)), `get_r_token` ([§ 1215](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L22784)).
+A register's name is text of its value's kind, because a scanner reads the register's value there ([§ 413](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L8345)). A dimension is glue without stretch.
 
 ```mermaid
 flowchart LR
@@ -259,63 +260,63 @@ flowchart LR
   t8["control sequence"]:::cs
   t9["conditional"]:::cs
   t10["options"]:::key
-  t11["text"]:::text
-  t12["name"]:::text
-  t13["definition body"]:::text
-  t14["tl variable"]:::expl3
-  t15["str variable"]:::expl3
-  t16["clist variable"]:::expl3
-  t17["seq variable"]:::expl3
-  t18["prop variable"]:::expl3
-  t19["fp variable"]:::expl3
-  t20["bool variable"]:::expl3
-  t21["regex variable"]:::expl3
-  t22["coffin variable"]:::expl3
-  t23["flag variable"]:::expl3
-  t24["intarray variable"]:::expl3
-  t25["cctab variable"]:::expl3
-  t26["count register"]:::register
-  t27["dimen register"]:::register
-  t28["skip register"]:::register
-  t29["muskip register"]:::register
-  t30["toks register"]:::register
-  t31["box register"]:::register
-  t32["read register"]:::register
-  t33["write register"]:::register
-  t34["counter"]:::register
-  t35["dimen name"]:::register
-  t36["skip name"]:::register
-  t37["muskip name"]:::register
-  t38["toks name"]:::register
-  t39["box name"]:::register
-  t40["read name"]:::register
-  t41["write name"]:::register
-  t42["key"]:::key
-  t43["label"]:::key
-  t44["citation key"]:::key
-  t45["option key"]:::key
-  t46["environment name"]:::key
-  t47["file"]:::file
-  t48["TeX file (.tex)"]:::file
-  t49["package (.sty)"]:::file
-  t50["class (.cls)"]:::file
-  t51["bibliography database (.bib)"]:::file
-  t52["bibliography style (.bst)"]:::file
-  t53["biblatex bibliography style (.bbx)"]:::file
-  t54["biblatex citation style (.cbx)"]:::file
-  t55["graphic file"]:::file
+  t11["date, at least"]:::text
+  t12["text"]:::text
+  t13["name"]:::text
+  t14["definition body"]:::text
+  t15["tl variable"]:::expl3
+  t16["str variable"]:::expl3
+  t17["clist variable"]:::expl3
+  t18["seq variable"]:::expl3
+  t19["prop variable"]:::expl3
+  t20["fp variable"]:::expl3
+  t21["bool variable"]:::expl3
+  t22["regex variable"]:::expl3
+  t23["coffin variable"]:::expl3
+  t24["flag variable"]:::expl3
+  t25["intarray variable"]:::expl3
+  t26["cctab variable"]:::expl3
+  t27["count register"]:::register
+  t28["dimen register"]:::register
+  t29["skip register"]:::register
+  t30["muskip register"]:::register
+  t31["toks register"]:::register
+  t32["box register"]:::register
+  t33["read register"]:::register
+  t34["write register"]:::register
+  t35["counter"]:::register
+  t36["dimen name"]:::register
+  t37["skip name"]:::register
+  t38["muskip name"]:::register
+  t39["toks name"]:::register
+  t40["box name"]:::register
+  t41["read name"]:::register
+  t42["write name"]:::register
+  t43["key"]:::key
+  t44["label"]:::key
+  t45["citation key"]:::key
+  t46["option key"]:::key
+  t47["environment name"]:::key
+  t48["file"]:::file
+  t49["TeX file (.tex)"]:::file
+  t50["package (.sty)"]:::file
+  t51["class (.cls)"]:::file
+  t52["bibliography database (.bib)"]:::file
+  t53["bibliography style (.bst)"]:::file
+  t54["biblatex bibliography style (.bbx)"]:::file
+  t55["biblatex citation style (.cbx)"]:::file
+  t56["graphic file"]:::file
   subgraph g0_register[" "]
     direction LR
     t7
-    t30
     t31
     t32
     t33
+    t34
   end
   t0 --> g0_register
   subgraph g8_expl3[" "]
     direction LR
-    t17
     t18
     t19
     t20
@@ -324,11 +325,11 @@ flowchart LR
     t23
     t24
     t25
+    t26
   end
   t8 --> g8_expl3
-  subgraph g12_register[" "]
+  subgraph g13_register[" "]
     direction LR
-    t34
     t35
     t36
     t37
@@ -336,19 +337,19 @@ flowchart LR
     t39
     t40
     t41
+    t42
   end
-  t12 --> g12_register
-  subgraph g42_key[" "]
+  t13 --> g13_register
+  subgraph g43_key[" "]
     direction LR
-    t43
     t44
     t45
     t46
+    t47
   end
-  t42 --> g42_key
-  subgraph g47_file[" "]
+  t43 --> g43_key
+  subgraph g48_file[" "]
     direction LR
-    t48
     t49
     t50
     t51
@@ -356,8 +357,9 @@ flowchart LR
     t53
     t54
     t55
+    t56
   end
-  t47 --> g47_file
+  t48 --> g48_file
   t0 --> t1
   t1 --> t2
   t4 --> t3
@@ -367,18 +369,19 @@ flowchart LR
   t0 --> t8
   t8 --> t9
   t0 --> t10
-  t0 --> t11
-  t11 --> t12
-  t11 --> t13
-  t8 --> t14
-  t14 --> t15
-  t14 --> t16
-  t2 --> t26
-  t3 --> t27
-  t4 --> t28
-  t5 --> t29
-  t12 --> t42
-  t12 --> t47
+  t12 --> t11
+  t0 --> t12
+  t12 --> t13
+  t12 --> t14
+  t8 --> t15
+  t15 --> t16
+  t15 --> t17
+  t2 --> t27
+  t3 --> t28
+  t4 --> t29
+  t5 --> t30
+  t13 --> t43
+  t13 --> t48
   classDef top fill:#eef0f2,stroke:#8a8f98,color:#1f2328
   classDef quantity fill:#dbeafe,stroke:#3b82f6,color:#1f2328
   classDef register fill:#ffedd5,stroke:#f97316,color:#1f2328
@@ -434,7 +437,7 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 
 - **Join**: the nearest type above both (`Ty::join`). A dimen and a skip register give `glue`, a label and a citation key give `key`, a `.bib` and a `.tex` use give `file`. The lattice is a tree, so disagreeing uses never stay a set.
 - **expl3 variables.** A name a definition reads (`get_r_token`) while a module function of a variable kind runs (`\tl_…:N…`, `\seq_…:c…`) is a variable of that kind: what the run did, not the name's suffix. Register-backed kinds (`int`, `dim`, `skip`, `muskip`, `box`, `ior`/`iow`) are registers of their kind.
-- **Where types come from.** A scanner's read of the argument (`Facts::types`, joined per place). Else its role (a label is a `key`, a load a `file`, `\bibdata` a `.bib`). Else its macro's body (`roles::assigned`, [tex.web §§ 1057](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20524), [1224](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22902)): `#1` after `\penalty` is a number, `#1` heading an assignment a `register`, `#1` inside `\csname` a `name`.
+- **Where types come from.** A scanner's read of the argument (`Facts::types`, joined per place). Else its role (a label is a `key`, a load a `file`, `\bibdata` a `.bib`). Else its macro's body (`roles::assigned`, [tex.web §§ 1057](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20524), [1224](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L22902)): `#1` after `\penalty` is a number, `#1` heading an assignment a `register`, `#1` inside `\csname` a `name`.
 - **Wrappers** inherit the types of arguments they hand on whole.
 - **Use.** Types order what an editor offers. They add no narrowing to the run: the scanners already read into the [value domains](#value-what-a-control-sequence-or-register-holds).
 
@@ -480,11 +483,11 @@ So a run spends at most `3 × limits.line_steps` per line, plus a constant. Ever
 Rules that keep cuts sound and convergent:
 
 - **Paths.** A path parked before a cut takes the same cut later. A `\csname` site that parted `limits.meaning_set` times on one line keeps the names as one family on one path.
-- **Loop entries.** A summary unwinds only to where its loop was entered. A head met after the entry's caller read on is a new entry ([tex.web § 325](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7015)), so a summary never closes its caller's groups.
+- **Loop entries.** A summary unwinds only to where its loop was entered. A head met after the entry's caller read on is a new entry ([tex.web § 325](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L7015)), so a summary never closes its caller's groups.
 - **What a pass wrote** is compared against the fork's binding, so a name set back (`\thepage` around `\protected@write`) is not widened. The body runs once more from the widened state before the cut, so names it opens arrive as a family.
 - **Loop exits in a scan** (`\edef`, `\expanded`): the cut continues on a path that already left the loop with the same text. Without one it reads one unknown token and skips to the scan's `}`. Scan cuts are per path.
 - **Endless loops** (`limits.cycle_after`) end a path only when another path covers it. Else it is summarized and goes on.
-- **Unwinding** drops token lists and closes the conditionals and groups their text opened ([§§ 281](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L6035)–[283](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L6070)), widening values a group restores. Levels left open become [stacks as intervals](#stacks-as-intervals).
+- **Unwinding** drops token lists and closes the conditionals and groups their text opened ([§§ 281](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L6035)–[283](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L6070)), widening values a group restores. Levels left open become [stacks as intervals](#stacks-as-intervals).
 - **The output routine** is a unit: an open output group ([§ 989](#stacks-as-intervals)), flushed with its conditionals when it ends ([§ 1100](#stacks-as-intervals)).
 
 ## The join, in general
@@ -492,7 +495,7 @@ Rules that keep cuts sound and convergent:
 Every domain joins the same way: **hull plus bounded union**. Keep the exact members while they fit the limit, else take the hull. Never fail.
 
 - **Undecided splits** (a conditional, a meaning set, a mode test) run each arm separately, then join the environments, globals included. With `arm_joins` (default), arms inside an `\edef` body join where they meet in the body: twelve tests are twelve splits, not 4096 runs.
-- **What a join keeps.** A name one arm defined is that definition or undefined. Registers join their values. A group's end restores what either path saved there. Only a path that saved nothing there leaves its current value in the join ([tex.web § 283](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L6070)). Paths in different groups join in the groups of the path that goes on. A summary goes on in the groups of its last pass. A group only the other path stood in leaves its writes at the joined level. Differing catcodes or pending `\afterassignment`/`\aftergroup` tokens keep paths apart, up to two per place.
+- **What a join keeps.** A name one arm defined is that definition or undefined. Registers join their values. A group's end restores what either path saved there. Only a path that saved nothing there leaves its current value in the join ([tex.web § 283](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L6070)). Paths in different groups join in the groups of the path that goes on. A summary goes on in the groups of its last pass. A group only the other path stood in leaves its writes at the joined level. Differing catcodes or pending `\afterassignment`/`\aftergroup` tokens keep paths apart, up to two per place.
 - **Scheduling.** The path furthest behind runs next, so paths that can meet do. No path is dropped: the end state joins every path that ended.
 - **Loops** reach a fixpoint: each round joins into the head's state, and the head reruns while it grows. After `limits.widen_after` growing rounds the state widens (meaning sets to unknown, intervals to the 32-bit range, others to `Unknown`), so every loop ends within `widen_after + 2` rounds (`undecided-loop` otherwise). A head that still grows is summarized after `2 × widen_after` widened rounds.
 
@@ -514,7 +517,7 @@ A group or conditional frame may stand for any number of copies (`many`). A loop
 
 ### Joins at `\fi`
 
-Arms of an undecided conditional that reach its `\fi` go on as one path (`fi_mark`, `partner` in [`src/machine/explore.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine/explore.rs)). The conditional is identified by its `\if…` and the stack depth below it ([tex.web §§ 489](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9601), [498](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9711)).
+Arms of an undecided conditional that reach its `\fi` go on as one path (`fi_mark`, `partner` in [`src/machine/explore.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine/explore.rs)). The conditional is identified by its `\if…` and the stack depth below it ([tex.web §§ 489](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L9601), [498](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L9711)).
 
 - Data becomes an interval or set, differing macros a meaning set, a one-arm macro "that body or undefined". All definitions stay recorded as facts.
 - Arms that leave another way (`\expandafter\@firstoftwo`) join at the next common place.
@@ -539,7 +542,7 @@ Joining pending code into unknown text keeps what it may do (`may_run`): undefin
 - Differing input joins as shared text around one token for either part. Each part must be whole: balanced braces, conditionals closed (`whole`).
 - Only data joins that way. Paths whose pending code differs never join until a common point. Code differs only between passes of one loop.
 - A path raising an error with an exact cause (a certainly undefined name) is dropped: the document is assumed to compile. Library code that redefines `\fi` drops its path too.
-- A cut keeps the lists holding the document's own text, and one in an output routine ends only the routine ([tex.web § 1100](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21213)).
+- A cut keeps the lists holding the document's own text, and one in an output routine ends only the routine ([tex.web § 1100](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L21213)).
 
 ## `limits`: where the domains stop being precise
 
@@ -569,7 +572,7 @@ A write through an index not pinned to one number (`\count#1=…`) must hold for
 
 ### Code tables behind an unknown character
 
-A `\catcode`, `\lccode`, `\uccode`, `\sfcode`, `\mathcode` or `\delcode` write through an unknown character ([tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L23040)) leaves every entry it may name at {old, new}, structural characters included.
+A `\catcode`, `\lccode`, `\uccode`, `\sfcode`, `\mathcode` or `\delcode` write through an unknown character ([tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L23040)) leaves every entry it may name at {old, new}, structural characters included.
 
 - **Categories**: the table keeps the hull of the codes reached (`reach`) and the categories written (`reach_cats`). Reading a character whose set holds a structural category splits the path per category (`split_catcode`, at most `SPLIT_CATS`), once per path. A letter-or-other character is a one-of token.
 - **Codes**: the written values join in one slot per table (`family_value`). An entry reads its own code joined with it.
@@ -581,7 +584,7 @@ Where `satex` does not yet reach the invariant:
 
 | Limit | What can be missed |
 | --- | --- |
-| executing a character of unknown category | only an active character runs code ([tex.web §§ 232](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4811), [344](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7286)), and only its bindings are joined in. Groups, modes, files and `\write`s it would make are not. A name built from unknown text (`\csname`) may be any control sequence, executing it widens nothing. |
+| executing a character of unknown category | only an active character runs code ([tex.web §§ 232](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L4811), [344](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L7286)), and only its bindings are joined in. Groups, modes, files and `\write`s it would make are not. A name built from unknown text (`\csname`) may be any control sequence, executing it widens nothing. |
 | a recursion cut at its bound | assignments are widened, catcodes, groups, files, streams and `\write` are not (their sound top would stop the run) |
 | a file the run wrote with unknown text that is also on disk | read as on disk |
 | loops spanning call sites | met again only through an undecided conditional, otherwise left to the stall limit |

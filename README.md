@@ -172,6 +172,9 @@ Output:
 
       --timings
           Print a per-phase timing breakdown to stderr after the run
+
+      --stats-json
+          Print the accounting of `--stats` and `--timings` as one JSON object to stderr after the run
 ```
 
 </details>
@@ -386,7 +389,7 @@ $ satex explain -f samples/paper.tex '\usepackage'
   effective      \usepackage[1]{2}[3]
   signature      omo
   roles          #2 package
-  types          #1 options, #2 package (.sty)
+  types          #1 options, #2 package (.sty), #3 date, at least
   takes          1-3
   uses           4 times, in this run
   by             \let
