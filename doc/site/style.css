@@ -890,7 +890,7 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .draw-solo footer { padding: 0 1rem .8rem; }
 .draw-filters { margin: .5rem 1rem 0; align-items: center; } .draw-filters .sep { width: .6rem; }
 .draw-box { display: flex; align-content: flex-start; gap: 1rem; padding: .6rem 1rem 1rem; }
-.draw-pad { flex: none; width: min(16rem, 42vw); display: grid; gap: .4rem; justify-items: start; align-content: start; }
+.draw-pad { flex: none; width: min(19.2rem, 46vw); display: grid; gap: .4rem; justify-items: start; align-content: start; }
 #draw-pad { width: 100%; height: auto; aspect-ratio: 1; border: 1px dashed var(--border); border-radius: 8px; background: var(--sunk); color: var(--fg); touch-action: none; cursor: crosshair; }
 .draw-results { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: .4rem; }
 .draw-list { flex: 1; min-height: 0; overflow: auto; isolation: isolate; margin: 0; padding: 0; list-style: none; font-size: .82rem; }
@@ -1076,3 +1076,4 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .claim-rot > span.shows .claim-lint { text-decoration-color: var(--error); }
 .claim-rot > span.shows .claim-lint.fixed { text-decoration-color: transparent; background: color-mix(in srgb, var(--safe, #3a3) 22%, transparent); border-radius: 3px; transition: background-color .6s var(--ease), text-decoration-color .3s; }
 .claim-rot > span:has(.claim-complete)::after { display: none; }
+.draw-solo .draw-box { flex: 1; min-height: 0; } .draw-results { overflow: hidden; } .draw-results .draw-list { flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0; }
