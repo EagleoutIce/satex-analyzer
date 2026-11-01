@@ -340,13 +340,13 @@ l.6 \ifdim\dimen2=0pt ⇒ undecided
 </details>
 
 **Where the model stands.**
-The line breaker is [tex.web](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web)'s ([§§ 813](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L17438)) for a paragraph whose items, metrics and parameters are known.
+The line breaker is [tex.web](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web)'s ([§§ 813](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L17438)) for a paragraph whose items, metrics and parameters are known.
 Anything else keeps an interval of lines.
-A forced break mid-paragraph keeps one active node per fitness class ([§ 836](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L16474)), so with `\adjdemerits` the lines after it may choose the lines before it.
+A forced break mid-paragraph keeps one active node per fitness class ([§ 836](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L16474)), so with `\adjdemerits` the lines after it may choose the lines before it.
 satex breaks such a segment only when one class ends it, as after `\\`, and keeps the interval otherwise.
 The page builder fires `\output` at forced breaks (`analysis.assume_forced_page_breaks`, an assumption, on by default).
 With the assumption off, a page that may have filled parts the run: one path fires `\output`, the other reads on.
-TeX's choice of the best break ([§§ 1005](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L19552)–[1010](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L19654)) is not modelled yet, so floats that TeX places on the next pages wait for `\clearpage` under the assumption.
+TeX's choice of the best break ([§§ 1005](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L19552)–[1010](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L19654)) is not modelled yet, so floats that TeX places on the next pages wait for `\clearpage` under the assumption.
 The float loops of LaTeX's output routine then run at the end, where unknown box sizes make them converge only by widening.
 
 ### 5. Packages are interpreters

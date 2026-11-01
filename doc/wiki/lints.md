@@ -333,13 +333,13 @@ A directive is a comment, so TeX skips it: `%\satex@assert{cond}`, `%\satex@assu
 
 **the run is still in math mode where the text ends**
 
-A `$` that is never closed leaves TeX in math mode. The next `\par` makes TeX report `Missing $ inserted` and close the formula itself ([tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20410) `insert_dollar_sign`), and everything up to there is set as mathematics.
+A `$` that is never closed leaves TeX in math mode. The next `\par` makes TeX report `Missing $ inserted` and close the formula itself ([tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20410) `insert_dollar_sign`), and everything up to there is set as mathematics.
 
 The rule reports what the interpreter already saw: the `missing-dollar` diagnostic it raised, or, where no `\par` followed, a last character still carrying a math mode (unless a limit stopped the run before the text's end). It reports one finding, never both.
 
 Fix by closing the formula.
 
-See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20410).
+See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20410).
 
 ### missing-graphic
 
@@ -500,13 +500,13 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 **`\left`, `\right` or `\middle` is followed by a brace or a math shift**
 
-`\left`, `\right` and `\middle` scan a delimiter: one character with a `\delcode`, or one control sequence made by `\delimiter` ([tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L22057)). A `{`, a `}` or a `$` is none of those, so TeX reports `Missing delimiter (. inserted)` and sets nothing.
+`\left`, `\right` and `\middle` scan a delimiter: one character with a `\delcode`, or one control sequence made by `\delimiter` ([tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22057)). A `{`, a `}` or a `$` is none of those, so TeX reports `Missing delimiter (. inserted)` and sets nothing.
 
 The rule asks what each command means rather than matching its name, so it covers `\middle` and any `\let` alias, which chktex's name list does not.
 
 Fix by writing `\{` and `\}` for brace delimiters, or `\left.` where no delimiter is wanted.
 
-See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L22057).
+See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22057).
 
 ### duplicate-bibliography-entry
 
@@ -942,7 +942,7 @@ satex compares each character's `\f@shape` against the kernel's `\itdefault` and
 
 Fix by writing `\/` after the last slanted character.
 
-See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L21365).
+See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L21365).
 
 ### missing-nonbreaking-space
 
@@ -952,11 +952,11 @@ See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https:/
 
 A reference should not begin a line on its own, so a tie belongs in front of it. `~` is an interword space TeX may not break at ([The TeXbook, chapter 14](https://ctan.org/pkg/texbook#chapter-14)).
 
-The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20358)).
+The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20358)).
 
 Fix by writing `Figure~\ref{fig:one}`.
 
-See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook#chapter-14), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20358).
+See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook#chapter-14), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20358).
 
 ### parenthesis-spacing
 
@@ -994,13 +994,13 @@ See [chktex 32](https://www.nongnu.org/chktex/), [chktex 33](https://www.nongnu.
 
 **a period set the wrong width of space for the sentence around it**
 
-How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000.
+How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000.
 
 So `etc. and` gets a sentence space and `the ABC. Next` a word space, both the wrong way round. The rule reads the characters the run set and reports only where a real space token became glue.
 
 Fix by writing `etc.\ and`, or `the ABC\@. Next`.
 
-See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.org/chktex/), [tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20114).
+See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.org/chktex/), [tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20114).
 
 ### space-before-command
 
@@ -1024,11 +1024,11 @@ See [chktex 24](https://www.nongnu.org/chktex/), [chktex 42](https://www.nongnu.
 
 Punctuation belongs against the word it follows. A space in front of a comma or a period is glue, and the reader sees it on the page.
 
-The rule reports only a real space token that became glue in horizontal mode ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20358)). A thin space a language package inserts before `:` comes from that package's own code, which the run keeps out of the text, so French typography is not reported.
+The rule reports only a real space token that became glue in horizontal mode ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20358)). A thin space a language package inserts before `:` comes from that package's own code, which the run keeps out of the text, so French typography is not reported.
 
 Fix by deleting the space.
 
-See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20358).
+See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20358).
 
 ### stray-italic-correction
 
@@ -1036,13 +1036,13 @@ See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://githu
 
 **a repeated italic correction, or one in front of a period or comma**
 
-`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4)). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L21365)), and one in front of a period or a comma (chktex 28).
+`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4)). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L21365)), and one in front of a period or a comma (chktex 28).
 
 satex reads the characters the document set, so it sees through a closing brace: in `\textit{word\/}.` the next character set is the period.
 
 Fix by deleting the `\/`.
 
-See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L21365).
+See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L21365).
 
 ### unknown-suppress-code
 
@@ -1102,13 +1102,13 @@ See [chktex 18](https://www.nongnu.org/chktex/), [chktex 19](https://www.nongnu.
 
 **the italic correction is zero here, so `\/` changes nothing**
 
-`\/` appends a kern as wide as the italic correction the font gives the last character on the current list ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L21365)). Where that correction is zero the `\/` does nothing.
+`\/` appends a kern as wide as the italic correction the font gives the last character on the current list ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L21365)). Where that correction is zero the `\/` does nothing.
 
 Every character carries the font it was set in ([fntguide § 2](https://ctan.org/pkg/fntguide)), and satex reads the correction out of that font's TFM. That is a measurement, where chktex decides from a list of command names. In math, and after a space, the kern is zero whatever the font.
 
 Fix by deleting the `\/`.
 
-See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L21365), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4).
+See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L21365), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4).
 
 ### build-bibliography-unneeded
 
@@ -1374,13 +1374,13 @@ See [chktex 38](https://www.nongnu.org/chktex/).
 
 **a macro body picked up a space from an unescaped line end**
 
-Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L7326)).
+Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L7326)).
 
-The finding follows the modes the run read that space in ([§ 1043](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20358): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been. Only a space that a character, box or rule follows in its list is reported. The glue that ends a paragraph goes ([§ 816](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L16066)), and glue before it only widens the end of the last line. One an `\unskip` takes is gone too ([§ 1105](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L21264)), as at `\end{center}`.
+The finding follows the modes the run read that space in ([§ 1043](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20358): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been. Only a space that a character, box or rule follows in its list is reported. The glue that ends a paragraph goes ([§ 816](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L16066)), and glue before it only widens the end of the last line. One an `\unskip` takes is gone too ([§ 1105](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L21264)), as at `\end{center}`.
 
 Fix by writing `%` at the end of that line.
 
-See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L7326), [tex.web § 816](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L16066), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/87771671b2ea0599e263006cfb405569061d9938/texk/web2c/tex.web#L20358).
+See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L7326), [tex.web § 816](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L16066), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20358).
 
 ### table-rules
 
