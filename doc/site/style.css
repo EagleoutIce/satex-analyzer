@@ -904,7 +904,7 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .cache-dialog.draw-dialog { height: min(86vh, 44rem); width: min(46rem, calc(100vw - 2rem)); } .draw-dialog .draw-box { flex: 1; min-height: 0; } .draw-dialog .draw-list { max-height: 100%; overflow: auto; }
 .draw-about { font-size: .8rem; max-width: 26rem; } .draw-tools { display: flex; gap: .3rem; align-items: center; align-self: stretch; } .draw-tools .pill svg { width: .95rem; height: .95rem; }
 .draw-pop { position: fixed; inset: auto 1rem 1rem auto; margin: 0; } .draw-about summary { cursor: pointer; }
-.draw-page { margin: 0; background: var(--bg); color: var(--fg); } .draw-solo { max-width: 60rem; height: 100dvh; margin: 0 auto; padding: .5rem 0; box-sizing: border-box; display: flex; flex-direction: column; } .draw-solo .draw-box { flex: 1; min-height: 0; } .draw-box > .draw-results { max-height: 100%; }
+.draw-page { margin: 0; background: var(--bg); color: var(--fg); } .draw-solo { height: 100dvh; margin: 0; padding: .5rem 1rem; box-sizing: border-box; display: flex; flex-direction: column; } .draw-solo .draw-box { flex: 1; min-height: 0; } .draw-box > .draw-results { max-height: 100%; }
 .draw-acts .pill:hover:not(:disabled), .draw-more-pill:hover { transform: none; box-shadow: none; border-color: var(--border); color: var(--accent); }
 .draw-acts .pill:focus:not(:focus-visible), .draw-more-pill:focus:not(:focus-visible) { outline: none; }
 #draw-pkgs { padding-right: 1.3rem; cursor: pointer; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
