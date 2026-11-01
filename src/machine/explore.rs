@@ -879,6 +879,13 @@ impl Machine<'_> {
         }
     }
 
+    /// Whether the site of the loop at `span` may still fork: once its budget is spent, the head
+    /// widens as a whole rather than a conditional in the next pass.
+    fn site_affords(&self, span: Span) -> bool {
+        let limit = self.limits.site_forks;
+        limit == 0 || self.site_forked(span) < limit
+    }
+
     /// Whether choices by `by` at `span` here entered as a loop more than
     /// `limits.loop_entries` times: every further one is a re-entry.
     pub(crate) fn loop_capped(&self, span: Span, by: Sym) -> bool {
@@ -1159,7 +1166,7 @@ impl Machine<'_> {
         let (h, here) = match (exact, alike) {
             (Some(h), _) => (h, here),
             (None, Some(h)) => {
-                let widen = paths.heads[h].passes >= widen_after;
+                let widen = paths.heads[h].passes >= widen_after || !self.site_affords(span);
                 match self.widen_input(&paths.heads[h].config.state.input, &here_input, span, widen, true) {
                     Some(input) => {
                         let head = &mut paths.heads[h];
@@ -1278,7 +1285,7 @@ impl Machine<'_> {
         // A pass forced by the count of passes is joined widened first: if
         // that adds nothing the loop is at its fixpoint, and one widened
         // pass more may reach it; only one still growing is summarized.
-        let widen = paths.heads[h].passes >= widen_after || forced_join;
+        let widen = paths.heads[h].passes >= widen_after || forced_join || !self.site_affords(span);
         let (joined, mut growth) = self.join_passes(&fork, &paths.heads[h].config, &here, widen, !widen);
         if input_grew {
             growth.parts.push("input");
