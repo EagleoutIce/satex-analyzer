@@ -2389,10 +2389,28 @@ fn option_handler(analysis: &Analysis, package: &str) -> (Vec<String>, Vec<Strin
             pass.captures_iter(body).flat_map(|c| c[1].split(',').map(|t| t.trim().to_string()).collect::<Vec<_>>()),
         );
     }
-    if named.len() == 1 {
-        return (Vec::new(), passed);
-    }
+    // A package that declares no option of its own reads its option list itself (geometry's
+    // `\ProcessOptionsKV{Gm}`): its options are the keys of the keyval families it defines
+    let own: Vec<&crate::facts::Definition> = analysis
+        .facts
+        .defs
+        .iter()
+        .filter(|d| d.package.is_some_and(|p| analysis.interner.name(p) == package))
+        .collect();
+    let reads_options = !own.iter().any(|d| d.tag == "option");
     let mut out: Vec<String> = Vec::new();
+    if reads_options {
+        for d in &own {
+            let family =
+                analysis.interner.name(d.name).strip_prefix("KV@").and_then(|r| r.split_once('@')).map(|(f, _)| f);
+            if let Some(family) = family.filter(|f| !out.iter().any(|o| o == f)) {
+                out.push(family.to_string());
+            }
+        }
+    }
+    if named.len() == 1 {
+        return (out, passed);
+    }
     for (_, body) in &bodies {
         for c in dispatch.captures_iter(body) {
             let family = c[1].trim().to_string();
