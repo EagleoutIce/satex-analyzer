@@ -1954,6 +1954,13 @@ fn hover_shows_the_mined_manual() {
         }
         panic!("{name}: {wanted:?} not in\n{last}");
     };
+    if !documented_sources_installed() {
+        // Without `texmf-dist/source` (TeX Live's docker image) nothing is mined: the usage and source link stay.
+        until("\\@latex@error", &["`\\@latex@error{⟨arg1⟩}{⟨arg2⟩}`", "[The LaTeX2e sources, source2e]"]);
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
     until(
         "\\@latex@error",
         &[
@@ -1968,6 +1975,13 @@ fn hover_shows_the_mined_manual() {
     until("\\ifthenelse", &["Tests a condition and chooses code.\n", "[texdoc ifthen]"]);
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Whether the installation ships the kernel's documented sources to mine.
+fn documented_sources_installed() -> bool {
+    let out = std::process::Command::new("kpsewhich").args(["-var-value", "TEXMFDIST"]).output();
+    let root = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    std::path::Path::new(&root).join("source/latex/base/lterror.dtx").is_file()
 }
 
 /// A server over `dir` with `args`, `main.tex` written there and opened.
