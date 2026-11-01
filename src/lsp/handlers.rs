@@ -1316,6 +1316,9 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
         let g = G.get_or_init(|| Regex::new(r"\{([^{}]*)\}").unwrap());
         g.captures(arg.groups).map(|c| c[1].trim().to_string())
     };
+    if arg.open == '{' && takes_colors(analysis, arg.cmd) {
+        return color_items(analysis);
+    }
     if arg.open == '[' {
         if roles.iter().any(|r| matches!(r.kind, R::Load(LoadKind::Class | LoadKind::Package))) {
             // `\usepackage[…]{name}`: the name follows the cursor.
@@ -2390,6 +2393,32 @@ fn word_before(text: &str, from: usize, name: &str) -> Option<usize> {
 
 fn word_after(text: &str, from: usize, name: &str) -> Option<usize> {
     words(text, name).find(|&i| i >= from)
+}
+
+/// Whether the run looked colors up for calls of `\cmd`: its argument names a color.
+fn takes_colors(analysis: &Analysis, cmd: &str) -> bool {
+    let Some(sym) = analysis.interner.lookup(cmd) else { return false };
+    analysis.facts.color_uses.iter().any(|u| u.via == Some(sym))
+}
+
+/// Every color the run defined, newest definition first, each with its value as `#rrggbb`: an
+/// editor shows a swatch next to a color item whose documentation is one.
+fn color_items(analysis: &Analysis) -> Vec<CompletionItem> {
+    let mut seen = crate::fixed::HashSet::default();
+    (analysis.facts.colors.iter().rev())
+        .filter(|c| seen.insert(c.name.as_str()))
+        .map(|c| {
+            let hex = c.value.as_ref().and_then(rgba).map(|v| hex_color(&v));
+            let mut it = item(c.name.clone(), CompletionItemKind::COLOR, hex.clone(), 0);
+            it.documentation = hex.map(lsp_types::Documentation::String);
+            it
+        })
+        .collect()
+}
+
+fn hex_color(c: &lsp_types::Color) -> String {
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!("#{:02x}{:02x}{:02x}", byte(c.red), byte(c.green), byte(c.blue))
 }
 
 /// A color xcolor holds exactly, as red, green and blue (xcolor § 6.3's

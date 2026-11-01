@@ -2314,3 +2314,17 @@ fn a_loading_commands_last_optional_argument_is_a_release_date() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// In an argument the run looked a color up for (`\textcolor{…}`), completion offers the colors
+/// the run defined, each a color item whose documentation is its `#rrggbb` value.
+#[test]
+fn a_color_argument_completes_colors_with_their_values() {
+    let text = "\\documentclass{article}\n\\usepackage{xcolor}\n\\definecolor{mine}{rgb}{0,0,1}\n\\begin{document}\n\\textcolor{mine}{x} \\textcolor{}{y}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("color-items", text);
+    let items = complete(&mut server, &uri, 4, 31);
+    let mine = items.iter().find(|i| i["label"] == "mine").unwrap_or_else(|| panic!("{:?}", labels(&items)));
+    assert_eq!(mine["kind"], 16, "{mine}");
+    assert_eq!(mine["documentation"], "#0000ff", "{mine}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
