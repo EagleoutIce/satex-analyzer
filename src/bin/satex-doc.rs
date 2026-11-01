@@ -1766,14 +1766,17 @@ $ satex lint -f samples/paper.tex
 warning: see tex.web § 211 for the rule
 ```
 ";
-        let expected = "\
+        let sha = include_str!("../../doc/src/tex-web-sha.txt").trim();
+        let expected = format!(
+            "\
 Some prose.
 
 ```text
 $ satex lint -f samples/paper.tex
-warning: see [tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4220) for the rule
+warning: see [tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/{sha}/texk/web2c/tex.web#L4220) for the rule
 ```
-";
+"
+        );
         assert_eq!(linkify_citations(markdown), expected);
     }
 
