@@ -362,9 +362,9 @@ fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>
     let pictures: Vec<String> = wanted
         .iter()
         .map(|w| match w.split_once(':') {
-            Some(("arrow", spec)) => format!("\\tikz\\draw[ink,thick,{spec}] (0,0) -- (0.9,0);"),
+            Some(("arrow", spec)) => format!("\\tikz\\draw[ink,thick,{spec}] (0,0) -- (0.9,0);"), // not prose
             Some((_, name)) => {
-                format!("\\tikz\\path[pattern={{{name}}},pattern color=ink] (0,0) rectangle (0.9,0.45);")
+                format!("\\tikz\\path[pattern={{{name}}},pattern color=ink] (0,0) rectangle (0.9,0.45);") // not prose
             }
             None => String::new(),
         })
