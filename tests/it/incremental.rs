@@ -138,3 +138,24 @@ fn a_resumed_run_says_what_a_full_run_says() {
     }
     assert!(resumed >= 5, "only {resumed} runs resumed from a checkpoint");
 }
+
+/// A build's rerun, after the `.aux` changed, resumes on the line that
+/// opens the document: the preamble before it read nothing that changed.
+#[test]
+fn a_rerun_resumes_where_the_document_begins() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-rerun");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let text = "\\documentclass{article}\n\\usepackage{xcolor}\n\\begin{document}\n\\tableofcontents\n\\section{One}\\label{one}\nSee \\ref{one}.\n\\end{document}\n";
+    std::fs::write(&main, text).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    let analysis = Machine::build(&mut checkpoints, text, &main, &cfg, false);
+    assert!(analysis.build_runs > 1, "the build ran once");
+    let opens = 1 + text.lines().position(|l| l.starts_with("\\begin{document}")).unwrap() as u32;
+    assert_eq!(checkpoints.resumed.map(|(_, line)| line), Some(opens), "{} runs", analysis.build_runs);
+    let _ = std::fs::remove_dir_all(&dir);
+}

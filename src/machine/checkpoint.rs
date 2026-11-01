@@ -70,17 +70,24 @@ impl Machine<'_> {
     /// since the last one or just into the document.
     pub(super) fn checkpoint_due(&self) -> bool {
         let Some(taking) = &self.checkpoints.on else { return false };
-        let Some(Frame::File { mouth, .. }) = self.input.last() else { return false };
+        let Some((mouth, lookahead)) = reading_file(&self.input) else { return false };
         let document = self.out.document_depth.is_some();
         let edit = taking.edit.as_ref().is_some_and(|(path, line)| {
             mouth.position().0 >= *line && Path::new(&self.out.files[usize::from(mouth.file)].path) == path
         });
-        if self.halted || (self.out.steps < taking.next && document == taking.document && !edit) {
+        // before the line that opens the document reads the `.aux` a rerun changed
+        let opens = !document && opens_document(mouth);
+        if self.halted || (self.out.steps < taking.next && document == taking.document && !edit && !opens) {
             return false;
         }
+        // a preamble command's lookahead (`\@ifnextchar[`) holds the next line's first token
+        let settled = match lookahead {
+            true => opens,
+            false => mouth.line_mark().is_some_and(|m| !m.ended),
+        };
         // Below the file, what TeX reads after it: `\include` goes on after its file.
         !self.input.iter().any(|f| matches!(f, Frame::Boundary))
-            && mouth.line_mark().is_some_and(|m| !m.ended)
+            && settled
             && self.project_file(mouth.file)
             && self.scans.is_empty()
             && self.scan_starts.is_empty()
@@ -110,6 +117,36 @@ impl Machine<'_> {
         }
         (taking.next, taking.document) = (steps + taking.every, document);
     }
+}
+
+/// The file the run reads, under tokens a lookahead gave back, and whether there are any.
+fn reading_file(input: &super::Input) -> Option<(&Mouth, bool)> {
+    let mut lookahead = false;
+    for frame in input.iter().rev() {
+        match frame {
+            Frame::Returned(_) => lookahead = true,
+            Frame::File { mouth, .. } => return Some((mouth, lookahead)),
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Whether `\begin{document}` stands on the line `mouth` is on or the next one: a
+/// lookahead from this line (`\usepackage`'s `\@ifnextchar`) may read past the next line's start.
+fn opens_document(mouth: &Mouth) -> bool {
+    let source = mouth.source();
+    let line_start = source[..mouth.offset().min(source.len())].iter().rposition(|&c| c == '\n').map_or(0, |i| i + 1);
+    let mut breaks = 0;
+    let two_lines: String = source[line_start..]
+        .iter()
+        .copied()
+        .take_while(|&c| {
+            breaks += usize::from(c == '\n');
+            breaks < 2
+        })
+        .collect();
+    two_lines.contains("\\begin{document}")
 }
 
 /// The checkpoints of one document's last run, and what they rest on.
@@ -217,7 +254,7 @@ impl<'a> Checkpoints<'a> {
             m.started = self.build_started.unwrap_or_else(std::time::Instant::now);
             m.checkpoints.resume = Some(Box::new(drive));
             crate::source::set_encoding(m.out.plugins.engine.encoding());
-            if let Some(Frame::File { mouth, .. }) = m.input.last() {
+            if let Some((mouth, _)) = reading_file(&m.input) {
                 let at = mouth.position().0;
                 self.resumed = Some((m.out.files[usize::from(mouth.file)].path.clone(), at));
             }
