@@ -114,7 +114,7 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
     let engine_hovers = hovers.clone();
     // A package's manual mined: its names' hovers are asked again.
     let weak = std::sync::Arc::downgrade(&hovers);
-    crate::plugin::docs::index().subscribe(Box::new(move |names| {
+    crate::plugin::docs::index(&cfg.docs).subscribe(Box::new(move |names| {
         let names: std::collections::HashSet<&String> = names.iter().collect();
         if let Some(Ok(mut hovers)) = weak.upgrade().as_ref().map(|h| h.lock()) {
             hovers.retain(|(_, n), _| !names.contains(n));
@@ -982,7 +982,7 @@ impl Engine {
         let called: std::collections::HashSet<String> = used.iter().map(|(_, n)| n.clone()).collect();
         used.sort_by(|a, b| b.cmp(a));
         let store = hover_store(self.cfg, analysis, &dir);
-        let docs = crate::plugin::docs::index();
+        let docs = crate::plugin::docs::index(&self.cfg.docs);
         let mut dirs = std::collections::HashSet::new();
         for file in analysis.file_names().iter().map(Path::new).filter(|_| self.cfg.plugins.docs) {
             if dirs.insert(file.parent()) {

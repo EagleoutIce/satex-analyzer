@@ -188,7 +188,7 @@ fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
     let mut markdown = format!("### `{key}`: key of `\\{}`\n\n", target.trim_start_matches('\\'));
     let mined = text(record, "path")
         .filter(|_| analysis.settings.plugins.docs)
-        .and_then(|p| crate::plugin::docs::index().lookup(std::path::Path::new(&p), key));
+        .and_then(|p| crate::plugin::docs::index(&analysis.settings.docs).lookup(std::path::Path::new(&p), key));
     if let Some((m, does)) = mined.as_ref().and_then(|m| Some((m, m.text.as_deref()?))) {
         markdown.push_str(&format!("{does} {}\n\n", extracted(&format!("from the {} manual", m.from))));
     }
@@ -359,7 +359,7 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
         let text = |key: &str| record.get(key).and_then(Json::as_str);
         let mined = text("path")
             .filter(|_| analysis.settings.plugins.docs)
-            .and_then(|p| crate::plugin::docs::index().lookup(std::path::Path::new(p), name));
+            .and_then(|p| crate::plugin::docs::index(&analysis.settings.docs).lookup(std::path::Path::new(p), name));
         let mined = mined.as_ref();
         match text("when") {
             Some(w) => markdown.push_str(&format!("### `\\{name}`: {w}\n\n")),
@@ -2337,10 +2337,14 @@ pub fn document_colors(analysis: &Analysis, doc: &Text, path: &str) -> Vec<lsp_t
     let mut out = Vec::new();
     for u in analysis.facts.color_uses.iter().filter(|u| file(u.span.file)) {
         let Some(color) = value(&u.name) else { continue };
+        // `Text::line` counts from 1, LSP positions from 0
         let line = u.span.line.saturating_sub(1);
-        let text = doc.line(line);
+        let text = doc.line(u.span.line);
         let from = (u.span.col as usize).min(text.len());
-        let Some(at) = text[from..].find(&u.name).map(|i| from + i) else { continue };
+        // the reader stands past the call's argument: the name is the last one before it, else the next
+        let Some(at) = text[..from].rfind(&u.name).or_else(|| text[from..].find(&u.name).map(|i| from + i)) else {
+            continue;
+        };
         let range = Range::new(Position::new(line, at as u32), Position::new(line, (at + u.name.len()) as u32));
         if !out.iter().any(|c: &lsp_types::ColorInformation| c.range == range) {
             out.push(lsp_types::ColorInformation { range, color });

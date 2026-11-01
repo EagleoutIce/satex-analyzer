@@ -2216,3 +2216,41 @@ fn hover_resolves_the_input_file() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `textDocument/documentColor` gives a swatch to a named color a color command
+/// uses and to one the document defines, each with the value the run gave it.
+#[test]
+fn document_colors_cover_named_and_defined_colors() {
+    let text = "\\documentclass{article}\n\\usepackage{xcolor}\n\\definecolor{mine}{rgb}{0,0,1}\n\\begin{document}\n\\color{red} \\textcolor{mine}{x}\n\\end{document}\n";
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-colors-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    std::fs::write(&main, text).unwrap();
+    let uri = fixture_uri(&main);
+    let mut server = Server::start_with(&dir, &dir, &["--set", "limits.seconds=0"]);
+    let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+    server.response(id);
+    server.notify("initialized", json!({}));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
+    );
+    server.notification("textDocument/publishDiagnostics");
+    let id = server.request("textDocument/documentColor", json!({ "textDocument": { "uri": uri } }));
+    let found = server.response(id)["result"].clone();
+    let at = |line: u64, name: &str| {
+        let start = text.lines().nth(line as usize).unwrap().find(name).unwrap() as u64;
+        found
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["range"]["start"] == json!({ "line": line, "character": start }))
+            .cloned()
+    };
+    let red = at(4, "red").unwrap_or_else(|| panic!("red has a color: {found}"));
+    assert_eq!((red["color"]["red"].as_f64(), red["color"]["blue"].as_f64()), (Some(1.0), Some(0.0)), "{found}");
+    let mine = at(4, "mine").unwrap_or_else(|| panic!("mine has a color: {found}"));
+    assert_eq!((mine["color"]["red"].as_f64(), mine["color"]["blue"].as_f64()), (Some(0.0), Some(1.0)), "{found}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
