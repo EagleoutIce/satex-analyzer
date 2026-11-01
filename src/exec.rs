@@ -1180,7 +1180,8 @@ impl Machine<'_> {
                 }
                 tokens
             }
-            Some(Value::Unknown) | None if level == Some(RegKind::Toks) => self.toks_member(sym, span),
+            Some(Value::OneOf(set)) if level == Some(RegKind::Toks) => self.toks_member(sym, set, span),
+            Some(Value::Unknown) | None if level == Some(RegKind::Toks) => vec![self.unknown_text(Unk::Any, span)],
             // A bounded number (`\the\numexpr`, a register in an interval)
             // prints as digits typed with its bound.
             Some(Value::Unknown) | None if level == Some(RegKind::Count) => match self.abs.take() {
@@ -1292,8 +1293,7 @@ impl Machine<'_> {
                     members.iter().map(|m| self.text_known(m).map(|text| self.text_tokens(&text, t.span))).collect()
                 });
                 if let Some(texts) = spelled {
-                    let texts: Vec<&[Token]> = texts.iter().map(Vec::as_slice).collect();
-                    out.push(self.unknown_text(Unk::Of(&texts), t.span));
+                    out.push(self.one_of(texts.into_iter().map(Rc::from).collect(), t.span));
                     continue;
                 }
                 out.push(self.printed(t, false, t.span));
@@ -3689,8 +3689,15 @@ impl Machine<'_> {
     /// while a join left it one of a few exact values, [`Machine::abs_exact`]
     /// for those (the set lift).
     fn register_value(&mut self, sym: Sym, kind: RegKind) -> Value {
-        let value = self.env.value(sym);
         let raw = self.env.get(sym).map(|b| &b.value);
+        // A join's token lists stay what they are: `\the` reads them one by one.
+        if kind == RegKind::Toks
+            && let Some(set @ Value::OneOf(_)) = raw
+        {
+            (self.abs, self.abs_exact, self.abs_from) = (None, None, None);
+            return set.clone();
+        }
+        let value = self.env.value(sym);
         (self.abs, self.abs_exact, self.abs_from) = match (&value, self.env.num(sym), kind) {
             (Value::Unknown, Some((quantity, num)), _) => {
                 (Some(num), raw.and_then(Value::exact_ints), Some((sym, quantity)))
@@ -3952,19 +3959,17 @@ impl Machine<'_> {
         }
     }
 
-    /// A token register a join left one of a few lists: a path per list,
-    /// on which it holds that one, as a test refines a count. Unknown text
-    /// otherwise.
-    fn toks_member(&mut self, sym: Sym, span: Span) -> Vec<Token> {
+    /// One of the lists a join left a token register: a path for each
+    /// when `sym` names the register, so later reads agree, else one
+    /// token standing for them all ([`Machine::one_of`]), still exact.
+    fn toks_member(&mut self, sym: Sym, set: Rc<[Value]>, span: Span) -> Vec<Token> {
+        let lists: Option<Vec<Rc<[Token]>>> =
+            set.iter().map(|v| if let Value::Toks(t) = v { Some(t.clone()) } else { None }).collect();
+        let Some(lists) = lists else { return vec![self.unknown_text(Unk::Any, span)] };
         let storage = self.storage(sym);
-        let lists: Option<Vec<Rc<[Token]>>> = match self.env.slot(storage).map(|b| &b.value) {
-            Some(Value::OneOf(set)) => {
-                set.iter().map(|v| if let Value::Toks(t) = v { Some(t.clone()) } else { None }).collect()
-            }
-            _ => None,
-        };
+        let named = self.env.slot(storage).is_some_and(|b| matches!(&b.value, Value::OneOf(s) if Rc::ptr_eq(s, &set)));
         let mut chosen = None;
-        if let Some(lists) = lists
+        if named
             && self.split(storage, span, lists.len(), |m, arm| {
                 m.refine_value(storage, Value::Toks(lists[arm].clone()));
                 chosen = Some(lists[arm].to_vec());
@@ -3974,19 +3979,21 @@ impl Machine<'_> {
         {
             return list;
         }
-        vec![self.unknown_text(Unk::Any, span)]
+        vec![self.one_of(lists, span)]
     }
 
     /// The tokens a token register holds. One never assigned holds none
     /// (tex.web § 232), as `\the` reads it.
     fn toks_of(&mut self, sym: Sym, span: Span) -> Vec<Token> {
         let value = match self.env.get(sym) {
+            Some(b) if matches!(b.value, Value::OneOf(_)) => b.value.clone(),
             Some(_) => self.env.value(sym),
             None => self.unseen_register(RegKind::Toks, sym),
         };
         match value {
             Value::Toks(toks) => toks.to_vec(),
-            _ => self.toks_member(sym, span),
+            Value::OneOf(set) => self.toks_member(sym, set, span),
+            _ => vec![self.unknown_text(Unk::Any, span)],
         }
     }
 

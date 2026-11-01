@@ -1435,6 +1435,19 @@ fn a_loop_over_unknown_text_ends() {
     assert!(definition(&analysis, "R").is_some());
 }
 
+/// Token lists a join left a register stay exact through `\the` in an
+/// `\edef` and through `\meaning`: a delimited scan splits them where
+/// TeX would, and finds no unknown text.
+#[test]
+fn a_joined_token_register_stays_exact_through_the_and_meaning() {
+    let analysis = analyze(
+        r"\ifnum\pdfuniformdeviate2=0 \toks0{a b}\else\toks0{c d e}\fi
+\edef\u{\the\toks0}\def\x#1 #2\stop{}\expandafter\x\u\stop
+\def\strip#1>{}\def\y#1 #2\stop{}\expandafter\expandafter\expandafter\y\expandafter\strip\meaning\u\stop",
+    );
+    assert!(diagnosed(&analysis, "argument-ends-in-unknown").is_empty());
+}
+
 /// A loop whose exit is undecided and whose counter is unknown: the loop
 /// head joins every pass's state and widens what still grows, so the run
 /// ends and what the loop defines on any pass is there, and the counter
