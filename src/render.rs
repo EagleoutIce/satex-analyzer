@@ -1089,6 +1089,58 @@ fn contents(out: &mut String, node: &crate::query::Node, prefix: &str, detail: D
 const TIME_WIDTH: usize = 8 + 3;
 const TOKENS_WIDTH: usize = 9 + 7;
 
+/// The run's accounting as one JSON object, for `--stats-json`: what the
+/// benchmark page plots. Phase times are in milliseconds.
+pub fn stats_json(analysis: &crate::machine::Analysis, elapsed: std::time::Duration) -> String {
+    use crate::facts::Severity;
+    let facts = &analysis.facts;
+    let severity =
+        |s: Severity| facts.diagnostics.iter().filter(|d| d.severity == s).map(|d| u64::from(d.count)).sum::<u64>();
+    let phases: serde_json::Map<String, Json> = analysis
+        .timings
+        .phases()
+        .into_iter()
+        .map(|(phase, took)| (phase.as_str().to_string(), Json::from((took.as_secs_f64() * 1e5).round() / 100.0)))
+        .collect();
+    // Counts the segments reused whole, so partly reused ones count as rebuilt.
+    let package_cache =
+        |reused: bool| analysis.package_caches.iter().filter(|(_, _, state)| (state == "cached") == reused).count();
+    serde_json::json!({
+        "seconds": (elapsed.as_secs_f64() * 1e3).round() / 1e3,
+        "peak_mib": crate::machine::peak_memory().map(|kb| kb / 1024),
+        "phases_ms": phases,
+        "files": analysis.files.len(),
+        "lines": analysis.lines,
+        "steps": analysis.steps,
+        "load_steps": analysis.load_steps,
+        "definitions": facts.defs.len(),
+        "expansions": facts.expansions.len(),
+        "forks": analysis.forks,
+        "peak_paths": analysis.peak_paths,
+        "joined_slots": analysis.joined_slots,
+        "loop_heads": analysis.loop_heads,
+        "vertices": analysis.graph.len(),
+        "edges": analysis.graph.edge_count(),
+        "diagnostics": {
+            "info": severity(Severity::Info),
+            "warning": severity(Severity::Warning),
+            "imprecision": severity(Severity::Imprecision),
+            "unsupported": severity(Severity::Unsupported),
+            "assumption": severity(Severity::Assumption),
+        },
+        "exhausted": analysis.exhausted,
+        "limits_hit": analysis.limits.len(),
+        "rules": crate::lint::rules().len(),
+        "cache": {
+            "discovery": analysis.distribution.index_cached,
+            "kernel": analysis.format.as_ref().map(|f| f.cached),
+            "packages_reused": package_cache(true),
+            "packages_rebuilt": package_cache(false),
+        },
+    })
+    .to_string()
+}
+
 pub fn timings(analysis: &crate::machine::Analysis, links: Links) -> String {
     let mut out = String::from("\n");
     let _ = writeln!(out, "{}", heading("phase"));

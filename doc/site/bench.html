@@ -1,63 +1,237 @@
 <section class="band" id="bench">
   <h1>Benchmarks</h1>
-  <p class="sub">Warm wall time, peak memory, steps and forks of <code>satex lint</code> on the benchmark documents, per release and kernel. The documents are listed in <a href="{{repository}}/blob/main/benches/docs.txt"><code>benches/docs.txt</code></a>.</p>
+  <p class="sub">What <code>satex lint</code> costs on the benchmark documents, per release and kernel: time per stage, memory, work done and how precise the result is. The documents are listed in <a href="{{repository}}/blob/main/benches/docs.txt"><code>benches/docs.txt</code></a>. Each number is a warm run after one cold run built the caches.</p>
   <p class="bench-ctl">
-    <label>Metric <select id="b-metric"></select></label>
     <label>Kernel <select id="b-kernel"></select></label>
-    <label>Document <select id="b-doc"></select></label>
+    <label>Release <select id="b-version"></select></label>
   </p>
-  <svg id="b-chart" class="bench-chart" role="img" aria-label="metric per release"></svg>
-  <p id="b-legend" class="bench-legend"></p>
   <p id="b-note" class="muted small"></p>
+  <div id="b-cards" class="bench-cards"></div>
+  <h2>Time per stage</h2>
+  <p class="muted small">Warm run of the chosen release. Discovery finds the TeX tree, the kernel is the format satex reads or builds, the document stage is the mouth and stomach reading and executing every file, lint runs the rules. Other is the rest of the wall time.</p>
+  <div id="b-stages" class="bench-stages"></div>
+  <p id="b-stage-legend" class="bench-legend"></p>
+  <h2>Over releases</h2>
+  <div id="b-charts" class="bench-charts"></div>
+  <p id="b-legend" class="bench-legend"></p>
+  <h2>Every document and kernel</h2>
+  <p class="muted small">Click a header to sort. A dash means the release predates that number.</p>
+  <div class="table-scroll"><table id="b-table" class="long bench-table"></table></div>
 </section>
 <style>
 .bench-ctl { display: flex; flex-wrap: wrap; gap: 1rem; }
-.bench-ctl select { font: inherit; background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: .2rem .4rem; }
-.bench-chart { width: 100%; height: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
-.bench-chart text { fill: var(--muted); font-size: 11px; font-family: inherit; }
+.bench-ctl select { font: inherit; background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: .2rem .5rem; }
+.bench-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: .7rem; margin: 1rem 0; }
+.bench-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: .6rem .8rem; box-shadow: var(--shadow); }
+.bench-card small { display: block; color: var(--muted); font-size: .78rem; }
+.bench-card b { display: block; font-size: 1.45rem; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.bench-card .delta { font-size: .8rem; font-variant-numeric: tabular-nums; color: var(--muted); }
+.bench-card .delta.better { color: var(--safe); } .bench-card .delta.worse { color: var(--error); }
+.bench-stages { display: grid; grid-template-columns: minmax(6rem, 14rem) 1fr; gap: .45rem .8rem; align-items: center; }
+.bench-stages .lab { font-size: .85rem; overflow-wrap: anywhere; }
+.bench-stages .lab span { color: var(--muted); }
+.bench-bar { display: flex; height: 1.3rem; border-radius: 5px; overflow: hidden; background: var(--sunk); }
+.bench-bar i { display: block; min-width: 1px; }
+.bench-bar em { margin-left: .5rem; font-style: normal; font-size: .8rem; color: var(--muted); white-space: nowrap; align-self: center; }
+.bench-bar-row { display: flex; }
+.bench-bar-row .bench-bar { width: var(--w); flex: none; }
+.bench-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: .8rem; }
+.bench-chart { width: 100%; height: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.bench-chart text { fill: var(--muted); font-size: 10px; font-family: inherit; }
+.bench-chart text.ttl { fill: var(--fg); font-size: 12px; font-weight: 600; }
 .bench-chart .grid { stroke: var(--border); stroke-width: 1; }
 .bench-chart .line { fill: none; stroke-width: 2; }
 .bench-legend { display: flex; flex-wrap: wrap; gap: .3rem 1rem; font-size: .85rem; }
 .bench-legend i { display: inline-block; width: .8rem; height: .8rem; border-radius: 2px; margin-right: .3rem; vertical-align: -1px; }
+.bench-table td, .bench-table th { text-align: right; white-space: nowrap; }
+.bench-table td:nth-child(-n+2), .bench-table th:nth-child(-n+2) { text-align: left; }
+.bench-table td.no { color: var(--muted); }
+.bench-table td.bad { color: var(--error); }
+@media (max-width: 600px) { .bench-stages { grid-template-columns: 1fr; gap: .1rem; } .bench-stages .lab { margin-top: .5rem; } }
 </style>
 <script>
 (async () => {
   const $ = id => document.getElementById(id);
-  const METRICS = { wall: ["Wall time (s)", "wall"], peak: ["Peak memory (MiB)", "peak"], steps: ["Steps", "steps"],
-                    forks: ["Forks", "forks"], end: ["Reached the end (runs)", "end"], findings: ["Findings", "findings"] };
-  const COLORS = ["#0b3d91", "#c2410c", "#15803d", "#a21caf", "#0e7490", "#b45309", "#be123c", "#4d7c0f", "#6d28d9", "#475569"];
+  const NS = "http://www.w3.org/2000/svg";
+  const SERIES = ["--c4", "--c1", "--c2", "--c5", "--c6", "--c3", "--c0", "--c7"];
+  const STAGES = [["discovery", "--c6"], ["format", "--c4"], ["document", "--c2"], ["hooks", "--c0"], ["lint", "--c5"], ["other", "--border"]];
   let data;
   try { data = await (await fetch("{{root}}bench/data.json")).json(); } catch { data = []; }
   if (!data.length) { $("b-note").textContent = "No benchmark data yet. Run python3 scripts/bench.py --build in the repository and reload."; return; }
-  const fill = (id, items) => { $(id).replaceChildren(...items.map(([v, t]) => Object.assign(document.createElement("option"), { value: v, textContent: t }))); };
-  const runs = data.flatMap(e => e.runs);
-  const kernels = [...new Set(runs.map(r => r.kernel))], docs = [...new Set(runs.map(r => r.doc))];
-  fill("b-metric", Object.entries(METRICS).map(([k, [t]]) => [k, t]));
+
+  const short = d => d.replace(/^.*\/(?=[^/]+\/[^/]+$)/, "");
+  const el = (n, a = {}, t) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); if (t != null) e.textContent = t; return e; };
+  const html = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const fmt = v => v == null ? "-" : v >= 1e9 ? +(v / 1e9).toPrecision(3) + "G" : v >= 1e6 ? +(v / 1e6).toPrecision(3) + "M" : v >= 1e4 ? +(v / 1e3).toPrecision(3) + "k" : +v.toPrecision(3);
+  const seconds = v => v == null ? "-" : v < 1 ? Math.round(v * 1e3) + " ms" : v.toFixed(2) + " s";
+
+  // One row per run with the numbers flattened. Old releases lack `stats`, so those fields stay null.
+  const diag = (r, k) => r.stats ? r.stats.diagnostics[k] : null;
+  const imprecise = r => r.stats ? diag(r, "imprecision") + diag(r, "unsupported") + diag(r, "assumption") : null;
+  const METRICS = {
+    wall: ["Wall time", r => r.wall, seconds, true],
+    peak: ["Peak memory", r => r.peak, v => v == null ? "-" : fmt(v) + " MiB", true],
+    steps: ["Steps", r => r.steps, fmt, true],
+    expansions: ["Expansions", r => r.stats?.expansions, fmt, true],
+    forks: ["Forks", r => r.stats ? r.stats.forks : r.forks, fmt, true],
+    paths: ["Peak paths", r => r.stats?.peak_paths, fmt, true],
+    imprecise: ["Imprecision, unsupported, assumptions", imprecise, fmt, true],
+    findings: ["Findings", r => r.findings, fmt, false],
+    end: ["Reached the end", r => r.end ? 1 : 0, v => v == null ? "-" : v, false],
+  };
+  const value = (r, m) => r ? METRICS[m][1](r) ?? null : null;
+  const runOf = (entry, doc, kernel) => entry.runs.find(r => r.doc === doc && r.kernel === kernel);
+
+  const kernels = [...new Set(data.flatMap(e => e.runs.map(r => r.kernel)))];
+  const docs = [...new Set(data.flatMap(e => e.runs.map(r => r.doc)))];
+  const fill = (id, items) => $(id).replaceChildren(...items.map(([v, t]) => Object.assign(html("option"), { value: v, textContent: t })));
   fill("b-kernel", kernels.map(k => [k, k]));
-  fill("b-doc", [["", "all documents"], ...docs.map(d => [d, d.replace(/^.*\/(?=[^/]+\/[^/]+$)/, "")])]);
-  const value = (r, m) => m === "end" ? (r.end ? 1 : 0) : r[m];
-  const NS = "http://www.w3.org/2000/svg";
-  const el = (n, a, t) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); if (t != null) e.textContent = t; return e; };
-  function draw() {
-    const m = $("b-metric").value, kernel = $("b-kernel").value, only = $("b-doc").value;
-    const series = (only ? [only] : docs).map(d => ({ d, pts: data.map(e => { const r = e.runs.find(r => r.doc === d && r.kernel === kernel); return r == null ? null : value(r, m); }) }));
-    const all = series.flatMap(s => s.pts).filter(v => v != null);
-    const W = 760, H = 320, L = 56, R = 12, T = 12, B = 44, svg = $("b-chart");
-    svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.replaceChildren();
-    const max = Math.max(...all, m === "end" ? 1 : 1e-9) * 1.05, x = i => L + (data.length < 2 ? (W - L - R) / 2 : i * (W - L - R) / (data.length - 1)), y = v => T + (H - T - B) * (1 - v / max);
-    const fmt = v => v >= 1e6 ? (v / 1e6).toPrecision(3) + "M" : v >= 1e3 ? (v / 1e3).toPrecision(3) + "k" : +v.toPrecision(3);
-    for (let i = 0; i <= 4; i++) { const v = max * i / 4; svg.append(el("line", { class: "grid", x1: L, x2: W - R, y1: y(v), y2: y(v) }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, fmt(v))); }
-    data.forEach((e, i) => svg.append(el("text", { x: x(i), y: H - 24, "text-anchor": "middle" }, e.version), el("text", { x: x(i), y: H - 10, "text-anchor": "middle" }, e.date)));
-    series.forEach((s, k) => {
-      const c = COLORS[k % COLORS.length], pts = s.pts.map((v, i) => v == null ? null : [x(i), y(v), v]);
-      const path = pts.map((p, i) => p ? `${pts[i - 1] ? "L" : "M"}${p[0]},${p[1]}` : "").join("");
-      svg.append(el("path", { class: "line", d: path, stroke: c }));
-      for (const p of pts) if (p) { const dot = el("circle", { cx: p[0], cy: p[1], r: 3, fill: c }); dot.append(el("title", {}, `${s.d}: ${fmt(p[2])}`)); svg.append(dot); }
-    });
-    $("b-legend").replaceChildren(...series.map((s, k) => { const span = document.createElement("span"); const i = document.createElement("i"); i.style.background = COLORS[k % COLORS.length]; span.append(i, s.d); return span; }));
-    $("b-note").textContent = `${data.length} version${data.length === 1 ? "" : "s"}, ${series.length} document${series.length === 1 ? "" : "s"}, kernel ${kernel}. Runs that did not reach the end still count with what they cost.`;
+  fill("b-version", data.map((e, i) => [i, `${e.version} (${e.date})`]).reverse());
+  $("b-version").value = data.length - 1;
+  const colorOf = k => `var(${SERIES[k % SERIES.length]})`;
+
+  // Totals over the documents both releases ran, so a new document never reads as a regression.
+  function card(title, metric, kernel, now, before) {
+    const docsNow = now.runs.filter(r => r.kernel === kernel && value(r, metric) != null);
+    const sum = (entry, list) => list.reduce((t, r) => t + (value(runOf(entry, r.doc, kernel), metric) ?? 0), 0);
+    const total = METRICS[metric][0] === "Peak memory" ? Math.max(0, ...docsNow.map(r => value(r, metric))) : sum(now, docsNow);
+    const box = html("div", "bench-card");
+    box.append(html("small", "", title), html("b", "", docsNow.length ? METRICS[metric][2](total) : "-"));
+    const common = before ? docsNow.filter(r => runOf(before, r.doc, kernel) && value(runOf(before, r.doc, kernel), metric) != null) : [];
+    const delta = html("span", "delta", before ? "no earlier value" : "first release");
+    if (common.length) {
+      const peak = metric === "peak";
+      const a = peak ? Math.max(...common.map(r => value(r, metric))) : sum(now, common);
+      const b = peak ? Math.max(...common.map(r => value(runOf(before, r.doc, kernel), metric))) : sum(before, common);
+      const pct = b ? (a - b) / b * 100 : 0;
+      delta.textContent = Math.abs(pct) < 0.5 ? `unchanged vs ${before.version}` : `${pct > 0 ? "+" : ""}${pct.toFixed(1)}% vs ${before.version}`;
+      if (Math.abs(pct) >= 0.5 && METRICS[metric][3]) delta.classList.add(pct < 0 ? "better" : "worse");
+    }
+    box.append(delta);
+    return box;
   }
-  for (const id of ["b-metric", "b-kernel", "b-doc"]) $(id).addEventListener("change", draw);
+
+  function cards(kernel, i) {
+    const now = data[i], before = data[i - 1];
+    const runs = now.runs.filter(r => r.kernel === kernel);
+    const ended = runs.filter(r => r.end).length;
+    const list = [card("Wall time, all documents", "wall", kernel, now, before), card("Peak memory, largest", "peak", kernel, now, before),
+      card("Steps", "steps", kernel, now, before), card("Expansions", "expansions", kernel, now, before), card("Forks", "forks", kernel, now, before),
+      card("Imprecise spots", "imprecise", kernel, now, before), card("Findings", "findings", kernel, now, before)];
+    const end = html("div", "bench-card");
+    end.append(html("small", "", "Documents that reached the end"), html("b", "", `${ended} of ${runs.length}`), html("span", "delta", `release ${now.version}`));
+    $("b-cards").replaceChildren(...list, end);
+  }
+
+  function stages(kernel, i) {
+    const runs = data[i].runs.filter(r => r.kernel === kernel);
+    const timed = runs.filter(r => r.stats?.phases_ms);
+    const max = Math.max(1e-9, ...runs.map(r => r.wall));
+    const rows = [];
+    for (const r of runs) {
+      const lab = html("div", "lab", short(r.doc));
+      const bar = html("div", "bench-bar-row"), inner = html("div", "bench-bar");
+      bar.style.setProperty("--w", `${Math.max(2, r.wall / max * 100 * 0.85)}%`);
+      if (r.stats?.phases_ms) {
+        const used = Object.values(r.stats.phases_ms).reduce((t, v) => t + v, 0) / 1e3;
+        const parts = { ...r.stats.phases_ms, other: Math.max(0, r.wall * 1e3 - used * 1e3) };
+        for (const [name, color] of STAGES) {
+          const ms = parts[name] ?? 0;
+          if (ms <= 0) continue;
+          const seg = html("i");
+          seg.style.cssText = `width:${ms / (r.wall * 1e3) * 100}%;background:var(${color})`;
+          seg.title = `${name}: ${ms.toFixed(1)} ms`;
+          inner.append(seg);
+        }
+      } else {
+        const seg = html("i"); seg.style.cssText = "width:100%;background:var(--border)"; seg.title = "no per-stage times in this release";
+        inner.append(seg);
+      }
+      bar.append(inner, html("em", "", r.timeout ? "timeout" : seconds(r.wall)));
+      rows.push(lab, bar);
+    }
+    $("b-stages").replaceChildren(...rows);
+    const legend = STAGES.map(([name, color]) => { const s = html("span"); const sw = html("i"); sw.style.background = `var(${color})`; s.append(sw, name); return s; });
+    $("b-stage-legend").replaceChildren(...legend);
+    if (runs.length && !timed.length) $("b-stages").prepend(Object.assign(html("p", "muted small", "This release has no per-stage times, only the wall time."), { style: "grid-column:1/-1" }));
+  }
+
+  function lineChart(metric, kernel) {
+    const W = 360, H = 200, L = 44, R = 10, T = 26, B = 34;
+    const svg = el("svg", { class: "bench-chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${METRICS[metric][0]} per release` });
+    const series = docs.map(d => data.map(e => value(runOf(e, d, kernel), metric)));
+    const all = series.flat().filter(v => v != null);
+    svg.append(el("text", { class: "ttl", x: L, y: 16 }, METRICS[metric][0]));
+    if (!all.length) { svg.append(el("text", { x: W / 2, y: H / 2, "text-anchor": "middle" }, "no data in these releases")); return svg; }
+    const max = Math.max(...all, 1e-9) * 1.08;
+    const x = i => L + (data.length < 2 ? (W - L - R) / 2 : i * (W - L - R) / (data.length - 1));
+    const y = v => T + (H - T - B) * (1 - v / max);
+    for (let g = 0; g <= 3; g++) { const v = max * g / 3; svg.append(el("line", { class: "grid", x1: L, x2: W - R, y1: y(v), y2: y(v) }), el("text", { x: L - 5, y: y(v) + 3, "text-anchor": "end" }, fmt(v))); }
+    const step = Math.ceil(data.length / 6);
+    data.forEach((e, i) => { if (i % step === 0 || i === data.length - 1) svg.append(el("text", { x: x(i), y: H - 14, "text-anchor": data.length < 2 ? "middle" : i === 0 ? "start" : i === data.length - 1 ? "end" : "middle" }, e.version)); });
+    series.forEach((pts, k) => {
+      const c = colorOf(k);
+      const xy = pts.map((v, i) => v == null ? null : [x(i), y(v), v]);
+      svg.append(el("path", { class: "line", d: xy.map((p, i) => p ? `${xy[i - 1] ? "L" : "M"}${p[0]},${p[1]}` : "").join(""), style: `stroke:${c}` }));
+      for (const [i, p] of xy.entries()) if (p) {
+        const dot = el("circle", { cx: p[0], cy: p[1], r: 3, style: `fill:${c}` });
+        dot.append(el("title", {}, `${short(docs[k])}, ${data[i].version}: ${METRICS[metric][2](p[2])}`));
+        svg.append(dot);
+      }
+    });
+    return svg;
+  }
+
+  function charts(kernel) {
+    $("b-charts").replaceChildren(...["wall", "peak", "steps", "expansions", "forks", "paths", "imprecise", "findings"].map(m => lineChart(m, kernel)));
+    $("b-legend").replaceChildren(...docs.map((d, k) => { const s = html("span"); const sw = html("i"); sw.style.background = colorOf(k); s.append(sw, short(d)); return s; }));
+  }
+
+  const COLUMNS = [["Document", r => short(r.doc), "text"], ["Kernel", r => r.kernel, "text"], ["Time", r => r.wall, seconds],
+    ["Memory", r => r.peak, v => v == null ? "-" : fmt(v) + " MiB"], ["Steps", r => r.steps, fmt], ["Expansions", r => r.stats?.expansions, fmt],
+    ["Forks", r => r.stats ? r.stats.forks : r.forks, fmt], ["Paths", r => r.stats?.peak_paths, fmt],
+    ["Imprecise", r => diag(r, "imprecision"), fmt], ["Unsupported", r => diag(r, "unsupported"), fmt], ["Assumed", r => diag(r, "assumption"), fmt],
+    ["Findings", r => r.findings, fmt], ["Rules", r => r.stats?.rules, fmt],
+    ["Cache", r => r.stats ? (r.stats.cache.kernel ? 1 : 0) + (r.stats.cache.discovery ? 1 : 0) : null, v => `${v} of 2`],
+    ["End", r => r.timeout ? "timeout" : r.end ? "yes" : "no", (v) => v, "text"]];
+  let sort = { col: 0, dir: 1 };
+  function table(i) {
+    const runs = data[i].runs;
+    const cell = (col, r) => col[1](r);
+    const sorted = [...runs].sort((a, b) => {
+      const [x, y] = [cell(COLUMNS[sort.col], a), cell(COLUMNS[sort.col], b)];
+      if (x == null || y == null) return (x == null) - (y == null);
+      return (typeof x === "string" ? x.localeCompare(y) : x - y) * sort.dir;
+    });
+    const head = html("tr");
+    COLUMNS.forEach((col, c) => {
+      const th = html("th", "sortable", col[0]);
+      if (sort.col === c) th.setAttribute("aria-sort", sort.dir > 0 ? "ascending" : "descending");
+      th.addEventListener("click", () => { sort = { col: c, dir: sort.col === c ? -sort.dir : 1 }; table(i); });
+      head.append(th);
+    });
+    const body = sorted.map(r => {
+      const tr = html("tr");
+      COLUMNS.forEach(col => {
+        const v = cell(col, r);
+        const td = html("td", v == null ? "no" : "", v == null ? "-" : col[2] === "text" ? v : col[2](v));
+        if (col[0] === "End" && v !== "yes") td.classList.add("bad");
+        if (col[0] === "Cache" && r.stats) td.title = `kernel ${r.stats.cache.kernel ? "reused" : "rebuilt"}, discovery ${r.stats.cache.discovery ? "cached" : "indexed"}, packages ${r.stats.cache.packages_reused} reused and ${r.stats.cache.packages_rebuilt} rebuilt`;
+        tr.append(td);
+      });
+      return tr;
+    });
+    const thead = html("thead"), tbody = html("tbody");
+    thead.append(head); tbody.append(...body);
+    $("b-table").replaceChildren(thead, tbody);
+  }
+
+  function draw() {
+    const kernel = $("b-kernel").value, i = +$("b-version").value;
+    $("b-note").textContent = data.length === 1 ? `One release so far (${data[0].version}). The charts fill in as releases are benchmarked.` : `${data.length} releases, ${docs.length} documents.`;
+    cards(kernel, i); stages(kernel, i); charts(kernel); table(i);
+  }
+  for (const id of ["b-kernel", "b-version"]) $(id).addEventListener("change", draw);
   draw();
 })();
 </script>

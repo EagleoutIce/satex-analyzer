@@ -113,6 +113,11 @@ struct Cli {
     /// Print a per-phase timing breakdown to stderr after the run.
     #[arg(long, global = true, help_heading = "Output")]
     timings: bool,
+
+    /// Print the accounting of `--stats` and `--timings` as one JSON object to
+    /// stderr after the run.
+    #[arg(long, global = true, help_heading = "Output")]
+    stats_json: bool,
 }
 
 impl Cli {
@@ -494,6 +499,10 @@ fn run() -> Result<(), String> {
         let _ = out.flush();
         anstream::eprint!("{}", render::timings(&analysis, cli.link_policy(satex::progress::terminal(io::stderr()))));
     }
+    if cli.stats_json {
+        let _ = out.flush();
+        anstream::eprintln!("{}", render::stats_json(&analysis, started.elapsed()));
+    }
     Ok(())
 }
 
@@ -598,7 +607,7 @@ fn configure(cli: &Cli, source: Option<&str>) -> Result<(Config, Vec<PathBuf>), 
         cfg.trace_steps = steps.as_deref().map(range).transpose()?;
     }
     cfg.record_arguments |= cli.command.as_ref().is_some_and(Command::wants_arguments);
-    cfg.timings |= cli.timings;
+    cfg.timings |= cli.timings || cli.stats_json;
     if let Some(command) = &cli.command {
         cfg.opaque_conditionals.extend(command.opaque_conditionals());
     }

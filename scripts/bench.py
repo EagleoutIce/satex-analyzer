@@ -37,8 +37,19 @@ def findings(out):
     return len(items)
 
 
+def stats_of(err):
+    """The `--stats-json` object on stderr, or None for a binary without it."""
+    for line in reversed(err.splitlines()):
+        if line.startswith("{"):
+            try:
+                return json.loads(line)
+            except ValueError:
+                return None
+    return None
+
+
 def run(satex, doc, kernel, timeout):
-    cmd = [satex, "lint", "--stats", "--format", "json", "--color", "never", "--set", f"engine={kernel}", "-f", str(doc)]
+    cmd = [satex, "lint", "--stats", "--stats-json", "--format", "json", "--color", "never", "--set", f"engine={kernel}", "-f", str(doc)]
     started = time.perf_counter()
     try:
         done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -46,7 +57,8 @@ def run(satex, doc, kernel, timeout):
         return {"wall": timeout, "end": False, "timeout": True}
     wall = time.perf_counter() - started
     err = done.stderr
-    return {
+    stats = stats_of(err)
+    result = {
         "wall": round(wall, 3),
         "peak": grab(r"(\d+) MiB peak", err, int),
         "steps": grab(r"([\d.]+[kMG]?) tokens", err),
@@ -55,6 +67,10 @@ def run(satex, doc, kernel, timeout):
         "findings": findings(done.stdout),
         "code": done.returncode,
     }
+    if stats:
+        # exact counts replace the rounded ones of the text line
+        result.update(peak=stats["peak_mib"], steps=stats["steps"], forks=stats["forks"], stats=stats)
+    return result
 
 
 def merge(data, new):
