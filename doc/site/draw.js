@@ -13,7 +13,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   // compare alike. Two outlines are as far apart as the mean distance of each one's points to the
   // other (chamfer distance), plus how much their aspects and their numbers of dots differ. Strokes
   // drawn apart are no dots: a `⇒` drawn in three strokes is one shape, `÷` has two dots.
-  const DRAW = { side: 32, glyph: 96, pen: 9, bitmap: 0.6, outline: 1, stroke: 1.5, either: 0, grid: 8, bins: 4, orient: 24, shortlist: 1500, refine: 5000, off: ['emoji', 'twemojis'], workers: 4, cut: 2.6, least: 12, on: ['worldflags'], pixel: 1.5, typed: 0.35, alias: 0.03, known: 0.2, plain: 0.1, call: 0.2, shown: 14, foreign: 1.12, variant: 0.4, icon: 0.1, aspect: 0.6, dots: 0.8, dot: 4, batch: 300, again: 120, more: 30 };
+  const DRAW = { side: 32, glyph: 96, pen: 9, bitmap: 0.6, outline: 1, stroke: 1.5, either: 0, grid: 8, bins: 4, orient: 96, shortlist: 1500, refine: 5000, off: ['emoji', 'twemojis', 'fontawesome', 'fontawesome6', 'fontawesome7'], trusted: 0.2, workers: 4, cut: 2.6, least: 12, on: ['worldflags'], pixel: 1.5, typed: 0.35, alias: 0.03, known: 0.2, plain: 0.1, call: 0.2, shown: 14, foreign: 1.12, variant: 0.4, icon: 0.1, aspect: 0.6, dots: 0.4, dot: 4, batch: 300, again: 120, more: 30 };
   const $ = (id) => root.querySelector(`#${id}`);
   const pad = $('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true });
   let drawTable = null, drawn = false;
@@ -24,7 +24,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   let chosen = {};
   try { chosen = JSON.parse(localStorage.getItem('satex-draw-pkgs') ?? '{}'); } catch {}
   for (const m of (query.get('pkgs') ?? '').matchAll(/([+-])([^+-]+)/g)) chosen[m[2]] = m[1] === '+';
-  // a package only pictures stand for starts off too (its fonts set nothing to match crisply), unless DRAW.on names it
+  // a package only pictures stand for starts off too (its fonts set nothing to match crisply), unless DRAW.on names it or it is relied on (DRAW.trusted)
   const pictured = new Set();
   const used = (p) => chosen[p] ?? (DRAW.on.includes(p) || !(DRAW.off.includes(p) || pictured.has(p)));
   const remember = () => {
@@ -282,7 +282,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       };
     }).then((t) => {
       const fonted = new Set(t.rows.filter((s) => !s.bitmap).map((s) => s.pkg));
-      for (const s of t.rows) if (!fonted.has(s.pkg)) pictured.add(s.pkg);
+      for (const s of t.rows) if (!fonted.has(s.pkg) && (t.weight?.[s.pkg] ?? 0) < DRAW.trusted) pictured.add(s.pkg);
       totals(t, t.rows.length, false);
       send({ type: 'init', fonts: t.fonts.map((f) => ({ family: f.family, url: f.bitmaps ? null : new URL(`${base}${f.url}`, location.href).href })), rows: t.rows.map((s) => [s.font, s.ch, s.bm]), bitmaps: t.bitmaps });
       return t;
@@ -396,9 +396,11 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     // the more packages and names set a glyph, the more it is used: a little lower for each, up to five
     const setters = (table.setters ??= table.rows.reduce((m, x) => m.set(x.ch, (m.get(x.ch) ?? 0) + 1), new Map()));
     const trust = (s) => (1 - DRAW.known * (table.weight?.[s.pkg] ?? 0)) * (1 - DRAW.alias * Math.min(5, (setters.get(s.ch) ?? 1) - 1));
-    send({ type: 'match', id: mine, fresh, f, want: Int32Array.from(wanted, (s) => s.i),
+    // the established packages' symbols are measured first, so they show at once
+    const first = wanted.map((s, k) => [s, -(table.weight?.[s.pkg] ?? 0), k]).sort((a, b) => a[1] - b[1] || a[2] - b[2]).map((a) => a[0]);
+    send({ type: 'match', id: mine, fresh, f, want: Int32Array.from(first, (s) => s.i),
       // a picture scores half again worse: a font's glyph of the shape wins
-      mul: Float32Array.from(wanted, (s) => (force.has(s.name) ? 1 : DRAW.foreign) * (s.bitmap ? DRAW.pixel : 1) * trust(s)), add: Float32Array.from(wanted, (s) => (ranked.get(s) * 0.05 + prior(s)) * trust(s)) });
+      mul: Float32Array.from(first, (s) => (force.has(s.name) ? 1 : DRAW.foreign) * (s.bitmap ? DRAW.pixel : 1) * trust(s)), add: Float32Array.from(first, (s) => (ranked.get(s) * 0.05 + prior(s)) * trust(s)) });
   }
   /** The matcher's answer for the latest request: shown unless it is older. */
   const shares = new Map();
@@ -413,6 +415,12 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       pending: all.length < Math.max(1, workers.length) || all.some((x) => x.pending) };
     render();
   }
+  /** The list ends at the window's bottom (or the widget's, if it ends sooner) and scrolls inside: "show more" stays in view. */
+  const fit = () => {
+    const list = $('draw-list'), top = list.getBoundingClientRect().top, bottom = Math.min(innerHeight, root.getBoundingClientRect().bottom);
+    list.style.maxHeight = `${Math.max(DRAW.least * 8, bottom - top - 8)}px`;
+  };
+  addEventListener('resize', fit);
   /** The list: one row per picture, best first, from the latest ranking. */
   function render() {
     const { id: mine, table, wanted, ranked, source, force, words, f } = current, list = $('draw-list');
@@ -470,6 +478,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     const ms = Math.round(performance.now() - started), pending = f && result.pending;
     if (!current.shown) { current.shown = true; list.dataset.first = String(ms); }
     if (!pending) list.dataset.full = String(ms);
+    fit();
     list.classList.toggle('refining', !!pending);
     total.classList.toggle('refining', !!pending);
     took = f ? `${ms} ms` : '';
@@ -504,15 +513,25 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   $('draw-list').addEventListener('mouseout', (e) => { if (e.target.closest('.draw-glyph')) zoom.hidden = true; });
   $('draw-list').addEventListener('scroll', () => { zoom.hidden = true; }, { passive: true });
   {
-    const clear = () => { pen.clearRect(0, 0, pad.width, pad.height); drawn = false; drawMatch(); };
+    // the strokes are kept: a change of theme draws them again in its ink
+    let ink = [];
+    const paint = () => {
+      pen.clearRect(0, 0, pad.width, pad.height);
+      Object.assign(pen, { lineWidth: DRAW.pen, lineCap: 'round', lineJoin: 'round', strokeStyle: getComputedStyle(pad).color });
+      for (const st of ink) { pen.beginPath(); st.forEach((p, k) => (k ? pen.lineTo(...p) : pen.moveTo(...p))); pen.stroke(); }
+    };
+    const clear = () => { ink = []; paint(); drawn = false; drawMatch(); };
+    new MutationObserver(paint).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', paint);
     let last = null;
     const at = (e) => { const b = pad.getBoundingClientRect(); return [(e.clientX - b.left) * pad.width / b.width, (e.clientY - b.top) * pad.height / b.height]; };
-    pad.addEventListener('pointerdown', (e) => { pad.setPointerCapture(e.pointerId); last = at(e); drawn = true; });
+    pad.addEventListener('pointerdown', (e) => { pad.setPointerCapture(e.pointerId); last = at(e); drawn = true; ink.push([last]); });
     pad.addEventListener('pointermove', (e) => {
       if (!last) return;
       const p = at(e);
       Object.assign(pen, { lineWidth: DRAW.pen, lineCap: 'round', lineJoin: 'round', strokeStyle: getComputedStyle(pad).color });
       pen.beginPath(); pen.moveTo(...last); pen.lineTo(...p); pen.stroke();
+      ink.at(-1).push(p);
       last = p;
     });
     pad.addEventListener('pointerup', () => { last = null; if (drawn) drawMatch(); });

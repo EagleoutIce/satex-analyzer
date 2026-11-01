@@ -30,15 +30,15 @@ const arrow = (a, b, s = .45) => { const l = Math.hypot(b[0] - a[0], b[1] - a[1]
 const R = (names, extra = '') => new RegExp('\\\\(' + names + ')(?![a-zA-Z])' + (extra ? '|' + extra : ''));
 
 // ---- shapes: [category, name, strokes, regex, target rank]
-const G = (name, re, strokes) => ['greek', name, strokes, R(re), 3];
-const A = (name, re, strokes, w = 3) => ['arrow', name, strokes, R(re), w];
-const L = (name, re, strokes, w = 3) => ['relation', name, strokes, R(re), w];
-const O = (name, re, strokes, w = 3) => ['operator', name, strokes, R(re), w];
-const S = (name, re, strokes, w = 3) => ['set-logic', name, strokes, R(re), w];
-const B = (name, re, strokes, w = 3) => ['bracket', name, strokes, R(re), w];
-const T = (name, re, strokes, w = 3) => ['letterlike', name, strokes, R(re), w];
-const M = (name, re, strokes, ex = '') => ['misc', name, strokes, R(re, ex), 3];
-const I = (name, re, strokes, w = 5) => ['icon', name, strokes, R(re), w];
+const G = (name, re, strokes) => ['greek', name, strokes, R(re), 10];
+const A = (name, re, strokes, w = 10) => ['arrow', name, strokes, R(re), w];
+const L = (name, re, strokes, w = 10) => ['relation', name, strokes, R(re), w];
+const O = (name, re, strokes, w = 10) => ['operator', name, strokes, R(re), w];
+const S = (name, re, strokes, w = 10) => ['set-logic', name, strokes, R(re), w];
+const B = (name, re, strokes, w = 10) => ['bracket', name, strokes, R(re), w];
+const T = (name, re, strokes, w = 10) => ['letterlike', name, strokes, R(re), w];
+const M = (name, re, strokes, ex = '') => ['misc', name, strokes, R(re, ex), 10];
+const I = (name, re, strokes, w = 10) => ['icon', name, strokes, R(re), w];
 const eqlines = (n, y0 = -.4, dy = .8, x = .9) => Array.from({ length: n }, (_, i) => line([-x, y0 + dy * i / Math.max(n - 1, 1)], [x, y0 + dy * i / Math.max(n - 1, 1)]));
 const shapes = [
   // Greek lower
@@ -194,6 +194,19 @@ const shapes = [
   I('house', 'faHome|faHouse|house|Home', [path([[-1, -.1], [0, -.95], [1, -.1]]), path([[-.75, -.1], [-.75, .9], [.75, .9], [.75, -.1]]), path([[-.2, .9], [-.2, .3], [.2, .3], [.2, .9]])]),
   I('envelope', 'faEnvelope|envelope|Letter|Mail|faEnvelopeOpen', [path([[-1, -.6], [1, -.6], [1, .6], [-1, .6], [-1, -.6]]), path([[-1, -.6], [0, .1], [1, -.6]])]),
 ];
+// rho by hand: one stroke (loop on a stem), a stem plus a bowl, a bowl that leaves the stem low, a tall thin one
+shapes.push(
+  G('rho-two', '(var)?rho', [line([-.3, -.3], [-.3, 1]), spline([[-.3, -.1], [-.1, -.85], [.45, -.85], [.6, -.35], [.25, .05], [-.3, -.1]])]),
+  G('rho-loop', '(var)?rho', [spline([[-.3, 1], [-.3, .2], [-.3, -.5], [-.05, -.9], [.4, -.85], [.6, -.4], [.35, 0], [-.05, .05], [-.3, -.4]])]),
+  G('rho-low', '(var)?rho', [spline([[-.35, .95], [-.35, .1]]), spline([[-.35, .5], [-.3, -.4], [.1, -.7], [.6, -.45], [.45, .1], [-.05, .35], [-.35, .2]])]),
+  G('rho-tall', '(var)?rho', [spline([[-.1, 1], [-.1, .3], [-.15, -.5], [.15, -.95], [.45, -.7], [.4, -.15], [.05, 0], [-.15, -.5]])]),
+);
+// every lowercase Greek letter again, narrower, slanted and wider with a lower stroke
+const lower = shapes.filter((x) => x[0] === 'greek' && /^[a-z]+$/.test(x[1]) && !x[1].startsWith('rho'));
+const warp = (st, f) => st.map((s) => (typeof s[0][0] === 'number' ? s.map(f) : s.map((t) => t.map(f))));
+for (const [c, n, st, re, w] of lower) {
+  shapes.push([c, n + '-narrow', warp(st, ([x, y]) => [x * .65, y]), re, w], [c, n + '-slant', warp(st, ([x, y]) => [x * .9 - y * .35, y]), re, w], [c, n + '-wide', warp(st, ([x, y]) => [x * 1.15, y * .75 + .1]), re, w]);
+}
 const names = new Set(), seen = shapes.map((s) => s[1]).filter((n) => names.has(n) || !names.add(n));
 if (seen.length) throw new Error('duplicate shape names ' + seen);
 
@@ -201,7 +214,7 @@ if (seen.length) throw new Error('duplicate shape names ' + seen);
 const b = await chromium.launch({ executablePath: chrome });
 const pg = await b.newPage({ viewport: { width: 900, height: 700 } });
 if (css) await pg.route(/\.css$/, async (r) => { const x = await r.fetch(); r.fulfill({ response: x, body: (await x.text()) + css }); });
-await pg.route(/draw-[0-9a-f]+\.js$/, (r) => r.fulfill({ body: js.replace('return { load: symbolsLoad', 'self.__dbg = { features, apart, symbolsLoad, pad, DRAW, drawMatch, tune }; return { load: symbolsLoad'), contentType: 'text/javascript' }));
+await pg.route(/draw-[0-9a-f]+\.js$/, (r) => r.fulfill({ body: js.replace('return { load: () => symbolsLoad()', 'self.__dbg = { symbolsLoad, pad, DRAW, drawMatch, tune }; return { load: () => symbolsLoad()'), contentType: 'text/javascript' }));
 await pg.goto(`http://127.0.0.1:${process.env.PORT ?? 8000}/draw/index.html?theme=light`);
 await pg.waitForSelector('#draw-pad');
 const rowsOf = () => pg.$$eval('#draw-list > li.draw-row', (l) => l.map((li) => li.querySelector('.draw-glyph').textContent + ' ' + [...li.querySelectorAll('code')].map((c) => c.textContent).join(' ')));
