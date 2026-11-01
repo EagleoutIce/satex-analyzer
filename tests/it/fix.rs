@@ -562,3 +562,14 @@ fn typography_fixes_introduce_nothing_new() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// A kernel command a package redefines (amsmath's `\[`) is a use of it
+/// where the document writes it.
+#[test]
+fn a_redefined_kernel_command_in_use_keeps_its_package() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\[ x \\]\n\\end{document}\n";
+    assert_eq!(reported("unused-package-redefined", source, "unused-package"), 0);
+}

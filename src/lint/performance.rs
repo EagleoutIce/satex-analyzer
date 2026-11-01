@@ -168,117 +168,31 @@ fn duplicate_package(report: &mut Report) {
     }
 }
 
+/// A package none of whose bindings reaches the document: no name it defines or redefines is
+/// used, no register it sets is read while the document is typeset, and it changes no parameter
+/// TeX reads as it typesets.
 fn unused_package(report: &mut Report) {
     let analysis = report.analysis();
-    // The files each package's load read, its own and those it requested.
-    let mut files: BTreeMap<Sym, BTreeSet<crate::tex::FileId>> = BTreeMap::new();
-    for load in &analysis.facts.loads {
-        let (Some(file), Some(name)) = (load.file, analysis.interner.lookup(&load.name)) else { continue };
-        files.entry(name).or_default().insert(file);
-        if let Some(by) = load.by {
-            files.entry(by).or_default().insert(file);
-        }
-    }
-    let of = |file: crate::tex::FileId| files.iter().filter(move |(_, f)| f.contains(&file)).map(|(p, _)| *p);
-    // A package's names: new to the format and still holding its meaning
-    // at the end. Used: what the document's code expands, transitively
-    // (`\begin{document}`'s hooks are the packages' own).
-    let document =
-        |kind| analysis.facts.occurrences.iter().find(|o| o.kind == kind && o.key == "document").map(|o| o.span);
-    let (begin, end) =
-        (document(crate::builtins::OccKind::BeginEnvironment), document(crate::builtins::OccKind::EndEnvironment));
-    let body = |span: Span| {
-        crate::query::origin(analysis, span.file) == "document"
-            && match begin {
-                Some(b) if span.file == b.file => {
-                    (span.line, span.col) >= (b.line, b.col + "\\begin{document}".len() as u32)
-                }
-                Some(_) => true,
-                None => false,
-            }
-            && end.is_none_or(|e| span.file != e.file || (span.line, span.col) < (e.line, e.col))
-    };
-    // What the document's own preamble runs itself (`\AtEndPreamble`) is a
-    // use too, but not what a macro it defines would call, nor its loads,
-    // whose options run the package's own code.
-    let preamble: crate::fixed::HashSet<Sym> = analysis
-        .facts
-        .expansions
-        .iter()
-        .filter(|e| {
-            crate::query::origin(analysis, e.span.file) == "document"
-                && e.span.line > 0
-                && !body(e.span)
-                && begin.is_some_and(|b| e.span.file != b.file || (e.span.line, e.span.col) < (b.line, b.col))
-                && !analysis.facts.loads.iter().any(|l| l.span == e.span)
-        })
-        .map(|e| e.name)
-        .collect();
-    // A parameter TeX reads as it typesets (`\parskip`) left other than
-    // the format had it acts whatever the document does, a register so left
-    // once code outside the package reads it while the body is typeset (the
-    // class's `\textheight`): vertices are numbered in the order the run made them.
-    let ended = analysis
-        .facts
-        .occurrences
-        .iter()
-        .find(|o| o.kind == crate::builtins::OccKind::EndEnvironment && o.key == "document");
-    let typeset = analysis
-        .facts
-        .expansions
-        .iter()
-        .filter(|e| body(e.span))
-        .filter_map(|e| e.node)
-        .chain(ended.map(|o| o.node))
-        .min();
-    let mut readers: BTreeMap<crate::env::NodeId, BTreeSet<crate::tex::FileId>> = BTreeMap::new();
-    for from in typeset.unwrap_or(crate::env::NodeId::MAX)..analysis.graph.len() as crate::env::NodeId {
-        let Some(reader) = analysis.graph.vertex(from) else { continue };
-        for &(to, kind) in analysis.graph.outgoing(from) {
-            if kind.intersects(crate::graph::EdgeKind::READS) {
-                readers.entry(to).or_default().insert(reader.span.file);
-            }
-        }
-    }
-    let mut provided: BTreeMap<Sym, BTreeSet<Sym>> = BTreeMap::new();
+    let files = package_files(analysis);
+    let consumed = consumed_names(analysis, &files);
+    let mut bound: BTreeMap<Sym, BTreeSet<Sym>> = BTreeMap::new();
     let mut acts: BTreeSet<Sym> = BTreeSet::new();
     for sym in analysis.env.bound() {
         let Some(binding) = analysis.env.slot(sym) else { continue };
-        let Some((&last, file)) = binding.defs.last().and_then(|n| Some((n, analysis.graph.vertex(*n)?.span.file)))
-        else {
+        let Some(file) = binding.defs.last().and_then(|&n| analysis.graph.vertex(n)).map(|v| v.span.file) else {
             continue;
         };
         let format = analysis.kernel.as_ref().and_then(|k| k.slot(sym));
+        let changed = format.is_none_or(|f| f.meaning != binding.meaning || f.value != binding.value);
         let parameter = matches!(binding.meaning.prim(), Some(p) if p.is_parameter());
-        let register = matches!(binding.meaning, crate::tex::Meaning::Register(..));
-        let set = (parameter || register) && format.is_none_or(|f| f.value != binding.value);
-        // Its own setting: no other code of the run wrote it (`\count@` is everyone's).
-        let read = |package: &Sym| {
-            let own = |f: &crate::tex::FileId| files[package].contains(f);
-            binding.defs.iter().filter_map(|&n| analysis.graph.vertex(n)).all(|v| own(&v.span.file))
-                && readers.get(&last).is_some_and(|r| r.iter().any(|f| !own(f)))
-        };
-        for package in of(file) {
-            if set && (parameter || read(&package)) {
-                acts.insert(package);
-            } else if format.is_none() && analysis.env.is_defined(sym) {
-                provided.entry(package).or_default().insert(sym);
+        for package in files.iter().filter(|(_, f)| f.contains(&file)).map(|(p, _)| *p) {
+            match (changed, parameter) {
+                (true, true) => _ = acts.insert(package),
+                (true, false) if analysis.env.is_defined(sym) => _ = bound.entry(package).or_default().insert(sym),
+                _ => {}
             }
         }
     }
-    let graph = &analysis.calls;
-    let roots: crate::fixed::HashSet<Sym> =
-        analysis.facts.expansions.iter().filter(|e| body(e.span)).map(|e| e.name).collect();
-    let mut reached = vec![false; graph.nodes.len()];
-    let mut queue: Vec<usize> = (0..graph.nodes.len()).filter(|&i| roots.contains(&graph.nodes[i])).collect();
-    while let Some(i) = queue.pop() {
-        if std::mem::replace(&mut reached[i], true) {
-            continue;
-        }
-        queue.extend(graph.edges[i].iter().copied().filter(|&j| !reached[j]));
-    }
-    let used: crate::fixed::HashSet<Sym> =
-        roots.iter().copied().chain((0..graph.nodes.len()).filter(|&i| reached[i]).map(|i| graph.nodes[i])).collect();
     for load in &analysis.facts.loads {
         if !load.kind.is_package()
             || load.status != LoadStatus::Read
@@ -287,9 +201,8 @@ fn unused_package(report: &mut Report) {
             continue;
         }
         let Some(package) = analysis.interner.lookup(&load.name) else { continue };
-        let Some(names) = provided.get(&package) else { continue };
-        if names.is_empty() || acts.contains(&package) || names.iter().any(|n| used.contains(n) || preamble.contains(n))
-        {
+        let Some(names) = bound.get(&package) else { continue };
+        if acts.contains(&package) || names.iter().any(|n| consumed.contains(n)) {
             continue;
         }
         let edits = report.edits().delete_load(load);
@@ -298,12 +211,75 @@ fn unused_package(report: &mut Report) {
             &load.name,
             format!("{} defines {} names, none of which are used", load.name, names.len()),
             Fix::new(
-                format!("delete `\\usepackage{{{}}}` if its side effects are not needed", load.name),
+                format!("delete `\\usepackage{{{}}}`: nothing it defines or changes is used", load.name),
                 Applicability::Unsafe,
                 edits,
             ),
         );
     }
+}
+
+/// Whether `span` lies in the command written at `at` as long as `text` (`\\end{document}` is shorter).
+fn within_command(span: &Span, at: &Span, text: &str) -> bool {
+    span.file == at.file && span.line == at.line && span.col >= at.col && span.col < at.col + text.len() as u32
+}
+
+/// The files each package's load read: its own and those it requested.
+fn package_files(analysis: &crate::machine::Analysis) -> BTreeMap<Sym, BTreeSet<crate::tex::FileId>> {
+    let mut files: BTreeMap<Sym, BTreeSet<crate::tex::FileId>> = BTreeMap::new();
+    for load in &analysis.facts.loads {
+        let (Some(file), Some(name)) = (load.file, analysis.interner.lookup(&load.name)) else { continue };
+        files.entry(name).or_default().insert(file);
+        if let Some(by) = load.by {
+            files.entry(by).or_default().insert(file);
+        }
+    }
+    files
+}
+
+/// The names the document consumes: what its own code calls, transitively through the macros it
+/// runs (`\begin{document}`'s hooks are the packages' own), and the registers code outside every
+/// package reads while it is typeset (a class's `\textheight` the kernel reads per page).
+fn consumed_names(
+    analysis: &crate::machine::Analysis,
+    packages: &BTreeMap<Sym, BTreeSet<crate::tex::FileId>>,
+) -> crate::fixed::HashSet<Sym> {
+    // the calls the document writes itself, not those its macros and environments make
+    let own = |e: &&crate::facts::Expansion| {
+        e.within.is_none()
+            && crate::query::origin(analysis, e.span.file) == "document"
+            && e.span.line > 0
+            && !analysis.facts.loads.iter().any(|l| l.span == e.span)
+    };
+    let document = |kind| analysis.facts.occurrences.iter().find(|o| o.kind == kind && o.key == "document");
+    let begun = document(crate::builtins::OccKind::BeginEnvironment);
+    let ended = document(crate::builtins::OccKind::EndEnvironment);
+    let typeset = begun.map_or(crate::env::NodeId::MAX, |o| o.node);
+    // the body's own calls, not those `\begin{document}` and `\end{document}` make: their hooks are the packages'
+    let in_frame =
+        |s: &Span| [begun, ended].into_iter().flatten().any(|o| within_command(s, &o.span, "\\begin{document}"));
+    let in_body = |e: &&crate::facts::Expansion| e.node.is_some_and(|n| n > typeset) && !in_frame(&e.span);
+    let named: crate::fixed::HashSet<Sym> = analysis.facts.expansions.iter().filter(own).map(|e| e.name).collect();
+    let body: crate::fixed::HashSet<Sym> =
+        analysis.facts.expansions.iter().filter(own).filter(in_body).map(|e| e.name).collect();
+    let graph = &analysis.calls;
+    let mut reached = vec![false; graph.nodes.len()];
+    let mut queue: Vec<usize> = (0..graph.nodes.len()).filter(|&i| body.contains(&graph.nodes[i])).collect();
+    while let Some(i) = queue.pop() {
+        if !std::mem::replace(&mut reached[i], true) {
+            queue.extend(graph.edges[i].iter().copied().filter(|&j| !reached[j]));
+        }
+    }
+    let called = (0..graph.nodes.len()).filter(|&i| reached[i]).map(|i| graph.nodes[i]);
+    let outside = |from: crate::env::NodeId| {
+        analysis.graph.vertex(from).is_some_and(|v| packages.values().all(|f| !f.contains(&v.span.file)))
+    };
+    let register = |sym: Sym| matches!(analysis.env.meaning(sym), crate::tex::Meaning::Register(..));
+    let read = (typeset..analysis.graph.len() as crate::env::NodeId).filter(|&from| outside(from)).flat_map(|from| {
+        analysis.graph.outgoing(from).iter().filter(|(_, kind)| kind.intersects(crate::graph::EdgeKind::READS))
+    });
+    let read = read.filter_map(|&(to, _)| analysis.graph.vertex(to)).map(|v| v.name).filter(|&n| register(n));
+    named.iter().copied().chain(called).chain(read).collect()
 }
 
 fn recursive_macro(report: &mut Report) {
