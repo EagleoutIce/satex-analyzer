@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fixed::{HashMap, HashSet};
 
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Exports {
@@ -165,6 +165,20 @@ impl Exports {
         exports
     }
 
+    /// The names declared as `kind` (`arrow`), each with the files that declare it.
+    pub fn declared(&self, kind: &str) -> Vec<(String, Vec<String>)> {
+        let prefix = format!("{kind}:");
+        self.defines
+            .iter()
+            .filter_map(|(n, fs)| {
+                Some((
+                    n.strip_prefix(&prefix)?.to_string(),
+                    fs.iter().map(|&f| self.files[f as usize].clone()).collect(),
+                ))
+            })
+            .collect()
+    }
+
     /// Files that, with what they load, define most of `names`: most first,
     /// then classes, then fewer files loaded.
     pub fn providers(&self, names: &[String]) -> Vec<(String, usize)> {
@@ -256,7 +270,14 @@ fn declared(text: &str) -> Vec<String> {
                 .expect("key regex"),
         ]
     });
-    FORMS.iter().flat_map(|re| re.captures_iter(text).map(|c| c[1].trim().to_string())).collect()
+    // each by its word, and by its kind and word (`arrow:Kite`) for completion to list a kind's
+    FORMS
+        .iter()
+        .zip(["arrow", "shape", "key"])
+        .flat_map(|(re, kind)| {
+            re.captures_iter(text).flat_map(move |c| [c[1].trim().to_string(), format!("{kind}:{}", c[1].trim())])
+        })
+        .collect()
 }
 
 /// The text of the group after `[options]` that `tokens` start with; a

@@ -1,11 +1,14 @@
 //! `%\satex@assert`, `%\satex@assume` and `%\satex@configure`: property
 //! checks and local settings written in the document's comments.
 
-use crate::support::{PRELUDE, analyze_latex, bare, installed, names};
+use crate::support::{PRELUDE, bare, installed, names};
 use satex::machine::{Analysis, Machine};
 
+/// With proved assertions reported, which the default leaves out.
 fn analyze(source: &str) -> Analysis {
-    Machine::analyze(&format!("{PRELUDE}{source}"), None, &bare())
+    let mut cfg = bare();
+    cfg.lint_off.retain(|code| code != "assertion-proved");
+    Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg)
 }
 
 /// The directive findings, as `code: message`.
@@ -115,10 +118,16 @@ fn thepage_compares_the_counter_whatever_prints_it() {
         return;
     }
     for numbering in ["arabic", "roman"] {
-        let analysis = analyze_latex(&format!(
-            "\\documentclass{{article}}\n\\pagenumbering{{{numbering}}}\n\\begin{{document}}\n\
-             \\setcounter{{page}}{{3}}\n%\\satex@assert{{\\thepage < 5}}\n%\\satex@assert{{\\thepage > 3}}\nx\n\\end{{document}}\n"
-        ));
+        let mut cfg = crate::support::config();
+        cfg.lint_off.retain(|code| code != "assertion-proved");
+        let analysis = Machine::analyze(
+            &format!(
+                "\\documentclass{{article}}\n\\pagenumbering{{{numbering}}}\n\\begin{{document}}\n\
+                 \\setcounter{{page}}{{3}}\n%\\satex@assert{{\\thepage < 5}}\n%\\satex@assert{{\\thepage > 3}}\nx\n\\end{{document}}\n"
+            ),
+            None,
+            &cfg,
+        );
         let found = outcomes(&analysis);
         assert!(found.iter().any(|f| f.starts_with("assertion-proved: `\\thepage < 5`")), "{numbering}: {found:?}");
         assert!(found.iter().any(|f| f.starts_with("assertion-refuted: `\\thepage > 3`")), "{numbering}: {found:?}");

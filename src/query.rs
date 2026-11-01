@@ -478,6 +478,18 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let mut next_key: std::collections::HashMap<FileId, usize> = Default::default();
     let (glyphs, joined) = glyphs(analysis);
     let mut boxes = drawn_boxes(analysis).into_iter().peekable();
+    // the environment of the user's text each character was set in (a figure, a listing): a paragraph
+    // ends where it changes, and says which one it was set in
+    let envs = environments(analysis);
+    // looked up once per source line: the characters of a line share it
+    let mut by_line: HashMap<(FileId, u32), Option<&str>> = HashMap::default();
+    let mut env_at = |s: Span| {
+        *by_line.entry((s.file, s.line)).or_insert_with(|| {
+            let begun = envs.partition_point(|(f, ..)| (f.file, f.line) <= (s.file, s.line));
+            envs[..begun].iter().rfind(|(f, t, _)| f.file == s.file && s.line <= t.line).map(|(_, _, n)| n.as_str())
+        })
+    };
+    let mut env: Option<&str> = None;
     for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
         let site = Span {
             file: text.site.get(i).map_or(spot.span.file, |s| s.file),
@@ -520,7 +532,8 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             c = format!("{}{c}", note("·"));
         }
         let piece = if boxed { format!("{}{c}{}", note("⟦"), note("⟧")) } else { c };
-        if text.pars.binary_search(&(i as u32)).is_ok() && !line.trim().is_empty() {
+        let here = env_at(site);
+        if (text.pars.binary_search(&(i as u32)).is_ok() || here != env) && !line.trim().is_empty() {
             close(&mut line, &mut choice, &mut causes);
             let mut record = paragraph(
                 analysis,
@@ -532,9 +545,13 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             if text.kept.binary_search(&(i as u32)).is_ok() {
                 record.insert("kept".into(), json!(true));
             }
+            if let Some(name) = env {
+                record.insert("env".into(), json!(name));
+            }
             out.push(record);
             style = "";
         }
+        env = here;
         if !piece.trim().is_empty() {
             first.get_or_insert(site);
         }
@@ -581,7 +598,11 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         line.push_str(&note(rule.glyph()));
     }
     if !line.trim().is_empty() {
-        out.push(paragraph(analysis, first.unwrap_or_default(), &line, causes, &mut keys));
+        let mut record = paragraph(analysis, first.unwrap_or_default(), &line, causes, &mut keys);
+        if let Some(name) = env {
+            record.insert("env".into(), json!(name));
+        }
+        out.push(record);
     }
     // A kernel read only partly leaves the document names the engine's
     // format defines (`\documentclass` set as text), so none of the text is
@@ -629,9 +650,29 @@ const PREVIEW: usize = 100;
 pub fn typeset_by(analysis: &Analysis, at: Span) -> Option<String> {
     let text = &analysis.facts.text;
     let after = |s: &Span| s.file == at.file && (s.line, s.col) > (at.line, at.col);
-    // The next call the file makes: the reader stands at most there.
-    let next = analysis.facts.expansions.iter().map(|e| e.span).filter(after).map(|s| (s.line, s.col)).min();
-    let first = text.site.iter().position(after)?;
+    // The next call the file itself makes, not one inside this call's expansion: the reader stands at most there.
+    let next = analysis
+        .facts
+        .expansions
+        .iter()
+        .filter(|e| e.within.is_none())
+        .map(|e| e.span)
+        .filter(after)
+        .map(|s| (s.line, s.col))
+        .min();
+    let mut on_page = vec![false; text.at.len()];
+    for &(from, to) in &text.placed {
+        let end = on_page.len();
+        on_page[(from as usize).min(end)..(to as usize).min(end)].fill(true);
+    }
+    // a box measured and never placed (`\settowidth`) is not what the reader sees
+    let boxed = |i: usize| {
+        !on_page[i]
+            && text.at[i]
+                .modes
+                .within(crate::mode::Modes::INTERNAL_VERTICAL.union(crate::mode::Modes::RESTRICTED_HORIZONTAL))
+    };
+    let first = (0..text.site.len()).find(|&i| after(&text.site[i]) && !boxed(i))?;
     let site = text.site[first];
     if next.is_some_and(|n| (site.line, site.col) > n) {
         return None;
@@ -642,6 +683,9 @@ pub fn typeset_by(analysis: &Analysis, at: Span) -> Option<String> {
     for (i, c) in text.chars.chars().enumerate().skip(first).take_while(|(i, _)| text.site.get(*i) == Some(&site)) {
         if shown == PREVIEW {
             break;
+        }
+        if boxed(i) {
+            continue;
         }
         let c = if crate::tex::is_unknown_char(c) { "⟨?⟩".to_string() } else { public(c) };
         shown += c.chars().count();
@@ -711,6 +755,26 @@ fn drawn_boxes(analysis: &Analysis) -> Vec<(Span, String)> {
     let mut out: Vec<(Span, String)> = out.into_iter().map(|(f, name, _)| (f, name)).collect();
     out.sort_by_key(|(s, _)| key(*s));
     out.dedup();
+    out
+}
+
+/// The environments of the user's files, `document` aside, as the places they begin and end.
+pub(crate) fn environments(analysis: &Analysis) -> Vec<(Span, Span, String)> {
+    let mut open: Vec<(&str, Span)> = Vec::new();
+    let mut out = Vec::new();
+    for o in analysis.facts.occurrences.iter().filter(|o| origin(analysis, o.span.file) == "document") {
+        match o.kind {
+            OccKind::BeginEnvironment if o.key != "document" => open.push((o.key.as_str(), o.span)),
+            OccKind::EndEnvironment => {
+                if let Some(k) = open.iter().rposition(|(name, _)| *name == o.key) {
+                    let (name, from) = open.remove(k);
+                    out.push((from, o.span, name.to_string()));
+                }
+            }
+            _ => {}
+        }
+    }
+    out.sort_by_key(|(f, ..)| (f.file, f.line, f.col));
     out
 }
 
@@ -2292,6 +2356,63 @@ fn offered_options(analysis: &Analysis, all: bool) -> Vec<Record> {
         out.push(record);
     }
     out
+}
+
+/// The values a load option `key=` takes, read off the code of the package and of the packages it
+/// passes options to: what its options set the key to (`a4paper` is `paper=a4`), and the words its
+/// key's code compares the value with (`\Ifstr{#1}{landscape}`).
+pub fn option_values(analysis: &Analysis, package: &str, key: &str) -> Vec<String> {
+    static COMPARED: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let compared = COMPARED.get_or_init(|| Regex::new(r"\{#1\}\s*\{([A-Za-z][\w.-]*)\}").expect("valid regex"));
+    let set =
+        Regex::new(&format!(r"(?:^|[,{{\s]){}\s*=\s*([A-Za-z0-9][\w.:-]*)", regex::escape(key))).expect("valid regex");
+    let mut packages = BTreeSet::from([package.to_string()]);
+    packages.extend(option_handler(analysis, package).1);
+    // and what those load: KOMA's `paper=` values live in typearea
+    let stem = |n: &str| n.trim_end_matches(".sty").trim_end_matches(".cls").to_string();
+    loop {
+        let more: Vec<String> = analysis
+            .facts
+            .loads
+            .iter()
+            .filter(|l| l.by.is_some_and(|b| packages.iter().any(|q| stem(q) == stem(analysis.interner.name(b)))))
+            .map(|l| stem(&l.name))
+            .filter(|n| !packages.iter().any(|q| stem(q) == *n))
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        packages.extend(more);
+    }
+    let mut out = BTreeSet::new();
+    for def in &analysis.facts.defs {
+        let Some(mac) = def.mac.as_ref() else { continue };
+        let body = detokenize(&mac.replacement_text, &analysis.interner);
+        let name = analysis.interner.name(def.name);
+        let ours = def.package.is_some_and(|p| {
+            packages.iter().any(|q| {
+                q.trim_end_matches(".sty").trim_end_matches(".cls")
+                    == analysis.interner.name(p).trim_end_matches(".sty").trim_end_matches(".cls")
+            })
+        });
+        if !ours {
+            continue;
+        }
+        out.extend(set.captures_iter(&body).map(|c| c[1].to_string()));
+        if name.ends_with(&format!("@{key}")) && name.contains("KV@") {
+            out.extend(compared.captures_iter(&body).map(|c| c[1].to_string()));
+            // `paper={a4paper}` handing its value to `\setkeys`: the family's flag keys are its values
+            if body.contains("\\setkeys") && body.contains("{#1}") {
+                out.extend(
+                    package_options(analysis, package)
+                        .into_iter()
+                        .filter(|(_, d)| d.as_deref() == Some("true"))
+                        .map(|(k, _)| k),
+                );
+            }
+        }
+    }
+    out.into_iter().collect()
 }
 
 /// The options `package` (a class or package name) declares, each with its
@@ -4812,7 +4933,7 @@ pub fn keyval_keys<'a>(
 /// call read straight from a file that the definition happened inside, so a
 /// key made by `\pgfkeys{…}` points at that `\pgfkeys` and not into
 /// pgfkeys.code.tex.
-fn defined_at(analysis: &Analysis, sym: Sym) -> Span {
+pub(crate) fn defined_at(analysis: &Analysis, sym: Sym) -> Span {
     let Some(def) = analysis.facts.defs.iter().rev().find(|def| def.name == sym) else {
         return analysis.kernel_sites.get(&sym).copied().unwrap_or_default();
     };

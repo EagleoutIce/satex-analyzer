@@ -1210,6 +1210,37 @@ fn hover_shows_what_the_call_typesets() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// After an edit, a call's hover says what the new run typesets, not what
+/// the run before set.
+#[test]
+fn a_call_hover_follows_the_edit() {
+    let text = "\\documentclass{article}\n\\begin{document}\nSee \\ref{a}.\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("typesets-edit", text);
+    let hover = |server: &mut Server| {
+        let id = server.request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": 6 } }),
+        );
+        server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
+    };
+    let before = hover(&mut server);
+    assert!(before.contains("Typesets `??`"), "{before}");
+    let labelled = text.replace("\\begin{document}\n", "\\begin{document}\n\\section{A}\\label{a}\n");
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": labelled }] }),
+    );
+    server.notification("textDocument/publishDiagnostics");
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 3, "character": 6 } }),
+    );
+    let after = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(after.contains("Typesets `1`"), "{after}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 const BIB: &str = "@book{lamport94,\n  title = {{\\LaTeX}: A System},\n  year = 1994,\n}\n\n@\n\n@article{k,\n  \n  title = {x \\},\n}\n";
 
 /// A `.bib` file the document reads, opened beside it.
@@ -2029,4 +2060,34 @@ fn kept_hovers_stay_with_their_project() {
     let second = hover(&base.join("b"), 3);
     assert!(second.contains("lib.sty:3") && !second.contains("lib.sty:1"), "{second}");
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// An expl3 name typed up to its signature offers each signature letter
+/// with what it means, from `conventions.signatures`.
+#[test]
+fn an_expl3_signature_completes_its_letters() {
+    let text =
+        "\\documentclass{article}\n\\ExplSyntaxOn\n\\tl_set:N\n\\ExplSyntaxOff\n\\begin{document}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("signature", text);
+    let items = complete(&mut server, &uri, 2, 9);
+    let letter = items.iter().find(|i| i["label"] == "tl_set:Nn");
+    assert!(letter.is_some(), "{:?}", labels(&items));
+    let v = items.iter().find(|i| i["label"] == "tl_set:NV").map(|i| i["detail"].to_string()).unwrap_or_default();
+    assert!(v.contains("value of a variable"), "{v}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Inside a TikZ path the names of the picture's nodes complete.
+#[test]
+fn a_tikz_path_completes_node_names() {
+    if !crate::support::installed() {
+        return;
+    }
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}\n\\node (alpha) {a};\\node (beta) at (1,0) {b};\n\\draw (al\n\\end{tikzpicture}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("nodes", text);
+    let items = complete(&mut server, &uri, 5, 9);
+    assert!(labels(&items).contains(&"alpha"), "{:?}", labels(&items));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
 }

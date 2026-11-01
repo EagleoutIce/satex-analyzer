@@ -156,7 +156,7 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
 /// What satex did with the magic comment (`% !TeX program = …`, `% arara: …`)
 /// on the cursor's line: the engine it ran, the root it read the file through.
 fn magic_hover(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<String> {
-    let magic = crate::plugin::magic::scan(doc.line(pos.line)).into_iter().next()?;
+    let magic = crate::plugin::magic::scan_with(doc.line(pos.line), &analysis.settings.magic).into_iter().next()?;
     let what = match magic.key.to_ascii_lowercase().as_str() {
         "tex program" => format!(
             "satex ran this document with the {:?} engine{}.",
@@ -277,7 +277,9 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
             markdown.push_str(&format!("{MORE_DEFINITIONS}\n\n"));
         }
         let text = |key: &str| record.get(key).and_then(Json::as_str);
-        let mined = text("path").and_then(|p| crate::plugin::docs::index().lookup(std::path::Path::new(p), name));
+        let mined = text("path")
+            .filter(|_| analysis.settings.plugins.docs)
+            .and_then(|p| crate::plugin::docs::index().lookup(std::path::Path::new(p), name));
         let mined = mined.as_ref();
         match text("when") {
             Some(w) => markdown.push_str(&format!("### `\\{name}`: {w}\n\n")),
@@ -349,7 +351,7 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
 /// What the document's first call of `name` that sets text typesets, and
 /// where that call stands.
 fn typesets(analysis: &Analysis, name: &str) -> String {
-    const SHOWN: usize = 4;
+    let shown = analysis.settings.conventions.completion.calls;
     let Some(sym) = analysis.interner.lookup(name) else { return String::new() };
     let mut calls: Vec<crate::tex::Span> = analysis
         .facts
@@ -378,11 +380,11 @@ fn typesets(analysis: &Analysis, name: &str) -> String {
         [(set, ls)] => format!("Typesets {set} at {}\n\n", lines(ls)),
         _ => {
             let mut out = format!("Typesets, by call ({} calls):\n\n", calls.len());
-            for (set, ls) in sets.iter().take(SHOWN) {
+            for (set, ls) in sets.iter().take(shown) {
                 out.push_str(&format!("- {set} at {}\n", lines(ls)));
             }
-            if sets.len() > SHOWN {
-                out.push_str(&format!("- and {} more\n", sets.len() - SHOWN));
+            if sets.len() > shown {
+                out.push_str(&format!("- and {} more\n", sets.len() - shown));
             }
             out + "\n"
         }
@@ -1055,6 +1057,9 @@ pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> Comple
     let pos = to_pos(doc, position);
     let line = doc.line(pos.line);
     let (before, after) = line.split_at(crate::source::byte_of_col(line, pos.col).min(line.len()));
+    if let Some(items) = node_items(analysis, before) {
+        return CompletionResponse::Array(items);
+    }
     match argument_at(before) {
         Some(arg) if !cs_re().is_match(before) => {
             let mut items = argument_items(analysis, doc, &arg, after, pos);
@@ -1109,10 +1114,6 @@ fn quantity_wanted(analysis: &Analysis, arg: &Arg) -> Option<crate::roles::Ty> {
     let ty = if matches!(ty, Ty::Reg(_)) { ty.parent() } else { ty };
     (ty.leq(Ty::Quantity) || ty == Ty::Register).then_some(ty)
 }
-
-/// How many commands one completion answer lists; the client asks again as
-/// more of the name is typed.
-const COMMANDS_SHOWN: usize = 300;
 
 /// A control sequence being typed at the end of the text.
 pub(super) fn cs_re() -> &'static Regex {
@@ -1222,7 +1223,13 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
             let Some(package) = name.captures(after).map(|c| c[1].trim().to_string()) else { return Vec::new() };
             // `key=…` whose value the run loaded as a file (biblatex's `style=` a `.bbx`).
             if let Some((key, typed)) = arg.inside.rsplit(',').next().and_then(|o| o.split_once('=')) {
-                return files(analysis, option_files(analysis, &package, key.trim()).into_iter(), typed.trim());
+                let mut items: Vec<CompletionItem> = query::option_values(analysis, &package, key.trim())
+                    .into_iter()
+                    .filter(|v| v.starts_with(typed.trim()))
+                    .map(|v| item(v, CompletionItemKind::VALUE, Some(format!("{} of {package}", key.trim())), 0))
+                    .collect();
+                items.extend(files(analysis, option_files(analysis, &package, key.trim()).into_iter(), typed.trim()));
+                return items;
             }
             let detail = |d: Option<String>| d.map_or(package.clone(), |d| format!("default: {d}  ({package})"));
             let options = query::package_options(analysis, &package).into_iter();
@@ -1410,8 +1417,39 @@ fn drawn_items(analysis: &Analysis, path: &str, kinds: &[Stroke]) -> Vec<Complet
             let it = item(n.clone(), CompletionItemKind::ENUM_MEMBER, Some(what.into()), 50_000);
             with_preview(it, crate::preview::drawn(analysis, kind, &n))
         }));
+        // the tips a library of the installation declares, not loaded yet: picking one loads it
+        if kind == Stroke::Arrows {
+            let have: BTreeSet<String> = out.iter().map(|i| i.label.clone()).collect();
+            let start =
+                crate::lint::shared::document_start(analysis).map(|s| Position::new(s.line.saturating_sub(1), 0));
+            for (tip, load) in crate::lint::shared::library_declared(analysis, "arrow") {
+                let label = if tip.contains(char::is_whitespace) { format!("-{{{tip}}}") } else { format!("-{tip}") };
+                if have.contains(&label) {
+                    continue;
+                }
+                let mut it = item(label, CompletionItemKind::ENUM_MEMBER, Some(format!("arrow tip of {load}")), 60_000);
+                it.additional_text_edits = start
+                    .map(|at| vec![TextEdit { range: Range { start: at, end: at }, new_text: format!("{load}\n") }]);
+                out.push(it);
+            }
+        }
     }
     out
+}
+
+/// After a `(` in a command's line (`\draw (a) -- (`): the names of the nodes the run made that
+/// start with what is typed, as pgf keeps them (`\pgf@sh@ns@⟨name⟩`).
+fn node_items(analysis: &Analysis, before: &str) -> Option<Vec<CompletionItem>> {
+    static AT: OnceLock<Regex> = OnceLock::new();
+    let at = AT.get_or_init(|| Regex::new(r"\\[A-Za-z]+\b[^;]*\(([^()\s]*)$").expect("node regex"));
+    let typed = at.captures(before)?.get(1)?.as_str();
+    let names: BTreeSet<&str> = (0..analysis.interner.len() as u32)
+        .filter_map(|i| analysis.interner.name(crate::tex::Sym(i)).strip_prefix("pgf@sh@ns@"))
+        .filter(|n| n.starts_with(typed) && !n.is_empty())
+        .collect();
+    Some(
+        names.into_iter().map(|n| item(n.to_string(), CompletionItemKind::REFERENCE, Some("node".into()), 0)).collect(),
+    )
 }
 
 /// The items of a key list at the cursor, from the keys the run stored
@@ -1494,7 +1532,7 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
         let dir = &typed[..typed.rfind('/').map_or(0, |i| i + 1)];
         let start = to_lsp(doc, Pos::new(pos.line, pos.col - typed.chars().count() as u32));
         let range = Range { start, end: to_lsp(doc, pos) };
-        return below(dir, KEY_DEPTH)
+        return below(dir, analysis.settings.conventions.completion.key_depth)
             .into_iter()
             .map(|(name, r)| {
                 let key = format!("{dir}{name}");
@@ -1518,7 +1556,9 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
         }
         // The subkeys of a pgfkeys family, after its own keys.
         let deeper = dirs.iter().filter(|d| d.starts_with('/')).flat_map(|d| {
-            below(&format!("{}/", d.trim_end_matches('/')), KEY_DEPTH).into_iter().filter(|(n, _)| n.contains('/'))
+            below(&format!("{}/", d.trim_end_matches('/')), analysis.settings.conventions.completion.key_depth)
+                .into_iter()
+                .filter(|(n, _)| n.contains('/'))
         });
         keys.extend(deeper.map(|(name, r)| {
             key_item(analysis, item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 99_999), &name, &r)
@@ -1526,17 +1566,15 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
         return keys;
     }
     dirs.iter()
-        .flat_map(|d| below(&format!("{}/", d.trim_end_matches('/')), KEY_DEPTH))
+        .flat_map(|d| {
+            below(&format!("{}/", d.trim_end_matches('/')), analysis.settings.conventions.completion.key_depth)
+        })
         .map(|(name, r)| {
             let rank = name.matches('/').count();
             key_item(analysis, item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank), &name, &r)
         })
         .collect()
 }
-
-/// How many levels below a directory key completion lists, so a family's
-/// subkeys are found by typing any part of their path.
-const KEY_DEPTH: usize = 3;
 
 /// The keys `name`'s optional argument feeds, from [`query::options`].
 /// The default of the `nth` optional argument `name` takes, by its
@@ -1650,7 +1688,7 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
         };
         let names: Vec<_> = names.into_iter().filter(|(n, ..)| n.starts_with(typed)).collect();
         // Reading each file's identification is for a list one can read.
-        let identify = names.len() <= IDENTIFIED;
+        let identify = names.len() <= analysis.settings.conventions.completion.identified;
         out.extend(names.into_iter().map(|(n, rank, path)| {
             let mut detail = detail(&n);
             let mut it = item(n.clone(), CompletionItemKind::FILE, None, rank);
@@ -1714,9 +1752,6 @@ fn library_items(analysis: &Analysis, roles: &[&crate::roles::Role], typed: &str
     }
     out
 }
-
-/// Up to how many installed files a completion reads the identification of.
-const IDENTIFIED: usize = 400;
 
 /// Whether `root` is a tree of the user's or the site's own rather than of
 /// the distribution: TeX Live's `texmf-dist` and a configured bundle are not.
@@ -1959,26 +1994,15 @@ fn takes(analysis: &Analysis) -> &crate::fixed::HashMap<String, u8> {
     })
 }
 
-/// Environments whose begin command reads its mandatory arguments through
-/// an internal macro (`\tabular` hands them to `\@tabular`), so its own
-/// definition takes none: how many they are.
-const ENVIRONMENT_ARGUMENTS: &[(&str, u8)] = &[
-    ("array", 1),
-    ("minipage", 1),
-    ("multicols", 1),
-    ("tabular", 1),
-    ("tabular*", 2),
-    ("tabularx", 2),
-    ("thebibliography", 1),
-    ("wrapfigure", 2),
-];
-
 /// How many mandatory arguments `\begin{env}` takes.
 fn environment_arguments(analysis: &Analysis, env: &str) -> u8 {
-    ENVIRONMENT_ARGUMENTS
-        .iter()
-        .find(|(name, _)| *name == env)
-        .map(|(_, n)| *n)
+    analysis
+        .settings
+        .conventions
+        .completion
+        .environment_arguments
+        .get(env)
+        .copied()
         .unwrap_or_else(|| takes(analysis).get(&format!("\\{env}")).copied().unwrap_or(0))
 }
 
@@ -1993,9 +2017,10 @@ fn written_by(analysis: &Analysis, record: &crate::query::Record) -> Option<Stri
 
 /// Each carries a snippet for its mandatory arguments.
 /// The commands in scope at `pos` whose name holds `typed` (case aside),
-/// the best [`COMMANDS_SHOWN`] of them, and whether there were more.
+/// the best `conventions.completion.shown` of them, and whether there were more.
 fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionItem>, bool) {
     let takes = takes(analysis);
+    let signature = signature_items(analysis, typed);
     let typed = typed.to_lowercase();
     let mut used: crate::fixed::HashMap<crate::tex::Sym, u32> = crate::fixed::HashMap::default();
     for e in &analysis.facts.expansions {
@@ -2005,6 +2030,7 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
     }
     // a name with `@` only where `@` is a letter (`\makeatletter`, a package)
     let letters = analysis.facts.letters_at(analysis.main_file, pos.line, pos.col);
+    let tiers = &analysis.settings.conventions.completion.tiers;
     let typeable =
         |label: &str| label.chars().count() < 2 || label.chars().all(|c| c.is_alphabetic() || letters.contains(&c));
     let mut items: Vec<CompletionItem> = query::scope(analysis, Some((analysis.main_file, pos.line, pos.col)), true)
@@ -2023,16 +2049,15 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
             let effective = record.get("effective").and_then(Json::as_str).unwrap_or("");
             let package = record.get("package").and_then(Json::as_str).unwrap_or("");
             let tier = match (package, internal) {
-                ("document", _) => 0,
-                (_, true) => 3,
-                _ if tag == "primitive" || !label.chars().any(char::is_alphabetic) => 2,
-                _ => 1,
+                ("document", _) => tiers.document,
+                (_, true) => tiers.internal,
+                _ if tag == "primitive" || !label.chars().any(char::is_alphabetic) => tiers.primitive,
+                _ => tiers.package,
             };
             let count = analysis.interner.lookup(&label).and_then(|s| used.get(&s)).copied().unwrap_or(0);
             // The argument is a name to pick: the editor asks again inside
             // the braces, and an environment brings its `\end`.
-            let pick =
-                matches!(label.as_str(), "begin" | "end" | "usepackage" | "documentclass" | "ref" | "cref" | "cite");
+            let pick = analysis.settings.conventions.completion.pick.contains(&label);
             let (insert_text, format) = match takes.get(&name).copied().unwrap_or(0) {
                 _ if pick => (format!("{label}{{$1}}"), InsertTextFormat::SNIPPET),
                 0 => (label.clone(), InsertTextFormat::PLAIN_TEXT),
@@ -2062,8 +2087,9 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
         .collect();
     // A name that starts with what is typed before one that only holds it.
     items.sort_by_cached_key(|i| (!i.label.to_lowercase().starts_with(&typed), i.sort_text.clone()));
-    let more = items.len() > COMMANDS_SHOWN;
-    items.truncate(COMMANDS_SHOWN);
+    let shown = analysis.settings.conventions.completion.shown;
+    let more = items.len() > shown;
+    items.truncate(shown);
     let all = {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         crate::roles::roles_many(analysis, &names)
@@ -2071,7 +2097,28 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
     for (item, roles) in items.iter_mut().zip(all) {
         item.detail = item.detail.take().map(|d| typed_usage(&d, &roles));
     }
+    items.extend(signature.into_iter().filter(|s| !items.iter().any(|i| i.label == s.label)).collect::<Vec<_>>());
     (items, more)
+}
+
+/// An expl3 name typed up to its signature (`tl_set:N`): each letter that may come next, with what
+/// it says of the argument, as the `conventions.signatures` setting has them.
+fn signature_items(analysis: &Analysis, typed: &str) -> Vec<CompletionItem> {
+    let Some((_, sig)) = typed.split_once(':') else { return Vec::new() };
+    if !sig.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Vec::new();
+    }
+    let signatures = &analysis.settings.conventions.signatures;
+    signatures
+        .iter()
+        .enumerate()
+        .map(|(i, (letter, about))| {
+            let mut it =
+                item(format!("{typed}{letter}"), CompletionItemKind::TYPE_PARAMETER, Some(about.clone()), 90_000 + i);
+            it.filter_text = Some(format!("{typed}{letter}"));
+            it
+        })
+        .collect()
 }
 
 /// A usage line with each braced argument's type after its number

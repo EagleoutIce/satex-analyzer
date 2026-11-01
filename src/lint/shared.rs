@@ -443,17 +443,31 @@ pub fn providing_package(analysis: &Analysis, name: &str) -> Option<String> {
 /// The load of the pgf or TikZ library that declares `name`, an arrow tip,
 /// shape or key a library error names: `\usetikzlibrary{arrows.meta}`.
 pub fn providing_library(analysis: &Analysis, name: &str) -> Option<String> {
-    let index = exports(analysis)?;
-    // `\usetikzlibrary` reads pgf's libraries too: a TikZ document asks for them so
     let tikz = loaded(analysis, "tikz");
-    index.providers(&[name.to_string()]).into_iter().find_map(|(file, _)| {
-        let stem = file.strip_suffix(".code.tex")?;
-        let (lib, pgf) = match stem.strip_prefix("tikzlibrary") {
-            Some(lib) => (lib, false),
-            None => (stem.strip_prefix("pgflibrary")?, !tikz),
-        };
-        Some(format!("\\use{}library{{{lib}}}", if pgf { "pgf" } else { "tikz" }))
-    })
+    exports(analysis)?.providers(&[name.to_string()]).into_iter().find_map(|(file, _)| library_load(&file, tikz))
+}
+
+/// The `kind` names (`arrow`) the installation's pgf and TikZ libraries declare, each with the load
+/// that brings it.
+pub fn library_declared(analysis: &Analysis, kind: &str) -> Vec<(String, String)> {
+    let Some(index) = exports(analysis) else { return Vec::new() };
+    let tikz = loaded(analysis, "tikz");
+    index
+        .declared(kind)
+        .into_iter()
+        .filter_map(|(name, files)| Some((name, files.iter().find_map(|f| library_load(f, tikz))?)))
+        .collect()
+}
+
+/// The load of a library file: `\usetikzlibrary` reads pgf's libraries too, so a TikZ document
+/// asks for them with it.
+fn library_load(file: &str, tikz: bool) -> Option<String> {
+    let stem = file.strip_suffix(".code.tex")?;
+    let (lib, pgf) = match stem.strip_prefix("tikzlibrary") {
+        Some(lib) => (lib, false),
+        None => (stem.strip_prefix("pgflibrary")?, !tikz),
+    };
+    Some(format!("\\use{}library{{{lib}}}", if pgf { "pgf" } else { "tikz" }))
 }
 
 /// The installation's index of what each file defines, built once and cached.

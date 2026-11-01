@@ -4048,3 +4048,20 @@ fn an_installed_image_is_found_and_sized() {
     crate::support::assert_lint(source, "missing-graphic", 0);
     assert_eq!(body(&analyze(source), "size"), "321.19922pt,240.8994pt");
 }
+
+/// `\draw` outside a `tikzpicture`: undefined there, defined only inside the picture.
+#[test]
+fn a_picture_command_outside_its_picture_says_where_it_is_defined() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}\n\\draw[-]\n\\end{document}\n",
+    );
+    let found: Vec<String> = satex::lint::lint(&analysis)
+        .iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-control-sequence"))
+        .map(|f| f["message"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(found, ["`\\draw` is undefined here: the run defines it only inside `tikzpicture` (line 4)"]);
+}

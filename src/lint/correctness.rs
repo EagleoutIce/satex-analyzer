@@ -464,6 +464,7 @@ fn undefined_control_sequences(report: &mut Report) {
         let name = report.cs(expansion.name);
         let raw = report.analysis.interner.name(expansion.name);
         let odd = raw.chars().count() > 1 && raw.chars().any(|c| "\\{}$&#% \t\r".contains(c));
+        let elsewhere = expansion.cds.is_empty().then(|| defined_elsewhere(report.analysis, expansion.name)).flatten();
         let (severity, message) = if assumed && odd {
             (
                 Severity::Warning,
@@ -471,17 +472,20 @@ fn undefined_control_sequences(report: &mut Report) {
             )
         } else if expansion.meaning == MeaningKind::UndefinedApproximated {
             (Severity::Info, format!("`{name}` is undefined on a path the analysis approximated"))
+        } else if let Some(inside) = &elsewhere {
+            (Severity::Error, format!("`{name}` is undefined here: the run defines it only {inside}"))
         } else if expansion.cds.is_empty() {
             (Severity::Error, format!("`{name}` is never defined in this run"))
         } else {
             (Severity::Warning, format!("`{name}` is undefined on a path satex could not decide"))
         };
-        let fix = if severity == Severity::Error { load_fix(report, raw) } else { None };
+        let fix = if severity == Severity::Error && elsewhere.is_none() { load_fix(report, raw) } else { None };
         match fix {
             Some(fix) => report.add_fix_as(severity, expansion.span, &name, message, fix),
             None => {
                 let known = known.get_or_insert_with(|| scope_names(report.analysis));
                 let help = match (severity == Severity::Error).then(|| closest(raw, known)).flatten() {
+                    _ if elsewhere.is_some() => format!("use `{name}` where it is defined"),
                     Some(other) => format!("did you mean `\\{other}`?"),
                     None => format!("define `{name}` or load the package that provides it"),
                 };
@@ -497,6 +501,20 @@ fn load_fix(report: &Report, name: &str) -> Option<Fix> {
     let package = super::shared::providing_package(report.analysis, name)?;
     let edits = report.edits().ensure_package(&package)?;
     Some(Fix::new(format!("load `{package}`, which defines it"), Applicability::Unsafe, Some(edits)))
+}
+
+/// Where the run defined a name it reads undefined elsewhere: inside an environment of the document
+/// (`\draw` in a `tikzpicture`), or in a group at a line of it.
+fn defined_elsewhere(analysis: &crate::machine::Analysis, name: crate::tex::Sym) -> Option<String> {
+    analysis.facts.defs.iter().find(|d| d.name == name && !d.global)?;
+    let at = crate::query::defined_at(analysis, name);
+    let envs = crate::query::environments(analysis);
+    let inside =
+        envs.iter().rfind(|(f, t, _)| f.file == at.file && (f.line, f.col) <= (at.line, at.col) && at.line <= t.line);
+    Some(match inside {
+        Some((f, _, env)) => format!("inside `{env}` (line {})", f.line),
+        None => format!("in a group at line {}", at.line),
+    })
 }
 
 /// The names that are defined at the end of the run.

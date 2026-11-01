@@ -977,23 +977,27 @@ impl Engine {
             }
         }
         let mut used: Vec<(u32, String)> = used.into_iter().map(|(sym, n)| (n, name(sym))).collect();
+        // a called name's hover says what this document's calls typeset: asked again each run
+        let called: std::collections::HashSet<String> = used.iter().map(|(_, n)| n.clone()).collect();
         used.sort_by(|a, b| b.cmp(a));
         let store = hover_store(self.cfg, analysis, &dir);
         let docs = crate::plugin::docs::index();
         let mut dirs = std::collections::HashSet::new();
-        for file in analysis.file_names().iter().map(Path::new) {
+        for file in analysis.file_names().iter().map(Path::new).filter(|_| self.cfg.plugins.docs) {
             if dirs.insert(file.parent()) {
                 docs.request(file);
             }
         }
         let Ok(mut hovers) = self.hovers.lock() else { return };
-        hovers.retain(|(u, n), _| u != uri || same && !own.contains(n));
+        hovers.retain(|(u, n), _| u != uri || same && !own.contains(n) && !called.contains(n));
         // What an earlier session kept for these same loads.
         if !same && let Some(path) = &store {
             let kept: HashMap<String, Option<String>> =
                 std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
             // A name a manual mined since documents may have been kept without it.
-            for (name, markdown) in kept.into_iter().filter(|(name, _)| !own.contains(name) && !docs.knows(name)) {
+            for (name, markdown) in
+                kept.into_iter().filter(|(name, _)| !own.contains(name) && !called.contains(name) && !docs.knows(name))
+            {
                 hovers.entry((uri.clone(), name)).or_insert(markdown);
             }
         }
