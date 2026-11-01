@@ -62,10 +62,13 @@ fn point(text: &str) -> Option<(f64, f64)> {
     Some((r * a.cos(), r * a.sin()))
 }
 
-/// The text of a node as plain words: macros and math marks dropped.
+/// The text of a node as plain words: math marks dropped, macros dropped but the logos (`\TeX`).
 fn plain(text: &str) -> String {
     let spaced = text.replace("\\\\", " ");
-    let words = MACRO.replace_all(&spaced, "");
+    let words = MACRO.replace_all(&spaced, |m: &regex::Captures| {
+        let name = m[0].trim_start_matches('\\');
+        if name.ends_with("TeX") { name.to_string() } else { String::new() }
+    });
     let kept: String = words.chars().filter(|c| !"${}\\".contains(*c)).collect();
     let kept = kept.split_whitespace().collect::<Vec<_>>().join(" ");
     match kept.char_indices().nth(TEXT_CLIP) {
@@ -563,5 +566,11 @@ mod tests {
         .unwrap();
         assert_eq!(s["nodes"].as_array().unwrap().len(), 4);
         assert_eq!(s["edges"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn logos_keep_their_names() {
+        assert_eq!(plain("\\TeX{} file"), "TeX file");
+        assert_eq!(plain("\\textbf{x}"), "x");
     }
 }

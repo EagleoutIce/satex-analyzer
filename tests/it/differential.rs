@@ -723,3 +723,28 @@ fn a_contents_line_keeps_its_boxes_and_leaders() {
         "{marks:?}"
     );
 }
+
+/// A forced line break (`\\`) stands in the paragraph where it is set: the
+/// record marks it between the two lines' characters.
+#[test]
+fn a_forced_line_break_is_marked_in_its_paragraph() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-break");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("b.tex"), "\\documentclass{article}\n\\begin{document}\nOne\\\\\nTwo\n\\end{document}\n")
+        .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "b.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let row = rows.iter().find(|r| r["detail"].as_str().is_some_and(|d| d.contains("One"))).expect("the paragraph");
+    let breaks: Vec<u64> = row["align"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|m| m["mark"] == "break")
+        .filter_map(|m| m["at"].as_u64())
+        .collect();
+    assert_eq!(breaks, [3], "{row}");
+}

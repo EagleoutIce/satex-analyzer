@@ -486,7 +486,8 @@
     const lines = sk.edges.map((e) => `<line x1="${X(e.x1)}" y1="${Y(e.y1)}" x2="${X(e.x2)}" y2="${Y(e.y2)}"${e.arrow === 'end' || e.arrow === 'both' ? ` marker-end="url(#${id})"` : ''}${e.arrow === 'start' || e.arrow === 'both' ? ` marker-start="url(#${id})"` : ''}/>`).join('');
     const boxes = sk.nodes.map((n) => {
       const shape = n.round ? `<ellipse cx="${X(n.x)}" cy="${Y(n.y)}" rx="${size(n.w / 2)}" ry="${size(n.h / 2)}"/>` : `<rect x="${X(n.x - n.w / 2)}" y="${Y(n.y + n.h / 2)}" width="${size(n.w)}" height="${size(n.h)}" rx="2"/>`;
-      return `${shape}<text x="${X(n.x)}" y="${Y(n.y)}" font-size="${font}">${esc(n.text)}</text>`;
+      const fit = Math.min(font, Math.max(5, (n.w * scale - 4) / (Math.max(n.text.length, 1) * 0.62))).toFixed(1);
+      return `${shape}<text x="${X(n.x)}" y="${Y(n.y)}" font-size="${fit}">${esc(n.text)}</text>`;
     }).join('');
     const width = ((x1 - x0) * scale + 2 * SKETCH_PAD).toFixed(0), height = ((y1 - y0) * scale + 2 * SKETCH_PAD).toFixed(0);
     return `<svg class="ts-sketch" role="img" aria-label="rough sketch of a TikZ picture" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
@@ -519,6 +520,7 @@
       if (mark.startsWith('box ')) { boxes++; return `<span class="ts-boxto" style="min-width: ${parseFloat(mark.slice(4))}pt">`; }
       if (mark === 'boxend') { if (!boxes) return ''; boxes--; return '</span>\u0000'; }
       if (mark === 'leaders') return '<span class="ts-leaders" aria-hidden="true"></span>';
+      if (mark === 'break') return '<br>';
       if (mark === 'begin') { table++; row = false; return '<span class="ts-table">'; }
       if (!table) return '';
       if (mark === 'cell') return `${opened()}</span><span class="ts-td">`;
@@ -550,7 +552,8 @@
     }).join('').replace(/<span class="ts-boxto" style="[^"]*"><\/span>\u0000/g, '');
     // set boxes at both ends (a contents line, a label) align the line as a row
     const aligned = html.startsWith('<span class="ts-boxto"') && html.endsWith('\u0000') || html.includes('ts-leaders');
-    return (picture ? sketchSvg(picture) : '') + (aligned ? '<i class="ts-row" hidden></i>' : '') + html.replaceAll('\u0000', '') + '</span>'.repeat(open + 2 * table + boxes);
+    if (picture) return sketchSvg(picture);
+    return (aligned ? '<i class="ts-row" hidden></i>' : '') + html.replaceAll('\u0000', '') + '</span>'.repeat(open + 2 * table + boxes);
   }
   /** The Markdown satex writes, for hovers and rule explanations: headings, paragraphs, lists,
    * fenced or indented code, links, emphasis. */
@@ -812,13 +815,40 @@
     if (!reset) continue;
     const note = fig.querySelector('.live-status').innerHTML, side = fig.querySelector('.ex-side');
     let live = null;
+    /** The line and column of the static source a click landed on: past a line's text, its end. */
+    const placeOf = (e) => {
+      const caret = document.caretPositionFromPoint?.(e.clientX, e.clientY) ?? (() => { const r = document.caretRangeFromPoint?.(e.clientX, e.clientY); return r && { offsetNode: r.startContainer, offset: r.startOffset }; })();
+      const lines = [...pre.querySelectorAll('.ln')];
+      const ln = caret?.offsetNode?.parentElement?.closest('.ln') ?? lines.find((l) => { const r = l.getBoundingClientRect(); return r.top <= e.clientY && e.clientY < r.bottom; });
+      if (!ln) return null;
+      const line = +ln.dataset.l - 1, length = data.source.split('\n')[line]?.length ?? 0;
+      if (!ln.contains(caret?.offsetNode)) return { line, col: length };
+      const span = document.createRange();
+      span.setStart(ln, 0);
+      span.setEnd(caret.offsetNode, caret.offset);
+      return { line, col: Math.min(span.toString().length, length) };
+    };
+    const slide = (ms) => new Promise((done) => setTimeout(done, ms));
     pre.addEventListener('click', async (e) => {
       if (live || e.target.closest('[data-cs], [data-lint]') || !data.source) return;
+      const place = placeOf(e);
+      // the editor builds beside the source, unseen, at its size; the source then makes room for the gutter and the editor fades in
       const host = Object.assign(document.createElement('div'), { className: 'src live-src' });
-      pre.replaceWith(host);
+      Object.assign(host.style, { position: 'absolute', visibility: 'hidden', left: `${pre.offsetLeft}px`, top: `${pre.offsetTop}px`, width: `${pre.offsetWidth}px`, minHeight: `${pre.offsetHeight}px` });
+      pre.after(host);
       card.hide();
       live = await liveEditor(fig, host, data.name, data.source);
+      const gutter = host.querySelector('.cm-gutters')?.offsetWidth ?? 0;
+      pre.style.transition = 'padding-left .15s var(--ease)';
+      pre.style.paddingLeft = `calc(${getComputedStyle(pre).paddingLeft} + ${gutter}px)`;
+      await slide(160);
+      host.removeAttribute('style');
+      host.style.minHeight = `${pre.offsetHeight}px`;
+      pre.replaceWith(host);
+      host.animate([{ opacity: 0 }, { opacity: 1 }], 140);
       reset.hidden = false;
+      const doc = live.view.state.doc;
+      if (place) live.view.dispatch({ selection: { anchor: doc.line(Math.min(place.line + 1, doc.lines)).from + place.col } });
       live.view.focus();
     });
     reset.addEventListener('click', () => {
@@ -827,6 +857,7 @@
       live.destroy();
       live = null;
       host.replaceWith(pre);
+      pre.style.paddingLeft = '';
       side.innerHTML = paragraphs(data.ts ?? []);
       fig.querySelector('.live-status').innerHTML = note;
       reset.hidden = true;
@@ -999,23 +1030,30 @@
       const c = text(i)[n - 1] ?? '';
       timer = setTimeout(() => run(i, n + 1, then), 18 + Math.random() * 28 + (c === ' ' ? 45 : c === ',' ? 160 : 0));
     };
-    // erased as an editor does it: the line selected, then gone
-    const erase = (then) => {
-      line.classList.add('selected');
-      timer = setTimeout(() => { line.classList.remove('selected'); line.innerHTML = ''; then(); }, 260);
-    };
+    const erase = (then) => { line.innerHTML = ''; then(); };
     // a typed `\command` opens a sketch of the editor's completion: the examples' own commands, as their cards write them
     const own = [...document.querySelectorAll('.ex-data')].flatMap((s) => { try { const d = JSON.parse(s.textContent); return Object.values(d.cs).flat().filter((r) => r.path === d.name && r.effective && r.effective !== r.name); } catch { return []; } });
     const offered = [...new Map(own.map((r) => [r.name, r])).values()].slice(0, 3);
     // TeX's category codes of what a name is spelled with once `@` is a letter
     const CODES = { '\\': 0, '{': 1, '}': 2, '$': 3, '&': 4, '#': 6, '^': 7, '_': 8, ' ': 10, '%': 14 };
     const catcode = (c) => CODES[c] ?? (/[A-Za-z@]/.test(c) ? 11 : 12);
+    /** Every character of the line with its category code under it, a word kept whole; the odd codes stand out. */
+    const annotate = () => {
+      const mark = (c) => `<span class="cc${[11, 12].includes(catcode(c)) ? '' : ' cc-hot'}" title="category ${catcode(c)}">${esc(c)}<sub>${catcode(c)}</sub></span>`;
+      const word = (w) => `<span class="cc-w">${[...w].map(mark).join('')}</span>`;
+      const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+      const texts = [];
+      while (walker.nextNode()) texts.push(walker.currentNode);
+      for (const t of texts) {
+        const html = t.parentElement.tagName === 'CODE' ? word(t.data) : t.data.split(/( +)/).map((w, i) => (i % 2 ? ' ' : word(w))).join('');
+        t.replaceWith(Object.assign(document.createElement('span'), { innerHTML: html }));
+      }
+      let n = 0;
+      for (const c of line.querySelectorAll('.cc')) c.style.setProperty('--i', String(n++));
+    };
     const effect = () => {
       const chip = line.querySelector('code');
-      if (effects[shown] === 'catcodes' && chip) {
-        chip.innerHTML = [...chip.textContent].map((c) => `<span class="cc${c === '@' ? ' cc-hot' : ''}" title="category ${catcode(c)}">${esc(c)}<sub>${catcode(c)}</sub></span>`).join('');
-        return true;
-      }
+      if (effects[shown] === 'catcodes') { annotate(); return true; }
       if (effects[shown] === 'ligatures') {
         line.innerHTML = line.innerHTML.replace(/fi(?=ne)/, '<span class="claim-lig" title="f and i set as one glyph, ﬁ"><span>fi</span><span>ﬁ</span></span>');
         return true;
@@ -1029,10 +1067,11 @@
     const settle = () => {
       timer = setTimeout(() => {
         if (effect() || line.querySelector('.claim-lint')) requestAnimationFrame(() => line.classList.add('shows'));
-        setTimeout(() => {
+        // the quick fix lands on this claim's underline only: one timer chain, cleared when another claim shows
+        timer = setTimeout(() => {
           for (const u of line.querySelectorAll('.claim-lint[data-fix]')) { u.textContent = u.dataset.fix; u.classList.add('fixed'); }
+          timer = setTimeout(() => paused || show((shown + 1) % knows.length), 2100);
         }, 1300);
-        timer = setTimeout(() => paused || show((shown + 1) % knows.length), 3400);
       }, 700);
     };
     const show = (i) => {

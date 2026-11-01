@@ -403,6 +403,8 @@ pub enum Align {
     BoxTo(crate::value::Scaled),
     BoxEnd,
     Leaders,
+    /// A forced line break in a paragraph (`\\`, `\newline`: a penalty of -10000).
+    Break,
 }
 
 impl Align {
@@ -415,6 +417,7 @@ impl Align {
             Align::BoxTo(width) => format!("box {:.2}", width as f64 / 65536.0),
             Align::BoxEnd => "boxend".into(),
             Align::Leaders => "leaders".into(),
+            Align::Break => "break".into(),
         }
     }
 }
