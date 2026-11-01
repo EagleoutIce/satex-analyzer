@@ -309,7 +309,7 @@ body.play main { padding: 0; height: 100%; display: grid; grid-template-rows: mi
 .output .err { color: var(--muted); }
 .statusbar { margin-top: auto; position: sticky; bottom: 0; display: flex; align-items: center; gap: .3rem .8rem; flex-wrap: nowrap; padding: .5rem 1.2rem; border-top: 1px solid var(--border); background: var(--panel); font: 12.5px ui-monospace, Menlo, monospace; }
 .statusbar .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#play-status { white-space: nowrap; } #play-status[data-done=error] { color: var(--error); white-space: normal; }
+#play-status { white-space: nowrap; } #play-status[data-done=error]:not([data-busy]) { color: var(--error); white-space: normal; }
 @media (max-width: 52rem) {
   body.play { height: auto; display: block; }
   .play-split { grid-template-columns: minmax(0, 1fr); } .divider { display: none; }
@@ -917,17 +917,17 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .draw-tools .pill[aria-pressed=true] { color: var(--accent); } .draw-meta { flex: 1; min-width: 0; margin-left: .2rem; font-size: .66rem; line-height: 1.25; }
 .draw-solo .draw-box > .draw-results { max-height: none; } .draw-results .search[hidden], .draw-filters[hidden] { display: none; } .draw-results .search { flex: none; z-index: 2; }
 /* one line per glyph: glyph, command with its packages, actions; other names fold out below */
-.draw-row { display: grid; grid-template-columns: 2.2rem minmax(0, 1fr) auto; align-items: center; gap: .5rem; min-height: 2.2rem; padding: .1rem .3rem; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+.draw-row { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr) auto; align-items: center; gap: .5rem; min-height: 2.3rem; padding: .1rem .3rem; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
 .draw-what { display: flex; align-items: center; gap: .45rem; min-width: 0; overflow: hidden; white-space: nowrap; } .draw-what .lib-pkg { margin: 0; overflow: hidden; text-overflow: ellipsis; }
 .draw-more-pill { flex: none; padding: 0 .45rem; border-radius: 999px; border: 1px solid var(--border); background: none; color: var(--muted); font-size: .7rem; cursor: pointer; }
 .draw-more { grid-column: 2 / -1; margin: 0 0 .3rem; padding: 0; list-style: none; font-size: .76rem; } .draw-more li { display: flex; gap: .5rem; align-items: center; } .draw-more .draw-acts { margin-left: auto; }
 .draw-acts { display: flex; gap: .25rem; } .draw-acts .pill { padding: .15rem .35rem; } .draw-acts .pill svg { width: .85rem; height: .85rem; }
 .draw-put.done svg { display: none; } .draw-put.done::before { content: "✓"; color: var(--safe); }
 
-.draw-row-more { text-align: center; padding: .4rem; list-style: none; }
+.draw-row-more { text-align: center; padding: .4rem; list-style: none; position: sticky; bottom: 0; z-index: 1; background: var(--panel); border-top: 1px solid var(--border); } .draw-page .draw-row-more { background: var(--bg); }
 
-.draw-glyph { flex: none; width: 2rem; text-align: center; font-size: 1.4rem; line-height: 1; }
-.draw-bmp { height: 1.4rem; background: currentColor; mask: var(--bmp) center / contain no-repeat; -webkit-mask: var(--bmp) center / contain no-repeat; }
+.draw-glyph { flex: none; width: 2.16rem; text-align: center; font-size: 1.512rem; line-height: 1; }
+.draw-bmp { height: 1.512rem; background: currentColor; mask: var(--bmp) center / contain no-repeat; -webkit-mask: var(--bmp) center / contain no-repeat; }
 .draw-off { opacity: .6; }
 .tree #play-outline[open] { flex: 1 0 auto; }
 .tree #play-exsect { margin-top: auto; position: sticky; bottom: -.5rem; padding-bottom: .5rem; background: var(--sunk); } .tree .grip { margin: .3rem 0 0; background: transparent; } .tree .grip:hover, .tree .grip.drag { background: var(--accent); }

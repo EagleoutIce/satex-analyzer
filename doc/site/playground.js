@@ -3194,7 +3194,10 @@
     $('t-heat').innerHTML = (top.length ? `<label class="ts-toggle t-heatgutter"><span>heat in the gutter</span><input type="checkbox" role="switch"${heatShown ? ' checked' : ''}></label>` : '') +
       rpBars(top, `busiest lines of ${escape(file.split('/').pop())}`, ([l]) => `line ${l}`, ([, n]) => `${short(n)} tokens`, false);
     // the rules that took time or found something, with their numbers
-    const all = texts.map((t) => t.match(/^rule (\S+) (\d+) (\d+)$/)).filter(Boolean).map(([, code, us, n]) => [code, +us, +n]);
+    // counts as the findings panel shows them: package code and switched-off rules leave none
+    const shown = new Map();
+    for (const d of Object.values(diagnostics).flat()) shown.set(d.code, (shown.get(d.code) ?? 0) + 1);
+    const all = texts.map((t) => t.match(/^rule (\S+) (\d+) (\d+)$/)).filter(Boolean).map(([, code, us]) => [code, +us, shown.get(code) ?? 0]);
     const rules = all.filter(([, us, n]) => n || us >= 500);
     const enabled = PLUGINS.filter((p) => configSet[`plugins.${p.name}`] !== false).length;
     $('t-rules').innerHTML = rpBars(rules, `lint rules: ${plural(all.length, 'rule')}, ${secs(all.reduce((s, r) => s + r[1], 0) / 1000)} in all`,
@@ -3610,6 +3613,7 @@
     const left = Number.isFinite(done) ? self.satexProgress.left(done, now - act.since) : null;
     status.textContent = left ? `${text} · about ${left} s left` : text;
     status.title = '';
+    status.dataset.busy = '';
     drawAct();
   }
   /** Work is over: the bar goes, the last result stays or comes back. */
@@ -3618,6 +3622,7 @@
     if (act.phase && text === null && status.textContent === act.text && act.rest) status.textContent = act.rest;
     if (text !== null) status.textContent = text;
     act.phase = ''; act.text = '';
+    delete status.dataset.busy;
     drawAct();
   }
   const mib = (n) => (n / 2 ** 20).toFixed(1);
