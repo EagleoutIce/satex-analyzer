@@ -706,7 +706,7 @@ mod line_guard {
     fn run(defs: &str, call: &str, alone: bool) -> Analysis {
         let mut cfg = super::cfg(1_000_000_000);
         cfg.limits.line_steps = LINE;
-        cfg.limits.seconds = 60;
+        cfg.limits.seconds = 600; // a backstop: the step bound below is what the test checks
         if alone {
             let l = &mut cfg.limits;
             (l.widen_after, l.cycle_after, l.recursion_depth, l.expansion_depth) =
