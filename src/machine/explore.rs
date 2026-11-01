@@ -20,7 +20,6 @@ const RUNS: usize = 64;
 /// (`\leavevmode` on one path, the next character on the other).
 const PARTITIONS: usize = 2;
 /// Fresh entries per loop point before an entry counts as a re-entry.
-const LOOP_ENTRIES: u32 = 16;
 
 /// A choice the running command met: how many arms it has and which one
 /// this run takes.
@@ -882,10 +881,10 @@ impl Machine<'_> {
     }
 
     /// Whether choices by `by` at `span` here entered as a loop more than
-    /// `LOOP_ENTRIES` times: every further one is a re-entry.
+    /// `limits.loop_entries` times: every further one is a re-entry.
     pub(crate) fn loop_capped(&self, span: Span, by: Sym) -> bool {
         let id = (span, by, self.source_progress - self.lines_read);
-        self.scratch.loop_summaries.get(&id).is_some_and(|c| c.1 > LOOP_ENTRIES)
+        self.scratch.loop_summaries.get(&id).is_some_and(|c| c.1 > u32::from(self.cfg.limits.loop_entries))
     }
 
     /// Whether a path other than the running one approximated nothing
@@ -1012,12 +1011,12 @@ impl Machine<'_> {
             return self.end_covered(paths, &fork, l, here, span, depth);
         }
         // A fresh entry (a later call, not a pass) starts its count anew,
-        // but only `LOOP_ENTRIES` times per point: past that, an entry is a
+        // but only `limits.loop_entries` times per point: past that, an entry is a
         // re-entry, so every point is summarized after finitely many passes.
         let fresh = !paths.loops.iter().any(|l| l.id == id && reentry(l));
         let counts = self.scratch.loop_summaries.entry(id).or_default();
         counts.1 += u32::from(fresh);
-        let (summaries, capped) = (counts.0, counts.1 > LOOP_ENTRIES);
+        let (summaries, capped) = (counts.0, counts.1 > u32::from(self.cfg.limits.loop_entries));
         // An entry whose call ended is never unwound to.
         paths.loops.retain(|l| l.id != id || reentry(l));
         if !capped {

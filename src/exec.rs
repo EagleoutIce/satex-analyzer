@@ -512,6 +512,9 @@ impl Machine<'_> {
             // § 1060, § 1103); `\mkern` and `\mskip` in math units.
             P::Typeset(crate::builtins::Typeset::Number) => {
                 let penalty = self.scan_number();
+                if self.mode == crate::mode::Modes::HORIZONTAL && penalty.is_some_and(|p| p <= -10000) {
+                    crate::observe::align(self, crate::facts::Align::Break);
+                }
                 // The item before it, where the list's tail is followed.
                 let before = self.natural.map_or(crate::mode::Last::UNKNOWN, |n| n.tail[0]);
                 self.append_item(crate::mode::Item::Penalty(penalty));
@@ -1698,7 +1701,7 @@ impl Machine<'_> {
             return true;
         }
         // One of several texts, or a name of several meanings: a path
-        // per one where the run may part. Read past `LOOP_ENTRIES` times at
+        // per one where the run may part. Read past `limits.loop_entries` times at
         // this `\csname` here, the token is an unknown part of the name: a
         // summary would join the arms into the token again.
         let one = self.one_of_members(t).is_some_and(|texts| texts.len() == 1);
@@ -2315,22 +2318,27 @@ impl Machine<'_> {
             log.extend_from_slice(&skipped);
         }
         let mut skipped = skipped;
-        skipped.extend(self.read_past_fi(&skipped));
+        let past = self.read_past_fi(&skipped);
+        let arms: Vec<Vec<Token>> = self.arms(&skipped).into_iter().map(|arm| [arm, &past].concat()).collect();
+        skipped.extend(past);
         self.may_run(by, &[], &[&skipped], span);
+        // arms of plain characters (`\__int_to_Letter:n`'s) leave text of their class; code leaves any text
+        let plain = arms.iter().flatten().all(|t| t.cs().is_none());
         if self.scanning > 0 {
             self.scan_undecided = true;
+        } else if plain {
+            let texts: Vec<&[Token]> = arms.iter().map(Vec::as_slice).collect();
+            let left = self.unknown_text(Unk::Of(&texts), span);
+            self.unread(left);
         } else {
             self.unread_unknown(span);
         }
     }
 
-    /// The tokens past a widened conditional's `\fi` its arms read as
-    /// arguments (`\expandafter\@firstoftwo\else…\fi{A}{B}`,
-    /// `\@gobbletwo\fi{…}\fi`): read here, so none of them runs as code.
-    /// Nothing when an arm's reach is not known or the arms would leave
-    /// different conditionals or groups open.
-    fn read_past_fi(&mut self, skipped: &[Token]) -> Vec<Token> {
-        let Some((&fi, body)) = skipped.split_last() else { return Vec::new() };
+    /// The arms of skipped conditional text: split at its own `\else` and
+    /// `\or`, the closing `\fi` left out.
+    fn arms<'t>(&self, skipped: &'t [Token]) -> Vec<&'t [Token]> {
+        let Some((_, body)) = skipped.split_last() else { return Vec::new() };
         let mut arms = Vec::new();
         let (mut depth, mut start) = (crate::machine::CondDepth::default(), 0);
         for (i, &t) in body.iter().enumerate() {
@@ -2340,6 +2348,17 @@ impl Machine<'_> {
             }
         }
         arms.push(&body[start..]);
+        arms
+    }
+
+    /// The tokens past a widened conditional's `\fi` its arms read as
+    /// arguments (`\expandafter\@firstoftwo\else…\fi{A}{B}`,
+    /// `\@gobbletwo\fi{…}\fi`): read here, so none of them runs as code.
+    /// Nothing when an arm's reach is not known or the arms would leave
+    /// different conditionals or groups open.
+    fn read_past_fi(&mut self, skipped: &[Token]) -> Vec<Token> {
+        let Some(&fi) = skipped.last() else { return Vec::new() };
+        let arms = self.arms(skipped);
         let mut ahead = Vec::new();
         let mut reaches = Vec::new();
         let last = arms.len() - 1;

@@ -14,6 +14,10 @@ pub const EVERY_SWITCH: &str = "*";
 pub struct Limits {
     /// Tokens the document may digest, and the kernel on top of that.
     pub steps: u64,
+    /// Tokens one trial run of a command may read when a hover learns what it does: a sectioning
+    /// command takes a few thousand, hyperref's `\GetTitleString` a million. Eight runs answer one
+    /// question at most.
+    pub probe_steps: u64,
     pub format_steps: u64,
     /// How deep `\input` may nest.
     pub file_depth: u16,
@@ -71,6 +75,10 @@ pub struct Limits {
     /// change become ranges (SEMANTICS § 14). A `\loop` counting to an
     /// unknown bound has its counter as a range after these rounds.
     pub widen_after: u16,
+    /// How often calls at one place may enter a loop afresh before every further entry counts as a
+    /// pass of it, so the loop is summarized: sibling calls on one line (`\int_to_Hex:n` seven
+    /// times in an `\edef`) stay exact up to this.
+    pub loop_entries: u16,
     /// How many runs of the build (latexmk's rounds) the analysis takes to
     /// reach the files' fixpoint; past them what still changes is unknown.
     /// 1 runs once, with no file of an earlier run.
@@ -169,6 +177,7 @@ impl Limits {
             "expansion_depth" => self.expansion_depth.into(),
             "site_expansions" => self.site_expansions.into(),
             "line_steps" => self.line_steps,
+            "probe_steps" => self.probe_steps,
             "replay_steps" => self.replay_steps,
             "repeat_failures" => self.repeat_failures.into(),
             "seconds" => self.seconds,
@@ -178,6 +187,7 @@ impl Limits {
             "alike" => self.alike.into(),
             "heads_apart" => self.heads_apart.into(),
             "widen_after" => self.widen_after.into(),
+            "loop_entries" => self.loop_entries.into(),
             "recursion_depth" => self.recursion_depth.into(),
             "loop_heads" => self.loop_heads.into(),
             "call_summary_after" => self.call_summary_after.into(),
@@ -213,6 +223,7 @@ impl Default for Limits {
     fn default() -> Limits {
         Limits {
             steps: 4_000_000_000,
+            probe_steps: 2_000_000,
             // The real expl3 reads the Unicode data files while the kernel
             // is built; that is done once and then cached.
             format_steps: 9_000_000_000,
@@ -241,6 +252,7 @@ impl Default for Limits {
             heads_apart: 32,
             meaning_splits: 4,
             widen_after: 3,
+            loop_entries: 256,
             build_runs: 5,
             recursion_depth: 100,
             loop_heads: 512,

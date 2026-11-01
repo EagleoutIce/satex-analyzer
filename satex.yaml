@@ -620,6 +620,9 @@ limits:
   steps: 4000000000  # how many tokens the document may run through before the run stops. Raise it for huge documents
     #! affects: speed
     #! example: a 1000-page thesis with TikZ may need more
+  probe_steps: 2000000  # tokens one trial run may read when a hover learns what a command does. Eight runs answer one question
+    #! affects: speed, precision
+    #! example: lower in a single-threaded host, where a trial blocks the next request
   format_steps: 9000000000  # the same for reading the LaTeX format, which is cached after the first time
     #! affects: speed
     #! example: rarely needs a change
@@ -665,6 +668,9 @@ limits:
   widen_after: 3  # how many rounds a loop is followed exactly before what still changes becomes a range
     #! affects: precision, speed
     #! example: \loop\advance\c by1 ... \repeat with unknown bound: c becomes a range after 3 rounds
+  loop_entries: 256  # how often calls at one place may enter a loop afresh before it is summarized
+    #! affects: precision, speed
+    #! example: seven \int_to_Hex:n calls in one \edef stay exact
   build_runs: 5  # how many LaTeX runs satex simulates to settle .aux, .toc and the rest. 1 runs once with no earlier files
     #! affects: precision, speed
     #! example: 1: \ref and \tableofcontents read nothing from an earlier run

@@ -14,13 +14,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::tex::{ArgSpec, ArgType, FileId, Sym, Token};
 
-/// Tokens one probe run may read: a sectioning command takes a few
-/// thousand, or a million where hyperref's `\\GetTitleString` loops over
-/// its title; a runaway loop is cut off here.
-const PROBE_STEPS: u64 = 2_000_000;
-/// Tokens all runs answering one question may read together, however many
-/// runs it takes: a question costs at most this plus one run.
-const QUESTION_STEPS: u64 = 8 * PROBE_STEPS;
+/// Runs one question may take, each up to `limits.probe_steps`: a question costs at most this many
+/// runs' tokens plus one run.
+const QUESTION_RUNS: u64 = 8;
 
 /// Set while a request waits for the engine: probes run in the
 /// [`background`] stop, and what they found is not kept.
@@ -66,18 +62,24 @@ pub(crate) fn preempted() -> bool {
     STOPPING.load(Ordering::Relaxed) || (BACKGROUND.get() && WANTED.load(Ordering::Relaxed))
 }
 
-/// Tokens the runs of one question read so far ([`QUESTION_STEPS`]).
-#[derive(Default)]
-struct Spent(Cell<u64>);
+/// Tokens the runs of one question read so far, and what they may read ([`QUESTION_RUNS`]).
+struct Spent {
+    read: Cell<u64>,
+    budget: u64,
+}
 
 impl Spent {
+    fn of(cfg: &Config) -> Self {
+        Spent { read: Cell::new(0), budget: QUESTION_RUNS * cfg.limits.probe_steps }
+    }
+
     /// What `run` watched, unless the question has read its tokens.
     fn run(&self, run: impl FnOnce() -> Option<Watch>) -> Option<Watch> {
-        if self.0.get() >= QUESTION_STEPS || preempted() {
+        if self.read.get() >= self.budget || preempted() {
             return None;
         }
         let watch = run()?;
-        self.0.set(self.0.get() + watch.steps);
+        self.read.set(self.read.get() + watch.steps);
         Some(watch)
     }
 }
@@ -277,7 +279,7 @@ pub fn probe(analysis: &Analysis, sym: Sym, at: State) -> Option<Probed> {
     }
     let cfg = sandbox_config(&analysis.settings);
     let found = crate::progress::because("its arguments", || {
-        Prober { cfg: &cfg, analysis, sym, at, context: None, seen: Default::default(), spent: Spent::default() }
+        Prober { cfg: &cfg, analysis, sym, at, context: None, seen: Default::default(), spent: Spent::of(&cfg) }
             .derive()
     });
     // One cut by a lint's deadline is no answer for a later hover.
@@ -417,7 +419,7 @@ pub fn probe_contexts(analysis: &Analysis, sym: Sym) -> Vec<(Option<Sym>, Option
     if let Some(found) = analysis.context_probes.lock().ok().and_then(|p| p.get(&sym).cloned()) {
         return found;
     }
-    let spent = Spent::default();
+    let spent = Spent::of(&analysis.settings);
     let bare = |env: Option<Sym>| {
         let why = env
             .map_or("what it raises alone".into(), |e| format!("what it raises in {{{}}}", analysis.interner.name(e)));
@@ -459,7 +461,7 @@ fn sandbox_config(base: &Config) -> Config {
         trace: false,
         timings: false,
         // Within a lint the run's own clock bounds them (`within_run`).
-        limits: Limits { steps: PROBE_STEPS, ..base.limits.clone() },
+        limits: Limits { steps: base.limits.probe_steps, ..base.limits.clone() },
         ..base.clone()
     }
 }
