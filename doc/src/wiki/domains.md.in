@@ -207,12 +207,13 @@ typed digits     d, with an interval [lo, hi]
 - At the end of a ⟨number⟩ scan, paths that differ only in numbers join to typed digits over the hull.
 - A number starting with a known digit has no sign: it lies in 0 to 2³¹-1 (tex.web § 445). A known last digit decides `\ifodd`.
 - `\the` of a dimension in a one-signed interval prints typed digits, a point, at most five digits and `pt`. Scanned back, it is an interval (§§ 448-458), so bounds survive `\pgf@sys@tonumber` and pgfmath's `round`, `floor`, `int`.
+- `\the` of an unknown glue prints its width, then a one-of token for the parts that may be nonzero: nothing, ` plus ⟨d⟩⟨unit⟩`, ` minus ⟨d⟩⟨unit⟩` or both (§ 178). A glue scan's `plus` and `minus` keywords split it per text, so `\vskip\the\skip@` never leaves part of it as typeset text.
 
 ### One-of tokens
 
 A one-of token stands for one of a few texts (a joined `\@currenvir`, `v` plus `a` or `b`).
 
-- A read that splits it (`\ifx`, `\csname`, a scan) narrows it on each path to the texts that path took (`split_one_of_groups`, [`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)). Every copy on that path, in a macro, an argument or a name being built, then holds those texts.
+- A read that splits it (`\ifx`, `\csname`, a scan, a keyword) narrows it on each path to the texts that path took (`split_one_of_groups`, [`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)). Every copy on that path, in a macro, an argument or a name being built, then holds those texts.
 - A `\csname` whose paths join inside the name keeps per name what each path took, and narrows again when it parts per name.
 - At a join, a copy narrowed to one text is that text, so arms that took different texts join as texts.
 - Only a token made once is narrowed. Made again, or once passes of a loop were joined since, its copies may stand for different choices.

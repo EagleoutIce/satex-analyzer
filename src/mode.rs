@@ -1521,10 +1521,10 @@ impl Machine<'_> {
             return false;
         }
         let par = self.intern("par");
-        // Back at the same command after its `\par`, still horizontal: TeX
+        // Back at the same command after its `\par`, still maybe horizontal: TeX
         // would insert `\par` forever, so a run that compiles had it end the
         // paragraph. Only an approximated `\par` gets here.
-        if self.par_inserted.replace(token.span) == Some(token.span) && horizontal == self.mode {
+        if self.par_inserted.replace(token.span) == Some(token.span) {
             // Without `analysis.assume_compiles` it is TeX's endless loop, and
             // the path goes on as the one that ends would.
             let (severity, message) = match self.cfg.compiles() {

@@ -753,3 +753,63 @@ fn a_walk_over_joined_digits_meets_its_marker() {
     let bad = crate::support::diagnosed(&analysis, "undefined-control-sequence");
     assert!(!bad.iter().any(|m| m.contains("BADSTOP")), "{bad:?}");
 }
+
+/// A widened conditional whose arms read past their `\fi`
+/// (`\expandafter\firstoftwo\else\expandafter\secondoftwo\fi{A}{B}`): `{A}`
+/// and `{B}` are what the arms read, never code run after the `\fi`, so
+/// neither sets `\a` for sure.
+#[test]
+fn a_widened_arm_reads_its_arguments_past_the_fi() {
+    let mut cfg = crate::support::bare();
+    cfg.limits.choices = 0;
+    let source = r"\long\def\firstoftwo#1#2{#1}\long\def\secondoftwo#1#2{#2}
+\def\test{\ifodd\pdfuniformdeviate2 \relax\fi\ifodd\pdfuniformdeviate2 \expandafter\firstoftwo\else\expandafter\secondoftwo\fi{\gdef\a{1}}{\gdef\a{2}}}
+\iftrue\test\fi
+\gdef\after{}";
+    let analysis = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
+    assert!(!with_code(&analysis, "undecided-condition").is_empty(), "the conditional was not widened");
+    let a = body(&analysis, "a");
+    assert!(!["1", "2"].contains(&a.as_str()), "an argument ran as code after the \\fi: \\a is {a}");
+    assert!(names(&analysis).contains(&"after".to_string()));
+    assert!(with_code(&analysis, "extra-fi").is_empty(), "{:?}", with_code(&analysis, "extra-fi"));
+}
+
+/// `\vskip` where the mode is horizontal or internal vertical (an undecided
+/// `\leavevmode` joined at its `\fi`) and LaTeX's `\par` is a macro: the
+/// horizontal path reads `\par` first, the paths differ and each reads the
+/// glue, so `\z@` is never left over as an assignment.
+#[test]
+fn vertical_glue_in_a_joined_mode_reads_its_glue() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex(
+        r"\documentclass{article}
+\makeatletter
+\def\maybe{\ifodd\pdfuniformdeviate 2 \leavevmode\fi}
+\begin{document}
+\vbox{\maybe\vskip\z@}
+\end{document}",
+    );
+    assert!(with_code(&analysis, "missing-number").is_empty(), "{:?}", with_code(&analysis, "missing-number"));
+}
+
+/// `\vskip\the\skip@` with an unknown glue: the tail `\the` prints is one of
+/// the texts TeX may print, which the glue scan reads whole, so vertical
+/// mode stays vertical (hyperref's `\Hy@RestoreLastskip`).
+#[test]
+fn a_printed_glue_is_read_back_whole() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex(
+        r"\documentclass{article}
+\makeatletter
+\begin{document}
+\par\skip@=-\lastskip
+\edef\x{\vskip\the\skip@\relax}\x
+\ifhmode\gdef\Horizontal{}\fi
+\end{document}",
+    );
+    assert!(!names(&analysis).contains(&"Horizontal".to_string()), "part of the glue was typeset");
+}

@@ -1315,6 +1315,15 @@ impl Machine<'_> {
             if read.is_empty() && !self.is_spacer(token) {
                 self.probe_scans(token, keyword);
             }
+            // One of several texts (a glue's tail as `\the` prints it): a path each, read on.
+            if self.one_of_members(token).is_some() && self.split_one_of(token) {
+                self.unread_all(&read);
+                read.clear();
+                want = keyword.chars().next();
+                wanted = keyword.chars();
+                wanted.next();
+                continue;
+            }
             match token.tok {
                 Tok::Chr(c, cat) if cat != Catcode::Active && (c == letter || c == letter.to_ascii_uppercase()) => {
                     read.push(token);

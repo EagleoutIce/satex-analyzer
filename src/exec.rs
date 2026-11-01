@@ -1140,11 +1140,11 @@ impl Machine<'_> {
         // Only the interval this quantity leaves may type its digits.
         self.abs = None;
         let value = self.internal_quantity(sym, span);
-        // Glue prints its `plus` and `minus` parts unless both are zero
-        // (tex.web § 178).
-        let tail = match &value {
-            Some(Value::GlueNum { hull, .. }) => hull.stretch != Num::exact(0) || hull.shrink != Num::exact(0),
-            _ => matches!(level, Some(RegKind::Skip | RegKind::MuSkip)),
+        // Glue prints its `plus` and `minus` parts where they may be nonzero (tex.web § 178).
+        let zero = Num::exact(0);
+        let parts = match &value {
+            Some(Value::GlueNum { hull, .. }) => (hull.stretch != zero, hull.shrink != zero),
+            _ => (true, true),
         };
         match value {
             Some(Value::Toks(toks)) => toks.to_vec(),
@@ -1172,8 +1172,8 @@ impl Machine<'_> {
                 // At most five places after the point (tex.web § 103).
                 tokens.push(self.unknown_text(Unk::Class(TextClass::DIGIT, true, Some(5), &[]), span));
                 tokens.extend(self.text_tokens(unit, span));
-                if tail {
-                    tokens.push(self.unknown_text(Unk::Class(TextClass::PRINTED, false, None, &[]), span));
+                if level != Some(RegKind::Dimen) && parts != (false, false) {
+                    tokens.push(self.glue_tail(parts, unit, span));
                 }
                 tokens
             }
@@ -1196,6 +1196,26 @@ impl Machine<'_> {
             }
             None => Vec::new(),
         }
+    }
+
+    /// The `plus` and `minus` parts `\the` prints after a glue's width, the
+    /// ones that may be nonzero: one of the texts TeX may print, so a glue
+    /// scan reads its keywords path by path (tex.web § 178).
+    fn glue_tail(&mut self, (stretch, shrink): (bool, bool), unit: &str, span: Span) -> Token {
+        let part = |me: &mut Self, keyword: &str| {
+            let mut text = me.text_tokens(&format!(" {keyword} "), span);
+            text.extend(me.unknown_number(None, crate::value::UNIT, span));
+            text.extend(me.text_tokens(".", span));
+            text.push(me.unknown_text(Unk::Class(TextClass::DIGIT, true, Some(5), &[]), span));
+            let units = [unit, "fil", "fill", "filll"].iter().map(|u| Rc::from(me.text_tokens(u, span))).collect();
+            text.push(me.one_of(units, span));
+            text
+        };
+        let plus = if stretch { part(self, "plus") } else { Vec::new() };
+        let minus = if shrink { part(self, "minus") } else { Vec::new() };
+        let both = [plus.as_slice(), minus.as_slice()].concat();
+        let texts = [Vec::new(), plus, minus, both].into_iter().map(Rc::from).collect();
+        self.one_of(texts, span)
     }
 
     /// An unknown value in `num` as `\the` prints it, its integer part the
@@ -2294,12 +2314,110 @@ impl Machine<'_> {
         if let Some(log) = &mut self.skip_log {
             log.extend_from_slice(&skipped);
         }
+        let mut skipped = skipped;
+        skipped.extend(self.read_past_fi(&skipped));
         self.may_run(by, &[], &[&skipped], span);
         if self.scanning > 0 {
             self.scan_undecided = true;
         } else {
             self.unread_unknown(span);
         }
+    }
+
+    /// The tokens past a widened conditional's `\fi` its arms read as
+    /// arguments (`\expandafter\@firstoftwo\else…\fi{A}{B}`,
+    /// `\@gobbletwo\fi{…}\fi`): read here, so none of them runs as code.
+    /// Nothing when an arm's reach is not known or the arms would leave
+    /// different conditionals or groups open.
+    fn read_past_fi(&mut self, skipped: &[Token]) -> Vec<Token> {
+        let Some((&fi, body)) = skipped.split_last() else { return Vec::new() };
+        let mut arms = Vec::new();
+        let (mut depth, mut start) = (crate::machine::CondDepth::default(), 0);
+        for (i, &t) in body.iter().enumerate() {
+            if depth.feed(self.cond_prim(t)).is_some() {
+                arms.push(&body[start..i]);
+                start = i + 1;
+            }
+        }
+        arms.push(&body[start..]);
+        let mut ahead = Vec::new();
+        let mut reaches = Vec::new();
+        let last = arms.len() - 1;
+        for (k, arm) in arms.into_iter().enumerate() {
+            match self.arm_reach(arm, k == last, fi, &mut ahead) {
+                Some(n) => reaches.push(n),
+                None => {
+                    self.unread_all(&ahead);
+                    return Vec::new();
+                }
+            }
+        }
+        let (lo, hi) = (reaches.iter().min().copied().unwrap_or(0), reaches.iter().max().copied().unwrap_or(0));
+        if !self.balanced(&ahead[lo..hi]) {
+            self.unread_all(&ahead);
+            return Vec::new();
+        }
+        let rest = ahead.split_off(hi);
+        self.unread_all(&rest);
+        ahead
+    }
+
+    /// How many tokens past the `\fi` the macro ending `arm` reads, read
+    /// into `ahead` as far as needed. With no `\expandafter` before it, the
+    /// macro of the `last` arm reads the `\fi` too, and the next `\fi`
+    /// ends the conditional. One ending an earlier arm reads the `\else`:
+    /// not known.
+    fn arm_reach(&mut self, arm: &[Token], last: bool, fi: Token, ahead: &mut Vec<Token>) -> Option<usize> {
+        let Some(Meaning::Macro(m)) = arm.last().and_then(Token::cs).map(|cs| self.env.meaning(cs)) else {
+            return Some(0);
+        };
+        if m.arity() == 0 || m.arg_spec.is_some() {
+            return Some(0);
+        }
+        let params = m.parameter_text.clone();
+        let expanded = arm.len() >= 2 && self.is_expandafter(arm[arm.len() - 2]);
+        if params.brace_end || !expanded && !last {
+            return None;
+        }
+        let (unknown, limit) = (self.unknown, self.cfg.limits.held_tokens);
+        let mut get = |i: usize| -> Option<Token> {
+            let i = match (expanded, i) {
+                (false, 0) => return Some(fi),
+                (false, i) => i - 1,
+                (true, i) => i,
+            };
+            while ahead.len() <= i && ahead.len() < limit {
+                ahead.push(self.next_token()?);
+            }
+            let t = *ahead.get(i)?;
+            let opaque = t.tok == Tok::Cs(unknown) || matches!(t.tok, Tok::Chr(c, _) if crate::tex::is_unknown_char(c));
+            (!opaque).then_some(t)
+        };
+        let read = reach(&params, &mut get)?;
+        if expanded {
+            return Some(read);
+        }
+        let next = get(read)?;
+        (self.cond_prim(next) == Some(Primitive::Fi)).then_some(read)
+    }
+
+    fn is_expandafter(&self, t: Token) -> bool {
+        t.cs().is_some_and(|cs| matches!(self.env.meaning(cs).prim(), Some(Primitive::ExpandAfter)))
+    }
+
+    /// Whether `text` leaves conditionals and groups as it found them.
+    fn balanced(&self, text: &[Token]) -> bool {
+        let (mut conds, mut braces) = (crate::machine::CondDepth::default(), 0i64);
+        for &t in text {
+            if conds.feed(self.cond_prim(t)).is_some() {
+                return false;
+            }
+            braces += i64::from(t.is_cat(Catcode::Begin)) - i64::from(t.is_cat(Catcode::End));
+            if braces < 0 {
+                return false;
+            }
+        }
+        conds.0 == 0 && braces == 0
     }
 
     /// `\ifcase`: skip to the selected arm, or run them all when the number
@@ -5136,4 +5254,61 @@ fn primitive_name(engine: crate::config::Engine, p: Primitive) -> Option<String>
 /// `\aftergroup` is. The `\relax` `\csname` gives an unknown name is not.
 fn is_primitive_named(engine: crate::config::Engine, name: &str, p: Primitive) -> bool {
     with_primitives(engine, |all| all.by_name.get(name) == Some(&p))
+}
+
+/// How many tokens of a call's input `params` match (tex.web §§ 392-399),
+/// `get` giving them one by one. `None` where the input runs out, is
+/// opaque or does not match.
+fn reach(params: &ParameterText, get: &mut impl FnMut(usize) -> Option<Token>) -> Option<usize> {
+    use crate::tex::ParamItem;
+    let (items, mut i, mut k) = (&params.items, 0, 0);
+    while k < items.len() {
+        if let ParamItem::Lit(tok) = items[k] {
+            if get(i)?.tok != tok {
+                return None;
+            }
+            (i, k) = (i + 1, k + 1);
+            continue;
+        }
+        let delimiter: Vec<Tok> = items[k + 1..]
+            .iter()
+            .map_while(|item| match item {
+                ParamItem::Lit(t) => Some(*t),
+                ParamItem::Param(_) => None,
+            })
+            .collect();
+        if delimiter.is_empty() {
+            while get(i)?.is_space() {
+                i += 1;
+            }
+        }
+        let mut depth = 0usize;
+        loop {
+            let t = get(i)?;
+            if depth == 0 && !delimiter.is_empty() {
+                let mut found = true;
+                for (j, d) in delimiter.iter().enumerate() {
+                    if get(i + j)?.tok != *d {
+                        found = false;
+                        break;
+                    }
+                }
+                if found {
+                    i += delimiter.len();
+                    break;
+                }
+            }
+            i += 1;
+            if t.is_cat(Catcode::Begin) {
+                depth += 1;
+            } else if t.is_cat(Catcode::End) {
+                depth = depth.checked_sub(1)?;
+            }
+            if depth == 0 && delimiter.is_empty() {
+                break;
+            }
+        }
+        k += 1 + delimiter.len();
+    }
+    Some(i)
 }
