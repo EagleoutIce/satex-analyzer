@@ -438,6 +438,8 @@ pub struct Analysis {
 
 /// Collection sizes change slowly. Checking them on every token would
 /// cost more than it saves.
+/// Steps between two pauses in which a language server answers requests: a few milliseconds.
+const PAUSE_MASK: u64 = (1 << 15) - 1;
 const CHECK_INTERVAL: u64 = 256;
 
 /// How many tokens of an input list a call's shape hashes: an identity
@@ -4143,6 +4145,10 @@ will look undefined",
         }
         self.out.steps += 1;
         self.read += 1;
+        // a language server answers from its last analysis meanwhile, even inside one long command
+        if self.out.steps & PAUSE_MASK == 0 {
+            crate::progress::pause_now();
+        }
         if self.out.timings.is_enabled() {
             self.out.timings.count_token();
         }

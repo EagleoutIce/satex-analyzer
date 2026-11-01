@@ -918,7 +918,8 @@ impl Engine {
     }
 
     /// `f`'s run, while which the requests that only read are answered
-    /// from the analyses there are, and the others wait for its end.
+    /// from the analyses there are (nothing yet before a document's first one,
+    /// never a wait), and the others wait for its end.
     fn serving<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
         let Some(inbox) = self.inbox.clone() else { return f(self) };
         let (mut docs, hovers) = (self.docs.clone(), self.hovers.clone());
@@ -932,10 +933,6 @@ impl Engine {
                             doc.text = text.clone();
                         }
                         waiting.borrow_mut().push(msg);
-                    }
-                    // A document's first analysis is waited for.
-                    msg if msg.uri().is_some_and(|uri| docs.get(uri).is_none_or(|d| d.analysis.is_none())) => {
-                        waiting.borrow_mut().push(msg)
                     }
                     msg => {
                         if let Some(msg) = answer(&docs, &hovers, msg) {
