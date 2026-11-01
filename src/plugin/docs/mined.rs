@@ -15,7 +15,7 @@ pub struct Mined;
 pub const EXTENSION: &str = "satex-docs";
 
 impl super::DocPlugin for Mined {
-    fn mine(&self, file: &Path, text: &str, out: &mut Vec<Entry>) {
+    fn mine(&self, _: &crate::config::DocsConfig, file: &Path, text: &str, out: &mut Vec<Entry>) {
         if file.extension().is_none_or(|e| e != EXTENSION) {
             return;
         }
@@ -69,10 +69,10 @@ mod tests {
         };
         let text = Json::Array(vec![row(&entry)]).to_string();
         let mut out = Vec::new();
-        Mined.mine(Path::new("doc/latex/pkg/pkg.satex-docs"), &text, &mut out);
+        Mined.mine(&Default::default(), Path::new("doc/latex/pkg/pkg.satex-docs"), &text, &mut out);
         assert_eq!(out, vec![entry]);
         let mut none = Vec::new();
-        Mined.mine(Path::new("doc/latex/pkg/pkg.tex"), &text, &mut none);
+        Mined.mine(&Default::default(), Path::new("doc/latex/pkg/pkg.tex"), &text, &mut none);
         assert!(none.is_empty());
     }
 }

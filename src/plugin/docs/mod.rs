@@ -15,6 +15,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::config::DocsConfig;
+
 /// Whether an entry documents a command for users or its implementation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Audience {
@@ -48,22 +50,19 @@ pub struct Dirs {
 /// One doc convention.
 pub trait DocPlugin: Sync {
     /// Adds the entries this convention documents in `text` of `file`.
-    fn mine(&self, _file: &Path, _text: &str, _out: &mut Vec<Entry>) {}
+    fn mine(&self, _config: &DocsConfig, _file: &Path, _text: &str, _out: &mut Vec<Entry>) {}
     /// Links the entries mined from `dirs` to their manual.
-    fn link(&self, _dirs: &Dirs, _entries: &mut [Entry]) {}
+    fn link(&self, _config: &DocsConfig, _dirs: &Dirs, _entries: &mut [Entry]) {}
 }
 
 /// The doc conventions, in order: a new one is one more line.
 pub const PLUGINS: &[&dyn DocPlugin] = &[&ltxdoc::Ltxdoc, &l3doc::L3doc, &texdoc::Texdoc, &mined::Mined];
 
-/// The extensions of the files mined.
-const MINED: [&str; 3] = ["dtx", "tex", mined::EXTENSION];
-
 impl Dirs {
     /// The documented sources of the package `file` belongs to: for
     /// `⟨root⟩/tex/⟨path⟩/f.sty`, the deepest `⟨root⟩/source/⟨path…⟩` and
     /// `⟨root⟩/doc/⟨path…⟩` that exist (TDS).
-    pub fn of(file: &Path) -> Option<Dirs> {
+    pub fn of(config: &DocsConfig, file: &Path) -> Option<Dirs> {
         let parts: Vec<_> = file.parent()?.components().collect();
         let at = parts.iter().rposition(|c| c.as_os_str() == "tex")?;
         let root: PathBuf = parts[..at].iter().collect();
@@ -71,18 +70,18 @@ impl Dirs {
         let find = |top: &str| {
             (2..=rest.len()).rev().map(|n| rest[..n].iter().fold(root.join(top), |p, c| p.join(c))).find(|d| d.is_dir())
         };
-        let dirs = Dirs { source: find("source"), doc: find("doc") };
+        let dirs = Dirs { source: find(&config.source_root), doc: find(&config.doc_root) };
         (dirs.source.is_some() || dirs.doc.is_some()).then_some(dirs)
     }
 
-    fn files(&self) -> Vec<PathBuf> {
+    fn files(&self, config: &DocsConfig) -> Vec<PathBuf> {
         let mut out: Vec<PathBuf> = [&self.source, &self.doc]
             .into_iter()
             .flatten()
             .filter_map(|d| std::fs::read_dir(d).ok())
             .flatten()
             .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|e| MINED.iter().any(|m| e == *m)) && p.is_file())
+            .filter(|p| p.extension().is_some_and(|e| config.extensions.iter().any(|m| e == m.as_str())) && p.is_file())
             .collect();
         out.sort();
         out
@@ -91,22 +90,23 @@ impl Dirs {
 
 /// Every entry `plugins` find in `dirs`, by name: a user entry before an
 /// implementation one, then the first found.
-pub fn mine(plugins: &[&dyn DocPlugin], dirs: &Dirs) -> HashMap<String, Entry> {
+pub fn mine(plugins: &[&dyn DocPlugin], config: &DocsConfig, dirs: &Dirs) -> HashMap<String, Entry> {
     let mut entries = Vec::new();
-    for file in dirs.files() {
+    for file in dirs.files(config) {
         let Ok(bytes) = std::fs::read(&file) else { continue };
         let text = String::from_utf8_lossy(&bytes);
         for plugin in plugins {
             // A plugin that fails on one file loses only that file.
             let mut found = Vec::new();
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plugin.mine(&file, &text, &mut found))).is_ok()
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plugin.mine(config, &file, &text, &mut found)))
+                .is_ok()
             {
                 entries.append(&mut found);
             }
         }
     }
     for plugin in plugins {
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plugin.link(dirs, &mut entries)));
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plugin.link(config, dirs, &mut entries)));
     }
     let mut out: HashMap<String, Entry> = HashMap::new();
     for e in entries {
@@ -146,13 +146,14 @@ struct State {
 /// The mined entries of each package, filled by one background thread.
 pub struct Index {
     plugins: &'static [&'static dyn DocPlugin],
+    config: DocsConfig,
     state: Mutex<State>,
     subscribers: Mutex<Vec<Subscriber>>,
 }
 
 impl Index {
-    pub fn new(plugins: &'static [&'static dyn DocPlugin]) -> Arc<Index> {
-        Arc::new(Index { plugins, state: Mutex::default(), subscribers: Mutex::default() })
+    pub fn new(plugins: &'static [&'static dyn DocPlugin], config: DocsConfig) -> Arc<Index> {
+        Arc::new(Index { plugins, config, state: Mutex::default(), subscribers: Mutex::default() })
     }
 
     /// Calls `f` with the names of each package once it is mined.
@@ -183,7 +184,7 @@ impl Index {
         let dirs = {
             let mut state = self.state.lock().ok()?;
             let parent = file.parent()?.to_path_buf();
-            let dirs = state.dirs.entry(parent).or_insert_with(|| Dirs::of(file)).clone()?;
+            let dirs = state.dirs.entry(parent).or_insert_with(|| Dirs::of(&self.config, file)).clone()?;
             if let Some(slot) = state.slots.get(&dirs) {
                 return slot.clone();
             }
@@ -223,7 +224,7 @@ impl Index {
     }
 
     fn fill(&self, dirs: Dirs) -> Entries {
-        let entries = Arc::new(mine(self.plugins, &dirs));
+        let entries = Arc::new(mine(self.plugins, &self.config, &dirs));
         if let Ok(mut state) = self.state.lock() {
             state.slots.insert(dirs, Some(entries.clone()));
         }
@@ -237,10 +238,10 @@ impl Index {
     }
 }
 
-/// The index of this process, over [`PLUGINS`].
-pub fn index() -> &'static Arc<Index> {
+/// The index of this process, over [`PLUGINS`]. The first use fixes its settings.
+pub fn index(config: &DocsConfig) -> &'static Arc<Index> {
     static INDEX: OnceLock<Arc<Index>> = OnceLock::new();
-    INDEX.get_or_init(|| Index::new(PLUGINS))
+    INDEX.get_or_init(|| Index::new(PLUGINS, config.clone()))
 }
 
 #[cfg(test)]
@@ -269,7 +270,7 @@ mod tests {
     static RELEASED: AtomicBool = AtomicBool::new(false);
     struct Slow;
     impl DocPlugin for Slow {
-        fn mine(&self, file: &Path, _: &str, out: &mut Vec<Entry>) {
+        fn mine(&self, _: &DocsConfig, file: &Path, _: &str, out: &mut Vec<Entry>) {
             while !RELEASED.load(Ordering::SeqCst) {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
@@ -289,7 +290,7 @@ mod tests {
         let root = tree("slow");
         std::fs::write(root.join("source/latex/pkg/pkg.dtx"), "").unwrap();
         const SLOW: &[&dyn DocPlugin] = &[&Slow];
-        let index = Index::new(SLOW);
+        let index = Index::new(SLOW, DocsConfig::default());
         let sty = root.join("tex/latex/pkg/pkg.sty");
         assert_eq!(index.lookup(&sty, "foo"), None);
         RELEASED.store(true, Ordering::SeqCst);
@@ -299,7 +300,7 @@ mod tests {
 
     struct Panics;
     impl DocPlugin for Panics {
-        fn mine(&self, _: &Path, text: &str, _: &mut Vec<Entry>) {
+        fn mine(&self, _: &DocsConfig, _: &Path, text: &str, _: &mut Vec<Entry>) {
             assert!(!text.contains("boom"));
         }
     }
@@ -312,7 +313,7 @@ mod tests {
         std::fs::write(src.join("a.dtx"), b"% \\begin{function}{\\x:n\n% \\begin{syntax}\xff\xfe boom {{{").unwrap();
         std::fs::create_dir_all(src.join("dir.dtx")).unwrap();
         std::fs::write(src.join("b.dtx"), "% \\DescribeMacro{\\bar}\n% Draws a bar.\n").unwrap();
-        let index = Index::new(BROKEN);
+        let index = Index::new(BROKEN, DocsConfig::default());
         let sty = root.join("tex/latex/pkg/pkg.sty");
         index.lookup(&sty, "bar");
         assert_eq!(wait(&index, &sty, "bar").and_then(|e| e.text), Some("Draws a bar.".into()));

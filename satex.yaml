@@ -106,6 +106,9 @@ conventions:  # how TeX is usually written, where the text alone does not say
     #! affects: precision
     #! example: definers: ['\defmacro']
     #! example: \defmacro\foo{...} then counts as a definition of \foo
+  math_symbols: {0: '−', 1: '·', 2: '×', 3: '∗', 6: '±', 15: '•', 20: '≤', 21: '≥', 33: '→'}  # what the typeset view shows for slots of the math symbol font
+    #! affects: output
+    #! example: add a slot your math font draws differently
   signatures:  # what each letter after the : of an expl3 name says of its argument, offered when such a name is typed
     #! affects: output
     #! example: add a letter your own package uses in its names
@@ -590,6 +593,47 @@ lsp:  # how satex lsp serves an editor
     #! example: 1000: fast typing triggers one run per pause, not per keystroke
   # port: 2087  # a TCP port to serve on instead of stdio
     #! affects: output
+
+docs:  # where a package's documentation is looked for and which conventions of it are read
+  source_root: source  # the folder of a TDS tree that holds the documented sources
+    #! affects: output
+    #! example: source_root: src looks in texmf/src/latex/pkg
+    #! plugin: docs
+  doc_root: doc  # the folder of a TDS tree that holds the manuals
+    #! affects: output
+    #! example: doc_root: manuals
+    #! plugin: docs
+  extensions: [dtx, tex, satex-docs]  # the extensions of the files mined
+    #! affects: output
+    #! example: extensions: [dtx]
+    #! plugin: docs
+  reads: ['\DocInput', '\DocInclude', '\input', '\include']  # the commands with which a manual reads another file, so its PDF documents that file too
+    #! affects: output
+    #! example: source2e reads lterror.dtx, so a hover on a kernel command links source2e
+    #! plugin: docs
+  depth: 3  # how deep those reads are followed
+    #! affects: output, speed
+    #! example: 1: only the files a manual reads itself
+    #! plugin: docs
+  usage_lines: 12  # how many lines after a describe command its usage line may stand
+    #! affects: output
+    #! example: 12: \DescribeMacro{\x} then \x{arg} within 12 lines gives the usage
+    #! plugin: docs
+  describe: [DescribeMacro]  # the commands that announce the documentation of a command, without the backslash
+    #! affects: output
+    #! example: describe: [DescribeMacro, DescribeEnv]
+    #! plugin: docs
+  ltxdoc_environments: [macro]  # the ltxdoc environments that document a command's code
+    #! affects: output
+    #! example: \begin{macro}{\x} documents \x
+    #! plugin: docs
+  l3doc_environments: [function, variable]  # the l3doc environments that document a function or variable
+    #! affects: output
+    #! example: \begin{function}{\tl_set:Nn} documents \tl_set:Nn
+    #! plugin: docs
+  inline: false  # also read the package's own .sty comments for what its commands do. Not supported yet: it changes nothing
+    #! affects: output
+    #! plugin: docs
 
 trace: false  # record every step of the run, for satex trace
   #! affects: speed, memory

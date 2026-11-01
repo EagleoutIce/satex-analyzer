@@ -426,6 +426,51 @@ impl Default for LspConfig {
     }
 }
 
+/// `docs:` in `satex.yaml`: where the documentation of a package is looked for,
+/// and which conventions of it are read ([`crate::plugin::docs`]).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DocsConfig {
+    /// The folder of a TDS tree that holds the documented sources.
+    pub source_root: String,
+    /// The folder of a TDS tree that holds the manuals.
+    pub doc_root: String,
+    /// The extensions of the files mined.
+    pub extensions: Vec<String>,
+    /// The commands (with their backslash) with which a manual reads another file.
+    pub reads: Vec<String>,
+    /// How deep a manual's reads are followed.
+    pub depth: usize,
+    /// How many lines after an `ltxdoc` anchor its usage line may stand.
+    pub usage_lines: usize,
+    /// The commands (without their backslash) that announce the documentation of a command, as `\DescribeMacro{\x}` does.
+    pub describe: Vec<String>,
+    /// The `ltxdoc` environments that document a command's code, `macro` in `\begin{macro}{\x}`.
+    pub ltxdoc_environments: Vec<String>,
+    /// The `l3doc` environments that document a function or variable.
+    pub l3doc_environments: Vec<String>,
+    /// Also read the package's own `.sty` comments. Not supported yet: it changes nothing.
+    pub inline: bool,
+}
+
+impl Default for DocsConfig {
+    fn default() -> DocsConfig {
+        let list = |items: &[&str]| items.iter().map(|s| s.to_string()).collect();
+        DocsConfig {
+            source_root: "source".into(),
+            doc_root: "doc".into(),
+            extensions: list(&["dtx", "tex", "satex-docs"]),
+            reads: list(&["\\DocInput", "\\DocInclude", "\\input", "\\include"]),
+            depth: 3,
+            usage_lines: 12,
+            describe: list(&["DescribeMacro"]),
+            ltxdoc_environments: list(&["macro"]),
+            l3doc_environments: list(&["function", "variable"]),
+            inline: false,
+        }
+    }
+}
+
 /// `clock:` in `satex.yaml`: what `\year`, `\month`, `\day`, `\time` and
 /// `\pdfcreationdate` hold (tex.web § 241).  `now` is the analysis time,
 /// `unknown` leaves the date unknown, and an ISO date-time
@@ -654,6 +699,9 @@ pub struct Conventions {
     /// What each letter after the `:` of an expl3 name says of its argument (interface3,
     /// "Function and variable names"): offered when such a name is typed.
     pub signatures: std::collections::BTreeMap<String, String>,
+    /// The character the typeset view shows for a slot of the math symbol font (family 2, OMS):
+    /// what `fontmath.ltx`'s `\DeclareMathSymbol`s draw there, as Unicode.
+    pub math_symbols: std::collections::BTreeMap<u32, char>,
     pub ties: Ties,
     pub quotes: Quotes,
     pub units: Units,
@@ -876,6 +924,19 @@ impl Default for Conventions {
         Conventions {
             internal: vec!["@".into(), "^__".into(), "_.*:".into()],
             definers: Vec::new(),
+            math_symbols: [
+                (0, '−'),
+                (1, '·'),
+                (2, '×'),
+                (3, '∗'),
+                (6, '±'),
+                (15, '•'),
+                (20, '≤'),
+                (21, '≥'),
+                (33, '→'),
+            ]
+            .into_iter()
+            .collect(),
             signatures: signatures.into_iter().map(|(k, v)| (k.into(), v.into())).collect(),
             ties: Ties::default(),
             quotes: Quotes::default(),
@@ -1342,6 +1403,9 @@ pub struct Config {
     /// How `satex lsp` listens and re-analyzes.
     #[serde(default)]
     pub lsp: LspConfig,
+    /// Where package documentation is looked for and which conventions are read.
+    #[serde(default)]
+    pub docs: DocsConfig,
     /// When an editor asks whether a frequent finding is the project's style.
     #[serde(default)]
     pub style_prompt: StylePrompt,
@@ -1399,6 +1463,7 @@ impl Default for Config {
             bib: Default::default(),
             lua: Default::default(),
             lsp: LspConfig::default(),
+            docs: DocsConfig::default(),
             style_prompt: StylePrompt::default(),
         }
     }

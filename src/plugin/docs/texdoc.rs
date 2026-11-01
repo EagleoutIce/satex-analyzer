@@ -8,13 +8,9 @@ use std::path::{Path, PathBuf};
 
 use super::markup::{group, lines};
 use super::{Audience, Dirs, Entry};
+use crate::config::DocsConfig;
 
 pub struct Texdoc;
-
-/// How deep a manual's reads are followed.
-const DEPTH: usize = 3;
-
-const READS: [&str; 4] = ["\\DocInput", "\\DocInclude", "\\input", "\\include"];
 
 /// A manual: its name and whether it shows the code, which l3doc turns on
 /// with `\EnableImplementation`.
@@ -29,7 +25,7 @@ fn stem(p: &Path) -> String {
 }
 
 impl super::DocPlugin for Texdoc {
-    fn link(&self, dirs: &Dirs, entries: &mut [Entry]) {
+    fn link(&self, config: &DocsConfig, dirs: &Dirs, entries: &mut [Entry]) {
         let Some(doc) = &dirs.doc else { return };
         let pdfs: HashSet<String> = std::fs::read_dir(doc)
             .into_iter()
@@ -38,14 +34,14 @@ impl super::DocPlugin for Texdoc {
             .filter(|p| p.extension().is_some_and(|e| e == "pdf"))
             .map(|p| stem(&p))
             .collect();
-        let sources: HashMap<String, PathBuf> = dirs.files().into_iter().map(|p| (stem(&p), p)).collect();
+        let sources: HashMap<String, PathBuf> = dirs.files(config).into_iter().map(|p| (stem(&p), p)).collect();
         let mut manuals: Vec<Manual> = sources
             .iter()
             .filter(|(s, _)| pdfs.contains(*s))
             .map(|(s, p)| {
                 let text = std::fs::read(p).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
                 let code = lines(p, &text).iter().any(|l| l.contains("\\EnableImplementation"));
-                Manual { name: s.clone(), code, reads: reads(s, &sources) }
+                Manual { name: s.clone(), code, reads: reads(config, s, &sources) }
             })
             .collect();
         manuals.sort_by(|a, b| a.name.cmp(&b.name));
@@ -58,17 +54,17 @@ impl super::DocPlugin for Texdoc {
     }
 }
 
-/// The stems `name` reads, itself among them, up to [`DEPTH`] deep.
-fn reads(name: &str, sources: &HashMap<String, PathBuf>) -> HashSet<String> {
+/// The stems `name` reads, itself among them, up to `config.depth` deep.
+fn reads(config: &DocsConfig, name: &str, sources: &HashMap<String, PathBuf>) -> HashSet<String> {
     let mut seen = HashSet::from([name.to_string()]);
     let mut todo = vec![name.to_string()];
-    for _ in 0..DEPTH {
+    for _ in 0..config.depth {
         let mut next = Vec::new();
         for s in todo.drain(..) {
             let Some(path) = sources.get(&s) else { continue };
             let Ok(bytes) = std::fs::read(path) else { continue };
             let text = lines(path, &String::from_utf8_lossy(&bytes)).join("\n");
-            for cmd in READS {
+            for cmd in config.reads.iter().map(String::as_str) {
                 for (at, _) in text.match_indices(cmd) {
                     let Some((arg, _)) = group(&text[at + cmd.len()..], '{', '}') else { continue };
                     let read = stem(Path::new(arg.trim()));
