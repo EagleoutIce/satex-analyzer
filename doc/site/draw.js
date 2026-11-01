@@ -1082,15 +1082,23 @@ self.satexDraw = (
       }">${text}</button>`;
     };
     // its look-alikes: their glyphs in a strip under it, each opening its name, packages and buttons
-    const alikeStrip = (alike) => {
+    const alikeStrip = (alike, s) => {
+      // the closest first, DRAW.few at once and the rest behind a "…"
+      const l0 = look(s, table), gap = (xs) => (l0 && look(xs[0], table) ? apart(l0, look(xs[0], table)) : Infinity);
+      alike = alike.map((xs) => [xs, gap(xs)]).sort((a, b) => a[1] - b[1]).map(([xs]) => xs);
       const tip = (xs) => `${xs[0].name} (${[...new Set(xs.map(from))].join(', ')})`;
       const button = (xs, k) => {
         const name = `<span class="draw-alike-name">${esc(xs[0].name)}</span>`;
         const attrs = `data-alike="${k}" aria-pressed="false" title="${esc(`${tip(xs)}: copy`)}"`;
-        return `<button type="button" class="draw-alike-glyph" ${attrs}>${glyph(xs[0], table)}${name}</button>`;
+        const hidden = k >= DRAW.few ? ' hidden' : '';
+        return `<button type="button" class="draw-alike-glyph" ${attrs}${hidden}>${glyph(xs[0], table)}${name}</button>`;
       };
+      const rest = alike.length - DRAW.few;
+      const more = rest > 0
+        ? `<button type="button" class="draw-alike-glyph draw-alike-rest" data-alike-rest="1" title="${rest} more">…</button>`
+        : '';
       const info = alike.map((xs, k) => variant(xs, true).replace('<li', `<li data-k="${k}"`)).join('');
-      return { strip: `<span class="draw-alike">${alike.map(button).join('')}</span>`, info: `<ul class="draw-more draw-alike-info">${info}</ul>` };
+      return { strip: `<span class="draw-alike">${alike.map(button).join('')}${more}</span>`, info: `<ul class="draw-more draw-alike-info">${info}</ul>` };
     };
     // under the name, one line for both: the name's glyphs in other packages, then its look-alikes
     const under = (fontGlyphs, strip) => {
@@ -1114,7 +1122,7 @@ self.satexDraw = (
         ? put(main, `${label} ${main.name} with ${use}`, ICON.package, ` data-use="${esc(use)}"`)
         : '';
       const acts = actions(like(main) + put(main) + withUse);
-      const { strip = '', info = '' } = alike.length ? alikeStrip(alike) : {};
+      const { strip = '', info = '' } = alike.length ? alikeStrip(alike, s) : {};
       const below = under(fonts(mine), strip) + (aliases.length ? aliasList(aliases) : '') + info;
       return `<li class="draw-row">${glyph(s, table)}${what}${acts}${below}</li>`;
     };
@@ -1418,6 +1426,11 @@ self.satexDraw = (
       remember();
       drawMatch();
     });
+    /** A moment's "copied" on what was pressed. */
+    const flash = (el) => {
+      el.classList.add('copied');
+      setTimeout(() => el.classList.remove('copied'), 1200);
+    };
     /** Only the symbols of `kind`: the kind filter set to it, as if chosen there. */
     const kindChoose = (kind) => {
       drawFilter.kind = kind;
@@ -1440,6 +1453,7 @@ self.satexDraw = (
       const g = e.target.closest('li > .draw-glyph');
       if (g) {
         g.parentElement.querySelector(':scope > .draw-acts .draw-put')?.click();
+        flash(g);
         return;
       }
       const alike = e.target.closest('[data-like]');
@@ -1469,12 +1483,19 @@ self.satexDraw = (
         toggle.parentElement.classList.toggle('open', open);
         return;
       }
+      const restAlike = e.target.closest('[data-alike-rest]');
+      if (restAlike) {
+        for (const b of restAlike.parentElement.querySelectorAll('.draw-alike-glyph[hidden]')) b.hidden = false;
+        restAlike.remove();
+        return;
+      }
       const shown = e.target.closest('[data-alike]');
       if (shown) {
         const info = shown.closest('li').querySelector(`.draw-alike-info > li[data-k="${shown.dataset.alike}"]`);
         shown.setAttribute('aria-pressed', 'true');
         info.hidden = false;
         info.querySelector(':scope > .draw-acts .draw-put')?.click();
+        flash(shown);
         return;
       }
       const cat = e.target.closest('[data-cat]');

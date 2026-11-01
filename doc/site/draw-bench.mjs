@@ -661,6 +661,11 @@ shapes.push(
     R('varnothing|emptyset'),
     10,
   ],
+  // a face drawn quickly: a tilted oval left open at the top, a blot and a ring for eyes, a smile
+  ['icon', 'face-drawn', [
+    arc(0, .05, .95, .7, -PI * .42, PI * 1.45).map(([x, y]) => [x * .95 - y * .3, x * .3 + y * .95]),
+    ...blob(-.45, -.25), ring((t) => [.05 + .12 * Math.cos(t), -.3 + .1 * Math.sin(t)], 16), arc(-.02, -.05, .4, .25, .5, PI - .4),
+  ], R('emoji\\{[a-z-]*face[a-z-]*\\}|twemoji\\{[^}]*face[^}]*\\}|faSmile\\w*|faMeh\\w*|faGrin\\w*|faFace\\w*|faLaugh\\w*|smiley|Smiley|blacksmiley|frownie|Laughey|dSmiley'), 10],
   // a flag: a rectangle, and one on a pole
   ['icon', 'flag-rect', [path([[-.9, -.6], [.9, -.6], [.9, .6], [-.9, .6], [-.9, -.6]])], R('worldflag|faFlag|flag|Flag|euflag'), 10],
   ['icon', 'flag-pole', [line([-.7, -1], [-.7, 1]), path([[-.7, -.9], [.8, -.9], [.8, .1], [-.7, .1]])], R('worldflag|faFlag|flag|Flag|euflag'), 10],
