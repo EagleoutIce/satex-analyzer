@@ -796,7 +796,7 @@ def examples(satex, work, project):
     own = len(jobs)
     tab = f'<button role="tab" aria-selected="false" aria-controls="ex-{own}" id="ex-tab-{own}">your own</button>'
     panel = (f'<figure class="example live" role="tabpanel" id="ex-{own}" aria-labelledby="ex-tab-{own}" hidden>\n'
-             f'<figcaption><span class="muted live-status" aria-live="polite">Type LaTeX: SaTeX reads it again as you type, in this page (about 10&nbsp;MB, loaded once).</span>'
+             f'<figcaption><span class="muted live-status" aria-live="polite">Type LaTeX, even a tikzpicture: SaTeX reads it again as you type, in this page (about 10&nbsp;MB, loaded once).</span>'
              f'<a class="button ghost small" href="play/index.html">open the playground →</a></figcaption>\n'
              f'<div class="src live-src"></div>\n<div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div></figure>')
     return f'<div class="tabs" role="tablist">{"".join(tabs)}{tab}</div>' + "\n".join([*panels, panel])
@@ -1002,7 +1002,8 @@ def comprehensive(dist):
                     ["pdftoppm", "-gray", "-f", str(number), "-l", str(number), "-scale-to-x", str(width * scale), "-scale-to-y", str(height * scale), str(pdf)],
                     capture_output=True).stdout)).convert("L"))
             cell = shot[int(max(y0, 0) * scale):int(y1 * scale), int(max(x0, 0) * scale):int((c["left"] - 3) * scale)]
-            ink = cell < 215
+            # any colour off the page's white is ink: a flag's yellow stripe as much as its black
+            ink = cell < 240
             cols = numpy.flatnonzero(ink.any(0))
             if not len(cols):
                 continue

@@ -2,7 +2,7 @@
 // Run:  node doc/site/draw-bench.mjs   (from the repo root; site served on 127.0.0.1:8000)
 // Needs playwright-core (PW=dir with node_modules) and a Chromium (CHROME=path).
 // Env: ONLY=a,b  run these shapes | TOP=n print top n rows | SWEEP=file.json {label: DRAW overrides}
-//      PORT=8000 | JS=path of draw.js to inject (default doc/site/draw.js) | CSS=style.css to serve | OUT=results json
+//      PKGS=all every package on | PORT=8000 | JS=path of draw.js to inject (default doc/site/draw.js) | CSS=style.css to serve | OUT=results json
 // Output: one line per shape, a summary (top1/3/5/10, median rank, per category),
 //         and target/scratch/draw-bench.json for comparing runs.
 import fs from 'fs';
@@ -661,6 +661,9 @@ shapes.push(
     R('varnothing|emptyset'),
     10,
   ],
+  // a flag: a rectangle, and one on a pole
+  ['icon', 'flag-rect', [path([[-.9, -.6], [.9, -.6], [.9, .6], [-.9, .6], [-.9, -.6]])], R('worldflag|faFlag|flag|Flag|euflag'), 10],
+  ['icon', 'flag-pole', [line([-.7, -1], [-.7, 1]), path([[-.7, -.9], [.8, -.9], [.8, .1], [-.7, .1]])], R('worldflag|faFlag|flag|Flag|euflag'), 10],
   // an orientation misremembered: the drawing mirrored, the wanted symbol the other way round
   ['flip', 'flip-slash', [line([-.5, -1], [.5, 1])], R('slash|mathslash|divslash', '^/ '), 10],
   [
@@ -713,6 +716,12 @@ pg.on('pageerror', (e) => console.log('pageerror', e.message));
 pg.on('console', (m) => m.type() === 'error' && console.log('console', m.text()));
 await pg.goto(`http://127.0.0.1:${process.env.PORT ?? 8000}/draw/index.html?theme=light`);
 await pg.waitForSelector('#draw-pad');
+// PKGS=all: every package on, to check that more packages never show fewer matches (compare `count` of two OUT files)
+if (process.env.PKGS === 'all') {
+  await pg.evaluate(() => document.querySelector('#draw-pkgs').click());
+  await pg.click('[data-all="1"]');
+  await pg.keyboard.press('Escape');
+}
 const rowsOf = () =>
   pg.$$eval(
     '#draw-list > li.draw-row',
@@ -784,6 +793,7 @@ for (const [cat, name, strokes, re, want] of shapes) {
     ok: rank !== null && rank <= want,
     ms: +ms || null,
     shown: rows.length,
+    count: +(await pg.evaluate(() => document.querySelector('#draw-list').dataset.count)),
     top,
   });
   console.log(

@@ -36,12 +36,12 @@ self.satexDraw = (
     grid: 8,
     bins: 4,
     orient: 96,
-    shortlist: 1500,
-    refine: 5000,
-    off: ['emoji', 'twemojis', 'fontawesome', 'fontawesome6', 'fontawesome7'],
+    // no cap on candidates or time: more packages may only add matches, never crowd one out
+    shortlist: 1e9,
+    refine: 1e9,
+    off: ['emoji', 'twemojis'],
     trusted: 0.2,
     workers: 4,
-    cut: 2.6,
     least: 12,
     on: ['worldflags'],
     pixel: 1.5,
@@ -57,7 +57,7 @@ self.satexDraw = (
     aspect: 0.6,
     dots: 0.4,
     dot: 4,
-    speck: 12,
+    speck: 12, kinds: 3, within: 90, solid: 0.6,
     flip: 20,
     hole: 3,
     big: 24,
@@ -172,8 +172,14 @@ self.satexDraw = (
         distances(bones, n),
         spread(bones, n),
         hash >>> 0,
-        DRAW.close.map((r) => holes(px, n, r)).reduce((a, b) => (b[0] > a[0] ? b : a)),
+        [...DRAW.close.map((r) => holes(px, n, r)).reduce((a, b) => (b[0] > a[0] ? b : a)), solidity(ink, bw * k * bh * k)],
       ];
+    }
+    /** How much of its box the ink fills, 0 to 1: a drawn outline little, a filled shape most. */
+    function solidity(ink, area) {
+      let on = 0;
+      for (const v of ink) on += v;
+      return on / Math.max(1, area);
     }
     /** The background the outside does not reach (a loop's inside, `o`, the bowl of `p`): its pieces of at least DRAW.hole cells
      * as [count, centre x, centre y], a piece under DRAW.big cells counting as its share of one (an eye of a skull less than a bowl), the centre in shares of the square. Faint ink counts, so a thin drawn loop stays closed,
@@ -393,6 +399,8 @@ self.satexDraw = (
     }
     /** How far apart two shapes' holes are: their numbers (relatively: 0 or 1 hole differ more than 3 or 4) and where they sit when both have some. */
     function loops(a, b) {
+      // a filled shape (a flag, a black square) shows no hole its drawn outline would: its holes say nothing
+      if (a[3] > DRAW.solid || b[3] > DRAW.solid) return 0;
       return DRAW.holes * Math.abs(a[0] - b[0]) / Math.max(1, a[0], b[0]) +
         (a[0] && b[0] ? DRAW.where * Math.hypot(a[1] - b[1], a[2] - b[2]) : 0);
     }
@@ -501,6 +509,7 @@ self.satexDraw = (
       if (m.type === 'init') {
         ({ fonts, rows, bitmaps } = m), (part = m.part ?? [0, 1]), (feats = new Array(rows.length));
       } else if (m.type === 'tune') Object.assign(DRAW, m.draw);
+      else if (m.type === 'stop') req = null;
       else if (m.type === 'match') {
         if (m.fresh || !req) deadline = now() + DRAW.refine;
         // this matcher's share of the rows: every n-th, so each font's glyphs are spread over the matchers
@@ -538,7 +547,8 @@ self.satexDraw = (
   const last = {};
   let workers = [];
   const send = (m) => {
-    if (m.type !== 'tune') last[m.type] = m;
+    if (m.type === 'stop') delete last.match;
+    else if (m.type !== 'tune') last[m.type] = m;
     if (workers.length) {
       workers.forEach((w, k) => w.postMessage(m.type === 'init' ? { ...m, part: [k, workers.length] } : m));
     } else local.on(m);
@@ -683,13 +693,14 @@ self.satexDraw = (
     const ink = inked(b);
     return ink < DRAW.speck || (Math.min(b.w, b.h) <= 2 && ink < Math.max(b.w, b.h));
   };
-  /** The symbol list's categories as further kinds in the kind filter, the most used first. */
+  /** The symbol list's categories as further kinds in the kind filter, by name; none of fewer than DRAW.kinds symbols. */
   function categoriesShow(table) {
     const count = new Map();
     for (const s of table.rows) if (s.cat) count.set(s.cat, (count.get(s.cat) ?? 0) + 1);
     const select = $('draw-filters')?.querySelector('select[data-f="kind"]');
     if (!select || !count.size) return;
-    const options = [...count].sort((a, b) => b[1] - a[1]).map(([c, n]) =>
+    const kept = [...count].filter(([, n]) => n >= DRAW.kinds);
+    const options = kept.sort((a, b) => a[0].localeCompare(b[0], 'en')).map(([c, n]) =>
       `<option value="cat:${esc(c)}">${esc(c)} (${n})</option>`
     );
     select.insertAdjacentHTML(
@@ -751,7 +762,8 @@ self.satexDraw = (
     const counts = new Map();
     for (const s of table.rows) counts.set(s.pkg, (counts.get(s.pkg) ?? 0) + 1);
     const list = [...counts].sort((a, b) => a[0].localeCompare(b[0], 'en', { sensitivity: 'base' }));
-    $('draw-pkgs').textContent = `packages ${list.filter(([p]) => used(p)).length}/${list.length}`;
+    $('draw-pkgs').textContent = 'packages';
+    $('draw-pkgs').title = `${list.filter(([p]) => used(p)).length} of ${list.length} packages searched`;
     $('draw-pkg-list').innerHTML =
       `<div class="draw-pkg-all"><button type="button" class="ghost small" data-all="1">all</button><button type="button" class="ghost small" data-all="0">none</button></div>` +
       list.map(([p, n]) =>
@@ -826,6 +838,8 @@ self.satexDraw = (
     current = { id: mine, table, wanted, ranked, source, force, words, f };
     result = null;
     if (!f) {
+      // no drawing: the matchers drop what they still measure for the last one
+      send({ type: 'stop' });
       render();
       return;
     }
@@ -893,9 +907,9 @@ self.satexDraw = (
     list.style.maxHeight = `${Math.max(DRAW.least * 8, bottom - top - 8)}px`;
   };
   addEventListener('resize', fit);
-  // a letter's own forms: its name, upright and italic (`\lambda`, `\muplambda`); `\mbf`, `\Bbb` and the rest are styles
-  const plainStyle = (name) =>
-    /^\\(?:mup|mit)?[A-Za-z]+$/.test(name) && !/^\\(?:mup|mit)?(?:bf|sans|tt|scr|frak|bb)/.test(name);
+  // a letter's own forms: its name, upright and italic (`\lambda`, `\muplambda`); any other prefix
+  // (`\mbf`, `\Bbb`, `\text`, `\var`) makes a style or a variant
+  const plainStyle = (name) => name.replace(/^\\(?:mup|mit)?/, '') === kin(name, false);
   /** How far apart two listed rows look, or null while either is not measured. */
   const lookDistance = (a, b) => (a.l && b.l ? apart(a.l, b.l) : null);
   /** Whether `row` joins the row `lead` leads: a glyph that looks the same, a letter's own forms,
@@ -934,26 +948,39 @@ self.satexDraw = (
     }
     return looks.get(s.i);
   };
-  /** The ranking as rows, only what looks enough like the best match: within DRAW.cut of its distance. */
+  /** The ranking as rows, best first. */
   function rankedRows(table) {
-    const bound = result.score.length ? result.score[0] * DRAW.cut + 0.05 : Infinity;
-    const rows = Array.from(
-      result.idx,
-      (i, k) => ({ s: table.rows[i], i, head: result.head[k], score: result.score[k] }),
-    );
-    return rows.filter((b, k) => k < DRAW.least || b.score <= bound);
+    return Array.from(result.idx, (i, k) => ({ s: table.rows[i], i, head: result.head[k], score: result.score[k] }));
   }
-  /** Rows of one picture follow its first, and so do its look-alikes (`belongs`); the first 3 × limit are measured for it. */
+  /** The rows of the groups worth showing: the first DRAW.least groups, then those whose lead scores within DRAW.within.
+   * The bound is absolute, so a symbol shows by how near it is, never by what else the packages chosen bring;
+   * a group's members show with it, however far each one alone. */
+  function nearEnough(best) {
+    const leads = new Map();
+    for (const b of best) if (b.head === b.i) leads.set(b.i, leads.size < DRAW.least || b.score <= DRAW.within);
+    return best.filter((b) => leads.get(b.head));
+  }
+  /** A symbol's name keys, worked out once: its stem with and without case (`kin`), and whether it is a letter's own form. */
+  const nameKeys = (s) => (s.keys ??= { key: kin(s.name), stem: kin(s.name, false), plain: plainStyle(s.name) });
+  /** Rows of one picture follow its first, and so do its look-alikes (`belongs`); the first 3 × limit are measured for it.
+   * A row is only held against the leads it could join: the measured ones, and those of its stem. */
   function joinLookAlikes(best, table) {
-    const leads = [];
-    let measured = 0;
+    const measuredLeads = [], byStem = new Map();
+    let measured = 0, order = 0;
     return best.map((b) => {
       if (b.head !== b.i) return b;
       const l = measured++ < 3 * limit ? look(b.s, table) : null;
-      const row = { i: b.i, key: kin(b.s.name), stem: kin(b.s.name, false), plain: plainStyle(b.s.name), l };
-      const lead = leads.find((a) => belongs(a, row));
-      if (lead) return { ...b, head: lead.i };
-      leads.push(row);
+      const row = { i: b.i, ...nameKeys(b.s), l, order: order++ };
+      const stemLeads = byStem.get(row.stem) ?? [];
+      const candidates = l ? [...measuredLeads, ...stemLeads] : stemLeads;
+      const lead = candidates.filter((a) => belongs(a, row)).sort((a, c) => a.order - c.order)[0];
+      if (lead) {
+        // a group holding a letter's own form takes its other forms too
+        if (row.plain && lead.stem === row.stem) lead.plain = true;
+        return { ...b, head: lead.i };
+      }
+      if (l) measuredLeads.push(row);
+      byStem.set(row.stem, [...stemLeads, row]);
       return b;
     });
   }
@@ -962,9 +989,10 @@ self.satexDraw = (
    * stem keeps the case (`\beta` for `\mupbeta`, never `\uparrow` for `⇑`). */
   function namesOf(s, twins, wanted, table, force) {
     const chs = new Set([s, ...twins].map((x) => x.ch));
-    const own = (x) => x.ch === s.ch || kin(x.name, false) === kin(s.name, false);
+    const own = (x) => x.ch === s.ch || nameKeys(x).stem === nameKeys(s).stem;
     const weight = (x) => table.weight?.[x.pkg] ?? 0;
-    const all = wanted.filter((x) => chs.has(x.ch));
+    current.byCh ??= Map.groupBy(wanted, (x) => x.ch);
+    const all = [...chs].flatMap((ch) => current.byCh.get(ch) ?? []);
     all.sort((a, b) =>
       own(b) - own(a) || force.has(b.name) - force.has(a.name) || weight(b) - weight(a) ||
       a.name.length - b.name.length
@@ -1019,9 +1047,8 @@ self.satexDraw = (
     const category = (xs) => {
       const cat = xs.find((x) => x.cat)?.cat;
       if (!cat) return '';
-      return `<span class="draw-cat" title="its table in the Comprehensive LaTeX Symbol List">${
-        esc(cat)
-      }</span>`;
+      const title = `its table in the Comprehensive LaTeX Symbol List: show only ${cat}`;
+      return `<button type="button" class="draw-cat" data-cat="${esc(cat)}" title="${esc(title)}">${esc(cat)}</button>`;
     };
     // a row's buttons; where the list is narrow, behind one toggle (style.css) that shows them
     const actions = (buttons) => {
@@ -1057,15 +1084,18 @@ self.satexDraw = (
     // its look-alikes: their glyphs in a strip under it, each opening its name, packages and buttons
     const alikeStrip = (alike) => {
       const tip = (xs) => `${xs[0].name} (${[...new Set(xs.map(from))].join(', ')})`;
-      const button = (xs, k) =>
-        `<button type="button" class="draw-alike-glyph" data-alike="${k}" aria-pressed="false" title="${
-          esc(tip(xs))
-        }">` +
-        `${glyph(xs[0], table)}</button>`;
+      const button = (xs, k) => {
+        const name = `<span class="draw-alike-name">${esc(xs[0].name)}</span>`;
+        const attrs = `data-alike="${k}" aria-pressed="false" title="${esc(`${tip(xs)}: copy`)}"`;
+        return `<button type="button" class="draw-alike-glyph" ${attrs}>${glyph(xs[0], table)}${name}</button>`;
+      };
       const info = alike.map((xs, k) => variant(xs, true).replace('<li', `<li data-k="${k}"`)).join('');
-      return `<div class="draw-alike">${
-        alike.map(button).join('')
-      }</div><ul class="draw-more draw-alike-info">${info}</ul>`;
+      return { strip: `<span class="draw-alike">${alike.map(button).join('')}</span>`, info: `<ul class="draw-more draw-alike-info">${info}</ul>` };
+    };
+    // under the name, one line for both: the name's glyphs in other packages, then its look-alikes
+    const under = (fontGlyphs, strip) => {
+      if (!fontGlyphs.includes('draw-glyph') && !strip) return '';
+      return `<div class="draw-under">${fontGlyphs}${strip}</div>`;
     };
     const row = (s, [[main, ...same], ...others]) => {
       const mine = [main, ...same];
@@ -1078,15 +1108,14 @@ self.satexDraw = (
       const where = missing(main) ? `not loaded: ${use}` : mine.map(from).join(', ');
       const pkgSpan = `<span class="lib-pkg${off(main)}" title="${esc(where)}">${pkgs(mine)}</span>`;
       const pill = aliases.length ? aliasPill(aliases) : '';
-      const what = `<span class="draw-what">${chip(main)}${px}${pkgSpan}${fonts(mine)}${
-        category(mine)
-      }${pill}</span>`;
+      const what = `<span class="draw-what">${chip(main)}${px}${pkgSpan}${category(mine)}${pill}</span>`;
       const needsUse = usepackage && !force.has(main.name) && !loaded(pkg);
       const withUse = needsUse
         ? put(main, `${label} ${main.name} with ${use}`, ICON.package, ` data-use="${esc(use)}"`)
         : '';
       const acts = actions(like(main) + put(main) + withUse);
-      const below = (aliases.length ? aliasList(aliases) : '') + (alike.length ? alikeStrip(alike) : '');
+      const { strip = '', info = '' } = alike.length ? alikeStrip(alike) : {};
+      const below = under(fonts(mine), strip) + (aliases.length ? aliasList(aliases) : '') + info;
       return `<li class="draw-row">${glyph(s, table)}${what}${acts}${below}</li>`;
     };
     return { row };
@@ -1105,17 +1134,20 @@ self.satexDraw = (
       best.sort((a, b) => a.score - b.score);
     }
     best = joinLookAlikes(best, table);
+    if (f) best = nearEnough(best);
     const twins = new Map();
     for (const { s, i, head } of best) if (head !== i) twins.set(head, [...(twins.get(head) ?? []), s]);
     const view = rowView(table, source, force);
-    const seen = new Set();
+    const seen = new Set(), shownFonts = new Set();
     const rows = [];
     let glyphs = 0;
     for (const { s, i, head } of best) {
       if (head !== i || seen.has(s.ch)) continue;
       seen.add(s.ch);
       if (glyphs++ >= limit) continue;
-      rows.push(view.row(s, namesOf(s, twins.get(i) ?? [], wanted, table, force)));
+      const names = namesOf(s, twins.get(i) ?? [], wanted, table, force);
+      for (const x of names.flat()) shownFonts.add(x.font);
+      rows.push(view.row(s, names));
     }
     if (glyphs > limit) {
       rows.push(
@@ -1125,12 +1157,9 @@ self.satexDraw = (
       );
     }
     // the glyphs shown appear once their fonts are in, measured or not
-    for (
-      const i of new Set(
-        [...seen].map((ch) => wanted.find((x) => x.ch === ch)?.font).filter((i) => i != null),
-      )
-    ) faceReady(table, i).catch(() => {});
+    for (const i of shownFonts) faceReady(table, i).catch(() => {});
     list.dataset.strokes = String(mine);
+    list.dataset.count = String(best.length);
     list.innerHTML = rows.join('') ||
       `<li class="muted">${
         drawFilter.from === 'loaded'
@@ -1389,6 +1418,13 @@ self.satexDraw = (
       remember();
       drawMatch();
     });
+    /** Only the symbols of `kind`: the kind filter set to it, as if chosen there. */
+    const kindChoose = (kind) => {
+      drawFilter.kind = kind;
+      $('draw-filters').querySelector('select[data-f="kind"]').value = kind;
+      remember();
+      drawMatch();
+    };
     $('draw-list').addEventListener('click', async (e) => {
       if (e.target.closest('[data-more]')) {
         limit += DRAW.more;
@@ -1435,10 +1471,15 @@ self.satexDraw = (
       }
       const shown = e.target.closest('[data-alike]');
       if (shown) {
-        const open = shown.getAttribute('aria-pressed') !== 'true';
-        shown.setAttribute('aria-pressed', String(open));
-        shown.closest('li').querySelector(`.draw-alike-info > li[data-k="${shown.dataset.alike}"]`).hidden =
-          !open;
+        const info = shown.closest('li').querySelector(`.draw-alike-info > li[data-k="${shown.dataset.alike}"]`);
+        shown.setAttribute('aria-pressed', 'true');
+        info.hidden = false;
+        info.querySelector(':scope > .draw-acts .draw-put')?.click();
+        return;
+      }
+      const cat = e.target.closest('[data-cat]');
+      if (cat) {
+        kindChoose(`cat:${cat.dataset.cat}`);
         return;
       }
       const b = e.target.closest('.draw-put');
