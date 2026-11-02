@@ -2173,14 +2173,12 @@ fn text_hull<'t>(texts: impl Iterator<Item = &'t [Token]>, typed: &Typed) -> Tok
     let (mut one, mut class, mut span) = (true, TextClass::EMPTY, None);
     let mut lens: Vec<Option<u32>> = Vec::new();
     for text in texts {
-        one &= !text.is_empty();
+        one &= typed.holds_one(text);
         let len = |t: &Token| text_len(typed.interner, t).or(matches!(t.tok, Tok::Chr(..)).then_some(1));
         lens.push(text.iter().try_fold(0, |n, t| Some(n + len(t)?)));
         for t in text {
             span = span.or(Some(t.span));
-            class = class.union(
-                typed.classify(t).or_else(|| typed.one_of_class(t)).map_or_else(|| TextClass::of(t.tok), |c| c.0),
-            );
+            class = class.union(typed.class_of(t).map_or_else(|| TextClass::of(t.tok), |c| c.0));
         }
     }
     let len = lens.first().copied().flatten().filter(|n| *n > 0 && lens.iter().all(|l| *l == Some(*n)));
@@ -2328,6 +2326,18 @@ impl Typed<'_> {
         let (_, head) = rest.rsplit_once(CLASS_MARK)?;
         let (spelled, one) = head.split_at(head.len().checked_sub(1)?);
         Some((TextClass::parse(spelled)?, one == "+"))
+    }
+
+    /// Whether `text` holds at least one token: some token of it is not
+    /// typed text that may be empty.
+    pub fn holds_one(&self, text: &[Token]) -> bool {
+        text.iter().any(|t| self.class_of(t).is_none_or(|(_, one)| one))
+    }
+
+    /// The class of typed text or of one of several texts `t` stands for,
+    /// and whether it holds at least one token.
+    pub fn class_of(&self, t: &Token) -> Option<(TextClass, bool)> {
+        self.classify(t).or_else(|| self.one_of_class(t))
     }
 
     pub fn make(&self, class: TextClass, one: bool, len: Option<u32>) -> Sym {
@@ -2524,7 +2534,7 @@ fn typed_join(set: &[Meaning], typed: &Typed, widen: bool) -> Option<Meaning> {
     let mut len = Some(0);
     for t in &texts {
         let middle = &t[head..t.len() - tail];
-        one &= !middle.is_empty();
+        one &= typed.holds_one(middle);
         let sum = middle.iter().try_fold(0, |n, x| Some(n + text_len(typed.interner, x)?));
         len = len.zip(sum).map(|(a, b)| a.max(b));
         let mut depth = 0i32;
@@ -2537,10 +2547,7 @@ fn typed_join(set: &[Meaning], typed: &Typed, widen: bool) -> Option<Meaning> {
             if depth < 0 {
                 return None;
             }
-            class = class.union(match typed.classify(x) {
-                Some((c, _)) => c,
-                None => TextClass::of(x.tok),
-            });
+            class = class.union(typed.class_of(x).map_or_else(|| TextClass::of(x.tok), |c| c.0));
         }
         if depth != 0 || class.contains(TextClass::CS) {
             return None;

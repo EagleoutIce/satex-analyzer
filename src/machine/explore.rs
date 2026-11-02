@@ -2417,10 +2417,9 @@ impl Machine<'_> {
         let typed = crate::env::typed!(self, syms);
         let (mut class, mut one) = (crate::tex::TextClass::EMPTY, true);
         for text in texts {
-            one &= !text.is_empty();
+            one &= typed.holds_one(text);
             for t in text {
-                let c = typed.classify(t).or_else(|| typed.one_of_class(t));
-                class = class.union(c.map_or_else(|| crate::tex::TextClass::of(t.tok), |c| c.0));
+                class = class.union(typed.class_of(t).map_or_else(|| crate::tex::TextClass::of(t.tok), |c| c.0));
             }
         }
         format!("{}{}{}", crate::env::CLASS_MARK, class.spell(), if one { '+' } else { '_' })

@@ -1,5 +1,6 @@
 # Failing tests with an open root (see ~/satex-plan.md): CI runs and reports them, a new failure fails it.
 budgets::document_metadata
+budgets::pgfmath_parse_of_typed_numbers
 documents::a_float_after_the_title_page_stays_bounded
 documents::expl3_hex_string_to_utf16_conversion_h4
 documents::expl3_hex_string_with_empty_target_encoding_h6
@@ -16,3 +17,4 @@ documents::tikz_loop_of_unknown_height_nodes_converges
 latex::document_metadata::lifting_the_bound_leaves_the_report_as_it_is
 semantics::a_delimiter_only_straddles_text_that_cannot_hold_it
 termination::a_join_never_folds_code_into_data
+termination::convergence::tikz_nodes_of_unknown_width

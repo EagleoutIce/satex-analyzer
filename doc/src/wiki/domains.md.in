@@ -104,7 +104,7 @@ After a join of paths that disagree, a `Binding` ([`src/env.rs`](https://github.
 | `\let` | copies the whole set |
 | widening | macros without parameters that differ only in digit runs become one macro with typed digits. Else macros with the same prefixes become one macro of unknown text, length-bounded when all are (`macro_hull`). A set with "undefined" keeps it. Anything else is an unknown meaning. |
 
-A widened macro whose members all hold a token holds one too, so `\ifx` can still tell it from a primitive, a character or a macro with parameters.
+A widened macro whose members all hold a token holds one too, so `\ifx` can still tell it from a primitive, a character or a macro with parameters. Typed text that may be empty does not count as a token, and a token for one of several texts joins by the class of those texts.
 
 **Example**: after `\ifx\a\b \let\next\foo \else \let\next\bar \fi`, `\next` may be `\foo` or `\bar`. `\ifx\next\relax` is undecided. Executing `\next` splits into two paths that join again later.
 
