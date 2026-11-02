@@ -657,6 +657,41 @@ fn item_context_meanings_show_with_no_document_uses_at_all() {
     }
 }
 
+/// Uses that all went through decide: the probe's call in text mode is no
+/// meaning of a math alphabet the document only uses in math.
+#[test]
+fn a_command_used_only_where_it_works_carries_no_probed_error() {
+    if !installed() {
+        return;
+    }
+    let analysis = Machine::analyze(
+        "\\documentclass{article}\n\\begin{document}\n\\begin{equation}\\mathcal{A}\\end{equation}\n\\[\\mathcal{B}\\]\n\\end{document}\n",
+        None,
+        &crate::support::config(),
+    );
+    let (records, _) =
+        query::explain(&analysis, &["mathcal".to_string()], false).unwrap_or_else(|e| panic!("did not explain: {e}"));
+    assert!(records.iter().all(|r| str_field(r, "error").is_none()), "{records:?}");
+}
+
+/// Only an argument the command reads on to a release check is a date: the
+/// default of `\newcommand`'s optional argument is none.
+#[test]
+fn a_definitions_default_is_no_release_date() {
+    if !installed() {
+        return;
+    }
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let analysis = Machine::analyze(
+        "\\documentclass{article}\n\\newcommand{\\foo}[1][x]{#1}\n\\begin{document}\\foo\\end{document}",
+        None,
+        &cfg,
+    );
+    let newcommand = explain_one(&analysis, "newcommand");
+    let types = newcommand.get("types").map(ToString::to_string).unwrap_or_default();
+    assert!(!types.contains("date"), "{newcommand:?}");
+}
+
 /// The bare probe hands `.` to `\end`'s argument, so `\end{.}` mismatches
 /// whatever is open: an error about the probe's argument, not a meaning.
 #[test]

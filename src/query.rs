@@ -4065,6 +4065,14 @@ fn insert_call_shape(
     }
 }
 
+/// The run called `sym` and no call raised an error: its uses decide, not a
+/// probe that calls it in text mode outside any environment, where
+/// `\mathcal` errs though every use, in math, did not.
+fn went_through(analysis: &Analysis, sym: Sym) -> bool {
+    analysis.facts.expansions.iter().any(|e| e.name == sym && e.node.is_some())
+        && !analysis.facts.raised.iter().any(|r| r.name == sym)
+}
+
 /// A record for a name with no recorded definition site: a kernel primitive
 /// or macro this run never redefined, reported from its final meaning —
 /// the branch `explain` falls back to.
@@ -4608,12 +4616,18 @@ pub fn explain_at(
             let preamble_def = preamble_boundary.and_then(|b| def_at(analysis, sym, Some(preamble_call.unwrap_or(b))));
             match (preamble_def, doc_def) {
                 (None, None) => {
-                    let base = record_for_kernel(analysis, sym, Window::All);
+                    let mut base = record_for_kernel(analysis, sym, Window::All);
                     // Real uses in the run, when there were any of note;
                     // otherwise the same question asked of the probe, so a
-                    // run with no `\item` inside a list still finds one.
+                    // run with no `\item` inside a list still finds one, and
+                    // its error stands only where no use decided.
+                    let decided = went_through(analysis, sym);
+                    if decided && let Some(b) = &mut base {
+                        b.remove("error");
+                    }
                     let split = base.as_ref().and_then(|b| {
-                        split_by_environment(analysis, sym, b).or_else(|| probe_context_meanings(analysis, sym, b))
+                        split_by_environment(analysis, sym, b)
+                            .or_else(|| (!decided).then(|| probe_context_meanings(analysis, sym, b)).flatten())
                     });
                     match split {
                         Some(split) => out.extend(split),
