@@ -779,6 +779,27 @@ fn a_switch_asked_about_governs_both_arms() {
 }
 
 #[test]
+fn a_switch_is_found_by_its_meaning_not_its_name() {
+    // `satex controls` lists what means `\iftrue` or `\iffalse`, whatever it is called
+    // and however it was made: `\newif`, `\let`, or a toggle macro.
+    let cfg = Config {
+        load: Load { packages: false, classes: false, inputs: false, ..Default::default() },
+        ..crate::support::config()
+    };
+    let analysis = Machine::analyze(
+        r"\catcode`\@=11 \newif\my@ifdraft \let\ifmine\iffalse \let\mybool\iftrue \def\tgl{\iffalse}\def\plain{x}",
+        None,
+        &cfg,
+    );
+    let found: Vec<_> =
+        query::switches(&analysis, false).iter().map(|r| r["name"].as_str().unwrap().to_string()).collect();
+    for name in ["\\my@ifdraft", "\\ifmine", "\\mybool", "\\tgl"] {
+        assert!(found.iter().any(|n| n == name), "{name} in {found:?}");
+    }
+    assert!(!found.iter().any(|n| n == "\\plain"), "{found:?}");
+}
+
+#[test]
 fn every_switch_means_the_documents_own() {
     // `satex controls` without a name leaves the document's switches
     // undecided, and only those: the kernel's `\if@tempswa` and the like

@@ -2465,18 +2465,43 @@ pub fn in_document_order(analysis: &Analysis, records: &mut [Record]) {
     });
 }
 
+/// Whether `name` now means `\iftrue` or `\iffalse`: a switch's value.
+fn switch_truth(analysis: &Analysis, name: Sym) -> Option<&'static str> {
+    match analysis.env.meaning(name).prim() {
+        Some(crate::builtins::Primitive::If(crate::builtins::Cond::True)) => Some("true"),
+        Some(crate::builtins::Primitive::If(crate::builtins::Cond::False)) => Some("false"),
+        _ => None,
+    }
+}
+
+/// A macro that only expands to `\iftrue` or `\iffalse`: a toggle (etoolbox's `\newtoggle`).
+fn macro_switch(analysis: &Analysis, def: &crate::facts::Definition) -> Option<&'static str> {
+    let mac = def.mac.as_ref().filter(|mac| mac.arity() == 0)?;
+    match &*mac.replacement_text {
+        [one] => switch_truth(analysis, one.cs()?),
+        _ => None,
+    }
+}
+
 pub fn switches(analysis: &Analysis, all: bool) -> Vec<Record> {
     let main = analysis.main_file;
     let mut out = Vec::new();
     let mut seen: BTreeMap<String, ()> = BTreeMap::new();
     for def in &analysis.facts.defs {
         let name = analysis.interner.name(def.name);
-        let Some(base) = name.strip_prefix("if") else { continue };
-        if base.is_empty() || def.mac.is_some() {
+        let dialect = analysis.interner.name(def.by);
+        let truth = match &def.mac {
+            Some(_) => macro_switch(analysis, def),
+            None => switch_truth(analysis, def.name),
+        };
+        if def.mac.is_some() && truth.is_none() {
             continue;
         }
-        let dialect = analysis.interner.name(def.by);
-        if !dialect.starts_with("new") && !dialect.starts_with("provide") {
+        // a conditional made by `\newif`, or any name that now means `\iftrue` or `\iffalse`
+        // (`\let\my@ifdraft\iffalse`, an expl3 bool), whatever it is called
+        let declared = (dialect.starts_with("new") || dialect.starts_with("provide"))
+            && (name.starts_with("if") || dialect.contains("if"));
+        if truth.is_none() && !declared {
             continue;
         }
         if !all && def.span.file != main {
@@ -2485,11 +2510,7 @@ pub fn switches(analysis: &Analysis, all: bool) -> Vec<Record> {
         if seen.insert(name.to_string(), ()).is_some() {
             continue;
         }
-        let value = match analysis.env.meaning(def.name).prim() {
-            Some(crate::builtins::Primitive::If(crate::builtins::Cond::True)) => "true",
-            Some(crate::builtins::Primitive::If(crate::builtins::Cond::False)) => "false",
-            _ => "undecided",
-        };
+        let value = truth.unwrap_or("undecided");
         let governs = governed_count(analysis, def.name);
         let mut record = place(analysis, def.span);
         record.insert("tag".into(), json!("switch"));
