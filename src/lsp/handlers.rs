@@ -195,7 +195,7 @@ fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
         .filter(|_| analysis.settings.plugins.docs)
         .and_then(|p| crate::plugin::docs::index(&analysis.settings.docs).lookup(std::path::Path::new(&p), key));
     if let Some((m, does)) = mined.as_ref().and_then(|m| Some((m, m.text.as_deref()?))) {
-        markdown.push_str(&format!("{does} {}\n\n", extracted_from_manual(&m.from, m.link.as_ref())));
+        markdown.push_str(&format!("{does} {}\n\n", extracted_from_manual(m)));
     }
     if let Some(comment) = text(&record, "comment") {
         markdown.push_str(&format!("{comment} {}\n\n", extracted("from the source comment")));
@@ -385,8 +385,7 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
         if let Some(does) = text("does") {
             markdown.push_str(&format!("{does}\n\n"));
         } else if let Some((m, does)) = mined.and_then(|m| Some((m, m.text.as_deref()?))) {
-            let manual = m.link.as_ref().and_then(|(l, _)| l.strip_prefix("texdoc ")).unwrap_or(&m.from);
-            markdown.push_str(&format!("{does} {}\n\n", extracted_from_manual(manual, m.link.as_ref())));
+            markdown.push_str(&format!("{does} {}\n\n", extracted_from_manual(m)));
         }
         if n == 0 {
             markdown.push_str(&typesets(analysis, name));
@@ -549,12 +548,17 @@ fn extracted(origin: &str) -> String {
     format!("*({origin})*")
 }
 
-/// The same for a mined manual, linked to where it can be read.
-fn extracted_from_manual(manual: &str, link: Option<&(String, String)>) -> String {
-    match link {
-        Some((_, url)) => extracted(&format!("from the [{manual} manual]({url})")),
-        None => extracted(&format!("from the {manual} manual")),
-    }
+/// The same for a mined manual: linked to where it can be read, with the
+/// section and the source line that document it.
+fn extracted_from_manual(m: &crate::plugin::docs::Entry) -> String {
+    let manual = m.link.as_ref().and_then(|(l, _)| l.strip_prefix("texdoc ")).unwrap_or(&m.from);
+    let section = m.at.as_ref().and_then(|p| p.section.as_ref()).map(|s| format!(", § {s}")).unwrap_or_default();
+    let origin = match &m.link {
+        Some((_, url)) => format!("from the [{manual} manual]({url}){section}"),
+        None => format!("from the {manual} manual{section}"),
+    };
+    let place = m.at.as_ref().map(|p| format!(" `{}:{}`", p.path, p.line)).unwrap_or_default();
+    format!("{}{place}", extracted(&origin))
 }
 
 /// The comment block above the definition a record names.
@@ -971,7 +975,15 @@ pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Positio
     let expanded: Vec<Record> =
         records.iter().filter_map(|r| r.get("expanded").and_then(Json::as_object).cloned()).collect();
     records.extend(expanded);
-    let mut locations: Vec<Location> = records.iter().filter_map(|r| record_location(r, &sources)).collect();
+    // The kernel's own definition of a name the run redefines.
+    let kernel = analysis.interner.lookup(&name).and_then(|s| analysis.kernel_sites.get(&s));
+    records.extend(kernel.map(|span| query::place(analysis, *span)));
+    let mut locations: Vec<Location> = Vec::new();
+    for at in records.iter().filter_map(|r| record_location(r, &sources)) {
+        if !locations.contains(&at) {
+            locations.push(at);
+        }
+    }
     // The run may stop before a later file defines the name: scan the source.
     if locations.is_empty() && is_command {
         for site in super::unreached::sites(analysis, path, &name) {
@@ -979,6 +991,15 @@ pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Positio
             let position = to_lsp(&site.text, site.pos);
             locations.push(Location { uri: path_uri(&site.path), range: Range { start: position, end: position } });
         }
+    }
+    // A primitive has no line: its documentation answers, else the format's source.
+    if locations.is_empty() {
+        let at = |r: &Record| {
+            let reference = r.get("reference").and_then(Json::as_str).and_then(|u| u.parse().ok());
+            let uri = reference.or_else(|| r.get("path").and_then(Json::as_str).map(path_uri))?;
+            Some(Location { uri, range: Range::default() })
+        };
+        locations.extend(records.iter().filter_map(at));
     }
     (!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations))
 }

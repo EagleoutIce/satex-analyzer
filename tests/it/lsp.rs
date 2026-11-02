@@ -2021,17 +2021,19 @@ fn completion_offers_at_names_only_where_at_is_a_letter() {
 
 /// A hover shows what the defining package's manual says (src/plugin/docs):
 /// mined in the background, so a later hover shows it. The kernel's
-/// internals link to source2e, expl3 to interface3, a package to its own PDF.
+/// internals link to source2e, expl3 to interface3, a package to its own PDF,
+/// each with the section and source line that document it; an environment too.
 #[test]
 fn hover_shows_the_mined_manual() {
     let lines = [
         "\\documentclass{article}",
-        "\\usepackage{ifthen,xspace}",
+        "\\usepackage{ifthen,xspace,alltt}",
         "\\xspaceaddexceptions{\\relax}",
         "\\makeatletter\\def\\oops{\\@latex@error{a}{b}}\\makeatother",
         "\\ExplSyntaxOn \\tl_set:Nn \\l_tmpa_tl {x} \\ExplSyntaxOff",
         "\\begin{document}",
         "\\ifthenelse{1=1}{a}{b}",
+        "\\begin{alltt}x\\end{alltt}",
         "\\end{document}",
     ];
     let (mut server, uri, _, dir) = open_loaded("mined", &(lines.join("\n") + "\n"));
@@ -2065,7 +2067,8 @@ fn hover_shows_the_mined_manual() {
     until(
         "\\@latex@error",
         &[
-            "for use in the LaTeX core. *(from the [source2e manual](https://texdoc.org/serve/source2e/0))*",
+            "for use in the LaTeX core. *(from the [source2e manual](https://texdoc.org/serve/source2e/0), § General commands)* `",
+            "lterror.dtx:",
             "[texdoc source2e](https://texdoc.org/serve/source2e/0)",
         ],
     );
@@ -2074,6 +2077,7 @@ fn hover_shows_the_mined_manual() {
     until("\\xspaceaddexceptions", &package);
     // An authored description stays first: the manual adds the link.
     until("\\ifthenelse", &["Tests a condition and chooses code.\n", "[texdoc ifthen]"]);
+    until("{alltt}", &["*(from the [alltt manual]", "§ Introduction)*", "alltt.dtx:"]);
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -2457,6 +2461,59 @@ fn a_color_argument_completes_colors_with_their_values() {
     // `boxed` sets a color, but `\begin`'s argument names an environment
     let environments = complete(&mut server, &uri, 6, 33);
     assert!(environments.iter().all(|i| i["kind"] != 16), "{:?}", labels(&environments));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Go to definition answers every place that defines a name (a
+/// redefinition, the kernel's and the document's), a primitive with its
+/// documentation, an environment name with its command's places; an
+/// environment's hover is its command's.
+#[test]
+fn definition_answers_every_place_primitives_and_environments() {
+    if !crate::support::installed() {
+        return;
+    }
+    let lines = [
+        "\\documentclass{article}",
+        "\\usepackage{listings}",
+        "\\newcommand\\twice{a}",
+        "\\renewcommand\\twice{b}",
+        "\\renewcommand\\today{now}",
+        "\\begin{document}",
+        "\\twice \\romannumeral 4 \\today",
+        "\\begin{lstlisting}",
+        "x",
+        "\\end{lstlisting}",
+        "\\end{document}",
+    ];
+    let (mut server, uri, _, dir) = open_loaded("everydef", &(lines.join("\n") + "\n"));
+    let mut ask = |method: &str, word: &str| {
+        let line = lines.iter().rposition(|l| l.contains(word)).unwrap();
+        let character = (lines[line].find(word).unwrap() + 2) as u32;
+        let id = server.request(
+            method,
+            json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": character } }),
+        );
+        server.response(id)["result"].clone()
+    };
+    let at_lines = |r: &Value| -> Vec<u64> {
+        r.as_array().into_iter().flatten().filter_map(|l| l["range"]["start"]["line"].as_u64()).collect()
+    };
+    let twice = ask("textDocument/definition", "twice");
+    let defining = |w: &str| lines.iter().position(|l| l.starts_with(w)).unwrap() as u64;
+    let wanted = [defining("\\newcommand"), defining("\\renewcommand")];
+    assert!(wanted.iter().all(|l| at_lines(&twice).contains(l)), "{twice}");
+    let primitive = ask("textDocument/definition", "romannumeral");
+    assert!(primitive[0]["uri"].as_str().is_some_and(|u| u.contains("romannumeral")), "{primitive}");
+    let today = ask("textDocument/definition", "today");
+    let files: Vec<&str> = today.as_array().into_iter().flatten().filter_map(|l| l["uri"].as_str()).collect();
+    assert!(files.iter().any(|u| u.ends_with("main.tex")) && files.iter().any(|u| u.ends_with(".ltx")), "{today}");
+    let env = ask("textDocument/definition", "lstlisting}");
+    assert!(env.to_string().contains("listings"), "{env}");
+    let hover = ask("textDocument/hover", "lstlisting}");
+    let hover = hover["contents"]["value"].as_str().unwrap_or_default();
+    assert!(hover.contains("`lstlisting`") && hover.contains("listings"), "{hover}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }

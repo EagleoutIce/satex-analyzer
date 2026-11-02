@@ -110,7 +110,7 @@ definition sits in a conditional arm that this use does not depend on.
 Fix by loading the package that provides it, defining it before the use, or
 correcting the spelling.",
         references: &[Ref { source: Source::TeXbook, at: "chapter 27" }],
-        fixes: &[],
+        fixes: &[LOAD_FIX],
         engines: &[],
         run: undefined_control_sequences,
     },
@@ -166,7 +166,7 @@ then a warning that names the earlier error.",
 Fix by loading the package that provides the environment or by defining it with
 `\\newenvironment{name}{…}{…}`.",
         references: &[Ref { source: Source::Source2e, at: "ltmiscen.dtx" }],
-        fixes: &[],
+        fixes: &[LOAD_FIX],
         engines: &[],
         run: undefined_environments,
     },
@@ -495,12 +495,15 @@ fn undefined_control_sequences(report: &mut Report) {
     }
 }
 
+/// How sure [`load_fix`] is: the rules that offer it declare it.
+const LOAD_FIX: Applicability = Applicability::Unsafe;
+
 /// Loading the installed package that defines `name`, offered, never applied
 /// on its own.
 fn load_fix(report: &Report, name: &str) -> Option<Fix> {
     let package = super::shared::providing_package(report.analysis, name)?;
     let edits = report.edits().ensure_package(&package)?;
-    Some(Fix::new(format!("load `{package}`, which defines it"), Applicability::Unsafe, Some(edits)))
+    Some(Fix::new(format!("load `{package}`, which defines it"), LOAD_FIX, Some(edits)))
 }
 
 /// Where the run defined a name it reads undefined elsewhere: inside an environment of the document

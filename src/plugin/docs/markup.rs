@@ -1,16 +1,21 @@
 //! The doc classes' markup as Markdown: `\cs{x}`, `\meta{x}`, `\marg{x}`,
 //! `|verbatim|` (doc.dtx, l3doc.dtx).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The documentation lines of `text`: a `.dtx`'s `%` lines without it, its
 /// code lines empty, a `.tex`'s lines without comments. A `^^A` comment
 /// joins the next line, as its line end is commented out.
 pub fn lines(file: &Path, text: &str) -> Vec<String> {
+    numbered(file, text).into_iter().map(|(l, _)| l).collect()
+}
+
+/// [`lines`], each with the 1-based line of `text` it starts on.
+pub fn numbered(file: &Path, text: &str) -> Vec<(String, usize)> {
     let dtx = file.extension().is_some_and(|e| e == "dtx");
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<(String, usize)> = Vec::new();
     let mut join = false;
-    for raw in text.lines() {
+    for (n, raw) in text.lines().enumerate() {
         let line = match dtx {
             true => raw.strip_prefix('%').filter(|l| !l.starts_with('%')).unwrap_or(""),
             false => cut_comment(raw),
@@ -20,8 +25,8 @@ pub fn lines(file: &Path, text: &str) -> Vec<String> {
             None => (line, false),
         };
         match out.last_mut().filter(|_| join) {
-            Some(last) => last.push_str(line.trim()),
-            None => out.push(line.trim().to_string()),
+            Some((last, _)) => last.push_str(line.trim()),
+            None => out.push((line.trim().to_string(), n + 1)),
         }
         join = comment;
     }
@@ -282,17 +287,122 @@ pub fn variants(opts: &str, names: Vec<String>) -> Vec<String> {
     out
 }
 
-/// The anchors `\begin{env}[opts]{names}` in `doc`: options, names and
-/// what follows.
-pub fn anchors<'a>(doc: &'a str, env: &str) -> impl Iterator<Item = (&'a str, &'a str, &'a str)> {
+/// The anchors `\begin{env}[opts]{names}` in `doc`: where each starts,
+/// options, names and what follows.
+pub fn anchors<'a>(doc: &'a str, env: &str) -> impl Iterator<Item = (usize, &'a str, &'a str, &'a str)> {
     let open = format!("\\begin{{{env}}}");
-    let at: Vec<usize> = doc.match_indices(&open).map(|(i, _)| i + open.len()).collect();
+    let at: Vec<usize> = doc.match_indices(&open).map(|(i, _)| i).collect();
     at.into_iter().filter_map(move |i| {
-        let rest = &doc[i..];
+        let rest = &doc[i + open.len()..];
         let (opts, rest) = group(rest, '[', ']').unwrap_or(("", rest));
         let (list, after) = group(rest, '{', '}')?;
-        Some((opts, list, after))
+        Some((i, opts, list, after))
     })
+}
+
+/// The headings of the manual `file`: the commands its class (`\documentclass`,
+/// then each `\LoadClass`) defines through `\@startsection` or `\secdef`,
+/// the kernel's two ways to start a section. Read from the class files of
+/// the installation `file` lies in, once per class.
+fn sectioning(file: &Path, text: &str) -> Vec<String> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static CLASSES: Mutex<Option<HashMap<PathBuf, Vec<String>>>> = Mutex::new(None);
+    let Some(root) = file.ancestors().find(|d| d.join("tex").is_dir()) else { return Vec::new() };
+    let mut names = Vec::new();
+    let mut class = loaded(text, "\\documentclass");
+    for _ in 0..8 {
+        let Some(path) = class.and_then(|c| crate::distribution::tex_file(&[root.to_path_buf()], &format!("{c}.cls")))
+        else {
+            break;
+        };
+        let Ok(code) = std::fs::read_to_string(&path) else { break };
+        let mut cache = CLASSES.lock().unwrap_or_else(|e| e.into_inner());
+        names.extend(
+            cache.get_or_insert_with(HashMap::new).entry(path).or_insert_with(|| starts_sections(&code)).clone(),
+        );
+        class = loaded(&code, "\\LoadClass");
+    }
+    names
+}
+
+/// The class `\documentclass` or `\LoadClass` (`cmd`) names in `code`.
+fn loaded(code: &str, cmd: &str) -> Option<String> {
+    let rest = code[code.find(cmd)? + cmd.len()..].trim_start();
+    let rest = group(rest, '[', ']').map_or(rest, |(_, r)| r);
+    Some(group(rest.trim_start(), '{', '}')?.0.trim().to_string())
+}
+
+/// The commands `code` defines whose definition reaches `\@startsection` or `\secdef`.
+fn starts_sections(code: &str) -> Vec<String> {
+    const DEFINE: [&str; 5] = ["\\newcommand", "\\renewcommand", "\\providecommand", "\\DeclareRobustCommand", "\\def"];
+    let mut starts: Vec<(usize, &str)> = DEFINE.iter().flat_map(|d| code.match_indices(d)).collect();
+    starts.sort();
+    let mut names = Vec::new();
+    for (i, &(at, define)) in starts.iter().enumerate() {
+        let end = starts.get(i + 1).map_or(code.len(), |n| n.0);
+        let rest = code[at + define.len()..end].trim_start_matches(['*', ' ', '{']);
+        let Some(name) = rest.strip_prefix('\\') else { continue };
+        let name: String = name.chars().take_while(|c| c.is_ascii_alphabetic() || *c == '@').collect();
+        let body = &code[at..end];
+        if !name.is_empty() && (body.contains("\\@startsection") || body.contains("\\secdef")) && !names.contains(&name)
+        {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// The places in `file` of its [`numbered`] lines joined as `doc`: an
+/// offset's line and the last heading before it (a command of the
+/// manual's class that starts a section, [`sectioning`]).
+pub struct Places {
+    path: String,
+    starts: Vec<usize>,
+    numbers: Vec<usize>,
+    headings: Vec<(usize, String)>,
+}
+
+impl Places {
+    /// The [`lines`] of `file` joined, with their places.
+    pub fn of(file: &Path, text: &str) -> (String, Places) {
+        let sections = sectioning(file, text);
+        let (lines, numbers): (Vec<String>, Vec<usize>) = numbered(file, text).into_iter().unzip();
+        let doc = lines.join("\n");
+        let starts = std::iter::once(0).chain(doc.match_indices('\n').map(|(i, _)| i + 1)).collect();
+        let mut headings: Vec<(usize, String)> = sections
+            .iter()
+            .flat_map(|s| {
+                let cmd = format!("\\{s}");
+                doc.match_indices(&cmd)
+                    .filter_map(|(i, _)| {
+                        let rest = doc[i + cmd.len()..].trim_start_matches('*');
+                        if rest.starts_with(|c: char| c.is_ascii_alphabetic()) {
+                            return None;
+                        }
+                        let rest = group(rest, '[', ']').map_or(rest, |(_, r)| r);
+                        Some((i, render(group(rest, '{', '}')?.0, false)))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        headings.sort();
+        let places = Places { path: file.to_string_lossy().into_owned(), starts, numbers, headings };
+        (doc, places)
+    }
+
+    pub fn at(&self, offset: usize) -> super::Place {
+        let before = self.headings.partition_point(|(i, _)| *i <= offset);
+        super::Place {
+            path: self.path.clone(),
+            line: self
+                .numbers
+                .get(self.starts.partition_point(|s| *s <= offset).saturating_sub(1))
+                .copied()
+                .unwrap_or(1),
+            section: before.checked_sub(1).map(|i| self.headings[i].1.clone()),
+        }
+    }
 }
 
 #[cfg(test)]

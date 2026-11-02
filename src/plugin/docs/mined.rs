@@ -7,7 +7,7 @@ use std::path::Path;
 
 use serde_json::{Value as Json, json};
 
-use super::{Audience, Entry};
+use super::{Audience, Entry, Place};
 
 pub struct Mined;
 
@@ -30,6 +30,11 @@ fn entry(row: &Json) -> Option<Entry> {
         .get("link")
         .and_then(Json::as_array)
         .and_then(|l| Some((l.first()?.as_str()?.into(), l.get(1)?.as_str()?.into())));
+    let at = row.get("at").map(|at| {
+        let text = |k: &str| at.get(k).and_then(Json::as_str).map(str::to_string);
+        let line = at.get("line").and_then(Json::as_u64).unwrap_or(1) as usize;
+        Place { path: text("path").unwrap_or_default(), line, section: text("section") }
+    });
     Some(Entry {
         name: text("name")?,
         usage: text("usage"),
@@ -37,6 +42,7 @@ fn entry(row: &Json) -> Option<Entry> {
         audience: if text("audience").as_deref() == Some("code") { Audience::Code } else { Audience::User },
         from: text("from").unwrap_or_default(),
         link,
+        at,
     })
 }
 
@@ -49,6 +55,7 @@ pub fn row(entry: &Entry) -> Json {
         "audience": if entry.audience == Audience::Code { "code" } else { "user" },
         "from": entry.from,
         "link": entry.link.as_ref().map(|(label, url)| [label, url]),
+        "at": entry.at.as_ref().map(|p| json!({ "path": p.path, "line": p.line, "section": p.section })),
     })
 }
 
@@ -66,6 +73,7 @@ mod tests {
             audience: Audience::User,
             from: "pkg".into(),
             link: Some(("pkg manual".into(), "https://texdoc.org/pkg/pkg".into())),
+            at: Some(Place { path: "pkg.dtx".into(), line: 7, section: Some("Usage".into()) }),
         };
         let text = Json::Array(vec![row(&entry)]).to_string();
         let mut out = Vec::new();

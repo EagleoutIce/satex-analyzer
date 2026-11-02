@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use super::markup::{anchors, description, lines, names, render, usage, variants};
+use super::markup::{Places, anchors, description, names, render, usage, variants};
 use super::{Audience, DocPlugin, Entry};
 use crate::config::DocsConfig;
 
@@ -12,9 +12,9 @@ pub struct L3doc;
 impl DocPlugin for L3doc {
     fn mine(&self, config: &DocsConfig, file: &Path, text: &str, out: &mut Vec<Entry>) {
         let from = file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        let doc = lines(file, text).join("\n");
+        let (doc, places) = Places::of(file, text);
         for env in config.l3doc_environments.iter().map(String::as_str) {
-            for (opts, list, after) in anchors(&doc, env) {
+            for (at, opts, list, after) in anchors(&doc, env) {
                 let body = after.split_once(&format!("\\end{{{env}}}")).map_or(after, |(b, _)| b);
                 let (syntax, text) = match body.split_once("\\begin{syntax}") {
                     Some((_, rest)) => rest.split_once("\\end{syntax}").unwrap_or((rest, "")),
@@ -30,6 +30,7 @@ impl DocPlugin for L3doc {
                         audience: Audience::User,
                         from: from.clone(),
                         link: None,
+                        at: Some(places.at(at)),
                     });
                 }
             }

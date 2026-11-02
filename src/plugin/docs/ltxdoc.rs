@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use super::markup::{anchors, description, group, lines, names, render, usage, variants};
+use super::markup::{Places, anchors, description, group, names, render, usage, variants};
 use super::{Audience, DocPlugin, Entry};
 use crate::config::DocsConfig;
 
@@ -12,21 +12,21 @@ pub struct Ltxdoc;
 impl DocPlugin for Ltxdoc {
     fn mine(&self, config: &DocsConfig, file: &Path, text: &str, out: &mut Vec<Entry>) {
         let from = file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        let lines = lines(file, text);
-        let doc = lines.join("\n");
-        let entry = |name: String, usage: Option<String>, text: Option<String>, audience| Entry {
+        let (doc, places) = Places::of(file, text);
+        let entry = |name: String, usage: Option<String>, text: Option<String>, audience, at| Entry {
             name,
             usage,
             text,
             audience,
             from: from.clone(),
             link: None,
+            at: Some(places.at(at)),
         };
         for env in &config.ltxdoc_environments {
-            for (opts, list, after) in anchors(&doc, env) {
+            for (at, opts, list, after) in anchors(&doc, env) {
                 let text = description(after, None);
                 out.extend(
-                    variants(opts, names(list)).into_iter().map(|n| entry(n, None, text.clone(), Audience::Code)),
+                    variants(opts, names(list)).into_iter().map(|n| entry(n, None, text.clone(), Audience::Code, at)),
                 );
             }
         }
@@ -39,7 +39,7 @@ impl DocPlugin for Ltxdoc {
                 for name in names(list) {
                     let usage = around.iter().find_map(|l| usage(l, &name));
                     let text = description(after, Some(&name));
-                    out.push(entry(name, usage, text, Audience::User));
+                    out.push(entry(name, usage, text, Audience::User, at));
                 }
             }
         }
@@ -52,9 +52,15 @@ mod tests {
 
     #[test]
     fn describe_macro_and_macro_blocks() {
-        let dtx = "% \\DescribeMacro{\\ifthenelse}\n% |\\ifthenelse{|^^A\n%   \\meta{test}|}{|\\meta{then}|}|\n%\n% Evaluates \\meta{test} as a boolean. Then more.\n%\n% \\begin{macro}{\\@latex@error}\n% \\begin{macro}{\\@latex@info}\n% \\changes{v1}{1994}{Added}\n%    Errors and other info, for use in the \\LaTeX{} core.\n%    \\begin{macrocode}\n\\gdef\\@latex@error#1#2{}\n";
+        // A manual's headings are what its class defines to start a section.
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/ltxdoc-headings");
+        let classes = root.join("tex/latex/base");
+        std::fs::create_dir_all(&classes).unwrap();
+        std::fs::write(classes.join("doclike.cls"), "\\LoadClass{bookish}").unwrap();
+        std::fs::write(classes.join("bookish.cls"), "\\newcommand\\chapter{\\secdef\\@chapter\\@schapter}\n\\newcommand\\section{\\@startsection{section}{1}{0pt}{1ex}{1ex}{}}").unwrap();
+        let dtx = "% \\documentclass{doclike}\n% \\chapter{Use}\n% \\section{Tests}\n% \\DescribeMacro{\\ifthenelse}\n% |\\ifthenelse{|^^A\n%   \\meta{test}|}{|\\meta{then}|}|\n%\n% Evaluates \\meta{test} as a boolean. Then more.\n%\n% \\begin{macro}{\\@latex@error}\n% \\begin{macro}{\\@latex@info}\n% \\changes{v1}{1994}{Added}\n%    Errors and other info, for use in the \\LaTeX{} core.\n%    \\begin{macrocode}\n\\gdef\\@latex@error#1#2{}\n";
         let mut out = Vec::new();
-        Ltxdoc.mine(&DocsConfig::default(), Path::new("x.dtx"), dtx, &mut out);
+        Ltxdoc.mine(&DocsConfig::default(), &root.join("source/latex/x/x.dtx"), dtx, &mut out);
         let get = |n: &str| out.iter().find(|e| e.name == n).cloned().expect(n);
         let ite = get("ifthenelse");
         assert_eq!(ite.usage.as_deref(), Some("\\ifthenelse{⟨test⟩}{⟨then⟩}"));
@@ -62,5 +68,10 @@ mod tests {
         let core = Some("Errors and other info, for use in the LaTeX core.");
         assert_eq!(get("@latex@error").text.as_deref(), core);
         assert_eq!(get("@latex@info").text.as_deref(), core);
+        // Each entry knows its line, past a joined `^^A` line, and the section it stands in.
+        let line = |s: &str| dtx.lines().position(|l| l.contains(s)).unwrap() + 1;
+        let at = |n: &str| get(n).at.map(|p| (p.line, p.section));
+        assert_eq!(at("ifthenelse"), Some((line("DescribeMacro"), Some("Tests".into()))));
+        assert_eq!(at("@latex@info"), Some((line("{\\@latex@info}"), Some("Tests".into()))));
     }
 }

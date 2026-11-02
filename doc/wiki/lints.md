@@ -63,8 +63,8 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C012 | [`option-clash`](#option-clash) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a package is loaded twice with different options | — |
 | C013 | [`raised-error`](#raised-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | the document's code raises a TeX error | — |
 | C014 | [`undefined-color`](#undefined-color) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | a color is used, or aliased from, before xcolor ever defines it | — |
-| C015 | [`undefined-control-sequence`](#undefined-control-sequence) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | a control sequence is used that nothing defines | — |
-| C016 | [`undefined-environment`](#undefined-environment) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | `\begin` names an environment that is not defined | — |
+| C015 | [`undefined-control-sequence`](#undefined-control-sequence) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a control sequence is used that nothing defines | — |
+| C016 | [`undefined-environment`](#undefined-environment) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | `\begin` names an environment that is not defined | — |
 | C017 | [`undefined-glossary-entry`](#undefined-glossary-entry) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | a glossary or acronym entry is used but never declared | — |
 | C018 | [`unguarded-recursion`](#unguarded-recursion) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | a recursive macro has nothing that can stop it | — |
 | C019 | [`build-missing-custom-dependency`](#build-missing-custom-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | the document writes glossary files, but latexmk has no rule to process them | — |
@@ -167,12 +167,14 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 
 `S` marks a safe fix, `U` an unsafe one. A rule with both has findings of each kind: the fix is safe where it cannot change what the document means and unsafe where it might. Each finding names its own kind.
 
-<details><summary>48 rules with quick fixes</summary>
+<details><summary>50 rules with quick fixes</summary>
 
 * C001 [`already-defined`](#already-defined) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\newcommand` redefines an existing name
 * C002 [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a BibTeX command biblatex replaces stops the run
 * C011 [`not-defined`](#not-defined) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> `\renewcommand` targets a name that does not exist
 * C012 [`option-clash`](#option-clash) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a package is loaded twice with different options
+* C015 [`undefined-control-sequence`](#undefined-control-sequence) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a control sequence is used that nothing defines
+* C016 [`undefined-environment`](#undefined-environment) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\begin` names an environment that is not defined
 * C022 [`delimiter-not-followed`](#delimiter-not-followed) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\left`, `\right` or `\middle` is followed by a brace or a math shift
 * C025 [`environment-mismatch`](#environment-mismatch) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\end` names an environment other than the one that is open
 * C029 [`ignored-verbatim-tail`](#ignored-verbatim-tail) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> text stands on the line that closes a verbatim body and never reaches the page
@@ -411,7 +413,7 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 ### undefined-control-sequence
 
-<p class="badges"><code class="num" title="rule number">C015</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C015</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
 
 **a control sequence is used that nothing defines**
 
@@ -423,7 +425,7 @@ See [The TeXbook, chapter 27](https://ctan.org/pkg/texbook#chapter-27).
 
 ### undefined-environment
 
-<p class="badges"><code class="num" title="rule number">C016</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C016</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
 
 **`\begin` names an environment that is not defined**
 

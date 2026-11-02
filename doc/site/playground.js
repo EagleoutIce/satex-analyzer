@@ -902,7 +902,7 @@
       e.preventDefault();
       const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY });
       ev.dispatch({ selection: { anchor: pos } });
-      definition();
+      definition(e.clientX, e.clientY);
     }, true);
     parent.addEventListener('contextmenu', (e) => {
       const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY });
@@ -1320,13 +1320,16 @@
 
   // ---------------------------------------------------------------- language server actions: definition, rename, the context menu
 
-  /** The definition of the command at the cursor: a project file's tab, or a bundle file read-only. */
-  async function definition() {
+  /** The definition of the command at the cursor: a project file's tab, a bundle file read-only, or a
+   * primitive's documentation; with several (redefinitions, the kernel's), a menu of them all. */
+  async function definition(x = innerWidth / 2, y = innerHeight / 3) {
     sync();
     const r = await lsp('textDocument/definition', { textDocument: { uri: uri() }, position: editor.position() }).catch(() => null);
-    const loc = Array.isArray(r) ? r[0] : r;
-    if (!loc) return toast('No definition found');
-    await openPlace(decodeURIComponent(new URL(loc.uri ?? loc.targetUri).pathname), (loc.range ?? loc.targetSelectionRange).start);
+    const locs = (Array.isArray(r) ? r : r ? [r] : []).map((l) => [new URL(l.uri ?? l.targetUri), (l.range ?? l.targetSelectionRange).start]);
+    if (!locs.length) return toast('No definition found');
+    const open = ([url, start]) => url.protocol === 'file:' ? openPlace(decodeURIComponent(url.pathname), start) : window.open(url.href, '_blank', 'noopener');
+    if (locs.length === 1) return open(locs[0]);
+    showMenu(locs.map((l) => [l[0].protocol === 'file:' ? `${decodeURIComponent(l[0].pathname).split('/').pop()}:${l[1].line + 1}` : l[0].href, '', () => open(l)]), x, y);
   }
   /** `file` (a path or a bare name) at `start`; a file outside the project opens read-only. */
   async function openPlace(file, start = { line: 0, character: 0 }, end = start) {
@@ -1448,7 +1451,7 @@
     const rules = [...new Set(found.filter((d) => d.fixes.length).map((d) => d.code))];
     const editable = !(state.file in state.ro);
     const items = [
-      ...(w?.[3] ? [['Go to definition', 'Ctrl+click', definition]] : []),
+      ...(w?.[3] ? [['Go to definition', 'Ctrl+click', () => definition(x, y)]] : []),
       ...(w && editable ? [['Find references', '', references]] : []), ...(renamable ? [['Rename symbol', 'F2', renameBox]] : []),
       ...(w?.[3] ? [['Explain', '', focusExplain], ['Show expansions', '', () => expansions(w)], ['Trace expansion', '', () => traceCall(`\\${w[2]}`, { file: state.file, line: p.line + 1, col: w[0] + 1 })]] : []),
       ...found.map((d) => [`Explain rule ${d.code}`, '', () => unfold(diagnostics[uri()].indexOf(d), false)]),

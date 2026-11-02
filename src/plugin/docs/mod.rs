@@ -38,6 +38,16 @@ pub struct Entry {
     pub from: String,
     /// The manual that shows it: label and URL.
     pub link: Option<(String, String)>,
+    /// Where it is documented.
+    pub at: Option<Place>,
+}
+
+/// A place in a documented source: its file, 1-based line and the heading it stands under.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Place {
+    pub path: String,
+    pub line: usize,
+    pub section: Option<String>,
 }
 
 /// A package's documented sources: its `source/…` and `doc/…` directories.
@@ -281,6 +291,7 @@ mod tests {
                 audience: Audience::User,
                 from: file.to_string_lossy().into(),
                 link: None,
+                at: None,
             });
         }
     }

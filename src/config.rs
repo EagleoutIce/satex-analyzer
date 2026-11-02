@@ -443,7 +443,7 @@ pub struct DocsConfig {
     pub depth: usize,
     /// How many lines after an `ltxdoc` anchor its usage line may stand.
     pub usage_lines: usize,
-    /// The commands (without their backslash) that announce the documentation of a command, as `\DescribeMacro{\x}` does.
+    /// The commands (without their backslash) that announce the documentation of a command or environment, as `\DescribeMacro{\x}` does.
     pub describe: Vec<String>,
     /// The `ltxdoc` environments that document a command's code, `macro` in `\begin{macro}{\x}`.
     pub ltxdoc_environments: Vec<String>,
@@ -463,7 +463,7 @@ impl Default for DocsConfig {
             reads: list(&["\\DocInput", "\\DocInclude", "\\input", "\\include"]),
             depth: 3,
             usage_lines: 12,
-            describe: list(&["DescribeMacro"]),
+            describe: list(&["DescribeMacro", "DescribeEnv"]),
             ltxdoc_environments: list(&["macro"]),
             l3doc_environments: list(&["function", "variable"]),
             inline: false,

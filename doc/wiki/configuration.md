@@ -639,9 +639,9 @@ docs:  # where a package's documentation is looked for and which conventions of 
     #! affects: output
     #! example: 12: \DescribeMacro{\x} then \x{arg} within 12 lines gives the usage
     #! plugin: docs
-  describe: [DescribeMacro]  # the commands that announce the documentation of a command, without the backslash
+  describe: [DescribeMacro, DescribeEnv]  # the commands that announce the documentation of a command or environment, without the backslash
     #! affects: output
-    #! example: describe: [DescribeMacro, DescribeEnv]
+    #! example: describe: [DescribeMacro] mines no environments
     #! plugin: docs
   ltxdoc_environments: [macro]  # the ltxdoc environments that document a command's code
     #! affects: output
