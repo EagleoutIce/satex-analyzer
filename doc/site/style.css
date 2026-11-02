@@ -1343,3 +1343,8 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf .pdf-page img { display: block; width: 100%; height: auto; cursor: crosshair; background: #fff; }
 .pdf .pdf-mark { position: absolute; pointer-events: none; background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1px solid var(--accent); border-radius: 2px; }
 .pdf .pdf-mark.coarse { background: none; outline-style: dashed; }
+.pdf .pdf-mark.word { background: color-mix(in srgb, var(--accent) 40%, transparent); outline-width: 2px; }
+.pdf .pdf-link { position: absolute; z-index: 1; border-radius: 2px; }
+.pdf .pdf-link:hover, .pdf .pdf-link:focus-visible { background: color-mix(in srgb, var(--accent) 14%, transparent); outline: 1px solid var(--accent); }
+.pdf .pdf-target { position: absolute; pointer-events: none; width: 30%; height: 1.4%; border-left: 3px solid var(--accent); background: linear-gradient(to right, color-mix(in srgb, var(--accent) 30%, transparent), transparent); animation: pdf-flash 1.8s ease-out forwards; }
+@keyframes pdf-flash { 60% { opacity: 1; } to { opacity: 0; } }

@@ -2,7 +2,8 @@
 //! /__satex/compile` takes `{main, files, at?}`, writes the files into a
 //! fresh directory beside the site and runs the native `satex compile` on
 //! the main file, or on `satex slice --at` of it. The answer names the
-//! pages (PNG, by `pdftocairo`), the words on them (`pdftotext -bbox`), the
+//! pages (PNG, by `pdftocairo`), the words on them (`pdftotext -bbox`), its
+//! objects with the link annotations (`qpdf --json`, parsed by the page), the
 //! log and the explained messages. A file is text or `{"b64": ...}` (an
 //! image). The same request again answers from the kept build, and with
 //! `cached` only a kept build answers.
@@ -149,6 +150,12 @@ fn build(root: &Path, body: &[u8]) -> Result<Value, String> {
     if pdf.is_file() {
         run(Command::new("pdftocairo").args(["-png", "-r", "144"]).arg(&pdf).arg(work.join("page")))?;
         run(Command::new("pdftotext").arg("-bbox").arg(&pdf).arg(work.join("words.html")))?;
+        // without qpdf the pages only lack their links. It exits 3 on mere warnings
+        let _ = Command::new("qpdf")
+            .args(["--json=2", "--json-key=pages", "--json-key=qpdf"])
+            .arg(&pdf)
+            .arg(work.join("links.json"))
+            .output();
     }
     let mut pages: Vec<String> = std::fs::read_dir(&work)
         .map_err(|e| e.to_string())?
@@ -166,6 +173,7 @@ fn build(root: &Path, body: &[u8]) -> Result<Value, String> {
         "synctex": work.join(stem.with_extension("synctex.gz")).is_file().then(|| stem.with_extension("synctex.gz")),
         "pages": pages,
         "words": work.join("words.html").is_file().then_some("words.html"),
+        "links": work.join("links.json").is_file().then_some("links.json"),
         "dpi": 144,
         "records": records,
         "log": log,

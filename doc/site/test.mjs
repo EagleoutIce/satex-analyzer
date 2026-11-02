@@ -840,6 +840,31 @@ async function browser() {
       check('the clock setting changes \\the\\year', year, await js(`return document.getElementById('typeset-body').textContent.slice(0, 120)`));
       await js(`document.getElementById('cfg-open').click(); document.getElementById('cfg-reset').click(); document.getElementById('play-config').close()`);
       });
+      await section('pdflinks', async () => {
+      // the compiled PDF's links (only with the compile server of `cargo playground`): areas over the pages,
+      // an internal one scrolls to its target and moves the editor there, Back returns, a URL opens a new tab
+      if (!await js(`return fetch('/__satex/compile').then((r) => r.ok && r.json()).then((j) => !!j?.compile).catch(() => false)`)) return console.log('skip: no compile server for the PDF links');
+      await open('links', '\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\\section{Intro}\\label{a}\nSee \\ref{b} and \\url{https://example.org}.\n\\newpage\n\\section{Two}\\label{b}\nBack to \\ref{a}.\n\\end{document}\n');
+      await js(`document.querySelector('.side-tabs [data-panel=play-pdf]').click(); document.getElementById('pdf-compile').click()`);
+      const built = await until(`return document.querySelectorAll('.pdf-page').length === 2 && document.querySelectorAll('.pdf-page img').length === [...document.querySelectorAll('.pdf-page img')].filter((i) => i.naturalWidth).length`, 180000);
+      const links = await js(`return [...document.querySelectorAll('.pdf-link')].map((a) => [a.closest('.pdf-page').dataset.page, a.getAttribute('href'), a.target, a.title])`);
+      check('the PDF has its links: two internal, one URL in a new tab', built && links.length === 3 && links.some(([p, h, t]) => p === '1' && h === 'https://example.org' && t === '_blank')
+        && links.filter(([, h, , t]) => h === '#' && /^to page \d$/.test(t)).length === 2, JSON.stringify(links));
+      const line = `document.querySelector('.cm-activeLine')?.textContent`;
+      await js(`document.querySelector('.pdf-page[data-page="1"] .pdf-link[title="to page 2"]').click()`);
+      const went = await until(`return /^\\\\section\\{Two\\}/.test(${line}) && !document.getElementById('pdf-back').hidden && document.querySelector('.pdf-page[data-page="2"] .pdf-target')`, 10000);
+      await shot('pdf-link');
+      await js(`document.getElementById('pdf-back').click()`);
+      const back = await until(`return document.getElementById('pdf-back').hidden && document.querySelector('.pdf-pages').scrollTop < 20`, 10000);
+      check('an internal link scrolls to its target and moves the editor, Back returns', went && back, await js(`return ${line} + ' | ' + document.querySelector('.pdf-pages').scrollTop`));
+      // the link stays on its words at another zoom
+      const onWord = `const a = document.querySelector('.pdf-link[href^=http]').getBoundingClientRect(), img = document.querySelector('.pdf-page[data-page="1"] img').getBoundingClientRect(); return [(a.left - img.left) / img.width, (a.top - img.top) / img.height].map((v) => v.toFixed(3)).join()`;
+      const at1 = await js(onWord);
+      await js(`document.getElementById('pdf-zoom-in').click()`);
+      await sleep(300);
+      check('links hold their place at every zoom', at1 === await js(onWord), at1);
+      await js(`document.getElementById('pdf-zoom-out').click()`);
+      });
       await section('settings', async () => {
       // a stored setting satex refuses never holds the start up: the page starts with the defaults
       await send('Page.navigate', { url: base + 'play/index.html' });

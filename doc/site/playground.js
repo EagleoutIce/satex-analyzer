@@ -3482,12 +3482,55 @@
       }
       return out;
     };
+    /** The link annotations of `qpdf --json`: per page `{page, rect, uri}` or `{page, rect, to}`, a rectangle
+     * `[left, top, width, height]` and a target `{page, x, y}` as fractions of their page, from the top left. */
+    const links = ({ pages, qpdf }) => {
+      const objs = qpdf[1], at = (v) => typeof v === 'string' && /^\d+ \d+ R$/.test(v) ? (objs[`obj:${v}`]?.value ?? objs[`obj:${v}`]?.stream?.dict) : v;
+      const str = (s) => s?.startsWith('b:') ? s.slice(2).replace(/../g, (h) => String.fromCharCode(parseInt(h, 16))) : s?.slice(2);
+      const index = new Map(pages.map((p, i) => [p.object, i + 1]));
+      const box = (page) => { for (let p = at(page), n = 0; p && n < 32; p = at(p['/Parent']), n++) { const b = at(p['/CropBox'] ?? p['/MediaBox']); if (b) return b.map(at); } return [0, 0, 612, 792]; };
+      const frac = (page, x, y) => { const [x0, y0, x1, y1] = box(page); return [(x - x0) / (x1 - x0), (y1 - y) / (y1 - y0)]; };
+      // named destinations: the catalog's name tree, or its older /Dests dictionary
+      const named = new Map(), root = at(at(qpdf[1].trailer?.value)?.['/Root']) ?? {};
+      const walk = (node, depth = 0) => {
+        node = at(node);
+        if (!node || depth > 32) return;
+        const n = at(node['/Names']) ?? [];
+        for (let i = 0; i + 1 < n.length; i += 2) named.set(n[i], n[i + 1]);
+        for (const k of at(node['/Kids']) ?? []) walk(k, depth + 1);
+      };
+      walk(at(root['/Names'])?.['/Dests']);
+      for (const [k, v] of Object.entries(at(root['/Dests']) ?? {})) named.set(`u:${k.slice(1)}`, v);
+      const dest = (d) => {
+        d = at(typeof d === 'string' && !/ R$/.test(d) ? named.get(d) ?? named.get(`u:${d.slice(1)}`) : d);
+        d = at(d?.['/D'] ?? d);
+        if (!Array.isArray(d) || !index.has(d[0])) return null;
+        const [ref, kind, ...a] = [d[0], ...d.slice(1).map(at)], [, y0, , y1] = box(ref);
+        const [x, y] = { '/XYZ': [a[0], a[1]], '/FitH': [null, a[0]], '/FitBH': [null, a[0]], '/FitR': [a[0], a[3]] }[kind] ?? [];
+        const [fx, fy] = frac(ref, x ?? box(ref)[0], y ?? y1 ?? y0);
+        return { page: index.get(ref), x: fx, y: Math.max(0, fy) };
+      };
+      const out = [];
+      pages.forEach((p, i) => {
+        for (const ref of at(at(p.object)?.['/Annots']) ?? []) {
+          const a = at(ref), act = at(a?.['/A']);
+          if (a?.['/Subtype'] !== '/Link' || !a['/Rect']) continue;
+          const [l, b, r, t] = a['/Rect'].map(at), [fl, ft] = frac(p.object, Math.min(l, r), Math.max(b, t)), [fr, fb] = frac(p.object, Math.max(l, r), Math.min(b, t));
+          const rect = [fl, ft, fr - fl, fb - ft];
+          if (act?.['/S'] === '/URI') out.push({ page: i + 1, rect, uri: str(act['/URI']) });
+          else { const to = dest(act?.['/S'] === '/GoTo' ? act['/D'] : a['/Dest']); if (to) out.push({ page: i + 1, rect, to }); }
+        }
+      });
+      return out;
+    };
     const text = async (url, gzip) => { const r = await fetch(url); return gzip ? new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).text() : r.text(); };
     self.onmessage = async ({ data: { url, request } }) => {
       try {
         const answer = await (await fetch(url, { method: 'POST', body: JSON.stringify(request) })).json();
         if (answer.synctex) answer.boxes = parse(await text(`${url}/${answer.base}${answer.synctex}`, true));
         if (answer.words) answer.wordList = words(await text(`${url}/${answer.base}${answer.words}`));
+        // a PDF whose objects do not parse only lacks its links
+        if (answer.links) answer.linkList = await text(`${url}/${answer.base}${answer.links}`).then((t) => links(JSON.parse(t))).catch(() => []);
         self.postMessage(answer);
       } catch (e) { self.postMessage({ error: String(e?.message ?? e) }); }
     };
@@ -3581,8 +3624,17 @@
     const s = r.severity === 'error' ? 'error' : 'warning', where = r.line ? `${r.path}:${r.line}` : r.path;
     return `<li class="f-${s}" tabindex="0" data-path="${escape(r.path)}" data-line="${r.line ?? 1}"><p><span class="sev sev-${s}">${s}</span> <code>${escape(r.code)}</code> ${escape(r.message)} <span class="muted">${escape(where)}</span></p>${r.fix ? `<p class="pdf-why"><b>satex:</b> ${escape(r.fix)}</p>` : ''}</li>`;
   };
+  /** A page's links as areas over its image, placed in percent, so they hold at every zoom. */
+  const pdfLinks = (page) => (pdf.linkList ?? []).map((l, i) => l.page !== page ? '' : `<a class="pdf-link" style="${pdfPlace(...l.rect)}" ${l.uri
+    ? `href="${escape(l.uri)}" target="_blank" rel="noopener" title="${escape(l.uri)}"` : `href="#" data-link="${i}" title="to page ${l.to.page}"`}></a>`).join('');
+  /** The style of a box at fractions of its page. */
+  const pdfPlace = (l, t, w, h) => `left:${l * 100}%;top:${t * 100}%;width:${w * 100}%;height:${h * 100}%`;
+  /** The places left by following links, the latest last: Back returns to them. */
+  const pdfBack = [], pdfBackButton = $('pdf-back');
   function pdfShow() {
     pdfLine = '';
+    pdfBack.length = 0;
+    pdfBackButton.hidden = true;
     if (pdf.error) { pdfBody.innerHTML = `<p class="x-err">${escape(pdf.error)}</p>`; return; }
     const records = (pdf.records ?? []).sort(pdfOrder), file = (n) => `${COMPILE}/${pdf.base}${n}`;
     const errors = records.filter((r) => r.severity === 'error').length;
@@ -3590,7 +3642,7 @@
       + ` · ${errors} error${errors === 1 ? '' : 's'}, ${records.length - errors} warning${records.length - errors === 1 ? '' : 's'}${pdf.slice ? ' · a slice: its lines are not the file\'s' : ''}</p>`
       + (records.length ? `<ul class="diagnostics pdf-records">${records.map(pdfRecord).join('')}</ul>` : '')
       + `<details class="pdf-log"><summary>TeX log</summary><pre>${escape(pdf.log || pdf.stderr || '')}</pre></details>`
-      + `<div class="pdf-pages">${pdf.pages.map((n, i) => `<div class="pdf-page" data-page="${i + 1}"><img src="${file(n)}" alt="page ${i + 1}" draggable="false"></div>`).join('')}</div>`;
+      + `<div class="pdf-pages">${pdf.pages.map((n, i) => `<div class="pdf-page" data-page="${i + 1}"><img src="${file(n)}" alt="page ${i + 1}" draggable="false">${pdfLinks(i + 1)}</div>`).join('')}</div>`;
     pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => pdfFollow(true), { once: true }));
   }
   /** A page's size in bp, from its image. */
@@ -3628,12 +3680,19 @@
     for (let l = line; l > 0 && l > line - 8 && !rects.length; l--) rects = pdfRects(state.file, l);
     // a line that closes a frame or a float sets all of it: outlined, not filled
     const coarse = rects.length > 8;
-    for (const r of rects) {
-      const page = pdfBody.querySelector(`.pdf-page[data-page="${r.page}"]`), img = page?.querySelector('img');
-      if (!img?.naturalWidth) continue;
+    // the word at the cursor, its n-th occurrence in the line the n-th among the marked rows' words
+    const src = state.texts[state.file]?.split('\n')[line - 1] ?? '', at = wordAt(src, pos.character);
+    const nth = at && !at[3] ? [...src.slice(0, at[0]).matchAll(new RegExp(`(?<![\\p{L}\\p{N}\\\\])${at[2].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'gu'))].length : -1;
+    const same = nth < 0 || coarse ? [] : rects.flatMap((r) => (pdf.wordList ?? []).filter((w) => w[0] === r.page && w[4] >= r.t && w[2] <= r.d && w[3] > r.l && w[1] < r.r && wordInLine(w[5], at[2])));
+    const mark = (page, cls, l, t, r, d) => {
+      const el = pdfBody.querySelector(`.pdf-page[data-page="${page}"]`), img = el?.querySelector('img');
+      if (!img?.naturalWidth) return;
       const [w, h] = pageSize(img), pad = 1.5;
-      page.insertAdjacentHTML('beforeend', `<div class="pdf-mark${coarse ? ' coarse' : ''}" style="left:${(r.l - pad) / w * 100}%;top:${(r.t - pad) / h * 100}%;width:${(r.r - r.l + 2 * pad) / w * 100}%;height:${(r.d - r.t + 2 * pad) / h * 100}%"></div>`);
-    }
+      el.insertAdjacentHTML('beforeend', `<div class="pdf-mark${cls}" style="${pdfPlace((l - pad) / w, (t - pad) / h, (r - l + 2 * pad) / w, (d - t + 2 * pad) / h)}"></div>`);
+    };
+    for (const r of rects) mark(r.page, coarse ? ' coarse' : '', r.l, r.t, r.r, r.d);
+    const word = same[Math.min(nth, same.length - 1)];
+    if (word) mark(word[0], ' word', word[1], word[2], word[3], word[4]);
     const first = pdfBody.querySelector('.pdf-mark'), pages = pdfBody.querySelector('.pdf-pages');
     if (first && !again) {
       const a = first.getBoundingClientRect(), b = pages.getBoundingClientRect();
@@ -3667,17 +3726,70 @@
       if (name && !pdf.slice) openPlace(name, { line: +rec.dataset.line - 1, character: 0 });
       return;
     }
+    const link = e.target.closest('.pdf-link');
+    if (link) {
+      if (link.dataset.link) { e.preventDefault(); pdfJump(pdf.linkList[+link.dataset.link].to); }
+      return;
+    }
     const img = e.target.closest('.pdf-page img');
     if (!img || pdf.slice) return;
     const [w, h] = pageSize(img), r = img.getBoundingClientRect(), page = +img.parentElement.dataset.page;
     const x = (e.clientX - r.left) / r.width * w, y = (e.clientY - r.top) / r.height * h;
-    const word = pdfWordUnder(page, x, y), hit = pdfSource(page, x, y, word);
+    pdfGo(page, x, y, pdfWordUnder(page, x, y));
+  });
+  /** The source of a point on a page opened in the editor, `word` (a word box) selected in its line when found there. */
+  async function pdfGo(page, x, y, word) {
+    const hit = pdfSource(page, x, y, word);
     if (!hit) return;
     const span = word && wordInLine(state.texts[hit.file]?.split('\n')[hit.line - 1] ?? '', word[5]);
     const start = { line: hit.line - 1, character: span?.[0] ?? 0 };
-    openPlace(hit.file, start, span ? { line: start.line, character: span[1] } : undefined).then(() => pdfFollow(true));
-  });
+    await openPlace(hit.file, start, span ? { line: start.line, character: span[1] } : undefined);
+    pdfFollow(true);
+  }
+  /** Where the pages stand: the page at the top of the view and how far down it, and the editor's place. */
+  function pdfSpot() {
+    const pages = pdfBody.querySelector('.pdf-pages'), top = pages.getBoundingClientRect().top;
+    const page = [...pages.querySelectorAll('.pdf-page')].find((p) => p.getBoundingClientRect().bottom > top);
+    const r = page?.getBoundingClientRect();
+    return { page: +(page?.dataset.page ?? 1), y: r ? (top - r.top) / r.height : 0, file: state.file, at: editor.position() };
+  }
+  /** Scrolls the pages to `y` (a fraction) of `page`, `x` into view when given. */
+  function pdfScroll(page, y, x) {
+    const pages = pdfBody.querySelector('.pdf-pages'), el = pages?.querySelector(`.pdf-page[data-page="${page}"]`);
+    if (!el) return;
+    const a = el.getBoundingClientRect(), b = pages.getBoundingClientRect();
+    pages.scrollTop += a.top + y * a.height - b.top;
+    const left = x === undefined ? null : a.left + x * a.width;
+    if (left !== null && (left < b.left || left > b.right - 40)) pages.scrollLeft += left - b.left - 16;
+  }
+  /** Follows an internal link: the pages scroll to its target, marked a moment, the editor to its source. Back returns. */
+  async function pdfJump(to) {
+    pdfBack.push(pdfSpot());
+    pdfBackButton.hidden = false;
+    const el = pdfBody.querySelector(`.pdf-page[data-page="${to.page}"]`), img = el?.querySelector('img');
+    if (!el) return;
+    if (img?.naturalWidth && !pdf.slice) {
+      // the source of the first word at or below the target
+      const [w, h] = pageSize(img), y = to.y * h;
+      const below = (pdf.wordList ?? []).filter((v) => v[0] === to.page && v[4] >= y).sort((a, b) => a[4] - b[4] || a[1] - b[1]);
+      const word = below.find((v) => v[2] <= below[0][4]);
+      if (word) await pdfGo(to.page, word[1] + 1, word[4] - 1, word);
+    }
+    pdfBody.querySelectorAll('.pdf-target').forEach((m) => m.remove());
+    el.insertAdjacentHTML('beforeend', `<div class="pdf-target" style="left:${to.x * 100}%;top:${to.y * 100}%"></div>`);
+    pdfScroll(to.page, Math.max(0, to.y - 0.02), to.x);
+  }
+  /** Back to the place before the last link followed. */
+  async function pdfReturn() {
+    const spot = pdfBack.pop();
+    pdfBackButton.hidden = !pdfBack.length;
+    if (!spot) return;
+    if (spot.file in state.texts && !pdf.slice) { await openPlace(spot.file, spot.at); pdfFollow(true); }
+    pdfScroll(spot.page, spot.y);
+  }
+  pdfBackButton.onclick = (e) => { e.preventDefault(); pdfReturn(); };
   pdfBody.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('.pdf-records li')) e.target.click(); });
+  $('play-pdf').addEventListener('keydown', (e) => { if (e.altKey && e.key === 'ArrowLeft' && pdfBack.length) { e.preventDefault(); pdfReturn(); } });
   async function written(target) {
     const files = await lsp('satex/written', { textDocument: { uri: target } }).catch(() => null);
     if (!files) return;
