@@ -58,6 +58,7 @@ fn run() -> Result<(), String> {
     take_over(&port);
     if dev.is_some() && root.join(&out).join("play/index.html").is_file() {
         let port = free_port(&port)?;
+        compile::warm(&root.join(&out), &root.join("doc/site/examples"));
         println!("playground: dev mode on the existing build in {} at http://127.0.0.1:{port}/play/", out.display());
         return serve(&root.join(&out), port.parse().map_err(|_| "no port".to_string())?, dev);
     }
@@ -70,12 +71,16 @@ fn run() -> Result<(), String> {
         println!("playground: serving the last build at {url} while rebuilding. Ctrl+C stops");
         let next = site.clone();
         std::thread::spawn(move || match build(root, &next, profile) {
-            Ok(()) => say("built. Reload the page to load this build"),
+            Ok(()) => {
+                compile::warm(&next, &root.join("doc/site/examples"));
+                say("built. Reload the page to load this build");
+            }
             Err(message) => eprintln!("playground: {message}. The last build stays"),
         });
         return serve(&site, port, dev);
     }
     build(root, &site, profile)?;
+    compile::warm(&site, &root.join("doc/site/examples"));
     println!("playground: serving {url}. Ctrl+C stops");
     serve(&site, port, dev)
 }

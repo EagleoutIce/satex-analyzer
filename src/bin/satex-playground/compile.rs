@@ -17,6 +17,56 @@ use serde_json::{Value, json};
 /// Builds kept for their pages and SyncTeX data: the newest few.
 const KEEP: usize = 4;
 
+/// One build at a time: TeX runs are heavy, the page waits anyway.
+static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Whether the caches of a fresh `satex` are still being built.
+static WARMING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Compiles every example once in the background, so the first Compile
+/// finds the native caches of this `satex` built: a stale cache costs a
+/// minute, a warm one a few seconds.
+pub fn warm(site: &Path, examples: &Path) {
+    let (root, examples) = (compile_root(site), examples.to_path_buf());
+    WARMING.store(true, std::sync::atomic::Ordering::Relaxed);
+    std::thread::spawn(move || {
+        let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = root.join("warm");
+        let _ = std::fs::remove_dir_all(&dir);
+        let copied = std::fs::create_dir_all(&dir).is_ok()
+            && std::fs::read_dir(&examples)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .all(|e| std::fs::copy(e.path(), dir.join(e.file_name())).is_ok());
+        let satex = std::env::current_exe().map(|e| e.with_file_name("satex"));
+        if let (true, Ok(satex)) = (copied, satex) {
+            for main in mains(&dir) {
+                let _ =
+                    Command::new(&satex).args(["--format", "json", "compile", "-f", &main]).current_dir(&dir).output();
+            }
+        }
+        WARMING.store(false, std::sync::atomic::Ordering::Relaxed);
+    });
+}
+
+/// The root documents among `dir`'s `.tex` files: those with a `\documentclass`.
+fn mains(dir: &Path) -> Vec<String> {
+    let mut mains: Vec<String> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("\\documentclass")))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.ends_with(".tex"))
+        .collect();
+    mains.sort();
+    mains
+}
+
+fn compile_root(site: &Path) -> PathBuf {
+    site.with_file_name(format!("{}-compile", site.file_name().and_then(|n| n.to_str()).unwrap_or("site")))
+}
+
 pub fn respond(
     stream: &mut std::net::TcpStream,
     method: &str,
@@ -24,16 +74,16 @@ pub fn respond(
     body: &[u8],
     site: &Path,
 ) -> std::io::Result<()> {
-    let root = site.with_file_name(format!("{}-compile", site.file_name().and_then(|n| n.to_str()).unwrap_or("site")));
+    let root = compile_root(site);
     if method == "POST" && rest.is_empty() {
-        // One build at a time: TeX runs are heavy, the page waits anyway.
-        static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
         let answer = build(&root, body).unwrap_or_else(|e| json!({ "error": e }));
         return super::send(stream, method, "answer.json", "no-cache", false, answer.to_string().into_bytes());
     }
     if rest.is_empty() {
-        return super::send(stream, method, "probe.json", "no-cache", false, b"{\"compile\":true}".to_vec());
+        let warming = WARMING.load(std::sync::atomic::Ordering::Relaxed);
+        let probe = json!({ "compile": true, "warming": warming });
+        return super::send(stream, method, "probe.json", "no-cache", false, probe.to_string().into_bytes());
     }
     let file = root.join(rest.trim_start_matches('/')).canonicalize().ok();
     match file.filter(|f| root.canonicalize().is_ok_and(|r| f.starts_with(r)) && f.is_file()) {

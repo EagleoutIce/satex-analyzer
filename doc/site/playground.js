@@ -3458,11 +3458,21 @@
     };
   }
   const pdfBody = $('pdf-body'), pdfStatus = $('pdf-status'), pdfButtons = [$('pdf-compile'), $('pdf-slice')];
-  var pdf = null, pdfWorker = null, pdfLine = '', pdfBusy = false; // var: the cursor may move before this line runs
+  var pdf = null, pdfWorker = null, pdfLine = '', pdfBusy = false, pdfWarming = false; // var: the cursor may move before this line runs
+  /** The server builds its native caches once after a rebuild; a Compile meanwhile waits for that. */
+  function pdfWatchSetup() {
+    if (!pdfBusy) pdfStatus.textContent = 'setting up: the server builds its TeX caches once, in the background';
+    setTimeout(() => fetch(COMPILE).then((r) => r.json()).then((j) => {
+      pdfWarming = j.warming;
+      if (pdfWarming) pdfWatchSetup(); else if (!pdfBusy) pdfStatus.textContent = 'ready';
+    }).catch(() => {}), 3000);
+  }
   const NO_SERVER = 'Compiling needs the local playground server (<code>cargo playground</code>): a static copy of the site has no TeX to run.';
   const pdfServer = fetch(COMPILE).then((r) => r.ok && r.json()).then((j) => {
     if (!j?.compile) throw new Error();
     pdfButtons.forEach((b) => { b.disabled = false; });
+    pdfWarming = j.warming;
+    if (pdfWarming) pdfWatchSetup();
     return true;
   }).catch(() => {
     pdfBody.innerHTML = `<p class="muted">${NO_SERVER}</p>`;
@@ -3506,7 +3516,7 @@
     const at = `${state.file === root ? '' : `${state.file}:`}${p.line + 1}:${p.character + 1}`;
     pdfWorker ??= new Worker(URL.createObjectURL(new Blob([`(${compileWorkerMain})()`], { type: 'text/javascript' })));
     const start = performance.now(), what = slice ? `a slice of ${root} at ${at}` : root;
-    const tick = cached ? 0 : setInterval(() => { pdfStatus.textContent = `compiling ${what}… ${secs(performance.now() - start)}`; }, 100);
+    const tick = cached ? 0 : setInterval(() => { pdfStatus.textContent = `${pdfWarming ? 'waiting for the setup, then compiling' : 'compiling'} ${what}… ${secs(performance.now() - start)}`; }, 100);
     pdfBusy = true;
     pdfButtons.forEach((b) => { b.disabled = true; });
     pdfWorker.onmessage = ({ data }) => {
