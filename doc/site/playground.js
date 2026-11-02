@@ -357,6 +357,8 @@
     }
   }
   setInterval(() => {
+    // a status that says Analyzing with nothing in flight is stale: findings held back are shown, the bar goes
+    if (act.phase === 'Analyzing' && !running && !analysisQueued && !pending.size && performance.now() - act.changed > 10000) { if (heldFindings) publish(heldFindings); phase(); }
     if (!recovering && performance.now() - lastHeard > hangLimit() && (running > 0 || pending.size || Object.keys(waiting).length))
       recoverWorker(`no answer for ${Math.round(hangLimit() / 1000)} s`);
   }, 2000);
@@ -554,7 +556,8 @@
   }
   function drainAnalysis() {
     if (running === 0) hang = HANG_MS;
-    if (running > 0 || !analysisQueued) return;
+    if (running > 0) return;
+    if (!analysisQueued) { if (heldFindings) publish(heldFindings); return; }
     analysisQueued = false;
     analyze();
   }
@@ -867,11 +870,14 @@
     const underline = (r) => { if (String(r) !== String(linked)) { linked = r; ev.dispatch({ effects: link.of(r) }); } };
     parent.addEventListener('mousemove', (e) => { const ctrl = e.ctrlKey || e.metaKey; if (ctrl) resolve(e); underline(ctrl ? under(e) : null); const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY }); if (pos != null) explainSoon(position(doc(), pos)); });
     parent.addEventListener('mouseleave', () => underline(null));
+    const inRect = (r, x, y) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
     let hovered = null, hoverTimer = 0;
     const unhover = () => { clearTimeout(hoverTimer); if (hovered) { hovered = null; tips.card.hide(150); } };
     parent.addEventListener('mousemove', (e) => {
       const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY });
       if (hovered && pos != null && pos >= hovered.from && pos <= hovered.to) return;
+      // the way from the word to its card is part of the hover: the card stays while the pointer is on it
+      if (hovered?.hull && inRect(hovered.hull, e.clientX, e.clientY)) return;
       unhover();
       if (pos == null || e.buttons) return;
       const version = doc();
@@ -881,7 +887,10 @@
         const a = ev.coordsAtPos(c.from), b = ev.coordsAtPos(c.to) ?? a;
         if (!a) return;
         hovered = c;
-        tips.card.show({ left: a.left, top: a.top, right: b.right, bottom: Math.max(a.bottom, b.bottom) }, c.html);
+        const word = { left: a.left, top: a.top, right: b.right, bottom: Math.max(a.bottom, b.bottom) };
+        tips.card.show(word, c.html);
+        const k = tips.card.el.getBoundingClientRect();
+        c.hull = { left: Math.min(word.left, k.left), top: Math.min(word.top, k.top), right: Math.max(word.right, k.right), bottom: Math.max(word.bottom, k.bottom) };
       }, 250);
     });
     parent.addEventListener('mouseleave', unhover);
@@ -1562,7 +1571,7 @@
    * names of letters before control symbols. */
   const libUseful = (r) => {
     const used = libUses.get(r.name) ?? 0;
-    return [used ? 0 : 1, r.package === 'document' ? 0 : 1, /[@_:]/.test(r.name.slice(1)) ? 1 : 0, r.does ? 0 : 1,
+    return [r.tag === 'documented' ? 1 : 0, used ? 0 : 1, r.package === 'document' ? 0 : 1, /[@_:]/.test(r.name.slice(1)) ? 1 : 0, r.does ? 0 : 1,
       r.tag === 'primitive' ? 1 : 0, /^\\[A-Za-z]+$/.test(r.name) ? 0 : 1, -used];
   };
   const byUse = (a, b) => { const x = libUseful(a), y = libUseful(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
@@ -1578,10 +1587,21 @@
     const paired = (n) => names.has(`\\end${n.slice(1)}`) && n !== '\\end';
     libNames = records.filter((r) => !(r.name.startsWith('\\end') && r.name !== '\\end' && names.has(`\\${r.name.slice(4)}`)))
       .map((r) => (paired(r.name) && r.tag !== 'primitive' ? { ...r, tag: 'environment' } : r));
+    // what the loaded packages' manuals document and nothing in force defines (their mined entries)
+    const manuals = await minedDocs();
+    libNames.push(...manuals.filter((d) => !names.has(d.name)));
     libUses = new Map();
     for (const [file, text] of Object.entries(state.texts)) if (state.files.includes(file) && !data(file))
       for (const m of String(text).matchAll(/\\begin\s*\{([^{}]+)\}|\\([A-Za-z@]+|.)/g)) { const n = `\\${m[1] ?? m[2]}`; libUses.set(n, (libUses.get(n) ?? 0) + 1); }
     libraryShow();
+  }
+  /** The mined manual entries of the loaded packages, as library records: `package` the stem of the file they document. */
+  async function minedDocs() {
+    const request = { file: path(state.root ?? state.file), queries: [{ type: 'docs' }] };
+    const rows = await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).then((r) => r?.[0]?.records ?? []).catch(() => []);
+    return rows.filter((d) => /^[A-Za-z@]+$/.test(d.name) && (d.audience !== 'code' || libInternal.checked)).map((d) => ({
+      name: `\\${d.name}`, tag: 'documented', package: String(d.package_file ?? '').split('/').pop().replace(/\.(sty|cls)$/, ''),
+      effective: d.usage ?? `\\${d.name}`, does: d.text ?? '' }));
   }
   /** The first 200 names the search matches: a name starting with it first, then one containing it, then a usage that does. */
   /** How well `name` matches `q`: a prefix, a part after `@`, `_` or `:`, anywhere, the letters in order, else none. */
@@ -1620,19 +1640,21 @@
       return `<li tabindex="-1" data-i="${i}" data-name="${escape(r.name)}"><code class="cs-ref" data-cs="${escape(r.name)}" tabindex="0">${cards.csName(name)}</code>` +
       `<span class="lib-use">${line}</span><span class="lib-does">${escape(r.does ?? signed?.does ?? '')}</span>` +
       `<button type="button" class="lib-try-it" data-try="${escape(tried)}" title="try it" aria-label="try it">▸</button>` +
-      `<span class="lib-pkg">${escape(libSource(r))}</span></li>`; }).join('') +
+      `<span class="lib-pkg"${r.tag === 'documented' ? ' title="from the package\'s manual: nothing in this run defines it"' : ''}>${escape(libSource(r))}</span></li>`; }).join('') +
       (hits.length > 200 ? `<li class="muted">${num(hits.length - 200)} more: narrow the search</li>` : '') ||
       `<li class="muted">${!libNames.length ? 'Names in force, after each check.' : from && !libNames.some((r) => libSource(r) === from)
         ? `${escape(from)} is not loaded in this document: <code>\\usepackage{${escape(from)}}</code> loads it.` : 'No name matches.'}</li>`;
   }
   // the package filter: a search over the sources of the names in force with their counts, then the packages the playground knows
+  /** The packages whose manuals the build mined, for hover descriptions. */
+  const manualPackages = () => new Set((manifest.packages ?? []).filter((p) => p.manual).map((p) => p.label.replace(/\.cls$/, '')));
   const libFromList = $('lib-from-list');
   function libFromDraw() {
     const counts = new Map();
     for (const r of libNames) counts.set(libSource(r), (counts.get(libSource(r)) ?? 0) + 1);
     const prefix = `${manifest.kernels[state.kernel]?.id}/`;
     const known = [...new Set((manifest.packages ?? []).filter((p) => p.id.startsWith(prefix)).map((p) => p.label.replace(/\.cls$/, '')))].filter((p) => !counts.has(p)).sort();
-    const manual = new Set((manifest.packages ?? []).filter((p) => p.manual).map((p) => p.label.replace(/\.cls$/, '')));
+    const manual = manualPackages();
     const first = ['document', 'kernel'].filter((p) => counts.has(p));
     const loaded = [...counts.keys()].filter((p) => !first.includes(p)).sort();
     const q = libFrom.value.trim().toLowerCase(), all = q === libPick.toLowerCase();
@@ -3507,7 +3529,7 @@
     const hits = (verb, hit) => hit.length ? ` <span class="muted cache-hit">${verb} ${hit.slice(0, 3).map((n) => `<code>${escape(n.replace(/\.cls$/, ''))}</code>`).join(', ')}${hit.length > 3 ? ` +${hit.length - 3}` : ''}</span>` : '';
     cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs], u, hit, via }, i) =>
       `<tr title="${escape(e.path)}"><td>${cacheBadge(cls, kind)}</td>` +
-      `<td><button type="button" class="cache-name" aria-expanded="${via.length > 0}" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>${hits('defines', hit)}${hits('loads', via)}${CACHE_NOTES[cls] ? ` <span class="muted cache-hit">${CACHE_NOTES[cls]}</span>` : ''}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
+      `<td><button type="button" class="cache-name" aria-expanded="${via.length > 0}" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>${(cls === 'package' || cls === 'class') && manualPackages().has(what) ? ' <span class="manual" title="the package\'s manual is mined for descriptions">docs</span>' : ''}${hits('defines', hit)}${hits('loads', via)}${CACHE_NOTES[cls] ? ` <span class="muted cache-hit">${CACHE_NOTES[cls]}</span>` : ''}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
       `<td class="num">${size(e.size)}</td><td><button type="button" class="small ghost" data-path="${escape(e.path)}" aria-label="drop ${escape(what || kind)}">Drop</button></td></tr>` +
       `<tr class="cache-sub" id="cache-sub-${i}"${via.length ? '' : ' hidden'}><td></td><td colspan="5">${details(cls, what, needs)}</td></tr>`).join('') ||
       `<tr><td colspan="6" class="muted">${cacheEntries.length ? 'No match.' : 'Nothing cached yet.'}</td></tr>`;
@@ -3605,6 +3627,7 @@
     else if (cls === 'package' || cls === 'class') parts.push('<span class="muted">not used by this document</span>');
     if (needs.length) parts.push(`loads ${needs.map((n) => cacheBadge(n.endsWith('.cls') ? 'class' : 'package', n.replace(/\.cls$/, ''))).join(' ')}`);
     const docs = cls === 'kernel' ? 'https://texdoc.org/serve/source2e/0' : (cls === 'package' || cls === 'class') ? `https://texdoc.org/pkg/${encodeURIComponent(what)}` : null;
+    if (cls === 'package' || cls === 'class') parts.push(manualPackages().has(what) ? '<span class="manual" title="the package\'s manual is mined: its commands are described on hover and in the library">manual information available</span>' : '<span class="muted">no manual information mined</span>');
     if (docs) parts.push(`<a href="${docs}" target="_blank" rel="noopener">documentation ↗</a>`);
     return parts.map((p) => `<div>${p}</div>`).join('');
   }
@@ -3877,7 +3900,7 @@
 
   /** What the page is doing, in one place: the status bar's text and bar, and a card with the details on hover. */
   const bar = $('play-progress'), loads = new Map(), actBox = $('act-detail');
-  const act = { phase: '', text: '', since: 0, changed: 0, got: 0, all: 0, started: 0, rest: '' };
+  const act = { phase: '', text: '', shown: '', since: 0, changed: 0, got: 0, all: 0, started: 0, rest: '' };
   const PHASE = { unpacking: ['Unpacking', 'Unpacking the TeX files…'], importing: ['Importing', 'Importing the kernel caches…'] };
   function busy(name, text, { done = null, got = 0, all = 0 } = {}) {
     const now = performance.now();
@@ -3888,7 +3911,7 @@
     // a status without both counts shows work going on, not a share of it; with them, the time left
     self.satexProgress.set(bar, Number.isFinite(done) ? done : null);
     const left = Number.isFinite(done) ? self.satexProgress.left(done, now - act.since) : null;
-    status.textContent = left ? `${text} · about ${left} s left` : text;
+    status.textContent = act.shown = left ? `${text} · about ${left} s left` : text;
     status.title = '';
     status.dataset.busy = '';
     drawAct();
@@ -3896,7 +3919,7 @@
   /** Work is over: the bar goes, the last result stays or comes back. */
   function idle(text = null) {
     bar.hidden = true;
-    if (act.phase && text === null && status.textContent === act.text && act.rest) status.textContent = act.rest;
+    if (act.phase && text === null && status.textContent === act.shown && act.rest) status.textContent = act.rest;
     if (text !== null) status.textContent = text;
     act.phase = ''; act.text = '';
     delete status.dataset.busy;
@@ -3924,6 +3947,35 @@
     status.title = names.join(', ');
   }
 
+  /** A published set of findings. One that arrives while a newer run is in flight is held, and shown if that run ends without publishing its own. */
+  let heldFindings = null;
+  function publish(p) {
+    if (running > 0 && p.uri === uri()) { heldFindings = p; return; }
+    heldFindings = null;
+    // The rule's number is the LSP code: the page keys rules by name.
+    for (const d of p.diagnostics) [d.number, d.code] = [d.code, d.data?.rule ?? d.code];
+    // Findings that come from a missing package wait for it: shown once its bundle is in.
+    const unresolved = p.diagnostics.filter((d) => d.code === 'unresolved-file').map((d) => d.message);
+    const waiting = missing(unresolved);
+    if ((waiting.length || inFlight.size) && p.uri === uri()) {
+      const names = [...new Set([...waiting, ...inFlight])].map((id) => PACKAGES.get(id).label).join(', ');
+      busy('Loading', `Loading ${plural(names.split(', ').length, 'package')}…`);
+      status.title = names;
+      if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok) { show(p.uri, p.diagnostics); typeset(p.uri); } });
+      return;
+    }
+    // what was answered from the last run meanwhile is asked again of this one
+    explanations.clear(); scopeAsked.clear(); explained = ''; explainSoon();
+    show(p.uri, p.diagnostics);
+    typeset(p.uri);
+    outline();
+    if (p.uri === uri()) { fetchAbsent(); colorize(); }
+    if (p.uri === uri()) prefetchCommands();
+    loadCaches(); // the status bar's count, and the table if open
+    if (p.uri === uri(state.root ?? state.file)) written(p.uri);
+    if (p.uri === uri()) lsp('satex/caches', { textDocument: { uri: p.uri } }).then((r) => cacheReport((r ?? []).map((l) => ['err', l]))).catch(() => {});
+    fetchMissing(unresolved);
+  }
   async function onWorkerMessage({ data }) {
     lastHeard = performance.now();
     if (data.type === 'lsp') {
@@ -3936,30 +3988,7 @@
         } else if (m.method === 'satex/styleCandidates') {
           for (const c of m.params.candidates ?? []) askStyle(c);
         } else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) {
-          // The rule's number is the LSP code: the page keys rules by name.
-          for (const d of m.params.diagnostics) [d.number, d.code] = [d.code, d.data?.rule ?? d.code];
-          // Findings that come from a missing package wait for it: shown once its bundle is in.
-          const unresolved = m.params.diagnostics.filter((d) => d.code === 'unresolved-file').map((d) => d.message);
-          const waiting = missing(unresolved);
-          if ((waiting.length || inFlight.size) && m.params.uri === uri()) {
-            const names = [...new Set([...waiting, ...inFlight])].map((id) => PACKAGES.get(id).label).join(', ');
-            busy('Loading', `Loading ${plural(names.split(', ').length, 'package')}…`);
-            status.title = names;
-            if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok) { show(m.params.uri, m.params.diagnostics); typeset(m.params.uri); } });
-            continue;
-          }
-          if (running > 0 && m.params.uri === uri()) continue; // intermediate: a newer text is in flight
-          // what was answered from the last run meanwhile is asked again of this one
-          explanations.clear(); scopeAsked.clear(); explained = ''; explainSoon();
-          show(m.params.uri, m.params.diagnostics);
-          typeset(m.params.uri);
-          outline();
-          if (m.params.uri === uri()) { fetchAbsent(); colorize(); }
-          if (m.params.uri === uri()) prefetchCommands();
-          loadCaches(); // the status bar's count, and the table if open
-          if (m.params.uri === uri(state.root ?? state.file)) written(m.params.uri);
-          if (m.params.uri === uri()) lsp('satex/caches', { textDocument: { uri: m.params.uri } }).then((r) => cacheReport((r ?? []).map((l) => ['err', l]))).catch(() => {});
-          fetchMissing(unresolved);
+          publish(m.params);
         }
       }
       drainAnalysis();

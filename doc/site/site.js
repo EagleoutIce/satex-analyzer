@@ -627,7 +627,9 @@
     if (rule && el.matches(':hover')) tips.card.show(el, ruleCard(rule, ruleLink(rule.code)));
   });
   document.addEventListener('mouseout', (e) => {
-    if (e.target.closest?.('a[href*="lints.html#"], code') && tips.card.el.querySelector('.rule-tip')) tips.card.hide(200);
+    // leaving the card's own code, or going onto the card, keeps it
+    const el = e.target.closest?.('a[href*="lints.html#"], code');
+    if (el && !el.closest('.tip') && !e.relatedTarget?.closest?.('.tip') && tips.card.el.querySelector('.rule-tip')) tips.card.hide(200);
   });
 
   // ------------------------------------------------------------ the landing page's examples
@@ -811,7 +813,7 @@
         if (value && at && host.matches(':hover')) card.show({ left: at.left, top: at.top, right: at.right, bottom: at.bottom }, `<div class="hover">${hoverCard(value)}</div>`);
       }, 300);
     });
-    host.addEventListener('mouseleave', () => { clearTimeout(shown); card.hide(150); });
+    host.addEventListener('mouseleave', () => { clearTimeout(shown); card.hide(350); });
     return { view, analyze, destroy: () => { clearTimeout(timer); version++; view.destroy(); } };
   }
   // an example: its source becomes an editor on a click that is no command's, "reset" brings the build's result back
