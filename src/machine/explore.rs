@@ -142,6 +142,8 @@ struct Loop {
     id: LoopId,
     depth: (usize, usize, usize),
     passes: u32,
+    /// The output routines fired when last met ([`Machine::pages`]).
+    pages: u64,
     /// How many names were assigned before the entry.
     recent: usize,
     /// The input levels below the entry's body, by identity and by place:
@@ -959,6 +961,22 @@ impl Machine<'_> {
                 m > 0 && !sibling && !read
             }
         };
+        // Met again past a page an enclosing loop passed since: a call
+        // of that loop's next pass, not a pass of its own. Page
+        // construction repeats per page; only the outermost loop counts.
+        let pages = here.state.pages;
+        let paged = |l: &Loop| {
+            pages > l.pages
+                && paths.loops.iter().any(|o| {
+                    o.id != l.id
+                        && o.pages > l.pages
+                        && o.places.len() < l.places.len()
+                        && l.places.starts_with(&o.places)
+                })
+        };
+        let paged: Vec<LoopId> = paths.loops.iter().filter(|l| paged(l)).map(|l| l.id).collect();
+        let paged_meet = paths.loops.iter().any(|l| l.id == id && reentry(l) && paged.contains(&l.id));
+        let reentry = |l: &Loop| reentry(l) && !paged.contains(&l.id);
         // A summarized loop met again inside its own levels stops the path.
         // The summary's own path met the loop again: never dropped, it is
         // summarized again at once. What the loop writes was widened by the
@@ -1021,7 +1039,7 @@ impl Machine<'_> {
         // re-entry, so every point is summarized after finitely many passes.
         let fresh = !paths.loops.iter().any(|l| l.id == id && reentry(l));
         let counts = self.scratch.loop_summaries.entry(id).or_default();
-        counts.1 += u32::from(fresh);
+        counts.1 += u32::from(fresh && !paged_meet);
         let (summaries, capped) = (counts.0, counts.1 > u32::from(self.cfg.limits.loop_entries));
         // An entry whose call ended is never unwound to.
         paths.loops.retain(|l| l.id != id || reentry(l));
@@ -1049,6 +1067,7 @@ impl Machine<'_> {
                 let before = here.state.loop_bounds.iter().find(|(l, _)| *l == id).and_then(|(_, b)| *b);
                 let shrinks = matches!((before, bound), (Some(a), Some(b)) if b < a);
                 let l = &mut paths.loops[l];
+                l.pages = pages;
                 l.passes += u32::from(!shrinks);
                 l.joined = joined;
                 l.passes >= k
@@ -1063,6 +1082,7 @@ impl Machine<'_> {
                     id,
                     depth,
                     passes: 0,
+                    pages,
                     recent: self.env.recent_len(),
                     levels,
                     places,
@@ -1082,6 +1102,11 @@ impl Machine<'_> {
         // A path that differs from a head in code it will still run (pgfmath
         // with a unary minus on its stack or without) is a head of its own.
         // Past `limits.heads_apart` such heads at one place they are joined.
+        // The enclosing loop's head joins its passes: heads here from
+        // earlier pages are left behind.
+        if paged_meet {
+            paths.heads.retain(|h| !same(h));
+        }
         let crowded = paths.heads.iter().filter(|h| same(h)).count() >= usize::from(self.limits.heads_apart);
         let mut fits: Vec<bool> = {
             let typed = crate::env::typed!(self, syms);

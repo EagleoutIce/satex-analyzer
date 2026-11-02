@@ -1315,6 +1315,7 @@ impl Machine<'_> {
             last_named_cs: _,
             font_watch: _,
             source_progress: _,
+            pages: _,
             doc_mark: _,
             lines_read: _,
             parted_by: _,

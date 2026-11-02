@@ -353,6 +353,9 @@ pub struct Para {
     pub(crate) items: Option<u32>,
     /// The last line's fitness class (tex.web § 817).
     pub(crate) fit: u8,
+    /// On an empty page: the `\topskip` its first box or line is topped up
+    /// to (tex.web § 1001).
+    top: Option<Dim>,
 }
 
 impl Para {
@@ -374,6 +377,14 @@ impl Para {
             fresh: self.fresh && other.fresh,
             items: if self.items == other.items { self.items } else { None },
             fit: if self.fit == other.fit { self.fit } else { crate::linebreak::UNFIT },
+            // One side not topped: the first box's own height or more.
+            top: match (self.top, other.top) {
+                (None, None) => None,
+                (a, b) => {
+                    let none = Dim::exact(-crate::value::MAX_DIMEN);
+                    Some(a.unwrap_or(none).join(b.unwrap_or(none)))
+                }
+            },
         }
     }
 }
@@ -575,8 +586,9 @@ impl Natural {
     /// a paragraph keeps in `para` (tex.web § 890).
     fn stack_lines(&mut self, (lo, hi): (u32, u32), h: Dim, d: Dim, skips: Interline) {
         let glue = self.interline_glue(h, Some(skips));
+        let top = self.topped(h);
         let p = &mut self.para;
-        p.along = p.along.extended_by(p.depth).extended_by(glue).extended_by(h);
+        p.along = p.along.extended_by(p.depth).extended_by(glue).extended_by(top);
         if hi > 1 {
             p.along = p.along.extended_by(skips.distance(d, h).times(lo - 1, hi - 1));
         }
@@ -584,6 +596,15 @@ impl Natural {
         p.lines = (p.lines.0.saturating_add(lo), p.lines.1.saturating_add(hi));
         self.first.get_or_insert(h);
         self.prev_depth = Some(d);
+    }
+
+    /// tex.web § 1001: the page's first box takes `\topskip` glue, which
+    /// tops its height `h` up to the `\topskip` width.
+    fn topped(&mut self, h: Dim) -> Dim {
+        match self.para.top.take() {
+            Some(top) if self.first.is_none() => h.max(top),
+            _ => h,
+        }
     }
 
     /// An item went onto the list.
@@ -668,7 +689,8 @@ impl Natural {
         } else {
             let h = h.unwrap_or(Dim::ANY);
             let glue = self.interline_glue(h, skips);
-            self.along = self.along.extended_by(self.depth).extended_by(glue).extended_by(h);
+            let top = self.topped(h);
+            self.along = self.along.extended_by(self.depth).extended_by(glue).extended_by(top);
             self.depth = d.unwrap_or(Dim::ANY);
             if let Some(w) = w {
                 self.wide = self.wide.max(w);
@@ -1123,6 +1145,13 @@ impl Machine<'_> {
                 parskip.map_or(Last::UNKNOWN, |g| Last::Glue(Dim::exact(g.width), Some(GlueHull::exact(&g)), false)),
             ),
         };
+        // § 1000: an empty page discards the glue above its first line,
+        // which takes `\topskip` (§ 1001).
+        let top = (on_page && self.page_empty()).then(|| self.topskip());
+        let (skip, first, depth, prev_depth) = match top {
+            Some(_) => (Dim::exact(0), None, Dim::exact(0), None),
+            None => (skip, first, outer.depth, outer.prev_depth),
+        };
         // tex.web § 1091: the indent box is `\parindent` wide.  The list's
         // width, height and depth are those of the one line it may make.
         let indent = if indented { self.dimen_parameter("parindent") } else { Dim::exact(0) };
@@ -1155,13 +1184,14 @@ impl Machine<'_> {
             scripted: None,
             math_breaks: 0,
             para: Para {
-                along: outer.along.extended_by(outer.depth).extended_by(skip),
+                along: outer.along.extended_by(depth).extended_by(skip),
                 below,
                 items: Some(0),
                 fit: 2,
+                top,
                 ..Para::default()
             },
-            prev_depth: outer.prev_depth,
+            prev_depth,
         });
         if indented {
             self.record_item(indent.known().map(|w| crate::linebreak::Kp::Box {
@@ -3711,6 +3741,35 @@ impl Machine<'_> {
         self.set_list_slot("disc.page", saved);
     }
 
+    /// tex.web §§ 994, 1000: glue and kerns wait on the contribution list
+    /// until the page builder runs, which it does right after a box or a
+    /// penalty: `page.wait` keeps the page's length before the first that
+    /// waits (`0`: none waits).
+    fn contribute(&mut self, item: &Item) {
+        let wait = match (self.mode == Modes::VERTICAL, item) {
+            (_, Item::Penalty(_) | Item::Zero | Item::Mark(_) | Item::Node(_) | Item::Rule { .. }) => return,
+            (true, Item::Glue(..) | Item::Kern(_)) if self.page_empty() => return,
+            (true, Item::Glue(..) | Item::Kern(_)) if self.page_wait() != Some(None) => return,
+            (true, Item::Glue(..) | Item::Kern(_)) => self.page_length().value(),
+            (true, _) => Value::Int(0),
+            (false, _) => Value::Unknown,
+        };
+        self.set_engine("page.wait", wait, true);
+    }
+
+    /// The page's length before the glue and kerns that wait (`Some(None)`:
+    /// none waits, `None`: not known).
+    pub(crate) fn page_wait(&mut self) -> Option<Option<Dim>> {
+        let sym = self.engine_sym("page.wait");
+        match self.env.get(sym).map(|_| self.env.value(sym)) {
+            None | Some(Value::Int(0)) => Some(None),
+            Some(v) => match v.num() {
+                Some((crate::value::Quantity::Dimen, n)) => Some(Some(Dim::range(n.lo, n.hi))),
+                _ => None,
+            },
+        }
+    }
+
     /// tex.web §§ 994, 1056: a rule on the main vertical list waits on the
     /// contribution list, which the page builder empties at its next run
     /// (after a box, a penalty, `\par`, a paragraph begun): only then are
@@ -3731,6 +3790,7 @@ impl Machine<'_> {
             return;
         }
         self.page_touched = false;
+        self.pages += 1;
         self.ship_pending();
         // §§ 1012-1014: the page's marks, those of earlier pages kept apart.
         // A forced break takes the whole list; past any other, it is lost.
@@ -3762,11 +3822,22 @@ impl Machine<'_> {
         };
         let width = if penalty <= -10000 { wide } else { Dim::exact(0).join(wide) };
         // At a forced break the page holds all of the list (its top
-        // discards are not counted, § 1000) and `\topskip` glue (§ 1001).
-        let top = self.glue_parameter("topskip").map_or(Dim::ANY, |g| Dim::range(0, g.width.max(0)));
+        // discards are not counted, § 1000) and `\topskip` glue (§ 1001),
+        // which the length holds once its first box is followed.
+        let main = self.natural.filter(|_| self.mode == Modes::VERTICAL);
+        let top = match main.and_then(|n| n.first) {
+            Some(_) => Dim::exact(0),
+            None => self.glue_parameter("topskip").map_or(Dim::ANY, |g| Dim::range(0, g.width.max(0))),
+        };
         let along = self.page_length();
         let natural = along.extended_by(top);
+        // The next page starts empty. Past a break at glue, what followed
+        // it is not followed.
         self.set_page_length(Dim::exact(0));
+        if let Some(n) = self.natural.as_mut().filter(|_| main.is_some()) {
+            n.first = None;
+        }
+        self.set_engine("page.wait", Value::Int(0), true);
         self.set_engine("page.built", Value::Int(0), true);
         self.set_engine("page.inserts", Value::Int(0), true);
         let sym = self.intern("outputpenalty");
@@ -3828,6 +3899,7 @@ impl Machine<'_> {
     /// glue: `\outputpenalty` 10000), the other goes on; they join where
     /// they meet again.
     pub(crate) fn build_page(&mut self, span: Span) {
+        self.set_engine("page.wait", Value::Int(0), true);
         self.take_contributions();
         self.page_so_far_moved(false);
         if self.cfg.analysis.assume_forced_page_breaks {
@@ -3881,6 +3953,11 @@ impl Machine<'_> {
     /// dimensions yet (tex.web § 986).
     pub(crate) fn page_empty(&self) -> bool {
         !self.page_touched
+    }
+
+    /// The `\topskip` width (tex.web § 1001).
+    fn topskip(&mut self) -> Dim {
+        self.glue_parameter("topskip").map_or(Dim::ANY, |g| Dim::exact(g.width))
     }
 
     /// Which list is being built: `Some(true)` horizontal, `Some(false)` a
@@ -3969,6 +4046,7 @@ impl Machine<'_> {
             if matches!(item, Item::Box(_) | Item::Rule { .. } | Item::Unknown) { MATERIAL | BOXED } else { MATERIAL };
         if self.mode.meets(Modes::VERTICAL) {
             self.page_so_far_moved(false);
+            self.contribute(&item);
             self.main_tail = match (self.mode == Modes::VERTICAL, &item) {
                 (false, _) | (_, Item::Unknown | Item::Glue(_, None)) => Last::UNKNOWN,
                 (_, Item::Glue(w, spec)) => Last::Glue(*w, *spec, false),
@@ -4074,9 +4152,11 @@ impl Machine<'_> {
                     return self.save_discard(self.kp_of(&item, false).flatten());
                 }
                 // The page's first box: the interline glue before it is
-                // discarded too, and no depth precedes it.
+                // discarded too, no depth precedes it, and it takes
+                // `\topskip` glue (§ 1001).
                 if fresh && matches!(item, Item::Box(_) | Item::Rule { .. }) {
-                    (n.depth, n.prev_depth) = (Dim::exact(0), None);
+                    (n.depth, n.prev_depth, n.first) = (Dim::exact(0), None, None);
+                    n.para.top = Some(self.topskip());
                 }
                 false
             }

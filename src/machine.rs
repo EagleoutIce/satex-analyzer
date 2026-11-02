@@ -1602,6 +1602,9 @@ pub struct Machine<'a> {
     /// Tokens taken from a file so far: the measure of progress through the
     /// source that tells a loop from a helper called again further down.
     source_progress: u64,
+    /// Output routines fired so far: a loop met again across one is page
+    /// construction's.
+    pub(crate) pages: u64,
     /// The assignment count when the document's own text was last read:
     /// a list entered before it called that text, and reads on past a cut.
     doc_mark: u64,
@@ -1855,6 +1858,7 @@ struct PathState {
     last_file: Option<FileId>,
     file_call: Option<(Sym, Span)>,
     source_progress: u64,
+    pages: u64,
     doc_mark: u64,
     lines_read: u64,
     file_depth: u16,
@@ -2347,6 +2351,7 @@ impl<'a> Machine<'a> {
             shape_memo: std::cell::RefCell::new(vec![None; SHAPE_MEMO]),
             cond_sites: Default::default(),
             source_progress: 0,
+            pages: 0,
             doc_mark: 0,
             lines_read: 0,
             call_shape: None,
@@ -9225,11 +9230,9 @@ will look undefined",
         }
         match &stub.result {
             StubResult::Plain(StubKind::Box) => {
-                self.touch_page();
                 self.append_item(crate::mode::Item::Unknown);
             }
             StubResult::Box { bounds } => {
-                self.touch_page();
                 let dims = [&bounds.width, &bounds.height, &bounds.depth].map(|b| self.stub_dim(b));
                 self.append_item(crate::mode::Item::Box(dims));
             }
@@ -10993,6 +10996,7 @@ will look undefined",
             last_file: self.last_file,
             file_call: self.file_call,
             source_progress: self.source_progress,
+            pages: self.pages,
             doc_mark: self.doc_mark,
             lines_read: self.lines_read,
             file_depth: self.file_depth,
@@ -11088,7 +11092,7 @@ will look undefined",
         self.last_file = state.last_file;
         self.file_call = state.file_call;
         (self.source_progress, self.lines_read) = (state.source_progress, state.lines_read);
-        self.doc_mark = state.doc_mark;
+        (self.doc_mark, self.pages) = (state.doc_mark, state.pages);
         self.file_depth = state.file_depth;
         self.halted = state.halted;
         self.streams = state.streams;

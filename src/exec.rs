@@ -3365,13 +3365,17 @@ impl Machine<'_> {
                         )
                         .value(),
                     ),
-                    // At most the length and the `\topskip` glue (§ 1001):
-                    // it leaves out the last depth, the glue the page
-                    // discarded and what waits to be added.
+                    // The length moved to the page (§§ 1003-1004): without
+                    // the last depth, the glue the page discarded and the
+                    // glue and kerns that wait; with the `\topskip` glue
+                    // (§ 1001), unless its first box was not followed.
                     "pagetotal" => {
                         let l = self.page_length();
-                        let top = self.glue_parameter("topskip")?.width.max(0);
-                        (!l.is_any()).then(|| Dim::range(0, l.hi.max(0).saturating_add(top)).value())
+                        // Paths that disagree on what waits: no more than the length.
+                        let l = self.page_wait().map_or(Dim::exact(0).join(l), |w| w.unwrap_or(l));
+                        let first = self.natural.and_then(|n| n.first);
+                        let top = if first.is_some() { 0 } else { self.glue_parameter("topskip")?.width.max(0) };
+                        (!l.is_any()).then(|| l.extended_by(Dim::range(0, top)).value())
                     }
                     _ => None,
                 }
