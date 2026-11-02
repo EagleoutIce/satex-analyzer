@@ -1546,6 +1546,82 @@ fn definition_on_a_tikz_key_opens_its_library() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A key in `\\draw[…]` resolves to the `\\tikzset` line that defines it: hover shows its comment
+/// and lattice type, go-to-definition opens the key's own line, a key no family stores is the
+/// family's `.unknown` handler's.
+#[test]
+fn a_tikz_key_resolves_to_its_definition_and_comment() {
+    if !crate::support::installed() {
+        return;
+    }
+    let lines = [
+        "\\documentclass{article}",
+        "\\usepackage{tikz}",
+        "% A thick red line.",
+        "\\tikzset{wire/.style={thick,red}}",
+        "\\tikzset{",
+        "  % The arrow at the end.",
+        "  tip/.style={->},",
+        "}",
+        "\\begin{document}",
+        "\\tikz\\draw[wire, tip, blue] (0,0) -- (1,1);",
+        "\\end{document}",
+    ];
+    let (mut server, uri, _, dir) = open_loaded("tikzkeydoc", &(lines.join("\n") + "\n"));
+    let use_line = lines.iter().position(|l| l.contains("draw[")).unwrap() as u32;
+    let mut ask = |method: &str, word: &str| {
+        let character = (lines[use_line as usize].find(word).unwrap() + 1) as u32;
+        let id = server.request(
+            method,
+            json!({ "textDocument": { "uri": uri }, "position": { "line": use_line, "character": character } }),
+        );
+        server.response(id)["result"].clone()
+    };
+    let hover = |r: Value| r["contents"]["value"].as_str().unwrap_or_default().to_string();
+    let wire = hover(ask("textDocument/hover", "wire"));
+    assert!(
+        wire.contains("A thick red line. *(from the source comment)*") && wire.contains("*pgf key* `/tikz/wire`"),
+        "{wire}"
+    );
+    assert!(hover(ask("textDocument/hover", "tip")).contains("The arrow at the end."));
+    assert!(hover(ask("textDocument/hover", "blue")).contains("`.unknown` handler"));
+    let at = ask("textDocument/definition", "tip");
+    let tip_line = lines.iter().position(|l| l.contains("tip/.style")).unwrap();
+    assert_eq!(at[0]["range"]["start"]["line"], tip_line, "{at}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A pgf-style block a blank line above a definition: its parameters and example show on hover.
+#[test]
+fn a_block_a_blank_line_above_documents_with_its_example() {
+    let lines = [
+        "\\documentclass{article}",
+        "% Return a point",
+        "%",
+        "% #1 = x-coordinate",
+        "%",
+        "% Example:",
+        "%",
+        "% \\point{2pt}",
+        "",
+        "\\newcommand\\point[1]{(#1)}",
+        "\\begin{document}",
+        "\\point{1pt}",
+        "\\end{document}",
+    ];
+    let (mut server, uri, _, dir) = open_loaded("pgfdoc", &(lines.join("\n") + "\n"));
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 11, "character": 3 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(hover.contains("Return a point *(from the source comment)*"), "{hover}");
+    assert!(hover.contains("`⟨arg1⟩` x-coordinate") && hover.contains("```tex\n\\point{2pt}\n```"), "{hover}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A braced name closes its brace unless one follows, and replaces the rest
 /// of the word under the cursor.
 #[test]

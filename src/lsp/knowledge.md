@@ -102,6 +102,9 @@ The key of a `.bib` entry or a `\bibitem`, used by `\cite`. Case matters. Labels
 ## option key
 A key in a key list (`\pgfkeys`, `\tikzset`, a package's options). A value may follow after `=`.
 
+## pgf key
+An option key pgfkeys stores under its family's path: `thick` in `\draw[thick]` is `/tikz/thick`. Hover shows the handler that made it (`.style`, `.code`), go to definition opens that line.
+
 ## environment name
 The name in `\begin{…}` and `\end{…}`, such as `figure` or `itemize`.
 

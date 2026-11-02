@@ -279,6 +279,7 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 | `label` | a label a command defines or references, below `key` | `\ref{⟨sec:intro⟩}` |
 | `citation key` | a bibliography entry's key | `\cite{⟨knuth84⟩}` |
 | `option key` | an option or key a key list names | `\usepackage[⟨draft⟩]{x}` |
+| `pgf key` | a key pgfkeys stores under its family's path, below `option key` | `\draw[⟨thick⟩]` is `/tikz/thick` |
 | `environment name` | an environment's name, below `key` | `\begin{⟨itemize⟩}` |
 | `file` | a file of no known kind, below `name` | `\input{⟨a⟩}` read as `.bib` and `.tex` |
 | `TeX file (.tex)` | a file read as TeX source | `\input{⟨chapter1⟩}` |

@@ -7,7 +7,7 @@
 
 mod l3doc;
 mod ltxdoc;
-mod markup;
+pub(crate) mod markup;
 pub mod mined;
 mod texdoc;
 

@@ -170,27 +170,26 @@ fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
         return None;
     }
     let key = line[start..end].trim();
-    if key.is_empty() || key.contains(['\\', ' ']) {
+    if key.is_empty() || key.contains('\\') {
         return None;
     }
     // the text up to and with the bracket or comma before the key: the first key has no comma
     let arg = argument_at(&line[..start])?;
-    let target = match arg.cmd {
-        "begin" => arg.groups.trim().trim_start_matches('{').split('}').next()?.to_string(),
-        cmd => cmd.to_string(),
-    };
-    let options = query::options(analysis, &target);
+    let target = key_list_owner(&arg)?;
+    let record = query::resolve_key(analysis, &target, key)?;
     let text = |r: &Record, f: &str| r.get(f).and_then(Json::as_str).filter(|v| !v.is_empty()).map(str::to_string);
-    let relative = |r: &Record| {
-        let (full, family) = (text(r, "key")?, text(r, "family").unwrap_or_default());
-        Some(full.strip_prefix(&family).map_or(full.clone(), |k| k.trim_start_matches('/').to_string()))
-    };
-    let record = options.iter().find(|r| relative(r).as_deref() == Some(key))?;
     let mut markdown = format!("### `{key}`: key of `\\{}`\n\n", target.trim_start_matches('\\'));
     // where the run defined the key (the package's file), not the call that loaded it
     let defined = record.get("defined");
     let site = |f: &str| defined.and_then(|d| d.get(f));
-    let defined_path = site("path").and_then(Json::as_str).map(str::to_string).or_else(|| text(record, "path"));
+    let defined_path = site("path").and_then(Json::as_str).map(str::to_string).or_else(|| text(&record, "path"));
+    let family = text(&record, "family");
+    if record.contains_key("unknown") {
+        markdown.push_str(&format!(
+            "No key of `{}` by this name: its `.unknown` handler reads it (a color, an arrow tip, a shape).\n\n",
+            family.as_deref().unwrap_or_default()
+        ));
+    }
     let mined = defined_path
         .clone()
         .filter(|_| analysis.settings.plugins.docs)
@@ -198,24 +197,28 @@ fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
     if let Some((m, does)) = mined.as_ref().and_then(|m| Some((m, m.text.as_deref()?))) {
         markdown.push_str(&format!("{does} {}\n\n", extracted_from_manual(&m.from, m.link.as_ref())));
     }
-    let default = text(record, "default").map(|d| match d.contains("pgfkeysvaluerequired") {
+    if let Some(comment) = text(&record, "comment") {
+        markdown.push_str(&format!("{comment} {}\n\n", extracted("from the source comment")));
+    }
+    let default = text(&record, "default").map(|d| match d.contains("pgfkeysvaluerequired") {
         true => "needs a value".to_string(),
         false => format!("default `{d}`"),
     });
-    let kind = text(record, "kind").filter(|k| k != "code");
-    let from = text(record, "package")
+    let kind = text(&record, "kind").filter(|k| k != "code");
+    let from = text(&record, "package")
         .or_else(|| defined_path.as_ref().map(|p| p.rsplit('/').next().unwrap_or(p).to_string()));
     let facts: Vec<String> = [
+        text(&record, "type").map(|t| format!("*{t}* `{}`", text(&record, "key").unwrap_or_default())),
         kind,
         default,
-        text(record, "family").map(|f| format!("family `{f}`")),
+        family.map(|f| format!("family `{f}`")),
         from.map(|p| format!("defined in `{p}`")),
     ]
     .into_iter()
     .flatten()
     .collect();
     markdown.push_str(&format!("{}\n\n", facts.join(" · ")));
-    if let Some(full) = text(record, "key") {
+    if let Some(full) = text(&record, "key").filter(|_| !record.contains_key("unknown")) {
         let choices: Vec<String> = query::stored_keys(analysis, Some(&format!("{full}/")))
             .iter()
             .filter_map(|r| text(r, "key")?.strip_prefix(&format!("{full}/")).map(str::to_string))
@@ -237,6 +240,14 @@ fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
         markdown.push_str(&format!("[{doc}]({url})\n\n"));
     }
     Some(markdown)
+}
+
+/// The command or environment whose key list `arg` is: `\draw[…]`, `\tikzset{…}`, `\begin{x}[…]`.
+fn key_list_owner(arg: &Arg) -> Option<String> {
+    Some(match arg.cmd {
+        "begin" => arg.groups.trim().trim_start_matches('{').split('}').next()?.to_string(),
+        cmd => cmd.to_string(),
+    })
 }
 
 /// What satex did with the magic comment (`% !TeX program = …`, `% arara: …`)
@@ -395,14 +406,28 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
             }
             markdown.push('\n');
         }
+        // Each argument once: its type and what the comment above the definition says of it.
+        let doc = documented(record);
+        let said = |n: &str| doc.as_ref()?.params.iter().find(|(k, _)| format!("⟨arg{k}⟩") == n).map(|(_, t)| t);
         let types = arg_types(record);
         for (arg, ty) in &types {
-            markdown.push_str(&format!("- `{arg}` {ty}\n"));
+            match said(arg) {
+                Some(text) => markdown.push_str(&format!("- `{arg}` {ty}: {text}\n")),
+                None => markdown.push_str(&format!("- `{arg}` {ty}\n")),
+            }
         }
-        if !types.is_empty() {
+        let untyped: Vec<_> = doc
+            .iter()
+            .flat_map(|d| &d.params)
+            .filter(|(n, _)| !types.iter().any(|(a, _)| *a == format!("⟨arg{n}⟩")))
+            .collect();
+        for (n, text) in &untyped {
+            markdown.push_str(&format!("- `⟨arg{n}⟩` {text}\n"));
+        }
+        if !types.is_empty() || !untyped.is_empty() {
             markdown.push('\n');
         }
-        if let Some(doc) = documented(record) {
+        if let Some(doc) = &doc {
             if !doc.text.is_empty() {
                 let place =
                     text("path").map(|p| format!(" `{p}:{}`", record.get("line").and_then(Json::as_u64).unwrap_or(1)));
@@ -413,12 +438,16 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
                     place.unwrap_or_default()
                 ));
             }
-            for (n, text) in &doc.params {
-                markdown.push_str(&format!("- `⟨arg{n}⟩` {text}\n"));
+            if !doc.example.is_empty() {
+                markdown.push_str(&format!("```tex\n{}\n```\n\n", doc.example.join("\n")));
             }
-            if !doc.params.is_empty() {
-                markdown.push('\n');
-            }
+        } else if let Some(body) = text("body").filter(|b| {
+            text("signature").is_none_or(str::is_empty)
+                && !b.is_empty()
+                && b.chars().count() <= analysis.settings.conventions.completion.body
+        }) {
+            // No comment and no arguments: what it stands for says most (`\draw` is `\path [draw]`).
+            markdown.push_str(&format!("Expands to `{body}`\n\n"));
         }
         let mut foot = Vec::new();
         if let (Some(file), Some(line)) = (text("file"), record.get("line").and_then(Json::as_u64)) {
@@ -908,9 +937,12 @@ pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Positio
         let item = arg.inside.rsplit(',').next().unwrap_or_default().trim_start();
         let rest: String = line[before.len()..].chars().take_while(|c| !matches!(c, ',' | '=' | ']' | '}')).collect();
         let key = format!("{item}{rest}").trim().to_string();
-        let found = query::pgfkeys(analysis, None).into_iter().find(|r| {
-            r.get("key").and_then(Json::as_str).is_some_and(|k| {
-                k.rsplit_once('/').is_some_and(|(_, last)| last == key) || k.ends_with(&format!("/{key}"))
+        let resolved = key_list_owner(&arg).and_then(|owner| query::resolve_key(analysis, &owner, &key));
+        let found = resolved.or_else(|| {
+            query::pgfkeys(analysis, None).into_iter().find(|r| {
+                r.get("key").and_then(Json::as_str).is_some_and(|k| {
+                    k.rsplit_once('/').is_some_and(|(_, last)| last == key) || k.ends_with(&format!("/{key}"))
+                })
             })
         });
         if let Some(at) =
@@ -1733,7 +1765,8 @@ fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
             let default = default.map(|d| {
                 if d.contains("pgfkeysvaluerequired") { "needs a value".to_string() } else { format!("default {d}") }
             });
-            let detail = [kind.map(str::to_string), default, Some(family.to_string())];
+            let ty = r.get("type").and_then(Json::as_str).map(str::to_string);
+            let detail = [ty, kind.map(str::to_string), default, Some(family.to_string())];
             let detail: Vec<String> = detail.into_iter().flatten().filter(|d| !d.is_empty()).collect();
             let rank = r.get("rank").and_then(Json::as_u64).unwrap_or(0) as usize * 10_000 + i.min(9_999);
             Some(key_item(

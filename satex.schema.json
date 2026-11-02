@@ -325,6 +325,16 @@
         "completion": {
           "description": "what completion offers and in which order",
           "properties": {
+            "body": {
+              "default": 80,
+              "description": "characters of an undocumented body its hover shows as what the command expands to",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "body: 0 hides it"
+            },
             "calls": {
               "default": 4,
               "description": "calls of a command its hover shows",

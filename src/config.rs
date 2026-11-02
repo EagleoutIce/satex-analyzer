@@ -864,6 +864,8 @@ area! {
         identified: usize = 400,
         /// Calls of a command its hover shows.
         calls: usize = 4,
+        /// Characters of an undocumented body its hover shows as what it expands to.
+        body: usize = 80,
         /// Commands whose argument is a name to pick from a list.
         pick: Vec<String> = strs(&["begin", "end", "usepackage", "documentclass", "ref", "cref", "cite"]),
         /// Environments whose `\begin` reads arguments through an inner macro, with how many.

@@ -57,6 +57,8 @@ pub enum KeyKind {
     Label,
     Cite,
     Option,
+    /// A key pgfkeys stores under its family's path (`/tikz/thick`), below `Option`.
+    Pgf,
     Environment,
     Any,
 }
@@ -252,7 +254,7 @@ impl Ty {
             .iter()
             .copied()
             .filter(|k| !matches!(k, RegKind::Char | RegKind::MathChar | RegKind::UMathChar));
-        let keys = [KeyKind::Any, KeyKind::Label, KeyKind::Cite, KeyKind::Option, KeyKind::Environment];
+        let keys = [KeyKind::Any, KeyKind::Label, KeyKind::Cite, KeyKind::Option, KeyKind::Pgf, KeyKind::Environment];
         let files = FILE_KINDS.iter().map(|r| r.0).filter(|k| *k != FileKind::Any);
         let mut out = vec![
             Top, Quantity, Number, Dimen, Glue, MuGlue, Box, Register, Cs, Switch, Options, Date, Text, Name, Body,
@@ -378,6 +380,7 @@ impl std::fmt::Display for Ty {
                 Ty::Key(KeyKind::Label) => "label",
                 Ty::Key(KeyKind::Cite) => "citation key",
                 Ty::Key(KeyKind::Option) => "option key",
+                Ty::Key(KeyKind::Pgf) => "pgf key",
                 Ty::Key(KeyKind::Environment) => "environment name",
                 Ty::Key(KeyKind::Any) => "key",
                 Ty::File(_) => "file",

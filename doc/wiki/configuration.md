@@ -271,6 +271,9 @@ conventions:  # how TeX is usually written, where the text alone does not say
     calls: 4  # calls of a command its hover shows
       #! affects: output
       #! example: calls: 10
+    body: 80  # characters of an undocumented body its hover shows as what the command expands to
+      #! affects: output
+      #! example: body: 0 hides it
     pick: [begin, end, usepackage, documentclass, ref, cref, cite]  # commands whose argument is picked from a list, so completion opens again inside the braces
       #! affects: output
       #! example: pick+: [autoref]

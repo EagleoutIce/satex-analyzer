@@ -4543,17 +4543,18 @@ pub fn explain_at(
         if let Some(at) = at {
             let boundary = explain_boundary(analysis, at)?;
             let window = if matches!(at, ExplainAt::Preamble) { Window::Preamble } else { Window::All };
-            match def_at(analysis, sym, boundary) {
+            let nodes = match at {
+                ExplainAt::At(a) => at_position(analysis, a),
+                _ => boundary.into_iter().collect(),
+            };
+            let mut reached: Vec<_> = nodes.into_iter().flat_map(|n| defs_reaching(analysis, sym, n)).collect();
+            reached.sort_by_key(|d| d.node);
+            reached.dedup_by_key(|d| d.node);
+            // The definition the use read beats the latest one before it: a group may have restored it.
+            match reached.last().copied().or_else(|| def_at(analysis, sym, boundary)) {
                 Some(def) => {
                     let mut record = record_for_def(analysis, def, window);
                     record.insert("when".into(), json!(at.to_string()));
-                    let nodes = match at {
-                        ExplainAt::At(a) => at_position(analysis, a),
-                        _ => boundary.into_iter().collect(),
-                    };
-                    let mut reached: Vec<_> = nodes.into_iter().flat_map(|n| defs_reaching(analysis, sym, n)).collect();
-                    reached.sort_by_key(|d| d.node);
-                    reached.dedup_by_key(|d| d.node);
                     if reached.len() > 1 {
                         let one_of: Vec<serde_json::Value> = reached
                             .iter()
@@ -5208,6 +5209,86 @@ pub fn options(analysis: &Analysis, name: &str) -> Vec<Record> {
     keys
 }
 
+/// The stored key `key` of the list `cmd` reads (`thick` in `\draw[thick]`,
+/// `every node/.style` in `\tikzset{…}`): the record [`options`] gives it,
+/// with `defined` moved to the key's own line and that line's `comment`.
+/// A pgf key no family stores goes to the family's `.unknown` handler
+/// (`red`, `->`), marked `unknown`.
+pub fn resolve_key(analysis: &Analysis, cmd: &str, key: &str) -> Option<Record> {
+    // A handler after the key defines it: `every node/.style`.
+    let key = key.split("/.").next()?.trim();
+    let text = |r: &Record, f: &str| r.get(f).and_then(Json::as_str).unwrap_or_default().to_string();
+    let options = options(analysis, cmd);
+    let named = |r: &&Record| {
+        let full = text(r, "key");
+        full == key || full.strip_prefix(&text(r, "family")).map(|k| k.trim_start_matches('/')) == Some(key)
+    };
+    let mut record = match options.iter().find(named) {
+        Some(r) => r.clone(),
+        None => {
+            let mut families: Vec<String> = options.iter().map(|r| text(r, "family")).collect();
+            families.dedup();
+            families.into_iter().filter(|f| f.starts_with('/')).find_map(|family| {
+                let handler = format!("{family}/.unknown");
+                let mut r = pgfkeys(analysis, Some(&handler)).into_iter().find(|r| text(r, "key") == handler)?;
+                r.insert("family".into(), json!(family));
+                r.insert("unknown".into(), json!(true));
+                Some(r)
+            })?
+        }
+    };
+    let call = record.get("defined").and_then(Json::as_object).cloned();
+    let name = text(&record, "key").rsplit('/').next().unwrap_or(key).to_string();
+    let site = call.as_ref().filter(|_| !record.contains_key("unknown")).and_then(|c| key_line(c, &name));
+    if let Some(site) = &site {
+        record.insert("defined".into(), Json::Object(site.clone()));
+    }
+    // The comment above the key's line, or above the `\tikzset{` line it is the first key under.
+    let line = |r: &Record| r.get("line").and_then(Json::as_u64).map(|n| n as usize);
+    let doc = call.as_ref().and_then(|call| {
+        let text = crate::overlay::read_to_string(Path::new(call.get("path")?.as_str()?)).ok()?;
+        let at = site.as_ref().and_then(line).unwrap_or(line(call)?);
+        let opener = text
+            .lines()
+            .nth(at.checked_sub(2)?)
+            .map(str::trim)
+            .is_some_and(|l| l.starts_with('\\') && l.ends_with('{'));
+        crate::lsp::doccomment::above(&text, at)
+            .or_else(|| opener.then(|| crate::lsp::doccomment::above(&text, at - 1)).flatten())
+    });
+    if let Some(doc) = doc.filter(|d| !d.text.is_empty()) {
+        record.insert("comment".into(), json!(doc.text));
+    }
+    Some(record)
+}
+
+/// Where the call `call` places defines `key` with a handler (`key/.style`)
+/// or a value (`key=`), within the braces the call opens on its line.
+fn key_line(call: &Record, key: &str) -> Option<Record> {
+    let first = call.get("line")?.as_u64()? as usize;
+    let text = crate::overlay::read_to_string(Path::new(call.get("path")?.as_str()?)).ok()?;
+    let mut depth = 0i64;
+    for (i, line) in text.lines().enumerate().skip(first.checked_sub(1)?) {
+        let found = line.match_indices(key).find(|(at, _)| {
+            let rest = line[at + key.len()..].trim_start();
+            let before = line[..*at].trim_end();
+            (before.is_empty() || before.ends_with(['{', ',', '[', '/']))
+                && (rest.starts_with("/.") || rest.starts_with('='))
+        });
+        if let Some((at, _)) = found {
+            let mut site = call.clone();
+            site.insert("line".into(), json!(i + 1));
+            site.insert("col".into(), json!(line[..at].chars().count() + 1));
+            return Some(site);
+        }
+        depth += line.matches('{').count() as i64 - line.matches('}').count() as i64;
+        if depth <= 0 {
+            return None;
+        }
+    }
+    None
+}
+
 /// The keys stored under `families` in `dialect`, each with its family.
 fn family_keys(analysis: &Analysis, dialect: KeyDialect<'_>, families: Vec<String>) -> Vec<Record> {
     let out: Vec<Record> = match dialect {
@@ -5246,6 +5327,7 @@ fn family_keys(analysis: &Analysis, dialect: KeyDialect<'_>, families: Vec<Strin
                     }
                     record.insert("rank".into(), json!(rank));
                     record.insert("family".into(), json!(families[rank]));
+                    record.insert("type".into(), json!(crate::roles::Ty::Key(crate::roles::KeyKind::Pgf).to_string()));
                     out.push(record);
                 }
                 rank += 1;
@@ -5262,6 +5344,7 @@ fn family_keys(analysis: &Analysis, dialect: KeyDialect<'_>, families: Vec<Strin
                 record.insert("family".into(), json!(family));
                 record.insert("key".into(), json!(key));
                 record.insert("store".into(), json!(format!("{prefix}{family}@")));
+                record.insert("type".into(), json!(crate::roles::Ty::Key(crate::roles::KeyKind::Option).to_string()));
                 record.insert("default".into(), default.map_or(Json::Null, |d| json!(d)));
                 record.insert("package".into(), symbol(analysis, def.package));
                 record
