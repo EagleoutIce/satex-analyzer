@@ -32,6 +32,11 @@ const BODIES: &[crate::support::BodyRow] = &[
         &[("r", "yes")],
     ),
     (
+        "a_name_around_number_text_spells_no_name_with_a_letter_there",
+        r"\expandafter\def\csname b0x\endcsname{}\expandafter\ifx\csname b\the\pdfelapsedtime.\the\pdfelapsedtime\endcsname\relax\def\r{yes}\else\def\r{no}\fi",
+        &[("r", "yes")],
+    ),
+    (
         "etex_expressions_are_evaluated",
         r"\ifnum\numexpr 2*3+1\relax>6 \def\big{yes}\else\def\big{no}\fi",
         &[("big", "yes")],

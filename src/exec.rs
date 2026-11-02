@@ -1452,8 +1452,8 @@ impl Machine<'_> {
         // A name built from unknown text is known by the text around it.
         let name = match name {
             Ok(name) => name,
-            Err((prefix, suffix, digits, number)) => {
-                let token = self.unknown_name_token(&prefix, &suffix, digits, number, at);
+            Err((prefix, suffix, class, number)) => {
+                let token = self.unknown_name_token(&prefix, &suffix, class, number, at);
                 return self.unread(token);
             }
         };
@@ -1705,7 +1705,13 @@ impl Machine<'_> {
         // this `\csname` here, the token is an unknown part of the name: a
         // summary would join the arms into the token again.
         let one = self.one_of_members(t).is_some_and(|texts| texts.len() == 1);
-        if (one || !self.loop_capped(site, sym)) && self.split_one_of_at(t, site) {
+        // Number text of several spellings is a gap of its class: the
+        // names it spells are told apart by that class, not a path each.
+        let number = {
+            let syms = self.typed_syms();
+            crate::env::typed!(self, syms).one_of_class(&t).is_some_and(|(c, _)| TextClass::NUMBER.contains(c))
+        };
+        if (one || !number && !self.loop_capped(site, sym)) && self.split_one_of_at(t, site) {
             return false;
         }
         // A path per meaning, each reading the name on with its own: read
@@ -1743,13 +1749,22 @@ impl Machine<'_> {
             || matches!(self.env.meaning(sym), Meaning::Unknown)
             || self.typed_text_of(t).is_some()
         {
-            let digits = self.is_unknown_digits(sym);
+            let class = match self.is_unknown_digits(sym) {
+                true => TextClass::DIGIT,
+                // One of several texts: the class they share.
+                false => {
+                    let syms = self.typed_syms();
+                    let typed = crate::env::typed!(self, syms);
+                    let one_of = typed.one_of_class(&t).filter(|(c, _)| !c.meets(TextClass::CS));
+                    self.typed_text_of(t).or(one_of).map_or(TextClass::ANY, |(class, _)| class)
+                }
+            };
             let number = self.typed_digits_of(sym).map(|_| sym);
             self.scans
                 .last_mut()
                 .and_then(|a| a.name.as_deref_mut())
                 .expect("the name scan")
-                .unknown_part(digits, number);
+                .unknown_part(class, number);
             return false;
         }
         // tex.web § 370: expanding an undefined control sequence reports
@@ -3120,8 +3135,7 @@ impl Machine<'_> {
                 // the meaning it gave the name holds: `\relax` where it can
                 // spell no defined name (tex.web § 372), or one assigned since.
                 if let Some(sym) = sym.filter(|&s| self.is_unknown_name(s)) {
-                    let built =
-                        self.name(sym).contains([crate::machine::UNKNOWN_NAME_GAP, crate::machine::UNKNOWN_DIGITS_GAP]);
+                    let built = self.name(sym).contains(crate::machine::is_gap);
                     return self.env.slot(sym).filter(|b| built && b.may.is_none()).and_then(|b| match b.meaning {
                         Meaning::Unknown | Meaning::Undefined => None,
                         _ => Some(true),

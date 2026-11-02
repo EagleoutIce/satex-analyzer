@@ -2886,7 +2886,7 @@ fn join_names(a: &Accum, b: &Accum, limit: usize) -> Option<Accum> {
             }
         }
     }
-    if !grew && n.files == other.files && n.closed == other.closed {
+    if !grew && n.files == other.files && n.closed == other.closed && n.gap.contains(other.gap) {
         return None;
     }
     for file in other.files {
@@ -2897,7 +2897,7 @@ fn join_names(a: &Accum, b: &Accum, limit: usize) -> Option<Accum> {
     n.at = n.at.or(other.at);
     n.closed = n.closed && other.closed;
     n.stopped = n.stopped.or(other.stopped);
-    n.gap_digits &= other.gap_digits;
+    n.gap = n.gap.union(other.gap);
     if n.number != other.number {
         n.number = None;
     }

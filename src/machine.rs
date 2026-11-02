@@ -895,9 +895,9 @@ pub(crate) struct NameAccum {
     pub(crate) files: Vec<FileId>,
     pub(crate) closed: bool,
     pub(crate) stopped: Option<Sym>,
-    /// Whether every unknown part, and what the names differ in, is
-    /// digits: the name is then the text around a number.
-    pub(crate) gap_digits: bool,
+    /// What the unknown parts, and what the names differ in, may hold:
+    /// digits make the name the text around a number.
+    pub(crate) gap: TextClass,
     /// The typed digits that are its one unknown part.
     pub(crate) number: Option<Sym>,
     /// The `\csname` that reads it: where its choices are made.
@@ -914,7 +914,7 @@ impl Default for NameAccum {
             files: Vec::new(),
             closed: false,
             stopped: None,
-            gap_digits: true,
+            gap: TextClass::EMPTY,
             number: None,
             site: Span::default(),
         }
@@ -931,12 +931,12 @@ impl NameAccum {
     /// An unknown part, digits or not: what came before it is the
     /// prefix, and the name goes on after it. Text between two unknown
     /// parts becomes part of the gap.
-    pub(crate) fn unknown_part(&mut self, digits: bool, number: Option<Sym>) {
-        self.gap_digits &= digits;
+    pub(crate) fn unknown_part(&mut self, class: TextClass, number: Option<Sym>) {
+        self.gap = self.gap.union(class);
         self.number = if self.names.iter().all(|(p, _)| p.is_none()) { number } else { None };
         for (prefix, name) in &mut self.names {
-            if prefix.is_some() && !name.chars().all(|c| c.is_ascii_digit()) {
-                self.gap_digits = false;
+            if prefix.is_some() {
+                self.gap = name.chars().fold(self.gap, |g, c| g.union(name_char_class(c)));
             }
             prefix.get_or_insert_with(|| name.clone());
             name.clear();
@@ -961,7 +961,8 @@ impl NameAccum {
             for (prefix, name) in &names {
                 let text = prefix.as_deref().map_or_else(|| name.clone(), |prefix| format!("{prefix}{name}"));
                 let middle = text.strip_prefix(p.as_str()).and_then(|t| t.strip_suffix(n.as_str()));
-                self.gap_digits &= middle.is_some_and(|m| m.chars().all(|c| c.is_ascii_digit()));
+                self.gap =
+                    middle.map_or(TextClass::ANY, |m| m.chars().fold(self.gap, |g, c| g.union(name_char_class(c))));
             }
         }
         self.names = vec![one];
@@ -996,7 +997,7 @@ pub(crate) fn join_took(a: &Took, b: &Took) -> Took {
 
 /// A name built around unknown text: its prefix, its suffix, whether the
 /// gap is digits, and the number they are when one number.
-pub(crate) type Gapped = (String, String, bool, Option<Sym>);
+pub(crate) type Gapped = (String, String, TextClass, Option<Sym>);
 
 /// What an expanding scan has made so far. It goes with the path, so the
 /// arms of a choice inside the scan join where they meet again. Older
@@ -1069,7 +1070,7 @@ impl Accum {
         n.collapse();
         match n.names.remove(0) {
             (None, name) => Ok(name),
-            (Some(prefix), name) => Err((prefix, name, n.gap_digits, n.number.filter(|_| n.gap_digits))),
+            (Some(prefix), name) => Err((prefix, name, n.gap, n.number.filter(|_| TextClass::DIGIT.contains(n.gap)))),
         }
     }
 
@@ -11083,7 +11084,7 @@ will look undefined",
             return false;
         }
         let Some((prefix, suffix)) = self.name_pattern(sym) else { return false };
-        let digits = self.name_gap_is_digits(sym);
+        let gap = self.name_gap_class(sym);
         let num = self.name_number(sym);
         let limit = usize::from(self.limits.meaning_set);
         let mut members: Vec<(Sym, Meaning)> = Vec::new();
@@ -11093,7 +11094,7 @@ will look undefined",
                 || name.len() < prefix.len() + suffix.len()
                 || !name.starts_with(prefix.as_str())
                 || !name.ends_with(suffix.as_str())
-                || !gap_fits(&name[prefix.len()..name.len() - suffix.len()], digits, num)
+                || !gap_fits(&name[prefix.len()..name.len() - suffix.len()], gap, num)
             {
                 continue;
             }
@@ -12200,12 +12201,53 @@ pub(crate) const UNKNOWN_NAME_GAP: char = '\u{3}';
 /// [`UNKNOWN_NAME_GAP`] where the unknown part is digits.
 pub(crate) const UNKNOWN_DIGITS_GAP: char = '\u{7}';
 
-/// Whether `gap` may fill a name's unknown part: digits for a digits gap,
-/// and for a number of values `num` one of them as `\the` prints it, with
-/// no leading zero (tex.web § 64).
-fn gap_fits(gap: &str, digits: bool, num: Option<crate::value::Num>) -> bool {
-    if !digits {
-        return true;
+/// A name's unknown part of class `class`: digits or number characters
+/// get their own marker, so names of different gaps stay apart.
+const NUMBER_GAPS: u32 = 0x10_FD00;
+
+pub(crate) fn gap_marker(class: TextClass) -> char {
+    match class {
+        c if TextClass::DIGIT.contains(c) => UNKNOWN_DIGITS_GAP,
+        c if TextClass::NUMBER.contains(c) => char::from_u32(NUMBER_GAPS + u32::from(c.0)).expect("a private use char"),
+        _ => UNKNOWN_NAME_GAP,
+    }
+}
+
+/// What the gap a marker stands for may hold, `None` for no marker.
+pub(crate) fn gap_class(c: char) -> Option<TextClass> {
+    match c {
+        UNKNOWN_DIGITS_GAP => Some(TextClass::DIGIT),
+        UNKNOWN_NAME_GAP => Some(TextClass::ANY),
+        c => (c as u32)
+            .checked_sub(NUMBER_GAPS)
+            .filter(|&k| k <= u32::from(TextClass::NUMBER.0))
+            .map(|k| TextClass(k as u8)),
+    }
+}
+
+pub(crate) fn is_gap(c: char) -> bool {
+    gap_class(c).is_some()
+}
+
+/// The class a known character of a name may have come from: a number's
+/// characters only from number text, any other from anything.
+fn name_char_class(c: char) -> TextClass {
+    match c {
+        c if c.is_ascii_digit() => TextClass::DIGIT,
+        '+' | '-' | '.' | ',' => TextClass::SIGN,
+        // An unknown character of a number: one of its characters.
+        c => crate::tex::unknown_number_chars(c)
+            .map_or(TextClass::ANY, |cs| cs.chars().fold(TextClass::EMPTY, |k, c| k.union(name_char_class(c)))),
+    }
+}
+
+/// Whether `gap` may fill a name's unknown part of class `class`: digits
+/// for a digits gap, and for a number of values `num` one of them as
+/// `\the` prints it, with no leading zero (tex.web § 64); for number text
+/// only its characters.
+fn gap_fits(gap: &str, class: TextClass, num: Option<crate::value::Num>) -> bool {
+    if !TextClass::DIGIT.contains(class) {
+        return !TextClass::NUMBER.contains(class) || gap.chars().all(|c| class.contains(name_char_class(c)));
     }
     let Some(num) = num else { return gap.bytes().all(|b| b.is_ascii_digit()) };
     let magnitude = gap.strip_prefix('-').unwrap_or(gap);
@@ -12214,7 +12256,6 @@ fn gap_fits(gap: &str, digits: bool, num: Option<crate::value::Num>) -> bool {
         && (magnitude == "0" || !magnitude.starts_with('0'));
     spelled && gap.parse::<i64>().is_ok_and(|v| num.lo <= v && v <= num.hi)
 }
-const GAPS: [char; 2] = [UNKNOWN_NAME_GAP, UNKNOWN_DIGITS_GAP];
 /// After a name built around one number's unknown digits: that number's
 /// token, so the names one number spells are one name.
 pub(crate) const NAME_NUMBER: char = '\u{5}';
@@ -12253,13 +12294,13 @@ impl Machine<'_> {
     /// not a name built around a gap: defining it defines some fresh name,
     /// never the token itself, whose expansion would then name itself.
     pub(crate) fn unknown_text_name(&self, sym: Sym) -> bool {
-        self.out.interner.name(sym).strip_prefix(UNKNOWN_NAME).is_some_and(|rest| !rest.contains(GAPS))
+        self.out.interner.name(sym).strip_prefix(UNKNOWN_NAME).is_some_and(|rest| !rest.contains(is_gap))
     }
 
     pub(crate) fn name_pattern(&self, sym: Sym) -> Option<(String, String)> {
         let rest = self.out.interner.name(sym).strip_prefix(UNKNOWN_NAME)?;
         let rest = rest.split_once(NAME_NUMBER).map_or(rest, |(family, _)| family);
-        let (prefix, suffix) = rest.split_once(GAPS)?;
+        let (prefix, suffix) = rest.split_once(is_gap)?;
         Some((prefix.to_string(), suffix.to_string()))
     }
 
@@ -12273,7 +12314,13 @@ impl Machine<'_> {
     /// Whether a name [`Machine::name_pattern`] reads has digits for its
     /// unknown part.
     pub(crate) fn name_gap_is_digits(&self, sym: Sym) -> bool {
-        self.out.interner.name(sym).strip_prefix(UNKNOWN_NAME).is_some_and(|rest| rest.contains(UNKNOWN_DIGITS_GAP))
+        TextClass::DIGIT.contains(self.name_gap_class(sym))
+    }
+
+    /// What the unknown part of a name [`Machine::name_pattern`] reads may hold.
+    fn name_gap_class(&self, sym: Sym) -> TextClass {
+        let name = self.out.interner.name(sym).strip_prefix(UNKNOWN_NAME).unwrap_or_default();
+        name.chars().find_map(gap_class).unwrap_or(TextClass::ANY)
     }
 
     /// What was assigned after assignment `mark` (and since the recent list
@@ -12689,11 +12736,11 @@ impl Machine<'_> {
         &mut self,
         prefix: &str,
         suffix: &str,
-        digits: bool,
+        class: TextClass,
         number: Option<Sym>,
         span: Span,
     ) -> Token {
-        let gap = if digits { UNKNOWN_DIGITS_GAP } else { UNKNOWN_NAME_GAP };
+        let (gap, digits) = (gap_marker(class), TextClass::DIGIT.contains(class));
         let family = format!("{UNKNOWN_NAME}{prefix}{gap}{suffix}");
         let sym = match number {
             Some(n) => {
@@ -12713,7 +12760,7 @@ impl Machine<'_> {
         // A name that can spell no defined name is undefined, so `\csname`
         // makes it `\relax`, locally as TeX does.
         let num = number.and_then(|n| self.typed_digits_of(n));
-        let meaning = match self.spells_defined(prefix, suffix, digits, num) {
+        let meaning = match self.spells_defined(prefix, suffix, class, num) {
             false => Meaning::Primitive(Primitive::Relax),
             true => Meaning::Unknown,
         };
@@ -12727,14 +12774,14 @@ impl Machine<'_> {
     /// with a meaning besides `\relax`: a defined name of that shape (digits
     /// in the middle where the unknown part is digits), or
     /// one a name built from unknown text may have defined.
-    fn spells_defined(&self, prefix: &str, suffix: &str, digits: bool, num: Option<crate::value::Num>) -> bool {
+    fn spells_defined(&self, prefix: &str, suffix: &str, class: TextClass, num: Option<crate::value::Num>) -> bool {
         self.wild.overlaps_real(prefix, suffix)
             || self.env.bound().into_iter().any(|s| {
                 let name = self.out.interner.name(s);
                 name.len() >= prefix.len() + suffix.len()
                     && name.starts_with(prefix)
                     && name.ends_with(suffix)
-                    && gap_fits(&name[prefix.len()..name.len() - suffix.len()], digits, num)
+                    && gap_fits(&name[prefix.len()..name.len() - suffix.len()], class, num)
                     && !self.is_unknown_name(s)
                     && !matches!(self.env.meaning(s), Meaning::Undefined | Meaning::Primitive(Primitive::Relax))
             })
