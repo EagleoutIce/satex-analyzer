@@ -27,7 +27,7 @@
 
 mod argument_hover;
 mod bib;
-mod doccomment;
+pub(crate) mod doccomment;
 mod handlers;
 pub mod knowledge;
 pub(crate) mod primitives;

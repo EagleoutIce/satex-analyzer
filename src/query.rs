@@ -1445,6 +1445,7 @@ fn definitions(analysis: &Analysis) -> Vec<Record> {
             record.insert("name".into(), json!(analysis.interner.cs(def.name)));
             record.insert("tag".into(), json!(def.tag));
             record.insert("by".into(), json!(analysis.interner.cs(def.by)));
+            insert_comment(&mut record, analysis, def.span);
             record.insert("subject".into(), symbol(analysis, def.subject));
             record.insert("package".into(), symbol(analysis, def.package));
             record.insert("origin".into(), json!(origin(analysis, def.span.file)));
@@ -3860,11 +3861,34 @@ fn defined_together(analysis: &Analysis, def: &crate::facts::Definition) -> Vec<
     out
 }
 
+/// What the comment block above a definition says, as `comment` and per
+/// argument `arguments` (`% #1 is the name`).
+fn insert_comment(record: &mut Record, analysis: &Analysis, at: Span) {
+    let Some(doc) = source_comment(analysis, at) else { return };
+    record.insert("comment".into(), json!(doc.text));
+    let args: Vec<String> = doc.params.iter().map(|(n, text)| format!("⟨arg{n}⟩ {text}")).collect();
+    if !args.is_empty() {
+        record.insert("arguments".into(), json!(args));
+    }
+}
+
+/// The comment block above a definition in the project's own files, read
+/// from the source.
+fn source_comment(analysis: &Analysis, at: Span) -> Option<crate::lsp::doccomment::DocComment> {
+    if !analysis.project_file(at.file) {
+        return None;
+    }
+    let path = analysis.files.get(usize::from(at.file))?.path.clone();
+    let text = crate::overlay::read_to_string(Path::new(&path)).ok()?;
+    crate::lsp::doccomment::above(&text, at.line as usize)
+}
+
 fn record_for_def(analysis: &Analysis, def: &crate::facts::Definition, window: Window) -> Record {
     let mut record = place(analysis, def.span);
     record.insert("name".into(), json!(analysis.interner.cs(def.name)));
     record.insert("tag".into(), json!(def.tag));
     record.insert("by".into(), json!(analysis.interner.cs(def.by)));
+    insert_comment(&mut record, analysis, def.span);
     let together = defined_together(analysis, def);
     if !together.is_empty() {
         record.insert("together".into(), json!(together));

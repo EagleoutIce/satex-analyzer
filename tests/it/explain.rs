@@ -919,3 +919,22 @@ fn kernel_end_and_primitive_def_read_as_themselves() {
     assert!(str_field(&def, "syntax").is_some_and(|s| s.contains("⟨parameter text⟩")), "{def:?}");
     assert_eq!(str_field(&def, "signature"), None);
 }
+
+/// The comment block above a definition documents it and its arguments,
+/// wherever the definition is explained.
+#[test]
+fn a_definition_carries_its_source_comment() {
+    let dir = crate::support::scratch_dir(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/explain-comment"),
+    );
+    let file = dir.join("a.tex");
+    std::fs::write(&file, "% Greets someone.\n% #1 is the name to greet\n\\def\\foo#1{Hello #1}\n\\foo{World}\n")
+        .unwrap();
+    let out = crate::support::satex()
+        .args(["explain", "-f", file.to_str().unwrap(), "\\foo", "--no-packages", "--no-classes"])
+        .output()
+        .expect("satex runs");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("Greets someone."), "{text}");
+    assert!(text.contains("⟨arg1⟩ is the name to greet"), "{text}");
+}
