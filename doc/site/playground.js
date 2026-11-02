@@ -490,11 +490,14 @@
   function prefetchCommands() {
     // every name in force: what a `\\` completes from at once, beyond the server's best few hundred
     namesInForce(false).then((records) => scopeItems.set(uri(), records.map((r) => ({ label: r.name.replace(/^\\/, ''), detail: r.effective ?? r.name, kind: 3 }))));
-    const text = editor?.text() ?? '';
-    for (const [place, offset] of askablePlaces(text)) {
-      if (commandItems.has(`${uri()}|${place}`)) continue;
-      const before = text.slice(0, offset).split('\n');
-      completions({ line: before.length - 1, character: before.at(-1).length }, before.at(-1).length, place);
+    // each kind of place once, from whichever open file of the project has one (`\\ref{` may stand in a chapter only)
+    for (const name of Object.keys(state.texts).filter((n) => opened.has(uri(n)))) {
+      const text = name === state.file ? editor?.text() ?? '' : state.texts[name];
+      for (const [place, offset] of askablePlaces(text)) {
+        if (commandItems.has(place)) continue;
+        const before = text.slice(0, offset).split('\n');
+        completions({ line: before.length - 1, character: before.at(-1).length }, before.at(-1).length, place, uri(name));
+      }
     }
   }
   /** The kinds of place the text offers a completion in, each with one offset to ask at: after a `\\`,
@@ -587,7 +590,7 @@
    * keeps the server busy, the last items stand in only where they were asked for the same word. */
   const asked = new Map();
   let lastItems = null, lastWord = '';
-  /** What the server last offered in each kind of place, by file (after a `\\`, in `\begin{`, `\cite{`, …):
+  /** What the server last offered in each kind of place of the project (after a `\\`, in `\begin{`, `\cite{`, …):
    * what the same kind of place completes from at once. */
   const commandItems = new Map(), scopeItems = new Map();
   /** The names in force at the end of the root's last run (`scope`), asked once per analysis. */
@@ -603,10 +606,10 @@
   }
   /** How long a completion waits for the server before the kept commands answer (the server's answer still replaces them). */
   const INSTANT_MS = 50;
-  function completions(position, start = position.character, place = null) {
-    const k = `${uri()}|${version}|${position.line}:${position.character}`, word = `${uri()}|${position.line}:${start}`;
+  function completions(position, start = position.character, place = null, file = uri()) {
+    const k = `${file}|${version}|${position.line}:${position.character}`, word = `${file}|${position.line}:${start}`;
     if (running && lastItems && lastWord === word) return lastItems;
-    const served = place && commandItems.get(`${uri()}|${place}`), names = place === '\\' && scopeItems.get(uri());
+    const served = place && commandItems.get(place), names = place === '\\' && scopeItems.get(file);
     const both = names ? [...(served ?? []), ...names.filter((n) => !served?.some((i) => i.label === n.label))] : served;
     // items asked elsewhere replace no range here: their text goes in at the cursor's word
     const kept = both?.map(({ textEdit, ...i }) => (textEdit ? { ...i, insertText: i.insertText ?? textEdit.newText } : i));
@@ -614,9 +617,9 @@
     if (running && kept) return kept;
     if (!asked.has(k)) {
       asked.clear();
-      asked.set(k, lsp('textDocument/completion', { textDocument: { uri: uri() }, position }).then((r) => {
+      asked.set(k, lsp('textDocument/completion', { textDocument: { uri: file }, position }).then((r) => {
         [lastItems, lastWord] = [(Array.isArray(r) ? r : r?.items) ?? [], word];
-        if (place && lastItems.length) commandItems.set(`${uri()}|${place}`, lastItems);
+        if (place && lastItems.length) commandItems.set(place, lastItems);
         return lastItems;
       }).catch(() => []));
     }
@@ -2965,6 +2968,7 @@
     opened.clear();
     for (const u of Object.keys(diagnostics)) if (!u.startsWith(`file://${state.dir}/`)) delete diagnostics[u];
     asked.clear();
+    commandItems.clear();
     for (const p of pending.values()) p.resolve(null);
     pending.clear();
     worker.postMessage({ type: 'reset', args: [...flags(), '-f', state.root], cwd: state.dir });
