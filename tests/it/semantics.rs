@@ -2271,6 +2271,18 @@ fn a_link_ends_in_a_whatsit() {
     assert_eq!(out, "9/7.50002pt");
 }
 
+/// A font one path loaded is that font or `\relax` after the join: neither
+/// expands, so `\selectfont`'s `\xdef\font@name{\csname…\endcsname}` keeps
+/// the name and the parbox's paragraph stays horizontal. pdflatex: H.
+#[test]
+fn a_font_loaded_on_one_path_keeps_its_name() {
+    let out = article_sizes(
+        r"\ifnum\pdfuniformdeviate2=0 \textsc{a}\fi
+          \setbox0\hbox{\parbox{3cm}{\textsc{One}\ifvmode\xdef\out{V}\else\xdef\out{H}\fi}}",
+    );
+    assert_eq!(out, "H");
+}
+
 /// Expanding `\ifdim\lastkern` inside a word does not end it: `A` and `V`
 /// still kern (tex.web §§ 1034-1036), as csquotes relies on. A `\write`
 /// is a whatsit, nothing after `\immediate` (§§ 1348, 1375); a font

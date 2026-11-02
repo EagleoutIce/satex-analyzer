@@ -840,11 +840,7 @@ impl Machine<'_> {
                 if matches!(self.env.meaning(sym), Meaning::Unknown)
                     && !self.is_unknown_marker(sym)
                     && !self.read_noexpanded(token)
-                    && !self
-                        .env
-                        .slot(sym)
-                        .and_then(|b| b.may.clone())
-                        .is_some_and(|may| may.iter().all(|m| !self.expandable_meaning(m))) =>
+                    && !self.joined_unexpandable(sym) =>
             {
                 let unknown = self.one_of_texts(sym, token.span);
                 self.unread(unknown);

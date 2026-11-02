@@ -7701,6 +7701,16 @@ will look undefined",
     }
 
     /// The same test on a meaning already in hand.
+    /// A name a join left only meanings that never expand (a font or
+    /// `\relax`): expanding reads it as itself.
+    pub(crate) fn joined_unexpandable(&self, sym: Sym) -> bool {
+        self.env.slot(sym).filter(|b| matches!(b.meaning, Meaning::Unknown)).and_then(|b| b.may.as_ref()).is_some_and(
+            |may| {
+                may.iter().all(|m| !matches!(m, Meaning::Unknown | Meaning::Undefined) && !self.expandable_meaning(m))
+            },
+        )
+    }
+
     pub fn expandable_meaning(&self, meaning: &Meaning) -> bool {
         match meaning {
             Meaning::Macro(_) => true,
@@ -7955,6 +7965,7 @@ will look undefined",
             {
                 out.push(token)
             }
+            Meaning::Unknown if self.joined_unexpandable(sym) => out.push(token),
             Meaning::Unknown if self.is_unknown_marker(sym) => out.push(self.unknown_text(Unk::Any, token.span)),
             Meaning::Unknown => {
                 self.approximated = true;
