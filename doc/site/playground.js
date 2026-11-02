@@ -604,6 +604,15 @@
     }
     return scopeAsked.get(key);
   }
+  /** The commands a `\\` completed last visit, per project: the first `\\` of a visit answers before the first run ends. */
+  const seedKey = () => `satex-complete:${state.root ?? state.file}`;
+  function keepSeed(items) {
+    const slim = items.slice(0, 400).map(({ label, detail, kind, insertText, insertTextFormat }) => ({ label, detail, kind, insertText, insertTextFormat }));
+    try { localStorage.setItem(seedKey(), JSON.stringify(slim)); } catch {}
+  }
+  function loadSeed() {
+    try { const seed = JSON.parse(localStorage.getItem(seedKey()) ?? 'null'); if (Array.isArray(seed)) commandItems.set('\\', seed); } catch {}
+  }
   /** How long a completion waits for the server before the kept commands answer (the server's answer still replaces them). */
   const INSTANT_MS = 50;
   function completions(position, start = position.character, place = null, file = uri()) {
@@ -620,6 +629,7 @@
       asked.set(k, lsp('textDocument/completion', { textDocument: { uri: file }, position }).then((r) => {
         [lastItems, lastWord] = [(Array.isArray(r) ? r : r?.items) ?? [], word];
         if (place && lastItems.length) commandItems.set(place, lastItems);
+        if (place === '\\' && lastItems.length) keepSeed(lastItems);
         return lastItems;
       }).catch(() => []));
     }
@@ -2969,6 +2979,7 @@
     for (const u of Object.keys(diagnostics)) if (!u.startsWith(`file://${state.dir}/`)) delete diagnostics[u];
     asked.clear();
     commandItems.clear();
+    loadSeed();
     for (const p of pending.values()) p.resolve(null);
     pending.clear();
     worker.postMessage({ type: 'reset', args: [...flags(), '-f', state.root], cwd: state.dir });
