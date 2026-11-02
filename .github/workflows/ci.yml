@@ -82,7 +82,7 @@ jobs:
     timeout-minutes: 45
     # The TeX Live image already holds a full installation, which the
     # engine-dependent tests need; installing one with apt takes minutes.
-    container: texlive/texlive:latest
+    container: texlive/texlive:TL2025-historic
     strategy:
       fail-fast: false
       matrix:
@@ -257,7 +257,7 @@ jobs:
         tl: [current, TL2022, TL2019]
         include:
           - tl: current
-            container: texlive/texlive:latest
+            container: texlive/texlive:TL2025-historic
           - tl: TL2022
             container: texlive/texlive:TL2022-historic
           - tl: TL2019
