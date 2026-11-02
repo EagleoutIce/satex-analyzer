@@ -767,8 +767,8 @@
         await e.lsp('textDocument/didOpen', { textDocument: { uri, languageId: 'latex', version: mine, text: now } }, true);
       } else {
         await e.lsp('textDocument/didChange', { textDocument: { uri, version: mine }, contentChanges: [{ text: now }] }, true);
-        await e.lsp('satex/analyze', {}, true);
       }
+      await e.lsp('satex/analyze', {}, true);
       if (mine !== version) return; // a newer text is on its way
       const rows = (await e.lsp('satex/typeset', { textDocument: { uri } })) ?? [];
       if (mine !== version) return;

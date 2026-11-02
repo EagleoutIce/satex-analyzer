@@ -423,7 +423,7 @@
   let running = 0;
   function lsp(method, params, notify = false) {
     const message = { jsonrpc: '2.0', method, params, ...(notify ? {} : { id: nextId++ }) };
-    const runs = method === 'satex/analyze' || method === 'textDocument/didOpen';
+    const runs = method === 'satex/analyze';
     // A read-only question asked while a run goes on is answered from the last finished one, never queued behind it.
     const read = !notify && !runs && (method === 'workspace/executeCommand' ? params.command === 'satex/query' : /^textDocument\/(hover|documentSymbol|definition|references|documentHighlight|signatureHelp|foldingRange|inlayHint|documentLink)$/.test(method));
     const key = read && method + JSON.stringify(params);
@@ -607,7 +607,9 @@
     const k = `${uri()}|${version}|${position.line}:${position.character}`, word = `${uri()}|${position.line}:${start}`;
     if (running && lastItems && lastWord === word) return lastItems;
     const served = place && commandItems.get(`${uri()}|${place}`), names = place === '\\' && scopeItems.get(uri());
-    const kept = names ? [...(served ?? []), ...names.filter((n) => !served?.some((i) => i.label === n.label))] : served;
+    const both = names ? [...(served ?? []), ...names.filter((n) => !served?.some((i) => i.label === n.label))] : served;
+    // items asked elsewhere replace no range here: their text goes in at the cursor's word
+    const kept = both?.map(({ textEdit, ...i }) => (textEdit ? { ...i, insertText: i.insertText ?? textEdit.newText } : i));
     // the server is busy with a run: the last items answer, the question is not queued behind it
     if (running && kept) return kept;
     if (!asked.has(k)) {
@@ -2915,11 +2917,12 @@
 
   let sampleTexts;
   const opened = new Set();
-  function open(name) {
+  /** Opens `name` on the server; `run` asks for the analysis it needs, which a batch of opens asks once. */
+  function open(name, run = true) {
     if (opened.has(uri(name)) || name in state.ro || (data(name) && !database(name))) return;
     opened.add(uri(name));
-    checking();
     lsp('textDocument/didOpen', { textDocument: { uri: uri(name), languageId: 'latex', version, text: state.texts[name] } }, true);
+    if (run) analyze();
   }
   function close(name) {
     if (!opened.delete(uri(name))) return;
@@ -2982,10 +2985,11 @@
     }
     try { localStorage.removeItem('satex-start'); } catch {}
     lsp('initialized', {}, true);
-    open(state.root);
-    open(state.file);
+    open(state.root, false);
+    open(state.file, false);
     // the server publishes findings of open files only: the project's own, up to a few, for the tree's counts
-    for (const n of state.files.slice(0, OPEN_AT_START)) open(n);
+    for (const n of state.files.slice(0, OPEN_AT_START)) open(n, false);
+    analyze();
     synced = version;
     following = false;
   }
@@ -3214,7 +3218,7 @@
       store([to], [name]);
       const links = relink(name, to);
       toast(`Renamed to ${to}${links ? `, ${links} reference${links > 1 ? 's' : ''} updated` : ''}`);
-      if (state.root === name) { state.root = to; redraw(); await restart(); } else { redraw(); open(state.file); analyze(); }
+      if (state.root === name) { state.root = to; redraw(); await restart(); } else { redraw(); open(state.file, false); analyze(); }
     });
   }
   /** Deletes a file: the first click asks, the second within a few seconds deletes. */

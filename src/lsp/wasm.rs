@@ -63,14 +63,11 @@ impl Local {
                 engine.flush();
                 vec![]
             }
+            // An opened document waits for `satex/analyze` too: the page
+            // opens a project's files together and asks for one run.
             Ok(Message::Notification(not)) => {
-                let opened = not.method == "textDocument/didOpen";
                 if let Some(m) = notification(not, |uri| engine.docs.get(uri).map(|d| d.text.as_str())) {
                     engine.step(m);
-                }
-                // A document just opened has no analysis to answer from yet.
-                if opened {
-                    engine.flush();
                 }
                 vec![]
             }
