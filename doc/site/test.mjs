@@ -369,15 +369,14 @@ async function browser() {
       await shot('w2-pgfmath');
       // 3: the written files: a card per file, its runs, the second run's .aux against the first's
       await open('written', '\\documentclass{article}\n\\makeatletter\n\\AtBeginDocument{\\immediate\\write\\@mainaux{\\@percentchar\\space seen \\@ifundefined{r@sec:a}{no}{yes}}}\n\\makeatother\n\\begin{document}\n\\tableofcontents\n\\section{Intro}\\label{sec:a}\nSee \\ref{sec:a}.\n\\end{document}\n');
-      await js(`document.getElementById('play-written').open = true`);
+      await js(`document.querySelector('.side-tabs [data-panel=play-written]').click()`);
       const wrote = await until(`return [...document.querySelectorAll('#written-body .wf-head code')].map((c) => c.textContent).join() === 'main.aux,main.toc'`, 30000);
       const runs = await js(`return [...document.querySelectorAll('#written-body .wf')[0]?.querySelectorAll('[data-view]') ?? []].map((b) => b.textContent)`);
       await js(`document.querySelector('#written-body .wf [data-view="1"]')?.click()`);
       const diff = await js(`const w = document.querySelector('#written-body .wf'); if (!w) return [[], []]; return [[...w.querySelectorAll('.wf-del')].map((e) => e.textContent), [...w.querySelectorAll('.wf-add')].map((e) => e.textContent)]`);
       check('written files: a card each, 2 runs, the diff shows the changed line', wrote && runs.join() === 'run 1,run 2' && diff[0].join() === '% seen no' && diff[1].join() === '% seen yes',
         JSON.stringify({ runs, diff, text: await js(`return document.getElementById('written-body').textContent.slice(0, 200)`) }));
-      await js(`document.getElementById('play-written').scrollIntoView()`);
-      await shot('w3-written');
+            await shot('w3-written');
       // 1: the run pop-up
       await js(`document.getElementById('t-time').click()`);
       await sleep(400);
@@ -391,11 +390,11 @@ async function browser() {
       await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
       await js(`document.getElementById('t-time').click()`);
       // 9: a click on the switch itself, with the mouse
-      const sw = await js(`const b = document.getElementById('typeset-keys'); b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2, b.checked, document.getElementById('play-typeset')?.open]`);
+      const sw = await js(`document.querySelector('.side-tabs [data-panel=play-typeset]').click(); const b = document.getElementById('typeset-keys'); b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2, b.checked, !document.getElementById('play-typeset').hidden]`);
       await mouse(sw[0], sw[1]);
       await sleep(150);
-      const after = await js(`return [document.getElementById('typeset-keys').checked, document.getElementById('play-typeset')?.open]`);
-      check('the switch flips on a real click, the section stays', after[0] !== sw[2] && after[1] === sw[3], JSON.stringify([sw, after]));
+      const after = await js(`return [document.getElementById('typeset-keys').checked, !document.getElementById('play-typeset').hidden]`);
+      check('the switch flips on a real click, the panel stays', after[0] !== sw[2] && after[1] === sw[3], JSON.stringify([sw, after]));
       await mouse(sw[0], sw[1]);
       // 5: the cache store is bounded and stamped
       const idb = await js(`const db = await new Promise((ok, no) => { const r = indexedDB.open('satex-playground'); r.onsuccess = () => ok(r.result); r.onerror = no; });
@@ -430,7 +429,7 @@ async function browser() {
       await section('typeset', async () => {
       // the Typeset panel: a table as a grid, its \hline a rule; a reference's key where the \ref stands, never inside a word
       await open('table', '\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:a}\nSee Section~\\ref{sec:a} for the hyphenation of everything \\makebox[2cm]{boxed}.\n\n\\begin{tabular}{lc}\nMethod & Score \\\\ \\hline\nOurs & 0.92 \\\\\nBase & 1.5 \\\\\n\\end{tabular}\n\\end{document}\n');
-      await js(`const d = document.getElementById('play-typeset'); d.open = true; const k = document.getElementById('typeset-keys'); if (!k.checked) k.click()`);
+      await js(`document.querySelector('.side-tabs [data-panel=play-typeset]').click(); const k = document.getElementById('typeset-keys'); if (!k.checked) k.click()`);
       await until(`return !!document.querySelector('#typeset-body .ts-table')`, 30000);
       const ts = await js(`const t = document.querySelector('#typeset-body .ts-table');
         const rows = [...t.querySelectorAll('.ts-tr')].filter((r) => r.textContent.trim()).map((r) => [...r.querySelectorAll('.ts-td')].map((c) => c.textContent.trim()));
@@ -836,7 +835,7 @@ async function browser() {
       await js(`document.getElementById('cfg-open').click()`);
       await until(`return !!document.querySelector('#cfg-list [data-cfg="clock"]')`, 30000);
       await js(`const i = document.querySelector('#cfg-list [data-cfg="clock"]'); i.value = '1999-06-01T00:00:00'; i.dispatchEvent(new Event('change', { bubbles: true })); document.getElementById('play-config').close()`);
-      await js(`document.getElementById('play-typeset').open = true`);
+      await js(`document.querySelector('.side-tabs [data-panel=play-typeset]').click()`);
       const year = await until(`return /Year 1999/.test(document.getElementById('typeset-body').textContent)`, 120000);
       check('the clock setting changes \\the\\year', year, await js(`return document.getElementById('typeset-body').textContent.slice(0, 120)`));
       await js(`document.getElementById('cfg-open').click(); document.getElementById('cfg-reset').click(); document.getElementById('play-config').close()`);
@@ -974,10 +973,10 @@ async function browser() {
       return ['flag', 'mand', 'opt'].every((k) => u.includes(k)) && !document.querySelector('.tip-card .arg .arg')`), await js(`return document.querySelector('.tip-card code.usage')?.innerHTML.slice(0, 300) ?? 'no usage'`));
     await shot('play-hover-newcommand');
 
-    // the Explain macro panel follows the mouse, no click
+    // the Explain panel follows the mouse, no click
     p = await spot('\\greet{', 2);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p[0], y: p[1] });
-    check('explain panel follows the mouse', await until(`return document.getElementById('explain-name').textContent === '\\\\greet' && /greet/.test(document.getElementById('explain-body').textContent)`, 20000),
+    check('explain panel follows the mouse', await until(`return /greet/.test(document.getElementById('explain-body').textContent)`, 20000),
       await js(`return document.getElementById('play-explain').textContent.slice(0, 120)`));
 
     check('explain panel shows the full record', await until(`return /greet/.test(document.querySelector('#explain-body .xcard .x-name')?.textContent ?? '') && /Hello, #1!/.test(document.getElementById('explain-body').textContent)`, 30000));

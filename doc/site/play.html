@@ -53,21 +53,32 @@
   </section>
   <div class="divider" id="play-divider" role="separator" aria-orientation="vertical" aria-label="resize panes: drag to the edge to fold a pane, click to bring it back" aria-valuemin="0" aria-valuemax="100" tabindex="0" title="drag to resize, to an edge to fold; click a folded one to unfold; double-click: half"></div>
   <section class="pane side-pane">
-    <details open class="sect" id="play-findings"><summary>Findings <b id="lsp-count"></b> <span class="muted" id="lsp-status"></span></summary>
+    <div class="tabs side-tabs" role="tablist" aria-label="panels">
+      <button type="button" role="tab" data-panel="play-findings" aria-controls="play-findings">Findings <b id="lsp-count" class="count"></b></button>
+      <button type="button" role="tab" data-panel="play-explain" aria-controls="play-explain">Explain</button>
+      <button type="button" role="tab" data-panel="play-typeset" aria-controls="play-typeset">Typeset</button>
+      <button type="button" role="tab" data-panel="play-pdf" aria-controls="play-pdf">PDF</button>
+      <button type="button" role="tab" data-panel="play-written" aria-controls="play-written">Written <b id="written-count" class="count"></b></button>
+      <button type="button" id="side-split" class="split-toggle" aria-pressed="false" title="show the PDF beside the open panel">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M8 2.5v11"/></svg><span>PDF beside</span></button>
+    </div>
+    <div class="panels">
+    <section class="sect" id="play-findings" role="tabpanel"><div class="sect-bar"><span class="muted" id="lsp-status"></span></div>
       <div id="play-refs" class="refs" hidden></div>
-      <ul id="lsp-diagnostics" class="diagnostics grow" aria-live="polite"></ul></details>
-    <details class="sect" id="play-explain"><summary>Explain macro <code id="explain-name"></code></summary>
-      <div id="explain-body" class="hover grow"><p class="muted">The command at the cursor, explained.</p></div></details>
-    <details open class="sect" id="play-pdf"><summary>PDF <span class="pdf-bar"><button type="button" id="pdf-compile" class="small" disabled title="Build the project with this machine's TeX and show the PDF">Compile</button><button type="button" id="pdf-slice" class="small ghost" disabled title="Build only what the cursor's line needs: satex slice at the cursor">Slice</button><button type="button" id="pdf-zoom-out" class="small ghost" title="Smaller pages (Ctrl and wheel on a page)">&minus;</button><button type="button" id="pdf-zoom-in" class="small ghost" title="Larger pages">+</button><span class="muted" id="pdf-zoom-level"></span></span> <span class="muted" id="pdf-status"></span></summary>
-      <div id="pdf-body" class="pdf grow"><p class="muted">Compile shows the PDF here. Click the page to find its source, move the cursor to find it on the page.</p></div></details>
-    <details open class="sect" id="play-typeset"><summary>Typeset
-      <span class="ts-switches"><label class="ts-toggle" title="Show the text set in boxes that never reach the page"><span>boxes</span><input type="checkbox" id="typeset-boxes" role="switch" aria-label="show boxed text"></label>
-      <label class="ts-toggle" title="Show the keys of labels, references and citations where they stand"><span>keys</span><input type="checkbox" id="typeset-keys" role="switch" aria-label="show keys"></label>
-      <label class="ts-toggle" title="Show only the paragraph at the cursor"><span>here</span><input type="checkbox" id="typeset-here" role="switch" aria-label="only the paragraph at the cursor"></label>
-      <label class="ts-toggle" title="Mark the ligatures the fonts set: the letters, then the glyph they join to"><span>ligs</span><input type="checkbox" id="typeset-ligs" role="switch" aria-label="show ligatures"></label></span></summary>
-      <div id="typeset-body" class="typeset grow"><p class="muted">Paragraphs of the open file, set after each check.</p></div></details>
-    <details class="sect" id="play-written"><summary>Written files <b id="written-count"></b></summary>
-      <div id="written-body" class="written grow"><p class="muted">Files the build writes (.aux, .toc …), as satex computes them. Unknown parts are marked.</p></div></details>
+      <ul id="lsp-diagnostics" class="diagnostics grow" aria-live="polite"></ul></section>
+    <section class="sect" id="play-explain" role="tabpanel" hidden>
+      <div id="explain-body" class="hover grow"><p class="muted">The command at the cursor, explained.</p></div></section>
+    <section class="sect" id="play-typeset" role="tabpanel" hidden><div class="sect-bar ts-switches">
+      <label class="ts-toggle" title="Show the text set in boxes that never reach the page"><input type="checkbox" id="typeset-boxes" role="switch" aria-label="show boxed text"><span>boxes</span></label>
+      <label class="ts-toggle" title="Show the keys of labels, references and citations where they stand"><input type="checkbox" id="typeset-keys" role="switch" aria-label="show keys"><span>keys</span></label>
+      <label class="ts-toggle" title="Show only the paragraph at the cursor"><input type="checkbox" id="typeset-here" role="switch" aria-label="only the paragraph at the cursor"><span>here</span></label>
+      <label class="ts-toggle" title="Mark the ligatures the fonts set: the letters, then the glyph they join to"><input type="checkbox" id="typeset-ligs" role="switch" aria-label="show ligatures"><span>ligs</span></label></div>
+      <div id="typeset-body" class="typeset grow"><p class="muted">Paragraphs of the open file, set after each check.</p></div></section>
+    <section class="sect" id="play-pdf" role="tabpanel" hidden><div class="sect-bar pdf-bar"><button type="button" id="pdf-compile" class="small" disabled title="Build the project with this machine's TeX and show the PDF">Compile</button><button type="button" id="pdf-slice" class="small ghost" disabled title="Build only what the cursor's line needs: satex slice at the cursor">Slice</button><button type="button" id="pdf-zoom-out" class="small ghost" title="Smaller pages (Ctrl and wheel on a page)">&minus;</button><button type="button" id="pdf-zoom-in" class="small ghost" title="Larger pages">+</button><span class="muted" id="pdf-zoom-level"></span> <span class="muted" id="pdf-status"></span></div>
+      <div id="pdf-body" class="pdf grow"><p class="muted">Compile shows the PDF here. Click the page to find its source, move the cursor to find it on the page.</p></div></section>
+    <section class="sect" id="play-written" role="tabpanel" hidden>
+      <div id="written-body" class="written grow"><p class="muted">Files the build writes (.aux, .toc …), as satex computes them. Unknown parts are marked.</p></div></section>
+    </div>
     <dialog id="play-library" class="cache-dialog lib-dialog" aria-labelledby="lib-title">
       <header><h3 id="lib-title">Library</h3><button type="button" class="ghost small" id="lib-close" aria-label="close">✕</button></header>
       <div class="lib grow">

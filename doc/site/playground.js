@@ -58,20 +58,43 @@
     new MutationObserver(check).observe(tabs, { childList: true });
     const ask = args.closest('.ask');
     collapsing(ask, () => args.clientWidth < 12 * parseFloat(getComputedStyle(args).fontSize));
-    // the typeset switches, wrapped under their heading, say less
-    const head = $('play-typeset').querySelector('summary'), switches = head.querySelector('.ts-switches');
-    const title = document.createRange();
-    title.selectNodeContents(head.firstChild);
-    collapsing(head, () => {
-      const t = title.getBoundingClientRect(), w = switches.getBoundingClientRect();
-      return w.top >= t.bottom - 2 || w.height > 1.5 * switches.firstElementChild.offsetHeight;
-    });
   }
   // Panes snap, as in flowR's playground: a splitter dragged into a pane's last half
   // minimum folds that pane away, a click on the folded splitter brings it back; near a
   // third, half or two thirds it rests there. A section's grip sets its height, dragged
   // under half the minimum it closes the section. Sizes are kept per browser.
   let foldConsole; // the satex console's fold, set below
+  // the side pane: one tab per panel, the PDF optionally beside the open one; both kept per browser
+  const showPanel = (() => {
+    const side = document.querySelector('.side-pane'), tabs = [...side.querySelectorAll('.side-tabs [role=tab]')], split = $('side-split');
+    const get = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+    const set = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+    const show = (id) => {
+      const beside = side.classList.contains('beside');
+      if (!tabs.some((t) => t.dataset.panel === id) || beside && id === 'play-pdf') id = 'play-typeset';
+      for (const t of tabs) {
+        const on = t.dataset.panel === id;
+        t.setAttribute('aria-selected', String(on));
+        t.tabIndex = on ? 0 : -1;
+        $(t.dataset.panel).hidden = !on && !(beside && t.dataset.panel === 'play-pdf');
+      }
+      set('satex-side-tab', id);
+    };
+    const first = get('satex-side-tab') ?? 'play-findings';
+    const current = () => tabs.find((t) => t.getAttribute('aria-selected') === 'true')?.dataset.panel ?? first;
+    const pair = (on) => { side.classList.toggle('beside', on); split.setAttribute('aria-pressed', String(on)); set('satex-side-split', on ? '1' : '0'); show(current()); };
+    for (const t of tabs) t.onclick = () => show(t.dataset.panel);
+    side.querySelector('.side-tabs').addEventListener('keydown', (e) => {
+      const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key], shown = tabs.filter((t) => t.offsetParent);
+      if (!step || !e.target.matches('[role=tab]')) return;
+      const next = shown[(shown.indexOf(e.target) + step + shown.length) % shown.length];
+      show(next.dataset.panel);
+      next.focus();
+    });
+    split.onclick = () => pair(!side.classList.contains('beside'));
+    pair(get('satex-side-split') === '1');
+    return show;
+  })();
   const PANES = { min: 15, snap: [1 / 3, 1 / 2, 2 / 3], within: 1, minSection: 4 }; // rem, fractions
   {
     const rem = () => parseFloat(getComputedStyle(document.documentElement).fontSize);
@@ -124,14 +147,13 @@
       if (to) { e.preventDefault(); place(to); keep(); }
     });
 
-    // each section of the side pane: a grip under its body, and open or folded as the reader left it
+    // each section of the file tree: a grip under its body, and open or folded as the reader left it
     kept.heights ??= {};
     kept.open ??= {};
-    for (const sect of document.querySelectorAll('.side-pane > details.sect, .tree > details.sect')) {
+    for (const sect of document.querySelectorAll('.tree > details.sect')) {
       const body = sect.querySelector('.grow');
       if (!body) continue;
-      // the Explain macro panel starts folded on every visit
-      if (sect.id in kept.open && sect.id !== 'play-explain') sect.open = kept.open[sect.id];
+      if (sect.id in kept.open) sect.open = kept.open[sect.id];
       sect.addEventListener('toggle', () => { kept.open[sect.id] = sect.open; keep(); });
       const grip = Object.assign(document.createElement('div'), { className: 'grip', title: 'drag to resize, down to nothing to close; double-click: fit' });
       grip.setAttribute('role', 'separator');
@@ -974,11 +996,9 @@
    * analysis (`satex query typeset`); a click goes to the paragraph. */
   const typesetBody = $('typeset-body');
   const notation = self.satexCards.notation;
-  // in the section's header: a click flips a switch, never the section's fold; kept across visits
+  // the Typeset panel's switches, kept across visits
   for (const [id, cls, store] of [['typeset-boxes', 'show-boxes', 'satex-typeset-boxes'], ['typeset-keys', 'show-keys', 'satex-typeset-keys'], ['typeset-ligs', 'show-ligs', 'satex-typeset-ligs']]) {
     const box = $(id), apply = () => typesetBody.classList.toggle(cls, box.checked);
-    // the switch itself flips natively; its text flips it here
-    box.closest('label').addEventListener('click', (e) => { if (e.target === box) return; e.preventDefault(); box.checked = !box.checked; box.dispatchEvent(new Event('change')); });
     try { box.checked = localStorage.getItem(store) === '1'; } catch {}
     box.onchange = () => { apply(); try { localStorage.setItem(store, box.checked ? '1' : '0'); } catch {} };
     apply();
@@ -1484,12 +1504,12 @@
     else if (dialog) { e.preventDefault(); dialog.close(); }
   });
 
-  // ---------------------------------------------------------------- the Explain macro panel
+  // ---------------------------------------------------------------- the Explain panel
 
   /** The command at the caret or under the mouse, explained live: what `satex explain`
    * says of it in the current text, run in the worker and kept per name and text version.
    * The language server's hover fills in until the run is back. */
-  const explainBox = $('play-explain'), explainBody = $('explain-body'), explainLabel = $('explain-name');
+  const explainBody = $('explain-body');
   var explainTimer = 0, explained = '';
   const explanations = new Map(); // `name|file|version|kernel` -> records
   function explainSoon(at) {
@@ -1533,7 +1553,6 @@
     const k = `${name}|${version}|${state.file}`;
     if (k === explained && !records) return;
     explained = k;
-    explainLabel.textContent = name;
     if (!records && at) {
       lsp('textDocument/hover', { textDocument: { uri: uri() }, position: at }).then((result) => {
         const c = result?.contents, value = typeof c === 'string' ? c : c?.value ?? '';
@@ -2728,10 +2747,9 @@
   document.addEventListener('click', (e) => { const b = e.target.closest?.('.x-trace'); if (b) { tips.card.hide(); if (b.dataset.try != null) tryIt(b); else traceCall(b.dataset.trace); } });
 
   function focusExplain() {
-    explainBox.open = true;
+    showPanel('play-explain');
     explained = '';
     explainAt(editor.position());
-    explainBox.scrollIntoView({ block: 'nearest' });
   }
 
   // ---------------------------------------------------------------- runs
@@ -2790,6 +2808,19 @@
   const outBox = $('play-out');
   $('play-outclose').onclick = () => { outBox.hidden = true; };
   const edits = () => Object.fromEntries(Object.entries(state.texts).filter(([name]) => state.files.includes(name) && !(name in state.ro)).map(([name, text]) => [path(name), text]));
+  /** A slice beside what it typesets: the reconstruction analyzed as a file next to the root. */
+  async function slicePreview(text) {
+    const root = (state.root ?? state.file).split('/').pop(), name = `slice-of-${root}`;
+    output.innerHTML = `<div class="slice-split"><pre class="raw">${escape(text)}</pre><div class="typeset"><p class="muted">typesetting the slice…</p></div></div>`;
+    post({ type: 'project', dir: state.dir, files: { [name]: encode(text) } });
+    const [ts] = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [{ file: `${state.dir}/${name}`, queries: [{ type: 'typeset' }] }] }).catch(() => null)) ?? [];
+    const box = output.querySelector('.slice-split .typeset');
+    if (!box) return;
+    const set = (ts?.records ?? []).filter((r) => r.kind === 'paragraph');
+    box.innerHTML = ts?.error ? `<p class="muted">${escape(ts.error)}</p>`
+      : set.map((r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', [], r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`).join('')
+        || '<p class="muted">The slice sets no text.</p>';
+  }
   async function start() {
     sync();
     const a = argv();
@@ -2808,11 +2839,12 @@
       }).filter((line) => line !== null).join('\n');
       const printed = data.lines.filter(([kind]) => kind === 'out').map(([, t]) => plain(t)).join('\n');
       output.innerHTML = structured(printed, raw);
-      // `explain \x` fills the Explain macro panel: one card, not a second one under Output
+      if (command() === 'slice' && !a.some((x) => x === '--list' || x === '--out' || x.startsWith('--format')) && printed.trim()) slicePreview(printed);
+      // `explain \x` fills the Explain panel: one card, not a second one under Output
       let records = null;
       try { records = command() === 'explain' && !a.includes('--at') ? JSON.parse(printed) : null; } catch {}
       const explainedHere = Array.isArray(records) && records.length > 0;
-      if (explainedHere) { explained = ''; explainName(records[0].name, null, records); explainBox.scrollIntoView({ block: 'nearest' }); }
+      if (explainedHere) { explained = ''; explainName(records[0].name, null, records); showPanel('play-explain'); }
       const [time, peak, files, tokens] = [/^(\S+?)s/, /([\d.]+ \w+) peak/, /([\d.k]+) files/, /([\d.kM]+) tokens/].map((r) => stats.match(r)?.[1]);
       timing('t-stats', stats ? [`${time} s`, peak && `${peak} peak`, `${files} files`, `${tokens} tokens`].filter(Boolean).join(' · ') : '', stats);
       shownTime(`${secs(data.ms)}`);
