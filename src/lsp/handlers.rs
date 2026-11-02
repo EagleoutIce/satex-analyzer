@@ -1375,7 +1375,9 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
         let g = G.get_or_init(|| Regex::new(r"\{([^{}]*)\}").unwrap());
         g.captures(arg.groups).map(|c| c[1].trim().to_string())
     };
-    if arg.open == '{' && takes_colors(analysis, arg) {
+    // A loaded file's name is no color: no probe asks.
+    let load = roles.iter().any(|r| matches!(r.kind, R::Load(_)));
+    if arg.open == '{' && !load && takes_colors(analysis, arg) {
         return color_items(analysis);
     }
     if arg.open == '[' {
@@ -2150,21 +2152,22 @@ fn body_reach(analysis: &Analysis, name: &str, limit: usize) -> BTreeSet<crate::
     seen
 }
 
-/// Command names in scope at `pos`, ranked for a document author: the
-/// project's own first, then documented names from packages and the
-/// kernel (no `@`, `_` or `:`), more used ones first, internals last.
-/// The fewest arguments each defined name takes, from the definitions
-/// query, once per analysis.
+/// Builds what completion reads of `analysis` once, ahead of the first request.
+pub fn warm(analysis: &Analysis) {
+    takes(analysis);
+    crate::progress::pause_now();
+    crate::roles::roles(analysis, "documentclass");
+    crate::progress::pause_now();
+    query::scope_named(analysis, None, false, |_| false);
+}
+
+/// The fewest arguments each defined name takes, once per analysis.
 fn takes(analysis: &Analysis) -> &crate::fixed::HashMap<String, u8> {
     analysis.takes.get_or_init(|| {
-        query::run(analysis, Query::Definitions, &Filter::Always)
-            .into_iter()
-            .filter_map(|r| {
-                let name = r.get("name")?.as_str()?.to_string();
-                let min = r.get("takes")?.get("min")?.as_u64()? as u8;
-                Some((name, min))
-            })
-            .collect()
+        let defs = analysis.facts.defs.iter();
+        crate::progress::unpaused(|| {
+            defs.filter_map(|d| Some((analysis.interner.cs(d.name), query::takes_min(analysis, d)?))).collect()
+        })
     })
 }
 
@@ -2192,13 +2195,17 @@ fn written_by(analysis: &Analysis, record: &crate::query::Record) -> Option<Stri
 /// Each carries a snippet for its mandatory arguments.
 /// The commands in scope at `pos` whose name holds `typed` (case aside),
 /// the best `conventions.completion.shown` of them, and whether there were more.
+/// The project's own first, then documented names from packages and the
+/// kernel (no `@`, `_` or `:`), more used ones first, internals last.
 fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionItem>, bool) {
     let takes = takes(analysis);
     let signature = signature_items(analysis, typed);
     let typed = typed.to_lowercase();
     let mut used: crate::fixed::HashMap<crate::tex::Sym, u32> = crate::fixed::HashMap::default();
+    let mut document: crate::fixed::HashMap<crate::tex::FileId, bool> = crate::fixed::HashMap::default();
     for e in &analysis.facts.expansions {
-        if query::origin(analysis, e.span.file) == "document" && e.within.is_none() {
+        let own = *document.entry(e.span.file).or_insert_with(|| query::origin(analysis, e.span.file) == "document");
+        if own && e.within.is_none() {
             *used.entry(e.name).or_default() += 1;
         }
     }
@@ -2207,58 +2214,58 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
     let tiers = &analysis.settings.conventions.completion.tiers;
     let typeable =
         |label: &str| label.chars().count() < 2 || label.chars().all(|c| c.is_alphabetic() || letters.contains(&c));
-    let mut items: Vec<CompletionItem> = query::scope(analysis, Some((analysis.main_file, pos.line, pos.col)), true)
-        .into_iter()
-        .filter_map(|record| {
-            let name = record.get("name")?.as_str()?.to_string();
-            let label = crate::tex::bare_name(&name).to_string();
-            if !label.to_lowercase().contains(&typed) || !typeable(&label) {
-                return None;
+    let mut items: Vec<CompletionItem> = {
+        let named = |name: &str| crate::tex::bare_name(name).to_lowercase().contains(&typed);
+        query::scope_named(analysis, Some((analysis.main_file, pos.line, pos.col)), true, named)
+    }
+    .into_iter()
+    .filter_map(|record| {
+        let name = record.get("name")?.as_str()?.to_string();
+        let label = crate::tex::bare_name(&name).to_string();
+        if !label.to_lowercase().contains(&typed) || !typeable(&label) {
+            return None;
+        }
+        let tag = record.get("tag").and_then(Json::as_str).unwrap_or("");
+        let internal = analysis.settings.conventions.is_internal(crate::tex::bare_name(&label));
+        if label.is_empty() || (internal && !matches!(tag, "macro" | "primitive" | "environment" | "alias")) {
+            return None;
+        }
+        let effective = record.get("effective").and_then(Json::as_str).unwrap_or("");
+        let package = record.get("package").and_then(Json::as_str).unwrap_or("");
+        let tier = match (package, internal) {
+            ("document", _) => tiers.document,
+            (_, true) => tiers.internal,
+            _ if tag == "primitive" || !label.chars().any(char::is_alphabetic) => tiers.primitive,
+            _ => tiers.package,
+        };
+        let count = analysis.interner.lookup(&label).and_then(|s| used.get(&s)).copied().unwrap_or(0);
+        // The argument is a name to pick: the editor asks again inside
+        // the braces, and an environment brings its `\end`.
+        let pick = analysis.settings.conventions.completion.pick.contains(&label);
+        let (insert_text, format) = match takes.get(&name).copied().unwrap_or(0) {
+            _ if pick => (format!("{label}{{$1}}"), InsertTextFormat::SNIPPET),
+            0 => (label.clone(), InsertTextFormat::PLAIN_TEXT),
+            min => {
+                let args: String = (1..=min).map(|i| format!("{{${i}}}")).collect();
+                (format!("{label}{args}"), InsertTextFormat::SNIPPET)
             }
-            let tag = record.get("tag").and_then(Json::as_str).unwrap_or("");
-            let internal = analysis.settings.conventions.is_internal(crate::tex::bare_name(&label));
-            if label.is_empty() || (internal && !matches!(tag, "macro" | "primitive" | "environment" | "alias")) {
-                return None;
-            }
-            let effective = record.get("effective").and_then(Json::as_str).unwrap_or("");
-            let package = record.get("package").and_then(Json::as_str).unwrap_or("");
-            let tier = match (package, internal) {
-                ("document", _) => tiers.document,
-                (_, true) => tiers.internal,
-                _ if tag == "primitive" || !label.chars().any(char::is_alphabetic) => tiers.primitive,
-                _ => tiers.package,
-            };
-            let count = analysis.interner.lookup(&label).and_then(|s| used.get(&s)).copied().unwrap_or(0);
-            // The argument is a name to pick: the editor asks again inside
-            // the braces, and an environment brings its `\end`.
-            let pick = analysis.settings.conventions.completion.pick.contains(&label);
-            let (insert_text, format) = match takes.get(&name).copied().unwrap_or(0) {
-                _ if pick => (format!("{label}{{$1}}"), InsertTextFormat::SNIPPET),
-                0 => (label.clone(), InsertTextFormat::PLAIN_TEXT),
-                min => {
-                    let args: String = (1..=min).map(|i| format!("{{${i}}}")).collect();
-                    (format!("{label}{args}"), InsertTextFormat::SNIPPET)
-                }
-            };
-            Some(CompletionItem {
-                sort_text: Some(format!("{tier}{:06}{label}", 999_999u32.saturating_sub(count))),
-                label,
-                kind: Some(if tag == "primitive" { CompletionItemKind::KEYWORD } else { CompletionItemKind::FUNCTION }),
-                detail: Some(format!(
-                    "{effective}  ({})",
-                    written_by(analysis, &record).unwrap_or(package.to_string())
-                )),
-                insert_text: Some(insert_text),
-                insert_text_format: Some(format),
-                command: pick.then(|| lsp_types::Command {
-                    title: "pick".into(),
-                    command: "editor.action.triggerSuggest".into(),
-                    arguments: None,
-                }),
-                ..Default::default()
-            })
+        };
+        Some(CompletionItem {
+            sort_text: Some(format!("{tier}{:06}{label}", 999_999u32.saturating_sub(count))),
+            label,
+            kind: Some(if tag == "primitive" { CompletionItemKind::KEYWORD } else { CompletionItemKind::FUNCTION }),
+            detail: Some(format!("{effective}  ({})", written_by(analysis, &record).unwrap_or(package.to_string()))),
+            insert_text: Some(insert_text),
+            insert_text_format: Some(format),
+            command: pick.then(|| lsp_types::Command {
+                title: "pick".into(),
+                command: "editor.action.triggerSuggest".into(),
+                arguments: None,
+            }),
+            ..Default::default()
         })
-        .collect();
+    })
+    .collect();
     // A name that starts with what is typed before one that only holds it.
     items.sort_by_cached_key(|i| (!i.label.to_lowercase().starts_with(&typed), i.sort_text.clone()));
     let shown = analysis.settings.conventions.completion.shown;

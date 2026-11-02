@@ -436,6 +436,8 @@ pub struct Analysis {
     /// The entries of the bibliography databases the document names, for
     /// completion: read once.
     pub bib: std::sync::OnceLock<Vec<crate::plugin::bib::Entry>>,
+    /// What [`crate::query::scope`] shows of each name: built once.
+    pub scope_rows: std::sync::OnceLock<crate::query::ScopeRows>,
 }
 
 /// Collection sizes change slowly. Checking them on every token would
@@ -2252,6 +2254,7 @@ impl<'a> Machine<'a> {
                 takes: Default::default(),
                 role_sources: Default::default(),
                 bib: Default::default(),
+                scope_rows: Default::default(),
             },
             env,
             catcodes,

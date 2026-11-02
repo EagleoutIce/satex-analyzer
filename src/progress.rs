@@ -316,14 +316,22 @@ thread_local! {
 /// Runs `f` with `pause` called between the commands of the runs it makes:
 /// the language server answers from its last analysis there.
 pub fn pausing<T>(pause: Pause, f: impl FnOnce() -> T) -> T {
-    struct Restore(Option<Pause>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            PAUSE.set(self.0.take());
-        }
-    }
     let _restore = Restore(PAUSE.replace(Some(pause)));
     f()
+}
+
+/// Runs `f` without pauses: what fills a cache that a paused request reads.
+pub fn unpaused<T>(f: impl FnOnce() -> T) -> T {
+    let _restore = Restore(PAUSE.take());
+    f()
+}
+
+struct Restore(Option<Pause>);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        PAUSE.set(self.0.take());
+    }
 }
 
 /// A run stands between two of its commands: every so often, the pause runs.

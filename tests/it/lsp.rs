@@ -2517,3 +2517,81 @@ fn definition_answers_every_place_primitives_and_environments() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// How long a completion may take while a run goes on: far below a run of
+/// the kernel, generous for a loaded machine.
+const COMPLETION_BOUND: Duration = Duration::from_secs(1);
+
+/// The completion at `line`:`character` and how long it took.
+fn timed_complete(server: &mut Server, uri: &str, line: u32, character: u32) -> (Vec<Value>, Duration) {
+    let start = std::time::Instant::now();
+    let items = complete(server, uri, line, character);
+    (items, start.elapsed())
+}
+
+/// A completion never waits for a run: during the first one the
+/// installation's classes and packages answer, during a later one the last
+/// run answers each kind of place.
+#[test]
+fn completion_answers_while_a_run_goes_on() {
+    if !crate::support::installed() {
+        return;
+    }
+    let lines = [
+        "\\documentclass[]{article}",
+        "\\usepackage{amsmath}",
+        "\\usepackage[]{amsmath}",
+        "\\begin{document}",
+        "\\begin{ite",
+        "\\sec",
+        "\\end{document}",
+        "\\documentclass{art",
+        "\\usepackage{ams",
+    ];
+    let text = lines.join("\n") + "\n";
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-running-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.tex"), &text).unwrap();
+    let mut server = serve(&dir, true);
+    let uri = fixture_uri(&dir.join("main.tex"));
+    let at = |prefix: &str| {
+        let line = lines.iter().rposition(|l| l.starts_with(prefix)).unwrap();
+        let character = lines[line].find("[]").map_or(lines[line].len(), |i| i + 1);
+        (line as u32, character as u32)
+    };
+    // (where, an item it offers)
+    let places = [
+        (at("\\documentclass{"), "article"),
+        (at("\\usepackage{ams"), "amsmath"),
+        (at("\\documentclass["), "11pt"),
+        (at("\\usepackage["), "fleqn"),
+        (at("\\begin{ite"), "itemize"),
+        (at("\\sec"), "section"),
+    ];
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
+    );
+    // the first run reads the kernel: the installation answers meanwhile
+    for ((line, character), wanted) in &places[..2] {
+        let (items, took) = timed_complete(&mut server, &uri, *line, *character);
+        assert!(took < COMPLETION_BOUND, "{wanted}: {took:?}");
+        assert!(labels(&items).contains(wanted), "{wanted}: {:?}", labels(&items));
+    }
+    server.notification("textDocument/publishDiagnostics");
+    // an edit, then the run it starts once the debounce is over
+    let edited = text.replace("\\begin{document}", "\\usepackage{array}\n\\begin{document}");
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": edited }] }),
+    );
+    std::thread::sleep(Duration::from_millis(satex::config::LspConfig::default().debounce_ms) * 2);
+    for ((line, character), wanted) in places {
+        let line = if line >= 3 { line + 1 } else { line };
+        let (items, took) = timed_complete(&mut server, &uri, line, character);
+        assert!(took < COMPLETION_BOUND, "{wanted}: {took:?}");
+        assert!(labels(&items).contains(&wanted), "{wanted}: {:?}", labels(&items));
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}

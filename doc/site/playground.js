@@ -647,7 +647,10 @@
     const both = names ? [...(served ?? []), ...names.filter((n) => !served?.some((i) => i.label === n.label))] : served;
     // items asked elsewhere replace no range here: their text goes in at the cursor's word
     const kept = both?.map(({ textEdit, ...i }) => (textEdit ? { ...i, insertText: i.insertText ?? textEdit.newText } : i));
-    // the server is busy with a run: the last items answer, the question is not queued behind it
+    // A run keeps the worker busy, so a question would wait behind it. The last items answer,
+    // else the bundle's classes and packages, else nothing, and the server's answer is kept for next time.
+    const seeds = { documentclass: NAMES.classes, LoadClass: NAMES.classes, usepackage: NAMES.packages, RequirePackage: NAMES.packages }[place];
+    const now = kept ?? seeds?.map((label) => ({ label, kind: 17 })) ?? [];
     if (running && kept) return kept;
     if (!asked.has(k)) {
       asked.clear();
@@ -658,11 +661,12 @@
         return lastItems;
       }).catch(() => []));
     }
-    if (!kept) return asked.get(k);
-    // a run keeps the server busy for seconds: the kept commands answer now, the server's items replace them when they come
-    let early = false;
+    if (!kept && !running) return asked.get(k);
+    // what answers now; the server's items replace it when they come
+    let early = running > 0;
     asked.get(k).then(() => { if (early && document.querySelector('.cm-tooltip-autocomplete') && k.endsWith(`|${version}|${position.line}:${position.character}`)) editor.complete?.(); });
-    return Promise.race([asked.get(k), new Promise((done) => setTimeout(() => { early = true; done(kept); }, INSTANT_MS))]);
+    if (early) return now;
+    return Promise.race([asked.get(k), new Promise((done) => setTimeout(() => { early = true; done(now); }, INSTANT_MS))]);
   }
   /** The last hover of each command, by file: shown at once while a run goes on. */
   const keptHovers = new Map();

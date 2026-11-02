@@ -3321,7 +3321,18 @@ fn origin_of(analysis: &Analysis, package: Option<Sym>, file: FileId) -> (u8, Js
 /// tens of thousands the kernel allocates for its own bookkeeping).
 /// `does` is the one-line description of a documented kernel command.
 pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool) -> Vec<Record> {
-    let mut latest: BTreeMap<Sym, &crate::facts::Definition> = BTreeMap::new();
+    scope_named(analysis, before, all, |_| true)
+}
+
+/// [`scope`] of the names `named` keeps.
+pub fn scope_named(
+    analysis: &Analysis,
+    before: Option<(FileId, u32, u32)>,
+    all: bool,
+    named: impl Fn(&str) -> bool,
+) -> Vec<Record> {
+    let rows = analysis.scope_rows.get_or_init(|| crate::progress::unpaused(|| scope_rows(analysis)));
+    let mut latest: BTreeMap<Sym, usize> = BTreeMap::new();
     // A definition in a file no user file reads (the kernel's, run by
     // `\begin{document}`) has no place there: it holds once the run has
     // passed the first call made at or after the position.
@@ -3335,40 +3346,75 @@ pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool)
             .filter_map(|e| e.node)
             .min()
     });
-    for def in &analysis.facts.defs {
+    for (i, def) in analysis.facts.defs.iter().enumerate() {
         let visible = match before {
             None => true,
             Some((file, line, col)) if placed(def.span.file) => analysis.visible_in(def.span, file, line, col),
             Some(_) => cut.flatten().is_none_or(|cut| def.node < cut),
         };
-        if visible {
-            latest.insert(def.name, def);
+        if visible && named(analysis.interner.name(def.name)) {
+            latest.insert(def.name, i);
         }
     }
-    let mut rows: Vec<(u8, Record)> = Vec::new();
-    for def in latest.values() {
-        let name = analysis.interner.name(def.name);
-        if unprintable_name(name) || (!all && internal_name(analysis, name)) {
-            continue;
-        }
-        let mut record = place(analysis, def.span);
-        record.insert("name".into(), json!(analysis.interner.cs(def.name)));
-        record.insert("tag".into(), json!(def.tag));
-        record.insert("effective".into(), json!(effective_of(analysis, def.name, def.mac.as_deref(), None)));
-        let (tier, origin) = origin_of(analysis, def.package, def.span.file);
-        record.insert("package".into(), origin);
-        if let Some(does) = describe_meaning(analysis, name, &analysis.env.meaning(def.name)) {
-            record.insert("does".into(), json!(does));
-        }
-        rows.push((tier, record));
+    let shown = |row: &&ScopeRow| all || row.plain;
+    let row = |i: usize| {
+        rows.defs[i].get_or_init(|| crate::progress::unpaused(|| def_row(analysis, &analysis.facts.defs[i])))
+    };
+    let defs = latest.values().filter_map(|&i| row(i).as_ref()).filter(shown);
+    let rest = rows.rest.iter().filter(|r| named(&r.name)).filter(shown);
+    let mut out: Vec<&ScopeRow> = defs.chain(rest).collect();
+    out.sort_by(|a, b| {
+        (a.tier, a.record.get("name").and_then(Json::as_str))
+            .cmp(&(b.tier, b.record.get("name").and_then(Json::as_str)))
+    });
+    out.into_iter().map(|row| row.record.clone()).collect()
+}
+
+/// One name [`scope`] may show, its tier, and whether a document spells it.
+#[derive(Clone)]
+pub struct ScopeRow {
+    name: String,
+    tier: u8,
+    record: Record,
+    plain: bool,
+}
+
+/// What [`scope`] shows of each definition, made when a position first
+/// shows it, then of each name only the run's end state holds: kept per
+/// analysis, cut to a position per request.
+#[derive(Clone)]
+pub struct ScopeRows {
+    defs: Vec<std::sync::OnceLock<Option<ScopeRow>>>,
+    rest: Vec<ScopeRow>,
+}
+
+fn def_row(analysis: &Analysis, def: &crate::facts::Definition) -> Option<ScopeRow> {
+    let name = analysis.interner.name(def.name);
+    if unprintable_name(name) {
+        return None;
     }
+    let mut record = place(analysis, def.span);
+    record.insert("name".into(), json!(analysis.interner.cs(def.name)));
+    record.insert("tag".into(), json!(def.tag));
+    record.insert("effective".into(), json!(effective_of(analysis, def.name, def.mac.as_deref(), None)));
+    let (tier, origin) = origin_of(analysis, def.package, def.span.file);
+    record.insert("package".into(), origin);
+    if let Some(does) = describe_meaning(analysis, name, &analysis.env.meaning(def.name)) {
+        record.insert("does".into(), json!(does));
+    }
+    Some(ScopeRow { name: name.to_string(), tier, record, plain: !internal_name(analysis, name) })
+}
+
+fn scope_rows(analysis: &Analysis) -> ScopeRows {
+    let defs = analysis.facts.defs.iter().map(|_| std::sync::OnceLock::new()).collect();
     let recorded: BTreeSet<Sym> = analysis.facts.defs.iter().map(|d| d.name).collect();
+    let mut rest = Vec::new();
     for i in 0..analysis.interner.len() as u32 {
         let sym = Sym(i);
         // A name the document defines later, but not yet at this position,
         // is not the kernel's meaning to show — `env.meaning` is the run's
         // final state, not this position's.
-        if latest.contains_key(&sym) || recorded.contains(&sym) {
+        if recorded.contains(&sym) {
             continue;
         }
         let meaning = analysis.env.meaning(sym);
@@ -3377,15 +3423,15 @@ pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool)
         }
         let name = analysis.interner.name(sym);
         let tag = meaning.kind();
-        // Without `--all`, only what reads as an invokable command: not the
+        // Without `all`, only what reads as an invokable command: not the
         // registers and character meanings the kernel carries one of for
         // every number and character it has ever seen, which would
         // otherwise outnumber the useful primitives and macros many times
         // over.
-        if unprintable_name(name) || (!all && (internal_name(analysis, name) || !matches!(tag, "primitive" | "macro")))
-        {
+        if unprintable_name(name) {
             continue;
         }
+        let plain = !internal_name(analysis, name) && matches!(tag, "primitive" | "macro");
         // `\X` and `\endX` both macros: an environment the format made
         let base = name.strip_prefix("end").filter(|b| !b.is_empty()).unwrap_or(name);
         let partner = if base.len() == name.len() { format!("end{name}") } else { base.to_string() };
@@ -3399,12 +3445,9 @@ pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool)
         if let Some(does) = describe_meaning(analysis, name, &meaning) {
             record.insert("does".into(), json!(does));
         }
-        rows.push((2, record));
+        rest.push(ScopeRow { name: name.to_string(), tier: 2, record, plain });
     }
-    rows.sort_by(|(ta, a), (tb, b)| {
-        (ta, a.get("name").and_then(Json::as_str)).cmp(&(tb, b.get("name").and_then(Json::as_str)))
-    });
-    rows.into_iter().map(|(_, record)| record).collect()
+    ScopeRows { defs, rest }
 }
 
 /// How many arguments a command consumes, as a range: what its parameter
@@ -3492,6 +3535,11 @@ fn probed(
 /// unbounded (`\csname`, `\halign`) or the probe could not see the end.
 /// A primitive's bounds are what satex was seen to read for it, or its
 /// catalog entry.
+/// The fewest arguments `def` takes.
+pub fn takes_min(analysis: &Analysis, def: &crate::facts::Definition) -> Option<u8> {
+    Some(takes_of(analysis, def.name, def.mac.as_deref(), None).get("min")?.as_u64()? as u8)
+}
+
 fn takes_of(
     analysis: &Analysis,
     sym: crate::tex::Sym,

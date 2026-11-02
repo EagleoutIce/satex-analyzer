@@ -672,6 +672,9 @@ struct Engine {
     /// Where messages arrive while a run goes on, and those that wait for its end.
     inbox: Option<Receiver<EngineMsg>>,
     deferred: std::collections::VecDeque<EngineMsg>,
+    /// A run of no document: what a completion answers from before a
+    /// document's first run ends, the installation's classes and packages.
+    blank: Option<Rc<Analysis>>,
 }
 
 impl EngineMsg {
@@ -716,6 +719,7 @@ impl Engine {
             checkpoints: HashMap::default(),
             inbox: None,
             deferred: Default::default(),
+            blank: None,
         }
     }
 
@@ -736,6 +740,10 @@ impl Engine {
             crate::overlay::set(&doc.path, doc.text.clone());
         }
         let (analysis, fresh) = self.run_for(&path, &text);
+        if fresh {
+            // What a completion reads of the new run, built while the last run answers.
+            self.serving(|_| handlers::warm(&analysis));
+        }
         self.dirty.retain(|d| d != uri);
         let Some(doc) = self.docs.get_mut(uri) else { return };
         let changed = !doc.analysis.as_ref().is_some_and(|a| Rc::ptr_eq(a, &analysis));
@@ -932,7 +940,7 @@ impl Engine {
     /// never a wait), and the others wait for its end.
     fn serving<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
         let Some(inbox) = self.inbox.clone() else { return f(self) };
-        let (mut docs, hovers) = (self.docs.clone(), self.hovers.clone());
+        let (mut docs, hovers, blank) = (self.docs.clone(), self.hovers.clone(), self.blank.clone());
         let deferred = Rc::new(std::cell::RefCell::new(Vec::new()));
         let waiting = deferred.clone();
         let pause = Box::new(move || {
@@ -945,7 +953,7 @@ impl Engine {
                         waiting.borrow_mut().push(msg);
                     }
                     msg => {
-                        if let Some(msg) = answer(&docs, &hovers, msg) {
+                        if let Some(msg) = answer(&docs, &hovers, blank.as_deref(), msg) {
                             waiting.borrow_mut().push(msg);
                         }
                     }
@@ -1039,6 +1047,10 @@ impl Engine {
     /// One queued hover, computed and kept; once the queue of a document is
     /// done, its hovers are stored for the next session.
     fn prefill_one(&mut self) {
+        self.serving(Self::prefill_next);
+    }
+
+    fn prefill_next(&mut self) {
         let Some((uri, name)) = self.prefill.pop_front() else { return };
         let last = !self.prefill.iter().any(|(u, _)| *u == uri);
         let markdown = crate::probe::background(|| {
@@ -1095,6 +1107,11 @@ impl Engine {
             EngineMsg::Shutdown => {}
             EngineMsg::Open(uri, path, text) => {
                 handlers::VIEW.with_borrow_mut(|view| view.add(&path));
+                if self.blank.is_none() {
+                    let mut cfg = self.cfg.clone();
+                    cfg.load.format = false;
+                    self.blank = Some(Rc::new(Machine::analyze("", None, &cfg)));
+                }
                 self.docs.insert(uri.clone(), Doc { text, path, analysis: None });
                 if !self.dirty.contains(&uri) {
                     self.dirty.push(uri);
@@ -1134,10 +1151,13 @@ impl Engine {
             | EngineMsg::Written(..)
             | EngineMsg::Caches(..)
             | EngineMsg::WorkspaceSymbol(..)) => {
-                if let Some(uri) = msg.uri().or_else(|| self.docs.keys().next()).cloned() {
+                // A completion never waits for a run: it answers from the last one.
+                if !matches!(msg, EngineMsg::Completion(..))
+                    && let Some(uri) = msg.uri().or_else(|| self.docs.keys().next()).cloned()
+                {
                     self.ensure(&uri);
                 }
-                answer(&self.docs, &self.hovers, msg);
+                answer(&self.docs, &self.hovers, self.blank.as_deref(), msg);
             }
             EngineMsg::Highlight(uri, pos, reply) => {
                 self.fresh(&uri);
@@ -1206,7 +1226,7 @@ impl Engine {
 
 /// Answers `msg` from the analyses in `docs` when it only reads one; any
 /// other message comes back.
-fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, msg: EngineMsg) -> Option<EngineMsg> {
+fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, msg: EngineMsg) -> Option<EngineMsg> {
     match msg {
         EngineMsg::Hover(uri, pos, reply) => {
             let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
@@ -1250,7 +1270,7 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, msg: EngineMsg) -> Option<E
         EngineMsg::Completion(uri, pos, reply) => {
             let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
             let result = crate::progress::because("completion", || {
-                with_doc(docs, &uri, |analysis, text| {
+                with_doc_or(docs, blank, &uri, |analysis, text| {
                     match bib::completion(analysis, text, &path, handlers::to_pos(text, pos)) {
                         Some(items) => lsp_types::CompletionResponse::Array(items),
                         None => handlers::completion(analysis, text, pos),
@@ -1450,8 +1470,18 @@ fn publish(
 /// Runs `f` against `uri`'s [`Analysis`] and a [`Text`] of its current
 /// buffer, or `None` when the document is not open or has no analysis yet.
 fn with_doc<T>(docs: &HashMap<Uri, Doc>, uri: &Uri, f: impl FnOnce(&Analysis, &Text) -> T) -> Option<T> {
+    with_doc_or(docs, None, uri, f)
+}
+
+/// [`with_doc`], with `blank` standing in for a document not analyzed yet.
+fn with_doc_or<T>(
+    docs: &HashMap<Uri, Doc>,
+    blank: Option<&Analysis>,
+    uri: &Uri,
+    f: impl FnOnce(&Analysis, &Text) -> T,
+) -> Option<T> {
     let doc = docs.get(uri)?;
-    let analysis = doc.analysis.as_deref()?;
+    let analysis = doc.analysis.as_deref().or(blank)?;
     let text = Text::new(doc.text.clone());
     // Columns count what this document's engine reads, whatever was
     // analyzed last on this thread (`crate::source`).
