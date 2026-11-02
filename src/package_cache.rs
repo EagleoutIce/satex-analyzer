@@ -1950,9 +1950,10 @@ impl Machine<'_> {
         for (i, reader) in &st.reached {
             let reader =
                 reader.and_then(|r| self.resolve_vertex(&st, &mut ids, &reached, before, site, r, 0).first().copied());
-            let charged = std::mem::replace(&mut self.out.graph.reader, reader);
+            let charged = self.out.graph.reader;
+            self.out.graph.set_reader(reader);
             self.resolve_vertex(&st, &mut ids, &reached, before, site, VRef::Table(*i), 0);
-            self.out.graph.reader = charged;
+            self.out.graph.set_reader(charged);
         }
         // Table entries already made resolve without a lookup.
         fn made(ids: &[Option<NodeId>], r: &VRef) -> Option<NodeId> {
@@ -2000,13 +2001,14 @@ impl Machine<'_> {
                     made(&ids, &r)
                         .or_else(|| self.resolve_vertex(&st, &mut ids, &reached, before, site, r, 0).first().copied())
                 });
-                let charged = std::mem::replace(&mut self.out.graph.reader, reader);
+                let charged = self.out.graph.reader;
+                self.out.graph.set_reader(reader);
                 for f in froms {
                     for t in tos {
                         self.out.graph.edge(*f, *t, kind);
                     }
                 }
-                self.out.graph.reader = charged;
+                self.out.graph.set_reader(charged);
             } else {
                 for f in froms {
                     for t in tos {

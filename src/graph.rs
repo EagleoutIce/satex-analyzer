@@ -131,8 +131,13 @@ pub struct DependencyGraph {
     /// definition site.
     defs_of: LookupMap<Sym, u32>,
     /// The call read from a file whose expansion is running, if any: what
-    /// it reads is read on behalf of that call.
+    /// it reads is read on behalf of that call.  Set through
+    /// [`DependencyGraph::set_reader`].
     pub reader: Option<NodeId>,
+    /// For each call that was [`DependencyGraph::reader`]: how many vertices
+    /// there were when it last stopped being it.  A vertex made later is
+    /// nothing its expansion can have read.
+    ends: HashMap<NodeId, NodeId>,
     /// While a package cache is being captured: the vertices it reached, new
     /// or not, in the order it first reached them.
     touched: Option<(crate::fixed::HashSet<NodeId>, Vec<NodeId>)>,
@@ -313,6 +318,16 @@ impl DependencyGraph {
         id
     }
 
+    /// Charge what follows to `reader`, noting when the one before stopped.
+    pub fn set_reader(&mut self, reader: Option<NodeId>) {
+        if let Some(old) = self.reader.filter(|old| reader != Some(*old)) {
+            let now = self.vertices.len() as NodeId;
+            let end = self.ends.entry(old).or_insert(now);
+            *end = (*end).max(now);
+        }
+        self.reader = reader;
+    }
+
     /// Record that the construct beginning at `span` reads as far as `line`.
     pub fn note_extent(&mut self, span: Span, line: u32) {
         if line <= span.line {
@@ -480,7 +495,6 @@ impl DependencyGraph {
     /// the criterion and cannot have influenced it.
     pub fn slice_until(&self, criteria: &[NodeId], kinds: EdgeKind, forward: bool, bound: &SliceBound) -> Vec<NodeId> {
         let transposed = forward.then(|| self.transposed());
-        let mut seen = crate::fixed::HashSet::default();
         let mut kept = vec![false; self.vertices.len()];
         // Each vertex travels with the call of the home file it was reached
         // from: a body vertex stands for every expansion, and only the call
@@ -488,12 +502,18 @@ impl DependencyGraph {
         let scratch = self.scratch_names();
         let is_scratch = |id: NodeId| scratch.contains(&self.vertices[id as usize].name);
         let file_of = |id: NodeId| self.vertices[id as usize].span.file;
-        let mut stack: Vec<(NodeId, Option<NodeId>)> = criteria.iter().map(|&c| (c, None)).collect();
-        while let Some((node, entry)) = stack.pop() {
+        // Each vertex also travels with the last vertex it may be: what an
+        // expansion read was made before it ended (`ends`), and a body
+        // vertex's edges from later expansions point past that.
+        let mut stack: Vec<(NodeId, Option<NodeId>, NodeId)> =
+            criteria.iter().map(|&c| (c, None, bound.limit)).collect();
+        let mut seen: crate::fixed::HashMap<(NodeId, Option<NodeId>), NodeId> = Default::default();
+        while let Some((node, entry, last)) = stack.pop() {
             let index = node as usize;
-            if index >= kept.len() || node > bound.limit || !seen.insert((node, entry)) {
+            if index >= kept.len() || node > last || seen.get(&(node, entry)).is_some_and(|&l| l >= last) {
                 continue;
             }
+            seen.insert((node, entry), last);
             kept[index] = true;
             let at_home = |id: NodeId| bound.home.is_some_and(|h| self.vertices[id as usize].span.file == h);
             let next = match &transposed {
@@ -533,12 +553,17 @@ impl DependencyGraph {
                 }
                 // Only an expansion runs a call's body: what a home vertex reads
                 // was made by whichever call made it.
-                let entry = match (at_home(node), kind.intersects(EdgeKind::EXPANDS)) {
+                let expands = at_home(node) && kind.intersects(EdgeKind::EXPANDS);
+                let entry = match (at_home(node), expands) {
                     (true, true) => Some(node),
                     (true, false) => None,
                     (false, _) => entry,
                 };
-                stack.push((*other, entry));
+                let last = match self.ends.get(&node) {
+                    Some(&end) if expands && !forward => last.min(end.saturating_sub(1)),
+                    _ => last,
+                };
+                stack.push((*other, entry, last));
             }
         }
         (0..kept.len() as NodeId).filter(|&id| kept[id as usize]).collect()

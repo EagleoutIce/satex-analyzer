@@ -171,9 +171,14 @@ fn check(case: &Case) -> Option<String> {
     std::fs::create_dir_all(&slice).unwrap();
     for (name, text) in case.files {
         std::fs::write(original.join(name), text).unwrap();
-        std::fs::write(slice.join(name), text).unwrap();
     }
     let text = sliced(case, &original);
+    // A LaTeX document's slice is standalone: it compiles in an empty directory.
+    if !text.contains("\\documentclass") {
+        for (name, text) in case.files {
+            std::fs::write(slice.join(name), text).unwrap();
+        }
+    }
     std::fs::write(slice.join(case.file), &text).unwrap();
     let run_file = match case.driver {
         Some(driver) => {
@@ -567,4 +572,89 @@ fn package_and_class_slices_load_like_the_original() {
             ..Case::new("class", "pdflatex", CLASS, 0)
         },
     ]);
+}
+
+fn line_of(source: &str, needle: &str) -> u32 {
+    source.lines().position(|l| l.contains(needle)).expect("the needle") as u32 + 1
+}
+
+// --- standalone -----------------------------------------------------------
+
+/// A one-page PDF `width` by `height` bp, its cross-reference table counted.
+fn tiny_pdf(width: u32, height: u32) -> String {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] >>"),
+    ];
+    let mut pdf = String::from("%PDF-1.4\n");
+    let mut offsets = Vec::new();
+    for (i, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.push_str(&format!("{} 0 obj\n{object}\nendobj\n", i + 1));
+    }
+    let xref = pdf.len();
+    pdf.push_str(&format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1));
+    for offset in offsets {
+        pdf.push_str(&format!("{offset:010} 00000 n \n"));
+    }
+    pdf.push_str(&format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1));
+    pdf
+}
+
+/// A graphic the slice does not ship: its stand-in takes the same room.
+const LATEX_GRAPHIC: &str = r"\documentclass{article}
+\usepackage{graphicx}
+\begin{document}
+\sbox0{\includegraphics[width=3cm]{pic}}
+\typeout{SATEX<a|\the\wd0 x \the\ht0|SATEX}
+\end{document}
+";
+
+#[test]
+fn a_standalone_slice_compiles_in_an_empty_directory() {
+    let pic: &'static str = Box::leak(tiny_pdf(200, 50).into_boxed_str());
+    let files: &'static [(&str, &str)] = Box::leak(Box::new([("pic.pdf", pic)]));
+    let graphic =
+        Case { files, ..Case::new("standalone-graphic", "pdflatex", LATEX_GRAPHIC, line_of(LATEX_GRAPHIC, OPEN)) };
+    let directory = scratch("standalone-graphic-text");
+    std::fs::write(directory.join("pic.pdf"), pic).unwrap();
+    let text = sliced(&graphic, &directory);
+    assert!(text.contains("example-image"), "the graphic stays:\n{text}");
+    let input = Case {
+        files: &[("part.tex", PART), ("mypkg.sty", MYPKG)],
+        ..Case::new("standalone-input", "pdflatex", LATEX_INPUT, line_of(LATEX_INPUT, OPEN))
+    };
+    run_all(&[graphic, input]);
+}
+
+// --- the oracle -----------------------------------------------------------
+
+/// The playground's examples, sliced at a few lines each: every slice has
+/// to typeset its line exactly as the original, pixel for pixel.
+#[test]
+fn playground_slices_typeset_their_line_like_the_original() {
+    if satex::paths::which("synctex").is_err() || engine("pdflatex").is_none() {
+        return;
+    }
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/site/examples");
+    let picks: [(&str, &str, &[&str]); 3] = [
+        ("thesis.tex", "chapter.tex", &["Figure~\\ref{fig:flow} draws", "\\node (satex)", "Literate programming"]),
+        ("slides.tex", "slides.tex", &["\\item<2->", "One \\pause"]),
+        ("rerun.tex", "rerun.tex", &["See Section"]),
+    ];
+    let mut failures = Vec::new();
+    for (main, file, needles) in picks {
+        let work = scratch(&format!("oracle-{main}"));
+        let doc = satex::slice_oracle::Document::prepare(&examples, main, &work).expect("the example builds");
+        let source = std::fs::read_to_string(examples.join(file)).unwrap();
+        let criteria: Vec<(String, u32)> = needles.iter().map(|n| (file.to_string(), line_of(&source, n))).collect();
+        let slices = doc.slice_all(&criteria, true);
+        for ((file, line, dir), verdict) in slices.iter().zip(satex::slice_oracle::check_all(&doc, &slices, 4)) {
+            if matches!(verdict, satex::slice_oracle::Verdict::Mismatch(_) | satex::slice_oracle::Verdict::Fail(_)) {
+                failures.push(format!("{file}:{line}: {verdict:?} ({})", dir.display()));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "slices typeset differently:\n{}", failures.join("\n"));
 }

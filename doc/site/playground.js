@@ -2815,7 +2815,8 @@
   /** A slice beside what it typesets: the reconstruction analyzed as a file next to the root. */
   async function slicePreview(text) {
     const root = (state.root ?? state.file).split('/').pop(), name = `slice-of-${root}`;
-    output.innerHTML = `<div class="slice-split"><pre class="raw">${escape(text)}</pre><div class="typeset"><p class="muted">typesetting the slice…</p></div></div>`;
+    output.innerHTML = `<p><button type="button" class="small" id="slice-compile" title="Build the slice alone, in an empty directory: it is a standalone MWE">Compile</button></p><div class="slice-split"><pre class="raw">${escape(text)}</pre><div class="typeset"><p class="muted">typesetting the slice…</p></div></div>`;
+    $('slice-compile').onclick = (e) => { e.preventDefault(); compile(false, false, text); };
     post({ type: 'project', dir: state.dir, files: { [name]: encode(text) } });
     const [ts] = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [{ file: `${state.dir}/${name}`, queries: [{ type: 'typeset' }] }] }).catch(() => null)) ?? [];
     const box = output.querySelector('.slice-split .typeset');
@@ -3590,11 +3591,11 @@
     ...Object.fromEntries(state.files.filter((n) => n in state.texts && !(n in state.ro)).map((n) => [n, state.texts[n]])),
     ...Object.fromEntries(Object.entries(state.bins).map(([n, d]) => [n, { b64: base64(d) }])),
   });
-  /** Builds the project, or with `slice` only what the cursor's line needs. `cached` only shows a kept build. */
-  async function compile(slice = false, cached = false) {
+  /** Builds the project, or with `slice` only what the cursor's line needs. `cached` only shows a kept build. `alone`: a standalone slice's text, built on its own. */
+  async function compile(slice = false, cached = false, alone = null) {
     if (pdfBusy || !(await pdfServer)) return;
     push();
-    const root = state.root ?? state.file, p = editor.position();
+    const root = alone === null ? state.root ?? state.file : `slice-of-${(state.root ?? state.file).split('/').pop()}`, p = editor.position();
     const at = `${state.file === root ? '' : `${state.file}:`}${p.line + 1}:${p.character + 1}`;
     pdfWorker ??= new Worker(URL.createObjectURL(new Blob([`(${compileWorkerMain})()`], { type: 'text/javascript' })));
     const start = performance.now(), what = slice ? `a slice of ${root} at ${at}` : root;
@@ -3610,7 +3611,7 @@
       pdf = { ...data, slice, root };
       pdfShow();
     };
-    pdfWorker.postMessage({ url: COMPILE, request: { main: root, files: pdfFiles(), ...(slice ? { at } : {}), ...(cached ? { cached } : {}) } });
+    pdfWorker.postMessage({ url: COMPILE, request: { main: root, files: alone === null ? pdfFiles() : { [root]: alone }, ...(slice ? { at } : {}), ...(cached ? { cached } : {}) } });
   }
   pdfButtons.forEach((b, i) => { b.onclick = (e) => { e.preventDefault(); compile(i === 1); }; });
   /** The last build of this very text, kept by the server, shown when the page opens. */

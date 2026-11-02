@@ -181,9 +181,9 @@ pub enum Command {
         /// Implied by `--format json/csv/markdown`.
         #[arg(long)]
         list: bool,
-        /// Write a new project into DIR: the sliced main file, plus every
-        /// local package, class, graphics or bibliography file it needs,
-        /// with paths preserved.
+        /// Write a new project into DIR: the sliced main file. With
+        /// `slice.standalone: false` also every local package, class,
+        /// graphics or bibliography file it needs, with paths preserved.
         #[arg(long, value_name = "DIR")]
         out: Option<std::path::PathBuf>,
     },

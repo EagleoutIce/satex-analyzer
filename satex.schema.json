@@ -3147,14 +3147,23 @@
     "slice": {
       "description": "what satex slice leaves out",
       "properties": {
+        "standalone": {
+          "default": true,
+          "description": "make the slice one file that compiles in an empty directory. Local files it reads go in as filecontents, graphics as example-image of the same size",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "standalone: false: satex slice --out also copies the local files the slice names"
+        },
         "trim": {
-          "default": false,
+          "default": true,
           "description": "leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \\begin{document} reads",
           "type": "boolean",
           "x-affects": [
             "output"
           ],
-          "x-example": "trim: true: a slice that draws no picture drops \\usepackage{tikz}"
+          "x-example": "trim: false: the slice also keeps every package and what \\begin{document} reads"
         }
       },
       "type": "object"

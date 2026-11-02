@@ -70,6 +70,7 @@ pub mod render;
 pub mod roles;
 pub mod scan;
 pub mod sketch;
+pub mod slice_oracle;
 pub mod source;
 pub mod tex;
 pub mod tfm;

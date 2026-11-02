@@ -1970,7 +1970,30 @@ fn at_position(analysis: &Analysis, at: &At) -> Vec<NodeId> {
 }
 
 pub fn slice(analysis: &Analysis, names: &[String], at: Option<&At>, direction: Direction) -> Vec<Record> {
-    slice_from(analysis, resolve(analysis, names, at), direction)
+    let mut records = slice_from(analysis, resolve(analysis, names, at), direction);
+    // A range of lines keeps its lines, also the text no vertex stands for.
+    if let Some((at, file, (last, _))) = at.and_then(|at| Some((at, at.file(analysis)?, at.end?))) {
+        // An environment begun there is one box: its body sets its size.
+        let last = environments(analysis)
+            .into_iter()
+            .filter(|(begin, end, _)| begin.file == file && end.file == file && (at.line..=last).contains(&begin.line))
+            .map(|(_, end, _)| end.line)
+            .fold(last, u32::max);
+        // The run's end ships out the last page, and with it all that is on it.
+        let main = analysis.main_file;
+        let ends = frame(analysis, &[]).ends;
+        let first = match file == main && (at.line..=last).any(|l| ends.contains(&l)) {
+            true => 1,
+            false => at.line,
+        };
+        for line in first..=last {
+            let mut record = place(analysis, Span::new(file, line, 1));
+            record.insert("tag".into(), json!("line"));
+            record.insert("file_id".into(), json!(file));
+            records.push(record);
+        }
+    }
+    records
 }
 
 /// Slice on every occurrence or definition `filter` accepts, for example
@@ -2033,7 +2056,7 @@ fn slice_bound(analysis: &Analysis, limit: NodeId, home: Option<FileId>) -> crat
             .collect();
         opaque.extend(
             (0..analysis.graph.vertices.len() as NodeId)
-                .filter(|&id| analysis.graph.vertices[id as usize].within.is_none())
+                .filter(|&id| straight(analysis, &analysis.graph.vertices[id as usize]))
                 .filter(|&id| calls.contains(&analysis.graph.vertices[id as usize].span)),
         );
         opaque.extend(frame_construct(analysis, &frame(analysis, &[])));
@@ -2052,11 +2075,44 @@ fn frame_construct(analysis: &Analysis, frame: &Frame) -> crate::fixed::HashSet<
     (0..analysis.graph.vertices.len() as NodeId)
         .filter(|&id| {
             let v = &analysis.graph.vertices[id as usize];
-            v.within.is_none()
+            straight(analysis, v)
                 && spans.iter().any(|(s, w)| {
                     s.file == v.span.file && s.line == v.span.line && (s.col..s.col + w).contains(&v.span.col)
                 })
         })
+        .collect()
+}
+
+/// What the criteria run besides themselves: every vertex of a file one of
+/// them inputs, and of the files that one inputs in turn.
+fn runs(analysis: &Analysis, criteria: &[NodeId]) -> Vec<NodeId> {
+    let spans: BTreeSet<Span> = criteria.iter().filter_map(|&id| analysis.graph.vertex(id)).map(|v| v.span).collect();
+    let mut files: BTreeSet<FileId> = analysis
+        .facts
+        .loads
+        .iter()
+        .filter(|load| load.kind == LoadKind::Input && spans.contains(&load.call.unwrap_or(load.span)))
+        .filter_map(|load| load.file)
+        .collect();
+    loop {
+        let more: Vec<FileId> = analysis
+            .facts
+            .loads
+            .iter()
+            .filter(|load| load.kind == LoadKind::Input && files.contains(&load.span.file))
+            .filter_map(|load| load.file)
+            .filter(|file| !files.contains(file))
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        files.extend(more);
+    }
+    let vertices = analysis.graph.vertices.iter().enumerate();
+    criteria
+        .iter()
+        .copied()
+        .chain(vertices.filter(|(_, v)| files.contains(&v.span.file)).map(|(id, _)| id as NodeId))
         .collect()
 }
 
@@ -2067,6 +2123,7 @@ fn slice_from(analysis: &Analysis, criteria: Vec<NodeId>, direction: Direction) 
         if forward { NodeId::MAX } else { slice_limit(analysis, &criteria) },
         (!forward).then_some(analysis.main_file),
     );
+    let criteria = runs(analysis, &criteria);
     analysis
         .graph
         .slice_until(&criteria, SLICE_EDGES, forward, &bound)
@@ -2096,6 +2153,12 @@ fn slice_from(analysis: &Analysis, criteria: Vec<NodeId>, direction: Direction) 
 /// environment, the end of a plain run — the category codes its lines were
 /// read under, and the environments around the lines it keeps.
 pub fn reconstruct(analysis: &Analysis, slice: &[Record], source: &str) -> String {
+    reconstruct_mapped(analysis, slice, source).0
+}
+
+/// [`reconstruct`], with the line of the document each line of it comes
+/// from: `(file, line)`, `None` for one it adds.
+pub fn reconstruct_mapped(analysis: &Analysis, slice: &[Record], source: &str) -> (String, Vec<Option<(String, u32)>>) {
     let mut nodes: BTreeSet<NodeId> = slice
         .iter()
         .filter_map(|record| record.get("node").and_then(Json::as_u64))
@@ -2107,55 +2170,78 @@ pub fn reconstruct(analysis: &Analysis, slice: &[Record], source: &str) -> Strin
     // The frame reads what the whole run wrote (`\begin{document}` reads the
     // `.aux` file), and so does an environment's end: what stands after the
     // slice is kept out of what they pull in.
+    // The statement of the document's own files the run reached last, to
+    // its end: the vertex before the next line of that file.
     let reach = |ids: &mut dyn Iterator<Item = NodeId>| {
         let main = analysis.main_file;
         let last = ids
-            .filter_map(|id| analysis.graph.vertex(id))
-            .filter(|v| v.span.file == main && !frame.ends.contains(&v.span.line))
-            .map(|v| v.span.line)
-            .max();
+            .filter_map(|id| Some((id, analysis.graph.vertex(id)?)))
+            .filter(|(_, v)| inlined(analysis, v.span.file))
+            .filter(|(_, v)| !(v.span.file == main && frame.ends.contains(&v.span.line)))
+            .max_by_key(|(id, _)| *id);
         match last {
-            Some(last) => analysis
-                .graph
-                .vertices
+            Some((id, last)) => analysis.graph.vertices[id as usize..]
                 .iter()
-                .position(|v| v.span.file == main && v.span.line > last)
-                .map_or(NodeId::MAX, |first| (first as NodeId).saturating_sub(1)),
+                .position(|v| v.span.file == last.span.file && v.span.line > last.span.line)
+                .map_or(NodeId::MAX, |next| (id + next as NodeId).saturating_sub(1)),
             None => NodeId::MAX,
         }
     };
     // Trimmed, the frame keeps its lines but not what it reads: what only
     // `\begin{document}` reads (package hooks, the `.aux` file) is no
     // dependency of the criterion.
+    // The document's own catcode changes stay either way: they decide how
+    // every later line reads. A package's stay inside its load.
     let trim = analysis.settings.slice.trim;
     let construct = frame_construct(analysis, &frame);
-    if !trim {
-        let limit = reach(&mut nodes.iter().chain(&frame.nodes).copied());
-        nodes.extend(backward(analysis, &frame.nodes, limit));
-    }
+    let loads = slice_bound(analysis, NodeId::MAX, None).opaque;
+    let from: Vec<NodeId> =
+        frame.nodes.iter().copied().filter(|n| !trim || !construct.contains(n) && !loads.contains(n)).collect();
+    let limit = reach(&mut nodes.iter().chain(&from).copied());
+    nodes.extend(backward(analysis, &from, limit));
     let mut framing: BTreeMap<FileId, BTreeSet<u32>> = BTreeMap::new();
+    for record in slice.iter().filter(|r| r.get("tag").and_then(Json::as_str) == Some("line")) {
+        let (Some(file), Some(line)) =
+            (record.get("file_id").and_then(Json::as_u64), record.get("line").and_then(Json::as_u64))
+        else {
+            continue;
+        };
+        if let Some((file, lines)) = home(analysis, file as FileId, line as u32, line as u32) {
+            framing.entry(file).or_default().extend(lines);
+        }
+    }
     framing.entry(analysis.main_file).or_default().extend(frame.lines.iter().copied());
+    framing.entry(analysis.main_file).or_default().extend(option_lines(analysis));
+    let peeks = peeks(analysis);
     let lines = loop {
-        let lines = kept_lines(analysis, &nodes, &framing, &mut texts);
+        let lines = kept_lines(analysis, &nodes, &peeks, &framing, &mut texts);
         let extra: Vec<NodeId> = on_kept_lines(analysis, &lines, &frame.ends)
             .into_iter()
             .chain(enclosing_environments(analysis, &lines))
-            .chain(written_back(analysis, &nodes, reach(&mut nodes.iter().copied())))
+            .chain(written_back(analysis, &nodes))
             .filter(|node| !nodes.contains(node))
             .filter(|node| !trim || !construct.contains(node))
             .collect();
         let groups = enclosing_groups(analysis, &lines);
         let conditionals = enclosing_conditionals(analysis, &lines);
-        if extra.is_empty() && groups.is_empty() && conditionals.is_empty() {
+        let peeked = unanswered_peeks(analysis, &nodes, &peeks, &lines, &texts);
+        let paragraphs = enclosing_paragraphs(analysis, &lines, &frame.lines);
+        if extra.is_empty()
+            && groups.is_empty()
+            && conditionals.is_empty()
+            && peeked.is_empty()
+            && paragraphs.is_empty()
+        {
             break lines;
         }
-        for (file, line) in groups.into_iter().chain(conditionals) {
+        for (file, line) in groups.into_iter().chain(conditionals).chain(peeked).chain(paragraphs) {
             framing.entry(file).or_default().insert(line);
         }
         let limit = reach(&mut nodes.iter().chain(&extra).copied());
         nodes.extend(extra.iter().copied());
         nodes.extend(backward(analysis, &extra, limit));
     };
+    let lines = whole_inputs(analysis, lines, &mut texts);
     // Sorted by where the line belongs in the main file: a line of the main
     // file by its own number, a line of an `\input` file by the position
     // where that file became visible.
@@ -2184,6 +2270,7 @@ pub fn reconstruct(analysis: &Analysis, slice: &[Record], source: &str) -> Strin
     }
     chunks.sort_by_key(|(key, file, number)| (*key, *file, *number));
     let mut out = String::new();
+    let mut origin = Vec::new();
     let mut current: Option<FileId> = None;
     for (_, file, number) in chunks {
         let Some(line) = texts.get(&file).and_then(|t| t.get(number as usize - 1)) else {
@@ -2191,11 +2278,130 @@ pub fn reconstruct(analysis: &Analysis, slice: &[Record], source: &str) -> Strin
         };
         if current != Some(file) && file != analysis.main_file {
             let _ = writeln!(out, "%% from {}", analysis.file_name(file));
+            origin.push(None);
         }
         current = Some(file);
         let _ = writeln!(out, "{line}");
+        origin.push(Some((analysis.file_name(file).to_string(), number)));
     }
-    out
+    if !analysis.settings.slice.standalone || frame.class.is_empty() {
+        return (out, origin);
+    }
+    let out = standalone(analysis, &out, &lines);
+    let added = out.lines().count().saturating_sub(origin.len());
+    (out, std::iter::repeat_n(None, added).chain(origin).collect())
+}
+
+/// An `\input` file every code line of which is kept is read by its own
+/// load line instead of being inlined: it runs the same, and stays where
+/// the run put it.  Inner files first, so a whole chain folds up.
+fn whole_inputs(
+    analysis: &Analysis,
+    mut lines: BTreeMap<FileId, BTreeSet<u32>>,
+    texts: &mut BTreeMap<FileId, Vec<String>>,
+) -> BTreeMap<FileId, BTreeSet<u32>> {
+    let code = |line: &String| !line[..crate::tex::comment_start(line).unwrap_or(line.len())].trim().is_empty();
+    loop {
+        let whole = lines.iter().find_map(|(&file, kept)| {
+            let load = analysis.facts.loads.iter().find(|l| l.kind == LoadKind::Input && l.file == Some(file))?;
+            let text = texts.get(&file)?;
+            let nested =
+                lines.keys().any(|&f| f != file && loaded_by(analysis, f).is_some_and(|l| l.span.file == file));
+            let all = (1..=text.len() as u32).all(|n| kept.contains(&n) || !code(&text[n as usize - 1]));
+            (file != analysis.main_file && !nested && all && inlined(analysis, load.span.file))
+                .then_some((file, load.span))
+        });
+        let Some((file, at)) = whole else { return lines };
+        if let std::collections::btree_map::Entry::Vacant(e) = texts.entry(at.file) {
+            let Ok(text) = std::fs::read_to_string(analysis.file_name(at.file)) else { return lines };
+            e.insert(text.lines().map(str::to_string).collect());
+        }
+        lines.remove(&file);
+        lines.entry(at.file).or_default().insert(at.line);
+    }
+}
+
+/// `slice.standalone`: the reconstruction as one file that compiles in an
+/// empty directory.  Every local file it reads goes in front of it as
+/// `filecontents*`, and every graphic becomes `example-image` with the
+/// bounding box of the original, so it takes the same room.
+fn standalone(analysis: &Analysis, text: &str, inlined: &BTreeMap<FileId, BTreeSet<u32>>) -> String {
+    let main = Path::new(analysis.file_name(analysis.main_file));
+    let main_dir = main.parent().unwrap_or_else(|| Path::new(""));
+    let root = std::fs::canonicalize(main).ok().and_then(|p| Some(p.parent()?.to_path_buf())).unwrap_or_default();
+    let local = |path: &Path| !analysis.distribution.roots.iter().any(|root| path.starts_with(root));
+    let written =
+        |path: &Path| analysis.facts.written_files.iter().any(|w| Path::new(w).file_name() == path.file_name());
+    let mut files: Vec<(PathBuf, PathBuf)> = project_files(analysis, text);
+    // A file whose lines are in the text already needs no copy.
+    let named = |name: &str| text.contains(name) || name.strip_suffix(".tex").is_some_and(|stem| text.contains(stem));
+    files.extend(analysis.facts.loads.iter().filter(|load| named(&load.name)).filter_map(|load| {
+        let file = load.file.filter(|f| !inlined.contains_key(f))?;
+        let path = std::fs::canonicalize(analysis.file_name(file)).ok()?;
+        let relative = path.strip_prefix(&root).map(Path::to_path_buf).ok()?;
+        Some((path, relative))
+    }));
+    let mut head = String::new();
+    let mut seen = BTreeSet::new();
+    for (path, relative) in files {
+        if !local(&path) || written(&path) || !seen.insert(relative.clone()) {
+            continue;
+        }
+        let Ok(contents) = std::fs::read_to_string(&path) else { continue };
+        let name = relative.to_string_lossy();
+        let _ = writeln!(
+            head,
+            "\\begin{{filecontents*}}[overwrite]{{{name}}}\n{}\\end{{filecontents*}}",
+            contents.trim_end().to_string() + "\n"
+        );
+    }
+    let graphic = Regex::new(r"\\includegraphics(\*?)\s*(?:\[([^\]]*)\])?\s*\{([^{}]*)\}").expect("a valid pattern");
+    let body = graphic.replace_all(text, |c: &regex::Captures| {
+        let options = c.get(2).map_or("", |m| m.as_str());
+        match example_image(main_dir, &c[3], options) {
+            Some(options) => format!("\\includegraphics{}[{options}]{{example-image}}", &c[1]),
+            None => c[0].to_string(),
+        }
+    });
+    head + &body
+}
+
+/// The options that draw `example-image` as large as `file` with `options`:
+/// its natural size as the bounding box, a trim as the viewport it leaves,
+/// and no page, since the example has one.
+fn example_image(dir: &Path, file: &str, options: &str) -> Option<String> {
+    let path = std::iter::once(dir.join(file))
+        .chain(["pdf", "png", "jpg", "jpeg"].iter().map(|ext| dir.join(format!("{file}.{ext}"))))
+        .find(|p| p.is_file())?;
+    let bytes = std::fs::read(&path).ok()?;
+    let pdf = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
+    let mut keys: Vec<(String, String)> = options
+        .split(',')
+        .filter_map(|o| {
+            let (k, v) = o.split_once('=').unwrap_or((o, ""));
+            (!k.trim().is_empty()).then(|| (k.trim().to_string(), v.trim().to_string()))
+        })
+        .collect();
+    let page = keys.iter().find(|(k, _)| k == "page").and_then(|(_, v)| v.parse().ok()).unwrap_or(1);
+    let (w, h) = match pdf {
+        true => crate::pdfbox::page_box(&bytes, "crop", page)?,
+        false => crate::pdfbox::raster_size(&bytes, 72)?,
+    };
+    // The box in scaled points, as the engine measures the file itself.
+    let bb = format!("bb=0 0 {w}sp {h}sp");
+    let bp = |sp: i64| sp as f64 / 65536.0 * 72.0 / 72.27;
+    let (w, h) = (bp(w), bp(h));
+    keys.retain(|(k, _)| k != "page");
+    for (k, v) in &mut keys {
+        if k != "trim" {
+            continue;
+        }
+        let t: Vec<f64> = v.split_whitespace().filter_map(|n| n.parse().ok()).collect();
+        let [l, b, r, top] = t[..] else { return None };
+        (*k, *v) = ("viewport".into(), format!("{l} {b} {} {}", w - r, h - top));
+    }
+    let rest: Vec<String> = keys.into_iter().map(|(k, v)| if v.is_empty() { k } else { format!("{k}={v}") }).collect();
+    Some(std::iter::once(bb).chain(rest).collect::<Vec<_>>().join(","))
 }
 
 /// The project's own files a reconstruction needs beside it to compile: a
@@ -2261,6 +2467,8 @@ struct Frame {
     ends: Vec<u32>,
     /// How many columns `\begin{document}` takes, by its span.
     widths: BTreeMap<Span, u32>,
+    /// The lines that load the class: none in plain TeX or a package.
+    class: Vec<u32>,
 }
 
 fn frame(analysis: &Analysis, main: &[String]) -> Frame {
@@ -2296,8 +2504,35 @@ fn frame(analysis: &Analysis, main: &[String]) -> Frame {
     {
         ends.push(last as u32 + 1);
     }
+    let class = lines.clone();
+    // A run that never reached `\end{document}` says nothing about what
+    // follows where it stopped: the whole file stays.
+    if !class.is_empty() && ends.is_empty() {
+        lines.extend(1..=main.len() as u32);
+    }
     lines.extend(ends.iter().copied());
-    Frame { nodes, lines, ends, widths }
+    Frame { nodes, lines, ends, widths, class }
+}
+
+/// A package or a class sliced on its own: the lines that declare its
+/// options and what of its own reads them (`\ProcessOptions`).  Its options
+/// are its input, and a real caller passes some this run never saw.
+fn option_lines(analysis: &Analysis) -> Vec<u32> {
+    let main = analysis.main_file;
+    if !analysis.files.get(main as usize).is_some_and(|f| f.kind.is_package()) {
+        return Vec::new();
+    }
+    let options: Vec<NodeId> =
+        analysis.facts.defs.iter().filter(|d| d.tag == "option" && d.span.file == main).map(|d| d.node).collect();
+    let bound = crate::graph::SliceBound { limit: NodeId::MAX, home: None, opaque: Default::default() };
+    analysis
+        .graph
+        .slice_until(&options, SLICE_EDGES, true, &bound)
+        .into_iter()
+        .filter_map(|id| analysis.graph.vertex(id))
+        .filter(|v| straight(analysis, v) && v.span.file == main)
+        .map(|v| v.span.line)
+        .collect()
 }
 
 /// Everything the run did on a kept line, read from the file itself rather
@@ -2309,9 +2544,10 @@ fn on_kept_lines(analysis: &Analysis, lines: &BTreeMap<FileId, BTreeSet<u32>>, e
         .vertices
         .iter()
         .enumerate()
+        // A token a library macro expands (`\state` inside `\typeout`) is
+        // read on its line too, so not only straight vertices count.
         .filter(|(_, v)| {
-            v.within.is_none()
-                && !(v.span.file == main && ends.contains(&v.span.line))
+            !(v.span.file == main && ends.contains(&v.span.line))
                 && lines.get(&v.span.file).is_some_and(|kept| kept.contains(&v.span.line))
         })
         .map(|(id, _)| id as NodeId)
@@ -2319,9 +2555,10 @@ fn on_kept_lines(analysis: &Analysis, lines: &BTreeMap<FileId, BTreeSet<u32>>, e
 }
 
 /// The writes a kept line read back depends on: a vertex of a file the run
-/// wrote itself (the `.aux`) stands for every call of the main file up to
-/// `limit` that wrote a line, since which of them wrote it is not tracked.
-fn written_back(analysis: &Analysis, nodes: &BTreeSet<NodeId>, limit: NodeId) -> Vec<NodeId> {
+/// wrote itself (the `.aux`) stands for every call of the document's own
+/// files that wrote a line, since which of them wrote it is not tracked.
+/// The run before wrote the whole file, so a write after the reader counts.
+fn written_back(analysis: &Analysis, nodes: &BTreeSet<NodeId>) -> Vec<NodeId> {
     let written = |file: FileId| {
         let name = Path::new(analysis.file_name(file)).file_name();
         analysis.facts.written_files.iter().any(|w| Path::new(w).file_name() == name)
@@ -2333,12 +2570,12 @@ fn written_back(analysis: &Analysis, nodes: &BTreeSet<NodeId>, limit: NodeId) ->
         .facts
         .occurrences
         .iter()
-        .filter(|o| o.kind == OccKind::Write && o.node <= limit)
+        .filter(|o| o.kind == OccKind::Write)
         .filter_map(|o| o.call.map(|(_, span)| span))
-        .filter(|span| span.file == analysis.main_file)
+        .filter(|span| inlined(analysis, span.file))
         .collect();
-    (0..=limit.min(analysis.graph.vertices.len().saturating_sub(1) as NodeId))
-        .filter(|&id| analysis.graph.vertices[id as usize].within.is_none())
+    (0..analysis.graph.vertices.len() as NodeId)
+        .filter(|&id| straight(analysis, &analysis.graph.vertices[id as usize]))
         .filter(|&id| calls.contains(&analysis.graph.vertices[id as usize].span))
         .collect()
 }
@@ -2349,26 +2586,34 @@ fn written_back(analysis: &Analysis, nodes: &BTreeSet<NodeId>, limit: NodeId) ->
 fn enclosing_environments(analysis: &Analysis, lines: &BTreeMap<FileId, BTreeSet<u32>>) -> Vec<NodeId> {
     let mut out = Vec::new();
     for (&file, kept) in lines {
-        let mut open: Vec<&crate::facts::Occurrence> = Vec::new();
-        let mut marks: Vec<&crate::facts::Occurrence> = analysis
-            .facts
-            .occurrences
-            .iter()
-            .filter(|o| o.span.file == file && matches!(o.kind, OccKind::BeginEnvironment | OccKind::EndEnvironment))
-            .collect();
-        marks.sort_by_key(|o| (o.span.line, o.span.col));
-        for mark in marks {
-            if mark.kind == OccKind::BeginEnvironment {
-                open.push(mark);
-                continue;
-            }
-            let Some(at) = open.iter().rposition(|b| b.key == mark.key) else { continue };
-            let begin = open[at];
-            open.truncate(at);
-            if kept.range(begin.span.line..=mark.span.line).next().is_some() {
-                out.extend([begin.node, mark.node]);
+        for (begin, end) in environment_pairs(analysis, file) {
+            if kept.range(begin.span.line..=end.span.line).next().is_some() {
+                out.extend([begin.node, end.node]);
             }
         }
+    }
+    out
+}
+
+/// The `\begin`/`\end` pairs of `file`, matched by name.
+fn environment_pairs(analysis: &Analysis, file: FileId) -> Vec<(&crate::facts::Occurrence, &crate::facts::Occurrence)> {
+    let mut open: Vec<&crate::facts::Occurrence> = Vec::new();
+    let mut marks: Vec<&crate::facts::Occurrence> = analysis
+        .facts
+        .occurrences
+        .iter()
+        .filter(|o| o.span.file == file && matches!(o.kind, OccKind::BeginEnvironment | OccKind::EndEnvironment))
+        .collect();
+    marks.sort_by_key(|o| (o.span.line, o.span.col));
+    let mut out = Vec::new();
+    for mark in marks {
+        if mark.kind == OccKind::BeginEnvironment {
+            open.push(mark);
+            continue;
+        }
+        let Some(at) = open.iter().rposition(|b| b.key == mark.key) else { continue };
+        out.push((open[at], mark));
+        open.truncate(at);
     }
     out
 }
@@ -2385,6 +2630,50 @@ fn enclosing_groups(analysis: &Analysis, lines: &BTreeMap<FileId, BTreeSet<u32>>
         for line in [open.line, close.line] {
             if !kept.contains(&line) {
                 out.push((open.file, line));
+            }
+        }
+    }
+    out
+}
+
+/// Every line of a paragraph that a kept line sets a character of: TeX
+/// breaks a paragraph into lines as a whole, so where a character lands
+/// depends on all of it.  The paragraphs are the run's (`\par`), each the
+/// lines of its file from its first character to its last.
+fn enclosing_paragraphs(
+    analysis: &Analysis,
+    lines: &BTreeMap<FileId, BTreeSet<u32>>,
+    frame: &[u32],
+) -> Vec<(FileId, u32)> {
+    let text = &analysis.facts.text;
+    // A space shows only when its glue stays (tex.web § 816): one a
+    // paragraph's end removes is no part of it.
+    let shows: Vec<bool> = text
+        .chars
+        .chars()
+        .zip(&text.at)
+        .map(|(c, s)| !c.is_whitespace() || analysis.facts.kept_spaces.contains(&s.span))
+        .collect();
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    for end in text.pars.iter().map(|&p| p as usize).chain([text.at.len()]) {
+        let range = start.min(end)..end;
+        start = end;
+        let spots: Vec<&crate::facts::Spot> =
+            range.filter(|&i| shows.get(i) == Some(&true)).map(|i| &text.at[i]).collect();
+        let mut spans: BTreeMap<FileId, (u32, u32)> = BTreeMap::new();
+        for spot in spots.iter().filter(|s| inlined(analysis, s.span.file)) {
+            let range = spans.entry(spot.span.file).or_insert((spot.span.line, spot.span.line));
+            *range = (range.0.min(spot.span.line), range.1.max(spot.span.line));
+        }
+        // The frame's lines are kept whatever the criterion.
+        let mine = |s: &crate::facts::Spot| !(s.span.file == analysis.main_file && frame.contains(&s.span.line));
+        let touched =
+            spots.iter().filter(|s| mine(s)).any(|s| lines.get(&s.span.file).is_some_and(|k| k.contains(&s.span.line)));
+        if touched {
+            for (&file, &(a, b)) in &spans {
+                let kept = lines.get(&file);
+                out.extend((a..=b).filter(|l| !kept.is_some_and(|k| k.contains(l))).map(|l| (file, l)));
             }
         }
     }
@@ -2421,11 +2710,12 @@ fn enclosing_conditionals(analysis: &Analysis, lines: &BTreeMap<FileId, BTreeSet
 fn kept_lines(
     analysis: &Analysis,
     nodes: &BTreeSet<NodeId>,
+    peeks: &crate::fixed::HashSet<NodeId>,
     framing: &BTreeMap<FileId, BTreeSet<u32>>,
     texts: &mut BTreeMap<FileId, Vec<String>>,
 ) -> BTreeMap<FileId, BTreeSet<u32>> {
     let mut wanted = framing.clone();
-    for &node in nodes {
+    for &node in nodes.iter().filter(|node| !peeks.contains(node)) {
         let Some(vertex) = analysis.graph.vertex(node) else { continue };
         let line = vertex.span.line;
         // A command whose arguments ran past its own line keeps them all.
@@ -2443,6 +2733,69 @@ fn kept_lines(
         out.insert(file, balanced_lines(&text, &lines));
     }
     out
+}
+
+/// Tokens of the document only looked at by a lookahead made elsewhere
+/// (`\@ifnextchar` lets `\@let@token` to the next token): what the peek
+/// reads is whichever token comes next, not the line it stands on.
+fn peeks(analysis: &Analysis) -> crate::fixed::HashSet<NodeId> {
+    let graph = &analysis.graph;
+    (0..graph.vertices.len() as NodeId)
+        .flat_map(|from| graph.outgoing(from).iter().map(move |&(to, kind)| (from, to, kind)))
+        .filter(|&(from, to, kind)| {
+            let (by, read) = (&graph.vertices[from as usize], &graph.vertices[to as usize]);
+            kind.intersects(EdgeKind::DEFINED_BY)
+                && by.tag == crate::graph::VertexTag::VariableDefinition
+                && read.tag == crate::graph::VertexTag::Use
+                && straight(analysis, read)
+                && (by.span.file, by.span.line) != (read.span.file, read.span.line)
+                && inlined(analysis, read.span.file)
+        })
+        .map(|(_, to, _)| to)
+        .collect()
+}
+
+/// The lines of the peeked tokens whose place the slice gives to a token
+/// that may answer the peek differently.  A macro call answers it like any
+/// other: a lookahead tests for a character or an implicit one, never for
+/// one particular macro (a convention).
+fn unanswered_peeks(
+    analysis: &Analysis,
+    nodes: &BTreeSet<NodeId>,
+    peeks: &crate::fixed::HashSet<NodeId>,
+    lines: &BTreeMap<FileId, BTreeSet<u32>>,
+    texts: &BTreeMap<FileId, Vec<String>>,
+) -> Vec<(FileId, u32)> {
+    let call_at = |file: FileId, line: u32, col: u32| {
+        let text = texts.get(&file).and_then(|t| t.get(line as usize - 1)).map_or("", String::as_str);
+        let starts = text.get(col as usize - 1..).is_some_and(|rest| {
+            rest.strip_prefix('\\').is_some_and(|r| r.starts_with(|c: char| c.is_ascii_alphabetic()))
+        });
+        starts
+            && analysis.graph.vertices.iter().any(|v| {
+                straight(analysis, v)
+                    && v.tag == crate::graph::VertexTag::MacroCall
+                    && (v.span.file, v.span.line, v.span.col) == (file, line, col)
+            })
+    };
+    nodes
+        .iter()
+        .filter(|node| peeks.contains(node))
+        .filter_map(|&node| analysis.graph.vertex(node).map(|v| v.span))
+        .filter(|span| !lines.get(&span.file).is_some_and(|kept| kept.contains(&span.line)))
+        .filter(|span| {
+            let next = lines.get(&span.file).and_then(|kept| {
+                kept.range(span.line + 1..).find_map(|&line| {
+                    let text = texts.get(&span.file)?.get(line as usize - 1)?;
+                    let code = &text[..crate::tex::comment_start(text).unwrap_or(text.len())];
+                    let col = code.len() - code.trim_start().len();
+                    (!code.trim().is_empty()).then_some((line, col as u32 + 1))
+                })
+            });
+            !(call_at(span.file, span.line, span.col) && next.is_some_and(|(line, col)| call_at(span.file, line, col)))
+        })
+        .map(|span| (span.file, span.line))
+        .collect()
 }
 
 /// Where lines `first..=last` of `file` go in the reconstruction: in the
@@ -2475,6 +2828,13 @@ fn input_stand_in(analysis: &Analysis, file: FileId, line: u32) -> Option<FileId
 
 fn loaded_by(analysis: &Analysis, file: FileId) -> Option<&Load> {
     analysis.facts.loads.iter().find(|load| load.file == Some(file) && load.span.file != file)
+}
+
+/// Whether the run read `v` straight from its file: no expansion made it,
+/// or, in an `\input` file, only the library macro that reads the file.
+fn straight(analysis: &Analysis, v: &crate::graph::Vertex) -> bool {
+    let input = v.span.file != analysis.main_file && inlined(analysis, v.span.file);
+    v.within.and_then(|w| analysis.graph.vertex(w)).is_none_or(|w| input && !inlined(analysis, w.span.file))
 }
 
 /// Whether a file's own lines go into the reconstruction: the main file,

@@ -615,9 +615,12 @@ lsp:  # how satex lsp serves an editor
     #! affects: output
 
 slice:  # what satex slice leaves out
-  trim: false  # leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \begin{document} reads
+  trim: true  # leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \begin{document} reads
     #! affects: output
-    #! example: trim: true: a slice that draws no picture drops \usepackage{tikz}
+    #! example: trim: false: the slice also keeps every package and what \begin{document} reads
+  standalone: true  # make the slice one file that compiles in an empty directory. Local files it reads go in as filecontents, graphics as example-image of the same size
+    #! affects: output
+    #! example: standalone: false: satex slice --out also copies the local files the slice names
 
 docs:  # where a package's documentation is looked for and which conventions of it are read
   source_root: source  # the folder of a TDS tree that holds the documented sources

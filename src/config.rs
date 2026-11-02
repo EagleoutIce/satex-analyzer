@@ -427,13 +427,22 @@ impl Default for LspConfig {
 }
 
 /// `slice:` in `satex.yaml`: what a reconstructed slice leaves out.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SliceConfig {
     /// Keeps only what the criterion depends on: what the document's frame
     /// (`\begin{document}`, its hooks, the `.aux` file) alone reads stays
     /// out, so unused packages, libraries and numbering go.
     pub trim: bool,
+    /// Makes the slice one file that compiles in an empty directory: local
+    /// files it reads go in as `filecontents*`, graphics as `example-image`.
+    pub standalone: bool,
+}
+
+impl Default for SliceConfig {
+    fn default() -> Self {
+        Self { trim: true, standalone: true }
+    }
 }
 
 /// `docs:` in `satex.yaml`: where the documentation of a package is looked for,

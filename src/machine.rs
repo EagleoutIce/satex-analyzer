@@ -4308,6 +4308,16 @@ will look undefined",
                         self.env.clear_recent();
                         let main = self.reading_command && self.step_depth == 1;
                         self.read_on(t.span, main);
+                        // What an expansion reads from the file itself (an
+                        // argument, verbatim text) is part of its call.
+                        if !self.reading_command
+                            && let Some(call) = self.out.graph.reader.and_then(|r| self.out.graph.vertex(r))
+                            && call.span.file == t.span.file
+                            && t.span.line > call.span.line
+                        {
+                            let at = call.span;
+                            self.out.graph.note_extent(at, t.span.line);
+                        }
                         self.last_file = Some(t.span.file);
                         self.source = None;
                         if let Some(c) = chars {
@@ -4649,6 +4659,14 @@ will look undefined",
     /// doing of the macro whose text set it off.
     pub(crate) fn push_inserted(&mut self, sym: Sym, toks: Rc<[Token]>, span: Span) {
         let node = self.force_reference(sym, span);
+        // The list is read here, so this spot depends on the call that set it,
+        // however often the name is rewritten.
+        for def in self.env.link_defs(sym) {
+            self.out.graph.add_raw_edge(node, def, EdgeKind::READS);
+            if let Some(maker) = self.out.graph.maker(def) {
+                self.out.graph.add_raw_edge(node, maker, EdgeKind::SIDE_EFFECT_ON_CALL);
+            }
+        }
         self.end_used_up_lists();
         self.bump_expanding(sym, 1);
         crate::push_shared(&mut self.within, (sym, node));
@@ -6756,9 +6774,9 @@ will look undefined",
             return true;
         }
         // A command the main loop takes from a file is read on no call's
-        // behalf.
-        if command && self.within.is_empty() && self.last_file == Some(token.span.file) {
-            self.out.graph.reader = None;
+        // behalf, also in a file an expansion still running opened (`\input`).
+        if command && self.last_file == Some(token.span.file) {
+            self.out.graph.set_reader(None);
         }
         // Inline math whose size is followed holds only characters: any
         // other command may add atoms of unknown size.
@@ -9088,7 +9106,7 @@ will look undefined",
         // the file is read again: what an expansion leaves behind for the
         // main loop is still that call's doing.
         if self.out.graph.reader.is_none() {
-            self.out.graph.reader = Some(node);
+            self.out.graph.set_reader(Some(node));
         }
         crate::push_shared(&mut self.within, (sym, node));
         let before = self.input.len();
@@ -11071,7 +11089,7 @@ will look undefined",
         self.identifying = state.identifying;
         self.recent_file_spans = state.recent_file_spans;
         self.file_calls = state.file_calls;
-        self.out.graph.reader = state.reader;
+        self.out.graph.set_reader(state.reader);
         self.scans = state.scans;
         self.at_join = state.at_join;
         self.fi_mark = state.fi_mark;

@@ -88,7 +88,11 @@ fn write_project(
     let main_name = main_path.file_name().map(std::path::PathBuf::from).unwrap_or_else(|| "main.tex".into());
     std::fs::write(dir.join(&main_name), &text)
         .map_err(|e| format!("cannot write {}: {e}", dir.join(&main_name).display()))?;
-    let files = query::project_files(context.analysis, &text);
+    // A standalone slice carries its files inside.
+    let files = match context.analysis.settings.slice.standalone {
+        true => Vec::new(),
+        false => query::project_files(context.analysis, &text),
+    };
     for (source, relative) in &files {
         let dest = dir.join(relative);
         if let Some(parent) = dest.parent() {
