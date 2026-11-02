@@ -3963,9 +3963,9 @@ impl Machine<'_> {
     /// when `sym` names the register, so later reads agree, else one
     /// token standing for them all ([`Machine::one_of`]), still exact.
     fn toks_member(&mut self, sym: Sym, set: Rc<[Value]>, span: Span) -> Vec<Token> {
-        let lists: Option<Vec<Rc<[Token]>>> =
-            set.iter().map(|v| if let Value::Toks(t) = v { Some(t.clone()) } else { None }).collect();
-        let Some(lists) = lists else { return vec![self.unknown_text(Unk::Any, span)] };
+        let Some(lists) = Value::OneOf(set.clone()).token_lists() else {
+            return vec![self.unknown_text(Unk::Any, span)];
+        };
         let storage = self.storage(sym);
         let named = self.env.slot(storage).is_some_and(|b| matches!(&b.value, Value::OneOf(s) if Rc::ptr_eq(s, &set)));
         let mut chosen = None;

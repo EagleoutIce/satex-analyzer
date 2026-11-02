@@ -657,6 +657,12 @@ impl Value {
         }
     }
 
+    /// The token lists this may be: itself, or each member of a
+    /// [`Value::OneOf`] of lists. `None` for anything else.
+    pub(crate) fn token_lists(&self) -> Option<Vec<Rc<[Token]>>> {
+        self.exacts()?.into_iter().map(|v| if let Value::Toks(t) = v { Some(t) } else { None }).collect()
+    }
+
     /// The exact values of one kind this may be, when there are few:
     /// itself, when it is one already; [`Value::OneOf`]'s members. `None`
     /// once it is only an interval or hull (already past `limits.value_set`

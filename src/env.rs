@@ -2564,14 +2564,7 @@ pub static RESUME_SLOTS: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 fn typed_toks_join(values: &[&Value], typed: &Typed, widen: bool) -> Option<std::rc::Rc<[Token]>> {
     let mut set = Vec::new();
     for v in values {
-        let lists = match v {
-            Value::Toks(t) => vec![t.clone()],
-            Value::OneOf(m) => {
-                m.iter().map(|v| if let Value::Toks(t) = v { Some(t.clone()) } else { None }).collect::<Option<_>>()?
-            }
-            _ => return None,
-        };
-        for t in lists {
+        for t in v.token_lists()? {
             let def = crate::tex::MacroDef {
                 parameter_text: Default::default(),
                 arg_spec: None,
