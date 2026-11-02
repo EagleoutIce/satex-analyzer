@@ -2663,7 +2663,9 @@ impl<'a> Machine<'a> {
                     }
                     let text = match text {
                         Some(t) if run + 1 < runs && !widen => t.clone(),
-                        Some(t) => widen_text(now.as_deref().unwrap_or_default(), t),
+                        Some(t) => {
+                            widen_text(now.as_deref().unwrap_or_default(), t, usize::from(cfg.limits.meaning_set))
+                        }
                         None => crate::tex::UNKNOWN_ANY.to_string(),
                     };
                     (now.as_deref() != Some(text.as_str())).then_some((at, text, again))
@@ -13178,14 +13180,16 @@ fn line_key(l: &str) -> &str {
 }
 
 /// `new` joined into the texts `old` holds, each new text into its
-/// nearest ([`nearness`]). No text is added, so reruns settle.
-fn widen_text(old: &str, new: &str) -> String {
+/// nearest ([`nearness`]). A text whose lines pair with none stays apart
+/// while fewer than `bound` are kept, so reruns settle.
+fn widen_text(old: &str, new: &str, bound: usize) -> String {
     let mut texts: Vec<String> = texts_of(old).into_iter().map(str::to_string).collect();
     for t in texts_of(new) {
-        if let Some(x) = texts.iter_mut().max_by_key(|x| nearness(x, t))
-            && x != t
-        {
-            *x = join_written(x, t);
+        let full = texts.len() >= bound.max(1);
+        match texts.iter_mut().max_by_key(|x| nearness(x, t)) {
+            Some(x) if x == t => {}
+            Some(x) if full || nearness(x, t).0 => *x = join_written(x, t),
+            _ => texts.push(t.to_string()),
         }
     }
     texts.join(&format!("{}\n", crate::tex::TEXT_OR))

@@ -837,3 +837,18 @@ fn a_footnote_follows_its_paragraph() {
     let foot = rows.iter().find(|r| r["footnote"] == true).expect("the footnote");
     assert!(detail(foot).contains("Aside"), "{foot}");
 }
+
+/// A label whose page flips every run (challenge 11): the build widens its
+/// `.aux`, and a run that writes one line fewer keeps that text apart
+/// instead of reading one line of unknown text. The text before the
+/// flip is still typeset.
+#[test]
+fn a_page_that_flips_every_run_keeps_the_text_before_it() {
+    let rows = typeset_rows(
+        "flip",
+        "\\usepackage{refcount}",
+        "The label was on page \\pageref{x}.\n\\ifnum\\getpagerefnumber{x}=1 \\newpage\\fi\n\\label{x}Here.",
+    );
+    let texts: Vec<&str> = rows.iter().filter_map(|r| r["detail"].as_str()).collect();
+    assert!(texts.iter().any(|t| t.contains("The label was on page")), "{texts:?}");
+}
