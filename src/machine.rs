@@ -7879,24 +7879,136 @@ will look undefined",
             return self.push_tokens(Rc::from(vec![unknown]));
         };
         acc.tail.push(unknown);
-        let (base, mut depth, mut fis) = (acc.base, acc.depth, 0);
-        while self.text_levels() >= base
-            && let Some(t) = self.read(false)
-        {
-            match t.tok {
-                Tok::Chr(_, Catcode::Begin) if body => depth += 1,
-                Tok::Chr(_, Catcode::End) if body && depth == 0 => break,
-                Tok::Chr(_, Catcode::End) if body => depth -= 1,
-                _ => fis += self.closing(&t).0,
-            }
-            if fis > 0 {
-                self.pop_conditional();
-                fis = 0;
-            }
+        let (base, mut depth) = (acc.base, acc.depth);
+        let mut pops = 0;
+        let closed = self.skip_unknown_text(body, &mut depth, &mut pops, |m| m.text_levels() >= base);
+        for _ in 0..pops {
+            self.pop_conditional();
+        }
+        // Its `}` comes from code below the scan (`\if_false: { \fi: }`).
+        if body && !closed && depth == 0 {
+            self.close_from_below(span);
         }
         let acc = self.scans.last_mut().expect("the scan is in flight");
         (acc.depth, acc.done) = (depth, true);
         acc.freeze();
+    }
+
+    /// Reads text unexpanded while `more`, to a `}` at `depth` 0 (counted
+    /// only in a `body`): whether it met one. `pops` counts the
+    /// conditionals its `\fi`s close beyond its own.
+    fn skip_unknown_text(
+        &mut self,
+        body: bool,
+        depth: &mut usize,
+        pops: &mut usize,
+        more: impl Fn(&Self) -> bool,
+    ) -> bool {
+        let mut fis = 0;
+        while more(self)
+            && let Some(t) = self.read(false)
+        {
+            match t.tok {
+                Tok::Chr(_, Catcode::Begin) if body => *depth += 1,
+                Tok::Chr(_, Catcode::End) if body && *depth == 0 => return true,
+                Tok::Chr(_, Catcode::End) if body => *depth -= 1,
+                _ => fis += self.closing(&t).0,
+            }
+            if fis > 0 {
+                *pops += 1;
+                fis = 0;
+            }
+        }
+        false
+    }
+
+    /// A cut body scan whose `}` its own text lacks: the code below emits
+    /// it (`\if_false: { \fi: }`). Its lists are read on, unexpanded, to
+    /// the first call whose text closes a group it never opened: its
+    /// arguments are unknown, and its text after that `}` runs. Never
+    /// reads source; finding no such call, what it read goes back.
+    fn close_from_below(&mut self, span: Span) {
+        let lists = |m: &Self| {
+            matches!(m.input.iter().rev().find(|f| !read_out(f)), Some(Frame::Tokens { .. } | Frame::Returned(_)))
+        };
+        let (mut read, mut depth, mut fis, mut pops) = (Vec::new(), 0usize, 0, 0);
+        while lists(self)
+            && let Some(t) = self.read(false)
+        {
+            read.push(t);
+            let call = match t.tok {
+                Tok::Cs(s) if depth == 0 => self.env.meaning(s).as_macro().cloned(),
+                _ => None,
+            };
+            let Some((m, at)) = call.and_then(|m| Some((m.clone(), self.emitted_close(&m.replacement_text)?))) else {
+                match t.tok {
+                    Tok::Chr(_, Catcode::Begin) => depth += 1,
+                    // A `}` of its own ends the scan, as in TeX.
+                    Tok::Chr(_, Catcode::End) if depth == 0 => return (0..pops).for_each(|_| self.pop_conditional()),
+                    Tok::Chr(_, Catcode::End) => depth -= 1,
+                    _ => fis += self.closing(&t).0,
+                }
+                if fis > 0 {
+                    (pops, fis) = (pops + 1, 0);
+                }
+                continue;
+            };
+            // Its arguments: through its last delimiter, then one per
+            // undelimited parameter after it.
+            let items = &m.parameter_text.items;
+            let last = items.iter().rposition(|i| matches!(i, ParamItem::Lit(_)));
+            if let Some(&ParamItem::Lit(stop)) = last.map(|l| &items[l]) {
+                let mut depth = 0usize;
+                while lists(self)
+                    && let Some(t) = self.read(false)
+                {
+                    match t.tok {
+                        Tok::Chr(_, Catcode::Begin) => depth += 1,
+                        Tok::Chr(_, Catcode::End) => depth = depth.saturating_sub(1),
+                        tok if tok == stop && depth == 0 => break,
+                        _ => {}
+                    }
+                }
+            }
+            for _ in items[last.map_or(0, |l| l + 1)..].iter() {
+                if self.read(false).is_some_and(|t| matches!(t.tok, Tok::Chr(_, Catcode::Begin))) {
+                    self.skip_unknown_text(true, &mut 0, &mut 0, lists);
+                }
+            }
+            (0..pops).for_each(|_| self.pop_conditional());
+            let unknown = self.unknown_text(Unk::Any, span);
+            let rest: Vec<Token> = m.replacement_text[at + 1..]
+                .iter()
+                .map(|t| if matches!(t.tok, Tok::Param(_)) { unknown } else { *t })
+                .collect();
+            return self.push_tokens(Rc::from(rest));
+        }
+        if !read.is_empty() {
+            self.push_tokens(Rc::from(read));
+        }
+    }
+
+    /// Where `text` closes a group it never opened, `\iffalse` spans not
+    /// counted (`\if_false: { \fi: }`): the `}`'s index.
+    fn emitted_close(&self, text: &[Token]) -> Option<usize> {
+        use crate::builtins::Cond;
+        let mut ifs = 0i64;
+        for (i, t) in text.iter().enumerate() {
+            let c = self.closing(t).0;
+            let prim = |p: Primitive| matches!(t.tok, Tok::Cs(s) if self.env.meaning(s).prim() == Some(p));
+            if ifs > 0 {
+                // `\else` at its own level ends the skipped span.
+                ifs = if ifs == 1 && (prim(Primitive::Else) || prim(Primitive::Or)) { 0 } else { ifs - c };
+                continue;
+            }
+            match t.tok {
+                Tok::Chr(_, Catcode::Begin) => return None,
+                Tok::Chr(_, Catcode::End) => return Some(i),
+                _ if prim(Primitive::If(Cond::False)) => ifs = 1,
+                _ => {}
+            }
+        }
+        None
     }
 
     /// Whether the expansion that began with `gaps` raised, running at `depth`, ran
