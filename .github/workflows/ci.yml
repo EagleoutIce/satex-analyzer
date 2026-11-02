@@ -426,6 +426,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Links that answered stay checked for a day, so a slow host costs one run.
+      - name: Link cache
+        uses: actions/cache@v4
+        with:
+          path: .lycheecache
+          key: lychee-${{ github.sha }}
+          restore-keys: lychee-
+
       - name: Lychee
         uses: lycheeverse/lychee-action@v2
         env:
@@ -438,6 +446,7 @@ jobs:
           # (see lychee.toml).
           args: >-
             --config lychee.toml
+            --cache --max-cache-age 1d
             --no-progress
             --remap 'https://github\.com/EagleoutIce/satex-analyzer/blob/main/([^#]*)(#.*)? file://${{ github.workspace }}/$1'
             --remap '^https://mirrors\.ctan\.org/(.*)$ https://ctan.net/$1'
