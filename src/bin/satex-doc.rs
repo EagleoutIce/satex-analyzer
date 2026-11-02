@@ -23,6 +23,11 @@
 //!       Inlines the file, then shows side by side the text pdflatex
 //!       typesets (one run, random seed 7) and what `satex lint` reports.
 //!
+//!   {{still-wrong}}
+//!       A list of the examples above it whose table has a row marked ✗,
+//!       linked by the heading they stand under, so the page never claims a
+//!       fixed example is wrong or a wrong one is right.
+//!
 //!   {{rules}}
 //!       A Markdown table of the lint rules (code, category, severity,
 //!       summary), from `satex lint --rules --format json`.
@@ -605,24 +610,56 @@ fn expand_all(mut todo: Vec<&str>) -> HashMap<&str, Result<String, String>> {
     out
 }
 
+/// Marks an example whose table has a row satex computes wrong.
+const WRONG: &str = "<!-- satex: wrong -->\n";
+
 fn render(template: &str, expanded: &HashMap<&str, Result<String, String>>) -> Result<String, String> {
     let mut out = String::new();
     let mut rest = template;
+    // The wrong examples, by the heading they stand under, for `{{still-wrong}}`.
+    let mut wrong: Vec<String> = Vec::new();
     while let Some(start) = rest.find("{{") {
         out.push_str(&rest[..start]);
         let after = &rest[start + 2..];
         let end = after.find("}}").ok_or("unterminated `{{` directive")?;
+        let directive = after[..end].trim();
         // Expansions are built line by line and so end with a trailing
         // newline; trim it so the template's own surrounding blank lines
         // control spacing, rather than adding to it.
-        out.push_str(expanded[after[..end].trim()].clone()?.trim_end_matches('\n'));
+        let text = if directive == "still-wrong" { still_wrong(&wrong) } else { expanded[directive].clone()? };
+        if text.starts_with(WRONG) {
+            let heading = out.lines().rev().find_map(|l| l.strip_prefix("### ")).unwrap_or("this page");
+            wrong.push(format!("- [{heading}](#{})", anchor(heading)));
+        }
+        out.push_str(text.trim_end_matches('\n'));
         rest = &after[end + 2..];
     }
     out.push_str(rest);
     Ok(out)
 }
 
+fn still_wrong(wrong: &[String]) -> String {
+    if wrong.is_empty() {
+        "None: every example above is computed exactly or covered soundly.\n".into()
+    } else {
+        wrong.join("\n") + "\n"
+    }
+}
+
+/// The anchor a wiki gives a heading: lower case, punctuation dropped, spaces as `-`.
+fn anchor(heading: &str) -> String {
+    heading
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-')
+        .map(|c| if c == ' ' { '-' } else { c })
+        .collect()
+}
+
 fn expand(directive: &str) -> Result<String, String> {
+    if directive == "still-wrong" {
+        return Ok(String::new());
+    }
     if directive == "rules" {
         return rules_table();
     }
@@ -936,6 +973,9 @@ fn example(path: &str) -> Result<String, String> {
     table.push_str("</table>\n");
     why.truncate(5);
     let mut out = format!("{source}\n{table}\n");
+    if wrong.is_some() {
+        out.insert_str(0, WRONG);
+    }
     if let Some((e, c)) = wrong {
         let _ = writeln!(out, "Differs: pdflatex ships `{e}` where satex computes `{c}`.\n");
     }

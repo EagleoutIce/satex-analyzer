@@ -349,6 +349,45 @@ With the assumption off, a page that may have filled parts the run: one path fir
 TeX's choice of the best break ([§§ 1005](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L19552)–[1010](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L19654)) is not modelled yet, so floats that TeX places on the next pages wait for `\clearpage` under the assumption.
 The float loops of LaTeX's output routine then run at the end, where unknown box sizes make them converge only by widening.
 
+**A rounded node around a paragraph that breaks.**
+
+The height of a node with `text width` depends on the line breaker, and pgf's rounded corners read it. satex marks each possible hyphen (`·`) but does not choose the breaks, so the height stays unknown, and pgf's math leaves a long tail of unknown boxes.
+
+```tex
+\documentclass{article}
+\usepackage{tikz}
+\begin{document}
+\begin{tikzpicture}
+\node[rounded corners=10pt,draw,text width=3cm,align=center] {files, dependencies, more};
+\end{tikzpicture}
+\end{document}
+```
+
+<table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
+<tr><td><code>files, de-pen-den-cies, more</code></td><td><code>files, de<b>·</b>pen<b>·</b>den<b>·</b>cies, more</code></td><td>⊇</td></tr>
+</table>
+
+<details><summary>Computed text</summary>
+
+```sh
+$ satex query typeset -f s2-rounded-paragraph.tex --set limits.seconds=60
+5:64  paragraph  files, de·pen·den·cies, more
+0:0  paragraph  
+assumption  clock-assumed
+```
+
+</details>
+
+<details><summary>Trace</summary>
+
+```sh
+$ satex trace --format compact -f s2-rounded-paragraph.tex --set limits.seconds=60
+l.4 \tikzpicture ⇒ \begingroup \tikz@startup@env \tikz@coll… (defines ; : | … 327 more)
+l.5 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 587 more)
+```
+
+</details>
+
 ### 5. Packages are interpreters
 
 pgf computes with macro loops, tcolorbox splits boxes, hyperref and biblatex run hooks per page.
@@ -496,6 +535,57 @@ Fed one unknown value, each such walk forks per step, and its loops meet limits 
 satex keeps unknowns small instead: digits typed with an interval, a value that is one of a few texts, a mark that is one of the texts given to its class.
 A small interval is split into its values where a name is spelled from it, so each path builds the name TeX builds.
 Where a walk still forks per step, that is a bug to fix, not a price to pay.
+
+**A reference in math inside positioned nodes.**
+
+A `\ref` to an unknown label in math in a tikz node, with the nodes placed by `positioning`, is sound but far too imprecise: the text of each node becomes a large choice of unknown characters.
+
+```tex
+\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{positioning}
+\usepackage{hyperref}
+\begin{document}
+\begin{tikzpicture}
+  \node (a) {$B_{\ref{cell:B-a}}$};
+  \node[below=of a] (c) {$B_{\ref{cell:B-c}}$};
+  \node[below right=of a] (d) {$B_{\ref{cell:B-d}}$};
+  \node[below left=of a] (b) {$B_{\ref{cell:B-b}}$};
+  \draw[->] (a) -- (b);
+\end{tikzpicture}
+\end{document}
+```
+
+<table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
+<tr><td><code>B?? B?? B?? B??</code></td><td><code><b>i</b>B<b></b>??<b>i</b>B<b></b>??<b>i</b>B<b></b>??<b>i</b>B<b></b>??</code></td><td>✓</td></tr>
+</table>
+
+<details><summary>Computed text</summary>
+
+```sh
+$ satex query typeset -f s1-tikz-ref.tex --set limits.seconds=60
+7:16  paragraph  B??B??B??B??
+0:0  paragraph  
+assumption  clock-assumed
+```
+
+</details>
+
+<details><summary>Trace</summary>
+
+```sh
+$ satex trace --format compact -f s1-tikz-ref.tex --set limits.seconds=60
+l.3 \usetikzlibrary ⇒ \pgfutil@ifnextchar [{\use@tikzlibrary }… (defines \pgfutil@reserved@d \pgfutil@reserved@a \pgfutil@reserved@b … 16 more)
+l.6 \tikzpicture ⇒ \begingroup \tikz@startup@env \tikz@coll… (defines ; : | … 327 more)
+l.7 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 487 more)
+l.7 \ref ⇒ \__cmd_start:nNNnnn {s}\ref  \ref code {… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 71 more)
+l.8 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 474 more)
+l.8 \ref ⇒ \__cmd_start:nNNnnn {s}\ref  \ref code {… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 51 more)
+l.9 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 474 more)
+… 2 more
+```
+
+</details>
 
 ### 7. Termination is not structural
 
@@ -780,6 +870,7 @@ Inside one run the output routine is a cycle of its own: it fires when a page fi
 
 In this example the label moves away from the page the last run recorded. The kept `.aux` says page 1, so this run breaks the page and writes page 2. The next run reads 2, does not break, and writes 1 again. latexmk gives up after its maximum number of runs.
 
+<!-- satex: wrong -->
 ```tex
 \documentclass{article}
 \usepackage{refcount}
@@ -828,96 +919,7 @@ l.6 \label ⇒ \@bsphack \begingroup \UseHookWithArgume… (defines \thepage \pr
 
 ## Where satex is still wrong or stuck
 
-These examples are red tests today.
-Each runs under a 60 second limit.
-If satex hits a limit, the table shows what it computes at that point and the limit's name.
+Each example runs under a 60 second limit.
+This list is computed when the page is built: every example above whose table has a row marked ✗.
 
-### A reference in math inside positioned nodes
-
-A `\ref` to an unknown label in math in a tikz node, with the nodes placed by `positioning`, is sound but far too imprecise: the text of each node becomes a large choice of unknown characters.
-
-```tex
-\documentclass{article}
-\usepackage{tikz}
-\usetikzlibrary{positioning}
-\usepackage{hyperref}
-\begin{document}
-\begin{tikzpicture}
-  \node (a) {$B_{\ref{cell:B-a}}$};
-  \node[below=of a] (c) {$B_{\ref{cell:B-c}}$};
-  \node[below right=of a] (d) {$B_{\ref{cell:B-d}}$};
-  \node[below left=of a] (b) {$B_{\ref{cell:B-b}}$};
-  \draw[->] (a) -- (b);
-\end{tikzpicture}
-\end{document}
-```
-
-<table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>B?? B?? B?? B??</code></td><td><code><b>i</b>B<b></b>??<b>i</b>B<b></b>??<b>i</b>B<b></b>??<b>i</b>B<b></b>??</code></td><td>✓</td></tr>
-</table>
-
-<details><summary>Computed text</summary>
-
-```sh
-$ satex query typeset -f s1-tikz-ref.tex --set limits.seconds=60
-7:16  paragraph  B??B??B??B??
-0:0  paragraph  
-assumption  clock-assumed
-```
-
-</details>
-
-<details><summary>Trace</summary>
-
-```sh
-$ satex trace --format compact -f s1-tikz-ref.tex --set limits.seconds=60
-l.3 \usetikzlibrary ⇒ \pgfutil@ifnextchar [{\use@tikzlibrary }… (defines \pgfutil@reserved@d \pgfutil@reserved@a \pgfutil@reserved@b … 16 more)
-l.6 \tikzpicture ⇒ \begingroup \tikz@startup@env \tikz@coll… (defines ; : | … 327 more)
-l.7 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 487 more)
-l.7 \ref ⇒ \__cmd_start:nNNnnn {s}\ref  \ref code {… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 71 more)
-l.8 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 474 more)
-l.8 \ref ⇒ \__cmd_start:nNNnnn {s}\ref  \ref code {… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 51 more)
-l.9 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 474 more)
-… 2 more
-```
-
-</details>
-
-### A rounded node around a paragraph that breaks
-
-The height of a node with `text width` depends on the line breaker, and pgf's rounded corners read it. satex marks each possible hyphen (`·`) but does not choose the breaks, so the height stays unknown, and pgf's math leaves a long tail of unknown boxes.
-
-```tex
-\documentclass{article}
-\usepackage{tikz}
-\begin{document}
-\begin{tikzpicture}
-\node[rounded corners=10pt,draw,text width=3cm,align=center] {files, dependencies, more};
-\end{tikzpicture}
-\end{document}
-```
-
-<table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>files, de-pen-den-cies, more</code></td><td><code>files, de<b>·</b>pen<b>·</b>den<b>·</b>cies, more</code></td><td>⊇</td></tr>
-</table>
-
-<details><summary>Computed text</summary>
-
-```sh
-$ satex query typeset -f s2-rounded-paragraph.tex --set limits.seconds=60
-5:64  paragraph  files, de·pen·den·cies, more
-0:0  paragraph  
-assumption  clock-assumed
-```
-
-</details>
-
-<details><summary>Trace</summary>
-
-```sh
-$ satex trace --format compact -f s2-rounded-paragraph.tex --set limits.seconds=60
-l.4 \tikzpicture ⇒ \begingroup \tikz@startup@env \tikz@coll… (defines ; : | … 327 more)
-l.5 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 587 more)
-```
-
-</details>
+- [11. A document is a fixpoint computation](#11-a-document-is-a-fixpoint-computation)

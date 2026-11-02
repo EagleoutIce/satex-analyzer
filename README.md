@@ -475,7 +475,7 @@ The `controls` command shows the switches and options a package or class defines
 $ satex controls -f samples/paper.tex
 tag     name       count  value                                  governs  file           
 option  article           11pt                                            paper.tex      @ paper.tex:1:1
-switch  \ifdraft          false                                  315      paper.tex      @ paper.tex:3:7
+switch  \ifdraft          false                                  236      paper.tex      @ paper.tex:3:7
 offers  amsmath    15     alignedleftspaceno, alignedleftspace…           amsmath.sty    @ amsmath.sty:45:16
 … 9 more lines omitted
 ```
@@ -544,7 +544,7 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 $ satex cache
 cache
   source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
-  holds 190770 definitions
+  holds 195122 definitions
   state cached
 … 2 more lines omitted
 ```
@@ -559,14 +559,14 @@ The commands a document defines itself, without packages and without internal `@
 
 ```text
 $ satex query definitions -f samples/paper.tex --filter 'origin=document and not package~. and not name~@'
-tag     name         parameters                       body                     file          
+tag     name         parameters    comment                           body      file          
 switch  \ifdraft                                                               paper.tex     @ paper.tex:3:7
-switch  \drafttrue                                    \let \ifdraft \iftrue    paper.tex     @ paper.tex:3:7
-switch  \draftfalse                                   \let \ifdraft \iffalse   paper.tex     @ paper.tex:3:7
-macro   \hello                                        world                    preamble.tex  @ preamble.tex:1:1
-macro   \highlight   #1                               \textbf {#1}             paper.tex     @ paper.tex:11:13
-macro   \norm        #1                               \left \lVert #1\right …  paper.tex     @ paper.tex:12:13
-macro   \WeirdMore   super #1\;                        #1                      paper.tex     @ paper.tex:14:1
+switch  \drafttrue                                                   \let \i…  paper.tex     @ paper.tex:3:7
+switch  \draftfalse                                                  \let \i…  paper.tex     @ paper.tex:3:7
+macro   \hello                                                       world     preamble.tex  @ preamble.tex:1:1
+macro   \highlight   #1            Standard single-argument macros.  \textbf…  paper.tex     @ paper.tex:11:13
+macro   \norm        #1                                              \left \…  paper.tex     @ paper.tex:12:13
+macro   \WeirdMore   super #1\;                                       #1       paper.tex     @ paper.tex:14:1
 … 2 more lines omitted
 ```
 

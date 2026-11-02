@@ -104,6 +104,12 @@ With the assumption off, a page that may have filled parts the run: one path fir
 TeX's choice of the best break (§§ 1005-1010) is not modelled yet, so floats that TeX places on the next pages wait for `\clearpage` under the assumption.
 The float loops of LaTeX's output routine then run at the end, where unknown box sizes make them converge only by widening.
 
+**A rounded node around a paragraph that breaks.**
+
+The height of a node with `text width` depends on the line breaker, and pgf's rounded corners read it. satex marks each possible hyphen (`·`) but does not choose the breaks, so the height stays unknown, and pgf's math leaves a long tail of unknown boxes.
+
+{{example: doc/src/wiki/challenges/s2-rounded-paragraph.tex}}
+
 ### 5. Packages are interpreters
 
 pgf computes with macro loops, tcolorbox splits boxes, hyperref and biblatex run hooks per page.
@@ -130,6 +136,12 @@ Fed one unknown value, each such walk forks per step, and its loops meet limits 
 satex keeps unknowns small instead: digits typed with an interval, a value that is one of a few texts, a mark that is one of the texts given to its class.
 A small interval is split into its values where a name is spelled from it, so each path builds the name TeX builds.
 Where a walk still forks per step, that is a bug to fix, not a price to pay.
+
+**A reference in math inside positioned nodes.**
+
+A `\ref` to an unknown label in math in a tikz node, with the nodes placed by `positioning`, is sound but far too imprecise: the text of each node becomes a large choice of unknown characters.
+
+{{example: doc/src/wiki/challenges/s1-tikz-ref.tex}}
 
 ### 7. Termination is not structural
 
@@ -185,18 +197,7 @@ In this example the label moves away from the page the last run recorded. The ke
 
 ## Where satex is still wrong or stuck
 
-These examples are red tests today.
-Each runs under a 60 second limit.
-If satex hits a limit, the table shows what it computes at that point and the limit's name.
+Each example runs under a 60 second limit.
+This list is computed when the page is built: every example above whose table has a row marked ✗.
 
-### A reference in math inside positioned nodes
-
-A `\ref` to an unknown label in math in a tikz node, with the nodes placed by `positioning`, is sound but far too imprecise: the text of each node becomes a large choice of unknown characters.
-
-{{example: doc/src/wiki/challenges/s1-tikz-ref.tex}}
-
-### A rounded node around a paragraph that breaks
-
-The height of a node with `text width` depends on the line breaker, and pgf's rounded corners read it. satex marks each possible hyphen (`·`) but does not choose the breaks, so the height stays unknown, and pgf's math leaves a long tail of unknown boxes.
-
-{{example: doc/src/wiki/challenges/s2-rounded-paragraph.tex}}
+{{still-wrong}}

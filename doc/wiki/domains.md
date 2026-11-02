@@ -301,16 +301,17 @@ flowchart LR
   t44["label"]:::key
   t45["citation key"]:::key
   t46["option key"]:::key
-  t47["environment name"]:::key
-  t48["file"]:::file
-  t49["TeX file (.tex)"]:::file
-  t50["package (.sty)"]:::file
-  t51["class (.cls)"]:::file
-  t52["bibliography database (.bib)"]:::file
-  t53["bibliography style (.bst)"]:::file
-  t54["biblatex bibliography style (.bbx)"]:::file
-  t55["biblatex citation style (.cbx)"]:::file
-  t56["graphic file"]:::file
+  t47["pgf key"]:::key
+  t48["environment name"]:::key
+  t49["file"]:::file
+  t50["TeX file (.tex)"]:::file
+  t51["package (.sty)"]:::file
+  t52["class (.cls)"]:::file
+  t53["bibliography database (.bib)"]:::file
+  t54["bibliography style (.bst)"]:::file
+  t55["biblatex bibliography style (.bbx)"]:::file
+  t56["biblatex citation style (.cbx)"]:::file
+  t57["graphic file"]:::file
   subgraph g0_register[" "]
     direction LR
     t7
@@ -351,11 +352,11 @@ flowchart LR
     t45
     t46
     t47
+    t48
   end
   t43 --> g43_key
-  subgraph g48_file[" "]
+  subgraph g49_file[" "]
     direction LR
-    t49
     t50
     t51
     t52
@@ -363,8 +364,9 @@ flowchart LR
     t54
     t55
     t56
+    t57
   end
-  t48 --> g48_file
+  t49 --> g49_file
   t0 --> t1
   t1 --> t2
   t4 --> t3
@@ -386,7 +388,7 @@ flowchart LR
   t4 --> t29
   t5 --> t30
   t13 --> t43
-  t13 --> t48
+  t13 --> t49
   classDef top fill:#eef0f2,stroke:#8a8f98,color:#1f2328
   classDef quantity fill:#dbeafe,stroke:#3b82f6,color:#1f2328
   classDef register fill:#ffedd5,stroke:#f97316,color:#1f2328
@@ -558,7 +560,7 @@ The knobs that trade precision for a bounded search ([`src/config.rs`](https://g
 | setting | default | what it bounds |
 | --- | --- | --- |
 | [`limits.choices`](Configuration#configurable-limits-for-the-analysis) | 8 | How many undecided `\if` one command may split into paths. Past them the command's result is unknown text, reported as an `assumption`. Higher keeps more combinations apart and costs time. |
-| [`limits.site_forks`](Configuration#configurable-limits-for-the-analysis) | 64 | How many paths one place in a source line may start, counted over all paths. Past them an `\if` there is no longer followed both ways: the run takes the effects either branch may have (`site-forks-widened`). Lower finishes a `\foreach` with unknown bounds sooner but knows less. 0 turns it off. |
+| [`limits.site_forks`](Configuration#configurable-limits-for-the-analysis) | 256 | How many paths one place in a source line may start, counted over all paths. Past them an `\if` there is no longer followed both ways: the run takes the effects either branch may have (`site-forks-widened`). Lower finishes a `\foreach` with unknown bounds sooner but knows less. 0 turns it off. |
 | [`limits.paths`](Configuration#configurable-limits-for-the-analysis) | 16 | How many alternative paths satex keeps at once. Past them the two oldest at one place are merged into one. Higher is more precise, slower and takes more memory. |
 | [`limits.meaning_splits`](Configuration#configurable-limits-for-the-analysis) | 4 | How often one command may split the run per meaning of a name that has several, such as `\x` defined differently in two branches. Past them, and with 0, the name reads as unknown. |
 | [`limits.widen_after`](Configuration#configurable-limits-for-the-analysis) | 3 | How many rounds a loop is followed exactly before values that still change become ranges (SEMANTICS [§ 14](Configuration#configurable-limits-for-the-analysis)). A `\loop` counting to an unknown bound has its counter as a range after these rounds. |

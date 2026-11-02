@@ -34,12 +34,12 @@ Every name the document or its packages define. `origin` is `document` for files
 
 ```text
 $ satex query definitions -f samples/paper.tex --filter 'tag=macro and arity>0'
-tag    name                             paramet…  body      file                  
-macro  \__sys_tmp:w                     #1        \str_if…  expl3-code.tex        @ expl3-code.tex:1539:17
-macro  \sys_gset_rand_seed:n            #1        \tex_se…  expl3-code.tex        @ expl3-code.tex:1531:34
-macro  \reserved@c                      #1.sty\…  \def \r…  latex.ltx             @ latex.ltx:18742:20
-macro  \reserved@a                      #10#2#{   \expand…  latex.ltx             @ latex.ltx:1277:3
-macro  \reserved@a                      #1\@nil   \@for \…  latex.ltx             @ latex.ltx:18611:3
+tag    name      paramet…  comment                body      file                  
+macro  \__sys_…  #1                               \str_if…  expl3-code.tex        @ expl3-code.tex:1539:17
+macro  \sys_gs…  #1                               \tex_se…  expl3-code.tex        @ expl3-code.tex:1531:34
+macro  \reserv…  #1.sty\…                         \def \r…  latex.ltx             @ latex.ltx:18742:20
+macro  \reserv…  #10#2#{                          \expand…  latex.ltx             @ latex.ltx:1277:3
+macro  \reserv…  #1\@nil                          \@for \…  latex.ltx             @ latex.ltx:18611:3
 … 2591 more lines omitted
 ```
 
@@ -176,12 +176,12 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 ```text
 $ satex query diagnostics -f samples/paper.tex
 severity     code                          count  message              file            
+imprecision  call-summarized               1      a call with unknow…  latex.ltx       @ latex.ltx:1824:12
+imprecision  call-summarized               1      a call with unknow…  hyperref.sty    @ hyperref.sty:2143:24
 imprecision  paths-joined-at               1      2 paths arrived at…  paper.tex       @ paper.tex:56:13
 imprecision  call-summarized               1      a call with unknow…  latex.ltx       @ latex.ltx:16142:22
 imprecision  argument-ends-in-unknown      1      a delimited argume…  latex.ltx       @ latex.ltx:20534:3
-imprecision  unknown-name                  6      a name built from …  latex.ltx       @ latex.ltx:20322:31
-imprecision  unknown-name                  6      a name built from …  latex.ltx       @ latex.ltx:20322:41
-… 12 more lines omitted
+… 14 more lines omitted
 ```
 
 ## distribution
@@ -448,7 +448,7 @@ $ satex slice -f samples/paper.tex --where 'kind=begin-environment and key=figur
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{mypackage}
-… 20 more lines omitted
+… 21 more lines omitted
 ```
 
 `--out DIR` writes the slice as a standalone project: the main file plus the local packages, classes, graphics and bibliographies it needs, paths preserved.
