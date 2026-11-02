@@ -2398,7 +2398,22 @@ fn word_after(text: &str, from: usize, name: &str) -> Option<usize> {
 /// Whether the run looked colors up for calls of `\cmd`: its argument names a color.
 fn takes_colors(analysis: &Analysis, cmd: &str) -> bool {
     let Some(sym) = analysis.interner.lookup(cmd) else { return false };
-    analysis.facts.color_uses.iter().any(|u| u.via == Some(sym))
+    let call = format!("\\{cmd}{{");
+    let mut texts: crate::fixed::HashMap<u16, Option<String>> = Default::default();
+    // `\begin{tikzpicture}` looks colors up too, but not in its argument
+    analysis.facts.color_uses.iter().filter(|u| u.via == Some(sym)).any(|u| {
+        let text = texts.entry(u.span.file).or_insert_with(|| {
+            let path = &analysis.files.get(usize::from(u.span.file))?.path;
+            crate::overlay::read_to_string(std::path::Path::new(path)).ok()
+        });
+        let line = text.as_deref().and_then(|t| t.lines().nth(u.span.line.saturating_sub(1) as usize));
+        line.is_some_and(|line| {
+            line.match_indices(&call).any(|(i, _)| {
+                let argument = line[i + call.len()..].split('}').next().unwrap_or_default();
+                words(argument, &u.name).next().is_some()
+            })
+        })
+    })
 }
 
 /// Every color the run defined, newest definition first, each with its value as `#rrggbb`: an
@@ -2406,7 +2421,7 @@ fn takes_colors(analysis: &Analysis, cmd: &str) -> bool {
 fn color_items(analysis: &Analysis) -> Vec<CompletionItem> {
     let mut seen = crate::fixed::HashSet::default();
     (analysis.facts.colors.iter().rev())
-        .filter(|c| seen.insert(c.name.as_str()))
+        .filter(|c| seen.insert(c.name.as_str()) && !analysis.settings.conventions.is_internal(&c.name))
         .map(|c| {
             let hex = c.value.as_ref().and_then(rgba).map(|v| hex_color(&v));
             let mut it = item(c.name.clone(), CompletionItemKind::COLOR, hex.clone(), 0);

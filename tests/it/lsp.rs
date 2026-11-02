@@ -2333,12 +2333,15 @@ fn a_loading_commands_last_optional_argument_is_a_release_date() {
 /// the run defined, each a color item whose documentation is its `#rrggbb` value.
 #[test]
 fn a_color_argument_completes_colors_with_their_values() {
-    let text = "\\documentclass{article}\n\\usepackage{xcolor}\n\\definecolor{mine}{rgb}{0,0,1}\n\\begin{document}\n\\textcolor{mine}{x} \\textcolor{}{y}\n\\end{document}\n";
+    let text = "\\documentclass{article}\n\\usepackage{xcolor}\n\\definecolor{mine}{rgb}{0,0,1}\n\\newenvironment{boxed}{\\color{mine}}{}\n\\begin{document}\n\\textcolor{mine}{x} \\textcolor{}{y}\n\\begin{boxed}x\\end{boxed} \\begin{}\n\\end{document}\n";
     let (mut server, uri, _, dir) = open_loaded("color-items", text);
-    let items = complete(&mut server, &uri, 4, 31);
+    let items = complete(&mut server, &uri, 5, 31);
     let mine = items.iter().find(|i| i["label"] == "mine").unwrap_or_else(|| panic!("{:?}", labels(&items)));
     assert_eq!(mine["kind"], 16, "{mine}");
     assert_eq!(mine["documentation"], "#0000ff", "{mine}");
+    // `boxed` sets a color, but `\begin`'s argument names an environment
+    let environments = complete(&mut server, &uri, 6, 33);
+    assert!(environments.iter().all(|i| i["kind"] != 16), "{:?}", labels(&environments));
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
