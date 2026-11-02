@@ -152,6 +152,10 @@ fn server_capabilities() -> ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
         color_provider: Some(lsp_types::ColorProviderCapability::Simple(true)),
+        document_link_provider: Some(lsp_types::DocumentLinkOptions {
+            resolve_provider: Some(false),
+            work_done_progress_options: Default::default(),
+        }),
         linked_editing_range_provider: Some(lsp_types::LinkedEditingRangeServerCapabilities::Simple(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
@@ -450,6 +454,11 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             let out = ask(engine_tx, |reply| EngineMsg::Colors(p.text_document.uri, reply))?;
             Ok(serde_json::to_value(out).unwrap())
         }
+        "textDocument/documentLink" => {
+            let p: lsp_types::DocumentLinkParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let out = ask(engine_tx, |reply| EngineMsg::Links(p.text_document.uri, reply))?;
+            Ok(serde_json::to_value(out).unwrap())
+        }
         "textDocument/colorPresentation" => {
             let p: lsp_types::ColorPresentationParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
             let c = p.color;
@@ -577,6 +586,7 @@ enum EngineMsg {
     DocumentSymbol(Uri, Sender<Option<lsp_types::DocumentSymbolResponse>>),
     Highlight(Uri, Position, Sender<Option<Vec<lsp_types::DocumentHighlight>>>),
     Colors(Uri, Sender<Vec<lsp_types::ColorInformation>>),
+    Links(Uri, Sender<Vec<lsp_types::DocumentLink>>),
     PrepareRename(Uri, Position, Sender<Option<lsp_types::PrepareRenameResponse>>),
     Rename(Uri, Position, String, Sender<Result<lsp_types::WorkspaceEdit, String>>),
     WorkspaceSymbol(String, Sender<Vec<lsp_types::SymbolInformation>>),
@@ -1146,6 +1156,12 @@ impl Engine {
                         with_doc(&self.docs, &uri, |analysis, text| handlers::document_colors(analysis, text, &path))
                     })
                     .flatten();
+                let _ = reply.send(result.unwrap_or_default());
+            }
+            EngineMsg::Links(uri, reply) => {
+                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result =
+                    with_doc(&self.docs, &uri, |analysis, text| handlers::document_links(analysis, text, &path));
                 let _ = reply.send(result.unwrap_or_default());
             }
             EngineMsg::PrepareRename(uri, pos, reply) => {

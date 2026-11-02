@@ -173,7 +173,8 @@ fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
     if key.is_empty() || key.contains(['\\', ' ']) {
         return None;
     }
-    let arg = argument_at(&line[..start - 1])?;
+    // the text up to and with the bracket or comma before the key: the first key has no comma
+    let arg = argument_at(&line[..start])?;
     let target = match arg.cmd {
         "begin" => arg.groups.trim().trim_start_matches('{').split('}').next()?.to_string(),
         cmd => cmd.to_string(),
@@ -186,7 +187,12 @@ fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
     };
     let record = options.iter().find(|r| relative(r).as_deref() == Some(key))?;
     let mut markdown = format!("### `{key}`: key of `\\{}`\n\n", target.trim_start_matches('\\'));
-    let mined = text(record, "path")
+    // where the run defined the key (the package's file), not the call that loaded it
+    let defined = record.get("defined");
+    let site = |f: &str| defined.and_then(|d| d.get(f));
+    let defined_path = site("path").and_then(Json::as_str).map(str::to_string).or_else(|| text(record, "path"));
+    let mined = defined_path
+        .clone()
         .filter(|_| analysis.settings.plugins.docs)
         .and_then(|p| crate::plugin::docs::index(&analysis.settings.docs).lookup(std::path::Path::new(&p), key));
     if let Some((m, does)) = mined.as_ref().and_then(|m| Some((m, m.text.as_deref()?))) {
@@ -197,9 +203,8 @@ fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
         false => format!("default `{d}`"),
     });
     let kind = text(record, "kind").filter(|k| k != "code");
-    let line_of = |r: &Record| r.get("line").and_then(Json::as_u64);
     let from = text(record, "package")
-        .or_else(|| text(record, "path").map(|p| p.rsplit('/').next().unwrap_or(&p).to_string()));
+        .or_else(|| defined_path.as_ref().map(|p| p.rsplit('/').next().unwrap_or(p).to_string()));
     let facts: Vec<String> = [
         kind,
         default,
@@ -224,7 +229,8 @@ fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
             ));
         }
     }
-    if let (Some(path), Some(n)) = (text(record, "path"), line_of(record)) {
+    let line = site("line").or_else(|| record.get("line")).and_then(Json::as_u64);
+    if let (Some(path), Some(n)) = (defined_path, line) {
         markdown.push_str(&format!("`{path}:{n}`\n\n"));
     }
     if let Some((doc, url)) = mined.and_then(|m| m.link) {
@@ -1408,8 +1414,9 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
                 let open = open_environments(analysis, (pos.line, arg.col));
                 let snippet = *kind == OccKind::BeginEnvironment;
                 let close = after.starts_with('}');
-                // A name already written after the cursor stays as it is.
-                let fresh = close || after.trim().is_empty();
+                // A name already written after the cursor stays as it is. Text that only follows
+                // it (a comment, a word after a space) is not part of the name.
+                let fresh = close || !after.starts_with(|c: char| c.is_alphanumeric() || ":-_./*@".contains(c));
                 let here = open.iter().rev().enumerate().filter(|_| !snippet);
                 out.extend(here.map(|(i, e)| item(e.clone(), CompletionItemKind::MODULE, Some("open here".into()), i)));
                 for (env, items) in environments(analysis, pos) {
@@ -2375,6 +2382,31 @@ pub fn document_colors(analysis: &Analysis, doc: &Text, path: &str) -> Vec<lsp_t
         if !out.iter().any(|c: &lsp_types::ColorInformation| c.range == range) {
             out.push(lsp_types::ColorInformation { range, color });
         }
+    }
+    out
+}
+
+/// `textDocument/documentLink`: each name a load of this file resolved (`\usepackage{hyperref}`,
+/// `\input{intro}`) links to the file the run read for it, its implementation.
+pub fn document_links(analysis: &Analysis, doc: &Text, path: &str) -> Vec<lsp_types::DocumentLink> {
+    let mut out: Vec<lsp_types::DocumentLink> = Vec::new();
+    for load in analysis.facts.loads.iter().filter(|l| analysis.file_name(l.span.file) == path) {
+        let Some(file) = load.path.as_deref() else { continue };
+        let text = doc.line(load.span.line);
+        let from = (load.span.col as usize).min(text.len());
+        let name = load.name.as_str();
+        let Some(at) = word_before(text, from, name).or_else(|| word_after(text, from, name)) else { continue };
+        let line = load.span.line.saturating_sub(1);
+        let range = Range::new(Position::new(line, at as u32), Position::new(line, (at + name.len()) as u32));
+        if out.iter().any(|l| l.range == range) {
+            continue;
+        }
+        out.push(lsp_types::DocumentLink {
+            range,
+            target: Some(path_uri(file)),
+            tooltip: Some(format!("open {}", analysis.short_name(load.file.unwrap_or(analysis.main_file)))),
+            data: None,
+        });
     }
     out
 }

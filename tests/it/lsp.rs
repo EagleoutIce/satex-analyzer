@@ -785,6 +785,29 @@ fn open_file(server: &mut Server, dir: &std::path::Path, name: &str) -> (String,
     (uri, published)
 }
 
+/// A `\begin{` completion adds its `\end` when only a comment or a word after a space follows the cursor.
+#[test]
+fn begin_completion_closes_before_trailing_text() {
+    let text =
+        "\\documentclass{article}\n\\begin{document}\n\\begin{ite % later\n\\begin{ite and more\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("beginend", text);
+    for line in [2, 3] {
+        let items = complete(&mut server, &uri, line, 10);
+        let new_text = items
+            .iter()
+            .find(|i| i["label"] == "itemize")
+            .map(|i| i["textEdit"]["newText"].as_str().unwrap_or_default().to_string());
+        assert_eq!(
+            new_text.as_deref(),
+            Some("itemize}\n\t\\item $0\n\\end{itemize}"),
+            "line {line}: {:?}",
+            labels(&items)
+        );
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Inside an argument the list comes from what the run saw the command do.
 #[test]
 fn completion_knows_the_argument_it_is_in() {
@@ -1688,6 +1711,8 @@ fn hovering_a_key_shows_its_definition() {
     let size = hover(15);
     assert!(size.contains("key of `\\zset`") && size.contains("`big`") && size.contains("`small`"), "{size}");
     assert!(hover(12).is_empty() || !hover(12).contains("key of"), "a value is no key");
+    // the first key of a list has no comma before it
+    assert!(hover(8).contains("key of `\\zset`"), "{}", hover(8));
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
