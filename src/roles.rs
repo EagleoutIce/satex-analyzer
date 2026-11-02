@@ -964,49 +964,17 @@ fn seed(cmd: &str) -> Vec<Role> {
     }
 }
 
-/// Whether `cmd` reads a release date in an optional argument: some macro its
-/// body reaches compares that argument with a file's date, as `\@ifl@t@r`
-/// does with `\@parse@version`, which splits a date at its slashes. Found from
-/// the bodies alone, so the same holds for every command that reaches one.
+/// Whether `cmd` reads a release date from the text after it: its
+/// arguments flow, through the calls that read on past their own body, to a
+/// macro that splits them at slashes, as `\@ifl@t@r` does with
+/// `\@parse@version`. Found from the bodies alone, so the same holds for
+/// every command that reads one.
 pub fn takes_release(analysis: &Analysis, cmd: &str) -> bool {
-    let Some(start) = analysis.interner.lookup(cmd) else { return false };
+    let Some(sym) = analysis.interner.lookup(cmd) else { return false };
     let bodies = Bodies(analysis);
-    let mut made: crate::fixed::HashMap<Sym, Vec<Rc<MacroDef>>> = Default::default();
-    for d in &analysis.facts.defs {
-        if let Some(mac) = &d.mac {
-            made.entry(d.name).or_default().push(mac.clone());
-        }
-    }
-    let mut seen = vec![start];
-    let mut next = 0;
-    while let Some(&sym) = seen.get(next).filter(|_| seen.len() < REACH) {
-        next += 1;
-        let Some(mac) = bodies.get(sym) else { continue };
-        let bracketed = |p: usize| {
-            mac.parameter_text.items.windows(3).any(|w| {
-                matches!(w, [ParamItem::Lit(Tok::Chr('[', _)), ParamItem::Param(n), ParamItem::Lit(Tok::Chr(']', _))] if usize::from(*n) == p + 1)
-            })
-        };
-        // fresh per macro: a cycle's partial result cut off by the depth must not stand for the macro
-        if date_slots(analysis, &bodies, sym, DATE_DEPTH, &mut Default::default()).into_iter().any(bracketed) {
-            return true;
-        }
-        // every body the name had: a `\let` alias the run replaced with an error later still reached the loader
-        let had = made.get(&sym).into_iter().flatten().cloned();
-        for t in had.chain(Some(mac)).flat_map(|m| m.replacement_text.to_vec()) {
-            if let Tok::Cs(c) = t.tok
-                && !seen.contains(&c)
-                && analysis.env.meaning(c).as_macro().is_some()
-            {
-                seen.push(c);
-            }
-        }
-    }
-    false
+    // where the document writes it, any of its bodies may read the call
+    bodies.all(sym).iter().any(|m| !body_date_slots(&bodies, m, DATE_DEPTH, &mut Default::default()).is_empty())
 }
-
-/// How many macros [`takes_release`] looks through.
-const REACH: usize = 400;
 
 /// The macros as the preamble sees them: the format's meaning where it has
 /// one, since the run replaces what only the preamble may use
@@ -1018,113 +986,193 @@ impl Bodies<'_> {
         let kernel = self.0.kernel.as_ref().and_then(|k| k.meaning(sym).as_macro().cloned());
         kernel.or_else(|| self.0.env.meaning(sym).as_macro().cloned())
     }
-}
-/// How deep [`date_slots`] follows a body's calls.
-const DATE_DEPTH: usize = 6;
 
-/// The places among the arguments of `sym` (counting those a tail call
-/// reads past its own parameters) a body reads as a date: one whose text a
-/// macro with a `/`-delimited parameter splits, or one passed to a place
-/// that is itself such a date. A `\csname` forms a name, so no date.
-fn date_slots(
-    analysis: &Analysis,
-    bodies: &Bodies<'_>,
-    sym: Sym,
-    depth: usize,
-    known: &mut crate::fixed::HashMap<Sym, Vec<usize>>,
-) -> Vec<usize> {
-    if let Some(done) = known.get(&sym) {
+    /// Every body the run gave `sym` besides: `\documentclass` lets
+    /// `\usepackage` be `\RequirePackage` for the preamble alone.
+    fn all(&self, sym: Sym) -> Vec<Rc<MacroDef>> {
+        let mut out: Vec<Rc<MacroDef>> = Vec::new();
+        let made = self.0.facts.defs.iter().filter(|d| d.name == sym).filter_map(|d| d.mac.clone());
+        for m in self.get(sym).into_iter().chain(made) {
+            if !out.iter().any(|o| Rc::ptr_eq(o, &m)) {
+                out.push(m);
+            }
+        }
+        out
+    }
+
+    fn is(&self, t: &Token, p: crate::builtins::Primitive) -> bool {
+        matches!(t.tok, Tok::Cs(s) if self.0.env.meaning(s).prim() == Some(p))
+    }
+}
+
+/// The date slots found per macro, with the depth left when found.
+type Known = crate::fixed::HashMap<Sym, (usize, Vec<usize>)>;
+
+/// How deep [`date_slots`] follows a body's calls.
+const DATE_DEPTH: usize = 9;
+
+/// The places among the arguments of `sym` its body reads as a date.
+fn date_slots(bodies: &Bodies<'_>, sym: Sym, depth: usize, known: &mut Known) -> Vec<usize> {
+    // a result found with less depth left may miss what this one finds
+    if let Some((_, done)) = known.get(&sym).filter(|(d, _)| *d >= depth) {
         return done.clone();
     }
     let Some(mac) = bodies.get(sym) else { return Vec::new() };
-    known.insert(sym, Vec::new());
-    let slash = |m: &MacroDef| m.parameter_text.items.iter().any(|i| matches!(i, ParamItem::Lit(Tok::Chr('/', _))));
-    if slash(&mac) {
-        known.insert(sym, vec![0]);
-        return vec![0];
-    }
-    let mut out: Vec<usize> = Vec::new();
-    if depth > 0 {
-        let toks: Vec<&Token> =
-            mac.replacement_text.iter().filter(|t| !matches!(t.tok, Tok::Chr(_, Catcode::Space))).collect();
-        let arity = usize::from(mac.arity());
-        let mut tail = None;
-        for (k, t) in toks.iter().enumerate() {
-            let Tok::Cs(c) = t.tok else { continue };
-            let Some(callee) = bodies.get(c) else { continue };
-            let slots = date_slots(analysis, bodies, c, depth - 1, known);
-            if slots.is_empty() {
-                continue;
-            }
-            let (args, end) =
-                call_args(analysis, &toks[k + 1..], slash(&callee), slots.iter().max().map_or(0, |m| m + 1));
-            for &p in &slots {
-                let Some(arg) = args.get(p) else { continue };
-                if arg.iter().any(|t| is_prim(analysis, t, crate::builtins::Primitive::Csname)) {
-                    continue;
-                }
-                out.extend(arg.iter().filter_map(|t| match t.tok {
-                    Tok::Param(n) => Some(usize::from(n).saturating_sub(1)),
-                    _ => None,
-                }));
-            }
-            // a call at the body's end reads the rest of its arguments from after this macro's own
-            if k + 1 + end == toks.len() {
-                tail = Some((slots, args.len()));
-            }
-        }
-        if let Some((slots, supplied)) = tail {
-            out.extend(slots.into_iter().filter(|q| *q >= supplied).map(|q| arity + q - supplied));
-        }
-    }
-    out.sort_unstable();
-    out.dedup();
-    known.insert(sym, out.clone());
+    known.insert(sym, (depth, Vec::new()));
+    let out = body_date_slots(bodies, &mac, depth, known);
+    known.insert(sym, (depth, out.clone()));
     out
 }
 
-fn is_prim(analysis: &Analysis, t: &Token, p: crate::builtins::Primitive) -> bool {
-    matches!(t.tok, Tok::Cs(s) if analysis.env.meaning(s).prim() == Some(p))
+/// The places among the arguments of `mac` (counting those a tail call
+/// reads past its own parameters) its body reads as a date: one whose text
+/// a macro with a `/`-delimited parameter splits, or one passed to a place
+/// that is itself such a date. A `\csname` forms a name, so no date.
+fn body_date_slots(bodies: &Bodies<'_>, mac: &MacroDef, depth: usize, known: &mut Known) -> Vec<usize> {
+    use crate::builtins::Primitive as P;
+    if mac.parameter_text.items.iter().any(|i| matches!(i, ParamItem::Lit(Tok::Chr('/', _)))) {
+        return vec![0];
+    }
+    let mut out: Vec<usize> = Vec::new();
+    if depth == 0 {
+        return out;
+    }
+    let toks: Vec<&Token> =
+        mac.replacement_text.iter().filter(|t| !matches!(t.tok, Tok::Chr(_, Catcode::Space))).collect();
+    let param = |t: &&Token| match t.tok {
+        Tok::Param(n) => Some(usize::from(n).saturating_sub(1)),
+        _ => None,
+    };
+    for (k, t) in toks.iter().enumerate() {
+        let Tok::Cs(c) = t.tok else { continue };
+        let slots = date_slots(bodies, c, depth - 1, known);
+        let Some(&last) = slots.iter().max() else { continue };
+        if let Some(callee) = bodies.get(c) {
+            let (args, _) = call_args(bodies, &toks[k + 1..], &callee, last + 1);
+            for arg in slots.iter().filter_map(|&p| args.get(p)) {
+                if !arg.iter().any(|t| bodies.is(t, P::Csname)) {
+                    out.extend(arg.iter().filter_map(param));
+                }
+            }
+        }
+    }
+    // a call that ends the body reads the rest of its arguments from after this macro's own
+    let arity = usize::from(mac.arity());
+    let branch = toks.last().is_some_and(|t| bodies.is(t, P::Fi));
+    for (c, supplied) in tails(bodies, &toks, branch) {
+        let slots = date_slots(bodies, c, depth - 1, known);
+        out.extend(slots.into_iter().filter(|q| *q >= supplied).map(|q| arity + q - supplied));
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
-/// The first `n` arguments written after a call, and where they end: the
-/// text up to the next `/` for a macro that splits at one, else a group, a
-/// `\csname…\endcsname` or a single token each, a group without its braces.
-fn call_args<'a>(analysis: &Analysis, toks: &[&'a Token], slashed: bool, n: usize) -> (Vec<Vec<&'a Token>>, usize) {
+/// The calls in `toks` that read on past its end, each with how many
+/// arguments `toks` gives it: the last call, and the calls that end the
+/// arguments it is handed (`\@ifnextchar[{\a#1}{\a#1[]}` continues in
+/// `\a`). With `branch`, a call that ends a conditional's arm counts too.
+fn tails(bodies: &Bodies<'_>, toks: &[&Token], branch: bool) -> Vec<(Sym, usize)> {
     use crate::builtins::Primitive as P;
     let mut out = Vec::new();
-    let mut i = 0;
-    while out.len() < n && i < toks.len() {
-        if slashed && out.is_empty() {
-            let end = toks[i..].iter().position(|t| matches!(t.tok, Tok::Chr('/', _))).map_or(toks.len(), |e| i + e);
-            out.push(toks[i..end].to_vec());
-            i = end;
-            continue;
-        }
-        let start = i;
-        if is_prim(analysis, toks[i], P::Csname) {
-            while i < toks.len() && !is_prim(analysis, toks[i], P::Endcsname) {
-                i += 1;
-            }
-            i = (i + 1).min(toks.len());
-            out.push(toks[start..i].to_vec());
-        } else if matches!(toks[i].tok, Tok::Chr(_, Catcode::Begin)) {
-            let mut depth = 0;
-            while let Some(t) = toks.get(i) {
-                match t.tok {
-                    Tok::Chr(_, Catcode::Begin) => depth += 1,
-                    Tok::Chr(_, Catcode::End) => depth -= 1,
-                    _ => {}
+    let mut depth = 0i32;
+    for (k, t) in toks.iter().enumerate() {
+        match t.tok {
+            Tok::Chr(_, Catcode::Begin) => depth += 1,
+            Tok::Chr(_, Catcode::End) => depth -= 1,
+            Tok::Cs(c) if depth == 0 => {
+                let rest = &toks[k + 1..];
+                if let Some(callee) = bodies.get(c) {
+                    let (args, end) = call_args(bodies, rest, &callee, usize::from(callee.arity()));
+                    let ends_arm = rest.get(end).is_some_and(|t| bodies.is(t, P::Else) || bodies.is(t, P::Fi));
+                    if end == rest.len() || branch && ends_arm {
+                        out.push((c, args.len()));
+                        for arg in args.iter().filter(|a| !a.is_empty()) {
+                            out.extend(tails(bodies, arg, false));
+                        }
+                    }
                 }
-                i += 1;
-                if depth == 0 {
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The first `n` arguments written after a call of `callee`, and where they
+/// end, matched against its parameter text (tex.web § 392): a delimited one
+/// runs to its delimiter, an undelimited one past the parameters is a group
+/// without its braces, a `\csname…\endcsname` or a single token. Fewer than
+/// `n` where the text ends first: the call reads on past it.
+fn call_args<'a>(bodies: &Bodies<'_>, toks: &[&'a Token], callee: &MacroDef, n: usize) -> (Vec<Vec<&'a Token>>, usize) {
+    use crate::builtins::Primitive as P;
+    let items = &callee.parameter_text.items;
+    let mut out = Vec::new();
+    let mut i = 0;
+    let mut j = 0;
+    // one balanced item from `i`: a group, a `\csname…\endcsname` or a token
+    let item = |i: usize| -> usize {
+        let mut e = i;
+        let mut depth = 0i32;
+        let csname = bodies.is(toks[i], P::Csname);
+        while let Some(t) = toks.get(e) {
+            e += 1;
+            match t.tok {
+                Tok::Chr(_, Catcode::Begin) => depth += 1,
+                Tok::Chr(_, Catcode::End) => depth -= 1,
+                _ if csname && bodies.is(t, P::Endcsname) => break,
+                _ => {}
+            }
+            if depth <= 0 && !csname {
+                break;
+            }
+        }
+        e
+    };
+    let unbrace =
+        |i: usize, e: usize| match e >= i + 2 && matches!(toks[i].tok, Tok::Chr(_, Catcode::Begin)) && item(i) == e {
+            true => toks[i + 1..e - 1].to_vec(),
+            false => toks[i..e].to_vec(),
+        };
+    while out.len() < n && i < toks.len() {
+        match items.get(j) {
+            Some(ParamItem::Lit(lit)) => {
+                if toks[i].tok != *lit {
                     break;
                 }
+                i += 1;
+                j += 1;
             }
-            out.push(toks[start + 1..i.saturating_sub(1).max(start + 1)].to_vec());
-        } else {
-            out.push(vec![toks[i]]);
-            i += 1;
+            Some(ParamItem::Param(_)) => {
+                let delim: Vec<&Tok> = items[j + 1..]
+                    .iter()
+                    .map_while(|d| match d {
+                        ParamItem::Lit(t) => Some(t),
+                        ParamItem::Param(_) => None,
+                    })
+                    .collect();
+                j += 1 + delim.len();
+                if delim.is_empty() {
+                    let e = item(i);
+                    out.push(unbrace(i, e));
+                    i = e;
+                    continue;
+                }
+                let mut e = i;
+                while e < toks.len() && !toks[e..].iter().map(|t| &t.tok).take(delim.len()).eq(delim.iter().copied()) {
+                    e = item(e);
+                }
+                if e >= toks.len() {
+                    return (out, toks.len());
+                }
+                out.push(unbrace(i, e));
+                i = e + delim.len();
+            }
+            None => {
+                let e = item(i);
+                out.push(unbrace(i, e));
+                i = e;
+            }
         }
     }
     (out, i)
