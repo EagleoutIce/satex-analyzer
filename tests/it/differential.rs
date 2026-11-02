@@ -599,6 +599,11 @@ fn the_typeset_text_knows_its_fonts() {
 /// `\newtcolorbox{note}` makes the environment's `\note` with `\endnote`.
 #[test]
 fn names_one_call_defines_are_defined_together() {
+    // the quick jobs' TeX Live has no tcolorbox
+    let found = std::process::Command::new("kpsewhich").arg("tcolorbox.sty").output();
+    if !found.is_ok_and(|o| !o.stdout.is_empty()) {
+        return;
+    }
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("defined-together");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
