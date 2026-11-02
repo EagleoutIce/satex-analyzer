@@ -292,6 +292,21 @@ pub fn probe(analysis: &Analysis, sym: Sym, at: State) -> Option<Probed> {
     found
 }
 
+/// Which of `sym`'s braced arguments it looks up as a color name: one run
+/// with a different name in each, in the state the run ended in.
+pub fn color_arguments(analysis: &Analysis, sym: Sym) -> Vec<usize> {
+    let cfg = sandbox_config(&analysis.settings);
+    let names: Vec<String> = (0..TAIL).map(|i| format!("satexprobe{}", char::from(b'a' + i as u8))).collect();
+    let text: String = names.iter().map(|n| format!("{{{n}}}")).collect();
+    let Some(mut machine) = Machine::sandbox(&cfg, analysis, State::End) else { return Vec::new() };
+    machine.run_probe(sym, &text);
+    let used = machine.out.facts.color_uses.iter().filter_map(|u| names.iter().position(|n| *n == u.name));
+    let mut found: Vec<usize> = used.collect();
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
 fn past_run_deadline(cfg: &Config) -> bool {
     cfg.limits.seconds > 0 && run_started().is_some_and(|s| s.elapsed().as_secs() >= cfg.limits.seconds)
 }

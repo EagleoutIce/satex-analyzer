@@ -2331,6 +2331,20 @@ fn a_loading_commands_last_optional_argument_is_a_release_date() {
 
 /// In an argument the run looked a color up for (`\textcolor{…}`), completion offers the colors
 /// the run defined, each a color item whose documentation is its `#rrggbb` value.
+/// A command the document never called yet: one probe call shows which
+/// argument it looks up as a color.
+#[test]
+fn a_color_argument_completes_before_any_call() {
+    let text = "\\documentclass{article}\n\\usepackage{xcolor}\n\\definecolor{mine}{rgb}{0,0,1}\n\\begin{document}\nx\n\\end{document}\n\\textcolor{}{}\n";
+    let (mut server, uri, _, dir) = open_loaded("color-probe", text);
+    let first = complete(&mut server, &uri, 6, 11);
+    assert!(first.iter().any(|i| i["label"] == "mine" && i["kind"] == 16), "{:?}", labels(&first));
+    let second = complete(&mut server, &uri, 6, 13);
+    assert!(second.iter().all(|i| i["kind"] != 16), "{:?}", labels(&second));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_color_argument_completes_colors_with_their_values() {
     let text = "\\documentclass{article}\n\\usepackage{xcolor}\n\\definecolor{mine}{rgb}{0,0,1}\n\\newenvironment{boxed}{\\color{mine}}{}\n\\begin{document}\n\\textcolor{mine}{x} \\textcolor{}{y}\n\\begin{boxed}x\\end{boxed} \\begin{}\n\\end{document}\n";

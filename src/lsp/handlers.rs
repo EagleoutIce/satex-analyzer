@@ -1316,7 +1316,7 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
         let g = G.get_or_init(|| Regex::new(r"\{([^{}]*)\}").unwrap());
         g.captures(arg.groups).map(|c| c[1].trim().to_string())
     };
-    if arg.open == '{' && takes_colors(analysis, arg.cmd) {
+    if arg.open == '{' && takes_colors(analysis, arg) {
         return color_items(analysis);
     }
     if arg.open == '[' {
@@ -2396,8 +2396,13 @@ fn word_after(text: &str, from: usize, name: &str) -> Option<usize> {
 }
 
 /// Whether the run looked colors up for calls of `\cmd`: its argument names a color.
-fn takes_colors(analysis: &Analysis, cmd: &str) -> bool {
+fn takes_colors(analysis: &Analysis, arg: &Arg) -> bool {
+    let cmd = arg.cmd;
     let Some(sym) = analysis.interner.lookup(cmd) else { return false };
+    // No call to learn from: one probe call tells which argument names a color
+    if !analysis.facts.color_uses.iter().any(|u| u.via == Some(sym)) {
+        return crate::probe::color_arguments(analysis, sym).contains(&arg.groups.matches('{').count());
+    }
     let call = format!("\\{cmd}{{");
     let mut texts: crate::fixed::HashMap<u16, Option<String>> = Default::default();
     // `\begin{tikzpicture}` looks colors up too, but not in its argument
