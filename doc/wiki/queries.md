@@ -179,9 +179,9 @@ severity     code                          count  message              file
 imprecision  paths-joined-at               1      2 paths arrived at…  paper.tex       @ paper.tex:56:13
 imprecision  call-summarized               1      a call with unknow…  latex.ltx       @ latex.ltx:16142:22
 imprecision  argument-ends-in-unknown      1      a delimited argume…  latex.ltx       @ latex.ltx:20534:3
-imprecision  unknown-name                  5      a name built from …  latex.ltx       @ latex.ltx:20322:31
-imprecision  unknown-name                  5      a name built from …  latex.ltx       @ latex.ltx:20322:41
-… 21 more lines omitted
+imprecision  unknown-name                  6      a name built from …  latex.ltx       @ latex.ltx:20322:31
+imprecision  unknown-name                  6      a name built from …  latex.ltx       @ latex.ltx:20322:41
+… 12 more lines omitted
 ```
 
 ## distribution
