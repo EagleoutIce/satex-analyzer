@@ -149,9 +149,10 @@ fn a_class_named_by_a_relative_path_is_read_and_defines_its_commands() {
         "a.tex",
         "\\documentclass{../template/mycls}\n\\begin{document}\n\\ifexam\\clearpage\\fi\nx\n\\end{document}\n",
     );
-    let wanted = dir.join("doc").join("../template/mycls.cls").display().to_string();
+    let wanted = dir.join("doc").join("../template/mycls.cls");
     let read: Vec<&str> = analysis.files.iter().map(|f| f.path.as_str()).collect();
-    assert!(read.contains(&wanted.as_str()), "read {wanted}, not {read:?}");
+    // compared as paths: Windows spells one file with `\` and `/`
+    assert!(read.iter().any(|r| std::path::Path::new(r) == wanted), "read {}, not {read:?}", wanted.display());
     assert!(defined(&analysis, "ifexam"), "the class defines \\ifexam");
     assert_eq!(gaps(&analysis), Vec::new(), "the class is read, so \\fi has its \\if");
     let _ = std::fs::remove_dir_all(&dir);
