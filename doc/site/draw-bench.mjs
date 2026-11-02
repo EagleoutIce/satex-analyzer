@@ -105,6 +105,13 @@ const shapes = [
       -0.5,
     ]]),
   ]),
+  // an alpha as a fish: a closed loop on the left, the tail strokes crossing on the right
+  G('alpha fish', 'alpha', [ell(-.45, 0, .45, .45), line([-.1, -.45], [.9, .5]), line([-.1, .45], [.9, -.5])]),
+  G('alpha loop+tail', 'alpha', [ell(-.45, 0, .45, .45), path([[-.1, .4], [.4, -.2], [.9, -.5]])]),
+  G('alpha two strokes', 'alpha', [
+    spline([[.9, .6], [.3, .1], [-.3, -.4], [-.8, 0], [-.3, .5], [.2, .2]]),
+    spline([[-.3, -.4], [.3, -.2], [.9, -.55]]),
+  ]),
   G('beta', 'beta', [
     spline([
       [-0.5, 1],

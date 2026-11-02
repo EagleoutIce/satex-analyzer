@@ -1021,6 +1021,8 @@
     const mocks = knows.map((k) => k.querySelector('template')?.innerHTML ?? null), effects = knows.map((k) => k.dataset.effect ?? '');
     const parts = knows.map((k) => [...k.childNodes].filter((n) => n.nodeName !== 'TEMPLATE')
       .map((n) => ({ text: n.textContent, code: n.nodeName === 'CODE', lint: n.nodeName === 'U', fix: n.dataset?.fix ?? null, href: n.nodeName === 'A' ? n.getAttribute('href') : null })));
+    // TikZ is set as its logo is, with an italic k
+    const tikz = (html) => html.replace(/Tik(?=Z|$)/g, 'Ti<i class="tk">k</i>');
     const typed = (i, n) => {
       let left = n;
       // a `<u>` is a spot a linter would mark: with `data-fix` it holds the wrong text and the right one, the first turning into the second
@@ -1029,7 +1031,7 @@
         left -= text.length;
         if (!shown) return '';
         if (lint) return `<u class="claim-fix"><span>${esc(shown)}</span><span>${esc(shown === text ? fix ?? '' : '')}</span></u>`;
-        return code ? `<code>${esc(shown)}</code>` : href ? `<a href="${esc(href)}">${esc(shown)}</a>` : esc(shown);
+        return code ? `<code>${tikz(esc(shown))}</code>` : href ? `<a href="${esc(href)}">${tikz(esc(shown))}</a>` : tikz(esc(shown));
       }).join('');
     };
     const length = (i) => parts[i].reduce((sum, p) => sum + p.text.length, 0);
@@ -1070,9 +1072,9 @@
     // each claim acts out its words in a few classes: the pip is the shared mark for "noticed", the rest is CSS
     const tag = (cls, mark) => (w) => `<span class="claim-tag ${cls}" data-tag="${mark}">${w}</span>`;
     const arm = (cls) => `<span class="claim-arm ${cls}" aria-hidden="true">branches</span>`;
-    const peek = '<span class="claim-peek" aria-hidden="true"><code>TikZpingus</code><span>written by the author of SaTeX</span></span>';
+    const peek = '<span class="claim-peek" aria-hidden="true"><code>Ti<i class="tk">k</i>Zpingus</code><span>written by the author of SaTeX</span></span>';
     const WRAPS = {
-      peek: [[/(<a [^>]*>TikZpingus<\/a>)/, `<span class="claim-host">$1${peek}</span>`]],
+      peek: [[/(<a [^>]*>Ti<i class="tk">k<\/i>Zpingus<\/a>)/, `<span class="claim-host">$1${peek}</span>`]],
       branch: [[/branches/, `<span class="claim-fork">${arm('up')}<span class="claim-base">branches</span>${arm('down')}</span>`]],
       options: [[/options/, '<span class="claim-opt">options</span>']],
       runs: [[/runs/, tag('claim-count', '')]],

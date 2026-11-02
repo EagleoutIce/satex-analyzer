@@ -32,16 +32,19 @@ self.satexDraw = (
     bitmap: 0.6,
     outline: 1,
     stroke: 1.5,
-    either: 0,
+    // an outline or a centre line, whichever fits better: a loop drawn as one stroke or filled alike (bench: sum of ranks 394 -> 321)
+    either: 1,
     grid: 8,
     bins: 4,
-    orient: 96,
+    orient: 30,
     // no cap on candidates or time: more packages may only add matches, never crowd one out
     shortlist: 1e9,
     refine: 1e9,
     off: ['emoji', 'twemojis'],
     trusted: 0.2,
     workers: 4,
+    // the symbol list's size, as a factor of its base size (the address's `zoom`)
+    zoom: 1.2,
     least: 12,
     on: ['worldflags'],
     pixel: 1.5,
@@ -83,7 +86,10 @@ self.satexDraw = (
     kind: query.get('kind') ?? '',
     mode: query.get('mode') ?? '',
     shape: query.get('shape') ?? '',
+    zoom: Number(query.get('zoom')) || DRAW.zoom,
   };
+  const zoomApply = () => root.style.setProperty('--draw-zoom', String(Math.min(3, Math.max(0.5, drawFilter.zoom))));
+  zoomApply();
   let chosen = {};
   try {
     chosen = JSON.parse(localStorage.getItem('satex-draw-pkgs') ?? '{}');
@@ -98,6 +104,8 @@ self.satexDraw = (
       if (drawFilter[k]) q.set(k, drawFilter[k]);
       else q.delete(k);
     }
+    if (drawFilter.zoom !== DRAW.zoom) q.set('zoom', String(drawFilter.zoom));
+    else q.delete('zoom');
     const pkgs = Object.entries(chosen).map(([p, on]) => `${on ? '+' : '-'}${p}`).join('');
     if (pkgs) q.set('pkgs', pkgs);
     else q.delete('pkgs');
@@ -730,6 +738,40 @@ self.satexDraw = (
     }
     return edits + (a.length - i) + (b.length - j) <= 1;
   };
+  /** The `@` filters of the search, as the settings dialog's: name -> [what it lets through, test of a symbol by its value]. */
+  const SEARCH_FILTERS = {
+    math: ['math mode', (s) => drawMode(s) === 'math'],
+    text: ['text mode', (s) => drawMode(s) === 'text'],
+    symbol: ['symbols', (s) => drawKind(s) === 'symbol'],
+    letter: ['letters', (s) => drawKind(s) === 'letter'],
+    pixel: ['pictures, no font', (s) => !!s.bitmap],
+    font: ['set by a font', (s) => !s.bitmap],
+    pkg: ['one package, as in @pkg:amssymb', (s, v) => packageNamed(s.pkg, [v])],
+    cat: ['a symbol list category, as in @cat:arrows', (s, v) => !!s.cat && s.cat.toLowerCase().includes(v)],
+  };
+  /** The search text as plain words and the tests of its `@name` or `@name:value` filters; an unknown filter stays a word. */
+  function searchParse(text) {
+    const tests = [], words = [];
+    for (const w of text.trim().toLowerCase().split(/\s+/).filter(Boolean)) {
+      const [, name, value = ''] = w.match(/^@([a-z]+)(?::(.*))?$/) ?? [];
+      const f = SEARCH_FILTERS[name];
+      if (f && (value || !['pkg', 'cat'].includes(name))) tests.push((s) => f[1](s, value));
+      else words.push(...w.replace(/^\\/, '').split(/[\-_]+/).filter(Boolean));
+    }
+    return { words, tests };
+  }
+  /** The filters the last word of the search (one that starts with `@`) completes to, with what each does. */
+  function searchHints(text) {
+    const typing = text.match(/(?:^|\s)(@\S*)$/)?.[1]?.toLowerCase();
+    if (typing == null) return [];
+    return Object.entries(SEARCH_FILTERS).map(([n, [about]]) => [`@${n}${['pkg', 'cat'].includes(n) ? ':' : ''}`, about])
+      .filter(([f]) => f.startsWith(typing) && f !== typing);
+  }
+  const searchShow = () => {
+    const hints = searchHints($('draw-search').value);
+    $('draw-hints').hidden = !hints.length;
+    $('draw-hints').innerHTML = hints.map(([f, about]) => `<button type="button" class="lib-kind" data-filter="${esc(f)}" title="${esc(about)}">${esc(f)}</button>`).join('');
+  };
   /** How well the search words name a symbol, lower better, or null: the name itself first, then a word
    * the name or description starts, then one inside a word, then one a letter off (a typo). */
   const named = (s, words) => {
@@ -800,9 +842,7 @@ self.satexDraw = (
   async function drawMatch(fresh = true) {
     const mine = fresh ? ++matching : matching, list = $('draw-list'), f = features(pad);
     const flips = f ? [mirrored(pad, -1, 1), mirrored(pad, 1, -1)] : [];
-    const words = $('draw-search').value.trim().toLowerCase().replace(/^\\/, '').split(/[\s\-_]+/).filter(
-      Boolean,
-    );
+    const { words, tests } = searchParse($('draw-search').value);
     if (fresh) {
       started = performance.now();
       limit = DRAW.more;
@@ -825,6 +865,7 @@ self.satexDraw = (
         return false;
       }
       if (drawFilter.shape && (drawFilter.shape === 'pixel') !== !!s.bitmap) return false;
+      if (!tests.every((t) => t(s))) return false;
       // within a rank the more relied-on package first; browsing puts plain characters and pictures last
       const known = table.weight?.[s.pkg] ?? 0,
         plain = (s.code > 32 && s.code < 128 ? 1 : 0) + (s.bitmap ? 0.6 : 0);
@@ -1321,7 +1362,19 @@ self.satexDraw = (
       if (drawn) drawMatch();
     });
     $('draw-clear').onclick = clear;
-    $('draw-search').addEventListener('input', () => drawMatch());
+    $('draw-search').closest('.draw-top').insertAdjacentHTML('afterend', '<div id="draw-hints" class="lib-kinds draw-filters" role="group" aria-label="search filters" hidden></div>');
+    $('draw-search').addEventListener('input', () => {
+      searchShow();
+      drawMatch();
+    });
+    $('draw-hints').addEventListener('click', (e) => {
+      const f = e.target.closest('[data-filter]')?.dataset.filter, input = $('draw-search');
+      if (!f) return;
+      input.value = `${input.value.replace(/@\S*$/, '')}${f}${f.endsWith(':') ? '' : ' '}`;
+      input.focus();
+      searchShow();
+      drawMatch();
+    });
     // day or night: kept in the address (an embedding frame, a reload) and in the browser
     const theme = $('draw-theme'), html = document.documentElement;
     if (theme) {

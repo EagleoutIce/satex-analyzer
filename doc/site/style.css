@@ -918,7 +918,7 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .draw-pad { flex: none; width: min(19.2rem, 46vw); display: grid; gap: .4rem; justify-items: start; align-content: start; }
 #draw-pad { width: 100%; height: auto; aspect-ratio: 1; border: 1px dashed var(--border); border-radius: 8px; background: var(--sunk); color: var(--fg); touch-action: none; cursor: crosshair; }
 .draw-results { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: .4rem; }
-.draw-list { flex: 1; min-height: 0; overflow: auto; isolation: isolate; margin: 0; padding: 0; list-style: none; font-size: .82rem; }
+.draw-list { zoom: var(--draw-zoom, 1.2); flex: 1; min-height: 0; overflow: auto; isolation: isolate; margin: 0; padding: 0; list-style: none; font-size: .82rem; }
 .draw-total { margin: 0; font-size: .72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .draw-total.refining::after { content: " · refining…"; }
 .draw-tools .pill[aria-pressed=true] { color: var(--accent); } .draw-meta { flex: 1; min-width: 0; margin-left: .2rem; font-size: .66rem; line-height: 1.25; }
 .draw-solo .draw-box > .draw-results { max-height: none; } .draw-results .search[hidden], .draw-filters[hidden] { display: none; } .draw-results .search { flex: none; z-index: 2; }
@@ -1152,7 +1152,7 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 @media (max-width: 36rem) { .draw-top select.dropdown { max-width: none; } }
 /* a narrow list keeps a row's buttons behind one toggle, so the name and packages keep their room */
 .draw-list { container: drawlist / inline-size; } .draw-acts-toggle { display: none; }
-@container drawlist (max-width: 28rem) {
+@container drawlist (max-width: 14rem) {
   .draw-acts-toggle { display: inline-flex; font-size: .9rem; line-height: 1; }
   .draw-acts:not(.open) > :not(.draw-acts-toggle) { display: none; }
   .draw-acts.open { flex-wrap: wrap; justify-content: flex-end; max-width: 4.6rem; }
@@ -1216,14 +1216,14 @@ button.draw-cat { border: 0; font: inherit; font-size: .68rem; cursor: pointer; 
 .claim-rot > span.shows .claim-tag::after, .claim-rot > span.shows .claim-fix::after { animation: pip-in var(--claim-t) var(--ease) var(--claim-act) both; }
 @keyframes pip-in { from { opacity: 0; translate: 0 .3em; } to { opacity: 1; } }
 /* a wrong text turns into the right one: crossfade, the width following */
-.claim-fix { display: inline-grid; justify-items: center; overflow: visible; text-decoration: none; white-space: pre; width: var(--from); transition: width var(--claim-t) var(--ease) var(--claim-act); }
+.claim-fix { display: inline-grid; justify-items: center; overflow: visible; text-decoration: none; white-space: pre; width: var(--from); transition: width var(--claim-t) var(--ease) calc(var(--claim-act) + .25s); }
 .claim-fix > span { grid-area: 1 / 1; transition: opacity var(--claim-t) var(--ease) var(--claim-act), translate var(--claim-t) var(--ease) var(--claim-act), color var(--claim-t) var(--ease); }
-.claim-fix > span:first-child { color: var(--error); }
+.claim-fix > span:first-child { color: var(--error); transition-duration: .25s, .25s, var(--claim-t); }
 .claim-fix > span:last-child { opacity: 0; translate: 0 .35em; color: var(--c2); }
 .claim-fix::after { content: "✓"; color: var(--c2); }
 .claim-rot > span.shows .claim-fix { width: var(--to); }
 .claim-rot > span.shows .claim-fix > span:first-child { opacity: 0; translate: 0 -.35em; }
-.claim-rot > span.shows .claim-fix > span:last-child { opacity: 1; translate: none; }
+.claim-rot > span.shows .claim-fix > span:last-child { opacity: 1; translate: none; transition-delay: calc(var(--claim-act) + .25s), calc(var(--claim-act) + .25s), 0s; }
 /* the undecided word shows both arms, moving apart vertically, and joins them again */
 .claim-arm { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
 .claim-fork::before { content: ""; position: absolute; left: -.3em; top: 50%; height: 0; width: 2px; translate: 0 -50%; border-radius: 2px; background: var(--accent); opacity: 0; }
@@ -1244,15 +1244,18 @@ button.draw-cat { border: 0; font: inherit; font-size: .68rem; cursor: pointer; 
 .claim-rot > span.shows .claim-lig .lig-fi { opacity: 1; }
 .claim-rot > span.shows .claim-lig { box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent) 60%, transparent); border-radius: 2px; transition: box-shadow var(--claim-t) var(--ease); }
 /* options: brackets open around the word. runs: a counter ticks. compiled yesterday and not today: a tick and a cross */
-.claim-opt::before, .claim-opt::after { position: absolute; top: 0; opacity: 0; color: var(--accent); font-weight: 400; transition: opacity var(--claim-t) var(--ease) var(--claim-act), translate var(--claim-t) var(--ease) var(--claim-act); }
-.claim-opt::before { content: "["; left: 0; translate: .3em 0; } .claim-opt::after { content: "]"; right: 0; translate: -.3em 0; }
-.claim-rot > span.shows .claim-opt::before { opacity: 1; translate: -.2em 0; } .claim-rot > span.shows .claim-opt::after { opacity: 1; translate: .2em 0; }
+.claim-opt { display: inline-block; margin: 0; transition: margin var(--claim-t) var(--ease) var(--claim-act); }
+.claim-opt::before, .claim-opt::after { position: absolute; top: 0; bottom: 0; opacity: 0; color: var(--accent); font: inherit; line-height: inherit; transition: opacity var(--claim-t) var(--ease) var(--claim-act), translate var(--claim-t) var(--ease) var(--claim-act); }
+.claim-opt::before { content: "["; right: 100%; translate: .3em 0; } .claim-opt::after { content: "]"; left: 100%; translate: -.3em 0; }
+.claim-rot > span.shows .claim-opt { margin: 0 .35em; }
+.claim-rot > span.shows .claim-opt::before, .claim-rot > span.shows .claim-opt::after { opacity: 1; translate: none; }
 .claim-count::after { content: "1"; }
 .claim-rot > span.shows .claim-count::after { animation: pip-in var(--claim-t) var(--ease) var(--claim-act) both, runs-count calc(var(--claim-t) * 3) steps(1) var(--claim-act) both; }
 @keyframes runs-count { 0% { content: "×1"; } 40% { content: "×2"; } 100% { content: "×2"; } }
 .claim-ok::after, .claim-bad::after { content: attr(data-tag); }
 .claim-ok::after { color: var(--c2); } .claim-bad::after { color: var(--error); animation-delay: calc(var(--claim-act) + var(--claim-t)) !important; }
 /* a link draws its underline like a hover, then a peek of its target opens under it, as an editor's go-to-definition does */
+.claim-rot i.tk { font-style: italic; }
 .claim-host { position: relative; }
 .claim-host a { text-decoration: none; background: linear-gradient(currentColor, currentColor) 0 100% / 0 2px no-repeat; transition: background-size var(--claim-t) var(--ease) var(--claim-act); }
 .claim-rot > span.shows .claim-host a { background-size: 100% 2px; }
@@ -1304,3 +1307,5 @@ button.draw-cat { border: 0; font: inherit; font-size: .68rem; cursor: pointer; 
 /* a footnote: the insert's text at the foot, small, after a short rule (TeX's \footnoterule) */
 p.ts.ts-foot { font-size: .8em; margin-top: .4em; padding-top: .3em; position: relative; }
 p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 2.5em; border-top: 1px solid var(--muted); }
+.draw-foot { flex: none; margin: .3rem 0 0; text-align: center; font-size: .72rem; } .draw-foot a { color: var(--muted); text-decoration: none; } .draw-foot a:hover { color: var(--accent); text-decoration: underline; }
+@media (max-width: 699px) { .claim-complete { white-space: normal; } .claim-complete li { flex-wrap: wrap; gap: .05rem .8rem; } }

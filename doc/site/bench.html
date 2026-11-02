@@ -1,42 +1,55 @@
 <section class="band" id="bench">
-  <h1>Benchmarks</h1>
-  <p class="sub">What <code>satex lint</code> costs on the benchmark documents, per release and kernel: time per stage, memory, work done and how precise the result is. The documents are listed in <a href="{{repository}}/blob/main/benches/docs.txt"><code>benches/docs.txt</code></a>. Each number is a warm run after one cold run built the caches.</p>
-  <p class="bench-ctl">
+  <header class="bench-head">
+    <h1>SaTeX benchmark history</h1>
+    <a id="b-badge" class="bench-badge" href="{{repository}}/commits/main"></a>
+  </header>
+  <p class="sub">What <code>satex lint</code> costs on the benchmark documents, per release and kernel: time per phase, memory, work done and how precise the result is. The documents are listed in <a href="{{repository}}/blob/main/benches/docs.txt"><code>benches/docs.txt</code></a>. Each number is a warm run after one cold run built the caches.</p>
+  <div class="bench-bar-ctl" role="group" aria-label="what to show">
     <label>Kernel <select id="b-kernel"></select></label>
     <label>Release <select id="b-version"></select></label>
-  </p>
+    <span class="bench-toggle" role="group" aria-label="view"><button type="button" data-view="abs" aria-pressed="true">Absolute</button><button type="button" data-view="delta" aria-pressed="false">Delta vs. previous</button></span>
+    <span class="bench-dl"><a id="b-json" href="{{root}}bench/data.json" download>Data JSON</a><a id="b-csv" href="#" download="satex-bench.csv">Visible CSV</a></span>
+  </div>
   <p id="b-note" class="muted small"></p>
-  <div id="b-cards" class="bench-cards"></div>
-  <h2>Time per stage</h2>
-  <p class="muted small">Warm run of the chosen release. Discovery finds the TeX tree, the kernel is the format satex reads or builds, the document stage is the mouth and stomach reading and executing every file, lint runs the rules. Other is the rest of the wall time.</p>
-  <div id="b-stages" class="bench-stages"></div>
-  <p id="b-stage-legend" class="bench-legend"></p>
-  <h2>Over releases</h2>
-  <div id="b-charts" class="bench-charts"></div>
-  <p id="b-legend" class="bench-legend"></p>
-  <h2>Every document and kernel</h2>
-  <p class="muted small">Click a header to sort. A dash means the release predates that number.</p>
-  <div class="table-scroll"><table id="b-table" class="long bench-table"></table></div>
+  <div class="bench-tiles">
+    <details class="bench-tile wide" open><summary>Releases</summary><div class="table-scroll"><table id="b-releases" class="long bench-table"></table></div></details>
+    <details class="bench-tile wide" open><summary>Selected release</summary><div id="b-cards" class="bench-cards"></div></details>
+    <details class="bench-tile" open><summary>Time per phase and release</summary><div id="b-phase-chart"></div><p id="b-stage-legend" class="bench-legend"></p><p class="muted small">Discovery finds the TeX tree. The format is the kernel satex reads or builds. The document phase is the mouth and stomach reading and executing every file. Hooks and lint follow. Other is the rest of the wall time. Summed over the documents.</p></details>
+    <details class="bench-tile" open><summary>Precision per release</summary><div id="b-prec-chart"></div><p id="b-prec-legend" class="bench-legend"></p><p class="muted small">Spots where satex over-approximates, fewer is better. Summed over the documents.</p></details>
+    <details class="bench-tile wide" open><summary>Time per phase and document</summary><div id="b-stages" class="bench-stages"></div></details>
+    <details class="bench-tile wide" open><summary>Over releases</summary><div id="b-charts" class="bench-charts"></div><p id="b-legend" class="bench-legend"></p></details>
+    <details class="bench-tile wide"><summary>Every document and kernel</summary><p class="muted small">Click a header to sort. A dash means the release predates that number.</p><div class="table-scroll"><table id="b-table" class="long bench-table docs"></table></div></details>
+  </div>
 </section>
 <style>
-.bench-ctl { display: flex; flex-wrap: wrap; gap: 1rem; }
-.bench-ctl select { font: inherit; background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: .2rem .5rem; }
-.bench-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: .7rem; margin: 1rem 0; }
-.bench-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: .6rem .8rem; box-shadow: var(--shadow); }
+.bench-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem 1rem; }
+.bench-badge { font: 600 .8rem ui-monospace, Menlo, monospace; padding: .15rem .6rem; border-radius: 999px; background: var(--sunk); color: var(--fg); border: 1px solid var(--border); text-decoration: none; }
+.bench-bar-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1.2rem; padding: .6rem .8rem; margin: 1rem 0 .4rem; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.bench-bar-ctl select { font: inherit; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: .2rem .5rem; }
+.bench-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.bench-toggle button { font: inherit; font-size: .85rem; padding: .2rem .7rem; border: 0; background: none; color: var(--fg); cursor: pointer; }
+.bench-toggle button[aria-pressed=true] { background: var(--accent); color: var(--bg); }
+.bench-dl { display: flex; gap: 1rem; margin-left: auto; font-size: .85rem; }
+.bench-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap: .8rem; }
+.bench-tile { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: .2rem .9rem .8rem; box-shadow: var(--shadow); min-width: 0; }
+.bench-tile.wide { grid-column: 1 / -1; }
+.bench-tile > summary { cursor: pointer; font-weight: 600; padding: .6rem 0; }
+.bench-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: .6rem; }
+.bench-card { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: .5rem .7rem; }
 .bench-card small { display: block; color: var(--muted); font-size: .78rem; }
-.bench-card b { display: block; font-size: 1.45rem; line-height: 1.25; font-variant-numeric: tabular-nums; }
-.bench-card .delta { font-size: .8rem; font-variant-numeric: tabular-nums; color: var(--muted); }
-.bench-card .delta.better { color: var(--safe); } .bench-card .delta.worse { color: var(--error); }
+.bench-card b { display: block; font-size: 1.35rem; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.bench-card .delta, .bench-table .delta { font-size: .78rem; font-variant-numeric: tabular-nums; color: var(--muted); }
+.bench-table .delta { margin-left: .35em; }
+.delta.better { color: var(--safe); } .delta.worse { color: var(--error); }
 .bench-stages { display: grid; grid-template-columns: minmax(6rem, 14rem) 1fr; gap: .45rem .8rem; align-items: center; }
 .bench-stages .lab { font-size: .85rem; overflow-wrap: anywhere; }
-.bench-stages .lab span { color: var(--muted); }
 .bench-bar { display: flex; height: 1.3rem; border-radius: 5px; overflow: hidden; background: var(--sunk); }
 .bench-bar i { display: block; min-width: 1px; }
 .bench-bar em { margin-left: .5rem; font-style: normal; font-size: .8rem; color: var(--muted); white-space: nowrap; align-self: center; }
 .bench-bar-row { display: flex; }
 .bench-bar-row .bench-bar { width: var(--w); flex: none; }
 .bench-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: .8rem; }
-.bench-chart { width: 100%; height: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.bench-chart { width: 100%; height: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; }
 .bench-chart text { fill: var(--muted); font-size: 10px; font-family: inherit; }
 .bench-chart text.ttl { fill: var(--fg); font-size: 12px; font-weight: 600; }
 .bench-chart .grid { stroke: var(--border); stroke-width: 1; }
@@ -44,10 +57,11 @@
 .bench-legend { display: flex; flex-wrap: wrap; gap: .3rem 1rem; font-size: .85rem; }
 .bench-legend i { display: inline-block; width: .8rem; height: .8rem; border-radius: 2px; margin-right: .3rem; vertical-align: -1px; }
 .bench-table td, .bench-table th { text-align: right; white-space: nowrap; }
-.bench-table td:nth-child(-n+2), .bench-table th:nth-child(-n+2) { text-align: left; }
+.bench-table td:first-child, .bench-table th:first-child { text-align: left; }
+.bench-table.docs td:nth-child(-n+2), .bench-table.docs th:nth-child(-n+2) { text-align: left; }
 .bench-table td.no { color: var(--muted); }
 .bench-table td.bad { color: var(--error); }
-@media (max-width: 600px) { .bench-stages { grid-template-columns: 1fr; gap: .1rem; } .bench-stages .lab { margin-top: .5rem; } }
+@media (max-width: 600px) { .bench-stages { grid-template-columns: 1fr; gap: .1rem; } .bench-stages .lab { margin-top: .5rem; } .bench-dl { margin-left: 0; } }
 </style>
 <script>
 (async () => {
@@ -55,6 +69,9 @@
   const NS = "http://www.w3.org/2000/svg";
   const SERIES = ["--c4", "--c1", "--c2", "--c5", "--c6", "--c3", "--c0", "--c7"];
   const STAGES = [["discovery", "--c6"], ["format", "--c4"], ["document", "--c2"], ["hooks", "--c0"], ["lint", "--c5"], ["other", "--border"]];
+  const PHASE = { discovery: "discovery", format: "kernel format", document: "mouth and stomach", hooks: "hooks", lint: "linting", other: "other" };
+  const PRECISION = [["imprecision", "--c3"], ["unsupported", "--c1"], ["assumption", "--c5"], ["warning", "--c4"], ["info", "--c6"]];
+  let view = "abs";
   let data;
   try { data = await (await fetch("{{root}}bench/data.json")).json(); } catch { data = []; }
   if (!data.length) { $("b-note").textContent = "No benchmark data yet. Run python3 scripts/bench.py --build in the repository and reload."; return; }
@@ -140,7 +157,7 @@
           if (ms <= 0) continue;
           const seg = html("i");
           seg.style.cssText = `width:${ms / (r.wall * 1e3) * 100}%;background:var(${color})`;
-          seg.title = `${name}: ${ms.toFixed(1)} ms`;
+          seg.title = `${PHASE[name]}: ${ms.toFixed(1)} ms`;
           inner.append(seg);
         }
       } else {
@@ -151,7 +168,7 @@
       rows.push(lab, bar);
     }
     $("b-stages").replaceChildren(...rows);
-    const legend = STAGES.map(([name, color]) => { const s = html("span"); const sw = html("i"); sw.style.background = `var(${color})`; s.append(sw, name); return s; });
+    const legend = legendOf(STAGES, PHASE);
     $("b-stage-legend").replaceChildren(...legend);
     if (runs.length && !timed.length) $("b-stages").prepend(Object.assign(html("p", "muted small", "This release has no per-stage times, only the wall time."), { style: "grid-column:1/-1" }));
   }
@@ -163,7 +180,7 @@
     const all = series.flat().filter(v => v != null);
     svg.append(el("text", { class: "ttl", x: L, y: 16 }, METRICS[metric][0]));
     if (!all.length) { svg.append(el("text", { x: W / 2, y: H / 2, "text-anchor": "middle" }, "no data in these releases")); return svg; }
-    const max = Math.max(...all, 1e-9) * 1.08;
+    const max = Math.max(...all, metric === "wall" ? 1e-9 : 1) * 1.08;
     const x = i => L + (data.length < 2 ? (W - L - R) / 2 : i * (W - L - R) / (data.length - 1));
     const y = v => T + (H - T - B) * (1 - v / max);
     for (let g = 0; g <= 3; g++) { const v = max * g / 3; svg.append(el("line", { class: "grid", x1: L, x2: W - R, y1: y(v), y2: y(v) }), el("text", { x: L - 5, y: y(v) + 3, "text-anchor": "end" }, fmt(v))); }
@@ -194,6 +211,80 @@
     ["Findings", r => r.findings, fmt], ["Rules", r => r.stats?.rules, fmt],
     ["Cache", r => r.stats ? (r.stats.cache.kernel ? 1 : 0) + (r.stats.cache.discovery ? 1 : 0) : null, v => `${v} of 2`],
     ["End", r => r.timeout ? "timeout" : r.end ? "yes" : "no", (v) => v, "text"]];
+
+  const legendOf = (items, names = {}) => items.map(([name, color]) => { const s = html("span"); const sw = html("i"); sw.style.background = `var(${color})`; s.append(sw, names[name] ?? name); return s; });
+  const sumOver = (entry, kernel, get) => entry.runs.filter(r => r.kernel === kernel).reduce((t, r) => { const v = get(r); return v == null ? t : (t ?? 0) + v; }, null);
+  const phaseOf = (name) => r => name === "other" ? (r.stats?.phases_ms ? Math.max(0, r.wall * 1e3 - Object.values(r.stats.phases_ms).reduce((a, b) => a + b, 0)) : null) : r.stats?.phases_ms?.[name];
+  const percent = (now, before) => before ? (now - before) / before * 100 : null;
+  const deltaTag = (pct, lowerBetter = true) => {
+    const e = html("span", "delta", pct == null || Math.abs(pct) < 0.5 ? "" : `${pct > 0 ? "+" : ""}${pct.toFixed(1)}%`);
+    if (e.textContent && lowerBetter) e.classList.add(pct < 0 ? "better" : "worse");
+    return e;
+  };
+
+  /** Stacked bars, one per release: the parts of `series` ([name, color]) summed over the documents of `kernel`. */
+  function stacked(series, get, kernel, fmtv, title) {
+    const W = 360, H = 210, L = 44, R = 10, T = 14, B = 34;
+    const svg = el("svg", { class: "bench-chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": title });
+    const cols = data.map(e => series.map(([n]) => sumOver(e, kernel, get(n)) ?? 0));
+    const max = Math.max(1e-9, ...cols.map(c => c.reduce((a, b) => a + b, 0))) * 1.08;
+    const y = v => T + (H - T - B) * (1 - v / max);
+    for (let g = 0; g <= 3; g++) { const v = max * g / 3; svg.append(el("line", { class: "grid", x1: L, x2: W - R, y1: y(v), y2: y(v) }), el("text", { x: L - 5, y: y(v) + 3, "text-anchor": "end" }, fmtv(v))); }
+    const slot = (W - L - R) / data.length, bw = Math.min(46, slot * 0.6);
+    cols.forEach((c, i) => {
+      let acc = 0;
+      const x = L + slot * (i + 0.5) - bw / 2;
+      c.forEach((v, k) => {
+        if (v <= 0) return;
+        const r = el("rect", { x, y: y(acc + v), width: bw, height: y(acc) - y(acc + v), style: `fill:var(${series[k][1]})` });
+        r.append(el("title", {}, `${data[i].version}, ${series[k][0]}: ${fmtv(v)}`));
+        svg.append(r);
+        acc += v;
+      });
+      svg.append(el("text", { x: x + bw / 2, y: H - 14, "text-anchor": "middle" }, data[i].version));
+      if (!acc) svg.append(el("text", { x: x + bw / 2, y: y(0) - 6, "text-anchor": "middle" }, "no data"));
+    });
+    return svg;
+  }
+
+  const ROWS = [["Wall time", "wall", true], ["Peak memory", "peak", true], ["Steps", "steps", true], ["Expansions", "expansions", true], ["Forks", "forks", true], ["Imprecise", "imprecise", true], ["Findings", "findings", false], ["Rules", "rules", false]];
+  const total = (entry, kernel, m) => {
+    const runs = entry.runs.filter(r => r.kernel === kernel);
+    const vs = runs.map(r => m === "rules" ? r.stats?.rules : value(r, m)).filter(v => v != null);
+    return vs.length ? (m === "peak" || m === "rules" ? Math.max(...vs) : vs.reduce((a, b) => a + b, 0)) : null;
+  };
+  /** One row per release, newest first: its header (version, date, commit) and the totals, as deltas in the delta view. */
+  function releases(kernel) {
+    const head = html("tr");
+    for (const t of ["Release", "Date", "Commit", ...ROWS.map(r => r[0]), "Reached the end"]) head.append(html("th", "", t));
+    const body = data.map((e, i) => {
+      const tr = html("tr"), before = data[i - 1];
+      const runs = e.runs.filter(r => r.kernel === kernel);
+      tr.append(html("td", "", e.version), html("td", "", e.date), html("td", "", e.commit));
+      for (const [, m, lower] of ROWS) {
+        const v = total(e, kernel, m), b = before ? total(before, kernel, m) : null;
+        const td = html("td", v == null ? "no" : "");
+        if (v == null) td.textContent = "-";
+        else if (view === "delta") { const d = deltaTag(percent(v, b), lower); td.append(b == null || !d.textContent ? html("span", "delta", b == null ? "first" : "same") : d); }
+        else { td.append(METRICS[m]?.[2] ? METRICS[m][2](v) : fmt(v)); if (b != null) td.append(deltaTag(percent(v, b), lower)); }
+        tr.append(td);
+      }
+      tr.append(html("td", "", `${runs.filter(r => r.end).length} of ${runs.length}`));
+      return tr;
+    }).reverse();
+    const thead = html("thead"), tbody = html("tbody");
+    thead.append(head); tbody.append(...body);
+    $("b-releases").replaceChildren(thead, tbody);
+  }
+  function phases(kernel) {
+    $("b-phase-chart").replaceChildren(stacked(STAGES, phaseOf, kernel, v => v >= 1e3 ? (v / 1e3).toFixed(1) + " s" : Math.round(v) + " ms", "Time per phase and release"));
+    $("b-prec-chart").replaceChildren(stacked(PRECISION, n => r => r.stats?.diagnostics?.[n], kernel, fmt, "Precision per release"));
+    $("b-prec-legend").replaceChildren(...legendOf(PRECISION));
+  }
+  function csv(i) {
+    const rows = [COLUMNS.map(c => c[0]), ...data[i].runs.map(r => COLUMNS.map(c => { const v = c[1](r); return v == null ? "" : v; }))];
+    $("b-csv").href = "data:text/csv;charset=utf-8," + encodeURIComponent(rows.map(r => r.join(",")).join("\n"));
+  }
   let sort = { col: 0, dir: 1 };
   function table(i) {
     const runs = data[i].runs;
@@ -229,8 +320,12 @@
   function draw() {
     const kernel = $("b-kernel").value, i = +$("b-version").value;
     $("b-note").textContent = data.length === 1 ? `One release so far (${data[0].version}). The charts fill in as releases are benchmarked.` : `${data.length} releases, ${docs.length} documents.`;
-    cards(kernel, i); stages(kernel, i); charts(kernel); table(i);
+    releases(kernel); cards(kernel, i); phases(kernel); stages(kernel, i); charts(kernel); table(i); csv(i);
   }
+  const last = data.at(-1);
+  $("b-badge").textContent = `v${last.version} · ${last.date} · ${last.commit}`;
+  $("b-badge").href = "{{repository}}/commit/" + last.commit;
+  for (const b of document.querySelectorAll(".bench-toggle button")) b.addEventListener("click", () => { view = b.dataset.view; for (const o of document.querySelectorAll(".bench-toggle button")) o.setAttribute("aria-pressed", String(o === b)); draw(); });
   for (const id of ["b-kernel", "b-version"]) $(id).addEventListener("change", draw);
   draw();
 })();
