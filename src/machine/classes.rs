@@ -3,7 +3,9 @@
 //! repetitions, unknown text), read by the conditionals and the scans.
 
 use super::Machine;
-use crate::tex::{Catcode, TextClass, Tok, Token, UNKNOWN_DIGIT, UNKNOWN_LETTER, UNKNOWN_OTHER};
+use crate::tex::{
+    Catcode, TextClass, Tok, Token, UNKNOWN_DIGIT, UNKNOWN_HEX_LETTER, UNKNOWN_HEX_OTHER, UNKNOWN_LETTER, UNKNOWN_OTHER,
+};
 use crate::tex::{Meaning, Sym};
 
 /// The concrete tokens a token may be. Character codes are exact, or an
@@ -78,6 +80,10 @@ impl TokenClass {
     fn text_chars(class: TextClass) -> Vec<(u32, Catcode)> {
         let mut chars = Vec::new();
         let other = Catcode::Other;
+        let (letter, any) = match class.hex() {
+            true => (UNKNOWN_HEX_LETTER as u32, UNKNOWN_HEX_OTHER as u32),
+            false => (UNKNOWN_LETTER as u32, UNKNOWN_OTHER as u32),
+        };
         if class.meets(TextClass::DIGIT) {
             chars.push((UNKNOWN_DIGIT as u32, other));
         }
@@ -85,12 +91,12 @@ impl TokenClass {
             chars.extend("+-.,".chars().map(|c| (c as u32, other)));
         }
         if class.meets(TextClass::LETTER) {
-            chars.push((UNKNOWN_LETTER as u32, Catcode::Letter));
+            chars.push((letter, Catcode::Letter));
         }
         if class.meets(TextClass::OTHER) {
             let cats = [other, Catcode::Math, Catcode::Tab, Catcode::Sup, Catcode::Sub];
-            chars.extend(cats.map(|k| (UNKNOWN_OTHER as u32, k)));
-            chars.extend(cats.map(|k| (UNKNOWN_LETTER as u32, k)));
+            chars.extend(cats.map(|k| (any, k)));
+            chars.extend(cats.map(|k| (letter, k)));
         }
         if class.meets(TextClass::SPACE) {
             chars.push((' ' as u32, Catcode::Space));

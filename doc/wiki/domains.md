@@ -177,6 +177,7 @@ Unknown text has a class: the set of token kinds it may hold ([`src/tex.rs`](htt
 | `SPACE` | `_` | category 10 |
 | `BRACE` | `b` | balanced braces |
 | `CS` | `c` | control sequences and active characters: anything |
+| `HEX` | `h` | a restriction: its letters and other characters are `0`–`9`, `A`–`F`, `a`–`f` |
 
 ```text
 unknown text     all kinds (top)
@@ -188,6 +189,7 @@ typed digits     d, with an interval [lo, hi]
 
 - **Why it matters.** A scan delimited by `}` finds nothing in text without `b`. One delimited by a space finds nothing without `_`. `\ifx` against a letter cannot match without `l`. Nothing without `c` is a control sequence.
 - **Typed digits** carry their `Num`: `\ifnum`, `\numexpr` and `\csname` read the interval back.
+- **Hex.** `h` is kept only with `l` or `o` and without `c`. A join keeps it where both sides are hex (digits-only text is). `\detokenize` keeps it unless braces or names print. One character of `h` text has a code in `0`–`f`, so `` `#1<"80`` is decided.
 - **Join** is the union of kinds. The text is non-empty only if both are. A run of unknown tokens collapses into one token of the run's class. Widening moves up and stops at the top.
 - **Printing.** `\detokenize` and `\string` give the printed class ([tex.web § 464](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9142)).
 - One constructor makes all unknown text: `Machine::unknown_text`.
@@ -201,6 +203,8 @@ typed digits     d, with an interval [lo, hi]
 | `UNKNOWN_CHAR` | a digit or `-` (the first character `\the` prints for a number) |
 | `UNKNOWN_DIGIT` | `0`–`9` |
 | `UNKNOWN_NONZERO` | `1`–`9` |
+| `UNKNOWN_HEX_OTHER` | `0`–`9`, `A`–`F`, `a`–`f`, category 12 |
+| `UNKNOWN_HEX_LETTER` | `A`–`F`, `a`–`f`, category 11 |
 
 `\the` never prints a leading zero ([tex.web §§ 103](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L2199)–[104](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L2225)). Reading the first digit of an unknown number splits into `-` (digits follow), `0` (nothing follows) and `1`–`9` (one digit fewer may follow), so a digit-stripping loop ends.
 

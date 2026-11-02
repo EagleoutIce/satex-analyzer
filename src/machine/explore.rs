@@ -2232,6 +2232,20 @@ impl Machine<'_> {
         {
             return token;
         }
+        // Hex digits (some letter or other) with an unknown part are typed
+        // text of their class and longest length, as numbers are digits of
+        // their hull.
+        let hex = TextClass::new(TextClass::DIGIT.0 | TextClass::LETTER.0 | TextClass::OTHER.0 | TextClass::HEX.0);
+        let data = |m: &Self, t: &Token| matches!(t.tok, Tok::Chr(..)) || m.typed_text_of(*t).is_some();
+        if members.len() > 1
+            && members.iter().any(|t| self.has_unknown(t))
+            && members.iter().all(|t| t.iter().all(|x| data(self, x)))
+        {
+            let texts: Vec<&[Token]> = members.iter().map(|t| &**t).collect();
+            if self.cover(&texts).is_some_and(|(class, ..)| hex.contains(class) && class.0 & TextClass::HEX.0 != 0) {
+                return self.unknown_text(Unk::Of(&texts), span);
+            }
+        }
         if members.len() > usize::from(self.limits.meaning_set) {
             let texts: Vec<&[Token]> = members.iter().map(|t| &**t).collect();
             return self.unknown_text(Unk::Of(&texts), span);

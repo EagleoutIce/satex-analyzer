@@ -2005,6 +2005,10 @@ impl Machine<'_> {
         if !one || !cs.is_empty() || class.meets(C::CS) || class.one_char().is_some() {
             return None;
         }
+        let (letter, other) = match class.hex() {
+            true => (crate::tex::UNKNOWN_HEX_LETTER, crate::tex::UNKNOWN_HEX_OTHER),
+            false => (UNKNOWN_LETTER, UNKNOWN_OTHER),
+        };
         let kinds: [(C, &[Meaning]); 6] = [
             (C::DIGIT, &[Meaning::Char(UNKNOWN_DIGIT, Catcode::Other)]),
             (
@@ -2016,9 +2020,9 @@ impl Machine<'_> {
                     Meaning::Char(',', Catcode::Other),
                 ],
             ),
-            (C::LETTER, &[Meaning::Char(UNKNOWN_LETTER, Catcode::Letter)]),
+            (C::LETTER, &[Meaning::Char(letter, Catcode::Letter)]),
             // Other categories too, active characters among them.
-            (C::OTHER, &[Meaning::Char(UNKNOWN_OTHER, Catcode::Other), Meaning::Unknown]),
+            (C::OTHER, &[Meaning::Char(other, Catcode::Other), Meaning::Unknown]),
             (C::SPACE, &[Meaning::Char(' ', Catcode::Space)]),
             (C::BRACE, &[Meaning::Char('{', Catcode::Begin), Meaning::Char('}', Catcode::End)]),
         ];

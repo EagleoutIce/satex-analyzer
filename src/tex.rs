@@ -210,13 +210,18 @@ pub const UNKNOWN_LETTER: char = '\u{10FFFD}';
 /// One character of category 12 of unknown text, not known to be a digit.
 pub const UNKNOWN_OTHER: char = '\u{10FFFC}';
 
+/// [`UNKNOWN_LETTER`] and [`UNKNOWN_OTHER`] that are hex digits
+/// ([`TextClass::HEX`]).
+pub const UNKNOWN_HEX_LETTER: char = '\u{10FFF8}';
+pub const UNKNOWN_HEX_OTHER: char = '\u{10FFF7}';
+
 /// Unknown text of a known class written to a file: one character per
 /// class and lower bound (`class * 2 + one`), read back as that text.
 const WRITTEN_UNKNOWN: u32 = 0x10_0000;
 
 /// The character that writes unknown text of `class` to a file.
 pub fn written_unknown(class: TextClass, one: bool) -> char {
-    char::from_u32(WRITTEN_UNKNOWN + u32::from(class.0) * 2 + u32::from(one)).unwrap_or(UNKNOWN_ANY)
+    char::from_u32(WRITTEN_UNKNOWN + u32::from(class.0 & !TextClass::HEX.0) * 2 + u32::from(one)).unwrap_or(UNKNOWN_ANY)
 }
 
 /// The class and lower bound a [`written_unknown`] character stands for.
@@ -227,7 +232,7 @@ pub fn written_class(c: char) -> Option<(TextClass, bool)> {
 
 /// Whether `c` is one character of unknown text.
 pub fn is_unknown_char(c: char) -> bool {
-    matches!(c, UNKNOWN_CHAR | UNKNOWN_DIGIT | UNKNOWN_NONZERO | UNKNOWN_LETTER | UNKNOWN_OTHER | UNKNOWN_ANY)
+    unknown_number_chars(c).is_some() || matches!(c, UNKNOWN_LETTER | UNKNOWN_OTHER | UNKNOWN_ANY)
 }
 
 /// Whether `c` is one unknown digit.
@@ -235,12 +240,14 @@ pub fn is_unknown_digit(c: char) -> bool {
     matches!(c, UNKNOWN_DIGIT | UNKNOWN_NONZERO)
 }
 
-/// The characters an unknown character of a number may be.
+/// The characters an unknown character of a number or a hex digit may be.
 pub fn unknown_number_chars(c: char) -> Option<&'static str> {
     match c {
         UNKNOWN_DIGIT => Some("0123456789"),
         UNKNOWN_NONZERO => Some("123456789"),
         UNKNOWN_CHAR => Some("0123456789-"),
+        UNKNOWN_HEX_OTHER => Some("0123456789ABCDEFabcdef"),
+        UNKNOWN_HEX_LETTER => Some("ABCDEFabcdef"),
         _ => None,
     }
 }
@@ -297,6 +304,9 @@ impl TextClass {
     pub const BRACE: Self = Self(32);
     /// Control sequences, and so anything.
     pub const CS: Self = Self(64);
+    /// Its letters and other characters are hex digits `0`–`9`, `A`–`F`,
+    /// `a`–`f`: a restriction, kept only where it says something.
+    pub const HEX: Self = Self(128);
     /// What nothing known types to: characters neither active nor braces.
     pub const WIDE: Self = Self(Self::PRINTED.0 | Self::LETTER.0);
     pub const NUMBER: Self = Self(Self::DIGIT.0 | Self::SIGN.0);
@@ -306,7 +316,27 @@ impl TextClass {
     pub const ANY: Self = Self(127);
     /// The one-letter spellings of the classes, in bit order: how a typed
     /// token names its class.
-    const LETTERS: [char; 7] = ['d', 's', 'l', 'o', '_', 'b', 'c'];
+    const LETTERS: [char; 8] = ['d', 's', 'l', 'o', '_', 'b', 'c', 'h'];
+    /// How many classes there are, [`Self::HEX`] ones among them.
+    pub const COUNT: usize = 256;
+
+    /// The class of these bits, [`Self::HEX`] dropped where it says nothing.
+    pub fn new(bits: u8) -> Self {
+        match bits & (Self::LETTER.0 | Self::OTHER.0) != 0 && bits & Self::CS.0 == 0 {
+            true => Self(bits),
+            false => Self(bits & !Self::HEX.0),
+        }
+    }
+
+    /// Whether every letter and other character it holds is a hex digit.
+    pub fn hex(self) -> bool {
+        self.0 & Self::HEX.0 != 0 || !self.meets(Self(Self::LETTER.0 | Self::OTHER.0 | Self::CS.0))
+    }
+
+    /// The class without the categories of `other`.
+    pub fn without(self, other: Self) -> Self {
+        Self::new(self.0 & !(other.0 & !Self::HEX.0))
+    }
 
     /// What `\detokenize` makes of text of this class: letters and
     /// braces become category 12, a name its characters and perhaps a
@@ -319,19 +349,23 @@ impl TextClass {
         if self.meets(Self::CS) {
             c |= Self::PRINTED.0;
         }
-        Self(c)
+        // Braces and names print characters that are no hex digits.
+        let hex = self.0 & Self::HEX.0 != 0 && !self.meets(Self(Self::BRACE.0 | Self::CS.0));
+        Self::new(c | if hex { Self::HEX.0 } else { 0 })
     }
 
     pub fn union(self, other: Self) -> Self {
-        Self(self.0 | other.0)
+        let hex = if self.hex() && other.hex() { Self::HEX.0 } else { 0 };
+        Self::new((self.0 | other.0) & !Self::HEX.0 | hex)
     }
 
     pub fn contains(self, other: Self) -> bool {
-        self.0 & other.0 == other.0
+        let bits = !Self::HEX.0;
+        self.0 & other.0 & bits == other.0 & bits && (!self.hex() || other.hex())
     }
 
     pub fn meets(self, other: Self) -> bool {
-        self.0 & other.0 != 0
+        self.0 & other.0 & !Self::HEX.0 != 0
     }
 
     /// The class of one token that is known, or an unknown character.
@@ -340,10 +374,15 @@ impl TextClass {
             Tok::Chr(c, Catcode::Other) if c.is_ascii_digit() || is_unknown_digit(c) => Self::DIGIT,
             Tok::Chr(c, Catcode::Other) if "+-.,".contains(c) => Self::SIGN,
             Tok::Chr(c, Catcode::Other) if c == UNKNOWN_CHAR => Self::NUMBER,
+            Tok::Chr(c, Catcode::Letter) if c.is_ascii_hexdigit() || c == UNKNOWN_HEX_LETTER => {
+                Self(Self::LETTER.0 | Self::HEX.0)
+            }
             Tok::Chr(_, Catcode::Letter) => Self::LETTER,
             Tok::Chr(_, Catcode::Space) => Self::SPACE,
             Tok::Chr(_, Catcode::Begin | Catcode::End) => Self::BRACE,
             Tok::Chr(_, Catcode::Active | Catcode::Param) => Self::CS,
+            Tok::Chr(UNKNOWN_HEX_OTHER, _) => Self(Self::DIGIT.0 | Self::OTHER.0 | Self::HEX.0),
+            Tok::Chr(c, _) if c.is_ascii_hexdigit() => Self(Self::OTHER.0 | Self::HEX.0),
             Tok::Chr(..) => Self::OTHER,
             _ => Self::CS,
         }
@@ -364,7 +403,7 @@ impl TextClass {
         for c in text.chars() {
             class.0 |= 1 << Self::LETTERS.iter().position(|l| *l == c)?;
         }
-        Some(class)
+        Some(Self::new(class.0))
     }
 
     /// One character of this class, when every character it may hold has
@@ -373,11 +412,13 @@ impl TextClass {
         if self == Self::EMPTY || self.meets(Self(Self::SPACE.0 | Self::BRACE.0 | Self::CS.0)) {
             return None;
         }
-        Some(match self {
+        let hex = self.0 & Self::HEX.0 != 0;
+        Some(match Self(self.0 & !Self::HEX.0) {
             Self::DIGIT => Tok::Chr(UNKNOWN_DIGIT, Catcode::Other),
             c if Self::NUMBER.contains(c) => Tok::Chr(UNKNOWN_CHAR, Catcode::Other),
-            Self::LETTER => Tok::Chr(UNKNOWN_LETTER, Catcode::Letter),
+            Self::LETTER => Tok::Chr(if hex { UNKNOWN_HEX_LETTER } else { UNKNOWN_LETTER }, Catcode::Letter),
             c if c.meets(Self::LETTER) => return None,
+            c if hex && !c.meets(Self::SIGN) => Tok::Chr(UNKNOWN_HEX_OTHER, Catcode::Other),
             _ => Tok::Chr(UNKNOWN_OTHER, Catcode::Other),
         })
     }

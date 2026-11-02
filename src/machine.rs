@@ -9647,7 +9647,7 @@ will look undefined",
         }
         // Text over two categories: a path per category of its first
         // character, and one for spaces only. Braces and names stay one token.
-        let chars = Self::class_chars(if spaces { TextClass(class.0 & !TextClass::SPACE.0) } else { class });
+        let chars = Self::class_chars(if spaces { class.without(TextClass::SPACE) } else { class });
         let arms = chars.len() + usize::from(spaces);
         let Some(sym) = t.cs().filter(|_| !chars.is_empty() && arms > 1) else { return Some(t) };
         let mut first = None;
@@ -12400,7 +12400,7 @@ pub(crate) const LEAD_MARK: char = '\u{6}';
 pub(crate) const REST_SERIALS: usize = 32;
 /// Where the bounded names begin in the typed names
 /// ([`crate::env::bounded_index`]): after the classes and the rests.
-pub(crate) const BOUNDED_BASE: usize = 256 + 129 * REST_SERIALS;
+pub(crate) const BOUNDED_BASE: usize = 2 * TextClass::COUNT + (TextClass::COUNT + 1) * REST_SERIALS;
 
 /// What unknown text is known to hold ([`Machine::unknown_text`]).
 #[derive(Clone, Copy)]
@@ -12482,8 +12482,8 @@ impl Machine<'_> {
         {
             return syms.clone();
         }
-        let mut syms = Vec::with_capacity(256);
-        for i in 0..256usize {
+        let mut syms = Vec::with_capacity(BOUNDED_BASE);
+        for i in 0..2 * TextClass::COUNT {
             let (class, one) = (TextClass((i / 2) as u8), i % 2 == 1);
             let name = format!("{UNKNOWN_NAME}{TYPED_TEXT}{}{}", class.spell(), if one { '+' } else { '*' });
             let sym = self.intern(&name);
@@ -12498,8 +12498,8 @@ impl Machine<'_> {
         }
         // The rests' names, bound here once: a binding made per rest
         // would be a write every pass of a loop.
-        for i in 0..=128usize {
-            let base = if i < 128 { syms[i * 2] } else { self.unknown_more };
+        for i in 0..=TextClass::COUNT {
+            let base = if i < TextClass::COUNT { syms[i * 2] } else { self.unknown_more };
             let meaning = self.env.meaning(base);
             let spelled = self.name(base).to_string();
             for k in 0..REST_SERIALS {
@@ -12577,7 +12577,8 @@ impl Machine<'_> {
             None if one && class == TextClass::DIGIT => return self.unknown_digits_token(span),
             None if one => return Token::new(Tok::Cs(syms[class.0 as usize * 2 + 1]), span),
             None => {
-                let i = 256 + REST_SERIALS * if class == TextClass::DIGIT { 128 } else { class.0 as usize };
+                let i = 2 * TextClass::COUNT
+                    + REST_SERIALS * if class == TextClass::DIGIT { TextClass::COUNT } else { class.0 as usize };
                 syms[i..i + REST_SERIALS].to_vec()
             }
         };
@@ -12814,12 +12815,12 @@ impl Machine<'_> {
     /// The characters one token taken from text of `class` may be, one per
     /// category the class spans: none where it may be a space, a brace or
     /// a control sequence.
-    fn class_chars(class: TextClass) -> Vec<Tok> {
+    pub(crate) fn class_chars(class: TextClass) -> Vec<Tok> {
         if let Some(c) = class.one_char() {
             return vec![c];
         }
-        let letters = TextClass(class.0 & TextClass::LETTER.0);
-        let others = TextClass(class.0 & !TextClass::LETTER.0);
+        let others = class.without(TextClass::LETTER);
+        let letters = class.without(others);
         match (letters.one_char(), others.one_char()) {
             (Some(l), Some(o)) => vec![l, o],
             _ => Vec::new(),
@@ -13386,7 +13387,7 @@ fn char_class(c: char) -> u8 {
         _ if c.is_ascii_graphic() => C::Other,
         _ => C::Active,
     };
-    T::of(crate::tex::Tok::Chr(c, cat)).0
+    T::of(crate::tex::Tok::Chr(c, cat)).0 & !T::HEX.0
 }
 
 #[cfg(test)]
