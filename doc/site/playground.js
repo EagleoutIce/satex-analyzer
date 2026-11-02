@@ -1490,7 +1490,7 @@
   var explainTimer = 0, explained = '';
   const explanations = new Map(); // `name|file|version|kernel` -> records
   function explainSoon(at) {
-    if (!at) typesetFollow();
+    if (!at) { typesetFollow(); pdfFollow(); }
     clearTimeout(explainTimer);
     explainTimer = setTimeout(() => explainAt(at ?? editor?.position()), 200);
   }
@@ -3412,6 +3412,139 @@
     const [view, alt] = writtenPick.get(name) ?? ['final', 0];
     writtenPick.set(name, b.dataset.view !== undefined ? [b.dataset.view === 'final' ? 'final' : +b.dataset.view, alt] : [view, +b.dataset.alt]);
     writtenShow();
+  });
+  /* PDF: Compile builds the project with the TeX of the machine serving the playground (`cargo playground`,
+   * src/bin/satex-playground/compile.rs). The request and the SyncTeX parse run in a worker of their own,
+   * so the analysis stays responsive. Pages come as images; SyncTeX links them to the source both ways. */
+  const COMPILE = `${location.origin}/__satex/compile`;
+  /** The compile worker's code: posts the build, fetches and parses its SyncTeX data. */
+  function compileWorkerMain() {
+    const BP = 65781.76; // scaled points per big point
+    /** SyncTeX records of the project's own files: page, file, line, kind, x and y (baseline) in bp from the top left. */
+    const parse = (text) => {
+      const files = {}, boxes = [];
+      let unit = 1, page = 0;
+      for (const l of text.split('\n')) {
+        const m = /^([[(hvxkg$])(\d+),(\d+):(-?\d+),(-?\d+)(?::(-?\d+),(-?\d+),(-?\d+))?/.exec(l);
+        if (m && page && files[m[2]]) {
+          const s = unit / BP;
+          boxes.push({ page, file: files[m[2]], line: +m[3], kind: m[1], x: m[4] * s, y: m[5] * s, w: (m[6] ?? 0) * s, h: (m[7] ?? 0) * s, d: (m[8] ?? 0) * s });
+          continue;
+        }
+        const i = /^Input:(\d+):.*\/\.\/(.*)$/.exec(l), u = /^Unit:(\d+)/.exec(l), p = /^\{(\d+)/.exec(l);
+        if (i) files[i[1]] = i[2]; else if (u) unit = +u[1]; else if (p) page = +p[1];
+      }
+      return boxes;
+    };
+    self.onmessage = async ({ data: { url, request } }) => {
+      try {
+        const answer = await (await fetch(url, { method: 'POST', body: JSON.stringify(request) })).json();
+        if (answer.synctex) {
+          const z = await fetch(`${url}/${answer.base}${answer.synctex}`);
+          answer.boxes = parse(await new Response(z.body.pipeThrough(new DecompressionStream('gzip'))).text());
+        }
+        self.postMessage(answer);
+      } catch (e) { self.postMessage({ error: String(e?.message ?? e) }); }
+    };
+  }
+  const pdfBody = $('pdf-body'), pdfStatus = $('pdf-status'), pdfButtons = [$('pdf-compile'), $('pdf-slice')];
+  var pdf = null, pdfWorker = null, pdfLine = ''; // var: the cursor may move before this line runs
+  fetch(COMPILE).then((r) => r.ok && r.json()).then((j) => {
+    if (j?.compile) pdfButtons.forEach((b) => { b.disabled = false; });
+    else throw new Error();
+  }).catch(() => { pdfBody.innerHTML = '<p class="muted">Compiling needs the local playground server (<code>cargo playground</code>): a static copy of the site has no TeX to run.</p>'; });
+  /** Builds the project, or with `slice` only what the cursor's line needs. */
+  function compile(slice = false) {
+    push();
+    const root = state.root ?? state.file, p = editor.position();
+    const files = Object.fromEntries(state.files.filter((n) => n in state.texts && !(n in state.ro)).map((n) => [n, state.texts[n]]));
+    const at = `${state.file === root ? '' : `${state.file}:`}${p.line + 1}:${p.character + 1}`;
+    pdfWorker ??= new Worker(URL.createObjectURL(new Blob([`(${compileWorkerMain})()`], { type: 'text/javascript' })));
+    const start = performance.now(), what = slice ? `a slice of ${root} at ${at}` : root;
+    const tick = setInterval(() => { pdfStatus.textContent = `compiling ${what}… ${secs(performance.now() - start)}`; }, 100);
+    pdfButtons.forEach((b) => { b.disabled = true; });
+    pdfWorker.onmessage = ({ data }) => {
+      clearInterval(tick);
+      pdfButtons.forEach((b) => { b.disabled = false; });
+      pdfStatus.textContent = data.error ? '' : `${what} in ${secs(performance.now() - start)}`;
+      pdf = { ...data, slice, root };
+      pdfShow();
+    };
+    pdfWorker.postMessage({ url: COMPILE, request: { main: root, files, ...(slice ? { at } : {}) } });
+  }
+  pdfButtons.forEach((b, i) => { b.onclick = (e) => { e.preventDefault(); compile(i === 1); }; });
+  const pdfRecord = (r) => {
+    const s = r.severity === 'error' ? 'error' : 'warning', where = r.line ? `${r.path}:${r.line}` : r.path;
+    return `<li class="f-${s}" data-path="${escape(r.path)}" data-line="${r.line ?? 1}"><p><span class="sev sev-${s}">${s}</span> <code>${escape(r.code)}</code> ${escape(r.message)} <span class="muted">${escape(where)}</span></p>${r.fix ? `<p class="pdf-why"><b>satex:</b> ${escape(r.fix)}</p>` : ''}</li>`;
+  };
+  function pdfShow() {
+    pdfLine = '';
+    if (pdf.error) { pdfBody.innerHTML = `<p class="x-err">${escape(pdf.error)}</p>`; return; }
+    const records = pdf.records ?? [], file = (n) => `${COMPILE}/${pdf.base}${n}`;
+    const errors = records.filter((r) => r.severity === 'error').length;
+    pdfBody.innerHTML = `<p class="pdf-head">${pdf.pdf ? `<a href="${file(pdf.pdf)}" target="_blank" rel="noopener">${escape(pdf.pdf)}</a>, ${pdf.pages.length} page${pdf.pages.length === 1 ? '' : 's'}` : '<span class="x-err">no PDF</span>'}`
+      + ` · ${errors} error${errors === 1 ? '' : 's'}, ${records.length - errors} warning${records.length - errors === 1 ? '' : 's'}${pdf.slice ? ' · a slice: its lines are not the file\'s' : ''}</p>`
+      + (records.length ? `<ul class="diagnostics pdf-records">${records.map(pdfRecord).join('')}</ul>` : '')
+      + `<details class="pdf-log"><summary>TeX log</summary><pre>${escape(pdf.log || pdf.stderr || '')}</pre></details>`
+      + `<div class="pdf-pages">${pdf.pages.map((n, i) => `<div class="pdf-page" data-page="${i + 1}"><img src="${file(n)}" alt="page ${i + 1}" draggable="false"></div>`).join('')}</div>`;
+    pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => pdfFollow(true), { once: true }));
+  }
+  /** A page's size in bp, from its image. */
+  const pageSize = (img) => [img.naturalWidth * 72 / pdf.dpi, img.naturalHeight * 72 / pdf.dpi];
+  /** Where `file:line` stands on its first page: one rectangle per baseline, in bp. Only the points TeX set
+   * (glue, kerns, math, the current point), not the boxes, which carry the line where a whole frame or float closed. */
+  function pdfRects(file, line) {
+    const rows = new Map(), hits = (pdf.boxes ?? []).filter((b) => b.file === file && b.line === line && 'xgk$'.includes(b.kind));
+    for (const b of hits.filter((b) => b.page === hits[0].page)) {
+      const key = Math.round(b.y / 6), o = rows.get(key); // one row per baseline, a lowered letter (the E of \TeX) in it
+      rows.set(key, { page: b.page, l: Math.min(o?.l ?? b.x, b.x), r: Math.max(o?.r ?? 0, b.x + 4), t: b.y - 8, d: b.y + 2 });
+    }
+    return [...rows.values()];
+  }
+  /** The cursor's line marked on the pages, scrolled into view when it moved. */
+  function pdfFollow(again = false) {
+    if (!pdf?.boxes || pdf.slice) return;
+    const line = editor.position().line + 1, key = `${state.file}:${line}`;
+    if (key === pdfLine && !again) return;
+    pdfLine = key;
+    pdfBody.querySelectorAll('.pdf-mark').forEach((m) => m.remove());
+    // a line that sets nothing (a blank line, a comment) is marked by the nearest line above that does
+    let rects = [];
+    for (let l = line; l > 0 && l > line - 8 && !rects.length; l--) rects = pdfRects(state.file, l);
+    for (const r of rects) {
+      const page = pdfBody.querySelector(`.pdf-page[data-page="${r.page}"]`), img = page?.querySelector('img');
+      if (!img?.naturalWidth) continue;
+      const [w, h] = pageSize(img), pad = 1.5;
+      page.insertAdjacentHTML('beforeend', `<div class="pdf-mark" style="left:${(r.l - pad) / w * 100}%;top:${(r.t - pad) / h * 100}%;width:${(r.r - r.l + 2 * pad) / w * 100}%;height:${(r.d - r.t + 2 * pad) / h * 100}%"></div>`);
+    }
+    const first = pdfBody.querySelector('.pdf-mark'), pages = pdfBody.querySelector('.pdf-pages');
+    if (first && !again) {
+      const a = first.getBoundingClientRect(), b = pages.getBoundingClientRect();
+      if (a.top < b.top || a.bottom > b.bottom) pages.scrollTop += a.top - b.top - b.height / 3;
+    }
+  }
+  /** The source of a point on a page: the nearest record of the project's files, one line above another counting more. */
+  function pdfSource(page, x, y) {
+    let best = null, score = Infinity;
+    for (const b of pdf.boxes ?? []) {
+      if (b.page !== page || !(b.file in state.texts)) continue;
+      const s = Math.abs(x - b.x) / 4 + Math.abs(y - (b.y - 3));
+      if (s < score) { score = s; best = b; }
+    }
+    return best;
+  }
+  pdfBody.addEventListener('click', (e) => {
+    const rec = e.target.closest('.pdf-records li');
+    if (rec) {
+      const name = Object.keys(state.texts).find((n) => !(n in state.ro) && rec.dataset.path.endsWith(n));
+      if (name && !pdf.slice) openPlace(name, { line: +rec.dataset.line - 1, character: 0 });
+      return;
+    }
+    const img = e.target.closest('.pdf-page img');
+    if (!img || pdf.slice) return;
+    const [w, h] = pageSize(img), r = img.getBoundingClientRect();
+    const hit = pdfSource(+img.parentElement.dataset.page, (e.clientX - r.left) / r.width * w, (e.clientY - r.top) / r.height * h);
+    if (hit) openPlace(hit.file, { line: hit.line - 1, character: 0 }).then(() => pdfFollow(true));
   });
   async function written(target) {
     const files = await lsp('satex/written', { textDocument: { uri: target } }).catch(() => null);

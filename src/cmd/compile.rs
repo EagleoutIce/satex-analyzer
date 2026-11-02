@@ -5,7 +5,8 @@
 //!
 //! The build reads the project's own latexmkrc; satex only adds what keeps
 //! the log readable (`-file-line-error`, long lines) and never opens a
-//! viewer (`-pv-`).
+//! viewer (`-pv-`). It asks for SyncTeX data, which editors and the
+//! playground's PDF view link the source by.
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -37,7 +38,8 @@ pub fn run(context: &Context) -> Result<Output, String> {
         // latexmk reruns as often as the document needs and reads the
         // latexmkrc; the engine is ours only where that names none.
         Ok(_) => {
-            let mut args = vec!["-interaction=nonstopmode", "-file-line-error", "-pv-", "-pvc-"];
+            // `-f`: past an error, so the references the later runs resolve are not reported.
+            let mut args = vec!["-interaction=nonstopmode", "-file-line-error", "-synctex=1", "-f", "-pv-", "-pvc-"];
             if !["pdf_mode", "pdflatex", "lualatex", "xelatex", "latex"].iter().any(|k| project.setting(k).is_some()) {
                 args.push(match engine {
                     crate::config::Engine::LuaTeX => "-lualatex",
@@ -51,7 +53,7 @@ pub fn run(context: &Context) -> Result<Output, String> {
         // LaTeX's cross-references need.
         Err(_) => {
             let output = out_dir.as_ref().map(|d| format!("-output-directory={}", d.display()));
-            let mut args = vec!["-interaction=nonstopmode", "-file-line-error"];
+            let mut args = vec!["-interaction=nonstopmode", "-file-line-error", "-synctex=1"];
             args.extend(output.as_deref());
             let mut status = build(engine.program(), &args, file, &dir)?;
             for _ in 0..2 {
@@ -91,8 +93,9 @@ fn build(program: &str, args: &[&str], file: &str, dir: &Path) -> Result<std::pr
         .args(args)
         .arg(file)
         .current_dir(dir)
-        // Unwrapped log lines keep paths and messages whole.
-        .env("max_print_line", "100000")
+        // Unwrapped log lines keep paths and messages whole. BibTeX
+        // refuses 20000 and more ("3 is a bad bad").
+        .env("max_print_line", "10000")
         .stdout(std::process::Stdio::from(std::io::stderr()))
         .status()
         .map_err(|e| format!("cannot run {program}: {e}"))
@@ -174,7 +177,14 @@ fn explain(logged: &Logged, findings: &[Record], main: &Path) -> Record {
             }
     };
     let code = code_of(&logged.message);
-    let finding = findings.iter().filter(near).min_by_key(|r| r.get("code").and_then(|c| c.as_str()) != code);
+    // A finding explains the message only when it is about the same thing:
+    // the same rule, and the key the message quotes (`` `knuth84' ``).
+    let key = logged.message.split_once('`').and_then(|(_, rest)| rest.split_once('\'')).map(|(key, _)| key);
+    let about = |r: &&Record| {
+        let text = r.get("message").and_then(|m| m.as_str()).unwrap_or_default();
+        code.is_none_or(|c| r.get("code").and_then(|c| c.as_str()) == Some(c)) && key.is_none_or(|k| text.contains(k))
+    };
+    let finding = findings.iter().filter(near).find(about);
     let why = match finding {
         Some(f) => {
             let text = f.get("message").and_then(|m| m.as_str()).unwrap_or_default();
@@ -236,5 +246,22 @@ mod tests {
         assert_eq!(got[2].message, "Package foo Error: bad more here.");
         assert_eq!(code_of(&got[0].message), Some("undefined-control-sequence"));
         assert_eq!(code_of(&got[1].message), Some("undefined-reference"));
+    }
+
+    #[test]
+    fn a_finding_explains_only_the_message_about_its_key() {
+        let main = Path::new("main.tex");
+        let finding = |code: &str, message: &str| record(main, Some(4), false, code, message.into(), None);
+        let findings = [
+            finding("space-after-command", "the space after \\TeX is lost"),
+            finding("undefined-reference", "no `\\label{sec:nope}` anywhere"),
+        ];
+        let logged = |message: &str| Logged { path: None, line: Some(4), error: false, message: message.into() };
+        let why = |message: &str| explain(&logged(message), &findings, main)["fix"].as_str().map(str::to_owned);
+        assert_eq!(why("Reference `sec:nope' on page 1 undefined").as_deref(), Some("no `\\label{sec:nope}` anywhere"));
+        // another key on that line: the rule's summary, not the finding about `sec:nope`
+        assert!(why("Reference `sec:other' on page 1 undefined").is_some_and(|w| !w.contains("sec:nope")));
+        // a citation: no finding of its rule there, so none of the others either
+        assert!(why("Citation `knuth84' on page 1 undefined").is_some_and(|w| !w.contains("TeX")));
     }
 }

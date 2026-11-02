@@ -11,6 +11,9 @@
 //! Without `--dev`, a last build in `--out` serves at once while the new one
 //! builds beside it (`--out` with `.next`); the new one replaces it when done.
 //!
+//! The playground's Compile button posts to this server, which builds the
+//! project with the machine's TeX (`satex-playground/compile.rs`).
+//!
 //! It needs what the site's workflow has: Python 3, pandoc and pdftocairo,
 //! git, and `rustup`. The Rust target `wasm32-unknown-emscripten` is added
 //! when missing, and the Emscripten SDK the workflow pins is installed under
@@ -18,6 +21,9 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+
+#[path = "satex-playground/compile.rs"]
+mod compile;
 
 fn main() -> ExitCode {
     match run() {
@@ -165,7 +171,7 @@ fn respond(mut stream: std::net::TcpStream, site: &Path, dev: Option<&Path>) -> 
     let mut reader = std::io::BufReader::new(stream.try_clone()?);
     let mut request = String::new();
     reader.read_line(&mut request)?;
-    let mut gzip = false;
+    let (mut gzip, mut length) = (false, 0);
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line)? <= 2 {
@@ -173,6 +179,7 @@ fn respond(mut stream: std::net::TcpStream, site: &Path, dev: Option<&Path>) -> 
         }
         let line = line.to_ascii_lowercase();
         gzip |= line.starts_with("accept-encoding:") && line.contains("gzip");
+        length = line.strip_prefix("content-length:").and_then(|n| n.trim().parse().ok()).unwrap_or(length);
     }
     let mut words = request.split_whitespace();
     let (method, target) = (words.next().unwrap_or_default(), words.next().unwrap_or("/"));
@@ -185,6 +192,11 @@ fn respond(mut stream: std::net::TcpStream, site: &Path, dev: Option<&Path>) -> 
         )?;
         let _ = stream.flush();
         std::process::exit(0);
+    }
+    if let Some(rest) = path.strip_prefix("/__satex/compile") {
+        let mut body = vec![0; length];
+        std::io::Read::read_exact(&mut reader, &mut body)?;
+        return compile::respond(&mut stream, method, rest, &body, site);
     }
     if let Some(src) = dev {
         if path == "/__dev/events" {
@@ -217,7 +229,7 @@ fn respond(mut stream: std::net::TcpStream, site: &Path, dev: Option<&Path>) -> 
     send(&mut stream, method, &name, cache_control(&name), encoded, body)
 }
 
-fn send(
+pub(crate) fn send(
     stream: &mut std::net::TcpStream,
     method: &str,
     name: &str,
@@ -336,7 +348,7 @@ fn say(what: &str) {
 }
 
 /// The media type a static host gives a file by its extension.
-fn content_type(name: &str) -> &'static str {
+pub(crate) fn content_type(name: &str) -> &'static str {
     match name.rsplit('.').next().unwrap_or_default() {
         "html" => "text/html; charset=utf-8",             // not prose
         "js" | "mjs" => "text/javascript; charset=utf-8", // not prose

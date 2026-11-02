@@ -58,6 +58,8 @@
       <ul id="lsp-diagnostics" class="diagnostics grow" aria-live="polite"></ul></details>
     <details class="sect" id="play-explain"><summary>Explain macro <code id="explain-name"></code></summary>
       <div id="explain-body" class="hover grow"><p class="muted">The command at the cursor, explained.</p></div></details>
+    <details open class="sect" id="play-pdf"><summary>PDF <span class="pdf-bar"><button type="button" id="pdf-compile" class="small" disabled title="Build the project with this machine's TeX and show the PDF">Compile</button><button type="button" id="pdf-slice" class="small ghost" disabled title="Build only what the cursor's line needs: satex slice at the cursor">Slice</button></span> <span class="muted" id="pdf-status"></span></summary>
+      <div id="pdf-body" class="pdf grow"><p class="muted">Compile shows the PDF here. Click the page to find its source, move the cursor to find it on the page.</p></div></details>
     <details open class="sect" id="play-typeset"><summary>Typeset
       <span class="ts-switches"><label class="ts-toggle" title="Show the text set in boxes that never reach the page"><span>boxes</span><input type="checkbox" id="typeset-boxes" role="switch" aria-label="show boxed text"></label>
       <label class="ts-toggle" title="Show the keys of labels, references and citations where they stand"><span>keys</span><input type="checkbox" id="typeset-keys" role="switch" aria-label="show keys"></label>
