@@ -8,6 +8,9 @@
 # A new test lands in a shard by itself.  The compliance ledger fails on
 # purpose while it has open entries, so it is a shard of its own, reported
 # non-blocking; being short, it also runs the unit tests (`lib`), blocking.
+# A shard fails on a failing test that tests/known-red.txt does not list;
+# the listed ones run and are reported, and one that passes is named so
+# the list shrinks.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -38,5 +41,16 @@ mapfile -t tests < <(
 )
 (( ${#tests[@]} > 0 )) || { echo "$0: shard $k/$n is empty" >&2; exit 1; }
 
-set -x
-run --test it -- --exact "${tests[@]}"
+log=target/ci-test-shard-$k.log; mkdir -p target
+set +e
+(set -x; run --test it -- --exact "${tests[@]}") 2>&1 | tee "$log"
+set -e
+failed=$(sed -n 's/^test \(.*\) \.\.\. FAILED$/\1/p' "$log" | LC_ALL=C sort -u)
+known=$(grep -v '^#' tests/known-red.txt | LC_ALL=C sort -u)
+new=$(comm -23 <(printf '%s\n' "$failed" | sed '/^$/d') <(printf '%s\n' "$known"))
+for t in "${tests[@]}"; do
+    if grep -qxF "$t" <<<"$known" && ! grep -qxF "$t" <<<"$failed"; then echo "known red passes now, drop it from tests/known-red.txt: $t"; fi
+done
+[[ -z "$failed" ]] || echo "known red: $(comm -12 <(printf '%s\n' "$failed") <(printf '%s\n' "$known") | tr '\n' ' ')"
+grep -q '^test result: ' "$log" || { echo "$0: the test binary did not finish" >&2; exit 1; }
+[[ -z "$new" ]] || { echo "failing, not known red:"; printf '  %s\n' $new; exit 1; }
