@@ -68,6 +68,7 @@ fn check_allowing(id: &str, main: &str, also: &[&str], allowed: &[&str]) -> Opti
     }
     let steps = analysis.steps - analysis.load_steps;
     eprintln!("{id}/{main}: {steps} analysis steps, {} loading", analysis.load_steps);
+    crate::support::record_steps(&format!("documents::{id}/{main}"), steps);
     if steps >= STEP_BUDGET {
         failures.push(format!("{steps} analysis steps ({} loading), budget {STEP_BUDGET}", analysis.load_steps));
     }

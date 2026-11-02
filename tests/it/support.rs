@@ -110,6 +110,16 @@ pub fn satex() -> std::process::Command {
     command
 }
 
+/// Appends `label steps` to the file named by `SATEX_STEPS_LOG` (set by
+/// scripts/ci-test.sh), which scripts/regress.sh compares with tests/steps-baseline.txt.
+pub fn record_steps(label: &str, steps: u64) {
+    use std::io::Write;
+    let Some(path) = std::env::var_os("SATEX_STEPS_LOG") else { return };
+    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(path) {
+        let _ = f.write_all(format!("{label} {steps}\n").as_bytes());
+    }
+}
+
 /// Recreate `dir` empty. Used to give each test its own scratch directory.
 pub fn scratch_dir(dir: PathBuf) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dir);

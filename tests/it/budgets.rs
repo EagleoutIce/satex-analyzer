@@ -17,6 +17,7 @@ fn fresh(name: &str) -> PathBuf {
 
 fn within(what: &str, steps: u64, measured: u64) {
     eprintln!("budget {what}: {steps} (measured {measured})");
+    crate::support::record_steps(&format!("budgets::{}", what.replace(' ', "_")), steps);
     assert!(steps * 100 <= measured * SLACK, "{what}: {steps} steps, measured {measured}, fail at +20%");
 }
 

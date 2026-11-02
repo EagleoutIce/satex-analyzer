@@ -52,6 +52,25 @@ Use `tests/it/latex.rs` for documents loading packages, `tests/it/semantics.rs` 
 Keep examples anonymous: generic text, the `article` class, no names or paths from the original document.
 `broken_gaps` and `document_gaps` in `tests/it/latex.rs` collect gaps a test can assert are absent.
 
+### One command for CI
+
+`scripts/regress.sh` runs what CI runs: the 8 shards, `lib`, the quick modules and compliance, each through the known-red gate of `scripts/ci-test.sh`. It uses `target/scratch/lock2.sh` when that exists.
+
+```sh
+scripts/regress.sh                      # full, the source of truth
+scripts/regress.sh --changed            # only the modules tests/changed-map.txt maps the changed files to
+scripts/regress.sh budgets:: latex::x   # just these test filters
+scripts/regress.sh --record             # full, then rewrite the two baselines
+# options: --profile P (default ci)  --target-dir D  --jobs J  --shards N  --base REF
+```
+
+It prints the passed count, the known red tests, NEW failures, known reds that pass now, and exits 1 on a new failure. Two baselines catch what the known-red list hides:
+
+- `tests/green-baseline.txt` lists tests that passed in the last recorded full run. A known-red test in it is reported as a REGRESSION, and so is a listing of one in `tests/known-red.txt`. Fix such a test, do not list it.
+- `tests/steps-baseline.txt` holds the analysis steps of the document and budget tests (`documents::<id>/<main>`, `budgets::<name>`). A test whose steps grew over 20% is flagged as a warning. Tests append their count to `$SATEX_STEPS_LOG` through `support::record_steps`.
+
+Record the baselines from a green full run when a change lowers steps or fixes tests on purpose. A path in `src/` that `tests/changed-map.txt` has no rule for runs the full mode.
+
 ### Memory
 
 The test binary counts its allocations like `satex` does, and every test
