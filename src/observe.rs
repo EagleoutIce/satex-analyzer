@@ -787,7 +787,8 @@ pub fn relate(m: &mut Machine) {
     let mut named: Vec<(usize, String, usize)> = Vec::new();
     for (i, line) in lines.iter().enumerate().filter(|(i, l)| !declaring.contains(i) && !l.head.is_empty()) {
         let keys = line.keys();
-        for read in reads_at.get(&line.span).into_iter().flatten() {
+        // a name built from unknown text shows no shape of a key
+        for read in reads_at.get(&line.span).into_iter().flatten().filter(|r| !m.is_unknown_name(r.name)) {
             let name = m.name(read.name).to_string();
             if let Some((key, prefix, suffix)) = within(&name, &keys).filter(|(_, p, s)| !p.is_empty() || !s.is_empty())
             {
