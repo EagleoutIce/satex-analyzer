@@ -10653,9 +10653,12 @@ will look undefined",
         let text = format!("{text}\n");
         let mut mouth = Mouth::new(&text, 0);
         let mut out = Vec::new();
-        let Self { catcodes, out: analysis, end_line, .. } = self;
-        while let Some(mut t) = mouth.next_with(catcodes, &mut analysis.interner, *end_line) {
+        while let Some(mut t) = mouth.next_with(&self.catcodes, &mut self.out.interner, self.end_line) {
             t.span = at;
+            // Text a run wrote of a known class reads back as that class, as from a file.
+            if let Some((class, one)) = mouth.written.take() {
+                t = self.unknown_text(Unk::Class(class, one, None, &[]), at);
+            }
             out.push(t);
         }
         out
