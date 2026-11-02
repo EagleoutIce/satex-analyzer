@@ -426,6 +426,16 @@ impl Default for LspConfig {
     }
 }
 
+/// `slice:` in `satex.yaml`: what a reconstructed slice leaves out.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SliceConfig {
+    /// Keeps only what the criterion depends on: what the document's frame
+    /// (`\begin{document}`, its hooks, the `.aux` file) alone reads stays
+    /// out, so unused packages, libraries and numbering go.
+    pub trim: bool,
+}
+
 /// `docs:` in `satex.yaml`: where the documentation of a package is looked for,
 /// and which conventions of it are read ([`crate::plugin::docs`]).
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -1411,6 +1421,9 @@ pub struct Config {
     /// When an editor asks whether a frequent finding is the project's style.
     #[serde(default)]
     pub style_prompt: StylePrompt,
+    /// What `satex slice` leaves out.
+    #[serde(default)]
+    pub slice: SliceConfig,
 }
 
 impl Default for Config {
@@ -1467,6 +1480,7 @@ impl Default for Config {
             lsp: LspConfig::default(),
             docs: DocsConfig::default(),
             style_prompt: StylePrompt::default(),
+            slice: SliceConfig::default(),
         }
     }
 }

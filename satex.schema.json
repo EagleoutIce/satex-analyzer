@@ -3144,6 +3144,21 @@
       ],
       "x-example": "shell_escape: full\n\\write18{date > now.tex} runs, so \\input{now} reads its output"
     },
+    "slice": {
+      "description": "what satex slice leaves out",
+      "properties": {
+        "trim": {
+          "default": false,
+          "description": "leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \\begin{document} reads",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "trim: true: a slice that draws no picture drops \\usepackage{tikz}"
+        }
+      },
+      "type": "object"
+    },
     "stubs": {
       "properties": {},
       "type": "object"

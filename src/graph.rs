@@ -169,6 +169,9 @@ impl Vertex {
 pub struct SliceBound {
     pub limit: NodeId,
     pub home: Option<crate::tex::FileId>,
+    /// Calls reached only through what they define, never as a whole: a
+    /// load is used by way of its file's definitions.
+    pub opaque: crate::fixed::HashSet<NodeId>,
 }
 
 /// Definitions after which a name counts as scratch state.
@@ -497,7 +500,14 @@ impl DependencyGraph {
                 Some(incoming) => &incoming[index],
                 None => self.outgoing(node),
             };
-            for (other, kind) in next.iter().filter(|(_, k)| k.intersects(kinds)) {
+            for (other, kind) in next.iter() {
+                let kind = &match !forward && bound.opaque.contains(other) {
+                    true => EdgeKind(kind.0 & !EdgeKind::SIDE_EFFECT_ON_CALL.0),
+                    false => *kind,
+                };
+                if !kind.intersects(kinds) {
+                    continue;
+                }
                 let made_by = kind.intersects(EdgeKind(EdgeKind::DEFINED_BY.0 | EdgeKind::SIDE_EFFECT_ON_CALL.0));
                 if !forward
                     && made_by
@@ -513,7 +523,7 @@ impl DependencyGraph {
                 // An edge that touches the file being sliced is its own, and
                 // may be the only way to what wrote it (`\DeclareOption`).
                 if !forward
-                    && kind.intersects(EdgeKind::READS)
+                    && kind.intersects(EdgeKind(EdgeKind::READS.0 | EdgeKind::DEFINED_BY.0))
                     && (is_scratch(node) || is_scratch(*other))
                     && file_of(node) != file_of(*other)
                     && !at_home(node)
