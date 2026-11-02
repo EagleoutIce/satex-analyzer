@@ -11236,6 +11236,8 @@ will look undefined",
     }
 
     pub fn register_file(&mut self, path: String, kind: LoadKind) -> FileId {
+        // One spelling per file, however its path was joined (Windows takes `/`).
+        let path = if cfg!(windows) { path.replace('\\', "/") } else { path };
         if let Some(i) = self.file_index(&path) {
             return i as FileId;
         }
