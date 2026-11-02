@@ -200,7 +200,7 @@ jobs:
           SATEX_REQUIRE_TEX: '1'
         run: |
           cargo test --locked --profile ci --no-fail-fast --lib
-          cargo test --locked --profile ci --no-fail-fast --test it -- \
+          bash scripts/ci-test.sh quick \
             distribution_guard:: \
             engine:: \
             engine_truth:: \
@@ -355,7 +355,7 @@ jobs:
           SATEX_REQUIRE_TEX: '1'
         run: |
           cargo test --locked --profile ci --no-fail-fast --lib
-          cargo test --locked --profile ci --no-fail-fast --test it -- \
+          bash scripts/ci-test.sh quick \
             distribution_guard:: \
             engine:: \
             engine_truth:: \
