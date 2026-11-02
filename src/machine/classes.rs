@@ -179,8 +179,8 @@ impl Machine<'_> {
         self.class_at(t, first, 0)
     }
 
-    /// Whether two token lists can never be equal: both hold a token,
-    /// and their first ones differ in class.
+    /// Whether two token lists can never be equal: not both may be empty,
+    /// and the first tokens they may hold differ in class.
     pub(crate) fn texts_differ(&self, x: &[Token], y: &[Token]) -> bool {
         let first = |text: &[Token]| {
             let mut class = TokenClass { empty: true, ..TokenClass::default() };
@@ -196,7 +196,7 @@ impl Machine<'_> {
             class
         };
         let (a, b) = (first(x), first(y));
-        !a.empty && !b.empty && a.disjoint(&b)
+        !(a.empty && b.empty) && a.disjoint(&b)
     }
 
     fn class_at(&self, t: Token, first: bool, depth: usize) -> TokenClass {

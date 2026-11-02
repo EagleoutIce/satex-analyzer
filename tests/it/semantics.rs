@@ -2304,6 +2304,17 @@ fn a_font_loaded_on_one_path_keeps_its_name() {
     assert_eq!(out, "H");
 }
 
+/// `\ifx` of a macro of printed digits that may be none against one of
+/// `\relax`: never equal, empty or not (tex.web § 507). pdflatex: F.
+#[test]
+fn digits_that_may_be_none_never_equal_a_command() {
+    let out = article_sizes(
+        r"\setbox0\hbox{\the\pdfrandomseed}\edef\w{\the\wd0}\def\a#1#2.#3\end{\def\r{#2}}\expandafter\a\w\end
+          \def\e{\relax}\ifx\r\e\xdef\out{T}\else\xdef\out{F}\fi",
+    );
+    assert_eq!(out, "F");
+}
+
 /// Expanding `\ifdim\lastkern` inside a word does not end it: `A` and `V`
 /// still kern (tex.web §§ 1034-1036), as csquotes relies on. A `\write`
 /// is a whatsit, nothing after `\immediate` (§§ 1348, 1375); a font
