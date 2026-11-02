@@ -130,6 +130,31 @@ jobs:
           SATEX_REQUIRE_TEX: '1'
         run: bash scripts/ci-test.sh compliance
 
+  # The newest TeX Live, reported but not blocking: the main jobs pin
+  # TL2025-historic, and this shows how far satex is from the current kernel.
+  newest-texlive:
+    name: Test newest TeX Live (non-blocking)
+    needs: changes
+    if: (github.event_name == 'push' || github.event_name == 'pull_request') && needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    container: texlive/texlive:latest
+    steps:
+      - name: Install a C toolchain
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: quick-linux
+          save-if: false
+          cache-on-failure: true
+      - name: Test
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: "bash scripts/ci-test.sh quick latex:: documents:: termination::"
+
   quick-other:
     name: Test ${{ matrix.os }}
     needs: changes
