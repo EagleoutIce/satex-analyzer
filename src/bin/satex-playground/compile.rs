@@ -2,7 +2,10 @@
 //! /__satex/compile` takes `{main, files, at?}`, writes the files into a
 //! fresh directory beside the site and runs the native `satex compile` on
 //! the main file, or on `satex slice --at` of it. The answer names the
-//! pages (PNG, by `pdftocairo`), the log and the explained messages.
+//! pages (PNG, by `pdftocairo`), the words on them (`pdftotext -bbox`), the
+//! log and the explained messages. A file is text or `{"b64": ...}` (an
+//! image). The same request again answers from the kept build, and with
+//! `cached` only a kept build answers.
 //! `GET /__satex/compile/ID/FILE` serves what a build wrote, `GET
 //! /__satex/compile` says the server compiles. A static host has none of
 //! this, so the page offers Compile only where the probe answers.
@@ -49,6 +52,13 @@ pub fn respond(
 fn build(root: &Path, body: &[u8]) -> Result<Value, String> {
     let request: Value = serde_json::from_slice(body).map_err(|e| format!("bad request: {e}"))?;
     let main = request["main"].as_str().filter(|m| safe(m)).ok_or("no main file")?;
+    let key = request_key(&request);
+    if let Some(kept) = kept(root, &key) {
+        return Ok(kept);
+    }
+    if request["cached"].as_bool() == Some(true) {
+        return Ok(json!({ "none": true }));
+    }
     let id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
@@ -57,10 +67,11 @@ fn build(root: &Path, body: &[u8]) -> Result<Value, String> {
     prune(root);
     let dir = root.join(&id);
     for (name, text) in request["files"].as_object().into_iter().flatten() {
-        let (Some(text), true) = (text.as_str(), safe(name)) else { continue };
+        let bytes = text.as_str().map(|t| t.as_bytes().to_vec()).or_else(|| Some(unb64(text["b64"].as_str()?)));
+        let (Some(bytes), true) = (bytes, safe(name)) else { continue };
         let file = dir.join(name);
         std::fs::create_dir_all(file.parent().unwrap_or(&dir)).map_err(|e| e.to_string())?;
-        std::fs::write(&file, text).map_err(|e| e.to_string())?;
+        std::fs::write(&file, bytes).map_err(|e| e.to_string())?;
     }
     let satex = std::env::current_exe().map_err(|e| e.to_string())?.with_file_name("satex");
     // A slice is a project of its own: the main file cut down, the local files it needs.
@@ -87,6 +98,7 @@ fn build(root: &Path, body: &[u8]) -> Result<Value, String> {
     let pdf = work.join(stem.with_extension("pdf"));
     if pdf.is_file() {
         run(Command::new("pdftocairo").args(["-png", "-r", "144"]).arg(&pdf).arg(work.join("page")))?;
+        run(Command::new("pdftotext").arg("-bbox").arg(&pdf).arg(work.join("words.html")))?;
     }
     let mut pages: Vec<String> = std::fs::read_dir(&work)
         .map_err(|e| e.to_string())?
@@ -97,16 +109,60 @@ fn build(root: &Path, body: &[u8]) -> Result<Value, String> {
     pages.sort_by_key(|n| (n.len(), n.clone()));
     let base = work.strip_prefix(root).unwrap_or(&work).to_string_lossy().into_owned();
     let log = std::fs::read_to_string(work.join(stem.with_extension("log"))).unwrap_or_default();
-    Ok(json!({
+    let answer = json!({
+        "key": key,
         "base": format!("{base}/"),
         "pdf": pdf.is_file().then(|| stem.with_extension("pdf")),
         "synctex": work.join(stem.with_extension("synctex.gz")).is_file().then(|| stem.with_extension("synctex.gz")),
         "pages": pages,
+        "words": work.join("words.html").is_file().then_some("words.html"),
         "dpi": 144,
         "records": records,
         "log": log,
         "stderr": String::from_utf8_lossy(&out.stderr),
-    }))
+    });
+    std::fs::write(dir.join("answer.json"), answer.to_string()).map_err(|e| e.to_string())?;
+    Ok(answer)
+}
+
+/// What a request determines: its main file, slice point and files.
+fn request_key(request: &Value) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for part in [&request["main"], &request["at"], &request["files"]] {
+        part.to_string().hash(&mut hasher);
+    }
+    format!("{:016x}", hasher.finish())
+}
+
+/// The answer of a kept build with this key.
+fn kept(root: &Path, key: &str) -> Option<Value> {
+    std::fs::read_dir(root).ok()?.find_map(|d| {
+        let mut answer: Value =
+            serde_json::from_slice(&std::fs::read(d.ok()?.path().join("answer.json")).ok()?).ok()?;
+        (answer["key"] == key).then(|| {
+            answer["cached"] = json!(true);
+            answer
+        })
+    })
+}
+
+/// Bytes of base64 text, skipping what is not in the alphabet.
+fn unb64(text: &str) -> Vec<u8> {
+    let (mut out, mut bits, mut have) = (Vec::new(), 0u32, 0);
+    for c in text.bytes() {
+        let Some(v) = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".iter().position(|&a| a == c)
+        else {
+            continue;
+        };
+        (bits, have) = (bits << 6 | v as u32, have + 6);
+        if have >= 8 {
+            have -= 8;
+            out.push((bits >> have) as u8);
+            bits &= (1 << have) - 1;
+        }
+    }
+    out
 }
 
 fn run(command: &mut Command) -> Result<std::process::Output, String> {

@@ -198,7 +198,7 @@
   // (`manifest.projects` names the files it reads besides itself) or an upload is a project.
   // `texts` holds every file under `dir`: an example's edits stay while another one is open.
   // Read-only files (`ro`) are kernel or package files opened by a definition: never sent or run.
-  const state = { dir: '/work', texts: {}, file: null, root: manifest.sample, kernel: 0, loaded: new Set([0]), upload: false, ro: {},
+  const state = { dir: '/work', texts: {}, file: null, root: manifest.sample, kernel: 0, loaded: new Set([0]), upload: false, ro: {}, bins: {},
     example: manifest.sample, files: [], open: [], lists: {} };
   const projects = manifest.projects ?? {};
   const shared = new Set(Object.values(projects).flat());
@@ -943,10 +943,10 @@
       coords: () => ev.coordsAtPos(ev.state.selection.main.head),
       mark: (ranges) => ev.dispatch({ effects: marks.of(ranges.map((r) => span(r)).filter(([f, t]) => t > f)) }),
       line: () => { const l = doc().lineAt(ev.state.selection.main.head); return [l.from, l.to]; },
-      // the cursor goes to the start; the range only flashes
-      focus: (r, flash = false) => {
+      // the cursor goes to the start; the range only flashes, or is selected with `select`
+      focus: (r, flash = false, select = false) => {
         const [from, to] = span(r);
-        ev.dispatch({ selection: { anchor: from }, scrollIntoView: true, effects: flash && to > from ? flashes.of([[from, to]]) : [] });
+        ev.dispatch({ selection: { anchor: from, ...(select ? { head: to } : {}) }, scrollIntoView: true, effects: flash && to > from ? flashes.of([[from, to]]) : [] });
         ev.focus();
         if (flash) setTimeout(() => ev.dispatch({ effects: flashes.of([]) }), 1300);
       },
@@ -1329,7 +1329,7 @@
     await openPlace(decodeURIComponent(new URL(loc.uri ?? loc.targetUri).pathname), (loc.range ?? loc.targetSelectionRange).start);
   }
   /** `file` (a path or a bare name) at `start`; a file outside the project opens read-only. */
-  async function openPlace(file, start = { line: 0, character: 0 }) {
+  async function openPlace(file, start = { line: 0, character: 0 }, end = start) {
     const name = file.startsWith(`${state.dir}/`) ? file.slice(state.dir.length + 1) : Object.keys(state.texts).find((n) => n === file) ?? null;
     let target = name in state.texts ? name : null;
     if (!target) {
@@ -1340,7 +1340,7 @@
       state.texts[target] = new TextDecoder().decode(got.data);
     }
     choose(target);
-    editor.focus({ start, end: start });
+    editor.focus({ start, end }, false, true);
     editor.mark([{ start: { line: start.line, character: 0 }, end: { line: start.line + 1, character: 0 } }]);
   }
   // A place (`file:line`) in a card, a finding or a run opens; a command chip is explained.
@@ -3114,7 +3114,7 @@
   async function example(ex, { file = ex, list = null, root = ex, command = null } = {}) {
     if (!editor || !(ex in sampleTexts)) return;
     sync();
-    if (state.upload) Object.assign(state, { dir: '/work', texts: { ...sampleTexts }, upload: false, lists: {} });
+    if (state.upload) Object.assign(state, { dir: '/work', texts: { ...sampleTexts }, upload: false, lists: {}, bins: {} });
     for (const n of Object.keys(state.ro)) delete state.texts[n];
     state.ro = {};
     state.files = state.lists[ex] ??= list ?? [ex, ...(projects[ex] ?? [])];
@@ -3417,7 +3417,7 @@
    * src/bin/satex-playground/compile.rs). The request and the SyncTeX parse run in a worker of their own,
    * so the analysis stays responsive. Pages come as images; SyncTeX links them to the source both ways. */
   const COMPILE = `${location.origin}/__satex/compile`;
-  /** The compile worker's code: posts the build, fetches and parses its SyncTeX data. */
+  /** The compile worker's code: posts the build, fetches and parses its SyncTeX data and the words of its pages. */
   function compileWorkerMain() {
     const BP = 65781.76; // scaled points per big point
     /** SyncTeX records of the project's own files: page, file, line, kind, x and y (baseline) in bp from the top left. */
@@ -3436,51 +3436,110 @@
       }
       return boxes;
     };
+    const unescapeHtml = (s) => s.replace(/&(amp|lt|gt|quot|#39);/g, (_, c) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[c]);
+    /** The words of `pdftotext -bbox`: [page, x0, y0, x1, y1, text], in bp from the top left. */
+    const words = (html) => {
+      const out = [];
+      let page = 0;
+      for (const l of html.split('\n')) {
+        const w = /<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">(.*)<\/word>/.exec(l);
+        if (w) out.push([page, +w[1], +w[2], +w[3], +w[4], unescapeHtml(w[5])]); else if (l.includes('<page ')) page++;
+      }
+      return out;
+    };
+    const text = async (url, gzip) => { const r = await fetch(url); return gzip ? new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).text() : r.text(); };
     self.onmessage = async ({ data: { url, request } }) => {
       try {
         const answer = await (await fetch(url, { method: 'POST', body: JSON.stringify(request) })).json();
-        if (answer.synctex) {
-          const z = await fetch(`${url}/${answer.base}${answer.synctex}`);
-          answer.boxes = parse(await new Response(z.body.pipeThrough(new DecompressionStream('gzip'))).text());
-        }
+        if (answer.synctex) answer.boxes = parse(await text(`${url}/${answer.base}${answer.synctex}`, true));
+        if (answer.words) answer.wordList = words(await text(`${url}/${answer.base}${answer.words}`));
         self.postMessage(answer);
       } catch (e) { self.postMessage({ error: String(e?.message ?? e) }); }
     };
   }
   const pdfBody = $('pdf-body'), pdfStatus = $('pdf-status'), pdfButtons = [$('pdf-compile'), $('pdf-slice')];
-  var pdf = null, pdfWorker = null, pdfLine = ''; // var: the cursor may move before this line runs
-  fetch(COMPILE).then((r) => r.ok && r.json()).then((j) => {
-    if (j?.compile) pdfButtons.forEach((b) => { b.disabled = false; });
-    else throw new Error();
-  }).catch(() => { pdfBody.innerHTML = '<p class="muted">Compiling needs the local playground server (<code>cargo playground</code>): a static copy of the site has no TeX to run.</p>'; });
-  /** Builds the project, or with `slice` only what the cursor's line needs. */
-  function compile(slice = false) {
+  var pdf = null, pdfWorker = null, pdfLine = '', pdfBusy = false; // var: the cursor may move before this line runs
+  const NO_SERVER = 'Compiling needs the local playground server (<code>cargo playground</code>): a static copy of the site has no TeX to run.';
+  const pdfServer = fetch(COMPILE).then((r) => r.ok && r.json()).then((j) => {
+    if (!j?.compile) throw new Error();
+    pdfButtons.forEach((b) => { b.disabled = false; });
+    return true;
+  }).catch(() => {
+    pdfBody.innerHTML = `<p class="muted">${NO_SERVER}</p>`;
+    pdfStatus.textContent = 'no compile server';
+    return false;
+  });
+  /** Zoom of the pages as a factor of the pane's width, in the address's `zoom` like the symbol list's. */
+  const pdfZoom = { value: Math.min(4, Math.max(0.3, Number(new URLSearchParams(location.search).get('zoom')) || 1)) };
+  function pdfZoomTo(z) {
+    pdfZoom.value = Math.min(4, Math.max(0.3, Math.round(z * 100) / 100));
+    pdfBody.style.setProperty('--pdf-zoom', String(pdfZoom.value));
+    $('pdf-zoom-level').textContent = `${Math.round(pdfZoom.value * 100)}%`;
+    const q = new URLSearchParams(location.search);
+    if (pdfZoom.value !== 1) q.set('zoom', String(pdfZoom.value)); else q.delete('zoom');
+    history.replaceState(null, '', `${location.pathname}${q.size ? `?${q}` : ''}${location.hash}`);
+  }
+  pdfZoomTo(pdfZoom.value);
+  $('pdf-zoom-out').onclick = (e) => { e.preventDefault(); pdfZoomTo(pdfZoom.value / 1.25); };
+  $('pdf-zoom-in').onclick = (e) => { e.preventDefault(); pdfZoomTo(pdfZoom.value * 1.25); };
+  pdfBody.addEventListener('wheel', (e) => { if (e.ctrlKey && e.target.closest('.pdf-pages')) { e.preventDefault(); pdfZoomTo(pdfZoom.value * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); } }, { passive: false });
+  /** A binary file (an image) as base64 text for the request, once per file. */
+  const b64s = new WeakMap();
+  const base64 = (bytes) => {
+    if (!b64s.has(bytes)) {
+      let s = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      b64s.set(bytes, btoa(s));
+    }
+    return b64s.get(bytes);
+  };
+  /** The project as the server builds it: its texts and the images it holds. */
+  const pdfFiles = () => ({
+    ...Object.fromEntries(state.files.filter((n) => n in state.texts && !(n in state.ro)).map((n) => [n, state.texts[n]])),
+    ...Object.fromEntries(Object.entries(state.bins).map(([n, d]) => [n, { b64: base64(d) }])),
+  });
+  /** Builds the project, or with `slice` only what the cursor's line needs. `cached` only shows a kept build. */
+  async function compile(slice = false, cached = false) {
+    if (pdfBusy || !(await pdfServer)) return;
     push();
     const root = state.root ?? state.file, p = editor.position();
-    const files = Object.fromEntries(state.files.filter((n) => n in state.texts && !(n in state.ro)).map((n) => [n, state.texts[n]]));
     const at = `${state.file === root ? '' : `${state.file}:`}${p.line + 1}:${p.character + 1}`;
     pdfWorker ??= new Worker(URL.createObjectURL(new Blob([`(${compileWorkerMain})()`], { type: 'text/javascript' })));
     const start = performance.now(), what = slice ? `a slice of ${root} at ${at}` : root;
-    const tick = setInterval(() => { pdfStatus.textContent = `compiling ${what}… ${secs(performance.now() - start)}`; }, 100);
+    const tick = cached ? 0 : setInterval(() => { pdfStatus.textContent = `compiling ${what}… ${secs(performance.now() - start)}`; }, 100);
+    pdfBusy = true;
     pdfButtons.forEach((b) => { b.disabled = true; });
     pdfWorker.onmessage = ({ data }) => {
       clearInterval(tick);
+      pdfBusy = false;
       pdfButtons.forEach((b) => { b.disabled = false; });
-      pdfStatus.textContent = data.error ? '' : `${what} in ${secs(performance.now() - start)}`;
+      if (data.none) return;
+      pdfStatus.textContent = data.error ? '' : `${what} in ${data.cached ? 'cache' : secs(performance.now() - start)}`;
       pdf = { ...data, slice, root };
       pdfShow();
     };
-    pdfWorker.postMessage({ url: COMPILE, request: { main: root, files, ...(slice ? { at } : {}) } });
+    pdfWorker.postMessage({ url: COMPILE, request: { main: root, files: pdfFiles(), ...(slice ? { at } : {}), ...(cached ? { cached } : {}) } });
   }
   pdfButtons.forEach((b, i) => { b.onclick = (e) => { e.preventDefault(); compile(i === 1); }; });
+  /** The last build of this very text, kept by the server, shown when the page opens. */
+  const pdfRestore = () => compile(false, true);
+  // Ctrl+S builds, as in an editor with a build on save. Ctrl+Enter in the PDF pane too: in the editor it runs the command.
+  addEventListener('keydown', (e) => {
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === 's' || mod && e.key === 'Enter' && e.target.closest?.('#play-pdf')) {
+      e.preventDefault();
+      if (pdfButtons[0].disabled && !pdfBusy) toast('Compiling needs the local playground server (cargo playground)'); else compile();
+    }
+  });
+  const pdfOrder = (a, b) => a.path.localeCompare(b.path) || (a.line ?? 0) - (b.line ?? 0) || (b.severity === 'error') - (a.severity === 'error');
   const pdfRecord = (r) => {
     const s = r.severity === 'error' ? 'error' : 'warning', where = r.line ? `${r.path}:${r.line}` : r.path;
-    return `<li class="f-${s}" data-path="${escape(r.path)}" data-line="${r.line ?? 1}"><p><span class="sev sev-${s}">${s}</span> <code>${escape(r.code)}</code> ${escape(r.message)} <span class="muted">${escape(where)}</span></p>${r.fix ? `<p class="pdf-why"><b>satex:</b> ${escape(r.fix)}</p>` : ''}</li>`;
+    return `<li class="f-${s}" tabindex="0" data-path="${escape(r.path)}" data-line="${r.line ?? 1}"><p><span class="sev sev-${s}">${s}</span> <code>${escape(r.code)}</code> ${escape(r.message)} <span class="muted">${escape(where)}</span></p>${r.fix ? `<p class="pdf-why"><b>satex:</b> ${escape(r.fix)}</p>` : ''}</li>`;
   };
   function pdfShow() {
     pdfLine = '';
     if (pdf.error) { pdfBody.innerHTML = `<p class="x-err">${escape(pdf.error)}</p>`; return; }
-    const records = pdf.records ?? [], file = (n) => `${COMPILE}/${pdf.base}${n}`;
+    const records = (pdf.records ?? []).sort(pdfOrder), file = (n) => `${COMPILE}/${pdf.base}${n}`;
     const errors = records.filter((r) => r.severity === 'error').length;
     pdfBody.innerHTML = `<p class="pdf-head">${pdf.pdf ? `<a href="${file(pdf.pdf)}" target="_blank" rel="noopener">${escape(pdf.pdf)}</a>, ${pdf.pages.length} page${pdf.pages.length === 1 ? '' : 's'}` : '<span class="x-err">no PDF</span>'}`
       + ` · ${errors} error${errors === 1 ? '' : 's'}, ${records.length - errors} warning${records.length - errors === 1 ? '' : 's'}${pdf.slice ? ' · a slice: its lines are not the file\'s' : ''}</p>`
@@ -3491,31 +3550,44 @@
   }
   /** A page's size in bp, from its image. */
   const pageSize = (img) => [img.naturalWidth * 72 / pdf.dpi, img.naturalHeight * 72 / pdf.dpi];
+  /** The word of the page whose box holds the baseline `y` and is the first at or after `x` (`before`: the last ending by it). */
+  function pdfWordAt(page, y, x, before = false) {
+    const row = (pdf.wordList ?? []).filter((w) => w[0] === page && w[2] - 1 <= y && y <= w[4] + 1);
+    return before ? row.filter((w) => w[3] <= x + 3).at(-1) : row.find((w) => w[3] > x);
+  }
   /** Where `file:line` stands on its first page: one rectangle per baseline, in bp. Only the points TeX set
-   * (glue, kerns, math, the current point), not the boxes, which carry the line where a whole frame or float closed. */
+   * (glue, kerns, math, the current point), not the boxes, which carry the line where a whole frame or float closed.
+   * Glue lies between words, so a row grows to the words beside its first and last point. */
   function pdfRects(file, line) {
     const rows = new Map(), hits = (pdf.boxes ?? []).filter((b) => b.file === file && b.line === line && 'xgk$'.includes(b.kind));
     for (const b of hits.filter((b) => b.page === hits[0].page)) {
       const key = Math.round(b.y / 6), o = rows.get(key); // one row per baseline, a lowered letter (the E of \TeX) in it
-      rows.set(key, { page: b.page, l: Math.min(o?.l ?? b.x, b.x), r: Math.max(o?.r ?? 0, b.x + 4), t: b.y - 8, d: b.y + 2 });
+      rows.set(key, { page: b.page, y: b.y, l: Math.min(o?.l ?? b.x, b.x), r: Math.max(o?.r ?? 0, b.x + 4), t: b.y - 8, d: b.y + 2 });
+    }
+    for (const r of rows.values()) {
+      r.l = pdfWordAt(r.page, r.y, r.l, true)?.[1] ?? r.l;
+      r.r = Math.max(r.r, pdfWordAt(r.page, r.y, r.r - 4)?.[3] ?? r.r);
     }
     return [...rows.values()];
   }
   /** The cursor's line marked on the pages, scrolled into view when it moved. */
   function pdfFollow(again = false) {
-    if (!pdf?.boxes || pdf.slice) return;
-    const line = editor.position().line + 1, key = `${state.file}:${line}`;
+    const pos = editor?.position();
+    if (!pdf?.boxes || pdf.slice || !pos) return;
+    const line = pos.line + 1, key = `${state.file}:${line}`;
     if (key === pdfLine && !again) return;
     pdfLine = key;
     pdfBody.querySelectorAll('.pdf-mark').forEach((m) => m.remove());
     // a line that sets nothing (a blank line, a comment) is marked by the nearest line above that does
     let rects = [];
     for (let l = line; l > 0 && l > line - 8 && !rects.length; l--) rects = pdfRects(state.file, l);
+    // a line that closes a frame or a float sets all of it: outlined, not filled
+    const coarse = rects.length > 8;
     for (const r of rects) {
       const page = pdfBody.querySelector(`.pdf-page[data-page="${r.page}"]`), img = page?.querySelector('img');
       if (!img?.naturalWidth) continue;
       const [w, h] = pageSize(img), pad = 1.5;
-      page.insertAdjacentHTML('beforeend', `<div class="pdf-mark" style="left:${(r.l - pad) / w * 100}%;top:${(r.t - pad) / h * 100}%;width:${(r.r - r.l + 2 * pad) / w * 100}%;height:${(r.d - r.t + 2 * pad) / h * 100}%"></div>`);
+      page.insertAdjacentHTML('beforeend', `<div class="pdf-mark${coarse ? ' coarse' : ''}" style="left:${(r.l - pad) / w * 100}%;top:${(r.t - pad) / h * 100}%;width:${(r.r - r.l + 2 * pad) / w * 100}%;height:${(r.d - r.t + 2 * pad) / h * 100}%"></div>`);
     }
     const first = pdfBody.querySelector('.pdf-mark'), pages = pdfBody.querySelector('.pdf-pages');
     if (first && !again) {
@@ -3523,15 +3595,25 @@
       if (a.top < b.top || a.bottom > b.bottom) pages.scrollTop += a.top - b.top - b.height / 3;
     }
   }
-  /** The source of a point on a page: the nearest record of the project's files, one line above another counting more. */
-  function pdfSource(page, x, y) {
+  /** The source of a point on a page: the nearest record of the project's files, one line above another counting more.
+   * Boxes carry the line where they closed, so only the points TeX set count. Over a word, only those on its row. */
+  function pdfSource(page, x, y, word, fine = true) {
     let best = null, score = Infinity;
     for (const b of pdf.boxes ?? []) {
-      if (b.page !== page || !(b.file in state.texts)) continue;
+      if (b.page !== page || !(b.file in state.texts) || fine && !'xgk$'.includes(b.kind) || word && Math.abs(b.y - word[4]) > 4) continue;
       const s = Math.abs(x - b.x) / 4 + Math.abs(y - (b.y - 3));
       if (s < score) { score = s; best = b; }
     }
-    return best;
+    return best ?? (word ? pdfSource(page, x, y, null, fine) : fine ? pdfSource(page, x, y, null, false) : null);
+  }
+  /** The word on the page at a point, if one is under it. */
+  const pdfWordUnder = (page, x, y) => (pdf.wordList ?? []).find((w) => w[0] === page && w[1] - 1 <= x && x <= w[3] + 1 && w[2] - 1 <= y && y <= w[4] + 1);
+  /** Where `word` stands in a source line: its first whole occurrence, else null. Edge punctuation is not part of it. */
+  function wordInLine(text, word) {
+    const bare = word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    if (!bare) return null;
+    const re = new RegExp(`(?<![\\p{L}\\p{N}\\\\])${bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u').exec(text);
+    return re ? [re.index, re.index + bare.length] : null;
   }
   pdfBody.addEventListener('click', (e) => {
     const rec = e.target.closest('.pdf-records li');
@@ -3542,10 +3624,15 @@
     }
     const img = e.target.closest('.pdf-page img');
     if (!img || pdf.slice) return;
-    const [w, h] = pageSize(img), r = img.getBoundingClientRect();
-    const hit = pdfSource(+img.parentElement.dataset.page, (e.clientX - r.left) / r.width * w, (e.clientY - r.top) / r.height * h);
-    if (hit) openPlace(hit.file, { line: hit.line - 1, character: 0 }).then(() => pdfFollow(true));
+    const [w, h] = pageSize(img), r = img.getBoundingClientRect(), page = +img.parentElement.dataset.page;
+    const x = (e.clientX - r.left) / r.width * w, y = (e.clientY - r.top) / r.height * h;
+    const word = pdfWordUnder(page, x, y), hit = pdfSource(page, x, y, word);
+    if (!hit) return;
+    const span = word && wordInLine(state.texts[hit.file]?.split('\n')[hit.line - 1] ?? '', word[5]);
+    const start = { line: hit.line - 1, character: span?.[0] ?? 0 };
+    openPlace(hit.file, start, span ? { line: start.line, character: span[1] } : undefined).then(() => pdfFollow(true));
   });
+  pdfBody.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('.pdf-records li')) e.target.click(); });
   async function written(target) {
     const files = await lsp('satex/written', { textDocument: { uri: target } }).catch(() => null);
     if (!files) return;
@@ -3893,7 +3980,7 @@
     if (!found.length) throw new Error('no root document: no file has \\documentclass and \\begin{document}');
     const first = root in texts ? root : found[0];
     manualKernel = false;
-    Object.assign(state, { dir: '/work/upload', texts, root: first, file: first, open: [first], files: Object.keys(texts), example: null, upload: true, ro: {} });
+    Object.assign(state, { dir: '/work/upload', texts, root: first, file: first, open: [first], files: Object.keys(texts), example: null, upload: true, ro: {}, bins: Object.fromEntries(Object.entries(files).filter(([n]) => !TEXT.test(n))) });
     post({ type: 'project', dir: state.dir, files, replace: true });
     redraw();
     editor.set(texts[state.file]);
@@ -3908,6 +3995,7 @@
     const decoder = new TextDecoder();
     const texts = Object.entries(files).filter(([n]) => TEXT.test(n)).map(([n, d]) => [n, decoder.decode(d)]);
     Object.assign(state.texts, Object.fromEntries(texts));
+    Object.assign(state.bins, Object.fromEntries(Object.entries(files).filter(([n]) => !TEXT.test(n))));
     for (const [n] of texts) if (!state.files.includes(n)) state.files.push(n);
     post({ type: 'project', dir: state.dir, files });
     if (texts.length) choose(texts[0][0]); else redraw();
@@ -4004,7 +4092,7 @@
       if (link.f in state.texts) choose(link.f);
       args.value = link.a;
     } else {
-      if (state.upload) Object.assign(state, { dir: '/work', texts: { ...sampleTexts }, upload: false, lists: {} });
+      if (state.upload) Object.assign(state, { dir: '/work', texts: { ...sampleTexts }, upload: false, lists: {}, bins: {} });
       Object.assign(state.texts, link.p);
       delete state.lists[link.x];
       await example(link.x, { file: link.f, list: link.l, root: link.r, command: link.a });
@@ -4202,5 +4290,6 @@
     if (!plainLint()) return link && !link.x ? start() : undefined;
     status.textContent = 'Ready. Findings update as you type; Enter runs the command.';
     status.dataset.done = 'ready';
+    pdfRestore();
   })().catch((e) => { status.textContent = `the playground failed: ${e.message}`; status.dataset.done = 'error'; });
 })();
