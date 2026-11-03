@@ -268,12 +268,16 @@ fn dev_inject(name: &str, body: Vec<u8>) -> Vec<u8> {
 }
 
 /// Dev mode: what `path` is when read from `doc/site` instead of the build:
-/// the reload client, a hashed asset (`style-0123456789ab.css`) whose source
+/// the reload client, the service worker (version `dev`: it asks the network first), a hashed asset (`style-0123456789ab.css`) whose source
 /// is `doc/site/style.css`, or the playground page filled from `play.html`
 /// into the built page, with the built manifest and the current `worker.js`.
 fn dev_source(path: &str, site: &Path, src: &Path) -> Option<(String, Vec<u8>)> {
     if path == "/__dev.js" {
         return Some(("dev.js".into(), include_bytes!("../../doc/site/dev.js").to_vec()));
+    }
+    if path == "/play/sw.js" {
+        let worker = std::fs::read_to_string(src.join("sw.js")).ok()?.replace("__VERSION__", "dev");
+        return Some(("sw.js".into(), worker.into_bytes()));
     }
     if path == "/play/" || path == "/play/index.html" {
         let built = std::fs::read_to_string(site.join("play/index.html")).ok()?;

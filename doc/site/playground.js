@@ -3786,18 +3786,32 @@
       if (pdfWarming) pdfWatchSetup(); else if (!pdfBusy) pdfStatus.textContent = 'ready';
     }).catch(() => {}), 3000);
   }
-  const NO_SERVER = 'Compiling needs the local playground server (<code>cargo playground</code>): a static copy of the site has no TeX to run.';
-  const pdfServer = fetch(COMPILE).then((r) => r.ok && r.json()).then((j) => {
-    if (!j?.compile) throw new Error();
-    pdfButtons.forEach((b) => { b.disabled = false; });
-    pdfWarming = j.warming;
-    if (pdfWarming) pdfWatchSetup();
-    return true;
-  }).catch(() => {
-    pdfBody.innerHTML = `<p class="muted">${NO_SERVER}</p>`;
-    pdfStatus.textContent = 'no compile server';
-    return false;
-  });
+  const NO_SERVER = 'This needs the playground server (<code>cargo playground</code>): it runs the machine\'s TeX. Everything else here keeps working without it.';
+  /** Whether the server answers, asked cheaply (its compile endpoint's status page) and not for the sake of a build. */
+  let serverUp = false;
+  async function probeServer() {
+    let j = null;
+    try { const r = await fetch(COMPILE, { cache: 'no-store', signal: AbortSignal.timeout(2500) }); j = r.ok && await r.json(); } catch {}
+    const up = !!j?.compile;
+    if (up) {
+      pdfWarming = j.warming;
+      if (pdfWarming) pdfWatchSetup();
+      if (!serverUp && !pdfBusy) pdfStatus.textContent = pdfWarming ? pdfStatus.textContent : 'ready';
+      if (!serverUp && pdfBody.querySelector('.no-server')) pdfBody.innerHTML = '<p class="muted">Compile shows the PDF here.</p>';
+    } else if (!pdfBusy) {
+      pdfBody.innerHTML = pdf ? pdfBody.innerHTML : `<p class="muted no-server">${NO_SERVER}</p>`;
+      pdfStatus.textContent = 'needs the playground server';
+    }
+    serverUp = up;
+    pdfButtons.forEach((b) => { b.disabled = !up; b.title = up ? "Build the project with this machine's TeX and show the PDF (Ctrl+S)" : 'Needs the playground server'; });
+    if (up) pdfAutoKeep();
+    return up;
+  }
+  const pdfServer = probeServer();
+  // the server may come or go while the page is open
+  addEventListener('focus', () => probeServer());
+  addEventListener('online', () => probeServer());
+  addEventListener('offline', () => probeServer());
   /** Zoom of the pages as a factor of the pane's width, in the address's `zoom` like the symbol list's. */
   const pdfZoom = { value: Math.min(4, Math.max(0.3, Number(new URLSearchParams(location.search).get('zoom')) || 1)) };
   function pdfZoomTo(z) {
@@ -3831,7 +3845,7 @@
   const pdfSets = () => { const f = [...manifest.kernels[state.kernel].args, ...configFlags()]; return f.filter((_, i) => f[i - 1] === '--set'); };
   /** Builds the project, or with `slice` only what the cursor's line needs. `cached` only shows a kept build. `alone`: a standalone slice's text, built on its own. */
   async function compile(slice = false, cached = false, alone = null) {
-    if (!(await pdfServer)) return;
+    if (!(await pdfServer) && !(await probeServer())) { toast('Compiling needs the playground server'); return; }
     // one build at a time: a newer request waits, the newest only
     if (pdfBusy) { if (!cached) pdfQueued = [slice, false, alone]; return; }
     push();
@@ -3857,6 +3871,8 @@
         pdf = { ...data, slice, root };
         pdfShow();
         pdfLoaded(!data.error && !(data.records ?? []).some((r) => r.severity === 'error'));
+        // a failed request may be the server gone: say so plainly
+        if (data.error) probeServer().then((up) => { if (!up) { pdfStatus.textContent = 'needs the playground server'; toast('Compiling needs the playground server'); } });
       }
       if (next) compile(...next);
     };
@@ -3893,7 +3909,7 @@
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 's' || mod && e.key === 'Enter' && e.target.closest?.('#play-pdf')) {
       e.preventDefault();
-      if (pdfButtons[0].disabled && !pdfBusy) toast('Compiling needs the local playground server (cargo playground)'); else compile();
+      if (pdfButtons[0].disabled && !pdfBusy) { probeServer().then((up) => { if (up) compile(); else toast('Compiling needs the playground server (cargo playground)'); }); } else compile();
     }
   });
   /** A short jitter on failure, a soft pulse on success: on each of `els`, once. */
@@ -5278,6 +5294,72 @@
     return Uint8Array.fromBase64?.(text) ?? Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
   }
 
+  /* Offline: sw.js keeps the page, the wasm and every bundle once fetched. When the playground is idle the
+   * remaining bundles are fetched in the background (play/offline.json lists them), so it also works without its server. */
+  const offlineBox = $('offline'), offlineText = $('offline-text'), offlineBtn = $('offline-btn');
+  const offlineState = { todo: [], total: 0, got: 0, stop: false, running: false };
+  const offlineShow = (text, button = '', title = '') => {
+    offlineBox.hidden = !text;
+    offlineText.textContent = text;
+    offlineBtn.textContent = button;
+    offlineBtn.hidden = !button;
+    offlineBox.title = title;
+  };
+  async function offlineSetup() {
+    if (!navigator.serviceWorker || !/^https?:$/.test(location.protocol) || !self.caches) return;
+    try {
+      await navigator.serviceWorker.register(`${base}play/sw.js`);
+      await navigator.serviceWorker.ready;
+      const list = await (await fetch(`${base}play/offline.json`, { cache: 'no-cache' })).json();
+      const have = new Set((await (await caches.open('satex-assets')).keys()).map((r) => r.url));
+      const todo = list.more.filter(([p]) => !have.has(new URL(p, base).href));
+      Object.assign(offlineState, { todo, total: todo.reduce((n, [, s]) => n + s, 0), got: 0 });
+    } catch (e) { console.warn('offline mode unavailable', e); return; }
+    if (!offlineState.todo.length) { offlineShow('available offline', '', 'the page, satex and every package are kept in this browser'); return; }
+    let off = false;
+    try { off = localStorage.getItem('satex-offline') === 'off'; } catch {}
+    if (navigator.connection?.saveData || off) { offlineShow('', `Keep offline (${mib(offlineState.total)} MiB)`, 'fetch every package now, so the playground works without its server'); return; }
+    await new Promise((r) => (self.requestIdleCallback ? requestIdleCallback(r, { timeout: 2000 }) : setTimeout(r, 2000)));
+    offlineRun();
+  }
+  async function offlineRun() {
+    const s = offlineState, next = [...s.todo];
+    if (s.running) return;
+    Object.assign(s, { running: true, stop: false, got: s.todo.length === next.length ? s.got : 0 });
+    try { localStorage.removeItem('satex-offline'); } catch {}
+    const line = () => offlineShow(`making the playground available offline: ${mib(Math.min(s.got, s.total))} of ${mib(s.total)} MiB`, 'Stop', 'the packages are fetched in the background and kept in this browser');
+    line();
+    let failed = false;
+    const one = async () => {
+      while (!s.stop && next.length) {
+        // the analysis comes first
+        while (!s.stop && (act.phase || running > 0)) await new Promise((r) => setTimeout(r, 1000));
+        if (s.stop) break;
+        const [path, size] = next.shift();
+        try {
+          const response = await fetch(new URL(path, base).href);
+          if (!response.ok) throw new Error(String(response.status));
+          const reader = response.body.getReader();
+          for (let n = 0; ;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            s.got += value.length; n += value.length; line();
+            if (s.stop) { reader.cancel(); next.unshift([path, size]); s.got -= n; break; }
+          }
+        } catch { next.unshift([path, size]); failed = true; s.stop = true; }
+      }
+    };
+    await Promise.all([one(), one()]);
+    s.running = false;
+    s.todo = next;
+    if (!next.length) offlineShow('available offline', '', 'the page, satex and every package are kept in this browser');
+    else s.got = s.total - next.reduce((n, [, z]) => n + z, 0), offlineShow(failed ? 'offline copy paused: no connection' : `offline copy stopped at ${mib(s.got)} of ${mib(s.total)} MiB`, 'Resume', 'fetch the rest of the packages');
+  }
+  offlineBtn.onclick = () => {
+    if (offlineState.running) { offlineState.stop = true; try { localStorage.setItem('satex-offline', 'off'); } catch {} } else offlineRun();
+  };
+  addEventListener('online', () => { if (!offlineState.running && offlineState.todo.length && offlineBtn.textContent === 'Resume' && offlineText.textContent.includes('no connection')) offlineRun(); });
+
   (async () => {
     let given;
     if (location.protocol === 'file:') {
@@ -5326,6 +5408,7 @@
     else await example(ex, { file: shared.has(hash) ? hash : ex });
     const opening = hash.match(/^open=(.+):(\d+)$/);
     if (opening) await openPlace(opening[1], { line: Number(opening[2]) - 1, character: 0 });
+    offlineSetup();
     if (!plainLint()) return link && !link.x ? start() : undefined;
     status.textContent = 'Ready. Findings update as you type; Enter runs the command.';
     status.dataset.done = 'ready';

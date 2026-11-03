@@ -32,7 +32,8 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
    * arrives: `total` from the manifest, since a compressed transfer's length is not
    * the length the body has once the browser decoded it. */
   async function fetched(url, label, total) {
-    const response = await fetch(url);
+    // the server gone: what the service worker (or an earlier visit) kept
+    const response = await fetch(url).catch((e) => globalThis.caches?.match(url).then((kept) => kept ?? Promise.reject(e)));
     if (!response.ok) throw new Error(`${url}: ${response.status}`);
     if (!response.body) return response;
     const size = total || Number(response.headers.get('Content-Length')) || 0;

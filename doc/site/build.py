@@ -1246,8 +1246,27 @@ def main():
         (out / "bench/data.json").write_text("[]\n")
     page("bench/index.html", "Benchmarks", fill((SITE / "bench.html").read_text(), {"root": "../", "repository": repo}), side=False)
     (out / ".nojekyll").write_text("")
+    offline(out)
     if args.precompress:
         precompress(out)
+
+
+def offline(out):
+    """`play/offline.json` (what the service worker keeps: `core` to start, `more` in the background, with sizes)
+    and `play/sw.js`, versioned by what they list."""
+    page = (out / "play/index.html").read_text()
+    manifest = json.loads(re.search(r'id="satex-play" type="application/json">(.*?)</script>', page, re.S).group(1).replace("<\\/", "</"))
+    symbols = json.loads((out / manifest["symbols"]).read_text())
+    core = sorted({m for m in re.findall(r"(?:\.\./)+([\w./-]+-[0-9a-f]{12}\.[\w.]+)", page)} | {
+        manifest["js"], manifest["wasm"], manifest["schema"], manifest["symbols"], manifest["kernels"][0]["bundle"], symbols["glyphs"], *symbols["fonts"], "rules.json"})
+    first = set(manifest.get("preload") or [])
+    packages = sorted(manifest["packages"], key=lambda p: (p["id"] not in first, p["id"]))
+    more = [[e["bundle"], e["size"]] for e in [*manifest["kernels"][1:], *packages]]
+    listing = {"core": core, "more": more}
+    version = digest(json.dumps(listing).encode() + page.encode() + (SITE / "sw.js").read_bytes())
+    (out / "play/offline.json").write_text(json.dumps({"version": version, **listing}))
+    (out / "play/sw.js").write_text((SITE / "sw.js").read_text().replace("__VERSION__", version))
+    print(f"playground: offline {len(core)} files to start, {len(more)} bundles, {sum(m[1] for m in more) / 2**20:.0f} MiB gz more", file=sys.stderr)
 
 
 COMPRESSIBLE = {".html", ".js", ".css", ".json", ".svg", ".wasm", ".txt", ".xml", ".map"}
