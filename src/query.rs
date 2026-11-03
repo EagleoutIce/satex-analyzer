@@ -3971,6 +3971,12 @@ fn effective_of(
     let mut star = false;
     let mut n = 0u8;
     let primitive = analysis.env.meaning(sym).prim().filter(|_| mac.is_none());
+    // A definer reads a parameter text, which no probe can count: its
+    // syntax is The TeXbook's.
+    let definer = matches!(primitive, Some(crate::builtins::Primitive::Def { .. }));
+    if let Some(rest) = definer.then(|| crate::lsp::primitives::usage(crate::tex::bare_name(&cs))).flatten() {
+        return format!("{cs}{rest}");
+    }
     let found = match primitive {
         // A primitive's syntax is not all arguments (`\def`, `\count0=`):
         // the probe counts only when it read some.

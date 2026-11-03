@@ -521,6 +521,15 @@ fn document_commands_of_every_argument_type() {
     );
 }
 
+/// A definer reads a parameter text, not arguments: The TeXbook's syntax,
+/// not nine optionals a probe made up.
+#[test]
+fn a_definer_shows_its_parameter_text() {
+    let analysis = analyze(r"\catcode`\{=1 \catcode`\}=2 ");
+    let record = explain_one(&analysis, "def");
+    assert_eq!(str_field(&record, "effective"), Some(r"\def⟨control sequence⟩⟨parameter text⟩{⟨replacement text⟩}"));
+}
+
 #[test]
 fn primitives_take_keywords_and_quantities() {
     // The TeXbook, chapter 24: `\hbox to ⟨dimen⟩`, rule specifications,
