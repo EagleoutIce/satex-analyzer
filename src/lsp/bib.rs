@@ -5,9 +5,9 @@
 use lsp_types::{CompletionItem, CompletionItemKind, CompletionTextEdit, Range, TextEdit};
 
 use super::handlers::{style_file, to_lsp};
-use crate::builtins::OccKind;
-use crate::lint::fix::{Pos, Text};
-use crate::machine::Analysis;
+use crate::analysis::machine::Analysis;
+use crate::engine::builtins::OccKind;
+use crate::linter::fix::{Pos, Text};
 
 /// The database commands every `.bib` file may use, whatever the style.
 const COMMANDS: [&str; 3] = ["string", "preamble", "comment"];

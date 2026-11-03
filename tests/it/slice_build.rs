@@ -13,9 +13,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use satex::config::Config;
-use satex::machine::Machine;
-use satex::query::{self, At, Direction};
+use satex::analysis::machine::Machine;
+use satex::project::config::Config;
+use satex::queries::query::{self, At, Direction};
 
 /// Where the installed engines live; `None` skips the case.
 fn engine(name: &str) -> Option<PathBuf> {
@@ -80,7 +80,7 @@ fn compile(binary: &Path, directory: &Path, file: &str, passes: usize) -> Run {
     }
     let log = std::fs::read_to_string(directory.join(format!("{stem}.log"))).unwrap_or_default();
     let pdf = directory.join(format!("{stem}.pdf"));
-    let text = (pdf.is_file() && satex::paths::which("pdftotext").is_ok())
+    let text = (pdf.is_file() && satex::project::paths::which("pdftotext").is_ok())
         .then(|| {
             let out = Command::new("pdftotext").arg(&pdf).arg("-").output().ok()?;
             Some(String::from_utf8_lossy(&out.stdout).to_string())
@@ -222,7 +222,7 @@ fn check(case: &Case) -> Option<String> {
 }
 
 fn run_all(cases: &[Case]) {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let failures: Vec<String> = cases.iter().filter_map(check).collect();
@@ -664,7 +664,7 @@ fn an_empty_slice_with_out_fails_with_its_reason() {
 /// to typeset its line exactly as the original, pixel for pixel.
 #[test]
 fn playground_slices_typeset_their_line_like_the_original() {
-    if satex::paths::which("synctex").is_err() || engine("pdflatex").is_none() {
+    if satex::project::paths::which("synctex").is_err() || engine("pdflatex").is_none() {
         return;
     }
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/site/examples");
@@ -680,12 +680,12 @@ fn playground_slices_typeset_their_line_like_the_original() {
     let mut failures = Vec::new();
     for (main, file, needles) in picks {
         let work = scratch(&format!("oracle-{main}"));
-        let doc = satex::slice_oracle::Document::prepare(&examples, main, &work).expect("the example builds");
+        let doc = satex::oracle::slice::Document::prepare(&examples, main, &work).expect("the example builds");
         let source = std::fs::read_to_string(examples.join(file)).unwrap();
         let criteria: Vec<(String, u32)> = needles.iter().map(|n| (file.to_string(), line_of(&source, n))).collect();
         let slices = doc.slice_all(&criteria, true);
-        for ((file, line, dir), verdict) in slices.iter().zip(satex::slice_oracle::check_all(&doc, &slices, 4)) {
-            if matches!(verdict, satex::slice_oracle::Verdict::Mismatch(_) | satex::slice_oracle::Verdict::Fail(_)) {
+        for ((file, line, dir), verdict) in slices.iter().zip(satex::oracle::slice::check_all(&doc, &slices, 4)) {
+            if matches!(verdict, satex::oracle::slice::Verdict::Mismatch(_) | satex::oracle::slice::Verdict::Fail(_)) {
                 failures.push(format!("{file}:{line}: {verdict:?} ({})", dir.display()));
             }
         }

@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use satex::plugin::discovery;
+use satex::plugins::discovery;
 
 /// Two roots sharing `shared.tex`; `orphan.tex` and `stray.bib` no root
 /// reads; `ignored.tex` and `build/` are ignored.

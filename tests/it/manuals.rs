@@ -1,7 +1,7 @@
 //! What the installed manuals give a package: its commands and a line about it.
 
-use satex::config::DocsConfig;
-use satex::plugin::docs::{Dirs, PLUGINS, about, mine};
+use satex::plugins::docs::{Dirs, PLUGINS, about, mine};
+use satex::project::config::DocsConfig;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -10,7 +10,7 @@ fn installed(file: &str) -> PathBuf {
     PathBuf::from(String::from_utf8_lossy(&out.stdout).trim())
 }
 
-fn mined(file: &str) -> HashMap<String, satex::plugin::docs::Entry> {
+fn mined(file: &str) -> HashMap<String, satex::plugins::docs::Entry> {
     let config = DocsConfig::default();
     mine(PLUGINS, &config, &Dirs::of(&config, &installed(file)).expect("documented"))
 }

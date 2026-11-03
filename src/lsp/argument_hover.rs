@@ -2,13 +2,13 @@
 //! names, one small helper per kind says what the run knows of it.
 
 use super::handlers::{argument_at, command_hover, load_hover};
-use crate::builtins::OccKind;
-use crate::facts::Occurrence;
-use crate::lint::fix::Pos;
-use crate::machine::Analysis;
-use crate::roles::{self, FileKind, KeyKind, Ty};
-use crate::source::byte_of_col;
-use crate::tex::RegKind;
+use crate::analysis::facts::Occurrence;
+use crate::analysis::machine::Analysis;
+use crate::analysis::roles::{self, FileKind, KeyKind, Ty};
+use crate::engine::builtins::OccKind;
+use crate::engine::source::byte_of_col;
+use crate::engine::tex::RegKind;
+use crate::linter::fix::Pos;
 use std::path::Path;
 
 /// What the braced argument under `pos` names, by the type [`roles::roles`] gives that argument.
@@ -90,7 +90,7 @@ fn label_hover(analysis: &Analysis, key: &str) -> Option<String> {
         None => md.push_str("Not defined by the run.\n\n"),
     }
     md.push_str(&format!("{} reference(s)\n\n", refs.len()));
-    if let Some(set) = refs.iter().find_map(|o| crate::query::typeset_by(analysis, o.span)) {
+    if let Some(set) = refs.iter().find_map(|o| crate::queries::query::typeset_by(analysis, o.span)) {
         md.push_str(&format!("A reference typesets {set}\n\n"));
     }
     Some(md)

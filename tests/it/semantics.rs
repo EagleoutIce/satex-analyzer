@@ -1,10 +1,10 @@
 use crate::support::{PRELUDE, analyze_kernel, analyze_plain as analyze, depth_of, diagnosed, last_body, names};
 use crate::support::{body, definition};
-use satex::builtins::OccKind;
-use satex::config::{Config, Load, Texmf};
-use satex::facts::MeaningKind;
-use satex::machine::{Analysis, Machine};
-use satex::query::{self, Filter, Query};
+use satex::analysis::facts::MeaningKind;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::engine::builtins::OccKind;
+use satex::project::config::{Config, Load, Texmf};
+use satex::queries::query::{self, Filter, Query};
 
 #[test]
 fn def_records_parameter_text_and_body() {
@@ -152,7 +152,7 @@ fn a_walk_past_an_undefined_stop_reads_on_as_tex_does() {
     );
     let bodies: Vec<String> = (analysis.facts.defs.iter())
         .filter(|d| analysis.interner.name(d.name) == "rev")
-        .filter_map(|d| d.mac.as_ref().map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner)))
+        .filter_map(|d| d.mac.as_ref().map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner)))
         .collect();
     assert!(bodies.iter().all(|b| ["", "1", "12", "\\def "].contains(&b.as_str())), "{bodies:?}");
 }
@@ -208,7 +208,7 @@ fn labels_and_references_are_recorded() {
     let labels: Vec<&str> =
         analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Label).map(|o| o.key.as_str()).collect();
     assert_eq!(labels, ["sec:one"]);
-    let lints = satex::lint::lint(&analysis);
+    let lints = satex::linter::lint(&analysis);
     assert!(lints.iter().any(|l| l["code"] == "undefined-reference"));
 }
 
@@ -297,7 +297,7 @@ fn filter_errors_are_reported() {
 
 #[test]
 fn a_global_definition_is_a_side_effect_of_the_expansion() {
-    use satex::graph::EdgeKind;
+    use satex::analysis::graph::EdgeKind;
     let analysis = analyze(r"\def\setup{\gdef\later{x}}\setup");
     let effects = analysis
         .graph
@@ -314,7 +314,7 @@ fn a_global_definition_is_a_side_effect_of_the_expansion() {
 
 #[test]
 fn dependency_graph_links_a_call_to_its_definition() {
-    use satex::graph::{EdgeKind, VertexTag};
+    use satex::analysis::graph::{EdgeKind, VertexTag};
     let analysis = analyze_kernel(r"\newcommand{\greet}{hi}\greet");
     let call = analysis
         .graph
@@ -341,7 +341,7 @@ fn scope_respects_position() {
 fn scope_orders_the_kernels_own_definitions_by_the_run() {
     let analysis = analyze_kernel("\\documentclass{article}\n\\usepa\n\\begin{document}\nx\n\\end{document}\n");
     let rows = |at| query::scope(&analysis, at, false);
-    let usepackage = |rows: Vec<satex::query::Record>| rows.into_iter().find(|r| r["name"] == "\\usepackage");
+    let usepackage = |rows: Vec<satex::queries::query::Record>| rows.into_iter().find(|r| r["name"] == "\\usepackage");
     let preamble = usepackage(rows(Some((analysis.main_file, 2, 6)))).expect("\\usepackage in the preamble");
     assert_ne!(usepackage(rows(None)).map(|r| r["line"].clone()), Some(preamble["line"].clone()));
 }
@@ -393,7 +393,7 @@ fn scope_hides_internal_names_unless_all() {
 
 #[test]
 fn expl3_functions_carry_their_arity_in_the_signature() {
-    use satex::tex::expl3_arity;
+    use satex::engine::tex::expl3_arity;
     assert_eq!(expl3_arity("tl_set:Nn"), Some(2));
     assert_eq!(expl3_arity("seq_map_inline:Nn"), Some(2));
     assert_eq!(expl3_arity("cs_new:Npn"), None, "a parameter text has no fixed shape");
@@ -437,7 +437,7 @@ fn plain_tex_primitives_are_known() {
 
 #[test]
 fn dimensions_use_scaled_points() {
-    use satex::value::{UNIT, parse_dimen};
+    use satex::engine::value::{UNIT, parse_dimen};
     assert_eq!(parse_dimen("1pt"), Some(UNIT));
     assert_eq!(parse_dimen("1in"), Some(4_736_286));
     assert_eq!(parse_dimen("1bp"), Some(65_781));
@@ -453,7 +453,7 @@ fn a_file_that_ends_mid_construct_does_not_eat_its_parent() {
 
 #[test]
 fn a_decimal_dimension_is_rounded_before_the_unit_is_applied() {
-    use satex::value::parse_dimen;
+    use satex::engine::value::parse_dimen;
     assert_eq!(parse_dimen("0.1pt"), Some(6554), "6553.6sp rounds away from zero");
     assert_eq!(parse_dimen("1in"), Some(4_736_286), "4736286.72sp truncates");
 }
@@ -469,7 +469,7 @@ fn expl_syntax_suppresses_the_end_of_line() {
 
 #[test]
 fn etex_expressions_respect_precedence() {
-    use satex::value::eval_expr;
+    use satex::engine::value::eval_expr;
     assert_eq!(eval_expr("1+2*3", false), Some(7));
     assert_eq!(eval_expr("(1+2)*3", false), Some(9));
     assert_eq!(eval_expr("-5", false), Some(-5));
@@ -487,7 +487,8 @@ fn document_commands_take_the_full_argument_specification() {
 
 fn sliced(analysis: &Analysis, names: &[&str], forward: bool) -> Vec<String> {
     let criteria: Vec<String> = names.iter().map(|n| n.to_string()).collect();
-    let direction = if forward { satex::query::Direction::Forward } else { satex::query::Direction::Backward };
+    let direction =
+        if forward { satex::queries::query::Direction::Forward } else { satex::queries::query::Direction::Backward };
     query::slice(analysis, &criteria, None, direction)
         .into_iter()
         .map(|record| record["name"].as_str().unwrap_or_default().to_string())
@@ -804,12 +805,12 @@ fn every_switch_means_the_documents_own() {
     // `satex controls` without a name leaves the document's switches
     // undecided, and only those: the kernel's `\if@tempswa` and the like
     // keep deciding the code they drive.
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let cfg = Config {
         load: Load { classes: true, ..Default::default() },
-        opaque_conditionals: vec![satex::config::EVERY_SWITCH.into()],
+        opaque_conditionals: vec![satex::project::config::EVERY_SWITCH.into()],
         ..crate::support::config()
     };
     let analysis = Machine::analyze(
@@ -839,7 +840,7 @@ fn out(source: &str) -> String {
         .rev()
         .find(|d| analysis.interner.name(d.name) == "out")
         .and_then(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         .unwrap_or_default()
 }
 
@@ -1022,7 +1023,7 @@ fn out_agrees_with_tex() {
 
 /// Which gaps make an expansion give up on the text it assembled, and which
 /// leave it standing.  The two sides are not the same kind of thing, and
-/// `WIDEN_ON` in src/machine.rs is the list that tells them apart.
+/// `WIDEN_ON` in src/analysis/machine.rs is the list that tells them apart.
 ///
 /// A gap satex invented: the scan for `\stop` meets a `}` after text it
 /// could not follow, so where the argument ended is satex's guess and the
@@ -1075,7 +1076,7 @@ fn the_rest_of_split_unknown_text_may_hold_the_next_delimiter() {
         .iter()
         .filter(|d| analysis.interner.name(d.name) == "out")
         .filter_map(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         .collect();
     // `E` alone (an empty replacement text for sure) or no `\out` at all
     // (a runaway) drops the paths the engine may take.
@@ -1098,7 +1099,7 @@ fn a_delimiter_may_begin_before_unknown_text_and_end_in_it() {
         .iter()
         .filter(|d| analysis.interner.name(d.name) == "out")
         .filter_map(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         .collect();
     assert!(outs.iter().any(|o| o == "[]"), "{outs:?}");
 }
@@ -1127,7 +1128,7 @@ fn undecided_arms_meet_after_the_arguments_they_take() {
         .iter()
         .filter(|d| analysis.interner.name(d.name) == "r")
         .filter_map(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         .collect();
     assert!(bodies.contains(&"A".to_string()) && bodies.contains(&"B".to_string()), "{bodies:?}");
     assert_eq!(analysis.facts.defs.iter().filter(|d| analysis.interner.name(d.name) == "after").count(), 1);
@@ -1390,7 +1391,12 @@ fn summary_defines_line_counts_document_concepts_separately() {
 \\begin{myenv}\n\\end{myenv}\n",
     );
     let root = query::summary(&analysis);
-    let text = satex::render::summary(&analysis, &root, satex::render::Detail::brief(), satex::render::Links(false));
+    let text = satex::util::render::summary(
+        &analysis,
+        &root,
+        satex::util::render::Detail::brief(),
+        satex::util::render::Links(false),
+    );
     assert!(text.contains("defines"), "{text}");
     assert!(text.contains("1 command"), "{text}");
     assert!(text.contains("1 environment"), "{text}");
@@ -2114,9 +2120,10 @@ fn digit_reversal_over_unknown_digits_converges() {
 /// The errors, warnings and precision notes, as (code, severity, line,
 /// column, message).
 fn problems(analysis: &Analysis) -> Vec<(String, String, u64, u64, String)> {
-    let s = |f: &satex::query::Record, k: &str| f.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    let n = |f: &satex::query::Record, k: &str| f.get(k).and_then(|v| v.as_u64()).unwrap_or_default();
-    satex::lint::lint(analysis)
+    let s =
+        |f: &satex::queries::query::Record, k: &str| f.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let n = |f: &satex::queries::query::Record, k: &str| f.get(k).and_then(|v| v.as_u64()).unwrap_or_default();
+    satex::linter::lint(analysis)
         .iter()
         .filter(|f| s(f, "severity") != "info" || s(f, "code") == "analysis-imprecision")
         .map(|f| (s(f, "code"), s(f, "severity"), n(f, "line"), n(f, "col"), s(f, "message")))
@@ -2369,7 +2376,7 @@ fn a_paragraph_of_uncertain_breaks_has_a_bounded_height() {
 fn digit_reversal_past_the_choices_limit_is_not_empty() {
     for choices in [4, 8] {
         let cfg = Config {
-            limits: satex::config::Limits { choices, ..crate::support::bare().limits },
+            limits: satex::project::config::Limits { choices, ..crate::support::bare().limits },
             ..crate::support::bare()
         };
         let analysis = Machine::analyze(
@@ -2485,7 +2492,7 @@ fn immediate_covers_only_the_next_command() {
 #[test]
 fn if_tells_a_control_sequence_from_char_256() {
     // tex.web § 506; XeTeX's `too_big_usv` is past every character (probed with xetex).
-    let cfg = Config { engine: Some(satex::config::Engine::XeTeX), ..crate::support::bare() };
+    let cfg = Config { engine: Some(satex::project::config::Engine::XeTeX), ..crate::support::bare() };
     let analysis =
         Machine::analyze(&format!("{PRELUDE}\\if \u{100}\\relax\\def\\r{{T}}\\else\\def\\r{{F}}\\fi"), None, &cfg);
     assert_eq!(body(&analysis, "r"), "F");

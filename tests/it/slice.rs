@@ -13,9 +13,9 @@ use std::process::Command;
 
 use crate::support::bare;
 use crate::support::installed;
-use satex::config::{Config, Load, Texmf};
-use satex::machine::{Analysis, Machine};
-use satex::query::{self, At, Direction, Record};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Load, Texmf};
+use satex::queries::query::{self, At, Direction, Record};
 
 /// No format, no packages: the primitives are enough for documents whose
 /// answer is decidable by hand.
@@ -327,22 +327,22 @@ fn a_position_in_a_file_the_run_never_read_names_nothing() {
 
 #[test]
 fn a_position_parses_with_and_without_a_file() {
-    assert_eq!(satex::cmd::parse_place("3:7"), Ok(At::here(3, 7)));
+    assert_eq!(satex::cli::parse_place("3:7"), Ok(At::here(3, 7)));
     assert_eq!(
-        satex::cmd::parse_place("part.tex:3:7"),
+        satex::cli::parse_place("part.tex:3:7"),
         Ok(At { file: Some("part.tex".into()), line: 3, col: 7, end: None })
     );
     assert_eq!(
-        satex::cmd::parse_place("/a/b/part.tex:3:7"),
+        satex::cli::parse_place("/a/b/part.tex:3:7"),
         Ok(At { file: Some("/a/b/part.tex".into()), line: 3, col: 7, end: None })
     );
     assert_eq!(
-        satex::cmd::parse_place("part-a.tex:45:1-48"),
+        satex::cli::parse_place("part-a.tex:45:1-48"),
         Ok(At { file: Some("part-a.tex".into()), line: 45, col: 1, end: Some((48, u32::MAX)) })
     );
-    assert_eq!(satex::cmd::parse_place("4:2-5:3").map(|at| at.end), Ok(Some((5, 3))));
-    assert!(satex::cmd::parse_place("3").is_err());
-    assert!(satex::cmd::parse_place("part.tex:x:7").is_err());
+    assert_eq!(satex::cli::parse_place("4:2-5:3").map(|at| at.end), Ok(Some((5, 3))));
+    assert!(satex::cli::parse_place("3").is_err());
+    assert!(satex::cli::parse_place("part.tex:x:7").is_err());
 }
 
 #[test]
@@ -576,8 +576,8 @@ fn a_macro_from_a_package_is_sliced_back_to_the_package() {
 
 #[test]
 fn place_range_start_column_optional() {
-    let at = satex::cmd::parse_place("45-48").unwrap();
+    let at = satex::cli::parse_place("45-48").unwrap();
     assert_eq!((at.line, at.col, at.end), (45, 1, Some((48, u32::MAX))));
-    let at = satex::cmd::parse_place("p.tex:45-48").unwrap();
+    let at = satex::cli::parse_place("p.tex:45-48").unwrap();
     assert_eq!((at.file.as_deref(), at.line, at.col), (Some("p.tex"), 45, 1));
 }

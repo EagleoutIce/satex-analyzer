@@ -439,7 +439,7 @@ fn wasm_cargo() -> Result<Command, String> {
 /// under `target/emsdk` the first time.
 fn emscripten_path(root: &Path) -> Result<String, String> {
     let path = std::env::var("PATH").unwrap_or_default();
-    if satex::paths::which("emcc").is_ok() {
+    if satex::project::paths::which("emcc").is_ok() {
         return Ok(path);
     }
     let emsdk = match std::env::var("EMSDK") {

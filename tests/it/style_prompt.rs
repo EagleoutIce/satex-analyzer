@@ -1,7 +1,7 @@
 //! Rules a project breaks so often that they may be its style
 //! (`style_prompt` in satex.yaml), and the answer written to its satex.yaml.
 
-use satex::config::{Config, StyleChoice, StylePrompt, record_style_choice};
+use satex::project::config::{Config, StyleChoice, StylePrompt, record_style_choice};
 
 /// `\hskip` where LaTeX has `\hspace`, in `times` paragraphs.
 pub(crate) fn hskips(times: usize) -> String {
@@ -10,8 +10,8 @@ pub(crate) fn hskips(times: usize) -> String {
 }
 
 fn candidates(times: usize, prompt: &StylePrompt) -> Vec<String> {
-    let records = satex::lint::lint(&crate::support::analyze_latex(&hskips(times)));
-    satex::lint::style_candidates(&records, prompt)
+    let records = satex::linter::lint(&crate::support::analyze_latex(&hskips(times)));
+    satex::linter::style_candidates(&records, prompt)
         .iter()
         .map(|c| format!("{} {}", c["code"].as_str().unwrap_or(""), c["count"]))
         .collect()
@@ -30,9 +30,9 @@ fn a_rule_past_the_threshold_is_a_candidate() {
 
 #[test]
 fn the_question_names_the_construct() {
-    let records = satex::lint::lint(&crate::support::analyze_latex(&hskips(3)));
+    let records = satex::linter::lint(&crate::support::analyze_latex(&hskips(3)));
     let prompt = StylePrompt { min_findings: 3, ..StylePrompt::default() };
-    let found = satex::lint::style_candidates(&records, &prompt);
+    let found = satex::linter::style_candidates(&records, &prompt);
     let question = found[0]["question"].as_str().unwrap_or_default();
     assert!(question.contains("hskip") && question.contains("3 times"), "{question}");
 }

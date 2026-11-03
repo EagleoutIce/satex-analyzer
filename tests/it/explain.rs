@@ -4,9 +4,9 @@ use crate::support::{analyze_kernel, analyze_plain as analyze};
 use serde_json::{Value as Json, json};
 
 use crate::support::{analyze_latex, installed};
-use satex::config::{Config, Load};
-use satex::machine::{Analysis, Machine};
-use satex::query::{self, Record};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Load};
+use satex::queries::query::{self, Record};
 
 fn explain_one(analysis: &Analysis, name: &str) -> Record {
     query::explain(analysis, &[name.to_string()], false)
@@ -371,7 +371,7 @@ fn explain_shows_one_record_when_preamble_and_document_agree() {
 
 fn expl3_mismatches(source: &str) -> Vec<String> {
     let analysis = analyze_kernel(source);
-    satex::lint::lint(&analysis)
+    satex::linter::lint(&analysis)
         .into_iter()
         .filter(|r| r.get("code").and_then(Json::as_str) == Some("expl3-signature-mismatch"))
         .filter_map(|r| r.get("name").and_then(Json::as_str).map(str::to_string))
@@ -633,7 +633,7 @@ fn item_context_meanings_show_with_no_document_uses_at_all() {
     // The smallest document there is uses `\item` nowhere, so there is
     // nothing to read a real use's context off of; the distinct meanings
     // still show, found by really entering every environment worth trying
-    // in a sandbox and calling `\item` there (src/probe.rs).
+    // in a sandbox and calling `\item` there (src/analysis/probe.rs).
     if !installed() {
         return;
     }
@@ -829,7 +829,7 @@ fn a_list_tex_inserts_charges_nothing_to_the_macro_that_set_it_off() {
 }
 
 /// A macro no use typed takes the types its body's assignments and
-/// scanners give its parameters ([`satex::roles`]).
+/// scanners give its parameters ([`satex::analysis::roles`]).
 #[test]
 fn a_body_types_the_parameters_it_assigns() {
     let analysis = analyze(
@@ -909,17 +909,17 @@ fn description_for_a_primitive_and_a_kernel_macro() {
 
 #[test]
 fn every_builtin_primitive_has_a_description() {
-    use satex::config::Engine::{LuaTeX, PdfTeX, Tex, XeTeX};
+    use satex::project::config::Engine::{LuaTeX, PdfTeX, Tex, XeTeX};
     let mut missing: Vec<&str> = [Tex, PdfTeX, LuaTeX, XeTeX]
         .into_iter()
-        .flat_map(|e| satex::builtins::primitive_names(e).keys().map(String::as_str))
-        .filter(|n| satex::query::describe(n).is_none())
+        .flat_map(|e| satex::engine::builtins::primitive_names(e).keys().map(String::as_str))
+        .filter(|n| satex::queries::query::describe(n).is_none())
         .collect();
     missing.sort_unstable();
     missing.dedup();
     assert!(
         missing.is_empty(),
-        "{} primitives lack a line in src/describe.tsv:\n{}",
+        "{} primitives lack a line in src/data/describe.tsv:\n{}",
         missing.len(),
         missing.join("\n")
     );

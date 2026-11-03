@@ -197,7 +197,7 @@ fn prose_has_no_semicolons_or_em_dashes() {
     let joined = Regex::new(r"(?m);(\s|$)|—").unwrap();
     let mut pages: Vec<String> = GENERATED_PAGES.iter().map(|p| p.to_string()).collect();
     pages.extend(
-        ["src/lsp/knowledge.md", "editors/vscode/README.md", "editors/vscode/package.json", "satex.schema.json"]
+        ["src/data/knowledge.md", "editors/vscode/README.md", "editors/vscode/package.json", "satex.schema.json"]
             .map(String::from),
     );
     for dir in ["doc/src", "doc/site"] {

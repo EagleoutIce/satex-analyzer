@@ -1,11 +1,11 @@
-//! `satex::rename`: a rename has to move every name one declaration made
+//! `satex::queries::rename`: a rename has to move every name one declaration made
 //! from one key, and every site that spells it, or refuse.
 
 use crate::support::installed;
-use satex::config::{Config, Load, Texmf};
-use satex::lint::fix::{Pos, Sources};
-use satex::machine::{Analysis, Machine};
-use satex::rename;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::linter::fix::{Pos, Sources};
+use satex::project::config::{Config, Load, Texmf};
+use satex::queries::rename;
 
 // Without a format the catcodes are INITEX's (tex.web § 232).
 const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7\n";

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use serde_json::Value as Json;
 
 use crate::support::installed;
-use satex::machine::Machine;
+use satex::analysis::machine::Machine;
 
 fn scratch(name: &str) -> PathBuf {
     let directory = crate::support::tmp_root().join(format!("satex-build-lints-{}", std::process::id())).join(name);
@@ -29,7 +29,7 @@ fn findings(name: &str, rc: &str, document: &str) -> Vec<String> {
     let field = |record: &serde_json::Map<String, Json>, key: &str| {
         record.get(key).map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_string)).unwrap_or_default()
     };
-    let out = satex::lint::lint(&analysis)
+    let out = satex::linter::lint(&analysis)
         .into_iter()
         .filter(|record| field(record, "code").starts_with("build-"))
         .map(|record| format!("{}@{}:{}", field(&record, "code"), field(&record, "file"), field(&record, "line")))

@@ -7,7 +7,7 @@
 //! first cuts it down to what still shows its first violation.
 //!
 //! `satex-oracle --slice [--jobs N] [--sample N] [--seed S] [--trim] [--work
-//! DIR] PATH…` checks slices instead ([`satex::slice_oracle`]): every main
+//! DIR] PATH…` checks slices instead ([`satex::oracle::slice`]): every main
 //! file under each PATH is sliced at each line, and each standalone slice
 //! has to typeset its line exactly as the original.  The report goes to
 //! DIR/report.txt, and a second run resumes where one stopped.
@@ -138,7 +138,7 @@ fn slices(args: &[String]) -> i32 {
         let dir = main.parent().unwrap_or(std::path::Path::new("."));
         let name = main.file_name().unwrap_or_default().to_string_lossy().to_string();
         let key = main.to_string_lossy().replace(['/', '.'], "_");
-        let doc = match satex::slice_oracle::Document::prepare(dir, &name, &work.join(&key)) {
+        let doc = match satex::oracle::slice::Document::prepare(dir, &name, &work.join(&key)) {
             Ok(doc) => doc,
             Err(why) => {
                 report.push_str(&format!("{}: skipped, {why}\n", main.display()));
@@ -158,7 +158,7 @@ fn slices(args: &[String]) -> i32 {
             criteria = picked;
         }
         let sliced = doc.slice_all(&criteria, trim);
-        let verdicts = satex::slice_oracle::check_all(&doc, &sliced, jobs);
+        let verdicts = satex::oracle::slice::check_all(&doc, &sliced, jobs);
         let count = |w: &str| verdicts.iter().filter(|v| v.word() == w).count();
         let line = format!(
             "{}: {} pass, {} empty, {} mismatch, {} fail\n",
@@ -171,7 +171,7 @@ fn slices(args: &[String]) -> i32 {
         print!("{line}");
         report.push_str(&line);
         for ((file, at, slice), v) in sliced.iter().zip(&verdicts) {
-            if let satex::slice_oracle::Verdict::Mismatch(why) | satex::slice_oracle::Verdict::Fail(why) = v {
+            if let satex::oracle::slice::Verdict::Mismatch(why) | satex::oracle::slice::Verdict::Fail(why) = v {
                 bad += 1;
                 report.push_str(&format!(
                     "  {} {file}:{at}: {} ({})\n",

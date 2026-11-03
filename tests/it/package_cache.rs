@@ -4,9 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::support::{defined, installed};
-use satex::config::{Cache, Config};
-use satex::facts::LoadStatus;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::facts::LoadStatus;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Cache, Config};
 
 fn project(name: &str) -> PathBuf {
     let dir = crate::support::tmp_root().join(format!("satex-package-cache-{name}-{}", std::process::id()));
@@ -67,7 +67,7 @@ fn preamble(lines: &str) -> String {
 fn served(analysis: &Analysis, package: &str) -> Option<bool> {
     analysis.package_caches.iter().rev().find(|(name, ..)| name == package).and_then(|(.., state)| {
         match state.as_str() {
-            state if satex::machine::cache_served(state) => Some(true),
+            state if satex::analysis::machine::cache_served(state) => Some(true),
             state if state.ends_with("stored") => Some(false),
             _ => None,
         }
@@ -87,7 +87,7 @@ fn facts(analysis: &Analysis) -> Vec<String> {
             .map(|e| format!("{} {:?} {} {}", analysis.interner.name(e.name), e.span, e.meaning.as_str(), e.count)),
     );
     out.push(format!("{} vertices, {} edges", analysis.graph.len(), analysis.graph.edge_count()));
-    out.push(serde_json::to_string(&satex::lint::lint(analysis)).unwrap_or_default());
+    out.push(serde_json::to_string(&satex::linter::lint(analysis)).unwrap_or_default());
     out
 }
 
@@ -144,7 +144,7 @@ fn same_facts(a: &Analysis, b: &Analysis) {
             eprintln!("warm only {e}");
         }
         let lints = |a: &Analysis| -> std::collections::BTreeSet<String> {
-            satex::lint::lint(a)
+            satex::linter::lint(a)
                 .iter()
                 .map(|r| format!("{} {} {} {}", r["code"], r["file"], r["line"], r["message"]))
                 .collect()
@@ -202,7 +202,7 @@ fn a_second_run_replays_the_package_and_reports_the_same() {
     // TeX's "Undefined control sequence" in the package is its expansion.
     let undefined = |a: &Analysis| {
         a.facts.expansions.iter().any(|e| {
-            e.meaning == satex::facts::MeaningKind::Undefined
+            e.meaning == satex::analysis::facts::MeaningKind::Undefined
                 && a.file_name(e.span.file).ends_with("outer.sty")
                 && e.span.line == 7
         })
@@ -232,13 +232,13 @@ fn a_replayed_package_reports_the_tokens_and_time_it_stands_for() {
     let _first = analyze(&dir, DOCUMENT, &timed(&dir));
     let second = analyze(&dir, DOCUMENT, &timed(&dir));
     assert_eq!(served(&second, "outer"), Some(true), "the second run replays outer.sty from its cache");
-    let root = satex::query::summary(&second);
+    let root = satex::queries::query::summary(&second);
     let outer = root.children.iter().find(|n| n.name == "outer.sty").expect("outer.sty in the tree");
     assert!(outer.cached, "the replayed file is marked cached");
     assert!(outer.tokens > 0, "outer.sty reports the tokens its cache stands for, got {}", outer.tokens);
     // `inner.sty` has a cache entry of its own, replayed between outer's segments.
     assert_eq!(served(&second, "inner"), Some(true), "{:?}", second.package_caches);
-    let text = satex::render::timings(&second, satex::render::Links(false));
+    let text = satex::util::render::timings(&second, satex::util::render::Links(false));
     assert!(text.contains("inner"), "inner.sty is named:\n{text}");
 }
 
@@ -295,7 +295,7 @@ fn a_name_the_package_no_longer_defines_is_undefined() {
         let named = |r: &serde_json::Map<String, serde_json::Value>| {
             r["message"].as_str().is_some_and(|m| m.contains("`\\innermacro`"))
         };
-        satex::lint::lint(a).iter().any(|r| r["code"] == "undefined-control-sequence" && named(r))
+        satex::linter::lint(a).iter().any(|r| r["code"] == "undefined-control-sequence" && named(r))
     };
     let warm = run(&dir, source);
     assert!(!undefined(&warm));
@@ -424,7 +424,7 @@ fn cache_build_builds_what_is_missing_and_refresh_rebuilds() {
     let states = |refresh| -> Vec<String> {
         let mut lines = Vec::new();
         let prepared =
-            satex::cmd::cache::build::prepare(&cfg, refresh, &[], &[], None, &mut |line| lines.push(line.to_string()))
+            satex::cli::cache::build::prepare(&cfg, refresh, &[], &[], None, &mut |line| lines.push(line.to_string()))
                 .expect("prepared");
         assert!(lines[0].starts_with("plan:"), "the plan comes first: {lines:?}");
         assert!(lines.iter().any(|l| l.starts_with("[2/2] outer")), "then each item: {lines:?}");
@@ -459,7 +459,7 @@ fn run_latex(dir: &Path, source: &str, auto: bool) -> Analysis {
 fn register_of(analysis: &Analysis, name: &str) -> Option<u16> {
     let sym = analysis.interner.lookup(name)?;
     match analysis.env.meaning(sym) {
-        satex::tex::Meaning::Register(_, index) => Some(index),
+        satex::engine::tex::Meaning::Register(_, index) => Some(index),
         _ => None,
     }
 }
@@ -603,7 +603,7 @@ fn text_of(analysis: &Analysis, name: &str) -> Option<String> {
     Some(
         text.iter()
             .filter_map(|t| match t.tok {
-                satex::tex::Tok::Chr(c, _) => Some(c),
+                satex::engine::tex::Tok::Chr(c, _) => Some(c),
                 _ => None,
             })
             .collect(),
@@ -699,7 +699,7 @@ fn a_case_mismatched_load_reports_the_disk_name_in_the_lint() {
     };
     assert_eq!(analysis.interner.name(on_disk), "Mismatch.sty");
 
-    let findings = satex::lint::lint(&analysis);
+    let findings = satex::linter::lint(&analysis);
     let finding = findings
         .iter()
         .find(|r| r.get("code").and_then(|c| c.as_str()) == Some("unresolved-file"))
@@ -765,7 +765,7 @@ fn settings_that_do_not_change_the_interpretation_share_a_cache() {
     let mut other = latex(&dir);
     other.verbose = 2;
     other.lint_off = vec!["unused-label".into()];
-    other.profile = Some(satex::config::Profile::Document);
+    other.profile = Some(satex::project::config::Profile::Document);
     other.engine = Some(first.plugins.engine);
     other.limits.memory = bytesize::ByteSize::gib(3);
     other.limits.degrade_at_percent = 90;
@@ -1052,12 +1052,12 @@ impl Portable {
 
     fn export(&self, cfg: &Config) {
         let mut out = Vec::new();
-        satex::cmd::cache::export(cfg, &self.archive, (&[], &[]), false, &mut out).expect("export");
+        satex::cli::cache::export(cfg, &self.archive, (&[], &[]), false, &mut out).expect("export");
     }
 
     fn import(&self, cfg: &Config) -> String {
         let mut out = Vec::new();
-        satex::cmd::cache::import(cfg, &self.archive, false, &mut out).expect("import");
+        satex::cli::cache::import(cfg, &self.archive, false, &mut out).expect("import");
         String::from_utf8_lossy(&out).into_owned()
     }
 }
@@ -1168,10 +1168,10 @@ fn a_kernel_is_named_by_its_release_not_its_path() {
     );
     let kernel = dir.join("latex.ltx");
     std::fs::write(&kernel, "\\edef\\fmtversion{2031-06-01}\n").expect("kernel");
-    assert_eq!(satex::format::release_name(&kernel), "2031");
+    assert_eq!(satex::caches::format::release_name(&kernel), "2031");
     let bare = dir.join("other.ltx");
     std::fs::write(&bare, "\\relax\n").expect("kernel");
-    assert_eq!(satex::format::release_name(&bare), satex::format::tree_name(&bare));
+    assert_eq!(satex::caches::format::release_name(&bare), satex::caches::format::tree_name(&bare));
 }
 
 /// No state from an interrupted run: every package cache entry of `a`.
@@ -1297,7 +1297,7 @@ fn an_export_can_be_limited_to_a_package() {
         let (only, without): (Vec<String>, Vec<String>) =
             (only.iter().map(|s| s.to_string()).collect(), without.iter().map(|s| s.to_string()).collect());
         let mut out = Vec::new();
-        satex::cmd::cache::export(&cfg, &p.archive, (&only, &without), true, &mut out).expect("export");
+        satex::cli::cache::export(&cfg, &p.archive, (&only, &without), true, &mut out).expect("export");
         let said: serde_json::Value = serde_json::from_slice(&out).expect("json");
         (said["entries"].as_u64().unwrap(), said["holds"].as_object().unwrap().keys().cloned().collect::<Vec<_>>())
     };
@@ -1322,7 +1322,7 @@ fn a_package_loaded_on_the_last_line_is_read_cold_and_warm() {
     run_latex(&dir, "\\relax\n", true);
     for run in ["cold", "warm"] {
         let analysis = run_latex(&dir, WITH_CLASS, true);
-        let undefined: Vec<_> = satex::lint::lint(&analysis)
+        let undefined: Vec<_> = satex::linter::lint(&analysis)
             .into_iter()
             .filter(|r| r["code"] == "undefined-control-sequence")
             .map(|r| r["message"].to_string())

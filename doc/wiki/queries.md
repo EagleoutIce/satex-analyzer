@@ -166,7 +166,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    texsys.aux                                
 4    input    expl3.ltx                                 
-… 295 more lines omitted
+… 291 more lines omitted
 ```
 
 ## diagnostics
@@ -221,7 +221,7 @@ variable-definition  \ifdraft                   while expanding at 3:1       pap
 variable-definition  \drafttrue                 while expanding at 3:1       paper.tex  @ paper.tex:3:7
 variable-definition  \draftfalse                while expanding at 3:1       paper.tex  @ paper.tex:3:7
 macro-call           \usepackage                while expanding at 1:1       paper.tex  @ paper.tex:4:1
-… 112 more lines omitted
+… 114 more lines omitted
 ```
 
 ## project
@@ -264,12 +264,12 @@ The pgfkeys keys defined at the end of the run and what each does (`initial`, `c
 
 ```text
 $ satex query pgfkeys -f samples/keys.tex
-kind       key       value     default  file                            
-is family  /demo     \edef \…           keys.tex                        @ keys.tex:4:1
-style      /demo/c…  \pgfkey…  red      keys.tex                        @ keys.tex:4:1
-is if      /demo/d…  \pgfkey…  true     keys.tex                        @ keys.tex:4:1
-initial    /demo/f…  /demo              keys.tex                        @ keys.tex:4:1
-code args  /demo/l…  \def \d…           keys.tex                        @ keys.tex:4:1
+kind       key                                                  value         default  file      
+is family  /demo                                                \edef \pgfk…           keys.tex  @ keys.tex:4:1
+style      /demo/color                                          \pgfkeysals…  red      keys.tex  @ keys.tex:4:1
+is if      /demo/draft                                          \pgfkeys@ha…  true     keys.tex  @ keys.tex:4:1
+initial    /demo/family                                         /demo                  keys.tex  @ keys.tex:4:1
+code args  /demo/label                                          \def \demol…           keys.tex  @ keys.tex:4:1
 … 90 more lines omitted
 ```
 
@@ -441,7 +441,7 @@ $ satex slice -f samples/paper.tex '\ifdraft'
 
 \RequirePackage{xcolor}
 
-… 86 more lines omitted
+… 53 more lines omitted
 ```
 
 ```text
@@ -452,7 +452,7 @@ $ satex slice -f samples/paper.tex --where 'kind=begin-environment and key=figur
 
 \RequirePackage{xcolor}
 
-… 77 more lines omitted
+… 73 more lines omitted
 ```
 
 `--out DIR` writes the slice as a standalone project: the main file plus the local packages, classes, graphics and bibliographies it needs, paths preserved.

@@ -241,7 +241,7 @@ and pdfTeX adds `\expanded`. Everything else is executed by the stomach.
     other `os` (the clock is unknown), no `debug`, no binary chunk. Command
     numbers are LuaTeX's (`token.commands()`). The `mode` of a register
     command is its number.
-  * Every global and library field LuaTeX has (`src/plugin/luatex_fields.txt`,
+  * Every global and library field LuaTeX has (`src/data/luatex-fields.txt`,
     listed by LuaHBTeX, with `luaharfbuzz` only when the engine is known to be
     LuaHBTeX) exists: one SaTeX does not implement is, if a function, a
     function that stops the run when called, and otherwise the unknown
@@ -470,7 +470,7 @@ TeX's internal quantities are ⟨number⟩, ⟨dimen⟩, ⟨glue⟩, ⟨muglue�
   file first. An installed font is `[file]` under the trees' `fonts/opentype`
   or `fonts/truetype`, or a family, full name or PostScript name that
   `fc-list` lists, which asks fontconfig as XeTeX does. Of a single `[file]`
-  font satex reads the OpenType tables (`src/otf.rs`): the character map
+  font satex reads the OpenType tables (`src/engine/otf.rs`): the character map
   (`\iffontchar`, `\XeTeXcharglyph`, `\XeTeX{first,last}fontchar`,
   `\XeTeXcountglyphs`), advances (`\fontcharwd`, `.notdef`'s for a missing
   character), `\XeTeXfonttype` 2 unless it has Graphite tables, and the
@@ -946,7 +946,7 @@ what the run that wrote it did.
 * The **kernel cache** holds the meanings and catcodes [`latex.ltx`][latex.ltx] leaves. It
   is keyed on the installation, the engine, the preloaded format and the
   semantic version, and rejected when a file it was read from changed.
-* Every cache is keyed on `SEMANTIC_VERSION` (`src/format.rs`), bumped by
+* Every cache is keyed on `SEMANTIC_VERSION` (`src/caches/format.rs`), bumped by
   hand when cache semantics change. A golden test fails when the analysis
   changes without a bump. Builds outside the `release` profile add their
   source digest, so local edits never replay a stale cache.

@@ -4,9 +4,9 @@ use crate::support::PRELUDE;
 use serde_json::Value as Json;
 
 use crate::support::installed;
-use satex::config::{Config, Load};
-use satex::machine::{Analysis, Machine};
-use satex::query::{self, Record};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Load};
+use satex::queries::query::{self, Record};
 
 /// No format, no packages: enough for anything the modeled primitives
 /// answer without a real TeX installation.

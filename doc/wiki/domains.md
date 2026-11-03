@@ -18,7 +18,7 @@ One invariant holds everywhere: a construct is followed **exactly**, or its resu
 
 ## `Value`: what a control sequence or register holds
 
-[`src/value.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/value.rs): every kind has an exact value, a hull, a bounded set of either, and a top.
+[`src/engine/value.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/value.rs): every kind has an exact value, a hull, a bounded set of either, and a top.
 
 | Kind | Exact | Hull | Top |
 | --- | --- | --- | --- |
@@ -79,7 +79,7 @@ A character whose category is not pinned keeps the set of categories it may have
 
 Code table entries (`\lccode`, `\uccode`, `\sfcode`, `\mathcode`, `\delcode`, [tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L23040)) hold a `Value`, joined like registers.
 
-- A ⟨number⟩ that is one of several characters reads as their hull plus the exact set (`abs_exact`, [`src/scan.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/scan.rs)).
+- A ⟨number⟩ that is one of several characters reads as their hull plus the exact set (`abs_exact`, [`src/engine/scan.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs)).
 - A set with an invalid member, or any set for `\mathcode`, becomes `Unknown`.
 - `\lowercase`/`\uppercase` ([tex.web § 1288](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L23608)) turn a character with a few possible codes into one token for the shifted characters, categories kept. An unknown code gives unknown text.
 
@@ -92,7 +92,7 @@ An xcolor color is `Color { model, components }`, one `Num` per component in xco
 
 ## Meaning sets: what a control sequence may mean
 
-After a join of paths that disagree, a `Binding` ([`src/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/env.rs)) keeps the possible meanings in `may` (at most `limits.meaning_set`). Code that does not look at the set reads the meaning as unknown.
+After a join of paths that disagree, a `Binding` ([`src/engine/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/env.rs)) keeps the possible meanings in `may` (at most `limits.meaning_set`). Code that does not look at the set reads the meaning as unknown.
 
 | Operation | What it does |
 | --- | --- |
@@ -110,7 +110,7 @@ A widened macro whose members all hold a token holds one too, so `\ifx` can stil
 
 ## Modes and box dimensions
 
-`Modes` ([`src/mode.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/mode.rs)) is the set of TeX's six modes the run may be in ([tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L4220)). `\ifvmode`, `\ifhmode`, `\ifmmode` and `\ifinner` are decided when every mode agrees. Paths join by union.
+`Modes` ([`src/engine/mode.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs)) is the set of TeX's six modes the run may be in ([tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L4220)). `\ifvmode`, `\ifhmode`, `\ifmmode` and `\ifinner` are decided when every mode agrees. Paths join by union.
 
 `Dim { lo, hi }` is one length: box sizes, added up as `hpack` ([§ 649](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L12910)) and `vpack` ([§ 668](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L13152)) do. An item `satex` cannot follow widens the size to `Dim::ANY`. It is never left out.
 
@@ -155,18 +155,18 @@ A paragraph in a vertical box is broken as `line_break` does it ([tex.web §§ 8
 | Case | Result |
 | --- | --- |
 | forced breaks (penalty ≤ -10000) | exact ([tex.web §§ 851](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L16750), [879](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L17297)) |
-| all items known, plain parameters | Knuth-Plass in all three passes ([§ 863](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L16982), `src/linebreak.rs`): line count, sizes and `\prevgraf` exact |
+| all items known, plain parameters | Knuth-Plass in all three passes ([§ 863](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L16982), `src/engine/linebreak.rs`): line count, sizes and `\prevgraf` exact |
 | fits with infinite stretch, or badness bound low enough | one line ([§§ 817](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L16090), [851](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L16750)–[859](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L16900)) |
 | otherwise | one line up to one per breakpoint, sizes between zero and the text's |
 
 - Line width is `\hsize`. With `\parshape` or `\hangindent` it is unknown ([§§ 847](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L16676)–[848](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L16702)).
 - At `\par`: final glue dropped, `\parfillskip` added ([§ 816](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L16066)). Interline glue from `\baselineskip` or `\lineskip` ([§ 679](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L13312)), both joined when either may apply. `\prevdepth` ([§ 219](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L4423)), `\parskip` ([§ 1091](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L21111)).
-- **Hyphenation** ([§§ 919](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L18072)–[965](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L18820)) uses the format's own `\patterns` and `\hyphenation` (`src/hyph.rs`). Each found gap is a may-hyphen (`·` in the typeset view). A one-line paragraph gets none ([§ 902](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L17669)). An unknown language or `\lccode` marks every gap.
+- **Hyphenation** ([§§ 919](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L18072)–[965](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L18820)) uses the format's own `\patterns` and `\hyphenation` (`src/engine/hyph.rs`). Each found gap is a may-hyphen (`·` in the typeset view). A one-line paragraph gets none ([§ 902](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L17669)). An unknown language or `\lccode` marks every gap.
 - Line parameters are read at `\par`. If they changed after a line was set, the sizes widen.
 
 ## Unknown text: the `TextClass` lattice
 
-Unknown text has a class: the set of token kinds it may hold ([`src/tex.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/tex.rs)). Classes are ordered by inclusion.
+Unknown text has a class: the set of token kinds it may hold ([`src/engine/tex.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/tex.rs)). Classes are ordered by inclusion.
 
 | Kind | Letter | Tokens |
 | --- | --- | --- |
@@ -218,7 +218,7 @@ typed digits     d, with an interval [lo, hi]
 
 A one-of token stands for one of a few texts (a joined `\@currenvir`, `v` plus `a` or `b`).
 
-- A read that splits it (`\ifx`, `\csname`, a scan, a keyword) narrows it on each path to the texts that path took (`split_one_of_groups`, [`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)). Every copy on that path, in a macro, an argument or a name being built, then holds those texts.
+- A read that splits it (`\ifx`, `\csname`, a scan, a keyword) narrows it on each path to the texts that path took (`split_one_of_groups`, [`src/analysis/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs)). Every copy on that path, in a macro, an argument or a name being built, then holds those texts.
 - A `\csname` whose paths join inside the name keeps per name what each path took, and narrows again when it parts per name.
 - At a join, a copy narrowed to one text is that text, so arms that took different texts join as texts.
 - Only a token made once is narrowed. Made again, or once passes of a loop were joined since, its copies may stand for different choices.
@@ -239,7 +239,7 @@ A loop pass whose pending input strictly shrinks is not counted against `limits.
 
 ### Names from unknown text
 
-`Wild` ([`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)) holds the families of names a definition of a partly unknown name may have made ([tex.web § 372](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L7745)): the known text around the unknown part, as in `\csname MT@inh@\x\endcsname`.
+`Wild` ([`src/analysis/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs)) holds the families of names a definition of a partly unknown name may have made ([tex.web § 372](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L7745)): the known text around the unknown part, as in `\csname MT@inh@\x\endcsname`.
 
 - A name of such a family may be undefined, `\relax` (a `\csname` may have made it), or one of up to 8 meanings the family's writes gave. Families join by union. Past 1024 they widen to what they share.
 - A name around one number's typed digits is that number's own name: `\tl_map_inline:nn` defines and calls the same `__tl_map_⟨n⟩:w` exactly. Another definition that may hit the same name joins into it (a weak update).
@@ -247,7 +247,7 @@ A loop pass whose pending input strictly shrinks is not counted against `limits.
 
 ## Argument types: the `Ty` lattice
 
-[`src/roles.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/roles.rs) types each argument of a command by what TeX read it as. The record numbers them by their place in the usage line, optional ones counted.
+[`src/analysis/roles.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/roles.rs) types each argument of a command by what TeX read it as. The record numbers them by their place in the usage line, optional ones counted.
 A type stands for the texts an argument may hold, so a type is below another when every text it admits the other admits too.
 The order follows [tex.web](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web)'s scanners: `scan_int` ([§ 440](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L8701)), `scan_dimen` ([§ 448](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L8829)), `scan_glue` ([§ 461](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9064)), a register an assignment names ([§ 1224](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22902)), a box number ([§ 1079](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20936)), `get_r_token` ([§ 1215](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22784)).
 A register's name is text of its value's kind, because a scanner reads the register's value there ([§ 413](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L8345)). A dimension is glue without stretch.
@@ -451,11 +451,11 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 
 ## Files written in the run
 
-`satex` writes nothing to disk. A run's written files live per path in `Outputs` ([`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)).
+`satex` writes nothing to disk. A run's written files live per path in `Outputs` ([`src/analysis/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs)).
 
 | State | How it arises |
 | --- | --- |
-| known text | `\immediate\openout` empties it, each `\write` appends a line. A deferred `\write` waits for the shipout ([§ 1370](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)), as a set of texts like the file. A token for one of several texts parts the path per text, so each writes it exactly. Other unknown parts are written as one character per class, which reads back as that class. |
+| known text | `\immediate\openout` empties it, each `\write` appends a line. A deferred `\write` waits for the shipout ([§ 1370](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs)), as a set of texts like the file. A token for one of several texts parts the path per text, so each writes it exactly. Other unknown parts are written as one character per class, which reads back as that class. |
 | unknown text | a `\write` to a stream number not pinned adds a line of unknown text to every open file |
 | a set of texts | paths that wrote it differently, each distinct text kept, up to `limits.meaning_set`. A read parts the path per text. |
 
@@ -466,7 +466,7 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 
 ## Call summaries: what a call did twice
 
-[`src/machine/calls.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine/calls.rs) summarizes a call by its effect, so parsers that walk unknown text token by token (pgfmath, l3fp, calc, listings) converge after two runs.
+[`src/analysis/machine/calls.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine/calls.rs) summarizes a call by its effect, so parsers that walk unknown text token by token (pgfmath, l3fp, calc, listings) converge after two runs.
 
 | Step | Rule |
 | --- | --- |
@@ -510,7 +510,7 @@ Every domain joins the same way: **hull plus bounded union**. Keep the exact mem
 
 ### Arms kept paired
 
-A join that is not widened keeps its arms paired (`Corr`, [`src/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/env.rs)): per arm, the bindings of the names that differ. pgfmath's operation stack and its top differ together. Joined apart, a later split pairs `neg` with a stack that never held it (a false missing number).
+A join that is not widened keeps its arms paired (`Corr`, [`src/engine/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/env.rs)): per arm, the bindings of the names that differ. pgfmath's operation stack and its top differ together. Joined apart, a later split pairs `neg` with a stack that never held it (a false missing number).
 
 - Learning one paired name narrows the others to the arms that allow it.
 - A name written after the join leaves the pairing. Past `limits.join_arms` arms, the name with the most bindings leaves first.
@@ -526,7 +526,7 @@ A group or conditional frame may stand for any number of copies (`many`). A loop
 
 ### Joins at `\fi`
 
-Arms of an undecided conditional that reach its `\fi` go on as one path (`fi_mark`, `partner` in [`src/machine/explore.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine/explore.rs)). The conditional is identified by its `\if…` and the stack depth below it ([tex.web §§ 489](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9601), [498](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9711)).
+Arms of an undecided conditional that reach its `\fi` go on as one path (`fi_mark`, `partner` in [`src/analysis/machine/explore.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine/explore.rs)). The conditional is identified by its `\if…` and the stack depth below it ([tex.web §§ 489](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9601), [498](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9711)).
 
 - Data becomes an interval or set, differing macros a meaning set, a one-arm macro "that body or undefined". All definitions stay recorded as facts.
 - Arms that leave another way (`\expandafter\@firstoftwo`) join at the next common place.
@@ -555,7 +555,7 @@ Joining pending code into unknown text keeps what it may do (`may_run`): undefin
 
 ## `limits`: where the domains stop being precise
 
-The knobs that trade precision for a bounded search ([`src/config.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/config.rs), details in [Configuration](Configuration#configurable-limits-for-the-analysis)). Past each, the value moves up the lattice and a diagnostic says so. Time, memory and thread limits never coarsen a result: they only stop a run.
+The knobs that trade precision for a bounded search ([`src/project/config.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/project/config.rs), details in [Configuration](Configuration#configurable-limits-for-the-analysis)). Past each, the value moves up the lattice and a diagnostic says so. Time, memory and thread limits never coarsen a result: they only stop a run.
 
 | setting | default | what it bounds |
 | --- | --- | --- |
@@ -574,7 +574,7 @@ The knobs that trade precision for a bounded search ([`src/config.rs`](https://g
 
 ### Registers behind an unpinned index
 
-A write through an index not pinned to one number (`\count#1=…`) must hold for every register it may name (`weaken_registers`, [`src/exec.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/exec.rs)):
+A write through an index not pinned to one number (`\count#1=…`) must hold for every register it may name (`weaken_registers`, [`src/engine/exec.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs)):
 
 - A narrow interval (at most `limits.value_set` registers): each is joined with the value.
 - Otherwise every register of the kind is weakened, and unseen ones read as the whole range (`register_top`), no longer as zero.

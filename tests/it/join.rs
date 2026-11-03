@@ -4,15 +4,15 @@
 
 use crate::support::{PRELUDE, broken_gaps, names};
 use crate::support::{body, installed};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
 
 fn analyze(source: &str) -> Analysis {
-    let cfg = satex::config::Config { arm_joins: true, ..crate::support::bare() };
+    let cfg = satex::project::config::Config { arm_joins: true, ..crate::support::bare() };
     Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg)
 }
 
 fn analyze_latex(source: &str) -> Analysis {
-    let cfg = satex::config::Config { arm_joins: true, ..crate::support::config() };
+    let cfg = satex::project::config::Config { arm_joins: true, ..crate::support::config() };
     Machine::analyze(source, None, &cfg)
 }
 
@@ -279,7 +279,7 @@ fn ifx_of_a_joined_text_is_decided_per_member() {
 /// passes, never cut: what follows the loop still runs.
 #[test]
 fn a_loop_past_its_passes_is_widened_not_cut() {
-    let cfg = satex::config::Config { arm_joins: true, ..crate::support::bare() };
+    let cfg = satex::project::config::Config { arm_joins: true, ..crate::support::bare() };
     let analysis = Machine::analyze(
         &format!(
             "{PRELUDE}\\def\\a{{\\advance\\count1 1 \\ifnum\\count1<\\count2 \\expandafter\\a\\fi}}\\count2=\\pdfuniformdeviate 100000 \\a\\def\\after{{}}"
@@ -370,7 +370,7 @@ fn certain_error_drops_its_path() {
         crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-join-lib-{}", std::process::id())));
     std::fs::write(lib.join("arm.tex"), arm).unwrap();
     let source = format!(r"\input {}/arm.tex \edef\z{{\m}}", crate::support::tex_path(&lib));
-    let mut cfg = satex::config::Config { arm_joins: true, ..crate::support::bare() };
+    let mut cfg = satex::project::config::Config { arm_joins: true, ..crate::support::bare() };
     cfg.load.inputs = true;
     let analysis = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
     assert_eq!(body(&analysis, "z"), "b");
@@ -407,9 +407,9 @@ fn a_dropped_path_rejoins_once_nothing_compiles() {
 /// Before, every head was kept and a large picture took all of memory.
 #[test]
 fn loop_heads_left_behind_are_retired() {
-    let cfg = satex::config::Config {
-        engine: Some(satex::config::Engine::PdfTeX),
-        kernel: Some(satex::plugin::Kernel::None),
+    let cfg = satex::project::config::Config {
+        engine: Some(satex::project::config::Engine::PdfTeX),
+        kernel: Some(satex::plugins::Kernel::None),
         ..crate::support::config()
     };
     let calls = r"\l".repeat(200);
@@ -430,9 +430,9 @@ fn loop_heads_left_behind_are_retired() {
 /// loop unfolded until a limit.
 #[test]
 fn alternating_heads_of_a_tail_loop_meet_again() {
-    let mut cfg = satex::config::Config {
-        engine: Some(satex::config::Engine::PdfTeX),
-        kernel: Some(satex::plugin::Kernel::None),
+    let mut cfg = satex::project::config::Config {
+        engine: Some(satex::project::config::Engine::PdfTeX),
+        kernel: Some(satex::plugins::Kernel::None),
         ..crate::support::config()
     };
     cfg.limits.steps = 2_000_000;
@@ -732,7 +732,7 @@ fn disjoint_intervals_join_to_an_interval_set() {
     assert!(!defined.contains(&"middle".to_string()), "{defined:?}");
     assert!(defined.contains(&"below".to_string()) && !defined.contains(&"above".to_string()), "{defined:?}");
     // One member keeps only the hull, which holds values between them.
-    let mut cfg = satex::config::Config { arm_joins: true, ..crate::support::bare() };
+    let mut cfg = satex::project::config::Config { arm_joins: true, ..crate::support::bare() };
     cfg.limits.interval_set = 1;
     let hull = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
     assert!(names(&hull).contains(&"middle".to_string()), "{:?}", names(&hull));

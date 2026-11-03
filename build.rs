@@ -53,16 +53,19 @@ fn main() {
 /// Code that only reports on an analysis — lints, subcommands, rendering —
 /// does not change what a cache holds, so editing it keeps the caches.
 const REPORTING: &[&str] = &[
-    "src/lint",
-    "src/cmd",
+    "src/linter",
+    "src/cli",
     "src/bin",
     "src/lsp",
-    "src/render.rs",
     "src/main.rs",
-    "src/progress.rs",
-    "src/query.rs",
-    "src/rename.rs",
-    "src/timing.rs",
+    "src/util/render.rs",
+    "src/util/progress.rs",
+    "src/util/timing.rs",
+    "src/queries/query.rs",
+    "src/queries/rename.rs",
+    "src/data/describe.tsv",
+    "src/data/lint-numbers.txt",
+    "src/data/knowledge.md",
 ];
 
 /// FNV-1a over the interpreter's source files, in path order: the binary and

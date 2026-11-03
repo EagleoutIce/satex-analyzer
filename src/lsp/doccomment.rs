@@ -126,7 +126,7 @@ fn parse(block: &[&str]) -> Option<DocComment> {
                 doc.text.push(' ');
             }
             match markup {
-                true => doc.text.push_str(&crate::plugin::docs::markup::render(line, false)),
+                true => doc.text.push_str(&crate::plugins::docs::markup::render(line, false)),
                 false => doc.text.push_str(line),
             }
         }
@@ -141,14 +141,14 @@ fn parse(block: &[&str]) -> Option<DocComment> {
 /// `\begin{macro}{\foo}`: environment markup naming a command, as the doc classes document one.
 fn names_a_command(line: &str) -> bool {
     let Some(rest) = line.strip_prefix("\\begin") else { return false };
-    let Some((_, rest)) = crate::plugin::docs::markup::group(rest, '{', '}') else { return false };
-    crate::plugin::docs::markup::group(rest, '{', '}').is_some_and(|(name, _)| name.trim_start().starts_with('\\'))
+    let Some((_, rest)) = crate::plugins::docs::markup::group(rest, '{', '}') else { return false };
+    crate::plugins::docs::markup::group(rest, '{', '}').is_some_and(|(name, _)| name.trim_start().starts_with('\\'))
 }
 
 /// `\begin{macro}{\foo}`, `\end{macrocode}`: a line of environment markup only.
 fn environment_line(line: &str) -> bool {
     let Some(mut rest) = line.strip_prefix("\\begin").or_else(|| line.strip_prefix("\\end")) else { return false };
-    while let Some((_, after)) = crate::plugin::docs::markup::group(rest, '{', '}') {
+    while let Some((_, after)) = crate::plugins::docs::markup::group(rest, '{', '}') {
         rest = after;
     }
     rest.trim().is_empty()
@@ -167,8 +167,8 @@ fn usage_line(line: &str) -> Option<Vec<String>> {
     let mut names = Vec::new();
     while !rest.trim().is_empty() {
         let (inner, after) = match rest.trim_start().chars().next()? {
-            '{' => crate::plugin::docs::markup::group(rest, '{', '}')?,
-            '[' => crate::plugin::docs::markup::group(rest, '[', ']')?,
+            '{' => crate::plugins::docs::markup::group(rest, '{', '}')?,
+            '[' => crate::plugins::docs::markup::group(rest, '[', ']')?,
             _ => return None,
         };
         let inner = inner.trim();

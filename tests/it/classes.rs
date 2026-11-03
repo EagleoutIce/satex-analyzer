@@ -4,7 +4,7 @@
 //! ends on, and raises no error of its own.
 
 use crate::support::{analyze_latex, broken_gaps, codes, installed, last_body as body};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
 
 /// Cuts that end or blur a run: none may happen in a plain document.
 const CUTS: &[&str] = &["budget-exhausted", "line-budget-cut", "analysis-ended-early", "fault-contained"];

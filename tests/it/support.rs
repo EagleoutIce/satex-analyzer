@@ -1,8 +1,8 @@
 //! Shared infrastructure for modules below, not a module of tests itself.
 #![allow(dead_code)]
 
-use satex::config::{Config, Load, Texmf};
-use satex::machine::Analysis;
+use satex::analysis::machine::Analysis;
+use satex::project::config::{Config, Load, Texmf};
 use std::path::{Path, PathBuf};
 
 /// `Config::default()` with `limits.seconds = 0` (no wall-clock budget), so
@@ -32,13 +32,14 @@ fn bounded(mut cfg: Config) -> Config {
         cfg.cache.dir = Some(test_cache());
     }
     // One fixed clock: runs a second apart, cached or not, agree.
-    cfg.clock = satex::config::Clock::At(time::OffsetDateTime::from_unix_timestamp(1_767_268_800).expect("a date"));
+    cfg.clock =
+        satex::project::config::Clock::At(time::OffsetDateTime::from_unix_timestamp(1_767_268_800).expect("a date"));
     cfg.limits.steps = 300_000_000;
     // Counted for the whole test process (tests/it/main.rs): the run stops
     // itself at 4 GiB, and an allocation past 6 GiB aborts the process, so
     // the test cgroup (10 GB) never has to kill it.
     cfg.limits.memory = bytesize::ByteSize::gib(4);
-    satex::budget::set_limit(cfg.limits.memory.as_u64());
+    satex::analysis::budget::set_limit(cfg.limits.memory.as_u64());
     cfg.limits.facts = 1_000_000;
     cfg.limits.vertices = 400_000;
     cfg
@@ -48,7 +49,7 @@ fn bounded(mut cfg: Config) -> Config {
 /// need `texmf.kpsewhich` or package/class loading skip themselves when this
 /// is `false`.
 pub fn installed() -> bool {
-    satex::paths::which("kpsewhich").is_ok()
+    satex::project::paths::which("kpsewhich").is_ok()
 }
 
 /// `config()` with package, class, input and format loading all off, and
@@ -146,7 +147,7 @@ pub fn seed_kernel(cfg: &Config) {
             let mut warm = cfg.clone();
             warm.cache.dir = Some(shared.clone());
             warm.cache.rebuild = false;
-            satex::machine::Machine::analyze("\\relax\n", Some(&shared.join("kernel.tex")), &warm);
+            satex::analysis::machine::Machine::analyze("\\relax\n", Some(&shared.join("kernel.tex")), &warm);
             built.push(key);
         }
     }
@@ -174,7 +175,7 @@ pub fn seed_kernel(cfg: &Config) {
 }
 
 /// The first definition of `name` in analysis order.
-pub fn definition<'a>(analysis: &'a Analysis, name: &str) -> Option<&'a satex::facts::Definition> {
+pub fn definition<'a>(analysis: &'a Analysis, name: &str) -> Option<&'a satex::analysis::facts::Definition> {
     analysis.facts.defs.iter().find(|d| analysis.interner.name(d.name) == name)
 }
 
@@ -182,12 +183,12 @@ pub fn definition<'a>(analysis: &'a Analysis, name: &str) -> Option<&'a satex::f
 pub fn body(analysis: &Analysis, name: &str) -> String {
     definition(analysis, name)
         .and_then(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         .unwrap_or_default()
 }
 
 /// The last definition of `name` in analysis order.
-pub fn last_definition<'a>(analysis: &'a Analysis, name: &str) -> Option<&'a satex::facts::Definition> {
+pub fn last_definition<'a>(analysis: &'a Analysis, name: &str) -> Option<&'a satex::analysis::facts::Definition> {
     analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == name)
 }
 
@@ -195,7 +196,7 @@ pub fn last_definition<'a>(analysis: &'a Analysis, name: &str) -> Option<&'a sat
 pub fn last_body(analysis: &Analysis, name: &str) -> String {
     last_definition(analysis, name)
         .and_then(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         .unwrap_or_default()
 }
 
@@ -210,19 +211,19 @@ pub const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\cat
 
 /// `source` after [`PRELUDE`], run on [`bare`].
 pub fn analyze_plain(source: &str) -> Analysis {
-    satex::machine::Machine::analyze(&format!("{PRELUDE}{source}"), None, &bare())
+    satex::analysis::machine::Machine::analyze(&format!("{PRELUDE}{source}"), None, &bare())
 }
 
 /// The LaTeX kernel read for real (and cached): expl3 is `expl3-code.tex`
 /// itself, which only a format run has.
 pub fn analyze_kernel(source: &str) -> Analysis {
     let cfg = Config { load: Load { packages: false, classes: false, ..Default::default() }, ..config() };
-    satex::machine::Machine::analyze(source, None, &cfg)
+    satex::analysis::machine::Machine::analyze(source, None, &cfg)
 }
 
 /// `source` analysed on the default [`config`], with no file name.
 pub fn analyze_latex(source: &str) -> Analysis {
-    satex::machine::Machine::analyze(source, None, &config())
+    satex::analysis::machine::Machine::analyze(source, None, &config())
 }
 
 /// Fails when the run of `source` has broken gaps, listing them.
@@ -238,7 +239,7 @@ pub fn assert_body(source: &str, name: &str, expected: &str) {
 
 /// Fails unless `source` yields exactly `count` lint records with `code`.
 pub fn assert_lint(source: &str, code: &str, count: usize) {
-    let found: Vec<String> = satex::lint::lint(&analyze_latex(source))
+    let found: Vec<String> = satex::linter::lint(&analyze_latex(source))
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some(code))
         .map(|f| f.get("message").and_then(|m| m.as_str()).unwrap_or_default().to_string())
@@ -267,14 +268,14 @@ pub fn broken_gaps(analysis: &Analysis) -> Vec<String> {
         .facts
         .diagnostics
         .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported)
         .map(|d| format!("{}: {}", d.code, d.message))
         .collect()
 }
 
 /// The lint codes found in the document itself.
 pub fn codes(analysis: &Analysis) -> Vec<String> {
-    satex::lint::lint(analysis)
+    satex::linter::lint(analysis)
         .iter()
         .filter(|f| f.get("origin").and_then(|o| o.as_str()) == Some("document"))
         .filter_map(|f| f.get("code").and_then(|c| c.as_str()).map(str::to_string))
@@ -287,7 +288,7 @@ pub fn marks(analysis: &Analysis) -> Vec<String> {
         .facts
         .occurrences
         .iter()
-        .filter(|o| o.kind == satex::builtins::OccKind::Message && o.key.starts_with("mark "))
+        .filter(|o| o.kind == satex::engine::builtins::OccKind::Message && o.key.starts_with("mark "))
         .map(|o| o.key.clone())
         .collect()
 }
@@ -388,7 +389,7 @@ const MINI_PACKAGE: &str = "\\ProvidesPackage{demo}\n\
 pub fn mini_config(tree: &Path, cache: &Path) -> Config {
     Config {
         texmf: Texmf { roots: vec![tree.to_path_buf()], bundle: None, kpsewhich: false, fallback: false },
-        cache: satex::config::Cache { dir: Some(cache.to_path_buf()), ..Default::default() },
+        cache: satex::project::config::Cache { dir: Some(cache.to_path_buf()), ..Default::default() },
         ..config()
     }
 }

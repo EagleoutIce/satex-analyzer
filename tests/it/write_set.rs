@@ -11,16 +11,16 @@
 //! Failing rows are the to-do list: never ignore them.
 
 use crate::support::PRELUDE;
-use satex::config::Config;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::Config;
 
 /// `\i` counts passes, `\n` is the unknown bound.
 const HEAD: &str = r"\countdef\i=200 \countdef\n=201 \n=\N \i=0 ";
 
 fn cfg(assume_compiles: bool) -> Config {
     let mut cfg = Config {
-        engine: Some(satex::config::Engine::PdfTeX),
-        kernel: Some(satex::plugin::Kernel::None),
+        engine: Some(satex::project::config::Engine::PdfTeX),
+        kernel: Some(satex::plugins::Kernel::None),
         ..crate::support::config()
     };
     cfg.limits.steps = 5_000_000;
@@ -407,9 +407,9 @@ fn expl3_variables() {
 \int_compare:nNnT \g_tmpa_int = {6} {\def\okB{}} \int_compare:nNnF \g_tmpb_int = {5} {\def\badB{}}
 \ExplSyntaxOff";
     let mut cfg = crate::support::config();
-    cfg.load = satex::config::Load { packages: false, classes: false, ..Default::default() };
+    cfg.load = satex::project::config::Load { packages: false, classes: false, ..Default::default() };
     let analysis = Machine::analyze(&probe.replace(r"\N", r"\pdfelapsedtime"), None, &cfg);
-    let summarized = |d: &satex::facts::Diagnostic| d.code == "recursion-widened";
+    let summarized = |d: &satex::analysis::facts::Diagnostic| d.code == "recursion-widened";
     assert!(analysis.facts.diagnostics.iter().any(summarized), "the loop is summarized");
     let mut analysis = analysis;
     analysis.facts.diagnostics.retain(|d| !summarized(d));

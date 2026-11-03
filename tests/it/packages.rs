@@ -1,8 +1,8 @@
 use crate::support::{codes, marks};
 
 use crate::support::{defined, installed, last_body as body};
-use satex::config::{Config, Load};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Load};
 
 fn analyze(source: &str) -> Analysis {
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
@@ -56,7 +56,11 @@ fn a_package_that_redefines_a_kernel_command_keeps_the_observed_meaning() {
 \section{One}\label{sec:one}
 \end{document}",
     );
-    let labels = satex::query::run(&analysis, satex::query::Query::Occurrences, &satex::query::Filter::Always);
+    let labels = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Occurrences,
+        &satex::queries::query::Filter::Always,
+    );
     assert!(
         labels.iter().any(|record| record.get("key").is_some_and(|k| k == "sec:one")),
         "the label survives hyperref redefining \\label"
@@ -82,7 +86,7 @@ fn expl3_code_keeps_its_names_and_its_catcodes() {
     for name in ["l_demo_text_tl", "g_demo_count_int", "demo_show:n", "DemoShow"] {
         assert!(defined(&analysis, name), "expl3 defines \\{name}");
     }
-    let findings = satex::lint::lint(&analysis);
+    let findings = satex::linter::lint(&analysis);
     let codes: Vec<&str> = findings.iter().filter_map(|f| f.get("code").and_then(|c| c.as_str())).collect();
     assert!(!codes.contains(&"expl-syntax-left-on"), "\\ExplSyntaxOff ends it: {codes:?}");
     assert!(!codes.contains(&"catcode-left-changed"), "the catcodes go back: {codes:?}");
@@ -138,13 +142,13 @@ fn an_image_is_looked_for_where_graphicspath_says_and_in_what_the_driver_reads()
         .facts
         .occurrences
         .iter()
-        .filter(|o| o.kind == satex::builtins::OccKind::Graphics)
+        .filter(|o| o.kind == satex::engine::builtins::OccKind::Graphics)
         .map(|o| (o.key.clone(), o.detail.is_some()))
         .collect();
     // pdflatex's log: `<figs/tree.png, id=1, ...>` and
     // `! LaTeX Error: File `nowhere' not found.`
     assert!(found.contains(&("figs/tree.png".to_string(), true)), "{found:?}");
-    let missing: Vec<String> = satex::lint::lint(&analysis)
+    let missing: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("missing-graphic"))
         .filter_map(|f| f.get("name").and_then(|c| c.as_str()).map(str::to_string))
@@ -153,7 +157,7 @@ fn an_image_is_looked_for_where_graphicspath_says_and_in_what_the_driver_reads()
     let _ = std::fs::remove_dir_all(&directory);
 }
 
-fn occurrences(analysis: &Analysis, kind: satex::builtins::OccKind) -> Vec<String> {
+fn occurrences(analysis: &Analysis, kind: satex::engine::builtins::OccKind) -> Vec<String> {
     analysis.facts.occurrences.iter().filter(|o| o.kind == kind).map(|o| o.key.clone()).collect()
 }
 
@@ -175,7 +179,7 @@ fn glossaries_uses_come_from_the_lines_it_writes_and_its_errors() {
     // pdflatex writes `\glossaryentry{TeX?\glossentry{tex}|…}` to the
     // `.glo` and `api` to the `.acn`, and stops with `Glossary entry
     // `missing' has not been defined`.
-    use satex::builtins::OccKind;
+    use satex::engine::builtins::OccKind;
     let mut declared = occurrences(&analysis, OccKind::Key);
     declared.sort();
     assert_eq!(declared, ["api", "tex"]);
@@ -184,7 +188,7 @@ fn glossaries_uses_come_from_the_lines_it_writes_and_its_errors() {
     used.sort();
     used.dedup();
     assert_eq!(used, ["api", "missing", "tex"]);
-    let missing: Vec<String> = satex::lint::lint(&analysis)
+    let missing: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-glossary-entry"))
         .filter_map(|f| f.get("name").and_then(|c| c.as_str()).map(str::to_string))
@@ -210,7 +214,7 @@ fn the_acronym_package_declares_its_entries() {
     // `\acro` exists only inside the `acronym` environment; pdflatex writes
     // `\newacro{ci}…` and `\acronymused{ci}` to the `.aux`.
     // Read back, `\newacro{ci}` defines `\fn@ci`, which `\ac{ci}` reads.
-    use satex::builtins::OccKind;
+    use satex::engine::builtins::OccKind;
     assert_eq!(occurrences(&analysis, OccKind::Label), ["ci"]);
     let mut used = occurrences(&analysis, OccKind::Ref);
     used.dedup();
@@ -331,7 +335,7 @@ fn cleveref_and_hyperref_references_are_observed_from_the_names_they_test() {
     );
     // pdflatex, first run: `Reference `⟨key⟩' on page 1 undefined` for
     // exactly these keys.
-    let mut refs = occurrences(&analysis, satex::builtins::OccKind::Ref);
+    let mut refs = occurrences(&analysis, satex::engine::builtins::OccKind::Ref);
     refs.sort();
     refs.dedup();
     assert_eq!(refs, ["sec:end", "sec:gone", "sec:intro", "sec:missing"], "{refs:?}");
@@ -349,7 +353,7 @@ fn cleveref_reads_every_label_of_a_list() {
 \cref{a,b}\cref{c}
 \end{document}",
     );
-    let mut refs = occurrences(&analysis, satex::builtins::OccKind::Ref);
+    let mut refs = occurrences(&analysis, satex::engine::builtins::OccKind::Ref);
     refs.sort();
     refs.dedup();
     assert_eq!(refs, ["a", "b", "c"], "{refs:?}");
@@ -369,7 +373,7 @@ fn biblatex_citations_and_resources_are_observed_from_what_it_writes() {
 \printbibliography
 \end{document}",
     );
-    use satex::builtins::OccKind;
+    use satex::engine::builtins::OccKind;
     // pdflatex writes `\abx@aux@cite{0}{knuth}` and `{0}{missing}` to the
     // `.aux`, and `refs.bib` as the datasource of the `.bcf`.
     let mut cites = occurrences(&analysis, OccKind::Cite);
@@ -393,7 +397,7 @@ fn acro_acronyms_are_observed_from_what_acro_writes_and_its_errors() {
 \ac{ci} \acs{ci} \acl{xx}
 \end{document}",
     );
-    use satex::builtins::OccKind;
+    use satex::engine::builtins::OccKind;
     // pdflatex writes `\ACRO{recordpage}{ci}…` for each use of `ci` and
     // stops with `Package acro Error: You've requested acronym `xx'`.
     let mut declared = occurrences(&analysis, OccKind::Key);
@@ -403,7 +407,7 @@ fn acro_acronyms_are_observed_from_what_acro_writes_and_its_errors() {
     used.sort();
     used.dedup();
     assert_eq!(used, ["ci", "xx"]);
-    let missing: Vec<String> = satex::lint::lint(&analysis)
+    let missing: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-glossary-entry"))
         .filter_map(|f| f.get("name").and_then(|c| c.as_str()).map(str::to_string))
@@ -481,8 +485,9 @@ fn a_theme_is_read_after_the_class_it_expects() {
     let source =
         "\\mode<presentation>\n\\setbeamertemplate{navigation symbols}{}\n\\usecolortheme{whale}\n\\mode<all>\n";
     std::fs::write(&path, source).unwrap();
-    let undefined =
-        |a: &Analysis| a.facts.expansions.iter().filter(|e| e.meaning == satex::facts::MeaningKind::Undefined).count();
+    let undefined = |a: &Analysis| {
+        a.facts.expansions.iter().filter(|e| e.meaning == satex::analysis::facts::MeaningKind::Undefined).count()
+    };
     let cfg = crate::support::config();
     let found = Machine::analyze(source, Some(&path), &cfg);
     assert_eq!(undefined(&found), 0);

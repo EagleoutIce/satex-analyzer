@@ -1,11 +1,11 @@
 //! A run resumed from a checkpoint after an edit says exactly what a full
-//! run of the edited document says ([`satex::machine::Checkpoints`]).
+//! run of the edited document says ([`satex::analysis::machine::Checkpoints`]).
 
 use crate::support::installed;
-use satex::machine::{Analysis, Checkpoints, Machine};
+use satex::analysis::machine::{Analysis, Checkpoints, Machine};
 use std::path::Path;
 
-fn at(analysis: &Analysis, span: satex::tex::Span) -> String {
+fn at(analysis: &Analysis, span: satex::engine::tex::Span) -> String {
     format!("{}:{}:{}", analysis.file_name(span.file), span.line, span.col)
 }
 

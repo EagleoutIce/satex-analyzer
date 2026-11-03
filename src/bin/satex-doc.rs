@@ -39,10 +39,10 @@
 //!       The crate version, from `satex --version`.
 //!
 //!   {{primitives}}
-//!       Every TeX82/eTeX/pdfTeX/XeTeX/LuaTeX primitive `src/builtins.rs`
+//!       Every TeX82/eTeX/pdfTeX/XeTeX/LuaTeX primitive `src/engine/builtins.rs`
 //!       registers, sectioned by the engine that adds it, with the verdict
-//!       `src/builtins.rs::verdict` gives from what `src/exec.rs`,
-//!       `src/mode.rs` and `src/commands.rs` do with it. Each row links
+//!       `src/engine/builtins.rs::verdict` gives from what `src/engine/exec.rs`,
+//!       `src/engine/mode.rs` and `src/engine/commands.rs` do with it. Each row links
 //!       to the deciding arm, from the `file!()`/`line!()` that arm
 //!       records in `builtins::Site`.
 //!
@@ -67,7 +67,7 @@
 //! upstream file (the `trunk`/`main` branch, fetched fresh each run) to
 //! build a commit-pinned permalink. `--refresh-citations` writes the
 //! result (`doc/src/tex-web-sections.tsv`/`tex-web-sha.txt`, the build-time
-//! cache `src/lint/mod.rs` embeds, and the `[tw-N]:`/`[ech-<name>]:`
+//! cache `src/linter/mod.rs` embeds, and the `[tw-N]:`/`[ech-<name>]:`
 //! definitions in SEMANTICS.md); `--check-citations` (CI) only reports
 //! drift and fails if a citation no longer resolves, or resolves to a
 //! different line than what is checked in. See [`refresh_citations`].
@@ -82,10 +82,10 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use regex::Regex;
-use satex::builtins::{self, Primitive, Site, Verdict};
-use satex::config::{Engine, Limits};
-use satex::lint::cite::linkify_citations;
-use satex::tex::{Interner, Meaning};
+use satex::engine::builtins::{self, Primitive, Site, Verdict};
+use satex::engine::tex::{Interner, Meaning};
+use satex::linter::cite::linkify_citations;
+use satex::project::config::{Engine, Limits};
 
 const TEMPLATES: &[(&str, &str)] = &[
     ("doc/src/README.md.in", "README.md"),
@@ -159,7 +159,7 @@ fn installation(bin: &str) -> Result<String, String> {
 /// [`Ty::family`], one node per type. Three or more leaves of one parent and
 /// family stand in a stacked cluster that one edge reaches. `nothing` is left out.
 fn types_chart() -> String {
-    use satex::roles::Ty;
+    use satex::analysis::roles::Ty;
     let all: Vec<Ty> = Ty::all().into_iter().filter(|t| *t != Ty::Bottom).collect();
     let id = |t: Ty| all.iter().position(|x| *x == t).unwrap_or(0);
     let leaf = |t: Ty| t != Ty::Top && !all.iter().any(|c| *c != Ty::Top && c.parent() == t);
@@ -247,7 +247,8 @@ fn run(check: bool) -> Result<(), String> {
     }
     // The schema the `# yaml-language-server: $schema=` line of a satex.yaml names.
     let documented = fs::read_to_string("satex.yaml").map_err(|e| format!("satex.yaml: {e}"))?;
-    let schema = serde_json::to_string_pretty(&satex::config::schema(&documented)).map_err(|e| e.to_string())? + "\n";
+    let schema =
+        serde_json::to_string_pretty(&satex::project::config::schema(&documented)).map_err(|e| e.to_string())? + "\n";
     if fs::read_to_string(SCHEMA).unwrap_or_default() != schema {
         match check {
             true => stale.push(SCHEMA),
@@ -510,7 +511,7 @@ fn resolve_file_citations(path: &str, resolver: &mut CitationResolver, write: bo
     Ok(changed)
 }
 
-/// The tex.web module -> line table `src/lint/mod.rs` and this binary
+/// The tex.web module -> line table `src/linter/mod.rs` and this binary
 /// embed with `include_str!`, so a normal `satex` build and a normal
 /// `satex-doc` run need no network access: only `--refresh-citations`
 /// (writing it) and `--check-citations` (verifying it is not stale) fetch
@@ -679,13 +680,13 @@ fn expand(directive: &str) -> Result<String, String> {
         return enum_list(&Engine::ALL.iter().map(|e| e.as_str()).collect::<Vec<_>>());
     }
     if directive == "kernels" {
-        return enum_list(&satex::plugin::Kernel::ALL.iter().map(|k| k.as_str()).collect::<Vec<_>>());
+        return enum_list(&satex::plugins::Kernel::ALL.iter().map(|k| k.as_str()).collect::<Vec<_>>());
     }
     if directive == "outputs" {
-        return enum_list(&satex::plugin::output::Output::ALL.iter().map(|o| o.as_str()).collect::<Vec<_>>());
+        return enum_list(&satex::plugins::output::Output::ALL.iter().map(|o| o.as_str()).collect::<Vec<_>>());
     }
     if directive == "build-systems" {
-        return enum_list(&satex::plugin::build::BuildSystem::ALL.iter().map(|b| b.as_str()).collect::<Vec<_>>());
+        return enum_list(&satex::plugins::build::BuildSystem::ALL.iter().map(|b| b.as_str()).collect::<Vec<_>>());
     }
     if directive == "version" {
         return version();
@@ -743,7 +744,7 @@ fn redact_paths(line: &str) -> String {
     }
     // Anything still under `$HOME` (a personal texmf tree, a per-user
     // texlive var directory) is this machine's alone.
-    if let Some(home) = satex::paths::home_dir() {
+    if let Some(home) = satex::project::paths::home_dir() {
         let home = home.display().to_string();
         if !home.is_empty() {
             out = out.replace(&home, "~");
@@ -900,8 +901,8 @@ fn example(path: &str) -> Result<String, String> {
     let mut pairs: Vec<(String, String)> = Vec::new();
     let mut engine = shipped.iter().peekable();
     for c in &computed {
-        let alone = satex::query::typeset_verdict(c, "") != "DIFFERS"
-            && engine.peek().is_none_or(|e| satex::query::typeset_verdict(c, e) == "DIFFERS");
+        let alone = satex::queries::query::typeset_verdict(c, "") != "DIFFERS"
+            && engine.peek().is_none_or(|e| satex::queries::query::typeset_verdict(c, e) == "DIFFERS");
         let e = if alone { String::new() } else { engine.next().cloned().unwrap_or_default() };
         pairs.push((e, c.clone()));
     }
@@ -939,7 +940,7 @@ fn example(path: &str) -> Result<String, String> {
     let mut wrong = None;
     let mut why: Vec<String> = Vec::new();
     for (e, c) in &pairs {
-        let m = if c.starts_with("assumes ") { "" } else { mark(satex::query::typeset_verdict(c, e)) };
+        let m = if c.starts_with("assumes ") { "" } else { mark(satex::queries::query::typeset_verdict(c, e)) };
         if m == "✗" && wrong.is_none() {
             wrong = Some((e.clone(), c.clone()));
         }
@@ -1379,11 +1380,11 @@ struct RuleDefault {
 
 /// One [`RuleDefault`] per rule code, computed from `Config::default()`
 /// merged with `satex.yaml` and every `profiles.*` overlay applied on top
-/// of it in turn ([`satex::config::Config::apply_profile`]) — the same
+/// of it in turn ([`satex::project::config::Config::apply_profile`]) — the same
 /// merge a real run does — so a rule's on/off state can never drift from
 /// what `satex lint` actually does with it.
 fn rule_defaults() -> Result<std::collections::HashMap<&'static str, RuleDefault>, String> {
-    use satex::config::Profile;
+    use satex::project::config::Profile;
     let mut base = satex::Config::default();
     base.merge(Path::new("satex.yaml")).map_err(|e| format!("satex.yaml: {e}"))?;
     let mut off_by_profile: Vec<(Profile, Vec<String>)> = Vec::new();
@@ -1399,7 +1400,7 @@ fn rule_defaults() -> Result<std::collections::HashMap<&'static str, RuleDefault
         .unwrap_or_default();
 
     let mut result = std::collections::HashMap::new();
-    for rule in satex::lint::all() {
+    for rule in satex::linter::all() {
         let off_by_default = document_off.contains(rule.code);
         let mut disagreeing_profiles = Vec::new();
         for (profile, off) in &off_by_profile {
@@ -1508,7 +1509,7 @@ fn display_primitive(name: &str) -> String {
     }
 }
 
-/// Every primitive `src/builtins.rs` registers, sectioned by the engine
+/// Every primitive `src/engine/builtins.rs` registers, sectioned by the engine
 /// block that adds it, with `builtins::verdict`'s judgment on each. Runs
 /// `initial_meanings` in-process, so a renamed or added primitive cannot
 /// leave this page stale.
@@ -1520,7 +1521,7 @@ fn primitives_table() -> Result<String, String> {
     let luatex_table = builtins::initial_meanings(&mut it, Engine::LuaTeX);
 
     let prim_map =
-        |table: &satex::fixed::HashMap<satex::tex::Sym, Meaning>| -> std::collections::BTreeMap<String, Primitive> {
+        |table: &satex::fixed::HashMap<satex::engine::tex::Sym, Meaning>| -> std::collections::BTreeMap<String, Primitive> {
             table.iter().filter_map(|(s, m)| m.prim().map(|p| (it.name(*s).to_string(), p))).collect()
         };
     let pdftex_all = prim_map(&pdftex_table);
@@ -1668,7 +1669,7 @@ const PRECISION_LIMITS: &[&str] = &[
 /// comment. `limits.*` is described in full on the configuration page; every
 /// row links there, so this table only has to give the number.
 fn limits_table() -> Result<String, String> {
-    let source = fs::read_to_string("src/config.rs").map_err(|e| format!("src/config.rs: {e}"))?;
+    let source = fs::read_to_string("src/project/config.rs").map_err(|e| format!("src/project/config.rs: {e}"))?;
     let fields = struct_doc_fields(&source, "Limits")?;
     let limits = Limits::default();
     let defaults = serde_json::to_value(&limits).map_err(|e| format!("serializing Limits::default(): {e}"))?;
@@ -1722,9 +1723,9 @@ fn fields_text(name: &str, key: &str) -> Result<String, String> {
             other => other.to_string(),
         }
     }
-    let source = fs::read_to_string("src/config.rs").map_err(|e| format!("src/config.rs: {e}"))?;
-    let mut defaults =
-        serde_json::to_value(satex::config::Config::default()).map_err(|e| format!("Config::default(): {e}"))?;
+    let source = fs::read_to_string("src/project/config.rs").map_err(|e| format!("src/project/config.rs: {e}"))?;
+    let mut defaults = serde_json::to_value(satex::project::config::Config::default())
+        .map_err(|e| format!("Config::default(): {e}"))?;
     strip_nulls(&mut defaults);
     let block = key
         .split('.')

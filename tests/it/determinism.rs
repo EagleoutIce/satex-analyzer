@@ -7,9 +7,9 @@
 use std::path::PathBuf;
 
 use crate::support::installed;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
 
-fn at(analysis: &Analysis, span: satex::tex::Span) -> String {
+fn at(analysis: &Analysis, span: satex::engine::tex::Span) -> String {
     format!("{}:{}:{}", analysis.file_name(span.file), span.line, span.col)
 }
 
@@ -221,12 +221,12 @@ fn the_file_order_does_not_decide_the_declared_root() {
     let (first_dir, second_dir) = (scratch("order-a"), scratch("order-b"));
     write(&first_dir, &one);
     write(&second_dir, &two);
-    let named = |found: &satex::plugin::Discovery| {
+    let named = |found: &satex::plugins::Discovery| {
         found.declared_root.as_ref().map(|root| root.file_name().unwrap().to_string_lossy().into_owned())
     };
     for threads in [1, 8] {
-        let a = satex::plugin::discovery::scan_with(&first_dir, threads);
-        let b = satex::plugin::discovery::scan_with(&second_dir, threads);
+        let a = satex::plugins::discovery::scan_with(&first_dir, threads);
+        let b = satex::plugins::discovery::scan_with(&second_dir, threads);
         assert_eq!(named(&a), named(&b), "the file order decided the `% !TeX root` on {threads} thread(s)");
         assert_eq!(named(&a), Some("r00.tex".to_string()), "the first root in path order should win");
     }
@@ -243,15 +243,15 @@ fn a_parallel_project_walk_reports_one_thing() {
         let text = format!("% !TeX root = r{i:02}.tex\nx\n");
         std::fs::write(dir.join(format!("r{i:02}.tex")), text).expect("write file");
     }
-    let first = satex::plugin::discovery::scan_with(&dir, 8);
+    let first = satex::plugins::discovery::scan_with(&dir, 8);
     for _ in 0..8 {
-        let again = satex::plugin::discovery::scan_with(&dir, 8);
+        let again = satex::plugins::discovery::scan_with(&dir, 8);
         assert_eq!(first.declared_root, again.declared_root, "the parallel walk picked another `% !TeX root`");
         assert_eq!(first.inputs, again.inputs);
         assert_eq!(first.documents, again.documents);
         assert_eq!(first.packages, again.packages);
     }
-    let single = satex::plugin::discovery::scan_with(&dir, 1);
+    let single = satex::plugins::discovery::scan_with(&dir, 1);
     assert_eq!(first.declared_root, single.declared_root, "the walkers disagree on the `% !TeX root`");
     assert_eq!(first.inputs, single.inputs, "the walkers disagree on the inputs");
     let _ = std::fs::remove_dir_all(&dir);

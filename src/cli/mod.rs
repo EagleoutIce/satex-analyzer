@@ -1,0 +1,589 @@
+//! The command line: one module per group of commands.
+
+pub mod cache;
+pub mod compile;
+mod graph;
+mod inspect;
+pub mod install;
+mod lint;
+pub mod lsp;
+pub mod query;
+mod summary;
+mod tokens;
+
+use std::io::Write;
+
+use clap::Subcommand;
+
+use crate::analysis::machine::Analysis;
+pub use crate::plugins::Format;
+use crate::queries::query::Record;
+use crate::util::render::Links;
+
+/// What a [`Command`] hands back to the CLI driver to print: a finished list
+/// of [`Record`]s, a partial one with a note about what was left out, or
+/// nothing further to print.
+pub enum Output {
+    Records(Vec<Record>),
+    /// One block per record rather than a table: `explain` and the other
+    /// detail views, whose fields are too wide for a row.
+    Detail(Vec<Record>),
+    /// `lint`'s findings: grouped by severity and kept apart from
+    /// performance and precision notes rather than one flat table.
+    Lint(Vec<Record>),
+    /// Records plus a line naming what was left out, and the flag that shows it.
+    Partial(Vec<Record>, String),
+    /// [`Output::Detail`] plus a footer line, the way [`Output::Partial`] adds
+    /// one to [`Output::Records`]: `explain`, when a name had more
+    /// definitions than the default view shows.
+    DetailPartial(Vec<Record>, String),
+    Done,
+}
+
+/// Everything a [`Command`] needs to run: the finished [`Analysis`], the
+/// source text, and the output [`Format`].
+pub struct Context<'a> {
+    pub analysis: &'a Analysis,
+    pub source: &'a str,
+    pub format: Format,
+    pub links: Links,
+}
+
+/// One `satex` subcommand and its arguments, parsed by clap.
+/// [`Command::run`] dispatches it against a [`Context`].
+#[derive(Subcommand)]
+pub enum Command {
+    /// Run a query.  `satex query --list` names them all.
+    Query {
+        /// The query to run. See `satex query --list`.
+        #[arg(value_name = "NAME")]
+        #[cfg_attr(not(target_os = "emscripten"), arg(add = clap_complete::ArgValueCandidates::new(|| {
+            crate::queries::query::Query::ALL.iter().map(|(n, _)| clap_complete::CompletionCandidate::new(*n)).collect::<Vec<_>>()
+        })))]
+        name: Option<String>,
+        /// Filter expression, for example `tag=switch and package~^my`.
+        #[arg(long, value_name = "EXPR")]
+        filter: Option<String>,
+        /// The text the `produces` query looks for, as a literal substring.
+        #[arg(long, value_name = "TEXT")]
+        text: Option<String>,
+        /// The key path the `pgfkeys` query lists keys under, as `/tikz/pingu`.
+        #[arg(long, value_name = "PATH")]
+        prefix: Option<String>,
+        /// The environment or command the `options` query asks about, with
+        /// or without the leading backslash.
+        #[arg(long = "for", value_name = "NAME")]
+        for_: Option<String>,
+        /// List the query names instead of running one.
+        #[arg(long)]
+        list: bool,
+        /// Run every query a JSON request names, against one analysis, and
+        /// print one answer per query in the same order. `-` reads stdin.
+        /// See `doc/wiki/queries.md`.
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["name", "filter", "text", "prefix", "for_", "list"])]
+        request: Option<String>,
+    },
+    /// Context-sensitive lints for the input file. `--all` includes libraries.
+    Lint {
+        /// Restrict the findings to a filter expression, for example
+        /// `tag=switch and package~^my`.
+        #[arg(long, value_name = "EXPR", help_heading = "Selection")]
+        filter: Option<String>,
+        /// Include the packages and the kernel, not just the input file.
+        #[arg(long, help_heading = "Selection")]
+        all: bool,
+        /// List the rules instead of running them.
+        #[arg(long, help_heading = "Rules")]
+        rules: bool,
+        /// Explain one rule and how to fix what it reports.
+        #[arg(long, value_name = "CODE", help_heading = "Rules")]
+        explain: Option<String>,
+        /// List chktex's warnings and the rule that covers each.
+        #[arg(long, help_heading = "Rules")]
+        chktex: bool,
+        /// Print every finding, instead of a count for a rule that repeats.
+        #[arg(long, help_heading = "Selection")]
+        no_group: bool,
+        /// List the rules the project breaks so often they may be its style
+        /// (`style_prompt` in satex.yaml), instead of the findings.
+        #[arg(long, help_heading = "Rules")]
+        style: bool,
+        /// Apply the safe fixes to the project's files, lint again until
+        /// nothing fixable is left, and report what remains.
+        #[arg(long, help_heading = "Fixes")]
+        fix: bool,
+        /// Apply the fixes that need a review too, with `--fix` or `--diff`.
+        #[arg(long, help_heading = "Fixes")]
+        unsafe_fixes: bool,
+        /// Print the fixes as a unified diff instead of writing them.
+        #[arg(long, help_heading = "Fixes")]
+        diff: bool,
+    },
+    /// What the document and every file it loads contribute.
+    Summary {
+        /// Every file, and the names each one defines.
+        #[arg(long)]
+        all: bool,
+        /// How deep the load tree goes.
+        #[arg(long, value_name = "N")]
+        depth: Option<usize>,
+    },
+    /// Control sequences visible at a position, for completion.
+    Scope {
+        /// Position as `[FILE:]LINE:COL`, the main file without FILE. Omit it
+        /// for the end of the document.
+        #[arg(long, value_name = "[FILE:]LINE:COL")]
+        at: Option<String>,
+        /// Filter expression, for example `tag=switch and package~^my`.
+        #[arg(long, value_name = "EXPR")]
+        filter: Option<String>,
+        /// Include package and kernel internals, and every register and
+        /// character meaning. They are hidden by default, so a completion sees the
+        /// hundred names worth offering rather than the kernel's own
+        /// bookkeeping.
+        #[arg(long)]
+        all: bool,
+    },
+    /// What a control sequence means and where it comes from.
+    Explain {
+        /// Control sequence names to explain, with or without the leading
+        /// backslash.
+        #[arg(value_name = "NAME", required = true)]
+        names: Vec<String>,
+        /// List every recorded definition instead of the preamble and
+        /// document ones.
+        #[arg(long)]
+        all: bool,
+        /// Ask at one place instead: `preamble`, `document`, `LINE`,
+        /// `FILE:LINE` or `after:PACKAGE`.
+        #[arg(long, value_name = "WHERE")]
+        at: Option<String>,
+    },
+    /// Slice the document around a control sequence, environment or position:
+    /// a compilable reconstruction of the main file by default.
+    Slice {
+        /// Control sequences, environment names or label keys to slice on.
+        #[arg(value_name = "NAME")]
+        names: Vec<String>,
+        /// Slice on whatever is at this position instead. The main file
+        /// unless a file the run read is named.
+        #[arg(long, value_name = "[FILE:]LINE:COL")]
+        at: Option<String>,
+        /// Slice on every occurrence or definition a query accepts instead
+        /// of a name or a position, e.g. `kind=begin-environment and
+        /// key=figure` to slice to every figure.
+        #[arg(long = "where", value_name = "EXPR")]
+        where_: Option<String>,
+        /// Follow dependencies forwards: what the criterion affects.
+        #[arg(long)]
+        forward: bool,
+        /// Print the matching records instead of the reconstructed document.
+        /// Implied by `--format json/csv/markdown`.
+        #[arg(long)]
+        list: bool,
+        /// Write a new project into DIR: the sliced main file. With
+        /// `slice.standalone: false` also every local package, class,
+        /// graphics or bibliography file it needs, with paths preserved.
+        #[arg(long, value_name = "DIR")]
+        out: Option<std::path::PathBuf>,
+    },
+    /// Everything a switch, option or conditional governs.  Without a name,
+    /// the switches and options in effect.  Several names answer in one
+    /// table, each row's `for` column saying which one it answers.
+    #[command(alias = "options")]
+    Controls {
+        /// A switch (`\ifdraft`), a package option, or any conditional.
+        /// Repeatable.
+        #[arg(value_name = "NAME")]
+        names: Vec<String>,
+        /// Include the switches and options the kernel and the packages bring.
+        #[arg(long)]
+        all: bool,
+    },
+    /// The program dependence graph (data dependencies plus control
+    /// dependencies) as DOT or JSON.
+    #[command(alias = "deps")]
+    Dependencies,
+    /// The execution trace, step by step.
+    Trace {
+        /// Filter expression, for example `tag=switch and package~^my`.
+        #[arg(long, value_name = "EXPR")]
+        filter: Option<String>,
+        /// Only these lines of the main file (or of `FILE:`), with everything
+        /// their calls do.
+        #[arg(long, value_name = "[FILE:]FROM:TO")]
+        lines: Option<String>,
+        /// Only these steps of the run.
+        #[arg(long, value_name = "FROM:TO")]
+        steps: Option<String>,
+        /// Start at this position, `[FILE:]LINE[:COL]`. The main file without FILE.
+        #[arg(long, value_name = "LINE[:COL]")]
+        from: Option<String>,
+        /// End at this position, `[FILE:]LINE[:COL]`.
+        #[arg(long, value_name = "LINE[:COL]")]
+        to: Option<String>,
+        /// Step through the trace one event at a time, showing each macro's
+        /// definition, arguments and the tokens it inserts.  Enter steps,
+        /// `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits.
+        #[arg(short, long)]
+        interactive: bool,
+        /// Also trace what happens in packages, classes and the kernel. By
+        /// default only the files of the document itself are shown.
+        #[arg(long)]
+        include_internal: bool,
+    },
+    /// The interpreted LaTeX2e kernel and the package caches.  Without a
+    /// further command, prints their status.
+    Cache {
+        #[command(subcommand)]
+        action: Option<CacheAction>,
+    },
+    /// Build the document with latexmk, or the engine where latexmk is
+    /// missing, and explain each error and warning the log reports by what
+    /// the analysis found there.  Never opens a viewer.  The build runs the
+    /// project's own code, its latexmkrc and what it lets TeX run, so build
+    /// only projects you trust.
+    Compile,
+    /// Install the packages the document loads that this machine does not
+    /// have.  Asks first, never elevates, and is never run by `lint --fix`.
+    Install {
+        /// Install these packages instead of the ones the document needs.
+        #[arg(value_name = "PACKAGE")]
+        packages: Vec<String>,
+        /// Install without asking.
+        #[arg(long)]
+        yes: bool,
+        /// Print the commands and run nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Install into your own TEXMF tree, which needs no elevation
+        /// (TeX Live manual, `--usermode`).
+        #[arg(long)]
+        usermode: bool,
+    },
+    /// The token stream the mouth produces.
+    Tokens,
+    /// Print the shell completion script: bash, zsh, fish, elvish or
+    /// powershell.  Values complete from the running binary.  `install
+    /// [bash|zsh|fish]` registers it in that shell's startup file. Without a
+    /// shell, it does so in every shell installed or in use.
+    Completions {
+        #[arg(value_name = "SHELL", value_parser = clap::builder::PossibleValuesParser::new(
+            ["bash", "zsh", "fish", "elvish", "powershell", "install"].map(clap::builder::PossibleValue::new)
+                .into_iter().chain([clap::builder::PossibleValue::new("json").hide(true)])))]
+        shell: String,
+        /// The shell `install` sets up. Without it, every shell installed
+        /// or in use.
+        #[arg(value_name = "TARGET", value_parser = ["bash", "zsh", "fish"])]
+        target: Option<String>,
+    },
+    /// A Language Server Protocol server: a thin facade over the queries and
+    /// lints above, driven by `initialize`/`didOpen`/`didChange` instead of
+    /// one-shot arguments.  Stdio by default, `--port` switches to TCP.
+    Lsp {
+        /// Listen on this TCP port instead of stdio.
+        #[arg(long, value_name = "N")]
+        port: Option<u16>,
+        /// Interface to bind when `--port` is given.
+        #[arg(long, value_name = "HOST")]
+        host: Option<String>,
+        /// Stdio, the default: accepted because language clients pass it.
+        #[arg(long, hide = true)]
+        stdio: bool,
+    },
+}
+
+/// `satex cache`'s further commands.
+#[derive(Subcommand)]
+pub enum CacheAction {
+    /// Interpret the kernel, replacing its cache, and the given packages,
+    /// or `cache.index`'s configured ones when none are given.  Builds only
+    /// what is missing or stale. `--refresh` rebuilds everything.
+    Build {
+        /// Packages to prepare instead of the configured ones.
+        #[arg(value_name = "PACKAGE")]
+        packages: Vec<String>,
+        /// Rebuild every package cache too, not just what is missing or stale.
+        #[arg(long)]
+        refresh: bool,
+        /// Prepare for this engine instead of the configured ones (repeatable).
+        #[arg(long = "engine", value_name = "ENGINE")]
+        engines: Vec<String>,
+        /// Interpret this preamble on top of the kernel and cache the
+        /// result, the way `mylatexformat` dumps a format from one, instead
+        /// of building any packages.
+        #[arg(long, value_name = "PATH")]
+        preamble: Option<std::path::PathBuf>,
+    },
+    /// Write the valid caches of the cache directory into one archive.
+    Export {
+        /// The archive to write.
+        #[arg(value_name = "ARCHIVE")]
+        archive: std::path::PathBuf,
+        /// Only the caches holding this package or class (repeatable).
+        #[arg(long, value_name = "NAME")]
+        only: Vec<String>,
+        /// Not the caches holding this package or class (repeatable).
+        #[arg(long, value_name = "NAME")]
+        without: Vec<String>,
+    },
+    /// Unpack archives into the cache directory, in order. A cache one holds
+    /// that this build cannot use is skipped with a line saying why. A
+    /// directory names its `satex-cache.bin`.
+    Import {
+        /// An archive, or a bundle directory holding one.
+        #[arg(value_name = "ARCHIVE", required = true)]
+        archives: Vec<std::path::PathBuf>,
+    },
+    /// Delete every cache: the interpreted kernel and the package caches.
+    Clear,
+    /// Apply the size and staleness pruning now.
+    Prune,
+}
+
+impl Command {
+    pub fn needs_source(&self) -> bool {
+        !matches!(
+            self,
+            Command::Query { list: true, .. }
+                | Command::Query { request: Some(_), .. }
+                | Command::Lint { rules: true, .. }
+                | Command::Lint { explain: Some(_), .. }
+                | Command::Lint { chktex: true, .. }
+                | Command::Cache { action: Some(_) }
+                | Command::Lsp { .. }
+                | Command::Completions { .. }
+        )
+    }
+
+    pub fn needs_analysis(&self) -> bool {
+        self.needs_source() && !matches!(self, Command::Tokens)
+    }
+
+    pub fn wants_trace(&self) -> bool {
+        matches!(self, Command::Trace { .. })
+    }
+
+    /// Whether the run needs to keep what it read for each argument: the
+    /// `options` query reads a key family's name out of the argument a
+    /// `\setkeys`-family call was made with, which is only recorded when
+    /// this is on (`record_arguments` in `satex.yaml`, off by default —
+    /// keeping every argument costs real memory on a large document).
+    pub fn wants_arguments(&self) -> bool {
+        matches!(self, Command::Query { name: Some(n), request: None, .. } if n == "options")
+            || matches!(self, Command::Trace { interactive: true, .. })
+    }
+
+    /// `lint --fix` or `--diff`: the output is a diff or the findings left
+    /// after fixing, which say themselves what the analysis could not follow.
+    pub fn fixes(&self) -> bool {
+        matches!(self, Command::Lint { fix: true, .. } | Command::Lint { diff: true, .. })
+    }
+
+    /// Whether the command's own output already lists the gaps.  `query
+    /// gaps` prints exactly the records the footer would summarize, so the
+    /// footer would repeat them and point the reader at the command they
+    /// are already running.
+    pub fn reports_gaps(&self) -> bool {
+        matches!(self, Command::Query { name: Some(n), request: None, .. } if n == "gaps")
+    }
+
+    /// Whether `format` is something this command can print, matching the
+    /// precedence its own `run` gives its flags (`--rules` before
+    /// `--explain` before the findings themselves) — and a hint for what to
+    /// try instead when it is not.  `github` and `sarif` are for diagnostics
+    /// (`lint`); `dot` is for the dependency graph; everything else
+    /// prints whatever rows it has as text, json, csv or markdown.
+    pub fn check_format(&self, format: Format) -> Result<(), String> {
+        let generic = matches!(format, Format::Text | Format::Json | Format::Csv | Format::Markdown);
+        let (ok, hint): (bool, &str) = match self {
+            Command::Lint { rules: true, .. }
+            | Command::Lint { chktex: true, .. }
+            | Command::Lint { style: true, .. } => (generic, "text, json, csv or markdown"),
+            Command::Lint { explain: Some(_), .. } => (matches!(format, Format::Text | Format::Json), "text or json"),
+            Command::Lint { .. } | Command::Compile => (
+                generic || matches!(format, Format::Github | Format::Sarif | Format::Lsp | Format::Texlog),
+                "text, json, csv, markdown, github, sarif, lsp or texlog",
+            ),
+            Command::Summary { .. } | Command::Cache { action: None } | Command::Install { .. } => {
+                (matches!(format, Format::Text | Format::Json), "text or json")
+            }
+            Command::Dependencies => (matches!(format, Format::Text | Format::Json | Format::Dot), "text, json or dot"),
+            Command::Trace { .. } => (generic || format == Format::Compact, "text, json, csv, markdown or compact"),
+            _ => (generic, "text, json, csv or markdown"),
+        };
+        if ok { Ok(()) } else { Err(format!("`--format {}` does not apply here. Try {hint}", format.as_str())) }
+    }
+
+    pub fn opaque_conditionals(&self) -> Vec<String> {
+        match self {
+            // Without a name the document's own switches are analyzed as
+            // undecidable, so the summary can say what each one governs.
+            Command::Controls { names, .. } if names.is_empty() => {
+                vec![crate::project::config::EVERY_SWITCH.to_string()]
+            }
+            Command::Controls { names, .. } => {
+                names.iter().map(|n| crate::engine::tex::bare_name(n).to_string()).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn run(&self, context: &Context, out: &mut impl Write) -> Result<Output, String> {
+        match self {
+            Command::Query { name, filter, text, prefix, for_, list, request: _ } => query::run(
+                context,
+                name.as_deref(),
+                filter.as_deref(),
+                text.as_deref(),
+                prefix.as_deref(),
+                for_.as_deref(),
+                *list,
+                out,
+            ),
+            Command::Trace { .. } if context.format == crate::plugins::format::Format::Compact => {
+                query::trace_compact(context, out)
+            }
+            Command::Trace { filter, interactive, from, to, lines, include_internal, .. } => {
+                let file = trace_file(&[from.as_deref(), to.as_deref(), lines.as_deref()])?;
+                query::trace(context, filter.as_deref(), *interactive, *include_internal, file.as_deref(), out)
+            }
+            Command::Lint { filter, all, rules, explain, chktex, style, fix, unsafe_fixes, diff, no_group: _ } => {
+                let fixing = lint::Fixing { fix: *fix, unsafe_fixes: *unsafe_fixes, diff: *diff };
+                let selection = lint::Selection {
+                    filter: filter.as_deref(),
+                    all: *all,
+                    rules: *rules,
+                    explain: explain.as_deref(),
+                    chktex: *chktex,
+                    style: *style,
+                };
+                lint::run(context, selection, fixing, out)
+            }
+            Command::Summary { all, depth } => summary::run(context, *all, *depth, out),
+            Command::Scope { at, filter, all } => inspect::scope(context, at.as_deref(), filter.as_deref(), *all),
+            Command::Explain { names, all, at } => inspect::explain(context, names, *all, at.as_deref()),
+            Command::Slice { names, at, where_, forward, list, out: out_dir } => {
+                let query = inspect::SliceQuery {
+                    at: at.as_deref(),
+                    where_: where_.as_deref(),
+                    forward: *forward,
+                    list: *list,
+                };
+                inspect::slice(context, names, query, out_dir.as_deref(), out)
+            }
+            Command::Controls { names, all } => inspect::controls(context, names, *all),
+            Command::Dependencies => graph::run(context, out),
+            Command::Cache { action: None } => cache::status(context, out),
+            // `main.rs` special-cases every `Cache { action: Some(_) }` and
+            // `Lsp` before a `Context` exists, the same way it does
+            // `Query { request: Some(_) }`.
+            Command::Cache { action: Some(_) } => Ok(Output::Done),
+            Command::Lsp { .. } | Command::Completions { .. } => Ok(Output::Done),
+            Command::Compile => compile::run(context),
+            Command::Install { packages, yes, dry_run, usermode } => {
+                let options = install::Options { yes: *yes, dry_run: *dry_run, usermode: *usermode };
+                install::run(context, packages, options, out)
+            }
+            Command::Tokens => tokens::run(context),
+        }
+    }
+}
+
+pub fn parse_filter(text: Option<&str>) -> Result<crate::queries::query::Filter, String> {
+    text.map_or(Ok(crate::queries::query::Filter::Always), crate::queries::query::Filter::parse)
+}
+
+pub fn parse_position(text: &str) -> Result<(u32, u32), String> {
+    let (line, col) = text.split_once(':').ok_or("expected LINE:COL")?;
+    Ok((
+        line.trim().parse().map_err(|_| "line must be a number")?,
+        col.trim().parse().map_err(|_| "column must be a number")?,
+    ))
+}
+
+/// `LINE:COL`, or `FILE:LINE:COL` for a position in a file the run read
+/// rather than in the main one.  A trailing `-LINE[:COL]` makes it a range
+/// that runs to that column, or to the end of that line.
+pub fn parse_place(text: &str) -> Result<crate::queries::query::At, String> {
+    let (text, end) = match text.rfind('-') {
+        Some(dash) => match parse_end(&text[dash + 1..]) {
+            Some(end) => (&text[..dash], Some(end)),
+            None => (text, None),
+        },
+        None => (text, None),
+    };
+    // With a range the start may be a bare line: `LINE`, `FILE:LINE`, or with a column.
+    let numeric = |t: &str| t.trim().parse::<u32>().is_ok();
+    let parts: Vec<&str> = text.rsplitn(3, ':').collect();
+    let (file, rest) = match parts.as_slice() {
+        [col, line, file] if numeric(col) && numeric(line) => (Some(file.to_string()), &text[file.len() + 1..]),
+        [_, file] if end.is_some() && !numeric(file) => (Some(file.to_string()), &text[file.len() + 1..]),
+        _ => (None, text),
+    };
+    let (line, col) = match (end, rest.contains(':')) {
+        (Some(_), false) => (rest.trim().parse().map_err(|_| "line must be a number")?, 1),
+        _ => parse_position(rest)?,
+    };
+    Ok(crate::queries::query::At { file, line, col, end })
+}
+
+fn parse_end(text: &str) -> Option<(u32, u32)> {
+    match text.split_once(':') {
+        Some((line, col)) => Some((line.trim().parse().ok()?, col.trim().parse().ok()?)),
+        None => Some((text.trim().parse().ok()?, u32::MAX)),
+    }
+}
+
+/// Splits a leading `FILE:` off a trace position or range: the parts before
+/// the first empty or all-digit one.  `sub/a.tex:12:3` is `(sub/a.tex, 12:3)`;
+/// `12:3` and `40:` name no file.
+pub fn split_file(text: &str) -> (Option<String>, &str) {
+    let parts: Vec<&str> = text.split(':').collect();
+    let n = parts.iter().take_while(|p| !p.is_empty() && !p.chars().all(|c| c.is_ascii_digit())).count();
+    if n == 0 || n == parts.len() {
+        return (None, text);
+    }
+    let rest = parts[..n].iter().map(|p| p.len() + 1).sum::<usize>();
+    (Some(parts[..n].join(":")), &text[rest..])
+}
+
+/// The one file `--from`, `--to` and `--lines` agree on, if they name any.
+/// `text` with `inject` put before the character at `line` and `col`
+/// (both from 1; `col` 0 is the start of the line), and the position just
+/// after it: what `--inject` reads.
+pub fn inject_text(text: &str, line: u32, col: u32, inject: &str) -> Result<(String, (u32, u32)), String> {
+    let past = || format!("the file has no line {line}");
+    if line == 0 {
+        return Err(past());
+    }
+    let mut start = 0;
+    for _ in 1..line {
+        start += text[start..].find('\n').ok_or_else(past)? + 1;
+    }
+    let row = text[start..].split('\n').next().unwrap_or_default();
+    let at = start + row.char_indices().nth(col.saturating_sub(1) as usize).map_or(row.len(), |(i, _)| i);
+    let mut out = String::with_capacity(text.len() + inject.len());
+    out.push_str(&text[..at]);
+    out.push_str(inject);
+    out.push_str(&text[at..]);
+    let lines = inject.matches('\n').count() as u32;
+    let last = inject.rsplit('\n').next().unwrap_or_default().chars().count() as u32;
+    let end_col = if lines == 0 { col.max(1) + last } else { last + 1 };
+    Ok((out, (line + lines, end_col)))
+}
+
+pub fn trace_file(specs: &[Option<&str>]) -> Result<Option<String>, String> {
+    let mut found: Option<String> = None;
+    for spec in specs.iter().flatten() {
+        if let (Some(file), _) = split_file(spec) {
+            match &found {
+                Some(other) if *other != file => {
+                    return Err(format!("trace ranges name two files: {other} and {file}"));
+                }
+                _ => found = Some(file),
+            }
+        }
+    }
+    Ok(found)
+}

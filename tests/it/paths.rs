@@ -1,14 +1,14 @@
 //! kpathsea search-path variables (TEXINPUTS etc.): the fixtures satex reads
-//! them from, in the order `src/paths.rs` tries them — environment,
+//! them from, in the order `src/project/paths.rs` tries them — environment,
 //! `latexmkrc`, Makefile, `satex.yaml` (`--set` included).  Also the paths a
 //! document writes itself, like the `../template/` a class is kept in.
 
 use std::path::{Path, PathBuf};
 
 use crate::support::{defined, installed};
-use satex::config::{Config, Load};
-use satex::facts::Severity;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::facts::Severity;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Load};
 
 /// A project directory with `libs/sub/foolocal.sty`, reachable only through
 /// a `//`-recursive search of `libs`.
@@ -247,8 +247,10 @@ fn aux_fixture(name: &str, build_file: &str, text: &str) -> (PathBuf, Analysis) 
     let source = "\\documentclass{article}\n\\begin{document}hi\\end{document}\n";
     std::fs::write(&doc, source).unwrap();
     // The build's own `.aux` on disk, which these tests look for.
-    let cfg =
-        Config { load: satex::config::Load { build_files: true, ..Default::default() }, ..crate::support::config() };
+    let cfg = Config {
+        load: satex::project::config::Load { build_files: true, ..Default::default() },
+        ..crate::support::config()
+    };
     let analysis = Machine::analyze(source, Some(&doc), &cfg);
     (dir, analysis)
 }

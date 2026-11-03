@@ -1,7 +1,7 @@
 // Count allocations as the binary does, so `limits.memory` stops a runaway
 // analysis in a test instead of the machine running out.
 #[global_allocator]
-static ALLOCATOR: satex::budget::Counted = satex::budget::Counted;
+static ALLOCATOR: satex::analysis::budget::Counted = satex::analysis::budget::Counted;
 
 // Integration test crate: every module below was a standalone file in
 // tests/ before the merge into one binary, so libtest schedules every

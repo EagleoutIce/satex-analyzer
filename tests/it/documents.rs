@@ -4,9 +4,9 @@
 use std::path::PathBuf;
 
 use crate::support::{defined, installed};
-use satex::builtins::OccKind;
-use satex::facts::Severity;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::facts::Severity;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::engine::builtins::OccKind;
 
 /// Steps a fixture may take.
 const STEP_BUDGET: u64 = 20_000_000;
@@ -72,7 +72,7 @@ fn check_allowing(id: &str, main: &str, also: &[&str], allowed: &[&str]) -> Opti
     if steps >= STEP_BUDGET {
         failures.push(format!("{steps} analysis steps ({} loading), budget {STEP_BUDGET}", analysis.load_steps));
     }
-    let own = |s: &satex::tex::Span| {
+    let own = |s: &satex::engine::tex::Span| {
         analysis.files.get(s.file as usize).is_some_and(|f| std::path::Path::new(&f.path).starts_with(&root))
     };
     let bad: Vec<_> = analysis

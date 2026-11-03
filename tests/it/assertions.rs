@@ -2,7 +2,7 @@
 //! checks and local settings written in the document's comments.
 
 use crate::support::{PRELUDE, bare, installed, names};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
 
 /// With proved assertions reported, which the default leaves out.
 fn analyze(source: &str) -> Analysis {
@@ -14,7 +14,7 @@ fn analyze(source: &str) -> Analysis {
 /// The directive findings, as `code: message`.
 fn outcomes(analysis: &Analysis) -> Vec<String> {
     let codes = ["assertion-refuted", "assertion-unknown", "assertion-proved", "assumption-made", "invalid-directive"];
-    satex::lint::lint(analysis)
+    satex::linter::lint(analysis)
         .iter()
         .filter_map(|f| {
             let code = f.get("code")?.as_str()?;

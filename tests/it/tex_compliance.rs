@@ -5,7 +5,7 @@
 //! divergence are `#[ignore]`d with a one-line reason, so the suite stays
 //! green while the divergence is documented.
 
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
 
 const PRELUDE: &str =
     "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 \\catcode`\\ =10 \\catcode`\\%=14\n";
@@ -26,7 +26,7 @@ fn bodies(analysis: &Analysis, name: &str) -> Vec<(String, bool)> {
             let text = d
                 .mac
                 .as_ref()
-                .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+                .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
                 .unwrap_or_else(|| format!("<{}>", d.tag));
             (text, d.certain)
         })
@@ -70,7 +70,7 @@ fn probe() {
                     .map(|m| {
                         m.as_macro().map_or_else(
                             || format!("{m:?}"),
-                            |m| satex::tex::detokenize(&m.replacement_text, &a.interner),
+                            |m| satex::engine::tex::detokenize(&m.replacement_text, &a.interner),
                         )
                     })
                     .collect();
@@ -662,7 +662,7 @@ fn engine_error_after_unknown_text_is_a_gap() {
         let d = a.facts.diagnostics.iter().find(|d| d.code == "missing-endcsname").expect("reported");
         (d.severity, a.facts.raised.iter().any(|r| r.text == "Missing \\endcsname inserted"))
     };
-    use satex::facts::Severity;
+    use satex::analysis::facts::Severity;
     assert_eq!(severity(r"\expandafter\let\csname x\relax\endcsname\relax"), (Severity::Warning, true));
     assert_eq!(
         severity(r"\expandafter\let\csname x\pdfnormaldeviate\relax\endcsname\relax"),

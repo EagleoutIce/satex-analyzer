@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use crate::support::installed;
-use satex::machine::Machine;
+use satex::analysis::machine::Machine;
 
 fn scratch(name: &str) -> PathBuf {
     let directory = crate::support::tmp_root().join("satex-colors").join(format!("{name}-{}", std::process::id()));
@@ -22,7 +22,7 @@ fn findings(name: &str, code: &str, preamble: &str, body: &str) -> Vec<String> {
     std::fs::write(&main, &document).unwrap();
     let cfg = crate::support::config();
     let analysis = Machine::analyze(&document, Some(&main), &cfg);
-    let out = satex::lint::lint(&analysis)
+    let out = satex::linter::lint(&analysis)
         .into_iter()
         .filter(|record| record["code"] == code)
         .map(|record| record["name"].as_str().unwrap_or_default().to_string())
@@ -155,7 +155,7 @@ fn beamers_color_lookups_are_no_undefined_colours() {
     let main = directory.join("main.tex");
     std::fs::write(&main, document).unwrap();
     let analysis = Machine::analyze(document, Some(&main), &crate::support::config());
-    let found: Vec<String> = satex::lint::lint(&analysis)
+    let found: Vec<String> = satex::linter::lint(&analysis)
         .into_iter()
         .filter(|record| record["code"] == "undefined-color")
         .map(|record| record["name"].as_str().unwrap_or_default().to_string())

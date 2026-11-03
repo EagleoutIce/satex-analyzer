@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::support::analyze_latex;
-use satex::config::Config;
-use satex::machine::Machine;
+use satex::analysis::machine::Machine;
+use satex::project::config::Config;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Verdict {
@@ -68,7 +68,7 @@ fn satex_verdict(source: &str, name: &str) -> Result<Verdict, String> {
         let hits: Vec<String> = analysis.limits.iter().map(|h| format!("limits.{} x{}", h.key, h.count)).collect();
         return Err(hits.join(", "));
     }
-    Ok(satex::lint::lint(&analysis)
+    Ok(satex::linter::lint(&analysis)
         .into_iter()
         .filter(|record| record["origin"] == "document")
         .filter_map(|record| {
@@ -324,12 +324,12 @@ fn engine_dimensions(binary: &Path) -> Vec<String> {
 
 fn satex_dimension(case: &str) -> String {
     let source = format!("{PRELUDE}{case}\n");
-    let cfg = Config { kernel: Some(satex::plugin::Kernel::None), ..crate::support::config() };
+    let cfg = Config { kernel: Some(satex::plugins::Kernel::None), ..crate::support::config() };
     let analysis = Machine::analyze(&source, None, &cfg);
     let sym = analysis.interner.lookup("r");
     let def = sym.and_then(|sym| analysis.facts.defs.iter().rev().find(|d| d.name == sym));
     match def.and_then(|d| d.mac.as_ref()) {
-        Some(mac) => satex::tex::detokenize(&mac.replacement_text, &analysis.interner),
+        Some(mac) => satex::engine::tex::detokenize(&mac.replacement_text, &analysis.interner),
         None => "<none>".into(),
     }
 }
@@ -395,7 +395,7 @@ fn typeset_covers(stem: &str) {
     assert!(cut.is_empty(), "{stem}: the run was cut short: {cut:?}");
     let computed: Vec<&str> =
         rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
-    let verdict = satex::query::typeset_verdict(&computed.join(" "), &engine.join(" "));
+    let verdict = satex::queries::query::typeset_verdict(&computed.join(" "), &engine.join(" "));
     assert_ne!(verdict, "DIFFERS", "{stem}: pdflatex sets {engine:?}, satex computes {computed:?}");
 }
 
@@ -500,7 +500,7 @@ fn paragraph_lines_match_pdflatex() {
         let sym = analysis.interner.lookup(name);
         let def = sym.and_then(|sym| analysis.facts.defs.iter().rev().find(|d| d.name == sym));
         def.and_then(|d| d.mac.as_ref())
-            .map_or("<none>".into(), |m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+            .map_or("<none>".into(), |m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
     };
     // pdflatex 2025: \showbox gives 4, 4 and 2 lines.
     assert_eq!(
@@ -549,7 +549,11 @@ fn a_section_number_and_its_title_are_apart() {
     }
     let source = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nText.\n\\end{document}\n";
     let analysis = analyze_latex(source);
-    let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
     let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
     assert!(texts.contains(&"1 Intro"), "{texts:?}");
 }
@@ -564,7 +568,11 @@ fn a_symbol_reads_as_its_encoding_says() {
     let source =
         "\\documentclass{article}\n\\begin{document}\na\\{b\\}c \\char102 \\texttt{\\char92}\n\\end{document}\n";
     let analysis = analyze_latex(source);
-    let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
     let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
     assert!(texts.contains(&"a{b}c f\\"), "{texts:?}");
 }
@@ -578,7 +586,11 @@ fn the_typeset_text_knows_its_fonts() {
     }
     let source = "\\documentclass{article}\n\\begin{document}\nA \\textbf{B} {\\itshape C} \\texttt{D} \\textsf{\\textsc{E}} F\n\\end{document}\n";
     let analysis = analyze_latex(source);
-    let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
     let row = rows.iter().find(|r| r.get("kind").and_then(|k| k.as_str()) == Some("paragraph")).expect("a paragraph");
     let detail: Vec<char> = row["detail"].as_str().unwrap().chars().collect();
     let fonts = row["fonts"].as_array().expect("fonts");

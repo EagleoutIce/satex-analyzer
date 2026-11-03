@@ -916,10 +916,10 @@ def emoji(dist):
 
 
 def plugins():
-    """satex's plugins, each module of src/plugin with the first sentence of its module docs: the
+    """satex's plugins, each folder of src/plugins with the first sentence of its module docs: the
     playground's Settings lists them with the keys each one reads."""
     out = []
-    for path in sorted((ROOT / "src/plugin").iterdir()):
+    for path in sorted((ROOT / "src/plugins").iterdir()):
         source = path / "mod.rs" if path.is_dir() else path
         if source.suffix != ".rs" or source.stem == "mod" and not path.is_dir() or not source.is_file():
             continue

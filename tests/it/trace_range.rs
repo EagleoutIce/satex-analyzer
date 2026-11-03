@@ -284,9 +284,13 @@ fn a_register_in_the_trace_carries_its_allocated_name() {
     }
     let source =
         "\\documentclass{article}\n\\begin{document}\n\\makeatletter\\@tempcnta=5 \\makeatother\n\\end{document}\n";
-    let cfg = satex::config::Config { trace: true, ..crate::support::config() };
-    let analysis = satex::machine::Machine::analyze(source, None, &cfg);
-    let rows = satex::query::run(&analysis, satex::query::Query::Trace, &satex::query::Filter::Always);
+    let cfg = satex::project::config::Config { trace: true, ..crate::support::config() };
+    let analysis = satex::analysis::machine::Machine::analyze(source, None, &cfg);
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Trace,
+        &satex::queries::query::Filter::Always,
+    );
     let named = rows.iter().filter_map(|r| r.get("aliases")?.as_object()).flatten().any(|(register, names)| {
         register.starts_with("\\count") && names.as_array().is_some_and(|n| n.iter().any(|n| n == "\\@tempcnta"))
     });
@@ -300,14 +304,18 @@ fn a_register_in_the_trace_carries_its_allocated_name() {
 #[test]
 fn the_leap_year_trace_records_values_and_branches() {
     let source = include_str!("../../doc/site/examples/leapyear.tex");
-    let cfg = satex::config::Config {
-        engine: Some(satex::config::Engine::Tex),
-        kernel: Some(satex::plugin::Kernel::Plain),
+    let cfg = satex::project::config::Config {
+        engine: Some(satex::project::config::Engine::Tex),
+        kernel: Some(satex::plugins::Kernel::Plain),
         trace: true,
         ..crate::support::config()
     };
-    let analysis = satex::machine::Machine::analyze(source, None, &cfg);
-    let rows = satex::query::run(&analysis, satex::query::Query::Trace, &satex::query::Filter::Always);
+    let analysis = satex::analysis::machine::Machine::analyze(source, None, &cfg);
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Trace,
+        &satex::queries::query::Filter::Always,
+    );
     let of = |step: &str, name: &str| -> Vec<String> {
         rows.iter()
             .filter(|r| r["step"] == step && r["name"] == name)

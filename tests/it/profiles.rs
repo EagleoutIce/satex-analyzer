@@ -1,12 +1,12 @@
 //! `profiles.*` in `satex.yaml`: sensible defaults chosen from the kind of
-//! input (`src/config.rs`'s `Profile`), and `--profile` overriding that
+//! input (`src/project/config.rs`'s `Profile`), and `--profile` overriding that
 //! choice (`configure` in `src/main.rs`, exercised here through
 //! `Config::apply_profile` directly, which is what it calls).
 
 use std::path::Path;
 
-use satex::config::{Config, Load, Profile};
-use satex::machine::Machine;
+use satex::analysis::machine::Machine;
+use satex::project::config::{Config, Load, Profile};
 
 const PACKAGE: &str = "\
 \\NeedsTeXFormat{LaTeX2e}
@@ -88,7 +88,7 @@ fn explicit_config_still_wins_over_the_profile() {
     assert!(!cfg.at_letter);
 }
 
-fn analyze_as(profile: Profile, source: &str, name: &str) -> satex::machine::Analysis {
+fn analyze_as(profile: Profile, source: &str, name: &str) -> satex::analysis::machine::Analysis {
     let mut cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     cfg.apply_profile(profile).unwrap();
     Machine::analyze(source, Some(Path::new(name)), &cfg)
@@ -97,7 +97,7 @@ fn analyze_as(profile: Profile, source: &str, name: &str) -> satex::machine::Ana
 #[test]
 fn a_package_s_unused_definition_is_reported_only_when_private() {
     let analysis = analyze_as(Profile::Package, PACKAGE, "demo.sty");
-    let findings = satex::lint::lint(&analysis);
+    let findings = satex::linter::lint(&analysis);
     let names: Vec<String> = findings
         .iter()
         .filter(|r| r["code"] == "unused-definition" && r["origin"] == "document")
@@ -111,11 +111,11 @@ fn a_package_s_unused_definition_is_reported_only_when_private() {
 fn a_document_s_unused_definition_is_reported_regardless() {
     let source = "\\documentclass{article}\n\\newcommand\\unused{x}\n\\begin{document}\\end{document}\n";
     let analysis = analyze_as(Profile::Document, source, "demo.tex");
-    let findings = satex::lint::lint(&analysis);
+    let findings = satex::linter::lint(&analysis);
     assert!(findings.iter().any(|r| r["code"] == "unused-definition" && r["origin"] == "document"), "{findings:?}");
     // What LaTeX writes to the `.aux` file (`\@abspage@last`) is not the
     // author's to delete.
-    let aux = |r: &satex::query::Record| {
+    let aux = |r: &satex::queries::query::Record| {
         r["code"] == "unused-definition" && r["file"].as_str().is_some_and(|f| f.ends_with(".aux"))
     };
     assert!(!findings.iter().any(aux), "{findings:?}");

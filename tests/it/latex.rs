@@ -3,8 +3,8 @@
 use crate::support::analyze_latex as analyze;
 use crate::support::{assert_body, broken_gaps, codes, marks};
 use crate::support::{defined, installed, last_body as body};
-use satex::builtins::OccKind;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::engine::builtins::OccKind;
 
 /// Tests that the last body of `\key` after the document is `want`.
 macro_rules! body_cases {
@@ -145,7 +145,7 @@ fn an_undefined_name_past_an_approximation_is_a_possible_error() {
 \undefinedbaz
 \end{document}",
     );
-    let mut found: Vec<String> = satex::lint::lint(&analysis)
+    let mut found: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-control-sequence"))
         .map(|f| {
@@ -177,7 +177,7 @@ fn a_misspelled_command_suggests_the_nearest_name() {
 \sectoin{A} \mymacor \Textbf{b} \qwertzuiop
 \end{document}",
     );
-    let mut found: Vec<String> = satex::lint::lint(&analysis)
+    let mut found: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-control-sequence"))
         .map(|f| format!("{} {}", f["message"].as_str().unwrap_or_default(), f["fix"].as_str().unwrap_or_default()))
@@ -209,7 +209,11 @@ fn a_remainder_of_an_unknown_stays_below_its_divisor() {
 \int_compare:nNnTF {\int_mod:nn{\l_tmpa_tl}{16}} < {16} {in}{out}
 \end{document}",
     );
-    let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
     let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
     assert!(texts.contains(&"in"), "{texts:?}");
 }
@@ -228,7 +232,7 @@ fn an_unknown_arrow_tip_names_its_library() {
 \tikz\draw[-Kite] (0,0) -- (1,1);
 \end{document}",
     );
-    let found: Vec<String> = satex::lint::lint(&analysis)
+    let found: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("message").and_then(|m| m.as_str()).is_some_and(|m| m.contains("'Kite'")))
         .map(|f| f["fix"].as_str().unwrap_or_default().to_string())
@@ -251,7 +255,7 @@ fn a_name_read_under_assumed_category_codes_is_no_certain_error() {
         let mut cfg = crate::support::config();
         cfg.limits.line_steps = line_steps;
         let analysis = Machine::analyze(&source, None, &cfg);
-        satex::lint::lint(&analysis)
+        satex::linter::lint(&analysis)
             .iter()
             .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-control-sequence"))
             .map(|f| {
@@ -283,7 +287,7 @@ a \tikzmarknode{n-1-left}{x} b \tikzmarknode{n-1-left}{y}
 \section{B}\label{sec:a}
 \end{document}",
     );
-    let found: Vec<(String, String)> = satex::lint::lint(&analysis)
+    let found: Vec<(String, String)> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("duplicate-label"))
         .map(|f| {
@@ -676,7 +680,7 @@ fn the_sample_document_keeps_what_it_already_analyzed() {
         analysis
             .interner
             .lookup(name)
-            .is_some_and(|sym| !matches!(analysis.env.meaning(sym), satex::tex::Meaning::Undefined))
+            .is_some_and(|sym| !matches!(analysis.env.meaning(sym), satex::engine::tex::Meaning::Undefined))
     };
     // Kernel and class commands the document uses.
     for name in ["textbf", "emph", "section", "label", "ref", "item", "title", "author", "caption"] {
@@ -687,7 +691,7 @@ fn the_sample_document_keeps_what_it_already_analyzed() {
         .facts
         .occurrences
         .iter()
-        .filter(|o| o.kind == satex::builtins::OccKind::Label)
+        .filter(|o| o.kind == satex::engine::builtins::OccKind::Label)
         .map(|o| o.key.as_str())
         .collect();
     for key in ["sec:intro", "sec:method", "fig:main", "tab:results"] {
@@ -699,11 +703,12 @@ fn the_sample_document_keeps_what_it_already_analyzed() {
     }
     // A document that compiles has nothing undefined and no dangling
     // reference: both were false findings once, so both are pinned.
-    let findings = satex::lint::lint(&analysis);
-    let code_of =
-        |record: &satex::query::Record| record.get("code").and_then(|c| c.as_str()).unwrap_or_default().to_string();
+    let findings = satex::linter::lint(&analysis);
+    let code_of = |record: &satex::queries::query::Record| {
+        record.get("code").and_then(|c| c.as_str()).unwrap_or_default().to_string()
+    };
     for code in ["undefined-control-sequence", "undefined-reference"] {
-        let from_document = |record: &satex::query::Record| {
+        let from_document = |record: &satex::queries::query::Record| {
             record.get("file").and_then(|f| f.as_str()).unwrap_or_default() == "paper.tex"
         };
         let raised: Vec<String> = findings
@@ -717,7 +722,7 @@ fn the_sample_document_keeps_what_it_already_analyzed() {
 
 /// Severities of the `raised-error` findings in the document.
 fn raised(analysis: &Analysis) -> Vec<String> {
-    satex::lint::lint(analysis)
+    satex::linter::lint(analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("raised-error"))
         .filter_map(|f| f.get("severity").and_then(|s| s.as_str()).map(str::to_string))
@@ -783,7 +788,7 @@ fn an_unused_command_is_reported_once_not_with_its_implementation() {
 \newcommand\fe[1][x]{#1}
 \begin{document}x\end{document}",
     );
-    let mut names: Vec<String> = satex::lint::lint(&analysis)
+    let mut names: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("unused-definition"))
         .filter(|f| f.get("origin").and_then(|o| o.as_str()) == Some("document"))
@@ -818,7 +823,7 @@ fn a_definition_read_through_an_alias_or_a_package_is_used() {
 \includegraphics{example-image}
 \end{document}",
     );
-    let mut names: Vec<String> = satex::lint::lint(&analysis)
+    let mut names: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| matches!(f.get("code").and_then(|c| c.as_str()), Some("unused-definition" | "dead-definition")))
         .filter(|f| f.get("origin").and_then(|o| o.as_str()) == Some("document"))
@@ -846,7 +851,7 @@ fn italic_correction_follows_the_typeset_order() {
 \makeatletter\textit{\@title}\makeatother
 \end{document}",
     );
-    let places: Vec<(u64, u64)> = satex::lint::lint(&analysis)
+    let places: Vec<(u64, u64)> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("missing-italic-correction"))
         .map(|f| (f["line"].as_u64().unwrap_or(0), f["col"].as_u64().unwrap_or(0)))
@@ -876,8 +881,12 @@ Hidden \textbf{text} here.
 \end{document}",
     );
     assert!(defined(&analysis, "after"));
-    let gaps: Vec<_> =
-        analysis.facts.diagnostics.iter().filter(|d| d.severity == satex::facts::Severity::Unsupported).collect();
+    let gaps: Vec<_> = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported)
+        .collect();
     assert!(gaps.is_empty(), "{:?}", gaps.iter().map(|d| d.code).collect::<Vec<_>>());
 }
 
@@ -1107,7 +1116,7 @@ fn unsupported(analysis: &Analysis) -> Vec<String> {
         .facts
         .diagnostics
         .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported)
         .map(|d| {
             let file = analysis.files.get(d.span.file as usize).map(|f| f.path.as_str()).unwrap_or("?");
             format!("{} at {file}:{}", d.code, d.span.line)
@@ -1124,7 +1133,7 @@ fn last_body(analysis: &Analysis, name: &str) -> String {
         .rev()
         .find(|d| analysis.interner.name(d.name) == name && d.mac.is_some())
         .and_then(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         .unwrap_or_default()
 }
 
@@ -1265,9 +1274,9 @@ x
 /// with a bounded run and a bounded report instead of one gap counted into
 /// the millions.
 mod document_metadata {
-    use satex::config::Config;
-    use satex::facts::Severity;
-    use satex::machine::{Analysis, Machine};
+    use satex::analysis::facts::Severity;
+    use satex::analysis::machine::{Analysis, Machine};
+    use satex::project::config::Config;
 
     /// The bound one gap at one place is counted to.
     fn bound() -> u32 {
@@ -1406,12 +1415,12 @@ fn a_wide_int_rand_leaves_bounded_gaps() {
 x
 \end{document}",
     );
-    let bound = satex::config::Config::default().limits.repeat_failures;
+    let bound = satex::project::config::Config::default().limits.repeat_failures;
     let over: Vec<_> = analysis
         .facts
         .diagnostics
         .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported && d.code != "repeated-failure")
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported && d.code != "repeated-failure")
         .filter(|d| d.count > bound)
         .map(|d| (d.code, d.count))
         .collect();
@@ -1440,7 +1449,7 @@ x
         .facts
         .diagnostics
         .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported)
         .map(|d| (d.code, d.count))
         .collect();
     assert_eq!(found, Vec::new());
@@ -1472,7 +1481,7 @@ x
         .facts
         .diagnostics
         .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported)
         .map(|d| (d.code, d.count))
         .collect();
     assert_eq!(found, Vec::new());
@@ -1511,7 +1520,7 @@ x
         .facts
         .diagnostics
         .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported)
         .map(|d| (d.code, d.count))
         .collect();
     assert_eq!(found, Vec::new());
@@ -1524,7 +1533,7 @@ fn document_gaps(analysis: &Analysis) -> Vec<String> {
         .facts
         .diagnostics
         .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported && d.span.file == analysis.main_file)
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported && d.span.file == analysis.main_file)
         .map(|d| format!("{}: {}", d.code, d.message))
         .collect()
 }
@@ -1569,7 +1578,7 @@ fn different_aftergroup_tokens_join_into_one_of_them() {
         .defs
         .iter()
         .filter(|d| analysis.interner.name(d.name) == "seen")
-        .filter_map(|d| d.mac.as_ref().map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner)))
+        .filter_map(|d| d.mac.as_ref().map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner)))
         .collect();
     for n in ["1", "2", "3"] {
         assert!(bodies.contains(&n.to_string()), "{bodies:?}");
@@ -1661,7 +1670,7 @@ fn a_class_or_package_option_is_not_a_citation_key() {
     );
     assert_eq!(keys(&analysis, OccKind::Cite), vec!["knuth".to_string()]);
     // No bibliography: `knuth` is undefined, as LaTeX warns, and no option is.
-    let undefined: Vec<String> = satex::lint::lint(&analysis)
+    let undefined: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f["code"] == "undefined-citation")
         .map(|f| f["name"].as_str().unwrap_or_default().to_string())
@@ -1943,7 +1952,7 @@ fn unknown_clock_keeps_the_date_digit_shaped() {
         return;
     }
     let mut cfg = crate::support::config();
-    cfg.clock = satex::config::Clock::Unknown;
+    cfg.clock = satex::project::config::Clock::Unknown;
     let analysis = Machine::analyze(
         r"\documentclass{article}
 \usepackage[calc,en-US]{datetime2}
@@ -1960,7 +1969,7 @@ x\label{after}
     assert_eq!(keys(&analysis, OccKind::Label), vec!["after"]);
     let year = body(&analysis, "year@");
     assert_eq!(year.chars().count(), 4, "{year:?}");
-    assert!(year.chars().all(|c| c == satex::tex::UNKNOWN_DIGIT), "{year:?}");
+    assert!(year.chars().all(|c| c == satex::engine::tex::UNKNOWN_DIGIT), "{year:?}");
     let gaps = broken_gaps(&analysis);
     for code in ["extra-fi", "extra-else", "budget-exhausted", "line-budget-cut", "repeated-failure"] {
         assert!(!gaps.iter().any(|g| g.starts_with(code)), "{gaps:?}");
@@ -2308,7 +2317,7 @@ fn an_eps_image_converted_through_the_shell_has_its_bounding_box() {
     if !installed() {
         return;
     }
-    use satex::config::ShellEscape;
+    use satex::project::config::ShellEscape;
     let dir = crate::support::scratch_dir(std::env::temp_dir().join(format!("satex-eps-{}", std::process::id())));
     let eps = "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 10 -20 295 61\n%%HiResBoundingBox: 10.2 -19.5 294.8819 60.7874\n\
                %%EndComments\nnewpath 10 -20 moveto 284 0 rlineto 0 80 rlineto closepath fill\nshowpage\n%%EOF\n";
@@ -3207,7 +3216,7 @@ fn lint_text_puts_correctness_first_grouped_by_rule() {
         record("astyle", "style", 2),
         record("bug", "correctness", 3),
     ];
-    let text = satex::render::lint(&records, satex::render::Links::default(), true);
+    let text = satex::util::render::lint(&records, satex::util::render::Links::default(), true);
     let at = |s: &str| text.find(s).unwrap_or_else(|| panic!("{s} missing in {text}"));
     assert!(at("bug") < at("astyle") && at("astyle") < at("zstyle"), "{text}");
 }
@@ -3541,7 +3550,7 @@ fn an_output_routine_never_closes_its_callers_conditional() {
     std::fs::remove_dir_all(root).ok();
 }
 
-/// What TeX reads each argument as ([`satex::roles::Ty`]), seen in the run
+/// What TeX reads each argument as ([`satex::analysis::roles::Ty`]), seen in the run
 /// and handed on through wrappers.
 mod types {
     use super::*;
@@ -3558,8 +3567,8 @@ mod types {
         std::fs::write(&path, &source).unwrap();
         let a = Machine::analyze(&source, Some(&path), &crate::support::config());
         let shown = |cmd: &&str| {
-            let roles = satex::roles::roles(&a, cmd);
-            satex::roles::arg_types(&roles).iter().map(|(arg, t)| format!("#{} {t}", arg + 1)).collect()
+            let roles = satex::analysis::roles::roles(&a, cmd);
+            satex::analysis::roles::arg_types(&roles).iter().map(|(arg, t)| format!("#{} {t}", arg + 1)).collect()
         };
         let found = cmds.iter().map(shown).collect();
         std::fs::remove_dir_all(dir).ok();
@@ -3630,11 +3639,11 @@ mod types {
 
     #[test]
     fn the_lattice_orders_registers_below_their_values() {
-        use satex::roles::Ty;
-        use satex::tex::RegKind;
+        use satex::analysis::roles::Ty;
+        use satex::engine::tex::RegKind;
         assert_eq!(Ty::Reg(RegKind::Dimen).join(Ty::Reg(RegKind::Skip)), Ty::Glue);
         assert_eq!(Ty::Box.join(Ty::Dimen), Ty::Quantity);
-        assert_eq!(Ty::Named(RegKind::Count).join(Ty::Key(satex::roles::KeyKind::Any)), Ty::Name);
+        assert_eq!(Ty::Named(RegKind::Count).join(Ty::Key(satex::analysis::roles::KeyKind::Any)), Ty::Name);
         assert_eq!(Ty::Cs.join(Ty::Number), Ty::Top);
         assert!(Ty::Dimen.leq(Ty::Glue) && !Ty::Glue.leq(Ty::Dimen));
         assert_eq!(Ty::Bottom.join(Ty::Box), Ty::Box);
@@ -3866,7 +3875,7 @@ fn bibtex_commands_under_biblatex_migrate() {
     let path = dir.join("main.tex");
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
-    let found = satex::lint::lint(&analysis);
+    let found = satex::linter::lint(&analysis);
     let migrated: Vec<_> = found.iter().filter(|f| f["code"] == "bibtex-command-under-biblatex").collect();
     let names: Vec<&str> = migrated.iter().filter_map(|f| f["name"].as_str()).collect();
     assert_eq!(names, ["bibliographystyle", "bibliography"], "{found:?}");
@@ -3891,7 +3900,7 @@ fn bibtex_commands_under_biblatex_migrate() {
 #[test]
 fn a_new_declaration_that_redefines_a_command_is_reported() {
     let named = |source: &str| -> Vec<String> {
-        satex::lint::lint(&analyze(source))
+        satex::linter::lint(&analyze(source))
             .iter()
             .filter(|f| f["code"] == "new-redefines")
             .map(|f| f["name"].as_str().unwrap_or_default().to_string())
@@ -3926,7 +3935,11 @@ fn alignment_cells_are_placed_text() {
         return;
     }
     let analysis = crate::support::analyze_plain("\\catcode`\\&=4 x\n\n\\halign{#&#\\cr a&b\\cr c&d\\cr}\ny\n\\end\n");
-    let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
     let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
     assert_eq!(texts, ["x", "abcd", "y"]);
 }
@@ -3937,7 +3950,11 @@ fn alignment_cells_are_placed_text() {
 fn nested_lists_do_not_end_the_outer_paragraph() {
     for inner in ["\\vbox{a}", "\\valign{#\\cr a\\cr}"] {
         let analysis = crate::support::analyze_plain(&format!("x {inner} y\n\nz\n\\end\n"));
-        let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+        let rows = satex::queries::query::run(
+            &analysis,
+            satex::queries::query::Query::Typeset,
+            &satex::queries::query::Filter::Always,
+        );
         let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
         assert_eq!(texts, ["x a y", "z"], "{inner}");
     }
@@ -3953,7 +3970,7 @@ fn package_options_follow_the_declare_option_handler() {
     }
     let analysis = analyze("\\documentclass{article}\n\\usepackage{biblatex}\n\\begin{document}\nx\n\\end{document}\n");
     let options: Vec<String> =
-        satex::query::package_options(&analysis, "biblatex").into_iter().map(|(k, _)| k).collect();
+        satex::queries::query::package_options(&analysis, "biblatex").into_iter().map(|(k, _)| k).collect();
     for wanted in ["style", "backend", "sorting", "maxnames"] {
         assert!(options.iter().any(|o| o == wanted), "{wanted} not in {options:?}");
     }
@@ -3969,7 +3986,7 @@ fn expl3_variables_are_typed_by_the_function_that_made_them() {
     if !installed() {
         return;
     }
-    use satex::roles::{Ty, VarKind};
+    use satex::analysis::roles::{Ty, VarKind};
     let a = analyze(
         "\\documentclass{article}\\ExplSyntaxOn\n\\tl_new:N \\l_my_tl\n\\seq_new:N \\l_my_seq\n\\str_new:N \\l_my_str\n\\ExplSyntaxOff\n\\begin{document}x\\end{document}\n",
     );
@@ -3997,7 +4014,7 @@ fn expl3_conventions_are_checked_against_the_run() {
          \\str_new:N \\l_ok_str \\tl_set:Nn \\l_ok_str {x} \\tl_new:N \\g_ok_tl \\tl_gset:Nn \\g_ok_tl {x}\n\
          \\ExplSyntaxOff\n\\begin{document}x\\end{document}\n",
     );
-    let found = satex::lint::lint(&a);
+    let found = satex::linter::lint(&a);
     let named = |code: &str| -> Vec<String> {
         found.iter().filter(|r| r["code"] == code).map(|r| r["name"].as_str().unwrap_or_default().to_string()).collect()
     };
@@ -4058,7 +4075,7 @@ fn a_picture_command_outside_its_picture_says_where_it_is_defined() {
     let analysis = analyze(
         "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}\n\\draw[-]\n\\end{document}\n",
     );
-    let found: Vec<String> = satex::lint::lint(&analysis)
+    let found: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-control-sequence"))
         .map(|f| f["message"].as_str().unwrap_or_default().to_string())

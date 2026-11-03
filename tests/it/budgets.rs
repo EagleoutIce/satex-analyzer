@@ -4,8 +4,8 @@
 //! Document budgets run on a warm kernel cache and count analysis steps:
 //! the kernel (`kernel_build` measures it once) and package loads are out.
 
-use satex::config::{Cache, Load};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Cache, Load};
 use std::path::PathBuf;
 
 const SLACK: u64 = 120;
@@ -30,7 +30,7 @@ fn run(name: &str, source: &str) -> Analysis {
 }
 
 fn run_at(name: &str, source: &str, path: Option<&std::path::Path>) -> Analysis {
-    let cfg = satex::config::Config {
+    let cfg = satex::project::config::Config {
         cache: Cache { dir: Some(fresh(name)), ..Default::default() },
         load: Load { packages: true, classes: true, ..Default::default() },
         ..crate::support::config()
@@ -84,7 +84,7 @@ fn kernel_build() {
         return;
     }
     let dir = fresh("kernel");
-    let cfg = satex::config::Config {
+    let cfg = satex::project::config::Config {
         cache: Cache { dir: Some(dir.clone()), rebuild: true, ..Default::default() },
         ..crate::support::config()
     };
@@ -104,7 +104,7 @@ fn a_kernel_build_over_the_seconds_limit_stops_with_the_limit_named() {
         return;
     }
     let dir = fresh("kernel-seconds");
-    let mut cfg = satex::config::Config {
+    let mut cfg = satex::project::config::Config {
         cache: Cache { dir: Some(dir.clone()), rebuild: true, ..Default::default() },
         ..crate::support::config()
     };
@@ -287,7 +287,7 @@ fn a_dropped_error_path_does_not_weigh_on_later_joins() {
     let dropped =
         run_at("dropped-error", &doc(&format!("\\usepackage{{{}}}", crate::support::tex_path(&sty))), Some(&main));
     let codes = |a: &Analysis| {
-        use satex::facts::Severity::{Unsupported, Warning};
+        use satex::analysis::facts::Severity::{Unsupported, Warning};
         let faults = a.facts.diagnostics.iter().filter(|d| matches!(d.severity, Unsupported | Warning));
         let mut codes: Vec<&str> = faults.map(|d| d.code).collect();
         codes.sort_unstable();
@@ -364,8 +364,8 @@ fn notebook_cell_with_an_inline_listing() {
 #[test]
 fn a_seconds_limit_stops_the_run() {
     use satex::{
-        config::{Config, Engine},
-        plugin::Kernel,
+        plugins::Kernel,
+        project::config::{Config, Engine},
     };
     let mut cfg = Config { engine: Some(Engine::PdfTeX), kernel: Some(Kernel::None), ..crate::support::config() };
     (cfg.limits.steps, cfg.limits.line_steps, cfg.limits.site_expansions) = (u64::MAX, 0, u32::MAX);
@@ -400,9 +400,9 @@ fn expl3_regex_scan_of_lines() {
 /// expanded most and the document lines whose reading they followed.
 #[test]
 fn timings_name_the_costly_line_and_macro() {
-    let cfg = satex::config::Config { timings: true, ..crate::support::bare() };
+    let cfg = satex::project::config::Config { timings: true, ..crate::support::bare() };
     let source = format!("{}\\def\\x#1{{#1#1#1#1}}\n\\x{{\\x{{\\x{{\\relax}}}}}}\n\\relax\n", crate::support::PRELUDE);
-    let analysis = satex::machine::Machine::analyze(&source, None, &cfg);
+    let analysis = satex::analysis::machine::Machine::analyze(&source, None, &cfg);
     let sites = analysis.timings.top_sites(1);
     assert_eq!(sites.first().map(|((_, line), _)| *line), Some(2), "{sites:?}");
     let calls = analysis.timings.top_calls(1);

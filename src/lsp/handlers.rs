@@ -1,6 +1,6 @@
 //! Feature handlers: each turns an [`Analysis`] satex already built into the
 //! `lsp_types` response for one request.  No analysis of its own happens
-//! here — everything comes from [`crate::query`] and [`crate::lint`], the
+//! here — everything comes from [`crate::queries::query`] and [`crate::linter`], the
 //! same calls `satex query`/`satex lint` make; this module only converts
 //! between LSP's positions (0-based, UTF-16 columns) and satex's
 //! ([`Pos`]: 1-based, character columns) and shapes the JSON as `lsp_types`
@@ -18,10 +18,10 @@ use lsp_types::{
 use regex::Regex;
 use serde_json::Value as Json;
 
-use crate::lint::fix::{Pos, Sources, Text};
-use crate::machine::Analysis;
-use crate::preview::Stroke;
-use crate::query::{self, Filter, Query, Record};
+use crate::analysis::machine::Analysis;
+use crate::linter::fix::{Pos, Sources, Text};
+use crate::queries::preview::Stroke;
+use crate::queries::query::{self, Filter, Query, Record};
 
 /// LSP position (0-based line, UTF-16 column) to satex's (1-based line,
 /// column as the engine counts one), against the line as it stands in `doc`.
@@ -55,24 +55,28 @@ pub fn word_at(line: &str, col: u32) -> Option<(String, bool)> {
 
 /// The same, with the 1-based column the match starts at.
 pub fn word_span(line: &str, col: u32) -> Option<(String, bool, u32)> {
-    let target = crate::source::byte_of_col(line, col);
+    let target = crate::engine::source::byte_of_col(line, col);
     word_re().find_iter(line).find(|m| m.start() <= target && target <= m.end()).map(|m| {
         let text = m.as_str();
-        (crate::tex::bare_name(text).to_string(), text.starts_with('\\'), crate::source::col_of_byte(line, m.start()))
+        (
+            crate::engine::tex::bare_name(text).to_string(),
+            text.starts_with('\\'),
+            crate::engine::source::col_of_byte(line, m.start()),
+        )
     })
 }
 
 /// The path a run recorded a file under, resolved to a `file://` URI.
 /// `lsp_types::Uri` (since 0.95) is a thin wrapper over a generic RFC 3986
 /// URI, not a `url::Url`, so there is no `from_file_path`/`to_file_path`
-/// left to reuse: [`crate::paths::file_url`] and [`uri_to_path`] are
+/// left to reuse: [`crate::project::paths::file_url`] and [`uri_to_path`] are
 /// satex's own, covering exactly the case the server needs.
 pub fn path_uri(path: &str) -> Uri {
-    // The same rooting [`crate::render::file_url`] does, so a diagnostic and the file it
+    // The same rooting [`crate::util::render::file_url`] does, so a diagnostic and the file it
     // belongs to reach the client under one URI.
     let absolute = std::path::absolute(path).unwrap_or_else(|_| PathBuf::from(path));
     let absolute = VIEW.with_borrow(|view| view.named(&absolute));
-    crate::paths::file_url(&absolute).parse().unwrap_or_else(|_| "file:///".parse().unwrap())
+    crate::project::paths::file_url(&absolute).parse().unwrap_or_else(|_| "file:///".parse().unwrap())
 }
 
 thread_local! {
@@ -112,12 +116,12 @@ impl ClientView {
 /// The reverse of [`path_uri`]: the local path a `file://` URI names, or
 /// `None` for any other scheme.
 pub fn uri_to_path(uri: &Uri) -> Option<std::path::PathBuf> {
-    crate::paths::from_file_url(uri.as_str())
+    crate::project::paths::from_file_url(uri.as_str())
 }
 
 /// A `place`d record (`path`/`line`/`col`, as every query answer carries) as
 /// an LSP [`Location`]: a zero-width range at the position, the same way
-/// [`crate::render::lsp`] points a diagnostic at one place rather than a span.
+/// [`crate::util::render::lsp`] points a diagnostic at one place rather than a span.
 fn record_location(record: &Record, sources: &Sources) -> Option<Location> {
     let path = record.get("path").and_then(Json::as_str)?;
     let line = record.get("line").and_then(Json::as_u64)? as u32;
@@ -162,7 +166,7 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
 /// the family and package that define it, its type, default and choices as the run stored them
 /// ([`query::options`]), and what the mined manual says of it.
 fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
-    let at = crate::source::byte_of_col(line, col).min(line.len());
+    let at = crate::engine::source::byte_of_col(line, col).min(line.len());
     let start = line[..at].rfind([',', '[', '{']).map_or(0, |i| i + 1);
     let end = at + line[at..].find(['=', ',', ']', '}']).unwrap_or(line.len() - at);
     // a value, not a key: the `=` stands before the cursor
@@ -193,7 +197,7 @@ fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
     let mined = defined_path
         .clone()
         .filter(|_| analysis.settings.plugins.docs)
-        .and_then(|p| crate::plugin::docs::index(&analysis.settings.docs).lookup(std::path::Path::new(&p), key));
+        .and_then(|p| crate::plugins::docs::index(&analysis.settings.docs).lookup(std::path::Path::new(&p), key));
     if let Some((m, does)) = mined.as_ref().and_then(|m| Some((m, m.text.as_deref()?))) {
         markdown.push_str(&format!("{does} {}\n\n", extracted_from_manual(m)));
     }
@@ -253,7 +257,7 @@ fn key_list_owner(arg: &Arg) -> Option<String> {
 /// What satex did with the magic comment (`% !TeX program = …`, `% arara: …`)
 /// on the cursor's line: the engine it ran, the root it read the file through.
 fn magic_hover(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<String> {
-    let magic = crate::plugin::magic::scan_with(doc.line(pos.line), &analysis.settings.magic).into_iter().next()?;
+    let magic = crate::plugins::magic::scan_with(doc.line(pos.line), &analysis.settings.magic).into_iter().next()?;
     let what = match magic.key.to_ascii_lowercase().as_str() {
         "tex program" => format!(
             "satex ran this document with the {:?} engine{}.",
@@ -274,22 +278,22 @@ fn magic_hover(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<String> {
 /// The outcome of the `%\satex@` directive the cursor is on, from its
 /// `\satex@` to the end of its line.
 fn directive_hover(analysis: &Analysis, path: &str, pos: Pos) -> Option<String> {
-    let found: Vec<String> = crate::lint::assertions::verdicts(analysis)
+    let found: Vec<String> = crate::linter::assertions::verdicts(analysis)
         .into_iter()
         .filter(|(span, ..)| span.line == pos.line && span.col <= pos.col && analysis.file_name(span.file) == path)
-        .map(|(_, code, message)| format!("**{}** {message}", crate::lint::label(code)))
+        .map(|(_, code, message)| format!("**{}** {message}", crate::linter::label(code)))
         .collect();
     (!found.is_empty()).then(|| found.join("\n\n"))
 }
 
 /// The database entry of the key under column `col` of `line`, in an
-/// argument [`crate::roles`] says cites: what it names and every field.
+/// argument [`crate::analysis::roles`] says cites: what it names and every field.
 fn cite_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
-    let (before, after) = line.split_at(crate::source::byte_of_col(line, col).min(line.len()));
+    let (before, after) = line.split_at(crate::engine::source::byte_of_col(line, col).min(line.len()));
     let arg = argument_at(before).filter(|a| a.open == '{')?;
-    let at = crate::roles::braced_groups(arg.groups).len();
-    let cite = crate::roles::RoleKind::Occ(crate::builtins::OccKind::Cite);
-    crate::roles::roles(analysis, arg.cmd).iter().find(|r| r.arg == at && r.kind == cite)?;
+    let at = crate::analysis::roles::braced_groups(arg.groups).len();
+    let cite = crate::analysis::roles::RoleKind::Occ(crate::engine::builtins::OccKind::Cite);
+    crate::analysis::roles::roles(analysis, arg.cmd).iter().find(|r| r.arg == at && r.kind == cite)?;
     let start = before.rfind([',', '{']).map_or(0, |i| i + 1);
     let key = format!("{}{}", &before[start..], &after[..after.find([',', '}']).unwrap_or(after.len())]);
     let e = bib_entries(analysis).iter().find(|e| e.key == key.trim())?;
@@ -376,7 +380,7 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
         let text = |key: &str| record.get(key).and_then(Json::as_str);
         let mined = text("path")
             .filter(|_| analysis.settings.plugins.docs)
-            .and_then(|p| crate::plugin::docs::index(&analysis.settings.docs).lookup(std::path::Path::new(p), name));
+            .and_then(|p| crate::plugins::docs::index(&analysis.settings.docs).lookup(std::path::Path::new(p), name));
         let mined = mined.as_ref();
         match text("when") {
             Some(w) => markdown.push_str(&format!("### `\\{name}`: {w}\n\n")),
@@ -474,7 +478,7 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
 fn typesets(analysis: &Analysis, name: &str) -> String {
     let shown = analysis.settings.conventions.completion.calls;
     let Some(sym) = analysis.interner.lookup(name) else { return String::new() };
-    let mut calls: Vec<crate::tex::Span> = analysis
+    let mut calls: Vec<crate::engine::tex::Span> = analysis
         .facts
         .expansions
         .iter()
@@ -525,15 +529,15 @@ fn topics(analysis: &Analysis, name: &str, records: &[Record]) -> Vec<String> {
         )
         .collect();
     if let Some(meaning) = analysis.interner.lookup(name).map(|s| analysis.env.meaning(s)) {
-        out.extend(crate::roles::Ty::of_meaning(&meaning).map(|t| t.to_string()));
-        if let Some(crate::builtins::Primitive::Register(k)) = meaning.prim() {
+        out.extend(crate::analysis::roles::Ty::of_meaning(&meaning).map(|t| t.to_string()));
+        if let Some(crate::engine::builtins::Primitive::Register(k)) = meaning.prim() {
             out.push(k.as_str().to_string());
         }
     }
     out
 }
 
-/// The types a record gives its arguments ([`crate::roles::Ty`]), each by
+/// The types a record gives its arguments ([`crate::analysis::roles::Ty`]), each by
 /// its `⟨argN⟩` in the usage line.
 fn arg_types(record: &Record) -> Vec<(String, String)> {
     let types = record.get("types").and_then(Json::as_array).into_iter().flatten().filter_map(Json::as_str);
@@ -550,7 +554,7 @@ fn extracted(origin: &str) -> String {
 
 /// The same for a mined manual: linked to where it can be read, with the
 /// section and the source line that document it.
-fn extracted_from_manual(m: &crate::plugin::docs::Entry) -> String {
+fn extracted_from_manual(m: &crate::plugins::docs::Entry) -> String {
     let manual = m.link.as_ref().and_then(|(l, _)| l.strip_prefix("texdoc ")).unwrap_or(&m.from);
     let section = m.at.as_ref().and_then(|p| p.section.as_ref()).map(|s| format!(", § {s}")).unwrap_or_default();
     let origin = match &m.link {
@@ -565,7 +569,7 @@ fn extracted_from_manual(m: &crate::plugin::docs::Entry) -> String {
 fn documented(record: &Record) -> Option<super::doccomment::DocComment> {
     let path = record.get("path").and_then(Json::as_str)?;
     let line = record.get("line").and_then(Json::as_u64)? as usize;
-    super::doccomment::above(&crate::overlay::read_to_string(std::path::Path::new(path)).ok()?, line)
+    super::doccomment::above(&crate::project::overlay::read_to_string(std::path::Path::new(path)).ok()?, line)
 }
 
 /// The command whose argument the cursor is in, on its line: its name and
@@ -744,7 +748,7 @@ pub fn usage(sig: &str) -> String {
 /// gives: its `.bst` or `.bbx` file when one is found, the databases it
 /// formats and what it does.
 fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<String> {
-    use crate::builtins::OccKind;
+    use crate::engine::builtins::OccKind;
     let here = |line: u32, file| line == pos.line && analysis.file_name(file) == path;
     let bibtex = analysis
         .facts
@@ -789,7 +793,7 @@ fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Opt
 
 /// The style file `file`: beside the document `path`, in `shipped`, on BSTINPUTS, else in the installation's styles.
 pub(super) fn style_file(analysis: &Analysis, path: &str, file: &str, shipped: Option<PathBuf>) -> Option<PathBuf> {
-    let dirs = crate::paths::effective(
+    let dirs = crate::project::paths::effective(
         "BSTINPUTS",
         &analysis.project,
         &analysis.settings.paths.bstinputs,
@@ -797,7 +801,7 @@ pub(super) fn style_file(analysis: &Analysis, path: &str, file: &str, shipped: O
     );
     let beside = Path::new(path).parent().map(|d| d.join(file));
     let found = beside.into_iter().chain(shipped).chain(dirs.dirs.iter().map(|d| d.join(file))).find(|p| p.is_file());
-    found.or_else(|| crate::distribution::file_under(&analysis.distribution.roots, "bibtex/bst", file))
+    found.or_else(|| crate::caches::distribution::file_under(&analysis.distribution.roots, "bibtex/bst", file))
 }
 
 /// A package or class name in `\usepackage`, `\RequirePackage` or
@@ -812,7 +816,7 @@ pub(super) fn load_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) 
         .find(|l| l.name == word && l.span.line == pos.line && analysis.file_name(l.span.file) == path)?;
     let mut md = format!("### `{}`: {}\n\n", load.name, load.kind.as_str());
     let path_of = load.path.as_deref().map(std::path::Path::new);
-    if let Some(about) = path_of.and_then(|p| crate::plugin::docs::about(&analysis.settings.docs, p)) {
+    if let Some(about) = path_of.and_then(|p| crate::plugins::docs::about(&analysis.settings.docs, p)) {
         md.push_str(&format!("{about}\n\n"));
     }
     if let Some(provided) = &load.provided {
@@ -891,17 +895,20 @@ fn load_target(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<
     Some(GotoDefinitionResponse::Array(vec![Location { uri, range: Range { start: zero, end: zero } }]))
 }
 
-/// The file an argument typed [`crate::roles::Ty::File`] names under the
+/// The file an argument typed [`crate::analysis::roles::Ty::File`] names under the
 /// cursor, found beside the document or the project, through kpathsea for
 /// databases, with the extensions of its kind.
 fn file_target(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<GotoDefinitionResponse> {
     let line = doc.line(pos.line);
-    let (before, after) = line.split_at(crate::source::byte_of_col(line, pos.col).min(line.len()));
+    let (before, after) = line.split_at(crate::engine::source::byte_of_col(line, pos.col).min(line.len()));
     let arg = argument_at(before).filter(|a| a.open == '{')?;
-    let at = crate::roles::braced_groups(arg.groups).len();
-    let roles = crate::roles::roles(analysis, arg.cmd);
-    let ty =
-        roles.iter().filter(|r| r.arg == at).map(|r| r.kind.ty()).find(|t| matches!(t, crate::roles::Ty::File(_)))?;
+    let at = crate::analysis::roles::braced_groups(arg.groups).len();
+    let roles = crate::analysis::roles::roles(analysis, arg.cmd);
+    let ty = roles
+        .iter()
+        .filter(|r| r.arg == at)
+        .map(|r| r.kind.ty())
+        .find(|t| matches!(t, crate::analysis::roles::Ty::File(_)))?;
     let name = format!(
         "{}{}",
         arg.inside.rsplit(',').next().unwrap_or_default().trim_start(),
@@ -911,14 +918,14 @@ fn file_target(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<GotoDefiniti
     let main = analysis
         .files
         .get(usize::from(analysis.main_file))
-        .map(|f| crate::paths::dir_of(std::path::Path::new(&f.path)));
+        .map(|f| crate::project::paths::dir_of(std::path::Path::new(&f.path)));
     let dirs = [Some(analysis.project.root.clone()), main];
     let beside = dirs.into_iter().flatten().flat_map(|d| {
         let names = std::iter::once(name.clone()).chain(exts.iter().map(|e| format!("{name}.{e}"))).collect::<Vec<_>>();
         names.into_iter().map(move |n| d.join(n))
     });
     let found = beside
-        .chain(crate::plugin::bib::resolve(analysis, &name).filter(|_| exts.iter().any(|e| e == "bib")))
+        .chain(crate::plugins::bib::resolve(analysis, &name).filter(|_| exts.iter().any(|e| e == "bib")))
         .find(|p| p.is_file())?;
     let zero = Position { line: 0, character: 0 };
     Some(GotoDefinitionResponse::Array(vec![Location {
@@ -940,7 +947,7 @@ pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Positio
     let sources = Sources::default();
     // a key in an option list (`\draw[above]`, `\tikzset{x/.style=…}`): where its code is defined
     let line = doc.line(pos.line);
-    let before = &line[..crate::source::byte_of_col(line, pos.col).min(line.len())];
+    let before = &line[..crate::engine::source::byte_of_col(line, pos.col).min(line.len())];
     if !is_command && let Some(arg) = argument_at(before) {
         let item = arg.inside.rsplit(',').next().unwrap_or_default().trim_start();
         let rest: String = line[before.len()..].chars().take_while(|c| !matches!(c, ',' | '=' | ']' | '}')).collect();
@@ -1088,7 +1095,7 @@ fn site_range(record: &Record, sources: &Sources, name: &str, is_command: bool) 
     let col = record.get("col").and_then(Json::as_u64).unwrap_or(1) as u32;
     let text = sources.get(path)?;
     let text_line = text.line(line);
-    let from = crate::source::byte_of_col(text_line, col);
+    let from = crate::engine::source::byte_of_col(text_line, col);
     let needle = if is_command { format!("\\{name}") } else { name.to_string() };
     let mut search = from;
     if !is_command {
@@ -1100,8 +1107,8 @@ fn site_range(record: &Record, sources: &Sources, name: &str, is_command: bool) 
             && name.chars().all(|c| c.is_ascii_alphabetic() || c == '@')
             && after.is_some_and(|c| c.is_ascii_alphabetic() || c == '@'))
     })?;
-    let first = crate::source::col_of_byte(text_line, found) + u32::from(is_command);
-    let width = crate::source::columns(name) as u32;
+    let first = crate::engine::source::col_of_byte(text_line, found) + u32::from(is_command);
+    let width = crate::engine::source::columns(name) as u32;
     let range =
         Range { start: to_lsp(&text, Pos::new(line, first)), end: to_lsp(&text, Pos::new(line, first + width)) };
     Some((path.to_string(), range))
@@ -1124,10 +1131,15 @@ pub fn highlights(analysis: &Analysis, doc: &Text, path: &str, position: Positio
 
 /// The rename the name under the cursor asks for, against the files as
 /// they stand.
-fn rename_plan(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Result<crate::rename::Plan, String> {
+fn rename_plan(
+    analysis: &Analysis,
+    doc: &Text,
+    path: &str,
+    position: Position,
+) -> Result<crate::queries::rename::Plan, String> {
     let pos = to_pos(doc, position);
     let (name, is_command, col) = word_span(doc.line(pos.line), pos.col).ok_or("nothing renamable here")?;
-    crate::rename::plan(analysis, &Sources::default(), path, Pos::new(pos.line, col), &name, is_command)
+    crate::queries::rename::plan(analysis, &Sources::default(), path, Pos::new(pos.line, col), &name, is_command)
 }
 
 /// `textDocument/prepareRename`: the span under the cursor and its name.
@@ -1155,7 +1167,7 @@ pub fn rename(
     let plan = rename_plan(analysis, doc, path, position)?;
     let sources = Sources::default();
     let mut changes: std::collections::HashMap<Uri, Vec<TextEdit>> = std::collections::HashMap::new();
-    for edit in crate::rename::edits(&plan, analysis, new_name)? {
+    for edit in crate::queries::rename::edits(&plan, analysis, new_name)? {
         let text = sources.get(&edit.path).ok_or_else(|| format!("{} cannot be read", edit.path))?;
         let range = Range { start: to_lsp(&text, edit.start), end: to_lsp(&text, edit.end) };
         changes.entry(path_uri(&edit.path)).or_default().push(TextEdit { range, new_text: edit.replacement });
@@ -1214,7 +1226,7 @@ pub fn workspace_symbols(analysis: &Analysis, query_text: &str) -> Vec<SymbolInf
 pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> CompletionResponse {
     let pos = to_pos(doc, position);
     let line = doc.line(pos.line);
-    let (before, after) = line.split_at(crate::source::byte_of_col(line, pos.col).min(line.len()));
+    let (before, after) = line.split_at(crate::engine::source::byte_of_col(line, pos.col).min(line.len()));
     if let Some(items) = node_items(analysis, before) {
         return CompletionResponse::Array(items);
     }
@@ -1256,8 +1268,9 @@ pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> Comple
             if let Some(want) = argument_at(before).and_then(|arg| quantity_wanted(analysis, &arg)) {
                 for item in &mut items {
                     let sym = analysis.interner.lookup(&item.label);
-                    let ty = sym.and_then(|s| crate::roles::Ty::of_meaning(&analysis.env.meaning(s)));
-                    let register = want == crate::roles::Ty::Register && matches!(ty, Some(crate::roles::Ty::Reg(_)));
+                    let ty = sym.and_then(|s| crate::analysis::roles::Ty::of_meaning(&analysis.env.meaning(s)));
+                    let register = want == crate::analysis::roles::Ty::Register
+                        && matches!(ty, Some(crate::analysis::roles::Ty::Reg(_)));
                     if register || ty.is_some_and(|t| t.leq(want)) {
                         item.sort_text = item.sort_text.take().map(|s| format!("!{s}"));
                     }
@@ -1268,13 +1281,13 @@ pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> Comple
     }
 }
 
-/// The quantity the braced argument `arg` is read as ([`crate::roles::Ty`]),
+/// The quantity the braced argument `arg` is read as ([`crate::analysis::roles::Ty`]),
 /// a register's for a register name, or any register's.
-fn quantity_wanted(analysis: &Analysis, arg: &Arg) -> Option<crate::roles::Ty> {
-    use crate::roles::Ty;
-    let at = crate::roles::braced_groups(arg.groups).len();
-    let roles = crate::roles::roles(analysis, arg.cmd);
-    let (_, ty) = crate::roles::arg_types(&roles).into_iter().find(|(a, _)| arg.open == '{' && *a == at)?;
+fn quantity_wanted(analysis: &Analysis, arg: &Arg) -> Option<crate::analysis::roles::Ty> {
+    use crate::analysis::roles::Ty;
+    let at = crate::analysis::roles::braced_groups(arg.groups).len();
+    let roles = crate::analysis::roles::roles(analysis, arg.cmd);
+    let (_, ty) = crate::analysis::roles::arg_types(&roles).into_iter().find(|(a, _)| arg.open == '{' && *a == at)?;
     let ty = if matches!(ty, Ty::Reg(_)) { ty.parent() } else { ty };
     (ty.leq(Ty::Quantity) || ty == Ty::Register).then_some(ty)
 }
@@ -1311,7 +1324,7 @@ pub(super) fn argument_at(before: &str) -> Option<Arg<'_>> {
                     cmd: caps.get(1)?.as_str(),
                     open: c,
                     groups: caps.get(2)?.as_str(),
-                    col: crate::source::col_of_byte(before, start),
+                    col: crate::engine::source::col_of_byte(before, start),
                     inside: &before[i + 1..],
                 });
             }
@@ -1324,27 +1337,27 @@ pub(super) fn argument_at(before: &str) -> Option<Arg<'_>> {
 /// How many name characters precede the cursor on its line.
 fn before_word(doc: &Text, pos: Pos) -> u32 {
     let line = doc.line(pos.line);
-    let before = &line[..crate::source::byte_of_col(line, pos.col).min(line.len())];
+    let before = &line[..crate::engine::source::byte_of_col(line, pos.col).min(line.len())];
     before.chars().rev().take_while(|c| c.is_alphanumeric() || *c == '*').count() as u32
 }
 
 /// The entries of every database the document names, once per analysis.
-fn bib_entries(analysis: &Analysis) -> &[crate::plugin::bib::Entry] {
+fn bib_entries(analysis: &Analysis) -> &[crate::plugins::bib::Entry] {
     analysis.bib.get_or_init(|| {
         let mut seen = BTreeSet::new();
         analysis
             .facts
             .occurrences
             .iter()
-            .filter(|o| o.kind == crate::builtins::OccKind::Bibliography)
-            .filter_map(|o| crate::plugin::bib::resolve(analysis, &o.key))
+            .filter(|o| o.kind == crate::engine::builtins::OccKind::Bibliography)
+            .filter_map(|o| crate::plugins::bib::resolve(analysis, &o.key))
             .filter(|path| seen.insert(path.clone()))
-            .filter_map(|path| Some((crate::overlay::read_to_string(&path).ok()?, path)))
+            .filter_map(|path| Some((crate::project::overlay::read_to_string(&path).ok()?, path)))
             .flat_map(|(text, path)| {
                 let file = path.to_string_lossy().into_owned();
-                crate::plugin::bib::entries(&text)
+                crate::plugins::bib::entries(&text)
                     .into_iter()
-                    .map(move |e| crate::plugin::bib::Entry { file: file.clone(), ..e })
+                    .map(move |e| crate::plugins::bib::Entry { file: file.clone(), ..e })
             })
             .collect()
     })
@@ -1361,13 +1374,15 @@ fn item(label: String, kind: CompletionItemKind, detail: Option<String>, rank: u
 }
 
 fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: Pos) -> Vec<CompletionItem> {
-    use crate::builtins::{LoadKind, OccKind};
-    use crate::roles::RoleKind as R;
-    // What the argument at the cursor is ([`crate::roles`]): a braced one
+    use crate::analysis::roles::RoleKind as R;
+    use crate::engine::builtins::{LoadKind, OccKind};
+    // What the argument at the cursor is ([`crate::analysis::roles`]): a braced one
     // by its place, a bracketed one by every role of the command.
-    let at = crate::roles::braced_groups(arg.groups).len();
-    let roles: Vec<crate::roles::Role> =
-        crate::roles::roles(analysis, arg.cmd).into_iter().filter(|r| arg.open != '{' || r.arg == at).collect();
+    let at = crate::analysis::roles::braced_groups(arg.groups).len();
+    let roles: Vec<crate::analysis::roles::Role> = crate::analysis::roles::roles(analysis, arg.cmd)
+        .into_iter()
+        .filter(|r| arg.open != '{' || r.arg == at)
+        .collect();
     let mut occs: Vec<OccKind> =
         roles.iter().filter_map(|r| if let R::Occ(k) = r.kind { Some(k) } else { None }).collect();
     // A wrapper that adds a prefix (`\ref{sec:#1}`) is given what follows it.
@@ -1553,7 +1568,7 @@ fn takes_value(r: &Record) -> bool {
 /// A key's completion: the key, then `=` with the cursor after it where it takes a value.
 fn key_item(analysis: &Analysis, mut it: CompletionItem, key: &str, r: &Record) -> CompletionItem {
     if let Some(path) = r.get("key").and_then(Json::as_str) {
-        it = with_preview(it, crate::preview::of_key(analysis, path, None));
+        it = with_preview(it, crate::queries::preview::of_key(analysis, path, None));
     }
     if takes_value(r) {
         it.insert_text = Some(format!("{}=$1", key.replace('$', "\\$")));
@@ -1562,9 +1577,9 @@ fn key_item(analysis: &Analysis, mut it: CompletionItem, key: &str, r: &Record) 
     it
 }
 
-/// `it` with its picture ([`crate::preview`]): as documentation for an
+/// `it` with its picture ([`crate::queries::preview`]): as documentation for an
 /// editor, as `data.preview` for the playground.
-fn with_preview(mut it: CompletionItem, preview: Option<crate::preview::Preview>) -> CompletionItem {
+fn with_preview(mut it: CompletionItem, preview: Option<crate::queries::preview::Preview>) -> CompletionItem {
     if let Some(p) = preview {
         it.documentation = Some(lsp_types::Documentation::MarkupContent(lsp_types::MarkupContent {
             kind: lsp_types::MarkupKind::Markdown,
@@ -1578,23 +1593,23 @@ fn with_preview(mut it: CompletionItem, preview: Option<crate::preview::Preview>
 /// What `path`'s code hands a setter of `kinds` that TeX draws: the arrow
 /// specs or pattern names the run declared, each with its picture.
 fn drawn_items(analysis: &Analysis, path: &str, kinds: &[Stroke]) -> Vec<CompletionItem> {
-    let sets = crate::preview::sets(analysis, path);
+    let sets = crate::queries::preview::sets(analysis, path);
     let mut out = Vec::new();
     for &kind in kinds.iter().filter(|k| sets.contains(k)) {
         let (names, what) = match kind {
-            Stroke::Arrows => (crate::preview::arrow_specs(analysis), "arrow tips"),
-            _ => (crate::preview::pattern_names(analysis), "pattern"),
+            Stroke::Arrows => (crate::queries::preview::arrow_specs(analysis), "arrow tips"),
+            _ => (crate::queries::preview::pattern_names(analysis), "pattern"),
         };
         out.extend(names.into_iter().map(|n| {
             let it = item(n.clone(), CompletionItemKind::ENUM_MEMBER, Some(what.into()), 50_000);
-            with_preview(it, crate::preview::drawn(analysis, kind, &n))
+            with_preview(it, crate::queries::preview::drawn(analysis, kind, &n))
         }));
         // the tips a library of the installation declares, not loaded yet: picking one loads it
         if kind == Stroke::Arrows {
             let have: BTreeSet<String> = out.iter().map(|i| i.label.clone()).collect();
             let start =
-                crate::lint::shared::document_start(analysis).map(|s| Position::new(s.line.saturating_sub(1), 0));
-            for (tip, load) in crate::lint::shared::library_declared(analysis, "arrow") {
+                crate::linter::shared::document_start(analysis).map(|s| Position::new(s.line.saturating_sub(1), 0));
+            for (tip, load) in crate::linter::shared::library_declared(analysis, "arrow") {
                 let label = if tip.contains(char::is_whitespace) { format!("-{{{tip}}}") } else { format!("-{tip}") };
                 if have.contains(&label) {
                     continue;
@@ -1620,7 +1635,7 @@ fn node_items(analysis: &Analysis, before: &str) -> Option<Vec<CompletionItem>> 
         .facts
         .defs
         .iter()
-        .filter(|d| crate::query::origin(analysis, d.span.file) == "document")
+        .filter(|d| crate::queries::query::origin(analysis, d.span.file) == "document")
         .filter_map(|d| analysis.interner.name(d.name).strip_prefix("pgf@sh@ns@"))
         .filter(|n| n.starts_with(typed) && !n.is_empty() && !analysis.settings.conventions.is_internal(n))
         .collect();
@@ -1767,12 +1782,12 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
 /// The default of the `nth` optional argument `name` takes, by its
 /// signature ([`query::signature`]).
 fn optional_default(analysis: &Analysis, name: &str, nth: usize) -> Option<String> {
-    let sym = analysis.interner.lookup(crate::tex::bare_name(name))?;
+    let sym = analysis.interner.lookup(crate::engine::tex::bare_name(name))?;
     let mac = analysis.env.meaning(sym).as_macro()?.clone();
     let spec = query::signature(analysis, sym, &mac)?;
     let optional = spec.items.iter().filter_map(|a| match a {
-        crate::tex::ArgType::Optional(d) => Some(d.clone()),
-        crate::tex::ArgType::Delimited { open: '[', default, .. } => Some(default.clone()),
+        crate::engine::tex::ArgType::Optional(d) => Some(d.clone()),
+        crate::engine::tex::ArgType::Delimited { open: '[', default, .. } => Some(default.clone()),
         _ => None,
     });
     optional.into_iter().nth(nth).flatten()
@@ -1818,14 +1833,15 @@ fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
 /// Extensions of files, and the installation's tree their program searches.
 type Exts = (Vec<String>, Option<&'static str>);
 
-/// The files an argument of type `ty` names, by [`crate::roles::FileKind`].
-fn file_exts(analysis: &Analysis, ty: crate::roles::Ty) -> Option<Exts> {
-    use crate::roles::{FileKind, Ty};
+/// The files an argument of type `ty` names, by [`crate::analysis::roles::FileKind`].
+fn file_exts(analysis: &Analysis, ty: crate::analysis::roles::Ty) -> Option<Exts> {
+    use crate::analysis::roles::{FileKind, Ty};
     let Ty::File(kind) = ty else { return None };
     match kind {
         // The extensions the run's own graphics had.
         FileKind::Graphic => {
-            let occ = analysis.facts.occurrences.iter().filter(|o| o.kind == crate::builtins::OccKind::Graphics);
+            let occ =
+                analysis.facts.occurrences.iter().filter(|o| o.kind == crate::engine::builtins::OccKind::Graphics);
             let exts: BTreeSet<String> = occ.filter_map(|o| Some(o.key.rsplit_once('.')?.1.to_string())).collect();
             Some((exts.into_iter().collect(), None))
         }
@@ -1839,13 +1855,13 @@ fn file_exts(analysis: &Analysis, ty: crate::roles::Ty) -> Option<Exts> {
 /// by the name `v`, as [`file_exts`] gives them.
 fn option_files(analysis: &Analysis, package: &str, key: &str) -> Option<Exts> {
     let loads = &analysis.facts.loads;
-    let at = loads.iter().position(|l| l.name == package && l.kind == crate::builtins::LoadKind::Package)?;
+    let at = loads.iter().position(|l| l.name == package && l.kind == crate::engine::builtins::LoadKind::Package)?;
     let value = loads[at].options.iter().find_map(|o| o.split_once('=').filter(|(k, _)| k.trim() == key))?.1.trim();
     let nested = loads[at + 1..].iter().take_while(|l| l.depth > loads[at].depth);
     let exts: BTreeSet<String> = nested
         .filter_map(|l| l.name.rsplit_once('.').filter(|(stem, _)| *stem == value).map(|(_, ext)| ext.to_string()))
         .collect();
-    let tree = exts.first().and_then(|e| crate::roles::FileKind::of_ext(e)).and_then(|k| k.tree());
+    let tree = exts.first().and_then(|e| crate::analysis::roles::FileKind::of_ext(e)).and_then(|k| k.tree());
     (!exts.is_empty()).then(|| (exts.into_iter().collect(), tree))
 }
 
@@ -1862,11 +1878,13 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
             let ext = format!(".{ext}");
             match dir {
                 "tex" => names.extend(
-                    crate::distribution::files_with(roots, &ext)
+                    crate::caches::distribution::files_with(roots, &ext)
                         .into_iter()
                         .filter_map(|(n, p)| Some((n.strip_suffix(&ext)?.to_string(), 1, Some(p)))),
                 ),
-                _ => names.extend(crate::distribution::names_with(roots, dir, &ext).into_iter().map(|n| (n, 1, None))),
+                _ => names.extend(
+                    crate::caches::distribution::names_with(roots, dir, &ext).into_iter().map(|n| (n, 1, None)),
+                ),
             }
         }
         let listed: Vec<String> = exts.iter().filter(|e| !e.is_empty()).map(|e| format!(".{e}")).collect();
@@ -1891,7 +1909,7 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
                     it.sort_text = Some(format!("{}~", it.sort_text.as_deref().unwrap_or_default()));
                     let names: Vec<&str> = needs
                         .iter()
-                        .map(|e| if *e == crate::config::Engine::LuaTeX { "LuaTeX" } else { "XeTeX" })
+                        .map(|e| if *e == crate::project::config::Engine::LuaTeX { "LuaTeX" } else { "XeTeX" })
                         .collect();
                     format!("needs {}", names.join(" or "))
                 });
@@ -1916,12 +1934,12 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
 /// The installation's files a library argument names: for each role, the
 /// part of a file name between its prefix and suffix (and the extension
 /// its load kind adds), starting with `typed`.
-fn library_items(analysis: &Analysis, roles: &[&crate::roles::Role], typed: &str) -> Vec<CompletionItem> {
-    use crate::builtins::LoadKind;
-    let all = crate::distribution::files_with(&analysis.distribution.roots, "");
+fn library_items(analysis: &Analysis, roles: &[&crate::analysis::roles::Role], typed: &str) -> Vec<CompletionItem> {
+    use crate::engine::builtins::LoadKind;
+    let all = crate::caches::distribution::files_with(&analysis.distribution.roots, "");
     let mut out: Vec<CompletionItem> = Vec::new();
     for role in roles {
-        let crate::roles::RoleKind::Load(kind) = role.kind else { continue };
+        let crate::analysis::roles::RoleKind::Load(kind) = role.kind else { continue };
         let ext = match kind {
             LoadKind::Package => ".sty",
             LoadKind::Class => ".cls",
@@ -1978,8 +1996,8 @@ fn head(path: &std::path::Path) -> Option<String> {
 /// required" (luacode), "Use XeLaTeX or LuaLaTeX instead" (unicode-math); "Don't use XeTeX" is
 /// no such message. A
 /// convention read off its first lines; none found means any engine.
-fn needs(head: &str) -> Vec<crate::config::Engine> {
-    use crate::config::Engine;
+fn needs(head: &str) -> Vec<crate::project::config::Engine> {
+    use crate::project::config::Engine;
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
         let engine = r"(Lua|Xe)(?:La)?TeX";
@@ -2005,10 +2023,10 @@ fn needs(head: &str) -> Vec<crate::config::Engine> {
 /// What a file of extension `ext` is, and the command this run loaded such
 /// files with (`\usepackage{stem}`), if it loaded any.
 fn loader(analysis: &Analysis, ext: &str, stem: &str) -> Option<String> {
-    let kind = crate::roles::FileKind::of_ext(ext)?;
+    let kind = crate::analysis::roles::FileKind::of_ext(ext)?;
     let load = match kind {
-        crate::roles::FileKind::Sty => crate::builtins::LoadKind::Package,
-        crate::roles::FileKind::Cls => crate::builtins::LoadKind::Class,
+        crate::analysis::roles::FileKind::Sty => crate::engine::builtins::LoadKind::Package,
+        crate::analysis::roles::FileKind::Cls => crate::engine::builtins::LoadKind::Class,
         _ => return Some(kind.label().to_string()),
     };
     let by = analysis.facts.loads.iter().filter(|l| l.kind == load && l.depth == 0).find_map(|l| l.by);
@@ -2054,7 +2072,7 @@ fn project_files(analysis: &Analysis, exts: &[&str]) -> Vec<String> {
 
 /// Environments open before `at` in the main file, outermost first.
 fn open_environments(analysis: &Analysis, at: (u32, u32)) -> Vec<String> {
-    use crate::builtins::OccKind;
+    use crate::engine::builtins::OccKind;
     let mut stack: Vec<String> = Vec::new();
     let mut seen: Vec<_> = analysis
         .facts
@@ -2126,7 +2144,7 @@ fn environments(analysis: &Analysis, pos: Pos) -> Vec<(String, bool)> {
     let list = analysis.interner.lookup("list");
     let mut out = Vec::new();
     for i in 0..analysis.interner.len() as u32 {
-        let end = crate::tex::Sym(i);
+        let end = crate::engine::tex::Sym(i);
         let Some(base) = analysis.interner.name(end).strip_prefix("end") else { continue };
         if base.is_empty() || base.contains(['@', ':', '\\']) || base.chars().any(char::is_control) {
             continue;
@@ -2145,7 +2163,7 @@ fn environments(analysis: &Analysis, pos: Pos) -> Vec<(String, bool)> {
 
 /// The names the bodies of `name`'s code spell, breadth-first through the
 /// meanings the run ended with, up to `limit` macros.
-fn body_reach(analysis: &Analysis, name: &str, limit: usize) -> BTreeSet<crate::tex::Sym> {
+fn body_reach(analysis: &Analysis, name: &str, limit: usize) -> BTreeSet<crate::engine::tex::Sym> {
     let mut seen = BTreeSet::new();
     let mut queue: std::collections::VecDeque<_> = analysis.interner.lookup(name).into_iter().collect();
     let mut expanded = 0;
@@ -2167,9 +2185,9 @@ fn body_reach(analysis: &Analysis, name: &str, limit: usize) -> BTreeSet<crate::
 /// Builds what completion reads of `analysis` once, ahead of the first request.
 pub fn warm(analysis: &Analysis) {
     takes(analysis);
-    crate::progress::pause_now();
-    crate::roles::roles(analysis, "documentclass");
-    crate::progress::pause_now();
+    crate::util::progress::pause_now();
+    crate::analysis::roles::roles(analysis, "documentclass");
+    crate::util::progress::pause_now();
     query::scope_named(analysis, None, false, |_| false);
 }
 
@@ -2177,7 +2195,7 @@ pub fn warm(analysis: &Analysis) {
 fn takes(analysis: &Analysis) -> &crate::fixed::HashMap<String, u8> {
     analysis.takes.get_or_init(|| {
         let defs = analysis.facts.defs.iter();
-        crate::progress::unpaused(|| {
+        crate::util::progress::unpaused(|| {
             defs.filter_map(|d| Some((analysis.interner.cs(d.name), query::takes_min(analysis, d)?))).collect()
         })
     })
@@ -2197,7 +2215,7 @@ fn environment_arguments(analysis: &Analysis, env: &str) -> u8 {
 
 /// A name a file the build wrote defines (`\@abspage@last` from the
 /// `.aux`): it holds from the second run on, which the label says.
-fn written_by(analysis: &Analysis, record: &crate::query::Record) -> Option<String> {
+fn written_by(analysis: &Analysis, record: &crate::queries::query::Record) -> Option<String> {
     let path = record.get("path").and_then(Json::as_str)?;
     let file = analysis.written.iter().find(|(name, _)| path.ends_with(name.as_str()))?;
     let name = std::path::Path::new(&file.0).file_name()?.to_string_lossy().into_owned();
@@ -2213,8 +2231,8 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
     let takes = takes(analysis);
     let signature = signature_items(analysis, typed);
     let typed = typed.to_lowercase();
-    let mut used: crate::fixed::HashMap<crate::tex::Sym, u32> = crate::fixed::HashMap::default();
-    let mut document: crate::fixed::HashMap<crate::tex::FileId, bool> = crate::fixed::HashMap::default();
+    let mut used: crate::fixed::HashMap<crate::engine::tex::Sym, u32> = crate::fixed::HashMap::default();
+    let mut document: crate::fixed::HashMap<crate::engine::tex::FileId, bool> = crate::fixed::HashMap::default();
     for e in &analysis.facts.expansions {
         let own = *document.entry(e.span.file).or_insert_with(|| query::origin(analysis, e.span.file) == "document");
         if own && e.within.is_none() {
@@ -2227,18 +2245,18 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
     let typeable =
         |label: &str| label.chars().count() < 2 || label.chars().all(|c| c.is_alphabetic() || letters.contains(&c));
     let mut items: Vec<CompletionItem> = {
-        let named = |name: &str| crate::tex::bare_name(name).to_lowercase().contains(&typed);
+        let named = |name: &str| crate::engine::tex::bare_name(name).to_lowercase().contains(&typed);
         query::scope_named(analysis, Some((analysis.main_file, pos.line, pos.col)), true, named)
     }
     .into_iter()
     .filter_map(|record| {
         let name = record.get("name")?.as_str()?.to_string();
-        let label = crate::tex::bare_name(&name).to_string();
+        let label = crate::engine::tex::bare_name(&name).to_string();
         if !label.to_lowercase().contains(&typed) || !typeable(&label) {
             return None;
         }
         let tag = record.get("tag").and_then(Json::as_str).unwrap_or("");
-        let internal = analysis.settings.conventions.is_internal(crate::tex::bare_name(&label));
+        let internal = analysis.settings.conventions.is_internal(crate::engine::tex::bare_name(&label));
         if label.is_empty() || (internal && !matches!(tag, "macro" | "primitive" | "environment" | "alias")) {
             return None;
         }
@@ -2285,7 +2303,7 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
     items.truncate(shown);
     let all = {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        crate::roles::roles_many(analysis, &names)
+        crate::analysis::roles::roles_many(analysis, &names)
     };
     for (item, roles) in items.iter_mut().zip(all) {
         item.detail = item.detail.take().map(|d| typed_usage(&d, &roles));
@@ -2316,8 +2334,8 @@ fn signature_items(analysis: &Analysis, typed: &str) -> Vec<CompletionItem> {
 
 /// A usage line with each braced argument's type after its number
 /// (`{1}` is `{1: skip register}`), as far as the roles know it.
-fn typed_usage(usage: &str, roles: &[crate::roles::Role]) -> String {
-    let types = crate::roles::arg_types(roles);
+fn typed_usage(usage: &str, roles: &[crate::analysis::roles::Role]) -> String {
+    let types = crate::analysis::roles::arg_types(roles);
     let mut out = String::new();
     let (mut rest, mut braced) = (usage, 0);
     while let Some(open) = rest.find('{') {
@@ -2415,7 +2433,7 @@ pub fn document_symbols(analysis: &Analysis, path: &str, doc: &Text) -> Option<V
 /// `lint`'s findings in the document's own files. Precision notes are the
 /// analysis's, not the document's: an editor hides them.
 pub fn findings(analysis: &Analysis) -> Vec<Record> {
-    crate::lint::lint(analysis)
+    crate::linter::lint(analysis)
         .into_iter()
         .filter(|r| r.get("origin").and_then(Json::as_str) == Some("document"))
         .filter(|r| r.get("category").and_then(Json::as_str) != Some("precision"))
@@ -2425,7 +2443,7 @@ pub fn findings(analysis: &Analysis) -> Vec<Record> {
 /// `records` in `render::lsp`'s shape: `[{uri, diagnostics, codeActions}, …]`,
 /// one entry per file they touch.
 pub fn diagnostics_json(records: &[Record]) -> Vec<Json> {
-    let text = crate::render::lsp_with(records, |path| path_uri(path).to_string());
+    let text = crate::util::render::lsp_with(records, |path| path_uri(path).to_string());
     serde_json::from_str(&text).unwrap_or_default()
 }
 
@@ -2439,8 +2457,9 @@ pub fn document_colors(analysis: &Analysis, doc: &Text, path: &str) -> Vec<lsp_t
     };
     let mut out = Vec::new();
     // A test (`\ifcsname color@.north\endcsname`) only asks whether a word is a color.
-    let used =
-        |u: &&crate::facts::ColorUse| matches!(u.role, crate::facts::CsnameRole::Use | crate::facts::CsnameRole::LetTo);
+    let used = |u: &&crate::analysis::facts::ColorUse| {
+        matches!(u.role, crate::analysis::facts::CsnameRole::Use | crate::analysis::facts::CsnameRole::LetTo)
+    };
     for u in analysis.facts.color_uses.iter().filter(used).filter(|u| file(u.span.file)) {
         let Some(color) = value(&u.name) else { continue };
         // `Text::line` counts from 1, LSP positions from 0
@@ -2517,7 +2536,7 @@ fn takes_colors(analysis: &Analysis, arg: &Arg) -> bool {
     let Some(sym) = analysis.interner.lookup(cmd) else { return false };
     // No call to learn from: one probe call tells which argument names a color
     if !analysis.facts.color_uses.iter().any(|u| u.via == Some(sym)) {
-        return crate::probe::color_arguments(analysis, sym).contains(&arg.groups.matches('{').count());
+        return crate::analysis::probe::color_arguments(analysis, sym).contains(&arg.groups.matches('{').count());
     }
     let call = format!("\\{cmd}{{");
     let mut texts: crate::fixed::HashMap<u16, Option<String>> = Default::default();
@@ -2525,7 +2544,7 @@ fn takes_colors(analysis: &Analysis, arg: &Arg) -> bool {
     analysis.facts.color_uses.iter().filter(|u| u.via == Some(sym)).any(|u| {
         let text = texts.entry(u.span.file).or_insert_with(|| {
             let path = &analysis.files.get(usize::from(u.span.file))?.path;
-            crate::overlay::read_to_string(std::path::Path::new(path)).ok()
+            crate::project::overlay::read_to_string(std::path::Path::new(path)).ok()
         });
         let line = text.as_deref().and_then(|t| t.lines().nth(u.span.line.saturating_sub(1) as usize));
         line.is_some_and(|line| {
@@ -2559,10 +2578,10 @@ fn hex_color(c: &lsp_types::Color) -> String {
 
 /// A color xcolor holds exactly, as red, green and blue (xcolor § 6.3's
 /// conversions from its core models).
-fn rgba(colors: &crate::value::Colors) -> Option<lsp_types::Color> {
-    use crate::value::Model;
+fn rgba(colors: &crate::engine::value::Colors) -> Option<lsp_types::Color> {
+    use crate::engine::value::Model;
     let color = &colors.hull;
-    let c: Vec<f32> = color.exact()?.iter().map(|&v| v as f32 / crate::value::UNIT as f32).collect();
+    let c: Vec<f32> = color.exact()?.iter().map(|&v| v as f32 / crate::engine::value::UNIT as f32).collect();
     let (r, g, b) = match (color.model.core(), &c[..]) {
         (Model::Rgb, [r, g, b]) => (*r, *g, *b),
         (Model::Cmy, [cy, m, y]) => (1.0 - cy, 1.0 - m, 1.0 - y),

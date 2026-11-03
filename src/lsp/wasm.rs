@@ -25,10 +25,10 @@ unsafe extern "C" {
     fn satex_status(json: *const c_char);
 }
 
-pub fn serve(cfg: crate::config::Config, root: std::path::PathBuf, main: Option<std::path::PathBuf>) -> ! {
+pub fn serve(cfg: crate::project::config::Config, root: std::path::PathBuf, main: Option<std::path::PathBuf>) -> ! {
     let (tx, outbox) = crossbeam_channel::unbounded();
     let engine = Engine::new(cfg, root, main, tx);
-    crate::progress::listen(Some(Box::new(|now: &crate::progress::Status| {
+    crate::util::progress::listen(Some(Box::new(|now: &crate::util::progress::Status| {
         if let Some(json) = serde_json::to_string(now).ok().and_then(|j| CString::new(j).ok()) {
             unsafe { satex_status(json.as_ptr()) }
         }

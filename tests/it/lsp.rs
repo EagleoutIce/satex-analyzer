@@ -143,7 +143,7 @@ impl Server {
 }
 
 fn fixture_uri(path: &std::path::Path) -> String {
-    satex::paths::file_url(path)
+    satex::project::paths::file_url(path)
 }
 
 #[test]
@@ -470,12 +470,12 @@ fn a_folder_opened_through_a_symlink_keeps_its_name() {
 /// #5 (LSP goto-definition on a load site): `\input`, `\include` and
 /// `\usepackage` name a file; the earlier behavior pointed back at the
 /// `\input` line itself as if it defined the name. It should instead open
-/// the file the run resolved, at its start ([`satex::facts::Load::path`]).
+/// the file the run resolved, at its start ([`satex::analysis::facts::Load::path`]).
 mod goto_definition_on_loads {
     use super::*;
 
     fn kpsewhich_installed() -> bool {
-        satex::paths::which("kpsewhich").is_ok()
+        satex::project::paths::which("kpsewhich").is_ok()
     }
 
     fn definition_at(server: &mut Server, uri: &str, line: u32, character: u32) -> Value {
@@ -965,7 +965,7 @@ mod roots {
 
     /// Where `\greet` on the last line of `uri` is defined.
     fn greet_defined_in(server: &mut Server, uri: &str) -> String {
-        let path = satex::paths::from_file_url(uri).unwrap();
+        let path = satex::project::paths::from_file_url(uri).unwrap();
         let line = std::fs::read_to_string(path).unwrap().lines().count() - 1;
         let id = server.request(
             "textDocument/definition",
@@ -1198,7 +1198,7 @@ fn citation_keys_come_from_the_databases() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// What an argument is comes with the command ([`satex::roles`]): a
+/// What an argument is comes with the command ([`satex::analysis::roles`]): a
 /// wrapper that hands its first argument to `\ref` behind a prefix
 /// completes labels there, without the prefix, and not in its second.
 #[test]
@@ -1222,7 +1222,7 @@ fn a_redefined_ref_completes_no_labels() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// What TeX reads each argument as ([`satex::roles::Ty`]) comes with the
+/// What TeX reads each argument as ([`satex::analysis::roles::Ty`]) comes with the
 /// signature: the hover lists it per argument, the signature help per
 /// parameter.
 #[test]
@@ -1435,7 +1435,7 @@ fn file_arguments_complete_their_files_by_extension() {
 /// identification line says, and a link to its documentation.
 #[test]
 fn packages_complete_with_their_version_and_documentation() {
-    let Ok(path) = satex::paths::which("kpsewhich").map_err(|_| ()).and_then(|k| {
+    let Ok(path) = satex::project::paths::which("kpsewhich").map_err(|_| ()).and_then(|k| {
         let out = std::process::Command::new(k).arg("amsmath.sty").output().map_err(|_| ())?;
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }) else {
@@ -1508,7 +1508,7 @@ fn databases_complete_by_the_build_file_they_reach() {
 /// Files of two kinds join to a file of no kind, and a file is a name.
 #[test]
 fn file_kinds_join_to_a_file() {
-    use satex::roles::{FileKind as F, KeyKind as K, Ty};
+    use satex::analysis::roles::{FileKind as F, KeyKind as K, Ty};
     assert_eq!(Ty::File(F::Bib).join(Ty::File(F::Tex)), Ty::File(F::Any));
     assert_eq!(Ty::File(F::Bib).join(Ty::File(F::Bib)), Ty::File(F::Bib));
     assert_eq!(Ty::File(F::Bib).join(Ty::Key(K::Any)), Ty::Name);
@@ -1875,7 +1875,7 @@ fn typeset_after_edit(tag: &str, edit: Option<&str>, until: &str) -> Vec<Value> 
 /// The paragraphs of an `\input` file come with the file they are set in.
 #[test]
 fn typeset_of_a_root_lists_an_input_file() {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let rows = typeset_of_a_root("input");
@@ -1887,7 +1887,7 @@ fn typeset_of_a_root_lists_an_input_file() {
 /// The starred `\section*` it sets is a heading.
 #[test]
 fn typeset_of_a_root_splits_the_bibliography() {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let rows = typeset_of_a_root("bibliography");
@@ -1914,7 +1914,7 @@ fn typeset_of_a_root_splits_the_bibliography() {
 /// A paragraph set by a sectioning command says which.
 #[test]
 fn typeset_of_a_root_marks_headings() {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let rows = typeset_of_a_root("heading");
@@ -1928,7 +1928,7 @@ fn typeset_of_a_root_marks_headings() {
 /// tool would make is typeset in the root, as `satex query typeset` has it.
 #[test]
 fn typeset_of_a_root_lists_the_bibliography() {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let rows = typeset_of_a_root("bibliography");
@@ -1943,7 +1943,7 @@ fn typeset_of_a_root_lists_the_bibliography() {
 /// build round again, though the run never expanded `\contentsline`.
 #[test]
 fn typeset_of_a_root_sets_a_table_of_contents_added_later() {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let text = "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\input{chapter}\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
@@ -2052,7 +2052,7 @@ fn completion_offers_at_names_only_where_at_is_a_letter() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// A hover shows what the defining package's manual says (src/plugin/docs):
+/// A hover shows what the defining package's manual says (src/plugins/docs):
 /// mined in the background, so a later hover shows it. The kernel's
 /// internals link to source2e, expl3 to interface3, a package to its own PDF,
 /// each with the section and source line that document it; an environment too.
@@ -2187,7 +2187,7 @@ fn a_hover_over_a_finding_shows_its_rule() {
         json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": 3 } }),
     );
     let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
-    let number = satex::lint::number("primitive-tex-command").unwrap();
+    let number = satex::linter::number("primitive-tex-command").unwrap();
     assert!(hover.contains("primitive-tex-command") && hover.contains(number), "{hover}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
@@ -2618,7 +2618,7 @@ fn completion_answers_while_a_run_goes_on() {
         "textDocument/didChange",
         json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": edited }] }),
     );
-    std::thread::sleep(Duration::from_millis(satex::config::LspConfig::default().debounce_ms) * 2);
+    std::thread::sleep(Duration::from_millis(satex::project::config::LspConfig::default().debounce_ms) * 2);
     for ((line, character), wanted) in places {
         let line = if line >= 3 { line + 1 } else { line };
         let (items, took) = timed_complete(&mut server, &uri, line, character);

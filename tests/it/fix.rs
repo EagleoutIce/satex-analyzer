@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::support::installed;
-use satex::config::{Config, Load};
-use satex::lint::apply;
-use satex::machine::Machine;
-use satex::query::Record;
+use satex::analysis::machine::Machine;
+use satex::linter::apply;
+use satex::project::config::{Config, Load};
+use satex::queries::query::Record;
 
 struct Fixed {
     dir: PathBuf,
@@ -46,7 +46,7 @@ fn fix_files(name: &str, files: &[(&str, &str)], code: &str, unsafe_fixes: bool,
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     let analysis = Machine::analyze(&source, Some(&path), &cfg);
     let keep = select(code, all);
-    let records: Vec<Record> = satex::lint::lint(&analysis).into_iter().filter(|r| keep(r)).collect();
+    let records: Vec<Record> = satex::linter::lint(&analysis).into_iter().filter(|r| keep(r)).collect();
     assert!(!records.is_empty(), "{code} reports nothing");
     assert!(records.iter().any(|r| r.get("edits").is_some()), "{code} has no edits: {records:?}");
     let main = analysis.file_name(analysis.main_file).to_string();
@@ -62,7 +62,7 @@ fn fix(name: &str, source: &str, code: &str, unsafe_fixes: bool) -> Fixed {
 
 /// pdflatex accepts the fixed document, when it is installed.
 fn compiles(dir: &Path) {
-    if satex::paths::which("pdflatex").is_err() {
+    if satex::project::paths::which("pdflatex").is_err() {
         return;
     }
     let status = Command::new("pdflatex")
@@ -133,7 +133,7 @@ fn reported(name: &str, source: &str, code: &str) -> usize {
     let path = dir.join("doc.tex");
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     let analysis = Machine::analyze(source, Some(&path), &cfg);
-    satex::lint::lint(&analysis).iter().filter(|r| r.get("code").and_then(|c| c.as_str()) == Some(code)).count()
+    satex::linter::lint(&analysis).iter().filter(|r| r.get("code").and_then(|c| c.as_str()) == Some(code)).count()
 }
 
 /// A package whose command the text of a macro the document runs calls is
@@ -199,7 +199,7 @@ fn option_clash_moves_the_options_to_the_first_load() {
     let keep = |r: &Record| {
         matches!(r["code"].as_str(), Some("option-clash" | "duplicate-package")) && r["origin"] == "document"
     };
-    let records: Vec<Record> = satex::lint::lint(&analysis).into_iter().filter(|r| keep(r)).collect();
+    let records: Vec<Record> = satex::linter::lint(&analysis).into_iter().filter(|r| keep(r)).collect();
     let outcome = apply::fixpoint(analysis.file_name(analysis.main_file), &cfg, records, &keep, true);
     apply::write(&outcome).unwrap();
     let fixed = Fixed { text: std::fs::read_to_string(&path).unwrap(), dir, remaining: outcome.remaining };
@@ -239,7 +239,7 @@ fn ot1_accents_load_t1_and_latin_modern() {
         None,
         &Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() },
     );
-    if !satex::lint::lint(&analysis).iter().any(|r| r["code"] == "ot1-font-encoding") {
+    if !satex::linter::lint(&analysis).iter().any(|r| r["code"] == "ot1-font-encoding") {
         return;
     }
     let fixed = fix("ot1", source, "ot1-font-encoding", true);
@@ -281,7 +281,7 @@ fn edits_outside_the_project_are_never_offered() {
     let source = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\nx\n\\end{document}\n";
     let analysis = Machine::analyze(source, Some(&dir.join("doc.tex")), &cfg);
     let project = dir.canonicalize().unwrap();
-    for record in satex::lint::lint(&analysis) {
+    for record in satex::linter::lint(&analysis) {
         for edit in record.get("edits").and_then(|e| e.as_array()).into_iter().flatten() {
             let path = PathBuf::from(edit["path"].as_str().unwrap()).canonicalize().unwrap();
             assert!(path.starts_with(&project), "{record:?}");
@@ -300,7 +300,7 @@ fn lsp_positions_count_utf16_code_units() {
         "edits": [{ "path": path, "start": { "line": 1, "col": 3 }, "end": { "line": 1, "col": 12 }, "replacement": "" }],
     }))
     .unwrap();
-    let out: serde_json::Value = serde_json::from_str(&satex::render::lsp(&[record])).unwrap();
+    let out: serde_json::Value = serde_json::from_str(&satex::util::render::lsp(&[record])).unwrap();
     let action = &out[0]["codeActions"][0];
     let edit = action["edit"]["changes"].as_object().unwrap().values().next().unwrap()[0].clone();
     // `é` is one UTF-16 unit, `𝄞` two.
@@ -325,7 +325,7 @@ fn lsp_offers_one_action_for_all_fixes_of_a_rule() {
         }))
         .unwrap()
     };
-    let out: serde_json::Value = serde_json::from_str(&satex::render::lsp(&[record(1), record(2)])).unwrap();
+    let out: serde_json::Value = serde_json::from_str(&satex::util::render::lsp(&[record(1), record(2)])).unwrap();
     let actions = out[0]["codeActions"].as_array().unwrap();
     let all = actions.iter().find(|a| a["data"]["scope"] == "rule").expect("a fix-all action");
     let edits = all["edit"]["changes"].as_object().unwrap().values().next().unwrap().as_array().unwrap();
@@ -334,13 +334,13 @@ fn lsp_offers_one_action_for_all_fixes_of_a_rule() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `satex::lint::lint`'s findings of one `code`, against a fresh project
+/// `satex::linter::lint`'s findings of one `code`, against a fresh project
 /// holding `doc.tex`.  The caller removes the returned directory.
 fn lint_codes(name: &str, source: &str, code: &str) -> (Vec<Record>, PathBuf) {
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     let dir = project(name, &[("doc.tex", source)]);
     let analysis = Machine::analyze(source, Some(&dir.join("doc.tex")), &cfg);
-    let records = satex::lint::lint(&analysis).into_iter().filter(|r| r["code"] == code).collect();
+    let records = satex::linter::lint(&analysis).into_iter().filter(|r| r["code"] == code).collect();
     (records, dir)
 }
 
@@ -423,7 +423,7 @@ fn primitive_tex_command_is_latex_advice() {
     let plain = "% !TeX program = tex\n\\def\\x{a\\hskip 1pt b}\\x\n\\end\n";
     crate::support::assert_lint(plain, "primitive-tex-command", 0);
     let latex = "\\documentclass{article}\n\\begin{document}\na\\hskip 1pt b\n\\end{document}\n";
-    let found = satex::lint::lint(&crate::support::analyze_latex(latex));
+    let found = satex::linter::lint(&crate::support::analyze_latex(latex));
     let hskip = found.iter().filter(|r| r["code"] == "primitive-tex-command" && r["line"] == 3);
     assert_eq!(hskip.count(), 1, "{found:?}");
 }
@@ -572,7 +572,7 @@ fn typography_fixes_introduce_nothing_new() {
         let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
         let analysis = Machine::analyze(&source, Some(&path), &cfg);
         let select = |record: &Record| record["origin"] == "document";
-        let records: Vec<Record> = satex::lint::lint(&analysis).into_iter().filter(|r| select(r)).collect();
+        let records: Vec<Record> = satex::linter::lint(&analysis).into_iter().filter(|r| select(r)).collect();
         let main = analysis.file_name(analysis.main_file).to_string();
         let outcome = apply::fixpoint(&main, &cfg, records, &select, true);
         assert!(

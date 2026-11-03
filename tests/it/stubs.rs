@@ -1,10 +1,10 @@
 //! `stubs:` in `satex.yaml`: an effect summary in place of a macro's
 //! internals, said once as an `assumption`.
 
-use satex::builtins::OccKind;
-use satex::config::{Config, Load, Stub, StubKind, StubResult, StubSets};
-use satex::facts::Severity;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::facts::Severity;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::engine::builtins::OccKind;
+use satex::project::config::{Config, Load, Stub, StubKind, StubResult, StubSets};
 use std::path::PathBuf;
 
 const PACKAGE: &str = "\\ProvidesPackage{stubpkg}\n\\newcommand\\stubnum[1]{\\number 1#1}\n\

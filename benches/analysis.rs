@@ -3,10 +3,10 @@ use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-use satex::config::{Config, Load, Texmf};
-use satex::machine::Machine;
-use satex::query::{self, Filter, Query};
-use satex::tex::{CatcodeTable, Interner, Mouth};
+use satex::analysis::machine::Machine;
+use satex::engine::tex::{CatcodeTable, Interner, Mouth};
+use satex::project::config::{Config, Load, Texmf};
+use satex::queries::query::{self, Filter, Query};
 
 fn document(sections: usize) -> String {
     let mut source = String::from(
@@ -108,7 +108,7 @@ fn querying(c: &mut Criterion) {
     });
     group
         .bench_function("filtered", |b| b.iter(|| black_box(query::run(&analysis, Query::Definitions, &filter).len())));
-    group.bench_function("lint", |b| b.iter(|| black_box(satex::lint::lint(&analysis).len())));
+    group.bench_function("lint", |b| b.iter(|| black_box(satex::linter::lint(&analysis).len())));
     group.bench_function("slice", |b| {
         b.iter(|| black_box(query::slice(&analysis, &["hl".to_string()], None, query::Direction::Backward).len()))
     });

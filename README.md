@@ -304,7 +304,7 @@ info      style        S035    math-shift-dollars               display math ope
 info      style        S036    microtype-available              the engine can protrude characters and expand fonts, …  
 info      style        S037    numbers-not-aligned              a table column of numbers does not line them up at th…  
 info      style        S038    ot1-font-encoding                accented letters are built with `\accent` because the…  
-info      style        S039    prefer-cleveref                  a hand-written name in front of `\ref` is what clever…  
+info      style        S039    prefer-cleveref                  a name written before `\ref` that cleveref prints by …  
 info      style        S040    primitive-tex-command            a plain TeX primitive is used where LaTeX has its own…  
 info      style        S041    quote-ligature                   three quotation marks in a row set a double and a sin…  
 info      style        S042    quote-punctuation                punctuation stands inside the closing quotation mark    
@@ -502,7 +502,7 @@ $ satex slice -f samples/paper.tex '\ifdraft'
 
 \RequirePackage{xcolor}
 
-… 86 more lines omitted
+… 53 more lines omitted
 ```
 
 </details>
@@ -514,7 +514,7 @@ $ satex scope -f samples/paper.tex --at 20:1
 tag          name                           effecti…  does      file                
 macro        \Weird                         \Weird …            paper.tex           @ paper.tex:16:1
 macro        \WeirdMore                     \WeirdM…            paper.tex           @ paper.tex:14:1
-… 10692 more lines omitted
+… 10272 more lines omitted
 ```
 
 </details>
@@ -544,7 +544,7 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 $ satex cache
 cache
   source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
-  holds 195122 definitions
+  holds 197762 definitions
   state cached
 … 2 more lines omitted
 ```

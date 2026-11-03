@@ -6,11 +6,11 @@
 
 use crate::support::PRELUDE;
 use crate::support::body;
-use satex::builtins::{Primitive, initial_meanings};
-use satex::config::{Config, Engine, Interaction, Load, Texmf};
-use satex::machine::{Analysis, Machine};
-use satex::plugin::Kernel;
-use satex::tex::Meaning;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::engine::builtins::{Primitive, initial_meanings};
+use satex::engine::tex::Meaning;
+use satex::plugins::Kernel;
+use satex::project::config::{Config, Engine, Interaction, Load, Texmf};
 
 const ENGINES: [Engine; 4] = [Engine::Tex, Engine::PdfTeX, Engine::XeTeX, Engine::LuaTeX];
 /// The engines with ε-TeX's primitives: every one but Knuth's `tex`.
@@ -78,7 +78,7 @@ fn beside_a_file(engine: Engine, name: &str, source: &str) -> Analysis {
 }
 
 fn defined(engine: Engine, name: &str) -> bool {
-    let mut interner = satex::tex::Interner::default();
+    let mut interner = satex::engine::tex::Interner::default();
     let table = initial_meanings(&mut interner, engine);
     interner.lookup(name).and_then(|sym| table.get(&sym)).is_some()
 }
@@ -172,7 +172,7 @@ fn interactionmode_outlives_the_group_it_was_set_in() {
 /// (TeX Live 2025) does, probed with lualatex (a write of 2 reads 2 back);
 /// 1.24 does not.
 fn math_modes_assignable() -> bool {
-    satex::plugin::lua::installed_version().is_some_and(|v| v <= 122)
+    satex::plugins::lua::installed_version().is_some_and(|v| v <= 122)
 }
 
 /// Measured under `luatex 1.24.0`: each reads one value, before and after a
@@ -401,10 +401,10 @@ fn an_unpinnable_value_widens_a_range_checked_parameter() {
 fn every_limited_name_is_a_primitive_of_that_engine() {
     let mut found = 0;
     for engine in ENGINES {
-        let mut interner = satex::tex::Interner::default();
+        let mut interner = satex::engine::tex::Interner::default();
         for (sym, meaning) in initial_meanings(&mut interner, engine) {
             let name = interner.name(sym);
-            let Some(limit) = satex::builtins::limit(name, engine) else { continue };
+            let Some(limit) = satex::engine::builtins::limit(name, engine) else { continue };
             found += 1;
             match meaning {
                 Meaning::Primitive(Primitive::IntegerParameter) => {
@@ -430,13 +430,13 @@ fn every_limited_name_is_a_primitive_of_that_engine() {
 /// rename or an engine gate that dropped one would show here.
 #[test]
 fn every_owned_name_is_a_parameter_of_every_engine() {
-    use satex::builtins::Owned;
+    use satex::engine::builtins::Owned;
     for engine in ENGINES {
-        let mut interner = satex::tex::Interner::default();
+        let mut interner = satex::engine::tex::Interner::default();
         let mut found = 0;
         for (sym, meaning) in initial_meanings(&mut interner, engine) {
             let name = interner.name(sym);
-            let Some(owned) = satex::builtins::owned(name) else { continue };
+            let Some(owned) = satex::engine::builtins::owned(name) else { continue };
             found += 1;
             match (owned, meaning) {
                 (Owned::List { .. } | Owned::PageSoFar { .. }, Meaning::Primitive(Primitive::DimenParameter)) => {}

@@ -6,8 +6,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::support::installed;
-use satex::config::{Cache, Config};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Cache, Config};
 
 /// A project directory with its own empty cache: nothing this test reads
 /// was built by another.
@@ -113,7 +113,9 @@ fn a_run_that_builds_the_caches_and_one_that_reads_them_agree() {
     // compare two cold runs.
     let warm = run(&dir, PACKAGES);
     let served = |package: &str| {
-        warm.package_caches.iter().any(|(name, .., state)| name == package && satex::machine::cache_served(state))
+        warm.package_caches
+            .iter()
+            .any(|(name, .., state)| name == package && satex::analysis::machine::cache_served(state))
     };
     assert!(served("xcolor"), "xcolor was replayed: {:?}", warm.package_caches);
     assert!(served("etoolbox"), "etoolbox was replayed: {:?}", warm.package_caches);

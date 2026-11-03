@@ -14,70 +14,38 @@
 //! [documentation](https://eagleoutice.github.io/satex-analyzer/).  As a library:
 //!
 //! ```no_run
-//! use satex::config::Config;
-//! use satex::machine::Machine;
+//! use satex::project::config::Config;
+//! use satex::analysis::machine::Machine;
 //!
 //! let source = r"\documentclass{article}\newcommand\hi[1]{Hi #1}\begin{document}\hi{you}\end{document}";
 //! let analysis = Machine::analyze(source, None, &Config::default());
 //! for def in &analysis.facts.defs {
 //!     println!("{} at {}", analysis.interner.cs(def.name), def.span);
 //! }
-//! for finding in satex::lint::lint(&analysis) {
+//! for finding in satex::linter::lint(&analysis) {
 //!     println!("{}", finding["message"]);
 //! }
 //! ```
 //!
-//! Entry points: [`machine::Machine::analyze`] runs a document,
-//! [`query`] answers questions about the result, [`lint`] reports findings,
-//! [`config::Config`] holds every setting of `satex.yaml`.
+//! Entry points: [`analysis::machine::Machine::analyze`] runs a document,
+//! [`queries::query`] answers questions about the result, [`linter`] reports findings,
+//! [`project::config::Config`] holds every setting of `satex.yaml`.
 
 #[macro_use]
-mod names;
-pub mod budget;
-pub mod builtins;
-pub mod cmd;
-pub mod commands;
-pub mod config;
-pub mod distribution;
-pub mod env;
-pub mod exec;
-pub mod exports;
-pub mod facts;
-pub mod format;
-pub mod graph;
-pub mod hyph;
-pub mod linebreak;
-pub mod lint;
-pub mod literate;
-pub mod loader;
+pub mod util;
+pub mod analysis;
+pub mod caches;
+pub mod cli;
+pub mod engine;
+pub mod linter;
 pub mod lsp;
-pub mod machine;
-pub mod mode;
-pub mod observe;
 pub mod oracle;
-pub mod otf;
-pub mod overlay;
-pub mod paths;
-pub mod pdfbox;
-pub mod plugin;
-pub mod preview;
-pub mod probe;
-pub mod progress;
+pub mod plugins;
 pub mod project;
-pub mod query;
-pub mod rename;
-pub mod render;
-pub mod roles;
-pub mod scan;
-pub mod slice_oracle;
-pub mod source;
-pub mod tex;
-pub mod tfm;
-pub mod timing;
-pub mod value;
+pub mod queries;
 
-pub use config::Config;
-pub use machine::{Analysis, Machine};
+pub use analysis::machine::{Analysis, Machine};
+pub use project::config::Config;
 
 use std::path::Path;
 
@@ -106,10 +74,10 @@ pub mod fixed {
     pub type HashSet<K> = std::collections::HashSet<K, Hasher>;
     /// For tables that are only looked up, or whose iteration is sorted
     /// before use: no order of theirs is ever seen, so a fast hash will do.
-    pub type LookupMap<K, V> = std::collections::HashMap<K, V, crate::tex::NameHash>;
-    pub type LookupSet<K> = std::collections::HashSet<K, crate::tex::NameHash>;
+    pub type LookupMap<K, V> = std::collections::HashMap<K, V, crate::engine::tex::NameHash>;
+    pub type LookupSet<K> = std::collections::HashSet<K, crate::engine::tex::NameHash>;
 
-    /// A mutex whose clone holds a copy of its value: an [`crate::machine::Analysis`] is cloned whole.
+    /// A mutex whose clone holds a copy of its value: an [`crate::analysis::machine::Analysis`] is cloned whole.
     #[derive(Default, Debug)]
     pub struct Mutex<T>(pub std::sync::Mutex<T>);
 

@@ -6,8 +6,8 @@
 
 use crate::support::{analyze_plain as analyze, last_body, names};
 use crate::support::{body, installed};
-use satex::config::{Config, Load};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Load};
 
 /// Probes that each define macros, with the body TeX gives each one.
 const BODIES: &[crate::support::BodyRow] = &[
@@ -433,9 +433,10 @@ fn document(source: &str) -> Analysis {
 
 /// The findings for the document itself, as `code name` pairs.
 fn findings(analysis: &Analysis) -> Vec<String> {
-    let field =
-        |f: &satex::query::Record, key: &str| f.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    satex::lint::lint(analysis)
+    let field = |f: &satex::queries::query::Record, key: &str| {
+        f.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string()
+    };
+    satex::linter::lint(analysis)
         .iter()
         .filter(|f| field(f, "origin") == "document")
         .map(|f| format!("{} {}", field(f, "code"), field(f, "name")))
@@ -489,7 +490,7 @@ fn a_name_let_to_relax_counts_as_undefined() {
 /// `unguarded-recursion` findings as `(code, name, line, col)`, so a test can
 /// assert the exact place rather than just whether the code fired.
 fn recursion_findings(analysis: &Analysis) -> Vec<(String, String, u64, u64)> {
-    satex::lint::lint(analysis)
+    satex::linter::lint(analysis)
         .into_iter()
         .filter(|r| r["code"] == "unguarded-recursion")
         .map(|r| {
@@ -695,7 +696,7 @@ fn cite_keys(analysis: &Analysis) -> Vec<String> {
         .facts
         .occurrences
         .iter()
-        .filter(|o| o.kind == satex::builtins::OccKind::Cite)
+        .filter(|o| o.kind == satex::engine::builtins::OccKind::Cite)
         .map(|o| o.key.clone())
         .collect()
 }

@@ -6,9 +6,9 @@
 
 use satex::fixed::HashMap;
 
-use satex::builtins::{Primitive, initial_meanings};
-use satex::config::Engine;
-use satex::tex::{Interner, Meaning, Sym};
+use satex::engine::builtins::{Primitive, initial_meanings};
+use satex::engine::tex::{Interner, Meaning, Sym};
+use satex::project::config::Engine;
 
 const ENGINES: [Engine; 4] = [Engine::Tex, Engine::PdfTeX, Engine::XeTeX, Engine::LuaTeX];
 
@@ -571,13 +571,13 @@ fn directlua_reads_its_body_as_lua() {
     let (it, table) = table(Engine::LuaTeX);
     assert_eq!(
         meaning(&it, &table, "directlua"),
-        Some(&Meaning::Primitive(Primitive::Lua(satex::builtins::LuaOp::Direct)))
+        Some(&Meaning::Primitive(Primitive::Lua(satex::engine::builtins::LuaOp::Direct)))
     );
     assert_eq!(
         meaning(&it, &table, "latelua"),
-        Some(&Meaning::Primitive(Primitive::Lua(satex::builtins::LuaOp::Late)))
+        Some(&Meaning::Primitive(Primitive::Lua(satex::engine::builtins::LuaOp::Late)))
     );
-    assert_eq!(satex::builtins::takes(Primitive::Lua(satex::builtins::LuaOp::Direct)), (1, Some(1)));
+    assert_eq!(satex::engine::builtins::takes(Primitive::Lua(satex::engine::builtins::LuaOp::Direct)), (1, Some(1)));
 }
 
 #[test]
@@ -589,7 +589,7 @@ fn per_engine_counts_meet_the_documented_floor() {
     let floors = [(Engine::Tex, 322), (Engine::PdfTeX, 545), (Engine::XeTeX, 498), (Engine::LuaTeX, 722)];
     for (engine, floor) in floors {
         let (_, table) = table(engine);
-        let count = table.values().filter(|m| m.prim().is_some_and(satex::builtins::engine_primitive)).count();
+        let count = table.values().filter(|m| m.prim().is_some_and(satex::engine::builtins::engine_primitive)).count();
         assert!(count >= floor, "{engine:?} has {count} engine primitives, expected at least {floor}");
     }
 }
@@ -675,7 +675,7 @@ fn parameter_kinds_match_the_measured_value_classes() {
             let Some(Meaning::Primitive(p)) = meaning(&it, &table, &fact.name) else { continue };
             // A quantity the current list or the page builder owns reads
             // nothing from the probe's vertical-mode context.
-            if satex::builtins::owned(&fact.name).is_some() {
+            if satex::engine::builtins::owned(&fact.name).is_some() {
                 continue;
             }
             let class = match p {
@@ -721,8 +721,8 @@ fn parameter_kinds_match_the_measured_value_classes() {
 
 #[test]
 fn parameters_start_where_the_measured_engines_start_them() {
-    use satex::config::{Config, Load, Texmf};
-    use satex::plugin::Kernel;
+    use satex::plugins::Kernel;
+    use satex::project::config::{Config, Load, Texmf};
     for engine in ENGINES {
         let (it, table) = table(engine);
         let mut probed = Vec::new();
@@ -730,7 +730,7 @@ fn parameters_start_where_the_measured_engines_start_them() {
         for fact in facts(engine) {
             let Some(Meaning::Primitive(p)) = meaning(&it, &table, &fact.name) else { continue };
             if !matches!(p, Primitive::IntegerParameter | Primitive::DimenParameter)
-                || satex::builtins::owned(&fact.name).is_some()
+                || satex::engine::builtins::owned(&fact.name).is_some()
                 // The clock and the interaction the probe ran in.
                 || matches!(fact.name.as_str(), "year" | "month" | "day" | "time" | "interactionmode")
                 // The output plugin sets them, as the run's driver does.
@@ -752,7 +752,7 @@ fn parameters_start_where_the_measured_engines_start_them() {
             texmf: Texmf { kpsewhich: false, ..Default::default() },
             ..crate::support::config()
         };
-        let analysis = satex::machine::Machine::analyze(&source, None, &cfg);
+        let analysis = satex::analysis::machine::Machine::analyze(&source, None, &cfg);
         let wrong: Vec<String> = probed
             .iter()
             .filter_map(|(name, expected)| {

@@ -1,10 +1,10 @@
 //! `satex lsp`: a thin, synchronous Language Server Protocol facade over the
-//! queries and lints [`crate::cmd`] already exposes on the command line —
+//! queries and lints [`crate::cli`] already exposes on the command line —
 //! no analysis logic of its own.
 //!
 //! One "engine" thread owns the interpreter state and every [`Analysis`] it
-//! builds.  [`crate::machine::Machine`] uses `Rc` internally (the
-//! interpreter is one machine, run on one thread — see [`crate::overlay`]),
+//! builds.  [`crate::analysis::machine::Machine`] uses `Rc` internally (the
+//! interpreter is one machine, run on one thread — see [`crate::project::overlay`]),
 //! so an `Analysis` cannot cross threads; instead the engine thread answers
 //! every request itself and only ever sends back plain, `Send` values
 //! (`lsp_types` responses, JSON).  The connection thread (stdio or TCP) only
@@ -36,7 +36,7 @@ mod unreached;
 mod wasm;
 
 use crate::fixed::HashMap;
-use crate::plugin::discovery;
+use crate::plugins::discovery;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -54,9 +54,9 @@ use lsp_types::{
 };
 use serde_json::Value as Json;
 
-use crate::config::Config;
-use crate::lint::fix::Text;
-use crate::machine::{Analysis, Machine};
+use crate::analysis::machine::{Analysis, Machine};
+use crate::linter::fix::Text;
+use crate::project::config::Config;
 
 /// The one `workspace/executeCommand` this server answers: its single
 /// argument is a `satex query --request` body (`doc/wiki/queries.md`),
@@ -68,10 +68,10 @@ const EXECUTE_COMMAND: &str = "satex/query";
 const STYLE_COMMAND: &str = "satex/style";
 
 /// The prompt's answers, as `window/showMessageRequest` offers them.
-const STYLE_ANSWERS: [(&str, Option<crate::config::StyleChoice>); 3] = [
-    ("Yes, turn it off", Some(crate::config::StyleChoice::Off)),
+const STYLE_ANSWERS: [(&str, Option<crate::project::config::StyleChoice>); 3] = [
+    ("Yes, turn it off", Some(crate::project::config::StyleChoice::Off)),
     ("No", None),
-    ("Never ask", Some(crate::config::StyleChoice::Keep)),
+    ("Never ask", Some(crate::project::config::StyleChoice::Keep)),
 ];
 
 /// The hovers of control sequences by document and name, `None` where there
@@ -102,7 +102,7 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
     // What the engine is doing (`caching pdftex kernel`), for the editor's
     // status bar: `satex/status` with a `progress::Status`, `text` empty when idle.
     let status = connection.sender.clone();
-    crate::progress::listen(Some(Box::new(move |now: &crate::progress::Status| {
+    crate::util::progress::listen(Some(Box::new(move |now: &crate::util::progress::Status| {
         let note = Notification::new("satex/status".into(), now);
         let _ = status.send(Message::Notification(note));
     })));
@@ -114,7 +114,7 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
     let engine_hovers = hovers.clone();
     // A package's manual mined: its names' hovers are asked again.
     let weak = std::sync::Arc::downgrade(&hovers);
-    crate::plugin::docs::index(&cfg.docs).subscribe(Box::new(move |names| {
+    crate::plugins::docs::index(&cfg.docs).subscribe(Box::new(move |names| {
         let names: std::collections::HashSet<&String> = names.iter().collect();
         if let Some(Ok(mut hovers)) = weak.upgrade().as_ref().map(|h| h.lock()) {
             hovers.retain(|(_, n), _| !names.contains(n));
@@ -131,10 +131,10 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
         .map_err(|e| e.to_string())?;
 
     let result = main_loop(&connection, &engine_tx, &outbox_rx, &hovers);
-    crate::probe::stop_all();
+    crate::analysis::probe::stop_all();
     let _ = engine_tx.send(EngineMsg::Shutdown);
     let _ = engine.join();
-    crate::progress::listen(None);
+    crate::util::progress::listen(None);
     // The writer thread only stops once every `Sender` feeding it is gone
     // (`Connection::sender` among them), so it has to be dropped before
     // `io_threads.join()` can return.
@@ -265,7 +265,7 @@ fn style_prompt(id: lsp_server::RequestId, candidate: &Json) -> Request {
 }
 
 /// What a client's answer to [`style_prompt`] records, `None` for no.
-fn style_choice(answer: &Response) -> Option<crate::config::StyleChoice> {
+fn style_choice(answer: &Response) -> Option<crate::project::config::StyleChoice> {
     let title = answer.response_result.as_ref().ok()?.get("title")?.as_str()?;
     STYLE_ANSWERS.iter().find(|(t, _)| *t == title)?.1
 }
@@ -275,10 +275,10 @@ fn style_choice(answer: &Response) -> Option<crate::config::StyleChoice> {
 /// files the run read (each by its path, size and time), so a hover of
 /// another meaning is never read back.
 fn hover_store(cfg: &Config, analysis: &Analysis, own: &Path) -> Option<std::path::PathBuf> {
-    let dir = crate::format::enabled_cache_dir(cfg)?;
-    let mut hash = crate::format::Fnv::new();
-    hash.write(crate::format::cache_key().as_bytes());
-    for name in analysis.file_names().iter().filter(|f| !crate::paths::within(own, Path::new(f))) {
+    let dir = crate::caches::format::enabled_cache_dir(cfg)?;
+    let mut hash = crate::caches::format::Fnv::new();
+    hash.write(crate::caches::format::cache_key().as_bytes());
+    for name in analysis.file_names().iter().filter(|f| !crate::project::paths::within(own, Path::new(f))) {
         let meta = std::fs::metadata(name).ok();
         hash.put(&(name, meta.as_ref().map(|m| m.len()), meta.and_then(|m| m.modified().ok())));
     }
@@ -319,7 +319,7 @@ fn linked<'a>(req: &Request, text: impl FnOnce(&Uri) -> Option<&'a String>) -> O
 /// The rule of each published finding, by where it stands.
 type Findings = HashMap<Uri, Vec<(lsp_types::Range, String)>>;
 
-/// For a hover over findings, their rules' cards ([`crate::lint::rule_markdown`]).
+/// For a hover over findings, their rules' cards ([`crate::linter::rule_markdown`]).
 fn rule_cards(req: &Request, findings: &Findings) -> Option<String> {
     if req.method != "textDocument/hover" {
         return None;
@@ -333,7 +333,7 @@ fn rule_cards(req: &Request, findings: &Findings) -> Option<String> {
         .collect();
     codes.dedup();
     let cards: Vec<String> =
-        codes.iter().filter_map(|c| crate::lint::explanation(c)).map(crate::lint::rule_markdown).collect();
+        codes.iter().filter_map(|c| crate::linter::explanation(c)).map(crate::linter::rule_markdown).collect();
     (!cards.is_empty()).then(|| cards.join("\n\n---\n\n"))
 }
 
@@ -349,7 +349,7 @@ fn with_cards(mut response: Response, cards: Option<String>) -> Response {
 
 /// Hands `msg` to the engine, which stops the probes it runs in the background for it.
 fn to_engine(engine_tx: &Sender<EngineMsg>, msg: EngineMsg) -> bool {
-    crate::probe::WANTED.store(true, std::sync::atomic::Ordering::Relaxed);
+    crate::analysis::probe::WANTED.store(true, std::sync::atomic::Ordering::Relaxed);
     engine_tx.send(msg).is_ok()
 }
 
@@ -499,8 +499,8 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
                 let arg = p.arguments.first().cloned().unwrap_or_default();
                 let code = arg["code"].as_str().ok_or("expected `{code, answer}`")?.to_string();
                 let choice = match arg["answer"].as_str() {
-                    Some("off") => crate::config::StyleChoice::Off,
-                    Some("keep") => crate::config::StyleChoice::Keep,
+                    Some("off") => crate::project::config::StyleChoice::Off,
+                    Some("keep") => crate::project::config::StyleChoice::Keep,
                     _ => return Err("`answer` is `off` or `keep`".into()),
                 };
                 return ask(engine_tx, |reply| EngineMsg::Style(code, choice, reply))?;
@@ -593,7 +593,7 @@ enum EngineMsg {
     CodeAction(Uri, Sender<Vec<Json>>),
     ExecuteCommand(Json, Sender<Result<Vec<Json>, String>>),
     /// A style prompt's answer for a rule: the path of the `satex.yaml` written.
-    Style(String, crate::config::StyleChoice, Sender<Result<Json, String>>),
+    Style(String, crate::project::config::StyleChoice, Sender<Result<Json, String>>),
     Typeset(Uri, Sender<Vec<Json>>),
     Written(Uri, Sender<Vec<Json>>),
     Caches(Uri, Sender<Vec<String>>),
@@ -670,7 +670,7 @@ struct Engine {
     /// names it defines itself, which are never kept there.
     stores: HashMap<Uri, (std::path::PathBuf, std::collections::HashSet<String>)>,
     /// Each document root's checkpoints, from which its next run resumes.
-    checkpoints: HashMap<PathBuf, crate::machine::Checkpoints<'static>>,
+    checkpoints: HashMap<PathBuf, crate::analysis::machine::Checkpoints<'static>>,
     /// Where messages arrive while a run goes on, and those that wait for its end.
     inbox: Option<Receiver<EngineMsg>>,
     deferred: std::collections::VecDeque<EngineMsg>,
@@ -738,9 +738,9 @@ impl Engine {
         let Some(doc) = self.docs.get(uri) else { return };
         let (path, text) = (doc.path.clone(), doc.text.clone());
         // Every open buffer is read for its file, so an `\input` of one sees
-        // its unsaved text too (`crate::overlay`).
+        // its unsaved text too (`crate::project::overlay`).
         for doc in self.docs.values() {
-            crate::overlay::set(&doc.path, doc.text.clone());
+            crate::project::overlay::set(&doc.path, doc.text.clone());
         }
         let (analysis, fresh) = self.run_for(&path, &text);
         if fresh {
@@ -770,7 +770,7 @@ impl Engine {
             let orphan = self.orphans.contains(&canonical(&path));
             let (mut published, candidates) = self.serving(|engine| {
                 let records = engine.unsilenced(handlers::findings(&analysis));
-                let candidates = crate::lint::style_candidates(&records, &analysis.settings.style_prompt);
+                let candidates = crate::linter::style_candidates(&records, &analysis.settings.style_prompt);
                 (publish(&mut engine.actions, &analysis, &records, &path, &open), candidates)
             });
             if let Some(own) =
@@ -787,7 +787,7 @@ impl Engine {
             self.send_diagnostics(published);
             self.ask_style(candidates);
         }
-        crate::progress::idle();
+        crate::util::progress::idle();
     }
 
     fn send_diagnostics(&self, published: Vec<PublishDiagnosticsParams>) {
@@ -796,13 +796,13 @@ impl Engine {
         }
     }
 
-    fn unsilenced(&self, mut records: Vec<crate::query::Record>) -> Vec<crate::query::Record> {
+    fn unsilenced(&self, mut records: Vec<crate::queries::query::Record>) -> Vec<crate::queries::query::Record> {
         records.retain(|r| !self.silenced.iter().any(|c| r.get("code").and_then(Json::as_str) == Some(c)));
         records
     }
 
     /// Sends the style candidates not asked about yet in this session.
-    fn ask_style(&mut self, candidates: Vec<crate::query::Record>) {
+    fn ask_style(&mut self, candidates: Vec<crate::queries::query::Record>) {
         let asked = &mut self.asked;
         let new: Vec<_> = candidates
             .into_iter()
@@ -817,9 +817,9 @@ impl Engine {
 
     /// Records a style prompt's answer. A rule turned off leaves the open
     /// documents' diagnostics at once, not only from the next server start.
-    fn answer_style(&mut self, code: String, choice: crate::config::StyleChoice) -> Result<Json, String> {
-        let path = crate::config::record_style_choice(&self.root, &code, choice)?;
-        if choice == crate::config::StyleChoice::Off {
+    fn answer_style(&mut self, code: String, choice: crate::project::config::StyleChoice) -> Result<Json, String> {
+        let path = crate::project::config::record_style_choice(&self.root, &code, choice)?;
+        if choice == crate::project::config::StyleChoice::Off {
             self.silenced.push(code);
             let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).collect();
             let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
@@ -853,7 +853,11 @@ impl Engine {
         // The first root whose run began the document: an input no root
         // reads is read after its preamble, as that root would read it.
         let mut preamble: Option<PathBuf> = None;
-        let dir = if crate::paths::within(&self.root, path) { self.root.clone() } else { crate::paths::dir_of(path) };
+        let dir = if crate::project::paths::within(&self.root, path) {
+            self.root.clone()
+        } else {
+            crate::project::paths::dir_of(path)
+        };
         let searched = move || discovery::scan(&dir).candidate_roots(path);
         let candidates = known.into_iter().chain(input.then(searched).into_iter().flatten());
         for root in candidates {
@@ -867,7 +871,7 @@ impl Engine {
                 self.owners.insert(key, root);
                 return run;
             }
-            if preamble.is_none() && crate::lint::shared::document_start(&run.0).is_some() {
+            if preamble.is_none() && crate::linter::shared::document_start(&run.0).is_some() {
                 preamble = Some(root.clone());
             }
             // A root that does not read the file is dropped.
@@ -880,29 +884,30 @@ impl Engine {
         }
         // A part of a package the project provides is read where the
         // package puts it: after loading it, as its own code.
-        if input && let Some(owner) = discovery::scan(&crate::paths::dir_of(path)).package_owners(path).first() {
+        if input && let Some(owner) = discovery::scan(&crate::project::paths::dir_of(path)).package_owners(path).first()
+        {
             let stem = owner.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
             let (load, class) = match owner.extension().is_some_and(|e| e == "cls") {
                 true => (String::new(), stem.to_string()),
                 false => (format!("\\usepackage{{{stem}}}"), "article".to_string()),
             };
             let name = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
-            let root = crate::paths::dir_of(path).join(format!(".satex-part-{stem}.tex"));
+            let root = crate::project::paths::dir_of(path).join(format!(".satex-part-{stem}.tex"));
             let text = format!(
                 "\\documentclass{{{class}}}{load}\\makeatletter\\input{{{name}}}\\makeatother\\begin{{document}}\\end{{document}}\n"
             );
-            crate::overlay::set(&root, text);
+            crate::project::overlay::set(&root, text);
             return self.run(&root);
         }
         // LaTeX's own hook reads it once the root's preamble is done.
         if input && let Some(root) = preamble {
-            let dir = crate::paths::dir_of(&root);
+            let dir = crate::project::paths::dir_of(&root);
             let name = |p: &Path| p.strip_prefix(&dir).unwrap_or(p).with_extension("").display().to_string();
             let stem = root.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
             let part = dir.join(format!(".satex-part-{stem}.tex"));
             let text =
                 format!("\\AddToHook{{begindocument/end}}{{\\input{{{}}}}}\\input{{{}}}\n", name(path), name(&root));
-            crate::overlay::set(&part, text);
+            crate::project::overlay::set(&part, text);
             return self.run(&part);
         }
         self.run(path)
@@ -922,13 +927,16 @@ impl Engine {
         if let Some(run) = self.runs.get(&key).filter(|run| run.texts == texts) {
             return (run.analysis.clone(), false);
         }
-        let source = crate::overlay::read_to_string(root).unwrap_or_default();
+        let source = crate::project::overlay::read_to_string(root).unwrap_or_default();
         let analysis = Rc::new(self.serving(|engine| {
             let cfg = engine.cfg;
             match discovery::is_document(&source) {
                 // The build's files (`.aux`, the `.bbl`) stay for the next run.
                 true => Machine::build(
-                    engine.checkpoints.entry(key.clone()).or_insert_with(|| crate::machine::Checkpoints::new(cfg)),
+                    engine
+                        .checkpoints
+                        .entry(key.clone())
+                        .or_insert_with(|| crate::analysis::machine::Checkpoints::new(cfg)),
                     &source,
                     root,
                     cfg,
@@ -979,7 +987,7 @@ impl Engine {
                 }
             }
         });
-        let out = crate::progress::pausing(pause, || f(self));
+        let out = crate::util::progress::pausing(pause, || f(self));
         self.deferred.extend(deferred.take());
         out
     }
@@ -992,22 +1000,27 @@ impl Engine {
         let name = |sym| analysis.interner.name(sym).to_string();
         let loads: Vec<String> = analysis.facts.loads.iter().map(|l| l.name.clone()).collect();
         let same = self.preambles.insert(uri.clone(), loads.clone()).is_some_and(|before| before == loads);
-        let dir = crate::paths::dir_of(Path::new(analysis.file_name(analysis.main_file)));
+        let dir = crate::project::paths::dir_of(Path::new(analysis.file_name(analysis.main_file)));
         // The project's own names: defined by the document or in a file of the project, a
         // written `.aux` among them, whatever package's code read it there.
         let own: std::collections::HashSet<String> = analysis
             .facts
             .defs
             .iter()
-            .filter(|d| d.package.is_none() || crate::paths::within(&dir, Path::new(analysis.file_name(d.span.file))))
+            .filter(|d| {
+                d.package.is_none() || crate::project::paths::within(&dir, Path::new(analysis.file_name(d.span.file)))
+            })
             .map(|d| name(d.name))
             .collect();
         // The commands the document's own files call, not the kernel's inner ones.
-        let mut owned: HashMap<crate::tex::FileId, bool> = HashMap::default();
-        let mut used: HashMap<crate::tex::Sym, u32> = HashMap::default();
+        let mut owned: HashMap<crate::engine::tex::FileId, bool> = HashMap::default();
+        let mut used: HashMap<crate::engine::tex::Sym, u32> = HashMap::default();
         for e in &analysis.facts.expansions {
             let file = e.span.file;
-            if *owned.entry(file).or_insert_with(|| crate::paths::within(&dir, Path::new(analysis.file_name(file)))) {
+            if *owned
+                .entry(file)
+                .or_insert_with(|| crate::project::paths::within(&dir, Path::new(analysis.file_name(file))))
+            {
                 *used.entry(e.name).or_default() += e.count.max(1);
             }
         }
@@ -1016,7 +1029,7 @@ impl Engine {
         let called: std::collections::HashSet<String> = used.iter().map(|(_, n)| n.clone()).collect();
         used.sort_by(|a, b| b.cmp(a));
         let store = hover_store(self.cfg, analysis, &dir);
-        let docs = crate::plugin::docs::index(&self.cfg.docs);
+        let docs = crate::plugins::docs::index(&self.cfg.docs);
         let mut dirs = std::collections::HashSet::new();
         for file in analysis.file_names().iter().map(Path::new).filter(|_| self.cfg.plugins.docs) {
             if dirs.insert(file.parent()) {
@@ -1072,8 +1085,8 @@ impl Engine {
     fn prefill_next(&mut self) {
         let Some((uri, name)) = self.prefill.pop_front() else { return };
         let last = !self.prefill.iter().any(|(u, _)| *u == uri);
-        let markdown = crate::probe::background(|| {
-            crate::progress::because("hover computed ahead", || {
+        let markdown = crate::analysis::probe::background(|| {
+            crate::util::progress::because("hover computed ahead", || {
                 with_doc(&self.docs, &uri, |analysis, _| handlers::command_markdown(analysis, &name))
             })
         });
@@ -1103,7 +1116,7 @@ impl Engine {
     /// first. One the project takes as given (a submodule's, another
     /// repository's, `project.frozen`) waits until a request asks for it.
     fn flush(&mut self) {
-        let frozen = crate::lint::Frozen::new(&self.cfg.project, &self.root);
+        let frozen = crate::linter::Frozen::new(&self.cfg.project, &self.root);
         let dirty = std::mem::take(&mut self.dirty);
         for uri in dirty.iter().rev() {
             if self.docs.get(uri).is_some_and(|d| d.analysis.is_some() || !frozen.holds(&d.path)) {
@@ -1232,11 +1245,11 @@ impl Engine {
                 let open = self.docs.iter().find(|(_, d)| file.as_ref().is_none_or(|f| *f == d.path));
                 let held = open.map(|(uri, _)| uri.clone()).and_then(|uri| {
                     self.fresh(&uri);
-                    with_doc(&self.docs, &uri, |a, text| crate::cmd::query::answer_request(&body, a, text.body()))?
+                    with_doc(&self.docs, &uri, |a, text| crate::cli::query::answer_request(&body, a, text.body()))?
                 });
                 let active = self.docs.values().next().map(|d| d.path.clone()).unwrap_or_else(|| self.root.clone());
                 let result =
-                    held.map_or_else(|| crate::cmd::query::run_request_value(&body, self.cfg, Some(&active)), Ok);
+                    held.map_or_else(|| crate::cli::query::run_request_value(&body, self.cfg, Some(&active)), Ok);
                 let _ = reply.send(result);
             }
         }
@@ -1258,7 +1271,7 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
                     let kept = hovers.lock().ok().and_then(|h| h.get(&key).cloned());
                     let markdown = kept.unwrap_or_else(|| {
                         let markdown =
-                            crate::progress::because("hover", || handlers::command_markdown(analysis, &name));
+                            crate::util::progress::because("hover", || handlers::command_markdown(analysis, &name));
                         if let Ok(mut hovers) = hovers.lock() {
                             hovers.insert(key, markdown.clone());
                         }
@@ -1281,14 +1294,14 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
             let _ = reply.send(result.flatten());
         }
         EngineMsg::SignatureHelp(uri, pos, reply) => {
-            let result = crate::progress::because("signature help", || {
+            let result = crate::util::progress::because("signature help", || {
                 with_doc(docs, &uri, |analysis, text| handlers::signature_help(analysis, text, pos))
             });
             let _ = reply.send(result.flatten());
         }
         EngineMsg::Completion(uri, pos, reply) => {
             let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-            let result = crate::progress::because("completion", || {
+            let result = crate::util::progress::because("completion", || {
                 with_doc_or(docs, blank, &uri, |analysis, text| {
                     match bib::completion(analysis, text, &path, handlers::to_pos(text, pos)) {
                         Some(items) => lsp_types::CompletionResponse::Array(items),
@@ -1315,7 +1328,9 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
                 let key = (uri.clone(), name.clone());
                 hovers.lock().ok().and_then(|h| h.get(&key).cloned()).or_else(|| {
                     with_doc(docs, &uri, |analysis, _| {
-                        crate::progress::because("completion docs", || handlers::command_markdown(analysis, &name))
+                        crate::util::progress::because("completion docs", || {
+                            handlers::command_markdown(analysis, &name)
+                        })
                     })
                 })
             });
@@ -1352,7 +1367,7 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
             let _ = reply.send(result.unwrap_or_default());
         }
         EngineMsg::Written(uri, reply) => {
-            let or = format!("{}\n", crate::tex::TEXT_OR);
+            let or = format!("{}\n", crate::engine::tex::TEXT_OR);
             let files = |a: &Analysis| {
                 let texts = |t: &String| t.split(or.as_str()).map(str::to_owned).collect::<Vec<_>>();
                 a.written
@@ -1419,13 +1434,13 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
             rx.recv_timeout(debounce)
         } else if !engine.prefill.is_empty() {
             // Idle: one more hover, unless a message waits.
-            crate::probe::WANTED.store(false, std::sync::atomic::Ordering::Relaxed);
+            crate::analysis::probe::WANTED.store(false, std::sync::atomic::Ordering::Relaxed);
             match rx.try_recv() {
                 Ok(msg) => Ok(msg),
                 Err(TryRecvError::Empty) => {
                     engine.prefill_one();
                     if engine.prefill.is_empty() {
-                        crate::progress::idle();
+                        crate::util::progress::idle();
                     }
                     continue;
                 }
@@ -1439,7 +1454,7 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
             Ok(msg) => engine.step(msg),
             Err(RecvTimeoutError::Timeout) => engine.flush(),
         }
-        crate::progress::idle();
+        crate::util::progress::idle();
     }
 }
 
@@ -1450,12 +1465,12 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
 fn publish(
     actions: &mut HashMap<Uri, Vec<Json>>,
     analysis: &Analysis,
-    records: &[crate::query::Record],
+    records: &[crate::queries::query::Record],
     own: &Path,
     open: &[&Path],
 ) -> Vec<PublishDiagnosticsParams> {
     let names = analysis.file_names();
-    let read = |p: &&Path| names.iter().any(|f| crate::paths::same_file(Path::new(f), p));
+    let read = |p: &&Path| names.iter().any(|f| crate::project::paths::same_file(Path::new(f), p));
     // The findings of the file worked on and of the other open files it
     // reads: the rest of the run is context.
     let shown: Vec<String> = std::iter::once(own)
@@ -1503,8 +1518,8 @@ fn with_doc_or<T>(
     let analysis = doc.analysis.as_deref().or(blank)?;
     let text = Text::new(doc.text.clone());
     // Columns count what this document's engine reads, whatever was
-    // analyzed last on this thread (`crate::source`).
-    Some(crate::source::with(analysis.plugins.engine.encoding(), || f(analysis, &text)))
+    // analyzed last on this thread (`crate::engine::source`).
+    Some(crate::engine::source::with(analysis.plugins.engine.encoding(), || f(analysis, &text)))
 }
 
 /// What `old` probed of names the package code defines, by name, in
@@ -1521,7 +1536,7 @@ fn carry_probes(old: &Analysis, new: &Analysis) {
     let (Ok(from), Ok(mut to)) = (old.probes.lock(), new.probes.lock()) else { return };
     for (&(sym, at), probed) in from.iter() {
         let name = old.interner.name(sym);
-        if at != crate::probe::State::End
+        if at != crate::analysis::probe::State::End
             && !own.contains(name)
             && let Some(sym) = new.interner.lookup(name)
         {

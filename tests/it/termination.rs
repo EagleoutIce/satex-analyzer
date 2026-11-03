@@ -6,9 +6,9 @@
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use satex::config::{Config, Engine};
-use satex::machine::Machine;
-use satex::plugin::Kernel;
+use satex::analysis::machine::Machine;
+use satex::plugins::Kernel;
+use satex::project::config::{Config, Engine};
 
 /// Each input, with a budget small enough that a run reading tokens at any
 /// sane rate reaches it in well under the bound.
@@ -99,10 +99,10 @@ fn cfg(steps: u64) -> Config {
 /// and widened, because a path that fails at a site fails there again on
 /// every round.
 mod repeated_failures {
-    use satex::config::{Config, Engine};
-    use satex::facts::Severity;
-    use satex::machine::{Analysis, Machine};
-    use satex::plugin::Kernel;
+    use satex::analysis::facts::Severity;
+    use satex::analysis::machine::{Analysis, Machine};
+    use satex::plugins::Kernel;
+    use satex::project::config::{Config, Engine};
 
     /// How often the input below reaches the one failing site.
     const USES: usize = 40;
@@ -190,10 +190,10 @@ mod repeated_failures {
 /// `limits.recursion_depth` rounds instead, the same cheap way a repeated gap
 /// is (`repeated-failure`).
 mod self_referential_macros {
-    use satex::config::{Config, Engine};
-    use satex::facts::Severity;
-    use satex::machine::{Analysis, Machine};
-    use satex::plugin::Kernel;
+    use satex::analysis::facts::Severity;
+    use satex::analysis::machine::{Analysis, Machine};
+    use satex::plugins::Kernel;
+    use satex::project::config::{Config, Engine};
 
     fn cfg() -> Config {
         let mut cfg = Config { engine: Some(Engine::PdfTeX), kernel: Some(Kernel::None), ..crate::support::config() };
@@ -295,7 +295,7 @@ fn unknown_marker_through_expandafter_terminates_with_one_gap() {
     cfg.limits.seconds = 0;
     // The creation date stands for text satex cannot know only when the
     // clock is not assumed.
-    cfg.clock = satex::config::Clock::Unknown;
+    cfg.clock = satex::project::config::Clock::Unknown;
     let analysis = Machine::analyze(
         "\\catcode`\\{=1 \\catcode`\\}=2 \
          \\edef\\b{\\expandafter\\relax\\pdfcreationdate}\\ifnum\\b=0 \\fi",
@@ -570,8 +570,8 @@ fn a_join_never_folds_code_into_data() {
 \begin{document}x\end{document}";
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/termination/join-code");
     let cfg = Config {
-        cache: satex::config::Cache { dir: Some(crate::support::scratch_dir(dir)), ..Default::default() },
-        load: satex::config::Load { packages: true, classes: true, ..Default::default() },
+        cache: satex::project::config::Cache { dir: Some(crate::support::scratch_dir(dir)), ..Default::default() },
+        load: satex::project::config::Load { packages: true, classes: true, ..Default::default() },
         ..crate::support::config()
     };
     crate::support::seed_kernel(&cfg);
@@ -640,8 +640,8 @@ fn a_summarized_loop_leaves_the_rest_of_the_document_read() {
         crate::support::tex_path(&dir)
     );
     let cfg = Config {
-        cache: satex::config::Cache { dir: Some(dir.join("cache")), ..Default::default() },
-        load: satex::config::Load { packages: true, classes: true, ..Default::default() },
+        cache: satex::project::config::Cache { dir: Some(dir.join("cache")), ..Default::default() },
+        load: satex::project::config::Load { packages: true, classes: true, ..Default::default() },
         ..crate::support::config()
     };
     crate::support::seed_kernel(&cfg);
@@ -673,8 +673,8 @@ Plain text after the loop.
 \end{document}";
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/termination/no-gobble");
     let cfg = Config {
-        cache: satex::config::Cache { dir: Some(crate::support::scratch_dir(dir)), ..Default::default() },
-        load: satex::config::Load { packages: true, classes: true, ..Default::default() },
+        cache: satex::project::config::Cache { dir: Some(crate::support::scratch_dir(dir)), ..Default::default() },
+        load: satex::project::config::Load { packages: true, classes: true, ..Default::default() },
         ..crate::support::config()
     };
     crate::support::seed_kernel(&cfg);
@@ -697,7 +697,7 @@ Plain text after the loop.
 /// the line skips its rest, and the next line is read. The run takes at
 /// most 3 times the budget per line read.
 mod line_guard {
-    use satex::machine::{Analysis, Machine};
+    use satex::analysis::machine::{Analysis, Machine};
 
     const LINE: u64 = 100_000;
     const HEAD: &str =
@@ -761,8 +761,8 @@ mod line_guard {
 /// can spell no defined name) or by the per-site fork budget, never by
 /// running out of steps.
 mod convergence {
-    use satex::config::Config;
-    use satex::machine::{Analysis, Machine};
+    use satex::analysis::machine::{Analysis, Machine};
+    use satex::project::config::Config;
 
     fn latex(name: &str, source: &str, tune: impl Fn(&mut Config)) -> Option<Analysis> {
         if !crate::support::installed() {
@@ -792,7 +792,7 @@ mod convergence {
                 d.code == "budget-exhausted"
                     || d.code == "line-budget-cut"
                     || (d.code == "limit-reached" && budgets.iter().any(|b| d.message.contains(b)))
-                    || (d.code == "analysis-ended-early" && d.severity != satex::facts::Severity::Imprecision)
+                    || (d.code == "analysis-ended-early" && d.severity != satex::analysis::facts::Severity::Imprecision)
             })
             .map(|d| format!("{} {}", d.code, d.message))
             .collect();
@@ -1071,7 +1071,7 @@ Some text with microtype protrusion and expansion.
 #[test]
 fn cut_after_a_look_ahead_keeps_earlier_definitions() {
     let mut cfg = Config {
-        load: satex::config::Load { packages: false, classes: false, ..Default::default() },
+        load: satex::project::config::Load { packages: false, classes: false, ..Default::default() },
         ..crate::support::config()
     };
     cfg.limits.line_steps = 300;
@@ -1085,7 +1085,7 @@ fn cut_after_a_look_ahead_keeps_earlier_definitions() {
         .facts
         .expansions
         .iter()
-        .filter(|e| e.meaning == satex::facts::MeaningKind::Undefined)
+        .filter(|e| e.meaning == satex::analysis::facts::MeaningKind::Undefined)
         .map(|e| analysis.interner.name(e.name).to_string())
         .collect();
     assert!(never.is_empty(), "undefined on an exact path: {never:?}");
@@ -1098,12 +1098,14 @@ fn cut_after_a_look_ahead_keeps_earlier_definitions() {
 fn lint_probes_stop_at_the_run_deadline() {
     let mut cfg = crate::support::config();
     cfg.limits.seconds = 60;
-    let a = satex::machine::Machine::analyze("\\def\\foo#1#2{#1}\n\\foo ab\n", None, &cfg);
+    let a = satex::analysis::machine::Machine::analyze("\\def\\foo#1#2{#1}\n\\foo ab\n", None, &cfg);
     let foo = a.interner.lookup("foo").expect("defined");
     let past = Instant::now() - Duration::from_secs(cfg.limits.seconds + 1);
-    let cut = satex::probe::within_run(Some(past), || satex::probe::probe(&a, foo, satex::probe::State::End));
+    let cut = satex::analysis::probe::within_run(Some(past), || {
+        satex::analysis::probe::probe(&a, foo, satex::analysis::probe::State::End)
+    });
     assert!(cut.as_ref().is_none_or(|p| !p.complete), "{cut:?}");
-    assert!(satex::probe::probe(&a, foo, satex::probe::State::End).is_some_and(|p| p.complete));
+    assert!(satex::analysis::probe::probe(&a, foo, satex::analysis::probe::State::End).is_some_and(|p| p.complete));
 }
 
 /// A line cut on the look-ahead after a number leaves the `\fi` of a
@@ -1130,7 +1132,7 @@ fn a_cut_before_a_pending_fi_in_the_output_routine_ends() {
     let mut cfg = Config {
         engine: Some(Engine::PdfTeX),
         kernel: Some(Kernel::None),
-        load: satex::config::Load { inputs: true, ..Default::default() },
+        load: satex::project::config::Load { inputs: true, ..Default::default() },
         ..crate::support::config()
     };
     let l = &mut cfg.limits;

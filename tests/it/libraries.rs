@@ -5,10 +5,10 @@
 
 use crate::support::PRELUDE;
 use crate::support::bare;
-use satex::config::{Config, Load, Texmf};
-use satex::facts::Severity;
-use satex::machine::{Analysis, Machine};
-use satex::tex::Meaning;
+use satex::analysis::facts::Severity;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::engine::tex::Meaning;
+use satex::project::config::{Config, Load, Texmf};
 
 fn analyze(source: &str) -> Analysis {
     Machine::analyze(&format!("{PRELUDE}{source}"), None, &bare())
@@ -39,7 +39,7 @@ fn gaps(analysis: &Analysis) -> Vec<String> {
 
 fn body(analysis: &Analysis, name: &str) -> String {
     match analysis.interner.lookup(name).map(|sym| analysis.env.meaning(sym)) {
-        Some(Meaning::Macro(m)) => satex::tex::detokenize(&m.replacement_text, &analysis.interner),
+        Some(Meaning::Macro(m)) => satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner),
         other => format!("{other:?}"),
     }
 }
@@ -183,7 +183,7 @@ fn an_unknown_dimension_still_prints_its_unit() {
 
 #[test]
 fn the_pgfkeys_query_lists_every_key_with_its_handler() {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     // pgfkeys.code.tex needs `@` to be a letter (its own header says so);
@@ -196,7 +196,7 @@ fn the_pgfkeys_query_lists_every_key_with_its_handler() {
 ";
     let cfg = Config { load: Load { inputs: true, ..Default::default() }, ..crate::support::config() };
     let analysis = Machine::analyze(source, None, &cfg);
-    let keys = satex::query::pgfkeys(&analysis, Some("/demo"));
+    let keys = satex::queries::query::pgfkeys(&analysis, Some("/demo"));
     let kind = |key: &str| {
         keys.iter()
             .find(|r| r["key"] == key)
