@@ -6,6 +6,9 @@
 #      TIMES=1 to print every test's seconds (libtest --report-time).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# The binary runs without cargo, so it takes cargo's [env] itself: test threads
+# with less stack give up deep nesting (xint) that the CLI follows.
+export RUST_MIN_STACK=${RUST_MIN_STACK:-$(sed -n 's/^RUST_MIN_STACK *= *"\([0-9]*\)"/\1/p' .cargo/config.toml)}
 export CARGO_BUILD_JOBS=${JOBS:-12} RUST_TEST_THREADS=${THREADS:-${RUST_TEST_THREADS:-12}}
 cap=()
 [ "${CAP:-1}" = 0 ] || cap=(systemd-run --user --scope -q -p MemoryMax=20G -p MemorySwapMax=0 -p CPUQuota=1200% nice -n 10)
