@@ -1705,7 +1705,7 @@
     if (!first.length) [first, rest] = [shown.slice(0, 1), shown.slice(1)];
     if (shown.length) explainBody.innerHTML = first.map(cards.explain).join('') +
       (rest.length ? `<details class="more"><summary>More definitions</summary>${rest.map(cards.explain).join('')}</details>` : '');
-    else if (!explainBody.querySelector('.hover')) explainBody.innerHTML = `<p class="muted">satex knows no ${escape(name)} here.</p>`;
+    else if (!explainBody.querySelector('.hover')) explainBody.innerHTML = `<p class="muted">SaTeX knows no ${escape(name)} here.</p>`;
   }
   /** Any control-sequence chip (`.cs-ref`, a name chip `a.cs`) shows the name's hover card after a short rest. The records are kept per name. */
   const CS_CHIP = '.cs-ref, a.cs[data-cs]';
@@ -1987,7 +1987,7 @@
     if (!Object.keys(set).length) return null;
     const r = await ask({ type: 'run', args: [...configFlags(set), 'query', '--list'], edits: {}, cwd: '/work' }).catch((e) => ({ status: 1, lines: [['err', e.message]] }));
     if (r.status === 0) return null;
-    return r.lines.filter(([k, t]) => k === 'err' && !/ignored: /.test(t)).map(([, t]) => plain(t).replace(/^satex: /, '')).pop() ?? 'satex does not take it';
+    return r.lines.filter(([k, t]) => k === 'err' && !/ignored: /.test(t)).map(([, t]) => plain(t).replace(/^SaTeX: /, '')).pop() ?? 'SaTeX does not take it';
   }
   let configKeys = null;
   /** Settings set aside at the start ({set, why}): shown in the dialog, never applied. */
@@ -2024,8 +2024,8 @@
     if (k.options) {
       // each value says what it means (the schema's enumDescriptions): in the list, and under the one chosen
       const why = (o) => k.optionTexts?.[k.options.indexOf(o)] ?? '';
-      const shown = value == null ? 'satex picks it from the file, as it does when the setting is not given' : why(value);
-      return `<select class="dropdown" data-cfg="${escape(k.key)}">${k.def === undefined ? `<option value=""${value == null ? ' selected' : ''} title="satex picks it from the file">automatic (from the file)</option>` : ''}${k.options.map((o) => `<option${sameValue(o, value) ? ' selected' : ''} title="${escape(why(o))}">${escape(o)}</option>`).join('')}</select>${shown ? `<small class="cfg-opt-why muted">${escape(shown)}</small>` : ''}`;
+      const shown = value == null ? 'SaTeX picks it from the file, as it does when the setting is not given' : why(value);
+      return `<select class="dropdown" data-cfg="${escape(k.key)}">${k.def === undefined ? `<option value=""${value == null ? ' selected' : ''} title="SaTeX picks it from the file">automatic (from the file)</option>` : ''}${k.options.map((o) => `<option${sameValue(o, value) ? ' selected' : ''} title="${escape(why(o))}">${escape(o)}</option>`).join('')}</select>${shown ? `<small class="cfg-opt-why muted">${escape(shown)}</small>` : ''}`;
     }
     const text = value == null ? '' : typeof value === 'string' ? value : JSON.stringify(value);
     // a value of a few names or a pattern (`clock`: now, unknown or a date) completes from the names and today
@@ -2766,7 +2766,7 @@
   async function showTip(ref, pin = false) {
     const html = await tipFor(ref);
     if (!pin && (trTip.dataset.pin || !ref.matches(':hover'))) return;
-    tips.card.show(ref, (pin ? '<p class="tr-tip-pin muted">pinned · click outside to close</p>' : '') + (html || `<p class="muted">satex knows no ${escape(ref.dataset.cs)} here.</p>`));
+    tips.card.show(ref, (pin ? '<p class="tr-tip-pin muted">pinned · click outside to close</p>' : '') + (html || `<p class="muted">SaTeX knows no ${escape(ref.dataset.cs)} here.</p>`));
   }
   traceBox.addEventListener('mouseover', (e) => { const ref = e.target.closest?.('.tr-cs'); if (ref && !trTip.dataset.pin) showTip(ref); });
   traceBox.addEventListener('mouseout', (e) => { if (e.target.closest?.('.tr-cs') && !trTip.dataset.pin) tips.card.hide(150); });
@@ -3641,13 +3641,13 @@
     const k = Math.max(0, views.findIndex(([v]) => v === view)), shown = views[k][2], before = k ? views[k - 1][2] : null;
     const a = Math.min(alt, (shown?.length ?? 1) - 1), text = shown?.[a], prev = before?.[Math.min(a, before.length - 1)];
     const lines = text == null ? 0 : text.split('\n').filter(Boolean).length, short = name.split('/').pop();
-    const body = text == null ? '<p class="muted">Not known: the build wrote text satex could not follow here.</p>'
+    const body = text == null ? '<p class="muted">Not known: the build wrote text SaTeX could not follow here.</p>'
       : `<pre>${(prev == null ? text.split('\n').map((l) => [' ', l]) : lineDiff(prev, text)).filter(([, l], i, all) => l || i < all.length - 1)
         .map(([d, l]) => `<span class="wf-l${d === '+' ? ' wf-add' : d === '-' ? ' wf-del' : ''}">${commandRefs(marked(l)) || ' '}</span>`).join('')}</pre>`;
     const changed = prev != null && text != null && prev !== text;
     const ext = short.split('.').pop(), ty = (manifest.completion?.types ?? []).find((t) => t.name.endsWith(`(.${ext})`));
     const kind = ty ? `<a class="wf-kind ty" data-ty="${escape(ty.name)}" href="${base}wiki/domains.html#files-written-in-the-run" target="_blank" rel="noopener">${escape(ext)}</a>`
-      : `<a class="wf-kind" href="${base}wiki/domains.html#files-written-in-the-run" target="_blank" rel="noopener" title="a file the build writes and reads back: how satex follows it">${escape(ext)}</a>`;
+      : `<a class="wf-kind" href="${base}wiki/domains.html#files-written-in-the-run" target="_blank" rel="noopener" title="a file the build writes and reads back: how SaTeX follows it">${escape(ext)}</a>`;
     return `<div class="wf" data-name="${escape(name)}"><div class="wf-head"><code>${escape(short)}</code>${kind}` +
       `<span class="muted">${text == null ? 'unknown' : plural(lines, 'line')}${k ? (changed ? `, changed since ${views[k - 1][1]}` : `, as in ${views[k - 1][1]}`) : ''}</span>` +
       `<span class="wf-runs" role="tablist">${views.length > 1 ? views.map(([v, label, t], i) => `<button type="button" role="tab" data-view="${v}" aria-selected="${i === k}"${i !== k && same(t, shown) ? ' class="wf-same" title="the same text as the tab shown"' : ''}>${label}</button>`).join('') : ''}</span></div>` +
@@ -4604,7 +4604,7 @@
   let heat = null;
   /** What each count of the run means: a fork splits one path in two, paths are the runs alive at once. */
   const RUN_MEANS = {
-    forks: 'how often a path split in two at a conditional or value satex could not decide. Each split adds one path',
+    forks: 'how often a path split in two at a conditional or value SaTeX could not decide. Each split adds one path',
     'peak paths': 'the most alternative runs alive at the same time. Paths that agree again join, so this stays far below the forks',
     steps: 'tokens read and expanded, on all paths together',
   };
@@ -4756,7 +4756,7 @@
   /** One line for the entries whose name says little. */
   const CACHE_NOTES = {
     previews: 'Sprites of TikZ arrow tips, patterns and colors that TeX drew, shown in completion previews.',
-    hashes: 'Content hashes satex uses to tell whether a cached package or file changed.',
+    hashes: 'Content hashes SaTeX uses to tell whether a cached package or file changed.',
     facts: 'What the installation is like (TeX Live version, engines), probed once.',
   };
   const DEFINED = ['public command', 'internal macro', 'environment', 'option', 'register', 'counter', 'length', 'switch', 'public alias', 'internal alias'];
@@ -5063,7 +5063,7 @@
   // A link that opens GitHub's new-issue form, prefilled and short; it posts nothing.
   $('play-issue').onclick = () => {
     const text = (state.texts[state.file] ?? '').slice(0, 1500), version = document.querySelector('a.version')?.textContent.trim() ?? '';
-    const body = `satex ${version}, kernel ${manifest.kernels[state.kernel]?.label ?? ''}\n\nWhat happened:\n\n\n${state.file}:\n\`\`\`latex\n${text}\n\`\`\`\n`;
+    const body = `SaTeX ${version}, kernel ${manifest.kernels[state.kernel]?.label ?? ''}\n\nWhat happened:\n\n\n${state.file}:\n\`\`\`latex\n${text}\n\`\`\`\n`;
     window.open(`${manifest.repository ?? 'https://github.com/EagleoutIce/satex-analyzer'}/issues/new?title=${encodeURIComponent(`[playground] `)}&body=${encodeURIComponent(body)}`, '_blank', 'noopener');
   };
 
@@ -5075,14 +5075,14 @@
   const PHASE = { unpacking: ['Unpacking', 'Unpacking the TeX files…'], importing: ['Importing', 'Importing the kernel caches…'] };
   /* The start, and an uploaded project, as one card over the page: the logo, the version, the stages in one bar.
    * Each stage holds its share of the bar; a stage's own progress (bytes, lines read) fills its share. */
-  const BOOT = /** @type {[string, string, number][]} */ ([['Fetching', 'downloads', 0.55], ['Unpacking', 'TeX files', 0.15], ['Importing', 'caches', 0.15], ['Starting', 'satex starts', 0.15]]);
+  const BOOT = /** @type {[string, string, number][]} */ ([['Fetching', 'downloads', 0.55], ['Unpacking', 'TeX files', 0.15], ['Importing', 'caches', 0.15], ['Starting', 'SaTeX starts', 0.15]]);
   var boot = { el: /** @type {HTMLElement | null} */ (null), at: 0, stage: -1, open: false, started: false }; // var: busy may run before this line
   function bootOpen(title) {
     if (!boot.el) {
       boot.el = Object.assign(document.createElement('div'), { className: 'boot', role: 'dialog' });
       boot.el.setAttribute('aria-label', 'loading the playground');
       const logo = document.querySelector('header .brand img')?.cloneNode(), version = document.querySelector('header a.version')?.textContent.trim() ?? '';
-      boot.el.innerHTML = `<div class="boot-card"><div class="boot-logo"></div><p class="boot-title"></p><p class="muted boot-version">satex ${escape(version)}</p>`
+      boot.el.innerHTML = `<div class="boot-card"><div class="boot-logo"></div><p class="boot-title"></p><p class="muted boot-version">SaTeX ${escape(version)}</p>`
         + `<ol class="boot-stages">${BOOT.map(([n, label]) => `<li data-stage="${n}">${label}</li>`).join('')}</ol>`
         + '<span class="sx-progress boot-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span class="sx-fill"></span></span><p class="muted boot-text" aria-live="polite"></p>'
         + '<button type="button" class="small ghost boot-hide" title="keep loading in the background">Hide</button></div>';
@@ -5316,7 +5316,7 @@
       const todo = list.more.filter(([p]) => !have.has(new URL(p, base).href));
       Object.assign(offlineState, { todo, total: todo.reduce((n, [, s]) => n + s, 0), got: 0 });
     } catch (e) { console.warn('offline mode unavailable', e); return; }
-    if (!offlineState.todo.length) { offlineShow('available offline', '', 'the page, satex and every package are kept in this browser'); return; }
+    if (!offlineState.todo.length) { offlineShow('available offline', '', 'the page, SaTeX and every package are kept in this browser'); return; }
     let off = false;
     try { off = localStorage.getItem('satex-offline') === 'off'; } catch {}
     if (navigator.connection?.saveData || off) { offlineShow('', `Keep offline (${mib(offlineState.total)} MiB)`, 'fetch every package now, so the playground works without its server'); return; }
@@ -5353,7 +5353,7 @@
     await Promise.all([one(), one()]);
     s.running = false;
     s.todo = next;
-    if (!next.length) offlineShow('available offline', '', 'the page, satex and every package are kept in this browser');
+    if (!next.length) offlineShow('available offline', '', 'the page, SaTeX and every package are kept in this browser');
     else s.got = s.total - next.reduce((n, [, z]) => n + z, 0), offlineShow(failed ? 'offline copy paused: no connection' : `offline copy stopped at ${mib(s.got)} of ${mib(s.total)} MiB`, 'Resume', 'fetch the rest of the packages');
   }
   offlineBtn.onclick = () => {
@@ -5370,7 +5370,7 @@
     const ready = await ask({ type: 'init', base, manifest, given }, given ? Object.values(given).map((b) => b.buffer) : []);
     booted = true;
     try { sessionStorage.removeItem('satex-recovered'); } catch {}
-    timing('t-init', secs(performance.now() - started), 'time to fetch satex and the pdfTeX kernel and set them up');
+    timing('t-init', secs(performance.now() - started), 'time to fetch SaTeX and the pdfTeX kernel and set them up');
     idle();
     sampleTexts = ready.samples;
     const setting = location.hash.startsWith('#setting=') ? new URLSearchParams(location.hash.slice(1)) : null;
