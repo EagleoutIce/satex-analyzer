@@ -15,7 +15,7 @@ pub static RULES: &[Rule] = &[
         code: "prefer-cleveref",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a hand-written name in front of `\\ref` is what cleveref sets from the label itself",
+        summary: "a name written before `\\ref` that cleveref prints by itself",
         explanation: "\
 `Section~\\ref{sec:x}` writes the name of the thing by hand, so renaming a
 section into an appendix leaves the prose behind.  cleveref's `\\cref` and
@@ -401,15 +401,15 @@ fn prefer_cleveref(report: &mut Report) {
         // Loaded, it asks for nothing more.
         let mut fixed = edits.ensure_package("cleveref");
         fixed.iter_mut().for_each(|e| e.push(replace.clone()));
-        let (name, how, load) = match cleveref {
-            true => ("cleveref", format!(", where `{call}` reads the name from the label"), ""),
+        let (name, message, load) = match cleveref {
+            true => ("cleveref", format!("`{call}` prints `{}` itself", n.source), ""),
             false => (
                 "load",
-                format!(", cleveref's `{call}` reads it from the label"),
+                format!("with cleveref, `{call}` prints `{}` itself", n.source),
                 "load cleveref (after hyperref) and ",
             ),
         };
         let fix = Fix::new(format!("{load}write `{call}`"), Applicability::Unsafe, fixed);
-        report.add_fix(at, name, format!("`{}` names the reference by hand{how}", n.source), fix);
+        report.add_fix(at, name, message, fix);
     }
 }
