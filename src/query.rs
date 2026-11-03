@@ -838,24 +838,6 @@ fn drawn_boxes(analysis: &Analysis) -> Vec<Drawn> {
     };
     let mut out = Vec::new();
     let mut open: Vec<(&str, Span)> = Vec::new();
-    let mut files: HashMap<FileId, Option<String>> = HashMap::default();
-    let mut sketched = |name: &str, from: Span, to: Span| -> Json {
-        let source =
-            files.entry(from.file).or_insert_with(|| std::fs::read_to_string(analysis.file_name(from.file)).ok());
-        let picture = |source: &str| {
-            let mut rows: Vec<String> = source
-                .lines()
-                .skip(from.line as usize - 1)
-                .take((to.line - from.line) as usize + 1)
-                .map(String::from)
-                .collect();
-            let last = rows.last_mut()?;
-            *last = last.chars().take(to.col as usize - 1).collect();
-            rows[0] = rows[0].chars().skip(from.col as usize - 1).collect();
-            crate::sketch::sketch(&rows.join("\n"))
-        };
-        source.as_deref().filter(|_| name == "tikzpicture").and_then(picture).unwrap_or(Json::Null)
-    };
     // Only an environment the source begins itself: beamer's own, run inside
     // `\begin{frame}`, are reported at the frame's place.
     let mut texts: HashMap<FileId, Option<String>> = HashMap::default();
@@ -871,7 +853,8 @@ fn drawn_boxes(analysis: &Analysis) -> Vec<Drawn> {
             OccKind::EndEnvironment => {
                 if let Some(k) = open.iter().rposition(|(name, _)| *name == o.key) {
                     let (name, from) = open.remove(k);
-                    let sketch = if from.file == o.span.file { sketched(name, from, o.span) } else { Json::Null };
+                    // What the picture draws is not known here yet: the run's own drawing is to come.
+                    let sketch = Json::Null;
                     // Text an environment reads back at its end (a frame) is placed after `\end{…}`.
                     let end = Span { col: o.span.col + format!("\\end{{{name}}}").len() as u32, ..o.span };
                     if from.file == o.span.file && written(name, from) && (empty(from, end) || !sketch.is_null()) {
