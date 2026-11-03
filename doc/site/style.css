@@ -1500,6 +1500,9 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 /* PDF bar: one row, Compile with its menu, icon buttons, foldable */
 .pdf-bar { flex-wrap: nowrap; align-items: center; min-width: 0; }
 .pdf-bar .pdf-views { flex: 0 1 auto; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+/* a tab cut by the bar's edge fades out there, which says the row scrolls on */
+.pdf-bar .pdf-views > * { flex-shrink: 0; }
+.pdf-bar .pdf-views.overflows { mask-image: linear-gradient(to right, #000 calc(100% - 1.6rem), transparent); }
 .pdf-bar .pdf-tools { flex: none; }
 .pdf-bar .icon { padding: .05rem .4rem; min-width: 1.5rem; line-height: 1.2; }
 .pdf-bar .icon[aria-pressed=true] { color: var(--accent); border-color: var(--accent); }
@@ -1567,13 +1570,12 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 
 /* a layer's fold: its sub-filters, from the data */
 .pdf-layer-row { display: flex; align-items: center; justify-content: space-between; gap: .4rem; flex-wrap: wrap; }
-.pdf-sub > summary { list-style: none; cursor: pointer; width: .9rem; height: .9rem; display: grid; place-items: center; color: var(--muted); border-radius: 4px; }
-.pdf-sub > summary::-webkit-details-marker { display: none; }
-.pdf-sub > summary::before { content: ""; width: .3rem; height: .3rem; border: solid currentColor; border-width: 0 2px 2px 0; rotate: 45deg; translate: 0 -.08rem; transition: rotate .2s var(--ease); }
-.pdf-sub > summary:hover { color: var(--accent); background: var(--sunk); }
-.pdf-sub[open] > summary::before { rotate: 225deg; translate: 0 .08rem; }
-.pdf-layer-row:has(.pdf-sub[open]) { flex-basis: 100%; }
-.pdf-sub[open] { flex-basis: 100%; order: 3; }
+.pdf-sub-toggle { all: unset; cursor: pointer; width: 1.1rem; height: 1.1rem; display: grid; place-items: center; color: var(--muted); border-radius: 4px; }
+.pdf-sub-toggle::before { content: ""; width: .3rem; height: .3rem; border: solid currentColor; border-width: 0 2px 2px 0; rotate: 45deg; translate: 0 -.08rem; transition: rotate .2s var(--ease); }
+.pdf-sub-toggle:hover, .pdf-sub-toggle:focus-visible { color: var(--accent); background: var(--sunk); }
+.pdf-sub-toggle[aria-expanded="true"]::before { rotate: 225deg; translate: 0 .08rem; }
+.pdf-sub { flex-basis: 100%; }
+@media (prefers-reduced-motion: reduce) { .pdf-sub-toggle::before { transition: none; } }
 .pdf-sub-list { display: grid; gap: .1rem; max-height: 11rem; overflow: auto; margin: .2rem 0 .2rem 1rem; padding-left: .5rem; border-left: 1px solid var(--border); }
 .pdf-sub-group { display: grid; gap: .1rem; } .pdf-sub-group > label { display: flex; align-items: center; gap: .35rem; cursor: pointer; white-space: nowrap; }
 .pdf-sub-group .count { margin-left: auto; font-weight: 500; color: var(--muted); }

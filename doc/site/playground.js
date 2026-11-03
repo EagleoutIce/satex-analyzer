@@ -4220,6 +4220,11 @@
   const occRect = (o) => pdfRects(occFile(o), o.line)[0];
   /** The keys placed on the pages, as the overlay's chips index them. */
   let pdfKeys = [];
+  /** The view tabs fade at the bar's edge while some stand past it. */
+  const pdfViewsFit = () => { const v = $('pdf-views'); v.classList.toggle('overflows', v.scrollWidth > v.clientWidth + 1 && v.scrollLeft + v.clientWidth < v.scrollWidth - 1); };
+  $('pdf-views').addEventListener('scroll', pdfViewsFit, { passive: true });
+  new ResizeObserver(pdfViewsFit).observe($('pdf-views'));
+  new MutationObserver(pdfViewsFit).observe($('pdf-views'), { childList: true, subtree: true });
   /** The layers drawn over the pages, each switched on its own and remembered per viewer. */
   const PDF_LAYERS = [
     ['defs', 'definitions', 'Labels and bibliography entries where they are set'],
@@ -4258,11 +4263,11 @@
     if (layer === 'refs') return [['kind', 'kind', kinds((k) => REF_KIND.test(k))]];
     if (layer === 'findings') {
       const found = pdfFound();
-      return [['severity', 'severity', tally(found.map((f) => [f[2]]))], ['rule', 'category and rule', tally(found.map((f) => [f[5], `${manifest.rules[f[5]]?.category ?? 'other'} · ${f[5]}`]))]];
+      return [['severity', 'severity', facetTally(found.map((f) => [f[2]]))], ['rule', 'category and rule', facetTally(found.map((f) => [f[5], `${manifest.rules[f[5]]?.category ?? 'other'} · ${f[5]}`]))]];
     }
     const pairs = pdfEnvPairs();
-    if (layer === 'envs') return [['name', 'name', tally(pairs.filter(([b]) => b.key !== 'document').map(([b]) => [b.key]))]];
-    if (layer === 'figures') return [['environment', 'environment', tally(pairs.filter(([, o]) => FIGURE_ENV.test(o.key)).map(([, o]) => [o.key]))]];
+    if (layer === 'envs') return [['name', 'name', facetTally(pairs.filter(([b]) => b.key !== 'document').map(([b]) => [b.key]))]];
+    if (layer === 'figures') return [['environment', 'environment', facetTally(pairs.filter(([, o]) => FIGURE_ENV.test(o.key)).map(([, o]) => [o.key]))]];
     return [];
   }
   /** Fills each layer's fold, keeping the ones open that are; a click on a row never closes the menu. */
@@ -4279,7 +4284,17 @@
     if ('keys' in kept) kept.defs = kept.refs = kept.keys;
     for (const k of Object.keys(pdfOverlayOn)) pdfOverlayOn[k] = !!kept[k];
   } catch {}
-  $('pdf-layer-list').innerHTML = PDF_LAYERS.map(([k, name, about]) => `<div class="pdf-layer-row"><label class="pdf-layer" title="${escape(about)}"><input type="checkbox" data-layer="${k}"${pdfOverlayOn[k] ? ' checked' : ''}><i class="pdf-swatch sw-${k}"></i>${escape(name)}</label>${PDF_FACETS.has(k) ? `<details class="pdf-sub" data-sub="${k}"><summary title="Filter ${escape(name)}" aria-label="filter ${escape(name)}"></summary><div class="pdf-sub-list"></div></details>` : ''}</div>`).join('');
+  $('pdf-layer-list').innerHTML = PDF_LAYERS.map(([k, name, about]) => `<div class="pdf-layer-row"><label class="pdf-layer" title="${escape(about)}"><input type="checkbox" data-layer="${k}"${pdfOverlayOn[k] ? ' checked' : ''}><i class="pdf-swatch sw-${k}"></i>${escape(name)}</label>${PDF_FACETS.has(k) ? `<button type="button" class="pdf-sub-toggle" aria-expanded="false" title="Filter ${escape(name)}" aria-label="filter ${escape(name)}"></button><div class="pdf-sub" data-sub="${k}" hidden><div class="pdf-sub-list"></div></div>` : ''}</div>`).join('');
+  // a layer's filters fold open under its row, the chevron stays in the row
+  $('pdf-layer-list').addEventListener('click', (e) => {
+    const t = e.target.closest('.pdf-sub-toggle');
+    if (!t) return;
+    e.preventDefault();
+    const sub = t.nextElementSibling, open = sub.hidden;
+    sub.hidden = !open;
+    t.setAttribute('aria-expanded', String(open));
+    if (open) pdfFacetsDraw();
+  });
   /** "Near the pointer": layers show only within a radius of the mouse, fading with distance. Off by default, kept per viewer. */
   const NEAR_PX = 110;
   var pdfNear = false;
