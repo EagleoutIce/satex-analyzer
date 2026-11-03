@@ -6,7 +6,7 @@
 #      TIMES=1 to print every test's seconds (libtest --report-time).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-export CARGO_BUILD_JOBS=${JOBS:-12} RUST_TEST_THREADS=${THREADS:-12}
+export CARGO_BUILD_JOBS=${JOBS:-12} RUST_TEST_THREADS=${THREADS:-${RUST_TEST_THREADS:-12}}
 cap=()
 [ "${CAP:-1}" = 0 ] || cap=(systemd-run --user --scope -q -p MemoryMax=20G -p MemorySwapMax=0 -p CPUQuota=1200% nice -n 10)
 lock=${BUILD_LOCK:-target/scratch/.build.lock}
