@@ -68,6 +68,7 @@ mod progressive;
 mod rename;
 mod roots;
 mod semantics;
+mod semantics_coverage;
 mod slice;
 mod slice_build;
 mod stubs;
