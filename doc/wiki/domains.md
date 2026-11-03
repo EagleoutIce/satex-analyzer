@@ -43,7 +43,7 @@ The bounded set is `OneOf` for every kind (below). Code that does not inspect th
 | --- | --- |
 | join | union of the members. Overlapping or touching intervals merge. At most `limits.value_set` (8) exact members, `limits.interval_set` (4) with an interval among them. |
 | widening | past `k`, or with an `Unknown` side: the hull of all members (`Value::join_hulls`). Only the gaps are lost. |
-| test | `\ifnum`/`\ifdim` decide member by member. When members disagree, each arm keeps the narrowed part that passes (`Num::narrow`). The arms rejoin at `\fi`. |
+| test | `\ifnum`/`\ifdim` decide member by member. When members disagree, each arm keeps the narrowed part that passes (`Num::narrow`). The arms rejoin at `\fi`. A test of an expression that is one register plus a constant (`\numexpr\count1-10`) narrows that register by the bound minus the constant, in `\ifnum` and in each `\ifcase` arm. |
 | arithmetic | `Num::lift` on the hull: exact at a point, else the interval's corners (cut at zero). An overflow clips, a 32-bit wraparound ([tex.web § 1238](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L23134)) widens to the whole word range. |
 
 Macro bodies use the same lift as [meaning sets](#meaning-sets-what-a-control-sequence-may-mean) (`limits.meaning_set`).
