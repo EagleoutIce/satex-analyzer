@@ -270,6 +270,7 @@ body.play > footer, body.play .side, body.play .toc { display: none; }
 /* a grid item with auto margins shrinks to its content: the app spans the window */
 body.play .layout { max-width: none; width: 100%; margin: 0; display: block; min-height: 0; min-width: 0; }
 body.play .top nav { flex-wrap: nowrap; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+@media (max-width: 52rem) { body.play .top nav { mask-image: linear-gradient(to right, #000 80%, transparent); } }
 body.play main { padding: 0; height: 100%; display: grid; grid-template-rows: minmax(0, 1fr); }
 .play-split { display: grid; grid-template-columns: minmax(0, var(--split, 1fr)) 6px minmax(0, 1fr); min-height: 0; }
 .divider { cursor: col-resize; background: var(--border); touch-action: none; transition: background-color var(--quick); }

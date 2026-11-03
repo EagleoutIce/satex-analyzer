@@ -47,8 +47,9 @@
   }
   {
     const filebar = tabs.closest('.filebar'), actions = filebar.querySelector('.actions'), tablist = filebar.querySelector('.tablist');
-    // the tabs scroll, or the actions wrapped under them
-    const check = collapsing(filebar, () => tabs.scrollWidth > tabs.clientWidth + 1 || actions.offsetTop > tablist.offsetTop + tablist.offsetHeight / 2);
+    // the tabs scroll, the actions wrapped under them, or on a row of their own they run past the bar
+    const past = () => actions.getBoundingClientRect().right > filebar.getBoundingClientRect().right + 1;
+    const check = collapsing(filebar, () => tabs.scrollWidth > tabs.clientWidth + 1 || actions.offsetTop > tablist.offsetTop + tablist.offsetHeight / 2 || past());
     // the menu the buttons fold into: a click opens them as a column under it
     const more = Object.assign(document.createElement('button'), { type: 'button', className: 'pill more-actions', title: 'more actions', innerHTML: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12.5" cy="8" r="1.2"/></svg>' });
     more.setAttribute('aria-expanded', 'false');
@@ -80,7 +81,7 @@
       }
       set('satex-side-tab', id);
     };
-    const first = get('satex-side-tab') ?? 'play-findings';
+    const first = get('satex-side-tab') ?? 'play-typeset';
     const current = () => tabs.find((t) => t.getAttribute('aria-selected') === 'true')?.dataset.panel ?? first;
     const pair = (on) => { side.classList.toggle('beside', on); split.setAttribute('aria-pressed', String(on)); set('satex-side-split', on ? '1' : '0'); show(current()); };
     for (const t of tabs) t.onclick = () => show(t.dataset.panel);
