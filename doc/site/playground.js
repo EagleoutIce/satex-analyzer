@@ -19,7 +19,13 @@
   };
   // the browser's layout notice (`ResizeObserver loop …`) is no failure: it carries no error object
   addEventListener('error', (e) => { if (!booted && e.error) recover(e.error); });
-  addEventListener('unhandledrejection', (e) => { if (!booted) recover(e.reason); });
+  addEventListener('unhandledrejection', (e) => {
+    if (!booted) return recover(e.reason);
+    const m = String(e.reason?.message ?? e.reason ?? '');
+    if (e.reason?.name === 'AbortError' || /cancel|abort/i.test(m)) return;
+    console.warn('unhandled', e.reason);
+    self.satexToast?.(`Something failed: ${m.slice(0, 120)}`);
+  });
   try { const note = sessionStorage.getItem('satex-note'); if (note) { sessionStorage.removeItem('satex-note'); setTimeout(() => self.satexToast?.(note) ?? console.warn(note), 2000); } } catch {}
   window.satexTypeList = manifest.completion?.types;
   const base = new URL(manifest.root, document.baseURI).href;
@@ -70,8 +76,13 @@
     const side = document.querySelector('.side-pane'), tabs = [...side.querySelectorAll('.side-tabs [role=tab]')], split = $('side-split');
     const get = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
     const set = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+    const phone = matchMedia('(max-width: 36rem)'), splitEl = document.querySelector('.play-split'), editorTab = $('phone-editor');
+    // a phone shows the editor or one panel, the bottom bar switches
+    const view = (v) => { splitEl.dataset.view = v; editorTab.setAttribute('aria-pressed', String(v === 'editor')); };
+    let ready = false;
     const show = (id) => {
-      const beside = side.classList.contains('beside');
+      if (ready && phone.matches) view('panel');
+      const beside = side.classList.contains('beside') && !phone.matches;
       if (!tabs.some((t) => t.dataset.panel === id) || beside && id === 'play-pdf') id = 'play-typeset';
       for (const t of tabs) {
         const on = t.dataset.panel === id;
@@ -93,7 +104,11 @@
       next.focus();
     });
     split.onclick = () => pair(!side.classList.contains('beside'));
+    editorTab.onclick = () => view('editor');
+    phone.addEventListener('change', () => show(current()));
+    view('editor');
     pair(get('satex-side-split') === '1');
+    ready = true;
     return show;
   })();
   const PANES = { min: 15, snap: [1 / 3, 1 / 2, 2 / 3], within: 1, minSection: 4 }; // rem, fractions
@@ -190,7 +205,7 @@
       if (remember) { kept.console = folded; keep(); }
     };
     $('play-termtoggle').onclick = () => foldConsole(!$('play-termbody').hidden);
-    foldConsole(!!kept.console, false);
+    foldConsole(kept.console ?? matchMedia('(max-width: 36rem)').matches, false);
     // the run output over the command line: its grip sets its height
     const out = $('play-out');
     if (kept.term) out.style.setProperty('--h', `${kept.term}px`);
@@ -213,6 +228,11 @@
   const num = (n) => Number(n).toLocaleString('en').replace(/,/g, '\u2009');
   /** A count in a chip or badge: 22k, 1.4M; the exact one is `num`'s. */
   const short = (n) => compact.format(Number(n)).toLowerCase().replace('m', 'M');
+  /** A TeX length (in pt) in the other units too, as TeX counts them: 1in = 72.27pt, 1bp = 72.27/72pt, 1cm = 72.27/2.54pt. */
+  const lengths = (pt) => {
+    const sig = (x) => String(+x.toPrecision(3));
+    return `${sig(pt)}pt = ${sig(pt * 2.54 / 72.27 * 10)}mm = ${sig(pt * 2.54 / 72.27)}cm = ${sig(pt / 72.27)}in = ${sig(pt * 72 / 72.27)}bp`;
+  };
   const size = (n) => n < 2 ** 20 ? `${Math.ceil(n / 1024)} KiB` : `${(n / 2 ** 20).toFixed(1)} MiB`;
   const started = performance.now();
 
@@ -446,6 +466,11 @@
   // yet answered, are `running`, and what it answered before stands in meanwhile.
   const order = [];
   let running = 0;
+  /** Per file, the version of the last text sent to the server, and whether the editor's text is newer still. */
+  const sentVersions = new Map();
+  let typedSincePush = false;
+  /** Findings of a text older than the server's: the editor no longer has it. */
+  const outdated = (p) => p.version != null && (sentVersions.get(p.uri) ?? -Infinity) > p.version;
   function lsp(method, params, notify = false) {
     const message = { jsonrpc: '2.0', method, params, ...(notify ? {} : { id: nextId++ }) };
     const runs = method === 'satex/analyze';
@@ -456,6 +481,8 @@
       if (answered.has(key)) return Promise.resolve(answered.get(key));
       if (method === 'textDocument/hover') return Promise.resolve(null);
     }
+    // the version of each text the server has: findings of an older one are dropped
+    if (method === 'textDocument/didOpen' || method === 'textDocument/didChange') sentVersions.set(params.textDocument.uri, params.textDocument.version);
     order.push(runs);
     running += +runs;
     worker.postMessage({ type: 'lsp', message });
@@ -502,13 +529,16 @@
   let typedAt = 0;
   function changed() {
     version++;
+    typedSincePush = true;
     typedAt = performance.now();
     if (refs && refs.file === state.file) clearRefs();
     clearTimeout(timer);
     // A command name or an argument still being typed (`\dra`, `\cite{kn`) waits: the analysis
     // would block completion for seconds, and its findings would be about unfinished text.
     const line = editor.text().split('\n')[editor.position().line] ?? '', before = line.slice(0, editor.position().character);
+    dirty = true;
     timer = setTimeout(sync, /\\[A-Za-z@]*$|\{[^{}\s]*$/.test(before) ? 1500 : 400);
+    markStale();
     pdfEdited();
   }
   /** After an analysis, the command list the server would offer after a `\\`, asked once at a command
@@ -554,12 +584,13 @@
     }
     if (synced === version || !opened.has(uri())) return false;
     synced = version;
+    typedSincePush = false;
     lsp('textDocument/didChange', { textDocument: { uri: uri(), version }, contentChanges: [{ text: editor.text() }] }, true);
     return true;
   }
   /** Once typing pauses: the buffer, and an analysis of it. */
   function sync() {
-    clearTimeout(timer);
+    clearTimeout(timer); timer = null;
     // a completion may have sent the text already: what counts is whether this version was analyzed
     const pushed = push();
     if (pushed || (analyzedVersion !== version && !!state.file && !(state.file in state.ro))) {
@@ -569,19 +600,34 @@
       if (state.file === state.root && wanted() !== state.kernel && !manualKernel && !following) { following = true; restart().finally(() => { following = false; }); return; }
       analyze(); explainSoon();
     }
+    dirty = false; markStale();
   }
   /** An analysis wanted while one runs is not queued behind it in the worker: one follows it, on the newest text,
    * however many edits came meanwhile (the worker cannot stop a run, so the stale ones are never started). */
   let analysisQueued = false;
+  /** Findings of an older text dim while a newer analysis is wanted, pending or running. */
+  let dirty = false;
+  const pendingRun = () => !!state.file && (dirty || running > 0 || analysisQueued || timer !== null);
+  /** Every view (findings, their count, the typeset text, explain, the PDF's layers) is tagged with the file and text
+   * version its results are of ([`shownFor`]): it dims while the editor holds another file or a newer text, or a run is pending. */
+  const shownOf = new Map(); // element -> [uri, version, class]
+  function shownFor(el, target, of, cls = 'stale') { if (el) { shownOf.set(el, [target, of ?? null, cls]); markStale(); } }
+  function markStale() {
+    const sent = sentVersions.get(uri()), pending = pendingRun();
+    if (!shownOf.has(list)) list.classList.toggle('stale', pending);
+    for (const [el, [target, of, cls]] of shownOf) el.classList.toggle(cls, target !== uri() || (of !== null && sent !== undefined && of !== sent) || typedSincePush || pending);
+  }
   function analyze() {
-    if (running > 0) { analysisQueued = true; return; }
+    dirty = false;
+    if (running > 0) { analysisQueued = true; markStale(); return; }
     checking();
     lsp('satex/analyze', {}, true);
+    markStale();
   }
   function drainAnalysis() {
     if (running === 0) hang = HANG_MS;
     if (running > 0) return;
-    if (!analysisQueued) { if (heldFindings) publish(heldFindings); return; }
+    if (!analysisQueued) { if (heldFindings) publish(heldFindings); markStale(); return; }
     analysisQueued = false;
     analyze();
   }
@@ -1007,6 +1053,7 @@
   // ---------------------------------------------------------------- findings and fixes
 
   const diagnostics = {}; // uri -> the last list, each with its fixes
+  const diagnosticVersions = {}; // uri -> the version of the text they are of
   const key = (d) => `${d.data?.rule ?? d.code}|${d.range.start.line}:${d.range.start.character}|${d.message}`;
   /** What the open file's paragraphs set, from the language server's last
    * analysis (`satex query typeset`); a click goes to the paragraph. */
@@ -1267,6 +1314,7 @@
     if (alone && act.phase === 'Typesetting') idle();
     if (!rows || target !== uri()) return;
     typesetRows = rows;
+    shownFor(typesetBody, target, diagnosticVersions[target]);
     if (pdfOverlayOn?.findings) pdfOverlay();
     const paragraphs = rows.filter((r) => r.kind === 'paragraph');
     const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"${r.env ? ` data-env="${escape(r.env)}" title="set in ${escape(r.env)}"` : ''} data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${escape(r.detail ?? '')}"${r.lines?.length ? ` data-lines="${escape(JSON.stringify(r.lines))}"` : ''}><span class="ts-at">${r.line}</span><span class="ts-text">${r.env ? `<span class="ts-env">${escape(r.env)}</span>` : ''}${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`;
@@ -1307,9 +1355,12 @@
     } else editor.focus({ start: at, end: at });
   });
 
-  async function show(target, ds) {
+  async function show(target, ds, of = null) {
     const actions = await lsp('textDocument/codeAction', { textDocument: { uri: target },
       range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, context: { diagnostics: [] } }).catch(() => []);
+    // a newer text was sent while the fixes were asked for
+    if (outdated({ uri: target, version: of })) return;
+    diagnosticVersions[target] = of;
     const by = new Map();
     fixAlls[target] = (actions ?? []).filter((a) => a.data?.scope);
     for (const a of (actions ?? []).filter((x) => !x.data?.scope)) for (const d of a.diagnostics ?? []) {
@@ -1331,11 +1382,15 @@
   let listed = [];
   function render() {
     const ds = diagnostics[uri()] ?? [];
-    editor.diagnostics(ds);
+    // Findings go on the editor's text only when they are of it: else the editor keeps the last ones, moved along with its edits.
+    const of = diagnosticVersions[uri()];
+    if (!typedSincePush && (of == null || of === sentVersions.get(uri()))) editor.diagnostics(ds);
     const others = Object.entries(diagnostics).filter(([u]) => u !== uri()).flatMap(([u, rs]) => rs.map((d) => ({ ...d, file: u.split('/').pop(), target: u })));
     listed = [...ds, ...others];
     if (retryCompletion && !running) { retryCompletion = false; asked.clear(); editor.complete?.(); }
     count.textContent = listed.length;
+    shownFor(list, uri(), diagnosticVersions[uri()]);
+    shownFor(count, uri(), diagnosticVersions[uri()]);
     pills(ds);
     if (checkStart) { timing('t-check', secs(performance.now() - checkStart), 'the language server analyzed the open file'); shownTime(secs(performance.now() - checkStart)); }
     checkStart = 0;
@@ -1343,6 +1398,7 @@
     $('fix-all').innerHTML = editableFile() ? fixAllButton('all') : '';
     lspStatus.textContent = state.file in state.ro ? 'read-only file' : provisional ? `provisional: ${provisional} still downloading; the check runs again once ${provisional.includes(', ') ? 'they are' : 'it is'} in` : listed.length ? '' : 'none';
     list.classList.toggle('provisional', !!provisional);
+    markStale();
     if (pdfOverlayOn?.findings) pdfOverlay();
     typesetFindings();
     const fixButton = (f, j) => `<button class="small apply fix-${f.safety}" data-j="${j}" title="${escape(f.title)}">Fix (${f.safety})</button>`;
@@ -1643,7 +1699,7 @@
   /** The command at the caret or under the mouse, explained live: what `satex explain`
    * says of it in the current text, run in the worker and kept per name and text version.
    * The language server's hover fills in until the run is back. */
-  const explainBody = $('explain-body');
+  const explainBody = $('explain-body'), explainOff = $('explain-off');
   var explainTimer = 0, explained = '';
   const explanations = new Map(); // `name|file|version|kernel` -> records
   function explainSoon(at) {
@@ -1654,6 +1710,8 @@
   async function explainAt(at) {
     if (!editor || !at) return;
     const line = editor.text().split('\n')[at.line] ?? '', w = wordAt(line, at.character);
+    explainOff.hidden = !!w?.[3] || !explained;
+    explainBody.classList.toggle('off', !w?.[3] && !!explained);
     if (!w?.[3]) return;
     return explainName(`\\${w[2]}`, at);
   }
@@ -1697,6 +1755,7 @@
     const rs = records ?? await explainRecords(name);
     if (explained !== k) return;
     explainBody.classList.remove('stale');
+    shownFor(explainBody, uri(), sentVersions.get(uri()));
     const shown = rs.filter((r) => r.name === name);
     // the definition in force at the caret first, the others folded
     const text = editor.text(), begin = text.split('\n').findIndex((l) => /\\begin\s*\{document\}/.test(l));
@@ -3279,6 +3338,7 @@
     for (const n of state.files.slice(0, OPEN_AT_START)) open(n, false);
     analyze();
     synced = version;
+    typedSincePush = false;
     following = false;
   }
 
@@ -3340,6 +3400,7 @@
     drawRefs();
     open(name);
     synced = version; // the server has this text: opened with it, or kept in sync with it
+    typedSincePush = false;
     render();
     typeset(uri());
     heatDraw();
@@ -3364,6 +3425,7 @@
   /** An example in place of the project: its files (as last edited), its root, its command. */
   async function example(ex, { file = ex, list = null, root = ex, command = null } = {}) {
     if (!editor || !(ex in sampleTexts)) return;
+    exampleAt = performance.now();
     sync();
     if (state.upload) Object.assign(state, { dir: '/work', texts: { ...sampleTexts }, upload: false, lists: {}, bins: {} });
     for (const n of Object.keys(state.ro)) delete state.texts[n];
@@ -3547,6 +3609,7 @@
   async function fetchKernel(i) {
     const entry = manifest.kernels[i];
     if (!state.loaded.has(i)) {
+      bootAgain();
       busy('Fetching', `Fetching the ${entry.label} kernel (${size(entry.size)})…`);
       const t = performance.now();
       const given = location.protocol === 'file:' ? await local(entry.bundle) : undefined;
@@ -3590,6 +3653,7 @@
   let loadedBytes = 0;
   async function fetchPackages(ids) {
     if (!ids.length) return false;
+    bootAgain();
     const entries = ids.map((id) => PACKAGES.get(id));
     const label = entries.map((e) => e.label).join(', ');
     busy('Fetching', `Fetching ${plural(entries.length, 'package')}, ${size(entries.reduce((n, e) => n + e.size, 0))}…`);
@@ -3965,7 +4029,7 @@
       + `<ol class="pdf-cmds">${runs.map(pdfCommand).join('')}</ol>`
       + (shows.length ? `<details class="pdf-shows"><summary class="muted">How the playground shows the build (${shows.length})</summary><ol class="pdf-cmds">${shows.map(pdfCommand).join('')}</ol></details>` : '') + '</div>';
     pdfViewShow();
-    pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => { pdfFollow(true); pdfOverlay(); }, { once: true }));
+    pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => { if (pdfFollowOn) pdfFollow(true); pdfOverlay(); }, { once: true }));
   }
   /** The commands of the build: the server's, the engine runs `satex compile` names on its console (`$ …`) after it. */
   const pdfRuns = () => (pdf.commands ?? []).flatMap((r) => [r, ...(/ compile( |$)/.test(r.command) ? String(pdf.stderr ?? '').split('\n').filter((l) => l.startsWith('$ ')).map((l) => ({ command: l.slice(2), inner: true })) : [])]);
@@ -4006,11 +4070,12 @@
   var pdfFollowOn = true;
   try { pdfFollowOn = localStorage.getItem('satex-pdf-follow') !== 'off'; } catch {}
   const pdfFollowButton = $('pdf-follow');
-  pdfFollowButton.setAttribute('aria-pressed', String(pdfFollowOn));
+  const followState = () => { pdfFollowButton.setAttribute('aria-pressed', String(pdfFollowOn)); pdfFollowButton.title = `The page follows the editor's cursor: ${pdfFollowOn ? 'on' : 'off'}`; };
+  followState();
   pdfFollowButton.onclick = (e) => {
     e.preventDefault();
     pdfFollowOn = !pdfFollowOn;
-    pdfFollowButton.setAttribute('aria-pressed', String(pdfFollowOn));
+    followState();
     try { localStorage.setItem('satex-pdf-follow', pdfFollowOn ? 'on' : 'off'); } catch {}
     if (pdfFollowOn) pdfFollow(); else pdfBody.querySelectorAll('.pdf-mark').forEach((m) => m.remove());
   };
@@ -4416,6 +4481,7 @@
   /** Over the pages, each when switched on: keys (definitions apart from references), findings on their characters,
    * environments, the text block and the bad boxes of the log. Placed by SyncTeX, so a slice has none. */
   function pdfOverlay() {
+    shownFor(pdfBody, uri(), diagnosticVersions[uri()], 'ov-stale');
     pdfFacetsDraw();
     pdfOverlayDraw();
     pdfLabelsFit();
@@ -4492,7 +4558,7 @@
         if (!wh) continue;
         const pt = (bp) => (bp * 72.27 / 72).toFixed(0);
         for (const [l, t, r, d] of [[0, 0, wh[0], g.t], [0, g.d, wh[0], wh[1]], [0, g.t, g.l, g.d], [g.r, g.t, wh[0], g.d]]) box(page, 'pdf-margin', l, t, r, d, 'margin');
-        box(page, 'pdf-block', g.l, g.t, g.r, g.d, `text block: ${pt(g.r - g.l)}pt wide, its lines from ${pt(g.t)}pt to ${pt(g.d)}pt from the top`, `<b>${pt(g.r - g.l)}pt</b>`);
+        box(page, 'pdf-block', g.l, g.t, g.r, g.d, `text block: ${lengths((g.r - g.l) * 72.27 / 72)} wide, its lines from ${pt(g.t)}pt to ${pt(g.d)}pt from the top`, `<b>${pt(g.r - g.l)}pt</b>`);
       }
     }
     if (pdfOverlayOn.boxes) {
@@ -4506,11 +4572,11 @@
           // the line that sticks out most is the overfull one
           const r = over ? rows.reduce((x, y) => (y.r > x.r ? y : x)) : rows[0], g = blocks.get(r.page), edge = g?.r ?? r.r;
           box(r.page, `pdf-bad ${over ? 'b-over' : 'b-under'}`, r.l - 1, r.t - 1, Math.max(r.r, edge) + 1, r.d + 2, what);
-          if (over) box(r.page, 'pdf-bar-out', edge, r.t - 1, edge + Math.max(+by * 72 / 72.27, 1.5), r.d + 2, `${by}pt too wide`, `<b>${by}pt</b>`);
+          if (over) box(r.page, 'pdf-bar-out', edge, r.t - 1, edge + Math.max(+by * 72 / 72.27, 1.5), r.d + 2, `${lengths(+by)} too wide`, `<b>${by}pt</b>`);
         } else {
           const r = rows.at(-1), g = blocks.get(r.page);
           box(r.page, `pdf-bad ${over ? 'b-over' : 'b-under'}`, g?.l ?? r.l, r.t - 1, g?.r ?? r.r, r.d + 2, what);
-          if (over && g) box(r.page, 'pdf-bar-out pdf-bar-v', g.l, g.d, g.r, g.d + Math.max(+by * 72 / 72.27, 1.5), `${by}pt too high`, `<b>${by}pt</b>`);
+          if (over && g) box(r.page, 'pdf-bar-out pdf-bar-v', g.l, g.d, g.r, g.d + Math.max(+by * 72 / 72.27, 1.5), `${lengths(+by)} too high`, `<b>${by}pt</b>`);
         }
       }
     }
@@ -5116,6 +5182,11 @@
     boot.el.querySelector('.boot-text').textContent = text;
   }
   /** The card goes once satex has started and no download is left. */
+  /** A switch to an example that needs downloads brings the loading card back, until they end. */
+  let exampleAt = -1e9;
+  function bootAgain() {
+    if (boot?.started && !boot.open && performance.now() - exampleAt < 30000) bootOpen('Loading the example');
+  }
   function bootSettled() {
     if (boot?.started && !loads.size && !inFlight.size) bootClose();
   }
@@ -5138,14 +5209,13 @@
       // one analysis is one timeline: only an edit, or work long after, starts the next run
       const edited = version !== act.version;
       if (edited || now - act.ended > FOLLOW_MS) Object.assign(act, { started: now, steps: [], run: act.run + 1, after: act.run && edited ? 'after your edit' : '', version });
-      act.rest = status.dataset.done ? status.textContent : 'Ready. Findings update as you type; Enter runs the command.';
+      act.rest = status.dataset.done ? status.textContent : 'Ready. Findings update as you type.';
     }
     // one step per phase the page or the engine names, in the order they came
     const key = stage?.phase ? `${stage.run ?? 1} ${stage.phase}` : name;
     let step = act.steps.at(-1);
     if (step?.key !== key) {
-      const run = stage?.run > 1 ? `build run ${stage.run} of at most ${stage.runs}: ` : '';
-      step = { key, label: run + (stage?.phase ? STAGE[stage.phase] ?? stage.phase : name.toLowerCase()), at: now, items: new Set() };
+      step = { key, label: stage?.phase ? STAGE[stage.phase] ?? stage.phase : name.toLowerCase(), at: now, items: new Set(), run: stage?.phase ? `build run ${stage.run ?? 1}${stage.runs > 1 ? ` of at most ${stage.runs}` : ''}` : '' };
       act.steps.push(step);
     }
     if (stage?.phase === 'package') step.items.add(text);
@@ -5183,15 +5253,34 @@
     actBox.hidden = !(actWanted && act.phase);
     if (actBox.hidden) return;
     const now = performance.now(), s = (t) => secs(now - t);
-    const steps = act.steps.map((st, i) => {
+    const item = (st, i) => {
       const last = i === act.steps.length - 1, end = last ? now : act.steps[i + 1].at;
       const n = st.items.size > 1 ? ` · ${st.items.size}` : '';
       return `<li class="act-step${last ? ' act-now' : ''}"${last ? ' aria-current="step"' : ''}><span>${escape(st.label + n)}</span><span class="act-t">${secs(end - st.at)}</span></li>`;
+    };
+    // each build run's steps fold under the run, with its time; the run going on is open
+    const steps = [];
+    act.steps.forEach((st, i) => {
+      const g = st.run && steps.at(-1)?.run === st.run ? steps.at(-1) : null;
+      if (g) { g.rows.push(item(st, i)); g.end = i; } else steps.push({ run: st.run, at: st.at, end: i, rows: [item(st, i)] });
+    });
+    const steps_ = steps.map((g, k) => {
+      if (!g.run) return g.rows.join('');
+      const last = g.end === act.steps.length - 1, until = last ? now : act.steps[g.end + 1].at;
+      return `<li class="act-run"><details data-run="${escape(g.run)}"${actOpen.get(g.run) ?? last ? ' open' : ''}><summary><span>${escape(g.run)}</span><span class="act-t">${secs(until - g.at)}</span></summary><ol class="act-steps">${g.rows.join('')}</ol></details></li>`;
     }).join('');
     const rows = [['run', `${act.run}${act.after ? ` ${act.after}` : ''}`], ['doing', escape(act.text.replace(/…$/, ''))], ...(act.all ? [['bytes', `${mib(act.got)} of ${mib(act.all)} MiB`]] : []),
-      ...(act.where ? [['at', escape(act.where)]] : []), ['steps', `<ol class="act-steps">${steps}</ol>`], ['in this step', s(act.since)], ['since start', s(act.started)], ['last change', `${s(act.changed)} ago`]];
+      ...(act.where ? [['at', escape(act.where)]] : []), ['steps', `<ol class="act-steps">${steps_}</ol>`], ['in this step', s(act.since)], ['since start', s(act.started)], ['last change', `${s(act.changed)} ago`]];
     actBox.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
   }
+  var actOpen = new Map(); // var: drawAct may run before this line; build run -> opened or closed by the viewer
+  actBox.addEventListener('click', (e) => {
+    const sum = e.target instanceof Element && e.target.closest('summary');
+    if (!sum) return;
+    e.preventDefault();
+    actOpen.set(sum.parentElement.dataset.run, !sum.parentElement.open);
+    drawAct();
+  });
   let actTick = 0;
   const showAct = (on) => { actWanted = on; clearInterval(actTick); drawAct(); if (on) actTick = setInterval(drawAct, 1000); };
   const actHost = actBox.parentElement;
@@ -5214,6 +5303,8 @@
   /** The packages still downloading when the findings shown were made: they may change once those are in. */
   var provisional = ''; // var: a render may run before this line
   async function publish(p) {
+    // of a text the server no longer has: its analysis of the newer one follows, else is asked for
+    if (outdated(p)) { if (p.uri === uri() && timer === null) analyze(); return; }
     if (running > 0 && p.uri === uri()) { heldFindings = p; return; }
     heldFindings = null;
     // The rule's number is the LSP code: the page keys rules by name.
@@ -5225,7 +5316,7 @@
       const names = [...new Set([...waiting, ...inFlight])].map((id) => PACKAGES.get(id).label).join(', ');
       busy('Loading', `Loading ${plural(names.split(', ').length, 'package')}…`);
       status.title = names;
-      if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok) { show(p.uri, p.diagnostics); typeset(p.uri); } });
+      if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok && !outdated(p)) { show(p.uri, p.diagnostics, p.version); typeset(p.uri); } });
       return;
     }
     // A run that missed files a bundle holds is redone once they are in: its findings
@@ -5233,11 +5324,11 @@
     const seq = (published.get(p.uri) ?? 0) + 1;
     published.set(p.uri, seq);
     const absent = p.uri === uri() ? await absentBundles() : [];
-    if (seq !== published.get(p.uri)) return;
+    if (seq !== published.get(p.uri) || outdated(p)) return;
     if (p.uri === uri()) provisional = [...new Set([...absent, ...inFlight])].map((id) => PACKAGES.get(id)?.label ?? id).join(', ');
     // what was answered from the last run meanwhile is asked again of this one
     explanations.clear(); scopeAsked.clear(); explained = ''; explainSoon();
-    show(p.uri, p.diagnostics);
+    show(p.uri, p.diagnostics, p.version);
     typeset(p.uri);
     outline();
     if (p.uri === uri()) {
@@ -5328,7 +5419,7 @@
     if (s.running) return;
     Object.assign(s, { running: true, stop: false, got: s.todo.length === next.length ? s.got : 0 });
     try { localStorage.removeItem('satex-offline'); } catch {}
-    const line = () => offlineShow(`making the playground available offline: ${mib(Math.min(s.got, s.total))} of ${mib(s.total)} MiB`, 'Stop', 'the packages are fetched in the background and kept in this browser');
+    const line = () => offlineShow(`making it available offline: ${mib(Math.min(s.got, s.total))} of ${mib(s.total)} MiB`, 'Stop', 'the packages are fetched in the background and kept in this browser');
     line();
     let failed = false;
     const one = async () => {
@@ -5411,7 +5502,7 @@
     if (opening) await openPlace(opening[1], { line: Number(opening[2]) - 1, character: 0 });
     offlineSetup();
     if (!plainLint()) return link && !link.x ? start() : undefined;
-    status.textContent = 'Ready. Findings update as you type; Enter runs the command.';
+    status.textContent = 'Ready. Findings update as you type.';
     status.dataset.done = 'ready';
     pdfRestore();
   })().catch((e) => { status.textContent = `the playground failed: ${e.message}`; status.dataset.done = 'error'; bootClose(); });

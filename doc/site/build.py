@@ -424,6 +424,11 @@ def bundle(satex, work):
                                                for p in paths if p.suffix in (".sty", ".cls")))))
     more = [n for n in more if n not in listed_names]
     take(probe(more), "[4/4] files read by their packages")
+    # tikz's libraries are named in \usetikzlibrary, so every one is in its bundle, not only those a probe reads
+    libraries = {q for p in dist.glob("tex/*/pgf") for q in p.rglob("*") if re.fullmatch(r"(?:tikz|pgf)library.*\.code\.tex", q.name)}
+    for key in reads:
+        if key[1] == "tikz":
+            reads[key] = reads[key] | libraries
     every = listed_names + more
     for kernel, names in absent.items():
         print(f"playground: {len(names)} packages not offered under {kernel} (they do not load there)", file=sys.stderr)
@@ -435,6 +440,13 @@ def bundle(satex, work):
         shutil.copy2(path, target)
     if (dist.parent / "release-texlive.txt").is_file():  # names the TeX Live year
         shutil.copy2(dist.parent / "release-texlive.txt", tree / "release-texlive.txt")
+    # The hyphenation setup the formats read (`language.dat`, `.dat.lua`, `.def`), which TeX Live
+    # generates into TEXMFSYSVAR, not TEXMFDIST: without it LuaTeX's kernel is not read to its end.
+    var = Path(run("kpsewhich", "-var-value", "TEXMFSYSVAR").strip()).resolve()
+    generated = sorted((var / "tex" / "generic" / "config").glob("language.*"))
+    for path in generated:
+        (tree / "tex" / "generic" / "config").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, tree / "tex" / "generic" / "config" / path.name)
     config = (SITE / "playground.yaml").read_text().replace("/texmf.bundle", str(tree))
     shutil.copytree(ROOT / "samples", project, ignore=shutil.ignore_patterns("satex.yaml"))
     for doc in docs[:len(roots(EXAMPLES))]:
@@ -538,6 +550,8 @@ def bundle(satex, work):
             tables[0][f"/work/{path.name}"] = path.read_bytes()
     # The tree's file list (kpathsea's ls-R) names every file a bundle holds, fetched or not: completion
     # offers each package, and loading one the page has not fetched is a missing file it then fetches.
+    for path in generated:
+        tables[0][f"/texmf.bundle/tex/generic/config/{path.name}"] = path.read_bytes()
     held = sorted({p for files in [*tables, *(f for _, _, f, _ in packages)] for p in files if p.startswith("/texmf.bundle/")})
     listing = {}
     for p in held:

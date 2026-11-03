@@ -220,6 +220,7 @@ code .arg { font-size: 12px; padding: 0 .3rem; }
 .cs:hover { text-decoration: none; background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .place { font: 12.5px ui-monospace, Menlo, monospace; }
 .stale { opacity: .55; transition: opacity var(--quick); }
+.ov-stale .pdf-ov { opacity: .35; }
 #explain-body .xcard + .xcard, .output .xcard + .xcard { margin-top: .7rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
 .output .xcard { white-space: normal; } .upstream { font-size: .8rem; white-space: nowrap; }
 .b { font-weight: 700; } .d { opacity: .7; } .i { font-style: italic; } .u { text-decoration: underline; }
@@ -1117,6 +1118,7 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .manual { font-size: .62rem; padding: 0 .3rem; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); }
 .cfg-value input:invalid { border-color: var(--error) !important; }
 .statusbar #cache-open { margin-left: auto; }
+.statusbar #offline { flex: none; max-width: 14rem; }
 
 .typeset p.ts-current { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
 .ts-only-here > :not(p.ts-current, .ts-excerpt, .ts-nothing) { display: none; }
@@ -1579,3 +1581,79 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf-sub-list { display: grid; gap: .1rem; max-height: 11rem; overflow: auto; margin: .2rem 0 .2rem 1rem; padding-left: .5rem; border-left: 1px solid var(--border); }
 .pdf-sub-group { display: grid; gap: .1rem; } .pdf-sub-group > label { display: flex; align-items: center; gap: .35rem; cursor: pointer; white-space: nowrap; }
 .pdf-sub-group .count { margin-left: auto; font-weight: 500; color: var(--muted); }
+
+/* one height for every control of the PDF bar */
+.pdf-bar { --bar-h: 1.6rem; }
+.pdf-bar :is(button, summary, a.button, .pdf-views button, #pdf-fold) { box-sizing: border-box; height: var(--bar-h); min-height: var(--bar-h); padding-block: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+.pdf-bar .pdf-split > :is(button, details, summary) { height: var(--bar-h); }
+.pdf-bar #pdf-follow[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 18%, var(--bg)); color: var(--accent); border-color: var(--accent); font-weight: 600; }
+.pdf-bar #pdf-follow[aria-pressed=false] { color: var(--muted); border-style: dashed; }
+.pdf-bar #pdf-follow { gap: .3rem; }
+/* a layer's chevron stays in the layer's row, its list below */
+.pdf-layer-row > .pdf-layer { flex: 1 1 0; min-width: 0; }
+.pdf-layer-row > .pdf-sub-toggle { flex: none; }
+.act-run { list-style: none; } .act-run summary { display: flex; justify-content: space-between; gap: .6rem; cursor: pointer; }
+.act-run .act-steps { margin: .1rem 0 .2rem .9rem; padding: 0; }
+.md-table { border-collapse: collapse; font-size: .82rem; margin: .3rem 0; }
+.md-table th, .md-table td { padding: .1rem .6rem .1rem 0; text-align: left; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.md-table th { color: var(--muted); font-weight: 600; }
+/* phone: the settings rows stack, the PDF bar wraps so no tool is cut off */
+@media (max-width: 36rem) {
+  .cfg-row, .cfg-wide { grid-template-columns: minmax(0, 1fr) auto; }
+  .cfg-row > :nth-child(1), .cfg-wide .cfg-what { grid-column: 1; grid-row: 1; }
+  .cfg-row > :nth-child(2), .cfg-wide .cfg-value { grid-column: 1 / -1; grid-row: 2; }
+  .cfg-row > :nth-child(3), .cfg-wide > :nth-child(3) { grid-column: 2; grid-row: 1; }
+  .side-tabs [role=tab] { padding: .4rem .45rem; gap: .2rem; font-size: .8rem; }
+  .cfg-name { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem; }
+  .draw-top .draw-filters { flex-wrap: wrap; }
+  .draw-top .draw-filters > select.dropdown, .draw-top .draw-filters > .draw-pkg-wrap { flex: 1 1 40%; }
+  .pdf-bar { flex-wrap: wrap; }
+  .pdf-bar .pdf-tools { flex-wrap: wrap; justify-content: flex-end; }
+}
+/* completion: a long usage never widens the list past the page, the selected row stays readable */
+.cm-tooltip.cm-tooltip-autocomplete > ul { max-width: min(34rem, 92vw); }
+.cm-tooltip-autocomplete .cm-completionDetail { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cm-tooltip-autocomplete li[aria-selected] .cm-completionDetail { color: inherit; opacity: .92; }
+/* explain: off a command, the last card stays, dimmed, with a note */
+.explain-off { font-size: .76rem; } .explain-off[hidden] { display: none; }
+#explain-body.off { opacity: .5; transition: opacity var(--quick); }
+.phone-only { display: none; }
+/* phone: the editor or one panel fills the height, the status bar and a bottom bar stay */
+@media (max-width: 36rem) {
+  body.play { height: 100dvh; display: grid; }
+  .play-split, .play-split[data-fold] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto; }
+  .play-split[data-fold] > .pane { visibility: visible; overflow: visible; }
+  .side-pane { display: contents; }
+  .code-pane, .panels { grid-row: 1; grid-column: 1; min-height: 0; }
+  .panels { display: grid; height: auto; overflow: hidden; background: var(--bg); }
+  .panels > .sect { overflow: hidden; }
+  .play-split[data-view=editor] .panels, .play-split[data-view=panel] .code-pane { display: none; }
+  .pane .editor, .work > .editor { height: auto; flex: 1 1 0; }
+  .statusbar { grid-row: 2; grid-column: 1; overflow: hidden; padding-inline: .6rem; } .statusbar #offline { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .side-tabs { grid-row: 3; grid-column: 1; display: flex; padding: 0; gap: 0; border-top: 1px solid var(--border); background: var(--panel); overflow: hidden; }
+  .side-tabs > button { flex: 1 1 0; min-width: 0; justify-content: center; border-radius: 0; padding: .6rem .1rem .5rem; gap: .2rem; font-size: .7rem; }
+  .side-tabs .split-toggle { display: none; }
+  .beside .side-tabs [data-panel=play-pdf] { display: inline-flex; }
+  .phone-only { display: inline-flex; align-items: center; background: none; border: 0; color: var(--muted); font-weight: 500; position: relative; }
+  .phone-only[aria-pressed=true] { color: var(--accent); }
+  .side-tabs > button::after { inset: -1px .3rem auto; }
+  .phone-only::after { content: ""; position: absolute; inset: -1px .3rem auto; height: 2px; background: var(--accent); transform: scaleX(0); transition: transform .25s var(--ease); }
+  .phone-only[aria-pressed=true]::after { transform: none; }
+  .play-split[data-view=editor] .side-tabs [role=tab]::after { transform: scaleX(0); }
+  .play-split[data-view=editor] .side-tabs [role=tab][aria-selected=true] { color: var(--muted); }
+  /* the draw pad stays small so the results show */
+  .draw-pad { width: min(100%, 7.5rem); align-self: flex-start; }
+  /* the caches: a card per entry */
+  .cache-table thead { display: none; }
+  .cache-table, .cache-table tbody { display: block; }
+  .cache-table tr:not(.cache-sub) { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: .15rem .5rem; padding: .45rem 0; border-bottom: 1px solid var(--border); }
+  .cache-table tr:not(.cache-sub) > td { display: block; width: auto; padding: 0; border: 0; }
+  .cache-table tr:not(.cache-sub) > td:nth-child(3) { grid-column: 1 / 4; grid-row: 2; }
+  .cache-table tr:not(.cache-sub) > td:nth-child(6) { grid-column: 4; grid-row: 2; }
+  .cache-table tr.cache-sub:not([hidden]) { display: block; padding: 0 0 .4rem; border-bottom: 1px solid var(--border); }
+  .cache-table .cache-sub > td:first-child { display: none; }
+  .cache-table .cache-sub > td { display: block; padding: 0; }
+  .cache-table tr:not(.cache-sub):has(+ .cache-sub:not([hidden])) { border-bottom: 0; }
+}
+/* phone: the playground's header wraps its nav like every page */
+@media (max-width: 36rem) { body.play .top { flex-wrap: wrap; } body.play .top nav { flex-wrap: wrap; overflow: visible; mask-image: none; } }

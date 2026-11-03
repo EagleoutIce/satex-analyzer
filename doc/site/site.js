@@ -570,8 +570,14 @@
   /** The Markdown satex writes, for hovers and rule explanations: headings, paragraphs, lists,
    * fenced or indented code, links, emphasis. */
   const indented = (b) => b.split('\n').every((l) => !l.trim() || /^ {4}/.test(l));
+  const table = (b) => {
+    const rows = b.trim().split('\n').map((l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim()));
+    return `<table class="md-table"><thead><tr>${rows[0].map((c) => `<th>${inline(c)}</th>`).join('')}</tr></thead><tbody>${rows.slice(2).map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  };
+  const isTable = (b) => /^\s*\|.*\|\s*\n\s*\|?\s*:?-{3,}/.test(b);
   const markdown = (text) => text.split(/^```\w*\n([\s\S]*?)^```\s*$/m).map((part, i) => i % 2 ? `<pre><code>${esc(part)}</code></pre>`
     : part.split(/\n{2,}/).filter((b) => b.trim()).map((b) => indented(b) ? `<pre><code>${esc(b.replace(/^ {4}/gm, ''))}</code></pre>`
+      : isTable(b) ? table(b)
       : /^#+ /.test(b.trim()) ? `<h4>${inline(b.trim().replace(/^#+ /, ''))}</h4>`
         : /^[-*] /.test(b.trim()) ? `<ul>${b.trim().split(/\n(?=[-*] )/).map((li) => `<li>${inline(li.slice(2))}</li>`).join('')}</ul>`
           : `<p>${inline(b.trim())}</p>`).join('')).join('');
