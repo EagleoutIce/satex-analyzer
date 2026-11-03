@@ -1237,7 +1237,7 @@ impl Env {
             };
             let Some(Some(mine)) = self.slots.get(i).cloned() else { continue };
             let joined = join(theirs.clone(), Some(mine.clone()), self.sets, Some(typed));
-            let Some(mut joined) = widen_slot(&theirs, joined, self.sets, typed) else {
+            let Some(mut joined) = widen_slot(&theirs, joined, self.sets, typed, Reach::Havoc) else {
                 self.widen_in_place(sym, typed);
                 continue;
             };
@@ -1568,7 +1568,7 @@ impl Env {
     /// groups. A name they left with different meanings has one of them.
     /// `after[i]` is the `\aftergroup` tokens of group `i` where they differ
     /// (tex.web § 326). With `widen`, a slot that grows holds anything of its
-    /// kind. With `paired`, the arms stay paired ([`Corr`]) in the names
+    /// kind, as [`Reach`] allows. With `paired`, the arms stay paired ([`Corr`]) in the names
     /// the widening left as their join. Also returns the names the bound
     /// holds more of than `a`, and whether its waiting tokens grew. The
     /// bindings are left as `fork` saw them.
@@ -1578,7 +1578,7 @@ impl Env {
         a: &PathEnv,
         b: &PathEnv,
         typed: &Typed,
-        (widen, paired): (bool, bool),
+        (widen, paired): (Option<Reach>, bool),
         after: &[Option<Vec<Token>>],
     ) -> (PathEnv, Vec<Sym>, bool) {
         self.rewind(fork);
@@ -1606,15 +1606,15 @@ impl Env {
             let level = x.max(y).min(a.marks.len() as u32);
             let joined = join(old.clone(), new, self.sets, Some(typed));
             let joined = match widen {
-                true => {
-                    let widened = widen_slot(&old, joined.clone(), self.sets, typed);
+                Some(reach) => {
+                    let widened = widen_slot(&old, joined.clone(), self.sets, typed, reach);
                     // Arms stay paired in what the widening left as the join.
                     if !identical(&joined, &widened) {
                         lost.push(sym);
                     }
                     widened
                 }
-                false => joined,
+                None => joined,
             };
             if differ {
                 apart.push(sym);
@@ -2088,14 +2088,39 @@ fn same_value(a: &Value, b: &Value) -> bool {
     a == b || matches!((a, b), (Value::Unknown, Value::Unknown))
 }
 
+/// Why a slot is widened, which decides how much of its texts' structure
+/// (the tokens between digit runs: operators, letters) the hull keeps.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Reach {
+    /// A join a pass runs from: a loop head's, or a summary's that is not
+    /// cut. The members are every text a path reaching it holds, so a hull
+    /// that keeps what all of them have is their upper bound, and a later
+    /// pass that writes another text meets the loop again and widens
+    /// further ([`Reach::Havoc`] there).
+    Joined,
+    /// Writes no pass checks: a summary toward the loop's entry or one cut
+    /// short, a call summarized by its effect, a group end not followed.
+    /// An unseen write may be any text of its kind, so only the class
+    /// survives, or the one text all members are.
+    Havoc,
+}
+
 /// Widening at a loop head. A slot the loop still changes after as many
 /// passes as widening waits for may hold anything of its kind from then on:
 /// an unknown meaning (a switch stays an undecided switch) and an unknown
-/// value. No later pass can grow past that. Macros without parameters keep
-/// their texts with every run of digits as one `digits` token
-/// ([`digit_runs`]), as long as that leaves at most `sets.meanings` texts:
-/// a loop that appends digits to a number stays a number.
-pub fn widen_slot(old: &Option<Binding>, new: Option<Binding>, sets: SetLimits, typed: &Typed) -> Option<Binding> {
+/// value. No later pass can grow past that. At a loop head ([`Reach`]),
+/// texts with the same operators between digit runs keep them, one hull
+/// per run ([`shaped`]); others keep their texts with every run of digits
+/// as one `digits` token ([`numbers`]), as long as that leaves at most
+/// `sets.meanings` texts: a loop that appends digits to a number stays a
+/// number.
+pub fn widen_slot(
+    old: &Option<Binding>,
+    new: Option<Binding>,
+    sets: SetLimits,
+    typed: &Typed,
+    reach: Reach,
+) -> Option<Binding> {
     if same_slot(old, &new) {
         return new;
     }
@@ -2110,13 +2135,19 @@ pub fn widen_slot(old: &Option<Binding>, new: Option<Binding>, sets: SetLimits, 
         // The texts are kept only while they are no more than the head
         // had: a set that grows every pass is not a widening, and its
         // hull is.
-        let had = numbers(x, sets, typed).map_or(usize::MAX, |t| t.len());
-        let texts = numbers(&joined, sets, typed).filter(|t| t.len() <= had);
-        (joined.meaning, joined.may) = match texts {
-            _ if switch => (Meaning::Primitive(Primitive::If(Cond::Opaque)), None),
-            Some(mut texts) if texts.len() == 1 => (texts.pop().expect("one text"), None),
-            Some(texts) => (Meaning::Unknown, Some(texts.into())),
-            None => hull_meaning(&joined, typed, true),
+        let joins = reach == Reach::Joined;
+        let had = numbers(x, sets, typed, joins).map_or(usize::MAX, |t| t.len());
+        let texts = || numbers(&joined, sets, typed, joins).filter(|t| t.len() <= had);
+        // The run structure first: `numbers` would make the `1` of `+1` digits.
+        let ops = || joins.then(|| hull_by(&joined, &|t| shaped(t, typed))).flatten();
+        (joined.meaning, joined.may) = match (switch, ops()) {
+            (true, _) => (Meaning::Primitive(Primitive::If(Cond::Opaque)), None),
+            (_, Some(hull)) => hull,
+            _ => match texts() {
+                Some(mut texts) if texts.len() == 1 => (texts.pop().expect("one text"), None),
+                Some(texts) => (Meaning::Unknown, Some(texts.into())),
+                None => hull_meaning(&joined, typed, reach),
+            },
         };
     }
     if value_grows {
@@ -2133,15 +2164,22 @@ pub fn widen_slot(old: &Option<Binding>, new: Option<Binding>, sets: SetLimits, 
     Some(joined)
 }
 
+type Hulled = (Meaning, Option<std::rc::Rc<[Meaning]>>);
+
 /// The meaning and set a widened binding keeps: the macros' hull, still
 /// perhaps undefined where the set held that.
-fn hull_meaning(b: &Binding, typed: &Typed, keep: bool) -> (Meaning, Option<std::rc::Rc<[Meaning]>>) {
-    match macro_hull(b, typed, keep) {
-        Some(hull) if b.may.as_deref().is_some_and(|m| m.contains(&Meaning::Undefined)) => {
-            (Meaning::Unknown, Some(vec![Meaning::Undefined, hull].into()))
-        }
-        hull => (hull.unwrap_or(Meaning::Unknown), None),
-    }
+fn hull_meaning(b: &Binding, typed: &Typed, reach: Reach) -> Hulled {
+    hull_by(b, &|t| Some(text_hull(t, typed, reach))).unwrap_or((Meaning::Unknown, None))
+}
+
+/// [`hull_meaning`] with the texts' hull `hull`: `None` where `b` is no
+/// such macro or `hull` refuses its texts.
+fn hull_by(b: &Binding, hull: &dyn Fn(&[&[Token]]) -> Option<Vec<Token>>) -> Option<Hulled> {
+    let m = macro_hull(b, hull)?;
+    Some(match b.may.as_deref().is_some_and(|m| m.contains(&Meaning::Undefined)) {
+        true => (Meaning::Unknown, Some(vec![Meaning::Undefined, m].into())),
+        false => (m, None),
+    })
 }
 
 /// A macro without parameters whose text is any text of the classes its
@@ -2149,7 +2187,7 @@ fn hull_meaning(b: &Binding, typed: &Typed, keep: bool) -> (Meaning, Option<std:
 /// with the same prefixes: widened, it stays one, which `\ifx` can still
 /// tell from other kinds. Its length is bounded only where all texts have
 /// one length: a widened write that repeats changes it.
-fn macro_hull(b: &Binding, typed: &Typed, keep: bool) -> Option<Meaning> {
+fn macro_hull(b: &Binding, hull: &dyn Fn(&[&[Token]]) -> Option<Vec<Token>>) -> Option<Meaning> {
     let members = b.may.as_deref().unwrap_or(std::slice::from_ref(&b.meaning));
     let members: Vec<&Meaning> = members.iter().filter(|m| **m != Meaning::Undefined).collect();
     let mut first: Option<&crate::engine::tex::MacroDef> = None;
@@ -2167,17 +2205,28 @@ fn macro_hull(b: &Binding, typed: &Typed, keep: bool) -> Option<Meaning> {
         _ => None,
     });
     let texts: Vec<&[Token]> = texts.collect();
-    let text: std::rc::Rc<[Token]> = text_hull(&texts, typed, keep).into();
+    let text: std::rc::Rc<[Token]> = hull(&texts)?.into();
     Some(Meaning::Macro(std::rc::Rc::new(crate::engine::tex::MacroDef { replacement_text: text, ..def.clone() })))
 }
 
-/// Typed text for any text of the classes `texts` have. At a loop head
-/// (`keep`), several texts with the same operators between typed runs at
-/// the same places keep them, one hull per run: `+1` never folds into the
-/// digits before it, and a `-` that begins a run is its sign. Else one
-/// token: text inserted between operators is a text that grew, and a
-/// summary's write may be any text of its kind.
-fn text_hull(texts: &[&[Token]], typed: &Typed, keep: bool) -> Vec<Token> {
+/// Typed text for any text of the classes `texts` have: at a loop head
+/// their [`shaped`] hull where they have one, else one token (text
+/// inserted between operators is a text that grew, and a summary's write
+/// may be any text of its kind).
+fn text_hull(texts: &[&[Token]], typed: &Typed, reach: Reach) -> Vec<Token> {
+    let shape = (reach == Reach::Joined).then(|| shaped(texts, typed)).flatten();
+    shape.unwrap_or_else(|| {
+        let texts: Vec<Vec<Token>> = texts.iter().map(|t| unslice(t, typed.interner)).collect();
+        run_hull(&texts.iter().map(Vec::as_slice).collect::<Vec<_>>(), typed, false)
+    })
+}
+
+/// Several texts with the same operators between typed runs at the same
+/// places, joined: the operators stay, one hull per run, so `+1` never
+/// folds into the digits before it, and a `-` that begins a run is its
+/// sign. Sound only where `texts` are all a reaching path may hold
+/// ([`Reach::Joined`]). `None` for texts of other shapes.
+fn shaped(texts: &[&[Token]], typed: &Typed) -> Option<Vec<Token>> {
     let texts: Vec<Vec<Token>> = texts.iter().map(|t| unslice(t, typed.interner)).collect();
     let lits = |t: &[Token]| {
         let mut lit: Vec<bool> = Vec::with_capacity(t.len());
@@ -2210,9 +2259,9 @@ fn text_hull(texts: &[&[Token]], typed: &Typed, keep: bool) -> Vec<Token> {
         (ops.iter().map(|t| t.tok).collect::<Vec<_>>(), runs.iter().map(Vec::is_empty).collect::<Vec<_>>())
     };
     let first = shape(&parted[0]);
-    let kept = keep && texts.len() > 1 && !first.0.is_empty() && parted[0].1.iter().all(op);
+    let kept = texts.len() > 1 && !first.0.is_empty() && parted[0].1.iter().all(op);
     if !kept || parted.iter().any(|p| shape(p) != first) {
-        return run_hull(&texts.iter().map(Vec::as_slice).collect::<Vec<_>>(), typed, false);
+        return None;
     }
     let mut out = Vec::new();
     for (i, l) in parted[0].1.iter().map(Some).chain([None]).enumerate() {
@@ -2221,7 +2270,7 @@ fn text_hull(texts: &[&[Token]], typed: &Typed, keep: bool) -> Vec<Token> {
         }
         out.extend(l.copied());
     }
-    out
+    Some(out)
 }
 
 /// Typed text for any text of the classes `texts` have, at least one
@@ -2363,8 +2412,9 @@ fn unslice(text: &[Token], interner: &Interner) -> Vec<Token> {
 
 /// The meanings `b` may have, each a macro without parameters, with every
 /// digit run in their texts made one `digits` token: `None` when one is not
-/// such a macro or there are more than `sets.meanings` texts.
-fn numbers(b: &Binding, sets: SetLimits, typed: &Typed) -> Option<Vec<Meaning>> {
+/// such a macro or there are more than `sets.meanings` texts. Without
+/// `joins` ([`Reach::Havoc`]) only where all are one text.
+fn numbers(b: &Binding, sets: SetLimits, typed: &Typed, joins: bool) -> Option<Vec<Meaning>> {
     let members = match (&b.may, &b.meaning) {
         (Some(set), _) => set.to_vec(),
         (None, m) => vec![m.clone()],
@@ -2391,7 +2441,7 @@ fn numbers(b: &Binding, sets: SetLimits, typed: &Typed) -> Option<Vec<Meaning>> 
     if wholes.len() == 1 {
         return Some(wholes);
     }
-    (texts.len() <= sets.meanings).then_some(texts)
+    (joins && texts.len() <= sets.meanings).then_some(texts)
 }
 
 /// The names of typed unknown text, for widening without the machine:
@@ -2605,7 +2655,7 @@ pub fn unknown_runs(text: &[Token], typed: &Typed) -> std::rc::Rc<[Token]> {
 fn widened(mut binding: Binding, typed: &Typed) -> Binding {
     binding.value = Value::Unknown;
     if matches!(binding.meaning, Meaning::Macro(_)) || binding.may.is_some() {
-        (binding.meaning, binding.may) = hull_meaning(&binding, typed, false);
+        (binding.meaning, binding.may) = hull_meaning(&binding, typed, Reach::Havoc);
     }
     binding.certain = false;
     binding
@@ -2857,9 +2907,10 @@ mod tests {
         assert!(!b.certain);
     }
 
-    /// Numbers joined at a loop head keep the operator between them:
-    /// `12+1` and `345+1` widen to digits, `+`, digits; their hull to a
-    /// printed integer, `+`, `1`; a summary's to one token.
+    /// Numbers joined at a loop head keep the operator between them, and
+    /// the run structure comes before [`numbers`]: `12+1` and `345+1`
+    /// widen to a printed integer, `+`, the `1` both hold. A summary
+    /// ([`Reach::Havoc`]) keeps no structure: one token.
     #[test]
     fn widened_sum_keeps_its_operator() {
         let interner = Interner::default();
@@ -2880,27 +2931,25 @@ mod tests {
         // A summary's widening may be any text of the kind: one token.
         let Meaning::Macro(d) = &widened(b, &typed).meaning else { panic!("not a macro") };
         assert_eq!(d.replacement_text.len(), 1);
-        // At a loop head texts apart only in digit runs keep them as runs
-        // ([`numbers`]), the operator between them kept.
-        let (old, new) = (Binding::builtin(def("12+1")), Binding::builtin(def("345+1")));
-        let b = widen_slot(&Some(old), Some(new), SetLimits::default(), &typed).expect("a binding");
-        let Meaning::Macro(d) = &b.meaning else { panic!("not a macro: {:?}", b.meaning) };
         let plus = Tok::Chr('+', Catcode::Other);
-        assert_eq!(
-            d.replacement_text.iter().map(|t| t.tok).collect::<Vec<_>>(),
-            [Tok::Cs(Sym(1)), plus, Tok::Cs(Sym(1))]
-        );
-        // The loop head's hull of them: a printed integer of at most 3 digits, `+`, the `1` both hold.
-        let (x, y) = (def("12+1"), def("345+1"));
-        let text = |m: &Meaning| match m {
-            Meaning::Macro(d) => d.replacement_text.to_vec(),
-            _ => unreachable!(),
-        };
         let lead = syms[lead_index(true, 3).expect("lead")];
-        assert_eq!(
-            text_hull(&[&text(&x), &text(&y)], &typed, true).iter().map(|t| t.tok).collect::<Vec<_>>(),
-            [Tok::Cs(lead), plus, Tok::Chr('1', Catcode::Other)]
-        );
+        let widen = |a: &str, b: &str, reach| {
+            let (old, new) = (Binding::builtin(def(a)), Binding::builtin(def(b)));
+            let b = widen_slot(&Some(old), Some(new), SetLimits::default(), &typed, reach).expect("a binding");
+            let members = b.may.as_deref().unwrap_or(std::slice::from_ref(&b.meaning)).to_vec();
+            let text = |m: &Meaning| match m {
+                Meaning::Macro(d) => d.replacement_text.iter().map(|t| t.tok).collect::<Vec<_>>(),
+                m => panic!("not a macro: {m:?}"),
+            };
+            members.iter().map(text).collect::<Vec<_>>()
+        };
+        assert_eq!(widen("12+1", "345+1", Reach::Joined), [vec![Tok::Cs(lead), plus, Tok::Chr('1', Catcode::Other)]]);
+        assert_eq!(widen("12+1", "345+1", Reach::Havoc).iter().map(Vec::len).collect::<Vec<_>>(), [1]);
+        // Other shapes: more texts than the head had, a set that grows,
+        // so one token at a head too ([`numbers`]), and at a summary.
+        for reach in [Reach::Joined, Reach::Havoc] {
+            assert_eq!(widen("12+1", "345-1", reach).iter().map(Vec::len).collect::<Vec<_>>(), [1]);
+        }
     }
 
     /// Slices that spell all of a number read back as it, whatever the
@@ -2993,7 +3042,7 @@ mod tests {
         for a in &members {
             for b in &members {
                 let (x, y) = (chars(a), chars(b));
-                let hull = text_hull(&[&x, &y], &typed, true);
+                let hull = text_hull(&[&x, &y], &typed, Reach::Joined);
                 let p = pattern(&hull);
                 assert!(p.is_match(a) && p.is_match(b), "{a} | {b}: {p}");
                 assert!(
@@ -3014,9 +3063,57 @@ mod tests {
         let (x, y) = (chars("7"), chars("42"));
         assert!(pattern(&run_hull(&[&x, &y], &typed, false)).is_match("08"));
         assert!(!pattern(&run_hull(&[&x, &y], &typed, true)).is_match("08"));
-        // A summary's write is any text of its kind: no structure kept.
-        let (x, y) = (chars("12+1"), chars("345+1"));
-        assert_eq!(text_hull(&[&x, &y], &typed, false).len(), 1);
+        // A summary's write is any text of its kind: no structure kept,
+        // for every pair (the hull still holds both).
+        for a in &members {
+            for b in members.iter().step_by(7) {
+                let hull = text_hull(&[&chars(a), &chars(b)], &typed, Reach::Havoc);
+                assert_eq!(hull.len(), 1, "{a} | {b}");
+            }
+        }
+    }
+
+    /// The two widening sites on one pair of passes, `12+1` and `345+1`:
+    /// a loop head's join keeps the `+1` (the next pass runs from it), a
+    /// summary toward what the passes began with keeps no structure (a
+    /// pass not run may write another shape). The mutant that treats the
+    /// summary as a join keeps `+`.
+    #[test]
+    fn a_summary_keeps_no_operator_a_head_join_does() {
+        let interner = Interner::default();
+        let syms: Vec<Sym> = (0..TYPED_NAMES as u32).map(|i| Sym(1000 + i)).collect();
+        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2) };
+        let mac = |s: &str| {
+            Binding::builtin(Meaning::Macro(Rc::new(crate::engine::tex::MacroDef {
+                parameter_text: Default::default(),
+                arg_spec: None,
+                replacement_text: s.chars().map(|c| Token::new(Tok::Chr(c, Catcode::Other), Span::default())).collect(),
+                long: false,
+                outer: false,
+                protected: false,
+            })))
+        };
+        let toks = |b: &Binding| match &b.meaning {
+            Meaning::Macro(d) => d.replacement_text.iter().map(|t| t.tok).collect::<Vec<_>>(),
+            m => panic!("not a macro: {m:?}"),
+        };
+        let (x, plus) = (Sym(3), Tok::Chr('+', Catcode::Other));
+        let mut env = Env::with_capacity(8);
+        env.set(x, mac("12+1"), true);
+        let fork = env.fork();
+        let began = env.path(&fork);
+        env.set(x, mac("345+1"), true);
+        let pass = env.path(&fork);
+        for (reach, kept) in [(Reach::Joined, true), (Reach::Havoc, false)] {
+            let (joined, _, _) = env.join_paths(&fork, &began, &pass, &typed, (Some(reach), false), &[]);
+            let b = joined.slots.get(&x.0).and_then(|(b, _)| b.clone()).expect("joined");
+            assert_eq!(toks(&b).contains(&plus), kept, "{reach:?}: {:?}", toks(&b));
+        }
+        env.resume(&fork, &pass);
+        env.widen(&[x], Some((&began, &fork)), &typed);
+        let b = env.slot(x).expect("widened");
+        assert_eq!(toks(b).len(), 1, "a summary keeps one token: {:?}", toks(b));
+        env.unfork(fork);
     }
 
     fn int(n: i64) -> Binding {

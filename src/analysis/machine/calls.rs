@@ -239,7 +239,13 @@ impl Machine<'_> {
             for r in &runs[1..] {
                 let next = of(r);
                 let joined = crate::engine::env::join_slot(acc.clone(), next, self.env.sets);
-                acc = crate::engine::env::widen_slot(&acc, joined, self.env.sets, &typed);
+                acc = crate::engine::env::widen_slot(
+                    &acc,
+                    joined,
+                    self.env.sets,
+                    &typed,
+                    crate::engine::env::Reach::Havoc,
+                );
             }
             if let Some(mut b) = acc {
                 b.certain = false;

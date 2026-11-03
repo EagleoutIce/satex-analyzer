@@ -9,7 +9,7 @@
 //! widened after `widen_after` passes.
 
 use super::*;
-use crate::engine::env::{Fork, PathEnv};
+use crate::engine::env::{Fork, PathEnv, Reach};
 use crate::engine::value::Num;
 
 /// Runs of one command before further choices are left to the caller,
@@ -1064,7 +1064,7 @@ impl Machine<'_> {
         let entry = paths.loops.iter().find(|l| l.id == id).map(|l| (l.depth.0, l.depth.1, l.passes));
         let forced = match paths.loops.iter().position(|l| l.id == id) {
             Some(l) => {
-                let (joined, _) = self.join_passes(&fork, &paths.loops[l].joined, &here, false, true);
+                let (joined, _) = self.join_passes(&fork, &paths.loops[l].joined, &here, None, true);
                 // A pass on strictly less bounded text is not counted:
                 // such passes end by construction, each state exact.
                 let before = here.state.loop_bounds.iter().find(|(l, _)| *l == id).and_then(|(_, b)| *b);
@@ -1253,7 +1253,7 @@ impl Machine<'_> {
                     crate::util::progress::note!("satex: recursion widened at {span:?}, input: {places:#?}");
                 }
                 let depth = paths.heads[level].config.key.places.len();
-                let (joined, _) = self.join_passes(&fork, &paths.heads[level].config, &here, true, false);
+                let (joined, _) = self.join_passes(&fork, &paths.heads[level].config, &here, Some(Reach::Havoc), false);
                 self.resume_config(&fork, Config::new(here.state, joined.env, false));
                 while self.input.iter().filter_map(place).count() > depth {
                     self.pop_frame();
@@ -1286,7 +1286,7 @@ impl Machine<'_> {
                     paths.cut[i].1 = summary;
                     cut = Config::new(PathState { input, ..cut.state }, cut.env, false);
                 }
-                let (joined, growth) = self.join_passes(&fork, &paths.cut[i].1, &cut, true, false);
+                let (joined, growth) = self.join_passes(&fork, &paths.cut[i].1, &cut, Some(Reach::Havoc), false);
                 let growth =
                     Growth { parts: [growth.parts, if grew { vec!["input"] } else { vec![] }].concat(), ..growth };
                 if !growth.any() {
@@ -1314,7 +1314,9 @@ impl Machine<'_> {
         // that adds nothing the loop is at its fixpoint, and one widened
         // pass more may reach it; only one still growing is summarized.
         let widen = paths.heads[h].passes >= widen_after || forced_join || !self.site_affords(span);
-        let (joined, mut growth) = self.join_passes(&fork, &paths.heads[h].config, &here, widen, !widen);
+        // Joined at the head, the next pass runs from the join ([`Reach::Joined`]).
+        let reach = widen.then_some(Reach::Joined);
+        let (joined, mut growth) = self.join_passes(&fork, &paths.heads[h].config, &here, reach, !widen);
         if input_grew {
             growth.parts.push("input");
         }
@@ -1445,7 +1447,12 @@ impl Machine<'_> {
         // agree on keeps its value, one they differ in may hold any of them
         // or more.
         // `here` first: its groups are the ones the summary goes on in.
-        let (joined, _) = self.join_passes(fork, &here, &summarized.joined, true, true);
+        // Not cut, the body runs once more from this join, and what that
+        // pass writes apart from it is widened where it meets the loop
+        // again ([`Machine::end_covered`]): a join ([`Reach::Joined`]).
+        // Cut, no pass runs from it.
+        let reach = if cut { Reach::Havoc } else { Reach::Joined };
+        let (joined, _) = self.join_passes(fork, &here, &summarized.joined, Some(reach), true);
         // What a name the passes began with and this one disagree on would
         // hold after the passes not run is not known: the passes need not
         // have met a head to widen at (each deeper in conditionals or
@@ -1888,7 +1895,7 @@ impl Machine<'_> {
             true => None,
             false => Some(self.widen_input(&a.state.input, &b.state.input, self.position_span(), false, false)?),
         };
-        let (joined, mut growth) = self.join_configs(fork, a, b, false, true);
+        let (joined, mut growth) = self.join_configs(fork, a, b, None, true);
         if a.tag.mode != b.tag.mode {
             growth.parts.push("mode");
         }
@@ -2018,7 +2025,7 @@ impl Machine<'_> {
             let b = paths.parked.swap_remove(j);
             let a = paths.parked.swap_remove(i);
             let widen = |c: Config| Config::new(PathState { input: input.clone(), ..c.state }, c.env, c.ended);
-            let (joined, _) = self.join_configs(fork, &widen(a), &widen(b), false, true);
+            let (joined, _) = self.join_configs(fork, &widen(a), &widen(b), None, true);
             paths.parked.push(joined);
         }
         // Tried again only once more wait: the rest cannot be one now.
@@ -2218,7 +2225,7 @@ impl Machine<'_> {
         {
             let other = paths.parked.swap_remove(i);
             let (a, b) = if first { (&config, &other) } else { (&other, &config) };
-            config = self.join_configs(fork, a, b, false, true).0;
+            config = self.join_configs(fork, a, b, None, true).0;
         }
         config
     }
@@ -2704,14 +2711,29 @@ impl Machine<'_> {
     /// one-of token made before holds, in the join, copies of several
     /// passes' choices, so no split narrows it from now on
     /// ([`Machine::split_one_of_groups`]).
-    fn join_passes(&mut self, fork: &Fork, a: &Config, b: &Config, widen: bool, paired: bool) -> (Config, Growth) {
+    fn join_passes(
+        &mut self,
+        fork: &Fork,
+        a: &Config,
+        b: &Config,
+        widen: Option<Reach>,
+        paired: bool,
+    ) -> (Config, Growth) {
         self.carried.passes_joined = self.carried.passes_joined.wrapping_add(1);
         self.join_configs(fork, a, b, widen, paired)
     }
 
     /// The least upper bound of two paths at one place, and what it holds
     /// more of than `a`.  The bindings are left as `fork` saw them.
-    fn join_configs(&mut self, fork: &Fork, a: &Config, b: &Config, widen: bool, paired: bool) -> (Config, Growth) {
+    fn join_configs(
+        &mut self,
+        fork: &Fork,
+        a: &Config,
+        b: &Config,
+        reach: Option<Reach>,
+        paired: bool,
+    ) -> (Config, Growth) {
+        let widen = reach.is_some();
         let span = self.position_span();
         self.out.heat(|h| &mut h.joins, span);
         // Joins run many to a step: past `limits.memory` the run stops here.
@@ -2735,7 +2757,7 @@ impl Machine<'_> {
         let syms = self.typed_syms();
         let typed = crate::engine::env::typed!(self, syms);
         self.out.joined_slots += (a.env.len() + b.env.len()) as u64;
-        let (env, slots, waiting) = self.env.join_paths(fork, &a.env, &b.env, &typed, (widen, paired), &after);
+        let (env, slots, waiting) = self.env.join_paths(fork, &a.env, &b.env, &typed, (reach, paired), &after);
         // Widened, a name the loop makes from a number (`\flag test 12`,
         // `\csname f\the\i`) is one of a family that may be defined
         // ([`Wild`]): its members stay as defined, and one more is no

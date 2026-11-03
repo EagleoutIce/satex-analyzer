@@ -1686,6 +1686,7 @@ fn source_url(site: &Site) -> String {
 const PRECISION_LIMITS: &[&str] = &[
     "choices",
     "site_forks",
+    "digit_lengths",
     "paths",
     "meaning_splits",
     "widen_after",

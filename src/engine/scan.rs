@@ -1016,9 +1016,11 @@ impl Machine<'_> {
 
     /// What TeX may read as the first token of the digits `whole` stands
     /// for, which lie in `num`: one arm for a sign, for one digit and for
-    /// each longer length, each with the interval `whole` has on it and the
-    /// tokens it spells. Several digits are its first place and the rest,
-    /// slices of `whole` ([`Machine::slice_token`]).
+    /// each longer length up to `limits.digit_lengths` digit counts, the
+    /// last of them all longer lengths with the length open, each with the
+    /// interval `whole` has on it and the tokens it spells. Several digits
+    /// are its first place and the rest, slices of `whole`
+    /// ([`Machine::slice_token`]).
     pub(crate) fn digit_arms(&mut self, whole: Sym, num: Num, span: Span) -> Vec<(Num, Vec<Token>)> {
         let mut arms = Vec::new();
         if num.lo < 0 {
@@ -1030,17 +1032,20 @@ impl Machine<'_> {
         if num.hi >= 0 && num.lo <= 9 {
             arms.push((Num::range(num.lo.max(0), num.hi.min(9)), vec![Token::new(Tok::Cs(whole), span)]));
         }
-        // Several digits: the first place and the rest, one arm whatever
-        // the length, which stays open until a read needs where it ends.
-        if num.hi >= 10 {
-            let part = Num::range(num.lo.max(10), num.hi);
-            let k = match digit_count(part.lo) == digit_count(part.hi) {
-                true => digit_count(part.hi),
-                false => OPEN,
-            };
-            let text =
-                vec![self.slice_token(whole, part, (k, 0, 1), span), self.slice_token(whole, part, (k, 1, k), span)];
+        // Several digits: the first place and the rest, an arm per length,
+        // the last allowed one open until a read needs where it ends.
+        let (mut k, hi) = (digit_count(num.lo.max(10)), digit_count(num.hi.max(0)));
+        let apart = u32::from(self.limits.digit_lengths).max(2) - 1;
+        while num.hi >= 10 && k <= hi {
+            let top = if k + 1 - digit_count(num.lo.max(10)) >= apart { hi } else { k };
+            let part = Num::range(num.lo.max(10i64.saturating_pow(k - 1)), num.hi.min(10i64.saturating_pow(top) - 1));
+            let len = if top == k { k } else { OPEN };
+            let text = vec![
+                self.slice_token(whole, part, (len, 0, 1), span),
+                self.slice_token(whole, part, (len, 1, len), span),
+            ];
             arms.push((part, text));
+            k = top + 1;
         }
         let most = self.scratch.split_digits.entry(whole).or_default();
         *most = arms.len().max(*most);

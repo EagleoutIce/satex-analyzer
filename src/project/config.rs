@@ -54,6 +54,13 @@ pub struct Limits {
     /// Lower finishes a `\foreach` with unknown bounds sooner but knows less.
     /// 0 turns it off.
     pub site_forks: u32,
+    /// How many digit counts a number of unknown digits is read apart into,
+    /// one path each, when TeX reads it digit by digit (`\the\count` of
+    /// 0..214: one, two, three digits). Past them the longer counts are
+    /// one path whose count stays open. Higher is more precise where code
+    /// compares or prints the count, and forks more for wide ranges
+    /// (`\int_rand:n {16777215}`).
+    pub digit_lengths: u8,
     /// How many alternative paths satex keeps at once. Past them the two
     /// oldest at one place are merged into one. Higher is more precise,
     /// slower and takes more memory.
@@ -183,6 +190,7 @@ impl Limits {
             "seconds" => self.seconds,
             "choices" => self.choices.into(),
             "site_forks" => self.site_forks.into(),
+            "digit_lengths" => self.digit_lengths.into(),
             "paths" => self.paths.into(),
             "alike" => self.alike.into(),
             "heads_apart" => self.heads_apart.into(),
@@ -247,6 +255,11 @@ impl Default for Limits {
             seconds: 300,
             choices: 8,
             site_forks: 64,
+            // Measured: `\the` of a count below 1000 reads apart into one,
+            // two and three digits (pgfmath's octal path, a false error
+            // when merged); a 24-bit random number into eight would fork
+            // past `site_forks`.
+            digit_lengths: 3,
             paths: 16,
             alike: 8,
             heads_apart: 32,

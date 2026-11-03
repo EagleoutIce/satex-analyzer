@@ -566,6 +566,16 @@ fn adding_to_a_bounded_count_raises_nothing() {
     check("pgfmath_bounded_count_plus_one", "main.tex", &[]);
 }
 
+/// Two hex numbers of 24-bit random numbers, read digit by digit: past
+/// `limits.digit_lengths` the longer digit counts are one path, so the
+/// paths stay few and no separator is lost (no caused library error).
+#[test]
+fn hex_of_two_wide_random_numbers_raises_nothing() {
+    let Some(a) = check("expl3_two_wide_rand_hex", "main.tex", &[]) else { return };
+    let caused: Vec<_> = satex::linter::lint(&a).into_iter().filter(|r| r["code"] == "caused-library-error").collect();
+    assert!(caused.is_empty(), "{caused:?}");
+}
+
 /// pgfmath parses a result of unknown width again: no false error.
 #[test]
 fn reparsing_a_pgfmath_result_of_unknown_width_raises_nothing() {

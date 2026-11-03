@@ -690,7 +690,7 @@ arm_joins: true  # inside an \edef or \csname, merge both branches of an undecid
   #! example: `\edef\x{\ifdraft a\else b\fi c}`: on, one run with a or b, off, two runs
 
 # Limits: the termination argument. Reaching one stops that part of the run
-# and records a diagnostic. Only choices, site_forks, paths, meaning_splits, widen_after, recursion_depth,
+# and records a diagnostic. Only choices, site_forks, digit_lengths, paths, meaning_splits, widen_after, recursion_depth,
 # call_summary_after, meaning_set and value_set trade precision for time, the rest only stop a run.
 limits:
   memory: 8GiB  # most memory one run may use. It stops cleanly beyond it. 0 lifts the limit
@@ -738,6 +738,9 @@ limits:
   site_forks: 64  # how many paths one place in a line may start before its \if is approximated. 0 = never
     #! affects: precision, speed
     #! example: lower: a `\foreach` with unknown bounds finishes faster but knows less
+  digit_lengths: 3  # how many digit counts a number of unknown digits is read apart into, one path each; past them the longer counts are one path
+    #! affects: precision, speed
+    #! example: lower: `\int_rand:n {16777215}` read digit by digit forks less; higher: pgfmath tells two from three digits
   paths: 16  # how many alternative paths satex keeps at once before merging the oldest two. Higher is more precise and slower
     #! affects: precision, speed, memory
     #! example: `\ifdraft ... \fi` many times over: more paths keep each combination apart
