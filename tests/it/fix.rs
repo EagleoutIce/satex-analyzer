@@ -311,6 +311,28 @@ fn lsp_positions_count_utf16_code_units() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Two safe fixes of one rule in a file also come as one action that applies both.
+#[test]
+fn lsp_offers_one_action_for_all_fixes_of_a_rule() {
+    let dir = project("lsp-all", &[("doc.tex", "\\label{x}\n\\label{y}\n")]);
+    let path = dir.join("doc.tex").display().to_string();
+    let record = |line: u32| -> Record {
+        serde_json::from_value(serde_json::json!({
+            "code": "unused-label", "severity": "info", "message": "m", "fix": "delete", "path": path,
+            "file": "doc.tex", "line": line, "col": 1, "applicability": "safe",
+            "edits": [{ "path": path, "start": { "line": line, "col": 1 }, "end": { "line": line, "col": 10 }, "replacement": "" }],
+        }))
+        .unwrap()
+    };
+    let out: serde_json::Value = serde_json::from_str(&satex::render::lsp(&[record(1), record(2)])).unwrap();
+    let actions = out[0]["codeActions"].as_array().unwrap();
+    let all =
+        actions.iter().find(|a| a["diagnostics"].as_array().is_some_and(|d| d.len() == 2)).expect("a fix-all action");
+    let edits = all["edit"]["changes"].as_object().unwrap().values().next().unwrap().as_array().unwrap();
+    assert_eq!((actions.len(), edits.len()), (3, 2));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `satex::lint::lint`'s findings of one `code`, against a fresh project
 /// holding `doc.tex`.  The caller removes the returned directory.
 fn lint_codes(name: &str, source: &str, code: &str) -> (Vec<Record>, PathBuf) {

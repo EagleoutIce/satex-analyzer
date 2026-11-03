@@ -1618,11 +1618,49 @@ pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
     }
     let out: Vec<Json> = files
         .into_iter()
-        .map(|(path, diagnostics, actions)| {
+        .map(|(path, diagnostics, mut actions)| {
+            actions.extend(fix_all(&actions));
             serde_json::json!({ "uri": uri(&path), "diagnostics": diagnostics, "codeActions": actions })
         })
         .collect();
     serde_json::to_string_pretty(&out).unwrap_or_default()
+}
+
+/// One action per rule with several safe fixes in a file: all of them at once.
+fn fix_all(actions: &[Json]) -> Vec<Json> {
+    let rule = |a: &Json| a["diagnostics"][0]["data"]["rule"].as_str().map(str::to_string);
+    let safe: Vec<&Json> = actions.iter().filter(|a| a["isPreferred"] == true).collect();
+    let mut rules: Vec<String> = safe.iter().filter_map(|a| rule(a)).collect();
+    rules.sort();
+    rules.dedup();
+    let mut out = Vec::new();
+    for code in rules {
+        let mine: Vec<&&Json> = safe.iter().filter(|a| rule(a).as_deref() == Some(code.as_str())).collect();
+        if mine.len() < 2 {
+            continue;
+        }
+        let mut changes = serde_json::Map::new();
+        for a in &mine {
+            for (file, edits) in a["edit"]["changes"].as_object().into_iter().flatten() {
+                let all = changes.entry(file.clone()).or_insert_with(|| Json::Array(Vec::new()));
+                for edit in edits.as_array().into_iter().flatten() {
+                    if let Some(all) = all.as_array_mut()
+                        && !all.contains(edit)
+                    {
+                        all.push(edit.clone());
+                    }
+                }
+            }
+        }
+        let diagnostics: Vec<Json> = mine.iter().map(|a| a["diagnostics"][0].clone()).collect();
+        out.push(serde_json::json!({
+            "title": format!("Fix all {code} in this file ({})", mine.len()),
+            "kind": "quickfix",
+            "diagnostics": diagnostics,
+            "edit": { "changes": changes },
+        }));
+    }
+    out
 }
 
 /// What the run could not follow, in a few lines: every cause with how often
