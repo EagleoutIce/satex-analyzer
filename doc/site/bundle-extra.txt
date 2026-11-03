@@ -1,0 +1,9 @@
+# Files the playground's TeX tree needs that no listing finds: read by the
+# engines or by Lua, not by TeX's \input. One per line: the kpsewhich
+# variable whose tree holds them, then a glob relative to that tree. Each
+# lands at the same relative path in the bundle.
+# The hyphenation setup the formats read, generated into the system var tree.
+TEXMFSYSVAR tex/generic/config/language.*
+# LuaTeX's `status.luatex_engine` reads the engine table here: without it
+# expl3.lua stops early and expl3's Lua commands stay undefined.
+TEXMFDIST web2c/fmtutil.cnf
