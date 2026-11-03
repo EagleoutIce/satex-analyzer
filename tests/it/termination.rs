@@ -1011,6 +1011,26 @@ Some text with microtype protrusion and expansion.
         assert_eq!(crate::support::body(&a, "Check"), "12", "{codes:?}");
     }
 
+    /// A separator that is `\let`, read as a delimiter by a macro called
+    /// before it (expl3's `\__int_mod:ww ... \__int_sep: \__int_eval_end:`),
+    /// defines nothing: the alias after it keeps its meaning.
+    #[test]
+    fn a_widened_conditional_keeps_an_alias_after_a_delimiting_separator() {
+        let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\count1=\\pdfelapsedtime
+\\let\\sep\\let \\let\\stop\\relax \\def\\m#1\\sep#2\\sep{#1}
+\\def\\x{\\advance\\count2 1 \\ifnum\\count1>\\count2 \\m 1\\sep 2\\sep\\stop \\expandafter\\x\\else\\expandafter\\x\\fi}\\x
+\\edef\\Check{\\ifx\\stop\\relax y\\else n\\fi}
+";
+        let mut cfg = super::cfg(1_000_000_000);
+        let l = &mut cfg.limits;
+        (l.widen_after, l.cycle_after, l.recursion_depth) = (u16::MAX, u16::MAX, u16::MAX);
+        (l.call_summary_after, l.site_expansions, l.site_forks) = (0, u32::MAX, 4);
+        let a = Machine::analyze(source, None, &cfg);
+        let codes: Vec<&str> = a.facts.diagnostics.iter().map(|d| d.code).collect();
+        assert!(codes.contains(&"site-forks-widened"), "{codes:?}");
+        assert_eq!(crate::support::body(&a, "Check"), "y", "{codes:?}");
+    }
+
     /// A test of `\numexpr x-10` narrows `x` on each arm, `\ifcase` and
     /// `\ifnum` alike, so `\int_to_Hex:n`'s base recursion ends by intervals.
     #[test]

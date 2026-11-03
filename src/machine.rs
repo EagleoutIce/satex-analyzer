@@ -13017,6 +13017,8 @@ impl Machine<'_> {
             // A definition inside a group the text opens and closes is gone
             // when it ends; a `\global` one is not.
             let (mut grouped, mut global, mut definer) = (0usize, false, None::<Primitive>);
+            // The delimiters a macro called here reads up to: never code.
+            let mut delimiters: Vec<(Tok, usize)> = Vec::new();
             for (i, t) in text.iter().enumerate() {
                 left = left.saturating_sub(1);
                 if let Some((kind, n)) = numbered {
@@ -13045,7 +13047,19 @@ impl Machine<'_> {
                     }
                     continue;
                 };
+                if delimiters.last() == Some(&(t.tok, grouped)) {
+                    delimiters.pop();
+                    definer = None;
+                    continue;
+                }
                 let meaning = self.env.meaning(cs);
+                if let Meaning::Macro(m) = &meaning {
+                    let lits = m.parameter_text.items.iter().rev().filter_map(|p| match p {
+                        crate::tex::ParamItem::Lit(tok @ Tok::Cs(_)) => Some((*tok, grouped)),
+                        _ => None,
+                    });
+                    delimiters.extend(lits);
+                }
                 match meaning.prim() {
                     Some(Primitive::BeginGroup) => grouped += 1,
                     Some(Primitive::EndGroup) => grouped = grouped.saturating_sub(1),
