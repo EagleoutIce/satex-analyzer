@@ -444,9 +444,14 @@ def bundle(satex, work):
     # generates into TEXMFSYSVAR, not TEXMFDIST: without it LuaTeX's kernel is not read to its end.
     var = Path(run("kpsewhich", "-var-value", "TEXMFSYSVAR").strip()).resolve()
     generated = sorted((var / "tex" / "generic" / "config").glob("language.*"))
+    # the engine table LuaTeX's `status.luatex_engine` is read from: without it expl3.lua stops early
+    fmtutil = Path(run("kpsewhich", "fmtutil.cnf").strip())
     for path in generated:
         (tree / "tex" / "generic" / "config").mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, tree / "tex" / "generic" / "config" / path.name)
+    if fmtutil.is_file():
+        (tree / "web2c").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(fmtutil, tree / "web2c" / "fmtutil.cnf")
     config = (SITE / "playground.yaml").read_text().replace("/texmf.bundle", str(tree))
     shutil.copytree(ROOT / "samples", project, ignore=shutil.ignore_patterns("satex.yaml"))
     for doc in docs[:len(roots(EXAMPLES))]:
@@ -552,6 +557,8 @@ def bundle(satex, work):
     # offers each package, and loading one the page has not fetched is a missing file it then fetches.
     for path in generated:
         tables[0][f"/texmf.bundle/tex/generic/config/{path.name}"] = path.read_bytes()
+    if fmtutil.is_file():
+        tables[0]["/texmf.bundle/web2c/fmtutil.cnf"] = fmtutil.read_bytes()
     held = sorted({p for files in [*tables, *(f for _, _, f, _ in packages)] for p in files if p.startswith("/texmf.bundle/")})
     listing = {}
     for p in held:
