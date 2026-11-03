@@ -790,7 +790,7 @@ def examples(satex, work, project):
         tab = (f'<button role="tab" aria-selected="{sel}" aria-controls="ex-{i}" id="ex-tab-{i}">{html.escape(name)}</button>')
         return tab, (
             f'<figure class="example" role="tabpanel" id="ex-{i}" aria-labelledby="ex-tab-{i}"{"" if i == 0 else " hidden"}>\n'
-            f'<figcaption><span class="muted live-status" aria-live="polite">Hover a command to explain it, an underline or a marker to see its finding. Click into the source to edit it.</span>'
+            f'<figcaption><span class="muted live-status" aria-live="polite">Click into the source to edit it.</span>'
             f'<span class="ex-acts"><button type="button" class="ghost small ex-reset" hidden>reset</button>'
             f'<a class="button ghost small" href="play/index.html#{name}">open in the playground →</a></span></figcaption>\n'
             f'<pre class="src"><code>{lines}</code></pre>\n'
