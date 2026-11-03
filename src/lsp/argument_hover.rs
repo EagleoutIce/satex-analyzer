@@ -1,37 +1,47 @@
-//! Hover over a typed argument: the argument's [`Ty`] says what the text
-//! names, one small helper per kind says what the run knows of it.
+//! Hover over typed text: the type [`super::type_at::type_at`] finds says
+//! what the text names, one small helper per kind says what the run knows of it.
 
-use super::handlers::{argument_at, command_hover, load_hover};
+use super::handlers::{cite_hover, command_hover, key_hover, load_hover};
 use crate::analysis::facts::Occurrence;
 use crate::analysis::machine::Analysis;
-use crate::analysis::roles::{self, FileKind, KeyKind, Ty};
+use crate::analysis::roles::{FileKind, KeyKind, Ty};
 use crate::engine::builtins::OccKind;
-use crate::engine::source::byte_of_col;
 use crate::engine::tex::RegKind;
-use crate::linter::fix::Pos;
+use crate::linter::fix::{Pos, Text};
 use std::path::Path;
 
-/// What the braced argument under `pos` names, by the type [`roles::roles`] gives that argument.
-pub(super) fn argument_hover(analysis: &Analysis, line: &str, path: &str, pos: Pos) -> Option<String> {
-    let (before, after) = line.split_at(byte_of_col(line, pos.col).min(line.len()));
-    let arg = argument_at(before).filter(|a| a.open == '{')?;
-    let at = roles::braced_groups(arg.groups).len();
-    let ty = roles::roles(analysis, arg.cmd).iter().find(|r| r.arg == at)?.kind.ty();
-    let start = before.rfind([',', '{']).map_or(0, |i| i + 1);
-    let end = after.find([',', '}']).unwrap_or(after.len());
-    let key = format!("{}{}", &before[start..], &after[..end]);
-    let key = key.trim();
-    if key.is_empty() {
-        return None;
-    }
-    match ty {
-        Ty::File(FileKind::Cls | FileKind::Sty) => load_hover(analysis, path, pos, key),
-        Ty::File(kind) => file_hover(analysis, path, pos, key, kind),
-        Ty::Key(KeyKind::Environment) => environment_hover(analysis, path, pos, key),
-        Ty::Key(KeyKind::Label) => label_hover(analysis, key),
-        Ty::Named(RegKind::Count) => command_hover(analysis, &format!("c@{key}"), None),
-        _ => None,
-    }
+/// What the text under `pos` names, by its types, the most precise first.
+pub(super) fn typed_hover(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> Option<String> {
+    let line = doc.line(pos.line);
+    // the whole name: asked at its end
+    let at = crate::engine::source::byte_of_col(line, pos.col).min(line.len());
+    let rest = line[at..].chars().take_while(|c| !super::type_at::ENDS.contains(*c)).count() as u32;
+    let found = super::type_at::type_at(analysis, doc, path, Pos::new(pos.line, pos.col + rest));
+    let key = found.item.typed.trim();
+    found.hits.iter().find_map(|hit| {
+        let key = hit.typed.as_deref().unwrap_or(key);
+        match hit.ty {
+            _ if key.is_empty() => None,
+            Ty::Key(KeyKind::Cite) => cite_hover(analysis, key),
+            Ty::Key(KeyKind::Label) => label_hover(analysis, &format!("{}{key}", hit.prefix)),
+            Ty::Key(KeyKind::Environment) => environment_hover(analysis, path, pos, key),
+            Ty::Key(KeyKind::Option | KeyKind::Pgf | KeyKind::Declared) => key_hover(analysis, line, pos.col),
+            Ty::Key(KeyKind::Color) => color_hover(analysis, key),
+            Ty::File(FileKind::Cls | FileKind::Sty) => load_hover(analysis, path, pos, key),
+            Ty::File(kind) => file_hover(analysis, path, pos, key, kind),
+            Ty::Named(RegKind::Count) => command_hover(analysis, &format!("c@{key}"), None),
+            Ty::Dimen | Ty::Glue => super::units::hover(line, pos.col),
+            _ => None,
+        }
+    })
+}
+
+/// A color's name: its value where the run defined it.
+fn color_hover(analysis: &Analysis, key: &str) -> Option<String> {
+    let c = analysis.facts.colors.iter().rev().find(|c| c.name == key)?;
+    let value = c.value.as_ref().and_then(super::handlers::rgba);
+    let shown = value.map(|v| format!("rgb {:.2} {:.2} {:.2}", v.red, v.green, v.blue));
+    Some(format!("### `{key}`: color\n\n{}\n", shown.unwrap_or_else(|| "a value the run did not fix".into())))
 }
 
 /// A file argument: the load the run made of it, else the file beside the document when there is one.

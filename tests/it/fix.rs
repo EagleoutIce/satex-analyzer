@@ -615,3 +615,18 @@ fn missing_bye_is_appended() {
     assert!(records.is_empty(), "{records:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// ConTeXt's kernel is not read: how its documents end and which category
+/// codes they start with are not known, so neither is reported.
+#[test]
+fn a_context_document_is_not_held_to_latex_conventions() {
+    if !installed() {
+        return;
+    }
+    let source = "% !TeX program = context\n\\starttext\nHello\tthere.\n\\stoptext\n";
+    for code in ["missing-end", "catcode-escapes-group"] {
+        let (records, dir) = lint_codes(&format!("context-{code}"), source, code);
+        assert!(records.is_empty(), "{code}: {records:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

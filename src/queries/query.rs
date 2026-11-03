@@ -4192,6 +4192,13 @@ fn effective_of(
                 let _ = write!(body, "{{{n}}}");
             }
         }
+        // no complete probe: The TeXbook's syntax where one is known, not a count of arguments
+        (None, None, Some(_)) if crate::lsp::primitives::usage(crate::engine::tex::bare_name(&cs)).is_some() => {
+            return format!(
+                "{cs}{}",
+                crate::lsp::primitives::usage(crate::engine::tex::bare_name(&cs)).unwrap_or_default()
+            );
+        }
         (None, None, Some(prim)) => {
             let (low, high) = crate::engine::builtins::takes(prim);
             for i in 1..=low {

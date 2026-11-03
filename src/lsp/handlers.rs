@@ -142,28 +142,21 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
     if let Some(markdown) = super::directive::hover(doc.line(pos.line), pos.col) {
         return Some(markdown_hover(markdown));
     }
-    if let Some(markdown) = super::units::hover(doc.line(pos.line), pos.col) {
-        return Some(markdown_hover(markdown));
-    }
     if let Some(markdown) = directive_hover(analysis, path, pos) {
         return Some(markdown_hover(markdown));
     }
     if let Some(markdown) = magic_hover(analysis, doc, pos) {
         return Some(markdown_hover(markdown));
     }
-    if let Some(markdown) = cite_hover(analysis, doc.line(pos.line), pos.col) {
-        return Some(markdown_hover(markdown));
-    }
-    if let Some(markdown) = key_hover(analysis, doc.line(pos.line), pos.col) {
-        return Some(markdown_hover(markdown));
-    }
-    let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
-    let markdown = if is_command {
-        placed(analysis, command_hover(analysis, &name, active_at(analysis, &name, path, pos))?, &name, path, pos)
-    } else {
-        super::argument_hover::argument_hover(analysis, doc.line(pos.line), path, pos)
-            .or_else(|| load_hover(analysis, path, pos, &name))
-            .or_else(|| bib_style_hover(analysis, path, pos, &name))?
+    let word = word_at(doc.line(pos.line), pos.col);
+    let markdown = match word {
+        Some((name, true)) => {
+            placed(analysis, command_hover(analysis, &name, active_at(analysis, &name, path, pos))?, &name, path, pos)
+        }
+        _ => super::argument_hover::typed_hover(analysis, doc, path, pos).or_else(|| {
+            let (name, _) = word?;
+            load_hover(analysis, path, pos, &name).or_else(|| bib_style_hover(analysis, path, pos, &name))
+        })?,
     };
     Some(markdown_hover(markdown))
 }
@@ -171,9 +164,12 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
 /// The key under column `col` in the option list of a command (`\\captionsetup{aboveskip=}`):
 /// the family and package that define it, its type, default and choices as the run stored them
 /// ([`query::options`]), and what the mined manual says of it.
-fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
+pub(super) fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
     let at = crate::engine::source::byte_of_col(line, col).min(line.len());
-    let start = line[..at].rfind([',', '[', '{']).map_or(0, |i| i + 1);
+    // the group the cursor stands in, still open there: a `[…]` closed before it holds no key here
+    let open = argument_at(&line[..at])?;
+    let from = at - open.inside.len();
+    let start = from + open.inside.rfind([',', '{']).map_or(0, |i| i + 1);
     let end = at + line[at..].find(['=', ',', ']', '}']).unwrap_or(line.len() - at);
     // a value, not a key: the `=` stands before the cursor
     if line[start..at].contains('=') {
@@ -307,16 +303,8 @@ fn directive_hover(analysis: &Analysis, path: &str, pos: Pos) -> Option<String> 
     (!found.is_empty()).then(|| found.join("\n\n"))
 }
 
-/// The database entry of the key under column `col` of `line`, in an
-/// argument [`crate::analysis::roles`] says cites: what it names and every field.
-fn cite_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
-    let (before, after) = line.split_at(crate::engine::source::byte_of_col(line, col).min(line.len()));
-    let arg = argument_at(before).filter(|a| a.open == '{')?;
-    let at = crate::analysis::roles::braced_groups(arg.groups).len();
-    let cite = crate::analysis::roles::RoleKind::Occ(crate::engine::builtins::OccKind::Cite);
-    crate::analysis::roles::roles(analysis, arg.cmd).iter().find(|r| r.arg == at && r.kind == cite)?;
-    let start = before.rfind([',', '{']).map_or(0, |i| i + 1);
-    let key = format!("{}{}", &before[start..], &after[..after.find([',', '}']).unwrap_or(after.len())]);
+/// The database entry of the citation key `key`: what it names and every field.
+pub(super) fn cite_hover(analysis: &Analysis, key: &str) -> Option<String> {
     let e = bib_entries(analysis).iter().find(|e| e.key == key.trim())?;
     let field = |names: &[&str]| e.fields.iter().find(|(n, _)| names.contains(&n.as_str())).map(|(_, v)| v.as_str());
     let venue = field(&["journal", "journaltitle", "booktitle", "publisher", "school", "institution", "howpublished"]);
@@ -458,15 +446,9 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
             markdown.push('\n');
         }
         if let Some(doc) = &doc {
+            // the comment stands above the definition, whose place the card's foot gives
             if !doc.text.is_empty() {
-                let place =
-                    text("path").map(|p| format!(" `{p}:{}`", record.get("line").and_then(Json::as_u64).unwrap_or(1)));
-                markdown.push_str(&format!(
-                    "{} {}{}\n\n",
-                    doc.text,
-                    extracted("from the source comment"),
-                    place.unwrap_or_default()
-                ));
+                markdown.push_str(&format!("{} {}\n\n", doc.text, extracted("from the source comment")));
             }
             if !doc.example.is_empty() {
                 markdown.push_str(&format!("```tex\n{}\n```\n\n", doc.example.join("\n")));
@@ -1307,18 +1289,11 @@ pub fn workspace_symbols(analysis: &Analysis, query_text: &str) -> Vec<SymbolInf
 /// inputs), the keys its occurrences carry (environments, labels,
 /// citations, graphics), or the key family its optional argument feeds.
 /// Elsewhere, the commands in scope, ranked for a document author.
-pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> CompletionResponse {
-    let found = completion_at(analysis, doc, position);
-    // nothing the place offers: the kind of name the run formed there does
-    match &found {
-        CompletionResponse::Array(items) if items.is_empty() => {
-            slot_items(analysis, doc, to_pos(doc, position)).map_or(found, CompletionResponse::Array)
-        }
-        _ => found,
-    }
+pub fn completion(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> CompletionResponse {
+    completion_at(analysis, doc, path, position)
 }
 
-fn completion_at(analysis: &Analysis, doc: &Text, position: Position) -> CompletionResponse {
+fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> CompletionResponse {
     let pos = to_pos(doc, position);
     let line = doc.line(pos.line);
     let (before, after) = line.split_at(crate::engine::source::byte_of_col(line, pos.col).min(line.len()));
@@ -1345,15 +1320,17 @@ fn completion_at(analysis: &Analysis, doc: &Text, position: Position) -> Complet
     if let Some(items) = parameter_items(analysis, doc, before, pos) {
         return CompletionResponse::Array(items);
     }
-    if let Some(items) = node_items(analysis, doc, pos) {
-        return CompletionResponse::Array(items);
-    }
-    match argument_at(before) {
-        Some(arg) if !cs_re().is_match(before) => {
-            let mut items = argument_items(analysis, doc, &arg, after, pos);
+    // What the text at the cursor is ([`super::type_at`]): the names of that type.
+    let at = super::type_at::type_at(analysis, doc, path, pos);
+    let items = typed_items(analysis, doc, &at, after, pos);
+    match at.place.as_ref() {
+        Some(place) if !cs_re().is_match(before) => {
+            let arg = place.arg();
+            let mut items = items;
             // A braced name replaces the word typed and the rest of it, and closes the brace.
             let typed = arg.inside.rsplit(',').next().unwrap_or_default().trim_start();
             if arg.open == '{' && !typed.contains('=') {
+                let typed = &at.item.typed;
                 let rest = after.chars().take_while(|c| c.is_alphanumeric() || ":-_./*".contains(*c)).count();
                 let close = if after[after.char_indices().nth(rest).map_or(after.len(), |(i, _)| i)..].starts_with('}')
                 {
@@ -1384,16 +1361,16 @@ fn completion_at(analysis: &Analysis, doc: &Text, position: Position) -> Complet
             }
             CompletionResponse::Array(items)
         }
+        // a name of a known kind outside an argument (`\draw (`, `2.5c`): no `\` typed
+        _ if !items.is_empty() => CompletionResponse::Array(items),
         _ => {
-            // no `\` typed where the run formed a name from the text: that kind of name, not commands
-            let word = before.chars().rev().take_while(|c| !"{}[](),=;\\ \t%".contains(*c)).count();
-            if !before.chars().rev().nth(word).is_some_and(|c| c == '\\')
-                && let Some(items) = slot_items(analysis, doc, pos)
-            {
-                return CompletionResponse::Array(items);
-            }
             // the name typed, with the letters of that place (`_` and `:` under `\ExplSyntaxOn`)
             let letters = analysis.facts.letters_at(analysis.main_file, pos.line, pos.col);
+            // a command completes only where one is being typed: its `\` right before the letters
+            let word = before.chars().rev().take_while(|c| c.is_alphabetic() || letters.contains(c)).count();
+            if before.chars().rev().nth(word) != Some('\\') {
+                return CompletionResponse::Array(Vec::new());
+            }
             let typed = before
                 .rfind('\\')
                 .map(|i| &before[i + 1..])
@@ -1511,188 +1488,203 @@ fn item(label: String, kind: CompletionItemKind, detail: Option<String>, rank: u
     }
 }
 
-fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: Pos) -> Vec<CompletionItem> {
-    use crate::analysis::roles::RoleKind as R;
-    use crate::engine::builtins::{LoadKind, OccKind};
-    // What the argument at the cursor is ([`crate::analysis::roles`]): a braced one
-    // by its place, a bracketed one by every role of the command.
-    let at = crate::analysis::roles::braced_groups(arg.groups).len();
-    let roles: Vec<crate::analysis::roles::Role> = crate::analysis::roles::roles(analysis, arg.cmd)
-        .into_iter()
-        .filter(|r| arg.open != '{' || r.arg == at)
-        .collect();
-    let mut occs: Vec<OccKind> =
-        roles.iter().filter_map(|r| if let R::Occ(k) = r.kind { Some(k) } else { None }).collect();
-    // A wrapper that adds a prefix (`\ref{sec:#1}`) is given what follows it.
-    let prefix = roles.iter().find(|r| r.kind == R::Occ(OccKind::Ref)).map_or("", |r| r.prefix.as_str());
-    occs.sort_by_key(|k| *k as u8);
-    occs.dedup();
-    let first_group = || {
-        static G: OnceLock<Regex> = OnceLock::new();
-        let g = G.get_or_init(|| Regex::new(r"\{([^{}]*)\}").unwrap());
-        g.captures(arg.groups).map(|c| c[1].trim().to_string())
-    };
-    // A loaded file's name is no color: no probe asks.
-    let load = roles.iter().any(|r| matches!(r.kind, R::Load(_)));
-    if arg.open == '{' && !load && takes_colors(analysis, arg) {
-        return color_items(analysis);
-    }
-    if arg.open == '[' {
-        if roles.iter().any(|r| matches!(r.kind, R::Load(LoadKind::Class | LoadKind::Package))) {
-            // `\usepackage[…]{name}`: the name follows the cursor.
-            static NAME: OnceLock<Regex> = OnceLock::new();
-            let name = NAME.get_or_init(|| Regex::new(r"^[^\]]*\]\s*\{([^{},]*)").unwrap());
-            let Some(package) = name.captures(after).map(|c| c[1].trim().to_string()) else { return Vec::new() };
-            // `key=…` whose value the run loaded as a file (biblatex's `style=` a `.bbx`).
-            if let Some((key, typed)) = arg.inside.rsplit(',').next().and_then(|o| o.split_once('=')) {
-                let mut items: Vec<CompletionItem> = query::option_values(analysis, &package, key.trim())
-                    .into_iter()
-                    .filter(|v| v.starts_with(typed.trim()))
-                    .map(|v| item(v, CompletionItemKind::VALUE, Some(format!("{} of {package}", key.trim())), 0))
-                    .collect();
-                items.extend(files(analysis, option_files(analysis, &package, key.trim()).into_iter(), typed.trim()));
-                return items;
-            }
-            let detail = |d: Option<String>| d.map_or(package.clone(), |d| format!("default: {d}  ({package})"));
-            let options = query::package_options(analysis, &package).into_iter();
-            return options.map(|(key, d)| item(key, CompletionItemKind::PROPERTY, Some(detail(d)), 0)).collect();
-        }
-        let target = match occs.contains(&OccKind::BeginEnvironment) {
-            true => first_group().unwrap_or_default(),
-            false => arg.cmd.to_string(),
-        };
-        // `key=`: the tips or patterns the key hands pgf.
-        if let Some((key, _)) = arg.inside.rsplit(',').next().and_then(|o| o.split_once('=')) {
-            let options = query::options(analysis, &target);
-            let family = options.iter().find_map(|r| r.get("family")?.as_str().filter(|f| f.starts_with('/')));
-            if let Some(family) = family {
-                let path = format!("{}/{}", family.trim_end_matches('/'), key.trim());
-                let drawn = drawn_items(
-                    analysis,
-                    &path,
-                    &[Stroke::Arrows, Stroke::Pattern, Stroke::Color, Stroke::Node, Stroke::NodeOf],
-                );
-                if !drawn.is_empty() {
-                    return drawn;
+/// The names that fit each type [`super::type_at::type_at`] found at the cursor, the most precise
+/// type's first.
+fn typed_items(analysis: &Analysis, doc: &Text, at: &super::type_at::At, after: &str, pos: Pos) -> Vec<CompletionItem> {
+    use crate::analysis::roles::{KeyKind, Ty};
+    use crate::engine::builtins::OccKind;
+    let mut out: Vec<CompletionItem> = Vec::new();
+    // a name being defined is not one of those defined
+    for hit in at.hits.iter().filter(|h| !h.defines) {
+        let typed = hit.typed.as_deref().unwrap_or(&at.item.typed);
+        let arg = at.place.as_ref().map(super::type_at::Place::arg);
+        let items = match (hit.ty, &arg) {
+            (Ty::Options, Some(arg)) => package_options(analysis, arg, after),
+            (Ty::Key(KeyKind::Option | KeyKind::Pgf), Some(arg)) if arg.open == '[' => bracket_keys(analysis, doc, arg),
+            (Ty::Key(KeyKind::Option | KeyKind::Pgf | KeyKind::Declared), Some(arg)) => {
+                let keys = key_items(analysis, doc, arg, pos);
+                // after `key=` only values: nothing else fits a known key's value
+                let valued = arg.inside.rsplit(',').next().is_some_and(|k| k.contains('='));
+                if valued && !query::options(analysis, arg.cmd).is_empty() {
+                    return keys;
                 }
+                keys
             }
-        }
-        let mut items = option_items(analysis, &target);
-        // An optional argument with a default offers it; a numeric default
-        // makes it a count (`\newcommand`'s `[0]`): the counts follow.
-        if items.is_empty()
-            && let Some(default) = optional_default(analysis, &target, arg.groups.matches('[').count())
-        {
-            items.push(item(default.clone(), CompletionItemKind::VALUE, Some("default".into()), 0));
-            if default.trim().parse::<u8>().is_ok() {
-                items.extend(
-                    (0..=9u8)
-                        .map(|n| n.to_string())
-                        .filter(|n| *n != default)
-                        .map(|n| item(n, CompletionItemKind::VALUE, None, 1)),
-                );
+            (Ty::Key(KeyKind::Color), _) => color_items(analysis),
+            (Ty::Key(KeyKind::Label), _) => {
+                let labels = analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Label);
+                let labels: BTreeSet<&str> = labels.filter_map(|o| o.key.strip_prefix(hit.prefix.as_str())).collect();
+                let labels = labels.into_iter().filter(|k| !k.is_empty() && k.starts_with(typed));
+                labels.map(|k| item(k.to_string(), CompletionItemKind::REFERENCE, None, 0)).collect()
             }
-        }
+            (Ty::Key(KeyKind::Cite), _) => cite_items(analysis),
+            (Ty::Key(KeyKind::Environment), Some(arg)) => environment_items(analysis, doc, arg, after, pos),
+            (Ty::File(kind), _) if hit.file && !(hit.prefix.is_empty() && hit.suffix.is_empty()) => {
+                let ext = match kind {
+                    crate::analysis::roles::FileKind::Sty | crate::analysis::roles::FileKind::Cls => kind.ext(),
+                    _ => None,
+                };
+                library_items(analysis, &hit.prefix, &hit.suffix, ext.map(|e| format!(".{e}")).as_deref(), typed)
+            }
+            (ty @ Ty::File(_), _) => files(analysis, file_exts(analysis, ty).into_iter(), typed.trim()),
+            (Ty::Dimen | Ty::Glue, _) => unit_items(typed),
+            _ if !hit.prefix.is_empty() => {
+                let what = format!("named `{}…`", hit.prefix);
+                (defined_with(analysis, &hit.prefix, typed).into_iter())
+                    .map(|n| item(n, CompletionItemKind::REFERENCE, Some(what.clone()), 0))
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        out.extend(items.into_iter().filter(|i| !out.iter().any(|o| o.label == i.label)).collect::<Vec<_>>());
+    }
+    out
+}
+
+/// `\usepackage[…]{name}`: the options of the package named after the cursor, after `key=` the
+/// values the run saw and the files of the kind it loaded by that value (biblatex's `style=` a `.bbx`).
+fn package_options(analysis: &Analysis, arg: &Arg, after: &str) -> Vec<CompletionItem> {
+    let close = after.find(']').map_or(after.len(), |i| i + 1);
+    let named = crate::analysis::roles::braced_groups(&after[close..]);
+    let Some(package) =
+        named.first().map(|g| g.trim_matches(['{', '}']).split(',').next().unwrap_or_default().trim().to_string())
+    else {
+        return Vec::new();
+    };
+    if let Some((key, typed)) = arg.inside.rsplit(',').next().and_then(|o| o.split_once('=')) {
+        let mut items: Vec<CompletionItem> = query::option_values(analysis, &package, key.trim())
+            .into_iter()
+            .filter(|v| v.starts_with(typed.trim()))
+            .map(|v| item(v, CompletionItemKind::VALUE, Some(format!("{} of {package}", key.trim())), 0))
+            .collect();
+        items.extend(files(analysis, option_files(analysis, &package, key.trim()).into_iter(), typed.trim()));
         return items;
     }
-    // A key list in braces (`\pgfkeys{…}`, `\tikzset{…}`, a macro that
-    // hands its argument to one).
-    if arg.open == '{'
-        && !roles.iter().any(|r| matches!(r.kind, R::Load(_)))
-        && occs.iter().all(|k| matches!(k, OccKind::Key | OccKind::KeyUse))
+    let detail = |d: Option<String>| d.map_or(package.clone(), |d| format!("default: {d}  ({package})"));
+    let options = query::package_options(analysis, &package).into_iter();
+    options.map(|(key, d)| item(key, CompletionItemKind::PROPERTY, Some(detail(d)), 0)).collect()
+}
+
+/// A `[…]` key list of a command or environment: after `key=` the tips, patterns, colors or nodes
+/// the key hands pgf; else the keys, or the default of an optional argument.
+fn bracket_keys(analysis: &Analysis, doc: &Text, arg: &Arg) -> Vec<CompletionItem> {
+    let _ = doc;
+    let target = key_list_owner(arg).unwrap_or_else(|| arg.cmd.to_string());
+    if let Some((key, _)) = arg.inside.rsplit(',').next().and_then(|o| o.split_once('=')) {
+        let options = query::options(analysis, &target);
+        let family = options.iter().find_map(|r| r.get("family")?.as_str().filter(|f| f.starts_with('/')));
+        if let Some(family) = family {
+            let path = format!("{}/{}", family.trim_end_matches('/'), key.trim());
+            let drawn = drawn_items(
+                analysis,
+                &path,
+                &[Stroke::Arrows, Stroke::Pattern, Stroke::Color, Stroke::Node, Stroke::NodeOf],
+            );
+            if !drawn.is_empty() {
+                return drawn;
+            }
+        }
+    }
+    let mut items = option_items(analysis, &target);
+    // An optional argument with a default offers it; a numeric default
+    // makes it a count (`\newcommand`'s `[0]`): the counts follow.
+    if items.is_empty()
+        && let Some(default) = optional_default(analysis, &target, arg.groups.matches('[').count())
     {
-        let keys = key_items(analysis, doc, arg, pos);
-        // after `key=` only values: nothing else fits a known key's value
-        let valued = arg.inside.rsplit(',').next().is_some_and(|k| k.contains('='));
-        if !keys.is_empty() || (valued && !query::options(analysis, arg.cmd).is_empty()) {
-            return keys;
+        items.push(item(default.clone(), CompletionItemKind::VALUE, Some("default".into()), 0));
+        if default.trim().parse::<u8>().is_ok() {
+            items.extend(
+                (0..=9u8)
+                    .map(|n| n.to_string())
+                    .filter(|n| *n != default)
+                    .map(|n| item(n, CompletionItemKind::VALUE, None, 1)),
+            );
         }
     }
-    // A file argument: the files of the extension its role reads.
-    let typed = arg.inside.rsplit(',').next().unwrap_or_default().trim();
-    // A library's name: the files between the fixed prefix and suffix the
-    // run's loads put around it.
-    let affixed: Vec<_> = roles
+    items
+}
+
+/// The databases' entries, found by key, title, author or year; then keys a `\bibitem` or
+/// another citation gave.
+fn cite_items(analysis: &Analysis) -> Vec<CompletionItem> {
+    use crate::engine::builtins::OccKind;
+    let entries = bib_entries(analysis);
+    let mut out: Vec<CompletionItem> = entries
         .iter()
-        .filter(|r| matches!(r.kind, R::Load(_)) && !(r.prefix.is_empty() && r.suffix.is_empty()))
+        .map(|e| {
+            let who = e.author.split(" and ").next().unwrap_or_default();
+            let surname = who.split(',').next().unwrap_or(who).split_whitespace().last().unwrap_or_default();
+            let detail = match (surname, e.year.as_str()) {
+                ("", "") => e.kind.clone(),
+                (s, "") => s.to_string(),
+                ("", y) => y.to_string(),
+                (s, y) => format!("{s} ({y})"),
+            };
+            CompletionItem {
+                filter_text: Some(format!("{} {} {} {}", e.key, e.title, e.author, e.year)),
+                documentation: (!e.title.is_empty())
+                    .then(|| lsp_types::Documentation::String(format!("{}\n{} {}", e.title, e.author, e.year))),
+                ..item(e.key.clone(), CompletionItemKind::REFERENCE, Some(detail), 0)
+            }
+        })
         .collect();
-    if !affixed.is_empty() {
-        return library_items(analysis, &affixed, typed);
-    }
-    let mut out = files(analysis, roles.iter().filter_map(|r| file_exts(analysis, r.kind.ty())), typed);
-    let keys = |kinds: &[OccKind]| -> BTreeSet<String> {
-        let occ = analysis.facts.occurrences.iter().filter(|o| kinds.contains(&o.kind) && !o.key.is_empty());
-        occ.map(|o| o.key.clone()).collect()
-    };
-    for kind in &occs {
-        match kind {
-            OccKind::BeginEnvironment | OccKind::EndEnvironment => {
-                let open = open_environments(analysis, (pos.line, arg.col));
-                let snippet = *kind == OccKind::BeginEnvironment;
-                let close = after.starts_with('}');
-                // A name already written after the cursor stays as it is. Text that only follows
-                // it (a comment, a word after a space) is not part of the name.
-                let fresh = close || !after.starts_with(|c: char| c.is_alphanumeric() || ":-_./*@".contains(c));
-                let here = open.iter().rev().enumerate().filter(|_| !snippet);
-                out.extend(here.map(|(i, e)| item(e.clone(), CompletionItemKind::MODULE, Some("open here".into()), i)));
-                for (env, items) in environments(analysis, pos) {
-                    if !snippet && open.contains(&env) {
-                        continue;
-                    }
-                    let mut it = item(env.clone(), CompletionItemKind::MODULE, None, 100);
-                    if snippet && fresh {
-                        let body = if items { "\t\\item $0" } else { "\t$0" };
-                        // From the name typed so far through a `}` the
-                        // editor already closed.
-                        let typed = before_word(doc, pos);
-                        let range = Range {
-                            start: to_lsp(doc, Pos::new(pos.line, pos.col - typed)),
-                            end: to_lsp(doc, Pos::new(pos.line, pos.col + close as u32)),
-                        };
-                        let args: String =
-                            (1..=environment_arguments(analysis, &env)).map(|i| format!("{{${i}}}")).collect();
-                        let new_text = format!("{env}}}{args}\n{body}\n\\end{{{env}}}");
-                        it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
-                        it.insert_text_format = Some(InsertTextFormat::SNIPPET);
-                    }
-                    out.push(it);
-                }
-            }
-            OccKind::Ref => {
-                let labels =
-                    keys(&[OccKind::Label]).into_iter().filter_map(|k| Some(k.strip_prefix(prefix)?.to_string()));
-                out.extend(labels.map(|k| item(k, CompletionItemKind::REFERENCE, None, 0)));
-            }
-            OccKind::Cite => {
-                // The databases' entries, found by key, title, author or
-                // year; then keys a `\bibitem` or another citation gave.
-                let entries = bib_entries(analysis);
-                out.extend(entries.iter().map(|e| {
-                    let who = e.author.split(" and ").next().unwrap_or_default();
-                    let surname = who.split(',').next().unwrap_or(who).split_whitespace().last().unwrap_or_default();
-                    let detail = match (surname, e.year.as_str()) {
-                        ("", "") => e.kind.clone(),
-                        (s, "") => s.to_string(),
-                        ("", y) => y.to_string(),
-                        (s, y) => format!("{s} ({y})"),
-                    };
-                    CompletionItem {
-                        filter_text: Some(format!("{} {} {} {}", e.key, e.title, e.author, e.year)),
-                        documentation: (!e.title.is_empty())
-                            .then(|| lsp_types::Documentation::String(format!("{}\n{} {}", e.title, e.author, e.year))),
-                        ..item(e.key.clone(), CompletionItemKind::REFERENCE, Some(detail), 0)
-                    }
-                }));
-                let known: BTreeSet<&str> = entries.iter().map(|e| e.key.as_str()).collect();
-                let other =
-                    keys(&[OccKind::BibItem, OccKind::Cite]).into_iter().filter(|k| !known.contains(k.as_str()));
-                out.extend(other.map(|k| item(k, CompletionItemKind::REFERENCE, None, 1)));
-            }
-            _ => {}
-        }
-    }
-    out.dedup_by(|a, b| a.label == b.label);
+    let known: BTreeSet<&str> = entries.iter().map(|e| e.key.as_str()).collect();
+    let occ = analysis.facts.occurrences.iter().filter(|o| matches!(o.kind, OccKind::BibItem | OccKind::Cite));
+    let other: BTreeSet<&str> = occ.map(|o| o.key.as_str()).filter(|k| !k.is_empty() && !known.contains(k)).collect();
+    out.extend(other.into_iter().map(|k| item(k.to_string(), CompletionItemKind::REFERENCE, None, 1)));
     out
+}
+
+/// The environments open at the `\begin`/`\end`, then every one defined at the cursor; after
+/// `\begin{` as a snippet with its arguments and `\end`.
+fn environment_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: Pos) -> Vec<CompletionItem> {
+    let mut out = Vec::new();
+    let open = open_environments(analysis, (pos.line, arg.col));
+    let snippet = arg.cmd == "begin";
+    let close = after.starts_with('}');
+    // A name already written after the cursor stays as it is. Text that only follows
+    // it (a comment, a word after a space) is not part of the name.
+    let fresh = close || !after.starts_with(|c: char| c.is_alphanumeric() || ":-_./*@".contains(c));
+    let here = open.iter().rev().enumerate().filter(|_| !snippet);
+    out.extend(here.map(|(i, e)| item(e.clone(), CompletionItemKind::MODULE, Some("open here".into()), i)));
+    for (env, items) in environments(analysis, pos) {
+        if !snippet && open.contains(&env) {
+            continue;
+        }
+        let mut it = item(env.clone(), CompletionItemKind::MODULE, None, 100);
+        if snippet && fresh {
+            let body = if items { "\t\\item $0" } else { "\t$0" };
+            // From the name typed so far through a `}` the editor already closed.
+            let typed = before_word(doc, pos);
+            let range = Range {
+                start: to_lsp(doc, Pos::new(pos.line, pos.col - typed)),
+                end: to_lsp(doc, Pos::new(pos.line, pos.col + close as u32)),
+            };
+            let args: String = (1..=environment_arguments(analysis, &env)).map(|i| format!("{{${i}}}")).collect();
+            let new_text = format!("{env}}}{args}\n{body}\n\\end{{{env}}}");
+            it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
+            it.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        }
+        out.push(it);
+    }
+    out
+}
+
+/// After a number, every unit TeX reads (tex.web § 458) that starts with the letters typed.
+fn unit_items(typed: &str) -> Vec<CompletionItem> {
+    let letters = typed.chars().rev().take_while(char::is_ascii_alphabetic).count();
+    let (number, unit) = typed.split_at(typed.len() - letters);
+    if number.is_empty() || !number.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return Vec::new();
+    }
+    (crate::engine::value::UNITS.iter())
+        .filter(|(u, ..)| u.starts_with(unit))
+        .map(|(u, ..)| CompletionItem {
+            filter_text: Some(format!("{number}{u}")),
+            insert_text: Some(format!("{number}{u}")),
+            ..item(u.to_string(), CompletionItemKind::UNIT, Some(format!("{number}{u}")), 0)
+        })
+        .collect()
 }
 
 /// Whether a stored key is set with a value (`key=…`): not a switch, a
@@ -1781,40 +1773,34 @@ fn drawn_items(analysis: &Analysis, path: &str, kinds: &[Stroke]) -> Vec<Complet
     out
 }
 
-/// Where the run formed a name from the text at the cursor (a `\\csname`
-/// with the user's characters in it): every name defined with the same
-/// prefix, whoever defined it (the document, a package, the `.aux` the
-/// last build wrote). The kind of name comes from the run, not from the
-/// syntax around the cursor: `\\ref{` gives labels (`r@`), `\\draw (` nodes
-/// (`pgf@sh@ns@`), `\\color{` colors.
-fn slot_items(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<Vec<CompletionItem>> {
-    let line: Vec<char> = doc.line(pos.line).chars().collect();
-    let end = (pos.col as usize).saturating_sub(1).min(line.len());
-    let typed = line[..end].iter().rev().take_while(|c| !"{}[](),=;\\ \t%".contains(**c)).count();
-    let start = (end - typed) as u32 + 1;
-    // the document's own files: a file id with the same place in another is no matter
-    let at = |s: &crate::engine::tex::Span| s.line == pos.line && s.col == start;
-    let prefix = analysis.facts.slots.iter().find(|(s, _)| at(s)).map(|(_, p)| p.clone())?;
-    let typed: String = line[end - typed..end].iter().collect();
-    let names = defined_with(analysis, &prefix, &typed);
-    let what = format!("named `{prefix}…`");
-    Some(names.into_iter().map(|n| item(n, CompletionItemKind::REFERENCE, Some(what.clone()), 0)).collect())
-        .filter(|v: &Vec<_>| !v.is_empty())
-}
-
 /// Inside `(` (`\\draw (a) -- (`): the kinds of names that `(…)` groups in
 /// statements of the same command formed elsewhere in the document
-/// ([`crate::analysis::facts::Facts::slots`]), each name defined with that
-/// prefix. After `name.` the anchors of a node's shape, as pgf keeps them
-/// (`pgf@sh@ns@⟨node⟩` holds the shape, `pgf@anchor@⟨shape⟩@⟨anchor⟩` each anchor).
-fn node_items(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<Vec<CompletionItem>> {
-    let before: Vec<char> = doc.slice(Pos::new(1, 1), pos)?.chars().collect();
-    let open = before.iter().rposition(|c| !(c.is_alphanumeric() || " _-.:".contains(*c)))?;
-    if before[open] != '(' {
-        return None;
-    }
+/// ([`crate::analysis::facts::Facts::slots`]). After `name.` the anchors of a node's shape, as pgf
+/// keeps them (`pgf@sh@ns@⟨node⟩` holds the shape, `pgf@anchor@⟨shape⟩@⟨anchor⟩` each anchor).
+pub(super) fn node_hits(analysis: &Analysis, doc: &Text, pos: Pos) -> Vec<super::type_at::Hit> {
+    let hit =
+        |prefix: String| super::type_at::Hit { prefix, ..super::type_at::Hit::of(crate::analysis::roles::Ty::Name) };
+    let Some(before) = doc.slice(Pos::new(pos.line.saturating_sub(super::type_at::LINES).max(1), 1), pos) else {
+        return Vec::new();
+    };
+    let before: Vec<char> = before.chars().collect();
+    let Some(open) = before.iter().rposition(|c| !(c.is_alphanumeric() || " _-.:".contains(*c))) else {
+        return Vec::new();
+    };
+    let Some(command) = (before[open] == '(').then(|| statement_command(&before[..open])).flatten() else {
+        return Vec::new();
+    };
     let typed: String = before[open + 1..].iter().collect();
-    let command = statement_command(&before[..open])?;
+    if let Some((node, anchor)) = typed.split_once('.') {
+        let shape = analysis.interner.lookup(&format!("pgf@sh@ns@{}", node.trim()));
+        let shape = shape.and_then(|s| {
+            let m = analysis.env.meaning(s);
+            m.as_macro().map(|m| crate::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
+        });
+        let anchor =
+            |shape| super::type_at::Hit { typed: Some(anchor.to_string()), ..hit(format!("pgf@anchor@{shape}@")) };
+        return shape.map(anchor).into_iter().collect();
+    }
     // the prefixes `(…)` of this command's statements formed in the run
     let mut kinds = BTreeSet::new();
     for (span, prefix) in &analysis.facts.slots {
@@ -1828,27 +1814,7 @@ fn node_items(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<Vec<Completio
             kinds.insert(prefix.clone());
         }
     }
-    if kinds.is_empty() {
-        return None;
-    }
-    let item = |label: String, what: &str| item(label, CompletionItemKind::REFERENCE, Some(what.to_string()), 0);
-    if let Some((node, anchor)) = typed.split_once('.') {
-        let shape = analysis.interner.lookup(&format!("pgf@sh@ns@{}", node.trim()))?;
-        let shape = analysis
-            .env
-            .meaning(shape)
-            .as_macro()
-            .map(|m| crate::engine::tex::detokenize(&m.replacement_text, &analysis.interner))?;
-        let anchors = defined_with(analysis, &format!("pgf@anchor@{shape}@"), anchor);
-        return Some(anchors.into_iter().map(|a| item(a, &format!("anchor of {shape}"))).collect());
-    }
-    Some(
-        kinds
-            .iter()
-            .flat_map(|k| defined_with(analysis, k, typed.trim()).into_iter().map(move |n| (n, k)))
-            .map(|(n, k)| item(n, &format!("named `{k}…`")))
-            .collect(),
-    )
+    kinds.into_iter().map(hit).collect()
 }
 
 /// How many characters before a slot its statement may start.
@@ -2177,32 +2143,22 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
     out
 }
 
-/// The installation's files a library argument names: for each role, the
-/// part of a file name between its prefix and suffix (and the extension
-/// its load kind adds), starting with `typed`.
-fn library_items(analysis: &Analysis, roles: &[&crate::analysis::roles::Role], typed: &str) -> Vec<CompletionItem> {
-    use crate::engine::builtins::LoadKind;
+/// The installation's files a library argument names: the part of a file
+/// name between the `prefix` and `suffix` its load puts around it (and the
+/// extension `ext` a package's or class's load adds), starting with `typed`.
+fn library_items(
+    analysis: &Analysis,
+    prefix: &str,
+    suffix: &str,
+    ext: Option<&str>,
+    typed: &str,
+) -> Vec<CompletionItem> {
+    let ext = ext.unwrap_or_default();
     let all = crate::caches::distribution::files_with(&analysis.distribution.roots, "");
-    let mut out: Vec<CompletionItem> = Vec::new();
-    for role in roles {
-        let crate::analysis::roles::RoleKind::Load(kind) = role.kind else { continue };
-        let ext = match kind {
-            LoadKind::Package => ".sty",
-            LoadKind::Class => ".cls",
-            _ => "",
-        };
-        let detail = format!("{}…{}{ext}", role.prefix, role.suffix);
-        for (name, _) in &all {
-            let Some(middle) = name.strip_prefix(role.prefix.as_str()).and_then(|n| n.strip_suffix(ext)) else {
-                continue;
-            };
-            let Some(middle) = middle.strip_suffix(role.suffix.as_str()) else { continue };
-            if !middle.is_empty() && middle.starts_with(typed) && !out.iter().any(|i| i.label == middle) {
-                out.push(item(middle.to_string(), CompletionItemKind::MODULE, Some(detail.clone()), 0));
-            }
-        }
-    }
-    out
+    let detail = format!("{prefix}…{suffix}{ext}");
+    let names = all.iter().filter_map(|(name, _)| name.strip_prefix(prefix)?.strip_suffix(ext)?.strip_suffix(suffix));
+    let names: BTreeSet<&str> = names.filter(|m| !m.is_empty() && m.starts_with(typed)).collect();
+    names.into_iter().map(|m| item(m.to_string(), CompletionItemKind::MODULE, Some(detail.clone()), 0)).collect()
 }
 
 /// Whether `root` is a tree of the user's or the site's own rather than of
@@ -2776,32 +2732,6 @@ fn word_after(text: &str, from: usize, name: &str) -> Option<usize> {
     words(text, name).find(|&i| i >= from)
 }
 
-/// Whether the run looked colors up for calls of `\cmd`: its argument names a color.
-fn takes_colors(analysis: &Analysis, arg: &Arg) -> bool {
-    let cmd = arg.cmd;
-    let Some(sym) = analysis.interner.lookup(cmd) else { return false };
-    // No call to learn from: one probe call tells which argument names a color
-    if !analysis.facts.color_uses.iter().any(|u| u.via == Some(sym)) {
-        return crate::analysis::probe::color_arguments(analysis, sym).contains(&arg.groups.matches('{').count());
-    }
-    let call = format!("\\{cmd}{{");
-    let mut texts: crate::fixed::HashMap<u16, Option<String>> = Default::default();
-    // `\begin{tikzpicture}` looks colors up too, but not in its argument
-    analysis.facts.color_uses.iter().filter(|u| u.via == Some(sym)).any(|u| {
-        let text = texts.entry(u.span.file).or_insert_with(|| {
-            let path = &analysis.files.get(usize::from(u.span.file))?.path;
-            crate::project::overlay::read_to_string(std::path::Path::new(path)).ok()
-        });
-        let line = text.as_deref().and_then(|t| t.lines().nth(u.span.line.saturating_sub(1) as usize));
-        line.is_some_and(|line| {
-            line.match_indices(&call).any(|(i, _)| {
-                let argument = line[i + call.len()..].split('}').next().unwrap_or_default();
-                words(argument, &u.name).next().is_some()
-            })
-        })
-    })
-}
-
 /// Every color the run defined, newest definition first, each with its value as `#rrggbb`: an
 /// editor shows a swatch next to a color item whose documentation is one.
 fn color_items(analysis: &Analysis) -> Vec<CompletionItem> {
@@ -2824,7 +2754,7 @@ fn hex_color(c: &lsp_types::Color) -> String {
 
 /// A color xcolor holds exactly, as red, green and blue (xcolor § 6.3's
 /// conversions from its core models).
-fn rgba(colors: &crate::engine::value::Colors) -> Option<lsp_types::Color> {
+pub(super) fn rgba(colors: &crate::engine::value::Colors) -> Option<lsp_types::Color> {
     use crate::engine::value::Model;
     let color = &colors.hull;
     let c: Vec<f32> = color.exact()?.iter().map(|&v| v as f32 / crate::engine::value::UNIT as f32).collect();

@@ -1000,6 +1000,10 @@ fn duplicate_label(report: &mut Report) {
 }
 
 fn catcode_escapes_group(report: &mut Report) {
+    // the table a document starts with is the kernel's: a kernel satex does not read (ConTeXt) says none
+    if report.analysis.plugins.kernel.source().is_none() {
+        return;
+    }
     let base = crate::engine::tex::CatcodeTable::latex();
     let changed = report.analysis.catcodes.diff(&base);
     let sites: Vec<(Span, String)> = report

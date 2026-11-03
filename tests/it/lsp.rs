@@ -1167,12 +1167,19 @@ mod roots {
                 json!({ "textDocument": { "uri": uri, "version": version }, "contentChanges": [{ "text": text }] }),
             )
         };
-        let quiet = |server: &mut Server| {
+        // no run: at most the last run's findings again, now of the newest version
+        let mut last: Option<Value> = None;
+        let mut quiet = |server: &mut Server, newest: i64| {
             std::thread::sleep(Duration::from_millis(800));
             let id = server.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": uri } }));
             loop {
                 let msg = server.read();
-                assert_ne!(msg["method"], "textDocument/publishDiagnostics", "ran again: {msg:?}");
+                if msg["method"] == "textDocument/publishDiagnostics" {
+                    assert_eq!(msg["params"]["version"], newest, "ran again: {msg:?}");
+                    let found = &msg["params"]["diagnostics"];
+                    assert!(last.as_ref().is_none_or(|l| l == found), "ran again: {msg:?}");
+                    last = Some(found.clone());
+                }
                 if msg["id"] == id {
                     break;
                 }
@@ -1181,11 +1188,11 @@ mod roots {
         for version in 2..5 {
             change(&mut server, version, &main);
         }
-        quiet(&mut server);
+        quiet(&mut server, 4);
         // An edit and its undo before the debounce ends: the text analyzed.
         change(&mut server, 5, "% edited\n");
         change(&mut server, 6, &main);
-        quiet(&mut server);
+        quiet(&mut server, 6);
         change(&mut server, 7, "% edited\n");
         server.notification("textDocument/publishDiagnostics");
         server.shutdown();
@@ -1509,6 +1516,14 @@ fn library_arguments_complete_their_libraries() {
     let items = complete(&mut server, &uri, 2, "\\usetikzlibrary{calc,posi".len() as u32);
     assert!(labels(&items).contains(&"positioning"), "{:?}", labels(&items));
     assert!(labels(&items).iter().all(|l| l.starts_with("posi")), "{:?}", labels(&items));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+    // the first call, empty: what the argument loads is known all the same, no pgf keys
+    let text =
+        "\\documentclass{article}\n\\usepackage{tikz}\n\\usetikzlibrary{}\n\\begin{document}\nx\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("libraries-empty", text);
+    let items = complete(&mut server, &uri, 2, "\\usetikzlibrary{".len() as u32);
+    assert!(labels(&items).contains(&"positioning"), "{:?}", labels(&items));
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1840,7 +1855,7 @@ fn l3keys_complete_keys_and_choices() {
 /// Hovering a key of an option list names its module, type and choices.
 #[test]
 fn hovering_a_key_shows_its_definition() {
-    let text = "\\documentclass{article}\n\\ExplSyntaxOn\n\\keys_define:nn {zmod} { size .choice:, size/big .code:n = {}, size/small .code:n = {}, width .tl_set:N = \\l_tmpa_tl }\n\\NewDocumentCommand\\zset{m}{\\keys_set:nn{zmod}{#1}}\n\\ExplSyntaxOff\n\\begin{document}\n\\zset{width=1, size=big}\n\\end{document}\n";
+    let text = "\\documentclass{article}\n\\ExplSyntaxOn\n\\keys_define:nn {zmod} { size .choice:, size/big .code:n = {}, size/small .code:n = {}, width .tl_set:N = \\l_tmpa_tl }\n\\NewDocumentCommand\\zset{m}{\\keys_set:nn{zmod}{#1}}\n\\ExplSyntaxOff\n\\begin{document}\n\\zset{width=1, size=big} size\n\\end{document}\n";
     let (mut server, uri, _, dir) = open_loaded("keyhover", text);
     let mut hover = |character: u32| {
         let id = server.request(
@@ -1852,6 +1867,8 @@ fn hovering_a_key_shows_its_definition() {
     let size = hover(15);
     assert!(size.contains("key of `\\zset`") && size.contains("`big`") && size.contains("`small`"), "{size}");
     assert!(hover(12).is_empty() || !hover(12).contains("key of"), "a value is no key");
+    // after the list closed, a word is no key of it
+    assert!(!hover(27).contains("key of"), "outside the list");
     // the first key of a list has no comma before it
     assert!(hover(8).contains("key of `\\zset`"), "{}", hover(8));
     server.shutdown();
@@ -2610,6 +2627,17 @@ fn a_name_the_run_formed_completes_its_kind() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// No `\` typed, no command: a `(` or a word in prose completes nothing.
+#[test]
+fn prose_completes_no_commands() {
+    let text = "\\documentclass{article}\n\\begin{document}\nSee (\nwor\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("prose", text);
+    assert!(complete(&mut server, &uri, 2, 5).is_empty(), "after a paren in prose");
+    assert!(complete(&mut server, &uri, 3, 3).is_empty(), "a word in prose");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A tikz key whose code sets a color (`fill=`) takes the run's colors, and
 /// so does a bare word, which tikz's `.unknown` handler tries as a color.
 #[test]
@@ -2758,6 +2786,217 @@ fn completion_answers_while_a_run_goes_on() {
         assert!(took < COMPLETION_BOUND, "{wanted}: {took:?}");
         assert!(labels(&items).contains(&wanted), "{wanted}: {:?}", labels(&items));
     }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A document with one site of each type of name, for [`completion_follows_the_type_at_the_cursor`].
+const TYPED_SITES: &str = r"\documentclass{article}
+\usepackage{xcolor}
+\usepackage{tikz}
+\definecolor{brand}{HTML}{336699}
+\begin{document}
+\section{One}\label{sec:one}
+\textcolor{brand}{x} \ref{sec:one} \cite{knuth}
+\begin{tikzpicture}\node (alpha) {a}; \draw (alpha) -- (alpha.north);\end{tikzpicture}
+\begin{verbatim}
+\ref{
+\end{verbatim}
+% \ref{
+\textbf{see \ref{} and \ref{sec:one} x}
+\label{}
+\color{}
+\vspace{2c}
+page 2c and more
+\cite{knuth, }
+\iffalse\colorbox{}\fi
+\begin{thebibliography}{9}\bibitem{knuth} K.\end{thebibliography}
+\input{part}
+\end{document}
+";
+
+/// The column just after the `nth` (from 0) occurrence of `marker` on line `line` of `text`.
+fn after(text: &str, line: usize, marker: &str, nth: usize) -> u32 {
+    let l = text.lines().nth(line).unwrap();
+    let at = l.match_indices(marker).nth(nth).unwrap_or_else(|| panic!("{marker} on {l}")).0;
+    l[..at + marker.len()].encode_utf16().count() as u32
+}
+
+/// The completion items' labels at `line` after the `nth` `marker`.
+fn names_after(server: &mut Server, uri: &str, text: &str, line: usize, marker: &str, nth: usize) -> Vec<String> {
+    let items = complete(server, uri, line as u32, after(text, line, marker, nth));
+    labels(&items).into_iter().map(str::to_string).collect()
+}
+
+/// Completion offers the names of the type the text at the cursor has, per
+/// type: labels, citations, colors, nodes and anchors, units; none where the
+/// text defines a name, in a comment, in verbatim text, after the argument
+/// closed, or in prose. A command the run never called is probed, and
+/// another file of the project is typed the same.
+#[test]
+fn completion_follows_the_type_at_the_cursor() {
+    if !crate::support::installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-typed-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.tex"), TYPED_SITES).unwrap();
+    let part = "See \\ref{}.\n";
+    std::fs::write(dir.join("part.tex"), part).unwrap();
+    let mut server = serve(&dir, true);
+    let (uri, _) = open_file(&mut server, &dir, "main.tex");
+    let mut at = |line: usize, marker: &str, nth: usize| names_after(&mut server, &uri, TYPED_SITES, line, marker, nth);
+    let has = |names: &[String], name: &str| names.iter().any(|n| n == name);
+    // labels: an empty argument, nested in another group
+    let refs = at(12, "\\ref{", 0);
+    assert!(has(&refs, "sec:one") && !has(&refs, "brand") && !has(&refs, "knuth"), "{refs:?}");
+    // a name being defined, a closed group before the cursor: no labels
+    let defining = at(13, "\\label{", 0);
+    assert!(!has(&defining, "sec:one"), "{defining:?}");
+    let closed = at(12, " x", 0);
+    assert!(!has(&closed, "sec:one"), "{closed:?}");
+    // a comment, verbatim text
+    assert!(at(11, "\\ref{", 0).is_empty(), "comment");
+    let verbatim = at(9, "\\ref{", 0);
+    assert!(!has(&verbatim, "sec:one"), "verbatim: {verbatim:?}");
+    // colors, a command the run called and one it never called
+    let colors = at(14, "\\color{", 0);
+    assert!(has(&colors, "brand") && has(&colors, "red") && !has(&colors, "sec:one"), "{colors:?}");
+    let probed = at(18, "\\colorbox{", 0);
+    assert!(has(&probed, "brand"), "never called: {probed:?}");
+    // a citation after a list's comma
+    let cites = at(17, "knuth, ", 0);
+    assert!(has(&cites, "knuth") && !has(&cites, "sec:one"), "{cites:?}");
+    // nodes and a node's anchors
+    let nodes = at(7, "-- (", 0);
+    assert!(has(&nodes, "alpha"), "{nodes:?}");
+    let anchors = at(7, "(alpha.", 0);
+    assert!(has(&anchors, "north") && !has(&anchors, "alpha"), "{anchors:?}");
+    // a unit after a number where a length goes, none in prose
+    let units = at(15, "2c", 0);
+    assert!(has(&units, "cm") && !has(&units, "pt"), "{units:?}");
+    let prose = at(16, "2c", 0);
+    assert!(!has(&prose, "cm"), "{prose:?}");
+    // another file of the project, read through the document
+    let (part_uri, _) = open_file(&mut server, &dir, "part.tex");
+    let other = names_after(&mut server, &part_uri, part, 0, "\\ref{", 0);
+    assert!(has(&other, "sec:one"), "{other:?}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Hover names what the text is by the same types: a color's value, a label's place.
+#[test]
+fn hover_follows_the_type_at_the_cursor() {
+    if !crate::support::installed() {
+        return;
+    }
+    let (mut server, uri, _, dir) = open_loaded("typed-hover", TYPED_SITES);
+    let mut hover = |line: usize, marker: &str| {
+        let character = after(TYPED_SITES, line, marker, 0) + 1;
+        let id = server.request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": character } }),
+        );
+        server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
+    };
+    let color = hover(6, "\\textcolor{");
+    assert!(color.contains("`brand`: color") && color.contains("rgb 0.20 0.40 0.60"), "{color}");
+    let label = hover(6, "\\ref{");
+    assert!(label.contains("`sec:one`: label"), "{label}");
+    // the same word in prose is no label
+    assert!(!hover(16, "page ").contains(": label"));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The text around a completion site varies (spaces, a line break, a
+/// comment, an optional argument, a list before it): the candidates stay
+/// the same.
+#[test]
+fn completion_candidates_survive_mutations_of_their_site() {
+    if !crate::support::installed() {
+        return;
+    }
+    let base = "\\documentclass{article}\n\\begin{document}\n\\section{One}\\label{sec:one}\\label{sec:two}\nSITE\n\\nocite{knuth,lamport}\n\\begin{thebibliography}{9}\\bibitem{knuth} K.\\bibitem{lamport} L.\\end{thebibliography}\n\\end{document}\n";
+    // `|` marks the cursor
+    let sites: [(&str, &[&str]); 2] = [
+        (
+            "\\ref{|}",
+            &[
+                "\\ref{|}",
+                "\\ref {|}",
+                "\\ref{ |}",
+                "\\ref{%\n|}",
+                "\\ref{\n  |}",
+                "x\\ref{|} y",
+                "\\ref{|}% c",
+                "\\textbf{\\ref{|}}",
+            ],
+        ),
+        (
+            "\\cite{|}",
+            &[
+                "\\cite[p.~3]{|}",
+                "\\cite{knuth, |}",
+                "\\cite{knuth,% c\n|}",
+                "\\cite {|}",
+                "\\cite{lamport,\n|}",
+                "\\emph{\\cite{|}}",
+            ],
+        ),
+    ];
+    let (mut server, uri, _, dir) = open_loaded("mutations", &base.replace("SITE", ""));
+    let mut version = 1;
+    let mut names = |site: &str| {
+        let text = base.replace("SITE", &site.replace('|', ""));
+        let offset = base.find("SITE").unwrap() + site.find('|').unwrap();
+        let line = text[..offset].matches('\n').count() as u32;
+        let character = text[..offset].rsplit('\n').next().unwrap().encode_utf16().count() as u32;
+        version += 1;
+        server.notify(
+            "textDocument/didChange",
+            json!({ "textDocument": { "uri": uri, "version": version }, "contentChanges": [{ "text": text }] }),
+        );
+        server.notification("textDocument/publishDiagnostics");
+        let items = complete(&mut server, &uri, line, character);
+        let mut found: Vec<String> = labels(&items).into_iter().map(str::to_string).collect();
+        found.sort();
+        found
+    };
+    for (first, variants) in sites {
+        let expected = names(first);
+        assert!(!expected.is_empty(), "{first}");
+        for variant in variants {
+            assert_eq!(names(variant), expected, "{variant} against {first}");
+        }
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Published diagnostics name the version of the text they are of; an
+/// edit back to text already analyzed publishes them again for its version,
+/// so a client can drop those of a text it no longer has.
+#[test]
+fn diagnostics_name_the_version_they_are_of() {
+    let text = "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
+    let (mut server, uri, published, dir) = open_unsaved("versions", text);
+    assert_eq!(published["params"]["version"], 1, "{published}");
+    let change = |server: &mut Server, version: i32, text: &str| {
+        server.notify(
+            "textDocument/didChange",
+            json!({ "textDocument": { "uri": uri, "version": version }, "contentChanges": [{ "text": text }] }),
+        );
+        server.notification("textDocument/publishDiagnostics")
+    };
+    let broken = text.replace("x\n", "\\usetikzlib\n");
+    let two = change(&mut server, 2, &broken);
+    assert_eq!(two["params"]["version"], 2, "{two}");
+    // the same text again: the same run, its findings now of version 3
+    let three = change(&mut server, 3, &broken);
+    assert_eq!(three["params"]["version"], 3, "{three}");
+    assert_eq!(three["params"]["diagnostics"], two["params"]["diagnostics"]);
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }

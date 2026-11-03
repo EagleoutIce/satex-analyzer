@@ -435,6 +435,9 @@ pub struct Analysis {
     pub takes: std::sync::OnceLock<crate::fixed::HashMap<String, u8>>,
     /// What [`crate::analysis::roles`] reads of the sources: read once.
     pub role_sources: std::sync::OnceLock<crate::analysis::roles::Sources>,
+    /// The roles a probe call found for commands the run never called, by name:
+    /// cache for [`crate::analysis::probe::argument_roles`].
+    pub probed_roles: crate::fixed::Mutex<crate::fixed::HashMap<String, Vec<crate::analysis::roles::Role>>>,
     /// The entries of the bibliography databases the document names, for
     /// completion: read once.
     pub bib: std::sync::OnceLock<Vec<crate::plugins::bib::Entry>>,
@@ -2267,6 +2270,7 @@ impl<'a> Machine<'a> {
                 context_probes: Default::default(),
                 takes: Default::default(),
                 role_sources: Default::default(),
+                probed_roles: Default::default(),
                 bib: Default::default(),
                 scope_rows: Default::default(),
             },
@@ -12719,6 +12723,15 @@ impl Machine<'_> {
                 }
             }
         }
+        // Printed integers, spelled as `lead_digits` spells them.
+        for one in [false, true] {
+            for len in 1..=crate::engine::env::MAX_LEN {
+                let base = syms[crate::engine::env::bounded_index(TextClass::DIGIT, one, len, 0).expect("bounded")];
+                let lead = self.lead_name(base);
+                debug_assert_eq!(Some(syms.len()), crate::engine::env::lead_index(one, len));
+                syms.push(lead);
+            }
+        }
         let syms: Rc<[Sym]> = syms.into();
         self.typed_syms = Some(syms.clone());
         syms
@@ -12882,18 +12895,22 @@ impl Machine<'_> {
     /// least one where `one` ([`LEAD_MARK`]).
     pub(crate) fn lead_digits(&mut self, one: bool, len: u32, span: Span) -> Token {
         let base = self.unknown_text(Unk::Class(TextClass::DIGIT, one, Some(len), &[]), span);
-        let Some(sym) = base.cs() else { return base };
-        let Some((head, len)) =
-            self.name(sym).rsplit_once(crate::engine::env::LEN_MARK).map(|(h, l)| (h.to_string(), l.to_string()))
-        else {
-            return base;
-        };
-        let lead = self.intern(&format!("{head}{LEAD_MARK}{}{len}", crate::engine::env::LEN_MARK));
+        match base.cs().filter(|&sym| self.name(sym).contains(crate::engine::env::LEN_MARK)) {
+            Some(sym) => Token::new(Tok::Cs(self.lead_name(sym)), span),
+            None => base,
+        }
+    }
+
+    /// The printed-integer name of bounded digits `sym` ([`LEAD_MARK`]).
+    fn lead_name(&mut self, sym: Sym) -> Sym {
+        let (head, len) = self.name(sym).rsplit_once(crate::engine::env::LEN_MARK).expect("a bounded name");
+        let name = format!("{head}{LEAD_MARK}{}{len}", crate::engine::env::LEN_MARK);
+        let lead = self.intern(&name);
         if self.env.slot(lead).is_none() {
             let meaning = self.env.meaning(sym);
             self.env.constant(lead, Binding::builtin(meaning));
         }
-        Token::new(Tok::Cs(lead), span)
+        lead
     }
 
     /// Whether `t` is integer digits ([`LEAD_MARK`]).

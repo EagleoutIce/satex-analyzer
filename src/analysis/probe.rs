@@ -292,18 +292,45 @@ pub fn probe(analysis: &Analysis, sym: Sym, at: State) -> Option<Probed> {
     found
 }
 
-/// Which of `sym`'s braced arguments it looks up as a color name: one run
-/// with a different name in each, in the state the run ended in.
-pub fn color_arguments(analysis: &Analysis, sym: Sym) -> Vec<usize> {
+/// What `sym`'s braced arguments are, for a command the run never called:
+/// one probe call with a marker in each argument, and what it made of the
+/// text that holds a marker, with what the code put around it: an
+/// occurrence (`\ref{m}` reads the label `m`), a load or a file looked for
+/// and not found (`\usetikzlibrary{m}` looks for `tikzlibrarym.code.tex`),
+/// a color looked up. Cached per analysis.
+pub fn argument_roles(analysis: &Analysis, sym: Sym) -> Vec<crate::analysis::roles::Role> {
+    use crate::analysis::roles::{KeyKind, RoleKind, Ty};
+    use crate::engine::builtins::LoadKind;
+    let name = analysis.interner.name(sym).to_string();
+    if let Some(found) = analysis.probed_roles.lock().ok().and_then(|c| c.get(&name).cloned()) {
+        return found;
+    }
     let cfg = sandbox_config(&analysis.settings);
-    let names: Vec<String> = (0..TAIL).map(|i| format!("satexprobe{}", char::from(b'a' + i as u8))).collect();
-    let text: String = names.iter().map(|n| format!("{{{n}}}")).collect();
-    let Some(mut machine) = Machine::sandbox(&cfg, analysis, State::End) else { return Vec::new() };
-    machine.run_probe(sym, &text);
-    let used = machine.out.facts.color_uses.iter().filter_map(|u| names.iter().position(|n| *n == u.name));
-    let mut found: Vec<usize> = used.collect();
-    found.sort_unstable();
-    found.dedup();
+    let markers: Vec<String> = (0..TAIL).map(|i| format!("satexprobe{}", char::from(b'a' + i as u8))).collect();
+    let text: String = markers.iter().map(|m| format!("{{{m}}}")).collect();
+    let mut found = Vec::new();
+    if let Some(mut machine) = Machine::sandbox(&cfg, analysis, State::End) {
+        machine.run_probe(sym, &text);
+        let facts = &machine.out.facts;
+        let keys = (facts.occurrences.iter().map(|o| (o.key.as_str(), RoleKind::Occ(o.kind))))
+            .chain(facts.loads.iter().map(|l| (l.name.as_str(), RoleKind::Load(l.kind))))
+            .chain(facts.absent.iter().map(|a| (a.as_str(), RoleKind::Load(LoadKind::Conditional))))
+            .chain(facts.color_uses.iter().map(|u| (u.name.as_str(), RoleKind::Type(Ty::Key(KeyKind::Color)))));
+        for (key, kind) in keys {
+            let Some((arg, marker)) = markers.iter().enumerate().find(|(_, m)| key.contains(m.as_str())) else {
+                continue;
+            };
+            let (prefix, suffix) = key.split_once(marker.as_str()).expect("holds the marker");
+            let role =
+                crate::analysis::roles::Role { arg, kind, prefix: prefix.to_string(), suffix: suffix.to_string() };
+            if !found.contains(&role) {
+                found.push(role);
+            }
+        }
+    }
+    if let Ok(mut cache) = analysis.probed_roles.lock() {
+        cache.insert(name, found.clone());
+    }
     found
 }
 

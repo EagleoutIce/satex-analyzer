@@ -66,6 +66,8 @@ pub enum KeyKind {
     Declared,
     /// A term an index or glossary program sorts (`\\index{term}`).
     Entry,
+    /// A color's name, which a `\\csname` forms for the color's definition (xcolor's `\\color@⟨name⟩`).
+    Color,
     Any,
 }
 
@@ -269,6 +271,7 @@ impl Ty {
             KeyKind::Environment,
             KeyKind::Declared,
             KeyKind::Entry,
+            KeyKind::Color,
         ];
         let files = FILE_KINDS.iter().map(|r| r.0).filter(|k| *k != FileKind::Any);
         let mut out = vec![
@@ -296,6 +299,72 @@ impl Ty {
             Ty::Var(_) => "expl3",
             Ty::Cs | Ty::Switch => "cs",
             _ => "text",
+        }
+    }
+
+    /// What the type stands for and an example, for the table of the types
+    /// in the wiki (the example marks the argument with `⟨…⟩`).
+    pub fn about(self) -> (&'static str, &'static str) {
+        use Ty::*;
+        match self {
+            Top => ("no information, the join of unrelated types", ""),
+            Quantity => {
+                ("a number, dimen, glue or muglue", "`\\numexpr1+⟨\\dimexpr 1pt\\relax⟩` is read as a quantity")
+            }
+            Number => ("⟨number⟩, read by `scan_int`", "`\\penalty⟨100⟩`"),
+            Dimen => ("⟨dimen⟩, read by `scan_dimen`", "`\\kern⟨2pt⟩`"),
+            Glue => ("⟨glue⟩, a dimen with optional stretch and shrink", "`\\hskip⟨1pt plus 1fil⟩`"),
+            MuGlue => ("⟨mudimen⟩ or ⟨muglue⟩", "`\\mskip⟨3mu⟩`"),
+            Reg(RegKind::Count) => ("a count register an assignment names", "`\\advance⟨\\count@⟩ by 1`"),
+            Box => ("a box register's number", "`\\setbox⟨0⟩\\hbox{}`"),
+            Reg(RegKind::Dimen) => ("a dimen register an assignment names", "`\\advance⟨\\parindent⟩ by 1pt`"),
+            Reg(RegKind::Skip) => ("a skip register an assignment names", "`\\advance⟨\\parskip⟩ by 1pt`"),
+            Reg(RegKind::MuSkip) => ("a muskip register an assignment names", "`\\advance⟨\\medmuskip⟩ by 1mu`"),
+            Reg(_) => ("the other registers an assignment names", "`⟨\\toks@⟩={a}`"),
+            Register => (
+                "a register of a kind the text does not fix, what a body assigns `#1` to",
+                "`\\def\\x#1#2{\\advance⟨#1⟩ by #2}`",
+            ),
+            Text => ("balanced text of any kind", "`\\textbf{⟨a name or code⟩}`"),
+            Name => ("characters forming a name", "`\\csname ⟨foo⟩\\endcsname`"),
+            Named(RegKind::Count) => ("the name of a LaTeX counter, `c@⟨counter⟩`", "`\\setcounter{⟨section⟩}{1}`"),
+            Named(_) => ("the name of a register of that kind a `\\csname` forms", "`\\csname dimen⟨foo⟩\\endcsname`"),
+            Key(KeyKind::Any) => ("a key of no known kind", "`\\mykey{⟨x⟩}` of unknown role"),
+            Key(KeyKind::Label) => ("a label a command defines or references", "`\\ref{⟨sec:intro⟩}`"),
+            Key(KeyKind::Cite) => ("a bibliography entry's key", "`\\cite{⟨knuth84⟩}`"),
+            Key(KeyKind::Option) => ("an option or key a key list names", "`\\usepackage[⟨draft⟩]{x}`"),
+            Key(KeyKind::Pgf) => ("a key pgfkeys stores under its family's path", "`\\draw[⟨thick⟩]` is `/tikz/thick`"),
+            Key(KeyKind::Environment) => ("an environment's name", "`\\begin{⟨itemize⟩}`"),
+            Key(KeyKind::Declared) => (
+                "a key a document command declares and others read by its name",
+                "`\\gls{⟨graph⟩}` after `\\newglossaryentry{graph}`",
+            ),
+            Key(KeyKind::Entry) => ("a term an index or glossary program sorts", "`\\index{⟨source⟩}`"),
+            Key(KeyKind::Color) => {
+                ("a color's name, which a `\\csname` forms for its definition", "`\\color{⟨brand⟩}`")
+            }
+            File(FileKind::Any) => ("a file of no known kind", "`\\input{⟨a⟩}` read as `.bib` and `.tex`"),
+            File(FileKind::Tex) => ("a file read as TeX source", "`\\input{⟨chapter1⟩}`"),
+            File(FileKind::Sty) => ("a package", "`\\usepackage{⟨amsmath⟩}`"),
+            File(FileKind::Cls) => ("a document class", "`\\documentclass{⟨article⟩}`"),
+            File(FileKind::Bib) => ("a BibTeX database", "`\\bibliography{⟨refs⟩}`"),
+            File(FileKind::Bst) => ("a BibTeX style", "`\\bibliographystyle{⟨plain⟩}`"),
+            File(FileKind::Bbx) => ("a biblatex bibliography style", "`\\usepackage[style=⟨authoryear⟩]{biblatex}`"),
+            File(FileKind::Cbx) => ("a biblatex citation style", "`\\usepackage[citestyle=⟨numeric⟩]{biblatex}`"),
+            File(FileKind::Graphic) => ("a figure, its extension decided by the run", "`\\includegraphics{⟨fig⟩}`"),
+            Cs => ("a control sequence an assignment defines", "`\\def⟨\\foo⟩{}`"),
+            Switch => ("a conditional `\\newif` defines, `\\if⟨name⟩`", "`\\newif⟨\\ifdraft⟩`"),
+            Var(VarKind::Str | VarKind::Clist) => {
+                ("a string or comma list, which expl3 keeps as token lists", "`\\str_set:Nn⟨\\l_my_str⟩{x}`")
+            }
+            Var(_) => (
+                "an expl3 variable, by the module of the function that made or set it in the run (`\\tl_set:Nn`, `\\seq_new:N`)",
+                "`\\tl_set:Nn⟨\\l_my_tl⟩{x}`",
+            ),
+            Options => ("the key list a load takes in its optional argument", "`\\usepackage⟨[a,b]⟩{x}`"),
+            Date => ("a release date a body compares with the one a file provides, read as a number", ""),
+            Body => ("a definition's replacement text, code", "`\\def\\x{⟨\\kern1pt⟩}`"),
+            Bottom => ("no text, below every type", ""),
         }
     }
 
@@ -399,6 +468,7 @@ impl std::fmt::Display for Ty {
                 Ty::Key(KeyKind::Environment) => "environment name",
                 Ty::Key(KeyKind::Declared) => "declared key",
                 Ty::Key(KeyKind::Entry) => "index entry",
+                Ty::Key(KeyKind::Color) => "color name",
                 Ty::Key(KeyKind::Any) => "key",
                 Ty::File(_) => "file",
                 Ty::Name => "name",
@@ -447,6 +517,25 @@ const DEPTH: usize = 6;
 /// The roles of `cmd`'s arguments.
 pub fn roles(analysis: &Analysis, cmd: &str) -> Vec<Role> {
     roles_typed(analysis, &sources(analysis).typed, cmd)
+}
+
+/// [`roles`], and for a command whose arguments the run never saw name
+/// anything (no occurrence, load, key or file) what one probe call shows
+/// they name. The probe runs once per command and analysis: for the
+/// argument at the cursor, never for lists ([`roles_many`]).
+pub fn roles_probed(analysis: &Analysis, cmd: &str) -> Vec<Role> {
+    let names = |r: &Role| match r.kind {
+        RoleKind::Occ(_) | RoleKind::Load(_) => true,
+        RoleKind::Type(t) => matches!(t, Ty::Key(_) | Ty::File(_)),
+    };
+    let seen = roles(analysis, cmd);
+    if seen.iter().any(names) {
+        return seen;
+    }
+    let probed =
+        analysis.interner.lookup(cmd).map(|s| crate::analysis::probe::argument_roles(analysis, s)).unwrap_or_default();
+    // what the probe found stands for the conventions' guess, the typed roles stay
+    seen.into_iter().filter(|r| !names(r)).chain(probed).collect()
 }
 
 /// The types the run read in `cmd`'s `[…]` arguments, by their place

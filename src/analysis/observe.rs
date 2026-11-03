@@ -29,6 +29,10 @@ pub fn slot(m: &mut Machine, name: &str, from: usize, at: Span) {
         return;
     }
     let prefix: String = name.chars().take(from).collect();
+    // a color's control sequence: the text is a color's name
+    if prefix == COLOR_NAME_PREFIX {
+        arg_type(m, at, crate::analysis::roles::Ty::Key(crate::analysis::roles::KeyKind::Color));
+    }
     m.out.facts.slots.entry(at).or_insert(prefix);
 }
 

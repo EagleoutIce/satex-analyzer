@@ -32,6 +32,7 @@ pub(crate) mod doccomment;
 mod handlers;
 pub mod knowledge;
 pub(crate) mod primitives;
+mod type_at;
 mod units;
 mod unreached;
 #[cfg(target_os = "emscripten")]
@@ -228,7 +229,7 @@ fn main_loop(
                     Ok(Message::Notification(not)) => {
                         if let Some(m) = notification(not, |uri| texts.get(uri).map(String::as_str)) {
                             match &m {
-                                EngineMsg::Open(uri, _, text) | EngineMsg::Change(uri, text) => {
+                                EngineMsg::Open(uri, _, text, _) | EngineMsg::Change(uri, text, _) => {
                                     texts.insert(uri.clone(), text.clone());
                                 }
                                 EngineMsg::Close(uri) => {
@@ -540,10 +541,10 @@ fn notification<'a>(not: Notification, text_of: impl Fn(&Uri) -> Option<&'a str>
         "textDocument/didOpen" => serde_json::from_value::<DidOpenTextDocumentParams>(not.params).ok().and_then(|p| {
             let uri = p.text_document.uri;
             let path = handlers::uri_to_path(&uri)?;
-            Some(EngineMsg::Open(uri, path, p.text_document.text))
+            Some(EngineMsg::Open(uri, path, p.text_document.text, p.text_document.version))
         }),
         "textDocument/didChange" => serde_json::from_value::<DidChangeTextDocumentParams>(not.params).ok().map(|p| {
-            let uri = p.text_document.uri;
+            let (uri, version) = (p.text_document.uri, p.text_document.version);
             let mut text = text_of(&uri).unwrap_or_default().to_string();
             for change in p.content_changes {
                 match change.range {
@@ -554,11 +555,11 @@ fn notification<'a>(not: Notification, text_of: impl Fn(&Uri) -> Option<&'a str>
                     None => text = change.text,
                 }
             }
-            EngineMsg::Change(uri, text)
+            EngineMsg::Change(uri, text, Some(version))
         }),
         "textDocument/didSave" => serde_json::from_value::<DidSaveTextDocumentParams>(not.params)
             .ok()
-            .and_then(|p| p.text.map(|text| EngineMsg::Change(p.text_document.uri, text))),
+            .and_then(|p| p.text.map(|text| EngineMsg::Change(p.text_document.uri, text, None))),
         "textDocument/didClose" => serde_json::from_value::<DidCloseTextDocumentParams>(not.params)
             .ok()
             .map(|p| EngineMsg::Close(p.text_document.uri)),
@@ -590,8 +591,10 @@ fn offset(text: &str, at: Position) -> usize {
 // --- engine thread: owns every Analysis, never sends one out -----------
 
 enum EngineMsg {
-    Open(Uri, PathBuf, String),
-    Change(Uri, String),
+    /// A document opened, its text and version.
+    Open(Uri, PathBuf, String, i32),
+    /// A document's new text, with the version an edit gives it (a save gives none).
+    Change(Uri, String, Option<i32>),
     Close(Uri),
     Hover(Uri, Position, Sender<Option<Hover>>),
     Definition(Uri, Position, Sender<Option<lsp_types::GotoDefinitionResponse>>),
@@ -620,6 +623,8 @@ enum EngineMsg {
 #[derive(Clone)]
 struct Doc {
     text: String,
+    /// The client's version of `text`: published diagnostics name the version they are of.
+    version: i32,
     path: PathBuf,
     analysis: Option<Rc<Analysis>>,
 }
@@ -694,6 +699,9 @@ struct Engine {
     /// A run of no document: what a completion answers from before a
     /// document's first run ends, the installation's classes and packages.
     blank: Option<Rc<Analysis>>,
+    /// The diagnostics last published per file, with the run they came from: a run reused for a
+    /// newer version of the same texts publishes them again under that version.
+    published: HashMap<Uri, (std::rc::Weak<Analysis>, PublishDiagnosticsParams)>,
 }
 
 impl EngineMsg {
@@ -740,6 +748,7 @@ impl Engine {
             inbox: None,
             deferred: Default::default(),
             blank: None,
+            published: HashMap::default(),
         }
     }
 
@@ -762,6 +771,8 @@ impl Engine {
         let _analyzing = Analyzing(self.hovers.clone());
         let Some(doc) = self.docs.get(uri) else { return };
         let (path, text) = (doc.path.clone(), doc.text.clone());
+        // the versions the run reads: what its diagnostics are of
+        let versions: Vec<(PathBuf, i32)> = self.docs.values().map(|d| (d.path.clone(), d.version)).collect();
         // Every open buffer is read for its file, so an `\input` of one sees
         // its unsaved text too (`crate::project::overlay`).
         for doc in self.docs.values() {
@@ -809,8 +820,25 @@ impl Engine {
                     ..Default::default()
                 });
             }
+            for p in &mut published {
+                p.version = version_of(&versions, &p.uri);
+                self.published.insert(p.uri.clone(), (Rc::downgrade(&analysis), p.clone()));
+            }
             self.send_diagnostics(published);
             self.ask_style(candidates);
+        } else {
+            // the same texts under newer versions: the same diagnostics, of these versions
+            let again: Vec<PublishDiagnosticsParams> = (self.published.values_mut())
+                .filter(|(run, _)| run.upgrade().is_some_and(|r| Rc::ptr_eq(&r, &analysis)))
+                .filter_map(|(_, p)| {
+                    let now = version_of(&versions, &p.uri);
+                    (now != p.version).then(|| {
+                        p.version = now;
+                        p.clone()
+                    })
+                })
+                .collect();
+            self.send_diagnostics(again);
         }
         crate::util::progress::idle();
     }
@@ -852,7 +880,11 @@ impl Engine {
                 self.docs.values().filter_map(|d| Some((d.path.clone(), d.analysis.clone()?))).collect();
             for (path, analysis) in analyzed {
                 let records = self.unsilenced(handlers::findings(&analysis));
-                let published = publish(&mut self.actions, &analysis, &records, &path, &open);
+                let mut published = publish(&mut self.actions, &analysis, &records, &path, &open);
+                let versions: Vec<(PathBuf, i32)> = self.docs.values().map(|d| (d.path.clone(), d.version)).collect();
+                for p in &mut published {
+                    p.version = version_of(&versions, &p.uri);
+                }
                 self.send_diagnostics(published);
             }
         }
@@ -1004,7 +1036,7 @@ impl Engine {
         let pause = Box::new(move || {
             while let Ok(msg) = inbox.try_recv() {
                 match msg {
-                    EngineMsg::Change(ref uri, ref text) => {
+                    EngineMsg::Change(ref uri, ref text, _) => {
                         if let Some(doc) = docs.get_mut(uri) {
                             doc.text = text.clone();
                         }
@@ -1168,29 +1200,31 @@ impl Engine {
     fn step(&mut self, msg: EngineMsg) {
         match msg {
             EngineMsg::Shutdown => {}
-            EngineMsg::Open(uri, path, text) => {
+            EngineMsg::Open(uri, path, text, version) => {
                 handlers::VIEW.with_borrow_mut(|view| view.add(&path));
                 if self.blank.is_none() {
                     let mut cfg = self.cfg.clone();
                     cfg.load.format = false;
                     self.blank = Some(Rc::new(Machine::analyze("", None, &cfg)));
                 }
-                self.docs.insert(uri.clone(), Doc { text, path, analysis: None });
+                self.docs.insert(uri.clone(), Doc { text, version, path, analysis: None });
                 if !self.dirty.contains(&uri) {
                     self.dirty.push(uri);
                 }
             }
-            EngineMsg::Change(uri, text) => {
+            EngineMsg::Change(uri, text, version) => {
                 // The last analysis answers until the next one replaces it,
                 // so a request never waits out a whole run.
                 if let Some(doc) = self.docs.get_mut(&uri) {
                     doc.text = text;
+                    doc.version = version.unwrap_or(doc.version);
                     if !self.dirty.contains(&uri) {
                         self.dirty.push(uri);
                     }
                 }
             }
             EngineMsg::Close(uri) => {
+                self.published.remove(&uri);
                 self.store_hovers(&uri);
                 self.stores.remove(&uri);
                 self.docs.remove(&uri);
@@ -1336,7 +1370,7 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
                 with_doc_or(docs, blank, &uri, |analysis, text| {
                     match bib::completion(analysis, text, &path, handlers::to_pos(text, pos)) {
                         Some(items) => lsp_types::CompletionResponse::Array(items),
-                        None => handlers::completion(analysis, text, pos),
+                        None => handlers::completion(analysis, text, &path, pos),
                     }
                 })
             });
@@ -1487,6 +1521,12 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
         }
         crate::util::progress::idle();
     }
+}
+
+/// The version of the open document at `uri` among `versions`.
+fn version_of(versions: &[(PathBuf, i32)], uri: &Uri) -> Option<i32> {
+    let path = handlers::uri_to_path(uri)?;
+    versions.iter().find(|(p, _)| crate::project::paths::same_file(p, &path)).map(|(_, v)| *v)
 }
 
 /// The diagnostics of `analysis` to publish, by file, with an empty list
