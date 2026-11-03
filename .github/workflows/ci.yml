@@ -90,7 +90,7 @@ jobs:
     steps:
       # Lua and LPeg are compiled from C; the TeX Live image has no compiler.
       - name: Install a C toolchain
-        run: apt-get update && apt-get install -y --no-install-recommends build-essential
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential poppler-utils
 
       - uses: actions/checkout@v5
 
@@ -142,7 +142,7 @@ jobs:
     container: texlive/texlive:latest
     steps:
       - name: Install a C toolchain
-        run: apt-get update && apt-get install -y --no-install-recommends build-essential
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential poppler-utils
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -290,7 +290,7 @@ jobs:
         shard: ['1/8', '2/8', '3/8', '4/8', '5/8', '6/8', '7/8', '8/8', compliance]
     steps:
       - name: Install a C toolchain
-        run: apt-get update && apt-get install -y --no-install-recommends build-essential
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential poppler-utils
 
       - uses: actions/checkout@v5
 
