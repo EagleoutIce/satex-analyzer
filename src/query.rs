@@ -856,6 +856,15 @@ fn drawn_boxes(analysis: &Analysis) -> Vec<Drawn> {
         };
         source.as_deref().filter(|_| name == "tikzpicture").and_then(picture).unwrap_or(Json::Null)
     };
+    // Only an environment the source begins itself: beamer's own, run inside
+    // `\begin{frame}`, are reported at the frame's place.
+    let mut texts: HashMap<FileId, Option<String>> = HashMap::default();
+    let mut written = |name: &str, at: Span| {
+        let text = texts.entry(at.file).or_insert_with(|| std::fs::read_to_string(analysis.file_name(at.file)).ok());
+        let line = text.as_deref().and_then(|t| t.lines().nth(at.line as usize - 1)).unwrap_or_default();
+        let rest: String = line.chars().skip(at.col as usize - 1).collect();
+        rest.strip_prefix("\\begin").is_some_and(|r| r.trim_start().starts_with(&format!("{{{name}}}")))
+    };
     for o in analysis.facts.occurrences.iter().filter(|o| origin(analysis, o.span.file) == "document") {
         match o.kind {
             OccKind::BeginEnvironment => open.push((o.key.as_str(), o.span)),
@@ -863,7 +872,9 @@ fn drawn_boxes(analysis: &Analysis) -> Vec<Drawn> {
                 if let Some(k) = open.iter().rposition(|(name, _)| *name == o.key) {
                     let (name, from) = open.remove(k);
                     let sketch = if from.file == o.span.file { sketched(name, from, o.span) } else { Json::Null };
-                    if from.file == o.span.file && (empty(from, o.span) || !sketch.is_null()) {
+                    // Text an environment reads back at its end (a frame) is placed after `\end{…}`.
+                    let end = Span { col: o.span.col + format!("\\end{{{name}}}").len() as u32, ..o.span };
+                    if from.file == o.span.file && written(name, from) && (empty(from, end) || !sketch.is_null()) {
                         // An empty one holding others (a figure of one picture) stands for them.
                         out.retain(|d: &Drawn| !(key(d.0) > key(from) && key(d.3) < key(o.span)));
                         out.push((from, name.to_string(), sketch, o.span, empty(from, o.span)));
