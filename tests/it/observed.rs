@@ -125,6 +125,30 @@ fn citations_are_checked_against_the_bibitems_and_the_database() {
     cleanup("cite");
 }
 
+/// The unknown keys of one `\\cite` are one finding at that `\\cite`
+/// naming each of them: none hides another, and none is put at a name
+/// `\\cite` built from a key.
+#[test]
+fn every_unknown_key_of_one_cite_is_named() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_in(
+        "cites",
+        r"\documentclass{article}
+\begin{document}
+\cite{a,zz,b} \cite{qq,zz} \cite{zz}
+\bibliography{refs}
+\end{document}",
+        &[("refs.bib", "@book{a, title={A}}\n@book{b, title={B}}\n")],
+    );
+    let undefined: Vec<String> = findings(&analysis, "undefined-citation").into_iter().map(|(m, _)| m).collect();
+    assert_eq!(undefined.len(), 3, "{undefined:?}");
+    assert!(undefined.iter().all(|m| !m.contains("via")), "{undefined:?}");
+    assert!(undefined.iter().any(|m| m.contains("`qq`, `zz`")), "{undefined:?}");
+    cleanup("cites");
+}
+
 #[test]
 fn an_unreadable_database_keeps_citations_unjudged() {
     if !installed() {

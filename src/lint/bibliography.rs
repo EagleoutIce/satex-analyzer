@@ -192,23 +192,26 @@ fn undefined_citation(report: &mut Report) {
     if !bibliography.complete || bibliography.declared.is_empty() && report.unread("declared").is_some() {
         return;
     }
-    let missing: Vec<(Span, Option<String>, String)> = analysis
-        .facts
-        .occurrences
-        .iter()
-        .filter(|o| o.kind == OccKind::Cite && o.key != EVERY_ENTRY)
-        .filter(|o| !bibliography.declared.contains_key(&o.key))
-        .map(|o| {
-            let (span, via) = report.site(o);
-            (span, via, o.key.clone())
-        })
-        .collect();
-    for (span, via, key) in missing {
+    // Every unknown key of one call, in one finding at that call.
+    let mut missing: BTreeMap<Span, (Option<String>, Vec<String>)> = BTreeMap::new();
+    for o in analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Cite && o.key != EVERY_ENTRY) {
+        if bibliography.declared.contains_key(&o.key) {
+            continue;
+        }
+        let (span, via) = report.site(o);
+        let keys = &mut missing.entry(span).or_insert((via, Vec::new())).1;
+        if !keys.contains(&o.key) {
+            keys.push(o.key.clone());
+        }
+    }
+    for (span, (via, keys)) in missing {
+        let named = keys.iter().map(|k| format!("`{k}`")).collect::<Vec<_>>().join(", ");
+        let (entry, key) = if keys.len() > 1 { ("entries", "keys") } else { ("an entry", "key") };
         report.add(
             span,
-            &key,
-            format!("no bibliography entry declares `{key}`{}", via.unwrap_or_default()),
-            Some(format!("add an entry `{key}`, or correct the key")),
+            &keys.join(","),
+            format!("no bibliography entry declares {named}{}", via.unwrap_or_default()),
+            Some(format!("add {entry} {named}, or correct the {key}")),
         );
     }
 }

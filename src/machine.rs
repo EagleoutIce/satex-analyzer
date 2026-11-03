@@ -8371,8 +8371,21 @@ will look undefined",
         true
     }
 
+    /// Whether the file holds `sym` as written at `span`, not a name
+    /// `\csname` built from the text there.
+    fn written_here(&self, sym: Sym, span: Span) -> bool {
+        self.built_name != Some((sym, span))
+    }
+
+    /// Whether `span` stands after the file call in the call's own file:
+    /// part of the text the call reads.
+    fn after_file_call(&self, span: Span) -> bool {
+        self.file_call.is_some_and(|(_, call)| call.file == span.file && (span.line, span.col) > (call.line, call.col))
+    }
+
     fn do_control_sequence(&mut self, sym: Sym, span: Span) {
-        if self.own_file(span.file) && self.built_name != Some((sym, span)) {
+        let written = self.written_here(sym, span);
+        if self.own_file(span.file) && written {
             self.project_site = Some(span);
         }
         // A control sequence read straight from a file starts a new call. One
@@ -8382,7 +8395,7 @@ will look undefined",
             self.file_call = Some((sym, span));
             self.finish_shape();
             self.call_shape = Some(Rc::new((sym, span, String::new(), self.within.len())));
-        } else if self.file_call.is_some_and(|(_, c)| c.file == span.file && (span.line, span.col) > (c.line, c.col)) {
+        } else if written && self.after_file_call(span) {
             self.text_site = Some((sym, span));
         }
         // Text a join or a gap left: what the path does next is not known exactly.
