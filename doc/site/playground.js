@@ -3226,7 +3226,8 @@
     if (/\\starttext\b/.test(text) && !/\\documentclass/.test(text)) return 'context';
     return /\\bye\b/.test(text) && !/\\documentclass/.test(text) ? 'plain' : 'pdftex';
   }
-  const wanted = () => Math.max(0, manifest.kernels.findIndex((k) => k.id === engineOf(state.texts[state.root])));
+  // an engine offered on another kernel's bundle (ConTeXt on LuaTeX's) names itself in `engine`
+  const wanted = () => Math.max(0, manifest.kernels.findIndex((k) => (k.engine ?? k.id) === engineOf(state.texts[state.root])));
   /** Loads and selects the engine the root asks for, unless the selector was used; true if it changed. */
   async function followRoot() {
     const want = wanted();

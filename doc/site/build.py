@@ -324,8 +324,10 @@ def sources():
 # pdfTeX comes with the page; each other one is a bundle of its own, fetched when chosen.
 KERNELS = [("pdftex", "pdfTeX", ["--set", "engine=pdftex"]), ("xetex", "XeTeX", ["--set", "engine=xetex"]),
            ("plain", "plain TeX", ["--set", "engine=tex", "--set", "kernel=plain"]),
-           ("luatex", "LuaTeX", ["--set", "engine=luatex"]),
-           ("context", "ConTeXt", ["--set", "engine=luatex"])]  # the LuaTeX bundle: satex has no ConTeXt kernel to read
+           ("luatex", "LuaTeX", ["--set", "engine=luatex"])]
+# Engines offered on another kernel's bundle, never built or run on their own: (id, label, the kernel they use).
+# satex has no ConTeXt kernel to read, so ConTeXt runs on LuaTeX's.
+ALIASES = [("context", "ConTeXt", "luatex")]
 # Kernels that are offered but flagged, with the badge and the plain statement shown in the menu.
 EXPERIMENTAL = {"luatex": ("experimental", "Experimental. LaTeX documents run on the LuaTeX engine model. Lua code (\\directlua, luacode) is not executed, only modelled, "
                            "and fontspec and other LuaTeX-only packages may report spurious findings."),
@@ -389,7 +391,7 @@ def bundle(satex, work):
     # Names the installation has (test fixtures' names are not); plain TeX loads no LaTeX package.
     installed = lambda names: [n for n in names if file_of(n) in set(Path(p).name for p in subprocess.run(
         ["kpsewhich", *map(file_of, names)], capture_output=True, text=True).stdout.split())] if names else []
-    probe = lambda names: [(kernel, flags, name) for kernel, _, flags in KERNELS if kernel not in ("plain", "context") for name in names]
+    probe = lambda names: [(kernel, flags, name) for kernel, _, flags in KERNELS if kernel != "plain" for name in names]
 
     def listing(job):
         kernel, flags, it = job
@@ -462,7 +464,7 @@ def bundle(satex, work):
                                                     capture_output=True, check=False), docs))
             # the first download's packages get entries even when no example loads them: a probe document's.
             # Not its classes: a KOMA class's entries are about 9 MiB gz each, too much for the first download.
-            first = [probe_doc(probes, n) for n in installed(first_download()) if kernel not in ("plain", "context") and not n.endswith(".cls")]
+            first = [probe_doc(probes, n) for n in installed(first_download()) if kernel != "plain" and not n.endswith(".cls")]
             list(inner.map(lambda d: subprocess.run([str(satex), *flags, "lint", "-f", d.name], cwd=probes, env=penv,
                                                     capture_output=True, check=False), first))
         out = work / f"export-{kernel}.bin"
@@ -834,6 +836,10 @@ def playground(satex, wasm, work, out):
                         **({"badge": EXPERIMENTAL[kernel][0], "note": EXPERIMENTAL[kernel][1]} if kernel in EXPERIMENTAL else {}),
                         "bundle": emit_local(out, f"play/{kernel}.bin.gz", packed),
                         "files": [[path, len(data)] for path, data in files.items()]})
+    for engine, label, uses in ALIASES:
+        base = next(k for k in kernels if k["id"] == uses)
+        kernels.append({**base, "engine": engine, "label": label,
+                        **({"badge": EXPERIMENTAL[engine][0], "note": EXPERIMENTAL[engine][1]} if engine in EXPERIMENTAL else {})})
     extra = []
     for kernel, name, files, needs in packages:
         packed = gzip.compress(b"".join(files.values()), 9, mtime=0)
