@@ -6775,7 +6775,14 @@ will look undefined",
         }
         // A command the main loop takes from a file is read on no call's
         // behalf, also in a file an expansion still running opened (`\input`).
-        if command && self.last_file == Some(token.span.file) {
+        // A package's lines, and the library files they read, stay their load's.
+        let input = |m: &mut Self, file: FileId| {
+            m.own_file(file) && !m.out.files.get(usize::from(file)).is_some_and(|f| f.kind.is_package())
+        };
+        if command
+            && self.last_file == Some(token.span.file)
+            && (self.within.is_empty() || input(self, token.span.file))
+        {
             self.out.graph.set_reader(None);
         }
         // Inline math whose size is followed holds only characters: any
