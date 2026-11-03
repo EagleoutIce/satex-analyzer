@@ -127,7 +127,7 @@ variable-definition  \pkgcls@targetdate                                         
 use                  @                                                             paper.tex  @ paper.tex:1:1
 use                  11pt                                                          paper.tex  @ paper.tex:1:1
 macro-call           \value                                                        paper.tex  @ paper.tex:0:0
-… 568 more lines omitted
+… 571 more lines omitted
 ```
 
 ## trace
@@ -166,7 +166,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    texsys.aux                                
 4    input    expl3.ltx                                 
-… 291 more lines omitted
+… 295 more lines omitted
 ```
 
 ## diagnostics
@@ -176,12 +176,12 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 ```text
 $ satex query diagnostics -f samples/paper.tex
 severity     code                          count  message              file            
-imprecision  call-summarized               1      a call with unknow…  latex.ltx       @ latex.ltx:1824:12
-imprecision  call-summarized               1      a call with unknow…  hyperref.sty    @ hyperref.sty:2143:24
+assumption   unknown-text-run              1      unknown text runs …  paper.aux       @ paper.aux:18:1
+assumption   unknown-text-run              1      unknown text runs …  paper.aux       @ paper.aux:19:1
+assumption   unknown-text-run              4      unknown text runs …  paper.out       @ paper.out:5:1
+imprecision  call-summarized               1      a call with unknow…  hpdftex.def     @ hpdftex.def:330:3
 imprecision  paths-joined-at               1      2 paths arrived at…  paper.tex       @ paper.tex:56:13
-imprecision  call-summarized               1      a call with unknow…  latex.ltx       @ latex.ltx:16142:22
-imprecision  argument-ends-in-unknown      1      a delimited argume…  latex.ltx       @ latex.ltx:20534:3
-… 14 more lines omitted
+… 16 more lines omitted
 ```
 
 ## distribution
@@ -221,7 +221,7 @@ variable-definition  \ifdraft                   while expanding at 3:1       pap
 variable-definition  \drafttrue                 while expanding at 3:1       paper.tex  @ paper.tex:3:7
 variable-definition  \draftfalse                while expanding at 3:1       paper.tex  @ paper.tex:3:7
 macro-call           \usepackage                while expanding at 1:1       paper.tex  @ paper.tex:4:1
-… 114 more lines omitted
+… 112 more lines omitted
 ```
 
 ## project
@@ -260,12 +260,12 @@ The pgfkeys keys defined at the end of the run and what each does (`initial`, `c
 
 ```text
 $ satex query pgfkeys -f samples/keys.tex
-kind       key                                                  value         default  file      
-is family  /demo                                                \edef \pgfk…           keys.tex  @ keys.tex:4:1
-style      /demo/color                                          \pgfkeysals…  red      keys.tex  @ keys.tex:4:1
-is if      /demo/draft                                          \pgfkeys@ha…  true     keys.tex  @ keys.tex:4:1
-initial    /demo/family                                         /demo                  keys.tex  @ keys.tex:4:1
-code args  /demo/label                                          \def \demol…           keys.tex  @ keys.tex:4:1
+kind       key       value     default  file                            
+is family  /demo     \edef \…           keys.tex                        @ keys.tex:4:1
+style      /demo/c…  \pgfkey…  red      keys.tex                        @ keys.tex:4:1
+is if      /demo/d…  \pgfkey…  true     keys.tex                        @ keys.tex:4:1
+initial    /demo/f…  /demo              keys.tex                        @ keys.tex:4:1
+code args  /demo/l…  \def \d…           keys.tex                        @ keys.tex:4:1
 … 90 more lines omitted
 ```
 
@@ -431,24 +431,24 @@ The criterion is a name, `--at [FILE:]LINE:COL[-LINE[:COL]]` (a range, to the en
 
 ```text
 $ satex slice -f samples/paper.tex '\ifdraft'
-\documentclass[11pt]{article}
-\newif\ifdraft
-\usepackage{amsmath}
-\usepackage{graphicx}
-\usepackage{hyperref}
-\usepackage{mypackage}
-… 18 more lines omitted
+\begin{filecontents*}[overwrite]{mypackage.sty}
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{mypackage}[2024/01/01 v1.0 Sample package for satex]
+
+\RequirePackage{xcolor}
+
+… 86 more lines omitted
 ```
 
 ```text
 $ satex slice -f samples/paper.tex --where 'kind=begin-environment and key=figure'
-\documentclass[11pt]{article}
-\newif\ifdraft
-\usepackage{amsmath}
-\usepackage{graphicx}
-\usepackage{hyperref}
-\usepackage{mypackage}
-… 21 more lines omitted
+\begin{filecontents*}[overwrite]{mypackage.sty}
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{mypackage}[2024/01/01 v1.0 Sample package for satex]
+
+\RequirePackage{xcolor}
+
+… 77 more lines omitted
 ```
 
 `--out DIR` writes the slice as a standalone project: the main file plus the local packages, classes, graphics and bibliographies it needs, paths preserved.

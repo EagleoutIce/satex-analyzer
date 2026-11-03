@@ -496,13 +496,13 @@ A compilable document by default. `--where EXPR` slices to every occurrence or d
 
 ```text
 $ satex slice -f samples/paper.tex '\ifdraft'
-\documentclass[11pt]{article}
-\newif\ifdraft
-\usepackage{amsmath}
-\usepackage{graphicx}
-\usepackage{hyperref}
-\usepackage{mypackage}
-… 18 more lines omitted
+\begin{filecontents*}[overwrite]{mypackage.sty}
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{mypackage}[2024/01/01 v1.0 Sample package for satex]
+
+\RequirePackage{xcolor}
+
+… 86 more lines omitted
 ```
 
 </details>

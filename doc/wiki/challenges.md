@@ -882,19 +882,26 @@ The label was on page \pageref{x}.
 ```
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>The label was on page 1.</code></td><td><code>Here.</code></td><td>✗</td></tr>
-<tr><td><code>Here.</code></td><td><code></code></td><td>✗</td></tr>
+<tr><td><code>The label was on page 1.</code></td><td><code><b>{</b>The label was on page <b>⟨?⟩</b>. Here. <b>|</b>The label was on page 2. Here. <b>}</b></code></td><td>✗</td></tr>
+<tr><td><code>Here.</code></td><td><code><b>{</b>Here. <b>|</b><b>}</b></code></td><td>⊇</td></tr>
+<tr><td><code></code></td><td><code>assumes assumed-compiles</code></td><td></td></tr>
 </table>
 
-Differs: pdflatex ships `The label was on page 1.` where satex computes `Here.`.
+Differs: pdflatex ships `The label was on page 1.` where satex computes `{The label was on page ⟨?⟩. Here. |The label was on page 2. Here. }`.
+
+Why:
+
+- `⟨?⟩`: l.4 sets a character the run could not compute.
+- `{The label was on page ⟨?⟩. Here. |The label was on page …`: l.9729 sets a character the run could not compute.
+- `{Here. |}`: l.9729 sets a character the run could not compute.
 
 <details><summary>Computed text</summary>
 
 ```sh
 $ satex query typeset -f 11-fixpoint.tex --set limits.seconds=60
-6:11  paragraph  
-6:11  paragraph  Here.
-3:1  assumption  unknown-text-run
+4:2  paragraph  {The label was on page ⟨?⟩. Here. |The label was on page 2. Here. }
+6:11  paragraph  {Here. |}
+7:15  assumption  assumed-compiles
 assumption  clock-assumed
 ```
 
@@ -905,12 +912,13 @@ assumption  clock-assumed
 ```sh
 $ satex trace --format compact -f 11-fixpoint.tex --set limits.seconds=60
 l.4 \pageref ⇒ \__cmd_start:nNNnnn {s}\pageref  \pagere… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 18 more)
+l.4 \pageref ⇒ \__cmd_start:nNNnnn {s}\pageref  \pagere…
+l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex…
+l.5 \ifnum\getpagerefnumber{x}=1 ⇒ 2 = 1: false
 l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex…
 l.5 \ifnum\getpagerefnumber{x}=1 ⇒ undecided
 l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex…
-l.5 \ifnum\getpagerefnumber{x}=1 ⇒ undecided
-l.5 \newpage ⇒ \if@noskipsec \ifx \@nodocument \relax \… (defines \par \@outputbox@reinsertbskip \@elt … 147 more)
-l.6 \label ⇒ \@bsphack \begingroup \UseHookWithArgume… (defines \thepage \protect \reserved@a)
+… 4 more
 ```
 
 </details>

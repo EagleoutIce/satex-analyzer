@@ -191,7 +191,7 @@ typed digits     d, with an interval [lo, hi]
 - **Typed digits** carry their `Num`: `\ifnum`, `\numexpr` and `\csname` read the interval back.
 - **Hex.** `h` is kept only with `l` or `o` and without `c`. A join keeps it where both sides are hex (digits-only text is). `\detokenize` keeps it unless braces or names print. One character of `h` text has a code in `0`–`f`, so `` `#1<"80`` is decided.
 - **Join** is the union of kinds. The text is non-empty only if both are. A run of unknown tokens collapses into one token of the run's class. Widening moves up and stops at the top.
-- **Printing.** `\detokenize` and `\string` give the printed class ([tex.web § 464](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9142)).
+- **Printing.** `\detokenize` and `\string` give the printed class (tex.web § 464).
 - One constructor makes all unknown text: `Machine::unknown_text`.
 
 [Stubs](Configuration#stubs) name these elements: `nothing`, `number` / `{ number: [lo, hi] }`, `dimen`, `{ text: digits | number | dimension | cs-free | any }`, `box` / `{ box: { width, height, depth } }`.
@@ -560,7 +560,7 @@ The knobs that trade precision for a bounded search ([`src/config.rs`](https://g
 | setting | default | what it bounds |
 | --- | --- | --- |
 | [`limits.choices`](Configuration#configurable-limits-for-the-analysis) | 8 | How many undecided `\if` one command may split into paths. Past them the command's result is unknown text, reported as an `assumption`. Higher keeps more combinations apart and costs time. |
-| [`limits.site_forks`](Configuration#configurable-limits-for-the-analysis) | 256 | How many paths one place in a source line may start, counted over all paths. Past them an `\if` there is no longer followed both ways: the run takes the effects either branch may have (`site-forks-widened`). Lower finishes a `\foreach` with unknown bounds sooner but knows less. 0 turns it off. |
+| [`limits.site_forks`](Configuration#configurable-limits-for-the-analysis) | 64 | How many paths one place in a source line may start, counted over all paths. Past them an `\if` there is no longer followed both ways: the run takes the effects either branch may have (`site-forks-widened`). Lower finishes a `\foreach` with unknown bounds sooner but knows less. 0 turns it off. |
 | [`limits.paths`](Configuration#configurable-limits-for-the-analysis) | 16 | How many alternative paths satex keeps at once. Past them the two oldest at one place are merged into one. Higher is more precise, slower and takes more memory. |
 | [`limits.meaning_splits`](Configuration#configurable-limits-for-the-analysis) | 4 | How often one command may split the run per meaning of a name that has several, such as `\x` defined differently in two branches. Past them, and with 0, the name reads as unknown. |
 | [`limits.widen_after`](Configuration#configurable-limits-for-the-analysis) | 3 | How many rounds a loop is followed exactly before values that still change become ranges (SEMANTICS [§ 14](Configuration#configurable-limits-for-the-analysis)). A `\loop` counting to an unknown bound has its counter as a range after these rounds. |
