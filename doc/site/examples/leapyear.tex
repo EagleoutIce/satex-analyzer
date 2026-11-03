@@ -30,6 +30,10 @@
 \ckleapyear{1996}
 \ckleapyear{2000}
 \ckleapyear{2004}
-% satex reads properties written as comments: here it narrows \year
+% satex reads settings and properties written as comments.
+% Here the clock is unknown, so \year may be any year:
+%\satex@configure{clock=unknown}
+\ckleapyear{\the\year}
+% Here \year is narrowed to this century, still both arms:
 %\satex@assume{\year >= 2000}
 \ckleapyear{\the\year}

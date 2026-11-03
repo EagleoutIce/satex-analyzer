@@ -182,7 +182,12 @@ impl Machine<'_> {
         if cfg.limits != self.cfg.limits {
             self.limits = cfg.limits.clone();
         }
+        // `\year` and its kin read the clock from here on: `clock=unknown` makes them any date.
+        let clock = cfg.clock != self.cfg.clock;
         self.cfg = Cow::Owned(cfg);
+        if clock {
+            self.install_clock();
+        }
     }
 
     /// `text` as an `or` of `and`s of tests, each run on this path.

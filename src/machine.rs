@@ -3187,7 +3187,7 @@ impl<'a> Machine<'a> {
     /// the date it is compiled at. Installed again once the format is in
     /// place: what the kernel build read of the clock is the kernel's, the
     /// document's first read is its own.
-    fn install_clock(&mut self) {
+    pub(super) fn install_clock(&mut self) {
         let clock = self.cfg.clock.resolve();
         self.clock = clock;
         self.clock_read_at = None;
