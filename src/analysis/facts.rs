@@ -547,10 +547,17 @@ pub struct Facts {
     pub expansions: Vec<Expansion>,
     pub loads: Vec<Load>,
     pub occurrences: Vec<Occurrence>,
+    /// Every `\pdfliteral` the run wrote, in order: what a picture draws.
+    pub literals: Vec<Literal>,
     pub diagnostics: Vec<Diagnostic>,
     /// What each `\csname` site formed its control sequence for, the first
     /// time it ran.
     pub csnames: crate::fixed::HashMap<Span, CsnameRole>,
+    /// Per first character of text the user's files wrote into a
+    /// `\csname` name, what the code put before it: the kind of name
+    /// typed there (`pgf@sh@ns@` a node, `r@` a label). Completion offers
+    /// the names defined with the same prefix.
+    pub slots: crate::fixed::HashMap<Span, String>,
     /// `\begingroup … \endgroup` read straight from a file over several
     /// lines: where each opened and where it closed.
     pub groups: Vec<(Span, Span)>,
@@ -627,4 +634,45 @@ impl Facts {
         }
         out
     }
+}
+
+/// The conditionals a name a user gives may mean, each with how it got
+/// there, by LaTeX's naming conventions: `\\name` itself, the switch
+/// `\\ifname` that `\\newif` makes for the stem `name`, and the switches the
+/// option `name` sets: its handler `\\ds@name` calls `\\stemtrue` or
+/// `\\stemfalse`. The handler is read from its definitions, as
+/// `\\ProcessOptions` lets it to `\\relax`.
+pub fn switches_named(
+    interner: &crate::engine::tex::Interner,
+    defs: &[Definition],
+    wanted: &str,
+) -> Vec<(String, String)> {
+    let mut out = vec![
+        (wanted.to_string(), String::new()),
+        (format!("if{wanted}"), format!("the switch `\\newif` makes for `{wanted}`")),
+    ];
+    let Some(handler) = interner.lookup(&format!("ds@{wanted}")) else { return out };
+    let bodies = defs.iter().filter(|d| d.name == handler).filter_map(|d| d.mac.as_deref());
+    for t in bodies.flat_map(|m| m.replacement_text.iter()) {
+        let Some(name) = t.cs().map(|s| interner.name(s)) else { continue };
+        let stem = name.strip_suffix("true").or_else(|| name.strip_suffix("false"));
+        if let Some(stem) = stem.filter(|s| !s.is_empty()) {
+            let switch = format!("if{stem}");
+            if !out.iter().any(|(n, _)| *n == switch) {
+                out.push((switch, format!("the switch the option `{wanted}` sets")));
+            }
+        }
+    }
+    out
+}
+
+/// A `\pdfliteral` the run wrote (pgf's driver draws through them): its
+/// PDF content operators, where the document's call stands, and how many
+/// characters were typeset before it, so text set between two literals is
+/// placed where the drawing stands then.
+#[derive(Clone, Debug)]
+pub struct Literal {
+    pub at: Span,
+    pub text: String,
+    pub chars: u32,
 }

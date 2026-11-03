@@ -36,9 +36,10 @@ impl RoleKind {
             RoleKind::Occ(OccKind::Ref | OccKind::Label) => Ty::Key(KeyKind::Label),
             RoleKind::Occ(OccKind::Cite | OccKind::BibItem) => Ty::Key(KeyKind::Cite),
             RoleKind::Occ(OccKind::BeginEnvironment | OccKind::EndEnvironment) => Ty::Key(KeyKind::Environment),
-            RoleKind::Occ(OccKind::Key | OccKind::KeyUse) => Ty::Key(KeyKind::Option),
+            RoleKind::Occ(OccKind::Key | OccKind::KeyUse) => Ty::Key(KeyKind::Declared),
+            RoleKind::Occ(OccKind::Entry) => Ty::Key(KeyKind::Entry),
             // What a tool's input line carries says nothing of the argument's kind.
-            RoleKind::Occ(OccKind::Entry | OccKind::Write) => Ty::Bottom,
+            RoleKind::Occ(OccKind::Write) => Ty::Bottom,
             RoleKind::Occ(_) => Ty::Key(KeyKind::Any),
             RoleKind::Load(LoadKind::Class) => Ty::File(F::Cls),
             RoleKind::Load(LoadKind::Package) => Ty::File(F::Sty),
@@ -60,6 +61,11 @@ pub enum KeyKind {
     /// A key pgfkeys stores under its family's path (`/tikz/thick`), below `Option`.
     Pgf,
     Environment,
+    /// A key a document command declares and others read by its name
+    /// (`\\newglossaryentry{k}`, `\\gls{k}`, `\\newacronym`).
+    Declared,
+    /// A term an index or glossary program sorts (`\\index{term}`).
+    Entry,
     Any,
 }
 
@@ -254,7 +260,16 @@ impl Ty {
             .iter()
             .copied()
             .filter(|k| !matches!(k, RegKind::Char | RegKind::MathChar | RegKind::UMathChar));
-        let keys = [KeyKind::Any, KeyKind::Label, KeyKind::Cite, KeyKind::Option, KeyKind::Pgf, KeyKind::Environment];
+        let keys = [
+            KeyKind::Any,
+            KeyKind::Label,
+            KeyKind::Cite,
+            KeyKind::Option,
+            KeyKind::Pgf,
+            KeyKind::Environment,
+            KeyKind::Declared,
+            KeyKind::Entry,
+        ];
         let files = FILE_KINDS.iter().map(|r| r.0).filter(|k| *k != FileKind::Any);
         let mut out = vec![
             Top, Quantity, Number, Dimen, Glue, MuGlue, Box, Register, Cs, Switch, Options, Date, Text, Name, Body,
@@ -334,9 +349,7 @@ impl Ty {
     pub fn of_meaning(meaning: &crate::engine::tex::Meaning) -> Option<Ty> {
         use crate::engine::builtins::Primitive as P;
         Some(match meaning {
-            crate::engine::tex::Meaning::Register(RegKind::Char | RegKind::MathChar | RegKind::UMathChar, _) => {
-                Ty::Number
-            }
+            crate::engine::tex::Meaning::Register(k, _) if k.is_constant() => Ty::Number,
             crate::engine::tex::Meaning::Register(k, _) => Ty::Reg(*k),
             m => match m.prim()? {
                 P::IntegerParameter => Ty::Reg(RegKind::Count),
@@ -384,6 +397,8 @@ impl std::fmt::Display for Ty {
                 Ty::Key(KeyKind::Option) => "option key",
                 Ty::Key(KeyKind::Pgf) => "pgf key",
                 Ty::Key(KeyKind::Environment) => "environment name",
+                Ty::Key(KeyKind::Declared) => "declared key",
+                Ty::Key(KeyKind::Entry) => "index entry",
                 Ty::Key(KeyKind::Any) => "key",
                 Ty::File(_) => "file",
                 Ty::Name => "name",
@@ -963,6 +978,44 @@ fn seed(cmd: &str) -> Vec<Role> {
         | "Vref" | "labelcref" | "subref" => first(RoleKind::Occ(O::Ref)),
         c if c.contains("cite") => first(RoleKind::Occ(O::Cite)),
         _ => Vec::new(),
+    }
+}
+
+/// What a macro's expansion gives where TeX reads a quantity, as far as its
+/// body shows it: `\\the` or `\\number` of a register, a register or constant
+/// it stands for, or a number or dimension written out.
+pub fn yields(analysis: &Analysis, mac: &crate::engine::tex::MacroDef) -> Option<Ty> {
+    use crate::engine::builtins::{Primitive as P, TextOf};
+    let toks = &mac.replacement_text;
+    let quantity = |k: RegKind| match k {
+        RegKind::Count => Some(Ty::Number),
+        k if k.is_constant() => Some(Ty::Number),
+        RegKind::Dimen => Some(Ty::Dimen),
+        RegKind::Skip => Some(Ty::Glue),
+        RegKind::MuSkip => Some(Ty::MuGlue),
+        _ => None,
+    };
+    let of = |t: Option<&crate::engine::tex::Token>| match Ty::of_meaning(&analysis.env.meaning(t?.cs()?))? {
+        Ty::Number => Some(Ty::Number),
+        Ty::Reg(k) => quantity(k),
+        _ => None,
+    };
+    match toks.first()?.tok {
+        Tok::Cs(sym) => match analysis.env.meaning(sym).prim() {
+            Some(P::Text(TextOf::Number)) => Some(Ty::Number),
+            Some(P::Text(TextOf::The)) => of(toks.get(1)),
+            _ if toks.len() == 1 => of(toks.first()),
+            _ => None,
+        },
+        _ => {
+            let text = crate::engine::tex::detokenize(toks, &analysis.interner);
+            let text = text.trim();
+            match (text.parse::<i64>().is_ok(), crate::engine::value::parse_dimen(text).is_some()) {
+                (true, _) => Some(Ty::Number),
+                (_, true) => Some(Ty::Dimen),
+                _ => None,
+            }
+        }
     }
 }
 

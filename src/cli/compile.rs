@@ -34,10 +34,18 @@ pub fn run(context: &Context) -> Result<Output, String> {
     let out_dir = project.output_dir().map(|(d, _)| dir.join(d));
     let log_path = out_dir.clone().unwrap_or_else(|| dir.clone()).join(format!("{job}.log"));
     let engine = analysis.plugins.engine;
-    let status = match crate::project::paths::which("latexmk") {
+    // latexmk runs LaTeX: a plain TeX file (`% !TeX program = tex`) runs its own program.
+    let latex = analysis.plugins.kernel == crate::plugins::Kernel::Latex;
+    let program = match latex || analysis.plugins.program.is_empty() {
+        true => engine.program(),
+        false => analysis.plugins.program.as_str(),
+    };
+    // Knuth's `tex` writes DVI only: pdfTeX runs the same plain format and writes PDF.
+    let program = if program == "tex" { "pdftex" } else { program };
+    let status = match crate::project::paths::which("latexmk").ok().filter(|_| latex) {
         // latexmk reruns as often as the document needs and reads the
         // latexmkrc; the engine is ours only where that names none.
-        Ok(_) => {
+        Some(_) => {
             // `-f`: past an error, so the references the later runs resolve are not reported.
             let mut args = vec!["-interaction=nonstopmode", "-file-line-error", "-synctex=1", "-f", "-pv-", "-pvc-"];
             if !["pdf_mode", "pdflatex", "lualatex", "xelatex", "latex"].iter().any(|k| project.setting(k).is_some()) {
@@ -51,17 +59,18 @@ pub fn run(context: &Context) -> Result<Output, String> {
         }
         // The engine alone: again while the log asks for a rerun, as
         // LaTeX's cross-references need.
-        Err(_) => {
+        None => {
             let output = out_dir.as_ref().map(|d| format!("-output-directory={}", d.display()));
-            let mut args = vec!["-interaction=nonstopmode", "-file-line-error", "-synctex=1"];
+            let mut args = vec!["-interaction=nonstopmode", "-file-line-error"];
+            args.push("-synctex=1");
             args.extend(output.as_deref());
-            let mut status = build(engine.program(), &args, file, &dir)?;
+            let mut status = build(program, &args, file, &dir)?;
             for _ in 0..2 {
                 let log = std::fs::read_to_string(&log_path).unwrap_or_default();
                 if !log.contains("Rerun to get") {
                     break;
                 }
-                status = build(engine.program(), &args, file, &dir)?;
+                status = build(program, &args, file, &dir)?;
             }
             status
         }
@@ -134,6 +143,23 @@ fn parse_log(log: &str, dir: &Path) -> Vec<Logged> {
             }
             let number = message.rsplit_once("on input line ").and_then(|(_, n)| n.trim_end_matches('.').parse().ok());
             out.push(Logged { path: files.last().cloned(), line: number, error: false, message });
+            continue;
+        }
+        // TeX's fatal ends without a file and line: `*** (job aborted, no legal \end found)`
+        // (tex.web § 360) and `! Emergency stop.` (§ 93)
+        // (an error with its place said so already: `! Emergency stop.` follows it)
+        let unplaced = line.strip_prefix("! ").filter(|_| !out.iter().any(|l: &Logged| l.error));
+        if let Some(message) = line.strip_prefix("*** (").and_then(|m| m.strip_suffix(')')).or(unplaced) {
+            out.push(Logged { path: files.last().cloned(), line: None, error: true, message: message.to_string() });
+            continue;
+        }
+        // `Overfull \hbox (12.3pt too wide) in paragraph at lines 4--7`: by how much, where it begins
+        if line.starts_with("Overfull \\") || line.starts_with("Underfull \\") {
+            let number = ["at lines ", "at line "]
+                .iter()
+                .find_map(|p| line.rsplit_once(p))
+                .and_then(|(_, n)| n.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok());
+            out.push(Logged { path: files.last().cloned(), line: number, error: false, message: line.to_string() });
             continue;
         }
         track_files(line, dir, &mut files);
@@ -248,6 +274,16 @@ mod tests {
         assert_eq!(got[2].message, "Package foo Error: bad more here.");
         assert_eq!(code_of(&got[0].message), Some("undefined-control-sequence"));
         assert_eq!(code_of(&got[1].message), Some("undefined-reference"));
+    }
+
+    #[test]
+    fn a_bad_box_is_a_warning_at_its_first_line() {
+        let log = "(./main.tex\nOverfull \\hbox (12.3pt too wide) in paragraph at lines 4--7\n[]\\OT1/cmr/m/n/10 x\n\n\
+                   Underfull \\vbox (badness 10000) detected at line 9\n)";
+        let got = parse_log(log, Path::new("/d"));
+        assert_eq!(got.iter().map(|g| (g.line, g.error)).collect::<Vec<_>>(), [(Some(4), false), (Some(9), false)]);
+        assert_eq!(got[0].path.as_deref(), Some(Path::new("/d/./main.tex")));
+        assert!(got[0].message.contains("12.3pt too wide"), "{got:?}");
     }
 
     #[test]

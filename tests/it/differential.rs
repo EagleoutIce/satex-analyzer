@@ -780,6 +780,71 @@ fn typeset_rows(tag: &str, preamble: &str, body: &str) -> Vec<serde_json::Value>
     serde_json::from_slice(&out.stdout).expect("json")
 }
 
+/// Each typeset character finds its source: a run of source text counts on
+/// from its site, a macro's text stands at its call. The PDF marks a
+/// finding on only the characters of its range by these.
+#[test]
+fn a_paragraph_records_the_source_site_of_its_characters() {
+    let rows = typeset_rows("sites", "\\def\\name{Knuth}", "Hello \\name{} and you");
+    let row = rows.iter().find(|r| r["detail"].as_str().is_some_and(|d| d.contains("Hello"))).expect("paragraph");
+    let body = row["line"].as_u64().unwrap();
+    let text: Vec<char> = row["detail"].as_str().unwrap().chars().collect();
+    let sites = row["sites"].as_array().expect("sites");
+    // the site of the character at offset `at`: its entry's column, plus the characters since
+    let site = |at: usize| {
+        let s = sites.iter().rev().find(|s| s["at"].as_u64().unwrap() as usize <= at).expect("an entry");
+        let step = if s["same"] == true { 0 } else { at - s["at"].as_u64().unwrap() as usize };
+        (s["line"].as_u64().unwrap(), s["col"].as_u64().unwrap() + step as u64)
+    };
+    let find = |w: &str| text.iter().collect::<String>().find(w).map(|b| text_offset(&text, b)).unwrap();
+    assert_eq!(site(find("Hello")), (body, 1), "{row}");
+    // inside the call: the last letter of its name
+    let call = "Hello \\name".len() as u64;
+    assert!((0..5).all(|k| site(find("Knuth") + k) == (body, call)), "the macro's text stands at its call: {row}");
+    let and = "Hello \\name{} and".find("and").unwrap() as u64 + 1;
+    assert_eq!(site(find("and")), (body, and), "{row}");
+}
+
+/// A picture is drawn from what the run wrote for it: its two node frames,
+/// the line between them and the arrow tip pgf drew as a curve, with each
+/// node's text in its frame and with `yshift` where TikZ put the node.
+#[test]
+fn a_picture_is_drawn_from_the_literals_the_run_wrote() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\begin{tikzpicture}\n\\node[draw] (a) {A};\n\\node[draw] (b) at (2,0) [yshift=5mm] {B};\n\\draw[->] (a) -- (b);\n\\end{tikzpicture}";
+    let rows = typeset_rows("picture", "\\usepackage{tikz}", body);
+    // A picture with text is a paragraph's `sketch`, one without a note's in `sketches`.
+    let drawn = |r: &serde_json::Value| {
+        r["sketches"].as_array().cloned().unwrap_or_default().into_iter().chain([r["sketch"].clone()])
+    };
+    let picture = rows.iter().flat_map(drawn).find(|p| p.is_object());
+    let picture = picture.unwrap_or_else(|| panic!("a drawn picture: {rows:?}"));
+    let paths = picture["paths"].as_array().unwrap();
+    assert!(paths.len() >= 4, "two frames, a line and a tip: {picture}");
+    assert!(paths.iter().any(|p| p["d"].as_str().unwrap().contains('C')), "the tip is pgf's curve: {picture}");
+    let at = |name: &str| {
+        let t = picture["texts"].as_array().unwrap().iter().find(|t| t["text"] == name).expect("a text");
+        (t["x"].as_f64().unwrap(), t["y"].as_f64().unwrap())
+    };
+    let ((ax, ay), (bx, by)) = (at("A"), at("B"));
+    // 2cm is 56.9pt to the right, 5mm is 14.2pt up, which SVG's y has negative
+    assert!((bx - ax - 56.9).abs() < 0.5 && (ay - by - 14.2).abs() < 0.5, "{picture}");
+    assert_eq!(picture["approximate"], false);
+}
+
+/// The char offset of byte offset `b` in `text`.
+fn text_offset(text: &[char], b: usize) -> usize {
+    let mut bytes = 0;
+    text.iter()
+        .take_while(|c| {
+            bytes += c.len_utf8();
+            bytes <= b
+        })
+        .count()
+}
+
 /// A paragraph over several source lines says where each line's text starts,
 /// and the color the run had selected there is recorded, whatever command
 /// selected it.

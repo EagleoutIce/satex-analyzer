@@ -139,6 +139,12 @@ fn record_location(record: &Record, sources: &Sources) -> Option<Location> {
 /// meanings when preamble and document differ, and where it comes from.
 pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Option<Hover> {
     let pos = to_pos(doc, position);
+    if let Some(markdown) = super::directive::hover(doc.line(pos.line), pos.col) {
+        return Some(markdown_hover(markdown));
+    }
+    if let Some(markdown) = super::units::hover(doc.line(pos.line), pos.col) {
+        return Some(markdown_hover(markdown));
+    }
     if let Some(markdown) = directive_hover(analysis, path, pos) {
         return Some(markdown_hover(markdown));
     }
@@ -189,17 +195,32 @@ fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
     let defined_path = site("path").and_then(Json::as_str).map(str::to_string).or_else(|| text(&record, "path"));
     let family = text(&record, "family");
     if record.contains_key("unknown") {
-        markdown.push_str(&format!(
-            "No key of `{}` by this name: its `.unknown` handler reads it (a color, an arrow tip, a shape).\n\n",
-            family.as_deref().unwrap_or_default()
-        ));
+        // What the handler takes it for, by what the run defined under that name.
+        let color = analysis.facts.colors.iter().rev().find(|c| c.name == key);
+        match color {
+            Some(c) => markdown.push_str(&format!(
+                "The color `{key}`{}: no key of `{}` by this name, so its `.unknown` handler takes it as the color to draw and fill with.\n\n",
+                c.value.as_ref().and_then(rgba).map(|v| format!(" (rgb {:.2} {:.2} {:.2})", v.red, v.green, v.blue)).unwrap_or_default(),
+                family.as_deref().unwrap_or_default()
+            )),
+            None => markdown.push_str(&format!(
+                "No key of `{}` by this name: its `.unknown` handler reads it (a color, an arrow tip, a shape).\n\n",
+                family.as_deref().unwrap_or_default()
+            )),
+        }
     }
-    let mined = defined_path
-        .clone()
-        .filter(|_| analysis.settings.plugins.docs)
-        .and_then(|p| crate::plugins::docs::index(&analysis.settings.docs).lookup(std::path::Path::new(&p), key));
+    let mined = defined_path.clone().filter(|_| analysis.settings.plugins.docs).and_then(|p| {
+        // pgf's manual names a key by its path (`/tikz/yshift`), other manuals by its name
+        let index = crate::plugins::docs::index(&analysis.settings.docs);
+        let path = std::path::Path::new(&p);
+        let full = family.as_deref().map(|f| format!("{}/{key}", f.trim_end_matches('/')));
+        full.and_then(|f| index.lookup(path, &f)).or_else(|| index.lookup(path, key))
+    });
     if let Some((m, does)) = mined.as_ref().and_then(|m| Some((m, m.text.as_deref()?))) {
         markdown.push_str(&format!("{does} {}\n\n", extracted_from_manual(m)));
+    }
+    if let Some(usage) = mined.as_ref().and_then(|m| m.usage.as_deref()) {
+        markdown.push_str(&format!("`{usage}`\n\n"));
     }
     if let Some(comment) = text(&record, "comment") {
         markdown.push_str(&format!("{comment} {}\n\n", extracted("from the source comment")));
@@ -335,6 +356,12 @@ pub const MORE_DEFINITIONS: &str = "#### More definitions";
 /// `name` still means the primitive at `at`.
 pub fn placed(analysis: &Analysis, mut markdown: String, name: &str, path: &str, at: Pos) -> String {
     let first = markdown.find("\n\n").map_or(0, |i| i + 2);
+    // What the calls typeset, the one at the cursor first: before the
+    // signature line, else after the first paragraph under the heading.
+    let set = typesets(analysis, name, path, at);
+    let usage = markdown.find(&format!("\n`\\{name}")).map(|i| i + 1);
+    let second = markdown[first..].find("\n\n").map_or(markdown.len(), |i| first + i + 2);
+    markdown.insert_str(usage.unwrap_or(second).min(markdown.len()), &set);
     if let Some(syntax) = super::primitives::syntax(analysis, name, path, at.line, at.col) {
         markdown.insert_str(first, &syntax);
     }
@@ -391,9 +418,6 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
         } else if let Some((m, does)) = mined.and_then(|m| Some((m, m.text.as_deref()?))) {
             markdown.push_str(&format!("{does} {}\n\n", extracted_from_manual(m)));
         }
-        if n == 0 {
-            markdown.push_str(&typesets(analysis, name));
-        }
         if let Some(sig) = text("signature").filter(|s| !s.is_empty()) {
             markdown.push_str(&format!("`\\{name}{}`\n\n", usage(sig)));
         } else if let Some(usage) = mined.and_then(|m| m.usage.as_deref()) {
@@ -427,7 +451,10 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
         for (n, text) in &untyped {
             markdown.push_str(&format!("- `⟨arg{n}⟩` {text}\n"));
         }
-        if !types.is_empty() || !untyped.is_empty() {
+        if let Some(ty) = text("yields") {
+            markdown.push_str(&format!("- yields {ty}\n"));
+        }
+        if !types.is_empty() || !untyped.is_empty() || text("yields").is_some() {
             markdown.push('\n');
         }
         if let Some(doc) = &doc {
@@ -473,10 +500,11 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
     Some(markdown)
 }
 
-/// What the document's first call of `name` that sets text typesets, and
-/// where that call stands.
-fn typesets(analysis: &Analysis, name: &str) -> String {
-    let shown = analysis.settings.conventions.completion.calls;
+/// What the document's calls of `name` typeset: the call at `at` in `path`
+/// first, marked, then at most two others, the rest counted (Explain
+/// lists them all).
+fn typesets(analysis: &Analysis, name: &str, path: &str, at: Pos) -> String {
+    const OTHERS: usize = 2;
     let Some(sym) = analysis.interner.lookup(name) else { return String::new() };
     let mut calls: Vec<crate::engine::tex::Span> = analysis
         .facts
@@ -487,33 +515,46 @@ fn typesets(analysis: &Analysis, name: &str) -> String {
         .collect();
     calls.sort_by_key(|s| (s.file, s.line, s.col));
     calls.dedup();
+    let here = calls
+        .iter()
+        .rposition(|s| analysis.file_name(s.file) == path && (s.line, s.col) <= (at.line, at.col) && s.line == at.line);
     // each call that sets text, with the lines that set the same text together
-    let mut sets: Vec<(String, Vec<u32>)> = Vec::new();
-    for at in &calls {
-        let Some(set) = query::typeset_by(analysis, *at) else { continue };
-        match sets.iter_mut().find(|(s, _)| *s == set) {
-            Some((_, lines)) => lines.push(at.line),
-            None => sets.push((set, vec![at.line])),
+    let mut sets: Vec<(String, Vec<u32>, bool)> = Vec::new();
+    for (i, call) in calls.iter().enumerate() {
+        let Some(set) = query::typeset_by(analysis, *call) else { continue };
+        let mine = here == Some(i);
+        match sets.iter_mut().find(|(s, ..)| *s == set) {
+            Some((_, lines, m)) => {
+                lines.push(call.line);
+                *m |= mine;
+            }
+            None => sets.push((set, vec![call.line], mine)),
         }
     }
+    sets.sort_by_key(|(.., mine)| !mine);
     let lines = |ls: &[u32]| {
         let named = ls.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");
         format!("line{} {named}", if ls.len() > 1 { "s" } else { "" })
     };
-    match sets.as_slice() {
-        [] => String::new(),
-        [(set, ls)] => format!("Typesets {set} at {}\n\n", lines(ls)),
-        _ => {
-            let mut out = format!("Typesets, by call ({} calls):\n\n", calls.len());
-            for (set, ls) in sets.iter().take(shown) {
-                out.push_str(&format!("- {set} at {}\n", lines(ls)));
-            }
-            if sets.len() > shown {
-                out.push_str(&format!("- and {} more\n", sets.len() - shown));
-            }
-            out + "\n"
-        }
+    let mut out = String::new();
+    let mut rest = sets.iter();
+    // the call at the cursor stands out, the others are muted
+    if let Some((set, _, true)) = sets.first() {
+        rest.next();
+        out.push_str(&format!("**Typesets {set} here**\n\n"));
     }
+    let others: Vec<_> = rest.collect();
+    if others.is_empty() {
+        return out;
+    }
+    let shown: Vec<String> =
+        others.iter().take(OTHERS).map(|(set, ls, _)| format!("*{set} at {}*", lines(ls))).collect();
+    let more = match others.len() > OTHERS {
+        true => format!(" *+{} more*", others.len() - OTHERS),
+        false => String::new(),
+    };
+    let heading = if out.is_empty() { "Typesets" } else { "Elsewhere" };
+    format!("{out}*{heading}:* {}{more}\n\n", shown.join(" · "))
 }
 
 /// The knowledge-base topics a command's hover touches: the types of its
@@ -545,6 +586,49 @@ fn arg_types(record: &Record) -> Vec<(String, String)> {
         .filter_map(|t| t.strip_prefix('#')?.split_once(' '))
         .map(|(n, ty)| (format!("⟨arg{n}⟩"), ty.to_string()))
         .collect()
+}
+
+/// After `#` in a definition's body: the parameters of the macro the line
+/// defines, each with its type and what the comment above it says of it.
+fn parameter_items(analysis: &Analysis, doc: &Text, before: &str, pos: Pos) -> Option<Vec<CompletionItem>> {
+    let typed =
+        before.strip_suffix('#').or_else(|| before.trim_end_matches(|c: char| c.is_ascii_digit()).strip_suffix('#'))?;
+    // `##` is a parameter of a definition inside this one
+    if typed.ends_with('#') {
+        return None;
+    }
+    let path = analysis.file_name(analysis.main_file);
+    let def = (analysis.facts.defs.iter())
+        .filter(|d| d.span.line <= pos.line && analysis.file_name(d.span.file) == path && d.mac.is_some())
+        .max_by_key(|d| (d.span.line, d.span.col))?;
+    let arity = def.mac.as_ref()?.parameter_text.arity;
+    let name = analysis.interner.name(def.name).to_string();
+    let record = query::explain(analysis, std::slice::from_ref(&name), false).ok()?.0.into_iter().next();
+    let types = record.as_ref().map(arg_types).unwrap_or_default();
+    let comment = record.as_ref().and_then(documented);
+    let start = to_lsp(doc, Pos::new(pos.line, pos.col - (before.len() - typed.len()) as u32));
+    let range = Range { start, end: to_lsp(doc, pos) };
+    let items = (1..=arity).map(|n| {
+        let ty = types.iter().find(|(a, _)| *a == format!("⟨arg{n}⟩")).map(|(_, t)| t.clone());
+        let about = comment.as_ref().and_then(|d| d.params.iter().find(|(k, _)| *k == n)).map(|(_, t)| t.clone());
+        let label = format!("#{n}");
+        CompletionItem {
+            text_edit: Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text: label.clone() })),
+            detail: Some(
+                [ty.clone(), Some(format!("parameter {n} of \\{name}"))]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join("  "),
+            ),
+            documentation: about.map(lsp_types::Documentation::String),
+            kind: Some(CompletionItemKind::VARIABLE),
+            sort_text: Some(format!("{n:02}")),
+            label,
+            ..Default::default()
+        }
+    });
+    Some(items.collect())
 }
 
 /// The label that sets text satex extracted apart from what it authored.
@@ -1224,10 +1308,44 @@ pub fn workspace_symbols(analysis: &Analysis, query_text: &str) -> Vec<SymbolInf
 /// citations, graphics), or the key family its optional argument feeds.
 /// Elsewhere, the commands in scope, ranked for a document author.
 pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> CompletionResponse {
+    let found = completion_at(analysis, doc, position);
+    // nothing the place offers: the kind of name the run formed there does
+    match &found {
+        CompletionResponse::Array(items) if items.is_empty() => {
+            slot_items(analysis, doc, to_pos(doc, position)).map_or(found, CompletionResponse::Array)
+        }
+        _ => found,
+    }
+}
+
+fn completion_at(analysis: &Analysis, doc: &Text, position: Position) -> CompletionResponse {
     let pos = to_pos(doc, position);
     let line = doc.line(pos.line);
     let (before, after) = line.split_at(crate::engine::source::byte_of_col(line, pos.col).min(line.len()));
-    if let Some(items) = node_items(analysis, before) {
+    if let Some(items) = super::directive::completion(before) {
+        return CompletionResponse::Array(items);
+    }
+    match super::directive::in_comment(before) {
+        Some(super::directive::InComment::Names(mut items)) => {
+            // the items replace the name typed from its backslash on
+            let typed = before.rsplit('\\').next().unwrap_or_default().chars().count() as u32 + 1;
+            let range = Range { start: to_lsp(doc, Pos::new(pos.line, pos.col.saturating_sub(typed))), end: position };
+            for it in &mut items {
+                let new_text = it.insert_text.take().unwrap_or_default();
+                it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
+            }
+            return CompletionResponse::Array(items);
+        }
+        Some(super::directive::InComment::Nothing) => return CompletionResponse::Array(Vec::new()),
+        Some(super::directive::InComment::Code) | None => {}
+    }
+    if let Some(items) = super::directive::relations(before) {
+        return CompletionResponse::Array(items);
+    }
+    if let Some(items) = parameter_items(analysis, doc, before, pos) {
+        return CompletionResponse::Array(items);
+    }
+    if let Some(items) = node_items(analysis, doc, pos) {
         return CompletionResponse::Array(items);
     }
     match argument_at(before) {
@@ -1252,9 +1370,28 @@ pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> Comple
                     it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
                 }
             }
+            // An option replaces what is typed of it, `-` and `>` too (`-Ki` for `-Kite`):
+            // an editor's word would stop at them and filter the item out.
+            if arg.open == '[' {
+                let typed = typed.rsplit('=').next().unwrap_or_default().trim_start();
+                let start = to_lsp(doc, Pos::new(pos.line, pos.col - typed.chars().count() as u32));
+                let range = Range { start, end: position };
+                for it in items.iter_mut().filter(|i| i.text_edit.is_none()) {
+                    let new_text = it.insert_text.take().unwrap_or_else(|| it.label.clone());
+                    it.filter_text.get_or_insert_with(|| it.label.clone());
+                    it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
+                }
+            }
             CompletionResponse::Array(items)
         }
         _ => {
+            // no `\` typed where the run formed a name from the text: that kind of name, not commands
+            let word = before.chars().rev().take_while(|c| !"{}[](),=;\\ \t%".contains(*c)).count();
+            if !before.chars().rev().nth(word).is_some_and(|c| c == '\\')
+                && let Some(items) = slot_items(analysis, doc, pos)
+            {
+                return CompletionResponse::Array(items);
+            }
             // the name typed, with the letters of that place (`_` and `:` under `\ExplSyntaxOn`)
             let letters = analysis.facts.letters_at(analysis.main_file, pos.line, pos.col);
             let typed = before
@@ -1311,7 +1448,8 @@ pub(super) struct Arg<'a> {
 
 pub(super) fn argument_at(before: &str) -> Option<Arg<'_>> {
     static HEAD: OnceLock<Regex> = OnceLock::new();
-    let head = HEAD.get_or_init(|| Regex::new(r"\\([A-Za-z@]+)\*?((?:\s*(?:\[[^\[\]]*\]|\{[^{}]*\}))*)\s*$").unwrap());
+    let head = HEAD
+        .get_or_init(|| Regex::new(r"\\([A-Za-z@]+)\*?((?:\s*(?:\[[^\[\]]*\]|\{[^{}]*\}|\([^()]*\)))*)\s*$").unwrap());
     let mut depth = 0u32;
     for (i, c) in before.char_indices().rev() {
         match c {
@@ -1429,7 +1567,11 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
             let family = options.iter().find_map(|r| r.get("family")?.as_str().filter(|f| f.starts_with('/')));
             if let Some(family) = family {
                 let path = format!("{}/{}", family.trim_end_matches('/'), key.trim());
-                let drawn = drawn_items(analysis, &path, &[Stroke::Arrows, Stroke::Pattern]);
+                let drawn = drawn_items(
+                    analysis,
+                    &path,
+                    &[Stroke::Arrows, Stroke::Pattern, Stroke::Color, Stroke::Node, Stroke::NodeOf],
+                );
                 if !drawn.is_empty() {
                     return drawn;
                 }
@@ -1596,6 +1738,21 @@ fn drawn_items(analysis: &Analysis, path: &str, kinds: &[Stroke]) -> Vec<Complet
     let sets = crate::queries::preview::sets(analysis, path);
     let mut out = Vec::new();
     for &kind in kinds.iter().filter(|k| sets.contains(k)) {
+        if matches!(kind, Stroke::Node | Stroke::NodeOf) {
+            let of = if kind == Stroke::NodeOf { "of " } else { "" };
+            let nodes = node_names(analysis, "").into_iter().map(|n| format!("{of}{n}"));
+            out.extend(nodes.map(|n| item(n, CompletionItemKind::REFERENCE, Some("node".into()), 0)));
+            continue;
+        }
+        // after the keys, like the tips
+        if kind == Stroke::Color {
+            out.extend(
+                color_items(analysis)
+                    .into_iter()
+                    .map(|it| CompletionItem { sort_text: Some(format!("{:05}{}", 50_000, it.label)), ..it }),
+            );
+            continue;
+        }
         let (names, what) = match kind {
             Stroke::Arrows => (crate::queries::preview::arrow_specs(analysis), "arrow tips"),
             _ => (crate::queries::preview::pattern_names(analysis), "pattern"),
@@ -1624,24 +1781,107 @@ fn drawn_items(analysis: &Analysis, path: &str, kinds: &[Stroke]) -> Vec<Complet
     out
 }
 
-/// After a `(` in a command's line (`\draw (a) -- (`): the names of the nodes the run made that
-/// start with what is typed, as pgf keeps them (`\pgf@sh@ns@⟨name⟩`).
-fn node_items(analysis: &Analysis, before: &str) -> Option<Vec<CompletionItem>> {
-    static AT: OnceLock<Regex> = OnceLock::new();
-    let at = AT.get_or_init(|| Regex::new(r"\\[A-Za-z]+\b[^;]*\(([^()\s]*)$").expect("node regex"));
-    let typed = at.captures(before)?.get(1)?.as_str();
-    // Only the nodes the document made: pgf's own (`current subpath start`) are defined by its library code.
-    let names: BTreeSet<&str> = analysis
-        .facts
-        .defs
-        .iter()
+/// Where the run formed a name from the text at the cursor (a `\\csname`
+/// with the user's characters in it): every name defined with the same
+/// prefix, whoever defined it (the document, a package, the `.aux` the
+/// last build wrote). The kind of name comes from the run, not from the
+/// syntax around the cursor: `\\ref{` gives labels (`r@`), `\\draw (` nodes
+/// (`pgf@sh@ns@`), `\\color{` colors.
+fn slot_items(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<Vec<CompletionItem>> {
+    let line: Vec<char> = doc.line(pos.line).chars().collect();
+    let end = (pos.col as usize).saturating_sub(1).min(line.len());
+    let typed = line[..end].iter().rev().take_while(|c| !"{}[](),=;\\ \t%".contains(**c)).count();
+    let start = (end - typed) as u32 + 1;
+    // the document's own files: a file id with the same place in another is no matter
+    let at = |s: &crate::engine::tex::Span| s.line == pos.line && s.col == start;
+    let prefix = analysis.facts.slots.iter().find(|(s, _)| at(s)).map(|(_, p)| p.clone())?;
+    let typed: String = line[end - typed..end].iter().collect();
+    let names = defined_with(analysis, &prefix, &typed);
+    let what = format!("named `{prefix}…`");
+    Some(names.into_iter().map(|n| item(n, CompletionItemKind::REFERENCE, Some(what.clone()), 0)).collect())
+        .filter(|v: &Vec<_>| !v.is_empty())
+}
+
+/// Inside `(` (`\\draw (a) -- (`): the kinds of names that `(…)` groups in
+/// statements of the same command formed elsewhere in the document
+/// ([`crate::analysis::facts::Facts::slots`]), each name defined with that
+/// prefix. After `name.` the anchors of a node's shape, as pgf keeps them
+/// (`pgf@sh@ns@⟨node⟩` holds the shape, `pgf@anchor@⟨shape⟩@⟨anchor⟩` each anchor).
+fn node_items(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<Vec<CompletionItem>> {
+    let before: Vec<char> = doc.slice(Pos::new(1, 1), pos)?.chars().collect();
+    let open = before.iter().rposition(|c| !(c.is_alphanumeric() || " _-.:".contains(*c)))?;
+    if before[open] != '(' {
+        return None;
+    }
+    let typed: String = before[open + 1..].iter().collect();
+    let command = statement_command(&before[..open])?;
+    // the prefixes `(…)` of this command's statements formed in the run
+    let mut kinds = BTreeSet::new();
+    for (span, prefix) in &analysis.facts.slots {
+        let Some(at) = doc.offset(Pos::new(span.line, span.col)) else { continue };
+        // a statement is a few lines: what stands within a window before the slot
+        let body = &doc.body()[..at];
+        let from = body.char_indices().rev().nth(WINDOW).map_or(0, |(i, _)| i);
+        let text: Vec<char> = body[from..].chars().collect();
+        if text.last() == Some(&'(') && statement_command(&text[..text.len() - 1]).as_deref() == Some(command.as_str())
+        {
+            kinds.insert(prefix.clone());
+        }
+    }
+    if kinds.is_empty() {
+        return None;
+    }
+    let item = |label: String, what: &str| item(label, CompletionItemKind::REFERENCE, Some(what.to_string()), 0);
+    if let Some((node, anchor)) = typed.split_once('.') {
+        let shape = analysis.interner.lookup(&format!("pgf@sh@ns@{}", node.trim()))?;
+        let shape = analysis
+            .env
+            .meaning(shape)
+            .as_macro()
+            .map(|m| crate::engine::tex::detokenize(&m.replacement_text, &analysis.interner))?;
+        let anchors = defined_with(analysis, &format!("pgf@anchor@{shape}@"), anchor);
+        return Some(anchors.into_iter().map(|a| item(a, &format!("anchor of {shape}"))).collect());
+    }
+    Some(
+        kinds
+            .iter()
+            .flat_map(|k| defined_with(analysis, k, typed.trim()).into_iter().map(move |n| (n, k)))
+            .map(|(n, k)| item(n, &format!("named `{k}…`")))
+            .collect(),
+    )
+}
+
+/// How many characters before a slot its statement may start.
+const WINDOW: usize = 2000;
+
+/// The command a statement starts with: the first control word after the
+/// `;` that ends the statement before (TikZ's statements end there).
+fn statement_command(before: &[char]) -> Option<String> {
+    let start = before.iter().rposition(|c| *c == ';').map_or(0, |i| i + 1);
+    let at = before[start..].iter().position(|c| *c == '\\')? + start + 1;
+    let name: String = before[at..].iter().take_while(|c| c.is_ascii_alphabetic()).collect();
+    (!name.is_empty()).then_some(name)
+}
+
+/// The defined names that start with `prefix`, without it, those that go on with `typed`.
+fn defined_with(analysis: &Analysis, prefix: &str, typed: &str) -> BTreeSet<String> {
+    (0..analysis.interner.len() as u32)
+        .map(crate::engine::tex::Sym)
+        .filter(|s| analysis.env.is_defined(*s))
+        .filter_map(|s| analysis.interner.name(s).strip_prefix(prefix).map(str::to_string))
+        .filter(|n| !n.is_empty() && n.starts_with(typed) && !analysis.settings.conventions.is_internal(n))
+        .collect()
+}
+
+/// The names of the nodes the document made that start with `typed`, as pgf
+/// keeps them (`\pgf@sh@ns@⟨name⟩`). pgf's own (`current subpath start`) are
+/// defined by its library code.
+fn node_names<'a>(analysis: &'a Analysis, typed: &str) -> BTreeSet<&'a str> {
+    (analysis.facts.defs.iter())
         .filter(|d| crate::queries::query::origin(analysis, d.span.file) == "document")
         .filter_map(|d| analysis.interner.name(d.name).strip_prefix("pgf@sh@ns@"))
         .filter(|n| n.starts_with(typed) && !n.is_empty() && !analysis.settings.conventions.is_internal(n))
-        .collect();
-    Some(
-        names.into_iter().map(|n| item(n.to_string(), CompletionItemKind::REFERENCE, Some("node".into()), 0)).collect(),
-    )
+        .collect()
 }
 
 /// The items of a key list at the cursor, from the keys the run stored
@@ -1716,7 +1956,11 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
             out.extend(
                 children(&dir).into_iter().map(|(n, _)| item(n, CompletionItemKind::ENUM_MEMBER, Some(path.into()), 0)),
             );
-            out.extend(drawn_items(analysis, path, &[Stroke::Arrows, Stroke::Pattern]));
+            out.extend(drawn_items(
+                analysis,
+                path,
+                &[Stroke::Arrows, Stroke::Pattern, Stroke::Color, Stroke::Node, Stroke::NodeOf],
+            ));
         }
         let values = query::key_values(analysis, arg.cmd, key.trim());
         out.extend(values.into_iter().map(|v| item(v, CompletionItemKind::ENUM_MEMBER, Some(key.trim().into()), 0)));
@@ -1800,7 +2044,9 @@ fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
     let tips: Vec<CompletionItem> = families
         .iter()
         .filter(|f| f.starts_with('/'))
-        .flat_map(|f| drawn_items(analysis, &format!("{}/.unknown", f.trim_end_matches('/')), &[Stroke::Arrows]))
+        .flat_map(|f| {
+            drawn_items(analysis, &format!("{}/.unknown", f.trim_end_matches('/')), &[Stroke::Arrows, Stroke::Color])
+        })
         .collect();
     options
         .iter()
@@ -2120,7 +2366,7 @@ pub fn linked_environment(text: &str, position: Position) -> Option<lsp_types::L
 }
 
 /// `line` up to its first `%` that starts a comment (not `\%`).
-fn uncommented(line: &str) -> &str {
+pub(super) fn uncommented(line: &str) -> &str {
     let mut escaped = false;
     for (at, c) in line.char_indices() {
         match c {

@@ -896,6 +896,9 @@ pub(crate) struct NameAccum {
     pub(crate) took: Vec<Took>,
     pub(crate) at: Option<Span>,
     pub(crate) at_written: bool,
+    /// How many characters of the name came before the first one the
+    /// calling file wrote: what the code put in front of the user's text.
+    pub(crate) written_from: Option<usize>,
     pub(crate) files: Vec<FileId>,
     pub(crate) closed: bool,
     pub(crate) stopped: Option<Sym>,
@@ -915,6 +918,7 @@ impl Default for NameAccum {
             took: vec![Took::new()],
             at: None,
             at_written: false,
+            written_from: None,
             files: Vec::new(),
             closed: false,
             stopped: None,
@@ -1533,6 +1537,9 @@ pub struct Machine<'a> {
     /// LuaTeX's `\lastnamedcs`: the name the last `\csname`,
     /// `\begincsname` or `\ifcsname` built.
     pub(crate) last_named_cs: Option<Sym>,
+    /// The last `\csname` scan's user text: how many characters came before
+    /// it and where it stands ([`crate::analysis::observe::slot`]).
+    pub(crate) name_slot: Option<(usize, Span)>,
     /// What `observed_font_state` needs to stamp every character with its
     /// font without resolving the state again.
     pub(crate) font_watch: FontWatch,
@@ -2343,6 +2350,7 @@ impl<'a> Machine<'a> {
             cell_base: None,
             noexpanded: None,
             last_named_cs: None,
+            name_slot: None,
             font_watch: FontWatch::default(),
             dont_expand,
             unknown,
@@ -2589,9 +2597,15 @@ impl<'a> Machine<'a> {
         let mut history = Vec::new();
         let mut analysis = loop {
             let before = elapsed(checkpoints);
-            crate::util::progress::set_run(run);
+            crate::util::progress::set_run(run, runs);
             let mut analysis = checkpoints.analyze(source, path);
             analysis.build_runs = run;
+            // The bibliography tool's file, made from the .bib entries cited: written by the build too.
+            if let Some((at, text)) = Machine::virtual_bbl(&analysis, &base, path)
+                && let Some(name) = at.file_name()
+            {
+                analysis.written.push((name.to_string_lossy().into_owned(), Some(text)));
+            }
             history.push(analysis.written.clone());
             caches.get_or_insert_with(|| (analysis.package_caches.clone(), analysis.format.clone()));
             // A budget stopped it: no other run, and the last one that ran
@@ -2637,7 +2651,7 @@ impl<'a> Machine<'a> {
             let read_files: Vec<&Path> = analysis.files.iter().map(|f| Path::new(&f.path)).collect();
             let missing = |at: &Path| !read_files.iter().any(|p| p.components().eq(at.components()));
             // Files this run left changed, and whether that means another run.
-            let mut changed: Vec<(PathBuf, String, bool)> = analysis
+            let changed: Vec<(PathBuf, String, bool)> = analysis
                 .written
                 .iter()
                 // A file a program made (`\write18`) is not text the run wrote:
@@ -2680,12 +2694,6 @@ impl<'a> Machine<'a> {
                     (now.as_deref() != Some(text.as_str())).then_some((at, text, again))
                 })
                 .collect();
-            // The bibliography tool's file, made from the .bib entries cited.
-            if let Some((at, text)) = Machine::virtual_bbl(&analysis, &base, path)
-                && crate::project::overlay::text(&at).as_deref() != Some(text.as_str())
-            {
-                changed.push((at, text, true));
-            }
             if cfg.verbose >= 1 {
                 let names: Vec<_> = (changed.iter().filter(|c| c.2).filter_map(|(at, ..)| at.file_name()))
                     .map(|n| n.to_string_lossy())
@@ -2715,7 +2723,7 @@ impl<'a> Machine<'a> {
             run += 1;
             complete = Some(analysis);
         };
-        crate::util::progress::set_run(1);
+        crate::util::progress::set_run(1, 1);
         if !keep {
             placed.iter().for_each(|p| crate::project::overlay::remove(p));
         }
@@ -2780,7 +2788,7 @@ impl<'a> Machine<'a> {
         let (_run, _entered) = crate::analysis::budget::Run::start();
         let (mut m, id) = Machine::begin(source, path, cfg);
         m.run_guarded();
-        m.conclude(id)
+        m.conclude(id, source)
     }
 
     /// A run of `source` set up to read it: the format installed, the
@@ -2908,9 +2916,10 @@ impl<'a> Machine<'a> {
 
     /// What the document's run leaves, once it ran: the hooks after it,
     /// and the facts drawn from all it recorded.
-    fn conclude(self, id: FileId) -> Analysis {
+    fn conclude(self, id: FileId, source: &str) -> Analysis {
         let mut m = self;
         m.out.started = Some(m.started);
+        m.report_missing_end(source);
         // tex.web § 1054: `\end` ships out what is left, deferred writes too.
         m.ship_pending();
         let mut written: Vec<(String, Option<String>)> =
@@ -6246,6 +6255,34 @@ will look undefined",
     /// Never silent: a project file an `\input`, `\include` or `\subfile`
     /// of the document's own files names, which exists but was never
     /// opened, is said where it is named.
+    /// A document whose every path ran off its input without `\end`
+    /// (`\bye`, `\end{document}`): TeX stops with "*** (job aborted, no
+    /// legal \end found)" (tex.web § 360). A file that is no document of its
+    /// own (a chapter, a package) ends that way by design.
+    fn report_missing_end(&mut self, source: &str) {
+        // only a kernel satex reads says how a document ends (ConTeXt's `\\stoptext` is not read)
+        let read =
+            self.out.plugins.kernel.source().is_some() || self.out.plugins.kernel == crate::plugins::Kernel::None;
+        if self.job_ended
+            || self.halted
+            || self.out.exhausted
+            || !read
+            || !crate::plugins::discovery::is_document(source)
+        {
+            return;
+        }
+        let latex = self.out.plugins.kernel == crate::plugins::Kernel::Latex;
+        let (lines, last) = (source.lines().count().max(1) as u32, source.lines().last().unwrap_or_default());
+        let span = Span { file: self.out.main_file, line: lines, col: last.chars().count() as u32 + 1 };
+        let end = if latex { "`\\end{document}`" } else { "`\\bye`" };
+        self.diagnose(
+            Severity::Warning,
+            "missing-end",
+            span,
+            format!("the document ends without {end}: TeX stops with \"*** (job aborted, no legal \\end found)\""),
+        );
+    }
+
     fn report_unread_inputs(&mut self) {
         let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
         let read: HashSet<PathBuf> = self.out.files.iter().map(|f| real(Path::new(&f.path))).collect();
@@ -6424,6 +6461,7 @@ will look undefined",
                 paths: self.waiting as u64 + 1,
                 probe: probing.map(|sym| format!("\\{}", self.name(sym))).unwrap_or_default(),
                 why: if probing.is_some() { crate::util::progress::why() } else { String::new() },
+                ..Default::default()
             });
             let label = if subs.is_empty() && !file.is_empty() { format!("{label}:{line}") } else { label };
             let at = self.guard_key(self.position_span());
@@ -8501,7 +8539,8 @@ will look undefined",
             }
             Meaning::Register(kind, _) => {
                 let node = self.reference(sym, span);
-                self.note_expansion(sym, span, MeaningKind::Register, node, Vec::new());
+                let named = if kind.is_constant() { MeaningKind::Char } else { MeaningKind::Register };
+                self.note_expansion(sym, span, named, node, Vec::new());
                 // A `\chardef` constant in the stomach typesets its character (tex.web
                 // § 1038); only a register takes an assignment. `\newbox` makes a
                 // `\chardef` (plain.tex `\alloc@`), which also typesets its character.
@@ -9439,13 +9478,10 @@ will look undefined",
         }
         let split = text.find(|c: char| c.is_alphabetic()).unwrap_or(text.len());
         let (number, unit) = text.split_at(split);
-        let per_pt = match unit.trim() {
-            "" | "pt" => 65536.0,
-            "bp" => 65536.0 * 7227.0 / 7200.0,
-            "in" => 65536.0 * 72.27,
-            "cm" => 65536.0 * 72.27 / 2.54,
-            "mm" => 65536.0 * 7.227 / 2.54,
-            "sp" => 1.0,
+        let ratio = crate::engine::value::UNITS.iter().find(|(u, _, _)| *u == unit.trim() && *u != "mu");
+        let per_pt = match (unit.trim(), ratio) {
+            ("", _) => 65536.0,
+            (_, Some(&(_, n, d))) => 65536.0 * n as f64 / d as f64,
             _ => return if low { -max } else { max },
         };
         match number.trim().parse::<f64>() {
@@ -9655,6 +9691,27 @@ will look undefined",
             Some(t) if let Some(num) = t.cs().and_then(|sym| self.typed_digits_of(sym)) => {
                 let sym = t.cs().expect("typed digits are a name");
                 if let Some((whole, k, i, j)) = self.typed_slice(sym) {
+                    // The rest of a number whose length is open: a path per length.
+                    if k == crate::engine::scan::OPEN && j == crate::engine::scan::OPEN && i > 0 {
+                        let whole_num = self.typed_digits_of(whole).unwrap_or(num);
+                        let arms = self.rest_arms(whole, whole_num, i, t.span);
+                        if let [(_, text)] = &arms[..] {
+                            let text = text.clone();
+                            self.unread_all(&text);
+                            return self.read_undelimited();
+                        }
+                        if self.split(sym, t.span, arms.len(), |m, arm| {
+                            let (part, text) = &arms[arm];
+                            let value =
+                                crate::engine::value::Value::from_num(crate::engine::value::Quantity::Int, *part);
+                            m.refine_value(whole, value);
+                            m.unread_all(text);
+                            true
+                        }) {
+                            return self.read_undelimited();
+                        }
+                        return vec![t];
+                    }
                     if j - i > 1 {
                         let whole_num = self.typed_digits_of(whole).unwrap_or(num);
                         let first = self.slice_token(whole, whole_num, (k, i, i + 1), t.span);
@@ -13365,13 +13422,19 @@ fn nearness(a: &str, b: &str) -> (bool, usize) {
     (a.lines().map(line_key).eq(b.lines().map(line_key)), a.lines().filter(|l| lines.contains(l)).count())
 }
 
-/// The texts either file may hold, each distinct one kept: a reader takes
-/// each apart (`\z@` or `\@ne`, not some control sequence). Past `bound`
-/// texts, the nearest two join ([`nearness`], [`join_written`]).
+/// The texts either file may hold. Texts whose lines pair one by one
+/// join line by line ([`join_written`]): each differing line keeps its own
+/// values, and the file is not kept once per combination of them. Texts
+/// that set different things stay apart, so a reader takes each apart.
+/// Past `bound` texts, the nearest two join ([`nearness`]).
 fn either_text(a: &str, b: &str, bound: usize) -> String {
     let mut texts: Vec<String> = Vec::new();
     for t in texts_of(a).into_iter().chain(texts_of(b)) {
         if texts.iter().any(|x| x == t) {
+            continue;
+        }
+        if let Some(x) = texts.iter_mut().find(|x| nearness(x, t).0) {
+            *x = join_written(x, t);
             continue;
         }
         texts.push(t.to_string());
@@ -13580,6 +13643,20 @@ mod written {
         // The page a written digit, the value an unknown name: the braces and the rest stay.
         assert!(joined.starts_with("\\newlabel{n.5}{{") && joined.ends_with(" \\relax }}"), "{joined:?}");
         assert!(joined.contains("{\\numexpr +"), "{joined:?}");
+    }
+
+    /// Paths that wrote the same lines but for one value (the last page)
+    /// leave one text, that line joined: the file is not kept once per
+    /// path, which a rerun would read once per text.
+    #[test]
+    fn texts_that_pair_line_by_line_are_one_text() {
+        let text = |page: u8| format!("\\newlabel{{x}}{{{{1}}}}\n\\gdef \\@abspage@last{{{page}}}\n");
+        let either = (1..=9).map(text).fold(String::new(), |all, t| match all.is_empty() {
+            true => t,
+            false => either_text(&all, &t, 8),
+        });
+        assert_eq!(texts_of(&either).len(), 1, "{either:?}");
+        assert!(either.starts_with("\\newlabel{x}{{1}}\n"), "{either:?}");
     }
 
     /// Past the bound, only the nearest texts join: a text with a line more

@@ -21,6 +21,17 @@ pub fn arg_type(m: &mut Machine, span: Span, ty: crate::analysis::roles::Ty) {
     *slot = slot.join(ty);
 }
 
+/// A `\csname` formed `name` from the user's text at `at`, its first `from`
+/// characters put before it by the code: the kind of name the text is
+/// (`pgf@sh@ns@` a node, `r@` a label, `color@` a color).
+pub fn slot(m: &mut Machine, name: &str, from: usize, at: Span) {
+    if from == 0 || !m.own_file(at.file) || m.out.facts.slots.len() >= m.cfg.limits.facts {
+        return;
+    }
+    let prefix: String = name.chars().take(from).collect();
+    m.out.facts.slots.entry(at).or_insert(prefix);
+}
+
 /// A `\csname…\endcsname` just formed `name`.
 pub fn csname(m: &mut Machine, name: &str, span: Span) {
     let role = role(m, span);
@@ -160,6 +171,28 @@ fn brace_groups(toks: &[Token], n: usize) -> Option<Vec<&[Token]>> {
     }
     Some(out)
 }
+
+/// What a `\pdfcolorstack` does to the drawing, as a literal: a set color is
+/// its operators (xcolor's `0 1 0 rg 0 1 0 RG`), a push the same after
+/// [`PUSH_COLOR`], a pop is [`POP_COLOR`]. The picture's reader keeps the stack.
+pub fn color_literal(m: &mut Machine, color: Option<(&[Token], bool)>, span: Span) {
+    let text = match color {
+        Some((tokens, push)) => {
+            let ops = crate::engine::tex::text_with_groups(&m.expand_tokens(tokens.into()), &m.out.interner);
+            if push { format!("{PUSH_COLOR} {ops}") } else { ops }
+        }
+        None => POP_COLOR.to_string(),
+    };
+    if m.out.facts.literals.len() < m.cfg.limits.facts {
+        let (at, chars) = (m.file_call.map_or(span, |(_, at)| at), m.out.facts.text.at.len() as u32);
+        m.out.facts.literals.push(crate::analysis::facts::Literal { at, text, chars });
+    }
+}
+
+/// The literal a `\pdfcolorstack … pop` stands as, and the mark a push's
+/// operators follow: no PDF operator spells them.
+pub const POP_COLOR: &str = "%pop-color";
+pub const PUSH_COLOR: &str = "%push-color";
 
 /// A `\pdfcolorstack` the run executed (pdfTeX manual § 8.9.8): `stack` is
 /// `None` when [`Machine::scan_int`] could not decide it.
@@ -1155,6 +1188,10 @@ fn record_pdf(m: &mut Machine, payload: &[Token], detail: &str, span: Span) {
     let expanded = m.expand_tokens(payload.into());
     let text = crate::engine::tex::text_with_groups(&expanded, &m.out.interner);
     let at = m.file_call.map_or(span, |(_, at)| at);
+    if detail == "literal" && m.out.facts.literals.len() < m.cfg.limits.facts {
+        let chars = m.out.facts.text.at.len() as u32;
+        m.out.facts.literals.push(crate::analysis::facts::Literal { at, text: text.clone(), chars });
+    }
     m.occurrence(OccKind::Pdf, text, Some(detail.to_string()), at);
 }
 

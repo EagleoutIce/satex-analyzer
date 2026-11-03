@@ -118,12 +118,21 @@ pub fn mine(plugins: &[&dyn DocPlugin], config: &DocsConfig, dirs: &Dirs) -> Has
     for plugin in plugins {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plugin.link(config, dirs, &mut entries)));
     }
+    // A file implements a name where its code documents it (`\begin{macro}`):
+    // its own manual speaks for it, not another that only mentions it.
+    let implements: std::collections::HashSet<(String, String)> =
+        entries.iter().filter(|e| e.audience == Audience::Code).map(|e| (e.name.clone(), e.from.clone())).collect();
+    let rank = |e: &Entry| {
+        let own = implements.contains(&(e.name.clone(), e.from.clone()));
+        (own || !implements.iter().any(|(n, _)| *n == e.name), e.audience == Audience::User)
+    };
     let mut out: HashMap<String, Entry> = HashMap::new();
     for e in entries {
         match out.get_mut(&e.name) {
             Some(old) => {
-                let better = (e.audience == Audience::User && old.audience == Audience::Code)
-                    || (old.text.is_none() && e.text.is_some());
+                // Implementation prose never stands in for a user's description.
+                let better = rank(&e) > rank(old)
+                    || (rank(&e) == rank(old) && old.text.is_none() && e.text.is_some() && e.audience == old.audience);
                 if better {
                     let usage = old.usage.take();
                     *old = e;

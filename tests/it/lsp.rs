@@ -735,6 +735,8 @@ fn arrow_tips_of_unloaded_libraries() {
     let items = complete(&mut server, &uri, 5, "\\draw[-Ki".len() as u32);
     let kite = items.iter().find(|i| i["label"] == "-Kite").unwrap_or_else(|| panic!("{:?}", labels(&items)));
     assert!(kite["additionalTextEdits"].to_string().contains("\\\\usetikzlibrary{arrows.meta}"), "{kite}");
+    // the edit covers the `-` typed, which an editor's word would leave out
+    assert_eq!(kite["textEdit"]["range"]["start"]["character"], "\\draw[".len(), "{kite}");
     drop(server);
     std::fs::remove_dir_all(dir).ok();
 }
@@ -979,7 +981,12 @@ mod roots {
     #[test]
     fn a_file_no_root_reads_is_marked() {
         let main = format!("{PRELUDE}\\input{{chap}}\n");
-        let files = [("main.tex", main.as_str()), ("chap.tex", "x\n"), ("orphan.tex", "y\n")];
+        let files = [
+            ("main.tex", main.as_str()),
+            ("chap.tex", "x\n"),
+            ("orphan.tex", "y\n"),
+            ("plain.tex", "% !TeX program = tex\nHello\n\\bye\n"),
+        ];
         let marked = |open: &str| {
             let dir = crate::support::tmp_root().join(format!("satex-lsp-orphan-{open}"));
             let _ = std::fs::remove_dir_all(&dir);
@@ -993,6 +1000,30 @@ mod roots {
         };
         assert!(marked("orphan.tex"));
         assert!(!marked("chap.tex"));
+        // a plain TeX root is a document of its own
+        assert!(!marked("plain.tex"));
+    }
+
+    /// A package no root loads is analyzed as a package: its `@` names are
+    /// names and its preamble commands raise nothing.
+    #[test]
+    fn a_package_no_root_loads_is_its_own_run() {
+        if !crate::support::installed() {
+            return;
+        }
+        let sty = "\\ProvidesPackage{mine}\n\\newif\\ifmy@draft\n\\DeclareOption{draft}{\\my@drafttrue}\n\\ProcessOptions\\relax\n";
+        let dir = crate::support::tmp_root().join("satex-lsp-unloaded-package");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let main = "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
+        std::fs::write(dir.join("main.tex"), main).unwrap();
+        std::fs::write(dir.join("mine.sty"), sty).unwrap();
+        let mut server = serve(&dir, true);
+        let (_, published) = open_file(&mut server, &dir, "mine.sty");
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+        let text = published.to_string();
+        assert!(!text.contains("only in preamble") && !text.contains("undefined-control-sequence"), "{text}");
     }
 
     #[test]
@@ -1245,8 +1276,8 @@ fn hover_and_signature_help_show_argument_types() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A command's hover says what its calls in the document typeset, each
-/// different text once with the lines that set it.
+/// A command's hover says what its calls in the document typeset: the
+/// call at the cursor first, then each other text once with its lines.
 #[test]
 fn hover_shows_what_the_call_typesets() {
     let text = "\\documentclass{article}\n\\newcommand\\hi[1]{Hello #1}\n\\begin{document}\nGar\\c{c}on \\hi{you}.\n\\hi{me} \\hi{you}\n\\end{document}\n";
@@ -1259,9 +1290,10 @@ fn hover_shows_what_the_call_typesets() {
         server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
     };
     let hi = hover(&mut server, 12);
-    assert!(hi.contains("- `Hello you` at lines 4, 5") && hi.contains("- `Hello me` at line 5"), "{hi}");
+    assert!(hi.contains("**Typesets `Hello you` here**") && hi.contains("*`Hello me` at line 5*"), "{hi}");
+    assert!(hi.find("here") < hi.find("Hello me"), "the call at the cursor first: {hi}");
     let c = hover(&mut server, 4);
-    assert!(c.contains("Typesets `") && c.contains("at line 4"), "{c}");
+    assert!(c.contains("Typesets `") && c.contains(" here**"), "{c}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -2252,11 +2284,12 @@ fn an_expl3_signature_completes_its_letters() {
 
 /// Inside a TikZ path the names of the picture's nodes complete.
 #[test]
+/// The editor closes the paren as `(` is typed: the run formed the name there.
 fn a_tikz_path_completes_node_names() {
     if !crate::support::installed() {
         return;
     }
-    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}\n\\node (alpha) {a};\\node (beta) at (1,0) {b};\n\\draw (al\n\\end{tikzpicture}\n\\end{document}\n";
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}\n\\node (alpha) {a};\\node (beta) at (1,0) {b};\n\\draw (al);\n\\end{tikzpicture}\n\\end{document}\n";
     let (mut server, uri, _, dir) = open_loaded("nodes", text);
     let items = complete(&mut server, &uri, 5, 9);
     assert!(labels(&items).contains(&"alpha"), "{:?}", labels(&items));
@@ -2494,6 +2527,106 @@ fn a_color_argument_completes_colors_with_their_values() {
     // `boxed` sets a color, but `\begin`'s argument names an environment
     let environments = complete(&mut server, &uri, 6, 33);
     assert!(environments.iter().all(|i| i["kind"] != 16), "{:?}", labels(&environments));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A comment completes no command, except the directive names after
+/// `\satex@`, and code inside a directive's braces.
+#[test]
+fn a_comment_completes_only_directives_and_their_code() {
+    let text = "\\documentclass{article}\n\\begin{document}\n% \\sec\n% \\satex@a\n% \\satex@assert{\\thepa}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("comment-completion", text);
+    let prose = complete(&mut server, &uri, 2, 6);
+    assert!(prose.is_empty(), "{:?}", labels(&prose));
+    let names = complete(&mut server, &uri, 3, 10);
+    assert_eq!(labels(&names), ["\\satex@assert", "\\satex@assume"]);
+    let code = complete(&mut server, &uri, 4, 22);
+    assert!(code.iter().any(|i| i["label"] == "thepage"), "{:?}", labels(&code));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// After the first operand of `\ifnum` and a space, the relations TeX
+/// reads; a directive's condition adds `<=`, `>=` and `!=`.
+#[test]
+fn a_comparison_completes_its_relations() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\ifnum\\value{page} \\fi\n% \\satex@assert{\\value{page} }\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("relations", text);
+    let tex = complete(&mut server, &uri, 2, 19);
+    assert_eq!(labels(&tex), ["<", "=", ">"]);
+    let directive = complete(&mut server, &uri, 3, 29);
+    assert_eq!(labels(&directive), ["<", "=", ">", "<=", ">=", "!="]);
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Node names complete after `(` (the node itself too: a self loop is
+/// fine), after a key whose code takes a node (`right of=`), after
+/// positioning's `of`, and after `name.` its shape's anchors.
+#[test]
+fn node_names_complete_where_a_node_is_named() {
+    if !crate::support::installed() {
+        return;
+    }
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\usetikzlibrary{positioning}\n\\begin{document}\n\\begin{tikzpicture}\n\\node (tex) {a};\n\\node (out) [right of=] {b};\n\\node (x) [right=] {c};\n\\draw (tex) -- (;\n\\draw (tex.no;\n\\end{tikzpicture}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("node-names", text);
+    let paren = complete(&mut server, &uri, 8, 16);
+    assert!(["tex", "out", "x"].iter().all(|n| labels(&paren).contains(n)), "{:?}", labels(&paren));
+    let of = complete(&mut server, &uri, 6, 22);
+    assert!(labels(&of).contains(&"tex"), "{:?}", labels(&of));
+    let placed = complete(&mut server, &uri, 7, 17);
+    assert!(labels(&placed).contains(&"of tex"), "{:?}", labels(&placed));
+    // after `name.` the anchors of its shape, as pgf declared them
+    let anchors = complete(&mut server, &uri, 9, 13);
+    assert!(labels(&anchors).contains(&"north") && !labels(&anchors).contains(&"south"), "{:?}", labels(&anchors));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// After `#` in a body: the macro's parameters, with what the comment above
+/// the definition says of each.
+#[test]
+fn a_parameter_completes_with_its_comment() {
+    let text = "\\documentclass{article}\n% Says it thrice.\n% #1 is the text\n\\newcommand{\\thrice}[1]{#1#1#1 #}\n\\begin{document}\n\\thrice{ab}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("parameters", text);
+    let items = complete(&mut server, &uri, 3, 32);
+    assert_eq!(labels(&items), ["#1"]);
+    assert!(items[0]["documentation"].to_string().contains("the text"), "{items:?}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Where the run formed a name from the text at the cursor, the names
+/// defined with the same prefix complete: labels in `\ref{`, from the
+/// `.aux` too.
+#[test]
+fn a_name_the_run_formed_completes_its_kind() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\\section{B}\\label{sec:b}\nSee \\ref{se}.\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("slots", text);
+    let items = complete(&mut server, &uri, 4, 11);
+    assert!(labels(&items).contains(&"sec:a") && labels(&items).contains(&"sec:b"), "{:?}", labels(&items));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A tikz key whose code sets a color (`fill=`) takes the run's colors, and
+/// so does a bare word, which tikz's `.unknown` handler tries as a color.
+#[test]
+fn a_tikz_color_key_completes_colors() {
+    if !crate::support::installed() {
+        return;
+    }
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\definecolor{mine}{rgb}{0,0,1}\n\\begin{document}\n\\tikz\\node[fill=] {x};\n\\tikz\\node[] {y};\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("tikz-colors", text);
+    let valued = complete(&mut server, &uri, 4, 16);
+    assert!(valued.iter().any(|i| i["label"] == "mine" && i["kind"] == 16), "{:?}", labels(&valued));
+    let bare = complete(&mut server, &uri, 5, 11);
+    let rank = |label: &str| {
+        bare.iter().find(|i| i["label"] == label).and_then(|i| i["sortText"].as_str().map(str::to_string))
+    };
+    let (color, key) = (rank("mine"), rank("draw"));
+    assert!(color.is_some() && key.is_some() && key < color, "{:?}", labels(&bare));
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }

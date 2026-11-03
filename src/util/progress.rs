@@ -150,11 +150,13 @@ pub struct Sub {
 /// characters of a file read, and under it `↳ file:line [##---] 24%` for the
 /// innermost file when it is another one. Approximate, since what a file
 /// loads is not counted, but cheap.
-/// Which run of the build the bars are of (latexmk's rounds).
+/// Which run of the build the bars are of (latexmk's rounds), and at most how many.
 static RUN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+static RUNS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 
-pub fn set_run(run: u32) {
+pub fn set_run(run: u32, runs: u32) {
     RUN.store(run, std::sync::atomic::Ordering::Relaxed);
+    RUNS.store(runs, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// `steps`: the tokens read so far, and on the line being read.
@@ -268,6 +270,11 @@ pub struct Status {
     pub probe: String,
     #[serde(skip_serializing_if = "str::is_empty")]
     pub why: String,
+    /// The build's run, of at most `runs` ([`set_run`]): [`tell`] fills them.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub run: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub runs: u64,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -286,7 +293,11 @@ pub fn listen(listener: Option<Listener>) {
 }
 
 /// What the work is now, for the listener ([`listen`]).
-pub fn tell(status: Status) {
+pub fn tell(mut status: Status) {
+    if !status.text.is_empty() {
+        status.run = RUN.load(std::sync::atomic::Ordering::Relaxed).into();
+        status.runs = RUNS.load(std::sync::atomic::Ordering::Relaxed).into();
+    }
     let mut listener = LISTENER.lock().unwrap_or_else(|e| e.into_inner());
     let Some((hear, last, at)) = listener.as_mut() else { return };
     let now = now_ms();

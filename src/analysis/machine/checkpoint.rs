@@ -210,7 +210,7 @@ impl<'a> Checkpoints<'a> {
                     crate::project::overlay::log(false);
                     let mut m = m;
                     m.run_guarded();
-                    return m.conclude(id);
+                    return m.conclude(id, source);
                 }
                 (m, id)
             }
@@ -232,7 +232,7 @@ impl<'a> Checkpoints<'a> {
         }
         // Reads past the last checkpoint: no resume rests on them, the build's reruns do.
         self.log.extend(crate::project::overlay::log(false));
-        m.conclude(id)
+        m.conclude(id, source)
     }
 
     /// The machine of the last checkpoint that still holds, made to read

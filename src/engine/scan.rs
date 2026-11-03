@@ -15,8 +15,40 @@ use crate::engine::value::{
 /// ([`Machine::digits_in`]).
 pub(crate) const TYPED_DIGITS: &str = "\u{2}unknown digits:";
 
-/// The number places `[i, j)` of a `k`-digit number in `num` spell.
+/// The length of a slice cut before the number's length is chosen: its
+/// last slice runs to the end, which [`OPEN`] marks too.
+pub(crate) const OPEN: u32 = 0;
+
+/// Whether a slice of length `l` from place `i` goes on where one of
+/// length `k` ending at `j` stops: one of them may still be open.
+pub(crate) fn continues((k, j): (u32, u32), (l, i): (u32, u32)) -> bool {
+    i == j && (k == l || k == OPEN || l == OPEN)
+}
+
+/// Whether slices up to `j` of a number of length `k` spell all of it.
+pub(crate) fn complete(k: u32, j: u32) -> bool {
+    j == k
+}
+
+/// How many digits `n` has.
+fn digit_count(n: i64) -> u32 {
+    n.max(0).to_string().len() as u32
+}
+
+/// The number places `[i, j)` of a `k`-digit number in `num` spell; of an
+/// [`OPEN`] length, places from `i` to its end when `j` is open too.
 fn places(num: Num, (k, i, j): (u32, u32, u32)) -> Num {
+    if k == OPEN {
+        let (short, long) = (digit_count(num.lo), digit_count(num.hi));
+        let lead = |n: i64, len: u32| n.max(0) / 10i64.pow(len - 1);
+        return match (i, j) {
+            (0, OPEN) => num,
+            (0, 1) if short == long => Num::range(lead(num.lo, short), lead(num.hi, long)),
+            (0, 1) => Num::range(1, 9),
+            (_, OPEN) => Num::range(0, 10i64.pow(long.saturating_sub(i)) - 1),
+            _ => Num::range(0, 10i64.pow(j - i) - 1),
+        };
+    }
     let (p, m) = (10i64.pow(k - j), 10i64.pow(j - i));
     let (lo, hi) = (num.lo.max(0) / p, num.hi.max(0) / p);
     match lo / m == hi / m {
@@ -82,19 +114,6 @@ const MAG_UNITY: i64 = 1000;
 const MAX_MAG: i64 = 32768;
 /// tex.web § 442: an improper alphabetic constant counts as `0`.
 const IMPROPER_ALPHABETIC: i64 = '0' as i64;
-/// tex.web § 458, with pdfTeX's `nd` and `nc`: ⟨unit⟩ as a fraction of a
-/// point.  `sp` is handled apart because it takes no fraction.
-const UNITS: [(&str, i64, i64); 9] = [
-    ("in", 7227, 100),
-    ("pc", 12, 1),
-    ("cm", 7227, 254),
-    ("mm", 7227, 2540),
-    ("bp", 7227, 7200),
-    ("dd", 1238, 1157),
-    ("cc", 14856, 1157),
-    ("nd", 685, 642),
-    ("nc", 1370, 107),
-];
 
 /// tex.web § 102 (`round_decimals`): `.d₁d₂…dₖ` in units of 2^-16.
 fn round_decimals(digits: &[i64]) -> i64 {
@@ -383,16 +402,17 @@ impl Machine<'_> {
             let mut from = token.cs();
             // Slices of one number's spelling, in order from its first
             // place: that number, or the number its first places make.
-            if let Some((whole, k, i, mut j)) = token.cs().and_then(|sym| self.typed_slice(sym)) {
+            if let Some((whole, mut k, i, mut j)) = token.cs().and_then(|sym| self.typed_slice(sym)) {
                 while let Some((w, l, i, e)) = next.and_then(|t| self.typed_slice(t.cs()?))
-                    && (w, l, i) == (whole, k, j)
+                    && w == whole
+                    && continues((k, j), (l, i))
                 {
-                    j = e;
+                    (k, j) = (k.max(l), e);
                     next = self.next_x_token();
                 }
                 if let Some(n) = self.typed_digits_of(whole) {
                     num = places(n, (k, i, j));
-                    from = (i == 0 && j == k).then_some(whole);
+                    from = (i == 0 && complete(k, j)).then_some(whole);
                 }
             }
             let more = next.is_some_and(|t| {
@@ -1010,19 +1030,38 @@ impl Machine<'_> {
         if num.hi >= 0 && num.lo <= 9 {
             arms.push((Num::range(num.lo.max(0), num.hi.min(9)), vec![Token::new(Tok::Cs(whole), span)]));
         }
-        // An arm per length: its slices know where the number ends.
-        let len = |n: i64| n.to_string().len() as u32;
-        for k in len(num.lo.max(10))..=len(num.hi.max(0)) {
-            let part = Num::range(num.lo.max(10i64.saturating_pow(k - 1)), num.hi.min(10i64.saturating_pow(k) - 1));
-            if k < 2 || part.lo > part.hi {
-                continue;
-            }
+        // Several digits: the first place and the rest, one arm whatever
+        // the length, which stays open until a read needs where it ends.
+        if num.hi >= 10 {
+            let part = Num::range(num.lo.max(10), num.hi);
+            let k = match digit_count(part.lo) == digit_count(part.hi) {
+                true => digit_count(part.hi),
+                false => OPEN,
+            };
             let text =
                 vec![self.slice_token(whole, part, (k, 0, 1), span), self.slice_token(whole, part, (k, 1, k), span)];
             arms.push((part, text));
         }
         let most = self.scratch.split_digits.entry(whole).or_default();
         *most = arms.len().max(*most);
+        arms
+    }
+
+    /// The rest of `whole`'s spelling from place `i`, its length open: an
+    /// arm per length, each its next place and the rest after it.
+    pub(crate) fn rest_arms(&mut self, whole: Sym, num: Num, i: u32, span: Span) -> Vec<(Num, Vec<Token>)> {
+        let mut arms = Vec::new();
+        for k in digit_count(num.lo).max(i + 1)..=digit_count(num.hi) {
+            let part = Num::range(num.lo.max(10i64.saturating_pow(k - 1)), num.hi.min(10i64.saturating_pow(k) - 1));
+            if part.lo > part.hi {
+                continue;
+            }
+            let mut text = vec![self.slice_token(whole, part, (k, i, i + 1), span)];
+            if k > i + 1 {
+                text.push(self.slice_token(whole, part, (k, i + 1, k), span));
+            }
+            arms.push((part, text));
+        }
         arms
     }
 
@@ -1228,7 +1267,9 @@ impl Machine<'_> {
             }
         }
         let pt = self.scan_keyword("pt");
-        let ratio = if pt { None } else { UNITS.iter().find(|(unit, _, _)| self.scan_keyword(unit)) };
+        // `pt` and `sp` are read apart (tex.web § 458), `mu` only in math glue
+        let mut others = crate::engine::value::UNITS.iter().filter(|(u, _, _)| !matches!(*u, "pt" | "sp" | "mu"));
+        let ratio = if pt { None } else { others.find(|(unit, _, _)| self.scan_keyword(unit)) };
         let value = if let Some(&(_, num, denom)) = ratio {
             let conv = |n: i64, fraction: i64| {
                 let (q, r) = xn_over_d(n, num, denom);

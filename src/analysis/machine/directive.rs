@@ -101,6 +101,13 @@ impl Machine<'_> {
         }
     }
 
+    /// The directives, each with what it does: completion offers them.
+    pub const DIRECTIVES: [(&'static str, &'static str); 3] = [
+        ("assert", "Checks a condition on every path that reaches it."),
+        ("assume", "Drops the paths where a condition fails."),
+        ("configure", "Changes settings of `satex.yaml` until the group ends."),
+    ];
+
     fn directive(&mut self, d: &Directive) {
         let invalid = |m: &mut Self, message: String| m.diagnose(Severity::Info, INVALID, d.span, message);
         let Some((kind, arg)) = split_directive(&d.text) else {
@@ -110,7 +117,10 @@ impl Machine<'_> {
             "assert" => self.assert(d.span, arg),
             "assume" => self.assume(d.span, arg),
             "configure" => self.configure(d.span, arg),
-            _ => invalid(self, format!("`\\satex@{kind}` is no directive: assert, assume or configure")),
+            _ => {
+                let names: Vec<&str> = Self::DIRECTIVES.iter().map(|(n, _)| *n).collect();
+                invalid(self, format!("`\\satex@{kind}` is no directive: {}", names.join(", ")))
+            }
         }
     }
 

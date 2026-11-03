@@ -157,6 +157,11 @@ fn region(dir: &Path, pdf: &str, file: &str, line: u32) -> Option<(i64, [f64; 4]
 
 /// The region of `pdf` cut out as a page of its own, rendered: the PNG and
 /// the text on it.
+/// Whether `tool` runs here.
+fn installed(tool: &str) -> bool {
+    Command::new(tool).arg("-v").output().is_ok()
+}
+
 fn cut(dir: &Path, pdf: &str, (page, [x0, y0, x1, y1]): (i64, [f64; 4]), name: &str) -> Option<(PathBuf, String)> {
     let source = format!(
         "\\documentclass{{standalone}}\\usepackage{{graphicx}}\\begin{{document}}\
@@ -300,6 +305,10 @@ impl Document {
             |r: [f64; 4]| ((r[2] - r[0]) * 100.0).round() as i64 * 1_000_000 + ((r[3] - r[1]) * 100.0).round() as i64;
         if size(before.1) != size(after.1) {
             return Verdict::Mismatch(format!("the region is {:?} instead of {:?}", after.1, before.1));
+        }
+        // The cut is pdflatex, then poppler's pdftocairo and pdftotext: say which is missing.
+        if let Some(tool) = ["pdflatex", "pdftocairo", "pdftotext"].into_iter().find(|t| !installed(t)) {
+            return Verdict::Fail(format!("cutting a region out needs `{tool}`, which is not installed"));
         }
         let _ = std::fs::copy(original.join(&pdf), dir.join("original.pdf"));
         let (Some(want), Some(got)) = (cut(dir, "original.pdf", before, "want"), cut(dir, &pdf, after, "got")) else {

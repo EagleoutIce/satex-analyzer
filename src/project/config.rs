@@ -485,7 +485,7 @@ impl Default for DocsConfig {
             depth: 3,
             usage_lines: 12,
             describe: list(&["DescribeMacro", "DescribeEnv", "cmditem"]),
-            usage_environments: list(&["command", "environment"]),
+            usage_environments: list(&["command", "environment", "key"]),
             ltxdoc_environments: list(&["macro"]),
             l3doc_environments: list(&["function", "variable"]),
             inline: false,
@@ -1524,23 +1524,35 @@ impl Engine {
     /// The engine a program name drives: `lualatex` is LuaTeX with the LaTeX
     /// format, and a magic comment names the program.
     pub fn from_program(program: &str) -> Option<Engine> {
-        Some(match program_name(program).as_str() {
-            // `latex` and `etex` run pdfTeX writing DVI (TeX Live's
-            // `fmtutil.cnf`); `tex` is Knuth's TeX, which has no format
-            // for LaTeX.
-            "pdflatex" | "pdftex" | "latex" | "etex" => Engine::PdfTeX,
-            "lualatex" | "luatex" | "lualatex-dev" | "dvilualatex" | "dviluatex" => Engine::LuaTeX,
-            "xelatex" | "xetex" => Engine::XeTeX,
-            "tex" => Engine::Tex,
-            // ConTeXt MkIV runs on LuaTeX and MkXL on LuaMetaTeX, a LuaTeX
-            // derivative (ConTeXt "LMTX" documentation); satex models the
-            // LuaTeX primitives for both, which is why ConTeXt is
-            // experimental.  The ConTeXt kernel itself is not interpreted;
-            // see [`crate::plugins::Kernel`].
-            "context" | "contextjit" | "luametatex" | "mtxrun" => Engine::LuaTeX,
-            _ => return None,
-        })
+        let name = program_name(program);
+        Self::PROGRAMS.iter().find(|(p, _)| *p == name).map(|(_, e)| *e)
     }
+
+    /// The programs a magic comment or a build may name, with the engine
+    /// each drives. `latex` and `etex` run pdfTeX writing DVI (TeX Live's
+    /// `fmtutil.cnf`); `tex` is Knuth's TeX, which has no format for LaTeX.
+    /// ConTeXt MkIV runs on LuaTeX and MkXL on LuaMetaTeX, a LuaTeX
+    /// derivative (ConTeXt "LMTX" documentation); satex models the LuaTeX
+    /// primitives for both, which is why ConTeXt is experimental. The
+    /// ConTeXt kernel itself is not interpreted; see [`crate::plugins::Kernel`].
+    pub const PROGRAMS: [(&'static str, Engine); 16] = [
+        ("pdflatex", Engine::PdfTeX),
+        ("lualatex", Engine::LuaTeX),
+        ("xelatex", Engine::XeTeX),
+        ("latex", Engine::PdfTeX),
+        ("pdftex", Engine::PdfTeX),
+        ("luatex", Engine::LuaTeX),
+        ("xetex", Engine::XeTeX),
+        ("tex", Engine::Tex),
+        ("etex", Engine::PdfTeX),
+        ("lualatex-dev", Engine::LuaTeX),
+        ("dvilualatex", Engine::LuaTeX),
+        ("dviluatex", Engine::LuaTeX),
+        ("context", Engine::LuaTeX),
+        ("contextjit", Engine::LuaTeX),
+        ("luametatex", Engine::LuaTeX),
+        ("mtxrun", Engine::LuaTeX),
+    ];
 
     pub fn program(self) -> &'static str {
         match self {
@@ -2396,6 +2408,8 @@ struct Documented {
     example: Vec<String>,
     range: Option<(f64, f64)>,
     plugin: Option<String>,
+    /// `#! option: value: text` lines: the values a setting takes and what each means.
+    options: Vec<(String, String)>,
 }
 
 fn documented_keys(documented: &str) -> std::collections::HashMap<String, Documented> {
@@ -2410,6 +2424,11 @@ fn documented_keys(documented: &str) -> std::collections::HashMap<String, Docume
                 Some(("affects", v)) => entry.affects.extend(v.split(',').map(|a| a.trim().to_string())),
                 Some(("example", v)) => entry.example.push(v.to_string()),
                 Some(("plugin", v)) => entry.plugin = Some(v.to_string()),
+                Some(("option", v)) => {
+                    if let Some((value, text)) = v.split_once(':') {
+                        entry.options.push((value.trim().to_string(), text.trim().to_string()));
+                    }
+                }
                 Some(("range", v)) => {
                     entry.range = v.split_once("..").and_then(|(lo, hi)| Some((lo.parse().ok()?, hi.parse().ok()?)))
                 }
@@ -2509,6 +2528,26 @@ pub fn schema(documented: &str) -> serde_json::Value {
         if let Some(values) = choices(path) {
             out["type"] = json!("string");
             out["enum"] = json!(values);
+        }
+        // `#! option:` lines name the values and say what each means (VS Code's `enumDescriptions`). A list takes them as its items.
+        if let Some(doc) = about.get(path).filter(|d| !d.options.is_empty()) {
+            let names: Vec<String> = doc.options.iter().map(|(o, _)| o.clone()).collect();
+            let values: Vec<String> = match out["enum"].as_array().or_else(|| out["items"]["enum"].as_array()) {
+                Some(values) => values.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+                None => names.clone(),
+            };
+            let descriptions: Vec<String> = values
+                .iter()
+                .map(|v| doc.options.iter().find(|(o, _)| o == v).map(|(_, t)| t.clone()).unwrap_or_default())
+                .collect();
+            if out["type"] == "array" {
+                if out["items"]["enum"].is_null() {
+                    out["items"] = json!({ "type": "string", "enum": names });
+                }
+                out["items"]["enumDescriptions"] = json!(descriptions);
+            } else {
+                out["enumDescriptions"] = json!(descriptions);
+            }
         }
         if path == "clock" {
             out = json!({ "oneOf": [

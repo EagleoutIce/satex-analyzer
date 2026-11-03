@@ -27,10 +27,12 @@
 
 mod argument_hover;
 mod bib;
+mod directive;
 pub(crate) mod doccomment;
 mod handlers;
 pub mod knowledge;
 pub(crate) mod primitives;
+mod units;
 mod unreached;
 #[cfg(target_os = "emscripten")]
 mod wasm;
@@ -78,7 +80,22 @@ const STYLE_ANSWERS: [(&str, Option<crate::project::config::StyleChoice>); 3] = 
 /// is none: shared with the connection thread, which answers from them while
 /// the engine analyzes. Filled on demand, and while the engine is idle for
 /// the names the document uses most.
-type Hovers = std::sync::Arc<std::sync::Mutex<HashMap<(Uri, String), Option<String>>>>;
+type Hovers = std::sync::Arc<Kept>;
+
+#[derive(Default)]
+struct Kept {
+    hovers: std::sync::Mutex<HashMap<(Uri, String), Option<String>>>,
+    /// Whether the engine is analyzing: only then does the connection thread
+    /// answer from what was kept, without the part placed at the cursor.
+    analyzing: std::sync::atomic::AtomicBool,
+}
+
+impl std::ops::Deref for Kept {
+    type Target = std::sync::Mutex<HashMap<(Uri, String), Option<String>>>;
+    fn deref(&self) -> &Self::Target {
+        &self.hovers
+    }
+}
 
 /// How many of the names a document uses most get their hover while the
 /// engine is idle.
@@ -288,7 +305,7 @@ fn hover_store(cfg: &Config, analysis: &Analysis, own: &Path) -> Option<std::pat
 
 /// A hover answered from what the engine kept, without waiting for it.
 fn kept_hover(req: &Request, texts: &HashMap<Uri, String>, hovers: &Hovers) -> Option<Json> {
-    if req.method != "textDocument/hover" {
+    if req.method != "textDocument/hover" || !hovers.analyzing.load(std::sync::atomic::Ordering::Relaxed) {
         return None;
     }
     let p: HoverParams = serde_json::from_value(req.params.clone()).ok()?;
@@ -735,6 +752,14 @@ impl Engine {
     /// new run once its hovers are the run's: a hover asked after them
     /// never gets an older one. A run of the same texts is reused.
     fn analyze(&mut self, uri: &Uri) {
+        struct Analyzing(Hovers);
+        impl Drop for Analyzing {
+            fn drop(&mut self) {
+                self.0.analyzing.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        self.hovers.analyzing.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _analyzing = Analyzing(self.hovers.clone());
         let Some(doc) = self.docs.get(uri) else { return };
         let (path, text) = (doc.path.clone(), doc.text.clone());
         // Every open buffer is read for its file, so an `\input` of one sees
@@ -898,6 +923,12 @@ impl Engine {
             );
             crate::project::overlay::set(&root, text);
             return self.run(&root);
+        }
+        // A package or class no root reads is analyzed as itself, as `-f` does:
+        // read into a document's body its `@` names and preamble commands fail.
+        use crate::project::config::Profile;
+        if matches!(Profile::of_name(Some(path), text), Some(Profile::Package | Profile::Class)) {
+            return self.run(path);
         }
         // LaTeX's own hook reads it once the root's preamble is done.
         if input && let Some(root) = preamble {

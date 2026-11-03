@@ -1940,12 +1940,15 @@ impl Machine<'_> {
             Syntax::PdfColorStack => {
                 let stack = self.scan_int();
                 let op = if self.scan_keyword("push") {
-                    self.read_general_text();
+                    let color = self.read_general_text();
+                    crate::analysis::observe::color_literal(self, Some((&color, true)), span);
                     crate::analysis::facts::StackOp::Push
                 } else if self.scan_keyword("pop") {
+                    crate::analysis::observe::color_literal(self, None, span);
                     crate::analysis::facts::StackOp::Pop
                 } else if self.scan_keyword("set") {
-                    self.read_general_text();
+                    let color = self.read_general_text();
+                    crate::analysis::observe::color_literal(self, Some((&color, false)), span);
                     crate::analysis::facts::StackOp::Set
                 } else {
                     // `current` takes no general text (pdfTeX manual § 8.9.8):

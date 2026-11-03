@@ -1472,6 +1472,9 @@ impl Machine<'_> {
         }
         self.last_named_cs = Some(self.intern(&name));
         crate::analysis::observe::csname(self, &name, span);
+        if let Some((from, at)) = self.name_slot.take() {
+            crate::analysis::observe::slot(self, &name, from, at);
+        }
         let sym = self.intern(&name);
         if let Meaning::Register(kind, _) = self.env.shape(sym) {
             crate::analysis::observe::arg_type(self, at, crate::analysis::roles::Ty::Named(kind));
@@ -1657,6 +1660,8 @@ impl Machine<'_> {
                 format!("\\csname has no \\endcsname: {why} after `{}`", n.names[0].1),
             );
         }
+        // the text the calling file wrote into the name, after what the code put before it
+        self.name_slot = n.written_from.zip(n.at);
         (built, n.at.unwrap_or(span), n.files)
     }
 
@@ -1697,6 +1702,9 @@ impl Machine<'_> {
                 if t.span.line > 0 && (n.at.is_none() || written && !n.at_written) {
                     n.at = Some(t.span);
                     n.at_written = written;
+                    if written {
+                        n.written_from = Some(n.names[0].1.chars().count() - 1);
+                    }
                 }
                 return false;
             }
@@ -1804,7 +1812,7 @@ impl Machine<'_> {
         // `satex controls` asks what a switch governs, which only has an
         // answer if the switch is left undecided.
         let opaque = self.cfg.opaque_conditionals.iter().any(|wanted| {
-            wanted == self.name(by)
+            crate::analysis::facts::switches_named(&self.out.interner, &self.out.facts.defs, wanted).iter().any(|(n, _)| n == self.name(by))
                 // Only the document's own switches. The kernel's and packages' drive
                 // code never meant to run both ways.
                 || (wanted == crate::project::config::EVERY_SWITCH && self.carried.own_switches.contains(&by) && self.is_switch(by))

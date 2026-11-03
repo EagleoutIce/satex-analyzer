@@ -34,6 +34,16 @@ impl DocPlugin for Ltxdoc {
         for env in &config.usage_environments {
             for (at, _, head, after) in anchors(&doc, env) {
                 let (name, args) = match group(head, '{', '}') {
+                    // pgf's `\begin{key}{/tikz/yshift=\meta{dimension}}`: the key, then its value
+                    Some((key, value)) if key.starts_with('/') => {
+                        let (key, rest) = key.split_once('=').map_or((key, ""), |(k, v)| (k, v));
+                        let usage = format!(
+                            "{}{}",
+                            key.trim(),
+                            if rest.is_empty() { String::new() } else { format!("={}", render(rest, true)) }
+                        );
+                        (key.trim().to_string(), format!("{usage}{}", render(value, true)))
+                    }
                     Some((env, args)) => {
                         (env.trim().to_string(), format!("\\begin{{{}}}{}", env.trim(), render(args, true)))
                     }

@@ -72,7 +72,9 @@ pub fn trap_zero_glue(value: Value) -> Value {
 const MAX_DECIMAL_DIGITS: usize = 17;
 const MAX_FIL_ORDER: u8 = 3;
 
-const UNITS: [(&str, i64, i64); 12] = [
+/// tex.web § 458, with pdfTeX's `nd` and `nc`: each ⟨unit⟩ as the fraction
+/// `n/d` of a point. The one table every reader of units takes.
+pub(crate) const UNITS: [(&str, i64, i64); 12] = [
     ("pt", 1, 1),
     ("pc", 12, 1),
     ("in", 7227, 100),

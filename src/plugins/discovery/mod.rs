@@ -71,9 +71,14 @@ fn head_of(path: &Path) -> String {
     String::from_utf8_lossy(&buffer).into_owned()
 }
 
-/// Whether `text` is a document's own: it names its class or opens it.
+/// Whether `text` is a document's own: it names its class or opens it,
+/// names the program that runs it (`% !TeX program = tex`), or ends the
+/// way plain TeX does (`\bye`).
 pub fn is_document(text: &str) -> bool {
-    text.contains("\\documentclass") || text.contains("\\begin{document}")
+    text.contains("\\documentclass")
+        || text.contains("\\begin{document}")
+        || text.contains("\\bye")
+        || crate::plugins::magic::scan(text).iter().any(|m| m.key.eq_ignore_ascii_case("TeX program"))
 }
 
 /// The root a `% !TeX root` line in `text`, the file at `path`, names.

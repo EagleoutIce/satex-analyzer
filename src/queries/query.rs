@@ -515,14 +515,27 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     // ends where it changes, and says which one it was set in
     let envs = environments(analysis);
     // looked up once per source line: the characters of a line share it
-    let mut by_line: HashMap<(FileId, u32), Option<&str>> = HashMap::default();
+    let mut by_line: HashMap<(FileId, u32), Option<usize>> = HashMap::default();
     let mut env_at = |s: Span| {
         *by_line.entry((s.file, s.line)).or_insert_with(|| {
             let begun = envs.partition_point(|(f, ..)| (f.file, f.line) <= (s.file, s.line));
-            envs[..begun].iter().rfind(|(f, t, _)| f.file == s.file && s.line <= t.line).map(|(_, _, n)| n.as_str())
+            envs[..begun].iter().rposition(|(f, t, _)| f.file == s.file && s.line <= t.line)
         })
     };
-    let mut env: Option<&str> = None;
+    // the innermost environment's name; the outermost one as `outer`: its name, the line it
+    // begins on (one per instance, a frame) and the labels set in it
+    let tag_env = |record: &mut Record, k: usize| {
+        record.insert("env".into(), json!(envs[k].2));
+        let within = |s: &Span, (f, t, _): &(Span, Span, String)| {
+            s.file == f.file && (f.line, f.col) <= (s.line, s.col) && s.line <= t.line
+        };
+        let (from, ..) = &envs[k];
+        let outer = envs.iter().find(|e| within(from, e)).unwrap_or(&envs[k]);
+        let labels: Vec<&str> =
+            named.iter().filter(|(s, kind, _)| *kind == "label" && within(s, outer)).map(|n| n.2).collect();
+        record.insert("outer".into(), json!({"env": outer.2, "line": outer.0.line, "labels": labels}));
+    };
+    let mut env: Option<usize> = None;
     let mut foot = String::new();
     let push_foot = |out: &mut Vec<Record>, foot: &mut String, at: Span, keys: &mut Keys<'_>| {
         if foot.trim().is_empty() {
@@ -535,6 +548,8 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     };
     // the source line the paragraph's text stands on now
     let mut on_line: Option<(FileId, u32)> = None;
+    // the source site of the last character set: the next one marks its own unless it follows
+    let mut last_site: Option<Span> = None;
     // where the paragraph being set began: its `\parskip` is the one in force there
     let mut began = 0usize;
     let mut flush = |i: usize, line: &mut String, keys: &mut std::collections::VecDeque<_>| {
@@ -625,8 +640,8 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                 record.insert("skip".into(), json!(text.skips[k].1 as f64 / f64::from(1 << 16)));
             }
             attach_sketches(&mut record, &mut sketches);
-            if let Some(name) = env {
-                record.insert("env".into(), json!(name));
+            if let Some(k) = env {
+                tag_env(&mut record, k);
                 attach_picture(analysis, &mut record, &pictures);
             }
             out.push(record);
@@ -658,6 +673,20 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                         keys.push_back((LINE, site.line.to_string().into()));
                     }
                     on_line = Some(here);
+                    // a piece of several characters (a note, a math atom) shares its site
+                    let single = unmarked(&piece).chars().count() == 1;
+                    let follows =
+                        last_site.is_some_and(|l| (l.file, l.line, l.col + 1) == (site.file, site.line, site.col));
+                    if !(single && follows) {
+                        line.push(KEY);
+                        let file = analysis.file_name(site.file);
+                        let step = if single { "" } else { ":0" };
+                        // the site is where reading stood after the character: one column back is its own
+                        // (a macro's text: the last letter of its name)
+                        let col = site.col.saturating_sub(1).max(1);
+                        keys.push_back((SITE, format!("{file}\u{1}{}:{col}{step}", site.line).into()));
+                    }
+                    last_site = single.then_some(site);
                 }
                 // a font set under an undecided conditional shows from the next sure character
                 let now = styles.get(usize::from(spot.font_state)).map_or("", String::as_str);
@@ -692,8 +721,8 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             record.insert("skip".into(), json!(text.skips[k].1 as f64 / f64::from(1 << 16)));
         }
         attach_sketches(&mut record, &mut sketches);
-        if let Some(name) = env {
-            record.insert("env".into(), json!(name));
+        if let Some(k) = env {
+            tag_env(&mut record, k);
             attach_picture(analysis, &mut record, &pictures);
         }
         out.push(record);
@@ -839,23 +868,18 @@ fn drawn_boxes(analysis: &Analysis) -> Vec<Drawn> {
     };
     let mut out = Vec::new();
     let mut open: Vec<(&str, Span)> = Vec::new();
-    // Only an environment the source begins itself: beamer's own, run inside
-    // `\begin{frame}`, are reported at the frame's place.
-    let mut texts: HashMap<FileId, Option<String>> = HashMap::default();
-    let mut written = |name: &str, at: Span| {
-        let text = texts.entry(at.file).or_insert_with(|| std::fs::read_to_string(analysis.file_name(at.file)).ok());
-        let line = text.as_deref().and_then(|t| t.lines().nth(at.line as usize - 1)).unwrap_or_default();
-        let rest: String = line.chars().skip(at.col as usize - 1).collect();
-        rest.strip_prefix("\\begin").is_some_and(|r| r.trim_start().starts_with(&format!("{{{name}}}")))
-    };
+    let mut written = written_by(analysis);
     for o in analysis.facts.occurrences.iter().filter(|o| origin(analysis, o.span.file) == "document") {
         match o.kind {
             OccKind::BeginEnvironment => open.push((o.key.as_str(), o.span)),
             OccKind::EndEnvironment => {
                 if let Some(k) = open.iter().rposition(|(name, _)| *name == o.key) {
                     let (name, from) = open.remove(k);
-                    // What the picture draws is not known here yet: the run's own drawing is to come.
-                    let sketch = Json::Null;
+                    // What the picture drew, read from the literals the run wrote.
+                    let sketch = match name == "tikzpicture" && from.file == o.span.file {
+                        true => crate::queries::picture::draw(analysis, from, o.span).unwrap_or(Json::Null),
+                        false => Json::Null,
+                    };
                     // Text an environment reads back at its end (a frame) is placed after `\end{…}`.
                     let end = Span { col: o.span.col + format!("\\end{{{name}}}").len() as u32, ..o.span };
                     if from.file == o.span.file && written(name, from) && (empty(from, end) || !sketch.is_null()) {
@@ -897,13 +921,30 @@ fn attach_picture(analysis: &Analysis, record: &mut Record, pictures: &[(Span, S
     }
 }
 
-/// The environments of the user's files, `document` aside, as the places they begin and end.
+/// Whether the source begins environment `name` itself at `at`: beamer's own
+/// (a `pgfpicture` run inside `\begin{frame}`) are reported at the frame's place.
+fn written_by(analysis: &Analysis) -> impl FnMut(&str, Span) -> bool + '_ {
+    let mut texts: HashMap<FileId, Option<String>> = HashMap::default();
+    move |name: &str, at: Span| {
+        let text = texts.entry(at.file).or_insert_with(|| std::fs::read_to_string(analysis.file_name(at.file)).ok());
+        // a text read from no file (an unsaved buffer) cannot tell: kept
+        let Some(text) = text.as_deref() else { return true };
+        let line = text.lines().nth((at.line as usize).saturating_sub(1)).unwrap_or_default();
+        let rest: String = line.chars().skip((at.col as usize).saturating_sub(1)).collect();
+        rest.strip_prefix("\\begin").is_some_and(|r| r.trim_start().starts_with(&format!("{{{name}}}")))
+    }
+}
+
+/// The environments the user's files begin themselves, `document` aside, as the places they begin and end.
 pub(crate) fn environments(analysis: &Analysis) -> Vec<(Span, Span, String)> {
     let mut open: Vec<(&str, Span)> = Vec::new();
     let mut out = Vec::new();
+    let mut written = written_by(analysis);
     for o in analysis.facts.occurrences.iter().filter(|o| origin(analysis, o.span.file) == "document") {
         match o.kind {
-            OccKind::BeginEnvironment if o.key != "document" => open.push((o.key.as_str(), o.span)),
+            OccKind::BeginEnvironment if o.key != "document" && written(&o.key, o.span) => {
+                open.push((o.key.as_str(), o.span))
+            }
             OccKind::EndEnvironment => {
                 if let Some(k) = open.iter().rposition(|(name, _)| *name == o.key) {
                     let (name, from) = open.remove(k);
@@ -1077,6 +1118,11 @@ const FONT: &str = "font";
 /// The kind of a [`KEY`] that marks where the text moves on to another source line: the number.
 const LINE: &str = "line";
 
+/// The kind of a [`KEY`] before a character that does not follow the last one in the source:
+/// its file, `\u{1}`, line and column. The characters after it count on from that column,
+/// or with `:0` after the column (a piece of several characters) all stand there.
+const SITE: &str = "site";
+
 /// The marks waiting for their [`KEY`] in a paragraph's text: kind and value.
 type Keys<'a> = std::collections::VecDeque<(&'a str, std::borrow::Cow<'a, str>)>;
 
@@ -1235,8 +1281,9 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
     let core = marked.trim_matches(|c: char| c == KEY || c.is_whitespace());
     let (head, tail) = (ends(&mut marked.chars()), if core.is_empty() { 0 } else { ends(&mut marked.chars().rev()) });
     let marked = tidy(&format!("{}{core}{}", KEY.to_string().repeat(head), KEY.to_string().repeat(tail)));
-    let (mut placed, mut fonts, mut aligned, mut ligatures, mut lines, mut offset) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0);
+    let (mut placed, mut fonts, mut aligned, mut ligatures, mut lines, mut sites, mut offset) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0);
+    let at_file = at.file;
     for c in unmarked(&marked).chars() {
         if c != KEY {
             offset += 1;
@@ -1248,6 +1295,18 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
                     font["color"] = json!(color);
                 }
                 fonts.push(font);
+            } else if kind == SITE {
+                let (file, at) = key.split_once('\u{1}').unwrap_or_default();
+                let mut parts = at.split(':').map(|n| n.parse::<u32>().unwrap_or(0));
+                let (line, col) = (parts.next().unwrap_or(0), parts.next().unwrap_or(0));
+                let mut site = json!({ "line": line, "col": col, "at": offset });
+                if parts.next() == Some(0) {
+                    site["same"] = json!(true);
+                }
+                if file != analysis.file_name(at_file) {
+                    site["path"] = json!(file);
+                }
+                sites.push(site);
             } else if kind == LINE {
                 lines.push(json!({ "line": key.parse::<u32>().unwrap_or(0), "at": offset }));
             } else if kind == ALIGN {
@@ -1267,6 +1326,9 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
     }
     if !lines.is_empty() {
         record.insert("lines".into(), json!(lines));
+    }
+    if !sites.is_empty() {
+        record.insert("sites".into(), json!(sites));
     }
     if fonts.iter().any(|f| f["style"] != "" || f.get("color").is_some()) {
         record.insert("fonts".into(), json!(fonts));
@@ -1321,13 +1383,30 @@ fn test_text(analysis: &Analysis, site: Span) -> (String, Vec<String>) {
     (test, reads)
 }
 
-/// Adjacent box marks and unknown characters merged.
+/// Adjacent box marks and unknown characters merged. A box that ends where
+/// the next begins is one box, the position marks between them kept inside.
 fn tidy(line: &str) -> String {
     let (open, shut) = NOTE;
-    let line = line
-        .replace(&format!("⟧{shut}{open}⟦"), "")
-        .replace(&format!("⟨?⟩{shut}{open}⟨?⟩"), "⟨?⟩")
-        .replace(&format!("⟨?⟩{shut}{open}⟨?⟩"), "⟨?⟩");
+    let (end, begin) = (format!("{open}⟧{shut}"), format!("{open}⟦{shut}"));
+    let mut joined = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(at) = rest.find(&end) {
+        let after = &rest[at + end.len()..];
+        let keys = after.chars().take_while(|&c| c == KEY).count();
+        joined.push_str(&rest[..at]);
+        match after[keys * KEY.len_utf8()..].starts_with(&begin) {
+            true => {
+                joined.push_str(&after[..keys * KEY.len_utf8()]);
+                rest = &after[keys * KEY.len_utf8() + begin.len()..];
+            }
+            false => {
+                joined.push_str(&end);
+                rest = after;
+            }
+        }
+    }
+    joined.push_str(rest);
+    let line = joined.replace(&format!("⟨?⟩{shut}{open}⟨?⟩"), "⟨?⟩").replace(&format!("⟨?⟩{shut}{open}⟨?⟩"), "⟨?⟩");
     regex::Regex::new(&format!("{open}⟦{shut}\\s*{open}⟧{shut}"))
         .map_or(line.clone(), |blank| blank.replace_all(&line, "").into_owned())
         .replace(&format!("{open}{shut}"), "")
@@ -1511,6 +1590,11 @@ fn dependencies(analysis: &Analysis) -> Vec<Record> {
             record.insert("certain".into(), json!(load.certain));
             record.insert("resolved".into(), json!(load.path.is_some()));
             record.insert("path".into(), json!(load.path));
+            // `\ProvidesPackage{p}[2019/01/01 v1.0 …]`: what the file says it is.
+            record.insert(
+                "provided".into(),
+                json!(identification(analysis, load.file).or_else(|| load.provided.clone())),
+            );
             // The TeX Live package depp would name for the file.
             let texlive = load.path.as_deref().and_then(|p| analysis.settings.depp.package_of(p));
             record.insert("texlive".into(), json!(texlive));
@@ -1945,11 +2029,21 @@ fn at_position(analysis: &Analysis, at: &At) -> Vec<NodeId> {
     let Some(file) = at.file(analysis) else { return Vec::new() };
     if let Some(end) = at.end {
         let start = (at.line, at.col);
+        let pos = |id: usize| {
+            let span = analysis.graph.vertices[id].span;
+            (span.file == file).then_some((span.line, span.col))
+        };
+        let inside: Vec<NodeId> = (0..analysis.graph.vertices.len())
+            .filter(|&id| pos(id).is_some_and(|p| p >= start && p <= end))
+            .map(|id| id as NodeId)
+            .collect();
+        if !inside.is_empty() {
+            return inside;
+        }
+        // Plain text names no construct: the last one before it reads it.
+        let last = (0..analysis.graph.vertices.len()).filter_map(pos).filter(|&p| p < start).max();
         return (0..analysis.graph.vertices.len())
-            .filter(|&id| {
-                let span = analysis.graph.vertices[id].span;
-                span.file == file && (span.line, span.col) >= start && (span.line, span.col) <= end
-            })
+            .filter(|&id| last.is_some() && pos(id) == last)
             .map(|id| id as NodeId)
             .collect();
     }
@@ -1968,6 +2062,25 @@ fn at_position(analysis: &Analysis, at: &At) -> Vec<NodeId> {
 }
 
 pub fn slice(analysis: &Analysis, names: &[String], at: Option<&At>, direction: Direction) -> Vec<Record> {
+    // A point on a line no construct stands for (plain text, a macro body's
+    // line): the brace-balanced lines around it, as a range. A line of only
+    // a comment stays empty.
+    let region = at.filter(|a| a.end.is_none()).and_then(|a| {
+        let file = a.file(analysis)?;
+        if analysis.graph.vertices.iter().any(|v| v.span.file == file && v.span.line == a.line) {
+            return None;
+        }
+        let text = std::fs::read_to_string(analysis.file_name(file)).ok()?;
+        let lines: Vec<&str> = text.lines().collect();
+        let region = balanced_lines(&lines, &BTreeSet::from([a.line]));
+        let code = |l: &u32| {
+            let t = lines.get(*l as usize - 1).copied().unwrap_or_default();
+            !t[..crate::engine::tex::comment_start(t).unwrap_or(t.len())].trim().is_empty()
+        };
+        let (first, last) = (*region.first()?, *region.last()?);
+        region.iter().any(code).then(|| At { line: first, col: 1, end: Some((last, u32::MAX)), ..a.clone() })
+    });
+    let at = region.as_ref().or(at);
     let mut records = slice_from(analysis, resolve(analysis, names, at), direction);
     // A range of lines keeps its lines, also the text no vertex stands for.
     if let Some((at, file, (last, _))) = at.and_then(|at| Some((at, at.file(analysis)?, at.end?))) {
@@ -2020,12 +2133,14 @@ fn slice_limit(analysis: &Analysis, criteria: &[NodeId]) -> NodeId {
     }
     // Whole lines: what stands after a criterion on its line is part of the same statement.
     let last = spans.iter().map(|s| s.line).max().unwrap_or(0);
-    analysis
+    let limit = analysis
         .graph
         .vertices
         .iter()
         .position(|v| v.span.file == main && v.span.line > last)
-        .map_or(NodeId::MAX, |first| (first as NodeId).saturating_sub(1))
+        .map_or(NodeId::MAX, |first| (first as NodeId).saturating_sub(1));
+    // A token stored on its line and run later (a key's value) is reached past that line: its run bounds it.
+    criteria.iter().copied().fold(limit, NodeId::max)
 }
 
 /// A backward slice from `nodes` that answers a body vertex to its own call.
@@ -2210,6 +2325,9 @@ pub fn reconstruct_mapped(analysis: &Analysis, slice: &[Record], source: &str) -
     }
     framing.entry(analysis.main_file).or_default().extend(frame.lines.iter().copied());
     framing.entry(analysis.main_file).or_default().extend(option_lines(analysis));
+    // The magic comments pick the build (`% !TeX program = tex`): the slice asks for the same one.
+    let magic = crate::plugins::magic::scan_with(source, &analysis.settings.magic);
+    framing.entry(analysis.main_file).or_default().extend(magic.iter().map(|m| m.line as u32));
     let peeks = peeks(analysis);
     let lines = loop {
         let lines = kept_lines(analysis, &nodes, &peeks, &framing, &mut texts);
@@ -3355,18 +3473,31 @@ pub fn controls_of(analysis: &Analysis, names: &[String], all: bool) -> Vec<Reco
 }
 
 pub fn controls(analysis: &Analysis, name: &str) -> Vec<Record> {
-    let wanted = crate::engine::tex::bare_name(name);
+    let wanted = crate::analysis::facts::switches_named(
+        &analysis.interner,
+        &analysis.facts.defs,
+        crate::engine::tex::bare_name(name),
+    );
     let governed = |cds: &[crate::analysis::graph::ControlDep]| -> Option<String> {
         cds.iter().find_map(|cd| {
             let vertex = analysis.graph.vertex(cd.on)?;
             let rendered = analysis.interner.name(vertex.name);
-            (rendered == wanted).then(|| format!("\\{rendered} = {}", cd.taken))
+            wanted.iter().any(|(w, _)| w == rendered).then(|| format!("\\{rendered} = {}", cd.taken))
         })
+    };
+    // What the name was taken to mean, said on every row it answers.
+    let means = |detail: &str| -> Option<String> {
+        let switch = detail.trim_start_matches('\\').split(' ').next()?;
+        let (_, how) = wanted.iter().find(|(w, _)| w == switch).filter(|(_, how)| !how.is_empty())?;
+        Some(format!("\\{switch}, {how}"))
     };
     let mut out = Vec::new();
     for def in &analysis.facts.defs {
         let Some(branch) = governed(&def.cds) else { continue };
         let mut record = place(analysis, def.span);
+        if let Some(means) = means(&branch) {
+            record.insert("means".into(), json!(means));
+        }
         record.insert("tag".into(), json!(def.tag));
         record.insert("name".into(), json!(analysis.interner.cs(def.name)));
         record.insert("detail".into(), json!(branch));
@@ -3386,6 +3517,9 @@ pub fn controls(analysis: &Analysis, name: &str) -> Vec<Record> {
             continue;
         }
         let mut record = place(analysis, expansion.span);
+        if let Some(means) = means(&branch) {
+            record.insert("means".into(), json!(means));
+        }
         record.insert("tag".into(), json!("use"));
         record.insert("name".into(), json!(analysis.interner.cs(expansion.name)));
         record.insert("detail".into(), json!(branch));
@@ -3995,7 +4129,10 @@ fn effective_of(
                         n += 1;
                         let _ = write!(body, "{{{n}}}");
                     }
+                    // its default shows, and it takes its parameter number all the same:
+                    // `#1` of the types is the optional argument
                     A::Optional(Some(default)) => {
+                        n += 1;
                         let _ = write!(body, "[{default}]");
                     }
                     A::TokenFlag(c) => {
@@ -4119,7 +4256,9 @@ fn insert_expands(record: &mut Record, analysis: &Analysis, sym: Sym, mac: &crat
     for expansion in &analysis.facts.expansions {
         // A test is a callee; the arms' ends are not.
         let test = matches!(analysis.env.meaning(expansion.name), Meaning::Primitive(P::Else | P::Or | P::Fi));
-        if expansion.within != Some(sym) || test || !seen.insert(expansion.name) || seen.len() > 12 {
+        // a value the run did not know (`\year`'s digits) stands where a token was: no callee
+        let value = analysis.interner.name(expansion.name).starts_with(crate::engine::tex::UNKNOWN_PREFIX);
+        if expansion.within != Some(sym) || test || value || !seen.insert(expansion.name) || seen.len() > 12 {
             continue;
         }
         let list = if always.contains(&expansion.name) { &mut definite } else { &mut potential };
@@ -4611,6 +4750,10 @@ fn insert_call_shape(
         record.insert("types".into(), json!(types.iter().map(|(arg, t)| format!("#{arg} {t}")).collect::<Vec<_>>()));
     }
     record.insert("effective".into(), json!(effective_of(analysis, sym, mac, view)));
+    // what the expansion gives where TeX reads a quantity (`\the\c@page`: a number)
+    if let Some(ty) = mac.and_then(|m| crate::analysis::roles::yields(analysis, m)) {
+        record.insert("yields".into(), json!(ty.to_string()));
+    }
     if let Some(error) = probe.and_then(|p| p.error) {
         record.insert("error".into(), json!(error));
     }

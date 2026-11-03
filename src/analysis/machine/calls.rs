@@ -427,15 +427,17 @@ impl Machine<'_> {
         let mut n = 0;
         while n < text.len() {
             let cut = |t: &Token| t.cs().and_then(|s| self.typed_slice(s));
-            if let Some((whole, k, 0, mut j)) = cut(&text[n]) {
+            if let Some((whole, mut k, 0, mut j)) = cut(&text[n]) {
+                use crate::engine::scan::{complete, continues};
                 let mut m = n + 1;
-                while j != k
+                while !complete(k, j)
                     && let Some((w, l, i, e)) = text.get(m).and_then(cut)
-                    && (w, l, i) == (whole, k, j)
+                    && w == whole
+                    && continues((k, j), (l, i))
                 {
-                    (j, m) = (e, m + 1);
+                    (k, j, m) = (k.max(l), e, m + 1);
                 }
-                if j == k {
+                if complete(k, j) {
                     out.push(Token::new(crate::engine::tex::Tok::Cs(whole), text[n].span));
                     n = m;
                     continue;

@@ -281,6 +281,8 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 | `option key` | an option or key a key list names | `\usepackage[⟨draft⟩]{x}` |
 | `pgf key` | a key pgfkeys stores under its family's path, below `option key` | `\draw[⟨thick⟩]` is `/tikz/thick` |
 | `environment name` | an environment's name, below `key` | `\begin{⟨itemize⟩}` |
+| `declared key` | a key a document command declares and others read by its name, below `key` | `\gls{⟨graph⟩}` after `\newglossaryentry{graph}` |
+| `index entry` | a term an index or glossary program sorts, below `key` | `\index{⟨source⟩}` |
 | `file` | a file of no known kind, below `name` | `\input{⟨a⟩}` read as `.bib` and `.tex` |
 | `TeX file (.tex)` | a file read as TeX source | `\input{⟨chapter1⟩}` |
 | `package (.sty)` | a package | `\usepackage{⟨amsmath⟩}` |
@@ -312,16 +314,16 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 | --- | --- |
 | known text | `\immediate\openout` empties it, each `\write` appends a line. A deferred `\write` waits for the shipout (§ 1370), as a set of texts like the file. A token for one of several texts parts the path per text, so each writes it exactly. Other unknown parts are written as one character per class, which reads back as that class. |
 | unknown text | a `\write` to a stream number not pinned adds a line of unknown text to every open file |
-| a set of texts | paths that wrote it differently, each distinct text kept, up to `limits.meaning_set`. A read parts the path per text. |
+| a set of texts | paths that wrote it differently: texts whose lines pair one by one join line by line (`join_written`), so each differing line keeps its values and the file is not kept once per combination of them. Texts that set different things stay apart, up to `limits.meaning_set`. A read parts the path per text. |
 
-- **Join past the bound** (`either_text`): past `limits.meaning_set` texts, the nearest two join (`join_written`): first two whose lines set the same things in the same order, so they pair line by line, then two sharing the most lines (`nearness`). Texts of another shape stay apart. Lines align on what they set (command and first argument, a longest common subsequence). Equal lines stay. Paired lines keep their common start and end around one unknown character. Lines that differ on both sides of a brace, with the same braces, keep them: each part between braces joins on its own (a label's page and value, `{2}{\z@}` against `{3}{\@ne}`, stay two braced parts). A stretch between of unequal length is one unknown line. An unknown line absorbs the one before it, so joins settle.
+- **Join past the bound** (`either_text`): past `limits.meaning_set` texts, the nearest two join (`join_written`): two sharing the most lines (`nearness`). Texts of another shape stay apart. Lines align on what they set (command and first argument, a longest common subsequence). Equal lines stay. Paired lines keep their common start and end around one unknown character. Lines that differ on both sides of a brace, with the same braces, keep them: each part between braces joins on its own (a label's page and value, `{2}{\z@}` against `{3}{\@ne}`, stay two braced parts). A stretch between of unequal length is one unknown line. An unknown line absorbs the one before it, so joins settle.
 - **The build's files** (`.aux`, `.toc`, `.bbl`, …) are the run's own, kept in an overlay. The build reruns until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`). A changed file sends the build round again only when the run read or looked for it. Every file a run wrote goes to the overlay, as TeX leaves it on disk, so the next run reads a part `.aux` the main `.aux` first names, not a missing file. The first run reads none of them, so the second run changing lines is expected. A file in which a later rerun changed an existing line again is widened: each text a later run writes joins into its nearest (`widen_text`, `nearness`), so the number of texts does not grow. Files an engine left on disk are read only with `load.build_files`.
 - **Reads** see the run's files first (§ 537), then the disk. A file neither written nor on disk is absent (§ 1275).
 - **`\openin` streams** hold the lines each has left. Paths that differ in a stream leave it unknown, and `\ifeof` is undecided. A stream number in an interval parts the path per stream (§ 436).
 
 ## Call summaries: what a call did twice
 
-[`src/analysis/machine/calls.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine/calls.rs) summarizes a call by its effect, so parsers that walk unknown text token by token (pgfmath, l3fp, calc, listings) converge after two runs.
+[`src/analysis/machine/calls.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine/calls.rs) summarizes a call by its effect, so parsers that walk unknown text token by token (pgfmath, l3fp, calc, listings) converge after two runs.
 
 | Step | Rule |
 | --- | --- |
@@ -381,7 +383,7 @@ A group or conditional frame may stand for any number of copies (`many`). A loop
 
 ### Joins at `\fi`
 
-Arms of an undecided conditional that reach its `\fi` go on as one path (`fi_mark`, `partner` in [`src/analysis/machine/explore.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine/explore.rs)). The conditional is identified by its `\if…` and the stack depth below it (tex.web §§ 489, 498).
+Arms of an undecided conditional that reach its `\fi` go on as one path (`fi_mark`, `partner` in [`src/analysis/machine/explore.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine/explore.rs)). The conditional is identified by its `\if…` and the stack depth below it (tex.web §§ 489, 498).
 
 - Data becomes an interval or set, differing macros a meaning set, a one-arm macro "that body or undefined". All definitions stay recorded as facts.
 - Arms that leave another way (`\expandafter\@firstoftwo`) join at the next common place.

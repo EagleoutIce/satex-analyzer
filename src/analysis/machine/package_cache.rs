@@ -1315,6 +1315,7 @@ impl Machine<'_> {
             class_options: _,
             identifying: _,
             last_named_cs: _,
+            name_slot: _,
             font_watch: _,
             source_progress: _,
             pages: _,

@@ -1993,6 +1993,13 @@ named_enum! {
     }
 }
 
+impl RegKind {
+    /// A `\chardef`-like constant: its number is its value, nothing is stored.
+    pub fn is_constant(self) -> bool {
+        matches!(self, RegKind::Char | RegKind::MathChar | RegKind::UMathChar)
+    }
+}
+
 /// The number of a register allocated by a modeled `\newcount` and its
 /// relatives, which satex does not number: its value lives on its own name
 /// rather than on the numbered register.
@@ -2072,6 +2079,8 @@ impl Meaning {
             Meaning::Primitive(_) => "primitive",
             Meaning::Macro(_) => "macro",
             Meaning::Char(..) => "char",
+            // `\chardef` and `\mathchardef` make constants, no registers (tex.web § 1224).
+            Meaning::Register(kind, _) if kind.is_constant() => "char",
             Meaning::Register(..) => "register",
             Meaning::Unknown => "unknown",
         }

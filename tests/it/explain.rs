@@ -50,7 +50,7 @@ fn effective_signature_with_an_optional_argument() {
     // is used here instead of redefining a kernel command.
     let analysis = analyze_kernel(r"\newcommand{\quote}[2][see]{#1:#2}");
     let record = explain_one(&analysis, "quote");
-    assert_eq!(str_field(&record, "effective"), Some(r"\quote[see]{1}"));
+    assert_eq!(str_field(&record, "effective"), Some(r"\quote[see]{2}"));
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn a_default_shows_when_it_is_substituted() {
     );
     let record = explain_one(&analysis, "myopt");
     assert_eq!(str_field(&record, "signature"), Some("O{dflt}m"));
-    assert_eq!(str_field(&record, "effective"), Some(r"\myopt[dflt]{1}"));
+    assert_eq!(str_field(&record, "effective"), Some(r"\myopt[dflt]{2}"));
 }
 
 #[test]
@@ -217,7 +217,7 @@ fn section_is_star_optional_mandatory() {
 fn document_command_signature_from_the_probe() {
     let analysis = analyze_kernel(r"\NewDocumentCommand\qx{s O{d} m}{#3}");
     let record = explain_one(&analysis, "qx");
-    assert_eq!(str_field(&record, "effective"), Some(r"\qx*?[d]{1}"));
+    assert_eq!(str_field(&record, "effective"), Some(r"\qx*?[d]{2}"));
 }
 
 #[test]
@@ -419,7 +419,7 @@ fn a_tail_call_adds_what_it_reads_after_the_parameter_text() {
     let analysis = analyze_kernel(r"\newcommand\qtail[2][d]{#1#2}\def\qhead key: #1\;{#1\qtail}");
     let record = explain_one(&analysis, "qhead");
     assert_eq!(str_field(&record, "signature"), Some(r"‹key: ›u{\;}O{d}m"));
-    assert_eq!(str_field(&record, "effective"), Some(r"\qhead key: {1}\;[d]{2}"));
+    assert_eq!(str_field(&record, "effective"), Some(r"\qhead key: {1}\;[d]{3}"));
 }
 
 /// `(name, effective, signature)` for each, from one analysis.
@@ -508,15 +508,15 @@ fn document_commands_of_every_argument_type() {
     assert_calls(
         &analysis,
         &[
-            ("na", r"\na*?+?[1][df]{2}", "st+oO{df}m"),
+            ("na", r"\na*?+?[1][df]{3}", "st+oO{df}m"),
             ("nb", r"\nb(1)<rr>{3}", "r()R<>{rr}m"),
             ("nc", r"\nc|1|?(dd)?{3}", "d||D(){dd}m"),
             ("nd", r"\nd{1}^{2}?_{3}?", "me{^}e{_}"),
             ("nv", r"\nv{1}", "m"),
             ("nh", r"\nh{1}{2}[3]", "mmo"),
             ("menv", r"\menv[1]{2}", "om"),
-            ("oenv", r"\oenv[q]{1}", "O{q}m"),
-            ("drc", r"\drc[x]{1}", "O{x}m"),
+            ("oenv", r"\oenv[q]{2}", "O{q}m"),
+            ("drc", r"\drc[x]{2}", "O{x}m"),
         ],
     );
 }
@@ -936,6 +936,34 @@ fn expands_splits_always_from_conditional_arms() {
     };
     assert_eq!(names("expands"), vec![r"\p", r"\ifx"]);
     assert_eq!(names("may_expand"), vec![r"\q"]);
+}
+
+/// What a macro's expansion gives where TeX reads a quantity.
+#[test]
+fn a_macro_yields_the_quantity_its_body_gives() {
+    let analysis =
+        analyze(r"\countdef\n=10 \dimendef\d=11 \def\v{\the\n}\def\w{\the\d}\def\x{3pt}\def\y{12}\def\z{a}\v\w\x\y\z");
+    let yields = |name| str_field(&explain_one(&analysis, name), "yields").map(str::to_string);
+    let got: Vec<Option<String>> = ["v", "w", "x", "y", "z"].into_iter().map(yields).collect();
+    let want: Vec<Option<String>> =
+        ["number", "dimen", "dimen", "number"].iter().map(|t| Some(t.to_string())).chain([None]).collect();
+    assert_eq!(got, want);
+}
+
+/// A number the run did not know (`\year` with the clock unknown) is no
+/// command a macro expands.
+#[test]
+fn expands_lists_no_unknown_value() {
+    let analysis = analyze("%\\satex@configure{clock=unknown}\n\\def\\y{\\ifnum\\year>0 \\the\\year\\fi}\\y");
+    let record = explain_one(&analysis, "y");
+    let all: Vec<&str> = ["expands", "may_expand"]
+        .iter()
+        .filter_map(|f| record.get(*f).and_then(Json::as_array))
+        .flatten()
+        .filter_map(Json::as_str)
+        .collect();
+    assert!(all.iter().all(|n| !n.contains("unknown")), "{all:?}");
+    assert!(all.contains(&r"\the"), "{all:?}");
 }
 
 /// What a command's calls leave defined: the public name after the call's

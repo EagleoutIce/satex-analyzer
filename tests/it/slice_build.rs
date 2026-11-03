@@ -658,6 +658,68 @@ fn an_empty_slice_with_out_fails_with_its_reason() {
     assert!(!directory.join("slice").exists(), "an empty slice wrote a directory");
 }
 
+/// A token stored on its line and run later (a key's value, run by the
+/// environment that reads the key) slices from where it runs: the
+/// playground's Slice on it gave an empty slice before.
+#[test]
+fn a_stored_token_slices_from_where_it_runs() {
+    let directory = scratch("stored-token");
+    let source = "\\documentclass{article}\n\\usepackage{listings}\n\\lstset{basicstyle=\\ttfamily\\small}\n\
+                  \\begin{document}\n\\begin{lstlisting}\nx\n\\end{lstlisting}\n\\end{document}\n";
+    std::fs::write(directory.join("doc.tex"), source).unwrap();
+    let col = source.lines().nth(2).and_then(|l| l.find("\\small")).expect("the stored token") + 1;
+    let output = crate::support::satex()
+        .args(["slice", "--at", &format!("3:{col}"), "--out", "slice", "-f", "doc.tex"])
+        .current_dir(&directory)
+        .output()
+        .expect("satex runs");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "no slice: {stderr}");
+    let sliced = std::fs::read_to_string(directory.join("slice/doc.tex")).expect("the sliced file");
+    assert!(sliced.contains("\\lstset") && sliced.contains("lstlisting"), "the slice misses its run:\n{sliced}");
+}
+
+/// A line of plain text holds no construct: Slice on it keeps the line, read
+/// after the construct before it, instead of an empty slice.
+#[test]
+fn a_plain_text_line_slices_to_itself() {
+    let directory = scratch("plain-line");
+    let source = "\\documentclass{article}\n\\begin{document}\n\\textbf{bold and\nplain words here}\n\\end{document}\n";
+    std::fs::write(directory.join("doc.tex"), source).unwrap();
+    let output = crate::support::satex()
+        .args(["slice", "--at", "4:7", "--out", "slice", "-f", "doc.tex"])
+        .current_dir(&directory)
+        .output()
+        .expect("satex runs");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "no slice: {stderr}");
+    let sliced = std::fs::read_to_string(directory.join("slice/doc.tex")).expect("the sliced file");
+    assert!(
+        sliced.contains("plain words here") && sliced.contains("\\textbf{bold"),
+        "the line or its reader is missing:\n{sliced}"
+    );
+}
+
+/// A line of a macro body runs only at the calls: Slice on it slices the
+/// definition. The magic comment that picks the engine stays, so the slice
+/// builds with the same one (a plain TeX file is no LaTeX file).
+#[test]
+fn a_macro_body_line_slices_its_definition_with_the_magic_comment() {
+    let directory = scratch("body-line");
+    let source = "% !TeX program = tex\n\\def\\twice#1{%\n  #1#1%\n}\n\\twice{ab}\n\\bye\n";
+    std::fs::write(directory.join("doc.tex"), source).unwrap();
+    let output = crate::support::satex()
+        .args(["slice", "--at", "3:3", "--out", "slice", "-f", "doc.tex"])
+        .current_dir(&directory)
+        .output()
+        .expect("satex runs");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "no slice: {stderr}");
+    let sliced = std::fs::read_to_string(directory.join("slice/doc.tex")).expect("the sliced file");
+    assert!(sliced.starts_with("% !TeX program = tex"), "the magic comment is lost:\n{sliced}");
+    assert!(sliced.contains("\\def\\twice") && sliced.contains("#1#1"), "the definition is missing:\n{sliced}");
+}
+
 // --- the oracle -----------------------------------------------------------
 
 /// The playground's examples, sliced at a few lines each: every slice has

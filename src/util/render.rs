@@ -139,9 +139,9 @@ fn location(record: &Record) -> String {
 }
 
 #[rustfmt::skip]
-const COLUMNS: [&str; 52] = [
+const COLUMNS: [&str; 53] = [
     "index", "warning", "covered", "rules", "id", "step", "severity", "category", "number", "code", "kind", "status",
-    "tag", "name", "callee", "key", "subject", "for", "when", "context", "redefined", "effective", "error",
+    "tag", "name", "callee", "key", "subject", "for", "means", "when", "context", "redefined", "effective", "error",
     "signature", "roles", "types", "parameters", "arity", "takes", "uses", "count", "value", "default", "governs", "package",
     "class", "by", "detail", "fix", "message", "does", "comment", "arguments", "documentation", "expands", "may_expand", "creates", "creates_internal", "body", "reference", "root",
     "file",
@@ -585,11 +585,12 @@ fn plural(count: usize, word: &str) -> String {
 /// One finding, never cut: `place  severity  code  message`, wrapped at the
 /// terminal width rather than elided, with `fix: ...` indented below it when
 /// the rule suggests one.
-/// The shape the documentation gives a severity: ◆ error, ▲ warning, ● info.
+/// The shape the documentation gives a severity: ◆ error, ▲ warning, ● info, ✓ hint.
 fn severity_symbol(severity: &str) -> &'static str {
     match severity {
         "error" => "\u{25C6}",
         "warning" => "\u{25B2}",
+        "hint" => "\u{2713}",
         _ => "\u{25CF}",
     }
 }
@@ -1498,11 +1499,12 @@ fn sarif_rule(code: &str) -> Json {
     }
 }
 
-/// LSP severities (`DiagnosticSeverity`): 1 error, 2 warning, 3 information.
+/// LSP severities (`DiagnosticSeverity`): 1 error, 2 warning, 3 information, 4 hint.
 fn lsp_severity(record: &Record) -> u8 {
     match record.get("severity").and_then(Json::as_str) {
         Some("error") => 1,
         Some("warning") => 2,
+        Some("hint") => 4,
         _ => 3,
     }
 }

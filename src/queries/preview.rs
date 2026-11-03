@@ -16,14 +16,30 @@ pub enum Stroke {
     Dash,
     Arrows,
     Pattern,
+    /// A color: the key's value names one.
+    Color,
+    /// A node: the key's value names one (`right of=a`).
+    Node,
+    /// A node after `of` (positioning's `right=of a`).
+    NodeOf,
 }
 
 impl Stroke {
-    const SETTERS: [(&'static str, Stroke); 4] = [
+    const SETTERS: [(&'static str, Stroke); 12] = [
         ("pgfsetlinewidth", Stroke::Width),
         ("pgfsetdash", Stroke::Dash),
         ("pgfsetarrows", Stroke::Arrows),
         ("pgfsetfillpattern", Stroke::Pattern),
+        ("pgfsetcolor", Stroke::Color),
+        ("pgfsetstrokecolor", Stroke::Color),
+        ("pgfsetfillcolor", Stroke::Color),
+        ("pgfutil@colorlet", Stroke::Color),
+        ("pgfutil@doifcolorelse", Stroke::Color),
+        // the color a node's text takes (tikz.code.tex `text`)
+        ("tikz@textcolor", Stroke::Color),
+        // tikz's `right of` and the like, and positioning's `right=of`
+        ("tikz@of", Stroke::Node),
+        ("tikz@lib@place@handle@", Stroke::NodeOf),
     ];
 }
 

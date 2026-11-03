@@ -11,7 +11,7 @@
             "precision",
             "soundness"
           ],
-          "x-example": "off: a path where \\ifx went the impossible way inside a package stays, with its error"
+          "x-example": "off: a path where `\\ifx` went the impossible way inside a package stays, with its error"
         },
         "assume_environment": {
           "default": true,
@@ -21,7 +21,7 @@
             "precision",
             "soundness"
           ],
-          "x-example": "off: \\directlua{tex.print(os.getenv(\"HOME\"))} prints unknown text"
+          "x-example": "off: `\\directlua{tex.print(os.getenv(\"HOME\"))}` prints unknown text"
         },
         "assume_forced_page_breaks": {
           "default": true,
@@ -31,7 +31,7 @@
             "precision",
             "soundness"
           ],
-          "x-example": "off: \\thepage after a long paragraph may also be one more"
+          "x-example": "off: `\\thepage` after a long paragraph may also be one more"
         },
         "assume_packages_close_groups": {
           "default": true,
@@ -50,7 +50,7 @@
               "hook": null
             }
           ],
-          "description": "where all paths still apart are merged into one, reported as paths-joined-at",
+          "description": "where all paths still apart are merged into one, reported as paths-joined-at `- hook: begindocument`  # an lthooks hook, when it is used",
           "items": {
             "maxProperties": 1,
             "minProperties": 1,
@@ -69,7 +69,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "- hook: begindocument\npaths still apart at \\begin{document} merge there, so the body is read once"
+          "x-example": "`- hook: begindocument`\npaths still apart at `\\begin{document}` merge there, so the body is read once"
         }
       },
       "type": "object"
@@ -81,7 +81,7 @@
       "x-affects": [
         "speed"
       ],
-      "x-example": "\\edef\\x{\\ifdraft a\\else b\\fi c}: on, one run with a or b, off, two runs"
+      "x-example": "`\\edef\\x{\\ifdraft a\\else b\\fi c}`: on, one run with a or b, off, two runs"
     },
     "at_letter": {
       "default": false,
@@ -90,7 +90,7 @@
       "x-affects": [
         "precision"
       ],
-      "x-example": "on: \\@ifnextchar reads as one name in a file without \\makeatletter"
+      "x-example": "on: `\\@ifnextchar` reads as one name in a file without `\\makeatletter`"
     },
     "bib": {
       "description": "the bibliography as the build makes it",
@@ -106,7 +106,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "backend: bibtex\n\\usepackage{biblatex} then runs bibtex in the build, not biber",
+          "x-example": "`backend: bibtex`\n`\\usepackage{biblatex}` then runs bibtex in the build, not biber",
           "x-plugin": "bib"
         }
       },
@@ -119,7 +119,7 @@
           "x-affects": [
             "speed"
           ],
-          "x-example": "dir: /fast-disk/satex"
+          "x-example": "`dir: /fast-disk/satex`"
         },
         "enabled": {
           "default": true,
@@ -128,7 +128,7 @@
           "x-affects": [
             "speed"
           ],
-          "x-example": "off: each run reads latex.ltx again, seconds instead of milliseconds"
+          "x-example": "off: each run reads `latex.ltx` again, seconds instead of milliseconds"
         },
         "index": {
           "description": "packages `satex cache build` prepares, or, when empty, whatever ordinary runs already found expensive to interpret (measured, not a hand-picked list)",
@@ -141,7 +141,7 @@
                 "speed",
                 "memory"
               ],
-              "x-example": "off: only satex cache build fills the cache"
+              "x-example": "off: only `satex cache build` fills the cache"
             },
             "class": {
               "default": "article",
@@ -150,7 +150,7 @@
               "x-affects": [
                 "speed"
               ],
-              "x-example": "class: scrartcl prepares caches that fit KOMA documents"
+              "x-example": "`class: scrartcl` prepares caches that fit KOMA documents"
             },
             "common": {
               "default": [
@@ -183,13 +183,25 @@
               "default": [],
               "description": "engines to prepare for. Empty: the engine in use",
               "items": {
+                "enum": [
+                  "tex",
+                  "pdftex",
+                  "luatex",
+                  "xetex"
+                ],
+                "enumDescriptions": [
+                  "the original TeX engine, 8-bit input",
+                  "pdfTeX, the default for LaTeX, 8-bit input",
+                  "LuaTeX, UTF-8 input and Lua",
+                  "XeTeX, UTF-8 input and system fonts"
+                ],
                 "type": "string"
               },
               "type": "array",
               "x-affects": [
                 "speed"
               ],
-              "x-example": "engines: [pdftex, luatex]"
+              "x-example": "`engines: [pdftex, luatex]`"
             },
             "packages": {
               "default": [],
@@ -201,7 +213,7 @@
               "x-affects": [
                 "speed"
               ],
-              "x-example": "packages: [tikz, pgfplots]"
+              "x-example": "`packages: [tikz, pgfplots]`"
             }
           },
           "type": "object"
@@ -243,7 +255,7 @@
       "x-affects": [
         "precision"
       ],
-      "x-example": "clock: 2026-09-29\n\\today is September 29, 2026"
+      "x-example": "`clock: 2026-09-29`\n`\\today` is September 29, 2026"
     },
     "conventions": {
       "description": "how TeX is usually written, where the text alone does not say",
@@ -333,7 +345,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "body: 0 hides it"
+              "x-example": "`body: 0` hides it"
             },
             "calls": {
               "default": 4,
@@ -343,7 +355,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "calls: 10"
+              "x-example": "`calls: 10`"
             },
             "environment_arguments": {
               "description": "environments whose \\begin reads its arguments through an inner macro, with how many",
@@ -393,7 +405,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "environment_arguments: {tabular: 1, tblr: 1}"
+              "x-example": "`environment_arguments: {tabular: 1, tblr: 1}`"
             },
             "identified": {
               "default": 400,
@@ -404,7 +416,7 @@
                 "output",
                 "speed"
               ],
-              "x-example": "identified: 0 lists names only"
+              "x-example": "`identified: 0` lists names only"
             },
             "key_depth": {
               "default": 3,
@@ -414,7 +426,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "key_depth: 1"
+              "x-example": "`key_depth: 1`"
             },
             "pick": {
               "default": [
@@ -434,7 +446,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "pick+: [autoref]"
+              "x-example": "`pick+: [autoref]`"
             },
             "shown": {
               "default": 300,
@@ -445,7 +457,7 @@
                 "output",
                 "speed"
               ],
-              "x-example": "shown: 50"
+              "x-example": "`shown: 50`"
             },
             "tiers": {
               "description": "the rank of each kind of command, lowest listed first",
@@ -458,7 +470,7 @@
                   "x-affects": [
                     "output"
                   ],
-                  "x-example": "document: 1"
+                  "x-example": "`document: 1`"
                 },
                 "internal": {
                   "default": 3,
@@ -468,7 +480,7 @@
                   "x-affects": [
                     "output"
                   ],
-                  "x-example": "internal: 9"
+                  "x-example": "`internal: 9`"
                 },
                 "package": {
                   "default": 1,
@@ -478,7 +490,7 @@
                   "x-affects": [
                     "output"
                   ],
-                  "x-example": "package: 0"
+                  "x-example": "`package: 0`"
                 },
                 "primitive": {
                   "default": 2,
@@ -488,7 +500,7 @@
                   "x-affects": [
                     "output"
                   ],
-                  "x-example": "primitive: 3"
+                  "x-example": "`primitive: 3`"
                 }
               },
               "type": "object"
@@ -512,7 +524,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "def: ['@namedef']"
+              "x-example": "`def: ['@namedef']`"
             },
             "edef": {
               "default": [
@@ -526,7 +538,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "edef: [csedef]"
+              "x-example": "`edef: [csedef]`"
             },
             "gdef": {
               "default": [
@@ -540,7 +552,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "gdef: [csgdef]"
+              "x-example": "`gdef: [csgdef]`"
             },
             "let": {
               "default": [
@@ -554,7 +566,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "let: [cslet]"
+              "x-example": "`let: [cslet]`"
             },
             "let_to": {
               "default": [
@@ -568,7 +580,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "let_to: [letcs]"
+              "x-example": "`let_to: [letcs]`"
             },
             "test": {
               "default": [
@@ -583,7 +595,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "test: ['@ifundefined']"
+              "x-example": "`test: ['@ifundefined']`"
             },
             "use": {
               "default": [
@@ -598,7 +610,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "use: ['@nameuse']"
+              "x-example": "`use: ['@nameuse']`"
             },
             "xdef": {
               "default": [
@@ -612,7 +624,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "xdef: [csxdef]"
+              "x-example": "`xdef: [csxdef]`"
             }
           },
           "type": "object"
@@ -627,7 +639,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "definers: ['\\defmacro']\n\\defmacro\\foo{...} then counts as a definition of \\foo"
+          "x-example": "`definers: ['\\defmacro']`\n`\\defmacro\\foo{...}` then counts as a definition of `\\foo`"
         },
         "fonts": {
           "description": "how fonts are named",
@@ -639,7 +651,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "roman: lmr"
+              "x-example": "`roman: lmr`"
             },
             "slanted": {
               "default": [
@@ -654,7 +666,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "slanted+: [scdefault]"
+              "x-example": "`slanted+: [scdefault]`"
             }
           },
           "type": "object"
@@ -673,7 +685,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "add '^my@' to hide your package's helper macros"
+          "x-example": "add `'^my@'` to hide your package's helper macros"
         },
         "math": {
           "description": "how math is written",
@@ -691,7 +703,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "accents+: [widehat]"
+              "x-example": "`accents+: [widehat]`"
             },
             "after": {
               "default": 24,
@@ -701,7 +713,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "after: 8"
+              "x-example": "`after: 8`"
             },
             "lexemes": {
               "default": 400000,
@@ -712,7 +724,7 @@
                 "output",
                 "speed"
               ],
-              "x-example": "lexemes: 100000"
+              "x-example": "`lexemes: 100000`"
             },
             "near": {
               "default": 400,
@@ -722,7 +734,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "near: 100"
+              "x-example": "`near: 100`"
             },
             "tags": {
               "default": [
@@ -738,7 +750,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "tags+: [mytag]"
+              "x-example": "`tags+: [mytag]`"
             }
           },
           "type": "object"
@@ -811,7 +823,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "english+: [irish]"
+              "x-example": "`english+: [irish]`"
             },
             "languages": {
               "default": [
@@ -826,7 +838,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "languages+: [translations]"
+              "x-example": "`languages+: [translations]`"
             },
             "ligature": {
               "default": 3,
@@ -837,7 +849,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "ligature: 4"
+              "x-example": "`ligature: 4`"
             }
           },
           "type": "object"
@@ -945,7 +957,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "environments: {tabular: 0, tblr: 0}"
+              "x-example": "`environments: {tabular: 0, tblr: 0}`"
             },
             "numbers": {
               "default": 2,
@@ -956,7 +968,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "numbers: 3"
+              "x-example": "`numbers: 3`"
             },
             "unit_length": {
               "default": 6,
@@ -966,7 +978,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "unit_length: 3"
+              "x-example": "`unit_length: 3`"
             }
           },
           "type": "object"
@@ -984,7 +996,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "abbreviations: [Dr., Fig., e.g., i.e.]\nDr. Smith then asks for Dr.\\ Smith"
+              "x-example": "`abbreviations: [Dr., Fig., e.g., i.e.]`\n`Dr. Smith` then asks for `Dr.\\ Smith`"
             },
             "before": {
               "default": [
@@ -1001,7 +1013,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "before+: ['\\autocite']\nSection \\autocite{x} then asks for Section~\\autocite{x}"
+              "x-example": "`before+: ['\\autocite']`\nSection `\\autocite{x}` then asks for `Section~\\autocite{x}`"
             },
             "footnote": {
               "default": [
@@ -1016,7 +1028,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "footnote+: ['\\tablefootnote']"
+              "x-example": "`footnote+: ['\\tablefootnote']`"
             },
             "hard": {
               "default": [
@@ -1031,7 +1043,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "hard+: ['\\nbsp']"
+              "x-example": "`hard+: ['\\nbsp']`"
             },
             "naming": {
               "default": [
@@ -1056,7 +1068,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "naming+: ['\\zcref']"
+              "x-example": "`naming+: ['\\zcref']`"
             },
             "unspaced": {
               "default": [
@@ -1070,7 +1082,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "unspaced+: ['\\glsadd']"
+              "x-example": "`unspaced+: ['\\glsadd']`"
             }
           },
           "type": "object"
@@ -1085,7 +1097,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "legacy: SI"
+              "x-example": "`legacy: SI`"
             },
             "plural": {
               "default": 3,
@@ -1096,7 +1108,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "plural: 4"
+              "x-example": "`plural: 4`"
             },
             "prefixes": {
               "description": "SI prefixes with siunitx's macro for each, the SI brochure's table 7",
@@ -1210,7 +1222,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "prefixes: {k: '\\kilo'}"
+              "x-example": "`prefixes: {k: '\\kilo'}`"
             },
             "quantity": {
               "default": "qty",
@@ -1219,7 +1231,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "quantity: SI\n5 kg then becomes \\SI{5}{\\kilo\\gram}"
+              "x-example": "`quantity: SI`\n`5 kg` then becomes `\\SI{5}{\\kilo\\gram}`"
             },
             "symbols": {
               "description": "unit symbols with siunitx's macro for each, the SI brochure's tables 1 to 4",
@@ -1405,7 +1417,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "symbols: {m: '\\metre', px: '\\pixel'}"
+              "x-example": "`symbols: {m: '\\metre', px: '\\pixel'}`"
             },
             "unprefixed": {
               "default": [
@@ -1425,7 +1437,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "unprefixed+: [px]"
+              "x-example": "`unprefixed+: [px]`"
             }
           },
           "type": "object"
@@ -1441,7 +1453,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "file: build/deps.txt",
+          "x-example": "`file: build/deps.txt`",
           "x-plugin": "depp"
         },
         "renames": {
@@ -1456,7 +1468,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "renames: {base: latex, graphics-def: graphics}",
+          "x-example": "`renames: {base: latex, graphics-def: graphics}`",
           "x-plugin": "depp"
         },
         "rules": {
@@ -1472,7 +1484,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "rules+: ['.+/mytree/([^/]+)']",
+          "x-example": "`rules+: ['.+/mytree/([^/]+)']`",
           "x-plugin": "depp"
         }
       },
@@ -1490,7 +1502,7 @@
             "output",
             "speed"
           ],
-          "x-example": "1: only the files a manual reads itself",
+          "x-example": "`1`: only the files a manual reads itself",
           "x-plugin": "docs"
         },
         "describe": {
@@ -1507,7 +1519,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "describe: [DescribeMacro] mines no environments",
+          "x-example": "`describe: [DescribeMacro]` mines no environments",
           "x-plugin": "docs"
         },
         "doc_root": {
@@ -1517,7 +1529,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "doc_root: manuals",
+          "x-example": "`doc_root: manuals`",
           "x-plugin": "docs"
         },
         "extensions": {
@@ -1534,7 +1546,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "extensions: [dtx]",
+          "x-example": "`extensions: [dtx]`",
           "x-plugin": "docs"
         },
         "inline": {
@@ -1559,7 +1571,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "\\begin{function}{\\tl_set:Nn} documents \\tl_set:Nn",
+          "x-example": "`\\begin{function}{\\tl_set:Nn}` documents `\\tl_set:Nn`",
           "x-plugin": "docs"
         },
         "ltxdoc_environments": {
@@ -1574,7 +1586,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "\\begin{macro}{\\x} documents \\x",
+          "x-example": "`\\begin{macro}{\\x}` documents `\\x`",
           "x-plugin": "docs"
         },
         "reads": {
@@ -1592,7 +1604,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "source2e reads lterror.dtx, so a hover on a kernel command links source2e",
+          "x-example": "source2e reads `lterror.dtx`, so a hover on a kernel command links source2e",
           "x-plugin": "docs"
         },
         "source_root": {
@@ -1602,13 +1614,14 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "source_root: src looks in texmf/src/latex/pkg",
+          "x-example": "`source_root: src` looks in `texmf/src/latex/pkg`",
           "x-plugin": "docs"
         },
         "usage_environments": {
           "default": [
             "command",
-            "environment"
+            "environment",
+            "key"
           ],
           "description": "the environments whose argument is a command or environment followed by its usage",
           "items": {
@@ -1618,7 +1631,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "\\begin{command}{\\logo\\marg{text}} documents \\logo",
+          "x-example": "`\\begin{command}{\\logo\\marg{text}}` documents `\\logo`",
           "x-plugin": "docs"
         },
         "usage_lines": {
@@ -1629,7 +1642,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "12: \\DescribeMacro{\\x} then \\x{arg} within 12 lines gives the usage",
+          "x-example": "`12`: `\\DescribeMacro{\\x}` then `\\x{arg}` within 12 lines gives the usage",
           "x-plugin": "docs"
         }
       },
@@ -1647,7 +1660,7 @@
       "x-affects": [
         "precision"
       ],
-      "x-example": "engine: luatex\n\\directlua is known and \\pdfliteral is not"
+      "x-example": "`engine: luatex`\n`\\directlua` is known and `\\pdfliteral` is not"
     },
     "expand_in_reports": {
       "default": [],
@@ -1659,7 +1672,7 @@
       "x-affects": [
         "output"
       ],
-      "x-example": "expand_in_reports: ['\\today']"
+      "x-example": "`expand_in_reports: ['\\today']`"
     },
     "gaps": {
       "properties": {
@@ -1676,7 +1689,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "off: nothing is appended to gaps.ndjson"
+          "x-example": "off: nothing is appended to `gaps.ndjson`"
         },
         "report": {
           "default": true,
@@ -1703,7 +1716,7 @@
       "x-affects": [
         "precision"
       ],
-      "x-example": "\\ifnum\\interactionmode=0 is true under batchmode"
+      "x-example": "`\\ifnum\\interactionmode=0` is true under batchmode"
     },
     "kernel": {
       "description": "the format the engine starts with: latex2e, plain, context (experimental) or none",
@@ -1718,7 +1731,7 @@
         "precision",
         "output"
       ],
-      "x-example": "kernel: plain\n\\count10=1 is plain TeX's way and gets no primitive-tex-command",
+      "x-example": "`kernel: plain`\n`\\count10=1` is plain TeX's way and gets no primitive-tex-command",
       "x-plugin": "format"
     },
     "latex_alternatives": {
@@ -1736,7 +1749,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "two paths at one \\fi that only differ in a later word are merged sooner when lower"
+          "x-example": "two paths at one `\\fi` that only differ in a later word are merged sooner when lower"
         },
         "build_runs": {
           "default": 5,
@@ -1747,7 +1760,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "1: \\ref and \\tableofcontents read nothing from an earlier run",
+          "x-example": "`1`: `\\ref` and `\\tableofcontents` read nothing from an earlier run",
           "x-plugin": "build"
         },
         "cache_size": {
@@ -1757,7 +1770,7 @@
           "x-affects": [
             "speed"
           ],
-          "x-example": "cache_size: 500MiB keeps fewer packages ready"
+          "x-example": "`cache_size: 500MiB` keeps fewer packages ready"
         },
         "call_summary_after": {
           "default": 2,
@@ -1768,7 +1781,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "\\pgfmathparse{\\x} with unknown \\x reuses what earlier calls did"
+          "x-example": "`\\pgfmathparse{\\x}` with unknown `\\x` reuses what earlier calls did"
         },
         "choices": {
           "default": 8,
@@ -1779,7 +1792,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "higher: \\ifdraft inside a command with many \\if is still followed both ways"
+          "x-example": "higher: `\\ifdraft` inside a command with many `\\if` is still followed both ways"
         },
         "conditional_tokens": {
           "default": 1048576,
@@ -1789,7 +1802,7 @@
           "x-affects": [
             "memory"
           ],
-          "x-example": "an \\ifcase with a huge body is cut here"
+          "x-example": "an `\\ifcase` with a huge body is cut here"
         },
         "cycle_after": {
           "default": 2,
@@ -1799,7 +1812,7 @@
           "x-affects": [
             "speed"
           ],
-          "x-example": "\\def\\a{\\a}\\a ends after 2 identical rounds"
+          "x-example": "`\\def\\a{\\a}\\a` ends after 2 identical rounds"
         },
         "degrade_at_percent": {
           "default": 100,
@@ -1811,7 +1824,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "80: a huge document finishes with fewer paths kept"
+          "x-example": "`80`: a huge document finishes with fewer paths kept"
         },
         "expansion_depth": {
           "default": 512,
@@ -1822,7 +1835,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "\\def\\a{\\a\\relax} stops after 512 levels with a finding"
+          "x-example": "`\\def\\a{\\a\\relax}` stops after 512 levels with a finding"
         },
         "expansion_stack": {
           "default": 4000,
@@ -1842,7 +1855,7 @@
           "x-affects": [
             "memory"
           ],
-          "x-example": "a runaway \\edef stops here instead of filling memory"
+          "x-example": "a runaway `\\edef` stops here instead of filling memory"
         },
         "facts": {
           "default": 2000000,
@@ -1884,7 +1897,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "a \\loop whose body depends on the round stays exact longer when higher"
+          "x-example": "a `\\loop` whose body depends on the round stays exact longer when higher"
         },
         "held_tokens": {
           "default": 4000000,
@@ -1904,7 +1917,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "{0..10, 100..120} stays two ranges instead of 0..120"
+          "x-example": "`{0..10, 100..120}` stays two ranges instead of `0..120`"
         },
         "join_arms": {
           "default": 32,
@@ -1915,7 +1928,7 @@
             "precision",
             "memory"
           ],
-          "x-example": "\\ifdraft\\def\\a{1}\\def\\b{1}\\else\\def\\a{2}\\def\\b{2}\\fi: a and b stay paired"
+          "x-example": "`\\ifdraft\\def\\a{1}\\def\\b{1}\\else\\def\\a{2}\\def\\b{2}\\fi`: a and b stay paired"
         },
         "join_names": {
           "default": 64,
@@ -1926,7 +1939,7 @@
             "precision",
             "memory"
           ],
-          "x-example": "higher: more names keep their pairing after an \\if"
+          "x-example": "higher: more names keep their pairing after an `\\if`"
         },
         "line_steps": {
           "default": 100000000,
@@ -1937,7 +1950,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "a line whose \\foreach runs forever is cut, and the next line is read"
+          "x-example": "a line whose `\\foreach` runs forever is cut, and the next line is read"
         },
         "loop_entries": {
           "default": 256,
@@ -1948,7 +1961,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "seven \\int_to_Hex:n calls in one \\edef stay exact"
+          "x-example": "seven `\\int_to_Hex:n` calls in one `\\edef` stay exact"
         },
         "loop_heads": {
           "default": 512,
@@ -1959,7 +1972,7 @@
             "precision",
             "memory"
           ],
-          "x-example": "a document with thousands of \\foreach loops may need more"
+          "x-example": "a document with thousands of `\\foreach` loops may need more"
         },
         "meaning_set": {
           "default": 8,
@@ -1970,7 +1983,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "\\x defined in 3 branches keeps all 3 meanings"
+          "x-example": "`\\x` defined in 3 branches keeps all 3 meanings"
         },
         "meaning_splits": {
           "default": 4,
@@ -1981,7 +1994,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "\\x defined differently in two branches is followed per meaning up to this"
+          "x-example": "`\\x` defined differently in two branches is followed per meaning up to this"
         },
         "memory": {
           "default": "8.0 GiB",
@@ -1990,7 +2003,7 @@
           "x-affects": [
             "memory"
           ],
-          "x-example": "memory: 2GiB stops a runaway run before it slows the machine"
+          "x-example": "`memory: 2GiB` stops a runaway run before it slows the machine"
         },
         "paths": {
           "default": 16,
@@ -2002,7 +2015,7 @@
             "speed",
             "memory"
           ],
-          "x-example": "\\ifdraft ... \\fi many times over: more paths keep each combination apart"
+          "x-example": "`\\ifdraft ... \\fi` many times over: more paths keep each combination apart"
         },
         "probe_steps": {
           "default": 2000000,
@@ -2024,7 +2037,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "a macro that calls itself while an \\if is unknown stops at 100 levels"
+          "x-example": "a macro that calls itself while an `\\if` is unknown stops at 100 levels"
         },
         "repeat_failures": {
           "default": 8,
@@ -2046,7 +2059,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "a huge \\write to the .aux is read without its labels past this"
+          "x-example": "a huge `\\write` to the `.aux` is read without its labels past this"
         },
         "save_stack": {
           "default": 2000000,
@@ -2056,7 +2069,7 @@
           "x-affects": [
             "memory"
           ],
-          "x-example": "a group with millions of \\def stops here"
+          "x-example": "a group with millions of `\\def` stops here"
         },
         "seconds": {
           "default": 300,
@@ -2066,7 +2079,7 @@
           "x-affects": [
             "speed"
           ],
-          "x-example": "seconds: 30 for an editor that should never wait long"
+          "x-example": "`seconds: 30` for an editor that should never wait long"
         },
         "site_expansions": {
           "default": 16384,
@@ -2088,7 +2101,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "lower: a \\foreach with unknown bounds finishes faster but knows less"
+          "x-example": "lower: a `\\foreach` with unknown bounds finishes faster but knows less"
         },
         "steps": {
           "default": 4000000000,
@@ -2108,7 +2121,7 @@
           "x-affects": [
             "speed"
           ],
-          "x-example": "threads: 1 keeps the walk on one core"
+          "x-example": "`threads: 1` keeps the walk on one core"
         },
         "trace": {
           "default": 200000,
@@ -2129,7 +2142,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "\\count0 is 1 or 5: kept as {1, 5}, not 1..5"
+          "x-example": "`\\count0` is 1 or 5: kept as `{1, 5}`, not `1..5`"
         },
         "vertices": {
           "default": 400000,
@@ -2151,7 +2164,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "\\loop\\advance\\c by1 ... \\repeat with unknown bound: c becomes a range after 3 rounds"
+          "x-example": "`\\loop\\advance\\c by1 ... \\repeat` with unknown bound: c becomes a range after 3 rounds"
         }
       },
       "type": "object"
@@ -2169,7 +2182,7 @@
       "x-affects": [
         "output"
       ],
-      "x-example": "lint_off+: [unused-label]\nunused labels are no longer reported"
+      "x-example": "`lint_off+: [unused-label]`\nunused labels are no longer reported"
     },
     "lints": {
       "properties": {
@@ -2195,7 +2208,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "0.3: a preamble taking a third of the run is reported"
+              "x-example": "`0.3`: a preamble taking a third of the run is reported"
             },
             "tokens": {
               "default": 2000000,
@@ -2227,7 +2240,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "% TODO cite this gets a finding"
+              "x-example": "`% TODO cite this` gets a finding"
             }
           },
           "type": "object"
@@ -2241,7 +2254,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "$a_1 + \\ldots + a_n$ is reported, \\cdots is wanted"
+              "x-example": "`$a_1 + \\ldots + a_n$` is reported, `\\cdots` is wanted"
             }
           },
           "type": "object"
@@ -2271,7 +2284,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "a two-row table with \\hline gets no finding"
+              "x-example": "a two-row table with `\\hline` gets no finding"
             }
           },
           "type": "object"
@@ -2288,7 +2301,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "ignore: ['^todo']"
+              "x-example": "`ignore: ['^todo']`"
             },
             "pgf_keys": {
               "default": false,
@@ -2297,7 +2310,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "\\tikzset{mystyle/.style={red}} never used: reported when on"
+              "x-example": "`\\tikzset{mystyle/.style={red}}` never used: reported when on"
             },
             "report_public": {
               "default": true,
@@ -2306,7 +2319,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "\\newcommand\\Hello{hi} never used: reported only when on"
+              "x-example": "`\\newcommand\\Hello{hi}` never used: reported only when on"
             }
           },
           "type": "object"
@@ -2324,7 +2337,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "patterns: ['e.g. ']"
+              "x-example": "`patterns: ['e.g. ']`"
             },
             "regexes": {
               "default": [],
@@ -2336,7 +2349,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "regexes: ['\\bvery\\b']"
+              "x-example": "`regexes: ['\\bvery\\b']`"
             }
           },
           "type": "object"
@@ -2357,7 +2370,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "pages 1-5 is reported, 1--5 is not"
+              "x-example": "pages `1-5` is reported, `1--5` is not"
             },
             "except": {
               "default": [
@@ -2371,7 +2384,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "except: [Navier--Stokes]"
+              "x-example": "`except: [Navier--Stokes]`"
             },
             "letters": {
               "default": [
@@ -2387,7 +2400,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "well--known is reported, well-known is not"
+              "x-example": "`well--known` is reported, `well-known` is not"
             },
             "words": {
               "default": [
@@ -2403,7 +2416,7 @@
               "x-affects": [
                 "output"
               ],
-              "x-example": "a -- b is fine with 2 in the list"
+              "x-example": "`a -- b` is fine with 2 in the list"
             }
           },
           "type": "object"
@@ -2449,7 +2462,7 @@
             "xdy",
             "log"
           ],
-          "description": "file endings that count as build files",
+          "description": "endings of files an earlier build left on disk. satex reads them only with build_files on. It tracks every file its own run writes, whatever the ending",
           "items": {
             "type": "string"
           },
@@ -2467,7 +2480,7 @@
             "soundness",
             "precision"
           ],
-          "x-example": "on: \\ref{x} reads the number a stale .aux holds\noff: it reads what this run's own pass computes"
+          "x-example": "on: `\\ref{x}` reads the number a stale `.aux` holds\noff: it reads what this run's own pass computes"
         },
         "classes": {
           "default": true,
@@ -2477,7 +2490,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "\\documentclass{article} \\section{Intro}\noff: \\section is reported as undefined"
+          "x-example": "`\\documentclass{article} \\section{Intro}`\noff: `\\section` is reported as undefined"
         },
         "expect": {
           "default": [],
@@ -2489,7 +2502,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "expect: [beamer]\na beamer theme .sty then sees \\usebeamercolor defined"
+          "x-example": "`expect: [beamer]`\na beamer theme `.sty` then sees `\\usebeamercolor` defined"
         },
         "expect_detect": {
           "default": true,
@@ -2498,7 +2511,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "a .sty that uses \\setbeamercolor gets beamer loaded first"
+          "x-example": "a `.sty` that uses `\\setbeamercolor` gets beamer loaded first"
         },
         "format": {
           "default": true,
@@ -2508,7 +2521,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "\\newcommand\\x{1}\noff: \\newcommand is unknown"
+          "x-example": "`\\newcommand\\x{1}`\noff: `\\newcommand` is unknown"
         },
         "inputs": {
           "default": true,
@@ -2518,7 +2531,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "\\input{chapter1} \\ref{sec:one}\noff: the label from chapter1.tex is reported as undefined"
+          "x-example": "`\\input{chapter1} \\ref{sec:one}`\noff: the label from `chapter1.tex` is reported as undefined"
         },
         "packages": {
           "default": true,
@@ -2528,7 +2541,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "\\usepackage{amsmath} \\[ \\text{x} \\]\noff: \\text is reported as undefined"
+          "x-example": "`\\usepackage{amsmath} \\[ \\text{x} \\]`\noff: `\\text` is reported as undefined"
         },
         "skip": {
           "default": [],
@@ -2541,7 +2554,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "skip: [tikz]\nno \\tikz picture is followed"
+          "x-example": "`skip: [tikz]`\nno `\\tikz` picture is followed"
         }
       },
       "type": "object"
@@ -2561,7 +2574,7 @@
           "x-affects": [
             "speed"
           ],
-          "x-example": "1000: fast typing triggers one run per pause, not per keystroke"
+          "x-example": "`1000`: fast typing triggers one run per pause, not per keystroke"
         },
         "host": {
           "default": "127.0.0.1",
@@ -2591,7 +2604,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "depth: 1: Lua that calls \\directlua again gets an unknown result",
+          "x-example": "`depth: 1`: Lua that calls `\\directlua` again gets an unknown result",
           "x-plugin": "lua_run"
         },
         "memory": {
@@ -2602,7 +2615,7 @@
             "precision",
             "memory"
           ],
-          "x-example": "memory: 64MiB",
+          "x-example": "`memory: 64MiB`",
           "x-plugin": "lua_run"
         },
         "modules": {
@@ -2613,7 +2626,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "modules: 2: a third nested require gives an unknown module",
+          "x-example": "`modules: 2`: a third nested require gives an unknown module",
           "x-plugin": "lua_run"
         },
         "run": {
@@ -2624,7 +2637,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "off: \\directlua{tex.print(\"x\")} prints something unknown",
+          "x-example": "off: `\\directlua{tex.print(\"x\")}` prints something unknown",
           "x-plugin": "lua"
         },
         "steps": {
@@ -2636,7 +2649,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "steps: 1000 stops a long Lua loop early, its result unknown",
+          "x-example": "`steps: 1000` stops a long Lua loop early, its result unknown",
           "x-plugin": "lua_run"
         }
       },
@@ -2652,7 +2665,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "off: % arara: lualatex no longer picks the engine, % !TeX program still does",
+          "x-example": "off: `% arara: lualatex` no longer picks the engine, `% !TeX program` still does",
           "x-plugin": "magic"
         },
         "prefixes": {
@@ -2668,7 +2681,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "prefixes+: ['!SaTeX']\n% !SaTeX root = main.tex names the root",
+          "x-example": "`prefixes+: ['!SaTeX']`\n`% !SaTeX root = main.tex` names the root",
           "x-plugin": "magic"
         }
       },
@@ -2685,7 +2698,7 @@
         "precision",
         "output"
       ],
-      "x-example": "opaque_conditionals: ['\\ifdraft']\ncode in both \\ifdraft branches gets findings"
+      "x-example": "`opaque_conditionals: ['\\ifdraft']`\ncode in both `\\ifdraft` branches gets findings"
     },
     "output": {
       "description": "what the build produces: pdf, dvi, ps or html",
@@ -2699,7 +2712,7 @@
       "x-affects": [
         "precision"
       ],
-      "x-example": "output: dvi\n\\includegraphics{fig} looks for fig.eps, not fig.pdf",
+      "x-example": "`output: dvi`\n`\\includegraphics{fig}` looks for `fig.eps`, not `fig.pdf`",
       "x-plugin": "pdf"
     },
     "paths": {
@@ -2715,7 +2728,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "bibinputs: [bib]\n\\addbibresource{refs.bib} finds bib/refs.bib"
+          "x-example": "`bibinputs: [bib]`\n`\\addbibresource{refs.bib}` finds `bib/refs.bib`"
         },
         "bstinputs": {
           "default": [],
@@ -2727,7 +2740,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "bstinputs: [bst]\n\\bibliographystyle{mystyle} finds bst/mystyle.bst"
+          "x-example": "`bstinputs: [bst]`\n`\\bibliographystyle{mystyle}` finds `bst/mystyle.bst`"
         },
         "encfonts": {
           "default": [],
@@ -2739,7 +2752,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "encfonts: [fonts]"
+          "x-example": "`encfonts: [fonts]`"
         },
         "output_directory": {
           "default": "",
@@ -2748,7 +2761,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "output_directory: build\nthe .aux is read from build/main.aux"
+          "x-example": "`output_directory: build`\nthe `.aux` is read from `build/main.aux`"
         },
         "texinputs": {
           "default": [],
@@ -2760,7 +2773,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "texinputs: [lib//]\n\\input{macros} finds lib/common/macros.tex"
+          "x-example": "`texinputs: [lib//]`\n`\\input{macros}` finds `lib/common/macros.tex`"
         },
         "tfmfonts": {
           "default": [],
@@ -2772,7 +2785,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "tfmfonts: [fonts]\na local font's widths become known"
+          "x-example": "`tfmfonts: [fonts]`\na local font's widths become known"
         }
       },
       "type": "object"
@@ -2788,7 +2801,7 @@
       "x-affects": [
         "precision"
       ],
-      "x-example": "platform: windows\n\\input{Chapter} also finds chapter.tex, as on a case-insensitive disk",
+      "x-example": "`platform: windows`\n`\\input{Chapter}` also finds `chapter.tex`, as on a case-insensitive disk",
       "x-plugin": "platform"
     },
     "plugins": {
@@ -2801,7 +2814,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "off: an \\input file is analyzed alone, without its root document",
+          "x-example": "off: an `\\input` file is analyzed alone, without its root document",
           "x-plugin": "discovery"
         },
         "docs": {
@@ -2822,7 +2835,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "% !TeX program = lualatex makes the run use LuaTeX",
+          "x-example": "`% !TeX program = lualatex` makes the run use LuaTeX",
           "x-plugin": "magic"
         },
         "packages": {
@@ -2843,7 +2856,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "%&mypreamble reads mypreamble's dumped preamble first",
+          "x-example": "`%&mypreamble` reads mypreamble's dumped preamble first",
           "x-plugin": "preload"
         },
         "tools": {
@@ -2854,7 +2867,7 @@
             "precision",
             "output"
           ],
-          "x-example": "off: a .bbl biber would write is not computed",
+          "x-example": "off: a `.bbl` biber would write is not computed",
           "x-plugin": "tool"
         }
       },
@@ -2865,7 +2878,7 @@
       "x-affects": [
         "precision"
       ],
-      "x-example": "preload: preamble.tex\ncommands from preamble.tex are known before the document starts",
+      "x-example": "`preload: preamble.tex`\ncommands from `preamble.tex` are known before the document starts",
       "x-plugin": "preload"
     },
     "pretex": {
@@ -2875,7 +2888,7 @@
       "x-affects": [
         "precision"
       ],
-      "x-example": "pretex: '\\def\\draft{}'\n\\ifdefined\\draft is true in the document"
+      "x-example": "`pretex: '\\def\\draft{}'`\n`\\ifdefined\\draft` is true in the document"
     },
     "profile": {
       "description": "the kind of input whose defaults apply: document, package, class, literate or plain. Detected when unset",
@@ -2886,12 +2899,19 @@
         "literate",
         "plain"
       ],
+      "enumDescriptions": [
+        "an ordinary LaTeX document, a .tex file with a body",
+        "a style file (.sty), analyzed as a package",
+        "a document class (.cls)",
+        "a documented source (.dtx or .ins), read with its driver",
+        "plain TeX, no LaTeX"
+      ],
       "type": "string",
       "x-affects": [
         "output",
         "precision"
       ],
-      "x-example": "profile: package\nan unused public macro of your .sty is no longer reported"
+      "x-example": "`profile: package`\nan unused public macro of your `.sty` is no longer reported"
     },
     "profiles": {
       "properties": {
@@ -3098,7 +3118,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "frozen: ['vendor/**']\nfindings in vendor/theme.sty are not shown"
+          "x-example": "`frozen: ['vendor/**']`\nfindings in `vendor/theme.sty` are not shown"
         },
         "ignore_other_configs": {
           "default": false,
@@ -3123,7 +3143,7 @@
       "x-affects": [
         "precision"
       ],
-      "x-example": "provider: miktex looks files up the way MiKTeX does",
+      "x-example": "`provider: miktex` looks files up the way MiKTeX does",
       "x-plugin": "provider"
     },
     "record_arguments": {
@@ -3133,7 +3153,7 @@
       "x-affects": [
         "memory"
       ],
-      "x-example": "on: satex query options --for tikzpicture lists the keys used"
+      "x-example": "on: `satex query options --for tikzpicture` lists the keys used"
     },
     "search_paths": {
       "default": [],
@@ -3145,7 +3165,7 @@
       "x-affects": [
         "precision"
       ],
-      "x-example": "search_paths: [styles]\n\\usepackage{mystyle} finds styles/mystyle.sty"
+      "x-example": "`search_paths: [styles]`\n`\\usepackage{mystyle}` finds `styles/mystyle.sty`"
     },
     "shell_escape": {
       "description": "which programs \\write18 may run: none, restricted or full. Unset: what the build files ask for",
@@ -3159,7 +3179,7 @@
         "precision",
         "soundness"
       ],
-      "x-example": "shell_escape: full\n\\write18{date > now.tex} runs, so \\input{now} reads its output"
+      "x-example": "`shell_escape: full`\n`\\write18{date > now.tex}` runs, so `\\input{now}` reads its output"
     },
     "slice": {
       "description": "what satex slice leaves out",
@@ -3171,7 +3191,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "standalone: false: satex slice --out also copies the local files the slice names"
+          "x-example": "`standalone: false`: `satex slice --out` also copies the local files the slice names"
         },
         "trim": {
           "default": true,
@@ -3180,7 +3200,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "trim: false: the slice also keeps every package and what \\begin{document} reads"
+          "x-example": "`trim: false`: the slice also keeps every package and what `\\begin{document}` reads"
         }
       },
       "type": "object"
@@ -3204,7 +3224,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "categories: [style, performance]"
+          "x-example": "`categories: [style, performance]`"
         },
         "enabled": {
           "default": true,
@@ -3213,7 +3233,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "false: no prompt, even for 100 findings of one rule"
+          "x-example": "`false`: no prompt, even for 100 findings of one rule"
         },
         "keep": {
           "default": [],
@@ -3225,7 +3245,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "keep: [primitive-tex-command]"
+          "x-example": "`keep: [primitive-tex-command]`"
         },
         "min_findings": {
           "default": 10,
@@ -3235,7 +3255,7 @@
           "x-affects": [
             "output"
           ],
-          "x-example": "3: twelve \\hskip already prompt to turn off primitive-tex-command"
+          "x-example": "`3`: twelve `\\hskip` already prompt to turn off primitive-tex-command"
         }
       },
       "type": "object"
@@ -3247,7 +3267,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "texlive.root: /opt/texlive",
+          "x-example": "`texlive.root: /opt/texlive`",
           "x-plugin": "provider"
         },
         "year": {
@@ -3255,7 +3275,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "texlive.year: 2025",
+          "x-example": "`texlive.year: 2025`",
           "x-plugin": "provider"
         }
       },
@@ -3293,7 +3313,7 @@
           "x-affects": [
             "precision"
           ],
-          "x-example": "roots: [/opt/texlive/2026/texmf-dist]"
+          "x-example": "`roots: [/opt/texlive/2026/texmf-dist]`"
         }
       },
       "type": "object"
@@ -3315,7 +3335,7 @@
         "speed",
         "memory"
       ],
-      "x-example": "on: satex trace can step through the run"
+      "x-example": "on: `satex trace` can step through the run"
     },
     "trace_col": {
       "default": 0,

@@ -779,6 +779,26 @@ fn a_switch_asked_about_governs_both_arms() {
     assert_eq!(macros.len(), 2, "both arms are recorded: {governed:?}");
 }
 
+/// A switch is asked about by its stem (`draft` for `\\ifdraft`) or by
+/// the option that sets it, whose handler `\\ProcessOptions` has let to
+/// `\\relax` by then: each answers what `\\ifmy@draft` governs.
+#[test]
+fn a_switch_is_asked_about_by_its_stem_or_its_option() {
+    let source = r"\catcode`\@=11 \newif\ifmy@draft \def\ds@draft{\my@drafttrue}\let\ds@draft\relax
+\ifmy@draft\def\a{}\else\def\b{}\fi";
+    for asked in ["my@draft", "draft"] {
+        let cfg = Config {
+            load: Load { packages: false, classes: false, inputs: false, ..Default::default() },
+            opaque_conditionals: vec![asked.into()],
+            ..crate::support::config()
+        };
+        let analysis = Machine::analyze(source, None, &cfg);
+        let governed = query::controls(&analysis, asked);
+        let macros: Vec<_> = governed.iter().filter(|r| r["tag"] == "macro").collect();
+        assert_eq!(macros.len(), 2, "`{asked}` governs both arms: {governed:?}");
+    }
+}
+
 #[test]
 fn a_switch_is_found_by_its_meaning_not_its_name() {
     // `satex controls` lists what means `\iftrue` or `\iffalse`, whatever it is called
