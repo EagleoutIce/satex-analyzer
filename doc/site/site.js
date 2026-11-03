@@ -1057,16 +1057,15 @@
     // TeX's category codes of what a name is spelled with once `@` is a letter
     const CODES = { '\\': 0, '{': 1, '}': 2, '$': 3, '&': 4, '#': 6, '^': 7, '_': 8, ' ': 10, '%': 14 };
     const catcode = (c) => CODES[c] ?? (/[A-Za-z@]/.test(c) ? 11 : 12);
-    /** Every character of the line with its category code under it, a word kept whole; the odd codes stand out. */
+    /** Every character of the line's TeX code with its category code under it; the odd codes stand out. */
     const annotate = () => {
       const mark = (c) => `<span class="cc${[11, 12].includes(catcode(c)) ? '' : ' cc-hot'}" title="category ${catcode(c)}">${esc(c)}<sub>${catcode(c)}</sub></span>`;
       const word = (w) => `<span class="cc-w">${[...w].map(mark).join('')}</span>`;
       const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
       const texts = [];
       while (walker.nextNode()) texts.push(walker.currentNode);
-      for (const t of texts) {
-        const html = t.parentElement.tagName === 'CODE' ? word(t.data) : t.data.split(/( +)/).map((w, i) => (i % 2 ? ' ' : word(w))).join('');
-        t.replaceWith(Object.assign(document.createElement('span'), { innerHTML: html }));
+      for (const t of texts.filter((t) => t.parentElement.tagName === 'CODE')) {
+        t.replaceWith(Object.assign(document.createElement('span'), { innerHTML: word(t.data) }));
       }
       let n = 0;
       for (const c of line.querySelectorAll('.cc')) c.style.setProperty('--i', String(n++));
@@ -1101,7 +1100,10 @@
       const mock = effects[shown] === 'complete' && offered.length
         ? offered.map((r) => `<li><code class="usage">${usage(r.effective, typesOf(r)).html}</code><span>${esc(r.file ?? r.path ?? '')}</span></li>`).join('') : mocks[shown];
       if (!mock || !chip) return false;
-      line.insertAdjacentHTML('beforeend', `<ul class="claim-complete" aria-hidden="true" style="margin-left:${chip.offsetLeft}px">${mock}</ul>`);
+      line.insertAdjacentHTML('beforeend', `<ul class="claim-complete" aria-hidden="true">${mock}</ul>`);
+      // under its chip, as far as the line leaves room
+      const box = line.lastElementChild;
+      box.style.marginLeft = `${Math.max(0, Math.min(chip.offsetLeft, line.clientWidth - box.offsetWidth))}px`;
       return true;
     };
     // appear (typed), act (SHOWS_AFTER), settle (the hold): the same beat for every claim

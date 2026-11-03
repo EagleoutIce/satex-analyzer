@@ -1120,9 +1120,13 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 /* the claim: erased as a selection, its sketch in the flow under it (the dots move down only while one shows), its effects in its words */
 .claim-rot > span.shows .claim-complete { opacity: 1; transform: none; }
 .claim-rot .cc-w { display: inline-block; white-space: nowrap; }
-@media (max-width: 699px) { .claim-rot { min-height: calc(4.8em + 5.8rem); } }
+@media (max-width: 699px) {
+  .claim { padding-inline: 1rem; box-sizing: border-box; }
+  .claim-rot { min-height: calc(4.8em + 5.8rem); }
+  .claim-complete { font-size: .78em; } .claim-complete li { gap: .5rem; padding-inline: .3rem; }
+}
 .claim-rot .cc { display: inline-flex; flex-direction: column; align-items: center; line-height: 1; }
-.claim-rot .cc sub { font: 600 .48em ui-monospace, Menlo, monospace; color: var(--muted); opacity: 0; transform: translateY(-.3em); transition: opacity .4s var(--ease), transform .4s var(--ease); }
+.claim-rot .cc sub { font: 600 max(.48em, 9px) ui-monospace, Menlo, monospace; color: var(--muted); opacity: 0; transform: translateY(-.3em); transition: opacity .4s var(--ease), transform .4s var(--ease); }
 .claim-rot .cc-hot sub { color: var(--accent); }
 .claim-rot > span.shows .cc sub { opacity: 1; transform: none; }
 .claim-rot > span.shows .cc:nth-child(n) sub { transition-delay: calc(var(--i, 0) * 40ms); }
@@ -1131,7 +1135,7 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
   border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 24px rgb(0 0 0 / .22); pointer-events: none; animation: zoom-in .12s var(--ease); }
 .draw-zoom[hidden] { display: none; } .draw-zoom .draw-glyph { width: auto; font-size: 3.4rem; } .draw-zoom .draw-bmp { width: 4rem; height: 4rem; }
 @keyframes zoom-in { from { opacity: 0; scale: .7; } }
-.claim-rot > span:has(.claim-complete)::after { display: none; }
+.claim-rot > span:has(.claim-complete, .claim-steps, .claim-draw)::after { display: none; }
 .draw-solo .draw-box { flex: 1; min-height: 0; } .draw-results { overflow: hidden; } .draw-results .draw-list { flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0; }
 /* text set in an environment of the document (a figure, a listing) stands apart from the running text */
 .typeset p.ts[data-env] { margin: .35rem 0 .35rem .8rem; padding: .1rem 0 .1rem .6rem; border-left: 2px solid color-mix(in srgb, var(--accent) 35%, transparent); }
