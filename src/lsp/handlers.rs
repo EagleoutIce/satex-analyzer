@@ -2436,7 +2436,10 @@ pub fn document_colors(analysis: &Analysis, doc: &Text, path: &str) -> Vec<lsp_t
         let text = doc.line(u.span.line);
         let from = (u.span.col as usize).min(text.len());
         // the reader stands past the call's argument: the name is the last one before it, else the next
-        let Some(at) = word_before(text, from, &u.name).or_else(|| word_after(text, from, &u.name)) else {
+        let Some(at) = word_before(text, from, &u.name)
+            .or_else(|| word_after(text, from, &u.name))
+            .filter(|&at| argument_value(text, at, &u.name))
+        else {
             continue;
         };
         let range = Range::new(Position::new(line, at as u32), Position::new(line, (at + u.name.len()) as u32));
@@ -2478,6 +2481,14 @@ fn words<'a>(text: &'a str, name: &'a str) -> impl Iterator<Item = usize> + 'a {
     text.match_indices(name).map(|(i, _)| i).filter(move |&i| {
         !text[..i].chars().next_back().is_some_and(word) && !text[i + name.len()..].chars().next().is_some_and(word)
     })
+}
+
+/// Whether `name` at `at` stands as an argument's value (`{red}`, `[x=red]`,
+/// `red!50`), not as prose: a package's own `\color{.}` names no full stop.
+fn argument_value(text: &str, at: usize, name: &str) -> bool {
+    let before = text[..at].trim_end().chars().next_back();
+    let after = text[at + name.len()..].trim_start().chars().next();
+    matches!(before, Some('{' | '[' | '=' | ',' | '!')) && matches!(after, Some('}' | ']' | ',' | '!' | ';'))
 }
 
 fn word_before(text: &str, from: usize, name: &str) -> Option<usize> {
