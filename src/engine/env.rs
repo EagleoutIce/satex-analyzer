@@ -2116,7 +2116,7 @@ pub fn widen_slot(old: &Option<Binding>, new: Option<Binding>, sets: SetLimits, 
             _ if switch => (Meaning::Primitive(Primitive::If(Cond::Opaque)), None),
             Some(mut texts) if texts.len() == 1 => (texts.pop().expect("one text"), None),
             Some(texts) => (Meaning::Unknown, Some(texts.into())),
-            None => hull_meaning(&joined, typed),
+            None => hull_meaning(&joined, typed, true),
         };
     }
     if value_grows {
@@ -2135,8 +2135,8 @@ pub fn widen_slot(old: &Option<Binding>, new: Option<Binding>, sets: SetLimits, 
 
 /// The meaning and set a widened binding keeps: the macros' hull, still
 /// perhaps undefined where the set held that.
-fn hull_meaning(b: &Binding, typed: &Typed) -> (Meaning, Option<std::rc::Rc<[Meaning]>>) {
-    match macro_hull(b, typed) {
+fn hull_meaning(b: &Binding, typed: &Typed, keep: bool) -> (Meaning, Option<std::rc::Rc<[Meaning]>>) {
+    match macro_hull(b, typed, keep) {
         Some(hull) if b.may.as_deref().is_some_and(|m| m.contains(&Meaning::Undefined)) => {
             (Meaning::Unknown, Some(vec![Meaning::Undefined, hull].into()))
         }
@@ -2149,7 +2149,7 @@ fn hull_meaning(b: &Binding, typed: &Typed) -> (Meaning, Option<std::rc::Rc<[Mea
 /// with the same prefixes: widened, it stays one, which `\ifx` can still
 /// tell from other kinds. Its length is bounded only where all texts have
 /// one length: a widened write that repeats changes it.
-fn macro_hull(b: &Binding, typed: &Typed) -> Option<Meaning> {
+fn macro_hull(b: &Binding, typed: &Typed, keep: bool) -> Option<Meaning> {
     let members = b.may.as_deref().unwrap_or(std::slice::from_ref(&b.meaning));
     let members: Vec<&Meaning> = members.iter().filter(|m| **m != Meaning::Undefined).collect();
     let mut first: Option<&crate::engine::tex::MacroDef> = None;
@@ -2166,27 +2166,199 @@ fn macro_hull(b: &Binding, typed: &Typed) -> Option<Meaning> {
         Meaning::Macro(d) => Some(&d.replacement_text[..]),
         _ => None,
     });
-    let text: std::rc::Rc<[Token]> = [text_hull(texts, typed)].into();
+    let texts: Vec<&[Token]> = texts.collect();
+    let text: std::rc::Rc<[Token]> = text_hull(&texts, typed, keep).into();
     Some(Meaning::Macro(std::rc::Rc::new(crate::engine::tex::MacroDef { replacement_text: text, ..def.clone() })))
 }
 
-/// One typed token for any text of the classes `texts` have, at least
-/// one token when each has one. Texts all of one bounded length keep it:
-/// no write grew them.
-fn text_hull<'t>(texts: impl Iterator<Item = &'t [Token]>, typed: &Typed) -> Token {
+/// Typed text for any text of the classes `texts` have. At a loop head
+/// (`keep`), several texts with the same operators between typed runs at
+/// the same places keep them, one hull per run: `+1` never folds into the
+/// digits before it, and a `-` that begins a run is its sign. Else one
+/// token: text inserted between operators is a text that grew, and a
+/// summary's write may be any text of its kind.
+fn text_hull(texts: &[&[Token]], typed: &Typed, keep: bool) -> Vec<Token> {
+    let texts: Vec<Vec<Token>> = texts.iter().map(|t| unslice(t, typed.interner)).collect();
+    let lits = |t: &[Token]| {
+        let mut lit: Vec<bool> = Vec::with_capacity(t.len());
+        for (i, x) in t.iter().enumerate() {
+            let sign = x.tok == Tok::Chr('-', Catcode::Other)
+                && (i == 0 || lit[i - 1])
+                && t.get(i + 1).is_some_and(|n| typed.classify(n).is_some());
+            lit.push(typed.classify(x).is_none() && !sign);
+        }
+        lit
+    };
+    let op = |t: &Token| matches!(t.tok, Tok::Chr(c, Catcode::Other) if !c.is_ascii_digit());
+    // The runs between operators and the operators, in order.
+    let parts = |t: &[Token]| {
+        let lit = lits(t);
+        let (mut runs, mut ops, mut run) = (Vec::new(), Vec::new(), Vec::new());
+        for (x, l) in t.iter().zip(lit) {
+            if l {
+                runs.push(std::mem::take(&mut run));
+                ops.push(*x);
+            } else {
+                run.push(*x);
+            }
+        }
+        runs.push(run);
+        (runs, ops)
+    };
+    let parted: Vec<(Vec<Vec<Token>>, Vec<Token>)> = texts.iter().map(|t| parts(t)).collect();
+    let shape = |(runs, ops): &(Vec<Vec<Token>>, Vec<Token>)| {
+        (ops.iter().map(|t| t.tok).collect::<Vec<_>>(), runs.iter().map(Vec::is_empty).collect::<Vec<_>>())
+    };
+    let first = shape(&parted[0]);
+    let kept = keep && texts.len() > 1 && !first.0.is_empty() && parted[0].1.iter().all(op);
+    if !kept || parted.iter().any(|p| shape(p) != first) {
+        return run_hull(&texts.iter().map(Vec::as_slice).collect::<Vec<_>>(), typed, false);
+    }
+    let mut out = Vec::new();
+    for (i, l) in parted[0].1.iter().map(Some).chain([None]).enumerate() {
+        if !parted[0].0[i].is_empty() {
+            out.extend(run_hull(&parted.iter().map(|(r, _)| &r[i][..]).collect::<Vec<_>>(), typed, true));
+        }
+        out.extend(l.copied());
+    }
+    out
+}
+
+/// Typed text for any text of the classes `texts` have, at least one
+/// token when each has one. Texts all of one bounded length keep it: no
+/// write grew them. Several texts that are one printed number stay it.
+/// Between operators (`run`), texts alike stay as they are, and printed
+/// integers stay printed integers ([`printed_hull`]).
+fn run_hull(texts: &[&[Token]], typed: &Typed, run: bool) -> Vec<Token> {
+    if let [[t], rest @ ..] = texts
+        && !rest.is_empty()
+        && t.cs().is_some_and(|s| typed.interner.name(s).starts_with(crate::engine::scan::TYPED_DIGITS))
+        && rest.iter().all(|r| matches!(r, [u] if u.tok == t.tok))
+    {
+        return vec![*t];
+    }
+    if run && texts.iter().all(|t| t.iter().map(|x| x.tok).eq(texts[0].iter().map(|x| x.tok))) {
+        return texts[0].to_vec();
+    }
+    if let Some(text) = printed_hull(texts, typed).filter(|_| run) {
+        return text;
+    }
     let (mut one, mut class, mut span) = (true, TextClass::EMPTY, None);
     let mut lens: Vec<Option<u32>> = Vec::new();
     for text in texts {
         one &= typed.holds_one(text);
         let len = |t: &Token| text_len(typed.interner, t).or(matches!(t.tok, Tok::Chr(..)).then_some(1));
         lens.push(text.iter().try_fold(0, |n, t| Some(n + len(t)?)));
-        for t in text {
+        for t in *text {
             span = span.or(Some(t.span));
             class = class.union(typed.class_of(t).map_or_else(|| TextClass::of(t.tok), |c| c.0));
         }
     }
     let len = lens.first().copied().flatten().filter(|n| *n > 0 && lens.iter().all(|l| *l == Some(*n)));
-    Token::new(Tok::Cs(typed.make(class, one, len)), span.unwrap_or_default())
+    vec![Token::new(Tok::Cs(typed.make(class, one, len)), span.unwrap_or_default())]
+}
+
+/// Integer digits as `\the` prints them, after a `-` where it may be
+/// negative (tex.web §§ 65, 103): whether it may be negative, holds at
+/// least one digit, and the most digits it has. `None` for other text,
+/// or digits of no bound.
+fn printed(text: &[Token], typed: &Typed) -> Option<(bool, bool, u32)> {
+    use crate::engine::tex::{UNKNOWN_CHAR, UNKNOWN_DIGIT, UNKNOWN_NONZERO};
+    let name = |t: &Token| t.cs().map(|s| typed.interner.name(s));
+    // A whole typed number: its interval, sign included.
+    let whole = |t: &Token| {
+        let (lo, hi) = name(t)?.strip_prefix(crate::engine::scan::TYPED_DIGITS)?.split_once('#')?.0.split_once("..")?;
+        Some((lo.parse::<i64>().ok()?, hi.parse::<i64>().ok()?))
+    };
+    let lead = |t: &Token| {
+        name(t).filter(|n| n.contains(crate::analysis::machine::LEAD_MARK))?;
+        Some((typed.classify(t)?.1, text_len(typed.interner, t)?))
+    };
+    let digits = |n: i64| n.unsigned_abs().checked_ilog10().unwrap_or(0) + 1;
+    let other = |c: char| Tok::Chr(c, Catcode::Other);
+    let (neg, text) = match text {
+        [t, rest @ ..] if t.tok == other('-') => (true, rest),
+        // A sign or first digit, the digits after it (`unknown_number`).
+        [t, l] if t.tok == other(UNKNOWN_CHAR) => return lead(l).filter(|l| !l.0).map(|(_, n)| (true, true, n)),
+        _ => (false, text),
+    };
+    match text {
+        [t] if matches!(t.tok, Tok::Chr('0' | UNKNOWN_DIGIT, Catcode::Other)) => Some((neg, true, 1)),
+        // After a `-`, at least one digit.
+        [t] if let Some((one, n)) = lead(t) => (one || !neg).then_some((neg, one, n)),
+        [t] if let Some((lo, hi)) = whole(t) => {
+            (!neg || lo >= 0).then(|| (neg || lo < 0, true, digits(lo).max(digits(hi))))
+        }
+        [f, rest @ ..] => {
+            let nonzero = matches!(f.tok, Tok::Chr('1'..='9' | UNKNOWN_NONZERO, Catcode::Other))
+                || whole(f).is_some_and(|(lo, _)| lo >= 1);
+            let len = |t: &Token| match t.tok {
+                Tok::Chr('0'..='9' | UNKNOWN_DIGIT, Catcode::Other) => Some(1),
+                _ if typed.classify(t)?.0 == TextClass::DIGIT && whole(t).is_none_or(|(lo, _)| lo >= 0) => {
+                    text_len(typed.interner, t)
+                }
+                _ => None,
+            };
+            let n = text.iter().try_fold(0, |n, t| Some(n + len(t)?))?;
+            (nonzero && rest.iter().all(|t| lead(t).is_none())).then_some((neg, true, n))
+        }
+        [] => None,
+    }
+}
+
+/// The printed integer any of `texts` is ([`printed`]): unknown digits as
+/// `\the` prints them, the sign one unknown character before them where
+/// one may be negative ([`crate::analysis::machine::LEAD_MARK`]). `None`
+/// when one is no such text or the digits pass [`MAX_LEN`].
+fn printed_hull(texts: &[&[Token]], typed: &Typed) -> Option<Vec<Token>> {
+    let (mut neg, mut one, mut len) = (false, true, 0);
+    for text in texts {
+        let (n, o, l) = printed(text, typed)?;
+        (neg, one, len) = (neg || n, one && o, len.max(l));
+    }
+    let span = texts.iter().find_map(|t| t.first())?.span;
+    let lead = |one| Some(Token::new(Tok::Cs(typed.syms[lead_index(one, len)?]), span));
+    Some(match neg {
+        false => vec![lead(one)?],
+        true if one => vec![Token::new(Tok::Chr(crate::engine::tex::UNKNOWN_CHAR, Catcode::Other), span), lead(false)?],
+        true => return None,
+    })
+}
+
+/// `text` with each run of slices that spells all places of a typed
+/// number, in order, as that number: a path that read it apart and one
+/// that did not then hold one text.
+fn unslice(text: &[Token], interner: &Interner) -> Vec<Token> {
+    let slice = |t: &Token| -> Option<[u32; 4]> {
+        let (_, cut) = interner.name(t.cs()?).strip_prefix(crate::engine::scan::TYPED_DIGITS)?.split_once('@')?;
+        let p: Vec<u32> = cut.split(':').map(|x| x.parse().ok()).collect::<Option<_>>()?;
+        p.try_into().ok()
+    };
+    use crate::engine::scan::{complete, continues};
+    let mut out = Vec::with_capacity(text.len());
+    let mut i = 0;
+    while i < text.len() {
+        // As a scan reads them back ([`continues`]): each slice goes on
+        // where the last stopped, so `n` moves on every step.
+        if let Some([w, mut k, 0, mut j]) = slice(&text[i]) {
+            let mut n = i + 1;
+            while !complete(k, j)
+                && let Some([v, l, a, e]) = text.get(n).and_then(slice)
+                && v == w
+                && continues((k, j), (l, a))
+            {
+                (k, j, n) = (k.max(l), e, n + 1);
+            }
+            if complete(k, j) {
+                out.push(Token::new(Tok::Cs(Sym(w)), text[i].span));
+                i = n;
+                continue;
+            }
+        }
+        out.push(text[i]);
+        i += 1;
+    }
+    out
 }
 
 /// The meanings `b` may have, each a macro without parameters, with every
@@ -2197,18 +2369,27 @@ fn numbers(b: &Binding, sets: SetLimits, typed: &Typed) -> Option<Vec<Meaning>> 
         (Some(set), _) => set.to_vec(),
         (None, m) => vec![m.clone()],
     };
-    let mut texts: Vec<Meaning> = Vec::new();
+    let (mut texts, mut wholes): (Vec<Meaning>, Vec<Meaning>) = (Vec::new(), Vec::new());
     for m in members {
         let Meaning::Macro(def) = m else { return None };
         if !def.parameter_text.items.is_empty() || def.parameter_text.brace_end {
             return None;
         }
-        let text = unknown_runs(&def.replacement_text, typed);
-        let m =
-            Meaning::Macro(std::rc::Rc::new(crate::engine::tex::MacroDef { replacement_text: text, ..(*def).clone() }));
-        if !texts.contains(&m) {
-            texts.push(m);
+        let whole = unslice(&def.replacement_text, typed.interner);
+        let text = unknown_runs(&whole, typed);
+        for (set, text) in [(&mut wholes, whole.into()), (&mut texts, text)] {
+            let m = Meaning::Macro(std::rc::Rc::new(crate::engine::tex::MacroDef {
+                replacement_text: text,
+                ..(*def).clone()
+            }));
+            if !set.contains(&m) {
+                set.push(m);
+            }
         }
+    }
+    // Texts that differ only in how far a number was read apart are one.
+    if wholes.len() == 1 {
+        return Some(wholes);
     }
     (texts.len() <= sets.meanings).then_some(texts)
 }
@@ -2243,6 +2424,20 @@ pub fn bounded_index(class: TextClass, one: bool, len: u32, serial: usize) -> Op
         crate::analysis::machine::BOUNDED_BASE
             + (((b * 2 + usize::from(one)) * MAX_LEN as usize + len as usize - 1) * serials + serial)
     })
+}
+
+/// Where the printed integers ([`crate::analysis::machine::LEAD_MARK`])
+/// stand in the typed names, after the bounded ones: per lower bound and
+/// bound, one name each, as no test narrows them.
+const LEAD_BASE: usize = crate::analysis::machine::BOUNDED_BASE
+    + BOUNDED.len() * 2 * MAX_LEN as usize * (crate::analysis::machine::REST_SERIALS + 1);
+/// How many typed names the machine makes.
+pub const TYPED_NAMES: usize = LEAD_BASE + 2 * MAX_LEN as usize;
+
+/// Where the printed integer of at most `len` digits, at least one where
+/// `one`, stands in the typed names.
+pub fn lead_index(one: bool, len: u32) -> Option<usize> {
+    (1..=MAX_LEN).contains(&len).then(|| LEAD_BASE + usize::from(one) * MAX_LEN as usize + len as usize - 1)
 }
 
 /// The most tokens unknown text `t` may hold: one for an unknown
@@ -2410,7 +2605,7 @@ pub fn unknown_runs(text: &[Token], typed: &Typed) -> std::rc::Rc<[Token]> {
 fn widened(mut binding: Binding, typed: &Typed) -> Binding {
     binding.value = Value::Unknown;
     if matches!(binding.meaning, Meaning::Macro(_)) || binding.may.is_some() {
-        (binding.meaning, binding.may) = hull_meaning(&binding, typed);
+        (binding.meaning, binding.may) = hull_meaning(&binding, typed, false);
     }
     binding.certain = false;
     binding
@@ -2643,9 +2838,7 @@ mod tests {
         let interner = Interner::default();
         // The table as the machine builds it: 256 one-of names, the rest
         // serials, and the names typed with a length bound.
-        let size = crate::analysis::machine::BOUNDED_BASE
-            + BOUNDED.len() * 2 * MAX_LEN as usize * (crate::analysis::machine::REST_SERIALS + 1);
-        let syms: Vec<Sym> = (0..size as u32).map(|i| Sym(1000 + i)).collect();
+        let syms: Vec<Sym> = (0..TYPED_NAMES as u32).map(|i| Sym(1000 + i)).collect();
         let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2) };
         let digit = |c| Token::new(Tok::Chr(c, crate::engine::tex::Catcode::Other), Span::default());
         let def = crate::engine::tex::MacroDef {
@@ -2662,6 +2855,168 @@ mod tests {
         let two = syms[bounded_index(TextClass::DIGIT, true, 2, 0).expect("bounded")];
         assert_eq!(d.replacement_text.iter().map(|t| t.tok).collect::<Vec<_>>(), vec![Tok::Cs(two)]);
         assert!(!b.certain);
+    }
+
+    /// Numbers joined at a loop head keep the operator between them:
+    /// `12+1` and `345+1` widen to digits, `+`, digits; their hull to a
+    /// printed integer, `+`, `1`; a summary's to one token.
+    #[test]
+    fn widened_sum_keeps_its_operator() {
+        let interner = Interner::default();
+        let syms: Vec<Sym> = (0..TYPED_NAMES as u32).map(|i| Sym(1000 + i)).collect();
+        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2) };
+        let def = |s: &str| {
+            Meaning::Macro(Rc::new(crate::engine::tex::MacroDef {
+                parameter_text: Default::default(),
+                arg_spec: None,
+                replacement_text: s.chars().map(|c| Token::new(Tok::Chr(c, Catcode::Other), Span::default())).collect(),
+                long: false,
+                outer: false,
+                protected: false,
+            }))
+        };
+        let mut b = Binding::builtin(Meaning::Unknown);
+        b.may = Some(vec![def("12+1"), def("345+1")].into());
+        // A summary's widening may be any text of the kind: one token.
+        let Meaning::Macro(d) = &widened(b, &typed).meaning else { panic!("not a macro") };
+        assert_eq!(d.replacement_text.len(), 1);
+        // At a loop head texts apart only in digit runs keep them as runs
+        // ([`numbers`]), the operator between them kept.
+        let (old, new) = (Binding::builtin(def("12+1")), Binding::builtin(def("345+1")));
+        let b = widen_slot(&Some(old), Some(new), SetLimits::default(), &typed).expect("a binding");
+        let Meaning::Macro(d) = &b.meaning else { panic!("not a macro: {:?}", b.meaning) };
+        let plus = Tok::Chr('+', Catcode::Other);
+        assert_eq!(
+            d.replacement_text.iter().map(|t| t.tok).collect::<Vec<_>>(),
+            [Tok::Cs(Sym(1)), plus, Tok::Cs(Sym(1))]
+        );
+        // The loop head's hull of them: a printed integer of at most 3 digits, `+`, the `1` both hold.
+        let (x, y) = (def("12+1"), def("345+1"));
+        let text = |m: &Meaning| match m {
+            Meaning::Macro(d) => d.replacement_text.to_vec(),
+            _ => unreachable!(),
+        };
+        let lead = syms[lead_index(true, 3).expect("lead")];
+        assert_eq!(
+            text_hull(&[&text(&x), &text(&y)], &typed, true).iter().map(|t| t.tok).collect::<Vec<_>>(),
+            [Tok::Cs(lead), plus, Tok::Chr('1', Catcode::Other)]
+        );
+    }
+
+    /// Slices that spell all of a number read back as it, whatever the
+    /// cut: a known length, an open one, the whole as one slice. Others
+    /// stay as they are, and every input ends (an open length is 0).
+    #[test]
+    fn slices_spelling_a_whole_number_are_that_number() {
+        use crate::engine::scan::{OPEN, TYPED_DIGITS};
+        let mut interner = Interner::default();
+        let w = interner.intern(&format!("{TYPED_DIGITS}0..214#7"));
+        let v = interner.intern(&format!("{TYPED_DIGITS}0..99#8"));
+        let mut cut = |n: Sym, k: u32, i: u32, j: u32| {
+            Token::new(Tok::Cs(interner.intern(&format!("{TYPED_DIGITS}0..9@{}:{k}:{i}:{j}", n.0))), Span::default())
+        };
+        let (o, plus) = (OPEN, Token::new(Tok::Chr('+', Catcode::Other), Span::default()));
+        let [a, b, c, d, e, f, g, h] = [
+            cut(w, 3, 0, 1),
+            cut(w, 3, 1, 3),
+            cut(w, o, 0, 1),
+            cut(w, o, 1, o),
+            cut(w, o, 0, o),
+            cut(v, 2, 0, 1),
+            cut(w, 3, 2, 3),
+            cut(w, 3, 1, 2),
+        ];
+        let whole = |s: Sym| Token::new(Tok::Cs(s), Span::default());
+        let cases: [(Vec<Token>, Vec<Token>); 8] = [
+            (vec![a, b], vec![whole(w)]),
+            (vec![c, d], vec![whole(w)]),
+            (vec![e], vec![whole(w)]),
+            (vec![e, e], vec![whole(w), whole(w)]),
+            (vec![c, d, plus, a, h, g], vec![whole(w), plus, whole(w)]),
+            (vec![a], vec![a]),
+            (vec![a, f], vec![a, f]),
+            (vec![b, a, g], vec![b, a, g]),
+        ];
+        for (text, want) in cases {
+            let toks = |t: &[Token]| t.iter().map(|t| t.tok).collect::<Vec<_>>();
+            assert_eq!(toks(&unslice(&text, &interner)), toks(&want), "{:?}", toks(&text));
+        }
+    }
+
+    /// Printed decimals and an operator, joined at a loop head, over a table
+    /// of signs, widths and decimals: each pair's hull holds both (sound),
+    /// keeps `.` and `+1`, and holds no integer with a leading zero or a
+    /// lone `-` (no octal or missing-number path pgfmath would take).
+    #[test]
+    fn printed_numbers_hull_to_printed_numbers() {
+        let interner = Interner::default();
+        let syms: Vec<Sym> = (0..TYPED_NAMES as u32).map(|i| Sym(1000 + i)).collect();
+        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2) };
+        let mut lang: std::collections::HashMap<Sym, String> =
+            std::collections::HashMap::from([(Sym(1), "[0-9]+".into()), (Sym(2), "[0-9]*".into())]);
+        for len in 1..=MAX_LEN {
+            for one in [false, true] {
+                let int = format!("(0|[1-9][0-9]{{0,{}}})", len - 1);
+                lang.insert(syms[lead_index(one, len).expect("lead")], if one { int } else { format!("{int}?") });
+                let i = bounded_index(TextClass::DIGIT, one, len, 0).expect("bounded");
+                lang.insert(syms[i], format!("[0-9]{{{},{len}}}", u32::from(one)));
+            }
+        }
+        let pattern = |text: &[Token]| {
+            let mut p = String::from("^");
+            for (i, t) in text.iter().enumerate() {
+                match t.tok {
+                    // A sign or first digit: the digits after it say which.
+                    Tok::Chr(crate::engine::tex::UNKNOWN_CHAR, _) => p.push_str("-?"),
+                    Tok::Chr(c, _) => p.push_str(&regex::escape(&c.to_string())),
+                    Tok::Cs(s)
+                        if i > 0 && text[i - 1].tok == Tok::Chr(crate::engine::tex::UNKNOWN_CHAR, Catcode::Other) =>
+                    {
+                        p.push_str(lang[&s].trim_end_matches('?'))
+                    }
+                    Tok::Cs(s) => p.push_str(&lang[&s]),
+                    Tok::Param(_) => panic!("no parameter in a hull"),
+                }
+            }
+            regex::Regex::new(&(p + "$")).expect("pattern")
+        };
+        let chars =
+            |s: &str| s.chars().map(|c| Token::new(Tok::Chr(c, Catcode::Other), Span::default())).collect::<Vec<_>>();
+        let mut members = Vec::new();
+        for sign in ["", "-"] {
+            for int in ["0", "7", "42", "305", "16383"] {
+                for dec in ["0", "5", "25", "125"] {
+                    members.push(format!("{sign}{int}.{dec}+1"));
+                }
+            }
+        }
+        for a in &members {
+            for b in &members {
+                let (x, y) = (chars(a), chars(b));
+                let hull = text_hull(&[&x, &y], &typed, true);
+                let p = pattern(&hull);
+                assert!(p.is_match(a) && p.is_match(b), "{a} | {b}: {p}");
+                assert!(
+                    hull.ends_with(&chars("+1")[..]) && hull.iter().any(|t| t.tok == Tok::Chr('.', Catcode::Other))
+                );
+                for bad in ["08.5+1", "-.5+1", "-08.0+1", ".5+1"] {
+                    assert!(!p.is_match(bad), "{a} | {b}: {p} holds {bad}");
+                }
+                // Only a negative member brings the sign, then for both.
+                let (neg, int) =
+                    (a.starts_with('-') || b.starts_with('-'), |s: &str| s.split('.').next().map(str::to_owned));
+                let other = |s: &str| if s.starts_with('-') { s[1..].to_owned() } else { format!("-{s}") };
+                assert_eq!(p.is_match(&other(b)), neg && int(a) != int(b), "{a} | {b}: {p}");
+            }
+        }
+        // The mutant without printed integers: digits of any spelling, so
+        // the octal `08` path this hull rules out.
+        let (x, y) = (chars("7"), chars("42"));
+        assert!(pattern(&run_hull(&[&x, &y], &typed, false)).is_match("08"));
+        assert!(!pattern(&run_hull(&[&x, &y], &typed, true)).is_match("08"));
+        // A summary's write is any text of its kind: no structure kept.
+        let (x, y) = (chars("12+1"), chars("345+1"));
+        assert_eq!(text_hull(&[&x, &y], &typed, false).len(), 1);
     }
 
     fn int(n: i64) -> Binding {

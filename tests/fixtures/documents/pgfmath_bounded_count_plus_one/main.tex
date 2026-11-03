@@ -1,0 +1,8 @@
+\documentclass{article}
+\usepackage{pgf}
+\newcount\uc
+\uc=\pdfelapsedtime \divide\uc by 10000000
+\begin{document}
+\pgfmathparse{\the\uc+1}
+\gdef\SatexReachedEnd{}
+\end{document}

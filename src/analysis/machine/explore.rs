@@ -595,6 +595,9 @@ impl Machine<'_> {
                 self.resume_config(&fork, joined);
             }
             // Ended paths wait for the run's end: their fork stays.
+            if paths.parked.is_empty() && paths.done.is_empty() && paths.arrived.is_empty() {
+                self.settle_closed(&mut paths);
+            }
             let idle = paths.parked.is_empty()
                 && paths.done.is_empty()
                 && paths.arrived.is_empty()
@@ -1760,6 +1763,43 @@ impl Machine<'_> {
             out.push(!broken && depth == 0 && open.0 == 0);
         }
         out
+    }
+
+    /// Paths dropped for an error in a file the running path has since
+    /// closed: that file's statements are over and the running path read
+    /// past them without one, so they are dropped there as at the drive's
+    /// end ([`Machine::settle`]). Kept, they hold the fork open, and every
+    /// later load runs as if on paths.
+    fn settle_closed(&mut self, paths: &mut Paths) {
+        if paths.failed || paths.shelved.is_empty() {
+            return;
+        }
+        let open: Vec<FileId> = self
+            .input
+            .iter()
+            .filter_map(|f| match f {
+                Frame::File { mouth, .. } => Some(mouth.file),
+                _ => None,
+            })
+            .collect();
+        let closed = |s: &Shelved| {
+            s.config
+                .key
+                .places
+                .iter()
+                .rev()
+                .find_map(|p| match p {
+                    Place::File(file, ..) => Some(*file),
+                    _ => None,
+                })
+                .is_some_and(|file| !open.contains(&file))
+        };
+        let (gone, kept): (Vec<Shelved>, Vec<Shelved>) =
+            std::mem::take(&mut paths.shelved).into_iter().partition(closed);
+        paths.shelved = kept;
+        for s in gone {
+            self.report_dropped(&s.error, s.at);
+        }
     }
 
     /// `analysis.assume_compiles`: a path that raised a certain error was dropped.

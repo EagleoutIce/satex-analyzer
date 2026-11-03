@@ -15,3 +15,4 @@ latex::document_metadata::lifting_the_bound_leaves_the_report_as_it_is
 latex::document_metadata::the_common_options_stay_bounded
 semantics::a_delimiter_only_straddles_text_that_cannot_hold_it
 termination::convergence::tikz_nodes_of_unknown_width
+documents::adding_to_a_bounded_count_raises_nothing

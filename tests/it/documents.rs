@@ -559,6 +559,13 @@ fn a_node_of_unknown_minimum_height_parses_its_other_lengths() {
     check("tikz_node_unknown_minimum_height", "main.tex", &[]);
 }
 
+/// A count in an interval, printed and added to: the printed number never
+/// starts with `0` unless it is 0, so pgfmath takes no octal path.
+#[test]
+fn adding_to_a_bounded_count_raises_nothing() {
+    check("pgfmath_bounded_count_plus_one", "main.tex", &[]);
+}
+
 /// pgfmath parses a result of unknown width again: no false error.
 #[test]
 fn reparsing_a_pgfmath_result_of_unknown_width_raises_nothing() {
