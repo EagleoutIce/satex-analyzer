@@ -38,6 +38,9 @@
 //!   {{version}}
 //!       The crate version, from `satex --version`.
 //!
+//!   {{type-table}}
+//!       The table of the types, from `Ty::all` and `Ty::about`.
+//!
 //!   {{primitives}}
 //!       Every TeX82/eTeX/pdfTeX/XeTeX/LuaTeX primitive `src/engine/builtins.rs`
 //!       registers, sectioned by the engine that adds it, with the verdict
@@ -154,6 +157,30 @@ fn installation(bin: &str) -> Result<String, String> {
     }
     let kernel = kernel.split(", ").take(2).collect::<Vec<_>>().join(", ");
     Ok(format!("{kernel}, files {hash:016x}\n"))
+}
+
+/// The table of the types from [`Ty::about`], rows with the same text merged.
+fn type_table() -> String {
+    use satex::analysis::roles::Ty;
+    let mut rows: Vec<(Vec<String>, Ty)> = Vec::new();
+    for t in Ty::all() {
+        match rows.iter_mut().find(|(_, r)| r.about() == t.about() && r.parent() == t.parent()) {
+            Some((labels, _)) => labels.push(t.to_string()),
+            None => rows.push((vec![t.to_string()], t)),
+        }
+    }
+    let mut out = String::from("| Label | Meaning | Example |\n|---|---|---|\n");
+    for (labels, t) in rows {
+        let (meaning, example) = t.about();
+        let below = if matches!(t, Ty::Top | Ty::Bottom) || t.parent() == Ty::Top {
+            String::new()
+        } else {
+            format!(", below `{}`", t.parent())
+        };
+        let labels = labels.iter().map(|l| format!("`{l}`")).collect::<Vec<_>>().join(", ");
+        let _ = writeln!(out, "| {labels} | {meaning}{below} | {example} |");
+    }
+    out
 }
 
 /// The type lattice as a Mermaid flowchart from [`Ty::parent`], coloured by
@@ -694,6 +721,9 @@ fn expand(directive: &str) -> Result<String, String> {
     }
     if directive == "types" {
         return Ok(types_chart());
+    }
+    if directive == "type-table" {
+        return Ok(type_table());
     }
     if directive == "primitives" {
         return primitives_table();

@@ -120,6 +120,14 @@ jobs:
           SATEX_REQUIRE_TEX: '1'
         run: bash scripts/ci-test.sh lib
 
+      # The wiki, README and schema are generated from doc/src and the code:
+      # a change that leaves a generated page behind fails here, never later.
+      - name: Generated docs are up to date
+        if: matrix.shard == 'compliance'
+        run: |
+          cargo build --locked --profile ci --features doc --bin satex --bin satex-doc
+          target/ci/satex-doc --check
+
       # The known-divergence ledger: fails on purpose while any of its ~61
       # entries is open.  Reported here as its own shard, non-blocking, so
       # the count is visible on every run without turning the job red.

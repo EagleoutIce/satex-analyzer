@@ -89,11 +89,11 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C037 | [`undefined-reference`](#undefined-reference) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | `\ref` names a label that is never defined | — |
 | C038 | [`uninstalled-package`](#uninstalled-package) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | the package is not installed, and the distribution could install it | — |
 | C039 | [`unresolved-file`](#unresolved-file) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a package, class or input file is not in the installation | <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a> |
-| C044 | [`assertion-proved`](#assertion-proved) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | — | an assertion holds on every path | — |
 | C045 | [`assumption-made`](#assumption-made) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | — | the document assumes a condition | — |
 | C040 | [`expected-load`](#expected-load) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | — | the file was read after a package it expects loaded | — |
 | C041 | [`math-mode-mismatch`](#math-mode-mismatch) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | — | \(, \), \[ or \] stands where the mode does not allow it | <a class="from" href="Chktex-Coverage" title="follows chktex warning 49">chktex 49</a> |
 | C042 | [`unintended-escape`](#unintended-escape) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a command is followed by an escaped punctuation mark, which is another command | <a class="from" href="Chktex-Coverage" title="follows chktex warning 21">chktex 21</a> |
+| C044 | [`assertion-proved`](#assertion-proved) | <span class="sev sev-hint" title="default: hint">●</span> <span class="cat cat-correctness">correctness</span> | — | — | an assertion holds on every path | — |
 | X001 | [`build-shell-escape-unneeded`](#build-shell-escape-unneeded) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-security">security</span> | — | — | the build allows `\write18`, but the document never uses it | — |
 | X002 | [`shell-escape`](#shell-escape) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-security">security</span> | — | — | the document runs a program through `\write18` | — |
 | S001 | [`accent-on-dotted-letter`](#accent-on-dotted-letter) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | an accent sits on top of the dot of an `i` or a `j` | <a class="from" href="Chktex-Coverage" title="follows chktex warning 7">chktex 7</a> |
@@ -128,6 +128,8 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | S030 | [`duplicate-color-value`](#duplicate-color-value) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | two color names store the exact same color | — |
 | S031 | [`duplicate-package`](#duplicate-package) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | a package is loaded more than once | — |
 | S032 | [`hand-set-quantity`](#hand-set-quantity) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a number and its unit are set by hand where siunitx would set them | — |
+| S052 | [`hand-written-author`](#hand-written-author) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | an author name typed before a citation that prints it from the bibliography | — |
+| S051 | [`hand-written-reference`](#hand-written-reference) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a number typed after a reference name, where `\ref` would keep it right | — |
 | S033 | [`inconsistent-precision`](#inconsistent-precision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | the numbers of a table column give different numbers of decimals | — |
 | S034 | [`math-punctuation`](#math-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | punctuation sits on the wrong side of a formula | <a class="from" href="Chktex-Coverage" title="follows chktex warning 40">chktex 40</a> |
 | S035 | [`math-shift-dollars`](#math-shift-dollars) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | display math opened with `$$` where LaTeX spells it \[ | <a class="from" href="Chktex-Coverage" title="follows chktex warning 45, 46">chktex 45, 46</a> |
@@ -168,7 +170,7 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 
 `S` marks a safe fix, `U` an unsafe one. A rule with both has findings of each kind: the fix is safe where it cannot change what the document means and unsafe where it might. Each finding names its own kind.
 
-<details><summary>51 rules with quick fixes</summary>
+<details><summary>53 rules with quick fixes</summary>
 
 * C001 [`already-defined`](#already-defined) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\newcommand` redefines an existing name
 * C002 [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a BibTeX command biblatex replaces stops the run
@@ -205,6 +207,8 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 * S029 [`dead-definition`](#dead-definition) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a definition is replaced before anything uses it
 * S031 [`duplicate-package`](#duplicate-package) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> a package is loaded more than once
 * S032 [`hand-set-quantity`](#hand-set-quantity) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a number and its unit are set by hand where siunitx would set them
+* S052 [`hand-written-author`](#hand-written-author) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> an author name typed before a citation that prints it from the bibliography
+* S051 [`hand-written-reference`](#hand-written-reference) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a number typed after a reference name, where `\ref` would keep it right
 * S035 [`math-shift-dollars`](#math-shift-dollars) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> display math opened with `$$` where LaTeX spells it \[
 * S036 [`microtype-available`](#microtype-available) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> the engine can protrude characters and expand fonts, but microtype is not loaded
 * S038 [`ot1-font-encoding`](#ot1-font-encoding) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> accented letters are built with `\accent` because the text is set in OT1
@@ -738,14 +742,6 @@ Fix by installing the package, adding its directory to `search_paths` in `satex.
 
 See [chktex 27](https://www.nongnu.org/chktex/).
 
-### assertion-proved
-
-<p class="badges"><code class="num" title="rule number">C044</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-correctness">correctness</span></p>
-
-**an assertion holds on every path**
-
-The condition of `%\satex@assert` is true on every path that reads it. The paths cover every run of the document, so the property holds, under the assumptions the run reports.
-
 ### assumption-made
 
 <p class="badges"><code class="num" title="rule number">C045</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-correctness">correctness</span></p>
@@ -792,6 +788,14 @@ Fix by removing the backslash.
 
 See [chktex 21](https://www.nongnu.org/chktex/), [The TeXbook, chapter 9](https://ctan.org/pkg/texbook#chapter-9).
 
+### assertion-proved
+
+<p class="badges"><code class="num" title="rule number">C044</code> <span class="sev sev-hint" title="default: hint">default: hint</span> <span class="cat cat-correctness">correctness</span></p>
+
+**an assertion holds on every path**
+
+The condition of `%\satex@assert` is true on every path that reads it. The paths cover every run of the document, so the property holds, under the assumptions the run reports.
+
 </details>
 
 <details id="category-security">
@@ -824,7 +828,7 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 </details>
 
 <details id="category-style">
-<summary><b>style</b> (50 rules)</summary>
+<summary><b>style</b> (52 rules)</summary>
 
 ### accent-on-dotted-letter
 
@@ -1251,6 +1255,34 @@ The rule reads what the run typeset: a digit run followed by letters with no spa
 Fix by loading `\usepackage{siunitx}` and writing `\qty{⟨number⟩}{⟨unit⟩}`.
 
 See [SI brochure § 5.4.3](https://www.bipm.org/en/publications/si-brochure), [siunitx § \qty](https://ctan.org/pkg/siunitx).
+
+### hand-written-author
+
+<p class="badges"><code class="num" title="rule number">S052</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
+
+**an author name typed before a citation that prints it from the bibliography**
+
+In `Knuth \cite{knuth84}` the name is typed by hand. natbib's `\citet` and biblatex's `\textcite` print the author from the entry and the citation after it, so the two always agree.
+
+A finding needs a citation of one key whose entry, in a database the run read, has that author's last name right before it. `Knuth and Plass` and `Knuth et al.` count, as does a citation in brackets, `Knuth~[\cite{k}]`. It needs natbib or biblatex too: without `\textcite`, `\citet` or `\citeauthor`, there is nothing better to write.
+
+Fix by writing `\textcite{knuth84}`, `\citet{knuth84}` or `\citeauthor{knuth84}~\cite{knuth84}`.
+
+See [biblatex § 3.9.1](https://ctan.org/pkg/biblatex), [The LaTeX Companion § 16.3](https://ctan.org/pkg/tlc3-examples).
+
+### hand-written-reference
+
+<p class="badges"><code class="num" title="rule number">S051</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
+
+**a number typed after a reference name, where `\ref` would keep it right**
+
+`see Section 2` stays `2` when a section is added in front of it. `\ref` prints the number the label has in this run, so it never goes stale.
+
+A finding needs a word that names a kind of thing the document labels (a counter's name, its `\<counter>name` text such as `Figure`, a cleveref name, or an abbreviation with a period such as `Eq.`), then a number or a letter typed in the source, as in `Figure 2`, `Eq. (5)` or `Appendix A`. The words come from the run, so babel's names count too. Text in math, verbatim or a comment is never read, and neither is a number `\ref` set.
+
+Where one label of that kind prints that very number, the fix names it: `\cref` with cleveref loaded, else `\autoref` with hyperref, else `Section~\ref{...}`. Otherwise the finding asks for a label.
+
+See [The LaTeX Companion § 2.4](https://ctan.org/pkg/tlc3-examples), [cleveref § 2](https://ctan.org/pkg/cleveref).
 
 ### inconsistent-precision
 

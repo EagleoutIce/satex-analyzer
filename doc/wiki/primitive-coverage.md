@@ -4,7 +4,7 @@
 
 # Primitive coverage
 
-[tex.web](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web) parts 24-49 define TeX82's primitives. The [eTeX manual](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf), the [pdfTeX manual](https://mirrors.ctan.org/systems/doc/pdftex/manual/pdftex-a.pdf), the [XeTeX reference](https://tug.org/xetex/) and the [LuaTeX manual](https://mirrors.ctan.org/systems/doc/luatex/luatex.pdf) add the rest.
+[tex.web](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web) parts 24-49 define TeX82's primitives. The [eTeX manual](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf), the [pdfTeX manual](https://mirrors.ctan.org/systems/doc/pdftex/manual/pdftex-a.pdf), the [XeTeX reference](https://tug.org/xetex/) and the [LuaTeX manual](https://mirrors.ctan.org/systems/doc/luatex/luatex.pdf) add the rest.
 
 `src/engine/builtins.rs` maps every one of these names to a `Primitive`, and `builtins::verdict` judges each `Primitive` from what `src/engine/exec.rs`, `src/engine/mode.rs` and `src/engine/commands.rs` do with it. This page is generated from both, so it cannot drift from the interpreter. Every **modeled as** cell links to the arm of `builtins::verdict` that judges the primitive, built from `file!()` and `line!()` at that arm rather than from a table typed by hand. See [Domains](Domains) for the values a primitive's operands and results are tracked as, and [Lints](Lints) and [Chktex-Coverage](Chktex-Coverage) for what a lint rule builds on top of a primitive's real effect.
 
@@ -26,31 +26,31 @@ A primitive that scans its operands and drops their effect with neither of the l
 
 ## TeX82 & eTeX ✓
 
-**Fully modeled**: all 392 primitives, 225 of them exactly. Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web) parts 24-49. eTeX is in every engine but Knuth's `tex` (`Engine::has_etex`), so its primitives are listed with TeX82's, not apart.
+**Fully modeled**: all 392 primitives, 225 of them exactly. Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web) parts 24-49. eTeX is in every engine but Knuth's `tex` (`Engine::has_etex`), so its primitives are listed with TeX82's, not apart.
 
 | primitive | modeled as | fidelity | how |
 | --- | --- | --- | --- |
 | `\ ` (control space) | [`Mode(Horizontal(Space))`][builtins-2853] | exact | Real item, appended to the list satex tracks |
-| `\-` | [`Mode(Horizontal(Hyphen))`][builtins-2860] | approximated | Widens to Unknown. A rarely-taken [tex.web](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web) path this pass does not distinguish further |
+| `\-` | [`Mode(Horizontal(Hyphen))`][builtins-2860] | approximated | Widens to Unknown. A rarely-taken [tex.web](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web) path this pass does not distinguish further |
 | `\/` | [`Command(Nothing)`][builtins-2729] | approximated | No operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
 | `\TeXXeTstate` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\above` | [`Command(Fraction { delims: false, dimen: true })`][builtins-2746] | approximated | List so far becomes the numerator and the list starts afresh ([tex.web § 1181](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22252)). The fraction's size widens |
+| `\above` | [`Command(Fraction { delims: false, dimen: true })`][builtins-2746] | approximated | List so far becomes the numerator and the list starts afresh ([tex.web § 1181](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22252)). The fraction's size widens |
 | `\abovedisplayshortskip` | [`GlueParameter { mu: false }`][builtins-2562] | exact | Stored parameter table |
 | `\abovedisplayskip` | [`GlueParameter { mu: false }`][builtins-2562] | exact | Stored parameter table |
-| `\abovewithdelims` | [`Command(Fraction { delims: true, dimen: true })`][builtins-2746] | approximated | List so far becomes the numerator and the list starts afresh ([tex.web § 1181](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22252)). The fraction's size widens |
-| `\accent` | [`Accent`][builtins-2598] | exact | Tex.web [§§ 1123](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L21488)–[1125](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L21526) for TFM fonts: the accent box, its shift by the x-height, the kerns and the character after the assignments. Widens where the font, either character or what follows is not known |
+| `\abovewithdelims` | [`Command(Fraction { delims: true, dimen: true })`][builtins-2746] | approximated | List so far becomes the numerator and the list starts afresh ([tex.web § 1181](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22252)). The fraction's size widens |
+| `\accent` | [`Accent`][builtins-2598] | exact | Tex.web [§§ 1123](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L21488)–[1125](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L21526) for TFM fonts: the accent box, its shift by the x-height, the kerns and the character after the assignments. Widens where the font, either character or what follows is not known |
 | `\adjdemerits` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\advance` | [`Arith(Advance)`][builtins-2557] | approximated | Exact for known operands. Interval arithmetic and [tex.web § 222](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L4513)'s zero default otherwise |
-| `\afterassignment` | [`Defer(Assignment)`][builtins-2543] | exact | Tex.web [§§ 1211](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22720), [1](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L95) (semi-simple groups, `\aftergroup`/`\afterassignment`) |
-| `\aftergroup` | [`Defer(Group)`][builtins-2543] | exact | Tex.web [§§ 1211](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22720), [1](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L95) (semi-simple groups, `\aftergroup`/`\afterassignment`) |
-| `\atop` | [`Command(Fraction { delims: false, dimen: false })`][builtins-2746] | approximated | List so far becomes the numerator and the list starts afresh ([tex.web § 1181](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22252)). The fraction's size widens |
-| `\atopwithdelims` | [`Command(Fraction { delims: true, dimen: false })`][builtins-2746] | approximated | List so far becomes the numerator and the list starts afresh ([tex.web § 1181](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22252)). The fraction's size widens |
+| `\advance` | [`Arith(Advance)`][builtins-2557] | approximated | Exact for known operands. Interval arithmetic and [tex.web § 222](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L4513)'s zero default otherwise |
+| `\afterassignment` | [`Defer(Assignment)`][builtins-2543] | exact | Tex.web [§§ 1211](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22720), [1](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L95) (semi-simple groups, `\aftergroup`/`\afterassignment`) |
+| `\aftergroup` | [`Defer(Group)`][builtins-2543] | exact | Tex.web [§§ 1211](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22720), [1](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L95) (semi-simple groups, `\aftergroup`/`\afterassignment`) |
+| `\atop` | [`Command(Fraction { delims: false, dimen: false })`][builtins-2746] | approximated | List so far becomes the numerator and the list starts afresh ([tex.web § 1181](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22252)). The fraction's size widens |
+| `\atopwithdelims` | [`Command(Fraction { delims: true, dimen: false })`][builtins-2746] | approximated | List so far becomes the numerator and the list starts afresh ([tex.web § 1181](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22252)). The fraction's size widens |
 | `\badness` | [`LastItem(Badness)`][builtins-2681] | approximated | Always Unknown. Badness needs the line-breaking satex does not run |
 | `\baselineskip` | [`GlueParameter { mu: false }`][builtins-2562] | exact | Stored parameter table |
 | `\batchmode` | [`Command(Interaction(0))`][builtins-2750] | exact | Sets `\interactionmode` |
 | `\beginL` | [`Mode(Horizontal(LR))`][builtins-2853] | exact | Real item, appended to the list satex tracks |
 | `\beginR` | [`Mode(Horizontal(LR))`][builtins-2853] | exact | Real item, appended to the list satex tracks |
-| `\begingroup` | [`BeginGroup`][builtins-2543] | exact | Tex.web [§§ 1211](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22720), [1](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L95) (semi-simple groups, `\aftergroup`/`\afterassignment`) |
+| `\begingroup` | [`BeginGroup`][builtins-2543] | exact | Tex.web [§§ 1211](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22720), [1](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L95) (semi-simple groups, `\aftergroup`/`\afterassignment`) |
 | `\belowdisplayshortskip` | [`GlueParameter { mu: false }`][builtins-2562] | exact | Stored parameter table |
 | `\belowdisplayskip` | [`GlueParameter { mu: false }`][builtins-2562] | exact | Stored parameter table |
 | `\binoppenalty` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
@@ -62,8 +62,8 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\catcode` | [`CatcodeAssign`][builtins-2568] | approximated | Exact for one known character and category. Through an unknown character or value (`unknown-catcode`) each character it may name keeps its category or takes one it may be given, structural ones included. The reader splits the path on such a character |
 | `\char` | [`Mode(Horizontal(Char))`][builtins-2853] | exact | Real item, appended to the list satex tracks |
 | `\chardef` | [`RegisterDef(Char)`][builtins-2548] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
-| `\cleaders` | [`Mode(Leaders)`][builtins-2825] | approximated | Box or rule is scanned exactly. [tex.web § 1078](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20920)'s repeated copies are not laid out, since satex tracks natural size, not a page |
-| `\closein` | [`CloseIn`][builtins-2553] | approximated | Tex.web [§ 1351](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L24696). Exact for a known stream number. One satex cannot pin down leaves every stream's state unknown |
+| `\cleaders` | [`Mode(Leaders)`][builtins-2825] | approximated | Box or rule is scanned exactly. [tex.web § 1078](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L20920)'s repeated copies are not laid out, since satex tracks natural size, not a page |
+| `\closein` | [`CloseIn`][builtins-2553] | approximated | Tex.web [§ 1351](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L24696). Exact for a known stream number. One satex cannot pin down leaves every stream's state unknown |
 | `\closeout` | [`Command(CloseOut)`][builtins-2754] | approximated | Tracks the stream state a later `\input` of the written file reads back. A stream number satex cannot pin down widens every stream |
 | `\clubpenalties` | [`Special(Penalties)`][builtins-2718] | approximated | Table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\clubpenalty` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
@@ -80,7 +80,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\currentiftype` | [`LastItem(IfType)`][builtins-2686] | approximated | Exact once the conditional stack has settled. Unknown while a branch is undecided |
 | `\day` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\deadcycles` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\def` | [`Def { global: false, expand: false }`][builtins-2516] | exact | Tex.web [§ 476](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9357). An unterminated definition is diagnosed, not read past the file's end |
+| `\def` | [`Def { global: false, expand: false }`][builtins-2516] | exact | Tex.web [§ 476](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L9357). An unterminated definition is diagnosed, not read past the file's end |
 | `\defaulthyphenchar` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\defaultskewchar` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\delcode` | [`CharCode(Delimiter)`][builtins-2572] | approximated | Exact for one known character and code. Through an unknown character or value (`unknown-char-code`) each entry it may name holds its old code or the new, read back as that set |
@@ -90,33 +90,33 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\detokenize` | [`Text(Detokenize)`][builtins-2621] | approximated | Exact for a known operand. Widens when the token's meaning or a register's digits are unresolved |
 | `\dimen` | [`Register(Dimen)`][builtins-2548] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\dimendef` | [`RegisterDef(Dimen)`][builtins-2548] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
-| `\dimexpr` | [`Expr(Dimen)`][builtins-2592] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L195), [5](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L268) |
+| `\dimexpr` | [`Expr(Dimen)`][builtins-2592] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L195), [5](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L268) |
 | `\discretionary` | [`Mode(Horizontal(Discretionary))`][builtins-2853] | exact | Real item, appended to the list satex tracks |
 | `\displayindent` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
 | `\displaylimits` | [`Command(Limits)`][builtins-2738] | approximated | No operand. Where the scripts go is not followed, so the formula's size widens |
-| `\displaystyle` | [`Mode(MathStyle(0))`][builtins-2837] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
+| `\displaystyle` | [`Mode(MathStyle(0))`][builtins-2837] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
 | `\displaywidowpenalties` | [`Special(Penalties)`][builtins-2718] | approximated | Table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\displaywidowpenalty` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\displaywidth` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
-| `\divide` | [`Arith(Divide)`][builtins-2557] | approximated | Exact for known operands. Interval arithmetic and [tex.web § 222](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L4513)'s zero default otherwise |
+| `\divide` | [`Arith(Divide)`][builtins-2557] | approximated | Exact for known operands. Interval arithmetic and [tex.web § 222](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L4513)'s zero default otherwise |
 | `\doublehyphendemerits` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\dp` | [`Special(BoxDimen)`][builtins-2716] | approximated | Round-trips through the register consistently. The box behind it is never built |
-| `\dump` | [`End`][builtins-2586] | exact | Tex.web [§ 1054](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20477) (`end_job`) |
+| `\dump` | [`End`][builtins-2586] | exact | Tex.web [§ 1054](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L20477) (`end_job`) |
 | `\eTeXrevision` | [`Convert(EtexRevision)`][builtins-2783] | exact | Real constant or stored name |
 | `\eTeXversion` | [`LastItem(EtexVersion)`][builtins-2683] | exact | Read from state satex already tracks |
-| `\edef` | [`Def { global: false, expand: true }`][builtins-2516] | exact | Tex.web [§ 476](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9357). An unterminated definition is diagnosed, not read past the file's end |
-| `\else` | [`Else`][builtins-2536] | exact | Tex.web [§ 510](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9892), including `insert_relax` for an else or fi met mid-test |
+| `\edef` | [`Def { global: false, expand: true }`][builtins-2516] | exact | Tex.web [§ 476](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L9357). An unterminated definition is diagnosed, not read past the file's end |
+| `\else` | [`Else`][builtins-2536] | exact | Tex.web [§ 510](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L9892), including `insert_relax` for an else or fi met mid-test |
 | `\emergencystretch` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
-| `\end` | [`End`][builtins-2586] | exact | Tex.web [§ 1054](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20477) (`end_job`) |
+| `\end` | [`End`][builtins-2586] | exact | Tex.web [§ 1054](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L20477) (`end_job`) |
 | `\endL` | [`Mode(Horizontal(LR))`][builtins-2853] | exact | Real item, appended to the list satex tracks |
 | `\endR` | [`Mode(Horizontal(LR))`][builtins-2853] | exact | Real item, appended to the list satex tracks |
 | `\endcsname` | [`Endcsname`][builtins-2529] | exact | [LuaTeX manual, "Macros"](https://ctan.org/pkg/luatex) |
 | `\endgroup` | [`EndGroup`][builtins-2543] | exact | Tex.web [§§ 1211, 1](https://ctan.org/pkg/luatex) (semi-simple groups, `\aftergroup`/`\afterassignment`) |
 | `\endinput` | [`Endinput`][builtins-2585] | exact | Tex.web [§ 362](https://ctan.org/pkg/luatex): under an undecided conditional each path ends its own file |
 | `\endlinechar` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\eqno` | [`Mode(EqNo)`][builtins-2814] | approximated | Opens the equation number. The display's placement ([tex.web § 1199](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22500)) is widened |
+| `\eqno` | [`Mode(EqNo)`][builtins-2814] | approximated | Opens the equation number. The display's placement ([tex.web § 1199](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22500)) is widened |
 | `\errhelp` | [`TokensParameter`][builtins-2564] | approximated | Stored parameter table, but setting any `\every…` list widens the dimensions of boxes that were already packed before it was read |
-| `\errmessage` | [`Message { error: true }`][builtins-2587] | exact | Tex.web [§ 1279](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L23541) |
+| `\errmessage` | [`Message { error: true }`][builtins-2587] | exact | Tex.web [§ 1279](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L23541) |
 | `\errorcontextlines` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\errorstopmode` | [`Command(Interaction(3))`][builtins-2750] | exact | Sets `\interactionmode` |
 | `\escapechar` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
@@ -129,25 +129,25 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\everypar` | [`TokensParameter`][builtins-2564] | approximated | Stored parameter table, but setting any `\every…` list widens the dimensions of boxes that were already packed before it was read |
 | `\everyvbox` | [`TokensParameter`][builtins-2564] | approximated | Stored parameter table, but setting any `\every…` list widens the dimensions of boxes that were already packed before it was read |
 | `\exhyphenpenalty` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\expandafter` | [`ExpandAfter`][builtins-2520] | exact | Tex.web [§ 367](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L7681) |
+| `\expandafter` | [`ExpandAfter`][builtins-2520] | exact | Tex.web [§ 367](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L7681) |
 | `\fam` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\fi` | [`Fi`][builtins-2536] | exact | Tex.web [§ 510](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9892), including `insert_relax` for an else or fi met mid-test |
+| `\fi` | [`Fi`][builtins-2536] | exact | Tex.web [§ 510](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L9892), including `insert_relax` for an else or fi met mid-test |
 | `\finalhyphendemerits` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\firstmark` | [`Convert(Mark(1))`][builtins-2805] | approximated | Scanned, answer unknown |
 | `\firstmarks` | [`Convert(Marks(1))`][builtins-2805] | approximated | Scanned, answer unknown |
 | `\floatingpenalty` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\font` | [`FontDef`][builtins-2552] | exact | Tex.web [§ 1257](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L23346) (`\font`) |
+| `\font` | [`FontDef`][builtins-2552] | exact | Tex.web [§ 1257](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L23346) (`\font`) |
 | `\fontchardp` | [`LastItem(FontCharDp)`][builtins-2692] | approximated | Exact for a TFM font ([etex_man § 3.10](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf)). A native font's height, depth and italic correction are not read, so it widens to Unknown |
 | `\fontcharht` | [`LastItem(FontCharHt)`][builtins-2692] | approximated | Exact for a TFM font ([etex_man § 3.10](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf)). A native font's height, depth and italic correction are not read, so it widens to Unknown |
 | `\fontcharic` | [`LastItem(FontCharIc)`][builtins-2692] | approximated | Exact for a TFM font ([etex_man § 3.10](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf)). A native font's height, depth and italic correction are not read, so it widens to Unknown |
 | `\fontcharwd` | [`LastItem(FontCharWd)`][builtins-2691] | exact | TFM's or a native font's real glyph advance |
-| `\fontdimen` | [`FontParam(Dimen)`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\fontdimen` | [`FontParam(Dimen)`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\fontname` | [`Convert(FontName)`][builtins-2783] | exact | Real constant or stored name |
-| `\futurelet` | [`Let { global: false, future: true }`][builtins-2518] | exact | Tex.web [§ 1221](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22838), including the two-token `\futurelet` lookahead |
-| `\gdef` | [`Def { global: true, expand: false }`][builtins-2516] | exact | Tex.web [§ 476](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9357). An unterminated definition is diagnosed, not read past the file's end |
-| `\global` | [`Prefix(Global)`][builtins-2519] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22720) |
+| `\futurelet` | [`Let { global: false, future: true }`][builtins-2518] | exact | Tex.web [§ 1221](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22838), including the two-token `\futurelet` lookahead |
+| `\gdef` | [`Def { global: true, expand: false }`][builtins-2516] | exact | Tex.web [§ 476](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L9357). An unterminated definition is diagnosed, not read past the file's end |
+| `\global` | [`Prefix(Global)`][builtins-2519] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22720) |
 | `\globaldefs` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\glueexpr` | [`Expr(Skip)`][builtins-2592] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L195), [5](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L268) |
+| `\glueexpr` | [`Expr(Skip)`][builtins-2592] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L195), [5](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L268) |
 | `\glueshrink` | [`LastItem(GlueShrink)`][builtins-2689] | exact | Computed from a known glue spec |
 | `\glueshrinkorder` | [`LastItem(GlueShrinkOrder)`][builtins-2689] | exact | Computed from a known glue spec |
 | `\gluestretch` | [`LastItem(GlueStretch)`][builtins-2689] | exact | Computed from a known glue spec |
@@ -170,17 +170,17 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\hss` | [`Mode(Horizontal(Fil(2)))`][builtins-2853] | exact | Real item, appended to the list satex tracks |
 | `\ht` | [`Special(BoxDimen)`][builtins-2716] | approximated | Round-trips through the register consistently. The box behind it is never built |
 | `\hyphenation` | [`Command(GeneralText)`][builtins-2774] | approximated | Scanned, not built |
-| `\hyphenchar` | [`FontParam(HyphenChar)`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\hyphenchar` | [`FontParam(HyphenChar)`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\hyphenpenalty` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\if` | [`If(Chars)`][builtins-2645] | approximated | Exact for known characters. Undecided when either operand is an unresolved character |
-| `\ifcase` | [`If(Case)`][builtins-2648] | approximated | Tex.web [§ 509](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9875). Every arm is analyzed as its own path when the selector is unknown |
+| `\ifcase` | [`If(Case)`][builtins-2648] | approximated | Tex.web [§ 509](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L9875). Every arm is analyzed as its own path when the selector is unknown |
 | `\ifcat` | [`If(Catcodes)`][builtins-2645] | approximated | Exact for known characters. Undecided when either operand is an unresolved character |
 | `\ifcsname` | [`If(Csname)`][builtins-2640] | exact | Builds the name and looks it up |
 | `\ifdefined` | [`If(Defined)`][builtins-2638] | approximated | Exact for a known name. Narrowed by which names could still be undefined otherwise |
 | `\ifdim` | [`If(Dim)`][builtins-2642] | approximated | Exact for known operands. Narrows the interval on each branch otherwise |
 | `\ifeof` | [`If(Eof)`][builtins-2650] | approximated | Satex resolves the real file, so end-of-file is known for a known stream number. One it cannot pin down leaves the test undecided |
 | `\iffalse` | [`If(False)`][builtins-2632] | exact | Constant |
-| `\iffontchar` | [`If(FontChar)`][builtins-2666] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L195), [10](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L348): read from the font's real character table |
+| `\iffontchar` | [`If(FontChar)`][builtins-2666] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L195), [10](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L348): read from the font's real character table |
 | `\ifhbox` | [`If(Box)`][builtins-2659] | approximated | Exact for a known box state (void, `\hbox`, `\vbox`). Undecided once the register is Unknown |
 | `\ifhmode` | [`If(HMode)`][builtins-2655] | approximated | Decided from the mode satex tracks through the run. Open groups the run couldn't follow leave it undecided |
 | `\ifinner` | [`If(InnerMode)`][builtins-2655] | approximated | Decided from the mode satex tracks through the run. Open groups the run couldn't follow leave it undecided |
@@ -191,11 +191,11 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\ifvbox` | [`If(Box)`][builtins-2659] | approximated | Exact for a known box state (void, `\hbox`, `\vbox`). Undecided once the register is Unknown |
 | `\ifvmode` | [`If(VMode)`][builtins-2655] | approximated | Decided from the mode satex tracks through the run. Open groups the run couldn't follow leave it undecided |
 | `\ifvoid` | [`If(Box)`][builtins-2659] | approximated | Exact for a known box state (void, `\hbox`, `\vbox`). Undecided once the register is Unknown |
-| `\ifx` | [`If(IfX)`][builtins-2633] | approximated | Exact for known meanings ([tex.web § 507](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9840)'s `original` handles a redefined primitive). Member-by-member across a set of possible meanings otherwise, decided only when they agree |
-| `\ignorespaces` | [`IgnoreSpaces`][builtins-2594] | exact | Tex.web [§ 1045](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20377) |
-| `\immediate` | [`Prefix(Immediate)`][builtins-2519] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22720) |
+| `\ifx` | [`If(IfX)`][builtins-2633] | approximated | Exact for known meanings ([tex.web § 507](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L9840)'s `original` handles a redefined primitive). Member-by-member across a set of possible meanings otherwise, decided only when they agree |
+| `\ignorespaces` | [`IgnoreSpaces`][builtins-2594] | exact | Tex.web [§ 1045](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L20377) |
+| `\immediate` | [`Prefix(Immediate)`][builtins-2519] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22720) |
 | `\indent` | [`Mode(StartPar { indent: true })`][builtins-2817] | exact | Tex.web's own mode-transition rules |
-| `\input` | [`Load(Input)`][builtins-2584] | exact | Tex.web [§ 537](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L10365) (`\input`) |
+| `\input` | [`Load(Input)`][builtins-2584] | exact | Tex.web [§ 537](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L10365) (`\input`) |
 | `\inputlineno` | [`LastItem(InputLineNo)`][builtins-2683] | exact | Read from state satex already tracks |
 | `\insert` | [`Mode(Insert { vadjust: false })`][builtins-2831] | approximated | Opens the insert's own list. Not told apart from the vertical list around it |
 | `\insertpenalties` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
@@ -212,78 +212,78 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\lastpenalty` | [`LastItem(Penalty)`][builtins-2675] | approximated | Reads the tail of the list satex tracks. Unknown once the tail itself is |
 | `\lastskip` | [`LastItem(Skip)`][builtins-2675] | approximated | Reads the tail of the list satex tracks. Unknown once the tail itself is |
 | `\lccode` | [`CharCode(Lower)`][builtins-2572] | approximated | Exact for one known character and code. Through an unknown character or value (`unknown-char-code`) each entry it may name holds its old code or the new, read back as that set |
-| `\leaders` | [`Mode(Leaders)`][builtins-2825] | approximated | Box or rule is scanned exactly. [tex.web § 1078](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20920)'s repeated copies are not laid out, since satex tracks natural size, not a page |
-| `\left` | [`Mode(LeftRight { opens: true, closes: false })`][builtins-2841] | approximated | Math left group is kept ([tex.web § 1191](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22367)). The size of the list it delimits widens |
+| `\leaders` | [`Mode(Leaders)`][builtins-2825] | approximated | Box or rule is scanned exactly. [tex.web § 1078](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L20920)'s repeated copies are not laid out, since satex tracks natural size, not a page |
+| `\left` | [`Mode(LeftRight { opens: true, closes: false })`][builtins-2841] | approximated | Math left group is kept ([tex.web § 1191](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22367)). The size of the list it delimits widens |
 | `\lefthyphenmin` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\leftskip` | [`GlueParameter { mu: false }`][builtins-2562] | exact | Stored parameter table |
-| `\leqno` | [`Mode(EqNo)`][builtins-2814] | approximated | Opens the equation number. The display's placement ([tex.web § 1199](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22500)) is widened |
-| `\let` | [`Let { global: false, future: false }`][builtins-2518] | exact | Tex.web [§ 1221](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22838), including the two-token `\futurelet` lookahead |
+| `\leqno` | [`Mode(EqNo)`][builtins-2814] | approximated | Opens the equation number. The display's placement ([tex.web § 1199](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22500)) is widened |
+| `\let` | [`Let { global: false, future: false }`][builtins-2518] | exact | Tex.web [§ 1221](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22838), including the two-token `\futurelet` lookahead |
 | `\limits` | [`Command(Limits)`][builtins-2738] | approximated | No operand. Where the scripts go is not followed, so the formula's size widens |
 | `\linepenalty` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\lineskip` | [`GlueParameter { mu: false }`][builtins-2562] | exact | Stored parameter table |
 | `\lineskiplimit` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
-| `\long` | [`Prefix(Long)`][builtins-2519] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22720) |
+| `\long` | [`Prefix(Long)`][builtins-2519] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22720) |
 | `\looseness` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\lower` | [`Mode(Shift { vertical: true })`][builtins-2817] | exact | Tex.web's own mode-transition rules |
-| `\lowercase` | [`CaseShift(Lower)`][builtins-2576] | exact | Tex.web [§ 1288](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L23608). Widens a code an unknown token was assigned |
+| `\lowercase` | [`CaseShift(Lower)`][builtins-2576] | exact | Tex.web [§ 1288](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L23608). Widens a code an unknown token was assigned |
 | `\mag` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\mark` | [`Command(GeneralText)`][builtins-2774] | approximated | Scanned, not built |
 | `\marks` | [`Command(NumberText)`][builtins-2774] | approximated | Scanned, not built |
 | `\mathaccent` | [`Command(Number)`][builtins-2774] | approximated | Scanned, not built |
-| `\mathbin` | [`Command(MathComp(2))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L14663) centres a one-character list) |
+| `\mathbin` | [`Command(MathComp(2))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L14663) centres a one-character list) |
 | `\mathchar` | [`Command(Number)`][builtins-2774] | approximated | Scanned, not built |
 | `\mathchardef` | [`RegisterDef(MathChar)`][builtins-2548] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
-| `\mathchoice` | [`Mode(MathChoice)`][builtins-2836] | exact | Tex.web [§ 1172](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22146): opens all four styles in sequence |
-| `\mathclose` | [`Command(MathComp(5))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L14663) centres a one-character list) |
+| `\mathchoice` | [`Mode(MathChoice)`][builtins-2836] | exact | Tex.web [§ 1172](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22146): opens all four styles in sequence |
+| `\mathclose` | [`Command(MathComp(5))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L14663) centres a one-character list) |
 | `\mathcode` | [`CharCode(Math)`][builtins-2572] | approximated | Exact for one known character and code. Through an unknown character or value (`unknown-char-code`) each entry it may name holds its old code or the new, read back as that set |
-| `\mathinner` | [`Command(MathComp(7))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L14663) centres a one-character list) |
-| `\mathop` | [`Command(MathComp(1))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L14663) centres a one-character list) |
-| `\mathopen` | [`Command(MathComp(4))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L14663) centres a one-character list) |
-| `\mathord` | [`Command(MathComp(0))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L14663) centres a one-character list) |
-| `\mathpunct` | [`Command(MathComp(6))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L14663) centres a one-character list) |
-| `\mathrel` | [`Command(MathComp(3))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L14663) centres a one-character list) |
+| `\mathinner` | [`Command(MathComp(7))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L14663) centres a one-character list) |
+| `\mathop` | [`Command(MathComp(1))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L14663) centres a one-character list) |
+| `\mathopen` | [`Command(MathComp(4))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L14663) centres a one-character list) |
+| `\mathord` | [`Command(MathComp(0))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L14663) centres a one-character list) |
+| `\mathpunct` | [`Command(MathComp(6))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L14663) centres a one-character list) |
+| `\mathrel` | [`Command(MathComp(3))`][builtins-2733] | approximated | Sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens ([tex.web § 749](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L14663) centres a one-character list) |
 | `\mathsurround` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
 | `\maxdeadcycles` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\maxdepth` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
 | `\meaning` | [`Text(Meaning)`][builtins-2621] | approximated | Exact for a known operand. Widens when the token's meaning or a register's digits are unresolved |
 | `\medmuskip` | [`GlueParameter { mu: true }`][builtins-2562] | exact | Stored parameter table |
-| `\message` | [`Message { error: false }`][builtins-2587] | exact | Tex.web [§ 1279](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L23541) |
-| `\middle` | [`Mode(LeftRight { opens: true, closes: true })`][builtins-2841] | approximated | Math left group is kept ([tex.web § 1191](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22367)). The size of the list it delimits widens |
+| `\message` | [`Message { error: false }`][builtins-2587] | exact | Tex.web [§ 1279](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L23541) |
+| `\middle` | [`Mode(LeftRight { opens: true, closes: true })`][builtins-2841] | approximated | Math left group is kept ([tex.web § 1191](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22367)). The size of the list it delimits widens |
 | `\mkern` | [`Typeset(Dimen)`][builtins-2891] | approximated | `\kern` is exact. `\mkern`'s math-unit dimension always widens to Unknown, since it needs math-font setup satex does not run |
 | `\month` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\moveleft` | [`Mode(Shift { vertical: false })`][builtins-2817] | exact | Tex.web's own mode-transition rules |
 | `\moveright` | [`Mode(Shift { vertical: false })`][builtins-2817] | exact | Tex.web's own mode-transition rules |
 | `\mskip` | [`Typeset(Glue)`][builtins-2899] | approximated | `\mskip` appends an item of unknown size: its glue is in math units, which need math-font setup satex does not run |
-| `\muexpr` | [`Expr(MuSkip)`][builtins-2592] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L195), [5](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L268) |
-| `\multiply` | [`Arith(Multiply)`][builtins-2557] | approximated | Exact for known operands. Interval arithmetic and [tex.web § 222](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L4513)'s zero default otherwise |
+| `\muexpr` | [`Expr(MuSkip)`][builtins-2592] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L195), [5](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L268) |
+| `\multiply` | [`Arith(Multiply)`][builtins-2557] | approximated | Exact for known operands. Interval arithmetic and [tex.web § 222](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L4513)'s zero default otherwise |
 | `\muskip` | [`Register(MuSkip)`][builtins-2548] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\muskipdef` | [`RegisterDef(MuSkip)`][builtins-2548] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\mutoglue` | [`LastItem(MuToGlue)`][builtins-2689] | exact | Computed from a known glue spec |
 | `\newlinechar` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\noalign` | [`Mode(NoAlign)`][builtins-2834] | approximated | Cells run in the alignment's own list, not distinguished from the preamble |
 | `\noboundary` | [`Mode(Horizontal(NoBoundary))`][builtins-2853] | exact | Real item, appended to the list satex tracks |
-| `\noexpand` | [`NoExpand`][builtins-2521] | exact | Tex.web [§§ 367](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L7681), [358](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L7503) |
+| `\noexpand` | [`NoExpand`][builtins-2521] | exact | Tex.web [§§ 367](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L7681), [358](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L7503) |
 | `\noindent` | [`Mode(StartPar { indent: false })`][builtins-2817] | exact | Tex.web's own mode-transition rules |
 | `\nolimits` | [`Command(Limits)`][builtins-2738] | approximated | No operand. Where the scripts go is not followed, so the formula's size widens |
-| `\nonscript` | [`Command(NonScript)`][builtins-2741] | approximated | Glue of no size in math ([tex.web § 1171](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22139)). Script styles, which cancel the next glue, widen |
+| `\nonscript` | [`Command(NonScript)`][builtins-2741] | approximated | Glue of no size in math ([tex.web § 1171](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22139)). Script styles, which cancel the next glue, widen |
 | `\nonstopmode` | [`Command(Interaction(1))`][builtins-2750] | exact | Sets `\interactionmode` |
 | `\nulldelimiterspace` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
-| `\nullfont` | [`FontIdent(0)`][builtins-2581] | exact | Tex.web [§ 1217](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22811): selecting a font is a local assignment |
+| `\nullfont` | [`FontIdent(0)`][builtins-2581] | exact | Tex.web [§ 1217](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22811): selecting a font is a local assignment |
 | `\number` | [`Text(Number)`][builtins-2621] | approximated | Exact for a known operand. Widens when the token's meaning or a register's digits are unresolved |
-| `\numexpr` | [`Expr(Count)`][builtins-2592] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L195), [5](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L268) |
+| `\numexpr` | [`Expr(Count)`][builtins-2592] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L195), [5](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L268) |
 | `\omit` | [`Command(Nothing)`][builtins-2729] | approximated | No operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
-| `\openin` | [`OpenIn`][builtins-2553] | approximated | Tex.web [§ 1351](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L24696). Exact for a known stream number. One satex cannot pin down leaves every stream's state unknown |
+| `\openin` | [`OpenIn`][builtins-2553] | approximated | Tex.web [§ 1351](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L24696). Exact for a known stream number. One satex cannot pin down leaves every stream's state unknown |
 | `\openout` | [`Command(OpenOut)`][builtins-2754] | approximated | Tracks the stream state a later `\input` of the written file reads back. A stream number satex cannot pin down widens every stream |
-| `\or` | [`Or`][builtins-2536] | exact | Tex.web [§ 510](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9892), including `insert_relax` for an else or fi met mid-test |
-| `\outer` | [`Prefix(Outer)`][builtins-2519] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22720) |
+| `\or` | [`Or`][builtins-2536] | exact | Tex.web [§ 510](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L9892), including `insert_relax` for an else or fi met mid-test |
+| `\outer` | [`Prefix(Outer)`][builtins-2519] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22720) |
 | `\output` | [`TokensParameter`][builtins-2564] | approximated | Stored parameter table, but setting any `\every…` list widens the dimensions of boxes that were already packed before it was read |
 | `\outputpenalty` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\over` | [`Command(Fraction { delims: false, dimen: false })`][builtins-2746] | approximated | List so far becomes the numerator and the list starts afresh ([tex.web § 1181](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22252)). The fraction's size widens |
+| `\over` | [`Command(Fraction { delims: false, dimen: false })`][builtins-2746] | approximated | List so far becomes the numerator and the list starts afresh ([tex.web § 1181](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22252)). The fraction's size widens |
 | `\overfullrule` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
 | `\overline` | [`Command(Nothing)`][builtins-2729] | approximated | No operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
-| `\overwithdelims` | [`Command(Fraction { delims: true, dimen: false })`][builtins-2746] | approximated | List so far becomes the numerator and the list starts afresh ([tex.web § 1181](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22252)). The fraction's size widens |
+| `\overwithdelims` | [`Command(Fraction { delims: true, dimen: false })`][builtins-2746] | approximated | List so far becomes the numerator and the list starts afresh ([tex.web § 1181](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22252)). The fraction's size widens |
 | `\pagedepth` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
-| `\pagediscards` | [`Mode(Vertical(Discards(false)))`][builtins-2860] | approximated | Widens to Unknown. A rarely-taken [tex.web](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web) path this pass does not distinguish further |
+| `\pagediscards` | [`Mode(Vertical(Discards(false)))`][builtins-2860] | approximated | Widens to Unknown. A rarely-taken [tex.web](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web) path this pass does not distinguish further |
 | `\pagefilllstretch` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
 | `\pagefillstretch` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
 | `\pagefilstretch` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
@@ -309,30 +309,30 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\pretolerance` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\prevdepth` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
 | `\prevgraf` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\protected` | [`Prefix(Protected)`][builtins-2519] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22720) |
+| `\protected` | [`Prefix(Protected)`][builtins-2519] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22720) |
 | `\radical` | [`Command(Number)`][builtins-2774] | approximated | Scanned, not built |
 | `\raise` | [`Mode(Shift { vertical: true })`][builtins-2817] | exact | Tex.web's own mode-transition rules |
-| `\read` | [`Read`][builtins-2553] | approximated | Tex.web [§ 1351](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L24696). Exact for a known stream number. One satex cannot pin down leaves every stream's state unknown |
-| `\readline` | [`Command(ReadLine)`][builtins-2762] | approximated | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L195), [2](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L131), including the terminal-fatal case. A stream number satex cannot pin down gives an unknown line and does not end the job |
-| `\relax` | [`Relax`][builtins-2593] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22720) |
+| `\read` | [`Read`][builtins-2553] | approximated | Tex.web [§ 1351](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L24696). Exact for a known stream number. One satex cannot pin down leaves every stream's state unknown |
+| `\readline` | [`Command(ReadLine)`][builtins-2762] | approximated | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L195), [2](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L131), including the terminal-fatal case. A stream number satex cannot pin down gives an unknown line and does not end the job |
+| `\relax` | [`Relax`][builtins-2593] | exact | Tex.web [§ 1211](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22720) |
 | `\relpenalty` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\right` | [`Mode(LeftRight { opens: false, closes: true })`][builtins-2841] | approximated | Math left group is kept ([tex.web § 1191](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22367)). The size of the list it delimits widens |
+| `\right` | [`Mode(LeftRight { opens: false, closes: true })`][builtins-2841] | approximated | Math left group is kept ([tex.web § 1191](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22367)). The size of the list it delimits widens |
 | `\righthyphenmin` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\rightskip` | [`GlueParameter { mu: false }`][builtins-2562] | exact | Stored parameter table |
 | `\romannumeral` | [`Text(Roman)`][builtins-2621] | approximated | Exact for a known operand. Widens when the token's meaning or a register's digits are unresolved |
 | `\savinghyphcodes` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\savingvdiscards` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\scantokens` | [`ScanTokens { text: false }`][builtins-2532] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L195), [9](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L333). A capacity overflow (`MAX_IN_OPEN`) is diagnosed, not assumed away |
+| `\scantokens` | [`ScanTokens { text: false }`][builtins-2532] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L195), [9](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L333). A capacity overflow (`MAX_IN_OPEN`) is diagnosed, not assumed away |
 | `\scriptfont` | [`Command(FamilyFont)`][builtins-2758] | approximated | Stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
 | `\scriptscriptfont` | [`Command(FamilyFont)`][builtins-2758] | approximated | Stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
-| `\scriptscriptstyle` | [`Mode(MathStyle(6))`][builtins-2837] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
+| `\scriptscriptstyle` | [`Mode(MathStyle(6))`][builtins-2837] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
 | `\scriptspace` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
-| `\scriptstyle` | [`Mode(MathStyle(4))`][builtins-2837] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
+| `\scriptstyle` | [`Mode(MathStyle(4))`][builtins-2837] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
 | `\scrollmode` | [`Command(Interaction(2))`][builtins-2750] | exact | Sets `\interactionmode` |
 | `\setbox` | [`Command(SetBox)`][builtins-2753] | exact | Forwarded to the real box-scanning path |
-| `\setlanguage` | [`Command(SetLanguage)`][builtins-2745] | exact | Whatsit in horizontal mode, an illegal case elsewhere ([tex.web § 1377](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L24970)) |
+| `\setlanguage` | [`Command(SetLanguage)`][builtins-2745] | exact | Whatsit in horizontal mode, an illegal case elsewhere ([tex.web § 1377](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L24970)) |
 | `\sfcode` | [`CharCode(Space)`][builtins-2572] | approximated | Exact for one known character and code. Through an unknown character or value (`unknown-char-code`) each entry it may name holds its old code or the new, read back as that set |
-| `\shipout` | [`Mode(ShipOut)`][builtins-2829] | exact | Removes the box from the list, [tex.web § 1073](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20853)'s own effect on it |
+| `\shipout` | [`Mode(ShipOut)`][builtins-2829] | exact | Removes the box from the list, [tex.web § 1073](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L20853)'s own effect on it |
 | `\show` | [`Command(Token)`][builtins-2751] | exact | `\show` |
 | `\showbox` | [`Command(Number)`][builtins-2774] | approximated | Scanned, not built |
 | `\showboxbreadth` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
@@ -342,7 +342,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\showlists` | [`Command(Nothing)`][builtins-2729] | approximated | No operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
 | `\showthe` | [`Command(Internal)`][builtins-2752] | exact | `\showthe` |
 | `\showtokens` | [`Command(GeneralText)`][builtins-2774] | approximated | Scanned, not built |
-| `\skewchar` | [`FontParam(SkewChar)`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\skewchar` | [`FontParam(SkewChar)`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\skip` | [`Register(Skip)`][builtins-2548] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\skipdef` | [`RegisterDef(Skip)`][builtins-2548] | approximated | Exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\spacefactor` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
@@ -351,7 +351,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\special` | [`Pdf(Special)`][builtins-2602] | approximated | Manual's keywords are scanned exactly. No PDF is built, so the payload is recorded as an occurrence, not replayed |
 | `\splitbotmark` | [`Convert(Mark(4))`][builtins-2805] | approximated | Scanned, answer unknown |
 | `\splitbotmarks` | [`Convert(Marks(4))`][builtins-2805] | approximated | Scanned, answer unknown |
-| `\splitdiscards` | [`Mode(Vertical(Discards(true)))`][builtins-2860] | approximated | Widens to Unknown. A rarely-taken [tex.web](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web) path this pass does not distinguish further |
+| `\splitdiscards` | [`Mode(Vertical(Discards(true)))`][builtins-2860] | approximated | Widens to Unknown. A rarely-taken [tex.web](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web) path this pass does not distinguish further |
 | `\splitfirstmark` | [`Convert(Mark(3))`][builtins-2805] | approximated | Scanned, answer unknown |
 | `\splitfirstmarks` | [`Convert(Marks(3))`][builtins-2805] | approximated | Scanned, answer unknown |
 | `\splitmaxdepth` | [`DimenParameter`][builtins-2562] | exact | Stored parameter table |
@@ -359,7 +359,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\string` | [`Text(String)`][builtins-2621] | approximated | Exact for a known operand. Widens when the token's meaning or a register's digits are unresolved |
 | `\tabskip` | [`GlueParameter { mu: false }`][builtins-2562] | exact | Stored parameter table |
 | `\textfont` | [`Command(FamilyFont)`][builtins-2758] | approximated | Stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
-| `\textstyle` | [`Mode(MathStyle(2))`][builtins-2837] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
+| `\textstyle` | [`Mode(MathStyle(2))`][builtins-2837] | approximated | Tex.web [§ 1171](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
 | `\the` | [`Text(The)`][builtins-2621] | approximated | Exact for a known operand. Widens when the token's meaning or a register's digits are unresolved |
 | `\thickmuskip` | [`GlueParameter { mu: true }`][builtins-2562] | exact | Stored parameter table |
 | `\thinmuskip` | [`GlueParameter { mu: true }`][builtins-2562] | exact | Stored parameter table |
@@ -388,7 +388,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\uccode` | [`CharCode(Upper)`][builtins-2572] | approximated | Exact for one known character and code. Through an unknown character or value (`unknown-char-code`) each entry it may name holds its old code or the new, read back as that set |
 | `\uchyph` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\underline` | [`Command(Nothing)`][builtins-2729] | approximated | No operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
-| `\unexpanded` | [`Reinject`][builtins-2530] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L195), [4](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L231) |
+| `\unexpanded` | [`Reinject`][builtins-2530] | exact | ETeX manual [§§ 3](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L195), [4](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L231) |
 | `\unhbox` | [`Mode(Horizontal(Unpackage { take: true }))`][builtins-2855] | approximated | Void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
 | `\unhcopy` | [`Mode(Horizontal(Unpackage { take: false }))`][builtins-2855] | approximated | Void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
 | `\unkern` | [`Typeset(Plain)`][builtins-2889] | exact | `\unskip`, `\unkern` and `\unpenalty` remove the real tail item |
@@ -397,7 +397,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\unskip` | [`Typeset(Plain)`][builtins-2889] | exact | `\unskip`, `\unkern` and `\unpenalty` remove the real tail item |
 | `\unvbox` | [`Mode(Vertical(Unpackage { take: true }))`][builtins-2855] | approximated | Void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
 | `\unvcopy` | [`Mode(Vertical(Unpackage { take: false }))`][builtins-2855] | approximated | Void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
-| `\uppercase` | [`CaseShift(Upper)`][builtins-2576] | exact | Tex.web [§ 1288](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L23608). Widens a code an unknown token was assigned |
+| `\uppercase` | [`CaseShift(Upper)`][builtins-2576] | exact | Tex.web [§ 1288](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L23608). Widens a code an unknown token was assigned |
 | `\vadjust` | [`Mode(Insert { vadjust: true })`][builtins-2831] | approximated | Opens the insert's own list. Not told apart from the vertical list around it |
 | `\valign` | [`Mode(Horizontal(Align))`][builtins-2865] | approximated | Cells run in the alignment's own list, not distinguished from the preamble |
 | `\vbadness` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
@@ -418,8 +418,8 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\widowpenalties` | [`Special(Penalties)`][builtins-2718] | approximated | Table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\widowpenalty` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\write` | [`Write`][builtins-2588] | approximated | `\immediate\write` is exact. A deferred `\write`'s text is recorded unexpanded, since satex never reaches shipout to expand it |
-| `\xdef` | [`Def { global: true, expand: true }`][builtins-2516] | exact | Tex.web [§ 476](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L9357). An unterminated definition is diagnosed, not read past the file's end |
-| `\xleaders` | [`Mode(Leaders)`][builtins-2825] | approximated | Box or rule is scanned exactly. [tex.web § 1078](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L20920)'s repeated copies are not laid out, since satex tracks natural size, not a page |
+| `\xdef` | [`Def { global: true, expand: true }`][builtins-2516] | exact | Tex.web [§ 476](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L9357). An unterminated definition is diagnosed, not read past the file's end |
+| `\xleaders` | [`Mode(Leaders)`][builtins-2825] | approximated | Box or rule is scanned exactly. [tex.web § 1078](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L20920)'s repeated copies are not laid out, since satex tracks natural size, not a page |
 | `\xspaceskip` | [`GlueParameter { mu: false }`][builtins-2562] | exact | Stored parameter table |
 | `\year` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 
@@ -429,19 +429,19 @@ A primitive that scans its operands and drops their effect with neither of the l
 
 | primitive | modeled as | fidelity | how |
 | --- | --- | --- | --- |
-| `\efcode` | [`FontParam(CharCode(1000))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\efcode` | [`FontParam(CharCode(1000))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\expanded` | [`Expanded`][builtins-2534] | exact | Interface3, "Selecting tokens", and [pdfTeX manual, "\expanded"](https://ctan.org/pkg/pdftex) |
 | `\ifincsname` | [`If(InCsname)`][builtins-2664] | exact | Computed from state satex already tracks (`eval_extra_condition`) |
 | `\ifpdfabsdim` | [`If(AbsDim)`][builtins-2664] | exact | Computed from state satex already tracks (`eval_extra_condition`) |
 | `\ifpdfabsnum` | [`If(AbsNum)`][builtins-2664] | exact | Computed from state satex already tracks (`eval_extra_condition`) |
 | `\ifpdfprimitive` | [`If(Primitive)`][builtins-2664] | exact | Computed from state satex already tracks (`eval_extra_condition`) |
 | `\ignoreprimitiveerror` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\knaccode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
-| `\knbccode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
-| `\knbscode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\knaccode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\knbccode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\knbscode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\leftmarginkern` | [`Convert(LeftMarginKern)`][builtins-2805] | approximated | Scanned, answer unknown |
 | `\letterspacefont` | [`Command(CopyFont { amount: true })`][builtins-2758] | approximated | Stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
-| `\lpcode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\lpcode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\partokencontext` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\partokenname` | [`Command(Token)`][builtins-2751] | exact | `\show` |
 | `\pdfadjustinterwordglue` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
@@ -581,12 +581,12 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\pdfximagebbox` | [`Convert(ImageBBox)`][builtins-2805] | approximated | Scanned, answer unknown |
 | `\quitvmode` | [`Mode(QuitVMode)`][builtins-2817] | exact | Tex.web's own mode-transition rules |
 | `\rightmarginkern` | [`Convert(MarginKern)`][builtins-2805] | approximated | Scanned, answer unknown |
-| `\rpcode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
-| `\shbscode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\rpcode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\shbscode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\showstream` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\stbscode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\stbscode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\synctex` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
-| `\tagcode` | [`FontParam(TagCode { lig: true })`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\tagcode` | [`FontParam(TagCode { lig: true })`][builtins-2577] | approximated | Reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 
 ## XeTeX extensions ✓
 
@@ -834,7 +834,7 @@ A primitive that scans its operands and drops their effect with neither of the l
 | `\Uvextensible` | [`Unmodeled`][builtins-2610] | unsupported + diagnostic | Widens the mode |
 | `\adjustspacing` | [`IntegerParameter`][builtins-2562] | exact | Stored parameter table |
 | `\alignmark` | [`AlignMark`][builtins-2610] | unsupported + diagnostic | Widens the mode |
-| `\aligntab` | [`AlignTab`][builtins-2609] | exact | `&`: ends the cell, or begins one between rows ([tex.web § 785](https://github.com/TeX-Live/texlive-source/blob/d522db656cb9ac1c8a7b287fe8bc24b82c422303/texk/web2c/tex.web#L15499)) |
+| `\aligntab` | [`AlignTab`][builtins-2609] | exact | `&`: ends the cell, or begins one between rows ([tex.web § 785](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L15499)) |
 | `\attribute` | [`Command(NumberIsNumber)`][builtins-2774] | approximated | Scanned, not built |
 | `\attributedef` | [`Command(NamesNumber)`][builtins-2774] | approximated | Scanned, not built |
 | `\automaticdiscretionary` | [`Unmodeled`][builtins-2610] | unsupported + diagnostic | Widens the mode |

@@ -463,6 +463,11 @@ $ satex slice -f samples/paper.tex --where 'kind=begin-environment and key=figur
 
 ```text
 $ satex controls my@draft my@wide -f samples/mypackage.sty
+tag    name         for       means                              detail    file           
+use    \newcommand  my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:23:3
+macro  \mymode      my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:23:15
+use    \newcommand  my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:25:3
+macro  \mymode      my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:25:15
 ```
 
 # JSON requests
