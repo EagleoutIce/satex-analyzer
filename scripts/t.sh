@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Edit-compile-test loop: builds under the build lock, runs the tests without it.
 #   scripts/t.sh [libtest args: filter, --skip x, --exact, ...]
-# Env: PROFILE (fast), THREADS (12), JOBS (12), BUILD_LOCK (target/scratch/.build.lock),
+# Env: PROFILE (fast), THREADS (12), JOBS (12), BUILD_LOCK ($CARGO_TARGET_DIR/.build.lock),
 #      CARGO_TARGET_DIR, CAP=0 to skip the systemd-run memory/CPU cap,
 #      TIMES=1 to print every test's seconds (libtest --report-time).
 set -euo pipefail
@@ -12,7 +12,8 @@ export RUST_MIN_STACK=${RUST_MIN_STACK:-$(sed -n 's/^RUST_MIN_STACK *= *"\([0-9]
 export CARGO_BUILD_JOBS=${JOBS:-12} RUST_TEST_THREADS=${THREADS:-${RUST_TEST_THREADS:-12}}
 cap=()
 [ "${CAP:-1}" = 0 ] || cap=(systemd-run --user --scope -q -p MemoryMax=20G -p MemorySwapMax=0 -p CPUQuota=1200% nice -n 10)
-lock=${BUILD_LOCK:-target/scratch/.build.lock}
+# one lock per build folder: builds into different target dirs never wait on each other
+lock=${BUILD_LOCK:-${CARGO_TARGET_DIR:-target}/.build.lock}
 mkdir -p "$(dirname "$lock")"
 # Only the build holds the lock: it is gone when this pipeline ends.
 bin=$(flock "$lock" "${cap[@]}" cargo test --profile "${PROFILE:-fast}" --test it --no-run --message-format=json |
