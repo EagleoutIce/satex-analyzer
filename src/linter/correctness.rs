@@ -133,6 +133,24 @@ document's error too: it is shown at the call that opens it.",
         run: raised_errors,
     },
     Rule {
+        code: "missing-end",
+        category: Category::Correctness,
+        severity: Severity::Error,
+        summary: "the document ends without `\\bye` or `\\end{document}`",
+        explanation: "\
+Every path of the run reads the document to its end without meeting TeX's
+`\\end`: plain TeX's `\\bye`, or LaTeX's `\\end{document}`.  TeX then stops
+with `*** (job aborted, no legal \\end found)` and writes no last page.  A file
+that is no document of its own (a chapter `\\input` by another) ends this way
+by design and is not reported.
+
+Fix by ending the document with `\\bye` (plain TeX) or `\\end{document}` (LaTeX).",
+        references: &[Ref { source: Source::TeXbook, at: "chapter 23" }],
+        fixes: &[END_FIX],
+        engines: &[],
+        run: missing_end,
+    },
+    Rule {
         code: "caused-library-error",
         category: Category::Correctness,
         severity: Severity::Error,
@@ -574,6 +592,29 @@ fn edits(a: &str, b: &str) -> usize {
 
 /// Every `\errmessage` a real run reaches, once per place and text, placed
 /// at the request that read the file raising it.
+const END_FIX: Applicability = Applicability::Safe;
+
+/// The run's `missing-end`, with the ending its kernel takes appended.
+fn missing_end(report: &mut Report) {
+    let analysis = report.analysis();
+    let found: Vec<(Span, String)> = (analysis.facts.diagnostics.iter())
+        .filter(|d| d.code == "missing-end")
+        .map(|d| (d.span, d.message.clone()))
+        .collect();
+    let ending = match analysis.plugins.kernel == crate::plugins::Kernel::Latex {
+        true => "\\end{document}",
+        false => "\\bye",
+    };
+    for (span, message) in found {
+        let edits = report.edits().text(span.file).map(|(path, text)| {
+            let end = text.end();
+            let lead = if text.body().ends_with('\n') || text.body().is_empty() { "" } else { "\n" };
+            vec![crate::linter::fix::Edit { path, start: end, end, replacement: format!("{lead}{ending}\n") }]
+        });
+        report.add_fix(span, ending, message, Fix::new(format!("append `{ending}`"), END_FIX, edits));
+    }
+}
+
 fn raised_errors(report: &mut Report) {
     let analysis = report.analysis();
     let view = report.text();

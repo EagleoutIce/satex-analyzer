@@ -80,3 +80,4 @@ mod tex_semantics;
 mod trace_range;
 mod units;
 mod write_set;
+mod xref;

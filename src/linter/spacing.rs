@@ -28,7 +28,9 @@ glue is one TeX swallowed.  The rule reports it only where the command put a
 character on the page and the next word starts against it, so `\\rm text` and
 `\\noindent text` stay silent.
 
-Fix by writing `\\TeX{} ok`, or `\\TeX\\ ok` where a space belongs.",
+Fix by writing `\\TeX{} ok`, or `\\TeX\\ ok` where a space belongs.  Where the
+joined word is meant (`\\TeX book` for TeXbook), write `\\TeX{}book`: no space
+is swallowed there, so the rule stays silent and the intent shows.",
         references: &[Ref { source: Source::Chktex, at: "1" }, Ref { source: Source::TeXbook, at: "chapter 3" }],
         fixes: &[Applicability::Safe],
         engines: &[],
@@ -288,14 +290,14 @@ fn command_terminated_space(report: &mut Report) {
         }
         let name = analysis.interner.cs(expansion.name);
         let set = format!("{}{}", view.word_before(i), view.word_after(i));
-        findings.push((eaten, path, name, set));
+        findings.push((eaten, path, name, set, view.word_after(i)));
     }
-    for (at, path, name, set) in findings {
+    for (at, path, name, set, next) in findings {
         let edits = write_over(&path, at, 1, "{} ");
         report.add_fix(
             at,
             "swallowed",
-            format!("{name} took the space after its name, and the run set `{set}`"),
+            format!("{name} took the space after its name, and the run set `{set}`. If `{set}` is meant, write `{name}{{}}{next}`"),
             Fix::new(format!("write `{name}{{}}` so the space survives"), Applicability::Safe, Some(edits)),
         );
     }
@@ -314,10 +316,17 @@ fn sites(
     let mut out = Vec::new();
     // A command the document defines around a listed one is a wrapper: it
     // stands where the word in front of the number does, not the number.
+    // One whose body opens with the listed command sets the number first.
+    let opens = |d: &&crate::analysis::facts::Definition| {
+        d.mac.as_ref().and_then(|m| m.replacement_text.first()).and_then(|t| t.cs()).is_some_and(|cs| {
+            let name = analysis.interner.cs(cs);
+            names.iter().any(|group| group.contains(&name))
+        })
+    };
     let mut own: HashSet<Sym> = HashSet::default();
     let mut called: HashMap<Span, Sym> = HashMap::default();
     if !wrappers {
-        own.extend(analysis.facts.defs.iter().filter(|d| view.document(d.span.file)).map(|d| d.name));
+        own.extend(analysis.facts.defs.iter().filter(|d| view.document(d.span.file) && !opens(d)).map(|d| d.name));
         called.extend(analysis.facts.expansions.iter().map(|e| (e.span, e.name)));
     }
     for occurrence in &analysis.facts.occurrences {

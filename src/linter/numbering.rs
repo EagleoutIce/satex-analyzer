@@ -17,23 +17,21 @@ pub static RULES: &[Rule] = &[
         severity: Severity::Info,
         summary: "a name written before `\\ref` that cleveref prints by itself",
         explanation: "\
-`Section~\\ref{sec:x}` writes the name of the thing by hand, so renaming a
-section into an appendix leaves the prose behind.  cleveref's `\\cref` and
-`\\Cref` read the name from the label's counter.
+In `Section~\\ref{sec:x}` the word `Section` is typed by hand.  If the
+section becomes an appendix, the word is wrong.  cleveref's `\\cref` and
+`\\Cref` print the word from the label's counter.
 
-The rule reads the `\\ref` sites the run recorded and takes a word, or
-abbreviation with a period, tied or spaced directly in front of one.  The
-word must name the label's kind, read from the counter the label was set
-after: the counter's name, its `\\<counter>name` macro or a `\\crefname` text,
-in singular, plural or as a prefix.  `see~\\ref{x}` stays silent, and so does
-a label the run never found.  `\\eqref`, `\\pageref` and `(\\ref{x})` have no word in
-front and stay silent.  `Sections~\\ref{a} and~\\ref{b}` is one finding.
+A finding needs a word, or an abbreviation with a period, right before a
+`\\ref`.  The word must name the kind of the label: its counter, the
+counter's `\\<counter>name` or a `\\crefname` text, singular, plural or a
+prefix.  So `see~\\ref{x}` gives no finding, and neither do a label the run
+never found, `\\eqref`, `\\pageref` and `(\\ref{x})`.
+`Sections~\\ref{a} and~\\ref{b}` is one finding.
 
-Whether the document loaded cleveref is read from the run.  If it did, the
-fix writes `\\Cref{sec:x}`, or `\\cref` after a lowercase word, and the rule
-speaks only where cleveref would set the very word written (`Sec.` stays
-where it sets `Section`).  If it did
-not, the fix also loads it, after the last `\\usepackage` of the preamble.
+With cleveref loaded, a finding needs cleveref to print the same word
+(`Sec.` gives none where it prints `Section`), and the fix writes
+`\\Cref{sec:x}`, or `\\cref` after a lowercase word.  Without cleveref, the
+fix also loads it after the last `\\usepackage` of the preamble.
 
 Fix by writing `\\Cref{sec:x}` and loading cleveref.",
         references: &[Ref { source: Source::Cleveref, at: "2" }],
@@ -258,7 +256,7 @@ fn name_before(line: &[char], at: usize) -> Option<(usize, String)> {
 /// (scope-correct, unlike a counter register read later): cleveref's
 /// `\newlabel{k@cref}{{[section][1][]1}...}`, else hyperref's anchor
 /// `section.1` at the end of `\newlabel{k}`.
-fn label_counters(analysis: &Analysis) -> HashMap<&str, String> {
+pub(crate) fn label_counters(analysis: &Analysis) -> HashMap<&str, String> {
     let lines: Vec<&str> = analysis
         .facts
         .occurrences
@@ -304,7 +302,7 @@ fn label_counters(analysis: &Analysis) -> HashMap<&str, String> {
 /// Whether `word` names the kind of thing `counter` counts: the counter's
 /// own name, its `\<counter>name` macro, or a cleveref name for it, in the
 /// singular, the plural or as an abbreviation with a period.
-fn names_counter(analysis: &Analysis, cleveref: bool, counter: &str, word: &str) -> bool {
+pub(crate) fn names_counter(analysis: &Analysis, cleveref: bool, counter: &str, word: &str) -> bool {
     use crate::linter::shared::macro_text;
     let mut names = vec![counter.to_string()];
     names.extend(macro_text(analysis, &format!("{counter}name")));

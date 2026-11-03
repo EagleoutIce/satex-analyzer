@@ -50,7 +50,7 @@ reads the assertion.  `%\\satex@assume` can narrow what it reads.",
     Rule {
         code: "assertion-proved",
         category: Category::Correctness,
-        severity: Severity::Info,
+        severity: Severity::Hint,
         summary: "an assertion holds on every path",
         explanation: "\
 The condition of `%\\satex@assert` is true on every path that reads it.  The

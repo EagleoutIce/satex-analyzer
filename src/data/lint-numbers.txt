@@ -110,3 +110,6 @@ C044 assertion-proved
 C045 assumption-made
 C046 invalid-directive
 A002 assertion-unknown
+C047 missing-end
+S051 hand-written-reference
+S052 hand-written-author

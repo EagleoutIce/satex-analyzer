@@ -106,6 +106,9 @@ const BODY: &str = "\\begin{document}\nx\n\\end{document}\n";
 const PROSE: &str = "Running text that fills the line. ";
 
 fix_cases! {
+    /// A document every path reads to its end without TeX's `\end` gets the
+    /// ending of its kernel appended.
+    missing_end_document_is_appended("missing-end-document", "\\documentclass{article}\n\\begin{document}\nx\n", "missing-end", false, "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n");
     duplicate_package_drops_the_name_from_a_list("duplicate-list", format!(
         "\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage{{amsmath,graphicx,amssymb}}\n{BODY}"
     ), "duplicate-package", false, &format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage{{amsmath,amssymb}}\n{BODY}"));
@@ -595,4 +598,20 @@ fn a_redefined_kernel_command_in_use_keeps_its_package() {
     }
     let source = "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\[ x \\]\n\\end{document}\n";
     assert_eq!(reported("unused-package-redefined", source, "unused-package"), 0);
+}
+
+/// A plain TeX document without `\bye` is told so and gets it appended; a
+/// chapter, no document of its own, is not.
+#[test]
+fn missing_bye_is_appended() {
+    if !installed() {
+        return;
+    }
+    let (records, dir) = lint_codes("missing-bye", "% !TeX program = tex\nHello.\n", "missing-end");
+    let replacement = records.first().and_then(|r| r["edits"][0]["replacement"].as_str().map(str::to_string));
+    assert_eq!(replacement.as_deref(), Some("\\bye\n"), "{records:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (records, dir) = lint_codes("missing-bye-chapter", "\\section{Two}\nText.\n", "missing-end");
+    assert!(records.is_empty(), "{records:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

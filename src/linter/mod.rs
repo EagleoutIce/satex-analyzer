@@ -29,6 +29,7 @@ pub mod text;
 pub mod typography;
 pub mod units;
 pub mod verbatim;
+pub mod xref;
 
 use serde_json::json;
 
@@ -61,6 +62,7 @@ pub fn all() -> impl Iterator<Item = &'static Rule> {
         .chain(suppress::RULES)
         .chain(colors::RULES)
         .chain(tables::RULES)
+        .chain(xref::RULES)
 }
 
 /// Which lint family a [`Rule`] belongs to. `satex lint --filter category=…`
@@ -108,6 +110,9 @@ pub enum Severity {
     Error,
     Warning,
     Info,
+    /// A confirmation, not a problem (an assertion that holds): an editor
+    /// shows it without underlining the text.
+    Hint,
 }
 
 impl Severity {
@@ -116,6 +121,7 @@ impl Severity {
             Severity::Error => "error",
             Severity::Warning => "warning",
             Severity::Info => "info",
+            Severity::Hint => "hint",
         }
     }
 }
@@ -750,6 +756,7 @@ pub fn rule_markdown(rule: &Rule) -> String {
         Severity::Error => "◆",
         Severity::Warning => "▲",
         Severity::Info => "●",
+        Severity::Hint => "✓",
     };
     let engines: Vec<&str> = rule.engines.iter().map(|e| e.as_str()).collect();
     let mut badges = vec![
