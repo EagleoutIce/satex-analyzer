@@ -18,6 +18,7 @@
 
 **[🧩 Language server](Lsp)**
 - [Editor setup](Lsp#editor-setup)
+- [IntelliJ plugin](Intellij)
 
 **[📖 Semantics](Semantics)**
 - [Where satex is not exact](Semantics#14-where-satex-is-not-exact)

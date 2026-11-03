@@ -93,6 +93,7 @@ const TEMPLATES: &[(&str, &str)] = &[
     ("doc/src/wiki/queries.md.in", "doc/wiki/queries.md"),
     ("doc/src/wiki/configuration.md.in", "doc/wiki/configuration.md"),
     ("doc/src/wiki/lsp.md.in", "doc/wiki/lsp.md"),
+    ("doc/src/wiki/intellij.md.in", "doc/wiki/intellij.md"),
     ("doc/src/wiki/domains.md.in", "doc/wiki/domains.md"),
     ("doc/src/wiki/challenges.md.in", "doc/wiki/challenges.md"),
     ("doc/src/chktex-coverage.md.in", "doc/chktex-coverage.md"),
