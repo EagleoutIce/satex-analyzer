@@ -4856,7 +4856,15 @@ impl Machine<'_> {
         let name = self.name(by).to_string();
         let raw = self.read_undelimited();
         let expanded = self.expand_tokens(Rc::from(raw.clone()));
-        let text = crate::tex::text_with_groups(&expanded, &self.out.interner);
+        // tex.web § 1280: shown as `show_token_list` shows it, `\Join ` with its space.
+        let escape = self.escape_char();
+        let text = crate::tex::detokenize_in(
+            &expanded,
+            &self.out.interner,
+            escape,
+            &self.catcodes,
+            crate::tex::Selector::NewString,
+        );
         // The message belongs to the command the file called, wherever the
         // raising code was defined.
         let at = self.raised_at(span);
