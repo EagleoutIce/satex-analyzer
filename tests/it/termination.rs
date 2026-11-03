@@ -990,6 +990,40 @@ Some text with microtype protrusion and expansion.
         assert!(a.forks <= 64 * 2, "{} forks", a.forks);
     }
 
+    /// A widened conditional runs what its arms may do, but a separator
+    /// that is `\let` (expl3's `\__int_sep:`) after `\expandafter` defines
+    /// nothing: the name past it expands first. An alias of `\number` there
+    /// keeps its meaning.
+    #[test]
+    fn a_widened_conditional_keeps_an_alias_after_an_expandafter_separator() {
+        let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\count1=\\pdfelapsedtime
+\\let\\sep\\let \\let\\value\\number
+\\def\\x{\\advance\\count2 1 \\ifnum\\count1>\\count2 \\expandafter\\sep\\value 0 \\expandafter\\x\\else\\expandafter\\x\\fi}\\x
+\\edef\\Check{\\value 12}
+";
+        let mut cfg = super::cfg(1_000_000_000);
+        let l = &mut cfg.limits;
+        (l.widen_after, l.cycle_after, l.recursion_depth) = (u16::MAX, u16::MAX, u16::MAX);
+        (l.call_summary_after, l.site_expansions, l.site_forks) = (0, u32::MAX, 4);
+        let a = Machine::analyze(source, None, &cfg);
+        let codes: Vec<&str> = a.facts.diagnostics.iter().map(|d| d.code).collect();
+        assert!(codes.contains(&"site-forks-widened"), "{codes:?}");
+        assert_eq!(crate::support::body(&a, "Check"), "12", "{codes:?}");
+    }
+
+    /// A test of `\numexpr x-10` narrows `x` on each arm, `\ifcase` and
+    /// `\ifnum` alike, so `\int_to_Hex:n`'s base recursion ends by intervals.
+    #[test]
+    fn a_test_of_a_register_plus_a_constant_narrows_the_register() {
+        let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\count1=\\pdfuniformdeviate 16\\relax
+\\ifcase\\numexpr\\count1-10\\relax \\def\\C{y}\\or\\def\\C{y}\\or\\def\\C{y}\\or\\def\\C{y}\\or\\def\\C{y}\\or\\def\\C{y}\\else\\edef\\C{\\ifnum\\count1<10 y\\else n\\fi}\\fi
+\\ifnum\\numexpr\\count1-10\\relax<0 \\edef\\D{\\ifnum\\count1<10 y\\else n\\fi}\\else\\edef\\D{\\ifnum\\count1>9 y\\else n\\fi}\\fi
+";
+        let a = Machine::analyze(source, None, &super::cfg(1_000_000_000));
+        assert_eq!(crate::support::body(&a, "D"), "y");
+        assert_eq!(crate::support::body(&a, "C"), "y");
+    }
+
     /// A loop whose flag a macro in a widened conditional clears
     /// (scrlayer-notecolumn's `\ifeof\slnc@file\@tempswafalse\fi` over a
     /// joined stream): the flag may be false after it, so the loop may end.

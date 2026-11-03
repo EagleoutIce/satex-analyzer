@@ -1465,8 +1465,9 @@ pub struct Machine<'a> {
     /// every number down to 0). Only the number scan that read it may
     /// leave it: [`Machine::scan_int`] clears it first.
     pub(crate) abs_parts: Option<Vec<crate::value::Num>>,
-    /// The register that interval was read from, and what quantity it is.
-    pub(crate) abs_from: Option<(Sym, crate::value::Quantity)>,
+    /// The register that interval was read from, what quantity it is, and
+    /// what was added to it (`\numexpr x-10`).
+    pub(crate) abs_from: Option<crate::exec::From>,
     pub(crate) abs_whole: bool,
     /// The operands a traced numeric test compared (`1900 = 1900`), for its branch step.
     pub(crate) compared: Option<String>,
@@ -7915,10 +7916,16 @@ will look undefined",
         };
         acc.tail.push(unknown);
         let (base, mut depth) = (acc.base, acc.depth);
-        let mut pops = 0;
-        let closed = self.skip_unknown_text(body, &mut depth, &mut pops, |m| m.text_levels() >= base);
+        let (mut pops, mut closers) = (0, Vec::new());
+        let closed = self.skip_unknown_text(body, &mut depth, &mut pops, &mut closers, |m| m.text_levels() >= base);
         for _ in 0..pops {
             self.pop_conditional();
+        }
+        // A `}` closing a brace the scan made before the cut is its own:
+        // kept, text after it unknown again.
+        for closer in closers {
+            let t = closer.unwrap_or_else(|| self.unknown_text(Unk::Any, span));
+            self.scans.last_mut().expect("the scan is in flight").tail.push(t);
         }
         // Its `}` comes from code below the scan (`\if_false: { \fi: }`).
         if body && !closed && depth == 0 {
@@ -7931,27 +7938,40 @@ will look undefined",
 
     /// Reads text unexpanded while `more`, to a `}` at `depth` 0 (counted
     /// only in a `body`): whether it met one. `pops` counts the
-    /// conditionals its `\fi`s close beyond its own.
+    /// conditionals its `\fi`s close beyond its own. `closers` gets the
+    /// `}`s that close braces opened before it began, and `None` for text
+    /// read after one.
     fn skip_unknown_text(
         &mut self,
         body: bool,
         depth: &mut usize,
         pops: &mut usize,
+        closers: &mut Vec<Option<Token>>,
         more: impl Fn(&Self) -> bool,
     ) -> bool {
-        let mut fis = 0;
+        let (mut fis, mut floor) = (0, *depth);
         while more(self)
             && let Some(t) = self.read(false)
         {
             match t.tok {
                 Tok::Chr(_, Catcode::Begin) if body => *depth += 1,
                 Tok::Chr(_, Catcode::End) if body && *depth == 0 => return true,
-                Tok::Chr(_, Catcode::End) if body => *depth -= 1,
+                Tok::Chr(_, Catcode::End) if body => {
+                    *depth -= 1;
+                    if *depth < floor {
+                        floor = *depth;
+                        closers.push(Some(t));
+                        continue;
+                    }
+                }
                 _ => fis += self.closing(&t).0,
             }
             if fis > 0 {
                 *pops += 1;
                 fis = 0;
+            }
+            if matches!(closers.last(), Some(Some(_))) {
+                closers.push(None);
             }
         }
         false
@@ -8007,7 +8027,7 @@ will look undefined",
             }
             for _ in items[last.map_or(0, |l| l + 1)..].iter() {
                 if self.read(false).is_some_and(|t| matches!(t.tok, Tok::Chr(_, Catcode::Begin))) {
-                    self.skip_unknown_text(true, &mut 0, &mut 0, lists);
+                    self.skip_unknown_text(true, &mut 0, &mut 0, &mut Vec::new(), lists);
                 }
             }
             (0..pops).for_each(|_| self.pop_conditional());
@@ -9612,8 +9632,9 @@ will look undefined",
             // The rest of unknown text, perhaps none: a path where it is
             // empty, one where it is not ([`Machine::one_token`] reads that).
             Some(t) if let Some((class, false)) = self.typed_text_of(t) => {
+                // Read whole, the token is gone: progress, not a scan given up.
                 if !self.split_rest(t, class) {
-                    return self.unknown_argument(&[t], t.span);
+                    return vec![self.unknown_text(Unk::Of(&[&[t]]), t.span)];
                 }
                 self.read_undelimited()
             }
@@ -13016,7 +13037,14 @@ impl Machine<'_> {
                     Tok::Chr(_, Catcode::End) => grouped = grouped.saturating_sub(1),
                     _ => {}
                 }
-                let Some(cs) = t.cs() else { continue };
+                // A definer's target is the next token, spaces aside: a
+                // parameter or character there names no known name.
+                let Some(cs) = t.cs() else {
+                    if !matches!(t.tok, Tok::Chr(' ', _)) {
+                        definer = None;
+                    }
+                    continue;
+                };
                 let meaning = self.env.meaning(cs);
                 match meaning.prim() {
                     Some(Primitive::BeginGroup) => grouped += 1,
@@ -13054,7 +13082,13 @@ impl Machine<'_> {
                     _ => {}
                 }
                 defines = defining(self, cs);
-                if defines {
+                // After `\expandafter` the token past it expands first
+                // (`\expandafter\__int_sep:\int_value:w`, a separator that
+                // is `\let`): that token is no target.
+                let deferred = i > 0
+                    && text[i - 1].cs().is_some_and(|e| self.env.meaning(e).prim() == Some(Primitive::ExpandAfter))
+                    && text.get(i + 1).and_then(|t| t.cs()).is_some_and(|n| self.expandable(n));
+                if defines && !deferred {
                     definer = meaning.prim();
                 }
             }

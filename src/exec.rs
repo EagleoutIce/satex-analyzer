@@ -25,6 +25,8 @@ type Learn = (Option<(crate::mode::Modes, crate::mode::Modes)>, Option<(Sym, Opt
 /// put back.
 type Operands = (Vec<Vec<(u32, u8)>>, Option<Token>);
 pub(crate) type Narrowing = (Sym, crate::value::Quantity, crate::value::Num, Option<Vec<i64>>, char, (i64, i64));
+/// A number read as a register's value plus a constant ([`Machine::abs_from`]).
+pub(crate) type From = (Sym, crate::value::Quantity, i64);
 
 /// tex.web § 1232: `"8000` is the largest math code.
 const MATH_CODE_MAX: i64 = 0x8000;
@@ -1804,7 +1806,9 @@ impl Machine<'_> {
             self.testing_kind.push(kind);
             self.abs = None;
             self.abs_exact = None;
+            self.abs_from = None;
             let selector = self.scan_number();
+            let from = self.abs_from.take();
             // An unknown selector whose interval lies in one case range decides
             // it: all negative (`\else`, as -1 selects it) or one value.
             // Otherwise only the arms in its interval are split.
@@ -1819,7 +1823,7 @@ impl Machine<'_> {
             };
             return match selector.or(decided) {
                 Some(n) => self.case_conditional(n, by, span, base, kind, None),
-                None => self.undecided_case(by, span, base, kind, range),
+                None => self.undecided_case(by, span, base, kind, range, from),
             };
         }
         if cond == Cond::IfX {
@@ -1965,6 +1969,14 @@ impl Machine<'_> {
 
     fn keep_arms(&self, sym: Sym, members: &[Meaning]) -> Vec<bool> {
         self.env.arms(sym).iter().map(|arm| members.iter().any(|m| self.may_mean(arm, m))).collect()
+    }
+
+    /// What reading `part` of `x+c` teaches `x`.
+    fn refine_from(&mut self, from: Option<From>, part: Num) {
+        if let Some((sym, quantity, c)) = from {
+            let d = |v: i64| v.saturating_sub(c);
+            self.refine_value(sym, Value::from_num(quantity, Num::range(d(part.lo), d(part.hi))));
+        }
     }
 
     /// [`Machine::refine`] for a register's value.
@@ -2158,7 +2170,15 @@ impl Machine<'_> {
 
     /// Undecided `\ifcase`: a path per selector in range. Negative values
     /// select `\else` (tex.web § 509).
-    fn undecided_case(&mut self, by: Sym, span: Span, base: usize, kind: Option<i8>, range: Option<Num>) {
+    fn undecided_case(
+        &mut self,
+        by: Sym,
+        span: Span,
+        base: usize,
+        kind: Option<i8>,
+        range: Option<Num>,
+        from: Option<From>,
+    ) {
         let on = self.force_reference(by, span);
         self.record_with(Step::Condition, by, span, || Some("undecided"));
         self.note_conditional(by, span, None);
@@ -2166,7 +2186,8 @@ impl Machine<'_> {
         let (lo, hi) = range.map_or((0, i64::MAX), |n| (n.lo.max(-1), n.hi));
         // A path per arm the selector may reach: the values past the last
         // `\or` (or below 0) all take the same one.
-        let selectors: Option<Vec<i64>> = self.case_arms().map(|ors| {
+        let ors = self.case_arms();
+        let selectors: Option<Vec<i64>> = ors.map(|ors| {
             let last = ors as i64;
             let mut values: Vec<i64> = (lo.max(0)..=hi.min(last)).collect();
             if lo < 0 || hi > last {
@@ -2182,6 +2203,16 @@ impl Machine<'_> {
             Some(values) => values.get(arm).copied(),
             None => lo.checked_add(arm as i64).filter(|&n| n <= hi),
         };
+        // Each arm narrows the selector's register to the values it takes.
+        if let (Some(n), Some(range), Some(last)) = (n, range, ors.map(|o| o as i64)) {
+            let part = match (n, lo < 0, hi > last) {
+                (0.., _, _) if n <= last => Num::exact(n),
+                (_, true, false) => Num::range(range.lo, -1),
+                (_, false, true) => Num::range(last + 1, range.hi),
+                _ => range,
+            };
+            self.refine_from(from, part);
+        }
         match n {
             Some(n) => self.case_conditional(n, by, span, base, kind, Some(on)),
             None => self.no_arm(),
@@ -3434,7 +3465,10 @@ impl Machine<'_> {
             // lift), to the test that reads it, as a register does.
             Some(Primitive::Expr(kind)) => {
                 let value = self.scan_expr(kind);
-                self.read_abstract(value)
+                let from = self.abs_from.take();
+                let read = self.read_abstract(value);
+                self.abs_from = from.filter(|_| self.abs.is_some());
+                read
             }
             // `\the\catcode⟨number⟩` is the category code in force (The TeXbook,
             // ch. 24). expl3 saves and restores its catcodes with it.
@@ -3718,11 +3752,11 @@ impl Machine<'_> {
         let value = self.env.value(sym);
         (self.abs, self.abs_exact, self.abs_from) = match (&value, self.env.num(sym), kind) {
             (Value::Unknown, Some((quantity, num)), _) => {
-                (Some(num), raw.and_then(Value::exact_ints), Some((sym, quantity)))
+                (Some(num), raw.and_then(Value::exact_ints), Some((sym, quantity, 0)))
             }
             (Value::Unknown, None, RegKind::Count | RegKind::Dimen) => {
                 let quantity = if kind == RegKind::Dimen { Quantity::Dimen } else { Quantity::Int };
-                (register_top(kind), None, Some((sym, quantity)))
+                (register_top(kind), None, Some((sym, quantity, 0)))
             }
             _ => (None, None, None),
         };
@@ -4995,9 +5029,7 @@ impl Machine<'_> {
         let mut stream = None;
         self.split(by, span, arms.len(), |m, arm| {
             let (s, part) = arms[arm];
-            if let Some((sym, quantity)) = from {
-                m.refine_value(sym, Value::from_num(quantity, part));
-            }
+            m.refine_from(from, part);
             stream = Some(s);
             true
         });
@@ -5172,14 +5204,15 @@ impl Machine<'_> {
         ys: Option<Num>,
         ys_exact: Option<Vec<i64>>,
         (a, b): (Option<i64>, Option<i64>),
-        (from_a, from_b): (Option<(Sym, crate::value::Quantity)>, Option<(Sym, crate::value::Quantity)>),
+        (from_a, from_b): (Option<From>, Option<From>),
     ) -> Option<bool> {
         self.narrowing = None;
         let relation = relation?;
         // A register a join left a set of values or intervals is decided
         // member by member: every pair of members gives the same answer.
-        let members = |exact: &Option<Vec<i64>>, from: Option<(Sym, crate::value::Quantity)>, whole: Option<Num>| {
-            whole.and_then(|w| from.and_then(|(sym, _)| self.members_of(sym, exact.as_deref(), w)).or(Some(vec![w])))
+        let members = |exact: &Option<Vec<i64>>, from: Option<From>, whole: Option<Num>| {
+            let from = from.filter(|f| f.2 == 0);
+            whole.and_then(|w| from.and_then(|(sym, ..)| self.members_of(sym, exact.as_deref(), w)).or(Some(vec![w])))
         };
         if let (Some(xm), Some(ym)) = (members(&xs_exact, from_a, xs), members(&ys_exact, from_b, ys))
             && let Some(Some(answer)) =
@@ -5209,9 +5242,20 @@ impl Machine<'_> {
             (None, Some(o), '>') => Some((o.lo, o.hi)),
             _ => None,
         };
+        // `x+c` against a bound is `x` against the bound less `c`.
+        let less = |c: i64, n: Num, exact: Option<Vec<i64>>, (p, q): (i64, i64)| {
+            let d = |v: i64| v.saturating_sub(c);
+            (Num::range(d(n.lo), d(n.hi)), exact.map(|e| e.into_iter().map(d).collect()), (d(p), d(q)))
+        };
         self.narrowing = match (from_a, xs, bounds(relation, b, ys), from_b, ys, bounds(flipped, a, xs)) {
-            (Some((sym, dimen)), Some(x), Some(bound), ..) => Some((sym, dimen, x, xs_exact, relation, bound)),
-            (_, _, _, Some((sym, dimen)), Some(y), Some(bound)) => Some((sym, dimen, y, ys_exact, flipped, bound)),
+            (Some((sym, dimen, c)), Some(x), Some(bound), ..) => {
+                let (x, exact, bound) = less(c, x, xs_exact, bound);
+                Some((sym, dimen, x, exact, relation, bound))
+            }
+            (_, _, _, Some((sym, dimen, c)), Some(y), Some(bound)) => {
+                let (y, exact, bound) = less(c, y, ys_exact, bound);
+                Some((sym, dimen, y, exact, flipped, bound))
+            }
             _ => None,
         };
         None
@@ -5219,7 +5263,7 @@ impl Machine<'_> {
 }
 
 /// An operand of a comparison: its interval, exact members, value and register.
-type Operand = (Option<Num>, Option<Vec<i64>>, Option<i64>, Option<(Sym, crate::value::Quantity)>);
+type Operand = (Option<Num>, Option<Vec<i64>>, Option<i64>, Option<From>);
 
 /// pdfTeX's `\ifpdfabsnum`/`\ifpdfabsdim`: both operands as absolute
 /// values; the register is dropped, so no arm narrows it.

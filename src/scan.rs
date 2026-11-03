@@ -416,7 +416,7 @@ impl Machine<'_> {
                 None => true,
             };
             // The test that reads it narrows it on each arm, as a register's.
-            let from = from.map(|sym| (sym, crate::value::Quantity::Int));
+            let from = from.map(|sym| (sym, crate::value::Quantity::Int, 0));
             (self.abs, self.abs_exact, self.abs_from, self.abs_odd) = (Some(num), None, from, None);
             return ((num.lo == num.hi).then_some(num.lo), backed_up);
         }
@@ -1561,14 +1561,14 @@ impl Machine<'_> {
         let mut err = (false, false);
         let mut unknown = false;
         let zero = Glue::default();
-        let (e, ea, ea_x) = 'restart: loop {
+        let (e, ea, ea_x, ef) = 'restart: loop {
             let (mut r, mut e, mut s, mut t, mut n) = (ExprOp::None, zero, ExprOp::None, zero, 0i64);
             let (mut ea, mut ta, mut na) = (Num::exact(0), Num::exact(0), Num::exact(0));
             let (mut ea_x, mut ta_x, mut na_x) = (Some(vec![0i64]), Some(vec![0i64]), Some(vec![0i64]));
             let (mut ef, mut tf) = (Form::None, Form::None);
             'next: loop {
                 let o_level = if s == ExprOp::None { l } else { RegKind::Count };
-                let Some(token) = self.next_non_blank_x_token() else { break 'restart (e, ea, ea_x) };
+                let Some(token) = self.next_non_blank_x_token() else { break 'restart (e, ea, ea_x, Form::None) };
                 if token.is_char('(') && token.is_cat(Catcode::Other) {
                     stack.push(Frame { l, s, r, e, t, n, ea, ta, na, ea_x, ta_x, na_x, ef, tf });
                     l = o_level;
@@ -1599,7 +1599,7 @@ impl Machine<'_> {
 
                 // One unknown read twice is one value: `x - (x/d)*d`.
                 let mut ff = match self.abs_from {
-                    Some((sym, _)) if f.is_none() && o_level == RegKind::Count => Form::Lin(sym, 0),
+                    Some((sym, _, c)) if f.is_none() && o_level == RegKind::Count => Form::Lin(sym, c),
                     _ => Form::None,
                 };
                 self.abs = None;
@@ -1801,7 +1801,7 @@ impl Machine<'_> {
                     if o != ExprOp::None {
                         continue 'next;
                     }
-                    let Some(saved) = stack.pop() else { break 'restart (e, self.as_now(ef, ea), ea_x) };
+                    let Some(saved) = stack.pop() else { break 'restart (e, self.as_now(ef, ea), ea_x, ef) };
                     f = e;
                     fa = ea;
                     fa_x = ea_x;
@@ -1810,6 +1810,11 @@ impl Machine<'_> {
                     continue 'found;
                 }
             }
+        };
+        // The whole expression one unknown plus a constant: a test of it narrows that unknown.
+        self.abs_from = match ef {
+            Form::Lin(x, c) if kind == RegKind::Count => Some((x, crate::value::Quantity::Int, c)),
+            _ => None,
         };
         if arith && !unknown {
             self.diagnose(

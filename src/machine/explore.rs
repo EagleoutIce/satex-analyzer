@@ -2874,8 +2874,22 @@ impl Machine<'_> {
         let unknown = Tok::Cs(self.unknown);
         let last_unknown = text.last().is_some_and(|t| t.tok == unknown);
         if last_unknown {
-        } else if !balanced(mp) || !balanced(mq) || (widen && mp.iter().chain(mq).any(|t| t.tok == unknown)) {
+        } else if widen && mp.iter().chain(mq).any(|t| t.tok == unknown) {
             text.push(self.unknown_text(Unk::Any, span));
+        } else if !balanced(mp) || !balanced(mq) {
+            // One token cannot stand for a brace: it covers the characters
+            // either side holds, a brace as the other character it prints.
+            let brace = |t: &&Token| matches!(t.tok, Tok::Chr(_, Catcode::Begin | Catcode::End));
+            let bare = |t: &[Token]| -> Vec<Token> { t.iter().filter(|t| !brace(t)).copied().collect() };
+            let braces = mp.iter().chain(mq).any(|t| brace(&t));
+            let token = match self.cover(&[&bare(mp), &bare(mq)]) {
+                Some((class, one, _, cs)) => {
+                    let class = if braces { class.union(TextClass::OTHER) } else { class };
+                    self.unknown_text(Unk::Class(class, one, None, &cs), span)
+                }
+                None => self.unknown_text(Unk::Any, span),
+            };
+            text.push(token);
         } else if widen {
             let token = self.unknown_text(Unk::Of(&[mp, mq]), span);
             text.push(token);
