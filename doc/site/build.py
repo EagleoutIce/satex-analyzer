@@ -109,6 +109,14 @@ def parallel(label, jobs, f, workers=None):
 # flags, the project config and the installation (its ls-R files). A listing
 # does not depend on the satex build, so a rebuild reuses it; --fresh drops it.
 LISTINGS = {}
+LISTINGS_FILE = None  # where they are kept between builds: written after each step, so a stopped build keeps what it listed
+
+
+def save_listings():
+    if LISTINGS_FILE:
+        tmp = LISTINGS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(LISTINGS))
+        tmp.replace(LISTINGS_FILE)
 # The satex binary's digest, its cache key (what the analysis is: reporting code
 # aside) and whether to ignore remembered results (--fresh): set by main().
 BINARY, KEY, FRESH, SATEX = "", "", False, None
@@ -398,7 +406,9 @@ def bundle(satex, work):
         return listed((flags, it, ROOT) if isinstance(it, Path) else (flags, probe_doc(probes, it), probes))
 
     def take(jobs, label):
-        for (kernel, _, it), paths in zip(jobs, parallel(label, jobs, listing)):
+        done = parallel(label, jobs, listing)
+        save_listings()
+        for (kernel, _, it), paths in zip(jobs, done):
             if isinstance(it, Path):
                 reads[(kernel, it.name)] = paths
             elif file_of(it) in {p.name for p in paths}:
@@ -1166,7 +1176,7 @@ def main():
     # start more of them, so the process ends at once instead of unwinding the main thread only.
     for stop in (signal.SIGINT, signal.SIGTERM):
         signal.signal(stop, lambda number, _: os._exit(128 + number))
-    global BINARY, KEY, FRESH, SATEX, SITE, EXAMPLES
+    global BINARY, KEY, FRESH, SATEX, SITE, EXAMPLES, LISTINGS_FILE
     SATEX = args.satex.resolve()
     BINARY, FRESH = digest(args.satex.resolve().read_bytes()), args.fresh
     KEY = json.loads(subprocess.run([str(args.satex), "cache", "--format", "json"], capture_output=True, text=True).stdout or "{}").get("key") or BINARY
@@ -1180,7 +1190,7 @@ def main():
     shutil.rmtree(snapshot, ignore_errors=True)
     shutil.copytree(SITE, snapshot, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     SITE, EXAMPLES = snapshot, snapshot / "examples"
-    listings = work / "listings.json"
+    listings = LISTINGS_FILE = work / "listings.json"
     stamp = installation_stamp() + ("" if args.keep_listings else ";" + KEY)
     if listings.exists() and not args.fresh:
         LISTINGS.update(json.loads(listings.read_text()))
@@ -1231,7 +1241,7 @@ def main():
         pages_done = side.submit(docs)
         manifest, shown = playground(args.satex.resolve(), args.wasm.resolve(), work, out)
         pages_done.result()
-    listings.write_text(json.dumps(LISTINGS))
+    save_listings()
     manifest["worker"] = (SITE / "worker.js").read_text()
     readme = (ROOT / "README.md").read_text()
     md = lambda text: rewrite(markdown(text), "README.md", table, homepage, repo, out, "")
