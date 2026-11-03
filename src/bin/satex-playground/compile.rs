@@ -1,10 +1,11 @@
 //! The playground's Compile button, on this machine's TeX: `POST
 //! /__satex/compile` takes `{main, files, at?}`, writes the files into a
 //! fresh directory beside the site and runs the native `satex compile` on
-//! the main file, or on `satex slice --at` of it. The answer names the
+//! the main file, or on `satex slice --at` of it, with the page's settings
+//! (`sets`: `KEY=VALUE`, each a `--set`). The answer names the
 //! pages (PNG, by `pdftocairo`), the words on them (`pdftotext -bbox`), its
 //! objects with the link annotations (`qpdf --json`, parsed by the page), the
-//! log and the explained messages. A file is text or `{"b64": ...}` (an
+//! log, the explained messages and every command run. A file is text or `{"b64": ...}` (an
 //! image). The same request again answers from the kept build, and with
 //! `cached` only a kept build answers.
 //! `GET /__satex/compile/ID/FILE` serves what a build wrote, `GET
@@ -78,7 +79,8 @@ pub fn respond(
     let root = compile_root(site);
     if method == "POST" && rest.is_empty() {
         let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
-        let answer = build(&root, body).unwrap_or_else(|e| json!({ "error": e }));
+        let mut runs = Vec::new();
+        let answer = build(&root, body, &mut runs).unwrap_or_else(|e| json!({ "error": e, "commands": runs }));
         return super::send(stream, method, "answer.json", "no-cache", false, answer.to_string().into_bytes());
     }
     if rest.is_empty() {
@@ -90,7 +92,10 @@ pub fn respond(
     match file.filter(|f| root.canonicalize().is_ok_and(|r| f.starts_with(r)) && f.is_file()) {
         Some(f) => {
             let name = f.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
-            super::send(stream, method, &name, "no-cache", false, std::fs::read(&f)?)
+            let bytes = std::fs::read(&f)?;
+            // a text file of the build (.aux, .log, .fls) shows in the browser, not as a download
+            let text = super::content_type(&name) == "application/octet-stream" && std::str::from_utf8(&bytes).is_ok();
+            super::send(stream, method, &if text { format!("{name}.txt") } else { name }, "no-cache", false, bytes)
         }
         None => std::io::Write::write_all(
             stream,
@@ -100,7 +105,8 @@ pub fn respond(
 }
 
 /// One build of the request's project in a new directory under `root`.
-fn build(root: &Path, body: &[u8]) -> Result<Value, String> {
+/// Every command it runs goes into `runs`, the page shows them.
+fn build(root: &Path, body: &[u8], runs: &mut Vec<Value>) -> Result<Value, String> {
     let request: Value = serde_json::from_slice(body).map_err(|e| format!("bad request: {e}"))?;
     let main = request["main"].as_str().filter(|m| safe(m)).ok_or("no main file")?;
     let key = request_key(&request);
@@ -125,19 +131,30 @@ fn build(root: &Path, body: &[u8]) -> Result<Value, String> {
         std::fs::write(&file, bytes).map_err(|e| e.to_string())?;
     }
     let satex = std::env::current_exe().map_err(|e| e.to_string())?.with_file_name("satex");
+    // The page's settings: `--set KEY=VALUE` pairs only.
+    let sets: Vec<&str> = request["sets"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    let flags: Vec<&str> = sets.iter().flat_map(|s| ["--set", s]).collect();
     // A slice is a project of its own: the main file cut down, the local files it needs.
     let work = match request["at"].as_str() {
         Some(at) => {
-            let out =
-                run(Command::new(&satex).args(["slice", "--at", at, "--out", "slice", "-f", main]).current_dir(&dir))?;
-            if !dir.join("slice").join(main).is_file() {
-                return Err(format!("the slice failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+            let out = run(
+                runs,
+                Command::new(&satex)
+                    .args(&flags)
+                    .args(["slice", "--at", at, "--out", "slice", "-f", main])
+                    .current_dir(&dir),
+            )?;
+            if !out.status.success() || !dir.join("slice").join(main).is_file() {
+                return Err(format!("satex slice --at {at} wrote no {main} ({}): {}", out.status, said(&out)));
             }
             dir.join("slice")
         }
         None => dir.clone(),
     };
-    let out = run(Command::new(&satex).args(["--format", "json", "compile", "-f", main]).current_dir(&work))?;
+    let out = run(
+        runs,
+        Command::new(&satex).args(&flags).args(["--format", "json", "compile", "-f", main]).current_dir(&work),
+    )?;
     let mut records: Vec<Value> = serde_json::from_slice(&out.stdout).unwrap_or_default();
     for r in &mut records {
         if let Some(p) = r["path"].as_str() {
@@ -148,14 +165,20 @@ fn build(root: &Path, body: &[u8]) -> Result<Value, String> {
     let stem = Path::new(main).with_extension("");
     let pdf = work.join(stem.with_extension("pdf"));
     if pdf.is_file() {
-        run(Command::new("pdftocairo").args(["-png", "-r", "144"]).arg(&pdf).arg(work.join("page")))?;
-        run(Command::new("pdftotext").arg("-bbox").arg(&pdf).arg(work.join("words.html")))?;
+        run(
+            runs,
+            Command::new("pdftocairo").args(["-png", "-r", "144"]).arg(&pdf).arg(work.join("page")).current_dir(&work),
+        )?;
+        run(runs, Command::new("pdftotext").arg("-bbox").arg(&pdf).arg(work.join("words.html")).current_dir(&work))?;
         // without qpdf the pages only lack their links. It exits 3 on mere warnings
-        let _ = Command::new("qpdf")
-            .args(["--json=2", "--json-key=pages", "--json-key=qpdf"])
-            .arg(&pdf)
-            .arg(work.join("links.json"))
-            .output();
+        let _ = run(
+            runs,
+            Command::new("qpdf")
+                .args(["--json=2", "--json-key=pages", "--json-key=qpdf"])
+                .arg(&pdf)
+                .arg(work.join("links.json"))
+                .current_dir(&work),
+        );
     }
     let mut pages: Vec<String> = std::fs::read_dir(&work)
         .map_err(|e| e.to_string())?
@@ -166,6 +189,22 @@ fn build(root: &Path, body: &[u8]) -> Result<Value, String> {
     pages.sort_by_key(|n| (n.len(), n.clone()));
     let base = work.strip_prefix(root).unwrap_or(&work).to_string_lossy().into_owned();
     let log = std::fs::read_to_string(work.join(stem.with_extension("log"))).unwrap_or_default();
+    // What the build wrote beside the sources: the page shows each, the logs (BibTeX's too) as text.
+    let sent: std::collections::HashSet<&str> =
+        request["files"].as_object().into_iter().flatten().map(|(n, _)| n.as_str()).collect();
+    let mut outputs = Vec::new();
+    let mut logs = serde_json::Map::new();
+    for entry in walkdir(&work) {
+        let Ok(name) = entry.strip_prefix(&work).map(|n| n.to_string_lossy().into_owned()) else { continue };
+        let ours = name.starts_with("page-") || ["words.html", "links.json", "answer.json"].contains(&name.as_str());
+        if ours || sent.contains(name.as_str()) || name.starts_with("slice/") {
+            continue;
+        }
+        if [".log", ".blg", ".ilg"].iter().any(|e| name.ends_with(e)) {
+            logs.insert(name.clone(), json!(String::from_utf8_lossy(&std::fs::read(&entry).unwrap_or_default())));
+        }
+        outputs.push(json!({ "name": name, "size": entry.metadata().map(|m| m.len()).unwrap_or(0) }));
+    }
     let answer = json!({
         "key": key,
         "base": format!("{base}/"),
@@ -178,6 +217,9 @@ fn build(root: &Path, body: &[u8]) -> Result<Value, String> {
         "records": records,
         "log": log,
         "stderr": String::from_utf8_lossy(&out.stderr),
+        "commands": runs,
+        "outputs": outputs,
+        "logs": logs,
     });
     std::fs::write(dir.join("answer.json"), answer.to_string()).map_err(|e| e.to_string())?;
     Ok(answer)
@@ -187,7 +229,7 @@ fn build(root: &Path, body: &[u8]) -> Result<Value, String> {
 fn request_key(request: &Value) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for part in [&request["main"], &request["at"], &request["files"]] {
+    for part in [&request["main"], &request["at"], &request["files"], &request["sets"]] {
         part.to_string().hash(&mut hasher);
     }
     format!("{:016x}", hasher.finish())
@@ -223,14 +265,51 @@ fn unb64(text: &str) -> Vec<u8> {
     out
 }
 
-fn run(command: &mut Command) -> Result<std::process::Output, String> {
-    command.output().map_err(|e| format!("cannot run {}: {e}", command.get_program().to_string_lossy()))
+/// Runs `command`, noted in `runs` as the page shows it: its words, paths
+/// inside the build directory relative, exit status and time.
+fn run(runs: &mut Vec<Value>, command: &mut Command) -> Result<std::process::Output, String> {
+    let dir = command.get_current_dir().map(Path::to_path_buf).unwrap_or_default();
+    let word = |w: &std::ffi::OsStr| {
+        let p = Path::new(w);
+        let p = p.strip_prefix(&dir).unwrap_or(p);
+        // the native satex beside this server is plain `satex` to the reader
+        let w = if p.file_name() == Some("satex".as_ref()) { "satex".into() } else { p.to_string_lossy() };
+        if w.contains([' ', '\\']) { format!("'{w}'") } else { w.into_owned() }
+    };
+    let line: Vec<String> = std::iter::once(command.get_program()).chain(command.get_args()).map(word).collect();
+    let start = std::time::Instant::now();
+    let out = command.output();
+    runs.push(json!({
+        "command": line.join(" "),
+        "status": out.as_ref().ok().and_then(|o| o.status.code()),
+        "ms": start.elapsed().as_millis() as u64,
+        "error": out.as_ref().err().map(ToString::to_string),
+    }));
+    out.map_err(|e| format!("cannot run {}: {e}", command.get_program().to_string_lossy()))
+}
+
+/// What a run printed, stderr then stdout, for an error message.
+fn said(out: &std::process::Output) -> String {
+    let text = [&out.stderr, &out.stdout].map(|b| String::from_utf8_lossy(b).trim().to_string());
+    let text = text.into_iter().filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n");
+    if text.is_empty() { "it printed nothing".into() } else { text }
 }
 
 /// A relative path that stays inside the build directory.
 fn safe(name: &str) -> bool {
     let path = Path::new(name);
     !name.is_empty() && path.components().all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
+/// Every file under `dir`, sorted.
+fn walkdir(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() { out.extend(walkdir(&path)) } else { out.push(path) }
+    }
+    out.sort();
+    out
 }
 
 /// Drops all but the newest [`KEEP`] builds.

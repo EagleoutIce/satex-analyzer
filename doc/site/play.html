@@ -58,12 +58,12 @@
       <button type="button" role="tab" data-panel="play-explain" aria-controls="play-explain">Explain</button>
       <button type="button" role="tab" data-panel="play-typeset" aria-controls="play-typeset">Typeset</button>
       <button type="button" role="tab" data-panel="play-pdf" aria-controls="play-pdf">PDF</button>
-      <button type="button" role="tab" data-panel="play-written" aria-controls="play-written">Written <b id="written-count" class="count"></b></button>
-      <button type="button" id="side-split" class="split-toggle" aria-pressed="false" title="show the PDF beside the open panel">
+      <button type="button" role="tab" data-panel="play-written" aria-controls="play-written" title="the files the run reads and the build writes, by kind">Files <b id="written-count" class="count"></b></button>
+      <button type="button" id="side-split" class="split-toggle" aria-pressed="false" aria-label="PDF beside" title="show the PDF beside the open panel">
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M8 2.5v11"/></svg><span>PDF beside</span></button>
     </div>
     <div class="panels">
-    <section class="sect" id="play-findings" role="tabpanel"><div class="sect-bar"><span class="muted" id="lsp-status"></span></div>
+    <section class="sect" id="play-findings" role="tabpanel"><div class="sect-bar"><span class="muted" id="lsp-status"></span><span class="fix-bar"><label class="ts-toggle" title="Fix all also applies the unsafe fixes, as satex fix --unsafe-fixes: check the result"><input type="checkbox" id="fix-unsafe" role="switch" aria-label="fix all applies unsafe fixes too"><span>unsafe too</span></label><span id="fix-all"></span></span></div>
       <div id="play-refs" class="refs" hidden></div>
       <ul id="lsp-diagnostics" class="diagnostics grow" aria-live="polite"></ul></section>
     <section class="sect" id="play-explain" role="tabpanel" hidden>
@@ -74,10 +74,10 @@
       <label class="ts-toggle" title="Show only the paragraph at the cursor"><input type="checkbox" id="typeset-here" role="switch" aria-label="only the paragraph at the cursor"><span>here</span></label>
       <label class="ts-toggle" title="Mark the ligatures the fonts set: the letters, then the glyph they join to"><input type="checkbox" id="typeset-ligs" role="switch" aria-label="show ligatures"><span>ligs</span></label></div>
       <div id="typeset-body" class="typeset grow"><p class="muted">Paragraphs of the open file, set after each check.</p></div></section>
-    <section class="sect" id="play-pdf" role="tabpanel" hidden><div class="sect-bar pdf-bar"><button type="button" id="pdf-compile" class="small" disabled title="Build the project with this machine's TeX and show the PDF">Compile</button><button type="button" id="pdf-slice" class="small ghost" disabled title="Build only what the cursor's line needs: satex slice at the cursor">Slice</button><button type="button" id="pdf-zoom-out" class="small ghost" title="Smaller pages (Ctrl and wheel on a page)">&minus;</button><button type="button" id="pdf-zoom-in" class="small ghost" title="Larger pages">+</button><span class="muted" id="pdf-zoom-level"></span><button type="button" id="pdf-back" class="small ghost" hidden title="Back to where the last link was followed (Alt+Left)">Back</button> <span class="muted" id="pdf-status"></span></div>
-      <div id="pdf-body" class="pdf grow"><p class="muted">Compile shows the PDF here. Click the page to find its source, move the cursor to find it on the page. Links work as in a PDF viewer.</p></div></section>
+    <section class="sect" id="play-pdf" role="tabpanel" hidden><div class="sect-bar pdf-bar"><button type="button" id="pdf-compile" class="small" disabled title="Build the project with this machine's TeX and show the PDF">Compile</button><button type="button" id="pdf-slice" class="small ghost" disabled title="Build only what the cursor's line needs: satex slice at the cursor">Slice</button><button type="button" id="pdf-zoom-out" class="small ghost" title="Smaller pages (Ctrl and wheel on a page)">&minus;</button><button type="button" id="pdf-zoom-in" class="small ghost" title="Larger pages">+</button><span class="muted" id="pdf-zoom-level"></span><label class="ts-toggle" title="Show the keys of labels, references and citations where they are set; click one to follow it"><input type="checkbox" id="pdf-keys" role="switch" aria-label="show keys on the pages"><span>keys</span></label><label class="ts-toggle" title="Mark the lines with findings, the check's and the build's; hover one for them"><input type="checkbox" id="pdf-findings" role="switch" aria-label="show findings on the pages"><span>findings</span></label><button type="button" id="pdf-back" class="small ghost" hidden title="Back to where the last link was followed (Alt+Left)">Back</button> <span class="muted" id="pdf-status"></span></div>
+      <div id="pdf-body" class="pdf grow"><p class="muted">Compile shows the PDF here. Click the page to find its source, move the cursor to find it on the page. Links and references work as in a PDF viewer.</p></div></section>
     <section class="sect" id="play-written" role="tabpanel" hidden>
-      <div id="written-body" class="written grow"><p class="muted">Files the build writes (.aux, .toc …), as satex computes them. Unknown parts are marked.</p></div></section>
+      <div id="written-body" class="written grow"><p class="muted">Files the build writes (.aux, .toc …), as satex computes them, and the files the run reads. Unknown parts are marked.</p></div></section>
     </div>
     <dialog id="play-library" class="cache-dialog lib-dialog" aria-labelledby="lib-title">
       <header><h3 id="lib-title">Library</h3><button type="button" class="ghost small" id="lib-close" aria-label="close">✕</button></header>

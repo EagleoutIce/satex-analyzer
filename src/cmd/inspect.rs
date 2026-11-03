@@ -61,7 +61,12 @@ pub fn slice(
             (true, None, Some(_)) => format!("`--where {}`", query.where_.unwrap_or_default()),
             (true, None, None) => "the criterion".into(),
         };
-        return Ok(Output::Partial(records, format!("{what} names nothing the run reached, so the slice is empty")));
+        let why = format!("{what} names nothing the run reached, so the slice is empty");
+        // `--out` asked for a project: none written is a failure, not a hint.
+        return match out_dir {
+            Some(dir) => Err(format!("{why}: nothing written to {}", dir.display())),
+            None => Ok(Output::Partial(records, why)),
+        };
     }
     if let Some(dir) = out_dir {
         return write_project(context, &records, dir, out);

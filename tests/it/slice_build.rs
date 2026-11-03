@@ -628,6 +628,36 @@ fn a_standalone_slice_compiles_in_an_empty_directory() {
     run_all(&[graphic, input]);
 }
 
+/// `slice --out` that slices nothing fails and says why: the playground's
+/// Slice shows that reason, not a bare "failed".
+#[test]
+fn an_empty_slice_with_out_fails_with_its_reason() {
+    let directory = scratch("empty-out");
+    std::fs::write(directory.join("doc.tex"), "\\relax\n").unwrap();
+    let output = crate::support::satex()
+        // a line past the end: nothing the run reached
+        .args([
+            "slice",
+            "--at",
+            "40:1",
+            "--out",
+            "slice",
+            "-f",
+            "doc.tex",
+            "--set",
+            "engine=tex",
+            "--set",
+            "kernel=plain",
+        ])
+        .current_dir(&directory)
+        .output()
+        .expect("satex runs");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "an empty slice succeeded: {stderr}");
+    assert!(stderr.contains("names nothing the run reached"), "no reason given: {stderr}");
+    assert!(!directory.join("slice").exists(), "an empty slice wrote a directory");
+}
+
 // --- the oracle -----------------------------------------------------------
 
 /// The playground's examples, sliced at a few lines each: every slice has
@@ -639,7 +669,11 @@ fn playground_slices_typeset_their_line_like_the_original() {
     }
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/site/examples");
     let picks: [(&str, &str, &[&str]); 3] = [
-        ("thesis.tex", "chapter.tex", &["Figure~\\ref{fig:flow} draws", "\\node (satex)", "Literate programming"]),
+        (
+            "thesis.tex",
+            "chapter.tex",
+            &["Figure~\\ref{fig:flow} draws", "\\node (satex)", "Literate programming", "\\caption{"],
+        ),
         ("slides.tex", "slides.tex", &["\\item<2->", "One \\pause"]),
         ("rerun.tex", "rerun.tex", &["See Section"]),
     ];

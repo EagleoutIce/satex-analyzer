@@ -88,7 +88,9 @@ pub fn run(context: &Context) -> Result<Output, String> {
 /// was reading: the innermost `(file` the log opened and has not closed.
 /// One run of `program` on `file` in `dir`. Its output is progress on
 /// stderr; the findings are the result.
+/// Each run is named on stderr first, as a shell shows it (`$ latexmk …`).
 fn build(program: &str, args: &[&str], file: &str, dir: &Path) -> Result<std::process::ExitStatus, String> {
+    eprintln!("$ {program} {} {file}", args.join(" "));
     Command::new(program)
         .args(args)
         .arg(file)

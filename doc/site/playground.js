@@ -207,7 +207,7 @@
   const escape = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   const SEVERITY = ['', 'error', 'warning', 'info', 'hint'];
   const sev = (d) => SEVERITY[d.severity] || 'info';
-  const secs = (ms) => `${(ms / 1000).toFixed(2)} s`;
+  const secs = self.satexCards.duration;
   const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
   /** A count with its thousands set apart by thin spaces: 21 939. */
   const num = (n) => Number(n).toLocaleString('en').replace(/,/g, '\u2009');
@@ -1014,6 +1014,14 @@
   const exSect = $('play-exsect');
   try { exSect.open = localStorage.getItem('satex-examples') === '1'; } catch {}
   exSect.addEventListener('toggle', () => { try { localStorage.setItem('satex-examples', exSect.open ? '1' : '0'); } catch {} });
+  // A fold's whole head toggles it: a link in a <summary> (an outline row's title) both acts and folds.
+  // The browser leaves a click on a link alone, so the fold is toggled here, for every <summary> on the page.
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest?.('summary a[href="#"]'), d = a?.closest('summary')?.parentElement;
+    if (!(d instanceof HTMLDetailsElement)) return;
+    e.preventDefault();
+    d.open = !d.open;
+  });
   const outlineBody = $('outline-body'), outlineOpen = new Set(), outlineFolded = new Set();
   outlineBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) outlineOpen.add(id); else outlineOpen.delete(id); } }, true);
   // a section's fold hides the deeper sections after it; kept across checks
@@ -1040,6 +1048,8 @@
     }
   }
   const LEVELS = ['part', 'chapter', 'section', 'subsection', 'subsubsection', 'paragraph', 'subparagraph'];
+  /** The document's sections, labels, references and citations of the last check, for the outline and the PDF. */
+  var occurrences = []; // var: the PDF code reads it before this line may run
   async function outline() {
     // an edit in an included file leaves the held analysis of the root stale: a config forces a fresh one
     const request = { file: path(state.root), queries: [{ type: 'occurrences' }], ...(state.file !== state.root ? { config: { trace: 'false' } } : {}) };
@@ -1047,6 +1057,8 @@
     if (!rs) return;
     // sections in the run's order; labels, citations and the rest come after them, each placed by its source position
     const own = rs.filter((r) => !r.origin || r.origin === 'document'), file = (r) => r.path ?? r.file;
+    occurrences = own;
+    pdfOverlay();
     const before = (a, b) => a.line < b.line || a.line === b.line && (a.col ?? 0) <= (b.col ?? 0);
     const firstOf = new Map();
     own.forEach((r, i) => { if (!firstOf.has(file(r))) firstOf.set(file(r), i); });
@@ -1211,7 +1223,8 @@
     const actions = await lsp('textDocument/codeAction', { textDocument: { uri: target },
       range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, context: { diagnostics: [] } }).catch(() => []);
     const by = new Map();
-    for (const a of actions ?? []) for (const d of a.diagnostics ?? []) {
+    fixAlls[target] = (actions ?? []).filter((a) => a.data?.scope);
+    for (const a of (actions ?? []).filter((x) => !x.data?.scope)) for (const d of a.diagnostics ?? []) {
       const safety = d.data?.applicability ?? (a.isPreferred ? 'safe' : 'unsafe');
       by.set(key(d), [...(by.get(key(d)) ?? []), { ...a, safety }]);
     }
@@ -1239,12 +1252,15 @@
     if (checkStart) { timing('t-check', secs(performance.now() - checkStart), 'the language server analyzed the open file'); shownTime(secs(performance.now() - checkStart)); }
     checkStart = 0;
     phase();
-    lspStatus.textContent = state.file in state.ro ? 'read-only file' : listed.length ? '' : 'none';
+    $('fix-all').innerHTML = editableFile() ? fixAllButton('all') : '';
+    lspStatus.textContent = state.file in state.ro ? 'read-only file' : provisional ? `provisional: ${provisional} still downloading; the check runs again once ${provisional.includes(', ') ? 'they are' : 'it is'} in` : listed.length ? '' : 'none';
+    list.classList.toggle('provisional', !!provisional);
+    if (pdfOverlayOn?.findings) pdfOverlay();
     const fixButton = (f, j) => `<button class="small apply fix-${f.safety}" data-j="${j}" title="${escape(f.title)}">Fix (${f.safety})</button>`;
     const item = (d, i) => `<li class="f-${sev(d)}${unfolded.has(key(d)) ? ' open' : ''}" data-i="${i}" tabindex="0">` +
       `<span class="msg" title="${escape(d.message ?? '')}">${d.number ? `<code class="rno" title="rule number">${escape(d.number)}</code> ` : ''}<b class="rn">${escape(d.code ?? '')}</b>: ${commandRefs(inline(d.message))}</span>` +
       `<span class="where"><b class="loc">${d.file ? `<span class="loc-file">${escape(d.file)}:</span>` : ''}${d.range.start.line + 1}:${d.range.start.character + 1}</b><span class="shape" title="${sev(d)}" aria-label="${sev(d)}"></span></span>` +
-      `<span class="acts">${d.fixes.map(fixButton).join('')}<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
+      `<span class="acts">${d.fixes.map(fixButton).join('')}${!d.file && editableFile() ? fixAllButton('rule', d.code, `Fix all ${d.code}`) : ''}<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
       (unfolded.has(key(d)) ? explanation(d) : '') + '</li>';
     /** Findings of one object (`group`, "table@12:1") fold together under a header; a lone one stays flat. */
     const fold = (id, cls, head, rows, inner) => `<li class="${cls}"><details${folded.has(id) ? '' : ' open'} data-fold="${escape(id)}"><summary class="cat-head" aria-label="${escape(head)}">${inner}</summary>` +
@@ -1271,7 +1287,7 @@
       const label = `${cat}: ${rows.length} finding${rows.length > 1 ? 's' : ''}`;
       return fold(cat, `cat-group cat-${escape(cat)}`, label, grouped(cat, rows), `<span class="cat-icon" aria-hidden="true">${catIcon(cat)}</span>` +
         `<span class="cat-name">${escape(cat)}</span><span class="cat-count">${rows.length}</span>` +
-        `<span class="cat-sevs" aria-hidden="true">${sevs.map(([s, n]) => `<span class="cat-sev sev-${s}" title="${n} ${s}">${n}</span>`).join('')}</span>`);
+        `<span class="cat-sevs" aria-hidden="true">${sevs.map(([s, n]) => `<span class="cat-sev sev-${s}" title="${n} ${s}">${n}</span>`).join('')}</span>${editableFile() ? fixAllButton('category', cat) : ''}`);
     }).join('');
   }
   /** The lint categories in the command line's order, each with its icon (24-unit strokes). */
@@ -1307,6 +1323,15 @@
     const [hit] = findingsAt(line, character);
     if (hit) unfold(hit[1], false);
   }
+  const editableFile = () => !(state.file in state.ro);
+  // a Fix all in a category's head acts, it does not fold the category
+  for (const box of [list, $('fix-all')]) box.addEventListener('click', (e) => {
+    const b = e.target.closest('.fix-all');
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    fixAll(b.dataset.key || undefined, fixUnsafe, b.dataset.scope);
+  }, true);
+  $('fix-unsafe').onchange = (e) => { fixUnsafe = e.target.checked; render(); };
   list.onclick = (e) => {
     const li = e.target.closest('li[data-i]');
     if (!li) return;
@@ -1330,18 +1355,33 @@
     const away = !(uri() in changes) && elsewhere[0], name = away && Object.keys(state.texts).find((n) => uri(n) === away);
     if (name) openPlace(name, changes[away][0].range.start);
   }
-  /** Every safe fix of the open file, of one rule if given, in one edit; overlapping ones wait for the next check. */
-  function fixAll(code, unsafe = false) {
-    sync();
-    const edits = [];
-    for (const d of diagnostics[uri()] ?? []) if (!code || d.code === code) for (const f of d.fixes.filter((f) => unsafe || f.safety === 'safe').slice(0, 1)) edits.push(...(f.edit?.changes?.[uri()] ?? []));
-    const pos = (p) => p.line * 1e6 + p.character;
-    edits.sort((a, b) => pos(a.range.start) - pos(b.range.start));
-    const kept = edits.filter((e, i) => !edits.slice(0, i).some((o) => pos(o.range.end) > pos(e.range.start) || pos(o.range.start) === pos(e.range.start)));
-    if (kept.length) editor.apply(kept);
-    const what = unsafe ? 'fix' : 'safe fix';
-    toast(kept.length ? `Applied ${kept.length} ${what}${kept.length > 1 ? 'es' : ''}` : `No ${what}es${code ? ` for ${code}` : ''} in this file`);
+  /** The open file's fixes at once, as the language server merges them (render.rs `fix_all`): per rule, per category or all. */
+  var fixAlls = {}; // var: a render may run before this line
+  /** What a fix-all of `scope` (`rule`, `category`, `all`) and `key` applies: the server's action, else the one fix there is. */
+  function fixAllOf(scope, key = '', unsafe = fixUnsafe) {
+    const mine = (fixAlls[uri()] ?? []).filter((a) => a.data.scope === scope && a.data.key === key);
+    const merged = mine.find((a) => a.data.unsafe === unsafe) ?? mine.find((a) => !a.data.unsafe);
+    if (merged) return merged;
+    const inScope = (d) => scope === 'all' || (scope === 'rule' ? d.code : manifest.rules[d.code]?.category) === key;
+    const lone = (diagnostics[uri()] ?? []).filter(inScope).flatMap((d) => d.fixes.filter((f) => unsafe || f.safety === 'safe').slice(0, 1));
+    return lone.length === 1 ? { ...lone[0], data: { count: 1 } } : null;
   }
+  /** Applies a fix-all as one edit (one undo step); the check runs again on the change. */
+  function fixAll(code, unsafe = fixUnsafe, scope = code ? 'rule' : 'all') {
+    sync();
+    const action = fixAllOf(scope, code ?? '', unsafe), edits = action?.edit?.changes?.[uri()] ?? [];
+    const what = unsafe ? 'fix' : 'safe fix';
+    if (!edits.length) return toast(`No ${what}es${code ? ` for ${code}` : ''} in this file`);
+    editor.apply(edits);
+    toast(`Applied ${plural(edits.length, what)}${edits.length < action.data.count ? `; ${action.data.count - edits.length} overlapping wait for the next check` : ''}`);
+  }
+  /** Whether Fix all also applies the unsafe fixes: off unless asked, as the command line's --unsafe-fixes. */
+  var fixUnsafe = false; // var: a render may run before this line
+  /** A Fix all button of a scope, with how many findings it fixes; none where nothing is fixable. */
+  const fixAllButton = (scope, key = '', label = 'Fix all') => {
+    const a = fixAllOf(scope, key);
+    return a ? `<button type="button" class="small ghost fix-all" data-scope="${scope}" data-key="${escape(key)}" title="${escape(a.title)}">${escape(label)} <b class="count">${a.data.count}</b></button>` : '';
+  };
 
   // ---------------------------------------------------------------- language server actions: definition, rename, the context menu
 
@@ -1481,7 +1521,7 @@
       ...(w?.[3] ? [['Explain', '', focusExplain], ['Show expansions', '', () => expansions(w)], ['Trace expansion', '', () => traceCall(`\\${w[2]}`, { file: state.file, line: p.line + 1, col: w[0] + 1 })]] : []),
       ...found.map((d) => [`Explain rule ${d.code}`, '', () => unfold(diagnostics[uri()].indexOf(d), false)]),
       ...(editable ? fixes.map((f) => [`Fix: ${f.title}`, f.safety, () => fix(f)]) : []),
-      ...(editable ? rules.map((c) => [`Fix all ${c}`, `${(diagnostics[uri()] ?? []).filter((d) => d.code === c && d.fixes.length).length}×`, () => fixAll(c, true)]) : []),
+      ...(editable ? rules.map((c) => [`Fix all ${c}`, `${fixAllOf('rule', c, true)?.data.count ?? 0}×`, () => fixAll(c, true)]) : []),
       ...sliceItems(),
       ['Copy link to this line', '', lineLink],
     ];
@@ -2882,7 +2922,7 @@
   /** The playground's own commands, next to satex's: language server edits in the editor. */
   const LOCAL = {
     rename: { about: 'rename the command or label at the cursor, in every file', run: (rest) => rest[0] ? renameTo(rest[0].replace(/^\\/, '')) : renameBox() },
-    fix: { about: 'apply the safe fixes, of one rule if given', run: (rest) => fixAll(rest[0]) },
+    fix: { about: 'apply the safe fixes, of one rule if given', run: (rest) => fixAll(rest[0], false) },
   };
   /** Runs `line` (or the command line): a playground command, or satex. */
   function execute(line = args.value) {
@@ -3445,11 +3485,25 @@
       `<span class="wf-runs" role="tablist">${views.length > 1 ? views.map(([v, label, t], i) => `<button type="button" role="tab" data-view="${v}" aria-selected="${i === k}"${i !== k && same(t, shown) ? ' class="wf-same" title="the same text as the tab shown"' : ''}>${label}</button>`).join('') : ''}</span></div>` +
       `${shown && shown.length > 1 ? `<div class="wf-alts" role="tablist">${shown.map((_, i) => `<button type="button" role="tab" data-alt="${i}" aria-selected="${i === a}">path ${i + 1}</button>`).join('')}</div>` : ''}${body}</div>`;
   }
+  /** The files the run read (`query files`): opened on a click. Absent ones were looked for, not found. */
+  let readFiles = [];
   const writtenShow = () => {
-    $('written-count').textContent = String(writtenFiles.length || '');
-    $('written-body').innerHTML = writtenFiles.length ? '<p class="muted wf-note">Each file is empty when the build starts: the first run reads none of them, the next run reads what this one wrote.</p>' + writtenFiles.map(writtenCard).join('') : '<p class="muted">The build writes no file.</p>';
+    const written = new Set(writtenFiles.map((f) => f.name.split('/').pop()));
+    const read = readFiles.filter((r) => !written.has(String(r.file).split('/').pop()));
+    $('written-count').textContent = String(writtenFiles.length + read.length || '');
+    // the files read, one group per kind of file: the project's, the packages', the kernel's …
+    const groups = Map.groupBy(read, (r) => r.kind === 'absent' ? 'looked for, absent' : (String(r.file).match(/\.([A-Za-z0-9]+)$/)?.[1] ?? 'other'));
+    const order = [...groups.keys()].sort((a, b) => Number(a === 'looked for, absent') - Number(b === 'looked for, absent') || groups.get(b).length - groups.get(a).length);
+    const item = (r) => r.kind === 'absent' ? `<li><code>${escape(r.file)}</code></li>`
+      : `<li><a href="#" class="fd-open" data-path="${escape(r.path ?? r.file)}" title="${escape(r.path ?? r.file)}">${escape(String(r.file).split('/').pop())}</a> <span class="muted">${escape(r.kind ?? '')}</span></li>`;
+    const readHtml = order.map((g) => `<details class="fd-group"${g === 'tex' ? ' open' : ''}><summary><code>${escape(g)}</code> <span class="muted">${plural(groups.get(g).length, 'file')}</span></summary><ul class="fd-list">${groups.get(g).map(item).join('')}</ul></details>`).join('');
+    $('written-body').innerHTML = `<h4 class="fd-head">Written by the build <span class="muted">${plural(writtenFiles.length, 'file')}</span></h4>`
+      + (writtenFiles.length ? '<p class="muted wf-note">Each file is empty when the build starts: the first run reads none of them, the next run reads what this one wrote.</p>' + writtenFiles.map(writtenCard).join('') : '<p class="muted">The build writes no file.</p>')
+      + (read.length ? `<h4 class="fd-head">Read by the run <span class="muted">${plural(read.length, 'file')}, by kind; click one to open it</span></h4>${readHtml}` : '');
   };
   $('written-body').addEventListener('click', (e) => {
+    const open = e.target.closest('.fd-open');
+    if (open) { e.preventDefault(); openPlace(open.dataset.path); return; }
     const b = e.target.closest('[data-view], [data-alt]'), name = b?.closest('.wf')?.dataset.name;
     if (!name) return;
     const [view, alt] = writtenPick.get(name) ?? ['final', 0];
@@ -3594,6 +3648,8 @@
     ...Object.fromEntries(state.files.filter((n) => n in state.texts && !(n in state.ro)).map((n) => [n, state.texts[n]])),
     ...Object.fromEntries(Object.entries(state.bins).map(([n, d]) => [n, { b64: base64(d) }])),
   });
+  /** The settings of the playground's runs (the kernel's and Settings'), as the `KEY=VALUE` of each `--set`. */
+  const pdfSets = () => { const f = [...manifest.kernels[state.kernel].args, ...configFlags()]; return f.filter((_, i) => f[i - 1] === '--set'); };
   /** Builds the project, or with `slice` only what the cursor's line needs. `cached` only shows a kept build. `alone`: a standalone slice's text, built on its own. */
   async function compile(slice = false, cached = false, alone = null) {
     if (pdfBusy || !(await pdfServer)) return;
@@ -3614,7 +3670,7 @@
       pdf = { ...data, slice, root };
       pdfShow();
     };
-    pdfWorker.postMessage({ url: COMPILE, request: { main: root, files: alone === null ? pdfFiles() : { [root]: alone }, ...(slice ? { at } : {}), ...(cached ? { cached } : {}) } });
+    pdfWorker.postMessage({ url: COMPILE, request: { main: root, files: alone === null ? pdfFiles() : { [root]: alone }, sets: pdfSets(), ...(slice ? { at } : {}), ...(cached ? { cached } : {}) } });
   }
   pdfButtons.forEach((b, i) => { b.onclick = (e) => { e.preventDefault(); compile(i === 1); }; });
   /** The last build of this very text, kept by the server, shown when the page opens. */
@@ -3643,15 +3699,34 @@
     pdfLine = '';
     pdfBack.length = 0;
     pdfBackButton.hidden = true;
-    if (pdf.error) { pdfBody.innerHTML = `<p class="x-err">${escape(pdf.error)}</p>`; return; }
-    const records = (pdf.records ?? []).sort(pdfOrder), file = (n) => `${COMPILE}/${pdf.base}${n}`;
-    const errors = records.filter((r) => r.severity === 'error').length;
-    pdfBody.innerHTML = `<p class="pdf-head">${pdf.pdf ? `<a href="${file(pdf.pdf)}" target="_blank" rel="noopener">${escape(pdf.pdf)}</a>, ${pdf.pages.length} page${pdf.pages.length === 1 ? '' : 's'}` : '<span class="x-err">no PDF</span>'}`
-      + ` · ${errors} error${errors === 1 ? '' : 's'}, ${records.length - errors} warning${records.length - errors === 1 ? '' : 's'}${pdf.slice ? ' · a slice: its lines are not the file\'s' : ''}</p>`
-      + (records.length ? `<ul class="diagnostics pdf-records">${records.map(pdfRecord).join('')}</ul>` : '')
-      + `<details class="pdf-log"><summary>TeX log</summary><pre>${escape(pdf.log || pdf.stderr || '')}</pre></details>`
-      + `<div class="pdf-pages">${pdf.pages.map((n, i) => `<div class="pdf-page" data-page="${i + 1}"><img src="${file(n)}" alt="page ${i + 1}" draggable="false">${pdfLinks(i + 1)}</div>`).join('')}</div>`;
-    pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => pdfFollow(true), { once: true }));
+    const records = (pdf.records ?? []).sort(pdfOrder), file = (n) => `${COMPILE}/${pdf.base}${n}`, pages = pdf.pages ?? [];
+    const errors = records.filter((r) => r.severity === 'error').length, runs = pdfRuns();
+    const head = pdf.error ? `<p class="pdf-head x-err">${escape(pdf.error)}</p>`
+      : `<p class="pdf-head">${pdf.pdf ? `<a href="${file(pdf.pdf)}" target="_blank" rel="noopener">${escape(pdf.pdf)}</a>, ${plural(pages.length, 'page')}` : '<span class="x-err">no PDF</span>'}`
+      + ` · ${plural(errors, 'error')}, ${plural(records.length - errors, 'warning')}${pdf.slice ? ' · a slice: its lines are not the file\'s' : ''}</p>`;
+    // one view at a time: the pages, the messages, the log, the commands run
+    const views = [['pages', 'Pages', pages.length || ''], ['messages', 'Messages', records.length || ''], ['log', 'Logs', ''], ['files', 'Files', (pdf.outputs ?? []).length || ''], ['commands', 'Commands', runs.length || '']];
+    if (pdf.error && pdfView === 'pages') pdfView = 'commands';
+    const tab = ([id, label, n]) => `<button type="button" role="tab" data-view="${id}" aria-selected="${id === pdfView}"${id === 'messages' && errors ? ' class="pdf-err"' : ''}>${label}${n !== '' ? ` <b class="count">${n}</b>` : ''}</button>`;
+    const log = (title, text) => text ? `<h4>${title}</h4><pre>${escape(text)}</pre>` : '';
+    pdfBody.innerHTML = head + `<div class="pdf-views" role="tablist" aria-label="what the build gives">${views.map(tab).join('')}</div>`
+      + `<div class="pdf-pages" data-view="pages">${pages.map((n, i) => `<div class="pdf-page" data-page="${i + 1}"><img src="${file(n)}" alt="page ${i + 1}" draggable="false">${pdfLinks(i + 1)}</div>`).join('') || '<p class="muted">No pages.</p>'}</div>`
+      + `<div class="pdf-text" data-view="messages">${records.length ? `<ul class="diagnostics pdf-records">${records.map(pdfRecord).join('')}</ul>` : '<p class="muted">The log has no error or warning.</p>'}</div>`
+      + `<div class="pdf-text pdf-log" data-view="log">${(pdf.logs ? Object.entries(pdf.logs).map(([n, t]) => log(escape(n), t)).join('') : log('TeX log', pdf.log)) + log('Console: what satex compile and latexmk printed', pdf.stderr) || '<p class="muted">The build wrote no log.</p>'}</div>`
+      + `<div class="pdf-text" data-view="files"><p class="muted">What the build wrote beside the sources. Each opens in a new tab.</p><ul class="pdf-cmds">${(pdf.outputs ?? []).map((o) => `<li><a href="${file(o.name)}" target="_blank" rel="noopener">${escape(o.name)}</a> <span class="muted">${size(o.size)}</span></li>`).join('')}</ul></div>`
+      + `<div class="pdf-text" data-view="commands"><p class="muted">Run in a fresh directory on this machine${pdfSetsShown()}. <code>satex compile</code> runs latexmk where it is installed, else the engine, and reads the project's latexmkrc and satex.yaml.</p>`
+      + `<ol class="pdf-cmds">${runs.map((r) => `<li${r.status ? ' class="x-err"' : ''}><code>$ ${escape(r.command)}</code>${r.inner ? ' <span class="muted">(by satex compile)</span>' : ` <span class="muted">${r.error ? escape(r.error) : `exit ${r.status ?? '?'}${r.ms != null ? `, ${secs(r.ms)}` : ''}`}</span>`}</li>`).join('')}</ol></div>`;
+    pdfViewShow();
+    pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => { pdfFollow(true); pdfOverlay(); }, { once: true }));
+  }
+  /** The commands of the build: the server's, the engine runs `satex compile` names on its console (`$ …`) after it. */
+  const pdfRuns = () => (pdf.commands ?? []).flatMap((r) => [r, ...(/ compile( |$)/.test(r.command) ? String(pdf.stderr ?? '').split('\n').filter((l) => l.startsWith('$ ')).map((l) => ({ command: l.slice(2), inner: true })) : [])]);
+  const pdfSetsShown = () => { const sets = pdfSets(); return sets.length ? `, with the playground's settings: ${sets.map((x) => `<code>--set ${escape(x)}</code>`).join(' ')}` : ''; };
+  /** The view of the build shown: `pages`, `messages`, `log` or `commands`. */
+  let pdfView = 'pages';
+  function pdfViewShow() {
+    for (const t of pdfBody.querySelectorAll('.pdf-views [data-view]')) t.setAttribute('aria-selected', String(t.dataset.view === pdfView));
+    for (const v of pdfBody.querySelectorAll(':scope > [data-view]')) v.hidden = v.dataset.view !== pdfView;
   }
   /** A page's size in bp, from its image. */
   const pageSize = (img) => [img.naturalWidth * 72 / pdf.dpi, img.naturalHeight * 72 / pdf.dpi];
@@ -3728,6 +3803,10 @@
     return re ? [re.index, re.index + bare.length] : null;
   }
   pdfBody.addEventListener('click', (e) => {
+    const view = e.target.closest('.pdf-views [data-view]');
+    if (view) { pdfView = view.dataset.view; pdfViewShow(); return; }
+    const chip = e.target.closest('.pdf-key');
+    if (chip) { e.preventDefault(); pdfToTarget(pdfKeys[+chip.dataset.k]); return; }
     const rec = e.target.closest('.pdf-records li');
     if (rec) {
       const name = Object.keys(state.texts).find((n) => !(n in state.ro) && rec.dataset.path.endsWith(n));
@@ -3745,11 +3824,18 @@
     const x = (e.clientX - r.left) / r.width * w, y = (e.clientY - r.top) / r.height * h;
     pdfGo(page, x, y, pdfWordUnder(page, x, y));
   });
-  /** The source of a point on a page opened in the editor, `word` (a word box) selected in its line when found there. */
-  async function pdfGo(page, x, y, word) {
+  /** The source of a point on a page opened in the editor, `word` (a word box) selected in its line when found there.
+   * A word the line does not spell under a reference (its number) follows the reference, unless `follow` is false. */
+  async function pdfGo(page, x, y, word, follow = true) {
     const hit = pdfSource(page, x, y, word);
     if (!hit) return;
-    const span = word && wordInLine(state.texts[hit.file]?.split('\n')[hit.line - 1] ?? '', word[5]);
+    const text = state.texts[hit.file]?.split('\n')[hit.line - 1] ?? '', span = word && wordInLine(text, word[5]);
+    // a word the line does not spell (a reference's number, a citation's label) is a reference set there: followed
+    const refs = follow && !span && word ? occurrences.filter((o) => ['ref', 'cite'].includes(o.kind) && occFile(o) === hit.file && o.line === hit.line).sort((a, b) => (a.col ?? 0) - (b.col ?? 0)) : [];
+    if (refs.length) {
+      const set = (pdf.wordList ?? []).filter((w) => w[0] === page && Math.abs(w[4] - word[4]) < 3 && !wordInLine(text, w[5])).sort((a, b) => a[1] - b[1]);
+      return pdfToTarget(refs[Math.min(Math.max(set.indexOf(word), 0), refs.length - 1)]);
+    }
     const start = { line: hit.line - 1, character: span?.[0] ?? 0 };
     await openPlace(hit.file, start, span ? { line: start.line, character: span[1] } : undefined);
     pdfFollow(true);
@@ -3781,7 +3867,7 @@
       const [w, h] = pageSize(img), y = to.y * h;
       const below = (pdf.wordList ?? []).filter((v) => v[0] === to.page && v[4] >= y).sort((a, b) => a[4] - b[4] || a[1] - b[1]);
       const word = below.find((v) => v[2] <= below[0][4]);
-      if (word) await pdfGo(to.page, word[1] + 1, word[4] - 1, word);
+      if (word) await pdfGo(to.page, word[1] + 1, word[4] - 1, word, false);
     }
     pdfBody.querySelectorAll('.pdf-target').forEach((m) => m.remove());
     el.insertAdjacentHTML('beforeend', `<div class="pdf-target" style="left:${to.x * 100}%;top:${to.y * 100}%"></div>`);
@@ -3796,12 +3882,81 @@
     pdfScroll(spot.page, spot.y);
   }
   pdfBackButton.onclick = (e) => { e.preventDefault(); pdfReturn(); };
+  /** An occurrence's file as the project names it, else its base name (a .bbl the build wrote). */
+  const occFile = (o) => { const p = String(o.path ?? o.file ?? ''); return Object.keys(state.texts).find((n) => !(n in state.ro) && p.endsWith(n)) ?? p.split('/').pop(); };
+  /** Where an occurrence stands on the pages: the first row SyncTeX gives its line. */
+  const occRect = (o) => pdfRects(occFile(o), o.line)[0];
+  /** The keys placed on the pages, as the overlay's chips index them. */
+  let pdfKeys = [];
+  var pdfOverlayOn = { keys: false, findings: false }; // var: a check may render before this line ran
+  try { Object.assign(pdfOverlayOn, JSON.parse(localStorage.getItem('satex-pdf-overlay') ?? '{}')); } catch {}
+  for (const k of Object.keys(pdfOverlayOn)) {
+    const box = $(`pdf-${k}`);
+    box.checked = pdfOverlayOn[k];
+    box.onchange = () => { pdfOverlayOn[k] = box.checked; try { localStorage.setItem('satex-pdf-overlay', JSON.stringify(pdfOverlayOn)); } catch {} pdfOverlay(); };
+  }
+  /** Over the pages, when switched on: the keys of labels, references and citations where they are set,
+   * and the findings of the last check and of the build on their lines. Placed by SyncTeX, so a slice has none. */
+  function pdfOverlay() {
+    if (!pdf?.boxes || !pdfBody.querySelector('.pdf-pages')) return;
+    pdfBody.querySelectorAll('.pdf-ov').forEach((m) => m.remove());
+    if (pdf.slice) return;
+    const put = (page, html) => pdfBody.querySelector(`.pdf-page[data-page="${page}"]`)?.insertAdjacentHTML('beforeend', html);
+    const size = (page) => { const img = /** @type {HTMLImageElement | null} */ (pdfBody.querySelector(`.pdf-page[data-page="${page}"] img`)); return img?.naturalWidth ? pageSize(img) : null; };
+    pdfKeys = [];
+    if (pdfOverlayOn.keys) {
+      const lines = Map.groupBy(occurrences.filter((o) => ['label', 'ref', 'cite'].includes(o.kind)), (o) => `${occFile(o)}:${o.line}`);
+      for (const os of lines.values()) {
+        const r = occRect(os[0]), wh = r && size(r.page);
+        if (!wh) continue;
+        const chips = os.sort((a, b) => (a.col ?? 0) - (b.col ?? 0)).map((o) => `<a href="#" class="pdf-key k-${o.kind}" data-k="${pdfKeys.push(o) - 1}" title="${o.kind} ${escape(o.key)} at ${escape(occFile(o))}:${o.line}${o.kind === 'label' ? '' : ': click to go to its target'}">${escape(o.key)}</a>`).join('');
+        put(r.page, `<span class="pdf-ov pdf-keys" style="left:${r.l / wh[0] * 100}%;top:${r.t / wh[1] * 100}%">${chips}</span>`);
+      }
+    }
+    if (pdfOverlayOn.findings) {
+      const found = Object.keys(state.texts).filter((n) => !(n in state.ro)).flatMap((n) => (diagnostics[uri(n)] ?? []).map((d) => [n, d.range.start.line + 1, sev(d), `${d.code}: ${d.message}`]))
+        .concat((pdf.records ?? []).filter((r) => r.line).map((r) => [occFile(r), r.line, r.severity === 'error' ? 'error' : 'warning', `${r.code}: ${r.message} (the build)`]));
+      for (const [line, fs] of Map.groupBy(found, ([n, l]) => `${n}:${l}`)) {
+        const r = pdfRects(fs[0][0], fs[0][1])[0], wh = r && size(r.page);
+        if (!wh) continue;
+        const worst = ['error', 'warning', 'info', 'hint'].find((v) => fs.some((f) => f[2] === v));
+        put(r.page, `<span class="pdf-ov pdf-finding f-${worst}" style="${pdfPlace((r.l - 2) / wh[0], (r.t - 2) / wh[1], (r.r - r.l + 4) / wh[0], (r.d - r.t + 4) / wh[1])}" title="${escape(`${line}\n${fs.map((f) => f[3]).join('\n')}`)}"></span>`);
+      }
+    }
+  }
+  /** Follows a reference or citation (`o`, an occurrence) to what it names: the editor to its definition,
+   * the pages to where that is set (a label's line, the bibliography's entry). Back returns. A label opens itself. */
+  async function pdfToTarget(o) {
+    if (!o) return;
+    const from = pdfSpot(), name = occFile(o), at = { line: o.line - 1, character: Math.max((o.col ?? 1) - 1, 0) };
+    const kind = { ref: 'label', cite: 'bibitem' }[o.kind];
+    const target = kind && occurrences.find((x) => x.kind === kind && x.key === o.key);
+    // the definition of the key, asked where the key stands (on `\\ref` it would be the command's)
+    const keyAt = (state.texts[name]?.split('\n')[at.line] ?? '').indexOf(o.key, at.character);
+    const def = kind && keyAt >= 0 ? (await lsp('textDocument/definition', { textDocument: { uri: uri(name) }, position: { line: at.line, character: keyAt + 1 } }).catch(() => null)) : null;
+    const loc = [def].flat().find(Boolean);
+    if (kind && !target && !loc) return toast(`${o.key}: no ${kind === 'label' ? '\\label' : 'bibliography entry'} found`);
+    pdfBack.push(from);
+    pdfBackButton.hidden = false;
+    if (loc) await openPlace(decodeURIComponent(new URL(loc.uri ?? loc.targetUri).pathname), (loc.range ?? loc.targetSelectionRange).start);
+    else if (target && occFile(target) in state.texts) await openPlace(occFile(target), { line: target.line - 1, character: Math.max((target.col ?? 1) - 1, 0) });
+    else if (!kind) await openPlace(name, at);
+    const r = occRect(target ?? o), img = r && /** @type {HTMLImageElement | null} */ (pdfBody.querySelector(`.pdf-page[data-page="${r.page}"] img`));
+    if (!img?.naturalWidth) return;
+    const [w, h] = pageSize(img);
+    pdfBody.querySelectorAll('.pdf-target').forEach((m) => m.remove());
+    img.parentElement.insertAdjacentHTML('beforeend', `<div class="pdf-target" style="left:${r.l / w * 100}%;top:${r.t / h * 100}%"></div>`);
+    pdfScroll(r.page, Math.max(0, r.t / h - 0.05), r.l / w);
+  }
   pdfBody.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('.pdf-records li')) e.target.click(); });
   $('play-pdf').addEventListener('keydown', (e) => { if (e.altKey && e.key === 'ArrowLeft' && pdfBack.length) { e.preventDefault(); pdfReturn(); } });
   async function written(target) {
-    const files = await lsp('satex/written', { textDocument: { uri: target } }).catch(() => null);
+    const request = { file: path(state.root ?? state.file), queries: [{ type: 'files' }] };
+    const [files, read] = await Promise.all([lsp('satex/written', { textDocument: { uri: target } }).catch(() => null),
+      lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).then((r) => r?.[0]?.records).catch(() => null)]);
     if (!files) return;
     writtenFiles = files;
+    readFiles = read ?? readFiles;
     writtenShow();
   }
   /** What a run's cache report says: the packages and classes served from the caches, the ones analyzed anew. */
@@ -4066,17 +4221,20 @@
     const css = ({ red, green, blue, alpha }) => `rgba(${[red, green, blue].map((x) => Math.round(x * 255)).join(',')},${alpha})`;
     editor?.colors?.((found ?? []).map((c) => [c.range.start, css(c.color)]));
   }
-  /** Files the run looked for and did not find (`\IfFileExists`, listings' language files) that a
-   * bundle holds: fetched, then the check starts over. A probe of a file no bundle has stays as it is. */
-  async function fetchAbsent() {
+  /** The bundles holding files the run looked for and did not find (`\IfFileExists`, listings' language files). */
+  async function absentBundles() {
     const request = { file: path(state.root ?? state.file), queries: [{ type: 'files' }] };
     const records = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records ?? [];
     const kernel = manifest.kernels[state.kernel].id;
     const held = records.filter((r) => r.kind === 'absent').map((r) => r.file).filter((f) => HOLDER.has(`${kernel}/${f}`));
-    const ids = wanted_(held).filter((id) => !inFlight.has(id));
-    if (!ids.length || !await fetchPackages(ids)) return;
+    return wanted_(held).filter((id) => !inFlight.has(id));
+  }
+  /** Fetches `ids` (absent files' bundles), then the check starts over. A probe of a file no bundle has stays as it is. */
+  async function fetchAbsent(ids) {
+    if (!ids.length || !await fetchPackages(ids)) return false;
     await restart();
     if (!plainLint()) await start();
+    return true;
   }
   /** After findings or a run name missing packages: fetch them, start over. */
   async function fetchMissing(texts) {
@@ -4314,7 +4472,7 @@
   const mib = (n) => (n / 2 ** 20).toFixed(1);
   function drawAct() {
     if (actBox.hidden) return;
-    const now = performance.now(), s = (t) => `${((now - t) / 1000).toFixed(0)} s`;
+    const now = performance.now(), s = (t) => secs(now - t);
     const rows = act.phase ? [['phase', act.phase], ['doing', act.text.replace(/…$/, '')], ...(act.all ? [['bytes', `${mib(act.got)} of ${mib(act.all)} MiB`]] : []),
       ['in this phase', s(act.since)], ['since start', s(act.started)], ['last change', `${s(act.changed)} ago`]] : [['phase', 'idle'], ['status', status.textContent]];
     actBox.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${escape(v)}</dd>`).join('');
@@ -4335,7 +4493,11 @@
 
   /** A published set of findings. One that arrives while a newer run is in flight is held, and shown if that run ends without publishing its own. */
   let heldFindings = null;
-  function publish(p) {
+  /** Per file, the latest set of findings published: an older one still asking about absent files is dropped. */
+  const published = new Map();
+  /** The packages still downloading when the findings shown were made: they may change once those are in. */
+  var provisional = ''; // var: a render may run before this line
+  async function publish(p) {
     if (running > 0 && p.uri === uri()) { heldFindings = p; return; }
     heldFindings = null;
     // The rule's number is the LSP code: the page keys rules by name.
@@ -4350,12 +4512,23 @@
       if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok) { show(p.uri, p.diagnostics); typeset(p.uri); } });
       return;
     }
+    // A run that missed files a bundle holds is redone once they are in: its findings
+    // (a listings language "not found") are shown as provisional meanwhile, never as final.
+    const seq = (published.get(p.uri) ?? 0) + 1;
+    published.set(p.uri, seq);
+    const absent = p.uri === uri() ? await absentBundles() : [];
+    if (seq !== published.get(p.uri)) return;
+    if (p.uri === uri()) provisional = [...new Set([...absent, ...inFlight])].map((id) => PACKAGES.get(id)?.label ?? id).join(', ');
     // what was answered from the last run meanwhile is asked again of this one
     explanations.clear(); scopeAsked.clear(); explained = ''; explainSoon();
     show(p.uri, p.diagnostics);
     typeset(p.uri);
     outline();
-    if (p.uri === uri()) { fetchAbsent(); colorize(); }
+    if (p.uri === uri()) {
+      colorize();
+      // a failed download leaves the findings as they are: final
+      if (absent.length) fetchAbsent(absent).then((ok) => { if (!ok && seq === published.get(p.uri)) { provisional = ''; render(); } });
+    }
     if (p.uri === uri()) prefetchCommands();
     loadCaches(); // the status bar's count, and the table if open
     if (p.uri === uri(state.root ?? state.file)) written(p.uri);

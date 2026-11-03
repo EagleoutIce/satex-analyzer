@@ -1574,7 +1574,7 @@ pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
             "code": rule_id(&code),
             "source": "satex",
             "message": plain(record.get("message").unwrap_or(&Json::Null)),
-            "data": { "rule": code, "fix": record.get("fix"), "applicability": record.get("applicability"), "group": record.get("group") },
+            "data": { "rule": code, "category": record.get("category"), "fix": record.get("fix"), "applicability": record.get("applicability"), "group": record.get("group") },
         });
         if crate::lint::number(&code).is_some() {
             diagnostic["codeDescription"] = serde_json::json!({ "href": crate::lint::url(&code) });
@@ -1626,41 +1626,70 @@ pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
     serde_json::to_string_pretty(&out).unwrap_or_default()
 }
 
-/// One action per rule with several safe fixes in a file: all of them at once.
+/// The fixes of a file at once, per rule, per category and all of them: an
+/// action where a scope has several. Safe fixes only, and again with the
+/// unsafe ones where a scope has some (`data.unsafe`, never preferred).
+/// Edits merge in source order; one overlapping an earlier one waits for the
+/// next check. `data` names the scope (`rule`, `category`, `all`), its key and
+/// how many findings it fixes.
 fn fix_all(actions: &[Json]) -> Vec<Json> {
-    let rule = |a: &Json| a["diagnostics"][0]["data"]["rule"].as_str().map(str::to_string);
-    let safe: Vec<&Json> = actions.iter().filter(|a| a["isPreferred"] == true).collect();
-    let mut rules: Vec<String> = safe.iter().filter_map(|a| rule(a)).collect();
-    rules.sort();
-    rules.dedup();
-    let mut out = Vec::new();
-    for code in rules {
-        let mine: Vec<&&Json> = safe.iter().filter(|a| rule(a).as_deref() == Some(code.as_str())).collect();
-        if mine.len() < 2 {
-            continue;
-        }
-        let mut changes = serde_json::Map::new();
-        for a in &mine {
-            for (file, edits) in a["edit"]["changes"].as_object().into_iter().flatten() {
-                let all = changes.entry(file.clone()).or_insert_with(|| Json::Array(Vec::new()));
-                for edit in edits.as_array().into_iter().flatten() {
-                    if let Some(all) = all.as_array_mut()
-                        && !all.contains(edit)
-                    {
-                        all.push(edit.clone());
-                    }
-                }
+    let field = |a: &Json, k: &str| a["diagnostics"][0]["data"][k].as_str().unwrap_or_default().to_string();
+    let mut scopes: Vec<(&str, String)> = vec![("all", String::new())];
+    for a in actions {
+        for scope in [("category", field(a, "category")), ("rule", field(a, "rule"))] {
+            if !scope.1.is_empty() && !scopes.contains(&scope) {
+                scopes.push(scope);
             }
         }
-        let diagnostics: Vec<Json> = mine.iter().map(|a| a["diagnostics"][0].clone()).collect();
-        out.push(serde_json::json!({
-            "title": format!("Fix all {code} in this file ({})", mine.len()),
-            "kind": "quickfix",
-            "diagnostics": diagnostics,
-            "edit": { "changes": changes },
-        }));
+    }
+    let mut out = Vec::new();
+    for (scope, key) in scopes {
+        let within = |a: &&Json| scope == "all" || field(a, scope) == key;
+        let safe: Vec<&Json> = actions.iter().filter(within).filter(|a| a["isPreferred"] == true).collect();
+        let all: Vec<&Json> = actions.iter().filter(within).collect();
+        for (unsafe_, mine) in [(false, safe), (true, all)] {
+            let enough = if unsafe_ { mine.iter().any(|a| a["isPreferred"] != true) } else { mine.len() >= 2 };
+            if !enough {
+                continue;
+            }
+            let what = if scope == "all" { String::new() } else { format!(" {key}") };
+            let kind = if unsafe_ { ", unsafe too" } else { "" };
+            out.push(serde_json::json!({
+                "title": format!("Fix all{what} in this file ({}{kind})", mine.len()),
+                "kind": "quickfix",
+                "diagnostics": mine.iter().map(|a| a["diagnostics"][0].clone()).collect::<Vec<_>>(),
+                "edit": { "changes": merged(&mine) },
+                "data": { "scope": scope, "key": key, "count": mine.len(), "unsafe": unsafe_ },
+            }));
+        }
     }
     out
+}
+
+/// The edits of `actions` per file in source order, each once; one that
+/// overlaps or starts where a kept one does is left out.
+fn merged(actions: &[&Json]) -> serde_json::Map<String, Json> {
+    let at = |p: &Json| (p["line"].as_u64().unwrap_or(0), p["character"].as_u64().unwrap_or(0));
+    let mut files: std::collections::BTreeMap<String, Vec<Json>> = Default::default();
+    for a in actions {
+        for (file, edits) in a["edit"]["changes"].as_object().into_iter().flatten() {
+            files.entry(file.clone()).or_default().extend(edits.as_array().into_iter().flatten().cloned());
+        }
+    }
+    files
+        .into_iter()
+        .map(|(file, mut edits)| {
+            edits.sort_by_key(|e| (at(&e["range"]["start"]), at(&e["range"]["end"])));
+            let mut kept: Vec<Json> = Vec::new();
+            for e in edits {
+                let start = at(&e["range"]["start"]);
+                if kept.iter().all(|k| at(&k["range"]["end"]) <= start && at(&k["range"]["start"]) != start) {
+                    kept.push(e);
+                }
+            }
+            (file, Json::Array(kept))
+        })
+        .collect()
 }
 
 /// What the run could not follow, in a few lines: every cause with how often
@@ -1789,6 +1818,37 @@ mod tests {
             millis: 0.0,
             children: Vec::new(),
         }
+    }
+
+    /// A fix of `rule` in `category` at line 0, columns `from..to`.
+    fn fix(rule: &str, category: &str, from: u64, to: u64, safe: bool) -> Json {
+        let pos = |c: u64| serde_json::json!({ "line": 0, "character": c });
+        serde_json::json!({
+            "diagnostics": [{ "data": { "rule": rule, "category": category } }],
+            "isPreferred": safe,
+            "edit": { "changes": { "f": [{ "range": { "start": pos(from), "end": pos(to) }, "newText": "x" }] } },
+        })
+    }
+
+    #[test]
+    fn fix_all_scopes_rule_category_and_file_and_drops_overlaps() {
+        let actions = [
+            fix("a", "style", 0, 2, true),
+            fix("a", "style", 1, 3, true),
+            fix("b", "style", 5, 6, true),
+            fix("c", "correctness", 8, 9, false),
+        ];
+        let all = fix_all(&actions);
+        let scope = |s: &str, k: &str, unsafe_: bool| {
+            all.iter().find(|a| a["data"]["scope"] == s && a["data"]["key"] == k && a["data"]["unsafe"] == unsafe_)
+        };
+        let edits = |a: &Json| a["edit"]["changes"]["f"].as_array().map_or(0, Vec::len);
+        let rule = scope("rule", "a", false).expect("rule a");
+        assert_eq!((rule["data"]["count"].as_u64(), edits(rule)), (Some(2), 1), "the overlapping edit waits");
+        assert_eq!(scope("category", "style", false).map(edits), Some(2));
+        assert_eq!(scope("all", "", false).map(edits), Some(2), "the unsafe fix stays out");
+        assert_eq!(scope("all", "", true).map(edits), Some(3), "asked for, it is in");
+        assert!(scope("rule", "b", false).is_none(), "one fix needs no fix-all");
     }
 
     #[test]

@@ -7,6 +7,7 @@
 <link rel="icon" href="{{root}}{{favicon}}" type="image/svg+xml">
 <link rel="stylesheet" href="{{root}}{{css}}">
 <script>{ let t = new URLSearchParams(location.search).get('theme'); if (t !== 'dark' && t !== 'light') try { t = localStorage.getItem('satex-theme'); } catch {} if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; }</script>
+<script src="{{root}}{{sitejs}}" defer></script>
 <script src="{{root}}{{drawjs}}" defer></script>
 </head>
 <body class="draw-page">

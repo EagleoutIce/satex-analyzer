@@ -118,6 +118,13 @@
   // ------------------------------------------------------------ explain cards
   // One renderer for `satex explain --format json`: the landing page's cards, the
   // playground's Explain panel, its run output and its hover cards.
+  /** A duration for reading: ms under a second, else seconds. */
+  const duration = (ms) => ms < 1000 ? `${Math.round(ms)} ms` : ms < 60e3 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60e3)} min ${Math.round(ms % 60e3 / 1000)} s`;
+  /** How many chips a card's list shows before its "+N", which unfolds the rest. */
+  const CHIPS_SHOWN = 10;
+  /** A card's list of names as chips (`chip` renders one): the first CHIPS_SHOWN, the rest behind "+N", folding back on a second click. */
+  const chipList = (names, chip) => `<span class="chips">${names.slice(0, CHIPS_SHOWN).map(chip).join('')}${names.length > CHIPS_SHOWN
+    ? `<details class="chip-more"><summary title="show the other ${names.length - CHIPS_SHOWN}">+${names.length - CHIPS_SHOWN}</summary><span class="chips">${names.slice(CHIPS_SHOWN).map(chip).join('')}</span></details>` : ''}</span>`;
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   /** TeX source colored like the editor: commands, braces, parameters, comments. */
   const tex = (text, link = false) => esc(text).replace(/(%[^\n]*)|(\\(?:[A-Za-z@_:]+|.))|([{}[\]])|(#+\d)/g, (m, com, cmd, br) =>
@@ -186,7 +193,7 @@
     for (let x = t; x && x.name !== 'any' && !up.includes(x.name); x = types.get(x.parent)) up.unshift(x.name);
     const below = [...types.values()].filter((x) => x.parent === name && x.name !== name).map((x) => x.name);
     // each related type a chip that opens its own card; a long list shows its first few
-    const chips = (names) => names.slice(0, 6).map((n) => `<a class="ty ty-chip" href="#" data-ty="${esc(n)}">${esc(n)}</a>`).join(' ') + (names.length > 6 ? ` <span class="muted">+${names.length - 6} more</span>` : '');
+    const chips = (names) => chipList(names, (n) => `<a class="ty ty-chip" href="#" data-ty="${esc(n)}">${esc(n)}</a>`);
     const badge = t.family === 'expl3' ? ' <span class="ty-badge">expl3</span>' : '';
     return `<div class="ty-chain"><b>${esc(name)}</b>${badge}</div><p>${esc(t.about).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` +
       (up.length > 1 ? `<div class="ty-below"><span>more general:</span> ${chips(up.slice(0, -1).reverse())}</div>` : '') +
@@ -410,7 +417,7 @@
       for (const a of r.one_of) by.set(a.body ?? '', [...(by.get(a.body ?? '') ?? []), a.line]);
       rows.push(['one of, by path', [...by].map(([b, ls]) => `${b ? `<code>${esc(b)}</code>` : '<span class="muted">(empty)</span>'} <span class="muted">(line${ls.length > 1 ? 's' : ''} ${ls.join(', ')})</span>`).join(' / ')]);
     }
-    if (r.together?.length) rows.push(['defined with', `<span class="chips">${r.together.map(csChip).join('')}</span>`]);
+    if (r.together?.length) rows.push(['defined with', chipList(r.together, csChip)]);
     const owner = r.class ? pkgChip('class', r.class) : r.package ? (r.package === 'kernel' ? pkgChip('kernel', 'the kernel') : pkgChip('package', r.package)) : '';
     if (r.path && r.line) rows.push(['defined at', `${placeLink(r.path, r.line, r.file)}${owner ? ` ${owner}` : ''}`]);
     else if (owner) rows.push(['from', owner]);
@@ -419,11 +426,11 @@
       .replace(/: ([^:]+?)(?=, in |, outside|$)/g, (m, list) => `: ${list.split(', ').map((e) => `<code class="cs-ref env-ref" data-cs="\\${e}" tabindex="0">${e}</code>`).join(' ')}`)
       .replace(/(^|[\s(])(\\[A-Za-z@]+)/g, (m, pre, cs) => `${pre}<code class="cs-ref" data-cs="${cs}" tabindex="0">${cs}</code>`)]);
     if (r.uses != null) rows.push(['uses', r.uses ? `${r.uses} in this run` : 'none in this run']);
-    for (const [key, label] of [['expands', 'always expands'], ['may_expand', 'may expand']]) if (r[key]?.length) rows.push([label, `<span class="chips">${r[key].map(csChip).join('')}</span>`]);
+    for (const [key, label] of [['expands', 'always expands'], ['may_expand', 'may expand']]) if (r[key]?.length) rows.push([label, chipList(r[key], csChip)]);
     // what the document's calls leave defined: the public names, the internal ones folded
     const made = r.creates ?? [], inner = r.creates_internal ?? [];
-    if (made.length || inner.length) rows.push(['creates', `<span class="chips">${made.map(csChip).join('')}</span>` +
-      (inner.length ? `<details class="x-more"><summary>${inner.length} internal</summary><span class="chips">${inner.map(csChip).join('')}</span></details>` : '')]);
+    if (made.length || inner.length) rows.push(['creates', chipList(made, csChip) +
+      (inner.length ? `<details class="x-more"><summary>${inner.length} internal</summary>${chipList(inner, csChip)}</details>` : '')]);
     if (r.error) rows.push(['error', `<span class="x-err">${esc(r.error)}</span>`]);
     const tags = [primitive ? 'primitive' : r.tag, r.when && `in the ${r.when}`, r.certain === false && 'uncertain'].filter(Boolean);
     return `<div class="xcard"><div class="x-head"><code class="x-name">${csName(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}${traceButton(r)}</div>` +
@@ -444,7 +451,7 @@
     return `<div class="xcard brief"><div class="x-head"><code class="x-name">${csName(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}` +
       `${where ? ` <span class="x-where">${where}</span>` : ''}${traceButton(r)}</div>` +
       (r.does ? `<div class="x-does">${esc(r.does)}</div>` : '') + (use ? `<div class="x-use">${use}</div>` : '') +
-      (r.together?.length ? `<div class="x-with muted">defined together with <span class="chips">${r.together.slice(0, 6).map(csChip).join('')}</span>${r.together.length > 6 ? ` +${r.together.length - 6}` : ''}</div>` : '') + (r.error ? `<div class="x-err">${esc(r.error)}</div>` : '') +
+      (r.together?.length ? `<div class="x-with muted">defined together with ${chipList(r.together, csChip)}</div>` : '') + (r.error ? `<div class="x-err">${esc(r.error)}</div>` : '') +
       (docs ? `<div class="x-docs">${docs}</div>` : '') + '</div>';
   }
   /** Any other record value for a table cell: lists as chips, never raw JSON. */
@@ -606,7 +613,7 @@
     return sections(main) + (more ? `<details class="more"><summary>More definitions</summary>${sections(more)}</details>` : '');
   };
 
-  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation, withKeys, hover: hoverCard, useOf };
+  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation, withKeys, hover: hoverCard, useOf, duration };
   // A rule named anywhere on the site, as a link into the rules page or its code or number in a
   // code span, shows its card. The cards' data is the rules the build wrote, fetched once.
   const RULES_URL = new URL('rules.json', document.currentScript?.src ?? location.href);
@@ -777,7 +784,7 @@
       fig.classList.remove('busy');
       out.innerHTML = paragraphs(rows.filter((r) => r.kind === 'paragraph' && !String(r.path ?? '').startsWith('/texmf')));
       underline(found.get(uri) ?? []);
-      tell(`Analyzed in ${Math.round(performance.now() - t0)} ms. <a href="play/index.html">The playground</a> has traces, the library and more.`);
+      tell(`Analyzed in ${duration(performance.now() - t0)}. <a href="play/index.html">The playground</a> has traces, the library and more.`);
     }
     const [{ codemirror: { EditorView, basicSetup }, autocomplete: ac, lint, language, oneDark: { oneDark }, state: st }, tex] = await Promise.all([self.siteCM(), self.siteTex()]);
     const pos = (doc, p) => { const l = doc.lineAt(p); return { line: l.number - 1, character: p - l.from }; };

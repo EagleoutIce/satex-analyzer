@@ -311,7 +311,8 @@ fn lsp_positions_count_utf16_code_units() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Two safe fixes of one rule in a file also come as one action that applies both.
+/// Two safe fixes of one rule in a file also come as one action that applies
+/// both, for the rule and for the whole file.
 #[test]
 fn lsp_offers_one_action_for_all_fixes_of_a_rule() {
     let dir = project("lsp-all", &[("doc.tex", "\\label{x}\n\\label{y}\n")]);
@@ -326,10 +327,10 @@ fn lsp_offers_one_action_for_all_fixes_of_a_rule() {
     };
     let out: serde_json::Value = serde_json::from_str(&satex::render::lsp(&[record(1), record(2)])).unwrap();
     let actions = out[0]["codeActions"].as_array().unwrap();
-    let all =
-        actions.iter().find(|a| a["diagnostics"].as_array().is_some_and(|d| d.len() == 2)).expect("a fix-all action");
+    let all = actions.iter().find(|a| a["data"]["scope"] == "rule").expect("a fix-all action");
     let edits = all["edit"]["changes"].as_object().unwrap().values().next().unwrap().as_array().unwrap();
-    assert_eq!((actions.len(), edits.len()), (3, 2));
+    let file = actions.iter().filter(|a| a["data"]["scope"] == "all").count();
+    assert_eq!((actions.len(), edits.len(), file), (4, 2, 1));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

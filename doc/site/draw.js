@@ -1231,7 +1231,7 @@ self.satexDraw = (
     fit();
     list.classList.toggle('refining', !!pending);
     total.classList.toggle('refining', !!pending);
-    took = f ? `${ms} ms` : '';
+    took = f ? self.satexCards.duration(ms) : '';
     metaShow();
   }
   const ICON = {
