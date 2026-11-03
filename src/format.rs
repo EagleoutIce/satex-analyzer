@@ -419,6 +419,7 @@ fn remove_with_lock(path: &Path) -> bool {
     // The handle goes first: Windows refuses to unlink a file still open without it.
     drop(lock);
     let _ = std::fs::remove_file(lock_for(path));
+    let _ = std::fs::remove_file(path.with_extension("building.lock"));
     removed
 }
 

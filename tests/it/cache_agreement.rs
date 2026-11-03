@@ -292,8 +292,11 @@ fn a_package_and_a_document_in_one_project_share_the_kernel_cache() {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|n| n.starts_with("format-"))
         .collect();
-    let caches = names.iter().filter(|n| n.ends_with(".postcard")).count();
-    let locks = names.iter().filter(|n| n.ends_with(".lock")).count();
-    assert_eq!(caches, 1, "{names:?}");
-    assert_eq!(locks, 1, "a lock per cache and no more: {names:?}");
+    let caches: Vec<&str> = names.iter().filter_map(|n| n.strip_suffix(".postcard")).collect();
+    assert_eq!(caches.len(), 1, "{names:?}");
+    // The store lock and the build lock name their cache.
+    let stem = |n: &str| n.strip_suffix(".building.lock").or_else(|| n.strip_suffix(".lock")).map(str::to_string);
+    let orphans: Vec<&String> =
+        names.iter().filter(|n| stem(n).is_some_and(|s| !caches.contains(&s.as_str()))).collect();
+    assert!(orphans.is_empty(), "locks of no cache: {orphans:?}");
 }
