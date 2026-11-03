@@ -21,8 +21,8 @@ struct Cli {
     #[arg(short = 'V', long, global = true)]
     version: bool,
 
-    /// The document to read. Without it, satex looks for one root document
-    /// in the current directory, or reads stdin if that is not a terminal.
+    /// The document to read. Without it, satex reads each root document
+    /// in the current directory, or stdin if that is not a terminal.
     #[arg(short, long, global = true, value_name = "FILE", help_heading = "Input")]
     file: Option<PathBuf>,
 
@@ -372,8 +372,36 @@ fn run() -> Result<(), String> {
     // document, so the kernel and class still define `\section` and the like.
     let explaining = matches!(cli.command, Some(Command::Explain { .. } | Command::Scope { .. }));
     if cli.file.is_none() && cli.command().needs_source() && satex::progress::terminal(io::stdin()) {
-        cli.file = input_for(&std::env::current_dir().unwrap_or_default(), explaining)?;
+        let roots = input_for(&std::env::current_dir().unwrap_or_default(), explaining)?;
+        if roots.len() < 2 {
+            return run_on(&mut cli, roots.into_iter().next(), explaining);
+        }
+        // One machine-readable document per run: several roots would
+        // concatenate them.
+        if !cli.format.is_text() {
+            let names: Vec<String> = roots.iter().map(|p| p.display().to_string()).collect();
+            return Err(format!("{} are each a root: name one with -f", names.join(", ")));
+        }
+        // Several roots: each its own run, in turn; one that fails stops none of the others.
+        let mut failed = Vec::new();
+        for root in roots {
+            anstream::eprintln!("{}", render::status(&format!("satex: root {}", root.display())));
+            if let Err(why) = run_on(&mut cli, Some(root.clone()), explaining) {
+                anstream::eprintln!("satex: {}: {why}", root.display());
+                failed.push(root.display().to_string());
+            }
+        }
+        return match failed.is_empty() {
+            true => Ok(()),
+            false => Err(format!("the run failed on {}", failed.join(", "))),
+        };
     }
+    run_on(&mut cli, None, explaining)
+}
+
+/// One run of the command on `file`, or on what `cli` names.
+fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool) -> Result<(), String> {
+    cli.file = file.or(cli.file.take());
     let mut source = if cli.file.is_none() && explaining && satex::progress::terminal(io::stdin()) {
         // Interactive, nothing named, nothing piped in: reading stdin would
         // just hang waiting for input that is never coming.
@@ -388,10 +416,10 @@ fn run() -> Result<(), String> {
         source = EMPTY_DOCUMENT.to_string();
     }
     let injected = match (&cli.inject, &cli.at) {
-        (Some(text), Some(at)) => Some(inject(&cli, &mut source, text, at)?),
+        (Some(text), Some(at)) => Some(inject(cli, &mut source, text, at)?),
         _ => None,
     };
-    let (mut cfg, _layers) = configure(&cli, Some(&source))?;
+    let (mut cfg, _layers) = configure(cli, Some(&source))?;
     if let Some((file, from, to)) = injected {
         cfg.trace_file = file;
         cfg.trace_lines = Some((from.0, to.0));
@@ -477,13 +505,13 @@ fn run() -> Result<(), String> {
     let text = cli.format.is_text();
     let (body, hint) = match output {
         Output::Done => (String::new(), None),
-        Output::Records(records) => (rendered(&records, &cli, links), None),
-        Output::Partial(records, hint) => (rendered(&records, &cli, links), Some(hint)),
+        Output::Records(records) => (rendered(&records, cli, links), None),
+        Output::Partial(records, hint) => (rendered(&records, cli, links), Some(hint)),
         Output::Detail(records) if text => (render::fields(&records, links), None),
         Output::DetailPartial(records, hint) if text => (render::fields(&records, links), Some(hint)),
         Output::Lint(records) if text => (render::lint(&records, links, !cli.no_group()), None),
-        Output::Detail(records) | Output::Lint(records) => (rendered(&records, &cli, links), None),
-        Output::DetailPartial(records, hint) => (rendered(&records, &cli, links), Some(hint)),
+        Output::Detail(records) | Output::Lint(records) => (rendered(&records, cli, links), None),
+        Output::DetailPartial(records, hint) => (rendered(&records, cli, links), Some(hint)),
     };
     // JSON escapes what text would print raw.
     let safe = |t: &str| if text { render::terminal_safe(t) } else { t.to_string() };
@@ -858,17 +886,29 @@ fn rendered(records: &[query::Record], cli: &Cli, links: Links) -> String {
     cli.format.render(records, links, env!("CARGO_PKG_VERSION"))
 }
 
-/// The document to read when none is named: the one root in `dir`; for
-/// `explain` and `scope`, `None` (the smallest document) when there is not
-/// exactly one.
-fn input_for(dir: &Path, explaining: bool) -> Result<Option<PathBuf>, String> {
-    match discover_input(dir) {
-        Ok(found) => Ok(Some(found)),
-        Err(why) if explaining => {
+/// The documents to read when none is named: the roots in `dir`, each
+/// analyzed on its own; for `explain` and `scope`, none (the smallest
+/// document) when there is not exactly one. Files no root reads are named
+/// on stderr.
+fn input_for(dir: &Path, explaining: bool) -> Result<Vec<PathBuf>, String> {
+    let found = satex::plugin::discovery::scan(dir);
+    let unreachable = found.unreachable();
+    if !unreachable.is_empty() {
+        let names: Vec<String> = unreachable.iter().map(|p| p.display().to_string()).collect();
+        anstream::eprintln!("{}", render::status(&format!("satex: no root reads {}", names.join(", "))));
+    }
+    let roots = found.roots();
+    let why = match roots.len() {
+        0 => format!("no root document in {}: name one with -f", dir.display()),
+        n => format!("{n} documents could each be the root: name one with -f"),
+    };
+    match (roots.len(), explaining) {
+        (1, _) | (2.., false) => Ok(roots),
+        (0, false) => Err(why),
+        _ => {
             note_minimal_document(&why);
-            Ok(None)
+            Ok(Vec::new())
         }
-        Err(why) => Err(why),
     }
 }
 
@@ -876,25 +916,6 @@ fn input_for(dir: &Path, explaining: bool) -> Result<Option<PathBuf>, String> {
 /// so a name that means nothing there is not a silent surprise.
 fn note_minimal_document(why: &str) {
     anstream::eprintln!("satex: no document named ({why}). Analyzing the smallest LaTeX document instead");
-}
-
-/// The one root document in `dir`.  Several candidates are never guessed
-/// between, and none is an error: either way, `-f` names the root.
-fn discover_input(dir: &Path) -> Result<PathBuf, String> {
-    let found = satex::plugin::discovery::scan(dir);
-    let rivals = found.rival_roots();
-    if rivals.len() > 1 {
-        const SHOWN: usize = 5;
-        let mut names: Vec<String> = rivals.iter().take(SHOWN).map(|p| p.display().to_string()).collect();
-        if rivals.len() > SHOWN {
-            names.push(format!("… ({} more)", rivals.len() - SHOWN));
-        }
-        return Err(format!(
-            "{} could each be the root: name one with -f, or add a `% !TeX root` line to the source",
-            names.join(", ")
-        ));
-    }
-    found.root_document().ok_or_else(|| format!("no root document in {}: name one with -f", dir.display()))
 }
 
 /// `--inject`: the text put at `--at` in the main file's `source`, or

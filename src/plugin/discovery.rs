@@ -94,8 +94,8 @@ fn names(text: &str, file: &Path) -> bool {
         && (text.match_indices(stem).any(|(at, _)| {
             let before = text[..at].chars().next_back();
             let after = text[at + stem.len()..].chars().next();
-            (matches!(before, Some('{' | '/')) || text[..at].ends_with("\\input "))
-                && matches!(after, None | Some('}' | '.' | ' ' | '\n'))
+            (matches!(before, Some('{' | '/' | ',')) || text[..at].ends_with("\\input "))
+                && matches!(after, None | Some('}' | '.' | ' ' | '\n' | ','))
         }) || names_by_pattern(text, stem, name))
 }
 
@@ -146,7 +146,8 @@ pub fn scan_with(root: &Path, threads: usize) -> Discovery {
         false => root,
     };
     let mut builder = ignore::WalkBuilder::new(root);
-    builder.max_depth(Some(MAX_DEPTH)).threads(threads.max(1));
+    // A project outside a repository (a playground) keeps its `.gitignore`.
+    builder.max_depth(Some(MAX_DEPTH)).threads(threads.max(1)).require_git(false);
     let mut files = match threads > 1 {
         true => {
             let collected = std::sync::Mutex::new(Vec::new());
@@ -259,30 +260,57 @@ impl Discovery {
     /// it, directly or through inputs that do, then the one a run starts
     /// from. Only a run tells which one reads it.
     pub fn candidate_roots(&self, file: &Path) -> Vec<PathBuf> {
-        let texts: Vec<(&PathBuf, String)> = self
-            .documents
-            .iter()
-            .chain(&self.inputs)
-            .chain(&self.packages)
-            .chain(&self.classes)
-            .filter(|p| !crate::paths::same_file(p, file))
-            .map(|p| (p, head_of(p)))
-            .collect();
-        let mut named = vec![file.to_path_buf()];
-        let mut next = 0;
-        while next < named.len() {
-            let file = named[next].clone();
-            next += 1;
-            for (path, text) in &texts {
-                if names(text, &file) && !named.contains(path) {
-                    named.push(path.to_path_buf());
-                }
-            }
-        }
-        let mut roots: Vec<PathBuf> = named.iter().filter(|p| self.documents.contains(p)).cloned().collect();
+        let mut roots: Vec<PathBuf> =
+            self.reach(vec![file.to_path_buf()], false).into_iter().filter(|p| self.documents.contains(p)).collect();
         roots.sort_by_cached_key(|p| self.rank(p));
         roots.extend(self.root_document().filter(|r| !roots.contains(r) && !crate::paths::same_file(r, file)));
         roots
+    }
+
+    /// `seeds` and the project files they name, transitively (`forward`),
+    /// or those naming them.
+    fn reach(&self, mut set: Vec<PathBuf>, forward: bool) -> Vec<PathBuf> {
+        let seeds = set.clone();
+        let files = [&self.documents, &self.inputs, &self.packages, &self.classes, &self.bibliographies];
+        let texts: Vec<(&PathBuf, String)> = files
+            .into_iter()
+            .flatten()
+            .filter(|p| !seeds.iter().any(|s| crate::paths::same_file(p, s)))
+            .map(|p| (p, if forward { String::new() } else { head_of(p) }))
+            .collect();
+        let mut next = 0;
+        while next < set.len() {
+            let file = set[next].clone();
+            let head = if forward { head_of(&file) } else { String::new() };
+            next += 1;
+            for (path, text) in &texts {
+                if !set.contains(path) && if forward { names(&head, path) } else { names(text, &file) } {
+                    set.push(path.to_path_buf());
+                }
+            }
+        }
+        set
+    }
+
+    /// The documents each analyzed on its own: the one a run starts from,
+    /// or every rival when nothing says which.
+    pub fn roots(&self) -> Vec<PathBuf> {
+        match self.rival_roots() {
+            [] => self.root_document().into_iter().collect(),
+            rivals => rivals.to_vec(),
+        }
+    }
+
+    /// The inputs, packages, classes and bibliographies no document names,
+    /// directly or through others: no root reads them. A bundle with no
+    /// document claims none.
+    pub fn unreachable(&self) -> Vec<PathBuf> {
+        if self.documents.is_empty() {
+            return Vec::new();
+        }
+        let reached = self.reach(self.documents.iter().cloned().chain(self.root_document()).collect(), true);
+        let files = [&self.inputs, &self.packages, &self.classes, &self.bibliographies];
+        files.into_iter().flatten().filter(|p| !reached.contains(p)).cloned().collect()
     }
 
     /// The project's packages and classes that read `file` as a part of
@@ -297,8 +325,7 @@ impl Discovery {
     }
 
     /// The documents that could be the root, when more than one could and
-    /// nothing in the project says which: the caller picks the first but
-    /// should say that it had to choose.
+    /// nothing in the project says which: each is analyzed on its own.
     pub fn rival_roots(&self) -> &[PathBuf] {
         match self.declared_root.is_none() && self.documents.len() > 1 {
             true => &self.documents,
@@ -313,16 +340,17 @@ impl Discovery {
     }
 
     /// One row per kind of file found, for `summary` and `query project`.
-    pub fn rows(&self) -> Vec<(&'static str, Vec<&PathBuf>)> {
+    pub fn rows(&self) -> Vec<(&'static str, Vec<PathBuf>)> {
         vec![
-            ("documents", self.documents.iter().collect()),
-            ("inputs", self.inputs.iter().collect()),
-            ("classes", self.classes.iter().collect()),
-            ("packages", self.packages.iter().collect()),
-            ("build", self.build.iter().collect()),
-            ("bibliographies", self.bibliographies.iter().collect()),
-            ("literate", self.literate.iter().collect()),
-            ("typeset", self.typeset.iter().collect()),
+            ("documents", self.documents.clone()),
+            ("inputs", self.inputs.clone()),
+            ("classes", self.classes.clone()),
+            ("packages", self.packages.clone()),
+            ("build", self.build.clone()),
+            ("bibliographies", self.bibliographies.clone()),
+            ("literate", self.literate.clone()),
+            ("typeset", self.typeset.clone()),
+            ("unreachable", self.unreachable()),
         ]
     }
 }

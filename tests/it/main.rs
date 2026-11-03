@@ -65,6 +65,7 @@ mod produces;
 mod profiles;
 mod progressive;
 mod rename;
+mod roots;
 mod semantics;
 mod slice;
 mod slice_build;

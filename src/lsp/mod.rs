@@ -650,6 +650,8 @@ struct Engine {
     runs: HashMap<PathBuf, Run>,
     /// The root a run was seen to read each file from.
     owners: HashMap<PathBuf, PathBuf>,
+    /// The inputs no root's run was seen to read.
+    orphans: HashSet<PathBuf>,
     /// Where the engine's notifications go: diagnostics, style candidates.
     outbox: Sender<Notification>,
     /// The rules a style prompt was sent for, asked once per session.
@@ -708,6 +710,7 @@ impl Engine {
             main,
             runs: HashMap::default(),
             owners: HashMap::default(),
+            orphans: HashSet::new(),
             outbox,
             asked: HashSet::new(),
             silenced: Vec::new(),
@@ -764,11 +767,23 @@ impl Engine {
             // Requests that only read are answered while the rules run.
             let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).collect();
             let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
-            let (published, candidates) = self.serving(|engine| {
+            let orphan = self.orphans.contains(&canonical(&path));
+            let (mut published, candidates) = self.serving(|engine| {
                 let records = engine.unsilenced(handlers::findings(&analysis));
                 let candidates = crate::lint::style_candidates(&records, &analysis.settings.style_prompt);
                 (publish(&mut engine.actions, &analysis, &records, &path, &open), candidates)
             });
+            if let Some(own) =
+                published.iter_mut().find(|p| orphan && p.uri == handlers::path_uri(&path.display().to_string()))
+            {
+                own.diagnostics.push(lsp_types::Diagnostic {
+                    severity: Some(lsp_types::DiagnosticSeverity::INFORMATION),
+                    code: Some(lsp_types::NumberOrString::String("unreachable-file".into())),
+                    source: Some("satex".into()),
+                    message: "No root document reads this file.".into(),
+                    ..Default::default()
+                });
+            }
             self.send_diagnostics(published);
             self.ask_style(candidates);
         }
@@ -848,6 +863,7 @@ impl Engine {
             }
             let run = self.run(&root);
             if self.runs.get(&root_key).is_some_and(|r| r.reads.contains(&key)) {
+                self.orphans.remove(&key);
                 self.owners.insert(key, root);
                 return run;
             }
@@ -858,6 +874,9 @@ impl Engine {
             drop(run);
             self.runs.retain(|_, run| Rc::strong_count(&run.analysis) > 1);
             tried.push(root_key);
+        }
+        if input {
+            self.orphans.insert(key);
         }
         // A part of a package the project provides is read where the
         // package puts it: after loading it, as its own code.

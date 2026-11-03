@@ -962,6 +962,26 @@ mod roots {
         def["result"][0]["uri"].as_str().unwrap_or_else(|| panic!("no definition: {def:?}")).to_string()
     }
 
+    /// A file no root reads says so; one a root reads does not.
+    #[test]
+    fn a_file_no_root_reads_is_marked() {
+        let main = format!("{PRELUDE}\\input{{chap}}\n");
+        let files = [("main.tex", main.as_str()), ("chap.tex", "x\n"), ("orphan.tex", "y\n")];
+        let marked = |open: &str| {
+            let dir = crate::support::tmp_root().join(format!("satex-lsp-orphan-{open}"));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            files.iter().for_each(|(name, text)| std::fs::write(dir.join(name), text).unwrap());
+            let mut server = serve(&dir, false);
+            let (_, published) = open_file(&mut server, &dir, open);
+            server.shutdown();
+            let _ = std::fs::remove_dir_all(&dir);
+            published.to_string().contains("unreachable-file")
+        };
+        assert!(marked("orphan.tex"));
+        assert!(!marked("chap.tex"));
+    }
+
     #[test]
     fn an_input_file_is_read_through_its_root() {
         let main = format!("{PRELUDE}\\def\\greet#1{{Hello, #1!}}\n\\input{{chap}}\n");

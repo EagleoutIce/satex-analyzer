@@ -228,6 +228,10 @@ macro-call           \usepackage                while expanding at 1:1       pap
 
 The document class, engine, and build configuration SaTeX detected or was told to assume.
 
+The rows below list what the project walk found, without what `.gitignore` excludes.
+`unreachable` lists the inputs, packages, classes and bibliographies no root reads.
+Without `-f`, each root document is analyzed on its own.
+
 ```text
 $ satex query project -f samples/paper.tex
 kind       name                                                      count  detail    message                           

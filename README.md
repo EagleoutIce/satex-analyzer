@@ -94,7 +94,7 @@ Options:
 
 Input:
   -f, --file <FILE>
-          The document to read. Without it, satex looks for one root document in the current directory, or reads stdin if that is not a terminal
+          The document to read. Without it, satex reads each root document in the current directory, or stdin if that is not a terminal
 
       --config <FILE>
           An extra config file, merged on top of every discovered satex.yaml (built-in defaults, the global config, the ones from the filesystem root down to the document's directory)

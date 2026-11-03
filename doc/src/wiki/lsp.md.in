@@ -31,6 +31,8 @@ satex lsp --port 9257 --host 0.0.0.0
 | Linked editing | `textDocument/linkedEditingRange` | a `\begin` name and its `\end`, paired by nesting in the open text |
 | Any query | `workspace/executeCommand` (`satex/query`) | a [query request](queries.md#json-requests). Without `file` it reads the open document |
 
+**Roots.** A file is analyzed through the root document that reads it. A file no root reads gets an information diagnostic `unreachable-file`. It is then read after a root's preamble, apart from that root's results.
+
 **Definition fallback.** When the run stopped before a later file defines a name, the server scans the sources: breadth-first through `\input`, `\include`, `\usepackage`, … (at most 200 files), looking for `\def`, `\newcommand`, `\NewDocumentCommand`, `\cs_new:Npn` and relatives. Hover marks such a site as not reached.
 
 **Rename** moves every name one declaration made: `\newcounter{step}` renames `\c@step`, `\thestep`, `\p@step`, `\cl@step`, `\theHstep` and every `{step}` use. `\newenvironment{note}` renames `\begin{note}`/`\end{note}` too. It is refused, with the site named, when a new name is taken, a file may not be edited, or a built name has no spelled site.

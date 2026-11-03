@@ -96,6 +96,10 @@ Definitions and assignments a macro makes as a side effect of being called, rath
 
 The document class, engine, and build configuration SaTeX detected or was told to assume.
 
+The rows below list what the project walk found, without what `.gitignore` excludes.
+`unreachable` lists the inputs, packages, classes and bibliographies no root reads.
+Without `-f`, each root document is analyzed on its own.
+
 {{run(6): satex query project -f samples/paper.tex}}
 
 ## plugins
