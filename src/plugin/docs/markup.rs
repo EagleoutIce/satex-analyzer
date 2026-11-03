@@ -123,7 +123,7 @@ fn command<'a>(rest: &'a str, code: bool, out: &mut String) -> &'a str {
             out.push_str(&format!("{tick}\\{}{tick}", a.trim().trim_start_matches('\\')));
             rest
         }
-        "meta" => {
+        "meta" | "prm" => {
             let (a, rest) = arg(rest);
             out.push_str(&meta(a));
             rest
@@ -292,12 +292,33 @@ pub fn variants(opts: &str, names: Vec<String>) -> Vec<String> {
 pub fn anchors<'a>(doc: &'a str, env: &str) -> impl Iterator<Item = (usize, &'a str, &'a str, &'a str)> {
     let open = format!("\\begin{{{env}}}");
     let at: Vec<usize> = doc.match_indices(&open).map(|(i, _)| i).collect();
-    at.into_iter().filter_map(move |i| {
+    at.into_iter().filter(|&i| !quoted(doc, i)).filter_map(move |i| {
         let rest = &doc[i + open.len()..];
         let (opts, rest) = group(rest, '[', ']').unwrap_or(("", rest));
         let (list, after) = group(rest, '{', '}')?;
         Some((i, opts, list, after))
     })
+}
+
+/// Whether byte `at` of `doc` stands in verbatim text: an example the
+/// prose shows (`|\DescribeMacro{\foo}|`), no anchor.
+pub fn quoted(doc: &str, at: usize) -> bool {
+    let line = doc[..at].rfind('\n').map_or(0, |i| i + 1);
+    let open = doc[..at].rfind("\\begin{verbatim}");
+    doc[line..at].matches('|').count() % 2 == 1 || open > doc[..at].rfind("\\end{verbatim}")
+}
+
+/// The arguments after an anchor's name, each as its placeholder:
+/// `{command}[arguments]` gives `{⟨command⟩}[⟨arguments⟩]`.
+pub fn placeholders(mut rest: &str) -> String {
+    let mut out = String::new();
+    while let Some(open @ ('{' | '[')) = rest.chars().next() {
+        let close = if open == '{' { '}' } else { ']' };
+        let Some((arg, after)) = group(rest, open, close) else { break };
+        out.push_str(&format!("{open}⟨{}⟩{close}", render(arg, true)));
+        rest = after;
+    }
+    out
 }
 
 /// The headings of the manual `file`: the commands its class (`\documentclass`,

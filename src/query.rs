@@ -3646,7 +3646,8 @@ fn internal_name(analysis: &Analysis, name: &str) -> bool {
     // spelling (`\@testopt`'s internal partner for `\section`, say) carries
     // a literal backslash as its first character; no document ever writes
     // that out by hand.
-    analysis.settings.conventions.is_internal(name) || name.starts_with('\\')
+    // So does the robust partner `\X␣` of `\DeclareRobustCommand`.
+    analysis.settings.conventions.is_internal(name) || name.starts_with('\\') || name.ends_with(' ')
 }
 
 /// Where a name in scope came from, for `scope`'s ordering and its
@@ -3753,7 +3754,8 @@ fn def_row(analysis: &Analysis, def: &crate::facts::Definition) -> Option<ScopeR
     record.insert("effective".into(), json!(effective_of(analysis, def.name, def.mac.as_deref(), None)));
     let (tier, origin) = origin_of(analysis, def.package, def.span.file);
     record.insert("package".into(), origin);
-    if let Some(does) = describe_meaning(analysis, name, &analysis.env.meaning(def.name)) {
+    let file = analysis.files.get(usize::from(def.span.file)).map(|f| std::path::PathBuf::from(&f.path));
+    if let Some(does) = scope_does(analysis, name, &analysis.env.meaning(def.name), file) {
         record.insert("does".into(), json!(does));
     }
     Some(ScopeRow { name: name.to_string(), tier, record, plain: !internal_name(analysis, name) })
@@ -3796,7 +3798,7 @@ fn scope_rows(analysis: &Analysis) -> ScopeRows {
         record.insert("tag".into(), json!(if paired { "environment" } else { tag }));
         record.insert("effective".into(), json!(effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), None)));
         record.insert("package".into(), json!("kernel"));
-        if let Some(does) = describe_meaning(analysis, name, &meaning) {
+        if let Some(does) = scope_does(analysis, name, &meaning, None) {
             record.insert("does".into(), json!(does));
         }
         rest.push(ScopeRow { name: name.to_string(), tier: 2, record, plain });
@@ -4250,6 +4252,25 @@ fn describe_meaning(analysis: &Analysis, name: &str, meaning: &Meaning) -> Optio
         (!crate::builtins::primitive_names(analysis.plugins.engine).contains_key(name))
             .then(|| describe(name))
             .flatten()
+    })
+}
+
+/// What [`scope`] says `name` does: its description, else what the manual
+/// of the package defining it (`file`, else the format) says, else what
+/// the run made it: `\theX` prints counter `X` where `\c@X` is one.
+fn scope_does(analysis: &Analysis, name: &str, meaning: &Meaning, file: Option<std::path::PathBuf>) -> Option<String> {
+    if let Some(does) = describe_meaning(analysis, name, meaning) {
+        return Some(does.to_string());
+    }
+    let file = file.or_else(|| crate::distribution::tex_file(&analysis.distribution.roots, "latex.ltx"));
+    let mined = file
+        .filter(|_| analysis.settings.plugins.docs && meaning.as_macro().is_some())
+        .and_then(|f| crate::plugin::docs::index(&analysis.settings.docs).lookup_now(&f, name)?.text);
+    mined.or_else(|| {
+        let counter = name.strip_prefix("the")?;
+        let reg = analysis.interner.lookup(&format!("c@{counter}"))?;
+        matches!(analysis.env.meaning(reg), Meaning::Register(crate::tex::RegKind::Count, _))
+            .then(|| format!("The printed value of counter {counter}."))
     })
 }
 

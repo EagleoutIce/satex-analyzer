@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use super::markup::{Places, anchors, description, group, names, render, usage, variants};
+use super::markup::{Places, anchors, description, group, names, placeholders, quoted, render, usage, variants};
 use super::{Audience, DocPlugin, Entry};
 use crate::config::DocsConfig;
 
@@ -30,15 +30,47 @@ impl DocPlugin for Ltxdoc {
                 );
             }
         }
+        // `\begin{command}{\x\marg{a}}`: the name, then its usage.
+        for env in &config.usage_environments {
+            for (at, _, head, after) in anchors(&doc, env) {
+                let (name, args) = match group(head, '{', '}') {
+                    Some((env, args)) => {
+                        (env.trim().to_string(), format!("\\begin{{{}}}{}", env.trim(), render(args, true)))
+                    }
+                    None => {
+                        let cs = head.trim_start().trim_start_matches('\\');
+                        let len = cs.chars().take_while(|c| c.is_alphanumeric() || "@*".contains(*c)).count();
+                        (cs[..len].to_string(), format!("\\{}{}", &cs[..len], render(&cs[len..], true)))
+                    }
+                };
+                // Without a usage it is doc.sty's implementation `environment`, no user's manual.
+                if !name.is_empty() && args.contains('⟨') {
+                    out.push(entry(name, Some(args), description(after, None), Audience::User, at));
+                }
+            }
+        }
         for anchor in config.describe.iter().map(|c| format!("\\{c}")) {
-            for (at, _) in doc.match_indices(&anchor) {
+            for (at, _) in doc.match_indices(&anchor).filter(|(at, _)| !quoted(&doc, *at)) {
                 let Some((list, after)) = group(&doc[at + anchor.len()..], '{', '}') else { continue };
                 let own = doc[..at].rfind('\n').map_or(0, |i| i + 1);
                 let around = std::iter::once(&doc[own..at]).chain(after.split('\n').take(config.usage_lines));
                 let around: Vec<String> = around.map(|l| render(l, true)).collect();
+                // A bare name (`\cmditem{x}{arg}`) is followed by its arguments.
+                let bare = !list.trim_start().starts_with('\\');
+                let (line, rest) = after.split_once('\n').unwrap_or((after, ""));
+                // its variants' anchors stacked below (`\cmditem*{x*}`) are no description
+                let rest = match bare {
+                    true => rest
+                        .trim_start_matches('\n')
+                        .split_inclusive('\n')
+                        .skip_while(|l| l.starts_with(&anchor))
+                        .collect(),
+                    false => after.to_string(),
+                };
                 for name in names(list) {
-                    let usage = around.iter().find_map(|l| usage(l, &name));
-                    let text = description(after, Some(&name));
+                    let own = bare.then(|| format!("\\{name}{}", placeholders(line)));
+                    let usage = own.filter(|u| u.contains('⟨')).or_else(|| around.iter().find_map(|l| usage(l, &name)));
+                    let text = description(&rest, Some(&name));
                     out.push(entry(name, usage, text, Audience::User, at));
                 }
             }

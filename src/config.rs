@@ -466,6 +466,8 @@ pub struct DocsConfig {
     pub describe: Vec<String>,
     /// The `ltxdoc` environments that document a command's code, `macro` in `\begin{macro}{\x}`.
     pub ltxdoc_environments: Vec<String>,
+    /// The environments whose argument is a command or environment and its usage, `\begin{command}{\x\marg{a}}` (beamer's manual).
+    pub usage_environments: Vec<String>,
     /// The `l3doc` environments that document a function or variable.
     pub l3doc_environments: Vec<String>,
     /// Also read the package's own `.sty` comments. Not supported yet: it changes nothing.
@@ -482,7 +484,8 @@ impl Default for DocsConfig {
             reads: list(&["\\DocInput", "\\DocInclude", "\\input", "\\include"]),
             depth: 3,
             usage_lines: 12,
-            describe: list(&["DescribeMacro", "DescribeEnv"]),
+            describe: list(&["DescribeMacro", "DescribeEnv", "cmditem"]),
+            usage_environments: list(&["command", "environment"]),
             ltxdoc_environments: list(&["macro"]),
             l3doc_environments: list(&["function", "variable"]),
             inline: false,

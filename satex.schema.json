@@ -1496,7 +1496,8 @@
         "describe": {
           "default": [
             "DescribeMacro",
-            "DescribeEnv"
+            "DescribeEnv",
+            "cmditem"
           ],
           "description": "the commands that announce the documentation of a command or environment, without the backslash",
           "items": {
@@ -1602,6 +1603,22 @@
             "output"
           ],
           "x-example": "source_root: src looks in texmf/src/latex/pkg",
+          "x-plugin": "docs"
+        },
+        "usage_environments": {
+          "default": [
+            "command",
+            "environment"
+          ],
+          "description": "the environments whose argument is a command or environment followed by its usage",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "\\begin{command}{\\logo\\marg{text}} documents \\logo",
           "x-plugin": "docs"
         },
         "usage_lines": {

@@ -50,6 +50,7 @@ mod limits;
 mod literate;
 mod lsp;
 mod lua;
+mod manuals;
 mod monotonicity;
 mod mutation;
 mod no_hang;

@@ -811,6 +811,10 @@ pub(super) fn load_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) 
         .iter()
         .find(|l| l.name == word && l.span.line == pos.line && analysis.file_name(l.span.file) == path)?;
     let mut md = format!("### `{}`: {}\n\n", load.name, load.kind.as_str());
+    let path_of = load.path.as_deref().map(std::path::Path::new);
+    if let Some(about) = path_of.and_then(|p| crate::plugin::docs::about(&analysis.settings.docs, p)) {
+        md.push_str(&format!("{about}\n\n"));
+    }
     if let Some(provided) = &load.provided {
         md.push_str(&format!("{provided}\n\n"));
     }
@@ -1723,6 +1727,14 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
                 it
             })
             .collect();
+    }
+    // A key no family stores goes to its `.unknown` handler: tips where that sets arrows (`-Kite`).
+    if typed.contains('-') {
+        let unknown = |d: &String| format!("{}/.unknown", d.trim_end_matches('/'));
+        let tips: Vec<_> = dirs.iter().flat_map(|d| drawn_items(analysis, &unknown(d), &[Stroke::Arrows])).collect();
+        if !tips.is_empty() {
+            return tips;
+        }
     }
     if switched.is_none() {
         let mut keys = option_items(analysis, arg.cmd);

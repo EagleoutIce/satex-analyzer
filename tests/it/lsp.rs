@@ -726,6 +726,19 @@ fn completion_pictures_what_tikz_keys_draw() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// `\draw[-Ki`: a key TikZ reads as arrows offers the tips of a library not
+/// loaded yet, and picking one loads it.
+#[test]
+fn arrow_tips_of_unloaded_libraries() {
+    let text = COMPLETE_OPTIONS.replace("\\draw[]", "\\draw[-Ki]");
+    let (mut server, uri, _, dir) = open_loaded("tips", &text);
+    let items = complete(&mut server, &uri, 5, "\\draw[-Ki".len() as u32);
+    let kite = items.iter().find(|i| i["label"] == "-Kite").unwrap_or_else(|| panic!("{:?}", labels(&items)));
+    assert!(kite["additionalTextEdits"].to_string().contains("\\\\usetikzlibrary{arrows.meta}"), "{kite}");
+    drop(server);
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// A completion result's items, an array or a list (LSP `CompletionList`).
 fn completion_items(result: &Value) -> Vec<Value> {
     result.as_array().or_else(|| result["items"].as_array()).cloned().unwrap_or_default()

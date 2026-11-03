@@ -140,6 +140,65 @@ pub fn mine(plugins: &[&dyn DocPlugin], config: &DocsConfig, dirs: &Dirs) -> Has
     out
 }
 
+/// What the package `file` is, in a line, best source first: the
+/// installation's catalogue (`tlpkg/texlive.tlpdb`'s `shortdesc`), the
+/// first sentence of its README, the text of its `\ProvidesPackage`.
+pub fn about(config: &DocsConfig, file: &Path) -> Option<String> {
+    let base = file.file_name()?.to_string_lossy().into_owned();
+    let catalogue = file.ancestors().find_map(|d| catalogue(&d.join("tlpkg/texlive.tlpdb")));
+    catalogue
+        .and_then(|c| c.get(&base).cloned())
+        .or_else(|| readme(Dirs::of(config, file)?.doc.as_deref()?))
+        .or_else(|| provided(&std::fs::read_to_string(file).ok()?))
+}
+
+type Catalogue = Arc<HashMap<String, String>>;
+
+/// Each run file's package description in a TeX Live database, read once.
+fn catalogue(path: &Path) -> Option<Catalogue> {
+    static READ: Mutex<Option<HashMap<PathBuf, Option<Catalogue>>>> = Mutex::new(None);
+    let mut read = READ.lock().ok()?;
+    let read = read.get_or_insert_with(HashMap::new);
+    read.entry(path.to_path_buf())
+        .or_insert_with(|| {
+            let text = std::fs::read_to_string(path).ok()?;
+            let mut out = HashMap::new();
+            for block in text.split("\n\n") {
+                let Some(desc) = block.lines().find_map(|l| l.strip_prefix("shortdesc ")) else { continue };
+                for file in block.lines().filter(|l| l.starts_with(' ')) {
+                    let name =
+                        file.split_whitespace().next().unwrap_or_default().rsplit('/').next().unwrap_or_default();
+                    out.entry(name.to_string()).or_insert_with(|| desc.trim().to_string());
+                }
+            }
+            Some(Arc::new(out))
+        })
+        .clone()
+}
+
+/// The first sentence of a README's first paragraph of prose.
+fn readme(doc: &Path) -> Option<String> {
+    let path =
+        std::fs::read_dir(doc).ok()?.flatten().map(|e| e.path()).find(|p| {
+            p.file_stem().is_some_and(|s| s.to_string_lossy().eq_ignore_ascii_case("readme")) && p.is_file()
+        })?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let para = text
+        .split("\n\n")
+        .map(|p| p.lines().map(str::trim).collect::<Vec<_>>().join(" "))
+        .find(|p| p.split_whitespace().count() > 5 && p.starts_with(char::is_alphabetic))?;
+    markup::sentence(&para)
+}
+
+/// The text after date and version in `\ProvidesPackage{x}[date version text]`.
+fn provided(code: &str) -> Option<String> {
+    let at = code.find("\\Provides")?;
+    let (rest, _) = markup::group(code[at..].split_once('}')?.1, '[', ']')?;
+    let version = |w: &str| w.contains('/') || w.trim_start_matches('v').starts_with(|c: char| c.is_ascii_digit());
+    let words: Vec<&str> = rest.split_whitespace().skip_while(|w| version(w)).collect();
+    (!words.is_empty()).then(|| words.join(" "))
+}
+
 type Entries = Arc<HashMap<String, Entry>>;
 type Subscriber = Box<dyn Fn(&[String]) + Send + Sync>;
 
@@ -181,6 +240,21 @@ impl Index {
     /// else nothing, and mining starts.
     pub fn lookup(self: &Arc<Self>, file: &Path, name: &str) -> Option<Entry> {
         self.start(file, true)?.get(name).cloned()
+    }
+
+    /// [`Index::lookup`], mining the package here when no one has yet.
+    pub fn lookup_now(self: &Arc<Self>, file: &Path, name: &str) -> Option<Entry> {
+        let dirs = {
+            let mut state = self.state.lock().ok()?;
+            let parent = file.parent()?.to_path_buf();
+            let dirs = state.dirs.entry(parent).or_insert_with(|| Dirs::of(&self.config, file)).clone()?;
+            match state.slots.get(&dirs) {
+                Some(slot) => return slot.as_ref()?.get(name).cloned(),
+                None => state.slots.insert(dirs.clone(), None),
+            };
+            dirs
+        };
+        self.fill(dirs).get(name).cloned()
     }
 
     pub fn knows(&self, name: &str) -> bool {
