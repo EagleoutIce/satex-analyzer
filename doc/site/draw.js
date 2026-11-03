@@ -847,7 +847,13 @@ self.satexDraw = (
       started = performance.now();
       limit = DRAW.more;
     }
-    const [table, names] = await Promise.all([symbolsLoad(), inForce()]);
+    // every package's symbols show at once: the document's names, which wait for its run, follow
+    const asked = inForce(), table = await symbolsLoad();
+    let names = drawFilter.from === 'all' ? await Promise.race([asked, Promise.resolve(null)]) : await asked;
+    if (names === null) {
+      names = [];
+      asked.then(() => mine === matching && drawMatch(false));
+    }
     if (mine !== matching) return;
     if (!table.rows.length) {
       list.innerHTML = `<li class="muted">The symbols did not load${

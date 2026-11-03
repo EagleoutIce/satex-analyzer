@@ -1606,8 +1606,10 @@
   async function libraryLoad() {
     const key = `${state.root ?? state.file}|${libInternal.checked}|${analyzedVersion}`;
     if (key === libFor) return libraryShow();
+    // a new run of the same project shows the signatures it had until fresh ones arrive
+    if (libFor.replace(/\|[^|]*$/, '') !== key.replace(/\|[^|]*$/, '')) libSig.clear();
+    libFresh.clear();
     libFor = key;
-    libSig.clear();
     const records = await namesInForce(libInternal.checked);
     // an environment once, by its name: \X stays as the environment, its \endX goes
     const names = new Set(records.map((r) => r.name));
@@ -1712,11 +1714,11 @@
   });
   /** Each listed name's explain record, asked for the first rows shown: their usage lines with typed
    * argument chips, as the hover card draws them, and their argument types for the search. */
-  const LIB_SIGNED = 60, LIB_BATCH = 12, libSig = new Map();
+  const LIB_SIGNED = 60, LIB_BATCH = 12, libSig = new Map(), libFresh = new Set();
   async function libSigned(rows) {
-    const todo = rows.map((r) => r.name).filter((n) => !libSig.has(n));
+    const todo = rows.map((r) => r.name).filter((n) => !libFresh.has(n));
     if (!todo.length) return;
-    todo.forEach((n) => libSig.set(n, null));
+    todo.forEach((n) => { libFresh.add(n); if (!libSig.has(n)) libSig.set(n, null); });
     // a few at a time, so the first rows show theirs soon
     for (let k = 0; k < todo.length; k += LIB_BATCH) {
       const part = todo.slice(k, k + LIB_BATCH), found = await explainMany(part);
