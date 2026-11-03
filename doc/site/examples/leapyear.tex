@@ -34,6 +34,7 @@
 % Here the clock is unknown, so \year may be any year:
 %\satex@configure{clock=unknown}
 \ckleapyear{\the\year}
-% Here \year is narrowed to this century, still both arms:
-%\satex@assume{\year >= 2000}
+% Here the clock is now again, so \year is this year:
+%\satex@configure{clock=now}
 \ckleapyear{\the\year}
+\bye

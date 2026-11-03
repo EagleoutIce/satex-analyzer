@@ -509,6 +509,7 @@
     // would block completion for seconds, and its findings would be about unfinished text.
     const line = editor.text().split('\n')[editor.position().line] ?? '', before = line.slice(0, editor.position().character);
     timer = setTimeout(sync, /\\[A-Za-z@]*$|\{[^{}\s]*$/.test(before) ? 1500 : 400);
+    pdfEdited();
   }
   /** After an analysis, the command list the server would offer after a `\\`, asked once at a command
    * of the file: the first `\\` typed then completes at once. */
@@ -585,7 +586,7 @@
     analyze();
   }
   /** A running check shows in the status bar like any other work (`busy`); the worker reports how much of the file is read once the engine says. */
-  const phase = (text, done = null) => text ? busy('Analyzing', text[0].toUpperCase() + text.slice(1), { done }) : idle();
+  const phase = (text, done = null, stage = null) => text ? busy('Analyzing', text[0].toUpperCase() + text.slice(1), { done, stage }) : idle();
   function checking() { phase(`Analyzing ${state.file}…`); checkStart = performance.now(); }
 
   /** Completion order: the project's own commands, then the documented ones, internals
@@ -710,7 +711,8 @@
       // inside a {…} or […] the cursor's list item starts after `{`, `[`, `,` or `=`
       const open = [...line.text.slice(0, key.from - line.from)].reduce((d, c) => d + +'{['.includes(c) - +'}]'.includes(c), 0) > 0;
       const item = open && /[{[,=]\s*$/.test(line.text.slice(0, key.from - line.from));
-      if (!ctx.explicit && before !== '\\' && before !== '{' && !item) return null;
+      // `(` opens a node name or coordinate (`\\draw (a) -- (`)
+      if (!ctx.explicit && before !== '\\' && before !== '{' && before !== '(' && !item) return null;
       push();
       const start = before === '\\' ? word.from : key.from;
       // the kind of place: a command name, or the argument of the command whose brace is open
@@ -765,7 +767,7 @@
     // A finding's place, flashed for a moment when its row is clicked; never a selection.
     const flashField = st.StateField.define({
       create: () => view.Decoration.none,
-      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(flashes) ? view.Decoration.set(e.value.map(([f, t]) => view.Decoration.mark({ class: 'cm-flash' }).range(f, t)), true) : d, deco.map(tr.changes)),
+      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(flashes) ? view.Decoration.set(e.value.map(([f, t, cls = 'cm-flash']) => view.Decoration.mark({ class: cls }).range(f, t)), true) : d, deco.map(tr.changes)),
       provide: (f) => view.EditorView.decorations.from(f),
     });
     // A swatch before each color the server resolved (`textDocument/documentColor`), as editors show them.
@@ -945,6 +947,7 @@
       if (pos != null) pick(ev.state.doc.lineAt(pos).number - 1, marker ? null : position(ev.state.doc, pos).character);
     });
     const span = (r) => [at(doc(), r.start), Math.max(at(doc(), r.end), at(doc(), r.start))];
+    let holdTimer = 0;
     return {
       text: () => doc().toString(),
       // another file's text starts at its top: the last file's scroll position may lie past its end
@@ -953,7 +956,7 @@
       diagnostics: (ds) => ev.dispatch(lint.setDiagnostics(ev.state, ds.map((d, i) => {
         const [from, to] = span(d.range);
         return {
-          from, to: Math.min(Math.max(to, from + 1), doc().length), severity: sev(d) === 'hint' ? 'info' : sev(d),
+          from, to: Math.min(Math.max(to, from + 1), doc().length), severity: sev(d),
           message: d.message, source: d.code,
           renderMessage: () => Object.assign(document.createElement('span'), { innerHTML: inline(d.message) }),
           actions: [...d.fixes.map((f) => ({ name: `Fix (${f.safety})`, apply: () => fix(f) })), { name: 'Explain rule', apply: () => unfold(i, false) }],
@@ -965,6 +968,7 @@
       cursor: () => [ev.state.selection.main.anchor, ev.state.selection.main.head],
       select: ([anchor, head] = [0, 0]) => { const n = doc().length; ev.dispatch({ selection: { anchor: Math.min(anchor, n), head: Math.min(head, n) }, scrollIntoView: true }); },
       position: () => position(doc(), ev.state.selection.main.head),
+      range: () => [position(doc(), ev.state.selection.main.from), position(doc(), ev.state.selection.main.to)],
       selected: () => { const m = ev.state.selection.main; return doc().sliceString(m.from, m.to); },
       word: () => { const l = doc().lineAt(ev.state.selection.main.head); return wordAt(l.text, ev.state.selection.main.head - l.from); },
       coords: () => ev.coordsAtPos(ev.state.selection.main.head),
@@ -976,6 +980,13 @@
         ev.dispatch({ selection: { anchor: from, ...(select ? { head: to } : {}) }, scrollIntoView: true, effects: flash && to > from ? flashes.of([[from, to]]) : [] });
         ev.focus();
         if (flash) setTimeout(() => ev.dispatch({ effects: flashes.of([]) }), 1300);
+      },
+      // a place opened from elsewhere (the PDF, a card): marked a moment, then faded; `null` drops it at once
+      hold: (r) => {
+        clearTimeout(holdTimer);
+        const [from, to] = r ? span(r) : [0, 0];
+        ev.dispatch({ effects: flashes.of(to > from ? [[from, to, 'cm-hold']] : []) });
+        if (to > from) holdTimer = setTimeout(() => ev.dispatch({ effects: flashes.of([]) }), 2800);
       },
     };
   }
@@ -1002,7 +1013,7 @@
   const typesetBody = $('typeset-body');
   const notation = self.satexCards.notation;
   // the Typeset panel's switches, kept across visits
-  for (const [id, cls, store] of [['typeset-boxes', 'show-boxes', 'satex-typeset-boxes'], ['typeset-keys', 'show-keys', 'satex-typeset-keys'], ['typeset-ligs', 'show-ligs', 'satex-typeset-ligs']]) {
+  for (const [id, cls, store] of ['boxes', 'keys', 'ligs', 'findings', 'envs'].map((k) => [`typeset-${k}`, `show-${k}`, `satex-typeset-${k}`])) {
     const box = $(id), apply = () => typesetBody.classList.toggle(cls, box.checked);
     try { box.checked = localStorage.getItem(store) === '1'; } catch {}
     box.onchange = () => { apply(); try { localStorage.setItem(store, box.checked ? '1' : '0'); } catch {} };
@@ -1092,11 +1103,12 @@
       return `<li class="o-sec${kids ? ' o-parent' : ''}" data-id="${escape(id)}" style="--d:${depth}"${hidden ? ' hidden' : ''}>${kids ? `<button type="button" class="o-fold" data-id="${escape(id)}" aria-expanded="${!folded}" title="${folded ? 'show' : 'hide'} the subsections"></button>` : ''}` + (body
       ? `<details class="o-row" data-id="${escape(id)}"${outlineOpen.has(id) ? ' open' : ''}><summary>${head}</summary>${body}</details>` : `<div class="o-row o-flat">${head}</div>`) + '</li>';
     };
+    const defOf = new Map(own.filter((r) => r.kind === 'label' || r.kind === 'bibitem').map((r) => [`${r.kind === 'label' ? 'label' : 'cite'}:${r.key}`, r]));
     const chips = (list) => list.length ? `<span class="o-labels">${list.join('')}</span>` : '';
     const close = () => {
       if (!open) return;
       const files = [...open.files].filter((f) => /\.(tex|ltx)$/.test(f) && state.files.some((n) => String(f).endsWith(n)));
-      const cites = [...open.cites.entries()].map(([k, c]) => `<a href="#" class="o-go o-label o-bib" ${at(c[0])} title="cited ${c.length}× in this part">${escape(k)}</a>`);
+      const cites = [...open.cites.entries()].map(([k, c]) => `<a href="#" class="o-go o-label o-use" ${at(defOf.get(`cite:${k}`) ?? c[0])} title="cited ${c.length}× in this part${defOf.has(`cite:${k}`) ? ', click for its entry' : ''}">${escape(k)}</a>`);
       const fileChips = files.length > 1 || (files.length && !String(files[0]).endsWith(state.root)) ? files.map((f) => `<span class="o-file" title="a file this part is set from">${escape(base(f))}</span>`) : [];
       html.push(row(open.id, open.depth, open.head + (open.first ? `<span class="o-first" title="label ${escape(open.first)}">${escape(open.first)}</span>` : ''), chips(open.labels) + chips(fileChips) + chips(cites), open.kids));
       open = null;
@@ -1116,14 +1128,40 @@
         if (r.kind === 'cite') open.cites.set(r.key, [...(open.cites.get(r.key) ?? []), r]);
       }
       if (r.kind === 'label') {
-        const chip = `<a href="#" class="o-go o-label" ${at(r)} title="label at ${escape((r.file ?? '') + ':' + r.line)}">${escape(r.key)}</a>`;
+        const chip = `<a href="#" class="o-go o-label o-def" ${at(r)} title="label at ${escape((r.file ?? '') + ':' + r.line)}">${escape(r.key)}</a>`;
         if (open) { open.labels.push(chip); open.first ??= r.key; } else html.push(`<li class="o-sec" style="--d:0"><span class="o-labels">${chip}</span></li>`);
       }
     }
     close();
-    const bib = own.filter((r) => r.kind === 'bibitem'), where = own.find((r) => r.kind === 'bibliography');
-    if (bib.length || where) html.push(row('bibliography', 0, `<a href="#" class="o-go" ${at(where ?? bib[0])}><span class="o-kind">bibliography</span>${bib.length} entr${bib.length === 1 ? 'y' : 'ies'}</a>`,
-      chips(bib.map((r) => `<span class="o-label o-bib" title="${escape((r.file ?? '') + ':' + r.line)}">${escape(r.key)}</span>`))));
+    // the references: one fold per kind of key, each key at its definition with the places that use it
+    const cats = new Map(), keyCat = new Map();
+    const cat = (id, title) => { if (!cats.has(id)) cats.set(id, { title, keys: new Map() }); return cats.get(id); };
+    const entry = (c, key) => { if (!c.keys.has(key)) c.keys.set(key, { defs: [], uses: [] }); return c.keys.get(key); };
+    const cmd = (r) => String(r.detail ?? '').replace(/^\\/, '');
+    for (const r of own) {
+      if (r.kind === 'bibitem') entry(cat('cite', 'citations'), r.key).defs.push(r);
+      else if (r.kind === 'cite') entry(cat('cite', 'citations'), r.key).uses.push(r);
+      else if (r.kind === 'label') entry(cat('label', 'labels'), r.key).defs.push(r);
+      else if (r.kind === 'ref') entry(cat('label', 'labels'), r.key).uses.push(r);
+      else if (r.kind === 'key') { const c = cat(`key:${cmd(r)}`, `keys of \\${cmd(r)}`); keyCat.set(r.key, c); entry(c, r.key).defs.push(r); }
+    }
+    for (const r of own) {
+      if (r.kind === 'key-use') entry(keyCat.get(r.key) ?? cat('key:', 'other keys'), r.key).uses.push(r);
+      else if (r.kind === 'entry') entry(cat(`entry:${cmd(r)}`, `\\${cmd(r)} lines`), r.key).uses.push(r);
+    }
+    const place = (r) => `${escape(base(r.file ?? r.path))}:${r.line}`;
+    const catHtml = [...cats].map(([id, c]) => {
+      const keys = [...c.keys].sort((x, y) => x[0].localeCompare(y[0])).map(([key, k]) => {
+        const first = k.defs[0];
+        const head = first ? `<a href="#" class="o-go o-label o-def" ${at(first)} title="defined at ${place(first)}">${escape(key)}</a>` : `<span class="o-label o-undef" title="no definition found">${escape(key)}</span>`;
+        const uses = k.uses.map((u) => `<a href="#" class="o-go o-label o-use" ${at(u)} title="used at ${place(u)}">${u.line}</a>`).join('');
+        return `<li class="o-key">${head}<span class="o-uses" title="the lines that use it">${uses || '<span class="muted">unused</span>'}</span></li>`;
+      }).join('');
+      const fid = `ref:${id}`;
+      return `<details class="o-cat" data-id="${escape(fid)}"${outlineOpen.has(fid) ? ' open' : ''}><summary>${escape(c.title)} <b class="count">${c.keys.size}</b></summary><ul class="o-keys">${keys}</ul></details>`;
+    }).join('');
+    const where = own.find((r) => r.kind === 'bibliography');
+    if (cats.size) html.push(row('references', 0, `<a href="#" class="o-go"${where ? ` ${at(where)}` : ''}><span class="o-kind">references</span>${cats.size === 1 ? '1 kind' : `${cats.size} kinds`} of key</a>`, catHtml));
     $('outline-count').textContent = String(sections.length || '');
     const outlineHtml = html.length ? `<ul class="outline-list">${html.join('')}</ul>` : '<p class="muted">No sections, labels or bibliography yet.</p>';
     // an unchanged outline keeps its DOM: no rebuild, no lost hover or scroll
@@ -1142,62 +1180,111 @@
   /** The groups of other files unfolded, kept across checks. */
   const tsClosed = new Set();
   typesetBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) tsClosed.delete(id); else tsClosed.add(id); } }, true);
-  /** The paragraph the cursor stands in, marked; with "only at cursor" the others hidden. */
+  /** The paragraphs the selection (else the cursor) touches, marked; with "only at cursor" the others hidden. */
   function typesetFollow() {
-    const at = editor?.position()?.line + 1, own = [...typesetBody.querySelectorAll(':scope > p.ts[data-line]')];
-    const here = own.filter((p) => +p.dataset.line <= at).at(-1) ?? null;
-    for (const p of typesetBody.querySelectorAll('p.ts')) p.classList.toggle('ts-current', p === here);
+    const [from, to] = editor?.range?.() ?? [editor?.position(), editor?.position()];
+    if (!from) return;
+    // a selection that ends at a line's start does not take that line
+    const first = from.line + 1, last = to.line + 1 - Number(to.line > from.line && to.character === 0);
+    const own = [...typesetBody.querySelectorAll(':scope > p.ts[data-line]')];
+    const here = own.filter((p, i) => +p.dataset.line <= last && (i + 1 >= own.length || +own[i + 1].dataset.line > first));
+    for (const p of typesetBody.querySelectorAll('p.ts')) p.classList.toggle('ts-current', here.includes(p));
     const only = !!$('typeset-here')?.checked;
     typesetBody.classList.toggle('ts-only-here', only);
     // nothing set where the cursor stands: said so, not the whole document
     typesetBody.querySelector('.ts-nothing')?.remove();
     typesetBody.querySelectorAll('.ts-excerpt').forEach((x) => x.remove());
-    if (only && !here) typesetBody.insertAdjacentHTML('afterbegin', '<p class="muted ts-nothing">Nothing is set at the cursor.</p>');
-    else if (only) here.insertAdjacentHTML('afterend', excerpt(here));
+    if (only && !here.length) typesetBody.insertAdjacentHTML('afterbegin', '<p class="muted ts-nothing">Nothing is set at the cursor.</p>');
+    else if (only) for (const p of here) p.insertAdjacentHTML('afterend', excerpt(p, from, to));
     typesetBody.classList.toggle('ts-excerpted', only && !!typesetBody.querySelector('.ts-excerpt'));
   }
-  /** The selected characters (else the word at the cursor, else the cursor's share of the paragraph) in the paragraph's text,
-   * with a word of it before and after in grey. */
-  function excerpt(p) {
+  /** Where `needle` stands in `plain` nearest to `near`, soft hyphens between its letters allowed: [from, to], else null. */
+  const nearest = (plain, needle, near) => {
+    const hit = needle ? [...plain.matchAll(new RegExp([...needle].map((ch) => ch.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')).join('·?'), 'g'))]
+      .sort((x, y) => Math.abs(x.index - near) - Math.abs(y.index - near))[0] : null;
+    return hit ? [hit.index, hit.index + hit[0].length] : null;
+  };
+  /** The selected part of the paragraph's text (else the word at the cursor), with a word of it before and after in grey.
+   * The run's line marks (`lines`: where each source line starts in the text) place a selection; within a line, its share. */
+  function excerpt(p, from, to) {
     const plain = p.dataset.plain ?? '';
     if (!plain) return '';
-    const src = editor.text().split('\n'), pos = editor.position(), from = +p.dataset.line - 1;
-    const sel = (editor.selected?.() ?? '').trim(), w = wordAt(src[pos.line] ?? '', pos.character);
-    const raw = sel || (w && !w[3] ? w[2] : ''), needle = raw.replace(/^\W+|\W+$/g, '') || raw;
-    // the n-th occurrence of it (soft hyphens between its letters allowed), as many as stand in the source before the cursor
-    const upto = [...src.slice(from, pos.line), (src[pos.line] ?? '').slice(0, pos.character)].join('\n');
-    let a = -1, b = -1;
-    if (needle) {
-      const hits = [...plain.matchAll(new RegExp([...needle].map((ch) => ch.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')).join('·?'), 'g'))];
-      let k = 0;
-      for (let at = upto.indexOf(needle); at >= 0; at = upto.indexOf(needle, at + 1)) k++;
-      const hit = hits[Math.min(Math.max(k - 1, 0), hits.length - 1)];
-      if (hit) [a, b] = [hit.index, hit.index + hit[0].length];
+    const src = editor.text().split('\n'), start = +p.dataset.line - 1;
+    const after = p.parentElement.querySelectorAll(':scope > p.ts[data-line]:not(.ts-excerpt)'), k0 = [...after].indexOf(p);
+    const next = after[k0 + 1] ? +after[k0 + 1].dataset.line - 1 : src.length;
+    const marks = [{ line: start + 1, at: 0 }, ...JSON.parse(p.dataset.lines || '[]').filter((m) => m.line > start + 1 && m.line <= next)].sort((x, y) => x.line - y.line || x.at - y.at);
+    /** A source position as an offset in the text: its line's mark, then its share of the source up to the next mark. */
+    const offset = ({ line, character }) => {
+      if (line < start) return 0;
+      if (line >= next) return plain.length;
+      const k = marks.findLastIndex((m) => m.line - 1 <= line), m = marks[k], end = marks[k + 1] ?? { line: next + 1, at: plain.length };
+      const span = src.slice(m.line - 1, end.line - 1).join('\n'), before = src.slice(m.line - 1, line).join('\n').length + (line > m.line - 1 ? 1 : 0) + character;
+      return Math.round(m.at + (end.at - m.at) * Math.min(before / Math.max(span.length, 1), 1));
+    };
+    let range = null;
+    if (from.line !== to.line || from.character !== to.character) {
+      let [a, b] = [offset(from), offset(to)];
+      // whole words: from the start of the first to the end of the last
+      a = plain.slice(0, a).search(/\S*$/);
+      b += plain.slice(b).search(/\s|$/);
+      range = [a, b];
+      // a selection on one line keeps its own words where they stand in the text
+      const sel = (editor.selected?.() ?? '').trim();
+      if (from.line === to.line) range = nearest(plain, sel.replace(/^\W+|\W+$/g, '') || sel, a) ?? range;
+    } else {
+      const w = wordAt(src[from.line] ?? '', from.character), at = offset(from);
+      range = nearest(plain, w && !w[3] ? w[2].replace(/^\W+|\W+$/g, '') : '', at);
+      if (!range) for (const x of plain.matchAll(/\S+/g)) if (x.index + x[0].length > Math.min(at, plain.length - 1)) { range = [x.index, x.index + x[0].length]; break; }
     }
-    if (a < 0) {
-      const last = Math.max(+(p.nextElementSibling?.dataset?.line ?? src.length + 1) - 1, pos.line + 1);
-      const here = (src[pos.line] ?? '').slice(0, pos.character).length;
-      const share = upto.length / Math.max(upto.length + src.slice(pos.line, last).join('\n').length - here, 1);
-      a = Math.min(Math.floor(share * plain.length), Math.max(plain.length - 1, 0));
-      for (const x of plain.matchAll(/\S+/g)) if (x.index + x[0].length > a) { a = x.index; b = a + x[0].length; break; }
-    }
-    const word = (t) => t.match(/\S+\s*$/)?.[0] ?? '', next = (t) => t.match(/^\s*\S+/)?.[0] ?? '';
-    const [pre, post] = [word(plain.slice(0, a)), next(plain.slice(b))];
+    const [a, b] = range && range[1] > range[0] ? range : [0, (plain.match(/^\s*\S+/)?.[0] ?? plain).length];
+    const word = (t) => t.match(/\S+\s*$/)?.[0] ?? '', then = (t) => t.match(/^\s*\S+/)?.[0] ?? '';
+    const [pre, post] = [word(plain.slice(0, a)), then(plain.slice(b))];
     return `<p class="ts ts-excerpt"><span class="ts-at">${p.dataset.line}</span><span class="ts-text"><span class="ts-grey">${a > pre.length ? '… ' : ''}${escape(pre)}</span><mark>${escape(plain.slice(a, b))}</mark>` +
       `<span class="ts-grey">${escape(post)}${b + post.length < plain.length ? ' …' : ''}</span></span></p>`;
   }
   $('typeset-here')?.addEventListener('change', typesetFollow);
+  /** The open file's findings on the paragraphs they stand in: a mark in the margin, the worst first, shown with the findings switch. */
+  function typesetFindings() {
+    typesetBody.querySelectorAll('.ts-finding').forEach((m) => m.remove());
+    const own = [...typesetBody.querySelectorAll(':scope > p.ts[data-line]')], ds = diagnostics[uri()] ?? [];
+    own.forEach((p, i) => {
+      const [from, to] = [+p.dataset.line, own[i + 1] ? +own[i + 1].dataset.line : Infinity];
+      const fs = ds.filter((d) => d.range.start.line + 1 >= from && d.range.start.line + 1 < to);
+      if (!fs.length) return;
+      const worst = ['error', 'warning', 'info', 'hint'].find((v) => fs.some((d) => sev(d) === v));
+      p.querySelector('.ts-at')?.insertAdjacentHTML('afterbegin', `<span class="ts-finding f-${worst}" title="${escape(fs.map((d) => `${d.range.start.line + 1}: ${d.code}: ${d.message}`).join('\n'))}">${fs.length}</span>`);
+    });
+  }
   const withKeys = cards.withKeys;
+  /** The paragraphs of the last typeset, with the source site of their characters: the PDF's findings mark only theirs. */
+  var typesetRows = null;
   async function typeset(target) {
     if (target !== uri()) return;
+    // a step of its own in the status card, when nothing else is going on
+    const alone = !act.phase;
+    if (alone) busy('Typesetting', 'Typesetting the text…');
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
+    if (alone && act.phase === 'Typesetting') idle();
     if (!rows || target !== uri()) return;
+    typesetRows = rows;
+    if (pdfOverlayOn?.findings) pdfOverlay();
     const paragraphs = rows.filter((r) => r.kind === 'paragraph');
-    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"${r.env ? ` data-env="${escape(r.env)}" title="set in ${escape(r.env)}"` : ''} data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${escape(r.detail ?? '')}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`;
+    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"${r.env ? ` data-env="${escape(r.env)}" title="set in ${escape(r.env)}"` : ''} data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${escape(r.detail ?? '')}"${r.lines?.length ? ` data-lines="${escape(JSON.stringify(r.lines))}"` : ''}><span class="ts-at">${r.line}</span><span class="ts-text">${r.env ? `<span class="ts-env">${escape(r.env)}</span>` : ''}${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`;
     // the whole document in order: this file's paragraphs as they are, a run from another file folded into one line
     const html = [];
+    // A document whose text all stands in top-level environments (beamer's frames) is a row of pages:
+    // a rule with the environment's line and labels where the next one begins.
+    const own = paragraphs.filter((p) => p.path?.endsWith(state.file) && !p.footnote);
+    const slides = own.length > 0 && own.every((p) => p.outer) && new Set(own.map((p) => p.outer.line)).size > 1;
+    let shown = null;
     for (let i = 0; i < paragraphs.length;) {
-      const r = paragraphs[i];
+      const r = paragraphs[i], o = slides && r.path?.endsWith(state.file) ? r.outer : null;
+      if (o && o.line !== shown) {
+        // the frame's title first (its heading), then the environment and its line
+        const head = own.find((p) => p.outer?.line === o.line && p.heading), title = (head?.detail ?? '').replace(/^[^\p{L}\p{N}]+/u, '').trim();
+        html.push(`<div class="ts-slide" role="separator">${title ? `<span class="ts-slide-title">${escape(clip(title))}</span>` : ''}<span class="ts-slide-env">${escape(o.env)}</span><span class="ts-slide-line">line ${o.line}</span>${o.labels.map((l) => `<code class="ts-slide-label" title="label">${escape(l)}</code>`).join('')}</div>`);
+      }
+      if (o) shown = o.line;
       if (r.path?.endsWith(state.file)) { html.push(row(r)); i++; continue; }
       let j = i;
       while (j < paragraphs.length && paragraphs[j].path === r.path) j++;
@@ -1207,6 +1294,7 @@
       i = j;
     }
     typesetBody.innerHTML = html.length ? html.join('') : '<p class="muted">The document sets no paragraph.</p>';
+    typesetFindings();
     typesetFollow();
   }
   typesetBody.addEventListener('click', (e) => {
@@ -1256,6 +1344,7 @@
     lspStatus.textContent = state.file in state.ro ? 'read-only file' : provisional ? `provisional: ${provisional} still downloading; the check runs again once ${provisional.includes(', ') ? 'they are' : 'it is'} in` : listed.length ? '' : 'none';
     list.classList.toggle('provisional', !!provisional);
     if (pdfOverlayOn?.findings) pdfOverlay();
+    typesetFindings();
     const fixButton = (f, j) => `<button class="small apply fix-${f.safety}" data-j="${j}" title="${escape(f.title)}">Fix (${f.safety})</button>`;
     const item = (d, i) => `<li class="f-${sev(d)}${unfolded.has(key(d)) ? ' open' : ''}" data-i="${i}" tabindex="0">` +
       `<span class="msg" title="${escape(d.message ?? '')}">${d.number ? `<code class="rno" title="rule number">${escape(d.number)}</code> ` : ''}<b class="rn">${escape(d.code ?? '')}</b>: ${commandRefs(inline(d.message))}</span>` +
@@ -1409,7 +1498,7 @@
     }
     choose(target);
     editor.focus({ start, end }, false, true);
-    editor.mark([{ start: { line: start.line, character: 0 }, end: { line: start.line + 1, character: 0 } }]);
+    editor.hold?.({ start: { line: start.line, character: 0 }, end: { line: start.line + 1, character: 0 } });
   }
   // A place (`file:line`) in a card, a finding or a run opens; a command chip is explained.
   document.addEventListener('click', (e) => {
@@ -1618,14 +1707,20 @@
       (rest.length ? `<details class="more"><summary>More definitions</summary>${rest.map(cards.explain).join('')}</details>` : '');
     else if (!explainBody.querySelector('.hover')) explainBody.innerHTML = `<p class="muted">satex knows no ${escape(name)} here.</p>`;
   }
-  document.addEventListener('mouseover', async (e) => {
-    const ref = e.target.closest?.('.cs-ref');
-    if (!ref) return;
-    const name = ref.dataset.cs, rs = (await explainRecords(name)).filter((r) => r.name === name);
-    if (!rs.length || !ref.matches(':hover')) return;
-    tips.card.show(ref, cards.explain(rs[0]));
+  /** Any control-sequence chip (`.cs-ref`, a name chip `a.cs`) shows the name's hover card after a short rest. The records are kept per name. */
+  const CS_CHIP = '.cs-ref, a.cs[data-cs]';
+  let csTimer = 0;
+  document.addEventListener('mouseover', (e) => {
+    const ref = e.target.closest?.(CS_CHIP);
+    if (!ref || ref.contains(e.relatedTarget)) return;
+    clearTimeout(csTimer);
+    csTimer = setTimeout(async () => {
+      const name = ref.dataset.cs, rs = (await explainRecords(name)).filter((r) => r.name === name);
+      if (!rs.length || !ref.matches(':hover')) return;
+      tips.card.show(ref, cards.explain(rs[0]));
+    }, 150);
   });
-  document.addEventListener('mouseout', (e) => { if (e.target.closest?.('.cs-ref') && !tips.card.el.dataset.pin) tips.card.hide(150); });
+  document.addEventListener('mouseout', (e) => { if (e.target.closest?.(CS_CHIP) && !e.target.closest(CS_CHIP).contains(e.relatedTarget)) { clearTimeout(csTimer); if (!tips.card.el.dataset.pin) tips.card.hide(150); } });
   document.addEventListener('click', (e) => { const ref = e.target.closest?.('.cs-ref'); if (ref) { tips.card.hide(); explainName(ref.dataset.cs); } });
   // ---------------------------------------------------------------- library: every name in force, and a scratch line to try them
 
@@ -1644,6 +1739,13 @@
   const byUse = (a, b) => { const x = libUseful(a), y = libUseful(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
   /** The names in force at the end of the root's last run (`scope`), refreshed once per run. */
   async function libraryLoad() {
+    libBusy(1);
+    try { await libraryLoadRun(); } finally { libBusy(-1); }
+  }
+  /** A thin bar over the list while its parts load (names, manuals, signatures). */
+  let libLoading = 0;
+  const libBusy = (n) => { libLoading += n; libList.classList.toggle('lib-loading', libLoading > 0); libList.setAttribute('aria-busy', String(libLoading > 0)); };
+  async function libraryLoadRun() {
     const key = `${state.root ?? state.file}|${libInternal.checked}|${analyzedVersion}`;
     if (key === libFor) return libraryShow();
     // a new run of the same project shows the signatures it had until fresh ones arrive
@@ -1760,11 +1862,14 @@
     if (!todo.length) return;
     todo.forEach((n) => { libFresh.add(n); if (!libSig.has(n)) libSig.set(n, null); });
     // a few at a time, so the first rows show theirs soon
-    for (let k = 0; k < todo.length; k += LIB_BATCH) {
-      const part = todo.slice(k, k + LIB_BATCH), found = await explainMany(part);
-      part.forEach((n, i) => libSig.set(n, found[i]?.find((r) => !r.error) ?? found[i]?.[0] ?? null));
-      libSignedShow(part);
-    }
+    libBusy(1);
+    try {
+      for (let k = 0; k < todo.length; k += LIB_BATCH) {
+        const part = todo.slice(k, k + LIB_BATCH), found = await explainMany(part);
+        part.forEach((n, i) => libSig.set(n, found[i]?.find((r) => !r.error) ?? found[i]?.[0] ?? null));
+        libSignedShow(part);
+      }
+    } finally { libBusy(-1); }
   }
   function libSignedShow(names) {
     for (const li of libList.querySelectorAll('li[data-name]')) {
@@ -1888,7 +1993,7 @@
   /** Settings set aside at the start ({set, why}): shown in the dialog, never applied. */
   let configRejected = null;
   const leaves = (props, at = '') => Object.entries(props ?? {}).flatMap(([k, p]) => ((p.type ?? 'object') === 'object' && p.properties
-    ? leaves(p.properties, `${at}${k}.`) : [{ key: at + k, type: [].concat(p.type ?? 'string')[0], options: p.enum, def: p.default, about: p.description ?? '',
+    ? leaves(p.properties, `${at}${k}.`) : [{ key: at + k, type: [].concat(p.type ?? 'string')[0], options: p.enum, optionTexts: p.enumDescriptions, def: p.default, about: p.description ?? '',
       affects: [].concat(p['x-affects'] ?? []), example: p['x-example'], items: p.items, min: p.minimum, max: p.maximum,
       plugin: p['x-plugin'], suggest: (p.oneOf ?? []).flatMap((o) => o.enum ?? []), pattern: (p.oneOf ?? []).find((o) => o.pattern)?.pattern }]));
   /** A key's group: its first part (`limits`), or `general` for a key of one part. */
@@ -1916,7 +2021,12 @@
   function configInput(k, value) {
     if (k.type === 'boolean') return `<input type="checkbox" role="switch" data-cfg="${escape(k.key)}"${value ? ' checked' : ''}>`;
     // an enum without a default is detected by satex: unset is a choice of its own
-    if (k.options) return `<select class="dropdown" data-cfg="${escape(k.key)}">${k.def === undefined ? `<option value=""${value == null ? ' selected' : ''}>unset (detected)</option>` : ''}${k.options.map((o) => `<option${sameValue(o, value) ? ' selected' : ''}>${escape(o)}</option>`).join('')}</select>`;
+    if (k.options) {
+      // each value says what it means (the schema's enumDescriptions): in the list, and under the one chosen
+      const why = (o) => k.optionTexts?.[k.options.indexOf(o)] ?? '';
+      const shown = value == null ? 'satex picks it from the file, as it does when the setting is not given' : why(value);
+      return `<select class="dropdown" data-cfg="${escape(k.key)}">${k.def === undefined ? `<option value=""${value == null ? ' selected' : ''} title="satex picks it from the file">automatic (from the file)</option>` : ''}${k.options.map((o) => `<option${sameValue(o, value) ? ' selected' : ''} title="${escape(why(o))}">${escape(o)}</option>`).join('')}</select>${shown ? `<small class="cfg-opt-why muted">${escape(shown)}</small>` : ''}`;
+    }
     const text = value == null ? '' : typeof value === 'string' ? value : JSON.stringify(value);
     // a value of a few names or a pattern (`clock`: now, unknown or a date) completes from the names and today
     const suggest = k.suggest?.length ? [...k.suggest, ...(k.pattern?.includes('\\d{4}') ? [new Date().toISOString().slice(0, 10)] : [])] : [];
@@ -1952,28 +2062,34 @@
     return lines.map((line) => {
       const effect = line.match(/^(on|off): (.*)$/);
       if (effect) return `<p class="cfg-effect"><span class="cfg-aff">${effect[1]}</span> ${inline(effect[2])}</p>`;
-      const value = exampleValue(k, line);
+      // a line that is one code span spells a value or code; backticks elsewhere are prose with code in it
+      const bare = line.match(/^`([^`]+)`$/)?.[1] ?? line, value = exampleValue(k, bare);
       if (value !== undefined) return `<p class="cfg-try"><code>${escape(configYamlOf({ [k.key]: value }).replace(/\n\s*/g, ' '))}</code><button type="button" class="ghost small" data-use="${escape(k.key)}" data-value="${escape(JSON.stringify(value))}">use</button></p>`;
-      return /^[\\%]/.test(line) ? `<pre><code>${escape(line)}</code></pre>` : `<p>${inline(line)}</p>`;
+      return /^[\\%]/.test(bare) && bare !== line || /^[\\%]/.test(line) ? `<pre><code>${escape(bare)}</code></pre>` : `<p>${inline(line)}</p>`;
     }).join('');
   }
   /** A list's editor: a row per item, an object's fields side by side, remove and add. */
   function configList(k, value) {
     if (!k.items?.properties && ['string', 'integer', 'number'].includes(k.items?.type ?? 'string')) {
-      const names = configNames(k), list = Array.isArray(value) ? value : [];
-      return `<div class="cfg-chips" data-cfg="${escape(k.key)}" data-chips="1"${['integer', 'number'].includes(k.items?.type) ? ' data-num' : ''}>${list.map((v) => `<span class="cfg-chip" data-v="${escape(JSON.stringify(v))}">${escape(String(v))}<button type="button" data-chip-drop aria-label="remove ${escape(String(v))}">×</button></span>`).join('')}` +
-        `<input class="cfg-chip-in" type="text" spellcheck="false" placeholder="${list.length ? '' : 'add…'}" aria-label="add to ${escape(k.key)}"${names ? ` list="cfg-dl-${names}"` : ''}></div>`;
+      const names = configNames(k), list = Array.isArray(value) ? value : [], allowed = k.items?.enum;
+      return `<div class="cfg-chips" data-cfg="${escape(k.key)}" data-chips="1"${allowed ? ` data-enum="${escape(JSON.stringify(allowed))}"` : ''}${['integer', 'number'].includes(k.items?.type) ? ' data-num' : ''}>${list.map((v) => `<span class="cfg-chip" data-v="${escape(JSON.stringify(v))}">${escape(String(v))}<button type="button" data-chip-drop aria-label="remove ${escape(String(v))}">×</button></span>`).join('')}` +
+        `<input class="cfg-chip-in" type="text" spellcheck="false" placeholder="${list.length ? '' : allowed ? allowed.join(', ') : 'add…'}" aria-label="add to ${escape(k.key)}"${allowed ? ` list="cfg-dle-${escape(k.key)}"` : names ? ` list="cfg-dl-${names}"` : ''}>${allowed ? `<datalist id="cfg-dle-${escape(k.key)}">${allowed.map((o, i) => `<option value="${escape(o)}">${escape(k.items.enumDescriptions?.[i] ?? '')}</option>`).join('')}</datalist>` : ''}<small class="cfg-chip-hint muted" hidden></small></div>`;
     }
     const fields = k.items?.properties ? Object.keys(k.items.properties) : null, list = Array.isArray(value) ? value : [];
     const item = (v, i) => `<li data-item="${i}">${fields ? fields.map((f) => `<input type="text" data-field="${escape(f)}" placeholder="${escape(f)}" value="${escape(v?.[f] ?? '')}" spellcheck="false">`).join('')
       : `<input type="text" value="${escape(typeof v === 'string' ? v : JSON.stringify(v))}" spellcheck="false">`}<button type="button" class="ghost small" data-drop="${i}" aria-label="remove">×</button></li>`;
     return `<ul class="cfg-items" data-cfg="${escape(k.key)}" data-list="1">${list.map(item).join('')}<li><button type="button" class="ghost small" data-add="1">Add</button></li></ul>`;
   }
+  /** A map key as YAML writes it: plain when YAML takes it so, else quoted (a start such as `%` or `*`, a space, `: `). */
+  const yamlKey = (k) => (/^[^\s#%*&!@`|>'"{}[\],?:-][^\s]*$/u.test(k) && !/:(\s|$)/.test(k) ? k : JSON.stringify(k));
+  const YAML_KEY = String.raw`"(?:[^"\\]|\\.)*"|[^\s"#:][^\s:]*`;
+  /** The name a key's text spells: a quoted key unquoted. */
+  const keyName = (raw) => { try { return raw.startsWith('"') ? JSON.parse(raw) : raw; } catch { return raw; } };
   /** The settings changed, as the satex.yaml that sets them. */
   const configYamlOf = (set) => {
     const tree = {};
     for (const [k, v] of Object.entries(set)) { const parts = k.split('.'); let at = tree; parts.slice(0, -1).forEach((p) => { at = at[p] ??= {}; }); at[parts.at(-1)] = v; }
-    const out = (o, pad) => Object.entries(o).map(([k, v]) => v && typeof v === 'object' && !Array.isArray(v) ? `${pad}${k}:\n${out(v, `${pad}  `)}` : `${pad}${k}: ${yamlValue(v)}`).join('\n');
+    const out = (o, pad) => Object.entries(o).map(([k, v]) => v && typeof v === 'object' && !Array.isArray(v) ? `${pad}${yamlKey(k)}:\n${out(v, `${pad}  `)}` : `${pad}${yamlKey(k)}: ${yamlValue(v)}`).join('\n');
     return out(tree, '');
   };
   /** Every key at its default, as the YAML view shows them: the changed ones replace theirs. */
@@ -1984,17 +2100,26 @@
     return Object.fromEntries(Object.entries(set).filter(([k, v]) => !(k in defaults) || !sameValue(v, defaults[k])));
   };
   /** The YAML view's text as settings: nested keys by indentation, each value as JSON or else as text; null when it does not read. */
-  const configFromYaml = (text) => {
-    const set = {}, stack = [];
+  const configFromYaml = (text, objects = new Set()) => {
+    const set = {}, stack = [], isObj = (p) => objects.has(p) || objects.has(p.replace(/^profiles\.[^.]+\./, ''));
     for (const line of text.split('\n')) {
       if (!line.trim() || /^\s*#/.test(line)) continue;
-      const m = line.match(/^(\s*)([\w.+-]+):\s*(.*)$/);
+      const m = line.match(new RegExp(`^(\\s*)(${YAML_KEY})\\s*:\\s*(.*)$`));
       if (!m) return null;
-      const depth = m[1].length;
+      const depth = m[1].length, name = keyName(m[2]);
       while (stack.length && stack.at(-1)[0] >= depth) stack.pop();
-      const key = [...stack.map((s) => s[1]), m[2]].join('.');
-      if (m[3] === '') { stack.push([depth, m[2]]); continue; }
-      try { set[key] = JSON.parse(m[3]); } catch { set[key] = m[3]; }
+      const path = [...stack.map((s) => s[1]), name];
+      // under a map-valued setting, the keys are the map's entries, whatever they spell
+      const at = path.findIndex((_, i) => isObj(path.slice(0, i + 1).join('.')));
+      const value = m[3] === '' ? undefined : (() => { try { return JSON.parse(m[3]); } catch { return m[3]; } })();
+      if (at >= 0 && at < path.length - 1) {
+        let o = (set[path.slice(0, at + 1).join('.')] ??= {});
+        for (const part of path.slice(at + 1, -1)) o = (o[part] ??= {});
+        if (value === undefined) stack.push([depth, name]); else o[name] = value;
+        continue;
+      }
+      if (value === undefined) { stack.push([depth, name]); if (at === path.length - 1) set[path.join('.')] ??= {}; continue; }
+      set[path.join('.')] = value;
     }
     return set;
   };
@@ -2045,7 +2170,7 @@
       const example = k.example == null ? '' : `<details class="cfg-example"><summary>example</summary>${configExample(k)}</details>`;
       const links = [...(top ? [`overrides ${link(top, `<code>${escape(top)}</code>`)}`] : []), ...(overrides.get(k.key) ?? []).map(([p, key]) => `overridden in ${link(key, `<code>profiles.${escape(p)}</code>`)}`)];
       const wide = k.type === 'array';
-      return `<li class="cfg-row${cfgOpened.has(k.key) ? ' cfg-open' : ''}${wide ? ' cfg-wide' : ''}${changed ? ' cfg-changed' : ''}${rejected ? ' cfg-bad' : ''}" data-key="${escape(k.key)}"><div class="cfg-what"${rejected ? ` data-why="not applied: ${escape(configRejected.why)}"` : ''}><span class="cfg-name"><code>${k.key.includes('.') ? `<span class="cfg-prefix">${escape(k.key.slice(0, k.key.lastIndexOf('.') + 1))}</span>` : ''}${escape(k.key.slice(k.key.lastIndexOf('.') + 1))}</code>${badges}</span><span class="muted cfg-about">${escape(k.about)}</span>` +
+      return `<li class="cfg-row${cfgOpened.has(k.key) ? ' cfg-open' : ''}${wide ? ' cfg-wide' : ''}${changed ? ' cfg-changed' : ''}${rejected ? ' cfg-bad' : ''}" data-key="${escape(k.key)}"><div class="cfg-what"${rejected ? ` data-why="not applied: ${escape(configRejected.why)}"` : ''}><span class="cfg-name"><code>${k.key.includes('.') ? `<span class="cfg-prefix">${escape(k.key.slice(0, k.key.lastIndexOf('.') + 1))}</span>` : ''}${escape(k.key.slice(k.key.lastIndexOf('.') + 1))}</code>${badges}<button type="button" class="cfg-perm" data-perm="${escape(k.key)}" title="copy a link that opens this setting" aria-label="copy a link to ${escape(k.key)}">#</button></span><span class="muted cfg-about">${cfgAbout(k.about)}</span>` +
         `${added ? `<span class="muted">adds ${added.map((x) => `<code>${escape(x)}</code>`).join(', ')}</span>` : ''}${links.length ? `<span class="cfg-links muted">${links.join(' · ')}</span>` : ''}${example}</div>` +
         (wide ? `<div class="cfg-value">${configList(k, value)}</div>` : `<label class="${k.type === 'boolean' ? 'ts-toggle ' : ''}cfg-value">${configInput(k, value)}</label>`) +
         `<button type="button" class="ghost small" data-reset="${escape(k.key)}"${changed || k.extra ? '' : ' hidden'} title="${k.extra ? 'remove this override' : `back to the default: ${escape(yamlValue(k.def ?? ''))}`}">${k.extra ? 'Remove' : 'Reset'}</button></li>`;
@@ -2109,7 +2234,7 @@
   const yamlChanged = () => {
     clearTimeout(yamlTimer);
     yamlTimer = setTimeout(async () => {
-      const text = yamlGet(), read = configFromYaml(text), set = read && yamlChanges(read, await configLoad()), why = set ? await configRefused(set) : 'it does not read as `key: value` lines';
+      const text = yamlGet(), keys = await configLoad(), read = configFromYaml(text, new Set(keys.filter((k) => k.type === 'object').map((k) => k.key))), set = read && yamlChanges(read, keys), why = set ? await configRefused(set) : 'it does not read as `key: value` lines';
       (yamlView ? $('cfg-yaml-ed') : $('cfg-yaml')).classList.toggle('cfg-yaml-bad', !!why);
       $('cfg-total').textContent = why ? `not applied: ${why}` : '';
       yamlWhy = { text, why };
@@ -2133,16 +2258,16 @@
       };
       const known = (full) => { const f = full.replace(/\+$/, ''); return [f, strip(f)].some((c) => keys.some((k) => k.key.startsWith(`${c}.`))) || /^profiles\.[^.]+$/.test(f)
         || f.split('.').slice(0, -1).some((_, i, p) => leafMap.get(p.slice(0, i + 1).join('.'))?.type === 'object'); };
-      const lineKey = (text) => text.match(/^(\s*)([\w.+-]+)(\s*:)(\s*)(.*)$/);
+      const lineKey = (text) => text.match(new RegExp(`^(\\s*)(${YAML_KEY})(\\s*:)(\\s*)(.*)$`));
       /** The keys that enclose line `n` by its indentation. */
       const pathOf = (doc, n) => {
         let need = doc.line(n).text.match(/^\s*/)[0].length;
         const out = [];
-        for (let i = n - 1; i >= 1 && need > 0; i--) { const m = doc.line(i).text.match(/^(\s*)([\w.+-]+):\s*$/); if (m && m[1].length < need) { out.unshift(m[2]); need = m[1].length; } }
+        for (let i = n - 1; i >= 1 && need > 0; i--) { const m = doc.line(i).text.match(new RegExp(`^(\\s*)(${YAML_KEY}):\\s*$`)); if (m && m[1].length < need) { out.unshift(keyName(m[2])); need = m[1].length; } }
         return out;
       };
       const mode = language.StreamLanguage.define({ token(st) {
-        if (st.sol()) { st.eatSpace(); if (st.peek() === '#') { st.skipToEnd(); return 'comment'; } if (st.match(/[\w.+-]+(?=\s*:(\s|$))/)) return 'propertyName'; }
+        if (st.sol()) { st.eatSpace(); if (st.peek() === '#') { st.skipToEnd(); return 'comment'; } if (st.match(new RegExp(`(?:${YAML_KEY})(?=\\s*:(\\s|$))`))) return 'propertyName'; }
         if (st.eatSpace()) return null;
         if (st.match(/"(?:[^"\\]|\\.)*"?/)) return 'string';
         if (st.match(/-?\d+(\.\d+)?\b/)) return 'number';
@@ -2179,10 +2304,16 @@
         if (!m) return null;
         const from = line.from + m[1].length, to = from + m[2].length;
         if (pos < from || pos > to) return null;
-        const full = [...pathOf(v.state.doc, line.number), m[2]].join('.'), k = leafOf(full), dom = document.createElement('div');
+        const full = [...pathOf(v.state.doc, line.number), keyName(m[2])].join('.'), k = leafOf(full), dom = document.createElement('div');
         dom.className = 'cfg-tip';
         if (k) dom.innerHTML = `<code>${escape(full)}</code> <span class="muted">${escape(k.type)}${k.def !== undefined ? `, default ${escape(yamlValue(k.def).slice(0, 60))}` : ''}</span><p>${escape(k.about)}</p>`;
-        else if (known(full)) dom.innerHTML = `<code>${escape(full)}</code> <span class="muted">${plural(childrenOf(`${full}.`).size, 'setting')}</span>`;
+        else if (known(full)) {
+          // an entry of a map: its code points, and the other entries that look the same but are other characters
+          const name = keyName(m[2]), cp = (x) => [...x].map((c) => `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`).join(' ');
+          const twins = [...Array(v.state.doc.lines)].map((_, i) => lineKey(v.state.doc.line(i + 1).text)).filter((o) => o && o[1] === m[1]).map((o) => keyName(o[2])).filter((o) => o !== name && o.normalize('NFKC') === name.normalize('NFKC'));
+          dom.innerHTML = /[^\x00-\x7f]/.test(name) || twins.length ? `<code>${escape(name)}</code> <span class="muted">${cp(name)}</span>${twins.length ? `<p>Looks like ${twins.map((o) => `<code>${escape(o)}</code> ${cp(o)}`).join(', ')}, but is another character. Both are kept.</p>` : ''}`
+            : `<code>${escape(full)}</code> <span class="muted">${plural(childrenOf(`${full}.`).size, 'setting')}</span>`;
+        }
         else return null;
         return { pos: from, end: to, above: true, create: () => ({ dom }) };
       });
@@ -2193,7 +2324,7 @@
           if (!line.text.trim() || /^\s*#/.test(line.text)) continue;
           const m = lineKey(line.text);
           if (!m) { out.push({ from: line.from, to: line.to, severity: 'error', message: 'not a `key: value` line' }); continue; }
-          const from = line.from + m[1].length, key = { from, to: from + m[2].length }, full = [...pathOf(doc, n), m[2]].join('.'), k = leafOf(full);
+          const from = line.from + m[1].length, key = { from, to: from + m[2].length }, full = [...pathOf(doc, n), keyName(m[2])].join('.'), k = leafOf(full);
           if (!k) { if (!known(full)) out.push({ ...key, severity: 'warning', message: `unknown setting ${full}` }); continue; }
           if (!m[5]) continue;
           let value; try { value = JSON.parse(m[5]); } catch { value = m[5]; }
@@ -2205,7 +2336,7 @@
         }
         // what satex itself refused, set against the line that names the key
         if (!out.length && yamlWhy.why && yamlWhy.text === doc.toString()) {
-          const at = [...Array(doc.lines)].map((_, i) => doc.line(i + 1)).find((l) => { const m = lineKey(l.text); return m && yamlWhy.why.includes(m[2]); }) ?? doc.line(1);
+          const at = [...Array(doc.lines)].map((_, i) => doc.line(i + 1)).find((l) => { const m = lineKey(l.text); return m && yamlWhy.why.includes(keyName(m[2])); }) ?? doc.line(1);
           out.push({ from: at.from, to: at.to, severity: 'error', message: `not applied: ${yamlWhy.why}` });
         }
         return out;
@@ -2254,6 +2385,35 @@
   });
   $('cfg-list').addEventListener('click', (e) => { const u = e.target.closest('[data-use]'); if (u) { configApply({ ...configSet, [u.dataset.use]: JSON.parse(u.dataset.value) }); return; } });
   $('cfg-list').addEventListener('click', (e) => { const b = e.target.closest('[data-reset]'); if (b) { const { [b.dataset.reset]: _, [`${b.dataset.reset}+`]: __, ...rest } = configSet; cfgAdded.delete(b.dataset.reset); configApply(rest); } });
+  /** The chktex manual, for every description that names one of its options (`chktex's HyphDash`). */
+  const CHKTEX_MANUAL = 'https://www.nongnu.org/chktex/ChkTeX.pdf';
+  const cfgAbout = (text) => inline(text).replace(/\bchktex(?:&#39;|')s ([A-Z][A-Za-z]+)/g, (m, name) => `<a href="${CHKTEX_MANUAL}" target="_blank" rel="noopener" class="cfg-link" title="the chktex manual, option ${name}">${m}</a>`);
+  /** A link that opens the settings at `key`, with its value when it is changed. */
+  const cfgLink = (key) => {
+    const v = configSet[key], q = new URLSearchParams({ setting: key });
+    if (key in configSet) q.set('value', Array.isArray(v) ? v.join(',') : typeof v === 'object' ? JSON.stringify(v) : String(v));
+    return `${location.origin}${location.pathname}#${q}`;
+  };
+  $('cfg-list').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-perm]');
+    if (!b) return;
+    e.stopPropagation();
+    try { await navigator.clipboard.writeText(cfgLink(b.dataset.perm)); toast('Copied a link to this setting'); } catch { toast(cfgLink(b.dataset.perm)); }
+  });
+  /** Opens the settings at a key from a link's `setting` and `value`; the value is applied when satex accepts it. */
+  async function cfgFromLink(q) {
+    const key = q.get('setting'), k = withOverrides(await configLoad()).find((x) => x.key === key);
+    if (!k) return;
+    if (q.has('value')) {
+      const raw = q.get('value');
+      const value = k.type === 'array' ? raw.split(',').map((x) => x.trim()).filter(Boolean).map((x) => (Number.isFinite(Number(x)) ? Number(x) : x))
+        : k.type === 'boolean' ? raw === 'true' || raw === '1' : ['integer', 'number'].includes(k.type) ? Number(raw) : k.type === 'object' ? (() => { try { return JSON.parse(raw); } catch { return raw; } })() : raw;
+      const next = { ...configSet, [key]: value };
+      if (!(await configRefused(next))) configApply(next);
+    }
+    $('play-config').showModal();
+    await cfgGoto(key);
+  }
   /** Scrolls to the row of a key (opening its group, clearing a search that hides it) and flashes it. */
   async function cfgGoto(key) {
     const keys = withOverrides(await configLoad()), k = keys.find((x) => x.key === key);
@@ -2286,8 +2446,11 @@
     const words = text.split(',').map((w) => w.trim().replace(/^"|"$/g, '')).filter(Boolean);
     input.value = '';
     if (!words.length) return;
-    const numbers = 'num' in box.dataset;
+    const numbers = 'num' in box.dataset, allowed = box.dataset.enum && JSON.parse(box.dataset.enum), hint = box.querySelector('.cfg-chip-hint');
+    if (hint) hint.hidden = true;
     for (const w of words) {
+      // a value outside the list is not added: the allowed ones show beside the field
+      if (allowed && !allowed.includes(w)) { input.value = w; if (hint) { hint.textContent = `not one of: ${allowed.join(', ')}`; hint.hidden = false; } return; }
       if (numbers && !Number.isFinite(Number(w))) { input.value = w; input.setCustomValidity('a number'); input.reportValidity(); return; }
       const chip = Object.assign(document.createElement('span'), { className: 'cfg-chip' });
       chip.dataset.v = JSON.stringify(numbers ? Number(w) : w);
@@ -3055,11 +3218,12 @@
   // The engine follows the root: a `% !TEX program =` comment or a package only XeTeX has, else pdfTeX
   // (plain TeX for a `\bye` file without a class). Choosing in the selector overrides it until the root changes.
   let manualKernel = false, following = false;
-  const ENGINES = { xelatex: 'xetex', xetex: 'xetex', pdflatex: 'pdftex', pdftex: 'pdftex', latex: 'pdftex', tex: 'plain', plain: 'plain' };
+  const ENGINES = { xelatex: 'xetex', lualatex: 'luatex', luatex: 'luatex', context: 'context', xetex: 'xetex', pdflatex: 'pdftex', pdftex: 'pdftex', latex: 'pdftex', tex: 'plain', plain: 'plain' };
   function engineOf(text = '') {
     const magic = text.match(/^%\s*!T[eE]X\s+(?:TS-)?program\s*=\s*(\w+)/m);
     if (magic && ENGINES[magic[1].toLowerCase()]) return ENGINES[magic[1].toLowerCase()];
     if (/\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{[^}]*\b(?:fontspec|unicode-math|polyglossia|xltxtra|xunicode)\b/.test(text)) return 'xetex';
+    if (/\\starttext\b/.test(text) && !/\\documentclass/.test(text)) return 'context';
     return /\\bye\b/.test(text) && !/\\documentclass/.test(text) ? 'plain' : 'pdftex';
   }
   const wanted = () => Math.max(0, manifest.kernels.findIndex((k) => k.id === engineOf(state.texts[state.root])));
@@ -3104,6 +3268,9 @@
       return;
     }
     try { localStorage.removeItem('satex-start'); } catch {}
+    // the server answered: the card may go once no download is left, whichever phase idle() last saw
+    boot.started = true;
+    bootSettled();
     lsp('initialized', {}, true);
     open(state.root, false);
     open(state.file, false);
@@ -3386,7 +3553,7 @@
       state.loaded.add(i);
       timing('t-init', `${$('t-init').textContent} · ${entry.label} ${secs(performance.now() - t)}`, 'time to fetch and set up each kernel');
       loads.clear();
-      idle(`${entry.label} ready`);
+      idle();
     }
   }
 
@@ -3487,19 +3654,31 @@
   }
   /** The files the run read (`query files`): opened on a click. Absent ones were looked for, not found. */
   let readFiles = [];
+  /** The run's loads (`query dependencies`): each class, package and library file once, with what its `\Provides…` says. */
+  let libraries = [];
+  const LIB_KINDS = [['class', 'Classes'], ['package', 'Packages'], ['', 'Libraries and other files']];
   const writtenShow = () => {
     const written = new Set(writtenFiles.map((f) => f.name.split('/').pop()));
-    const read = readFiles.filter((r) => !written.has(String(r.file).split('/').pop()));
-    $('written-count').textContent = String(writtenFiles.length + read.length || '');
+    // a library is a load from outside the project: the project's own files stay with the files read
+    const own = (p) => state.files.some((n) => String(p).endsWith(`/${n}`));
+    const libs = [...new Map(libraries.filter((l) => l.path && l.status === 'read' && !own(l.path) && !['font', 'lua'].includes(l.kind)).map((l) => [l.path, l])).values()];
+    const libPaths = new Set(libs.map((l) => l.path));
+    const read = readFiles.filter((r) => !written.has(String(r.file).split('/').pop()) && !libPaths.has(r.path ?? r.file));
+    $('written-count').textContent = String(writtenFiles.length + libs.length + read.length || '');
+    const libItem = (l) => `<li><a href="#" class="fd-open" data-path="${escape(l.path)}" title="${escape(l.path)}">${escape(String(l.path).split('/').pop())}</a>`
+      + ` <span class="fd-ver">${l.provided ? escape(l.provided) : '<span class="muted">no version</span>'}</span>${l.by ? ` <span class="muted">by ${escape(String(l.by).replace(/^\\/, ''))}</span>` : ''}</li>`;
+    const libGroups = Map.groupBy(libs, (l) => LIB_KINDS.find(([k]) => k === l.kind)?.[0] ?? '');
+    const libHtml = LIB_KINDS.filter(([k]) => libGroups.has(k)).map(([k, label]) => `<details class="fd-group"${k ? ' open' : ''}><summary>${label} <span class="muted">${plural(libGroups.get(k).length, 'file')}</span></summary><ul class="fd-list">${libGroups.get(k).map(libItem).join('')}</ul></details>`).join('');
     // the files read, one group per kind of file: the project's, the packages', the kernel's …
     const groups = Map.groupBy(read, (r) => r.kind === 'absent' ? 'looked for, absent' : (String(r.file).match(/\.([A-Za-z0-9]+)$/)?.[1] ?? 'other'));
     const order = [...groups.keys()].sort((a, b) => Number(a === 'looked for, absent') - Number(b === 'looked for, absent') || groups.get(b).length - groups.get(a).length);
     const item = (r) => r.kind === 'absent' ? `<li><code>${escape(r.file)}</code></li>`
       : `<li><a href="#" class="fd-open" data-path="${escape(r.path ?? r.file)}" title="${escape(r.path ?? r.file)}">${escape(String(r.file).split('/').pop())}</a> <span class="muted">${escape(r.kind ?? '')}</span></li>`;
     const readHtml = order.map((g) => `<details class="fd-group"${g === 'tex' ? ' open' : ''}><summary><code>${escape(g)}</code> <span class="muted">${plural(groups.get(g).length, 'file')}</span></summary><ul class="fd-list">${groups.get(g).map(item).join('')}</ul></details>`).join('');
-    $('written-body').innerHTML = `<h4 class="fd-head">Written by the build <span class="muted">${plural(writtenFiles.length, 'file')}</span></h4>`
-      + (writtenFiles.length ? '<p class="muted wf-note">Each file is empty when the build starts: the first run reads none of them, the next run reads what this one wrote.</p>' + writtenFiles.map(writtenCard).join('') : '<p class="muted">The build writes no file.</p>')
-      + (read.length ? `<h4 class="fd-head">Read by the run <span class="muted">${plural(read.length, 'file')}, by kind; click one to open it</span></h4>${readHtml}` : '');
+    $('written-body').innerHTML = `<h4 class="fd-head">Written in SaTeX's analysis <span class="muted">${plural(writtenFiles.length, 'file')}, computed by SaTeX, not by a TeX build</span></h4>`
+      + (writtenFiles.length ? '<p class="muted wf-note">SaTeX runs the document as LaTeX would and keeps what it writes in memory, on every path: each file is empty when its analysis starts, the next run reads what this one wrote. What a real compile wrote is in the PDF tab, under Files.</p>' + writtenFiles.map(writtenCard).join('') : '<p class="muted">The analysis writes no file.</p>')
+      + (libs.length ? `<h4 class="fd-head">Loaded in SaTeX's run <span class="muted">${plural(libs.length, 'file')}, with the version each says it is</span></h4>${libHtml}` : '')
+      + (read.length ? `<h4 class="fd-head">Read in SaTeX's run <span class="muted">${plural(read.length, 'file')}</span></h4>${readHtml}` : '');
   };
   $('written-body').addEventListener('click', (e) => {
     const open = e.target.closest('.fd-open');
@@ -3597,7 +3776,7 @@
       } catch (e) { self.postMessage({ error: String(e?.message ?? e) }); }
     };
   }
-  const pdfBody = $('pdf-body'), pdfStatus = $('pdf-status'), pdfButtons = [$('pdf-compile'), $('pdf-slice')];
+  const pdfBody = $('pdf-body'), pdfStatus = $('pdf-status'), pdfButtons = [$('pdf-compile')];
   var pdf = null, pdfWorker = null, pdfLine = '', pdfBusy = false, pdfWarming = false; // var: the cursor may move before this line runs
   /** The server builds its native caches once after a rebuild; a Compile meanwhile waits for that. */
   function pdfWatchSetup() {
@@ -3652,27 +3831,61 @@
   const pdfSets = () => { const f = [...manifest.kernels[state.kernel].args, ...configFlags()]; return f.filter((_, i) => f[i - 1] === '--set'); };
   /** Builds the project, or with `slice` only what the cursor's line needs. `cached` only shows a kept build. `alone`: a standalone slice's text, built on its own. */
   async function compile(slice = false, cached = false, alone = null) {
-    if (pdfBusy || !(await pdfServer)) return;
+    if (!(await pdfServer)) return;
+    // one build at a time: a newer request waits, the newest only
+    if (pdfBusy) { if (!cached) pdfQueued = [slice, false, alone]; return; }
     push();
     const root = alone === null ? state.root ?? state.file : `slice-of-${(state.root ?? state.file).split('/').pop()}`, p = editor.position();
     const at = `${state.file === root ? '' : `${state.file}:`}${p.line + 1}:${p.character + 1}`;
     pdfWorker ??= new Worker(URL.createObjectURL(new Blob([`(${compileWorkerMain})()`], { type: 'text/javascript' })));
-    const start = performance.now(), what = slice ? `a slice of ${root} at ${at}` : root;
-    const tick = cached ? 0 : setInterval(() => { pdfStatus.textContent = `${pdfWarming ? 'waiting for the setup, then compiling' : 'compiling'} ${what}… ${secs(performance.now() - start)}`; }, 100);
+    const start = performance.now(), what = slice ? `slice at ${at}` : root;
+    const tick = cached ? 0 : setInterval(() => { pdfStatus.textContent = `${pdfWarming ? 'waiting for the setup, then compiling' : 'compiling'} ${what}… ${secs(performance.now() - start)}${pdfQueued ? ' · one more queued' : ''}`; }, 100);
     pdfBusy = true;
-    pdfButtons.forEach((b) => { b.disabled = true; });
+    $('play-pdf').classList.toggle('pdf-running', !cached);
+    // the zip is of the build shown: none while the next one runs
+    $('pdf-zip').setAttribute('aria-disabled', String(!cached));
     pdfWorker.onmessage = ({ data }) => {
       clearInterval(tick);
       pdfBusy = false;
-      pdfButtons.forEach((b) => { b.disabled = false; });
-      if (data.none) return;
-      pdfStatus.textContent = data.error ? '' : `${what} in ${data.cached ? 'cache' : secs(performance.now() - start)}`;
-      pdf = { ...data, slice, root };
-      pdfShow();
+      $('play-pdf').classList.remove('pdf-running');
+      $('pdf-zip').removeAttribute('aria-disabled');
+      const next = pdfQueued;
+      pdfQueued = null;
+      if (data.none || cached && pdf?.slice) pdfStatus.textContent = pdfSummary;
+      else {
+        pdfSummary = data.error ? '' : `${what} in ${data.cached ? 'cache' : secs(performance.now() - start)}`;
+        pdf = { ...data, slice, root };
+        pdfShow();
+        pdfLoaded(!data.error && !(data.records ?? []).some((r) => r.severity === 'error'));
+      }
+      if (next) compile(...next);
     };
     pdfWorker.postMessage({ url: COMPILE, request: { main: root, files: alone === null ? pdfFiles() : { [root]: alone }, sets: pdfSets(), ...(slice ? { at } : {}), ...(cached ? { cached } : {}) } });
   }
-  pdfButtons.forEach((b, i) => { b.onclick = (e) => { e.preventDefault(); compile(i === 1); }; });
+  /** A build asked for while one runs (the newest only), and what the last build said. */
+  var pdfQueued = null, pdfSummary = '';
+  pdfButtons.forEach((b, i) => { b.onclick = (e) => { e.preventDefault(); compile(); }; });
+  /** Auto-compile: a build once the edits rest for the chosen delay, remembered per viewer. var: an edit may come first. */
+  var pdfAuto = { on: false, delay: 1000, timer: 0 };
+  try { const kept = JSON.parse(localStorage.getItem('satex-pdf-auto') ?? '{}'); pdfAuto.on = !!kept.on; pdfAuto.delay = +kept.delay || 1000; } catch {}
+  const DELAYS = [[0, 'off'], [500, '0.5 s'], [1000, '1 s'], [2000, '2 s'], [5000, '5 s']];
+  $('pdf-auto-list').insertAdjacentHTML('beforeend', DELAYS.map(([ms, name]) => `<label><input type="radio" name="pdf-delay" value="${ms}"> ${name}</label>`).join(''));
+  const pdfAutoKeep = () => {
+    $('pdf-auto-list').querySelectorAll('input').forEach((i) => { i.checked = +i.value === (pdfAuto.on ? pdfAuto.delay : 0); });
+    $('pdf-compile').classList.toggle('auto', pdfAuto.on);
+    $('pdf-compile').title = pdfAuto.on ? `Automatic compile is on: a build ${pdfAuto.delay / 1000} s after the edits rest. Click to build now (Ctrl+S)` : "Build the project with this machine's TeX and show the PDF (Ctrl+S)";
+    try { localStorage.setItem('satex-pdf-auto', JSON.stringify({ on: pdfAuto.on, delay: pdfAuto.delay })); } catch {}
+  };
+  pdfAutoKeep();
+  $('pdf-auto-list').onchange = (e) => { const ms = +e.target.value; pdfAuto.on = ms > 0; pdfAuto.delay = ms || pdfAuto.delay; pdfAutoKeep(); pdfEdited(); };
+  // the Compile menu closes after a choice and when clicking elsewhere
+  addEventListener('pointerdown', (e) => { for (const d of document.querySelectorAll('.pdf-menu[open], .pdf-layers[open]')) if (!d.contains(e.target)) d.open = false; });
+  /** An edit: with auto-compile on, a build once the edits rest; one running then queues it. A slice is asked for, never rebuilt on its own. */
+  function pdfEdited() {
+    if (!pdfAuto?.on || pdf?.slice) return;
+    clearTimeout(pdfAuto.timer);
+    pdfAuto.timer = setTimeout(() => { if (pdfAuto.on && !pdfButtons[0].disabled) compile(); }, pdfAuto.delay);
+  }
   /** The last build of this very text, kept by the server, shown when the page opens. */
   const pdfRestore = () => compile(false, true);
   // Ctrl+S builds, as in an editor with a build on save. Ctrl+Enter in the PDF pane too: in the editor it runs the command.
@@ -3683,6 +3896,16 @@
       if (pdfButtons[0].disabled && !pdfBusy) toast('Compiling needs the local playground server (cargo playground)'); else compile();
     }
   });
+  /** A short jitter on failure, a soft pulse on success: on each of `els`, once. */
+  function flare(els, ok) {
+    for (const el of els) {
+      if (!el) continue;
+      el.classList.remove('flare-ok', 'flare-bad');
+      void el.offsetWidth; // restarts the animation
+      el.classList.add(ok ? 'flare-ok' : 'flare-bad');
+      el.addEventListener('animationend', () => el.classList.remove('flare-ok', 'flare-bad'), { once: true });
+    }
+  }
   const pdfOrder = (a, b) => a.path.localeCompare(b.path) || (a.line ?? 0) - (b.line ?? 0) || (b.severity === 'error') - (a.severity === 'error');
   const pdfRecord = (r) => {
     const s = r.severity === 'error' ? 'error' : 'warning', where = r.line ? `${r.path}:${r.line}` : r.path;
@@ -3700,32 +3923,44 @@
     pdfBack.length = 0;
     pdfBackButton.hidden = true;
     const records = (pdf.records ?? []).sort(pdfOrder), file = (n) => `${COMPILE}/${pdf.base}${n}`, pages = pdf.pages ?? [];
-    const errors = records.filter((r) => r.severity === 'error').length, runs = pdfRuns();
-    const head = pdf.error ? `<p class="pdf-head x-err">${escape(pdf.error)}</p>`
-      : `<p class="pdf-head">${pdf.pdf ? `<a href="${file(pdf.pdf)}" target="_blank" rel="noopener">${escape(pdf.pdf)}</a>, ${plural(pages.length, 'page')}` : '<span class="x-err">no PDF</span>'}`
-      + ` · ${plural(errors, 'error')}, ${plural(records.length - errors, 'warning')}${pdf.slice ? ' · a slice: its lines are not the file\'s' : ''}</p>`;
+    const errors = records.filter((r) => r.severity === 'error').length, all = pdfRuns();
+    const runs = all.filter(pdfBuilds), shows = all.filter((r) => !pdfBuilds(r));
+    // the title line: what the build gave, its views, its files as one zip
+    $('play-pdf').classList.toggle('pdf-is-slice', !!pdf.slice);
+    pdfStatus.innerHTML = (pdf.slice ? '<b class="pdf-badge" title="Only what the cursor\'s line needs, built alone. Its lines are not the file\'s.">slice</b> ' : '') + (pdf.error ? `<span class="x-err" title="${escape(pdf.error)}">${escape(pdf.error)}</span>`
+      : `${pdf.pdf ? `<a href="${file(pdf.pdf)}" target="_blank" rel="noopener">${escape(pdf.pdf)}</a>, ${plural(pages.length, 'page')}` : '<span class="x-err">no PDF</span>'}`
+      + [errors && `<span class="x-err">${plural(errors, 'error')}</span>`, records.length - errors && plural(records.length - errors, 'warning')].filter(Boolean).map((t, i) => (i ? ', ' : ' · ') + t).join('') + `${pdfSummary ? ` <span class="muted">· ${escape(pdfSummary)}</span>` : ''}`);
+    const zip = /** @type {HTMLAnchorElement} */ ($('pdf-zip'));
+    zip.hidden = !pdf.base;
+    if (pdf.base) { zip.href = `${COMPILE}/${pdf.base.replace(/\/$/, '')}.zip`; zip.download = `${pdf.root.replace(/\.tex$/, '')}${pdf.slice ? '-slice' : ''}-build.zip`; }
     // one view at a time: the pages, the messages, the log, the commands run
     const views = [['pages', 'Pages', pages.length || ''], ['messages', 'Messages', records.length || ''], ['log', 'Logs', ''], ['files', 'Files', (pdf.outputs ?? []).length || ''], ['commands', 'Commands', runs.length || '']];
     if (pdf.error && pdfView === 'pages') pdfView = 'commands';
     const tab = ([id, label, n]) => `<button type="button" role="tab" data-view="${id}" aria-selected="${id === pdfView}"${id === 'messages' && errors ? ' class="pdf-err"' : ''}>${label}${n !== '' ? ` <b class="count">${n}</b>` : ''}</button>`;
     const log = (title, text) => text ? `<h4>${title}</h4><pre>${escape(text)}</pre>` : '';
-    pdfBody.innerHTML = head + `<div class="pdf-views" role="tablist" aria-label="what the build gives">${views.map(tab).join('')}</div>`
-      + `<div class="pdf-pages" data-view="pages">${pages.map((n, i) => `<div class="pdf-page" data-page="${i + 1}"><img src="${file(n)}" alt="page ${i + 1}" draggable="false">${pdfLinks(i + 1)}</div>`).join('') || '<p class="muted">No pages.</p>'}</div>`
+    $('pdf-views').innerHTML = views.map(tab).join('');
+    pdfBody.innerHTML = (pdf.error ? `<p class="pdf-head x-err">${escape(pdf.error)}</p>` : '')
+      + `<div class="pdf-pages" data-view="pages">${pdf.slice ? '<div class="pdf-sep" role="separator"><b class="pdf-badge">slice</b><span>not the full build</span></div>' : ''}${pages.map((n, i) => `<div class="pdf-page" data-page="${i + 1}"><img src="${file(n)}" alt="page ${i + 1}" draggable="false">${pdfLinks(i + 1)}</div>`).join('') || '<p class="muted">No pages.</p>'}</div>`
       + `<div class="pdf-text" data-view="messages">${records.length ? `<ul class="diagnostics pdf-records">${records.map(pdfRecord).join('')}</ul>` : '<p class="muted">The log has no error or warning.</p>'}</div>`
       + `<div class="pdf-text pdf-log" data-view="log">${(pdf.logs ? Object.entries(pdf.logs).map(([n, t]) => log(escape(n), t)).join('') : log('TeX log', pdf.log)) + log('Console: what satex compile and latexmk printed', pdf.stderr) || '<p class="muted">The build wrote no log.</p>'}</div>`
-      + `<div class="pdf-text" data-view="files"><p class="muted">What the build wrote beside the sources. Each opens in a new tab.</p><ul class="pdf-cmds">${(pdf.outputs ?? []).map((o) => `<li><a href="${file(o.name)}" target="_blank" rel="noopener">${escape(o.name)}</a> <span class="muted">${size(o.size)}</span></li>`).join('')}</ul></div>`
+      + `<div class="pdf-text" data-view="files"><p class="muted">What the build wrote beside the sources. Each opens in a new tab, ↓ saves it. <a href="${escape(zip.href)}" download="${escape(zip.download)}">All of them with the sources as compiled, as one zip</a>.</p><ul class="pdf-cmds">${(pdf.outputs ?? []).map((o) => `<li><a href="${file(o.name)}" target="_blank" rel="noopener">${escape(o.name)}</a> <a href="${file(o.name)}" download="${escape(o.name.split('/').pop())}" title="save ${escape(o.name)}" aria-label="save ${escape(o.name)}">↓</a> <span class="muted">${size(o.size)}</span></li>`).join('')}</ul></div>`
       + `<div class="pdf-text" data-view="commands"><p class="muted">Run in a fresh directory on this machine${pdfSetsShown()}. <code>satex compile</code> runs latexmk where it is installed, else the engine, and reads the project's latexmkrc and satex.yaml.</p>`
-      + `<ol class="pdf-cmds">${runs.map((r) => `<li${r.status ? ' class="x-err"' : ''}><code>$ ${escape(r.command)}</code>${r.inner ? ' <span class="muted">(by satex compile)</span>' : ` <span class="muted">${r.error ? escape(r.error) : `exit ${r.status ?? '?'}${r.ms != null ? `, ${secs(r.ms)}` : ''}`}</span>`}</li>`).join('')}</ol></div>`;
+      + `<ol class="pdf-cmds">${runs.map(pdfCommand).join('')}</ol>`
+      + (shows.length ? `<details class="pdf-shows"><summary class="muted">How the playground shows the build (${shows.length})</summary><ol class="pdf-cmds">${shows.map(pdfCommand).join('')}</ol></details>` : '') + '</div>';
     pdfViewShow();
     pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => { pdfFollow(true); pdfOverlay(); }, { once: true }));
   }
   /** The commands of the build: the server's, the engine runs `satex compile` names on its console (`$ …`) after it. */
   const pdfRuns = () => (pdf.commands ?? []).flatMap((r) => [r, ...(/ compile( |$)/.test(r.command) ? String(pdf.stderr ?? '').split('\n').filter((l) => l.startsWith('$ ')).map((l) => ({ command: l.slice(2), inner: true })) : [])]);
+  /** One command run, with its exit and time; one `satex compile` ran shows as its. */
+  const pdfCommand = (r) => `<li${r.status ? ' class="x-err"' : ''}><code>$ ${escape(r.command)}</code>${r.inner ? ' <span class="muted">(by satex compile)</span>' : ` <span class="muted">${r.error ? escape(r.error) : `exit ${r.status ?? '?'}${r.ms != null ? `, ${secs(r.ms)}` : ''}`}</span>`}</li>`;
+  /** The build's own commands (`satex compile` and what it ran) apart from the tools the playground shows the PDF with. */
+  const pdfBuilds = (r) => r.inner || / compile( |$)/.test(r.command);
   const pdfSetsShown = () => { const sets = pdfSets(); return sets.length ? `, with the playground's settings: ${sets.map((x) => `<code>--set ${escape(x)}</code>`).join(' ')}` : ''; };
   /** The view of the build shown: `pages`, `messages`, `log` or `commands`. */
   let pdfView = 'pages';
   function pdfViewShow() {
-    for (const t of pdfBody.querySelectorAll('.pdf-views [data-view]')) t.setAttribute('aria-selected', String(t.dataset.view === pdfView));
+    for (const t of $('pdf-views').querySelectorAll('[data-view]')) t.setAttribute('aria-selected', String(t.dataset.view === pdfView));
     for (const v of pdfBody.querySelectorAll(':scope > [data-view]')) v.hidden = v.dataset.view !== pdfView;
   }
   /** A page's size in bp, from its image. */
@@ -3750,10 +3985,44 @@
     }
     return [...rows.values()];
   }
+  /** Whether the pages follow the editor's cursor, remembered per viewer. */
+  var pdfFollowOn = true;
+  try { pdfFollowOn = localStorage.getItem('satex-pdf-follow') !== 'off'; } catch {}
+  const pdfFollowButton = $('pdf-follow');
+  pdfFollowButton.setAttribute('aria-pressed', String(pdfFollowOn));
+  pdfFollowButton.onclick = (e) => {
+    e.preventDefault();
+    pdfFollowOn = !pdfFollowOn;
+    pdfFollowButton.setAttribute('aria-pressed', String(pdfFollowOn));
+    try { localStorage.setItem('satex-pdf-follow', pdfFollowOn ? 'on' : 'off'); } catch {}
+    if (pdfFollowOn) pdfFollow(); else pdfBody.querySelectorAll('.pdf-mark').forEach((m) => m.remove());
+  };
+  /** A build's download asks first, once: the answer stays with this viewer. */
+  addEventListener('click', (e) => {
+    const a = e.target instanceof Element ? e.target.closest('#play-pdf a[download]') : null;
+    if (!a) return;
+    let ok = false;
+    try { ok = localStorage.getItem('satex-download-ok') === 'yes'; } catch {}
+    if (ok) return;
+    const bytes = a.id === 'pdf-zip' ? (pdf?.outputs ?? []).reduce((n, o) => n + o.size, 0) : (pdf?.outputs ?? []).find((o) => a.href.endsWith(encodeURI(o.name)))?.size;
+    const what = a.id === 'pdf-zip' ? 'the whole build as a zip' : a.download;
+    if (!confirm(`Download ${what}${bytes ? ` (${a.id === 'pdf-zip' ? 'about ' : ''}${size(bytes)})` : ''}? You will not be asked again.`)) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    try { localStorage.setItem('satex-download-ok', 'yes'); } catch {}
+  }, true);
+  /** The bar folded to one line, remembered per viewer. */
+  $('pdf-fold').onclick = (e) => {
+    e.preventDefault();
+    const on = $('play-pdf').classList.toggle('pdf-folded');
+    $('pdf-fold').setAttribute('aria-pressed', String(on));
+    $('pdf-fold').querySelector('.fold-label').textContent = on ? 'Unfold' : 'Fold';
+    $('pdf-fold').title = on ? 'Show the whole bar again' : 'Fold this bar to one line';
+    try { localStorage.setItem('satex-pdf-fold', on ? 'on' : 'off'); } catch {}
+  };
+  try { if (localStorage.getItem('satex-pdf-fold') === 'on') $('pdf-fold').click(); } catch {}
   /** The cursor's line marked on the pages, scrolled into view when it moved. */
   function pdfFollow(again = false) {
     const pos = editor?.position();
-    if (!pdf?.boxes || pdf.slice || !pos) return;
+    if (!pdf?.boxes || pdf.slice || !pos || !again && !pdfFollowOn) return;
     const line = pos.line + 1, key = `${state.file}:${line}`;
     if (key === pdfLine && !again) return;
     pdfLine = key;
@@ -3802,9 +4071,10 @@
     const re = new RegExp(`(?<![\\p{L}\\p{N}\\\\])${bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u').exec(text);
     return re ? [re.index, re.index + bare.length] : null;
   }
+  $('pdf-views').addEventListener('click', (e) => { const view = e.target.closest('[data-view]'); if (view) { pdfView = view.dataset.view; pdfViewShow(); } });
+  // a double click selects nothing on the pages (the browser paints the image and its overlays)
+  pdfBody.addEventListener('mousedown', (e) => { if (e.detail > 1 && e.target.closest('.pdf-pages')) e.preventDefault(); });
   pdfBody.addEventListener('click', (e) => {
-    const view = e.target.closest('.pdf-views [data-view]');
-    if (view) { pdfView = view.dataset.view; pdfViewShow(); return; }
     const chip = e.target.closest('.pdf-key');
     if (chip) { e.preventDefault(); pdfToTarget(pdfKeys[+chip.dataset.k]); return; }
     const rec = e.target.closest('.pdf-records li');
@@ -3818,7 +4088,8 @@
       if (link.dataset.link) { e.preventDefault(); pdfJump(pdf.linkList[+link.dataset.link].to); }
       return;
     }
-    const img = e.target.closest('.pdf-page img');
+    // an overlay (a finding, an environment) over the page lets the click through to the page under it
+    const img = e.target.closest('.pdf-page img') ?? (e.target.closest('.pdf-ov:not(.pdf-keys)') && e.target.closest('.pdf-page')?.querySelector('img'));
     if (!img || pdf.slice) return;
     const [w, h] = pageSize(img), r = img.getBoundingClientRect(), page = +img.parentElement.dataset.page;
     const x = (e.clientX - r.left) / r.width * w, y = (e.clientY - r.top) / r.height * h;
@@ -3856,6 +4127,67 @@
     const left = x === undefined ? null : a.left + x * a.width;
     if (left !== null && (left < b.left || left > b.right - 40)) pages.scrollLeft += left - b.left - 16;
   }
+  /** New pages: the editor's mark of an old place goes, a search runs again, the button says how it went. */
+  function pdfLoaded(ok) {
+    editor?.hold?.(null);
+    if (!pdfFindBar.hidden) pdfFind(0);
+    flare([pdfButtons[0], pdfStatus], ok);
+  }
+  /* Ctrl+F in the PDF pane searches the pages' words (`pdftotext -bbox`), not the editor's text. */
+  const pdfFindBar = Object.assign(document.createElement('div'), { className: 'pdf-find', hidden: true, role: 'search',
+    innerHTML: '<input type="search" placeholder="Find in the PDF" aria-label="find in the PDF" spellcheck="false"><span class="muted" aria-live="polite"></span>'
+      + '<button type="button" class="small ghost" data-step="-1" title="previous (Shift+Enter)" aria-label="previous">↑</button><button type="button" class="small ghost" data-step="1" title="next (Enter)" aria-label="next">↓</button>'
+      + '<button type="button" class="small ghost" data-step="close" title="close (Escape)" aria-label="close">×</button>' });
+  $('play-pdf').append(pdfFindBar);
+  const pdfFindInput = pdfFindBar.querySelector('input'), pdfFindCount = pdfFindBar.querySelector('span');
+  let pdfHits = [], pdfHit = 0, pdfInside = false;
+  /** Marks every hit of the query on the pages, then steps `step` from the current one and scrolls to it. */
+  function pdfFind(step) {
+    pdfBody.querySelectorAll('.pdf-hit').forEach((m) => m.remove());
+    const q = pdfFindInput.value.trim().toLowerCase().replace(/\s+/g, ' '), ws = pdf?.wordList ?? [];
+    if (step === 0) {
+      // the words as one text, a space between two: a hit is the words its characters fall in
+      let text = '';
+      const starts = ws.map((w) => { const at = text.length; text += `${String(w[5]).toLowerCase()} `; return at; });
+      pdfHits = [];
+      for (let at = q ? text.indexOf(q) : -1; at >= 0 && pdfHits.length < 2000; at = text.indexOf(q, at + 1)) {
+        const first = starts.findLastIndex((x) => x <= at), last = starts.findLastIndex((x) => x < at + q.length);
+        pdfHits.push(ws.slice(first, last + 1));
+      }
+      pdfHit = Math.min(pdfHit, Math.max(pdfHits.length - 1, 0));
+    } else if (pdfHits.length) pdfHit = (pdfHit + step + pdfHits.length) % pdfHits.length;
+    pdfFindCount.textContent = !q ? '' : pdfHits.length ? `${pdfHit + 1} of ${pdfHits.length}` : 'no match';
+    pdfFindBar.classList.toggle('none', !!q && !pdfHits.length);
+    pdfHits.forEach((hit, i) => hit.forEach((w) => {
+      const img = /** @type {HTMLImageElement | null} */ (pdfBody.querySelector(`.pdf-page[data-page="${w[0]}"] img`));
+      if (!img?.naturalWidth) return;
+      const [pw, ph] = pageSize(img);
+      img.parentElement.insertAdjacentHTML('beforeend', `<div class="pdf-hit${i === pdfHit ? ' on' : ''}" style="${pdfPlace((w[1] - 1) / pw, (w[2] - 1) / ph, (w[3] - w[1] + 2) / pw, (w[4] - w[2] + 2) / ph)}"></div>`);
+    }));
+    const w = pdfHits[pdfHit]?.[0], img = w && /** @type {HTMLImageElement | null} */ (pdfBody.querySelector(`.pdf-page[data-page="${w[0]}"] img`));
+    if (img?.naturalWidth) { const [pw, ph] = pageSize(img); pdfScroll(w[0], Math.max(0, w[2] / ph - 0.15), w[1] / pw); }
+  }
+  const pdfFindClose = () => { pdfFindBar.hidden = true; pdfBody.querySelectorAll('.pdf-hit').forEach((m) => m.remove()); };
+  pdfFindInput.addEventListener('input', () => { pdfHit = 0; pdfFind(0); });
+  pdfFindInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); pdfFind(e.shiftKey ? -1 : 1); } else if (e.key === 'Escape') { e.preventDefault(); pdfFindClose(); }
+  });
+  pdfFindBar.addEventListener('click', (e) => { const b = e.target.closest('[data-step]'); if (b) b.dataset.step === 'close' ? pdfFindClose() : pdfFind(+b.dataset.step); });
+  // the PDF pane has Ctrl+F while the last click was in it (a click on a page moves the cursor to the editor),
+  // until something is typed elsewhere: then Ctrl+F is the editor's again
+  addEventListener('pointerdown', (e) => { pdfInside = !!e.target.closest?.('#play-pdf'); }, true);
+  addEventListener('keydown', (e) => {
+    const find = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f';
+    if (!find && e.key.length === 1 && !e.target.closest?.('#play-pdf')) pdfInside = false;
+    if (!find || $('play-pdf').hidden || !pdf?.wordList) return;
+    if (!(e.target.closest?.('#play-pdf') || pdfInside && !e.target.closest?.('input, textarea'))) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pdfFindBar.hidden = false;
+    pdfFindInput.focus();
+    pdfFindInput.select();
+    pdfFind(0);
+  }, true); // before the editor's own Ctrl+F
   /** Follows an internal link: the pages scroll to its target, marked a moment, the editor to its source. Back returns. */
   async function pdfJump(to) {
     pdfBack.push(pdfSpot());
@@ -3888,39 +4220,285 @@
   const occRect = (o) => pdfRects(occFile(o), o.line)[0];
   /** The keys placed on the pages, as the overlay's chips index them. */
   let pdfKeys = [];
-  var pdfOverlayOn = { keys: false, findings: false }; // var: a check may render before this line ran
-  try { Object.assign(pdfOverlayOn, JSON.parse(localStorage.getItem('satex-pdf-overlay') ?? '{}')); } catch {}
-  for (const k of Object.keys(pdfOverlayOn)) {
-    const box = $(`pdf-${k}`);
-    box.checked = pdfOverlayOn[k];
-    box.onchange = () => { pdfOverlayOn[k] = box.checked; try { localStorage.setItem('satex-pdf-overlay', JSON.stringify(pdfOverlayOn)); } catch {} pdfOverlay(); };
+  /** The layers drawn over the pages, each switched on its own and remembered per viewer. */
+  const PDF_LAYERS = [
+    ['defs', 'definitions', 'Labels and bibliography entries where they are set'],
+    ['refs', 'references', 'References and citations where they are set: click one to follow it'],
+    ['findings', 'findings', 'The findings of the check and of the build, on the characters they are about'],
+    ['envs', 'environments', 'Where each environment begins and ends'],
+    ['geometry', 'text block', 'The text block the lines fill, the margins shaded'],
+    ['figures', 'bounding boxes', 'The bounding box of each figure, table, picture, minipage … with its environment name'],
+    ['boxes', 'bad boxes', 'Overfull and underfull boxes of the log, an overfull one by how much it sticks out'],
+  ];
+  const FIGURE_ENV = /^(figure|table|sidewaysfigure|sidewaystable|wrapfigure|wraptable|subfigure|tikzpicture|picture|minipage|lstlisting|tabular|center)\*?$/;
+  /** Sub-filters per layer, from the data: [group, title, rows of [key, label, count]]. What the viewer switched off is kept as `layer|group|key`. */
+  const PDF_FACETS = new Map([['defs', 0], ['refs', 0], ['findings', 0], ['envs', 0], ['figures', 0]]);
+  var pdfHide = new Set(); // var: a check may render before this line ran
+  try { pdfHide = new Set(JSON.parse(localStorage.getItem('satex-pdf-facets') ?? '[]')); } catch {}
+  const pdfShown = (layer, group, key) => !pdfHide.has(`${layer}|${group}|${key}`);
+  const DEF_KIND = ['label', 'bibitem'], REF_KIND = /^(ref|cite|gls|glossary|index|acr)/;
+  const facetTally = (items) => [...Map.groupBy(items, (x) => x[0])].map(([key, xs]) => [key, xs[0][1] ?? key, xs.length]).sort((a, b) => b[2] - a[2] || String(a[0]).localeCompare(String(b[0])));
+  /** The findings drawn over the pages: the check's, then the build's, as [file, line, severity, text, range, code]. */
+  const pdfFound = () => Object.keys(state.texts).filter((n) => !(n in state.ro)).flatMap((n) => (diagnostics[uri(n)] ?? []).map((d) => [n, d.range.start.line + 1, sev(d), `${d.code}: ${d.message}`, d.range, d.code]))
+    .concat((pdf?.records ?? []).filter((r) => r.line).map((r) => [occFile(r), r.line, r.severity === 'error' ? 'error' : 'warning', `${r.code}: ${r.message} (the build)`, null, r.code]));
+  /** The environments' extents, from the begin and end occurrences: [begin, end, file]. */
+  function pdfEnvPairs() {
+    const open = [], out = [];
+    for (const o of occurrences.filter((o) => o.kind === 'begin-environment' || o.kind === 'end-environment').sort((a, b) => occFile(a).localeCompare(occFile(b)) || a.line - b.line || (a.col ?? 0) - (b.col ?? 0))) {
+      if (o.kind === 'begin-environment') { open.push(o); continue; }
+      const k = open.findLastIndex((b) => b.key === o.key && occFile(b) === occFile(o));
+      if (k >= 0) out.push([...open.splice(k, 1), o, open.filter((x) => occFile(x) === occFile(o)).length]);
+    }
+    return out;
   }
-  /** Over the pages, when switched on: the keys of labels, references and citations where they are set,
-   * and the findings of the last check and of the build on their lines. Placed by SyncTeX, so a slice has none. */
-  function pdfOverlay() {
-    if (!pdf?.boxes || !pdfBody.querySelector('.pdf-pages')) return;
-    pdfBody.querySelectorAll('.pdf-ov').forEach((m) => m.remove());
-    if (pdf.slice) return;
-    const put = (page, html) => pdfBody.querySelector(`.pdf-page[data-page="${page}"]`)?.insertAdjacentHTML('beforeend', html);
-    const size = (page) => { const img = /** @type {HTMLImageElement | null} */ (pdfBody.querySelector(`.pdf-page[data-page="${page}"] img`)); return img?.naturalWidth ? pageSize(img) : null; };
-    pdfKeys = [];
-    if (pdfOverlayOn.keys) {
-      const lines = Map.groupBy(occurrences.filter((o) => ['label', 'ref', 'cite'].includes(o.kind)), (o) => `${occFile(o)}:${o.line}`);
-      for (const os of lines.values()) {
-        const r = occRect(os[0]), wh = r && size(r.page);
-        if (!wh) continue;
-        const chips = os.sort((a, b) => (a.col ?? 0) - (b.col ?? 0)).map((o) => `<a href="#" class="pdf-key k-${o.kind}" data-k="${pdfKeys.push(o) - 1}" title="${o.kind} ${escape(o.key)} at ${escape(occFile(o))}:${o.line}${o.kind === 'label' ? '' : ': click to go to its target'}">${escape(o.key)}</a>`).join('');
-        put(r.page, `<span class="pdf-ov pdf-keys" style="left:${r.l / wh[0] * 100}%;top:${r.t / wh[1] * 100}%">${chips}</span>`);
+  /** The groups of a layer's sub-filters. */
+  function pdfFacetGroups(layer) {
+    const kinds = (pick) => facetTally(occurrences.filter((o) => pick(o.kind)).map((o) => [o.kind]));
+    if (layer === 'defs') return [['kind', 'kind', kinds((k) => DEF_KIND.includes(k))]];
+    if (layer === 'refs') return [['kind', 'kind', kinds((k) => REF_KIND.test(k))]];
+    if (layer === 'findings') {
+      const found = pdfFound();
+      return [['severity', 'severity', tally(found.map((f) => [f[2]]))], ['rule', 'category and rule', tally(found.map((f) => [f[5], `${manifest.rules[f[5]]?.category ?? 'other'} · ${f[5]}`]))]];
+    }
+    const pairs = pdfEnvPairs();
+    if (layer === 'envs') return [['name', 'name', tally(pairs.filter(([b]) => b.key !== 'document').map(([b]) => [b.key]))]];
+    if (layer === 'figures') return [['environment', 'environment', tally(pairs.filter(([, o]) => FIGURE_ENV.test(o.key)).map(([, o]) => [o.key]))]];
+    return [];
+  }
+  /** Fills each layer's fold, keeping the ones open that are; a click on a row never closes the menu. */
+  function pdfFacetsDraw() {
+    for (const d of $('pdf-layer-list').querySelectorAll('.pdf-sub')) {
+      const layer = d.dataset.sub, list = d.querySelector('.pdf-sub-list');
+      const html = pdfFacetGroups(layer).filter(([, , rows]) => rows.length).map(([g, title, rows]) => `<div class="pdf-sub-group"><span class="muted">${escape(title)}</span>${rows.map(([key, label, n]) => `<label><input type="checkbox" data-facet="${escape(`${layer}|${g}|${key}`)}"${pdfShown(layer, g, key) ? ' checked' : ''}>${escape(label)} <b class="count">${n}</b></label>`).join('')}</div>`).join('') || '<span class="muted">nothing yet</span>';
+      if (list.dataset.html !== html) { list.innerHTML = html; list.dataset.html = html; }
+    }
+  }
+  var pdfOverlayOn = Object.fromEntries(PDF_LAYERS.map(([k]) => [k, false])); // var: a check may render before this line ran
+  try {
+    const kept = JSON.parse(localStorage.getItem('satex-pdf-overlay') ?? '{}');
+    if ('keys' in kept) kept.defs = kept.refs = kept.keys;
+    for (const k of Object.keys(pdfOverlayOn)) pdfOverlayOn[k] = !!kept[k];
+  } catch {}
+  $('pdf-layer-list').innerHTML = PDF_LAYERS.map(([k, name, about]) => `<div class="pdf-layer-row"><label class="pdf-layer" title="${escape(about)}"><input type="checkbox" data-layer="${k}"${pdfOverlayOn[k] ? ' checked' : ''}><i class="pdf-swatch sw-${k}"></i>${escape(name)}</label>${PDF_FACETS.has(k) ? `<details class="pdf-sub" data-sub="${k}"><summary title="Filter ${escape(name)}" aria-label="filter ${escape(name)}"></summary><div class="pdf-sub-list"></div></details>` : ''}</div>`).join('');
+  /** "Near the pointer": layers show only within a radius of the mouse, fading with distance. Off by default, kept per viewer. */
+  const NEAR_PX = 110;
+  var pdfNear = false;
+  try { pdfNear = localStorage.getItem('satex-pdf-near') === 'on'; } catch {}
+  $('pdf-layer-list').insertAdjacentHTML('beforeend', `<label class="pdf-layer pdf-near" title="Draw the layers only around the mouse pointer, fading with distance"><input type="checkbox" data-near${pdfNear ? ' checked' : ''}>near the pointer</label>`);
+  let nearFrame = 0, nearAt = null;
+  function pdfNearDraw() {
+    nearFrame = 0;
+    pdfBody.classList.toggle('pdf-near', pdfNear);
+    for (const el of pdfBody.querySelectorAll('.pdf-ov')) {
+      if (!pdfNear) { el.style.opacity = ''; continue; }
+      const r = el.getBoundingClientRect();
+      const d = nearAt ? Math.hypot(Math.max(r.left - nearAt[0], 0, nearAt[0] - r.right), Math.max(r.top - nearAt[1], 0, nearAt[1] - r.bottom)) : Infinity;
+      el.style.opacity = d <= NEAR_PX * 0.6 ? '1' : d >= NEAR_PX ? '0.02' : String((1 - ((d - NEAR_PX * 0.6) / (NEAR_PX * 0.4)) ** 0.5 * 0.98).toFixed(2));
+    }
+  }
+  const pdfNearSoon = () => { nearFrame ||= requestAnimationFrame(pdfNearDraw); };
+  pdfBody.addEventListener('pointermove', (e) => { nearAt = [e.clientX, e.clientY]; if (pdfNear) pdfNearSoon(); });
+  pdfBody.addEventListener('pointerleave', () => { nearAt = null; if (pdfNear) pdfNearSoon(); });
+  $('pdf-layer-list').addEventListener('change', (e) => {
+    if (e.target.dataset?.near !== undefined) {
+      pdfNear = e.target.checked;
+      try { localStorage.setItem('satex-pdf-near', pdfNear ? 'on' : 'off'); } catch {}
+      pdfNearDraw();
+      return;
+    }
+    if (e.target.dataset?.facet) {
+      pdfHide[e.target.checked ? 'delete' : 'add'](e.target.dataset.facet);
+      try { localStorage.setItem('satex-pdf-facets', JSON.stringify([...pdfHide])); } catch {}
+      pdfOverlay();
+      return;
+    }
+    const k = e.target.dataset?.layer;
+    if (!k) return;
+    pdfOverlayOn[k] = e.target.checked;
+    try { localStorage.setItem('satex-pdf-overlay', JSON.stringify(pdfOverlayOn)); } catch {}
+    pdfLayersCount();
+    pdfOverlay();
+  });
+  const pdfLayersCount = () => { const n = Object.values(pdfOverlayOn).filter(Boolean).length; $('pdf-layers').querySelector('summary').innerHTML = `&#x25A4; <span>${n ? `layers ${n}` : 'layers'}</span>`; };
+  pdfLayersCount();
+  /** The typeset characters whose source lies in `range` of `file` (LSP positions), by the sites the typeset query gives. */
+  function typesetIn(file, range) {
+    const at = (p) => [p.line + 1, p.character + 1], before = (a, b) => a[0] < b[0] || a[0] === b[0] && a[1] < b[1];
+    let [from, to] = [at(range.start), at(range.end)];
+    if (!before(from, to)) {
+      // a point: the token or word there
+      const w = wordAt(state.texts[file]?.split('\n')[range.start.line] ?? '', range.start.character);
+      if (!w) return '';
+      [from, to] = [[from[0], w[0] + 1], [from[0], w[1] + 1]];
+    }
+    const out = [];
+    for (const r of typesetRows ?? []) {
+      if (!r.sites) continue;
+      // `marked` is `detail` with its notes bracketed: a note (a hyphen's ·) is no text, a math note not even in `detail`
+      const marked = [...(r.marked ?? r.detail ?? '')];
+      let k = 0, i = 0, hit = '', note = false, math = false;
+      for (let j = 0; j < marked.length; j++) {
+        const c = marked[j];
+        if (c === '') { note = true; math = marked[j + 1] === '\u0006'; continue; }
+        if (c === '') { note = math = false; continue; }
+        if (math) continue;
+        while (k + 1 < r.sites.length && r.sites[k + 1].at <= i) k++;
+        const s = r.sites[k], p = s && [s.line, s.col + (s.same ? 0 : i - s.at)];
+        hit += !note && s && s.at <= i && String(s.path ?? r.path ?? '').endsWith(file) && !before(p, from) && before(p, to) ? c : ' ';
+        i++;
       }
+      if (hit.trim()) out.push(hit.trim().replace(/\s+/g, ' '));
+    }
+    return out.join(' ');
+  }
+  /** The words of the rows `rects`, in reading order. */
+  const pdfRowWords = (rects) => rects.flatMap((r) => (pdf.wordList ?? []).filter((w) => w[0] === r.page && w[4] >= r.t && w[2] <= r.d && w[3] > r.l - 2 && w[1] < r.r + 2))
+    .sort((a, b) => a[0] - b[0] || a[2] - b[2] || a[1] - b[1]);
+  /** Where `text` (typeset words) stands among the rows' words: one box per row it covers, else null. */
+  function pdfWordsOf(rects, text) {
+    const bare = (t) => t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''), want = text.split(/\s+/).map(bare).filter(Boolean), words = pdfRowWords(rects);
+    if (!want.length) return null;
+    const fits = (w, t) => { const b = bare(w[5]); return b && (b.includes(t) || t.includes(b)); };
+    for (let i = 0; i + want.length <= words.length; i++) {
+      if (!want.every((t, j) => fits(words[i + j], t))) continue;
+      const rows = new Map();
+      for (const w of words.slice(i, i + want.length)) {
+        const key = `${w[0]}:${Math.round(w[4])}`, o = rows.get(key);
+        rows.set(key, { page: w[0], l: Math.min(o?.l ?? w[1], w[1]), t: Math.min(o?.t ?? w[2], w[2]), r: Math.max(o?.r ?? w[3], w[3]), d: Math.max(o?.d ?? w[4], w[4]) });
+      }
+      return [...rows.values()];
+    }
+    return null;
+  }
+  /** The text block of each page, from the lines SyncTeX places: the most common left edge and width of its line boxes, from the first to the last. */
+  function pdfBlocks() {
+    const out = new Map(), mode = (xs) => { const n = new Map(); for (const x of xs) n.set(x, (n.get(x) ?? 0) + 1); return [...n].sort((a, b) => b[1] - a[1])[0]?.[0]; };
+    for (const [page, lines] of Map.groupBy((pdf.boxes ?? []).filter((b) => b.kind === '(' && b.w > 0), (b) => b.page)) {
+      const left = mode(lines.map((b) => Math.round(b.x)));
+      const width = mode(lines.filter((b) => Math.round(b.x) === left).map((b) => Math.round(b.w)));
+      if (left === undefined || !width) continue;
+      out.set(page, { l: left, r: left + width, t: Math.min(...lines.map((b) => b.y - b.h)), d: Math.max(...lines.map((b) => b.y + b.d)) });
+    }
+    return out;
+  }
+  /** Over the pages, each when switched on: keys (definitions apart from references), findings on their characters,
+   * environments, the text block and the bad boxes of the log. Placed by SyncTeX, so a slice has none. */
+  function pdfOverlay() {
+    pdfFacetsDraw();
+    pdfOverlayDraw();
+    pdfLabelsFit();
+    if (pdfNear) pdfNearSoon();
+  }
+  /** The overlay as a diff: an element whose page and markup are unchanged stays, so a toggled layer or an update that changes nothing touches nothing else. */
+  function pdfOverlayDraw() {
+    if (!pdf?.boxes || !pdfBody.querySelector('.pdf-pages')) return;
+    const wanted = [];
+    if (!pdf.slice) pdfOverlayBuild((page, html) => wanted.push([page, html]));
+    const left = new Map();
+    for (const [page, html] of wanted) left.set(`${page}|${html}`, (left.get(`${page}|${html}`) ?? 0) + 1);
+    for (const el of pdfBody.querySelectorAll('.pdf-ov')) {
+      const key = el.dataset.ovKey ?? '', n = left.get(key) ?? 0;
+      if (n > 0) left.set(key, n - 1); else el.remove();
+    }
+    for (const [page, html] of wanted) {
+      const key = `${page}|${html}`;
+      if (!left.get(key)) continue;
+      left.set(key, left.get(key) - 1);
+      const host = pdfBody.querySelector(`.pdf-page[data-page="${page}"]`);
+      host?.insertAdjacentHTML('beforeend', html);
+      const el = host?.lastElementChild;
+      if (el) el.dataset.ovKey = key;
+    }
+  }
+  function pdfOverlayBuild(put) {
+    const size = (page) => { const img = /** @type {HTMLImageElement | null} */ (pdfBody.querySelector(`.pdf-page[data-page="${page}"] img`)); return img?.naturalWidth ? pageSize(img) : null; };
+    /** A box in bp on `page`, as an overlay element of class `cls`. */
+    const box = (page, cls, l, t, r, d, title = '', inner = '') => {
+      const wh = size(page);
+      if (wh) put(page, `<span class="pdf-ov ${cls}" style="${pdfPlace(l / wh[0], t / wh[1], (r - l) / wh[0], (d - t) / wh[1])}"${title ? ` title="${escape(title)}"` : ''}>${inner}</span>`);
+    };
+    const blocks = pdfBlocks(), rowsOf = (file, a, b) => { const out = []; for (let l = a; l <= b; l++) out.push(...pdfRects(file, l)); return out; };
+    pdfKeys = [];
+    const wantKind = (k) => DEF_KIND.includes(k) ? pdfOverlayOn.defs && pdfShown('defs', 'kind', k) : REF_KIND.test(k) && pdfOverlayOn.refs && pdfShown('refs', 'kind', k);
+    for (const os of Map.groupBy(occurrences.filter((o) => wantKind(o.kind)), (o) => `${occFile(o)}:${o.line}`).values()) {
+      const r = occRect(os[0]), wh = r && size(r.page);
+      if (!wh) continue;
+      const chips = os.sort((a, b) => (a.col ?? 0) - (b.col ?? 0)).map((o) => `<a href="#" class="pdf-key k-${o.kind}" data-k="${pdfKeys.push(o) - 1}" title="${['label', 'bibitem'].includes(o.kind) ? 'defines' : 'refers to'} ${escape(o.key)} (${o.kind} at ${escape(occFile(o))}:${o.line})${['label', 'bibitem'].includes(o.kind) ? '' : ': click to go to its target'}">${escape(o.key)}</a>`).join('');
+      put(r.page, `<span class="pdf-ov pdf-keys" style="left:${r.l / wh[0] * 100}%;top:${r.t / wh[1] * 100}%">${chips}</span>`);
     }
     if (pdfOverlayOn.findings) {
-      const found = Object.keys(state.texts).filter((n) => !(n in state.ro)).flatMap((n) => (diagnostics[uri(n)] ?? []).map((d) => [n, d.range.start.line + 1, sev(d), `${d.code}: ${d.message}`]))
-        .concat((pdf.records ?? []).filter((r) => r.line).map((r) => [occFile(r), r.line, r.severity === 'error' ? 'error' : 'warning', `${r.code}: ${r.message} (the build)`]));
-      for (const [line, fs] of Map.groupBy(found, ([n, l]) => `${n}:${l}`)) {
-        const r = pdfRects(fs[0][0], fs[0][1])[0], wh = r && size(r.page);
+      for (const [n, line, s, what, range, code] of pdfFound().filter((f) => pdfShown('findings', 'severity', f[2]) && pdfShown('findings', 'rule', f[5]))) {
+        const rows = pdfRects(n, line), text = range && rows.length ? typesetIn(n, range) : '';
+        for (const r of (text && pdfWordsOf(rows, text)) || rows.slice(0, 1)) box(r.page, `pdf-finding f-${s}`, r.l - 1, r.t - 1, r.r + 1, r.d + 2, `${n}:${line}${text ? ` · ${text}` : ''}\n${what}`);
+      }
+    }
+    if (pdfOverlayOn.envs) {
+      for (const [b, o, depth] of pdfEnvPairs()) {
+        const file = occFile(o);
+        if (b.key === 'document' || !pdfShown('envs', 'name', b.key)) continue;
+        // the lines inside: the begin and end lines carry what closed there (a whole float)
+        const inner = o.line - b.line > 1 ? rowsOf(file, b.line + 1, o.line - 1) : [], rows = inner.length ? inner : rowsOf(file, b.line, o.line);
+        if (!rows.length) continue;
+        for (const [page, rs] of Map.groupBy(rows, (r) => r.page)) {
+          const g = blocks.get(page), t = Math.min(...rs.map((r) => r.t)) - 2, d = Math.max(...rs.map((r) => r.d)) + 2;
+          const l = (g?.l ?? Math.min(...rs.map((r) => r.l))) - 6 - 4 * depth, r = (g?.r ?? Math.max(...rs.map((x) => x.r))) + 2;
+          box(page, 'pdf-env', l, t, r, d, `${b.key}: lines ${b.line} to ${o.line} of ${file}`, `<b>${escape(b.key)}</b>`);
+        }
+      }
+    }
+    if (pdfOverlayOn.figures) {
+      // the extent of an environment is the box SyncTeX records on its \end line: the largest list there
+      for (const [, o] of pdfEnvPairs()) {
+        if (!FIGURE_ENV.test(o.key) || !pdfShown('figures', 'environment', o.key)) continue;
+        const best = (pdf.boxes ?? []).filter((b) => b.file === occFile(o) && b.line === o.line && '[('.includes(b.kind) && b.w > 0 && b.h + b.d > 0).sort((a, b) => b.w * (b.h + b.d) - a.w * (a.h + a.d))[0];
+        if (best) box(best.page, 'pdf-fig', best.x, best.y - best.h, best.x + best.w, best.y + best.d, `bounding box of ${o.key}, ends at line ${o.line} of ${occFile(o)}`, `<b>${escape(o.key)}</b>`);
+      }
+    }
+    if (pdfOverlayOn.geometry) {
+      for (const [page, g] of blocks) {
+        const wh = size(page);
         if (!wh) continue;
-        const worst = ['error', 'warning', 'info', 'hint'].find((v) => fs.some((f) => f[2] === v));
-        put(r.page, `<span class="pdf-ov pdf-finding f-${worst}" style="${pdfPlace((r.l - 2) / wh[0], (r.t - 2) / wh[1], (r.r - r.l + 4) / wh[0], (r.d - r.t + 4) / wh[1])}" title="${escape(`${line}\n${fs.map((f) => f[3]).join('\n')}`)}"></span>`);
+        const pt = (bp) => (bp * 72.27 / 72).toFixed(0);
+        for (const [l, t, r, d] of [[0, 0, wh[0], g.t], [0, g.d, wh[0], wh[1]], [0, g.t, g.l, g.d], [g.r, g.t, wh[0], g.d]]) box(page, 'pdf-margin', l, t, r, d, 'margin');
+        box(page, 'pdf-block', g.l, g.t, g.r, g.d, `text block: ${pt(g.r - g.l)}pt wide, its lines from ${pt(g.t)}pt to ${pt(g.d)}pt from the top`, `<b>${pt(g.r - g.l)}pt</b>`);
+      }
+    }
+    if (pdfOverlayOn.boxes) {
+      for (const rec of pdf.records ?? []) {
+        const m = /^(Over|Under)full \\([hv])box \((?:([\d.]+)pt too \w+|badness (\d+))\).*?lines? (\d+)(?:--(\d+))?/.exec(rec.message ?? '');
+        if (!m) continue;
+        const [, kind, hv, by, , a, b] = m, file = occFile(rec), rows = rowsOf(file, +a, +(b ?? a));
+        if (!rows.length) continue;
+        const over = kind === 'Over', what = `${rec.message.replace(/\s*\[\].*$/, '')} (${file})`;
+        if (hv === 'h') {
+          // the line that sticks out most is the overfull one
+          const r = over ? rows.reduce((x, y) => (y.r > x.r ? y : x)) : rows[0], g = blocks.get(r.page), edge = g?.r ?? r.r;
+          box(r.page, `pdf-bad ${over ? 'b-over' : 'b-under'}`, r.l - 1, r.t - 1, Math.max(r.r, edge) + 1, r.d + 2, what);
+          if (over) box(r.page, 'pdf-bar-out', edge, r.t - 1, edge + Math.max(+by * 72 / 72.27, 1.5), r.d + 2, `${by}pt too wide`, `<b>${by}pt</b>`);
+        } else {
+          const r = rows.at(-1), g = blocks.get(r.page);
+          box(r.page, `pdf-bad ${over ? 'b-over' : 'b-under'}`, g?.l ?? r.l, r.t - 1, g?.r ?? r.r, r.d + 2, what);
+          if (over && g) box(r.page, 'pdf-bar-out pdf-bar-v', g.l, g.d, g.r, g.d + Math.max(+by * 72 / 72.27, 1.5), `${by}pt too high`, `<b>${by}pt</b>`);
+        }
+      }
+    }
+  }
+  /** Keeps the labels over the pages from overdrawing: a chip equal to one just placed goes, one that hits another moves up by its height. */
+  function pdfLabelsFit() {
+    for (const page of pdfBody.querySelectorAll('.pdf-page')) {
+      const placed = [], seen = new Set();
+      for (const el of page.querySelectorAll('.pdf-env > b, .pdf-keys')) {
+        el.style.transform = '';
+        el.hidden = false;
+        const r = el.getBoundingClientRect();
+        if (!r.width) continue;
+        const id = `${el.tagName}${el.textContent}${Math.round(r.left / 4)}${Math.round(r.top / 4)}`;
+        if (seen.has(id)) { el.hidden = true; continue; }
+        seen.add(id);
+        let top = r.top, hit;
+        for (let n = 0; n < 6 && (hit = placed.find((p) => r.left < p.right && r.right > p.left && top < p.bottom && top + r.height > p.top)); n++) top = hit.top - r.height;
+        if (top !== r.top) el.style.transform = `translateY(calc(-100% + ${top - r.top}px))`;
+        placed.push({ left: r.left, right: r.right, top, bottom: top + r.height });
       }
     }
   }
@@ -3951,12 +4529,13 @@
   pdfBody.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('.pdf-records li')) e.target.click(); });
   $('play-pdf').addEventListener('keydown', (e) => { if (e.altKey && e.key === 'ArrowLeft' && pdfBack.length) { e.preventDefault(); pdfReturn(); } });
   async function written(target) {
-    const request = { file: path(state.root ?? state.file), queries: [{ type: 'files' }] };
-    const [files, read] = await Promise.all([lsp('satex/written', { textDocument: { uri: target } }).catch(() => null),
-      lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).then((r) => r?.[0]?.records).catch(() => null)]);
+    const request = { file: path(state.root ?? state.file), queries: [{ type: 'files' }, { type: 'dependencies' }] };
+    const [files, [read, loads] = []] = await Promise.all([lsp('satex/written', { textDocument: { uri: target } }).catch(() => null),
+      lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).then((r) => r?.map((q) => q.records)).catch(() => null)]);
     if (!files) return;
     writtenFiles = files;
     readFiles = read ?? readFiles;
+    libraries = loads ?? libraries;
     writtenShow();
   }
   /** What a run's cache report says: the packages and classes served from the caches, the ones analyzed anew. */
@@ -4068,12 +4647,15 @@
     }
     const hits = (verb, hit) => hit.length ? ` <span class="muted cache-hit">${verb} ${hit.slice(0, 3).map((n) => `<code>${escape(n.replace(/\.cls$/, ''))}</code>`).join(', ')}${hit.length > 3 ? ` +${hit.length - 3}` : ''}</span>` : '';
     cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs], u, hit, via }, i) =>
-      `<tr title="${escape(e.path)}"><td>${cacheBadge(cls, kind)}</td>` +
-      `<td><button type="button" class="cache-name" aria-expanded="${via.length > 0}" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>${(cls === 'package' || cls === 'class') && manualPackages().has(what) ? ' <span class="manual" title="the package\'s manual is mined for descriptions">docs</span>' : ''}${hits('defines', hit)}${hits('loads', via)}${CACHE_NOTES[cls] ? ` <span class="muted cache-hit">${CACHE_NOTES[cls]}</span>` : ''}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
+      `<tr><td title="${escape(e.path)}">${cacheBadge(cls, kind)}</td>` +
+      `<td><button type="button" class="cache-name" aria-expanded="${via.length > 0}" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>${(cls === 'package' || cls === 'class') && manualPackages().has(what) ? ' <span class="manual" title="the package\'s manual is mined for descriptions">docs</span>' : ''}${exported(cls, what)}${hits('defines', hit)}${hits('loads', via)}${CACHE_NOTES[cls] ? ` <span class="muted cache-hit">${CACHE_NOTES[cls]}</span>` : ''}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
       `<td class="num">${size(e.size)}</td><td><button type="button" class="small ghost" data-path="${escape(e.path)}" aria-label="drop ${escape(what || kind)}">Drop</button></td></tr>` +
       `<tr class="cache-sub" id="cache-sub-${i}"${via.length ? '' : ' hidden'}><td></td><td colspan="5">${details(cls, what, needs)}</td></tr>`).join('') ||
       `<tr><td colspan="6" class="muted">${cacheEntries.length ? 'No match.' : 'Nothing cached yet.'}</td></tr>`;
-    $('cache-total').textContent = rows.length ? `${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}, ${size(rows.reduce((n, { e }) => n + e.size, 0))} in total` : '';
+    // the packages and classes listed, and how many of them have their manual mined
+    const pkgs = new Set(rows.filter(({ l }) => l[1] === 'package' || l[1] === 'class').map(({ l }) => l[2])), manual = manualPackages();
+    $('cache-total').textContent = rows.length ? `${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}, ${size(rows.reduce((n, { e }) => n + e.size, 0))} in total`
+      + (pkgs.size ? ` · manual information for ${num([...pkgs].filter((p) => manual.has(p)).length)} of ${plural(pkgs.size, 'package')}` : '') : '';
   }
   /** How the open document uses each class and package (`satex query dependencies` of the root):
    * loaded by the document itself, or by which packages. */
@@ -4090,15 +4672,17 @@
       used.set(k, u);
     }
   }
+  const USE_HOW = { always: 'always: every run, or the format', direct: 'directly: the document loads it', indirect: 'indirectly: another package loads it' };
   /** One marker for every kind: [used, html] of an entry for the open document. */
   const usedOf = (cls, what) => {
-    const mark = (text, title = '') => [true, `<span class="use use-yes" title="${escape(title)}">${text}</span>`];
-    if (cls === 'kernel') return what.startsWith(manifest.kernels[state.kernel]?.id ?? '\0') ? mark('the run\'s format') : [false, ''];
-    if (cls === 'index') return indexed ? mark('file lookups') : [false, ''];
-    if (cls === 'facts' || cls === 'hashes' || cls === 'previews') return mark('every run');
+    // how it comes in: always (every run, the format), directly (the document loads it), indirectly (another package does)
+    const mark = (text, how, title = '') => [true, `<span class="use use-yes use-${how}" title="${escape(`${USE_HOW[how]}${title ? `: ${title}` : ''}`)}">${text}</span>`];
+    if (cls === 'kernel') return what.startsWith(manifest.kernels[state.kernel]?.id ?? '\0') ? mark('the run\'s format', 'always') : [false, ''];
+    if (cls === 'index') return indexed ? mark('file lookups', 'always') : [false, ''];
+    if (cls === 'facts' || cls === 'hashes' || cls === 'previews') return mark('every run', 'always');
     const u = used.get(`${cls}:${what}`);
     if (!u) return [false, ''];
-    const [yes, html] = u.own ? mark('by the document') : mark(`via ${escape([...u.by].slice(0, 2).join(', '))}${u.by.size > 2 ? ` +${u.by.size - 2}` : ''}`, `loaded by ${[...u.by].join(', ')}`);
+    const [yes, html] = u.own ? mark('by the document', 'direct') : mark(`via ${escape([...u.by].slice(0, 2).join(', '))}${u.by.size > 2 ? ` +${u.by.size - 2}` : ''}`, 'indirect', `loaded by ${[...u.by].join(', ')}`);
     return [yes, u.always ? html : `${html} <span class="use-maybe" title="every load of it depends on an undecided conditional">sometimes</span>`];
   };
   /** What each package (and the kernel, `null`) defines in the open document's run, and the installation's
@@ -4120,6 +4704,7 @@
       const k = r.tag === 'macro' ? (internal ? 'internal macro' : 'public command') : r.tag === 'alias' ? (internal ? 'internal alias' : 'public alias') : r.tag;
       d[k] = (d[k] ?? 0) + 1;
       (d.names ??= new Set()).add(r.name);
+      if (k === 'public command') (d.commands ??= []).push(r.name);
       defined.set(r.package ?? null, d);
     }
     indexed = (dist?.records ?? []).find((r) => r.indexed != null) ?? null;
@@ -4149,6 +4734,13 @@
   const namesLike = (cls, what, q) => {
     const part = q.startsWith('\\'), w = q.replace(/^\\/, '');
     return w ? [...definedOf(cls, what)?.names ?? []].filter((n) => part ? n.toLowerCase().includes(w) : n.replace(/^\\/, '').toLowerCase() === w) : [];
+  };
+  /** A few public commands a class or package defined in the run, as chips; the rest behind "+N". */
+  // its own: letters only, and not the kernel's too (a load sets \CurrentFile, which is no command of the package)
+  const exported = (cls, what) => {
+    const kernel = defined.get(null)?.names ?? new Set();
+    const names = (cls === 'package' || cls === 'class') ? [...new Set(definedOf(cls, what)?.commands ?? [])].filter((n) => /^\\[A-Za-z]{2,}$/.test(n) && !kernel.has(n)).sort() : [];
+    return names.length ? ` ${cards.chipList(names, cards.csChip, 4)}` : '';
   };
   const plural = (n, w) => `${num(n)} ${w}${n === 1 ? '' : /(s|ch)$/.test(w) ? 'es' : 's'}`;
   /** One row's details: what it defines and loads, and where its documentation is. */
@@ -4244,8 +4836,8 @@
     return true;
   }
   // Closed, the selector shows the engine's name; its sizes only while the list is open.
-  kernelBox.innerHTML = manifest.kernels.map((k, i) => `<option value="${i}" title="download ${size(k.size)}" data-name="${k.label}" data-more="${size(k.size)}"></option>`).join('') +
-    (manifest.unavailable ?? []).map(([label, why]) => `<option disabled title="${escape(why)}" data-name="${label}" data-more="not available"></option>`).join('');
+  kernelBox.innerHTML = manifest.kernels.map((k, i) => `<option value="${i}" title="${escape(k.note ? `${k.note} Download ${size(k.size)}.` : `download ${size(k.size)}`)}" data-name="${k.label}" data-more="${k.badge ? `${k.badge} · ` : ''}${size(k.size)}"></option>`).join('') +
+    (manifest.unavailable ?? []).map(([label, why, badge]) => `<option disabled title="${escape(why)}" data-name="${label}" data-more="${badge ?? 'not available'}"></option>`).join('');
   const kernelList = (sizes) => { for (const o of kernelBox.options) o.textContent = sizes ? `${o.dataset.name} · ${o.dataset.more}` : o.dataset.name; };
   kernelList(false);
   kernelBox.addEventListener('mousedown', () => kernelList(true));
@@ -4329,6 +4921,8 @@
   /** Whatever was picked or dropped, as [path, File] pairs: a folder keeps its paths. */
   async function upload(entries) {
     if (!editor || !entries.length) return;
+    const whole = entries.length > 1 || /\.zip$/i.test(entries[0][0]);
+    if (whole) bootOpen(`Opening ${entries.length === 1 ? entries[0][0] : entries[0][0].split('/')[0]}`);
     try {
       const total = entries.reduce((n, [, f]) => n + f.size, 0);
       if (total > LIMIT) throw new Error(`more than ${LIMIT / 2 ** 20} MiB`);
@@ -4339,7 +4933,8 @@
       const names = Object.keys(files), top = names[0].split('/')[0] + '/';
       if (names.every((n) => n.startsWith(top))) return await project(Object.fromEntries(names.map((n) => [n.slice(top.length), files[n]])), top.slice(0, -1));
       await add(files);
-    } catch (e) { toast(`Upload: ${e.message}`); }
+      bootClose();
+    } catch (e) { bootClose(); toast(`Upload: ${e.message}`); }
   }
   /** A dropped item's files, folders walked. */
   async function walk(entry, into) {
@@ -4444,14 +5039,89 @@
 
   /** What the page is doing, in one place: the status bar's text and bar, and a card with the details on hover. */
   const bar = $('play-progress'), loads = new Map(), actBox = $('act-detail');
-  const act = { phase: '', text: '', shown: '', since: 0, changed: 0, got: 0, all: 0, started: 0, rest: '' };
+  const act = { phase: '', text: '', shown: '', since: 0, changed: 0, got: 0, all: 0, started: 0, rest: '', steps: [], run: 0, after: '', version: -1, ended: 0 };
   const PHASE = { unpacking: ['Unpacking', 'Unpacking the TeX files…'], importing: ['Importing', 'Importing the kernel caches…'] };
-  function busy(name, text, { done = null, got = 0, all = 0 } = {}) {
+  /* The start, and an uploaded project, as one card over the page: the logo, the version, the stages in one bar.
+   * Each stage holds its share of the bar; a stage's own progress (bytes, lines read) fills its share. */
+  const BOOT = /** @type {[string, string, number][]} */ ([['Fetching', 'downloads', 0.55], ['Unpacking', 'TeX files', 0.15], ['Importing', 'caches', 0.15], ['Starting', 'satex starts', 0.15]]);
+  var boot = { el: /** @type {HTMLElement | null} */ (null), at: 0, stage: -1, open: false, started: false }; // var: busy may run before this line
+  function bootOpen(title) {
+    if (!boot.el) {
+      boot.el = Object.assign(document.createElement('div'), { className: 'boot', role: 'dialog' });
+      boot.el.setAttribute('aria-label', 'loading the playground');
+      const logo = document.querySelector('header .brand img')?.cloneNode(), version = document.querySelector('header a.version')?.textContent.trim() ?? '';
+      boot.el.innerHTML = `<div class="boot-card"><div class="boot-logo"></div><p class="boot-title"></p><p class="muted boot-version">satex ${escape(version)}</p>`
+        + `<ol class="boot-stages">${BOOT.map(([n, label]) => `<li data-stage="${n}">${label}</li>`).join('')}</ol>`
+        + '<span class="sx-progress boot-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span class="sx-fill"></span></span><p class="muted boot-text" aria-live="polite"></p>'
+        + '<button type="button" class="small ghost boot-hide" title="keep loading in the background">Hide</button></div>';
+      if (logo) boot.el.querySelector('.boot-logo').append(logo);
+      boot.el.querySelector('.boot-hide').onclick = bootClose;
+      document.body.append(boot.el);
+    }
+    boot.el.querySelector('.boot-title').textContent = title;
+    boot.el.querySelectorAll('[data-stage]').forEach((li) => { li.className = ''; });
+    boot.at = 0;
+    boot.stage = -1;
+    boot.open = true;
+    boot.el.classList.remove('gone');
+    boot.el.hidden = false;
+    bootStep('', null, '');
+  }
+  function bootStep(name, done, text) {
+    if (!boot?.open) return;
+    const k = BOOT.findIndex(([n]) => n === name);
+    // The card covers what blocks the editor: every download, and satex starting. A download after
+    // satex started keeps the card open on its text, stages never run backwards, and the first
+    // analysis goes to the status line.
+    if (name && k < 0 && boot.stage >= 0) return bootSettled();
+    if (k >= 0 && k >= boot.stage) {
+      const before = BOOT.slice(0, k).reduce((n, b) => n + b[2], 0);
+      boot.stage = k;
+      boot.at = Math.max(boot.at, before + BOOT[k][2] * (Number.isFinite(done) ? done : 0));
+      boot.el.querySelectorAll('[data-stage]').forEach((li, i) => { li.className = i < k ? 'done' : i === k ? 'on' : ''; });
+    }
+    self.satexProgress.set(boot.el.querySelector('.boot-bar'), boot.at);
+    boot.el.querySelector('.boot-text').textContent = text;
+  }
+  /** The card goes once satex has started and no download is left. */
+  function bootSettled() {
+    if (boot?.started && !loads.size && !inFlight.size) bootClose();
+  }
+  function bootClose() {
+    if (!boot?.open) return;
+    boot.open = false;
+    self.satexProgress.set(boot.el.querySelector('.boot-bar'), 1);
+    boot.el.classList.add('gone');
+    setTimeout(() => { if (!boot.open) boot.el.hidden = true; }, 350);
+  }
+  bootOpen('Loading the playground');
+  /** The engine's phases (`Status::phase`, src/util/progress.rs) as the card names them. */
+  const STAGE = { format: 'kernel cache', package: 'package caches', preamble: 'preamble', document: 'document', lint: 'lint', probe: 'trying commands out' };
+  /** Work that starts this soon after other work ended, with no edit between, goes on in its timeline (a package fetched, the server restarted for it). */
+  const FOLLOW_MS = 1500;
+  function busy(name, text, { done = null, got = 0, all = 0, stage = null } = {}) {
     const now = performance.now();
-    if (!act.phase) { act.started = now; act.rest = status.dataset.done ? status.textContent : 'Ready. Findings update as you type; Enter runs the command.'; }
-    if (act.phase !== name) act.since = now;
-    if (text !== act.text || got !== act.got) act.changed = now;
-    Object.assign(act, { phase: name, text, got, all });
+    bootStep(name, done, text);
+    if (!act.phase) {
+      // one analysis is one timeline: only an edit, or work long after, starts the next run
+      const edited = version !== act.version;
+      if (edited || now - act.ended > FOLLOW_MS) Object.assign(act, { started: now, steps: [], run: act.run + 1, after: act.run && edited ? 'after your edit' : '', version });
+      act.rest = status.dataset.done ? status.textContent : 'Ready. Findings update as you type; Enter runs the command.';
+    }
+    // one step per phase the page or the engine names, in the order they came
+    const key = stage?.phase ? `${stage.run ?? 1} ${stage.phase}` : name;
+    let step = act.steps.at(-1);
+    if (step?.key !== key) {
+      const run = stage?.run > 1 ? `build run ${stage.run} of at most ${stage.runs}: ` : '';
+      step = { key, label: run + (stage?.phase ? STAGE[stage.phase] ?? stage.phase : name.toLowerCase()), at: now, items: new Set() };
+      act.steps.push(step);
+    }
+    if (stage?.phase === 'package') step.items.add(text);
+    act.since = step.at;
+    // where the engine reads now: a moving line is progress too
+    const where = stage?.file ? `${stage.file}:${stage.line ?? ''}` : '';
+    if (text !== act.text || got !== act.got || where !== act.where) act.changed = now;
+    Object.assign(act, { phase: name, text, got, all, where });
     // a status without both counts shows work going on, not a share of it; with them, the time left
     self.satexProgress.set(bar, Number.isFinite(done) ? done : null);
     const left = Number.isFinite(done) ? self.satexProgress.left(done, now - act.since) : null;
@@ -4462,26 +5132,40 @@
   }
   /** Work is over: the bar goes, the last result stays or comes back. */
   function idle(text = null) {
+    // satex has started, or did not: the card gives way to the page
+    if (act.phase === 'Stopped') bootClose();
+    if (act.phase === 'Starting') boot.started = true;
+    bootSettled();
     bar.hidden = true;
     if (act.phase && text === null && status.textContent === act.shown && act.rest) status.textContent = act.rest;
     if (text !== null) status.textContent = text;
+    if (act.phase) act.ended = performance.now();
     act.phase = ''; act.text = '';
     delete status.dataset.busy;
     drawAct();
   }
   const mib = (n) => (n / 2 ** 20).toFixed(1);
+  /** The card shows while work goes on and the status line is hovered or focused; idle, it covers nothing. */
+  let actWanted = false;
   function drawAct() {
+    actBox.hidden = !(actWanted && act.phase);
     if (actBox.hidden) return;
     const now = performance.now(), s = (t) => secs(now - t);
-    const rows = act.phase ? [['phase', act.phase], ['doing', act.text.replace(/…$/, '')], ...(act.all ? [['bytes', `${mib(act.got)} of ${mib(act.all)} MiB`]] : []),
-      ['in this phase', s(act.since)], ['since start', s(act.started)], ['last change', `${s(act.changed)} ago`]] : [['phase', 'idle'], ['status', status.textContent]];
-    actBox.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${escape(v)}</dd>`).join('');
+    const steps = act.steps.map((st, i) => {
+      const last = i === act.steps.length - 1, end = last ? now : act.steps[i + 1].at;
+      const n = st.items.size > 1 ? ` · ${st.items.size}` : '';
+      return `<li class="act-step${last ? ' act-now' : ''}"${last ? ' aria-current="step"' : ''}><span>${escape(st.label + n)}</span><span class="act-t">${secs(end - st.at)}</span></li>`;
+    }).join('');
+    const rows = [['run', `${act.run}${act.after ? ` ${act.after}` : ''}`], ['doing', escape(act.text.replace(/…$/, ''))], ...(act.all ? [['bytes', `${mib(act.got)} of ${mib(act.all)} MiB`]] : []),
+      ...(act.where ? [['at', escape(act.where)]] : []), ['steps', `<ol class="act-steps">${steps}</ol>`], ['in this step', s(act.since)], ['since start', s(act.started)], ['last change', `${s(act.changed)} ago`]];
+    actBox.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
   }
   let actTick = 0;
-  const showAct = (on) => { actBox.hidden = !on; clearInterval(actTick); if (on) { drawAct(); actTick = setInterval(drawAct, 1000); } };
+  const showAct = (on) => { actWanted = on; clearInterval(actTick); drawAct(); if (on) actTick = setInterval(drawAct, 1000); };
   const actHost = actBox.parentElement;
+  // a click leaves focus on the line: leaving it with the mouse still closes the card
   actHost.addEventListener('mouseenter', () => showAct(true)); actHost.addEventListener('mouseleave', () => showAct(false));
-  actHost.addEventListener('focusin', () => showAct(true)); actHost.addEventListener('focusout', () => showAct(false));
+  actHost.addEventListener('focusin', (e) => { if (e.target.matches(':focus-visible')) showAct(true); }); actHost.addEventListener('focusout', () => showAct(false));
   function progressed({ label, loaded, total }) {
     if (PHASE[label]) { busy(PHASE[label][0], PHASE[label][1]); return; }
     loads.set(label, [loaded, total]);
@@ -4553,7 +5237,7 @@
       drainAnalysis();
     } else if (data.type === 'status') {
       traceLive?.(data);
-      if (data.text && act.phase === 'Analyzing') phase(data.text, data.total ? Math.min(data.reached / data.total, 1) : null);
+      if (data.text && act.phase === 'Analyzing') phase(data.text, data.total ? Math.min(data.reached / data.total, 1) : null, data);
     } else if (data.type === 'progress') {
       progressed(data);
     } else if (data.type === 'error' && data.of === 'lsp') {
@@ -4591,7 +5275,8 @@
     timing('t-init', secs(performance.now() - started), 'time to fetch satex and the pdfTeX kernel and set them up');
     idle();
     sampleTexts = ready.samples;
-    const hash = decodeURIComponent(location.hash.slice(1));
+    const setting = location.hash.startsWith('#setting=') ? new URLSearchParams(location.hash.slice(1)) : null;
+    const hash = setting ? '' : decodeURIComponent(location.hash.slice(1));
     const link = hash.startsWith('s=') ? await restore(hash.slice(2)) : null;
     if (hash.startsWith('open=')) history.replaceState(null, '', location.pathname);
     const ex = link ? link.x : hash in sampleTexts && !shared.has(hash) ? hash : projectOf(hash) ?? manifest.sample;
@@ -4620,6 +5305,7 @@
     }
     button.textContent = 'Run';
     button.disabled = false;
+    if (setting) cfgFromLink(setting);
     await preloading;
     if (link) await openLink(link);
     else await example(ex, { file: shared.has(hash) ? hash : ex });
@@ -4629,5 +5315,5 @@
     status.textContent = 'Ready. Findings update as you type; Enter runs the command.';
     status.dataset.done = 'ready';
     pdfRestore();
-  })().catch((e) => { status.textContent = `the playground failed: ${e.message}`; status.dataset.done = 'error'; });
+  })().catch((e) => { status.textContent = `the playground failed: ${e.message}`; status.dataset.done = 'error'; bootClose(); });
 })();

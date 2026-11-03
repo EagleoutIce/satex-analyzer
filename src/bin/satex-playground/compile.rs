@@ -88,6 +88,15 @@ pub fn respond(
         let probe = json!({ "compile": true, "warming": warming });
         return super::send(stream, method, "probe.json", "no-cache", false, probe.to_string().into_bytes());
     }
+    // `ID.zip`, `ID/slice.zip`: every file of that build, sources as compiled included
+    if let Some(build) = rest.strip_suffix(".zip") {
+        let dir = root.join(build.trim_start_matches('/')).canonicalize().ok();
+        if let Some(dir) = dir.filter(|d| root.canonicalize().is_ok_and(|r| d.starts_with(&r) && *d != r) && d.is_dir())
+        {
+            let name = format!("{}.zip", dir.file_name().and_then(|n| n.to_str()).unwrap_or("build"));
+            return super::send(stream, method, &name, "no-cache", false, zip(&dir)?);
+        }
+    }
     let file = root.join(rest.trim_start_matches('/')).canonicalize().ok();
     match file.filter(|f| root.canonicalize().is_ok_and(|r| f.starts_with(r)) && f.is_file()) {
         Some(f) => {
@@ -196,8 +205,7 @@ fn build(root: &Path, body: &[u8], runs: &mut Vec<Value>) -> Result<Value, Strin
     let mut logs = serde_json::Map::new();
     for entry in walkdir(&work) {
         let Ok(name) = entry.strip_prefix(&work).map(|n| n.to_string_lossy().into_owned()) else { continue };
-        let ours = name.starts_with("page-") || ["words.html", "links.json", "answer.json"].contains(&name.as_str());
-        if ours || sent.contains(name.as_str()) || name.starts_with("slice/") {
+        if ours(&name) || sent.contains(name.as_str()) || name.starts_with("slice/") {
             continue;
         }
         if [".log", ".blg", ".ilg"].iter().any(|e| name.ends_with(e)) {
@@ -299,6 +307,64 @@ fn said(out: &std::process::Output) -> String {
 fn safe(name: &str) -> bool {
     let path = Path::new(name);
     !name.is_empty() && path.components().all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
+/// The page's own files beside a build: its page images, words, links and answer.
+fn ours(name: &str) -> bool {
+    name.starts_with("page-") && name.ends_with(".png") || ["words.html", "links.json", "answer.json"].contains(&name)
+}
+
+/// The build in `dir` as a zip (stored, not compressed: the PDF and
+/// `.synctex.gz` are compressed already), the page's own files and a slice's
+/// directory left out.
+fn zip(dir: &Path) -> std::io::Result<Vec<u8>> {
+    let crc = |bytes: &[u8]| {
+        !bytes
+            .iter()
+            .fold(!0u32, |c, &b| (0..8).fold(c ^ u32::from(b), |c, _| c >> 1 ^ (0xEDB8_8320 & (c & 1).wrapping_neg())))
+    };
+    let (mut out, mut central, mut count) = (Vec::new(), Vec::new(), 0u16);
+    for path in walkdir(dir) {
+        let Ok(name) = path.strip_prefix(dir).map(|n| n.to_string_lossy().replace('\\', "/")) else { continue };
+        if ours(&name) || name.starts_with("slice/") {
+            continue;
+        }
+        let bytes = std::fs::read(&path)?;
+        let (sum, size, at) = (crc(&bytes), bytes.len() as u32, out.len() as u32);
+        // version 2.0, no flags, stored, no time; the sizes, the name
+        let common = |head: &mut Vec<u8>| {
+            for v in [20u16, 0, 0, 0, 0x21] {
+                head.extend(v.to_le_bytes());
+            }
+            for v in [sum, size, size] {
+                head.extend(v.to_le_bytes());
+            }
+            head.extend((name.len() as u16).to_le_bytes());
+            head.extend(0u16.to_le_bytes());
+        };
+        out.extend(0x0403_4b50u32.to_le_bytes());
+        common(&mut out);
+        out.extend(name.as_bytes());
+        out.extend(&bytes);
+        central.extend(0x0201_4b50u32.to_le_bytes());
+        central.extend(20u16.to_le_bytes());
+        common(&mut central);
+        // no comment, disk 0, no attributes; where its header stands
+        central.extend([0u8; 10]);
+        central.extend(at.to_le_bytes());
+        central.extend(name.as_bytes());
+        count += 1;
+    }
+    let (start, len) = (out.len() as u32, central.len() as u32);
+    out.extend(central);
+    out.extend(0x0605_4b50u32.to_le_bytes());
+    for v in [0u16, 0, count, count] {
+        out.extend(v.to_le_bytes());
+    }
+    out.extend(len.to_le_bytes());
+    out.extend(start.to_le_bytes());
+    out.extend(0u16.to_le_bytes());
+    Ok(out)
 }
 
 /// Every file under `dir`, sorted.

@@ -5,8 +5,9 @@
   const dark = () => (root.dataset.theme ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark';
   self.siteDark = dark; // playground.js themes its editor by it
   const button = document.getElementById('theme');
-  const label = () => button.setAttribute('aria-pressed', String(dark()));
-  button.onclick = () => {
+  // /draw has its own theme button
+  const label = () => button?.setAttribute('aria-pressed', String(dark()));
+  if (button) button.onclick = () => {
     root.dataset.theme = dark() ? 'light' : 'dark';
     try { localStorage.setItem('satex-theme', root.dataset.theme); } catch {}
     label();
@@ -33,7 +34,7 @@
     const { language: { StreamLanguage }, stex: { stex }, highlight: hl } = await self.siteCM();
     const t = hl.tags;
     const highlighter = hl.tagHighlighter([[t.tagName, 'cmd'], [t.bracket, 'br'], [t.keyword, 'kw'], [t.comment, 'com'], [t.atom, 'atom'],
-      [t.number, 'num'], [t.string, 'str'], [t.definition(t.variableName), 'def'], [t.special(t.variableName), 'arg'], [t.variableName, 'arg'], [t.operator, 'br'], [t.meta, 'magic'], [t.attributeValue, 'magicv']].map(([tag, c]) => ({ tag, class: `tok-${c}` })));
+      [t.number, 'num'], [t.string, 'str'], [t.definition(t.variableName), 'def'], [t.special(t.variableName), 'arg'], [t.variableName, 'arg'], [t.operator, 'br'], [t.meta, 'magic'], [t.attributeValue, 'magicv'], [t.processingInstruction, 'dir']].map(([tag, c]) => ({ tag, class: `tok-${c}` })));
     // BibTeX (btxdoc § 2): `@type{key, field = value # value}`; `@string`, `@preamble` and `@comment`
     // are commands, not entries. A braced value is TeX: commands, braces and math in the TeX mode's classes.
     const COMMANDS = /^@(string|preamble|comment)\b/i;
@@ -75,7 +76,7 @@
       },
     });
     // a control symbol (`\ `, `\-`, `\'`) is one token, as for TeX; stex leaves some of them split
-    // a `%\satex@assert{…}` directive is a keyword with TeX after it, not a comment
+    // a `%\satex@assert{…}` directive (configure, assume, assert) is a comment satex reads: its own class, TeX after it
     // a magic comment's key (`% !TeX program =`, `% arara:`) and its value, apart from a plain comment
     const MAGIC = /^%\s*(?:!T[eE]X\s+(?:TS-)?[\w-]+\s*=?|arara:)/;
     // a verbatim body (lstlisting, minted, verbatim) is code in the language it names, not TeX:
@@ -108,7 +109,7 @@
         }
         if (st.magic) { s.skipToEnd(); return 'attributeValue'; }
         if (s.sol() && s.match(MAGIC)) { st.magic = true; return 'meta'; }
-        if (s.match(/^%\s*\\satex@[A-Za-z]+/)) return 'keyword';
+        if (s.match(/^%\s*\\satex@[A-Za-z]+/)) return 'processingInstruction';
         return s.match(/^\\[^A-Za-z@\xc0-\uffff]/) ? 'tag' : stex.token(s, st);
       },
     };
@@ -122,21 +123,27 @@
   const duration = (ms) => ms < 1000 ? `${Math.round(ms)} ms` : ms < 60e3 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60e3)} min ${Math.round(ms % 60e3 / 1000)} s`;
   /** How many chips a card's list shows before its "+N", which unfolds the rest. */
   const CHIPS_SHOWN = 10;
-  /** A card's list of names as chips (`chip` renders one): the first CHIPS_SHOWN, the rest behind "+N", folding back on a second click. */
-  const chipList = (names, chip) => `<span class="chips">${names.slice(0, CHIPS_SHOWN).map(chip).join('')}${names.length > CHIPS_SHOWN
-    ? `<details class="chip-more"><summary title="show the other ${names.length - CHIPS_SHOWN}">+${names.length - CHIPS_SHOWN}</summary><span class="chips">${names.slice(CHIPS_SHOWN).map(chip).join('')}</span></details>` : ''}</span>`;
+  /** A card's list of names as chips (`chip` renders one): the first `shown`, the rest behind "+N", folding back on a second click. */
+  const chipList = (names, chip, shown = CHIPS_SHOWN) => `<span class="chips">${names.slice(0, shown).map(chip).join('')}${names.length > shown
+    ? `<details class="chip-more"><summary title="show the other ${names.length - shown}">+${names.length - shown}</summary><span class="chips">${names.slice(shown).map(chip).join('')}</span></details>` : ''}</span>`;
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   /** TeX source colored like the editor: commands, braces, parameters, comments. */
   const tex = (text, link = false) => esc(text).replace(/(%[^\n]*)|(\\(?:[A-Za-z@_:]+|.))|([{}[\]])|(#+\d)/g, (m, com, cmd, br) =>
-    `<span class="tok-${com ? 'com' : cmd ? 'cmd' : br ? 'br' : 'arg'}">${link && cmd && /^\\[A-Za-z@_:]+$/.test(m) ? `<a class="cs bl" href="#" data-cs="${m}" title="explain ${m}">${m}</a>` : m}</span>`);
+    `<span class="tok-${com ? 'com' : cmd ? 'cmd' : br ? 'br' : 'arg'}">${link && cmd && /^\\[A-Za-z@_:]+$/.test(m) ? `<a class="cs bl" href="#" data-cs="${m}">${m}</a>` : m}</span>`);
   /** `code`, links and bold of satex's Markdown; a `file:line` is a place. */
   // a code span between double backticks may hold one (`` `* ``)
-  const inline = (t) => esc(t).split(/(``.+?``|`[^`]+`)/).map((p, i) => {
-    if (!(i % 2)) return p.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
-      .replace(/\*\(([^*]+)\)\*/g, '<span class="x-from">($1)</span>').replace(/\*([^*\s][^*]*)\*/g, '<em>$1</em>');
-    const code = p.startsWith('``') ? p.slice(2, -2).trim() : p.slice(1, -1), at = code.match(/^([\w./-]+\.\w+):(\d+)$/);
-    return at ? placeLink(at[1], +at[2]) : `<code>${code}</code>`;
-  }).join('');
+  const inline = (t) => {
+    // code spans stand aside as placeholders, so bold or italic may hold one (`**Typesets `ab` here**`)
+    const codes = [];
+    const text = esc(t).replace(/``.+?``|`[^`]+`/g, (p) => {
+      const code = p.startsWith('``') ? p.slice(2, -2).trim() : p.slice(1, -1), at = code.match(/^([\w./-]+\.\w+):(\d+)$/);
+      codes.push(at ? placeLink(at[1], +at[2]) : `<code>${code}</code>`);
+      return `\u0000${codes.length - 1}\u0000`;
+    });
+    return text.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/\*\(([^*]+)\)\*/g, '<span class="x-from">($1)</span>').replace(/\*([^*\s][^*]*)\*/g, '<em>$1</em>')
+      .replace(/\u0000(\d+)\u0000/g, (_, i) => codes[+i]);
+  };
 
   // xparse's argument types (xparse manual, "Argument specifications"): a color
   // class, the shape a use writes, how the argument is read.
@@ -169,6 +176,8 @@
     number: 'an integer: digits, a count register, \\numexpr …', dimen: 'a length: 3pt, \\parindent, \\dimexpr …', glue: 'a length that may stretch: 3pt plus 1fil',
     muglue: 'math glue: 3mu plus 1fill', 'file name': 'a file name, up to a space', equals: 'an optional =', 'optional spaces': 'spaces, skipped',
     filler: 'spaces and \\relax, skipped', token: 'one token', box: 'a box: \\hbox{…}, \\vbox{…}, \\box0 …', rule: 'a rule: \\hrule or \\vrule with its sizes',
+    by: 'the keyword by, may be left out', 'optional by': 'the keyword by, may be left out', relation: 'a relation: <, = or >',
+    'numeric variable': 'a numeric variable: a count, dimen, skip or muskip register or parameter',
     'math field': 'a math character or a {…} group', 'math character': 'a character in math', delim: 'a delimiter: (, \\langle …', font: 'a font identifier like \\tenrm',
   };
   const slot = (name, kind, ty) => {
@@ -383,7 +392,7 @@
   }
   /** A command's name as shown: a control space `\ ` keeps its space visible, as one token. */
   const csName = (name) => esc(String(name ?? '').replace(/^\\ $/, '\\␣'));
-  const csChip = (name) => `<a class="cs" href="#" data-cs="${esc(name)}" title="explain ${csName(name)}">${csName(name)}</a>`;
+  const csChip = (name) => `<a class="cs" href="#" data-cs="${esc(name)}">${csName(name)}</a>`;
   /** The one marker of a package, class or the kernel, as the cache dialog badges them. */
   const pkgChip = (kind, name) => `<span class="cache-kind k-${kind}" title="${kind === 'kernel' ? 'defined by the kernel' : `from the ${kind} ${esc(name)}`}">${esc(name)}</span>`;
   /** The playground's button that traces a call of the command. */
@@ -479,26 +488,17 @@
     put(Infinity);
     return out;
   }
-  /** A picture's sketch (`satex typeset` records them in `sketches`) as an inline SVG: its nodes as labeled boxes, its paths as lines with their arrow tips. */
-  let sketchCount = 0;
-  const SKETCH_PX = 38, SKETCH_MAX = 520, SKETCH_PAD = 8;
-  function sketchSvg(sk) {
-    const xs = [...sk.nodes.flatMap((n) => [n.x - n.w / 2, n.x + n.w / 2]), ...sk.edges.flatMap((e) => [e.x1, e.x2])];
-    const ys = [...sk.nodes.flatMap((n) => [n.y - n.h / 2, n.y + n.h / 2]), ...sk.edges.flatMap((e) => [e.y1, e.y2])];
-    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
-    const scale = Math.min(SKETCH_PX, (SKETCH_MAX - 2 * SKETCH_PAD) / Math.max(x1 - x0, 0.5));
-    const X = (x) => ((x - x0) * scale + SKETCH_PAD).toFixed(1), Y = (y) => ((y1 - y) * scale + SKETCH_PAD).toFixed(1);
-    const size = (v) => (v * scale).toFixed(1), font = Math.max(7, Math.min(12, scale * 0.3)).toFixed(1);
-    const id = `sk${sketchCount++}`;
-    const lines = sk.edges.map((e) => `<line x1="${X(e.x1)}" y1="${Y(e.y1)}" x2="${X(e.x2)}" y2="${Y(e.y2)}"${e.arrow === 'end' || e.arrow === 'both' ? ` marker-end="url(#${id})"` : ''}${e.arrow === 'start' || e.arrow === 'both' ? ` marker-start="url(#${id})"` : ''}/>`).join('');
-    const boxes = sk.nodes.map((n) => {
-      const shape = n.round ? `<ellipse cx="${X(n.x)}" cy="${Y(n.y)}" rx="${size(n.w / 2)}" ry="${size(n.h / 2)}"/>` : `<rect x="${X(n.x - n.w / 2)}" y="${Y(n.y + n.h / 2)}" width="${size(n.w)}" height="${size(n.h)}" rx="2"/>`;
-      const fit = Math.min(font, Math.max(5, (n.w * scale - 4) / (Math.max(n.text.length, 1) * 0.62))).toFixed(1);
-      return `${shape}<text x="${X(n.x)}" y="${Y(n.y)}" font-size="${fit}">${esc(n.text)}</text>`;
-    }).join('');
-    const width = ((x1 - x0) * scale + 2 * SKETCH_PAD).toFixed(0), height = ((y1 - y0) * scale + 2 * SKETCH_PAD).toFixed(0);
-    return `<svg class="ts-sketch" role="img" aria-label="rough sketch of a TikZ picture" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
-      `<defs><marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L8 4L0 8z"/></marker></defs>${lines}${boxes}</svg>`;
+  /** A picture as the run drew it (`satex typeset` records it in `sketches`): the paths pgf's driver wrote, in pt, and the node texts where the run set them. */
+  const PICTURE_SCALE = 1.4, PICTURE_MAX = 560, PICTURE_PAD = 6;
+  function sketchSvg(pic) {
+    const [x, y, w, h] = pic.box;
+    const scale = Math.min(PICTURE_SCALE, (PICTURE_MAX - 2 * PICTURE_PAD) / Math.max(w, 1));
+    const width = (w * scale + 2 * PICTURE_PAD).toFixed(0), height = (h * scale + 2 * PICTURE_PAD).toFixed(0);
+    const paths = pic.paths.map((p) => `<path d="${esc(p.d)}" fill="${p.fill ? 'currentColor' : 'none'}" stroke="${p.stroke ? 'currentColor' : 'none'}" stroke-width="${Math.max(p.width, 0.6)}"/>`).join('');
+    const texts = pic.texts.map((t) => `<text x="${t.x}" y="${t.y}" font-size="9" text-anchor="middle" dominant-baseline="central">${esc(t.text)}</text>`).join('');
+    const label = pic.approximate ? 'TikZ picture as the run drew it, approximate where it did not know a number' : 'TikZ picture as the run drew it';
+    return `<svg class="ts-sketch${pic.approximate ? ' approximate' : ''}" role="img" aria-label="${label}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
+      `<g transform="translate(${PICTURE_PAD} ${PICTURE_PAD}) scale(${scale}) translate(${-x} ${-y})">${paths}${texts}</g></svg>`;
   }
   function notation(marked, sketches = [], picture = null) {
     let drawn = 0;
@@ -613,7 +613,7 @@
     return sections(main) + (more ? `<details class="more"><summary>More definitions</summary>${sections(more)}</details>` : '');
   };
 
-  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation, withKeys, hover: hoverCard, useOf, duration };
+  self.satexCards = { chipList, explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation, withKeys, hover: hoverCard, useOf, duration };
   // A rule named anywhere on the site, as a link into the rules page or its code or number in a
   // code span, shows its card. The cards' data is the rules the build wrote, fetched once.
   const RULES_URL = new URL('rules.json', document.currentScript?.src ?? location.href);
@@ -1084,7 +1084,10 @@
     const WRAPS = {
       peek: [[/(<a [^>]*>Ti<i class="tk">k<\/i>Zpingus<\/a>)/, `<span class="claim-host">$1${peek}</span>`]],
       branch: [[/branches/, `<span class="claim-fork">${arm('up')}<span class="claim-base">branches</span>${arm('down')}</span>`]],
-      options: [[/options/, '<span class="claim-opt">options</span>']],
+      // the word gives way to an option a package reads, in brackets; the sketch under it says what it changes
+      options: [[/options/, '<span class="claim-opt claim-anchor"><span>options</span><code>colorlinks</code></span>']],
+      // the word a hover card opens on: where a command comes from, what changed it, the line that loads that
+      origin: [[/command/, '<span class="claim-hov claim-anchor">command</span>']],
       runs: [[/runs/, tag('claim-count', '')]],
       diff: [[/yesterday/, tag('claim-ok', '✓')], [/today/, tag('claim-bad', '✗')]],
       ligatures: [[/fi(?=ne)/, '<span class="claim-lig" title="f and i set as one glyph, ﬁ"><span class="lig-f">f</span><span class="lig-i">i</span><span class="lig-fi">ﬁ</span></span>']],
@@ -1101,13 +1104,15 @@
     const effect = () => {
       if (effects[shown] === 'draw') { line.insertAdjacentHTML('beforeend', sketchPad()); return true; }
       if (effects[shown] === 'stepper') { line.insertAdjacentHTML('beforeend', stepper()); return true; }
-      const chip = line.querySelector('code');
       if (effects[shown] === 'catcodes') { annotate(); return true; }
-      if (WRAPS[effects[shown]]) { for (const [re, wrap] of WRAPS[effects[shown]]) line.innerHTML = line.innerHTML.replace(re, wrap); return true; }
+      const wrapped = !!WRAPS[effects[shown]];
+      for (const [re, wrap] of WRAPS[effects[shown]] ?? []) line.innerHTML = line.innerHTML.replace(re, wrap);
+      // the sketch hangs under the word its effect marked, else under the first code
+      const chip = /** @type {HTMLElement | null} */ (line.querySelector('.claim-anchor') ?? line.querySelector('code'));
       const mock = effects[shown] === 'complete' && offered.length
         ? offered.map((r) => `<li><code class="usage">${usage(r.effective, typesOf(r)).html}</code><span>${esc(r.file ?? r.path ?? '')}</span></li>`).join('') : mocks[shown];
-      if (!mock || !chip) return false;
-      line.insertAdjacentHTML('beforeend', `<ul class="claim-complete" aria-hidden="true">${mock}</ul>`);
+      if (!mock || !chip) return wrapped;
+      line.insertAdjacentHTML('beforeend', `<ul class="claim-complete${chip.matches('.claim-hov') ? ' claim-card' : ''}" aria-hidden="true">${mock}</ul>`);
       // under its chip, as far as the line leaves room
       const box = line.lastElementChild;
       box.style.marginLeft = `${Math.max(0, Math.min(chip.offsetLeft, line.clientWidth - box.offsetWidth))}px`;
@@ -1132,6 +1137,20 @@
     dots.onclick = (e) => { const b = e.target.closest('button'); if (b) show([...dots.children].indexOf(b)); };
     const claim = line.closest('.claim');
     for (const el of [claim, dots]) { el.onmouseenter = () => (paused = true); el.onmouseleave = () => { paused = false; if (line.classList.contains('shows')) { clearTimeout(timer); timer = setTimeout(() => paused || show((shown + 1) % knows.length), 1500); } }; }
+    // the claims differ in height (a sketch, a trace): the tallest sets the room, so the page below never moves
+    const rot = line.parentElement;
+    const reserve = () => {
+      const [was, html] = [shown, line.innerHTML];
+      rot.style.minHeight = '';
+      let most = 0;
+      for (let i = 0; i < knows.length; i++) { shown = i; line.innerHTML = typed(i, length(i)); effect(); most = Math.max(most, line.offsetHeight); }
+      [shown, line.innerHTML] = [was, html];
+      rot.style.minHeight = `${Math.ceil(most)}px`;
+    };
+    reserve();
+    document.fonts?.ready.then(reserve);
+    let resized = 0;
+    addEventListener('resize', () => { clearTimeout(resized); resized = setTimeout(reserve, 150); });
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { line.innerHTML = typed(0, length(0)); line.classList.add('shows'); }
     else { line.innerHTML = ''; run(0, 0, settle); }
   }

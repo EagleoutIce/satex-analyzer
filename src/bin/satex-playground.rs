@@ -364,6 +364,7 @@ pub(crate) fn content_type(name: &str) -> &'static str {
         "ico" => "image/x-icon",
         "wasm" => "application/wasm",
         "gz" => "application/gzip",
+        "zip" => "application/zip",
         "woff2" => "font/woff2",
         "pdf" => "application/pdf",
         "txt" | "tex" | "md" => "text/plain; charset=utf-8", // not prose
