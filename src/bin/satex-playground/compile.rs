@@ -13,6 +13,7 @@
 //! this, so the page offers Compile only where the probe answers.
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::Ordering::Relaxed;
 
 use serde_json::{Value, json};
 
@@ -23,6 +24,10 @@ const KEEP: usize = 4;
 static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Whether the caches of a fresh `satex` are still being built.
 static WARMING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Builds the page asked for that wait for [`ONE`]: the warm-up yields to them.
+static WANTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Counts requests that supersede the build under way (another root): a build stops once it moved on.
+static SUPERSEDED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Compiles every example once in the background, so the first Compile
 /// finds the native caches of this `satex` built: a stale cache costs a
@@ -31,7 +36,6 @@ pub fn warm(site: &Path, examples: &Path) {
     let (root, examples) = (compile_root(site), examples.to_path_buf());
     WARMING.store(true, std::sync::atomic::Ordering::Relaxed);
     std::thread::spawn(move || {
-        let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
         let dir = root.join("warm");
         let _ = std::fs::remove_dir_all(&dir);
         let copied = std::fs::create_dir_all(&dir).is_ok()
@@ -42,9 +46,18 @@ pub fn warm(site: &Path, examples: &Path) {
                 .all(|e| std::fs::copy(e.path(), dir.join(e.file_name())).is_ok());
         let satex = std::env::current_exe().map(|e| e.with_file_name("satex"));
         if let (true, Ok(satex)) = (copied, satex) {
-            for main in mains(&dir) {
-                let _ =
-                    Command::new(&satex).args(["--format", "json", "compile", "-f", &main]).current_dir(&dir).output();
+            // Example by example, each stopped and taken again later when the page asks for a build.
+            let mut todo: std::collections::VecDeque<String> = mains(&dir).into();
+            while let Some(main) = todo.pop_front() {
+                while WANTED.load(Relaxed) > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+                let mut command = Command::new(&satex);
+                command.args(["--format", "json", "compile", "-f", &main]).current_dir(&dir);
+                if output_unless(&mut command, || WANTED.load(Relaxed) > 0).is_err() {
+                    todo.push_back(main);
+                }
             }
         }
         WARMING.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -88,9 +101,16 @@ pub fn respond(
         };
     }
     if method == "POST" && rest.is_empty() {
-        let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+        // A request for another root stops the build under way; the warm-up yields to any.
+        if serde_json::from_slice::<Value>(body).is_ok_and(|r| r["supersedes"] == true) {
+            SUPERSEDED.fetch_add(1, Relaxed);
+        }
+        WANTED.fetch_add(1, Relaxed);
+        let one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+        WANTED.fetch_sub(1, Relaxed);
         let mut runs = Vec::new();
         let answer = build(&root, body, &mut runs).unwrap_or_else(|e| json!({ "error": e, "commands": runs }));
+        drop(one);
         return super::send(stream, method, "answer.json", "no-cache", false, answer.to_string().into_bytes());
     }
     if rest.is_empty() {
@@ -321,7 +341,8 @@ fn run(runs: &mut Vec<Value>, command: &mut Command) -> Result<std::process::Out
     };
     let line: Vec<String> = std::iter::once(command.get_program()).chain(command.get_args()).map(word).collect();
     let start = std::time::Instant::now();
-    let out = command.output();
+    let since = SUPERSEDED.load(Relaxed);
+    let out = output_unless(command, || SUPERSEDED.load(Relaxed) != since);
     runs.push(json!({
         "command": line.join(" "),
         "status": out.as_ref().ok().and_then(|o| o.status.code()),
@@ -329,6 +350,34 @@ fn run(runs: &mut Vec<Value>, command: &mut Command) -> Result<std::process::Out
         "error": out.as_ref().err().map(ToString::to_string),
     }));
     out.map_err(|e| format!("cannot run {}: {e}", command.get_program().to_string_lossy()))
+}
+
+/// `command`'s output, unless `stop` turns true first: then it is killed.
+fn output_unless(command: &mut Command, stop: impl Fn() -> bool) -> std::io::Result<std::process::Output> {
+    use std::process::Stdio;
+    let mut child = command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    // read both pipes meanwhile: a full pipe would stall the child
+    let pipe = |p: Option<Box<dyn std::io::Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            p.map(|mut p| p.read_to_end(&mut bytes));
+            bytes
+        })
+    };
+    let out = pipe(child.stdout.take().map(|p| Box::new(p) as _));
+    let err = pipe(child.stderr.take().map(|p| Box::new(p) as _));
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if stop() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "superseded by a newer request"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    Ok(std::process::Output { status, stdout: out.join().unwrap_or_default(), stderr: err.join().unwrap_or_default() })
 }
 
 /// What a run printed, stderr then stdout, for an error message.

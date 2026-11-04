@@ -89,6 +89,7 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
   async function boot(lines, edits = {}, cwd = '/work', onStatus = undefined) {
     const module = await createSatex({
       onStatus,
+      cancelled: () => stale(),
       instantiateWasm(imports, done) {
         WebAssembly.instantiate(wasm, imports).then((instance) => done(instance, wasm));
         return {};
@@ -129,8 +130,10 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
   /** `satex lsp` in an instance that stays alive: each JSON-RPC message in, the replies out.
    * `reset` drops it: the next message starts one with these flags, in this directory. */
   let server = null, serverArgs = [], serverCwd = '/work', serverLines = [];
+  /** Whether the page no longer wants the run under way: src/lsp/wasm.rs asks while it runs. */
+  let stale = () => false;
   function reset(args = [], cwd = '/work') { server = null; serverArgs = args; serverCwd = cwd; }
-  async function lsp(message) {
+  async function lsp(message, cancelled = () => false) {
     if (!server) {
       // What the engine is doing while a message runs (src/lsp/wasm.rs).
       const onStatus = (json) => status(JSON.parse(json));
@@ -140,6 +143,7 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
     }
     const running = server, text = running.stringToNewUTF8(JSON.stringify(message));
     let out;
+    stale = cancelled;
     try {
       out = JSON.parse(running.UTF8ToString(running._satex_lsp(text)));
     } catch (e) {
@@ -148,6 +152,7 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
       server = null;
       throw e;
     } finally {
+      stale = () => false;
       try { running._free(text); } catch {} // an aborted module takes no more calls
     }
     // an analysis may have cached a class or package
@@ -303,6 +308,8 @@ if (typeof module === 'object' && module.exports) {
    * one at a time, except downloads, which the page sends one at a time itself. Two `lsp` messages after a
    * `reset` would otherwise each start a server of their own. */
   let serial = Promise.resolve();
+  /** The page's count of texts sent (an Int32Array on a SharedArrayBuffer), when the page is cross-origin isolated. */
+  let cancelFlag = null;
   self.onmessage = ({ data }) => {
     if (['init', 'bundle', 'bundles'].includes(data.type)) handle(data);
     else serial = serial.then(() => handle(data));
@@ -311,6 +318,7 @@ if (typeof module === 'object' && module.exports) {
     try {
       if (data.type === 'init') {
         const given = data.given ?? {};
+        cancelFlag = data.cancel ?? null;
         importScripts(given.js ? URL.createObjectURL(new Blob([given.js], { type: 'text/javascript' })) : data.base + data.manifest.js);
         // At most every 100 ms, and every phase change.
         let last = 0, phase = '';
@@ -341,7 +349,9 @@ if (typeof module === 'object' && module.exports) {
         await engine.uncache(data.paths);
         self.postMessage({ type: 'caches', entries: engine.caches() });
       } else if (data.type === 'lsp') {
-        self.postMessage({ type: 'lsp', out: await engine.lsp(data.message) });
+        // the page's shared counter of texts sent: a run of fewer stops once a newer one came
+        const flag = cancelFlag, sent = data.sent;
+        self.postMessage({ type: 'lsp', out: await engine.lsp(data.message, flag && sent != null ? () => Atomics.load(flag, 0) > sent : undefined) });
       }
     } catch (e) {
       self.postMessage({ type: 'error', of: data.type, message: e instanceof Error ? `${e.message}\n${e.stack}` : String(e) });

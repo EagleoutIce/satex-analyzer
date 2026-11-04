@@ -4197,6 +4197,28 @@ fn def_row(
 }
 
 fn scope_rows(analysis: &Analysis) -> ScopeRows {
+    scope_rows_from(analysis, None)
+}
+
+/// [`scope_rows`] of `analysis` built now, the rows of the format's names taken from `prior`'s
+/// where the name has the same number and meaning in both: an edit seldom changes them.
+pub fn carry_scope(prior: &Analysis, analysis: &Analysis) {
+    if let Some(rows) = prior.scope_rows.get() {
+        analysis
+            .scope_rows
+            .get_or_init(|| crate::util::progress::unpaused(|| scope_rows_from(analysis, Some((prior, rows)))));
+    }
+}
+
+fn scope_rows_from(analysis: &Analysis, prior: Option<(&Analysis, &ScopeRows)>) -> ScopeRows {
+    // the names both runs number alike: a meaning that names others means the same in both
+    let same = prior.map_or(0, |(p, _)| {
+        (0..analysis.interner.len().min(p.interner.len()) as u32)
+            .find(|&i| analysis.interner.name(Sym(i)) != p.interner.name(Sym(i)))
+            .unwrap_or(analysis.interner.len().min(p.interner.len()) as u32)
+    });
+    let kept: HashMap<&str, &ScopeRow> =
+        prior.map(|(_, rows)| rows.rest.iter().map(|r| (r.name.as_str(), r)).collect()).unwrap_or_default();
     let defs = analysis.facts.defs.iter().map(|_| std::sync::OnceLock::new()).collect();
     // the names a definition shows; one with only passing definitions shows the format's meaning
     let top = file_depths(analysis);
@@ -4233,9 +4255,20 @@ fn scope_rows(analysis: &Analysis) -> ScopeRows {
         let partner = if base.len() == name.len() { format!("end{name}") } else { base.to_string() };
         let paired = tag == "macro"
             && analysis.interner.lookup(&partner).is_some_and(|p| analysis.env.meaning(p).as_macro().is_some());
+        let tag = if paired { "environment" } else { tag };
+        if let Some((p, _)) = prior
+            && i < same
+            && let Some(row) = kept.get(name)
+            && row.plain == plain
+            && row.record.get("tag").and_then(Json::as_str) == Some(tag)
+            && p.env.meaning(sym) == meaning
+        {
+            rest.push((*row).clone());
+            continue;
+        }
         let mut record = Map::new();
         record.insert("name".into(), json!(analysis.interner.cs(sym)));
-        record.insert("tag".into(), json!(if paired { "environment" } else { tag }));
+        record.insert("tag".into(), json!(tag));
         record.insert("effective".into(), json!(effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), None)));
         record.insert("package".into(), json!("kernel"));
         record.insert("provider".into(), json!("kernel"));

@@ -2802,32 +2802,23 @@ pub fn document_symbols(analysis: &Analysis, path: &str, doc: &Text) -> Option<V
         container_name: None,
     };
     let mut out = Vec::new();
-    for record in query::run(analysis, Query::Occurrences, &Filter::Always) {
-        if record.get("path").and_then(Json::as_str) != Some(path) {
-            continue;
-        }
-        let kind = record.get("kind").and_then(Json::as_str).unwrap_or("");
-        let symbol_kind = match kind {
+    // the facts of this file only: no record is built for the rest of the run
+    let here = |f| analysis.file_name(f) == path;
+    for occ in analysis.facts.occurrences.iter().filter(|o| here(o.span.file)) {
+        let symbol_kind = match occ.kind.as_str() {
             "section" => SymbolKind::NAMESPACE,
             "label" => SymbolKind::CONSTANT,
             "begin-environment" => SymbolKind::MODULE,
             _ => continue,
         };
-        let Some(name) = record.get("key").and_then(Json::as_str).filter(|n| !n.is_empty()) else { continue };
-        let line = record.get("line").and_then(Json::as_u64).unwrap_or(1) as u32;
-        let col = record.get("col").and_then(Json::as_u64).unwrap_or(1) as u32;
-        out.push(symbol(name.to_string(), symbol_kind, line, col));
-    }
-    for record in query::run(analysis, Query::Definitions, &Filter::Always) {
-        if record.get("origin").and_then(Json::as_str) != Some("document")
-            || record.get("path").and_then(Json::as_str) != Some(path)
-        {
-            continue;
+        if !occ.key.is_empty() {
+            out.push(symbol(occ.key.clone(), symbol_kind, occ.span.line, occ.span.col));
         }
-        let Some(name) = record.get("name").and_then(Json::as_str) else { continue };
-        let line = record.get("line").and_then(Json::as_u64).unwrap_or(1) as u32;
-        let col = record.get("col").and_then(Json::as_u64).unwrap_or(1) as u32;
-        out.push(symbol(name.to_string(), SymbolKind::FUNCTION, line, col));
+    }
+    for def in analysis.facts.defs.iter().filter(|d| here(d.span.file)) {
+        if query::origin(analysis, def.span.file) == "document" {
+            out.push(symbol(analysis.interner.cs(def.name), SymbolKind::FUNCTION, def.span.line, def.span.col));
+        }
     }
     (!out.is_empty()).then_some(out)
 }
@@ -2835,7 +2826,7 @@ pub fn document_symbols(analysis: &Analysis, path: &str, doc: &Text) -> Option<V
 /// `lint`'s findings in the document's own files. Precision notes are the
 /// analysis's, not the document's: an editor hides them.
 pub fn findings(analysis: &Analysis) -> Vec<Record> {
-    crate::linter::lint(analysis)
+    crate::linter::lint_document(analysis)
         .into_iter()
         .filter(|r| r.get("origin").and_then(Json::as_str) == Some("document"))
         .filter(|r| r.get("category").and_then(Json::as_str) != Some("precision"))

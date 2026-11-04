@@ -475,12 +475,15 @@ fn undefined_control_sequences(report: &mut Report) {
     // is not known.
     let assumed = report.analysis.facts.diagnostics.iter().any(|d| d.code == "region-catcodes");
     let mut known: Option<Vec<String>> = None;
-    // Per name: where else the run defines it, and the nearest known name (a name used undefined
-    // many times is looked up once).
+    // Per name: where else the run defines it, the package that would define it, and the nearest
+    // known name (a name used undefined many times is looked up once).
     let mut elsewheres: crate::fixed::HashMap<Sym, Option<String>> = crate::fixed::HashMap::default();
+    let mut fixes: crate::fixed::HashMap<Sym, Option<Fix>> = crate::fixed::HashMap::default();
     let mut nearest: crate::fixed::HashMap<Sym, Option<String>> = crate::fixed::HashMap::default();
     for expansion in &report.analysis.facts.expansions {
-        if !matches!(expansion.meaning, MeaningKind::Undefined | MeaningKind::UndefinedApproximated) {
+        if !matches!(expansion.meaning, MeaningKind::Undefined | MeaningKind::UndefinedApproximated)
+            || !report.wanted(expansion.span)
+        {
             continue;
         }
         let name = report.cs(expansion.name);
@@ -506,7 +509,10 @@ fn undefined_control_sequences(report: &mut Report) {
         } else {
             (Severity::Warning, format!("`{name}` is undefined on a path satex could not decide"))
         };
-        let fix = if severity == Severity::Error && elsewhere.is_none() { load_fix(report, raw) } else { None };
+        let fix = match severity == Severity::Error && elsewhere.is_none() {
+            true => fixes.entry(expansion.name).or_insert_with(|| load_fix(report, raw)).clone(),
+            false => None,
+        };
         match fix {
             Some(fix) => report.add_fix_as(severity, expansion.span, &name, message, fix),
             None => {

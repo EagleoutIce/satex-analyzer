@@ -52,6 +52,29 @@ pub fn background<T>(f: impl FnOnce() -> T) -> Option<T> {
 
 static STOPPING: AtomicBool = AtomicBool::new(false);
 
+thread_local! {
+    /// Whether the run under way is no longer wanted (a newer edit came): [`cancellable`].
+    static CANCEL: std::cell::RefCell<Option<Box<dyn Fn() -> bool>>> = const { std::cell::RefCell::new(None) };
+    static POLLS: Cell<u32> = const { Cell::new(0) };
+}
+
+/// `f`, a run that stops at its next budget check once `cancelled` says so; whether it did.
+/// What such a run leaves is no analysis of anything: the caller drops it.
+pub fn cancellable<T>(cancelled: Box<dyn Fn() -> bool>, f: impl FnOnce() -> T) -> (T, bool) {
+    let outer = CANCEL.replace(Some(cancelled));
+    let out = f();
+    let cancelled = CANCEL.replace(outer).is_some_and(|c| c());
+    (out, cancelled)
+}
+
+/// Asked at the machine's budget checks: every 16th asks [`cancellable`]'s test, which may
+/// call out of the wasm module.
+pub(crate) fn run_cancelled() -> bool {
+    let n = POLLS.get().wrapping_add(1);
+    POLLS.set(n);
+    n.is_multiple_of(16) && CANCEL.with_borrow(|c| c.as_ref().is_some_and(|c| c()))
+}
+
 /// Stops every run at its next budget check (the server's `exit`).
 pub fn stop_all() {
     STOPPING.store(true, Ordering::Relaxed);

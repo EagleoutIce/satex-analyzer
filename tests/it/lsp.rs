@@ -4032,3 +4032,36 @@ fn hover_shows_the_redefinition_chain() {
         "{text}"
     );
 }
+
+/// A run under way when a newer text comes stops: only the newer text's
+/// findings are published, never the stopped run's.
+#[test]
+fn a_run_stops_for_a_newer_text_and_publishes_only_its_findings() {
+    let dir =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-lsp-stop-{}", std::process::id())));
+    let body = |tail: &str| {
+        format!("\\documentclass{{article}}\n\\newcount\\n\n\\begin{{document}}\n{tail}\n\\end{{document}}\n")
+    };
+    let slow = body("\\loop\\advance\\n1 \\ifnum\\n<3000000 \\repeat\n\\undefinedfirst");
+    std::fs::write(dir.join("main.tex"), &slow).unwrap();
+    let mut server = Server::start_with(&crate::support::test_cache(), &dir, &["--set", "limits.seconds=0"]);
+    let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+    server.response(id);
+    server.notify("initialized", json!({}));
+    let uri = fixture_uri(&dir.join("main.tex"));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": slow } }),
+    );
+    // the run is under way
+    server.notification("satex/status");
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": body("\\undefinedsecond") }] }),
+    );
+    let published = server.notification("textDocument/publishDiagnostics");
+    let said = published["params"].to_string();
+    assert_eq!(published["params"]["version"], 2, "{said}");
+    assert!(said.contains("undefinedsecond") && !said.contains("undefinedfirst"), "{said}");
+    server.shutdown();
+}

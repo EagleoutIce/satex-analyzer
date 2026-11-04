@@ -23,6 +23,12 @@ thread_local! { static LOCAL: RefCell<Option<Local>> = const { RefCell::new(None
 unsafe extern "C" {
     fn emscripten_exit_with_live_runtime() -> !;
     fn satex_status(json: *const c_char);
+    fn satex_cancelled() -> i32;
+}
+
+/// Whether the page asked to stop the run under way (src/lsp/wasm-status.js).
+pub(super) fn cancelled() -> bool {
+    unsafe { satex_cancelled() != 0 }
 }
 
 pub fn serve(cfg: crate::project::config::Config, root: std::path::PathBuf, main: Option<std::path::PathBuf>) -> ! {

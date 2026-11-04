@@ -1806,6 +1806,9 @@ table.prim td { vertical-align: top; } table.long.prim td:nth-child(3) { white-s
 /* a PDF of another project or root: dimmed, no clicks, says whose it is */
 #play-pdf.pdf-other .pdf-pages, #play-pdf.pdf-other .pdf-text { opacity: .35; filter: grayscale(1); pointer-events: none; }
 .pdf-owner { position: sticky; top: 0; z-index: 3; margin: 0; padding: .4rem .6rem; background: var(--bg); border-bottom: 1px solid var(--border); font-size: .85rem; }
+.pdf-wait { display: block; margin-top: .2rem; color: var(--accent); } .pdf-wait-bar .pdf-wait { margin-top: 0; }
+.pdf-wait::before { content: ""; display: inline-block; width: .55rem; height: .55rem; margin-right: .35rem; border-radius: 50%; border: 2px solid var(--accent); border-right-color: transparent; vertical-align: -.05rem; animation: pdf-spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .pdf-wait::before { animation: none; } }
 #play-pdf.pdf-running #pdf-compile { cursor: progress; box-shadow: inset 0 -2px 0 var(--accent); }
 
 /* The typeset view: one grid for every row. A fixed gutter holds the source line (right-aligned, the same x

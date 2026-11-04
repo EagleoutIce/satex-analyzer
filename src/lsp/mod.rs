@@ -92,6 +92,9 @@ struct Kept {
     /// Whether the engine is analyzing: only then does the connection thread
     /// answer from what was kept, without the part placed at the cursor.
     analyzing: std::sync::atomic::AtomicBool,
+    /// Texts opened or changed: counted by the connection thread as they come, by the
+    /// engine as it takes them. A run that began with fewer taken is stale once more came.
+    edits: std::sync::atomic::AtomicU64,
 }
 
 impl std::ops::Deref for Kept {
@@ -237,6 +240,7 @@ fn main_loop(
                             match &m {
                                 EngineMsg::Open(uri, _, text, _) | EngineMsg::Change(uri, text, _) => {
                                     texts.insert(uri.clone(), text.clone());
+                                    hovers.edits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                 }
                                 EngineMsg::Close(uri) => {
                                     texts.remove(uri);
@@ -752,6 +756,10 @@ struct Engine {
     /// Where messages arrive while a run goes on, and those that wait for its end.
     inbox: Option<Receiver<EngineMsg>>,
     deferred: std::collections::VecDeque<EngineMsg>,
+    /// Texts opened or changed that the engine took ([`Kept::edits`]).
+    taken: u64,
+    /// The last run stopped for a newer text.
+    cancelled: bool,
     /// A run of no document: what a completion answers from before a
     /// document's first run ends, the installation's classes and packages.
     blank: Option<Rc<Analysis>>,
@@ -811,6 +819,8 @@ impl Engine {
             checkpoints: HashMap::default(),
             inbox: None,
             deferred: Default::default(),
+            taken: 0,
+            cancelled: false,
             blank: None,
             published: HashMap::default(),
             edited: HashMap::default(),
@@ -846,7 +856,16 @@ impl Engine {
         for doc in self.docs.values() {
             crate::project::overlay::set(&doc.path, doc.text.clone());
         }
+        self.cancelled = false;
         let (analysis, fresh) = self.run_for(&path, &text);
+        // A newer text came while it ran: it stopped, and says nothing. The newer text's run follows.
+        if self.cancelled {
+            crate::util::progress::note!("satex: a run stopped for a newer text");
+            if !self.dirty.contains(uri) {
+                self.dirty.push(uri.clone());
+            }
+            return;
+        }
         self.dirty.retain(|d| d != uri);
         let Some(doc) = self.docs.get_mut(uri) else { return };
         let changed = !doc.analysis.as_ref().is_some_and(|a| Rc::ptr_eq(a, &analysis));
@@ -858,6 +877,8 @@ impl Engine {
         {
             carry_probes(old, &analysis);
         }
+        // the last run's rows of the format's names, for the completions of this one
+        let prior = changed.then(|| doc.analysis.clone()).flatten();
         doc.analysis = Some(analysis.clone());
         (doc.analyzed, doc.shift) = (Some(text.clone()), None);
         self.runs.retain(|_, run| Rc::strong_count(&run.analysis) > 1);
@@ -867,8 +888,12 @@ impl Engine {
         if fresh {
             self.publish_run(&analysis, &path, &versions, None);
             // What a completion reads of the new run, built once its diagnostics are out, while
-            // the last run answers. The playground's server answers only once a message is done:
-            // there the first completion builds it.
+            // the last run answers: the format's names carried over from the last run. The
+            // playground's server answers only once a message is done: there the first
+            // completion builds the rest.
+            if let Some(prior) = prior {
+                self.serving(|_| crate::queries::query::carry_scope(&prior, &analysis));
+            }
             if !cfg!(target_os = "emscripten") {
                 self.serving(|_| handlers::warm(&analysis));
             }
@@ -1074,6 +1099,9 @@ impl Engine {
                 continue;
             }
             let run = self.run(&root);
+            if self.cancelled {
+                return run;
+            }
             if self.runs.get(&root_key).is_some_and(|r| r.reads.contains(&key)) {
                 self.orphans.remove(&key);
                 self.owners.insert(key, root);
@@ -1142,23 +1170,38 @@ impl Engine {
             return (run.analysis.clone(), false);
         }
         let source = crate::project::overlay::read_to_string(root).unwrap_or_default();
-        let analysis = Rc::new(self.serving(|engine| {
-            let cfg = engine.cfg;
-            match discovery::is_document(&source) {
-                // The build's files (`.aux`, the `.bbl`) stay for the next run.
-                true => Machine::build(
-                    engine
-                        .checkpoints
-                        .entry(key.clone())
-                        .or_insert_with(|| crate::analysis::machine::Checkpoints::new(cfg)),
-                    &source,
-                    root,
-                    cfg,
-                    true,
-                ),
-                false => Machine::analyze(&source, Some(root), cfg),
-            }
-        }));
+        // A newer text, of any open file, makes this run stale: it stops, the next one starts.
+        #[cfg(not(target_os = "emscripten"))]
+        let stale: Box<dyn Fn() -> bool> = {
+            let (kept, taken) = (self.hovers.clone(), self.taken);
+            Box::new(move || kept.edits.load(std::sync::atomic::Ordering::Relaxed) > taken)
+        };
+        #[cfg(target_os = "emscripten")]
+        let stale: Box<dyn Fn() -> bool> = Box::new(wasm::cancelled);
+        let (analysis, cancelled) = crate::analysis::probe::cancellable(stale, || {
+            self.serving(|engine| {
+                let cfg = engine.cfg;
+                match discovery::is_document(&source) {
+                    // The build's files (`.aux`, the `.bbl`) stay for the next run.
+                    true => Machine::build(
+                        engine
+                            .checkpoints
+                            .entry(key.clone())
+                            .or_insert_with(|| crate::analysis::machine::Checkpoints::new(cfg)),
+                        &source,
+                        root,
+                        cfg,
+                        true,
+                    ),
+                    false => Machine::analyze(&source, Some(root), cfg),
+                }
+            })
+        });
+        let analysis = Rc::new(analysis);
+        if cancelled {
+            self.cancelled = true;
+            return (analysis, false);
+        }
         // The server's stderr is the client's log.
         for note in analysis.limit_notes() {
             eprintln!("satex: {note}");
@@ -1332,7 +1375,15 @@ impl Engine {
     fn flush(&mut self) {
         let frozen = crate::linter::Frozen::new(&self.cfg.project, &self.root);
         let dirty = std::mem::take(&mut self.dirty);
+        self.cancelled = false;
         for uri in dirty.iter().rev() {
+            // after a stopped run the rest waits for the newer text too
+            if self.cancelled {
+                if !self.dirty.contains(uri) {
+                    self.dirty.push(uri.clone());
+                }
+                continue;
+            }
             if self.docs.get(uri).is_some_and(|d| d.analysis.is_some() || !frozen.holds(&d.path)) {
                 self.analyze(uri);
             }
@@ -1349,6 +1400,9 @@ impl Engine {
     }
 
     fn step(&mut self, msg: EngineMsg) {
+        if matches!(msg, EngineMsg::Open(..) | EngineMsg::Change(..)) {
+            self.taken += 1;
+        }
         match msg {
             EngineMsg::Shutdown => {}
             EngineMsg::Open(uri, path, text, version) => {

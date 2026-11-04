@@ -17,6 +17,9 @@ use std::rc::Rc;
 /// thin out and double it.
 const EVERY: u64 = 1 << 23;
 const KEPT: usize = 8;
+/// In the body, between two of its top-level lines (a frame, a paragraph): steps
+/// between checkpoints are this share of the current spacing.
+const BODY_SHARE: u64 = 8;
 
 /// A run's whole state at a line start of a user's file, its paths joined.
 struct Checkpoint<'a> {
@@ -24,8 +27,10 @@ struct Checkpoint<'a> {
     drive: Drive,
     /// How many entries of [`Checkpoints::log`] it read.
     reads: usize,
-    /// Taken where the last edit began: kept while the list thins out.
+    /// Taken where the last edit began, or just before: kept while the list thins out.
     pinned: bool,
+    /// The last one before the edit's line so far: the next one on the way replaces it.
+    toward: bool,
 }
 
 /// The checkpoints a run takes, and the drive it resumes with.
@@ -40,6 +45,12 @@ struct Taking<'a> {
     log: Vec<crate::project::overlay::Read>,
     every: u64,
     next: u64,
+    /// The steps at the last one.
+    last: u64,
+    /// Whether this run pinned one for its edit yet.
+    pinned: bool,
+    /// Lines from the last one on the way to the edit's line to that line.
+    toward: u32,
     /// Whether `\begin{document}` had been read at the last one.
     document: bool,
     /// The file and line where the last edit began: a checkpoint is due
@@ -72,12 +83,23 @@ impl Machine<'_> {
         let Some(taking) = &self.checkpoints.on else { return false };
         let Some((mouth, lookahead)) = reading_file(&self.input) else { return false };
         let document = self.out.document_depth.is_some();
-        let edit = taking.edit.as_ref().is_some_and(|(path, line)| {
-            mouth.position().0 >= *line && Path::new(&self.out.files[usize::from(mouth.file)].path) == path
-        });
+        let gap = self.edit_gap(taking, mouth);
+        let edit = gap == Some(0);
         // before the line that opens the document reads the `.aux` a rerun changed
         let opens = !document && opens_document(mouth);
-        if self.halted || (self.out.steps < taking.next && document == taking.document && !edit && !opens) {
+        let since = self.out.steps - taking.last;
+        // On the way to the edit's line, each time half as far from it as the last (a few per run):
+        // the next edit, likely there again, resumes at the last line start before it.
+        let toward = gap.is_some_and(|g| g > 0 && g.saturating_mul(2) <= taking.toward);
+        // A top-level line of the body (a frame, a paragraph): an edit there resumes close by.
+        let top = || {
+            since >= taking.every / BODY_SHARE
+                && self.out.document_depth.is_some_and(|d| usize::from(d) == self.env.group_level())
+                && !self.env.many_groups()
+        };
+        let due = self.out.steps >= taking.next || document != taking.document || edit || opens || toward || top();
+        // not while a path through an undecided conditional runs: a resume there numbers its meanings anew
+        if self.halted || !due || self.env.forking() {
             return false;
         }
         // a preamble command's lookahead (`\@ifnextchar[`) holds the next line's first token
@@ -99,19 +121,35 @@ impl Machine<'_> {
     pub(super) fn take_checkpoint(&mut self, drive: Drive) {
         let machine = self.clone();
         let (steps, document) = (self.out.steps, self.out.document_depth.is_some());
+        let gap = match (&self.checkpoints.on, reading_file(&self.input)) {
+            (Some(taking), Some((mouth, _))) => self.edit_gap(taking, mouth),
+            _ => None,
+        };
         let Some(taking) = self.checkpoints.on.as_mut() else { return };
         taking.log.extend(crate::project::overlay::log(true));
-        let pinned = taking.edit.take().is_some();
+        let (toward, pinned) = (gap.is_some_and(|g| g > 0), gap.is_some());
+        match gap {
+            Some(0) => taking.edit = None,
+            Some(g) => taking.toward = g,
+            None => {}
+        }
         if self.cfg.verbose >= 2 {
             crate::util::progress::note!(
                 "satex: checkpoint at {:?}, step {steps}",
                 reading_file(&self.input).map(|(m, _)| m.position())
             );
         }
-        if pinned {
+        // The first for this run's edit unpins the last edit's; one on the way replaces the one before.
+        if pinned && !taking.pinned {
             taking.list.iter_mut().for_each(|c| c.pinned = false);
+            taking.pinned = true;
         }
-        taking.list.push(Checkpoint { machine, drive, reads: taking.log.len(), pinned });
+        if toward {
+            taking.list.retain(|c| !c.toward);
+        } else {
+            taking.list.iter_mut().for_each(|c| c.toward = false);
+        }
+        taking.list.push(Checkpoint { machine, drive, reads: taking.log.len(), pinned, toward });
         if taking.list.len() > KEPT {
             // Every other one goes; the last one and the pinned one stay.
             let mut n = taking.list.len();
@@ -121,11 +159,21 @@ impl Machine<'_> {
             });
             taking.every *= 2;
         }
-        (taking.next, taking.document) = (steps + taking.every, document);
+        (taking.next, taking.last, taking.document) = (steps + taking.every, steps, document);
+    }
+
+    /// Lines from the run's place to the last edit's line in its file, 0 at or past it;
+    /// `None` elsewhere or without one.
+    fn edit_gap(&self, taking: &Taking, mouth: &Mouth) -> Option<u32> {
+        let (path, line) = taking.edit.as_ref()?;
+        (Path::new(&self.out.files[usize::from(mouth.file)].path) == path)
+            .then(|| line.saturating_sub(mouth.position().0))
     }
 }
 
 /// The file the run reads, under tokens a lookahead gave back, and whether there are any.
+/// A token list read to its end (a macro's last token run) is read no more: TeX drops it
+/// at the next read.
 fn reading_file(input: &super::Input) -> Option<(&Mouth, bool)> {
     let mut lookahead = false;
     for frame in input.iter().rev() {
@@ -163,6 +211,8 @@ pub struct Checkpoints<'a> {
     list: Vec<Checkpoint<'a>>,
     /// The files the run read or looked for, in order.
     log: Vec<crate::project::overlay::Read>,
+    /// The document's text at the last run: where it changed is the edit's line.
+    source: String,
     every: u64,
     /// The line the last run resumed at, if it did.
     pub resumed: Option<(String, u32)>,
@@ -177,6 +227,7 @@ impl<'a> Checkpoints<'a> {
             setup: None,
             list: Vec::new(),
             log: Vec::new(),
+            source: String::new(),
             every: EVERY,
             resumed: None,
             build_started: None,
@@ -207,6 +258,8 @@ impl<'a> Checkpoints<'a> {
         let clock = std::time::Instant::now();
         let (resumed, edit) = self.resume(source);
         let resumed_in = clock.elapsed();
+        // The document's own first changed line says best where the edit is.
+        let changed = first_changed_line(&std::mem::replace(&mut self.source, source.to_string()), source);
         crate::project::overlay::log(true);
         let (mut m, id) = match resumed {
             Some(resumed) => resumed,
@@ -224,12 +277,16 @@ impl<'a> Checkpoints<'a> {
             }
         };
         m.started = *self.build_started.get_or_insert(m.started);
+        let edit = changed.map(|line| (PathBuf::from(&m.out.files[usize::from(id)].path), line)).or(edit);
         let next = m.out.steps + self.every;
         let taking = Taking {
             list: std::mem::take(&mut self.list),
             log: std::mem::take(&mut self.log),
             every: self.every,
             next,
+            last: m.out.steps,
+            pinned: false,
+            toward: u32::MAX,
             document: m.out.document_depth.is_some(),
             edit,
         };
@@ -358,6 +415,15 @@ fn reread(
         }
     }
     Ok(())
+}
+
+/// The first line `now` differs from `was` on, `None` when they are the same.
+fn first_changed_line(was: &str, now: &str) -> Option<u32> {
+    if was.is_empty() || was == now {
+        return None;
+    }
+    let same = was.split('\n').zip(now.split('\n')).take_while(|(a, b)| a == b).count();
+    Some(same as u32 + 1)
 }
 
 /// What a run reads before the document's first line, besides the

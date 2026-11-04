@@ -91,6 +91,7 @@ impl Edit {
 
 /// What a rule suggests: the prose, and the edits that carry it out when the
 /// fix is mechanical.
+#[derive(Clone)]
 pub struct Fix {
     pub description: String,
     pub applicability: Applicability,

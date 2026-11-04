@@ -188,3 +188,76 @@ fn a_known_document_built_again_typesets_one_path() {
         assert!(optional.is_empty(), "build {build}: {optional:?}");
     }
 }
+
+/// An edit inside a body read as one argument (a beamer frame) resumes, the
+/// next time, inside the document before that body: the run on the way to
+/// the edited line keeps a checkpoint shortly before it, and says what a
+/// full run says.
+#[test]
+fn an_edit_in_a_collected_body_resumes_before_it() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-frame");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let lines = [
+        "\\documentclass{article}",
+        "\\long\\def\\slide#1\\endslide{#1\\par}",
+        "\\begin{document}",
+        "\\slide",
+        "First slide, line one.",
+        "\\endslide",
+        "Between the slides.",
+        "",
+        "\\slide",
+        "Second slide, line one.",
+        "Second slide, line two.",
+        "\\endslide",
+        "\\end{document}",
+    ];
+    let body = 1 + lines.iter().position(|l| l.starts_with("\\begin{document}")).unwrap() as u32;
+    let edited = 1 + lines.iter().position(|l| l.starts_with("Second slide, line one")).unwrap();
+    let mut text = lines.join("\n") + "\n";
+    std::fs::write(&main, &text).unwrap();
+    let cfg = crate::support::config();
+    // as the editor builds it: the build's `.aux` decides what `\begin{document}` reads
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    Machine::build(&mut checkpoints, &text, &main, &cfg, true);
+    for edit in 1..=2 {
+        let mut now = lines.to_vec();
+        let line = format!("Second slide, line one {edit}.");
+        now[edited - 1] = &line;
+        text = now.join("\n") + "\n";
+        std::fs::write(&main, &text).unwrap();
+        let incremental = Machine::build(&mut checkpoints, &text, &main, &cfg, true);
+        let at = checkpoints.resumed.clone();
+        let full = Machine::build(&mut Checkpoints::new(&cfg), &text, &main, &cfg, true);
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "edit {edit}, resumed at {at:?}");
+    }
+    let at = checkpoints.resumed.map(|(_, line)| line);
+    assert!(at.is_some_and(|l| l > body && l < edited as u32), "resumed at {at:?}, the body opens on line {body}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A package's look-ahead (`\usepackage`'s `\@ifnextchar[`) that holds the
+/// `\begin` of the next line still leaves a restart point before the line
+/// that opens the document: the build's rerun does not load the package again.
+#[test]
+fn a_rerun_after_a_package_with_look_ahead_resumes_where_the_document_begins() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-rerun-graphicx");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let text = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\section{One}\\label{one}\nSee \\ref{one}.\n\\end{document}\n";
+    std::fs::write(&main, text).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    let analysis = Machine::build(&mut checkpoints, text, &main, &cfg, false);
+    assert!(analysis.build_runs > 1, "the build ran once");
+    let opens = 1 + text.lines().position(|l| l.starts_with("\\begin{document}")).unwrap() as u32;
+    assert_eq!(checkpoints.resumed.map(|(_, line)| line), Some(opens), "{} runs", analysis.build_runs);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -358,12 +358,20 @@ pub struct Report<'a> {
     rule: &'static Rule,
     /// [`cites`] for `rule`, built once instead of once per finding.
     reference: String,
+    /// Only findings in the document's own files are wanted: [`lint_document`].
+    document: bool,
     out: Vec<Record>,
 }
 
 impl<'a> Report<'a> {
     pub fn analysis(&self) -> &'a Analysis {
         self.analysis
+    }
+
+    /// Whether a finding at `span` is kept: the editor wants only the document's own.
+    /// A rule asks before costly work on a finding.
+    pub fn wanted(&self, span: Span) -> bool {
+        !self.document || self.index.origin(span.file) == "document"
     }
 
     pub fn add(&mut self, span: Span, name: &str, message: String, fix: Option<String>) {
@@ -423,6 +431,9 @@ impl<'a> Report<'a> {
         fix: Option<String>,
         edits: Option<(fix::Applicability, Vec<fix::Edit>)>,
     ) {
+        if !self.wanted(span) {
+            return;
+        }
         let mut record = crate::queries::query::place(self.analysis, span);
         record.insert("code".into(), json!(self.rule.code));
         record.insert("number".into(), json!(self.rule.number()));
@@ -543,10 +554,15 @@ impl<'a> Report<'a> {
 }
 
 pub fn lint(analysis: &Analysis) -> Vec<Record> {
-    crate::analysis::probe::within_run(analysis.started, || lint_run(analysis))
+    crate::analysis::probe::within_run(analysis.started, || lint_run(analysis, false))
 }
 
-fn lint_run(analysis: &Analysis) -> Vec<Record> {
+/// [`lint`]'s findings in the document's own files (`origin` `document`), the others never built.
+pub fn lint_document(analysis: &Analysis) -> Vec<Record> {
+    crate::analysis::probe::within_run(analysis.started, || lint_run(analysis, true))
+}
+
+fn lint_run(analysis: &Analysis, document: bool) -> Vec<Record> {
     let mut out = Vec::new();
     let sources = fix::Sources::default();
     crate::util::progress::bar("lint: the text as set", 0, 2, (0, 0), (0, 0), None, &[]);
@@ -572,6 +588,7 @@ fn lint_run(analysis: &Analysis) -> Vec<Record> {
             index: &index,
             rule,
             reference: cites(rule),
+            document,
             out: Vec::new(),
         };
         let since = std::time::Instant::now();

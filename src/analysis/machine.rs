@@ -7386,7 +7386,7 @@ will look undefined",
         if self.halted {
             return true;
         }
-        if crate::analysis::probe::preempted() {
+        if crate::analysis::probe::preempted() || crate::analysis::probe::run_cancelled() {
             self.halted = true;
             self.out.exhausted = true;
             return true;

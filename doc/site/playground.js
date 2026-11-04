@@ -217,6 +217,9 @@
   // The worker's code comes with the page: file:// pages cannot start a worker from a file.
   const newWorker = () => new Worker(URL.createObjectURL(new Blob([manifest.worker], { type: 'text/javascript' })));
   let worker = newWorker();
+  /** Texts sent to the server, shared with the worker where the page is cross-origin isolated: a run
+   * stops once a newer text was sent (src/lsp/wasm.rs), instead of being waited for. */
+  const textsSent = self.crossOriginIsolated ? new Int32Array(new SharedArrayBuffer(4)) : null;
   worker.onmessage = (e) => onWorkerMessage(e);
   worker.onerror = (e) => onWorkerError(e);
   const escape = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -450,6 +453,8 @@
     if (recovering) { held.push([msg, transfer]); return; }
     // a file:// page hands its buffers over, so a second worker cannot get them: commands share the first
     if (msg.given) mirrorable = false;
+    // another project, or a new server: the run under way is of texts no longer wanted
+    if (textsSent && (msg.type === 'reset' || (msg.type === 'project' && msg.replace))) Atomics.add(textsSent, 0, 1);
     if (MIRROR.has(msg.type)) mirrored.push(msg);
     // the project's files as they are now, not every edit that made them
     if (msg.type === 'project') {
@@ -515,10 +520,13 @@
       if (method === 'textDocument/hover') return Promise.resolve(null);
     }
     // the version of each text the server has: findings of an older one are dropped
-    if (method === 'textDocument/didOpen' || method === 'textDocument/didChange') sentVersions.set(params.textDocument.uri, params.textDocument.version);
+    if (method === 'textDocument/didOpen' || method === 'textDocument/didChange') {
+      sentVersions.set(params.textDocument.uri, params.textDocument.version);
+      if (textsSent) Atomics.add(textsSent, 0, 1);
+    }
     order.push(runs);
     running += +runs;
-    worker.postMessage({ type: 'lsp', message });
+    worker.postMessage({ type: 'lsp', message, sent: textsSent ? Atomics.load(textsSent, 0) : null });
     if (notify) return null;
     const reply = new Promise((resolve, reject) => pending.set(message.id, { resolve, reject }));
     return read ? reply.then((r) => { if (answered.size > 300) answered.delete(answered.keys().next().value); answered.set(key, r); return r; }) : reply;
@@ -4238,6 +4246,10 @@
     // a click is answered at once, in the PDF pane: one build at a time, a newer request waits (the newest only) and says so.
     // A build nobody clicked for (auto, on save, after a switch) leaves the open tab alone.
     if (!cached && !auto && $('play-pdf').hidden) showPanel('play-pdf');
+    // a build for another root (an example switched to) is not waited for: it stops, its answer is dropped
+    const wanted = { root: alone === null ? state.root ?? state.file : null, dir: state.dir };
+    const supersedes = pdfBusy && !cached && (pdfRunning?.root !== wanted.root || pdfRunning?.dir !== wanted.dir);
+    if (supersedes) pdfStop();
     if (pdfBusy) { if (!cached) { pdfQueued = [slice, false, alone, true]; $('play-pdf').classList.add('pdf-running'); pdfStatus.textContent = pdfWarming ? 'compiling once the compile server has finished its setup…' : 'compiling next, once the build under way ends…'; flare([pdfStatus], true); } return; }
     if (!cached) { $('play-pdf').classList.add('pdf-running'); pdfStatus.textContent = 'compiling: asking the compile server…'; }
     if (!(await pdfServer) && !(await probeServer())) {
@@ -4251,15 +4263,23 @@
     const at = `${state.file === root ? '' : `${state.file}:`}${p.line + 1}:${p.character + 1}`;
     pdfWorker ??= new Worker(URL.createObjectURL(new Blob([`(${compileWorkerMain})()`], { type: 'text/javascript' })));
     const start = performance.now(), what = slice ? `slice at ${at}` : root;
-    const tick = cached ? 0 : setInterval(() => { pdfStatus.textContent = `${pdfWarming ? 'waiting for the setup, then compiling' : 'compiling'} ${what}… ${secs(performance.now() - start)}${pdfQueued ? ' · one more queued' : ''}`; }, 100);
+    const tick = cached ? 0 : setInterval(() => {
+      const why = `${pdfWarming ? "waiting for the compile server's setup, then compiling" : 'compiling'} ${what}: ${secs(performance.now() - start)}${pdfQueued ? ' · one more queued' : ''}`;
+      pdfStatus.textContent = why;
+      pdfWait(why);
+    }, 100);
+    pdfTick = tick;
     pdfBusy = true;
+    pdfRunning = wanted;
     $('play-pdf').classList.toggle('pdf-running', !cached);
     // the zip is of the build shown: none while the next one runs
     $('pdf-zip').setAttribute('aria-disabled', String(!cached));
     const dir = state.dir;
     pdfWorker.onmessage = ({ data }) => {
       clearInterval(tick);
+      pdfWait(null);
       pdfBusy = false;
+      pdfRunning = null;
       $('play-pdf').classList.remove('pdf-running');
       $('pdf-zip').removeAttribute('aria-disabled');
       const next = pdfQueued;
@@ -4276,7 +4296,32 @@
       }
       if (next) compile(...next);
     };
-    pdfWorker.postMessage({ url: COMPILE, timeout: COMPILE_MS, request: { main: root, files: alone === null ? pdfFiles() : { [root]: alone }, sets: pdfSets(), ...(slice ? { at } : {}), ...(cached ? { cached } : {}) } });
+    pdfWorker.postMessage({ url: COMPILE, timeout: COMPILE_MS, request: { main: root, files: alone === null ? pdfFiles() : { [root]: alone }, sets: pdfSets(), ...(slice ? { at } : {}), ...(cached ? { cached } : {}), ...(supersedes ? { supersedes } : {}) } });
+  }
+  /** The build under way (its root and project) and its status timer. */
+  var pdfRunning = null, pdfTick = 0;
+  /** Drops the build under way: its worker goes, the server stops it once the next request says it supersedes it. */
+  function pdfStop() {
+    pdfWorker?.terminate();
+    pdfWorker = null;
+    clearInterval(pdfTick);
+    pdfWait(null);
+    pdfBusy = false;
+    pdfRunning = null;
+    pdfQueued = null;
+  }
+  /** Why the PDF pane waits, in full, with a spinner: in the bar naming whose PDF it is, else a bar of its own. */
+  function pdfWait(text) {
+    let el = pdfBody.querySelector('.pdf-wait');
+    if (text === null) { (el?.closest('.pdf-wait-bar') ?? el)?.remove(); return; }
+    if (!el) {
+      el = document.createElement('span');
+      el.className = 'pdf-wait';
+      el.setAttribute('role', 'status');
+      const owner = pdfBody.querySelector('.pdf-owner');
+      if (owner) owner.append(el); else { const bar = document.createElement('p'); bar.className = 'pdf-owner pdf-wait-bar'; bar.append(el); pdfBody.prepend(bar); }
+    }
+    el.textContent = text;
   }
   /** How long a build may take before the page gives up on it: the server's own limit is shorter. */
   const COMPILE_MS = 600000;
@@ -5978,7 +6023,7 @@
       const [js, wasm, bundle] = await Promise.all([manifest.js, manifest.wasm, manifest.kernels[0].bundle].map(local));
       given = { js, wasm, bundle };
     }
-    const ready = await ask({ type: 'init', base, manifest, given }, given ? Object.values(given).map((b) => b.buffer) : []);
+    const ready = await ask({ type: 'init', base, manifest, given, cancel: textsSent }, given ? Object.values(given).map((b) => b.buffer) : []);
     booted = true;
     try { sessionStorage.removeItem('satex-recovered'); } catch {}
     timing('t-init', secs(performance.now() - started), 'time to fetch SaTeX and the pdfTeX kernel and set them up');

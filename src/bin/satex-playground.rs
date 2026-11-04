@@ -251,7 +251,9 @@ pub(crate) fn send(
     if encoded {
         head.push_str("Content-Encoding: gzip\r\n");
     }
-    head.push_str("\r\n");
+    // Cross-origin isolated from the first load, as doc/site/sw.js makes it later: the page shares
+    // a SharedArrayBuffer with its worker, which a run polls to stop for a newer text.
+    head.push_str("Cross-Origin-Opener-Policy: same-origin\r\nCross-Origin-Embedder-Policy: credentialless\r\n\r\n");
     stream.write_all(head.as_bytes())?;
     if method != "HEAD" {
         stream.write_all(&body)?;
