@@ -65,7 +65,7 @@ A card says what documents the name, and nothing else:
 2. The package's documented sources: a `\DescribeMacro` paragraph, a `\begin{macro}` section, an l3doc `function` block. Only prose counts: a `\changes` note, a usage line or a fragment never stands in for a description.
 3. In the project's own files, the comment block right above a definition, or the comment that ends its line. `% #1: the text to box` names the argument.
 
-When none of them speaks, the card says `No documentation found. Defined at file:line`. The usage line names each argument by the documentation's syntax line, else by the type the run gives it, else by its place (`⟨arg2⟩`). A default is a hint (`[⟨number⟩ = 0]`), never the label. The `from` chip names the package that defines the name first; a package that redefines it shows as `redefined by`.
+When none of them speaks, the card says `No documentation found. Defined at file:line`. The usage line names each argument by the documentation's syntax line, else by the type the run gives it, else by its place (`⟨arg2⟩`). A default is a hint (`[⟨number⟩ = 0]`), never the label. The `from` chip names the package that defines the name first, and a package that redefines it shows as `redefined by`.
 
 ```tex
 % Draws a frame around its argument.

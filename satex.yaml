@@ -683,7 +683,7 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
       #! affects: output
   bibliography:  # citation keys and the .bib entries the run read
     #! category: widget
-    enabled: true  # a manager: search by key, author, title, year; edit fields, add per entry type, delete unused
+    enabled: true  # a manager: search by key, author, title, year, edit fields, add per entry type, delete unused
       #! affects: output
   index:  # index terms (\index{term!sub})
     #! category: widget
@@ -700,7 +700,7 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
       #! example: `enabled: false`: no tree lens, action or dialog
   units:  # dimensions: `12pt`, `\textwidth`, a value range
     #! category: hover
-    enabled: true  # hover in every unit, a converter dialog and convert actions
+    enabled: true  # hover in every unit (each value writes itself) and a converter dialog
       #! affects: output
       #! example: `enabled: false`: no conversions on a length
     units: [pt, mm, cm, in, bp]  # the units a hover shows and the conversions offered
@@ -850,9 +850,9 @@ limits:
   site_forks: 64  # how many paths one place in a line may start before its \if is approximated. 0 = never
     #! affects: precision, speed
     #! example: lower: a `\foreach` with unknown bounds finishes faster but knows less
-  digit_lengths: 3  # how many digit counts a number of unknown digits is read apart into, one path each; past them the longer counts are one path
+  digit_lengths: 3  # how many digit counts a number of unknown digits is read apart into, one path each. Past them the longer counts are one path
     #! affects: precision, speed
-    #! example: lower: `\int_rand:n {16777215}` read digit by digit forks less; higher: pgfmath tells two from three digits
+    #! example: lower: `\int_rand:n {16777215}` read digit by digit forks less. Higher: pgfmath tells two from three digits
   paths: 16  # how many alternative paths satex keeps at once before merging the oldest two. Higher is more precise and slower
     #! affects: precision, speed, memory
     #! example: `\ifdraft ... \fi` many times over: more paths keep each combination apart

@@ -1939,14 +1939,14 @@
         },
         "digit_lengths": {
           "default": 3,
-          "description": "how many digit counts a number of unknown digits is read apart into, one path each; past them the longer counts are one path",
+          "description": "how many digit counts a number of unknown digits is read apart into, one path each. Past them the longer counts are one path",
           "minimum": 0,
           "type": "integer",
           "x-affects": [
             "precision",
             "speed"
           ],
-          "x-example": "lower: `\\int_rand:n {16777215}` read digit by digit forks less; higher: pgfmath tells two from three digits"
+          "x-example": "lower: `\\int_rand:n {16777215}` read digit by digit forks less. Higher: pgfmath tells two from three digits"
         },
         "expansion_depth": {
           "default": 512,
@@ -3492,7 +3492,7 @@
           "properties": {
             "enabled": {
               "default": true,
-              "description": "a manager: search by key, author, title, year; edit fields, add per entry type, delete unused",
+              "description": "a manager: search by key, author, title, year, edit fields, add per entry type, delete unused",
               "type": "boolean",
               "x-affects": [
                 "output"
