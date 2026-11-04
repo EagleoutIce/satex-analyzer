@@ -353,7 +353,7 @@ struct Lists {
     section: Option<String>,
     lua: Vec<PathBuf>,
     counter_namespace: Option<String>,
-    streams: Vec<(i64, Vec<String>, usize)>,
+    streams: Vec<(i64, Vec<(Vec<String>, usize, usize)>)>,
     outputs: Vec<(String, Option<String>)>,
     pending: Vec<(String, String)>,
     aliases: Vec<(Sym, Sym)>,
@@ -1161,7 +1161,7 @@ impl Machine<'_> {
             parts.push(("prefixes and flags".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             hash.put(&self.section.as_deref());
             let mut streams: Vec<_> = self.streams.iter().collect();
-            streams.sort();
+            streams.sort_by_key(|(n, _)| **n);
             hash.put(&streams);
             let mut outputs: Vec<_> = self.outputs.iter().collect();
             outputs.sort();
@@ -2324,8 +2324,13 @@ impl Machine<'_> {
             self.lua
                 .set_files(lists.lua.iter().map(|f| PathBuf::from(roots.decode(&f.display().to_string()))).collect());
             self.counter_namespace = lists.counter_namespace.clone();
+            let at = |(lines, lo, hi): &(Vec<String>, usize, usize)| super::At {
+                lines: Rc::new(lines.clone()),
+                lo: *lo,
+                hi: *hi,
+            };
             self.streams =
-                Rc::new(lists.streams.iter().map(|(n, lines, at)| (*n, (Rc::new(lines.clone()), *at))).collect());
+                Rc::new(lists.streams.iter().map(|(n, texts)| (*n, Rc::new(texts.iter().map(at).collect()))).collect());
             self.outputs = Rc::new(lists.outputs.iter().cloned().collect());
             self.pending = Rc::new(lists.pending.iter().cloned().collect());
             self.env.aliases = lists.aliases.iter().copied().collect();
@@ -3180,8 +3185,11 @@ impl Machine<'_> {
             lua: self.lua.files().iter().map(|f| PathBuf::from(roots.encode(&f.display().to_string()))).collect(),
             counter_namespace: self.counter_namespace.clone(),
             streams: {
-                let mut s: Vec<_> =
-                    self.streams.iter().map(|(n, (lines, at))| (*n, lines.as_ref().clone(), *at)).collect();
+                let mut s: Vec<_> = self
+                    .streams
+                    .iter()
+                    .map(|(n, t)| (*n, t.iter().map(|a| (a.lines.to_vec(), a.lo, a.hi)).collect()))
+                    .collect();
                 s.sort_by_key(|(n, ..)| *n);
                 s
             },

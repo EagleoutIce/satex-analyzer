@@ -1235,15 +1235,20 @@ impl Env {
                 self.widen_in_place(sym, typed);
                 continue;
             };
-            let Some(Some(mine)) = self.slots.get(i).cloned() else { continue };
-            let joined = join(theirs.clone(), Some(mine.clone()), self.sets, Some(typed));
+            // Unbound here: the other side's write joins "undefined" (D2).
+            let mine = self.slots.get(i).cloned().flatten();
+            if mine.is_none() && theirs.is_none() {
+                continue;
+            }
+            let joined = join(theirs.clone(), mine.clone(), self.sets, Some(typed));
             let Some(mut joined) = widen_slot(&theirs, joined, self.sets, typed, Reach::Havoc) else {
                 self.widen_in_place(sym, typed);
                 continue;
             };
-            if same_slot(&Some(mine.clone()), &Some(joined.clone())) {
+            if same_slot(&mine, &Some(joined.clone())) {
                 continue;
             }
+            self.grow(sym);
             joined.certain = false;
             self.log(i);
             self.wrote_in_place(i);
@@ -2707,7 +2712,9 @@ fn join(a: Option<Binding>, b: Option<Binding>, sets: SetLimits, typed: Option<&
                 }
                 _ => None,
             };
-            let same = x.meaning == y.meaning && set.as_ref().is_none_or(|s| s.len() == 1);
+            // Top on one side only is not the other side's set (D1).
+            let same = x.meaning == y.meaning
+                && set.as_ref().map_or(members(&x).is_none() && members(&y).is_none(), |s| s.len() == 1);
             let mut defs = x.defs;
             defs.extend(y.defs.iter().copied());
             defs.sort_unstable();

@@ -1209,12 +1209,12 @@ fn a_let_dispatch_after_an_undecided_test_runs_every_meaning() {
     assert_eq!(analysis.facts.defs.iter().filter(|d| analysis.interner.name(d.name) == "after").count(), 1);
 }
 
-/// Without splitting the joined `\next` has an unknown meaning, and
-/// running it defines neither.
+/// Without splitting the joined `\next` has an unknown meaning: running
+/// it does what either macro may (`may_run`), so both may be defined.
 #[test]
-fn a_let_dispatch_without_splitting_is_unknown() {
+fn a_let_dispatch_without_splitting_may_define_both() {
     let names = names(&analyze_with_splits(&format!(r"{DISPATCH}\dispatch"), 0));
-    assert!(!names.contains(&"resA".to_string()) && !names.contains(&"resB".to_string()), "{names:?}");
+    assert!(names.contains(&"resA".to_string()) && names.contains(&"resB".to_string()), "{names:?}");
 }
 
 /// `\ifx` of a name a join left with several meanings is decided for each
@@ -2673,4 +2673,255 @@ fn a_delimiter_only_straddles_text_that_cannot_hold_it() {
     );
     assert!(crate::support::defined(&analysis, "r"), "the argument ends where `|` ends the text");
     assert!(!crate::support::defined(&analysis, "End"), "`\\End` is never an argument");
+}
+
+/// `\s` holds `fill` an unknown number of times (at least once), then
+/// `\rm` reads it up to `delimiter` and defines the token after it.
+fn delimited_over_unknown_repeats(fill: &str, delimiter: &str) -> Analysis {
+    analyze(&format!(
+        "\\catcode`\\|=12 \\catcode`\\!=12 \\count1=\\pdfuniformdeviate 100 \
+         \\def\\s{{}}\\def\\l{{\\edef\\s{{\\s {fill}}}\\advance\\count1 -1 \\ifnum\\count1>0 \\expandafter\\l\\fi}}\\l \
+         \\def\\rm!#1{delimiter}#2{{\\def#2{{#1}}}}\\expandafter\\rm\\expandafter!\\s {delimiter}\\r"
+    ))
+}
+
+/// Edge cases: a delimiter of several tokens, a control sequence alone,
+/// text whose class holds none of it: the argument is all the text.
+#[test]
+fn a_delimiter_the_text_cannot_hold_is_met_after_it() {
+    for (fill, delimiter) in [("a", "\\End"), ("|", "\\End"), ("a", "|\\End"), ("|", "||\\End"), ("a|", "|\\End")] {
+        let analysis = delimited_over_unknown_repeats(fill, delimiter);
+        let case = format!("{fill} then {delimiter}");
+        assert!(crate::support::defined(&analysis, "r"), "{case}: the argument ends at the delimiter after the text");
+        assert!(!crate::support::defined(&analysis, "End"), "{case}: `\\End` is never an argument");
+    }
+}
+
+/// A delimiter inside braces never matches (tex.web § 392): text whose
+/// texts hold it only in a group is read on to the real one.
+#[test]
+fn a_delimiter_in_braces_of_unknown_text_is_no_end() {
+    let analysis = delimited_over_unknown_repeats("{|}", "|\\End");
+    assert!(crate::support::defined(&analysis, "r"), "the argument ends after the braced texts");
+}
+
+/// A recursion that cuts the rest its own call put back, level after
+/// level, reads that rest on instead of parting again: it ends, and
+/// what follows runs (hyperref's `\HyPsd@GlyphProcess` over unknown text).
+#[test]
+fn a_recursion_over_its_own_rest_ends() {
+    let analysis = analyze(
+        "\\catcode`\\!=12 \\catcode`\\>=12 \\count1=\\pdfuniformdeviate 100 \
+         \\def\\s{}\\def\\l{\\edef\\s{\\s!}\\advance\\count1 -1 \\ifnum\\count1>0 \\expandafter\\l\\fi}\\l \
+         \\def\\p#1>#2\\end{\\ifx\\relax#2\\relax\\else\\p#2\\end\\fi}\\expandafter\\p\\s>\\end \\def\\done{}",
+    );
+    assert!(crate::support::defined(&analysis, "done"), "the recursion ends");
+}
+
+/// Mutation over delimiter and text: wherever TeX ends the argument at
+/// the delimiter after the text for every count, so does satex, and
+/// text that may hold the delimiter still may end it (a path that does).
+#[test]
+fn delimiters_over_unknown_text_agree_with_tex() {
+    let fills = ["a", "|", "||", "a|", "|a", "!"];
+    let delimiters = ["\\End", "|\\End", "||\\End", "a\\End", "|a\\End", "!\\End"];
+    for fill in fills {
+        for delimiter in delimiters {
+            let analysis = delimited_over_unknown_repeats(fill, delimiter);
+            let case = format!("{fill} then {delimiter}");
+            // Without `\End` in the text TeX finds the delimiter only at
+            // its end, whatever the count: `#2` is `\r`.
+            assert!(crate::support::defined(&analysis, "r"), "{case}: TeX defines \\r");
+            assert!(!crate::support::defined(&analysis, "End"), "{case}: TeX never defines \\End");
+        }
+    }
+}
+
+/// Places the model (semantics/mapping.md, D1-D11) found less sound than
+/// it: each run here must keep the outcome the model keeps.
+mod model_deviations {
+    use super::PRELUDE;
+    use crate::support::diagnosed;
+    use satex::analysis::machine::{Analysis, Machine};
+    use satex::project::config::{Config, Limits, Load, Texmf};
+
+    /// Plain TeX with `limits` changed: no format, no inputs.
+    fn run(source: &str, limits: impl Fn(&mut Limits)) -> Analysis {
+        let mut cfg = Config {
+            load: Load { packages: false, classes: false, inputs: false, format: false, ..Default::default() },
+            texmf: Texmf { kpsewhich: false, ..Default::default() },
+            ..crate::support::config()
+        };
+        limits(&mut cfg.limits);
+        Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg)
+    }
+
+    /// The bodies of every definition of `\R`.
+    fn bodies(analysis: &Analysis) -> Vec<String> {
+        analysis
+            .facts
+            .defs
+            .iter()
+            .filter(|d| analysis.interner.name(d.name) == "R")
+            .filter_map(|d| d.mac.as_ref())
+            .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner).trim().to_string())
+            .collect()
+    }
+
+    /// D6, D9: past the choices, a conditional's arms run as `may_run`.
+    /// What they may assign is no longer the value before.
+    #[test]
+    fn widened_arms_may_assign_every_kind() {
+        let rows = [
+            ("skip", r"\skip1=0pt \ifnum\pdfuniformdeviate2=0 \skip1=5pt\fi\edef\R{\the\skip1}", "0.0pt"),
+            ("toks", r"\toks1={a}\ifnum\pdfuniformdeviate2=0 \toks1={b}\fi\edef\R{\the\toks1}", "a"),
+            ("catcode", r"\ifnum\pdfuniformdeviate2=0 \catcode`\A=12 \fi\edef\R{\the\catcode`\A}", "11"),
+            (
+                "parameter",
+                r"\escapechar=92 \ifnum\pdfuniformdeviate2=0 \escapechar=-1 \fi\edef\R{\the\escapechar}",
+                "92",
+            ),
+            ("gdef in a group", r"\def\x{a}\ifnum\pdfuniformdeviate2=0 {\gdef\x{b}}\fi\edef\R{\x}", "a"),
+            ("xdef in a group", r"\def\x{a}\ifnum\pdfuniformdeviate2=0 {\xdef\x{b}}\fi\edef\R{\x}", "a"),
+            (
+                "csname",
+                r"\def\x{a}\ifnum\pdfuniformdeviate2=0 \expandafter\def\csname x\endcsname{b}\fi\edef\R{\x}",
+                "a",
+            ),
+            (
+                "register by name",
+                r"\def\n{1}\count1=0 \ifnum\pdfuniformdeviate2=0 \count\n=5 \fi\edef\R{\the\count1}",
+                "0",
+            ),
+        ];
+        let wrong: Vec<String> = rows
+            .iter()
+            .filter_map(|(what, source, before)| {
+                let got = bodies(&run(source, |l| l.choices = 0));
+                got.iter().all(|b| b == before).then(|| format!("{what}: {got:?}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "kept the value before: {wrong:?}");
+    }
+
+    /// D6 (c): macros past `limits.may_run_depth` are reported, and
+    /// followed when the limit allows.
+    #[test]
+    fn may_run_follows_macros_to_its_depth_and_says_so_past_it() {
+        let source = r"\def\a{\b}\def\b{\c}\def\c{\d}\def\d{\count1=5 }\count1=0
+            \ifnum\pdfuniformdeviate2=0 \a\fi\edef\R{\the\count1}";
+        let shallow = run(source, |l| l.choices = 0);
+        let said = diagnosed(&shallow, "joined-code-may-define");
+        assert!(said.iter().any(|m| m.contains("may_run_depth")), "{said:?}");
+        let deep = run(source, |l| {
+            l.choices = 0;
+            l.may_run_depth = 4;
+        });
+        assert!(bodies(&deep).iter().any(|b| b != "0"), "{:?}", bodies(&deep));
+    }
+
+    /// D11: a name a join left one of several macros, run where it may not
+    /// split, does what any of them may do.
+    #[test]
+    fn a_joined_name_run_unsplit_does_what_its_macros_may() {
+        let analysis = run(
+            r"\def\a{\count1=5 }\def\b{\relax}\count1=0
+              \ifnum\pdfuniformdeviate2=0 \let\n\a\else\let\n\b\fi\n\edef\R{\the\count1}",
+            |l| l.meaning_splits = 0,
+        );
+        assert!(bodies(&analysis).iter().any(|b| b != "0"), "{:?}", bodies(&analysis));
+    }
+
+    /// D8: where no path may part, required text that may begin inside an
+    /// unknown character (a digit or `-`, never empty) begins there.
+    #[test]
+    fn an_unforked_literal_begins_inside_unknown_text() {
+        let analysis = run(
+            r"\dimen1=\pdfuniformdeviate 5pt \advance\dimen1 -2pt \def\a-#1{\def\R{#1}}\expandafter\a\the\dimen1\relax",
+            |l| l.choices = 0,
+        );
+        assert!(bodies(&analysis).iter().all(|b| !b.is_empty()), "{:?}", bodies(&analysis));
+        assert!(!diagnosed(&analysis, "unforked-argument-end").is_empty());
+    }
+
+    /// D2: a loop summary joins a name one pass defined with "undefined"
+    /// on the path that never did, so both answers of `\ifdefined` stay.
+    #[test]
+    fn a_loop_summary_keeps_a_name_only_some_passes_define() {
+        let analysis = run(
+            r"\count1=\pdfuniformdeviate 100 \def\lp{\ifnum\count1>0 \advance\count1 -1 \ifnum\count1=50 \def\hit{x}\fi
+              \expandafter\lp\fi}\lp\ifdefined\hit\def\R{yes}\else\def\R{no}\fi",
+            |_| {},
+        );
+        let got = bodies(&analysis);
+        assert!(got.contains(&"yes".to_string()) && got.contains(&"no".to_string()), "{got:?}");
+    }
+
+    /// P1, P5 (semantics/PROOF-STATUS.md): a local write in a group whose
+    /// depth a loop left open, or after a summarized loop in the same
+    /// group, is put back by the group's end. The value TeX gives, or
+    /// unknown digits, never another value.
+    #[test]
+    fn group_ends_restore_after_open_groups_and_summaries() {
+        let rows = [
+            (
+                "groups a loop opened",
+                r"\count0=7 \count1=\pdfuniformdeviate 5 \def\lp{\ifnum\count1>0 \advance\count1 -1 \begingroup\count0=2 \expandafter\lp\fi}
+                  \begingroup\lp\count0=1 \endgroup\edef\R{\the\count0}",
+                &["7", "2"][..],
+            ),
+            (
+                "a global write among them",
+                r"\count0=7 \count1=\pdfuniformdeviate 5 \def\lp{\ifnum\count1>0 \advance\count1 -1 \begingroup\count0=2 \expandafter\lp\fi}
+                  \begingroup\lp\global\count0=1 \count0=3 \endgroup\edef\R{\the\count0}",
+                &["1"][..],
+            ),
+            (
+                "a summarized loop",
+                r"\count0=7 {\count1=\pdfuniformdeviate 100 \def\lp{\ifnum\count1>0 \advance\count1 -1 \count0=3 \expandafter\lp\fi}\lp\count0=5}
+                  \edef\R{\the\count0}",
+                &["7"][..],
+            ),
+        ];
+        let wrong: Vec<String> = rows
+            .iter()
+            .filter_map(|(what, source, tex)| {
+                let got = bodies(&run(source, |_| {}));
+                let ok = got.iter().all(|b| tex.contains(&b.as_str()) || b.contains("unknown"));
+                (!ok || got.is_empty()).then(|| format!("{what}: {got:?}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:?}");
+    }
+
+    /// P6: a cut region's category changes are the old category or the
+    /// new one afterwards, not the old one alone.
+    #[test]
+    fn a_cut_keeps_the_categories_the_region_set() {
+        let analysis = run(
+            r"\count1=60 \def\r{\ifnum\count1>0 \advance\count1 -1 \catcode`\A=12 \r\relax\fi}\r\edef\R{\the\catcode`\A}",
+            |l| l.expansion_stack = 20,
+        );
+        let got = bodies(&analysis);
+        assert!(!got.is_empty() && got.iter().all(|b| b != "11"), "{got:?}");
+    }
+
+    /// D1: a join with a name of any meaning is any meaning, whichever side
+    /// it is on.
+    #[test]
+    fn a_join_with_any_meaning_is_any_meaning_both_ways() {
+        use satex::engine::env::{Binding, SetLimits, join_slot};
+        use satex::engine::tex::Meaning;
+        let mut some = Binding::builtin(Meaning::Unknown);
+        some.may = Some(std::rc::Rc::from(vec![
+            Meaning::Undefined,
+            Meaning::Primitive(satex::engine::builtins::Primitive::Relax),
+        ]));
+        let top = Binding::builtin(Meaning::Unknown);
+        let sets = SetLimits::default();
+        let ab = join_slot(Some(some.clone()), Some(top.clone()), sets).expect("bound");
+        let ba = join_slot(Some(top), Some(some), sets).expect("bound");
+        assert_eq!((ab.meaning.clone(), ab.may.clone()), (Meaning::Unknown, None));
+        assert_eq!((ba.meaning, ba.may), (ab.meaning, ab.may));
+    }
 }

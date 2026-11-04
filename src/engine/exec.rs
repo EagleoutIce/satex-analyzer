@@ -2921,6 +2921,10 @@ impl Machine<'_> {
             Cond::False => Some(false),
             Cond::Eof => {
                 let stream = four_bit(self.scan_number()?);
+                if self.stream_at_end(stream).is_none() {
+                    let by = self.intern("ifeof");
+                    self.pin_stream(Some(stream), by, None);
+                }
                 self.stream_at_end(stream)
             }
             // tex.web § 505: a register no `\setbox` has filled is void.
@@ -4407,7 +4411,7 @@ impl Machine<'_> {
     }
 
     /// An assignment that may have named `c`'s entry: it holds its old code or `value`.
-    fn join_code(&mut self, table: CodeTable, c: char, value: &Value, global: bool, span: Span) {
+    pub(crate) fn join_code(&mut self, table: CodeTable, c: char, value: &Value, global: bool, span: Span) {
         let target = self.char_code_sym(table, c);
         let joined = self.code_value(table, c).join(value, self.env.sets);
         self.env.set_value(target, joined, global);
@@ -4741,6 +4745,7 @@ impl Machine<'_> {
         // tex.web § 1225: a missing `to` is inserted.
         self.scan_keyword("to");
         let Some(name) = self.read_r_token() else { return };
+        self.pin_stream(stream, by, Some(span));
         let open = self.stream_open(stream);
         if open != Some(true) {
             // tex.web § 484: a stream not open reads the terminal, giving whatever

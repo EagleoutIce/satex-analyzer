@@ -1974,6 +1974,17 @@
           ],
           "x-example": "a document with thousands of `\\foreach` loops may need more"
         },
+        "may_run_depth": {
+          "default": 3,
+          "description": "how many macro levels deep satex follows code a join made unknown to find what it may assign",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "`\\def\\a{\\b}` reached in skipped code: what `\\b` assigns is made unknown too"
+        },
         "meaning_set": {
           "default": 8,
           "description": "how many possible meanings a name keeps after branches merge before it becomes unknown",

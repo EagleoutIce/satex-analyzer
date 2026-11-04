@@ -207,6 +207,28 @@ fn tcolorbox_of_unknown_height_keeps_its_anchors_local() {
     assert!(!defined(&analysis, "southwest"), "\\southwest leaked out of the box's groups");
 }
 
+/// Mutations of the box above: known height, a nested box, and anchors
+/// read by pictures before and after it. None leaves \southwest defined.
+fn box_anchors_stay_local(main: &str) {
+    let Some(analysis) = check("tcolorbox_anchor_variants", main, &[]) else { return };
+    assert!(!defined(&analysis, "southwest"), "\\southwest leaked out of the groups ({main})");
+}
+
+#[test]
+fn tcolorbox_of_known_height_keeps_its_anchors_local() {
+    box_anchors_stay_local("known.tex");
+}
+
+#[test]
+fn nested_tcolorbox_of_unknown_height_keeps_its_anchors_local() {
+    box_anchors_stay_local("nested.tex");
+}
+
+#[test]
+fn pictures_around_a_tcolorbox_keep_their_anchors_local() {
+    box_anchors_stay_local("before_after.tex");
+}
+
 fixtures! {
     tikz_bent_path_on_background_layer("tikz_bend_pingus", "mwe.tex");
     tikz_bend_to_a_point_of_unknown_width_closes_the_picture("tikz_bend_unknown_width", "main.tex");

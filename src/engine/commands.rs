@@ -2053,6 +2053,7 @@ impl Machine<'_> {
         let stream = self.scan_int();
         self.scan_keyword("to");
         let Some(name) = self.read_r_token() else { return };
+        self.pin_stream(stream, by, Some(span));
         let open = self.stream_open(stream);
         if open != Some(true) {
             // tex.web § 484: a stream that is not open is the terminal; a

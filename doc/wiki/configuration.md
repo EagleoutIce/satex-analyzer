@@ -772,6 +772,9 @@ limits:
   call_summary_after: 2  # after this many runs of one call, a call with unknown arguments reuses their result instead of running. 0 = never
     #! affects: precision, speed
     #! example: `\pgfmathparse{\x}` with unknown `\x` reuses what earlier calls did
+  may_run_depth: 3  # how many macro levels deep satex follows code a join made unknown to find what it may assign
+    #! affects: precision, speed
+    #! example: `\def\a{\b}` reached in skipped code: what `\b` assigns is made unknown too
   cycle_after: 2  # how often one call may repeat exactly the same state before satex ends that endless loop. 0 = never
     #! affects: speed
     #! example: `\def\a{\a}\a` ends after 2 identical rounds

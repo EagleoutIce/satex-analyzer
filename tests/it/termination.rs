@@ -1044,6 +1044,80 @@ Some text with microtype protrusion and expansion.
         assert_eq!(crate::support::body(&a, "C"), "y");
     }
 
+    /// Steps a document whose message text is one of a few known texts may
+    /// take: the bare article document takes about half of it.
+    const WRAP_STEPS: u64 = 2_000_000;
+    /// Undecided choices it may make: a few per text it may be.
+    const WRAP_FORKS: u64 = 200;
+
+    /// A document that sets `\l_my_tl` to `value` and then runs `call`.
+    fn wrapped(name: &str, value: &str, call: &str) -> Option<Analysis> {
+        let preamble = format!(
+            r"\ExplSyntaxOn
+\msg_new:nnn {{ my }} {{ x }} {{ The~value~'#1'~is~not~one~I~know~of,~so~I~wrap~it~over~lines~here~and~'#2'. }}
+\tl_set:Ne \l_my_tl {{ {value} }}
+{call}
+\ExplSyntaxOff"
+        );
+        latex(name, &document(&preamble, "Text."), |_| {})
+    }
+
+    fn wrap_document(name: &str, value: &str, call: &str) {
+        let Some(a) = wrapped(name, value, call) else { return };
+        converged(&a, WRAP_FORKS);
+        assert!(a.steps <= WRAP_STEPS, "{} steps, at most {WRAP_STEPS} expected", a.steps);
+        let unsupported: Vec<&str> = a
+            .facts
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported)
+            .map(|d| d.code)
+            .collect();
+        assert_eq!(unsupported, Vec::<&str>::new());
+    }
+
+    /// expl3's `\iow_wrap` (every message) cuts its text into chunks of
+    /// eight tokens. Over text that is one of several, its loop converges
+    /// in a few paths per text, never a fork per chunk.
+    #[test]
+    fn a_message_wrapped_over_one_of_several_texts_converges() {
+        wrap_document(
+            "iow-wrap-one-of",
+            r"\int_case:nnF { \pdfuniformdeviate 4 } { {0}{a~b} {1}{d} {2}{ccccccccccccccccccc} } { \c_space_tl }",
+            r"\msg_warning:nnee { my } { x } { \l_my_tl } { \l_my_tl \l_my_tl }",
+        );
+    }
+
+    /// A scan that gave up gives the document text it read back to the
+    /// file: no path of the message reads the document ahead of the
+    /// others, so none runs off its end or ends in the message's group.
+    #[test]
+    fn a_message_wrapped_over_one_of_several_texts_ends_on_its_line() {
+        let Some(a) = wrapped(
+            "iow-wrap-one-of-line",
+            r"\int_case:nnF { \pdfuniformdeviate 4 } { {0}{a~b} {1}{d} {2}{ccccccccccccccccccc} } { \c_space_tl }",
+            r"\msg_warning:nnee { my } { x } { \l_my_tl } { \l_my_tl \l_my_tl }",
+        ) else {
+            return;
+        };
+        let read_on = ["runaway-argument", "file-ended", "unbalanced-file", "unbalanced-conditional", "missing-end"];
+        let found: Vec<&str> = a.facts.diagnostics.iter().map(|d| d.code).filter(|c| read_on.contains(c)).collect();
+        assert_eq!(found, Vec::<&str>::new());
+        assert!(crate::support::defined(&a, "SatexReachedEnd"));
+    }
+
+    /// The same over several unknown chunks, a word longer than a line and
+    /// runs of spaces.
+    #[test]
+    fn a_message_wrapped_over_unknown_chunks_long_words_and_spaces_converges() {
+        wrap_document(
+            "iow-wrap-edge",
+            r"\int_if_odd:nTF { \pdfuniformdeviate 4 } { a~b } { \int_if_odd:nTF { \pdfuniformdeviate 4 } { d~~~e } { ccccccccccccccccccc } }",
+            r"\msg_warning:nnee { my } { x } { \l_my_tl ~ \int_eval:n { \pdfuniformdeviate 99 } ~ \l_my_tl }
+  { averyveryverylongwordwithoutanyspaceinitthatrunsfarpastthelinewidthofseventynineletters ~~ \l_my_tl }",
+        );
+    }
+
     /// A loop whose flag a macro in a widened conditional clears
     /// (scrlayer-notecolumn's `\ifeof\slnc@file\@tempswafalse\fi` over a
     /// joined stream): the flag may be false after it, so the loop may end.

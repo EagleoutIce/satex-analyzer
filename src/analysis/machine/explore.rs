@@ -2859,10 +2859,11 @@ impl Machine<'_> {
             growth.parts.push("endlinechar");
         }
         x.end_line = end_line;
-        if !same_streams(&x.streams, &y.streams) {
+        let streams = join_streams(&x.streams, &y.streams, widen, usize::from(self.limits.value_set));
+        if !same_streams(&x.streams, &streams) {
             growth.parts.push("streams");
         }
-        x.streams = join_streams(&x.streams, &y.streams);
+        x.streams = streams;
         // A waiting `\afterassignment` token (tex.web § 1269) joins like
         // the `\aftergroup` ones: one token for either, or none.
         if x.after_assignment.map(|t| t.tok) != y.after_assignment.map(|t| t.tok) {

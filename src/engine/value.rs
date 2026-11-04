@@ -189,9 +189,12 @@ impl Num {
     }
 
     /// Every value of the kind: what an unknown typesetting result is.
+    /// A count reaches `-2^31` by `\advance` (tex.web § 1238 checks no overflow).
     pub fn full(dimen: bool) -> Num {
-        let max = if dimen { MAX_DIMEN } else { MAX_INT };
-        Num::range(-max, max)
+        match dimen {
+            true => Num::range(-MAX_DIMEN, MAX_DIMEN),
+            false => Num::range(WORD_MIN, WORD_MAX),
+        }
     }
 
     /// Least upper bound: the interval spanning both.

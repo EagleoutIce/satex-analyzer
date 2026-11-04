@@ -813,3 +813,117 @@ fn a_printed_glue_is_read_back_whole() {
     );
     assert!(!names(&analysis).contains(&"Horizontal".to_string()), "part of the glue was typeset");
 }
+
+// Files written apart: the texts a file may hold are read one per path,
+// and the paths join once each read its text.
+
+/// [`analyze`], reading the files `\input` names.
+fn analyze_files(source: &str) -> Analysis {
+    let mut cfg = satex::project::config::Config { arm_joins: true, ..crate::support::bare() };
+    cfg.load.inputs = true;
+    Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg)
+}
+
+/// Writes `\a` on one path and `\b` and `\c` on the other to `name`,
+/// so the file holds one of two texts of different lengths.
+fn two_texts(name: &str, short_first: bool) -> String {
+    let (short, long) =
+        (r"\immediate\write1{\gdef\noexpand\a{}}", r"\immediate\write1{\gdef\noexpand\b{}\gdef\noexpand\c{}}");
+    let (x, y) = if short_first { (short, long) } else { (long, short) };
+    format!(
+        r"\def\run{{\immediate\openout1={name} \ifnum\pdfuniformdeviate2=0 {x}\else {y}\fi \immediate\closeout1 }}\run "
+    )
+}
+
+/// Two undecided tests after `text`: one path parts in two at a time.
+const TWO_TESTS: &str = r"\def\run{\ifnum\pdfuniformdeviate2=0 \count1=1 \else \count1=2 \fi
+  \ifnum\pdfuniformdeviate2=0 \count2=1 \else \count2=2 \fi}\run \gdef\reached{}";
+
+/// A file of two texts of different lengths, `\input`: each path reads its
+/// text, and past the file they stand at the same place with the same
+/// progress, so they join and the tests after it part one path.
+/// Variants: the longer text first.
+#[test]
+fn paths_that_read_different_texts_of_a_file_join_after_it() {
+    for short_first in [true, false] {
+        let analysis =
+            analyze_files(&format!(r"{}\input twotexts.tex {TWO_TESTS}", two_texts("twotexts.tex", short_first)));
+        let defined = names(&analysis);
+        let all = ["a", "b", "c", "reached"].iter().all(|n| defined.contains(&n.to_string()));
+        assert!(all, "short first {short_first}: {defined:?}");
+        assert!(analysis.peak_paths <= 2, "short first {short_first}: {} paths", analysis.peak_paths);
+    }
+}
+
+/// Writes `linea` on one path and `long` names on the other to `lines.tex`,
+/// then reads it in a loop with `reader` (`\read` or `\readline`).
+fn read_loop(long: usize, long_first: bool, reader: &str) -> (String, Vec<String>) {
+    let name = |n: usize| format!("line{}", char::from(b'a' + n as u8));
+    let line = |n: usize| format!(r"\immediate\write1{{{}}}", name(n));
+    let (short, long_text) = (line(0), (1..=long).map(line).collect::<String>());
+    let (x, y) = if long_first { (&long_text, &short) } else { (&short, &long_text) };
+    let write = format!(
+        r"\def\run{{\immediate\openout1=lines.tex \ifnum\pdfuniformdeviate2=0 {x}\else {y}\fi \immediate\closeout1 }}\run "
+    );
+    // Each line names a macro to define, read without a line end.
+    let read = format!(
+        r"\openin1=lines.tex \endlinechar=-1 \def\next{{\ifeof1 \else \{reader}1 to\l
+          \expandafter\gdef\csname\l\endcsname{{}}\expandafter\next\fi}}\next \closein1 \endlinechar=13 "
+    );
+    (format!("{write}{read}{TWO_TESTS}"), (0..=long).map(name).collect())
+}
+
+/// A `\read` loop over a file of one line on one path and three on the
+/// other ends on both, every line read, and the paths join after it.
+/// Variants: the longer text first, `\readline`, a text longer than the
+/// passes a loop runs before it widens.
+#[test]
+fn a_read_loop_over_a_file_of_two_lengths_ends_on_both_paths() {
+    for (long, long_first, reader) in
+        [(3, false, "read"), (3, true, "read"), (3, false, "readline"), (6, false, "read")]
+    {
+        let (source, lines) = read_loop(long, long_first, reader);
+        let analysis = analyze_files(&source);
+        let defined = names(&analysis);
+        let case = format!("{long} lines, long first {long_first}, {reader}");
+        assert!(
+            lines.iter().chain([&"reached".to_string()]).all(|n| defined.contains(n)),
+            "{case}: {defined:?} {:?}",
+            analysis.facts.diagnostics.iter().map(|d| format!("{} {}", d.code, d.message)).collect::<Vec<_>>()
+        );
+        assert!(
+            with_code(&analysis, "terminal-read").is_empty(),
+            "{case}: {:?}",
+            with_code(&analysis, "terminal-read")
+        );
+        assert!(analysis.peak_paths <= 2, "{case}: {} paths", analysis.peak_paths);
+    }
+}
+
+/// A stream the paths stand at different places of: read once more than
+/// the shorter text holds, outside a loop, the shorter path reads the empty
+/// line past its end and `\ifeof` is true there only.
+#[test]
+fn a_stream_read_past_its_end_on_one_path_is_at_end_there_only() {
+    let (source, _) = read_loop(2, false, "read");
+    let write = &source[..source.find(r"\openin").expect("the read")];
+    let read = r"\openin1=lines.tex \read1 to\l \read1 to\l \ifeof1 \gdef\ended{} \else \gdef\open{} \fi";
+    let analysis = analyze_files(&format!("{write}{read}"));
+    let defined = names(&analysis);
+    assert!(["ended", "open"].iter().all(|n| defined.contains(&n.to_string())), "{defined:?}");
+    assert!(with_code(&analysis, "terminal-read").is_empty(), "{:?}", with_code(&analysis, "terminal-read"));
+}
+
+/// A written line of unknown digits reads back as typed digits, by `\read`
+/// in a loop and by `\input`: the number stays a number.
+#[test]
+fn a_written_unknown_line_reads_back_typed() {
+    let write = r"\count3=\pdfuniformdeviate 100 \immediate\openout1=unknown.tex
+      \immediate\write1{\noexpand\count4=\the\count3 \relax}\immediate\closeout1 ";
+    let read = r"\openin1=unknown.tex \def\next{\ifeof1 \else \read1 to\l \l \expandafter\next\fi}\next \closein1
+      \ifnum\count4<100 \gdef\fits{}\fi \count4=-1 \input unknown.tex \ifnum\count4>-1 \gdef\again{}\fi";
+    let analysis = analyze_files(&format!("{write}{read}"));
+    let defined = names(&analysis);
+    assert!(defined.contains(&"fits".to_string()) && defined.contains(&"again".to_string()), "{defined:?}");
+    assert!(with_code(&analysis, "missing-number").is_empty(), "{:?}", with_code(&analysis, "missing-number"));
+}

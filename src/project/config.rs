@@ -100,6 +100,9 @@ pub struct Limits {
     /// arguments reuses their merged result instead of running again.
     /// `\pgfmathparse{\x}` with an unknown `\x` is then one step. 0 never does.
     pub call_summary_after: u16,
+    /// How deep code a join made unknown is followed into the macros it
+    /// calls to find what it may assign. Past it the run reports a gap.
+    pub may_run_depth: u8,
     /// How many times in a row one call may meet the state it met before,
     /// with the same arguments, input, nesting and bindings, before its
     /// path is ended (the only path is summarized instead): TeX repeats
@@ -115,7 +118,9 @@ pub struct Limits {
     /// apart, as unpaired names are.
     pub join_names: u16,
     /// How many exact values a count or length keeps after branches merge.
-    /// Past them only its range is kept, so `{1, 5}` becomes `1..5`.
+    /// Past them only its range is kept, so `{1, 5}` becomes `1..5`. Also
+    /// the places an `\openin` stream keeps apart (texts and their lines)
+    /// before it is unknown.
     pub value_set: u16,
     /// How many members a join leaves a number with as a set once
     /// intervals are among them (`{[0,10], [100,120]}`) before only their
@@ -199,6 +204,7 @@ impl Limits {
             "recursion_depth" => self.recursion_depth.into(),
             "loop_heads" => self.loop_heads.into(),
             "call_summary_after" => self.call_summary_after.into(),
+            "may_run_depth" => self.may_run_depth.into(),
             "cycle_after" => self.cycle_after.into(),
             "degrade_at_percent" => self.degrade_at_percent.into(),
             "expansion_tokens" => self.expansion_tokens as u64,
@@ -270,6 +276,7 @@ impl Default for Limits {
             recursion_depth: 100,
             loop_heads: 512,
             call_summary_after: 2,
+            may_run_depth: 3,
             cycle_after: 2,
             meaning_set: 8,
             join_arms: 32,

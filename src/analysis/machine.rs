@@ -696,6 +696,9 @@ pub(crate) enum Frame {
         conds: usize,
         /// Whether `\everyeof` was inserted at its end (etex.ch `eof_seen`).
         eof_seen: bool,
+        /// The source progress past a file of several texts: the same
+        /// whichever text a path read, so the paths join after it.
+        ends_at: Option<u64>,
     },
     /// A token list. One expansion may stand on several: a long argument
     /// is shared, not copied, into its replacement text
@@ -1093,8 +1096,6 @@ impl Accum {
 
 /// How deeply expansion may nest inside scans before the run stops.
 const MAX_NESTING: u32 = 300;
-/// How deep [`Machine::may_run`] follows the macros skipped code reaches.
-const MAY_RUN_LEVELS: u8 = 3;
 
 /// How much of the Rust stack nested steps may take before the run stops,
 /// whatever each level costs: half the 2 MiB a spawned thread gets.
@@ -1157,8 +1158,36 @@ pub(crate) struct CopyEvent {
     pub fresh: bool,
 }
 
-/// `\openin` streams: the lines each still has to give, by stream number.
-type Streams = Rc<HashMap<i64, (Rc<Vec<String>>, usize)>>;
+/// Where an `\openin` stream may stand in one text: before line `lo` up
+/// to `hi`, [`CLOSED`] past the text.  One text and `lo == hi` is exact.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, serde::Serialize)]
+pub(crate) struct At {
+    pub(crate) lines: Rc<Vec<String>>,
+    pub(crate) lo: usize,
+    pub(crate) hi: usize,
+}
+
+impl At {
+    fn exact(lines: Rc<Vec<String>>, at: usize) -> At {
+        At { lines, lo: at, hi: at }
+    }
+
+    fn closed() -> At {
+        At::exact(Rc::new(Vec::new()), CLOSED)
+    }
+
+    /// The places it may stand at, each exact: lines up to the text's
+    /// end, then closed.
+    fn places(&self) -> impl Iterator<Item = At> + '_ {
+        let open = (self.lo..=self.hi.min(self.lines.len())).filter(|_| self.lo != CLOSED);
+        let open = open.map(|i| At::exact(self.lines.clone(), i));
+        open.chain((self.hi == CLOSED).then(At::closed))
+    }
+}
+
+/// `\openin` streams by number: the texts each may read and where in them
+/// it may stand (tex.web § 480).
+type Streams = Rc<HashMap<i64, Rc<Vec<At>>>>;
 
 /// The files this run opened with `\openout`, by name: the text written so
 /// far, or `None` once what they hold is unknown (a deferred `\write`, an
@@ -1187,21 +1216,48 @@ fn same_streams(a: &Streams, b: &Streams) -> bool {
     Rc::ptr_eq(a, b) || a == b
 }
 
-/// The join of two stream states (tex.web § 480): a stream is known only
-/// where both sides know it in the same state, open on the same lines at
-/// the same place or closed.  Every other one is unknown.
-fn join_streams(a: &Streams, b: &Streams) -> Streams {
+/// The join of two stream states (tex.web § 480): a stream keeps the
+/// texts either side may read, each with the hull of where it stands
+/// (an interval of lines); widened, a place that moved may be anywhere
+/// to the text's end.  Past `most` texts, or where one side does not know
+/// the stream, it is unknown.
+fn join_streams(a: &Streams, b: &Streams, widen: bool, most: usize) -> Streams {
     if same_streams(a, b) {
         return a.clone();
     }
     // A stream absent from a table that was never widened is closed.
     let state = |t: &Streams, s: i64| match t.get(&s) {
-        None if !t.contains_key(&ANY_STREAM) => Some((Rc::new(Vec::new()), CLOSED)),
+        None if !t.contains_key(&ANY_STREAM) => Some(Rc::new(vec![At::closed()])),
         known => known.cloned(),
     };
-    let mut joined: HashMap<_, _> =
-        (0..16).filter_map(|s| state(a, s).filter(|x| state(b, s).as_ref() == Some(x)).map(|x| (s, x))).collect();
-    joined.insert(ANY_STREAM, (Rc::new(Vec::new()), 0));
+    let union = |x: Rc<Vec<At>>, y: Rc<Vec<At>>| {
+        let mut texts = (*x).clone();
+        for at in y.iter() {
+            match texts.iter_mut().find(|t| t.lines == at.lines) {
+                Some(t) => {
+                    let (lo, hi) = (t.lo.min(at.lo), t.hi.max(at.hi));
+                    let moved = (lo, hi) != (t.lo, t.hi);
+                    (t.lo, t.hi) = (lo, if widen && moved { CLOSED } else { hi });
+                }
+                None => texts.push(at.clone()),
+            }
+        }
+        texts
+    };
+    let mut joined = HashMap::default();
+    let mut unknown = a.contains_key(&ANY_STREAM) || b.contains_key(&ANY_STREAM);
+    for s in 0..16 {
+        let texts = state(a, s).zip(state(b, s)).map(|(x, y)| union(x, y)).filter(|t| t.len() <= most);
+        match texts {
+            Some(texts) => drop(joined.insert(s, Rc::new(texts))),
+            None => unknown = true,
+        }
+    }
+    // Widened, a closed stream says so; otherwise absence does.
+    match unknown {
+        true => drop(joined.insert(ANY_STREAM, Rc::new(Vec::new()))),
+        false => joined.retain(|_, t: &mut Rc<Vec<At>>| **t != [At::closed()]),
+    }
     Rc::new(joined)
 }
 
@@ -1263,6 +1319,12 @@ carried! {
 /// replayed alike ([`Machine::end_cacheable_load`]).
 #[derive(Clone, Default)]
 pub(crate) struct Scratch {
+    /// The call whose arguments are being read, and the typed rests each
+    /// call site put back after taking a delimiter to end inside unknown
+    /// text ([`Machine::unread_rest`]): the same site meeting its own rest
+    /// again (a recursion that peels it) forks as one loop head per pair.
+    pub(crate) arg_site: Option<Span>,
+    pub(crate) split_rests: HashSet<(Span, Tok)>,
     /// Where a region's effect summary stands for the unknown text it left
     /// (a recursion cut: its widened fixpoint holds every deeper level's
     /// writes), so running that text adds nothing. Elsewhere unknown text
@@ -2895,7 +2957,14 @@ impl<'a> Machine<'a> {
         m.out.timings.start(Phase::Document);
         m.document_file_depth = m.file_depth;
         m.out.timings.enter_file(id);
-        m.input.push(Frame::File { mouth: Mouth::file(code, id), package: None, depth: 0, conds: 0, eof_seen: false });
+        m.input.push(Frame::File {
+            mouth: Mouth::file(code, id),
+            package: None,
+            depth: 0,
+            conds: 0,
+            eof_seen: false,
+            ends_at: None,
+        });
         m.push_expected(kind);
         // tex.web § 1337: `\everyjob` is read first, after the format is in
         // place: what it sets from the clock (expl3's `\c_sys_year_int`) is
@@ -3468,6 +3537,7 @@ impl<'a> Machine<'a> {
             depth: 0,
             conds: 0,
             eof_seen: false,
+            ends_at: None,
         });
         self.budget = Some(self.cfg.limits.format_steps);
         let lines = text.lines().count() as u32;
@@ -3652,6 +3722,7 @@ will look undefined",
             depth: 0,
             conds: 0,
             eof_seen: false,
+            ends_at: None,
         });
     }
 
@@ -3682,6 +3753,7 @@ will look undefined",
             depth: 0,
             conds: 0,
             eof_seen: false,
+            ends_at: None,
         });
         self.budget = Some(self.cfg.limits.format_steps);
         self.run();
@@ -3987,7 +4059,7 @@ will look undefined",
         let Some(stream) = stream else { return self.forget_streams() };
         match lines {
             Some(lines) => {
-                Rc::make_mut(&mut self.streams).insert(stream, (Rc::new(lines), 0));
+                Rc::make_mut(&mut self.streams).insert(stream, Rc::new(vec![At::exact(Rc::new(lines), 0)]));
             }
             // tex.web § 1275: a file that is not there leaves the stream
             // closed, which `\ifeof` reads as true.
@@ -4002,9 +4074,9 @@ will look undefined",
         // Widened, an absent stream is unknown: a closed one says so.
         if !streams.contains_key(&ANY_STREAM) {
             for s in 0..16 {
-                streams.entry(s).or_insert_with(|| (Rc::new(Vec::new()), CLOSED));
+                streams.entry(s).or_insert_with(|| Rc::new(vec![At::closed()]));
             }
-            streams.insert(ANY_STREAM, (Rc::new(Vec::new()), 0));
+            streams.insert(ANY_STREAM, Rc::new(Vec::new()));
         }
         streams.remove(&stream);
     }
@@ -4021,7 +4093,7 @@ will look undefined",
         let streams = Rc::make_mut(&mut self.streams);
         match widened {
             true => {
-                streams.insert(stream, (Rc::new(Vec::new()), CLOSED));
+                streams.insert(stream, Rc::new(vec![At::closed()]));
             }
             false => {
                 streams.remove(&stream);
@@ -4034,7 +4106,7 @@ will look undefined",
     pub fn forget_streams(&mut self) {
         let streams = Rc::make_mut(&mut self.streams);
         streams.clear();
-        streams.insert(ANY_STREAM, (Rc::new(Vec::new()), 0));
+        streams.insert(ANY_STREAM, Rc::new(Vec::new()));
     }
 
     /// A stream that was never opened, or whose file was not found, is at
@@ -4044,8 +4116,10 @@ will look undefined",
     /// `None` once a number satex could not pin down opened or closed one.
     pub fn stream_at_end(&self, stream: i64) -> Option<bool> {
         // What the table holds was learned after the last widening.
-        if let Some((_, at)) = self.streams.get(&stream) {
-            return Some(*at == CLOSED);
+        if let Some(texts) = self.streams.get(&stream) {
+            let mut ends = texts.iter().flat_map(|t| t.places().map(|p| p.lo == CLOSED).collect::<Vec<_>>());
+            let first = ends.next()?;
+            return ends.all(|e| e == first).then_some(first);
         }
         if self.streams.contains_key(&ANY_STREAM) {
             return None;
@@ -4064,15 +4138,46 @@ will look undefined",
         self.stream_at_end(n).map(|at_end| !at_end)
     }
 
+    /// A stream that may stand at several places, read or tested: a path
+    /// for each place (a text and a line of it), exact on it. Past the
+    /// paths a choice may part into, it is unknown.
+    pub(crate) fn pin_stream(&mut self, stream: Option<i64>, by: Sym, span: Option<Span>) {
+        let span = span.unwrap_or(self.region.span);
+        let Some(texts) = stream.and_then(|n| self.streams.get(&n)).cloned() else { return };
+        let mut places: Vec<At> = Vec::new();
+        for p in texts.iter().flat_map(At::places) {
+            if !places.contains(&p) {
+                places.push(p);
+            }
+        }
+        if places.len() < 2 {
+            return;
+        }
+        let n = stream.expect("a stream the table holds has a number");
+        let pinned = places.len() <= usize::from(self.cfg.limits.value_set)
+            && self.split(by, span, places.len(), |m, arm| {
+                Rc::make_mut(&mut m.streams).insert(n, Rc::new(vec![places[arm].clone()]));
+                true
+            });
+        if !pinned {
+            self.unknown_stream(stream);
+        }
+    }
+
     pub fn take_stream_line(&mut self, stream: i64) -> Option<String> {
         // The lines stay shared. Only the position moves, so a snapshot of
         // the streams costs nothing however long the file is.
-        let (lines, next) = Rc::make_mut(&mut self.streams).get_mut(&stream)?;
+        let texts = Rc::make_mut(&mut self.streams).get_mut(&stream)?;
+        let [At { lines, lo: next, hi }] = &mut Rc::make_mut(texts)[..] else { return None };
+        if next != hi {
+            return None;
+        }
         let Some(line) = lines.get(*next).cloned() else {
             self.close_in(Some(stream));
             return None;
         };
         *next += 1;
+        *hi = *next;
         self.carried.stream_read = Some((stream, *next, lines.len(), self.out.steps));
         // A line read from a file is input read, as one the mouth reads is:
         // a loop over a data file (expl3's `\ior_map_variable:NNn` over
@@ -4484,8 +4589,9 @@ will look undefined",
                 }
             }
             Some(Frame::Pseudo { .. }) => self.bump_expanding(self.pseudo_file, -1),
-            Some(Frame::File { mut mouth, package, depth, conds, .. }) => {
+            Some(Frame::File { mut mouth, package, depth, conds, ends_at, .. }) => {
                 self.pass_directives_on(&mut mouth);
+                self.source_progress = self.source_progress.max(ends_at.unwrap_or_default());
                 self.out.timings.leave_file();
                 self.out.lines += u64::from(mouth.here().line);
                 self.balance_file(mouth.file, depth);
@@ -4645,6 +4751,40 @@ will look undefined",
             Some(Frame::Returned(returned)) => returned.extend(tokens.iter().rev().copied()),
             _ => self.input.push(Frame::Returned(tokens.iter().rev().copied().collect())),
         }
+    }
+
+    /// Where the file a read takes its next token from stands, when no list
+    /// is left above it, with `at` tokens of the scan read.
+    fn source_mark(&self, at: usize) -> Option<SourceMark> {
+        let level = self.input.iter().rposition(|f| !read_out(f))?;
+        let Frame::File { mouth, eof_seen, .. } = &self.input[level] else { return None };
+        let (mouth, eof_seen) = (mouth.clone(), *eof_seen);
+        Some(SourceMark { at, level, mouth, eof_seen, progress: self.source_progress, lines: self.lines_read })
+    }
+
+    /// What a scan that gave up read from `out[k]` on goes back. The file
+    /// text among it, read since `mark`, the file reads again instead: the
+    /// path stands where one that never read it does.
+    fn give_back(&mut self, out: &mut Vec<Token>, k: usize, mark: Option<&SourceMark>) {
+        let tail = out.split_off(k);
+        let read = mark.map_or(0, |m| (k + tail.len()).saturating_sub(m.at).min(tail.len()));
+        let split = tail.len() - read;
+        let rewinds = mark.is_some_and(|m| {
+            read > 0
+                && self.source_progress - m.progress == read as u64
+                && self.input.iter().rposition(|f| !read_out(f)) == Some(m.level)
+                && matches!(&self.input[m.level], Frame::File { mouth, .. } if mouth.file == m.mouth.file)
+                && tail[split..].iter().all(|t| t.span.file == m.mouth.file)
+        });
+        let Some(m) = mark.filter(|_| rewinds) else { return self.unread_all(&tail) };
+        for t in &tail[split..] {
+            self.count_brace(t, -1);
+        }
+        if let Frame::File { mouth, eof_seen, .. } = &mut self.input[m.level] {
+            (*mouth, *eof_seen) = (m.mouth.clone(), m.eof_seen);
+        }
+        (self.source_progress, self.lines_read) = (m.progress, m.lines);
+        self.unread_all(&tail[..split]);
     }
 
     /// tex.web §§ 325, 347, 357: an explicit brace read counts `by` toward
@@ -6128,6 +6268,7 @@ will look undefined",
             depth: 0,
             conds: 0,
             eof_seen: false,
+            ends_at: None,
         });
         self.halted = false;
         self.out.exhausted = false;
@@ -6154,6 +6295,7 @@ will look undefined",
             depth: 0,
             conds: 0,
             eof_seen: false,
+            ends_at: None,
         });
         let call = Token { tok: Tok::Cs(sym), span: Span::default() };
         self.push_tokens(Rc::from(vec![call]));
@@ -7621,8 +7763,8 @@ will look undefined",
 
     /// The main loop reads on after a skipped region: what was assigned since
     /// the last source token is unknown, the token lists left are dropped
-    /// down to the file, and categories changed since are put back, an
-    /// assumption.
+    /// down to the file, and categories changed since are their old or new
+    /// one; changes the skipped rest would make are assumed not made.
     fn resync(&mut self) {
         self.leak_call_recs();
         let output = self.output_active();
@@ -7633,9 +7775,14 @@ will look undefined",
             let unknown = self.unknown_text(Unk::Any, at);
             self.push_tokens(Rc::from(vec![unknown]));
         }
+        // A category the skipped expansion changed is its old one or the
+        // one it set (P6): the rest of the expansion may or may not put it back.
         let changed = std::mem::take(&mut self.region.catcodes);
         for &(c, cat, may) in &changed {
+            let now = self.catcodes.cats(c);
             self.catcodes.restore(c, cat, may);
+            let cats = self.catcodes.cats(c) | now;
+            self.set_catcode_may(c, cats);
         }
         if !changed.is_empty() {
             let chars: String = changed.iter().map(|r| r.0).collect();
@@ -7643,7 +7790,7 @@ will look undefined",
                 Severity::Assumption,
                 "region-catcodes",
                 self.region.span,
-                format!("a skipped expansion changed the category of {chars:?}; they are assumed put back"),
+                format!("a skipped expansion changed the category of {chars:?}; each is its old one or the one set, and later changes the cut skipped are assumed not made"),
             );
         }
     }
@@ -8490,12 +8637,33 @@ will look undefined",
             self.text_site = Some((sym, span));
         }
         // Text a join or a gap left: what the path does next is not known exactly.
+        // What it may do is done: the names its text holds, or the macros a
+        // join left it one of (D11); a name of no known shape is reported.
         if matches!(self.env.meaning(sym), Meaning::Unknown) {
             self.approximated = true;
+            let may = self.env.slot(sym).and_then(|b| b.may.clone());
             if let Some((_, _, named)) = self.typed_shape(Token::new(Tok::Cs(sym), span))
                 && !named.is_empty()
             {
                 self.may_run(sym, &named, &[], span);
+            } else if let Some(may) = may {
+                let bodies: Vec<Rc<[Token]>> = may
+                    .iter()
+                    .filter_map(|m| match m {
+                        Meaning::Macro(m) => Some(m.replacement_text.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let texts: Vec<&[Token]> = bodies.iter().map(|b| &b[..]).collect();
+                self.may_run(sym, &[], &texts, span);
+            } else if sym != self.unknown
+                && !self.is_unknown_marker(sym)
+                && self.typed_shape(Token::new(Tok::Cs(sym), span)).is_none()
+                && !self.scratch.summarized.contains(&span)
+            {
+                let message =
+                    format!("\\{} of unknown meaning runs here; it is assumed to change no state", self.name(sym));
+                self.diagnose(Severity::Assumption, "unknown-text-run", span, message);
             }
         }
         if self.insert_dollar(Token::new(Tok::Cs(sym), span)) {
@@ -9031,7 +9199,12 @@ will look undefined",
         self.scan_abandoned = false;
         self.arm_assumed = false;
         self.call_in_library = !self.own_file(span.file);
+        // The macro, by where its body was defined: call spans of library
+        // code may all be the document command's.
+        let at = m.replacement_text.first().map_or(span, |t| t.span);
+        let site = self.scratch.arg_site.replace(at);
         let arguments = self.read_arguments(&m);
+        self.scratch.arg_site = site;
         let abandoned = self.scan_abandoned;
         if let Some(watch) = &mut self.probe {
             let text = &m.parameter_text;
@@ -9906,11 +10079,31 @@ will look undefined",
     }
 
     /// Whether the argument a scan reads ends inside the wholly unknown
-    /// text `t`: a path each way ([`Machine::branch`]). Where no more
-    /// paths may part it does not, so the scan goes on to the real
-    /// delimiter instead of leaving it behind.
-    fn unknown_ends_argument(&mut self, t: Token) -> bool {
-        matches!(self.branch(self.unknown, 2, t.span), Some(0))
+    /// text `t`: a path each way ([`Machine::branch`]). `None` where no
+    /// more paths may part: the caller reads on and over-approximates
+    /// the other end ([`Machine::unforked_end`]).
+    fn unknown_ends_argument(&mut self, t: Token) -> Option<bool> {
+        self.branch(self.unknown, 2, t.span).map(|arm| arm == 0)
+    }
+
+    /// No path parted where the argument `out` may end inside the unknown
+    /// text `out[at]`: the scan read on to the real end. The argument from
+    /// `out[at]` on is unknown text covering both ends, and what the other
+    /// end leaves to run after the call may run (D8). Its effects are done
+    /// before the call's body, not after it.
+    fn unforked_end(&mut self, mut out: Vec<Token>, at: Option<usize>, span: Span) -> Vec<Token> {
+        let Some(at) = at else { return out };
+        let tail = out.split_off(at);
+        let named = self.typed_shape(tail[0]).map(|(_, _, named)| named).unwrap_or_default();
+        self.may_run(self.unknown, &named, &[&tail[1..]], span);
+        out.push(self.unknown_text(Unk::Of(&[&tail, &[]]), span));
+        self.diagnose(
+            Severity::Imprecision,
+            "unforked-argument-end",
+            span,
+            "an argument may end inside unknown text, but no more paths may part: it is read to its real end, as unknown text, and what the other end runs may have run".into(),
+        );
+        out
     }
 
     /// What a test taught one arm of a typed rest `from`: its copies in
@@ -10002,47 +10195,27 @@ will look undefined",
     /// A delimited scan that read `out` and now meets `t`, one of several
     /// texts that may hold `delimiter`: each text is looked at in its
     /// place. A text the delimiter lies inside ends the argument there,
-    /// with the text's prefix in it and its rest read next. `Unknown`
-    /// when a text is not known in full, the delimiter is not in one of
-    /// the texts or straddles a text's end, or no more paths may part:
+    /// with the text's prefix in it and its rest read next. A delimiter
+    /// that only straddles a text's end is the caller's
+    /// ([`Machine::straddles`]). `Unknown` when a text is not known in full,
+    /// its unknown text may hold the delimiter, or no more paths may part:
     /// the caller then ends the argument at `t`, read as unknown text.
     fn scan_one_of(&mut self, t: Token, delimiter: &[Tok], out: &[Token], tail_free: bool) -> OneOfScan {
         let Some(texts) = self.one_of_members(t) else { return OneOfScan::Unknown };
-        // Unknown text in a member hides the delimiter, unless typed so
-        // that it cannot hold it.
-        if texts.iter().any(|x| {
-            x.iter().enumerate().any(|(i, t)| {
-                let prev = match i {
-                    0 if tail_free => None,
-                    0 => out.last(),
-                    _ => x.get(i - 1),
-                };
-                t.cs().is_some_and(|s| self.is_unknown_marker(s))
-                    && self.typed_may_hold(*t, Some(prev.copied()), delimiter)
-            })
-        }) {
+        // Unknown text in a text may hold the delimiter, or go on one the
+        // argument may end in.
+        let continues = |m: &Self, x: &[Token]| {
+            !tail_free && delimiter.len() > 1 && x.first().is_some_and(|f| m.hole(*f).is_some())
+        };
+        if texts.iter().any(|x| continues(self, x) || self.hides_delimiter(x, delimiter)) {
             return OneOfScan::Unknown;
         }
-        // What follows `t` in the token lists above the file: as far as
-        // the delimiter can be seen. A text ending in a beginning of the
-        // delimiter whose end is not in view may straddle it.
-        let ahead = self.pending_lists();
-        let straddles = |text: &[Token]| {
-            (1..delimiter.len()).any(|k| {
-                text.len() >= k
-                    && text[text.len() - k..].iter().zip(delimiter).all(|(t, d)| t.tok == *d)
-                    && ahead.len() < delimiter.len() - k
-            })
-        };
         let mut inside: Vec<usize> = Vec::new();
         let mut far: Vec<usize> = Vec::new();
         for (i, text) in texts.iter().enumerate() {
-            let whole: Vec<Token> = text.iter().chain(&ahead).copied().collect();
-            match Self::find_delimiter(&whole, delimiter) {
-                Some(at) if at + delimiter.len() <= text.len() => inside.push(i),
-                Some(at) if at >= text.len() => far.push(i),
-                Some(_) => return OneOfScan::Unknown,
-                None if explore::balanced(text) && !straddles(text) => far.push(i),
+            match Self::find_delimiter(text, delimiter) {
+                Some(_) => inside.push(i),
+                None if explore::balanced(text) => far.push(i),
                 None => return OneOfScan::Unknown,
             }
         }
@@ -10140,9 +10313,16 @@ will look undefined",
         // after all (the other way TeX stops with an error), so what was
         // read after it goes back, for the scans it belongs to. The call
         // thus ends in its own text instead of eating the file.
-        let ends_in_unknown = |m: &mut Self, out: &mut Vec<Token>, k: usize, span: Span, end: &str| -> Vec<Token> {
-            let tail = out.split_off(k + 1);
-            m.unread_all(&tail);
+        // Where the file stood before the scan first read from it ([`Machine::give_back`]).
+        let mut mark: Option<SourceMark> = None;
+        let ends_in_unknown = |m: &mut Self,
+                               out: &mut Vec<Token>,
+                               k: usize,
+                               span: Span,
+                               end: &str,
+                               mark: &Option<SourceMark>|
+         -> Vec<Token> {
+            m.give_back(out, k + 1, mark.as_ref());
             m.unread_rest(out[k], delimiter, span);
             m.scan_abandoned = true;
             m.diagnose(
@@ -10174,13 +10354,25 @@ will look undefined",
         };
         // Where the argument of a call begun in library code first took the
         // document's own text. Run on to the file's end, the scan is no run
-        // of the document: the text is given back and the argument is
+        // of the document: refuted where the document is assumed to
+        // compile, else the text is given back and the argument is
         // unknown, so the document is still read.
         let mut source_at: Option<usize> = None;
         let begun_in_library = self.call_in_library;
-        let gives_back = |m: &mut Self, out: &mut Vec<Token>, k: usize, span: Span, end: &str| -> Vec<Token> {
-            let tail = out.split_off(k);
-            m.unread_all(&tail);
+        let gives_back = |m: &mut Self,
+                          out: &mut Vec<Token>,
+                          k: usize,
+                          span: Span,
+                          end: &str,
+                          mark: &Option<SourceMark>|
+         -> Vec<Token> {
+            // Joined where the document goes on, such a path would carry
+            // what library code did on no run into it.
+            if m.cfg.compiles() && m.probe.is_none() {
+                m.no_arm();
+                return Vec::new();
+            }
+            m.give_back(out, k, mark.as_ref());
             m.runaway = Runaway::No;
             m.scan_abandoned = true;
             m.diagnose(
@@ -10193,18 +10385,21 @@ will look undefined",
             strip_braces(std::mem::take(out))
         };
         loop {
+            if mark.is_none() {
+                mark = self.source_mark(out.len());
+            }
             let Some(t) = self.next_token() else {
                 if let Some(k) = unknown_at
                     && k < out.len()
                 {
                     let span = out[k].span;
-                    return ends_in_unknown(self, &mut out, k, span, "the end of the file");
+                    return ends_in_unknown(self, &mut out, k, span, "the end of the file", &mark);
                 }
                 // Library code runs through the rest of the document only on
                 // a run TeX would stop with an error: never the document's.
                 if let Some(k) = source_at.filter(|_| self.runaway == Runaway::FileEnded) {
                     let span = out[k].span;
-                    return gives_back(self, &mut out, k, span, "the end of the file");
+                    return gives_back(self, &mut out, k, span, "the end of the file", &mark);
                 }
                 break;
             };
@@ -10218,9 +10413,9 @@ will look undefined",
                 && let Some(k) = unknown_at
                 && k < out.len()
             {
-                self.unread(t);
+                out.push(t);
                 let span = out[k].span;
-                return ends_in_unknown(self, &mut out, k, span, "source text");
+                return ends_in_unknown(self, &mut out, k, span, "source text", &mark);
             }
             from_file = match self.last_file == Some(t.span.file) && self.own_file(t.span.file) {
                 true => from_file + 1,
@@ -10231,7 +10426,7 @@ will look undefined",
                     && k < out.len()
                 {
                     self.runaway = Runaway::No;
-                    return ends_in_unknown(self, &mut out, k, t.span, "a paragraph end");
+                    return ends_in_unknown(self, &mut out, k, t.span, "a paragraph end", &mark);
                 }
                 return self.unknown_argument(&out, t.span);
             }
@@ -10239,23 +10434,31 @@ will look undefined",
             // argument there once and read the rest as delimiter-free. Typed
             // text counts only where its class may hold a brace or `first`.
             let first = &delimiter[..1.min(delimiter.len())];
-            // In a group no delimiter matches (tex.web § 392). Braceless typed
-            // text shorter than the delimiter can only straddle it
-            // ([`straddles`]), so it is read on as it is.
-            let short = match (depth, self.typed_text_of(t), self.text_len(t)) {
+            // In a group no delimiter matches (tex.web § 392). Typed text
+            // (balanced) that cannot hold all of the delimiter can only straddle
+            // it ([`straddles`]), so it is read on as it is: its most tokens.
+            let short = match (depth, self.typed_shape(t)) {
                 // one at a time: two close ones may hold it between them
-                (0, Some(_), Some(n))
-                    if (n as usize) < delimiter.len()
-                        && self.may_hold(t, &[]) == Some(false)
+                (0, Some(_))
+                    if self.may_hold(t, delimiter) == Some(true)
+                        && !self.hides_delimiter(&[t], delimiter)
                         && straddled.last().is_none_or(|&q| out.len() - q >= delimiter.len()) =>
                 {
-                    Some(n as usize)
+                    Some(self.text_len(t).map_or(usize::MAX, |n| n as usize))
                 }
                 _ => None,
             };
             let unknown_text = short.is_none()
                 && (self.is_unknown_text(t, first) || (t.cs().is_some() && self.may_hold(t, first) == Some(true)))
                 && (depth == 0 || self.may_hold(t, &[]) != Some(false));
+            // A rest this call site put back itself: its fork is keyed by
+            // (site, rest), not by where the text came from, so the levels
+            // of a recursion that peels it are passes of one loop head and
+            // forced convergence ends them (both arms kept).
+            let own_rest = (unknown_text && depth == 0)
+                .then_some(self.scratch.arg_site)
+                .flatten()
+                .filter(|&site| self.scratch.split_rests.contains(&(site, t.tok)));
             // The argument read so far ends in the delimiter's first `j`
             // tokens and the text may begin with the rest (tex.web § 392):
             // the delimiter ends in it, a path each way. Text too short for
@@ -10308,7 +10511,10 @@ will look undefined",
                 // the real delimiter behind to run as text. One of several
                 // texts ends it: the rest of the text is read next.
                 let ends = match depth == 0 && unknown_text {
-                    true => self.branch(self.unknown, 2, t.span),
+                    true => match (own_rest, t.cs()) {
+                        (Some(site), Some(rest)) => self.branch(rest, 2, site),
+                        _ => self.branch(self.unknown, 2, t.span),
+                    },
                     false => None,
                 };
                 if depth == 0 && (!unknown_text || ends == Some(0)) {
@@ -10338,12 +10544,13 @@ will look undefined",
                 && !self.conds.is_empty()
                 && let Some(k) = joined_at.or(unknown_at)
             {
-                self.unread(t);
-                return ends_in_unknown(self, &mut out, k, t.span, "the end of a conditional open around it");
+                out.push(t);
+                return ends_in_unknown(self, &mut out, k, t.span, "the end of a conditional open around it", &mark);
             }
             // One of several texts, one of which may hold the delimiter: a
             // path per text, each matched token by token (tex.web § 392).
-            if self.one_of_members(t).is_some_and(|texts| texts.iter().any(|x| x.iter().any(|y| matches(0, y))))
+            if !passes
+                && self.one_of_members(t).is_some_and(|texts| texts.iter().any(|x| x.iter().any(|y| matches(0, y))))
                 && self.split_one_of(t)
             {
                 continue;
@@ -10358,14 +10565,13 @@ will look undefined",
                 // abandons it (tex.web § 395).  Reading on would swallow the
                 // rest of the file looking for a delimiter that is not there.
                 Tok::Chr(_, Catcode::End) if depth == 0 => {
-                    self.unread(t);
                     // Read on past unknown text at level 0 and no delimiter
                     // before this `}`: the argument ended in that text (the
                     // other way TeX stops with an error), so what was read
                     // after it goes back, for the scans it belongs to.
                     if let Some(k) = unknown_at {
-                        let tail = out.split_off(k + 1);
-                        self.unread_all(&tail);
+                        out.push(t);
+                        self.give_back(&mut out, k + 1, mark.as_ref());
                         self.unread_rest(out[k], delimiter, t.span);
                         self.scan_abandoned = true;
                         self.diagnose(
@@ -10376,6 +10582,7 @@ will look undefined",
                         );
                         return strip_braces(out);
                     }
+                    self.unread(t);
                     // Unknown text was read here, so this `}` may close a
                     // group that text opened. The engine never met this
                     // end; reporting it as the engine's error would be one
@@ -10400,36 +10607,42 @@ will look undefined",
                 Tok::Chr(_, Catcode::End) => depth -= 1,
                 _ => {}
             }
-            if short.is_some() {
+            if short.is_some() || passes {
                 straddled.push(out.len());
             }
             out.push(t);
             // A delimiter that straddles short typed text read before: a
             // path where it ends here, and one where the text holds other
             // characters.
-            if depth == 0
-                && let Some((p, cut)) =
-                    straddled.iter().rev().find_map(|&p| self.straddles(&out, p, delimiter).map(|c| (p, c)))
-            {
-                match self.branch(self.unknown, 2, t.span) {
-                    Some(0) => {
-                        let rest = out[p];
-                        out.truncate(p - cut.0);
-                        if cut.0 == 0
-                            && let Some((class, _)) = self.typed_text_of(rest)
-                            && let Some(n) = self.text_len(rest).map(|n| n.saturating_sub(cut.1 as u32))
-                            && n > 0
-                        {
-                            out.push(self.unknown_text(Unk::Class(class, false, Some(n), &[]), rest.span));
+            if depth == 0 {
+                let found: Vec<(usize, (usize, usize))> = (straddled.iter().rev())
+                    .flat_map(|&p| self.straddles(&out, p, delimiter).into_iter().map(move |c| (p, c)))
+                    .collect();
+                if let Some((p, (j, rest, others))) = found.into_iter().find_map(|(p, (j, m))| {
+                    let need = &delimiter[j..j + m];
+                    self.tail_split(out[p], need, j > 0).map(|(rest, others)| (p, (j, rest, others)))
+                }) {
+                    let ends = match others {
+                        None => Some(0),
+                        Some(_) => self.branch(self.unknown, 2, t.span),
+                    };
+                    match ends {
+                        Some(0) => {
+                            out.truncate(p - j);
+                            out.extend(rest);
+                            self.delimiter_met = true;
+                            if let Some(span) = fuzzy {
+                                return self.unknown_argument(&out, span);
+                            }
+                            return strip_braces(out);
                         }
-                        self.delimiter_met = true;
-                        if let Some(span) = fuzzy {
-                            return self.unknown_argument(&out, span);
+                        // The texts that do not end so read on.
+                        Some(_) => {
+                            self.arm_assumed = true;
+                            out[p] = others.expect("forked on it");
                         }
-                        return strip_braces(out);
+                        None => fuzzy = fuzzy.or(Some(t.span)),
                     }
-                    Some(_) => self.arm_assumed = true,
-                    None => fuzzy = fuzzy.or(Some(t.span)),
                 }
             }
             if depth == 0 && out.len() >= delimiter.len() {
@@ -10466,29 +10679,172 @@ will look undefined",
     /// `j > 0`, its end otherwise) and the tokens after it are the rest,
     /// each exactly (tex.web § 392). The tokens before it that belong to
     /// the delimiter and how many the text gives it.
-    fn straddles(&self, out: &[Token], p: usize, delimiter: &[Tok]) -> Option<(usize, usize)> {
-        let after = out.len().checked_sub(p + 1).filter(|&n| n > 0 && n < delimiter.len())?;
-        let len = self.text_len(out[p])? as usize;
+    fn straddles(&self, out: &[Token], p: usize, delimiter: &[Tok]) -> Vec<(usize, usize)> {
+        let Some(after) = out.len().checked_sub(p + 1).filter(|&n| n > 0 && n < delimiter.len()) else {
+            return Vec::new();
+        };
+        let len = self.text_len(out[p]).map(|n| n as usize);
         let class = self.token_class(out[p], false);
         if out[p + 1..].iter().zip(&delimiter[delimiter.len() - after..]).any(|(o, d)| o.tok != *d) {
-            return None;
+            return Vec::new();
         }
         let inside = delimiter.len() - after;
-        (0..=inside.min(p)).find_map(|j| {
-            let m = inside - j;
-            let fits = m <= len && (m > 0 || j > 0);
-            let before = out[p - j..p].iter().zip(delimiter).all(|(o, d)| o.tok == *d);
-            let held = delimiter[j..inside].iter().all(|d| class.may_be(*d));
-            // Empty text: only where it may hold nothing.
-            let empty = m > 0 || class.empty;
-            (fits && before && held && empty).then_some((j, m))
-        })
+        (0..=inside.min(p))
+            .filter_map(|j| {
+                let m = inside - j;
+                let fits = len.is_none_or(|n| m <= n) && (m > 0 || j > 0);
+                let before = out[p - j..p].iter().zip(delimiter).all(|(o, d)| o.tok == *d);
+                let held = delimiter[j..inside].iter().all(|d| class.may_be(*d));
+                // Empty text: only where it may hold nothing.
+                let empty = m > 0 || class.empty;
+                (fits && before && held && empty).then_some((j, m))
+            })
+            .collect()
+    }
+
+    /// What unknown token `t` may be, one token by one: a test per
+    /// delimiter token, its most tokens, whether it holds one at least.
+    /// `None` for a known token; a class with braces is any text.
+    fn hole(&self, t: Token) -> Option<(classes::TokenClass, Option<usize>, bool)> {
+        let any = || (classes::TokenClass::any(), None, false);
+        let (class, len, one) = match t.tok {
+            Tok::Chr(..) if self.may_hold(t, &[]).is_some() => {
+                (classes::TokenClass::of_text(TextClass::of(t.tok), true, Vec::new()), Some(1), true)
+            }
+            Tok::Cs(_) if let Some((_, one, _)) = self.typed_shape(t) => {
+                (self.token_class(t, false), self.text_len(t).map(|n| n as usize), one)
+            }
+            Tok::Cs(_) if self.one_of_members(t).is_some() => {
+                let class = self.token_class(t, false);
+                let one = !class.empty;
+                (class, None, one)
+            }
+            Tok::Cs(sym) if self.is_unknown_marker(sym) => any(),
+            _ => return None,
+        };
+        // Typed text and one-of texts hold balanced braces only, which a
+        // delimiter never matches; one unknown character may be a lone one.
+        let lone = matches!(t.tok, Tok::Chr(..)) && class.may_brace();
+        Some(if lone { any() } else { (class, len, one) })
+    }
+
+    /// Whether `text` may hold all of `delimiter` at level 0 where some
+    /// unknown token in it gives part of it or is empty in between
+    /// (tex.web § 392): a match of the delimiter over the text, an
+    /// unknown token taking any run of tokens its class may be.
+    fn hides_delimiter(&self, text: &[Token], delimiter: &[Tok]) -> bool {
+        let n = delimiter.len();
+        // Delimiter tokens matched so far, and whether an unknown token gave some.
+        let mut open: Vec<(usize, bool)> = Vec::new();
+        let mut depth = 0usize;
+        for &x in text {
+            let mut next: Vec<(usize, bool)> = Vec::new();
+            let starts = open.iter().copied().chain([(0, false)]);
+            match self.hole(x) {
+                None => {
+                    match x.tok {
+                        Tok::Chr(_, Catcode::Begin) => depth += 1,
+                        Tok::Chr(_, Catcode::End) => depth = depth.saturating_sub(1),
+                        _ => {}
+                    }
+                    for (j, u) in starts.filter(|&(j, _)| depth == 0 && x.tok == delimiter[j]) {
+                        match j + 1 == n {
+                            true if u => return true,
+                            true => {}
+                            false => next.push((j + 1, u)),
+                        }
+                    }
+                }
+                Some(_) if depth > 0 => {}
+                Some((class, len, one)) => {
+                    for (j, _) in starts {
+                        // `q` delimiter tokens from the text of `x`.
+                        for q in 0..=n - j {
+                            if q > 0 && !class.may_be(delimiter[j + q - 1]) || len.is_some_and(|l| q > l) {
+                                break;
+                            }
+                            match (j, j + q == n) {
+                                // It holds it all, or its start ends it.
+                                (_, true) if q > 0 => return true,
+                                // Its end begins it.
+                                (0, false) if q > 0 => next.push((q, true)),
+                                // Wholly inside it.
+                                (1.., false) if q > 0 || !one => next.push((j + q, true)),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            next.sort_unstable();
+            next.dedup();
+            open = next;
+        }
+        false
+    }
+
+    /// The texts of unknown `t` that may end in `need` (be it, where
+    /// `exact`), less those tokens, and `t` narrowed to the texts that may
+    /// not (`None`: every text does). `None` where no text may.
+    fn tail_split(&mut self, t: Token, need: &[Tok], exact: bool) -> Option<(Vec<Token>, Option<Token>)> {
+        let k = need.len();
+        let Some(texts) = self.one_of_members(t) else {
+            // Typed text: its rest is shorter by `k` and may be empty.
+            let (class, _, cs) = self.typed_shape(t)?;
+            let len = self.text_len(t);
+            let rest = match len.map(|n| n.saturating_sub(k as u32)) {
+                _ if exact => Vec::new(),
+                Some(0) => Vec::new(),
+                rest => vec![self.unknown_text(Unk::Class(class, false, rest, &cs), t.span)],
+            };
+            return Some((rest, Some(t)));
+        };
+        let (mut rests, mut others): (Vec<Rc<[Token]>>, Vec<Rc<[Token]>>) = (Vec::new(), Vec::new());
+        for text in texts {
+            let known = text.iter().all(|x| self.hole(*x).is_none());
+            let tail = text.len().checked_sub(k).filter(|&at| !exact || at == 0);
+            match tail {
+                Some(at) if same_toks(&text[at..], need) && text[at..].iter().all(|x| self.hole(*x).is_none()) => {
+                    rests.push(Rc::from(&text[..at]));
+                }
+                _ if known => others.push(text),
+                _ => {
+                    // Unknown text in it: the rest is text of its class.
+                    let mut joined = classes::TokenClass::default();
+                    text.iter().for_each(|x| joined.join(self.token_class(*x, false)));
+                    if need.iter().all(|d| joined.may_be(*d)) {
+                        let rest = match self.cover(&[&text]) {
+                            _ if exact => Vec::new(),
+                            Some((class, _, _, cs)) => {
+                                vec![self.unknown_text(Unk::Class(class, false, None, &cs), t.span)]
+                            }
+                            None => vec![self.unknown_text(Unk::Any, t.span)],
+                        };
+                        rests.push(Rc::from(rest));
+                    }
+                    others.push(text);
+                }
+            }
+        }
+        let first = rests.first()?.clone();
+        let rest = match rests.iter().all(|r| r.iter().map(|x| x.tok).eq(first.iter().map(|x| x.tok))) {
+            true => first.to_vec(),
+            false => vec![self.one_of(rests, t.span)],
+        };
+        let others = match &others[..] {
+            [] => None,
+            [one] if one.len() == 1 => Some(one[0]),
+            _ => Some(self.one_of(others, t.span)),
+        };
+        Some((rest, others))
     }
 
     /// `\def\a#1#{…}`: the final argument stops at the begin-group character,
     /// which the replacement text puts back (tex.web § 476).
     fn read_before_group(&mut self) -> Vec<Token> {
         let mut out: Vec<Token> = Vec::new();
+        // Where the argument may have ended in unknown text no path took.
+        let mut unforked = None;
         while let Some(t) = self.next_token() {
             if self.runaway_argument(t) {
                 return self.unknown_argument(&out, t.span);
@@ -10496,9 +10852,15 @@ will look undefined",
             // One of several texts, one of which may hold the `{`: a path
             // per text, or the argument ends in it.
             let unknown_text = self.is_unknown_text(t, &[Tok::Chr('{', Catcode::Begin)]);
-            if unknown_text && !self.unknown_ends_argument(t) {
-                out.push(t);
-                continue;
+            if unknown_text {
+                let ends = self.unknown_ends_argument(t);
+                if ends != Some(true) {
+                    if ends.is_none() {
+                        unforked.get_or_insert(out.len());
+                    }
+                    out.push(t);
+                    continue;
+                }
             }
             if !unknown_text && self.one_of_hides(t, &[Tok::Chr('{', Catcode::Begin)], None) {
                 match self.scan_one_of(t, &[Tok::Chr('{', Catcode::Begin)], &out, false) {
@@ -10520,7 +10882,7 @@ will look undefined",
                     if out.is_empty() {
                         self.probe_wants(&[t], &[t.tok], crate::analysis::probe::Want::Until);
                     }
-                    return strip_braces(out);
+                    return strip_braces(self.unforked_end(out, unforked, t.span));
                 }
                 Tok::Chr(_, Catcode::End) => {
                     self.extra_right_brace(t);
@@ -10577,9 +10939,23 @@ will look undefined",
                     // empty and the delimiter follows (a path each way).
                     if let Some(t) = t
                         && self.is_unknown_text(t, &[*expected])
-                        && !self.unknown_ends_argument(t)
                     {
-                        continue;
+                        match self.unknown_ends_argument(t) {
+                            Some(true) => {}
+                            Some(false) => continue,
+                            // No path may part: the text begins inside it, and
+                            // the rest is unknown text the parameters read on
+                            // (D8; an unknown character is never empty).
+                            None => {
+                                self.diagnose(
+                                    Severity::Imprecision,
+                                    "unforked-argument-end",
+                                    t.span,
+                                    "required text may begin inside unknown text or after it, but no more paths may part: it is taken to begin inside, and what follows is read as unknown text".into(),
+                                );
+                                fuzzy.get_or_insert(t.span);
+                            }
+                        }
                     }
                     if let Some(t) = t
                         && (self.is_unknown_text(t, &[*expected]) || self.one_of_hides(t, &[*expected], None))
@@ -11671,7 +12047,14 @@ will look undefined",
                 }
             });
         let site = by.unwrap_or_else(|| self.intern(name));
-        let source = source.or(written).map(|text| self.pick_text(site, span, text));
+        let mut ends_at = None;
+        let source = source.or(written).map(|text| {
+            // Each text is shorter than the file: no path reads past this mark.
+            if texts_of(&text).len() > 1 {
+                ends_at = Some(self.source_progress + text.chars().count() as u64 + 1);
+            }
+            self.pick_text(site, span, text)
+        });
         // XeTeX reads a replacement character there, which satex does too;
         // LuaTeX stops with "String contains an invalid utf-8 sequence",
         // which satex cannot follow.
@@ -11765,7 +12148,7 @@ will look undefined",
         if self.take_pending_eof() {
             mouth.inherit_eof(false);
         }
-        self.input.push(Frame::File { mouth, package, depth, conds, eof_seen: false });
+        self.input.push(Frame::File { mouth, package, depth, conds, eof_seen: false, ends_at });
     }
 
     /// A `\documentclass`, `\usepackage` or `\RequirePackage` whose file the
@@ -12506,6 +12889,16 @@ enum OneOfScan {
 }
 
 /// Whether nothing is left to read in `f`.
+/// A file's place before a scan read from it ([`Machine::give_back`]).
+struct SourceMark {
+    at: usize,
+    level: usize,
+    mouth: Mouth,
+    eof_seen: bool,
+    progress: u64,
+    lines: u64,
+}
+
 fn read_out(f: &Frame) -> bool {
     match f {
         Frame::Tokens { toks, pos, .. } => *pos >= toks.len(),
@@ -12811,6 +13204,9 @@ impl Machine<'_> {
         let len = len.map(|n| n.saturating_sub(delimiter.len() as u32));
         if len != Some(0) && (class != TextClass::EMPTY || !cs.is_empty()) {
             let rest = self.unknown_text(Unk::Class(class, false, len, &cs), span);
+            if let Some(site) = self.scratch.arg_site {
+                self.scratch.split_rests.insert((site, rest.tok));
+            }
             self.unread(rest);
         }
     }
@@ -13132,13 +13528,19 @@ impl Machine<'_> {
     /// over-approximated. A name it, or a macro it reaches, may define that
     /// has no meaning yet may now have one: a fresh name, as for a `\\def`
     /// of an unknown name, so names with a meaning keep theirs. A count or
-    /// dimension register it may touch may now hold any value of its kind.
+    /// register, parameter, catcode or code it may touch may now hold any
+    /// value of its kind; past the depth followed, the run says so.
     /// `texts` is code known in order, `named` names known in no order.
     pub(crate) fn may_run(&mut self, by: Sym, named: &[Sym], texts: &[&[Token]], span: Span) {
         use crate::engine::tex::RegKind;
         let mut seen: HashSet<Sym> = named.iter().copied().collect();
         let mut queue: Vec<(Sym, u8)> = named.iter().map(|&s| (s, 1)).collect();
         let (mut fresh, mut regs) = (Vec::new(), Vec::new());
+        // Registers of a kind whose number is not known, parameters, codes.
+        let (mut kinds, mut params, mut codes) = (Vec::<RegKind>::new(), Vec::<Sym>::new(), Vec::new());
+        let mut deeper = false;
+        let reg_kind =
+            |k: RegKind| matches!(k, RegKind::Count | RegKind::Dimen | RegKind::Skip | RegKind::MuSkip | RegKind::Toks);
         // Names the code may give another meaning, with that meaning: a
         // `\let` to a known name its meaning, anything else unknown.
         let mut redefined: Vec<(Sym, Meaning)> = Vec::new();
@@ -13156,7 +13558,7 @@ impl Machine<'_> {
         for &cs in named {
             match self.env.meaning(cs) {
                 Meaning::Undefined if defines => fresh.push(cs),
-                Meaning::Register(kind @ (RegKind::Count | RegKind::Dimen), _) => regs.push((self.storage(cs), kind)),
+                Meaning::Register(kind, _) if reg_kind(kind) => regs.push((self.storage(cs), kind)),
                 _ => {}
             }
         }
@@ -13172,7 +13574,8 @@ impl Machine<'_> {
                     None => break,
                 },
             };
-            let (mut defines, mut numbered) = (false, None::<(RegKind, i64)>);
+            let text = self.named_csnames(&text, span);
+            let (mut defines, mut numbered) = (false, None::<(RegKind, Option<i64>)>);
             // A definition inside a group the text opens and closes is gone
             // when it ends; a `\global` one is not.
             let (mut grouped, mut global, mut definer) = (0usize, false, None::<Primitive>);
@@ -13181,17 +13584,23 @@ impl Machine<'_> {
             for (i, t) in text.iter().enumerate() {
                 left = left.saturating_sub(1);
                 if let Some((kind, n)) = numbered {
-                    match t.tok {
-                        Tok::Chr(c, Catcode::Other) if c.is_ascii_digit() => {
-                            numbered = Some((kind, n.saturating_mul(10) + i64::from(c as u8 - b'0')));
+                    match (t.tok, n) {
+                        (Tok::Chr(c, Catcode::Other), _) if c.is_ascii_digit() => {
+                            let n = n.unwrap_or(0).saturating_mul(10) + i64::from(c as u8 - b'0');
+                            numbered = Some((kind, Some(n)));
                             continue;
                         }
-                        _ => {
-                            let reg = self.register_sym(kind, n);
-                            regs.push((reg, kind));
-                            numbered = None;
-                        }
+                        (Tok::Chr(' ', _), None) => continue,
+                        (_, Some(n)) => regs.push((self.register_sym(kind, n), kind)),
+                        // `\count\z@`: a `\chardef` constant names one; else any.
+                        (_, None) => match t.cs().map(|cs| self.env.meaning(cs)) {
+                            Some(Meaning::Register(RegKind::Char, n)) => {
+                                regs.push((self.register_sym(kind, i64::from(n)), kind))
+                            }
+                            _ => kinds.push(kind),
+                        },
                     }
+                    numbered = None;
                 }
                 match t.tok {
                     Tok::Chr(_, Catcode::Begin) => grouped += 1,
@@ -13224,9 +13633,13 @@ impl Machine<'_> {
                     Some(Primitive::EndGroup) => grouped = grouped.saturating_sub(1),
                     _ => {}
                 }
+                // `\gdef`, `\xdef`, `\global\let` outlive the group.
+                let outlives = |how: Primitive| {
+                    matches!(how, Primitive::Def { global: true, .. } | Primitive::Let { global: true, .. })
+                };
                 if let Some(how) = definer.take()
                     && !matches!(meaning, Meaning::Undefined)
-                    && (grouped == 0 || std::mem::take(&mut global))
+                    && (grouped == 0 || outlives(how) || std::mem::take(&mut global))
                 {
                     let source = text[i + 1..].iter().find(|t| !matches!(t.tok, Tok::Chr('=' | ' ', _)));
                     let new = match (how, source.and_then(|s| s.cs())) {
@@ -13238,14 +13651,25 @@ impl Machine<'_> {
                 if matches!(meaning.prim(), Some(Primitive::Prefix(crate::engine::builtins::Prefix::Global))) {
                     global = true;
                 }
+                // A parameter or code set in a group the code opens is put back.
+                let kept = |global: &mut bool| grouped == 0 || std::mem::take(global);
                 match meaning {
                     Meaning::Undefined if defines => fresh.push(cs),
-                    Meaning::Macro(_) if level < MAY_RUN_LEVELS && seen.insert(cs) => queue.push((cs, level + 1)),
-                    Meaning::Register(kind @ (RegKind::Count | RegKind::Dimen), _) => {
-                        regs.push((self.storage(cs), kind))
+                    Meaning::Macro(_) if !seen.contains(&cs) && level >= self.limits.may_run_depth => deeper = true,
+                    Meaning::Macro(_) if seen.insert(cs) => queue.push((cs, level + 1)),
+                    Meaning::Register(kind, _) if reg_kind(kind) => regs.push((self.storage(cs), kind)),
+                    Meaning::Primitive(Primitive::Register(kind)) if reg_kind(kind) => numbered = Some((kind, None)),
+                    Meaning::Primitive(
+                        Primitive::IntegerParameter
+                        | Primitive::DimenParameter
+                        | Primitive::GlueParameter { .. }
+                        | Primitive::TokensParameter,
+                    ) if kept(&mut global) => params.push(self.env.identity(cs)),
+                    Meaning::Primitive(Primitive::CatcodeAssign) if kept(&mut global) => {
+                        codes.push((None, code_target(&text[i + 1..], &self.out.interner)))
                     }
-                    Meaning::Primitive(Primitive::Register(kind @ (RegKind::Count | RegKind::Dimen))) => {
-                        numbered = Some((kind, 0));
+                    Meaning::Primitive(Primitive::CharCode(table)) if kept(&mut global) => {
+                        codes.push((Some(table), code_target(&text[i + 1..], &self.out.interner)))
                     }
                     Meaning::Primitive(Primitive::Endinput) => {
                         if let Some(file) = self.innermost_file() {
@@ -13290,31 +13714,136 @@ impl Machine<'_> {
                 self.env.set(*name, joined, true);
             }
         }
+        // Any value of its kind: `\advance` leaves no number in the word unreached (tex.web § 1238).
+        let top = |kind: RegKind| {
+            use crate::engine::value::{Num, Quantity, Value, WORD_MAX, WORD_MIN};
+            let num = Num::range(WORD_MIN, WORD_MAX);
+            match kind {
+                RegKind::Count => Value::Num { quantity: Quantity::Int, num },
+                RegKind::Dimen => Value::Num { quantity: Quantity::Dimen, num },
+                _ => Value::Unknown,
+            }
+        };
         for &(reg, kind) in &regs {
-            let (quantity, num) = match kind {
-                RegKind::Dimen => (crate::engine::value::Quantity::Dimen, crate::engine::value::Num::full(true)),
-                _ => (
-                    crate::engine::value::Quantity::Int,
-                    crate::engine::value::Num::range(crate::engine::value::WORD_MIN, crate::engine::value::WORD_MAX),
-                ),
-            };
-            self.env.set_value(reg, crate::engine::value::Value::Num { quantity, num }, true);
+            self.env.set_value(reg, top(kind), true);
         }
-        if fresh.is_empty() && regs.is_empty() && redefined.is_empty() && left > 0 {
+        kinds.sort_unstable_by_key(|k| *k as u8);
+        kinds.dedup();
+        for &kind in &kinds {
+            self.weaken_registers(kind, None, top(kind), true);
+        }
+        params.sort_unstable();
+        params.dedup();
+        for &param in &params {
+            self.env.set_value(param, crate::engine::value::Value::Unknown, false);
+        }
+        for &(table, (ch, value)) in &codes {
+            let cats = value.filter(|v| (0..16).contains(v)).map_or(u16::MAX, |v| 1 << v);
+            let value = value.map_or(crate::engine::value::Value::Unknown, crate::engine::value::Value::Int);
+            match (table, ch) {
+                (None, Some(ch)) => self.set_catcode_may(ch, self.catcodes.cats(ch) | cats),
+                (None, None) => self.set_catcodes_reach(None, u16::MAX),
+                (Some(table), Some(ch)) => self.join_code(table, ch, &value, false, span),
+                (Some(table), None) => self.weaken_code_table(table, None, &value, false),
+            }
+        }
+        if fresh.is_empty()
+            && regs.is_empty()
+            && redefined.is_empty()
+            && kinds.is_empty()
+            && params.is_empty()
+            && codes.is_empty()
+            && left > 0
+            && !deeper
+        {
             return;
         }
         let names: Vec<String> = fresh.iter().map(|&n| format!("\\{}", self.name(n))).collect();
-        let more = if left == 0 { "; it reached more code than was read" } else { "" };
+        let more = match (left == 0, deeper) {
+            (true, _) => "; it reached more code than was read",
+            (false, true) => "; it reached macros deeper than limits.may_run_depth, whose writes are not followed",
+            _ => "",
+        };
         self.diagnose(
             Severity::Imprecision,
             "joined-code-may-define",
             span,
             format!(
-                "code a join made unknown may have run: {} may be defined and {} registers may hold any value{more}",
+                "code a join made unknown may have run: {} may be defined and {} registers, parameters or codes may hold any value{more}",
                 if names.is_empty() { "no name".to_string() } else { names.join(", ") },
-                regs.len()
+                regs.len() + kinds.len() + params.len() + codes.len()
             ),
         );
+    }
+
+    /// `text` with each `\\csname…\\endcsname` of characters as the name
+    /// it builds, for [`Machine::may_run`]. One a definition names that
+    /// holds more is a name of unknown text around the characters known.
+    fn named_csnames(&mut self, text: &Rc<[Token]>, span: Span) -> Rc<[Token]> {
+        let prim = |m: &Self, t: &Token| t.cs().and_then(|cs| m.env.meaning(cs).prim());
+        if !text.iter().any(|t| prim(self, t) == Some(Primitive::Csname)) {
+            return text.clone();
+        }
+        let mut out: Vec<Token> = Vec::with_capacity(text.len());
+        let mut i = 0;
+        while i < text.len() {
+            let t = text[i];
+            let end = (prim(self, &t) == Some(Primitive::Csname))
+                .then(|| text[i + 1..].iter().position(|u| prim(self, u) == Some(Primitive::Endcsname)))
+                .flatten();
+            let Some(end) = end else {
+                out.push(t);
+                i += 1;
+                continue;
+            };
+            let inner = &text[i + 1..i + 1 + end];
+            let chars: Option<String> = inner
+                .iter()
+                .map(|u| match u.tok {
+                    Tok::Chr(c, _) => Some(c),
+                    _ => None,
+                })
+                .collect();
+            let defined = out
+                .iter()
+                .rev()
+                .find(|u| prim(self, u) != Some(Primitive::ExpandAfter))
+                .is_some_and(|u| matches!(prim(self, u), Some(Primitive::Def { .. } | Primitive::Let { .. })));
+            // `\\expandafter\\def\\csname…`: the name built is the target.
+            if defined {
+                while out.last().is_some_and(|u| prim(self, u) == Some(Primitive::ExpandAfter)) {
+                    out.pop();
+                }
+                let at = out.len() - 1;
+                let mut k = at;
+                while k > 0 && prim(self, &out[k - 1]) == Some(Primitive::ExpandAfter) {
+                    k -= 1;
+                }
+                out.drain(k..at);
+            }
+            match chars {
+                Some(name) => out.push(Token::new(Tok::Cs(self.intern(&name)), t.span)),
+                None if defined => {
+                    let known = |part: &[Token]| -> String {
+                        part.iter()
+                            .map_while(|u| match u.tok {
+                                Tok::Chr(c, _) => Some(c),
+                                _ => None,
+                            })
+                            .collect()
+                    };
+                    let prefix = known(inner);
+                    let rev: Vec<Token> = inner.iter().rev().copied().collect();
+                    let suffix: String = known(&rev).chars().rev().collect();
+                    out.push(self.unknown_name_token(&prefix, &suffix, TextClass::ANY, None, span));
+                }
+                None => {
+                    out.extend_from_slice(&text[i..=i + 1 + end]);
+                }
+            }
+            i += end + 2;
+        }
+        Rc::from(out)
     }
 
     /// Whether an undefined `sym` may have been defined by a name built from
@@ -13327,6 +13856,46 @@ impl Machine<'_> {
     pub(crate) fn may_be_real(&self, sym: Sym) -> bool {
         !self.wild.is_empty() && self.wild.real(self.out.interner.name(sym))
     }
+}
+
+/// Whether `text` is the tokens `toks`.
+fn same_toks(text: &[Token], toks: &[Tok]) -> bool {
+    text.iter().map(|t| t.tok).eq(toks.iter().copied())
+}
+
+/// The character and value `\catcode`/`\lccode`… set in `text`, which
+/// follows the command: `` `\x `` or `` `x `` or digits, `=`, digits.
+fn code_target(text: &[Token], interner: &Interner) -> (Option<char>, Option<i64>) {
+    let toks: Vec<Tok> = text.iter().map(|t| t.tok).filter(|t| !matches!(t, Tok::Chr(' ', _))).take(16).collect();
+    let digits = |at: &mut usize| {
+        let mut n: Option<i64> = None;
+        while let Some(Tok::Chr(c, Catcode::Other)) = toks.get(*at)
+            && c.is_ascii_digit()
+        {
+            n = Some(n.unwrap_or(0).saturating_mul(10) + i64::from(*c as u8 - b'0'));
+            *at += 1;
+        }
+        n
+    };
+    let mut at = 0;
+    let ch = match toks.first() {
+        Some(Tok::Chr('`', Catcode::Other)) => {
+            at = 2;
+            match toks.get(1) {
+                Some(Tok::Chr(c, _)) => Some(*c),
+                Some(Tok::Cs(sym)) => {
+                    let mut chars = interner.name(*sym).chars();
+                    chars.next().filter(|_| chars.next().is_none())
+                }
+                _ => None,
+            }
+        }
+        _ => digits(&mut at).and_then(|n| u32::try_from(n).ok()).and_then(char::from_u32),
+    };
+    if matches!(toks.get(at), Some(Tok::Chr('=', Catcode::Other))) {
+        at += 1;
+    }
+    (ch, ch.and(digits(&mut at)))
 }
 
 /// The tokens of `delimiter` but its last: what may begin a match.

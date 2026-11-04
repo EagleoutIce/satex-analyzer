@@ -1,0 +1,14 @@
+% Mutation of tcolorbox_unknown_height_anchors: a box of unknown height
+% inside a box of known height.
+\documentclass{article}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\newtcolorbox{sbx}{blanker,underlay={\fill ([xshift=1pt]frame.south west) -- (frame.north east);}}
+\newdimen\uh \uh=\pdfelapsedtime sp
+\begin{document}
+\begin{sbx}A \begin{sbx}\rule{1pt}{\uh}\end{sbx} b.\end{sbx}
+\makeatletter
+\ifnum\currentgrouplevel=0 \ifx\southwest\undefined\gdef\AfterBoxGroupsClosed{}\fi\fi
+\makeatother
+\gdef\SatexReachedEnd{}
+\end{document}

@@ -1,0 +1,13 @@
+% Mutation of tcolorbox_unknown_height_anchors: the height is known.
+\documentclass{article}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\newtcolorbox{sbx}{blanker,breakable,underlay={\fill ([xshift=1pt]frame.south west) -- (frame.north east);}}
+\newdimen\uh \uh=12pt
+\begin{document}
+\begin{sbx}A \rule{1pt}{\uh} b.\end{sbx}
+\makeatletter
+\ifnum\currentgrouplevel=0 \ifx\southwest\undefined\gdef\AfterBoxGroupsClosed{}\fi\fi
+\makeatother
+\gdef\SatexReachedEnd{}
+\end{document}

@@ -1,0 +1,19 @@
+% Mutation of tcolorbox_unknown_height_anchors: a picture reads a node's
+% anchor before and after the box; neither leaves \southwest defined.
+\documentclass{article}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins}
+\newtcolorbox{sbx}{blanker,underlay={\fill (frame.south west) -- (frame.north east);}}
+\newdimen\uh \uh=\pdfelapsedtime sp
+\begin{document}
+\tikz{\node (a) {x}; \fill (a.south west) -- (a.north east);}
+\makeatletter
+\ifx\southwest\undefined\gdef\AfterFirstPicture{}\fi
+\makeatother
+\begin{sbx}\rule{1pt}{\uh}\end{sbx}
+\tikz{\node (b) {y}; \fill (b.south west) -- (b.north east);}
+\makeatletter
+\ifnum\currentgrouplevel=0 \ifx\southwest\undefined\gdef\AfterBoxGroupsClosed{}\fi\fi
+\makeatother
+\gdef\SatexReachedEnd{}
+\end{document}
