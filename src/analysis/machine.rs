@@ -5359,6 +5359,13 @@ will look undefined",
         steps && lines
     }
 
+    /// A math atom of math code `code` set at `span` ([`crate::analysis::observe::math_atom`]).
+    pub(crate) fn note_math(&mut self, code: i64, span: Span) {
+        if !self.output_active() {
+            crate::analysis::observe::math_atom(self, code, span);
+        }
+    }
+
     /// A character typeset at `span`, kept when a trace range asks what its
     /// lines produce.
     pub(crate) fn note_text(&mut self, c: char, span: Span) {
@@ -8843,10 +8850,16 @@ will look undefined",
                             None => self.append_item(crate::engine::mode::Item::Unknown),
                         }
                     }
-                } else if kind == crate::engine::tex::RegKind::MathChar && self.mode == crate::engine::mode::Modes::MATH
+                } else if kind == crate::engine::tex::RegKind::MathChar
+                    && self.mode.within(crate::engine::mode::Modes::ANY_MATH)
                 {
                     let code = self.env.value(sym).as_int();
-                    self.math_code_char(code);
+                    if let Some(c) = code {
+                        self.note_math(c, span);
+                    }
+                    if self.mode == crate::engine::mode::Modes::MATH {
+                        self.math_code_char(code);
+                    }
                 } else if !matches!(
                     kind,
                     crate::engine::tex::RegKind::MathChar | crate::engine::tex::RegKind::UMathChar

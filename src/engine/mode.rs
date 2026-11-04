@@ -3883,6 +3883,10 @@ impl Machine<'_> {
         if !self.page_touched || self.output_active() {
             return;
         }
+        // what filled before this break, while pages break only where forced
+        if self.cfg.analysis.assume_forced_page_breaks {
+            crate::analysis::observe::page_fill(self);
+        }
         self.page_touched = false;
         self.pages += 1;
         self.ship_pending();
@@ -3997,6 +4001,7 @@ impl Machine<'_> {
         self.take_contributions();
         self.page_so_far_moved(false);
         if self.cfg.analysis.assume_forced_page_breaks {
+            crate::analysis::observe::page_fill(self);
             return;
         }
         if !std::mem::take(&mut self.page_grew) || self.output_active() || !self.page_touched {
@@ -4945,7 +4950,7 @@ impl Machine<'_> {
     /// variant (tex.web §§ 1151, 1160). The shift that takes the code from
     /// the number.
     pub(crate) fn math_char_command(&self, by: Sym) -> Option<u32> {
-        if self.mode != Modes::MATH {
+        if !self.mode.within(Modes::ANY_MATH) {
             return None;
         }
         match self.name(self.env.identity(by)) {

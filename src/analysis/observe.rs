@@ -1316,6 +1316,30 @@ pub fn align(m: &mut Machine, mark: crate::analysis::facts::Align) {
     }
 }
 
+/// The page passed another `\vsize` since the last page shipped ([`crate::analysis::facts::Text::fills`]).
+pub fn page_fill(m: &mut Machine) {
+    if m.package().is_some() || m.reading_format() || m.output_active() {
+        return;
+    }
+    let Some(goal) = m.dimen_parameter("vsize").known().filter(|&g| g > 0) else { return };
+    let length = m.page_length();
+    // an unbounded length says nothing of where the page breaks
+    if length.is_any() || length.hi >= crate::engine::value::MAX_DIMEN {
+        return;
+    }
+    // TeX breaks once the page is past its goal (tex.web § 1005), not when it is full
+    let past = |l: crate::engine::value::Scaled| (l.max(1) - 1) / goal;
+    let (sure, may) = (past(length.lo), past(length.hi));
+    let text = &mut m.out.facts.text;
+    let since = text.pages.last().map_or(0, |p| p.0);
+    let mut have = text.fills.iter().filter(|f| f.0 >= since).count() as i64;
+    let at = text.at.len() as u32;
+    while have < may && text.fills.len() < m.cfg.limits.facts {
+        text.fills.push((at, have < sure));
+        have += 1;
+    }
+}
+
 /// `\shipout` sends a page out.
 pub fn page(m: &mut Machine, span: Span) {
     if m.package().is_some() || m.reading_format() {
@@ -1328,6 +1352,21 @@ pub fn page(m: &mut Machine, span: Span) {
     }
 }
 
+/// A math atom of math code `code` (`\\mathchar`, a `\\mathchardef` constant, `\\delimiter`'s
+/// small variant): its slot as the character when the family is a text font's (0, 1), else a
+/// placeholder the typeset view replaces by the glyph it knows for the code.
+pub fn math_atom(m: &mut Machine, code: i64, span: Span) {
+    if m.package().is_some() || m.reading_format() || m.in_nullfont() {
+        return;
+    }
+    let slot = (code & 0xff) as u8;
+    let c = if (code >> 8) & 0xf < 2 && slot.is_ascii_graphic() { char::from(slot) } else { GLYPH };
+    set(m, c, Some(code), span);
+}
+
+/// What a math atom without a text character stands as in the typeset text.
+pub const GLYPH: char = '\u{2b1a}';
+
 pub fn typeset(m: &mut Machine, c: char, span: Span) {
     if m.package().is_some() || m.reading_format() {
         m.quantity = Quantities::default();
@@ -1338,7 +1377,7 @@ pub fn typeset(m: &mut Machine, c: char, span: Span) {
         m.text_broken = true;
         return;
     }
-    set(m, c, span);
+    set(m, c, None, span);
     // A space after `\nobreak` (a tie, `~`) is no breakpoint (tex.web
     // § 831): the number and the unit stay together on the line, spaced
     // by hand, and the run goes on.
@@ -1453,7 +1492,7 @@ fn flush(m: &mut Machine, run: Option<Run>) {
 /// that is not a character came between them, or the two don't stand side
 /// by side in one line of one file: TeX's ligature program joins neither
 /// (tex.web § 1034).
-fn set(m: &mut Machine, c: char, span: Span) {
+fn set(m: &mut Machine, c: char, code: Option<i64>, span: Span) {
     if m.out.facts.text.at.len() >= m.cfg.limits.facts {
         return;
     }
@@ -1485,7 +1524,11 @@ fn set(m: &mut Machine, c: char, span: Span) {
         return;
     }
     let mathematical = m.mode.within(crate::engine::mode::Modes::ANY_MATH);
-    let code = if mathematical { m.char_code_known(crate::engine::builtins::CodeTable::Math, c) } else { None };
+    let code = if mathematical {
+        code.or_else(|| m.char_code_known(crate::engine::builtins::CodeTable::Math, c))
+    } else {
+        None
+    };
     let starts = {
         let text = &m.out.facts.text;
         let at = text.at.len() as u32;

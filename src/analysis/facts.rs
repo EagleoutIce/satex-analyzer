@@ -409,6 +409,10 @@ pub struct Text {
     /// Where `\shipout` sent a page out: the number of characters set
     /// before it, ascending, and the place in the user's files read then.
     pub pages: Vec<(u32, Span)>,
+    /// Where the page passed another `\vsize` while pages break only where forced
+    /// (`analysis.assume_forced_page_breaks`): pdfTeX breaks a page before it, surely when the
+    /// shortest the page can be has passed it (`true`), else when the page may have.
+    pub fills: Vec<(u32, bool)>,
     /// Character ranges of boxes used in a box that has rules on its sides
     /// and no text of its own (`\fbox`): one framed box around them.
     pub frames: Vec<(u32, u32)>,

@@ -777,42 +777,474 @@
           "type": "object"
         },
         "math_symbols": {
-          "description": "what the typeset view shows for slots of the math symbol font",
+          "description": "what the typeset view shows for a math font slot, keyed family * 256 + slot (0 OT1, 1 OML, 2 OMS, 3 OMX)",
           "properties": {
             "0": {
-              "default": "−",
+              "default": "Γ",
               "type": "string"
             },
             "1": {
-              "default": "·",
+              "default": "Δ",
               "type": "string"
             },
-            "15": {
-              "default": "•",
+            "10": {
+              "default": "Ω",
               "type": "string"
             },
             "2": {
-              "default": "×",
+              "default": "Θ",
               "type": "string"
             },
-            "20": {
-              "default": "≤",
+            "267": {
+              "default": "α",
               "type": "string"
             },
-            "21": {
-              "default": "≥",
+            "268": {
+              "default": "β",
+              "type": "string"
+            },
+            "269": {
+              "default": "γ",
+              "type": "string"
+            },
+            "270": {
+              "default": "δ",
+              "type": "string"
+            },
+            "271": {
+              "default": "ϵ",
+              "type": "string"
+            },
+            "272": {
+              "default": "ζ",
+              "type": "string"
+            },
+            "273": {
+              "default": "η",
+              "type": "string"
+            },
+            "274": {
+              "default": "θ",
+              "type": "string"
+            },
+            "275": {
+              "default": "ι",
+              "type": "string"
+            },
+            "276": {
+              "default": "κ",
+              "type": "string"
+            },
+            "277": {
+              "default": "λ",
+              "type": "string"
+            },
+            "278": {
+              "default": "μ",
+              "type": "string"
+            },
+            "279": {
+              "default": "ν",
+              "type": "string"
+            },
+            "280": {
+              "default": "ξ",
+              "type": "string"
+            },
+            "281": {
+              "default": "π",
+              "type": "string"
+            },
+            "282": {
+              "default": "ρ",
+              "type": "string"
+            },
+            "283": {
+              "default": "σ",
+              "type": "string"
+            },
+            "284": {
+              "default": "τ",
+              "type": "string"
+            },
+            "285": {
+              "default": "υ",
+              "type": "string"
+            },
+            "286": {
+              "default": "ϕ",
+              "type": "string"
+            },
+            "287": {
+              "default": "χ",
+              "type": "string"
+            },
+            "288": {
+              "default": "ψ",
+              "type": "string"
+            },
+            "289": {
+              "default": "ω",
+              "type": "string"
+            },
+            "290": {
+              "default": "ε",
+              "type": "string"
+            },
+            "291": {
+              "default": "ϑ",
+              "type": "string"
+            },
+            "292": {
+              "default": "ϖ",
+              "type": "string"
+            },
+            "293": {
+              "default": "ϱ",
+              "type": "string"
+            },
+            "294": {
+              "default": "ς",
+              "type": "string"
+            },
+            "295": {
+              "default": "φ",
               "type": "string"
             },
             "3": {
+              "default": "Λ",
+              "type": "string"
+            },
+            "4": {
+              "default": "Ξ",
+              "type": "string"
+            },
+            "5": {
+              "default": "Π",
+              "type": "string"
+            },
+            "512": {
+              "default": "−",
+              "type": "string"
+            },
+            "513": {
+              "default": "·",
+              "type": "string"
+            },
+            "514": {
+              "default": "×",
+              "type": "string"
+            },
+            "515": {
               "default": "∗",
               "type": "string"
             },
-            "33": {
+            "516": {
+              "default": "÷",
+              "type": "string"
+            },
+            "518": {
+              "default": "±",
+              "type": "string"
+            },
+            "519": {
+              "default": "∓",
+              "type": "string"
+            },
+            "520": {
+              "default": "⊕",
+              "type": "string"
+            },
+            "521": {
+              "default": "⊖",
+              "type": "string"
+            },
+            "522": {
+              "default": "⊗",
+              "type": "string"
+            },
+            "523": {
+              "default": "⊘",
+              "type": "string"
+            },
+            "524": {
+              "default": "⊙",
+              "type": "string"
+            },
+            "526": {
+              "default": "∘",
+              "type": "string"
+            },
+            "527": {
+              "default": "•",
+              "type": "string"
+            },
+            "529": {
+              "default": "≡",
+              "type": "string"
+            },
+            "530": {
+              "default": "⊆",
+              "type": "string"
+            },
+            "531": {
+              "default": "⊇",
+              "type": "string"
+            },
+            "532": {
+              "default": "≤",
+              "type": "string"
+            },
+            "533": {
+              "default": "≥",
+              "type": "string"
+            },
+            "536": {
+              "default": "∼",
+              "type": "string"
+            },
+            "537": {
+              "default": "≈",
+              "type": "string"
+            },
+            "538": {
+              "default": "⊂",
+              "type": "string"
+            },
+            "539": {
+              "default": "⊃",
+              "type": "string"
+            },
+            "540": {
+              "default": "≪",
+              "type": "string"
+            },
+            "541": {
+              "default": "≫",
+              "type": "string"
+            },
+            "544": {
+              "default": "←",
+              "type": "string"
+            },
+            "545": {
               "default": "→",
               "type": "string"
             },
+            "546": {
+              "default": "↑",
+              "type": "string"
+            },
+            "547": {
+              "default": "↓",
+              "type": "string"
+            },
+            "548": {
+              "default": "↔",
+              "type": "string"
+            },
+            "560": {
+              "default": "′",
+              "type": "string"
+            },
+            "561": {
+              "default": "∞",
+              "type": "string"
+            },
+            "562": {
+              "default": "∈",
+              "type": "string"
+            },
+            "563": {
+              "default": "∋",
+              "type": "string"
+            },
+            "564": {
+              "default": "△",
+              "type": "string"
+            },
+            "568": {
+              "default": "∀",
+              "type": "string"
+            },
+            "569": {
+              "default": "∃",
+              "type": "string"
+            },
+            "570": {
+              "default": "¬",
+              "type": "string"
+            },
+            "571": {
+              "default": "∅",
+              "type": "string"
+            },
+            "576": {
+              "default": "ℵ",
+              "type": "string"
+            },
             "6": {
-              "default": "±",
+              "default": "Σ",
+              "type": "string"
+            },
+            "603": {
+              "default": "∪",
+              "type": "string"
+            },
+            "604": {
+              "default": "∩",
+              "type": "string"
+            },
+            "606": {
+              "default": "∧",
+              "type": "string"
+            },
+            "607": {
+              "default": "∨",
+              "type": "string"
+            },
+            "614": {
+              "default": "{",
+              "type": "string"
+            },
+            "615": {
+              "default": "}",
+              "type": "string"
+            },
+            "616": {
+              "default": "⟨",
+              "type": "string"
+            },
+            "617": {
+              "default": "⟩",
+              "type": "string"
+            },
+            "618": {
+              "default": "|",
+              "type": "string"
+            },
+            "619": {
+              "default": "‖",
+              "type": "string"
+            },
+            "626": {
+              "default": "∇",
+              "type": "string"
+            },
+            "7": {
+              "default": "Υ",
+              "type": "string"
+            },
+            "8": {
+              "default": "Φ",
+              "type": "string"
+            },
+            "840": {
+              "default": "∮",
+              "type": "string"
+            },
+            "841": {
+              "default": "∮",
+              "type": "string"
+            },
+            "842": {
+              "default": "⨀",
+              "type": "string"
+            },
+            "843": {
+              "default": "⨀",
+              "type": "string"
+            },
+            "844": {
+              "default": "⨁",
+              "type": "string"
+            },
+            "845": {
+              "default": "⨁",
+              "type": "string"
+            },
+            "846": {
+              "default": "⨂",
+              "type": "string"
+            },
+            "847": {
+              "default": "⨂",
+              "type": "string"
+            },
+            "848": {
+              "default": "∑",
+              "type": "string"
+            },
+            "849": {
+              "default": "∏",
+              "type": "string"
+            },
+            "850": {
+              "default": "∫",
+              "type": "string"
+            },
+            "851": {
+              "default": "⋃",
+              "type": "string"
+            },
+            "852": {
+              "default": "⋂",
+              "type": "string"
+            },
+            "853": {
+              "default": "⨄",
+              "type": "string"
+            },
+            "854": {
+              "default": "⋀",
+              "type": "string"
+            },
+            "855": {
+              "default": "⋁",
+              "type": "string"
+            },
+            "856": {
+              "default": "∑",
+              "type": "string"
+            },
+            "857": {
+              "default": "∏",
+              "type": "string"
+            },
+            "858": {
+              "default": "∫",
+              "type": "string"
+            },
+            "859": {
+              "default": "⋃",
+              "type": "string"
+            },
+            "860": {
+              "default": "⋂",
+              "type": "string"
+            },
+            "861": {
+              "default": "⨄",
+              "type": "string"
+            },
+            "862": {
+              "default": "⋀",
+              "type": "string"
+            },
+            "863": {
+              "default": "⋁",
+              "type": "string"
+            },
+            "864": {
+              "default": "∐",
+              "type": "string"
+            },
+            "865": {
+              "default": "∐",
+              "type": "string"
+            },
+            "9": {
+              "default": "Ψ",
               "type": "string"
             }
           },

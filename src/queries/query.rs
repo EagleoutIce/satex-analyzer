@@ -582,14 +582,29 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let mut began = 0usize;
     // a page `\shipout` sent out, after the paragraph it followed: its number and the user's line then
     let mut pages = text.pages.iter().enumerate().peekable();
-    let shipped = |k: usize, at: Span, last: bool| {
+    // pages filled up to the character at `i`, where pages break only where forced: each one more page
+    let filled = |i: u32| text.fills.partition_point(|f| f.0 <= i);
+    let shipped = |k: usize, at: Span, last: bool, before: u32| {
+        let n = k + 1 + filled(before);
         let mut record = place(analysis, at);
         record.insert("kind".into(), json!("page"));
-        record.insert("page".into(), json!(k + 1));
+        record.insert("page".into(), json!(n));
         record.insert("last".into(), json!(last));
+        record.insert("detail".into(), json!(if last { format!("page {n}") } else { format!("page {n} → {}", n + 1) }));
+        record
+    };
+    // a page the run did not break, though it filled there: pdfTeX breaks it at or before here
+    let mut fills = text.fills.iter().enumerate().peekable();
+    let fill = |k: usize, sure: bool, at: Span| {
+        let n = k + 1 + text.pages.iter().filter(|p| p.0 < text.fills[k].0).count();
+        let mut record = place(analysis, at);
+        record.insert("kind".into(), json!("page"));
+        record.insert("page".into(), json!(n));
+        record.insert("last".into(), json!(false));
+        record.insert("filled".into(), json!(if sure { "surely" } else { "maybe" }));
         record.insert(
             "detail".into(),
-            json!(if last { format!("page {}", k + 1) } else { format!("page {} → {}", k + 1, k + 2) }),
+            json!(format!("page {n} → {} {}", n + 1, if sure { "by here" } else { "maybe by here" })),
         );
         record
     };
@@ -736,8 +751,11 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             }
             out.push(record);
             push_foot(&mut out, &mut foot, site, &mut keys);
-            while let Some((k, &(_, at))) = pages.next_if(|(_, p)| p.0 as usize <= i) {
-                out.push(shipped(k, at, false));
+            while let Some((k, &(before, at))) = pages.next_if(|(_, p)| p.0 as usize <= i) {
+                out.push(shipped(k, at, false, before));
+            }
+            while let Some((k, &(_, sure))) = fills.next_if(|(_, f)| f.0 as usize <= i) {
+                out.push(fill(k, sure, site));
             }
             style = "";
             on_line = None;
@@ -853,8 +871,11 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     }
     push_foot(&mut out, &mut foot, first.unwrap_or_default(), &mut keys);
     let total = text.pages.len();
-    for (k, &(_, at)) in pages {
-        out.push(shipped(k, at, k + 1 == total));
+    for (k, &(_, sure)) in fills {
+        out.push(fill(k, sure, first.unwrap_or_default()));
+    }
+    for (k, &(before, at)) in pages {
+        out.push(shipped(k, at, k + 1 == total, before));
     }
     // A kernel read only partly leaves the document names the engine's
     // format defines (`\documentclass` set as text), so none of the text is
@@ -1415,7 +1436,7 @@ fn math_atoms(
             }
             before = Some(class);
             let family = (code >> 8) & 0xf;
-            let glyph = (family == 2).then(|| symbols.get(&u32::from(code & 0xff)).copied()).flatten();
+            let glyph = symbols.get(&u32::from(code & 0xfff)).copied();
             let tag = if class == 0 && family == 1 { 'i' } else { char::from(b'0' + class as u8) };
             out.insert(at, (tag, glyph));
         }

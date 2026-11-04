@@ -532,7 +532,6 @@ main td .badges, main td .cat { white-space: nowrap; }
 .ts-toggle input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ts-toggle:hover { color: var(--fg); }
 .typeset .ts-at { flex: none; box-sizing: border-box; width: 3.5ch; color: var(--muted); font-family: var(--mono, monospace); font-size: 12px; text-align: right; }
-.typeset .ts-ln { color: var(--muted); font-family: var(--mono, monospace); font-size: 10px; vertical-align: super; margin: 0 .25ch; user-select: none; }
 /* Loading the playground: a thin bar before the status text. */
 /* the site's one progress bar: a share that grows smoothly, or a shimmer while the total is unknown */
 .sx-progress { position: relative; display: inline-block; flex: 0 0 auto; width: 7rem; height: .4rem; margin-right: .5rem; vertical-align: middle; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent); }
@@ -1548,9 +1547,6 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .ts-view p.ts.ts-h { border-bottom: 0; }
 .ts-view p.ts.ts-h .ts-text { border-bottom: 1px solid var(--border); }
 .ts-view p.ts[style*="--skip"] { margin-top: var(--skip); }
-/* a source line beginning mid-paragraph: a small mark in the gutter beside the visual line it starts on */
-.ts-view .ts-ln { position: absolute; left: 0; width: 2.6ch; overflow: hidden; margin: 0; text-align: left; white-space: nowrap; vertical-align: baseline; font-size: 9px; opacity: .55; }
-.ts-view .ts-ln:hover { opacity: 1; }
 .ts-view .ts-other { margin: .2rem 0; } .ts-view .ts-other > summary { cursor: pointer; list-style: none; color: var(--muted); font-size: .8rem; }
 .ts-view .ts-other > summary > .ts-file { grid-column: 3; grid-row: 1; } .ts-view .ts-other > summary > .muted { grid-column: 3; grid-row: 1; justify-self: end; }
 /* an environment instance of the user's file: one block, its name and line as a chip */
@@ -1564,14 +1560,18 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 /* a page break: a labelled line across the text column */
 .ts-view .ts-page { margin: .5rem 0; font: .66rem ui-monospace, Menlo, monospace; color: var(--muted); }
 .ts-view .ts-page-label { grid-column: 3; display: flex; align-items: center; gap: .5rem; }
-.ts-view .ts-page-label::before, .ts-view .ts-page-label::after { content: ""; flex: 1; border-top: 1px dashed var(--border); }
+.ts-view .ts-page-label::before, .ts-view .ts-page-label::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+/* where pdfTeX breaks a page the run did not: dashed, in the accent, fainter when only possible */
+.ts-view .ts-page-fill { color: var(--accent); }
+.ts-view .ts-page-fill .ts-page-label::before, .ts-view .ts-page-fill .ts-page-label::after { border-top-style: dashed; border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.ts-view .ts-page-fill.ts-maybe { opacity: .6; }
 /* glue that fills a box or cell: the text sits where the fills leave it */
 .typeset .ts-fill { display: inline; }
 .typeset .ts-boxto:has(> .ts-fill) { display: inline-flex; max-width: 100%; } .typeset .ts-boxto > .ts-fill { flex: 1; }
 .typeset .ts-td:has(> .ts-fill-l) { text-align: right; } .typeset .ts-td:has(> .ts-fill-l):has(> .ts-fill-r) { text-align: center; }
-.typeset .ts-hidden { color: transparent; text-decoration: underline dotted color-mix(in srgb, var(--muted) 60%, transparent); text-underline-offset: 3px; }
-.typeset .ts-hidden * { color: transparent !important; }
-.typeset.show-boxes .ts-hidden, .typeset .ts-hidden:hover { color: color-mix(in srgb, var(--muted) 45%, transparent); }
+/* covered material (beamer's \pause, \uncover): its words as a faint ghost where they keep their space */
+.typeset .ts-hidden, .typeset .ts-hidden * { color: color-mix(in srgb, var(--muted) 28%, transparent) !important; }
+.typeset.show-boxes .ts-hidden, .typeset .ts-hidden:hover, .typeset .ts-hidden:hover * { color: color-mix(in srgb, var(--muted) 70%, transparent) !important; }
 /* a paragraph set wholly in a box the run did not see placed (a float it could not follow to its page) */
 .ts-view p.ts-held .ts-text { border-left: 2px dashed color-mix(in srgb, var(--muted) 55%, transparent); padding-left: .4rem; }
 /* a frame's card: the page's own text (its title) as the header, a stepper through the pages it shipped */
@@ -1813,63 +1813,6 @@ table.prim td { vertical-align: top; } table.long.prim td:nth-child(3) { white-s
 .pdf-wait::before { content: ""; display: inline-block; width: .55rem; height: .55rem; margin-right: .35rem; border-radius: 50%; border: 2px solid var(--accent); border-right-color: transparent; vertical-align: -.05rem; animation: pdf-spin .8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .pdf-wait::before { animation: none; } }
 #play-pdf.pdf-running #pdf-compile { cursor: progress; box-shadow: inset 0 -2px 0 var(--accent); }
-
-/* The typeset view: one grid for every row. A fixed gutter holds the source line (right-aligned, the same x
-   everywhere), then one rail per environment level at a fixed step, then the text, aligned whatever the depth. */
-.ts-view { --gutter: 6ch; --step: .55rem; --rail: color-mix(in srgb, var(--accent) 35%, transparent); }
-.ts-view :is(p.ts, .ts-page, .ts-block-head, .ts-other > summary) { display: grid; grid-template-columns: var(--gutter) calc(var(--rails, 0) * var(--step)) minmax(0, 1fr); column-gap: .5rem; align-items: baseline; position: relative; margin: 0; padding: .1rem 0; }
-.ts-view p.ts[data-env] { margin: 0; padding: .1rem 0; border-left: 0; }
-.ts-view p.ts[data-env] + p.ts[data-env] { margin-top: 0; }
-.ts-view .ts-at { width: auto; grid-column: 1; }
-.ts-view .ts-text { grid-column: 3; }
-.ts-view .ts-rails { grid-column: 2; align-self: stretch; margin: -.1rem 0; background: repeating-linear-gradient(to right, var(--rail) 0 2px, transparent 2px var(--step)) no-repeat; background-size: calc(var(--depth, 0) * var(--step)) 100%; }
-.ts-view p.ts.ts-h { border-bottom: 0; }
-.ts-view p.ts.ts-h .ts-text { border-bottom: 1px solid var(--border); }
-.ts-view p.ts[style*="--skip"] { margin-top: var(--skip); }
-/* a source line beginning mid-paragraph: a small mark in the gutter beside the visual line it starts on */
-.ts-view .ts-ln { position: absolute; left: 0; width: 2.6ch; overflow: hidden; margin: 0; text-align: left; white-space: nowrap; vertical-align: baseline; font-size: 9px; opacity: .55; }
-.ts-view .ts-ln:hover { opacity: 1; }
-.ts-view .ts-other { margin: .2rem 0; } .ts-view .ts-other > summary { cursor: pointer; list-style: none; color: var(--muted); font-size: .8rem; }
-.ts-view .ts-other > summary > .ts-file { grid-column: 3; grid-row: 1; } .ts-view .ts-other > summary > .muted { grid-column: 3; grid-row: 1; justify-self: end; }
-/* an environment instance of the user's file: one block, its name and line as a chip */
-.ts-view .ts-block { margin: .45rem 0; }
-.ts-view .ts-block-head { font: 600 .66rem ui-monospace, Menlo, monospace; color: var(--muted); padding: 0; }
-.ts-view .ts-block-chip { grid-column: 3; display: flex; align-items: baseline; flex-wrap: wrap; }
-.ts-view .ts-block-env { color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
-.ts-view .ts-block-place { margin-left: .35rem; font-weight: 400; color: var(--fg); }
-.ts-view .ts-block-line, .ts-view .ts-block-label { margin-left: .5rem; font-weight: 400; }
-.ts-view .ts-block-label { padding: 0 .35rem; border-radius: 4px; background: var(--sunk); color: var(--fg); }
-/* a page break: a labelled line across the text column */
-.ts-view .ts-page { margin: .5rem 0; font: .66rem ui-monospace, Menlo, monospace; color: var(--muted); }
-.ts-view .ts-page-label { grid-column: 3; display: flex; align-items: center; gap: .5rem; }
-.ts-view .ts-page-label::before, .ts-view .ts-page-label::after { content: ""; flex: 1; border-top: 1px dashed var(--border); }
-/* glue that fills a box or cell: the text sits where the fills leave it */
-.typeset .ts-fill { display: inline; }
-.typeset .ts-boxto:has(> .ts-fill) { display: inline-flex; max-width: 100%; } .typeset .ts-boxto > .ts-fill { flex: 1; }
-.typeset .ts-td:has(> .ts-fill-l) { text-align: right; } .typeset .ts-td:has(> .ts-fill-l):has(> .ts-fill-r) { text-align: center; }
-.typeset .ts-hidden { color: transparent; text-decoration: underline dotted color-mix(in srgb, var(--muted) 60%, transparent); text-underline-offset: 3px; }
-.typeset .ts-hidden * { color: transparent !important; }
-.typeset.show-boxes .ts-hidden, .typeset .ts-hidden:hover { color: color-mix(in srgb, var(--muted) 45%, transparent); }
-/* a paragraph set wholly in a box the run did not see placed (a float it could not follow to its page) */
-.ts-view p.ts-held .ts-text { border-left: 2px dashed color-mix(in srgb, var(--muted) 55%, transparent); padding-left: .4rem; }
-/* a frame's card: the page's own text (its title) as the header, a stepper through the pages it shipped */
-.ts-view .ts-card { margin: .7rem 0; border: 1px solid var(--border); border-radius: 8px; padding: 0 0 .35rem; background: color-mix(in srgb, var(--accent) 3%, var(--bg)); }
-.ts-view .ts-card-head { padding: .4rem 0 .35rem; margin-bottom: .3rem; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 8px 8px 0 0; }
-.ts-view .ts-card-title { margin-right: .7rem; font: 700 1.05rem var(--serif, Georgia, serif); letter-spacing: 0; text-transform: none; color: var(--accent); }
-.ts-view .ts-stepper { display: inline-flex; gap: 2px; margin-left: .8rem; }
-.ts-view .ts-stepper button { min-width: 1.6rem; padding: 0 .35rem; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--fg); font: 600 .66rem ui-monospace, Menlo, monospace; cursor: pointer; }
-.ts-view .ts-stepper button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
-.ts-view .ts-stepper button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.ts-view .ts-diff-toggle { margin-left: .6rem; font-weight: 400; cursor: pointer; display: inline-flex; align-items: center; gap: .2rem; }
-.ts-view .ts-diff ins { text-decoration: none; background: color-mix(in srgb, var(--safe) 22%, transparent); border-radius: 3px; padding: 0 .15rem; }
-.ts-view .ts-diff del { background: color-mix(in srgb, var(--error) 18%, transparent); border-radius: 3px; padding: 0 .15rem; }
-@media (prefers-reduced-motion: no-preference) { .ts-view .ts-step:not([hidden]) { animation: ts-step-in .15s ease-out; } }
-@keyframes ts-step-in { from { opacity: .3; } to { opacity: 1; } }
-.typeset .ts[data-just=center] .ts-table { margin-inline: auto; } .typeset .ts[data-just=right] .ts-table { margin-left: auto; }
-.typeset .ts-fillrow { display: flex; flex-wrap: wrap; align-items: baseline; } .typeset .ts-fillrow > .ts-fill { flex: 1; }
-.typeset .ts-frame { display: inline-block; padding: 0 .25em; border: 1px solid currentColor; line-height: 1.2; }
-.typeset .ts-bar[style*="width"] { max-width: 100%; vertical-align: baseline; }
-.typeset .ts-sup, .typeset .ts-sub { font-size: .72em; line-height: 0; } .typeset .ts-sup { vertical-align: .55em; } .typeset .ts-sub { vertical-align: -.3em; }
 .hover .md-table { display: block; max-width: 100%; overflow-x: auto; }
 
 /* the embed snippet folds into a button (site.js satexEmbedFold) */

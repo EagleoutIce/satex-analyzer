@@ -426,6 +426,54 @@ fn a_kernel_cut_short_typesets_unknown_text() {
     assert_eq!(cut, ["kernel"]);
 }
 
+/// A page that fills past `\\vsize` breaks there in pdfTeX even where satex assumes pages break
+/// only where forced: the rows mark the break and count the pages pdflatex makes.
+#[test]
+fn a_filled_page_is_marked_where_it_breaks() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-page-fill");
+    std::fs::create_dir_all(&dir).unwrap();
+    let sentence = "Some text that fills the page with words and more words. ";
+    let paragraphs: Vec<String> = (0..15).map(|_| sentence.repeat(4)).collect();
+    let body = paragraphs.join("\n\n");
+    std::fs::write(
+        dir.join("p.tex"),
+        format!("\\documentclass{{article}}\n\\begin{{document}}\n\\section{{A}}\n{body}\n\\end{{document}}\n"),
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "p.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let pages: Vec<&str> = rows.iter().filter(|r| r["kind"] == "page").filter_map(|r| r["detail"].as_str()).collect();
+    // pdflatex sets these 15 three-line paragraphs on two pages
+    assert_eq!(pages, ["page 1 → 2 by here", "page 2"]);
+}
+
+/// Math atoms a math code names (`\\mathchardef` constants such as `\\alpha` and `\\sum`,
+/// `\\delimiter`'s small variant) are typeset with their glyph, inline and displayed.
+#[test]
+fn math_symbols_are_typeset() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-math-symbols");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("m.tex"),
+        "\\documentclass{article}\n\\begin{document}\nSee $\\alpha\\leq\\langle x\\rangle$.\n\\[\\sum\\limits_{i=1}^{n} \\Gamma\\]\n\\end{document}\n",
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "m.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let text: String = rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
+    for glyph in ['α', '≤', '⟨', '⟩', '∑', 'Γ'] {
+        assert!(text.contains(glyph), "{glyph} missing in {text:?}");
+    }
+}
+
 /// Capability: typesetting feedback. A table's `|` and `\\hline` and a
 /// `\\rule` bar are drawn between the text (tex.web § 463). Struts, rules
 /// of no width (`\\strut`, array's `\\@arstrut`), are not. Its cells

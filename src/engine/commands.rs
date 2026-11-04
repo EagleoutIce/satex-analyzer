@@ -1568,7 +1568,12 @@ impl Machine<'_> {
             }
             Syntax::Number if let Some(shift) = self.math_char_command(by) => {
                 let code = self.scan_int().map(|v| v >> shift);
-                self.math_code_char(code);
+                if let Some(c) = code {
+                    self.note_math(c, span);
+                }
+                if self.mode == crate::engine::mode::Modes::MATH {
+                    self.math_code_char(code);
+                }
             }
             Syntax::Number => {
                 self.scan_int();

@@ -620,7 +620,7 @@
       // the next bar's size, in pt
       if (mark.startsWith('bar ')) { bar = mark.slice(4).split(' ').map(parseFloat); return ''; }
       // text set while the drawing stood off the page: it keeps its space, not its ink (beamer's covered text)
-      if (mark === 'hide') { hidden++; return '<span class="ts-hidden" title="covered: set here, its space kept, not visible on this page">'; }
+      if (mark === 'hide') { hidden++; return '<span class="ts-hidden" title="covered on this slide: set and its space kept, but not visible">'; }
       if (mark === 'show') { if (!hidden) return ''; hidden--; return '</span>'; }
       if (mark !== 'boxend') inked = false;
       if (mark.startsWith('box ')) { boxes++; return `<span class="ts-boxto" style="min-width: ${parseFloat(mark.slice(4))}pt">`; }
@@ -649,7 +649,8 @@
       if (note[0] === '\u0005') { lig = note.slice(1).split('\u0001'); return ''; }
       if (note === '―' && table && row !== null) { row = true; return ''; }
       if (note[0] === '\u0002') { const [style, color = ''] = note.slice(1).split('\u0001'); font = style.split(' ').filter(Boolean).map((x) => `ts-${x}`).join(' '); ink = color; return ''; }
-      if (note[0] === '\u0007') return `<span class="ts-ln" title="source line ${esc(note.slice(1))}">${esc(note.slice(1))}</span>`;
+      // a source line beginning mid-paragraph: the row's gutter names the range, the text stays clean
+      if (note[0] === '\u0007') return '';
       if (note === '·') return '';
       const tr = table ? opened() : '';
       if (note === '⟦') { open++; return `${tr}<span class="ts-box" title="set in a box: on the page only if the box is used">`; }
@@ -676,14 +677,18 @@
    * environment it stands in, then its text. `depth` adds the levels of a folded file around it. */
   const tsRow = (r, depth = 0, k = r.k) => {
     const d = (r.depth ?? 0) + depth;
+    const last = Math.max(r.line ?? 0, ...[...(r.marked ?? '').matchAll(/\u0007(\d+)/g)].map((m) => +m[1]));
     return `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}${r.footnote ? ' ts-foot' : ''}${r.held ? ' ts-held' : ''}"${r.env ? ` data-env="${esc(r.env)}" title="set in ${esc(r.env)}"` : ''}${r.just && r.just !== 'justified' ? ` data-just="${esc(r.just)}"` : ''}` +
       `${k != null ? ` data-k="${k}"` : ''} data-path="${esc(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${esc(r.detail ?? '')}"${r.lines?.length ? ` data-lines="${esc(JSON.stringify(r.lines))}"` : ''}` +
       ` style="--depth: ${d}${typeof r.skip === 'number' && !r.heading ? `; --skip: ${Math.max(r.skip, 0)}pt` : ''}">` +
-      `<span class="ts-at">${r.line ?? ''}</span><span class="ts-rails" aria-hidden="true"></span>` +
+      `<span class="ts-at"${last > r.line ? ` title="lines ${r.line}–${last}"` : ''}>${r.line ?? ''}</span><span class="ts-rails" aria-hidden="true"></span>` +
       `<span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`;
   };
-  /** A page `\shipout` sent out, as a labelled line where the next one begins. */
-  const tsPage = (r) => `<div class="ts-page" role="separator" data-line="${r.line}" title="the run shipped page ${r.page} out while reading line ${r.line}">` +
+  /** A page `\shipout` sent out, as a labelled line where the next one begins; a page the run did not
+   * break though it filled (`filled`) as a dashed one: pdfTeX breaks it by there. */
+  const tsPage = (r) => `<div class="ts-page${r.filled ? ` ts-page-fill ts-${esc(r.filled)}` : ''}" role="separator" data-line="${r.line}" title="${r.filled
+    ? `the page passed \\vsize ${r.filled === 'surely' ? '' : 'maybe '}by line ${r.line}: pdfTeX breaks it there or before (the run breaks pages only where forced)`
+    : `the run shipped page ${r.page} out while reading line ${r.line}`}">` +
     `<span class="ts-at"></span><span class="ts-rails" aria-hidden="true"></span><span class="ts-page-label">${esc(r.detail)}</span></div>`;
   /** The typeset view of a `typeset` query's rows: paragraphs in a grid of one gutter and rails, page breaks as
    * lines, an environment instance of the user's file as one block with its name, a run from another file folded
@@ -755,7 +760,7 @@
   /** A step's words as the page shows them: covered text, boxes, keys and line marks left out. */
   const stepWords = (step) => {
     const c = step.cloneNode(true);
-    c.querySelectorAll('.ts-hidden, .ts-box, .ts-key, .ts-ln, .ts-at, .ts-env, .ts-finding').forEach((x) => x.remove());
+    c.querySelectorAll('.ts-hidden, .ts-box, .ts-key, .ts-at, .ts-env, .ts-finding').forEach((x) => x.remove());
     return [...c.querySelectorAll('.ts-text')].map((t) => t.textContent.trim().split(/\s+/).filter(Boolean));
   };
   /** Word diff of two steps, row by row as the later one has them: an LCS of all words. */
