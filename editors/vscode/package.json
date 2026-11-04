@@ -1,7 +1,7 @@
 {
   "name": "satex",
   "displayName": "SaTeX",
-  "description": "LaTeX/TeX static analysis and language server, powered by satex.",
+  "description": "SaTeX: a static analyzer and language server for LaTeX and friends.",
   "version": "0.1.0",
   "publisher": "eagleoutice",
   "license": "MIT",
@@ -112,7 +112,7 @@
       "activitybar": [
         {
           "id": "satex",
-          "title": "satex",
+          "title": "SaTeX: static analyzer for LaTeX and friends",
           "icon": "media/satex.svg"
         }
       ]
