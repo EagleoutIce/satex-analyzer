@@ -847,10 +847,6 @@ impl Engine {
             crate::project::overlay::set(&doc.path, doc.text.clone());
         }
         let (analysis, fresh) = self.run_for(&path, &text);
-        if fresh {
-            // What a completion reads of the new run, built while the last run answers.
-            self.serving(|_| handlers::warm(&analysis));
-        }
         self.dirty.retain(|d| d != uri);
         let Some(doc) = self.docs.get_mut(uri) else { return };
         let changed = !doc.analysis.as_ref().is_some_and(|a| Rc::ptr_eq(a, &analysis));
@@ -870,6 +866,12 @@ impl Engine {
         }
         if fresh {
             self.publish_run(&analysis, &path, &versions, None);
+            // What a completion reads of the new run, built once its diagnostics are out, while
+            // the last run answers. The playground's server answers only once a message is done:
+            // there the first completion builds it.
+            if !cfg!(target_os = "emscripten") {
+                self.serving(|_| handlers::warm(&analysis));
+            }
         } else {
             // the same texts under newer versions: the same diagnostics, of these versions
             let again: Vec<PublishDiagnosticsParams> = (self.published.values_mut())

@@ -475,6 +475,10 @@ fn undefined_control_sequences(report: &mut Report) {
     // is not known.
     let assumed = report.analysis.facts.diagnostics.iter().any(|d| d.code == "region-catcodes");
     let mut known: Option<Vec<String>> = None;
+    // Per name: where else the run defines it, and the nearest known name (a name used undefined
+    // many times is looked up once).
+    let mut elsewheres: crate::fixed::HashMap<Sym, Option<String>> = crate::fixed::HashMap::default();
+    let mut nearest: crate::fixed::HashMap<Sym, Option<String>> = crate::fixed::HashMap::default();
     for expansion in &report.analysis.facts.expansions {
         if !matches!(expansion.meaning, MeaningKind::Undefined | MeaningKind::UndefinedApproximated) {
             continue;
@@ -482,7 +486,12 @@ fn undefined_control_sequences(report: &mut Report) {
         let name = report.cs(expansion.name);
         let raw = report.analysis.interner.name(expansion.name);
         let odd = raw.chars().count() > 1 && raw.chars().any(|c| "\\{}$&#% \t\r".contains(c));
-        let elsewhere = expansion.cds.is_empty().then(|| defined_elsewhere(report.analysis, expansion.name)).flatten();
+        let elsewhere = match expansion.cds.is_empty() {
+            true => (elsewheres.entry(expansion.name))
+                .or_insert_with(|| defined_elsewhere(report.analysis, expansion.name))
+                .clone(),
+            false => None,
+        };
         let (severity, message) = if assumed && odd {
             (
                 Severity::Warning,
@@ -502,7 +511,10 @@ fn undefined_control_sequences(report: &mut Report) {
             Some(fix) => report.add_fix_as(severity, expansion.span, &name, message, fix),
             None => {
                 let known = known.get_or_insert_with(|| scope_names(report.analysis));
-                let help = match (severity == Severity::Error).then(|| closest(raw, known)).flatten() {
+                let near = (severity == Severity::Error).then(|| {
+                    nearest.entry(expansion.name).or_insert_with(|| closest(raw, known).map(str::to_string)).clone()
+                });
+                let help = match near.flatten() {
                     _ if elsewhere.is_some() => format!("use `{name}` where it is defined"),
                     Some(other) => format!("did you mean `\\{other}`?"),
                     None => format!("define `{name}` or load the package that provides it"),
@@ -548,11 +560,7 @@ fn defined_elsewhere(analysis: &crate::analysis::machine::Analysis, name: crate:
 
 /// The names that are defined at the end of the run.
 fn scope_names(analysis: &crate::analysis::machine::Analysis) -> Vec<String> {
-    crate::queries::query::scope(analysis, None, true)
-        .iter()
-        .filter_map(|r| Some(crate::engine::tex::bare_name(r.get("name")?.as_str()?).to_string()))
-        .filter(|n| n.chars().count() > 1)
-        .collect()
+    crate::queries::query::scope_names(analysis).into_iter().filter(|n| n.chars().count() > 1).collect()
 }
 
 /// The known name nearest to a misspelled one: a typo, a swapped or missing

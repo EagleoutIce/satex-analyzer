@@ -4068,6 +4068,16 @@ pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool)
     scope_named(analysis, before, all, |_| true)
 }
 
+/// The names [`scope`] shows with `all` at the run's end, without building their records:
+/// those the run defined and those its end state holds.
+pub fn scope_names(analysis: &Analysis) -> Vec<String> {
+    let held = (0..analysis.interner.len() as u32)
+        .map(Sym)
+        .filter(|&s| !matches!(analysis.env.meaning(s), Meaning::Undefined));
+    let names: BTreeSet<Sym> = analysis.facts.defs.iter().map(|d| d.name).chain(held).collect();
+    names.into_iter().map(|s| analysis.interner.name(s)).filter(|n| !unprintable_name(n)).map(str::to_string).collect()
+}
+
 /// [`scope`] of the names `named` keeps.
 pub fn scope_named(
     analysis: &Analysis,

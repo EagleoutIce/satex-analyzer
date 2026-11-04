@@ -3961,3 +3961,45 @@ fn incremental_typing_an_undefined_name_waits_for_the_pause() {
     assert_eq!(published[1], fresh["params"]["diagnostics"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `-f main.tex` names the root the editor opens as an absolute URI: one root, one set of
+/// checkpoints, so a body edit after an input file's first run resumes past the preamble
+/// (the playground passes `-f` and opened the input first: every edit ran the preamble).
+#[test]
+fn a_root_named_relative_resumes_after_a_body_edit() {
+    let dir =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-lsp-root-{}", std::process::id())));
+    let main = "\\documentclass{article}\n\\input{part}\n\\begin{document}\nOne.\n\nTwo.\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    std::fs::write(dir.join("part.tex"), "\\def\\x{x}\n").unwrap();
+    let mut server = Server::start_with(
+        &crate::support::test_cache(),
+        &dir,
+        &["-vv", "-f", "main.tex", "--set", "limits.seconds=0"],
+    );
+    let mut stderr = server.child.stderr.take().unwrap();
+    let said = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = std::io::Read::read_to_string(&mut stderr, &mut text);
+        text
+    });
+    let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+    server.response(id);
+    server.notify("initialized", json!({}));
+    open_file(&mut server, &dir, "part.tex");
+    let (uri, _) = open_file(&mut server, &dir, "main.tex");
+    let edited = main.replace("Two.", "Two more.");
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": edited }] }),
+    );
+    server.notification("textDocument/publishDiagnostics");
+    server.shutdown();
+    let said = said.join().unwrap();
+    // the edit's run: `resuming at` precedes its `resume …, run …` line
+    let runs: Vec<&str> = said.lines().filter(|l| l.starts_with("satex: resum")).collect();
+    assert!(
+        runs.len() >= 2 && runs[runs.len() - 2].starts_with("satex: resuming at"),
+        "the edit ran from the start: {runs:?}"
+    );
+}

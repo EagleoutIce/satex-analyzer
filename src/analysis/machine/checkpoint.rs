@@ -102,6 +102,12 @@ impl Machine<'_> {
         let Some(taking) = self.checkpoints.on.as_mut() else { return };
         taking.log.extend(crate::project::overlay::log(true));
         let pinned = taking.edit.take().is_some();
+        if self.cfg.verbose >= 2 {
+            crate::util::progress::note!(
+                "satex: checkpoint at {:?}, step {steps}",
+                reading_file(&self.input).map(|(m, _)| m.position())
+            );
+        }
         if pinned {
             taking.list.iter_mut().for_each(|c| c.pinned = false);
         }
@@ -198,7 +204,9 @@ impl<'a> Checkpoints<'a> {
         }
         self.setup = setup;
         self.resumed = None;
+        let clock = std::time::Instant::now();
         let (resumed, edit) = self.resume(source);
+        let resumed_in = clock.elapsed();
         crate::project::overlay::log(true);
         let (mut m, id) = match resumed {
             Some(resumed) => resumed,
@@ -226,13 +234,26 @@ impl<'a> Checkpoints<'a> {
             edit,
         };
         m.checkpoints.on = Some(Box::new(taking));
+        let (clock, from) = (std::time::Instant::now(), m.out.steps);
         m.run_guarded();
+        let ran = (clock.elapsed(), m.out.steps - from);
         if let Some(taking) = m.checkpoints.on.take() {
             (self.list, self.log, self.every) = (taking.list, taking.log, taking.every);
         }
         // Reads past the last checkpoint: no resume rests on them, the build's reruns do.
         self.log.extend(crate::project::overlay::log(false));
-        m.conclude(id, source)
+        let (clock, verbose) = (std::time::Instant::now(), self.cfg.verbose >= 2);
+        let analysis = m.conclude(id, source);
+        if verbose {
+            crate::util::progress::note!(
+                "satex: resume {:.2}s, run {:.2}s for {} steps, conclude {:.2}s",
+                resumed_in.as_secs_f64(),
+                ran.0.as_secs_f64(),
+                ran.1,
+                clock.elapsed().as_secs_f64()
+            );
+        }
+        analysis
     }
 
     /// The machine of the last checkpoint that still holds, made to read
@@ -243,6 +264,10 @@ impl<'a> Checkpoints<'a> {
         while let Some(checkpoint) = self.list.pop() {
             let (mut m, mut drive) = (checkpoint.machine.clone(), checkpoint.drive.clone());
             if let Err(changed) = reread(&mut m, &mut drive, &self.log[..checkpoint.reads], source, &mut holds) {
+                if self.cfg.verbose >= 2 {
+                    let at = reading_file(&m.input).map(|(m, _)| m.position());
+                    crate::util::progress::note!("satex: checkpoint at {at:?} does not hold: {changed:?}");
+                }
                 // Where in the file is known best from a checkpoint that read in it.
                 edit = edit.into_iter().chain(changed).max_by_key(|(_, line)| *line);
                 continue;
@@ -253,6 +278,9 @@ impl<'a> Checkpoints<'a> {
             m.checkpoints.resume = Some(Box::new(drive));
             crate::engine::source::set_encoding(m.out.plugins.engine.encoding());
             if let Some((mouth, _)) = reading_file(&m.input) {
+                if self.cfg.verbose >= 2 {
+                    crate::util::progress::note!("satex: resuming at {:?}, step {}", mouth.position(), m.out.steps);
+                }
                 let at = mouth.position().0;
                 self.resumed = Some((m.out.files[usize::from(mouth.file)].path.clone(), at));
             }
