@@ -154,7 +154,8 @@ theorem loopAbs_sound (f : A → A) (stable : A → A → Bool) (summary : A →
 
 /-- The summary `top` meets the summary conditions. -/
 theorem top_summary (f : A → A) :
-    (∀ a, D.le a ((fun _ => D.top) a)) ∧ (∀ a, D.le (f ((fun _ => D.top) a)) ((fun _ => D.top) a)) :=
+    (∀ a : A, D.le a ((fun _ : A => D.top) a)) ∧
+      (∀ a : A, D.le (f ((fun _ : A => D.top) a)) ((fun _ : A => D.top) a)) :=
   ⟨fun a => D.le_top a, fun a => D.le_top (f D.top)⟩
 
 /-- The loop runs at most `k` passes plus one summary. -/
@@ -326,8 +327,10 @@ theorem widen_rank_step (a b : Itv) :
     (if (Itv.widen a b).lo = a.lo ∧ (Itv.widen a b).hi = a.hi then 0 else 1) +
       itvRank (Itv.widen a b) ≤ itvRank a := by
   simp only [itvRank, Itv.widen, Itv.wlo, Itv.whi, Itv.wordMin, Itv.wordMax]
-  repeat' split
-  all_goals omega
+  by_cases h1 : b.lo < a.lo <;> by_cases h2 : a.hi < b.hi <;>
+    by_cases h3 : a.lo = -2147483648 <;> by_cases h4 : a.hi = 2147483647 <;>
+    simp only [h1, h2, h3, h4, ↓reduceIte, Int.reduceEq, and_true, true_and, and_self, and_false, false_and, if_true, if_false, ite_self] <;>
+    (repeat' split) <;> omega
 
 /-- Steps of a chain that changed its interval. -/
 def changes (f : Nat → Itv) : Nat → Nat
@@ -675,25 +678,27 @@ theorem compare_sound (i : Itv) (r : Itv.Rel) (k : Int) (b : Bool) (n : Int)
   cases r with
   | lt =>
     simp only [Itv.compare, Itv.exact] at h
-    split at h
-    · cases h; simp only [Itv.Rel.holds, decide_eq_true_eq]; omega
-    · split at h
-      · cases h; simp only [Itv.Rel.holds, decide_eq_false_iff_not]; omega
-      · cases h
+    by_cases c1 : i.hi < k
+    · simp only [c1, ↓reduceIte] at h; cases h; simp only [Itv.Rel.holds, decide_eq_true_eq]; omega
+    · simp only [c1, ↓reduceIte] at h
+      by_cases c2 : k ≤ i.lo
+      · simp only [c2, ↓reduceIte] at h; cases h; simp only [Itv.Rel.holds, decide_eq_false_iff_not]; omega
+      · simp only [c2, ↓reduceIte] at h; cases h
   | gt =>
     simp only [Itv.compare, Itv.exact] at h
-    split at h
-    · cases h; simp only [Itv.Rel.holds, decide_eq_true_eq]; omega
-    · split at h
-      · cases h; simp only [Itv.Rel.holds, decide_eq_false_iff_not]; omega
-      · cases h
+    by_cases c1 : k < i.lo
+    · simp only [c1, ↓reduceIte] at h; cases h; simp only [Itv.Rel.holds, decide_eq_true_eq]; omega
+    · simp only [c1, ↓reduceIte] at h
+      by_cases c2 : i.hi ≤ k
+      · simp only [c2, ↓reduceIte] at h; cases h; simp only [Itv.Rel.holds, decide_eq_false_iff_not]; omega
+      · simp only [c2, ↓reduceIte] at h; cases h
   | eq =>
     simp only [Itv.compare, Itv.exact] at h
     split at h
     · cases h; simp only [Itv.Rel.holds, decide_eq_true_eq]; omega
-    · split at h
-      · cases h; simp only [Itv.Rel.holds, decide_eq_false_iff_not]; omega
-      · cases h
+    · by_cases c2 : i.hi < k ∨ k < i.lo
+      · simp only [c2, ↓reduceIte] at h; cases h; simp only [Itv.Rel.holds, decide_eq_false_iff_not]; omega
+      · simp only [c2, ↓reduceIte] at h; cases h
 
 /-- `AState.join_sound` (CHANGES.md item 10): arms meeting at `\fi` in the
 same stacks join soundly. -/

@@ -1662,8 +1662,7 @@ inductive Expand (E : Engine) : State → State → Prop
   `\newlinechar`, read back as a file. -/
   | scantokens {s s1 s2 : State} {t : Token} {ts : TokList} {text : Bool} :
       Next s t s1 → cmdOf s1 t = some (.scantokens text) → GeneralText E false s1 ts s2 →
-      Expand E s { s2 with input := .file { name := "", pseudo := true, text := text,
-          lines := splitLines (s2.intPar "newlinechar") (showToks s2 ts) } :: s2.input }
+      Expand E s { s2 with input := .file { name := "", pseudo := true, text := text, lines := splitLines (s2.intPar "newlinechar") (showToks s2 ts) } :: s2.input }
   /-- A conditional (§ 498): push it, run the test, keep or skip. -/
   | ifTrue {s s1 s2 : State} {t : Token} {op : IfOp} {b neg : Bool} :
       CondHead s t op neg s1 → op ≠ .ifcase →
@@ -2133,6 +2132,16 @@ inductive FontSize (E : Engine) : State → Scaled → State → Prop
   | design {s s1 s2 : State} :
       Keyword E s "at".toList [] false s1 → Keyword E s1 "scaled".toList [] false s2 → FontSize E s (-1000) s2
 
+/-- The stream state after `\openin` (§ 1275): the file's lines, or closed. -/
+def openedStream (E : Engine) (s : State) (f : List CharCode) : ReadStream :=
+  match E.findFile (nameOf f) with
+  | some k => match s.vfs k with | some ls => .justOpen ls | none => .closed
+  | none => .closed
+
+/-- The box register entry after `\wd`, `\ht`, `\dp` (§ 1247). -/
+def boxDimEntry (s : State) (which : Nat) (d : Int) (n : Nat) : Entry :=
+  { s.eqtb (.reg .box n) with val := .box (setBoxDim which d (boxAt s n)) }
+
 /-- One step of the stomach (§ 1030 `main_control`, § 1211 `prefixed_command`). -/
 inductive Exec (E : Engine) : State → State → Prop
   | expand {s s1 : State} : Expand E s s1 → Exec E s s1
@@ -2275,10 +2284,7 @@ inductive Exec (E : Engine) : State → State → Prop
   | openin {s s1 s2 s3 s4 : State} {t : Token} {n : Int} {f : List CharCode} :
       Head s t s1 → cmdOf s1 t = some .openin → ScanInt E s1 n s2 → OptEquals E s2 s3 →
       FileName E s3 f s4 →
-      Exec E s { s4 with readStreams := upd s4.readStreams n.toNat
-        (match E.findFile (nameOf f) with
-         | some k => match s4.vfs k with | some ls => .justOpen ls | none => .closed
-         | none => .closed) }
+      Exec E s { s4 with readStreams := upd s4.readStreams n.toNat (openedStream E s4 f) }
   | closein {s s1 s2 : State} {t : Token} {n : Int} :
       Head s t s1 → cmdOf s1 t = some .closein → ScanInt E s1 n s2 →
       Exec E s { s2 with readStreams := upd s2.readStreams n.toNat .closed }
@@ -2373,8 +2379,7 @@ inductive Exec (E : Engine) : State → State → Prop
       Head s t s1 → cmdOf s1 t = some (.special nm) →
       (nm = "wd" ∧ which = 0 ∨ nm = "ht" ∧ which = 1 ∨ nm = "dp" ∧ which = 2) →
       ScanInt E s1 n s2 → 0 ≤ n → OptEquals E s2 s3 → ScanDimen E false false s3 d s4 →
-      Exec E s (finishAssign { s4 with eqtb := upd s4.eqtb (.reg .box n.toNat)
-        { s4.eqtb (.reg .box n.toNat) with val := .box (setBoxDim which d.1 (boxAt s4 n.toNat)) } })
+      Exec E s (finishAssign { s4 with eqtb := upd s4.eqtb (.reg .box n.toNat) (boxDimEntry s4 which d.1 n.toNat) })
   /-- Per-character tables of the extended engines (`\XeTeXcharclass`,
   `\Umathcode`, …): index, optional `=`, value. -/
   | specialTable {s s1 s2 s3 s4 : State} {t : Token} {nm : String} {i v : Int} :

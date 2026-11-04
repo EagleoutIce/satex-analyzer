@@ -40,7 +40,7 @@ structure Limits where
   choices : Nat := 8          -- limits.choices
   widenAfter : Nat := 3       -- limits.widen_after
   callSummaryAfter : Nat := 2 -- limits.call_summary_after
-  deriving Repr, Inhabited
+  deriving Inhabited
 
 /-! ## 1. Intervals: `Num` (src/engine/value.rs) -/
 
@@ -292,7 +292,7 @@ inductive AItem where
   | hole (h : Hole)
   | digits (i : Itv)
   | oneOf (alts : List TokList)
-  deriving Repr, Inhabited
+  deriving Inhabited
 
 abbrev AText := List AItem
 
@@ -346,7 +346,7 @@ abstract text (`macro_hull`, a widened macro). -/
 inductive AMeaning where
   | exact (m : Meaning)
   | text (long outer prot : Bool) (body : AText)
-  deriving Repr, Inhabited
+  deriving Inhabited
 
 def AMeaning.γ : AMeaning → Meaning → Prop
   | .exact m, m' => m' = m
@@ -369,7 +369,7 @@ inductive AVal where
   | toks (ms : List AText)
   /-- A box register: void or not, and its dimensions (`Dim`). -/
   | box (mayVoid : Bool) (w h d : Itv)
-  deriving Repr, Inhabited
+  deriving Inhabited
 
 def AVal.γ : AVal → Val → Prop
   | .top, _ => True
@@ -521,18 +521,18 @@ inductive ASave where
   | retain (l : Loc)
   | insertToken (t : Token)
   | group (c : GroupCode) (many : Bool)
-  deriving Repr, Inhabited
+  deriving Inhabited
 
 inductive AInput where
   | toks (kind : TokListKind) (t : AText)
   | file (f : FileLevel)
-  deriving Repr, Inhabited
+  deriving Inhabited
 
 structure ACond where
   limit : IfLimit
   op : IfOp
   many : Bool := false
-  deriving Repr, Inhabited
+  deriving Inhabited
 
 structure AState where
   eqtb : Loc → AVal

@@ -32,7 +32,7 @@ def toNat : Cat → Nat
 
 /-- Out-of-range values are rejected by `\catcode` (§ 1232); `other` is a
 total default only. -/
-def ofNat : Nat → Cat
+def ofCode : Nat → Cat
   | 0 => .escape | 1 => .bgroup | 2 => .egroup | 3 => .mathShift | 4 => .alignTab
   | 5 => .eol | 6 => .param | 7 => .sup | 8 => .sub | 9 => .ignored | 10 => .space
   | 11 => .letter | 12 => .other | 13 => .active | 14 => .comment | 15 => .invalid
@@ -445,7 +445,7 @@ def intAt (s : State) (l : Loc) : Int :=
   | .int i => i
   | _ => 0
 
-def catOf (s : State) (c : CharCode) : Cat := Cat.ofNat (s.intAt (.code .cat c)).toNat
+def catOf (s : State) (c : CharCode) : Cat := Cat.ofCode (s.intAt (.code .cat c)).toNat
 
 def intPar (s : State) (n : String) : Int := s.intAt (.intPar n)
 

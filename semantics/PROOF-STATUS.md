@@ -1,7 +1,7 @@
 # Soundness proof status (job 3)
 
 File: `lean/Satex/Soundness.lean`, imported from `lean/Satex.lean`.
-It is **not built**. No Lean toolchain is installed. It was written for core Lean 4 without mathlib and has no `sorry`.
+`lake build` succeeds (Lean 4.35.0, core only). No `sorry` in any file. No false statement found while compiling.
 Where a lemma is false for the model, the theorem takes the failing property as a named hypothesis, and the counterexample is below.
 Check the build first: the proofs rely on `omega`, `split`, `simp only [f]` with equation lemmas, and defeq through `ite`/`match`.
 
