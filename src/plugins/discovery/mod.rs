@@ -212,9 +212,8 @@ pub fn scan_with(root: &Path, threads: usize) -> Discovery {
         && let Some(config) = super::l3build::L3build::read(root)
     {
         let base = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-        found.typeset = config
-            .documents()
-            .into_iter()
+        let tests = if config.checks { config.tests() } else { Vec::new() };
+        found.typeset = (config.documents().into_iter().chain(tests))
             .map(|path| path.strip_prefix(&base).map(|p| root.join(p)).unwrap_or(path))
             .collect();
     }

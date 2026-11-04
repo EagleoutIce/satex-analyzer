@@ -461,6 +461,58 @@ pub struct TypePlugins {
     pub index: Switch,
     pub theorem: Switch,
     pub savebox: Switch,
+    pub comment_edit: Switch,
+    pub whitespace_edit: Switch,
+    pub typing: TypingPlugin,
+}
+
+/// `type_plugins.typing:` letters typed into a control word the run had undefined.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TypingPlugin {
+    pub enabled: bool,
+    /// How long typing pauses before the run follows the provisional results.
+    pub pause_ms: u64,
+}
+
+impl Default for TypingPlugin {
+    fn default() -> Self {
+        Self { enabled: true, pause_ms: 1500 }
+    }
+}
+
+/// `l3build:` in `satex.yaml`: how an l3build bundle's configuration is read
+/// ([`crate::plugins::l3build`]). Empty values keep what the bundle's own files say.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct L3buildConfig {
+    pub enabled: bool,
+    /// The build files looked for, in this order, in the directory and those above.
+    pub files: Vec<String>,
+    /// Lua files read after the build file, as `l3build --config` names them.
+    pub config: Vec<String>,
+    /// The module's name, instead of the build file's `module`.
+    pub module: Option<String>,
+    /// The test files in `testfiledir`, as patterns.
+    pub tests: Vec<String>,
+    /// The engines that check, instead of the build file's `checkengines`.
+    pub engines: Vec<String>,
+    /// Analyze the regression tests as documents of the bundle too.
+    pub checks: bool,
+}
+
+impl Default for L3buildConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            files: vec!["build.lua".into()],
+            config: Vec::new(),
+            module: None,
+            tests: vec!["*.lvt".into(), "*.pvt".into()],
+            engines: Vec::new(),
+            checks: false,
+        }
+    }
 }
 
 /// A plugin with nothing to tune: `enabled` only.
@@ -1563,6 +1615,7 @@ pub struct Config {
     /// The editor features each type plugin adds.
     #[serde(default)]
     pub type_plugins: TypePlugins,
+    pub l3build: L3buildConfig,
 }
 
 impl Default for Config {
@@ -1621,6 +1674,7 @@ impl Default for Config {
             style_prompt: StylePrompt::default(),
             slice: SliceConfig::default(),
             type_plugins: TypePlugins::default(),
+            l3build: L3buildConfig::default(),
         }
     }
 }
@@ -2536,6 +2590,8 @@ struct Documented {
     example: Vec<String>,
     range: Option<(f64, f64)>,
     plugin: Option<String>,
+    /// `#! category:`, the group a type plugin's settings belong to.
+    category: Option<String>,
     /// `#! option: value: text` lines: the values a setting takes and what each means.
     options: Vec<(String, String)>,
 }
@@ -2552,6 +2608,7 @@ fn documented_keys(documented: &str) -> std::collections::HashMap<String, Docume
                 Some(("affects", v)) => entry.affects.extend(v.split(',').map(|a| a.trim().to_string())),
                 Some(("example", v)) => entry.example.push(v.to_string()),
                 Some(("plugin", v)) => entry.plugin = Some(v.to_string()),
+                Some(("category", v)) => entry.category = Some(v.to_string()),
                 Some(("option", v)) => {
                     if let Some((value, text)) = v.split_once(':') {
                         entry.options.push((value.trim().to_string(), text.trim().to_string()));
@@ -2698,6 +2755,9 @@ pub fn schema(documented: &str) -> serde_json::Value {
             }
             if let Some(plugin) = &doc.plugin {
                 out["x-plugin"] = json!(plugin);
+            }
+            if let Some(category) = &doc.category {
+                out["x-category"] = json!(category);
             }
             if let Some((lo, hi)) = doc.range {
                 let bound = |x: f64| if x.fract() == 0.0 { json!(x as i64) } else { json!(x) };

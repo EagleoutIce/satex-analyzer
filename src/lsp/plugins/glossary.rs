@@ -15,6 +15,9 @@ impl TypePlugin for Glossary {
     fn name(&self) -> &'static str {
         "glossary"
     }
+    fn category(&self) -> &'static str {
+        "widget"
+    }
     fn about(&self) -> &'static str {
         "manage declared keys (glossary entries, acronyms): search, edit, add, delete, uses"
     }

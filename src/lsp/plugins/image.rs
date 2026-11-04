@@ -15,6 +15,9 @@ impl TypePlugin for Image {
     fn name(&self) -> &'static str {
         "image"
     }
+    fn category(&self) -> &'static str {
+        "widget"
+    }
     fn about(&self) -> &'static str {
         "a crop, rotate and size dialog for each figure, written as graphicx options"
     }

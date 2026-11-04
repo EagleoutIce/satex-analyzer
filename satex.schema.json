@@ -1755,6 +1755,96 @@
       "x-example": "`kernel: plain`\n`\\count10=1` is plain TeX's way and gets no primitive-tex-command",
       "x-plugin": "format"
     },
+    "l3build": {
+      "description": "how an l3build bundle's configuration is read (satex query type-plugins: category build)",
+      "properties": {
+        "checks": {
+          "default": false,
+          "description": "analyze the regression tests as documents of the bundle too",
+          "type": "boolean",
+          "x-affects": [
+            "output",
+            "speed"
+          ],
+          "x-example": "`checks: true`: each .lvt is a root document",
+          "x-plugin": "l3build"
+        },
+        "config": {
+          "default": [],
+          "description": "Lua files read after the build file, as l3build --config names them",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-affects": [
+            "precision"
+          ],
+          "x-example": "`config: [config-plain.lua]`",
+          "x-plugin": "l3build"
+        },
+        "enabled": {
+          "default": true,
+          "description": "read the bundle's build file for its module, files and engines",
+          "type": "boolean",
+          "x-affects": [
+            "precision"
+          ],
+          "x-example": "`enabled: false`: a bundle's sources are found only by discovery",
+          "x-plugin": "l3build"
+        },
+        "engines": {
+          "default": [],
+          "description": "the engines that check, instead of the build file's checkengines",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-affects": [
+            "precision"
+          ],
+          "x-example": "`engines: [pdftex, luatex]`",
+          "x-plugin": "l3build"
+        },
+        "files": {
+          "default": [
+            "build.lua"
+          ],
+          "description": "the build files looked for, in this order, here and in the directories above",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-affects": [
+            "precision"
+          ],
+          "x-example": "`files: [build-dev.lua, build.lua]`",
+          "x-plugin": "l3build"
+        },
+        "module": {
+          "description": "the module's name, instead of the build file's module",
+          "x-affects": [
+            "output"
+          ],
+          "x-plugin": "l3build"
+        },
+        "tests": {
+          "default": [
+            "*.lvt",
+            "*.pvt"
+          ],
+          "description": "the regression tests in testfiledir, as patterns",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-affects": [
+            "precision"
+          ],
+          "x-plugin": "l3build"
+        }
+      },
+      "type": "object"
+    },
     "latex_alternatives": {
       "properties": {},
       "type": "object"
@@ -3395,7 +3485,7 @@
     "trace_steps": {},
     "trace_stop": {},
     "type_plugins": {
-      "description": "editor features for text of a type: hover, completion, code actions and dialogs (satex query type-plugins)",
+      "description": "editor features by type, grouped by category: widget, hover, completion, lint, incremental (satex query type-plugins)",
       "properties": {
         "bibliography": {
           "description": "citation keys and the .bib entries the run read",
@@ -3409,7 +3499,8 @@
               ]
             }
           },
-          "type": "object"
+          "type": "object",
+          "x-category": "widget"
         },
         "color": {
           "description": "color names and xcolor expressions",
@@ -3440,7 +3531,24 @@
               ]
             }
           },
-          "type": "object"
+          "type": "object",
+          "x-category": "widget"
+        },
+        "comment_edit": {
+          "description": "an edit inside a comment every read of its line skipped, no %\\satex@ directive or magic comment",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "keep the last run instead of analyzing again; the rules still read the new text",
+              "type": "boolean",
+              "x-affects": [
+                "speed"
+              ],
+              "x-example": "`enabled: false`: typing in a comment runs the document again"
+            }
+          },
+          "type": "object",
+          "x-category": "incremental"
         },
         "environment": {
           "description": "the name of a \\begin or \\end",
@@ -3454,7 +3562,8 @@
               ]
             }
           },
-          "type": "object"
+          "type": "object",
+          "x-category": "widget"
         },
         "forest": {
           "description": "a forest environment the run met, a blank line of the document body",
@@ -3469,7 +3578,8 @@
               "x-example": "`enabled: false`: no tree lens, action or dialog"
             }
           },
-          "type": "object"
+          "type": "object",
+          "x-category": "widget"
         },
         "glossary": {
           "description": "declared keys: glossary entries, acronyms, abbreviations",
@@ -3483,7 +3593,8 @@
               ]
             }
           },
-          "type": "object"
+          "type": "object",
+          "x-category": "widget"
         },
         "image": {
           "description": "figures: the files \\includegraphics reads",
@@ -3498,7 +3609,8 @@
               "x-example": "`enabled: false`: no image lens, dialog or actions"
             }
           },
-          "type": "object"
+          "type": "object",
+          "x-category": "widget"
         },
         "index": {
           "description": "index terms (\\index{term!sub})",
@@ -3512,7 +3624,8 @@
               ]
             }
           },
-          "type": "object"
+          "type": "object",
+          "x-category": "widget"
         },
         "keys": {
           "description": "key lists: pgfkeys, l3keys, kvoptions and package options",
@@ -3535,7 +3648,8 @@
               ]
             }
           },
-          "type": "object"
+          "type": "object",
+          "x-category": "completion"
         },
         "savebox": {
           "description": "a \\begin name of a picture, listing or other environment the run met",
@@ -3549,7 +3663,8 @@
               ]
             }
           },
-          "type": "object"
+          "type": "object",
+          "x-category": "widget"
         },
         "table": {
           "description": "tables: environments whose code reaches \\@array (tabular, tabular*, tabularx, array)",
@@ -3564,7 +3679,8 @@
               "x-example": "`enabled: false`: no table lens, dialog or rewrites"
             }
           },
-          "type": "object"
+          "type": "object",
+          "x-category": "widget"
         },
         "theorem": {
           "description": "theorem-like environments the run defined",
@@ -3578,7 +3694,8 @@
               ]
             }
           },
-          "type": "object"
+          "type": "object",
+          "x-category": "widget"
         },
         "tikz": {
           "description": "a tikzpicture the run met, a blank line of the document body",
@@ -3611,7 +3728,34 @@
               ]
             }
           },
-          "type": "object"
+          "type": "object",
+          "x-category": "widget"
+        },
+        "typing": {
+          "description": "letters typed into a control word the run met undefined",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "the last results stand, marked provisional, until typing pauses",
+              "type": "boolean",
+              "x-affects": [
+                "speed"
+              ],
+              "x-example": "`enabled: false`: each pause of the debounce runs the document again"
+            },
+            "pause_ms": {
+              "default": 1500,
+              "description": "how long typing pauses before the run follows",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "speed"
+              ],
+              "x-example": "`3000`: a name typed slowly is run once"
+            }
+          },
+          "type": "object",
+          "x-category": "incremental"
         },
         "units": {
           "description": "dimensions: `12pt`, `\\textwidth`, a value range",
@@ -3654,7 +3798,24 @@
               "x-example": "`units: [cm, mm]`"
             }
           },
-          "type": "object"
+          "type": "object",
+          "x-category": "hover"
+        },
+        "whitespace_edit": {
+          "description": "spaces added where every read skipped one, white space past the last line read",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "keep the last run, its results moved along the line",
+              "type": "boolean",
+              "x-affects": [
+                "speed"
+              ],
+              "x-example": "`enabled: false`: indenting a line runs the document again"
+            }
+          },
+          "type": "object",
+          "x-category": "incremental"
         }
       },
       "type": "object"

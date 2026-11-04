@@ -23,6 +23,9 @@ impl TypePlugin for Color {
     fn name(&self) -> &'static str {
         "color"
     }
+    fn category(&self) -> &'static str {
+        "widget"
+    }
     fn about(&self) -> &'static str {
         "swatches, colors defined at the position, conversions between models and a picker"
     }

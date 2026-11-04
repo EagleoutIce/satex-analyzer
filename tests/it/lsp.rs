@@ -3810,3 +3810,104 @@ fn savebox_stores_and_refuses() {
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
+
+// --- incremental plugins (src/lsp/plugins/incremental.rs) ---
+
+/// INITEX with braces and parameters, a definition, a used name and an
+/// undefined one: each case edits one place of it.
+const INC: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\def\\greet#1{Hello, #1!}\\def\\nopes{}\n\\greet{world}  x % a note\n% a comment line\n  \\greet{you}\n\\nope\n{\\catcode`\\%=12 y % not a comment}\n\\end\n";
+
+/// The diagnostics after editing `INC` into `new`, the reuse lines of
+/// `satex/caches`, and the diagnostics a server that opens `new` publishes.
+fn edit_inc(tag: &str, new: &str) -> (Value, Vec<String>, Value) {
+    let (mut server, uri, _, dir) = open_unsaved(tag, INC);
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": new }] }),
+    );
+    let after = loop {
+        let p = server.notification("textDocument/publishDiagnostics");
+        if p["params"]["version"] == 2 {
+            break p["params"]["diagnostics"].clone();
+        }
+    };
+    let id = server.request("satex/caches", json!({ "textDocument": { "uri": uri } }));
+    let lines = server.response(id)["result"].as_array().cloned().unwrap_or_default();
+    let reused = lines.iter().filter_map(Value::as_str).filter(|l| l.starts_with("reused ")).map(String::from);
+    let reused = reused.collect();
+    server.shutdown();
+    let (server, _, fresh, dir2) = open_unsaved(tag, new);
+    server.shutdown();
+    assert_eq!(dir, dir2);
+    let _ = std::fs::remove_dir_all(&dir);
+    (after, reused, fresh["params"]["diagnostics"].clone())
+}
+
+/// Each edit a plugin takes keeps the run, and the results equal a fresh run's.
+#[test]
+fn incremental_edits_keep_the_run_and_equal_a_fresh_one() {
+    let cases = [
+        ("comment", INC.replace("% a comment line", "% a longer comment line"), "comment_edit"),
+        ("trailing-comment", INC.replace("% a note", "% a notebook"), "comment_edit"),
+        ("skipped-space", INC.replace("}  x", "}   x"), "whitespace_edit"),
+        ("indent", INC.replace("  \\greet{you}", "    \\greet{you}"), "whitespace_edit"),
+    ];
+    for (tag, new, plugin) in cases {
+        let (after, reused, fresh) = edit_inc(&format!("inc-{tag}"), &new);
+        assert_eq!(reused, [format!("reused {plugin} 1")], "{tag}");
+        assert_eq!(after, fresh, "{tag}: the kept run's results differ from a fresh run's");
+    }
+}
+
+/// Edits no plugin may take run again: a `%` of category 12, a new blank
+/// line, a directive, a name typed into a defined one.
+#[test]
+fn incremental_edits_that_must_run_again() {
+    let cases = [
+        ("catcode", INC.replace("y % not a comment", "y % not a comment!")),
+        // the run read the line of `\end` to its end: the new lines may be read
+        ("tail", format!("{INC}\n\n")),
+        ("blank-line", INC.replace("\\greet{world}  x", "\\greet{world}\n\n x")),
+        ("directive", INC.replace("% a comment line", "%\\satex@assert{1 < 2}")),
+        ("becomes-defined", INC.replace("\\nope\n", "\\nopes\n")),
+        ("defined-name", INC.replace("\\nope", "\\greet")),
+    ];
+    for (tag, new) in cases {
+        let (after, reused, fresh) = edit_inc(&format!("inc-no-{tag}"), &new);
+        assert!(reused.is_empty(), "{tag}: {reused:?}");
+        assert_eq!(after, fresh, "{tag}");
+    }
+}
+
+/// Letters typed into a name the run met undefined: the results stand,
+/// provisional, and the run follows once typing pauses, as a fresh one.
+#[test]
+fn incremental_typing_an_undefined_name_waits_for_the_pause() {
+    let new = INC.replace("\\nope\n", "\\nopex\n");
+    let (mut server, uri, _, dir) = open_unsaved("inc-typing", INC);
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": new }] }),
+    );
+    let mut published = Vec::new();
+    while published.is_empty() {
+        let p = server.notification("textDocument/publishDiagnostics");
+        if p["params"]["version"] == 2 {
+            published.push(p["params"]["diagnostics"].clone());
+        }
+    }
+    let id = server.request("satex/caches", json!({ "textDocument": { "uri": uri } }));
+    let lines = server.response(id)["result"].clone();
+    assert!(lines.as_array().unwrap().iter().any(|l| l == "reused typing 1"), "{lines}");
+    while published.len() < 2 {
+        let p = server.notification("textDocument/publishDiagnostics");
+        if p["params"]["version"] == 2 {
+            published.push(p["params"]["diagnostics"].clone());
+        }
+    }
+    server.shutdown();
+    let (server, _, fresh, _) = open_unsaved("inc-typing", &new);
+    server.shutdown();
+    assert_eq!(published[1], fresh["params"]["diagnostics"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

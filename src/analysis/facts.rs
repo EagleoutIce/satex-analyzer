@@ -633,6 +633,9 @@ pub struct Facts {
     pub color_stack: Vec<ColorStack>,
     /// Every character set outside package code, in order.
     pub text: Text,
+    /// Each line a file mouth read to its end, merged over every read: the
+    /// comment column all of them had, the spaces all of them skipped.
+    pub lines: crate::fixed::HashMap<(crate::engine::tex::FileId, u32), crate::engine::tex::LineRead>,
 }
 
 /// A conditional the run evaluated (tex.web §§ 487-510), merged over every
@@ -672,6 +675,20 @@ pub enum CsnameRole {
 }
 
 impl Facts {
+    /// Merges reads of lines: a comment column only where every read had
+    /// one (the last of them), a skipped space only where every read skipped it.
+    pub fn note_reads(&mut self, file: crate::engine::tex::FileId, reads: Vec<crate::engine::tex::LineRead>) {
+        for read in reads {
+            self.lines
+                .entry((file, read.line))
+                .and_modify(|r| {
+                    r.comment = r.comment.zip(read.comment).map(|(a, b)| a.max(b));
+                    r.skipped &= read.skipped;
+                })
+                .or_insert(read);
+        }
+    }
+
     /// The non-alphabetic characters that are letters at `file:line:col`.
     pub fn letters_at(&self, file: crate::engine::tex::FileId, line: u32, col: u32) -> Vec<char> {
         let mut out: Vec<char> = Vec::new();

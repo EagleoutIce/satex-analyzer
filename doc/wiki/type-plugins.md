@@ -4,23 +4,28 @@
 
 A type plugin adds editor features where text of a type stands. The type comes from the run, as the [type at the cursor](lsp.md#completion) finds it: what TeX read the text as, the kind of name a `\csname` formed from it, else the role of the argument. No plugin looks at a command's name or a text pattern. A new command that takes a color gets the color plugin without any setup.
 
-Each plugin has a block under `type_plugins:` in `satex.yaml`. `enabled: false` takes all its features away. The list below is what `satex query type-plugins` prints:
+Each plugin has a block under `type_plugins:` in `satex.yaml`, grouped there by its category: `widget` (dialogs and lenses), `hover`, `completion`, `lint`, `incremental` (whether an edit needs a new run) and `build` (the build file a project is read with, its settings under `l3build:`). `enabled: false` takes all its features away. The list below is what `satex query type-plugins` prints, by category:
 
 ```text
 $ satex query type-plugins -f samples/paper.tex
-name          types                                       
-keys          options, option key, pgf key, declared key  
-units         dimen, glue, dimen register, skip register  
-color         color name                                  
-environment   environment name                            
-table         environment the run met                     
-image         graphic file                                
-tikz          environment the run met                     
-savebox       environment name                            
-glossary      declared key                                
-bibliography  citation key                                
-index         index entry                                 
-theorem       environment name                            
+category     name             types                                       
+widget       color            color name                                  
+widget       environment      environment name                            
+widget       table            environment the run met                     
+widget       image            graphic file                                
+widget       tikz             environment the run met                     
+widget       forest           environment the run met                     
+widget       savebox          environment name                            
+widget       glossary         declared key                                
+widget       bibliography     citation key                                
+widget       index            index entry                                 
+widget       theorem          environment name                            
+hover        units            dimen, glue, dimen register, skip register  
+completion   keys             options, option key, pgf key, declared key  
+incremental  comment_edit                                                 
+incremental  whitespace_edit                                              
+incremental  typing                                                       
+build        l3build                                                      
 ```
 
 ## What each editor gets
@@ -126,5 +131,13 @@ A `forest` environment the run met: a lens "Edit tree…" on its `\begin` line a
 - It writes only what changed. An untouched node keeps its text, spacing and comments. A new or moved node takes the spacing of the sibling before it. Content with a comma or a bracket goes in braces.
 
 On a blank line of the document body, "Insert forest tree" writes a small tree and the view "New tree" starts one. Both add `\usepackage{forest}` when the run has no forest.
+
+## Incremental plugins
+
+An incremental plugin decides for one edit whether the last run still holds. It compares the text the run read with the new one, finds the one stretch they differ in, and asks the run's facts about it, never the text alone. Each mouth read of a line records where its comment began and which spaces it skipped (`Facts::lines`), merged over every read on every path. A plugin that says yes keeps the run: the rules run again, the diagnostics and their fixes, the outline, the lenses, inlays and colors are moved by the edit's offsets and published for the new version. Anything no plugin takes is analyzed again. `satex/caches` counts each reuse (`reused comment_edit 3`), the status bar shows it, and the server's log names it.
+
+- `comment_edit`: every read of the line had its comment begin before the edit, and the edit adds or removes no line end. TeX drops a comment's characters unread ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L7326)), so no read sees them. A `%` of category 12 (verbatim, `\catcode`) is no comment there and is not taken. A `%\satex@` directive and a magic comment (`% !TeX`) change a run, so an edit that makes, changes or removes one is not taken either. The rules read the new text, so a `satex-disable` comment or a comment marker counts at once.
+- `whitespace_edit`: copies of a space put into a run of it where every read skipped one in state N or S. The copies are read at the same moment under the same categories, so they are skipped too, and the line gets no new line end, so no `\par`. Or white space where no read got to: the line before it was never read to its end, and the run stopped at no limit. A user pattern (`lints.user-pattern`) may match spaces, so with one set only the second case is taken. A new line in the middle of the text is never taken: it moves every line after it.
+- `typing`: letters typed into a control word the run met undefined on every path, while the new name has no meaning or definition in the run. Its results stand, marked provisional, until typing pauses for `pause_ms`; then the run follows. This one is not claimed sound, only likely. The playground asks for its runs itself, so there it runs at once.
 
 Writing a plugin: [Writing a type plugin](writing-type-plugins.md).

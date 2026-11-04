@@ -73,6 +73,7 @@ $foo
 ```sh
 $ satex query typeset -f 01-catcode.tex --set limits.seconds=60
 5:5  paragraph  bar
+6:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -112,6 +113,7 @@ Macros take token lists, build names with `\csname`, mutate (`\g@addto@macro`), 
 ```sh
 $ satex query typeset -f 02-code-is-data.tex --set limits.seconds=60
 7:6  paragraph  AB, first, AB, macro:->AB
+8:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -153,6 +155,7 @@ l.7 \meaning\hook ⇒ macro:->AB
 ```sh
 $ satex query typeset -f r4-self-modifying.tex --set limits.seconds=60
 6:25  paragraph  [a][b][c]
+7:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -196,6 +199,7 @@ Many macros also push their own end markers into the stream, or use `\aftergroup
 ```sh
 $ satex query typeset -f 03-arguments.tex --set limits.seconds=60
 8:8  paragraph  (a) (none)b [everything up to the dot] after
+9:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -240,6 +244,7 @@ Why:
 ```sh
 $ satex query typeset -f r5-token-domain.tex --set limits.seconds=60
 4:15  paragraph  {empty|nonempty}
+5:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -284,6 +289,7 @@ Why:
 ```sh
 $ satex query typeset -f 04-typesetting.tex --set limits.seconds=60
 3:25  paragraph  ⟦f⟧wide, {empty page|page started}
+6:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -326,6 +332,7 @@ Why:
 ```sh
 $ satex query typeset -f r6-relational.tex --set limits.seconds=60
 6:20  paragraph  {always|never}
+7:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -373,7 +380,9 @@ The height of a node with `text width` depends on the line breaker, and pgf's ro
 ```sh
 $ satex query typeset -f s2-rounded-paragraph.tex --set limits.seconds=60
 5:64  paragraph  files, de·pen·den·cies, more
+7:1  paragraph  
 0:0  paragraph  
+7:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -412,6 +421,7 @@ A small document executes hundreds of thousands of lines of library code.
 ```sh
 $ satex query typeset -f 05-packages.tex --set limits.seconds=60
 4:41  paragraph  4.99994
+6:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -474,6 +484,7 @@ $ satex query typeset -f 06-unknown.tex --set limits.seconds=60
 8:5  paragraph  bazx
 14:80  paragraph  X1XHehe
 16:16  paragraph  1 Later
+17:15  page  page 1
 assumption  clock-assumed
 recognized gaps
   unbalanced-conditional 1× first at 06-unknown.tex:0
@@ -516,6 +527,7 @@ l.14 \ifcsname ⇒ true
 ```sh
 $ satex query typeset -f r3-choice.tex --set limits.seconds=60
 3:33  paragraph  12X
+4:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -567,6 +579,7 @@ A `\ref` to an unknown label in math in a tikz node, with the nodes placed by `p
 $ satex query typeset -f s1-tikz-ref.tex --set limits.seconds=60
 7:16  paragraph  B??B??B??B??
 0:0  paragraph  
+13:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -617,6 +630,7 @@ Why:
 ```sh
 $ satex query typeset -f 07-termination.tex --set limits.seconds=60
 6:6  paragraph  {.…|}
+7:15  page  page 1
 7:15  assumption  assumed-compiles
 assumption  clock-assumed
 ```
@@ -659,6 +673,7 @@ Why:
 ```sh
 $ satex query typeset -f r1-input-stack.tex --set limits.seconds=60
 4:9  paragraph  ((())) {(…)…|}
+6:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -697,6 +712,7 @@ Why:
 ```sh
 $ satex query typeset -f r7-merge-cost.tex --set limits.seconds=60
 6:16  paragraph  {d|}one
+7:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -739,6 +755,7 @@ Paragraph and page state change only when the output routine runs.
 ```sh
 $ satex query typeset -f 08-global-state.tex --set limits.seconds=60
 5:42  paragraph  inside after the group italic upright
+7:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -778,6 +795,7 @@ Macros call each other in a cycle and define the macros that continue it. Names 
 ```sh
 $ satex query typeset -f 09-progressive.tex --set limits.seconds=60
 5:6  paragraph  end3
+6:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -812,6 +830,7 @@ l.5 \a ⇒ \ifnum 0<3 \expandafter \def \csname b0\… (defines \b0 \a1 \b1 … 
 ```sh
 $ satex query typeset -f r2-growing-key.tex --set limits.seconds=60
 4:9  paragraph  .....
+5:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -846,6 +865,7 @@ pdfTeX, XeTeX and LuaTeX differ in fonts, line breaking and Lua callbacks.
 ```sh
 $ satex query typeset -f 10-engine.tex --set limits.seconds=60
 3:69  paragraph  pdfTeX
+4:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -899,8 +919,11 @@ Why:
 ```sh
 $ satex query typeset -f 11-fixpoint.tex --set limits.seconds=60
 4:2  paragraph  The label was on page {⟨?⟩|2}.
+5:38  page  page 1 → 2
 6:11  paragraph  Here.
+7:15  page  page 2 → 3
 6:11  paragraph  {Here. |}
+7:15  page  page 3
 7:15  assumption  assumed-compiles
 assumption  clock-assumed
 ```

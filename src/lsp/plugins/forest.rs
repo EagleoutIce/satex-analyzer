@@ -23,6 +23,9 @@ impl TypePlugin for Forest {
     fn name(&self) -> &'static str {
         "forest"
     }
+    fn category(&self) -> &'static str {
+        "widget"
+    }
     fn about(&self) -> &'static str {
         "a tree dialog for a forest environment, indented outlines in and out"
     }

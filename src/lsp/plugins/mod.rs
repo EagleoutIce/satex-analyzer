@@ -12,6 +12,7 @@ mod environment;
 mod forest;
 mod glossary;
 mod image;
+pub(super) mod incremental;
 mod index;
 mod keys;
 mod savebox;
@@ -55,6 +56,8 @@ pub(super) trait TypePlugin: Sync {
     fn name(&self) -> &'static str;
     /// One line for `satex query type-plugins` and the wiki.
     fn about(&self) -> &'static str;
+    /// What it is for, one of [`CATEGORIES`]: settings and lists group by it.
+    fn category(&self) -> &'static str;
     /// The types of the lattice it triggers on; none: the run's place triggers it (an
     /// environment the run met), asked with a [`Ty::Bottom`] hit.
     fn types(&self) -> &'static [Ty];
@@ -93,7 +96,14 @@ pub(super) trait TypePlugin: Sync {
     fn lenses(&self, _analysis: &Analysis, _doc: &Text, _path: &str) -> Vec<CodeLens> {
         Vec::new()
     }
+    /// An incremental plugin: whether the run still holds after `edit`.
+    fn reuse(&self, _edit: &incremental::Edit) -> Option<incremental::Reuse> {
+        None
+    }
 }
+
+/// The categories plugins group by, in the order lists show them.
+pub const CATEGORIES: [&str; 6] = ["widget", "hover", "completion", "lint", "incremental", "build"];
 
 /// Every plugin, in the order they answer.
 pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
@@ -110,6 +120,9 @@ pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
     &bibliography::Bibliography,
     &index::Index,
     &theorem::Theorem,
+    &incremental::CommentEdit,
+    &incremental::WhitespaceEdit,
+    &incremental::Typing,
 ];
 
 /// The hit a plugin without types is asked with.
@@ -332,16 +345,18 @@ pub(super) fn hover_types(analysis: &Analysis, doc: &Text, path: &str, pos: Pos)
     super::type_at::type_at(analysis, doc, path, Pos::new(pos.line, pos.col + rest))
 }
 
-/// `satex query type-plugins`: one record per plugin.
-pub fn list(cfg: &TypePlugins) -> Vec<crate::queries::query::Record> {
-    PLUGINS
+/// `satex query type-plugins`: one record per plugin, grouped by category, then the build
+/// plugins (`plugins.l3build`).
+pub fn list(cfg: &crate::project::config::Config) -> Vec<crate::queries::query::Record> {
+    let mut out: Vec<_> = PLUGINS
         .iter()
         .map(|p| {
             let mut r = crate::queries::query::Record::new();
             r.insert("name".into(), json!(p.name()));
-            r.insert("enabled".into(), json!(p.enabled(cfg)));
+            r.insert("category".into(), json!(p.category()));
+            r.insert("enabled".into(), json!(p.enabled(&cfg.type_plugins)));
             let mut types: Vec<String> = p.types().iter().map(Ty::to_string).collect();
-            if types.is_empty() {
+            if types.is_empty() && p.category() != "incremental" {
                 types.push("environment the run met".into());
             }
             r.insert("types".into(), json!(types));
@@ -349,7 +364,20 @@ pub fn list(cfg: &TypePlugins) -> Vec<crate::queries::query::Record> {
             r.insert("about".into(), json!(p.about()));
             r
         })
-        .collect()
+        .collect();
+    let mut l3build = crate::queries::query::Record::new();
+    l3build.insert("name".into(), json!("l3build"));
+    l3build.insert("category".into(), json!("build"));
+    l3build.insert("enabled".into(), json!(cfg.l3build.enabled));
+    l3build.insert("types".into(), json!(Vec::<String>::new()));
+    l3build.insert("features".into(), json!(["build"]));
+    l3build.insert("about".into(), json!("the bundle's build.lua: module, test files and engines"));
+    out.push(l3build);
+    let rank = |r: &crate::queries::query::Record| {
+        CATEGORIES.iter().position(|c| r.get("category").and_then(Json::as_str) == Some(c))
+    };
+    out.sort_by_key(rank);
+    out
 }
 
 /// A code action that replaces `range` of the document with `text`.

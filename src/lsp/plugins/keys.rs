@@ -16,6 +16,9 @@ impl TypePlugin for Keys {
     fn name(&self) -> &'static str {
         "keys"
     }
+    fn category(&self) -> &'static str {
+        "completion"
+    }
     fn about(&self) -> &'static str {
         "key list completion, family continuation and key docs on hover"
     }

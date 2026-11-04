@@ -15,6 +15,9 @@ impl TypePlugin for Table {
     fn name(&self) -> &'static str {
         "table"
     }
+    fn category(&self) -> &'static str {
+        "widget"
+    }
     fn about(&self) -> &'static str {
         "a grid dialog for each tabular, booktabs and siunitx rewrites"
     }

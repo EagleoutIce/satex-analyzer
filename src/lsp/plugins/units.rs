@@ -29,6 +29,9 @@ impl TypePlugin for Units {
     fn name(&self) -> &'static str {
         "units"
     }
+    fn category(&self) -> &'static str {
+        "hover"
+    }
     fn about(&self) -> &'static str {
         "a length in every unit, convert actions and a converter view"
     }

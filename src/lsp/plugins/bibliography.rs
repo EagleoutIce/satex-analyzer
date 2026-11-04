@@ -15,6 +15,9 @@ impl TypePlugin for Bibliography {
     fn name(&self) -> &'static str {
         "bibliography"
     }
+    fn category(&self) -> &'static str {
+        "widget"
+    }
     fn about(&self) -> &'static str {
         "manage .bib entries: search, edit fields, add per entry type, delete uncited, cited where"
     }

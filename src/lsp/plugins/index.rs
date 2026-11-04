@@ -18,6 +18,9 @@ impl TypePlugin for Index {
     fn name(&self) -> &'static str {
         "index"
     }
+    fn category(&self) -> &'static str {
+        "widget"
+    }
     fn about(&self) -> &'static str {
         "manage index terms: sorted terms with subentries, rename a term everywhere"
     }

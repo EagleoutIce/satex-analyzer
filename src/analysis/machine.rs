@@ -4431,7 +4431,11 @@ will look undefined",
                 }
                 Some(Frame::File { mouth, eof_seen, .. }) => {
                     let before = mouth.clone();
-                    if let Some(t) = mouth.next_with(catcodes, &mut out.interner, *end_line) {
+                    let next = mouth.next_with(catcodes, &mut out.interner, *end_line);
+                    if !mouth.lines.is_empty() {
+                        out.facts.note_reads(mouth.file, std::mem::take(&mut mouth.lines));
+                    }
+                    if let Some(t) = next {
                         // A character that may be structural: a path for each
                         // category, on which it has that one, reads it again.
                         if let Some(c) = mouth.undecided.take() {

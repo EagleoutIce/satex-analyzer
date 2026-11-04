@@ -20,6 +20,9 @@ impl TypePlugin for Theorem {
     fn name(&self) -> &'static str {
         "theorem"
     }
+    fn category(&self) -> &'static str {
+        "widget"
+    }
     fn about(&self) -> &'static str {
         "manage theorem-like environments: kinds, counters, instances, rename, numbering"
     }

@@ -24,6 +24,9 @@ impl TypePlugin for Tikz {
     fn name(&self) -> &'static str {
         "tikz"
     }
+    fn category(&self) -> &'static str {
+        "widget"
+    }
     fn about(&self) -> &'static str {
         "a canvas for a tikzpicture's nodes and arrows, Mermaid flowcharts in and out"
     }

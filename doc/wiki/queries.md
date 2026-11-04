@@ -367,6 +367,7 @@ The text satex computes the document typesets, one row per paragraph, then the n
 ```text
 $ satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex
 3:25  paragraph  ⟦f⟧wide, {empty page|page started}
+6:15  page  page 1
 assumption  clock-assumed
 ```
 

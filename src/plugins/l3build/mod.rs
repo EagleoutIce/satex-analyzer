@@ -29,6 +29,9 @@ pub struct L3build {
     pub vars: BTreeMap<String, Var>,
     /// Why `texlua` stopped, when it did.
     pub error: Option<String>,
+    /// The test file patterns and whether tests are analyzed (`l3build:` in `satex.yaml`).
+    pub tests: Vec<String>,
+    pub checks: bool,
 }
 
 /// The variables a run reports (l3build manual, "Variables"): which module,
@@ -119,27 +122,37 @@ impl L3build {
     /// l3build runs from the bundle's main directory while its tests and
     /// documentation sit below it.
     pub fn read(dir: &Path) -> Option<L3build> {
+        let settings = crate::project::config::Config::discover(dir).l3build;
+        if !settings.enabled {
+            return None;
+        }
         let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
         let home = crate::project::paths::home_dir();
-        let mut root = None;
+        let mut found = None;
         // Never above the repository, the home directory, or what another
-        // user owns: a `build.lua` there is no part of this bundle.
+        // user owns: a build file there is no part of this bundle.
         for ancestor in dir.ancestors().take_while(|a| Some(*a) != home.as_deref() && owned_alike(&dir, a)) {
-            if ancestor.join(FILE).is_file() {
-                root = Some(ancestor);
+            if let Some(name) = settings.files.iter().find(|f| ancestor.join(f).is_file()) {
+                found = Some((ancestor, name.as_str()));
                 break;
             }
             if ancestor.join(".git").exists() {
                 break;
             }
         }
-        let root = root?;
-        let path = root.join(FILE);
+        let (root, name) = found?;
+        let path = root.join(name);
         let text = std::fs::read_to_string(&path).ok()?;
         let defaults = defaults_file();
-        let mut config = L3build { path: path.clone(), root: root.to_path_buf(), ..L3build::default() };
+        let mut config = L3build {
+            path: path.clone(),
+            root: root.to_path_buf(),
+            tests: settings.tests.clone(),
+            checks: settings.checks,
+            ..L3build::default()
+        };
         let written = assignments(&text, &BTreeMap::new());
-        match evaluate(root, defaults.as_deref()) {
+        match evaluate(root, name, defaults.as_deref()) {
             Some((vars, error)) => {
                 config.how = if error.is_some() { "texlua, then read" } else { "texlua" };
                 config.vars = vars.iter().map(|(k, (v, _))| (k.clone(), v.clone())).collect();
@@ -162,6 +175,19 @@ impl L3build {
                 config.vars = base;
                 config.vars.extend(written);
             }
+        }
+        // `l3build --config` files, then the settings that override the bundle's.
+        for file in &settings.config {
+            if let Ok(text) = std::fs::read_to_string(root.join(file)) {
+                let read = assignments(&text, &config.vars);
+                config.vars.extend(read);
+            }
+        }
+        if let Some(module) = settings.module {
+            config.vars.insert("module".into(), Var::Str(module));
+        }
+        if !settings.engines.is_empty() {
+            config.vars.insert("checkengines".into(), Var::List(settings.engines));
         }
         Some(config)
     }
@@ -266,18 +292,17 @@ impl L3build {
         self.files("sourcefiledir", "installfiles")
     }
 
-    /// The regression tests: `.lvt` files in `testfiledir` (l3build manual,
-    /// "Regression testing").
+    /// The regression tests: the files `l3build.tests` selects in `testfiledir`
+    /// (l3build manual, "Regression testing").
     pub fn tests(&self) -> Vec<PathBuf> {
-        let dir = self.dir("testfiledir");
-        let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
-            .into_iter()
+        let base = self.dir("testfiledir");
+        let mut out: Vec<PathBuf> = (self.tests.iter())
+            .filter_map(|p| base.join(p).to_str().map(crate::project::paths::glob))
             .flatten()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|e| e == "lvt" || e == "pvt"))
+            .filter(|path| path.is_file())
             .collect();
         out.sort();
+        out.dedup();
         out
     }
 
@@ -355,7 +380,7 @@ fn owned_alike(dir: &Path, a: &Path) -> bool {
     }
 }
 
-fn evaluate(root: &Path, defaults: Option<&Path>) -> Option<Evaluated> {
+fn evaluate(root: &Path, build: &str, defaults: Option<&Path>) -> Option<Evaluated> {
     let texlua = crate::project::paths::which("texlua").ok()?;
     let script = std::env::temp_dir().join(format!(
         "satex-l3build-{}-{:?}.lua",
@@ -372,7 +397,7 @@ fn evaluate(root: &Path, defaults: Option<&Path>) -> Option<Evaluated> {
     let defaults = defaults.map(|p| p.display().to_string()).unwrap_or_default();
     let output = std::process::Command::new(texlua)
         .arg(&script)
-        .arg(FILE)
+        .arg(build)
         .arg(defaults)
         .current_dir(root)
         .stdin(std::process::Stdio::null())

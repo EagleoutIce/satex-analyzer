@@ -629,14 +629,94 @@ lsp:  # how satex lsp serves an editor
   # port: 2087  # a TCP port to serve on instead of stdio
     #! affects: output
 
-type_plugins:  # editor features for text of a type: hover, completion, code actions and dialogs (satex query type-plugins)
-  keys:  # key lists: pgfkeys, l3keys, kvoptions and package options
-    enabled: true  # completion and hover docs in key lists
+l3build:  # how an l3build bundle's configuration is read (satex query type-plugins: category build)
+  enabled: true  # read the bundle's build file for its module, files and engines
+    #! affects: precision
+    #! example: `enabled: false`: a bundle's sources are found only by discovery
+    #! plugin: l3build
+  files: [build.lua]  # the build files looked for, in this order, here and in the directories above
+    #! affects: precision
+    #! example: `files: [build-dev.lua, build.lua]`
+    #! plugin: l3build
+  config: []  # Lua files read after the build file, as l3build --config names them
+    #! affects: precision
+    #! example: `config: [config-plain.lua]`
+    #! plugin: l3build
+  # module: mypkg  # the module's name, instead of the build file's module
+    #! affects: output
+    #! plugin: l3build
+  tests: ['*.lvt', '*.pvt']  # the regression tests in testfiledir, as patterns
+    #! affects: precision
+    #! plugin: l3build
+  engines: []  # the engines that check, instead of the build file's checkengines
+    #! affects: precision
+    #! example: `engines: [pdftex, luatex]`
+    #! plugin: l3build
+  checks: false  # analyze the regression tests as documents of the bundle too
+    #! affects: output, speed
+    #! example: `checks: true`: each .lvt is a root document
+    #! plugin: l3build
+
+type_plugins:  # editor features by type, grouped by category: widget, hover, completion, lint, incremental (satex query type-plugins)
+  color:  # color names and xcolor expressions
+    #! category: widget
+    enabled: true  # swatches, picker dialog, model conversions and color completion
       #! affects: output
-      #! example: `enabled: false`: no key items or key hovers
-    family_continue: true  # accepting a family (`/demo`) inserts `/demo/` and opens its keys
+      #! example: `enabled: false`: no color items, swatches or picker
+    swatches: true  # a swatch next to each color a color command uses
       #! affects: output
+    name: mycolor  # what a color the picker defines is called, numbered when taken
+      #! affects: output
+  environment:  # the name of a \begin or \end
+    #! category: widget
+    enabled: true  # "Change environment…": switch one occurrence, both ends and its arguments
+      #! affects: output
+  table:  # tables: environments whose code reaches \@array (tabular, tabular*, tabularx, array)
+    #! category: widget
+    enabled: true  # a code lens and hover link to the grid dialog, booktabs and siunitx rewrites
+      #! affects: output
+      #! example: `enabled: false`: no table lens, dialog or rewrites
+  image:  # figures: the files \includegraphics reads
+    #! category: widget
+    enabled: true  # a code lens and hover link to the crop, rotate and size dialog, rotate and fit actions
+      #! affects: output
+      #! example: `enabled: false`: no image lens, dialog or actions
+  tikz:  # a tikzpicture the run met, a blank line of the document body
+    #! category: widget
+    enabled: true  # "Edit drawing…": nodes and arrows on a canvas, Mermaid import and export
+      #! affects: output
+      #! example: `enabled: false`: no drawing lens, action or dialog
+    grid: 0.5  # the grid in cm a dragged or added node snaps to
+      #! affects: output
+    spacing: 2.0  # the distance in cm between the ranks of an imported Mermaid flowchart
+      #! affects: output
+  savebox:  # a \begin name of a picture, listing or other environment the run met
+    #! category: widget
+    enabled: true  # "Store in a box": move it to the preamble as a saved box, refused where it reads its position
+      #! affects: output
+  glossary:  # declared keys: glossary entries, acronyms, abbreviations
+    #! category: widget
+    enabled: true  # a manager: search, edit fields, add like the document's own, delete or replace uses
+      #! affects: output
+  bibliography:  # citation keys and the .bib entries the run read
+    #! category: widget
+    enabled: true  # a manager: search by key, author, title, year; edit fields, add per entry type, delete unused
+      #! affects: output
+  index:  # index terms (\index{term!sub})
+    #! category: widget
+    enabled: true  # a manager: terms with subentries in sorted order, rename a term everywhere
+      #! affects: output
+  theorem:  # theorem-like environments the run defined
+    #! category: widget
+    enabled: true  # a manager: kinds with counters and styles, instances with labels and references, rename, numbering
+      #! affects: output
+  forest:  # a forest environment the run met, a blank line of the document body
+    #! category: widget
+    enabled: true  # "Edit tree…": add, delete, rename and drag nodes, node and `for tree` options, indented outlines in
+      #! affects: output
+      #! example: `enabled: false`: no tree lens, action or dialog
   units:  # dimensions: `12pt`, `\textwidth`, a value range
+    #! category: hover
     enabled: true  # hover in every unit, a converter dialog and convert actions
       #! affects: output
       #! example: `enabled: false`: no conversions on a length
@@ -646,52 +726,31 @@ type_plugins:  # editor features for text of a type: hover, completion, code act
     decimals: 2  # decimals a converted length is written with
       #! affects: output
       #! range: 0..6
-  color:  # color names and xcolor expressions
-    enabled: true  # swatches, picker dialog, model conversions and color completion
+  keys:  # key lists: pgfkeys, l3keys, kvoptions and package options
+    #! category: completion
+    enabled: true  # completion and hover docs in key lists
       #! affects: output
-      #! example: `enabled: false`: no color items, swatches or picker
-    swatches: true  # a swatch next to each color a color command uses
+      #! example: `enabled: false`: no key items or key hovers
+    family_continue: true  # accepting a family (`/demo`) inserts `/demo/` and opens its keys
       #! affects: output
-    name: mycolor  # what a color the picker defines is called, numbered when taken
-      #! affects: output
-  environment:  # the name of a \begin or \end
-    enabled: true  # "Change environment…": switch one occurrence, both ends and its arguments
-      #! affects: output
-  table:  # tables: environments whose code reaches \@array (tabular, tabular*, tabularx, array)
-    enabled: true  # a code lens and hover link to the grid dialog, booktabs and siunitx rewrites
-      #! affects: output
-      #! example: `enabled: false`: no table lens, dialog or rewrites
-  image:  # figures: the files \includegraphics reads
-    enabled: true  # a code lens and hover link to the crop, rotate and size dialog, rotate and fit actions
-      #! affects: output
-      #! example: `enabled: false`: no image lens, dialog or actions
-  tikz:  # a tikzpicture the run met, a blank line of the document body
-    enabled: true  # "Edit drawing…": nodes and arrows on a canvas, Mermaid import and export
-      #! affects: output
-      #! example: `enabled: false`: no drawing lens, action or dialog
-    grid: 0.5  # the grid in cm a dragged or added node snaps to
-      #! affects: output
-    spacing: 2.0  # the distance in cm between the ranks of an imported Mermaid flowchart
-      #! affects: output
-  savebox:  # a \begin name of a picture, listing or other environment the run met
-    enabled: true  # "Store in a box": move it to the preamble as a saved box, refused where it reads its position
-      #! affects: output
-  glossary:  # declared keys: glossary entries, acronyms, abbreviations
-    enabled: true  # a manager: search, edit fields, add like the document's own, delete or replace uses
-      #! affects: output
-  bibliography:  # citation keys and the .bib entries the run read
-    enabled: true  # a manager: search by key, author, title, year; edit fields, add per entry type, delete unused
-      #! affects: output
-  index:  # index terms (\index{term!sub})
-    enabled: true  # a manager: terms with subentries in sorted order, rename a term everywhere
-      #! affects: output
-  theorem:  # theorem-like environments the run defined
-    enabled: true  # a manager: kinds with counters and styles, instances with labels and references, rename, numbering
-      #! affects: output
-  forest:  # a forest environment the run met, a blank line of the document body
-    enabled: true  # "Edit tree…": add, delete, rename and drag nodes, node and `for tree` options, indented outlines in
-      #! affects: output
-      #! example: `enabled: false`: no tree lens, action or dialog
+  comment_edit:  # an edit inside a comment every read of its line skipped, no %\satex@ directive or magic comment
+    #! category: incremental
+    enabled: true  # keep the last run instead of analyzing again; the rules still read the new text
+      #! affects: speed
+      #! example: `enabled: false`: typing in a comment runs the document again
+  whitespace_edit:  # spaces added where every read skipped one, white space past the last line read
+    #! category: incremental
+    enabled: true  # keep the last run, its results moved along the line
+      #! affects: speed
+      #! example: `enabled: false`: indenting a line runs the document again
+  typing:  # letters typed into a control word the run met undefined
+    #! category: incremental
+    enabled: true  # the last results stand, marked provisional, until typing pauses
+      #! affects: speed
+      #! example: `enabled: false`: each pause of the debounce runs the document again
+    pause_ms: 1500  # how long typing pauses before the run follows
+      #! affects: speed
+      #! example: `3000`: a name typed slowly is run once
 
 slice:  # what satex slice leaves out
   trim: true  # leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \begin{document} reads
@@ -911,7 +970,7 @@ A plugin picks a default from the machine, the installation and the build files.
 
 - **Engines.** TeX, e-TeX and pdfTeX are modelled in full. LuaTeX and XeTeX are **experimental**: every primitive is known, but their effects are not modelled. ConTeXt is **experimental** too: its kernel is not interpreted, so `undefined-control-sequence` is off.
 - **Lua.** `\directlua`/`\latelua` are read as strings, not run. Literal `require`/`dofile` are dependencies, and unconditional `tex.print` of literals is read back in. Anything else is a `lua-output` gap. Catcode tables and `\luaescapestring` are interpreted, so `ltluatex`, `luacode` and expl3's Lua bridge run from source.
-- **l3build.** A `build.lua` runs in a sandboxed `texlua` (else its plain assignments are read). Its source dirs are searched, `.ins`/`.dtx` pairs read through docstrip, and `typesetexe`/`stdengine` pick the engine.
+- **l3build.** A `build.lua` runs in a sandboxed `texlua` (else its plain assignments are read). Its source dirs are searched, `.ins`/`.dtx` pairs read through docstrip, and `typesetexe`/`stdengine` pick the engine. `l3build:` in `satex.yaml` says which build files to look for (`files`), which `--config` files to read after it (`config`), and overrides the `module`, the test patterns (`tests`) and the check engines (`engines`). `checks: true` analyzes the regression tests as documents too. Empty values keep what the bundle says.
 - **depp.** Every file read maps to its TeX Live package by TDS path. With depp loaded or its file present, `missing-dependency` and `unused-dependency` compare against it. Rules: `depp.rules`, `depp.renames`, `depp.file`.
 - **Preloaded format.** A `%&fmt` line, `-fmt=` or `preload:` names a dumped preamble. SaTeX interprets that preamble instead (up to `\endofdump`). `pretex:` is code read before the first line (latexmk's `-usepretex`).
 

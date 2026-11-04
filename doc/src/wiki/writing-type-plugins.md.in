@@ -10,6 +10,7 @@ pub(super) struct Units;
 impl TypePlugin for Units {
     fn name(&self) -> &'static str { "units" }            // its key under `type_plugins:`
     fn about(&self) -> &'static str { "a length in every unit" }
+    fn category(&self) -> &'static str { "hover" }         // widget, hover, completion, lint, incremental or build
     fn types(&self) -> &'static [Ty] { &[Ty::Dimen, Ty::Glue] }
     fn features(&self) -> &'static [&'static str] { &["hover", "actions", "view"] }
     fn enabled(&self, cfg: &TypePlugins) -> bool { cfg.units.enabled }
@@ -19,13 +20,13 @@ impl TypePlugin for Units {
 }
 ```
 
-`Cx` holds the run, the document, the position and the types found there. `Hit` is one of those types, with the text it is part of. The registry asks each enabled plugin whose `wants(hit)` holds; by default that is `types()` containing the hit's type. `complete` returns `None` to leave a hit to the next plugin. A plugin with no `types()` is triggered by the run's place (an environment the run met, as `tikz`): it is asked once, with a `Ty::Bottom` hit, and finds its place with `pairs(analysis, path, environment)`. `lenses` adds code lenses to the whole document.
+`Cx` holds the run, the document, the position and the types found there. `Hit` is one of those types, with the text it is part of. The registry asks each enabled plugin whose `wants(hit)` holds; by default that is `types()` containing the hit's type. `complete` returns `None` to leave a hit to the next plugin. A plugin with no `types()` is triggered by the run's place (an environment the run met, as `tikz`): it is asked once, with a `Ty::Bottom` hit, and finds its place with `pairs(analysis, path, environment)`. `lenses` adds code lenses to the whole document. An `incremental` plugin implements `reuse(edit)` instead: whether the last run still holds after the edit, `Fresh` (positions outside the edit stay), `Shifted` (the edited line's rest moves) or `Provisional`, decided from the run's facts and stated as a soundness condition on its doc comment.
 
 Steps:
 
 1. Add the file and its entry in `PLUGINS` (`src/lsp/plugins/mod.rs`).
 2. Add `pub <name>: <Name>Plugin` with `enabled: bool` to `TypePlugins` (`src/project/config.rs`).
-3. Document each setting under `type_plugins.<name>:` in `satex.yaml`, with `#!` lines. The schema and the [configuration page](configuration.md) follow from it.
+3. Document each setting under `type_plugins.<name>:` in `satex.yaml`, among the plugins of its category, with `#!` lines and `#! category:` under the plugin's key. The schema and the [configuration page](configuration.md) follow from it.
 4. Test each feature on a small document through the language server (`tests/it/lsp.rs`), and that `enabled: false` removes it.
 
 Every number a plugin uses is a setting. A plugin reads the run's facts, never a list of command names.

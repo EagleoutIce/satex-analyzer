@@ -678,6 +678,11 @@ struct Doc {
     version: i32,
     path: PathBuf,
     analysis: Option<Rc<Analysis>>,
+    /// The text `analysis` read: an incremental plugin judges an edit against it.
+    analyzed: Option<String>,
+    /// How an edit the run was kept for moved the edited line: whole-document
+    /// results are made from `analyzed` and moved by it.
+    shift: Option<plugins::incremental::Shift>,
 }
 
 /// One run of a root: the open buffers' texts it read, by hash, and the
@@ -753,6 +758,8 @@ struct Engine {
     /// The diagnostics last published per file, with the run they came from: a run reused for a
     /// newer version of the same texts publishes them again under that version.
     published: HashMap<Uri, (std::rc::Weak<Analysis>, PublishDiagnosticsParams)>,
+    /// When each document was last edited: typing pauses after it.
+    edited: HashMap<Uri, std::time::Instant>,
 }
 
 impl EngineMsg {
@@ -806,6 +813,7 @@ impl Engine {
             deferred: Default::default(),
             blank: None,
             published: HashMap::default(),
+            edited: HashMap::default(),
         }
     }
 
@@ -823,6 +831,9 @@ impl Engine {
             fn drop(&mut self) {
                 self.0.analyzing.store(false, std::sync::atomic::Ordering::Relaxed);
             }
+        }
+        if self.reuse(uri) {
+            return;
         }
         self.hovers.analyzing.store(true, std::sync::atomic::Ordering::Relaxed);
         let _analyzing = Analyzing(self.hovers.clone());
@@ -852,37 +863,13 @@ impl Engine {
             carry_probes(old, &analysis);
         }
         doc.analysis = Some(analysis.clone());
+        (doc.analyzed, doc.shift) = (Some(text.clone()), None);
         self.runs.retain(|_, run| Rc::strong_count(&run.analysis) > 1);
         if changed {
             self.refresh_hovers(uri);
         }
         if fresh {
-            // Requests that only read are answered while the rules run.
-            let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).collect();
-            let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
-            let orphan = self.orphans.contains(&canonical(&path));
-            let (mut published, candidates) = self.serving(|engine| {
-                let records = engine.unsilenced(handlers::findings(&analysis));
-                let candidates = crate::linter::style_candidates(&records, &analysis.settings.style_prompt);
-                (publish(&mut engine.actions, &analysis, &records, &path, &open), candidates)
-            });
-            if let Some(own) =
-                published.iter_mut().find(|p| orphan && p.uri == handlers::path_uri(&path.display().to_string()))
-            {
-                own.diagnostics.push(lsp_types::Diagnostic {
-                    severity: Some(lsp_types::DiagnosticSeverity::INFORMATION),
-                    code: Some(lsp_types::NumberOrString::String("unreachable-file".into())),
-                    source: Some("satex".into()),
-                    message: "No root document reads this file.".into(),
-                    ..Default::default()
-                });
-            }
-            for p in &mut published {
-                p.version = version_of(&versions, &p.uri);
-                self.published.insert(p.uri.clone(), (Rc::downgrade(&analysis), p.clone()));
-            }
-            self.send_diagnostics(published);
-            self.ask_style(candidates);
+            self.publish_run(&analysis, &path, &versions, None);
         } else {
             // the same texts under newer versions: the same diagnostics, of these versions
             let again: Vec<PublishDiagnosticsParams> = (self.published.values_mut())
@@ -898,6 +885,111 @@ impl Engine {
             self.send_diagnostics(again);
         }
         crate::util::progress::idle();
+    }
+
+    /// Lints `analysis` and publishes its diagnostics under `versions`, moved by `shift`
+    /// in `path` when the run was kept across an edit there.
+    fn publish_run(
+        &mut self,
+        analysis: &Rc<Analysis>,
+        path: &Path,
+        versions: &[(PathBuf, i32)],
+        shift: Option<plugins::incremental::Shift>,
+    ) {
+        // Requests that only read are answered while the rules run.
+        let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).collect();
+        let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
+        let orphan = self.orphans.contains(&canonical(path));
+        let (mut published, candidates) = self.serving(|engine| {
+            let records = engine.unsilenced(handlers::findings(analysis));
+            let candidates = crate::linter::style_candidates(&records, &analysis.settings.style_prompt);
+            (publish(&mut engine.actions, analysis, &records, path, &open), candidates)
+        });
+        let own = handlers::path_uri(&path.display().to_string());
+        if let Some(own) = published.iter_mut().find(|p| orphan && p.uri == own) {
+            own.diagnostics.push(lsp_types::Diagnostic {
+                severity: Some(lsp_types::DiagnosticSeverity::INFORMATION),
+                code: Some(lsp_types::NumberOrString::String("unreachable-file".into())),
+                source: Some("satex".into()),
+                message: "No root document reads this file.".into(),
+                ..Default::default()
+            });
+        }
+        for p in &mut published {
+            if let Some(shift) = shift.filter(|_| p.uri == own) {
+                let mut moved = serde_json::to_value(&p.diagnostics).unwrap_or_default();
+                shift.apply(&mut moved);
+                p.diagnostics = serde_json::from_value(moved).unwrap_or_default();
+                self.actions.get_mut(&own).into_iter().flatten().for_each(|a| shift.apply(a));
+            }
+            p.version = version_of(versions, &p.uri);
+            self.published.insert(p.uri.clone(), (Rc::downgrade(analysis), p.clone()));
+        }
+        self.send_diagnostics(published);
+        self.ask_style(candidates);
+    }
+
+    /// Keeps `uri`'s last run across the edits since, when an incremental plugin
+    /// ([`plugins::incremental`]) takes them, and publishes its results for the new
+    /// text; `false` when a run must follow.
+    fn reuse(&mut self, uri: &Uri) -> bool {
+        use plugins::incremental::{Edit, Reuse};
+        // Another document's edit may change the same run.
+        if self.dirty.iter().any(|d| d != uri) {
+            return false;
+        }
+        let Some(doc) = self.docs.get(uri) else { return false };
+        let (Some(analysis), Some(old)) = (doc.analysis.clone(), doc.analyzed.clone()) else { return false };
+        let (path, new) = (doc.path.clone(), doc.text.clone());
+        // What picks the run a text is read by must not change.
+        let route = |t: &str| {
+            let profile = crate::project::config::Profile::of_name(Some(&path), t);
+            format!("{:?}", (discovery::is_document(t), discovery::declared_root(&path, t), profile))
+        };
+        if route(&old) != route(&new) {
+            return false;
+        }
+        let name = path.display().to_string();
+        let Some(edit) = Edit::new(&analysis, &name, &old, &new) else { return false };
+        let Some((plugin, how)) = plugins::incremental::decide(&edit) else { return false };
+        let shift = edit.shift();
+        if how == Reuse::Provisional {
+            // Only an engine with its own clock waits for the pause.
+            let pause = Duration::from_millis(analysis.settings.type_plugins.typing.pause_ms);
+            if self.inbox.is_none() || self.edited.get(uri).is_none_or(|t| t.elapsed() >= pause) {
+                return false;
+            }
+            if doc.shift == Some(shift) {
+                if !self.dirty.contains(uri) {
+                    self.dirty.push(uri.clone());
+                }
+                return true;
+            }
+        }
+        let versions: Vec<(PathBuf, i32)> = self.docs.values().map(|d| (d.path.clone(), d.version)).collect();
+        // The run no longer stands for its texts: back at them, it runs again.
+        self.runs.values_mut().filter(|r| Rc::ptr_eq(&r.analysis, &analysis)).for_each(|r| r.texts = 0);
+        // The rules read the text the run's positions are of, then everything the new one.
+        let read = if how == Reuse::Fresh { &new } else { &old };
+        crate::project::overlay::set(&path, read.clone());
+        self.publish_run(&analysis, &path, &versions, (how != Reuse::Fresh).then_some(shift));
+        crate::project::overlay::set(&path, new.clone());
+        if let Some(doc) = self.docs.get_mut(uri) {
+            match how {
+                Reuse::Fresh => (doc.analyzed, doc.shift) = (Some(new), None),
+                _ => doc.shift = Some(shift),
+            }
+        }
+        // A provisional result stays dirty: [`Engine::flush`] took it off the list.
+        self.dirty.retain(|d| d != uri);
+        if how == Reuse::Provisional {
+            self.dirty.push(uri.clone());
+        }
+        plugins::incremental::count(plugin);
+        let text = format!("{}: {plugin}", if how == Reuse::Provisional { "provisional" } else { "reused" });
+        eprintln!("satex: {text}");
+        crate::util::progress::tell(crate::util::progress::Status { text, ..Default::default() });
+        true
     }
 
     fn send_diagnostics(&self, published: Vec<PublishDiagnosticsParams>) {
@@ -1264,7 +1356,7 @@ impl Engine {
                     cfg.load.format = false;
                     self.blank = Some(Rc::new(Machine::analyze("", None, &cfg)));
                 }
-                self.docs.insert(uri.clone(), Doc { text, version, path, analysis: None });
+                self.docs.insert(uri.clone(), Doc { text, version, path, analysis: None, analyzed: None, shift: None });
                 if !self.dirty.contains(&uri) {
                     self.dirty.push(uri);
                 }
@@ -1273,6 +1365,7 @@ impl Engine {
                 // The last analysis answers until the next one replaces it,
                 // so a request never waits out a whole run.
                 if let Some(doc) = self.docs.get_mut(&uri) {
+                    self.edited.insert(uri.clone(), std::time::Instant::now());
                     doc.text = text;
                     doc.version = version.unwrap_or(doc.version);
                     if !self.dirty.contains(&uri) {
@@ -1282,6 +1375,7 @@ impl Engine {
             }
             EngineMsg::Close(uri) => {
                 self.published.remove(&uri);
+                self.edited.remove(&uri);
                 self.store_hovers(&uri);
                 self.stores.remove(&uri);
                 self.docs.remove(&uri);
@@ -1323,17 +1417,17 @@ impl Engine {
             }
             EngineMsg::Colors(uri, reply) => {
                 let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc(&self.docs, &uri, |analysis, text| plugins::colors(analysis, text, &path));
+                let result = with_doc_moved(&self.docs, &uri, |analysis, text| plugins::colors(analysis, text, &path));
                 let _ = reply.send(result.unwrap_or_default());
             }
             EngineMsg::Inlays(uri, reply) => {
                 let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc(&self.docs, &uri, |analysis, text| plugins::inlays(analysis, text, &path));
+                let result = with_doc_moved(&self.docs, &uri, |analysis, text| plugins::inlays(analysis, text, &path));
                 let _ = reply.send(result.unwrap_or_default());
             }
             EngineMsg::Lenses(uri, reply) => {
                 let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc(&self.docs, &uri, |analysis, text| plugins::lenses(analysis, text, &path));
+                let result = with_doc_moved(&self.docs, &uri, |analysis, text| plugins::lenses(analysis, text, &path));
                 let _ = reply.send(result.unwrap_or_default());
             }
             EngineMsg::Presentation(uri, range, color, reply) => {
@@ -1509,7 +1603,7 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
         EngineMsg::DocumentSymbol(uri, reply) => {
             let path = docs.get(&uri).map(|d| d.path.display().to_string());
             let result = match path {
-                Some(path) => with_doc(docs, &uri, |analysis, text| {
+                Some(path) => with_doc_moved(docs, &uri, |analysis, text| {
                     handlers::document_symbols(analysis, &path, text).map(lsp_types::DocumentSymbolResponse::Flat)
                 })
                 .flatten(),
@@ -1581,6 +1675,7 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
                     .chain(heat)
                     .chain(rules)
                     .chain(a.cache_report())
+                    .chain(plugins::incremental::counts())
                     .collect::<Vec<_>>()
             };
             let _ = reply.send(with_doc(docs, &uri, |analysis, _| report(analysis)).unwrap_or_default());
@@ -1699,6 +1794,23 @@ fn publish(
 /// buffer, or `None` when the document is not open or has no analysis yet.
 fn with_doc<T>(docs: &HashMap<Uri, Doc>, uri: &Uri, f: impl FnOnce(&Analysis, &Text) -> T) -> Option<T> {
     with_doc_or(docs, None, uri, f)
+}
+
+/// [`with_doc`] for a result of the whole document: made from the text the run read
+/// and moved as the edits since moved it ([`Doc::shift`]).
+fn with_doc_moved<T: serde::Serialize + serde::de::DeserializeOwned>(
+    docs: &HashMap<Uri, Doc>,
+    uri: &Uri,
+    f: impl FnOnce(&Analysis, &Text) -> T,
+) -> Option<T> {
+    let doc = docs.get(uri)?;
+    let (Some(shift), Some(analyzed)) = (doc.shift, &doc.analyzed) else { return with_doc(docs, uri, f) };
+    let analysis = doc.analysis.as_deref()?;
+    let text = Text::new(analyzed.clone());
+    let out = crate::engine::source::with(analysis.plugins.engine.encoding(), || f(analysis, &text));
+    let mut value = serde_json::to_value(out).ok()?;
+    shift.apply(&mut value);
+    serde_json::from_value(value).ok()
 }
 
 /// [`with_doc`], with `blank` standing in for a document not analyzed yet.

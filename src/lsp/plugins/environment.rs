@@ -16,6 +16,9 @@ impl TypePlugin for Environment {
     fn name(&self) -> &'static str {
         "environment"
     }
+    fn category(&self) -> &'static str {
+        "widget"
+    }
     fn about(&self) -> &'static str {
         "change one environment to another, both ends and its arguments"
     }

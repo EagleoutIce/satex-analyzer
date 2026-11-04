@@ -1259,6 +1259,20 @@ pub struct Mouth {
     /// The `%\satex@…` directives of comments read since the reader last
     /// took them ([`Directive`]).
     pub directives: Vec<Directive>,
+    /// How each line read to its end since the reader last took them was read.
+    pub lines: Vec<LineRead>,
+    /// The line being read: where its comment began, the spaces it skipped.
+    reading: LineRead,
+}
+
+/// How one read of a line went, as `satex lsp`'s incremental plugins ask:
+/// the column its comment began at and the columns (below 129) whose space
+/// it skipped in state N or S without a token (tex.web §§ 347, 354).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LineRead {
+    pub line: u32,
+    pub comment: Option<u32>,
+    pub skipped: u128,
 }
 
 /// A comment `%\satex@<kind><text>`: TeX skips it, satex runs it where it
@@ -1335,6 +1349,8 @@ impl Mouth {
             digit: None,
             file,
             directives: Vec::new(),
+            lines: Vec::new(),
+            reading: LineRead::default(),
         }
     }
 
@@ -1446,8 +1462,18 @@ impl Mouth {
         mouth
     }
 
+    /// The line read so far ends its read; one left before its end counts
+    /// as read without a comment, which no incremental plugin trusts.
+    fn end_read(&mut self, whole: bool) {
+        let read = std::mem::take(&mut self.reading);
+        self.lines.push(LineRead { line: self.line, comment: read.comment.filter(|_| whole), ..read });
+    }
+
     /// This mouth standing at `mark` of its file.
     pub fn seek(&mut self, mark: LineMark) {
+        if self.col > 1 {
+            self.end_read(false);
+        }
         self.pos = mark.pos.min(self.src.len());
         self.line = mark.line;
         self.col = mark.col;
@@ -1550,6 +1576,7 @@ impl Mouth {
         let c = *self.src.get(self.pos)?;
         self.pos += 1;
         if c == '\n' {
+            self.end_read(true);
             self.line += 1;
             self.col = 1;
         } else {
@@ -1790,6 +1817,7 @@ impl Mouth {
             match cat {
                 Catcode::Ignored | Catcode::Invalid => continue,
                 Catcode::Comment => {
+                    self.reading.comment = Some(span.col);
                     let start = self.pos;
                     while let Some(n) = self.peek_at(0) {
                         if n == '\n' || n == '\r' {
@@ -1853,7 +1881,12 @@ impl Mouth {
                         self.state = LineState::Skipping;
                         return Some(Token::new(Tok::Chr(' ', Catcode::Space), span));
                     }
-                    _ => continue,
+                    _ => {
+                        if written && span.col <= 128 {
+                            self.reading.skipped |= 1 << (span.col - 1);
+                        }
+                        continue;
+                    }
                 },
                 Catcode::Escape => {
                     let sym = self.read_cs_name(cats, it);

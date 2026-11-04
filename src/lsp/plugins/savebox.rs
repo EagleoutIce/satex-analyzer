@@ -19,6 +19,9 @@ impl TypePlugin for Savebox {
     fn name(&self) -> &'static str {
         "savebox"
     }
+    fn category(&self) -> &'static str {
+        "widget"
+    }
     fn about(&self) -> &'static str {
         "store an environment in a saved box in the preamble, refused where it reads its position"
     }
