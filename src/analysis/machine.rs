@@ -2205,8 +2205,8 @@ pub(crate) const BREAKING: [&str; 6] =
 
 /// Errors and stops of the engine that satex reports as warnings of its
 /// own, not through [`TEX_ERRORS`].
-const ENGINE_WARNINGS: [&str; 5] =
-    ["mismatched-group", "file-ended", "wrong-mode", "arithmetic-overflow", "endless-loop"];
+const ENGINE_WARNINGS: [&str; 6] =
+    ["mismatched-group", "file-ended", "wrong-mode", "arithmetic-overflow", "endless-loop", "terminal-read-fatal"];
 
 /// tex.web § 82: after this many errors in one paragraph TeX gives up
 /// ("That makes 100 errors; please try again").
