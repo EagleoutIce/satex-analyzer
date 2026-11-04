@@ -2108,11 +2108,14 @@ fn file_exts(analysis: &Analysis, ty: crate::analysis::roles::Ty) -> Option<Exts
     use crate::analysis::roles::{FileKind, Ty};
     let Ty::File(kind) = ty else { return None };
     match kind {
-        // The extensions the run's own graphics had.
+        // The extensions graphics tries (`\Gin@extensions` at the end of the run) and those the run's own graphics had.
         FileKind::Graphic => {
             let occ =
                 analysis.facts.occurrences.iter().filter(|o| o.kind == crate::engine::builtins::OccKind::Graphics);
-            let exts: BTreeSet<String> = occ.filter_map(|o| Some(o.key.rsplit_once('.')?.1.to_string())).collect();
+            let tried = crate::linter::shared::macro_text(analysis, "Gin@extensions").unwrap_or_default();
+            let tried = tried.split(',').filter_map(|e| Some(e.trim().strip_prefix('.')?.to_string()));
+            let exts: BTreeSet<String> =
+                occ.filter_map(|o| Some(o.key.rsplit_once('.')?.1.to_string())).chain(tried).collect();
             Some((exts.into_iter().collect(), None))
         }
         // `\input` adds `.tex` only to a name without an extension (tex.web § 537): any file goes.

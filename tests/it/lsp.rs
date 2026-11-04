@@ -690,6 +690,28 @@ fn completion_offers_what_an_optional_argument_takes() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// `\includegraphics{}` offers the project's images in the formats graphics
+/// tries (`\Gin@extensions`), even before the document has any graphic.
+#[test]
+fn completion_offers_images_graphics_can_read() {
+    let text =
+        "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\includegraphics{}\n\\end{document}\n";
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-images-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["plot.png", "notes.txt"] {
+        std::fs::write(dir.join(name), "x").unwrap();
+    }
+    std::fs::write(dir.join("main.tex"), text).unwrap();
+    let mut server = serve(&dir, true);
+    let (uri, _) = open_file(&mut server, &dir, "main.tex");
+    let items = complete(&mut server, &uri, 3, "\\includegraphics{".len() as u32);
+    let names = labels(&items);
+    assert!(names.iter().any(|n| n.starts_with("plot")), "{names:?}");
+    assert!(!names.iter().any(|n| n.starts_with("notes")), "{names:?}");
+    drop(server);
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// TikZ draws with what its keys hand pgf: `thick` a width, `densely dashed`
 /// a dash pattern, `-Stealth` a tip and `pattern=` a fill TeX draws. Each
 /// item carries its picture.
@@ -3188,6 +3210,34 @@ fn color_plugin_without_xcolor_and_off() {
     assert_eq!(at(&mut server, &uri, "satex/view", 4, c), json!([]));
     let id = server.request("textDocument/documentColor", json!({ "textDocument": { "uri": uri } }));
     assert_eq!(server.response(id)["result"], json!([]));
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// After a switch in a key list, `, ` offers the family's keys and no units (a length written
+/// before is no number at the cursor); after a choice key's `=` its choices, not the keys.
+#[test]
+fn key_list_after_a_switch_offers_keys_not_units() {
+    let text = "\\documentclass{article}\n\\usepackage{pgfkeys}\n\\newif\\ifdemodraft\n\\pgfkeys{/demo/.is family, /demo,\n  width/.initial=6bp,\n  draft/.is if=demodraft,\n  mode/.is choice, mode/fast/.code={}, mode/safe/.code={},\n}\n\\begin{document}\n\\pgfkeys{/demo/mode=fast, /demo/draft, }\n\\pgfkeys{/demo/width=6bp, /demo/mode=}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("keys-switch", text, &[]);
+    let after = complete(&mut server, &uri, 9, col(text, 9, ", }", 2));
+    assert!(!after.iter().any(|i| i["kind"] == 11), "units offered: {:?}", labels(&after));
+    assert!(labels(&after).iter().any(|l| l.starts_with("/demo/width")), "{:?}", labels(&after));
+    let values = complete(&mut server, &uri, 10, col(text, 10, "}", 0));
+    assert_eq!(labels(&values), ["fast", "safe"]);
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Keys of a keyval family (graphicx's `Gin`) show their docs on hover, with or without a value.
+#[test]
+fn hovering_a_graphics_key_shows_it() {
+    let text = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\includegraphics[width=1cm, alt={a plot}, clip]{example-image}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("gin-hover", text, &[]);
+    for key in ["width", "alt", "clip"] {
+        let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 3, col(text, 3, key, 1)));
+        assert!(md.contains(&format!("Key `{key}`")), "{key}: {md}");
+    }
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
