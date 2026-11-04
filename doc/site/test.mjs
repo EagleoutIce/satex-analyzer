@@ -217,7 +217,6 @@ check('explain records charge no hook to \\twice', !(exData.flatMap((d) => d.cs[
 await browser();
 process.exit(failed ? 1 : 0);
 
-// ---------------------------------------------------------------- the page in a browser
 
 function chromium() {
   if (process.env.CHROME) return process.env.CHROME;

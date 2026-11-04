@@ -176,8 +176,6 @@ def emit_local(out, name, data):
     return path
 
 
-# ---------------------------------------------------------------- pages
-
 def version(cargo):
     """The crate's version, starred when the build is not that release: a later or changed tree."""
     tag = subprocess.run(["git", "describe", "--tags", "--dirty"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
@@ -308,8 +306,6 @@ def install(text):
     return section(text, "Install") + "\n\n" + section(text, "Editor integration")
 
 
-# ---------------------------------------------------------------- logo
-
 def logo(work):
     """doc/logo/logo.tex, typeset and converted to SVG without its white page.
     Pages: 3 the wordmark, 4 and 5 the tagline's lines (shown side by side, as page 2), 6 the plain name."""
@@ -328,8 +324,6 @@ def logo(work):
     svgs["favpng"] = (work / "favicon.png").read_bytes()
     return svgs
 
-
-# ---------------------------------------------------------------- playground
 
 EXAMPLES = SITE / "examples"
 
@@ -1282,8 +1276,6 @@ def symbols(satex, project, env):
             "weight": {**established(dist, sorted({r[5] for r in rows})), "kernel": 1, "unicode-math": 1}}, fonts
 
 
-# ---------------------------------------------------------------- site
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--satex", type=Path, required=True, help="the native satex binary")
@@ -1411,6 +1403,8 @@ def main():
         parts[key], found = sem.mark_cards(parts[key], PREVIEW_NAMES())
         names |= found
     card_data = sem.cards(names, formal.rows, lean, refs, *scope_cards(args.satex.resolve(), work, names), {k.split(":", 1)[1]: v for k, v in PREVIEWS.items()}, sem.builtin_lines(ROOT), sem.example_defs(pending))
+    # satex's own comment directives: no package defines them
+    card_data.update((k, v) for k, v in sem.directive_cards(ROOT).items() if k in card_data)
     assets["cards"] = emit(out, "cs-cards.json", json.dumps(card_data, ensure_ascii=False, separators=(",", ":")).encode())
     print(f"cards: {len(card_data)} of {len(names)} control sequences named in code spans", file=sys.stderr)
     left = {k: v.get("k", "") for k, v in card_data.items() if v.get("k") == "undefined" or v.get("at", "").startswith("the example")}

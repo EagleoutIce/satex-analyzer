@@ -116,7 +116,6 @@
     return { language: StreamLanguage.define(tex), bib, highlighter };
   })());
 
-  // ------------------------------------------------------------ explain cards
   // One renderer for `satex explain --format json`: the landing page's cards, the
   // playground's Explain panel, its run output and its hover cards.
   /** A duration for reading: ms under a second, else seconds. */
@@ -211,7 +210,6 @@
       (below.length ? `<div class="ty-below"><span>more specific:</span> ${chips(below)}</div>` : '') +
       '<div class="ty-foot">click: the lattice in the wiki</div>';
   }
-  // ------------------------------------------------------------ tooltips
   // Every tooltip of the site is one of two floating cards made here: `satexTip.card` for a
   // command's card, a finding or a name in a trace, `satexTip.note` for short text (a `title`,
   // a type, an argument chip), which may stand beside a card.
@@ -314,9 +312,9 @@
       e.preventDefault();
       note.el.innerHTML = tyCard(chip.dataset.ty);
     });
-    document.addEventListener('pointerdown', (e) => { if (e.target.closest?.('.tip-note .ty-chip')) return; untitle(); note.hide(); if (!e.target.closest?.('.tip-card')) tips.card.hide(); }, true);
+    // a press inside an open note or card (its links, its chips) keeps it: hiding it first would swallow the click
+    document.addEventListener('pointerdown', (e) => { if (e.target.closest?.('.tip-note, .tip-card')) return; untitle(); note.hide(); if (!e.target.closest?.('.tip-card')) tips.card.hide(); }, true);
   }
-  // ------------------------------------------------------------ cards of control sequences and Lean names
   // A code span naming a control sequence (`code.cs`) shows its card from the build's one JSON index
   // (loaded on the first hover, from the file next to the site, so it works offline). A name of the Lean
   // model (`[data-lean]`) shows its type and doc comment from the page's own `#lean-decls`.
@@ -861,7 +859,6 @@
     if (el && !el.closest('.tip') && !e.relatedTarget?.closest?.('.tip') && tips.card.el.querySelector('.rule-tip')) tips.card.hide(200);
   });
 
-  // ------------------------------------------------------------ the landing page's examples
   // Each example: its source, findings underlined with a marker at the line's end, and what it
   // typesets beside it. A command explains itself on hover, a finding shows its rule: one floating
   // card, so nothing on the page moves; a click on a command pins its full card.

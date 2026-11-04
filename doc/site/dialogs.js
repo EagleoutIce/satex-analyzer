@@ -124,7 +124,6 @@ dialog.sd-dialog::backdrop { background: rgb(0 0 0 / .35); }
     return { refresh, root };
   }
 
-  // ------------------------------------------------------------ table
 
   const ALIGNS = [['l', 'left'], ['c', 'center'], ['r', 'right'], ['p', 'paragraph p{…}'], ['S', 'siunitx S']];
   const RULES = ['\\hline', '\\toprule', '\\midrule', '\\bottomrule'];
@@ -284,7 +283,6 @@ dialog.sd-dialog::backdrop { background: rgb(0 0 0 / .35); }
     return f;
   }
 
-  // ------------------------------------------------------------ image
 
   const fmt = (x) => String(Math.round(x * 100) / 100);
   function image(view, host) {

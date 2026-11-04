@@ -30,8 +30,6 @@ def attr(s):
     return html.escape(s, quote=True)
 
 
-# ---------------------------------------------------------------- Lean environment
-
 def export(lean_dir, script):
     """Every Satex declaration (`export.lean`): name, kind, type, doc, module, line."""
     done = subprocess.run(["bash", "-c", f"source ~/.elan/env 2>/dev/null; cd '{lean_dir}' && lake build -q Satex >&2 && lake env lean --run '{script}'"],
@@ -72,8 +70,6 @@ class Env:
         c = [n for n in self.last.get(name, []) if "." in n and n.rsplit(".", 1)[0] in self.by and self.by[n.rsplit(".", 1)[0]]["kind"] == "inductive"]
         return c[0] if len(c) == 1 else None
 
-
-# ---------------------------------------------------------------- tokens
 
 IDENT = r"[^\W\d][\w'!?]*(?:\.(?:[^\W\d]|\{)[\w'!?]*)*"
 TOKEN = re.compile(r"""
@@ -188,8 +184,6 @@ class Source:
         return None
 
 
-# ---------------------------------------------------------------- § links
-
 SECTION = re.compile(r"(§§?|\bSEM §§?)\s*(\d+(?:\.\d+)?)((?:\s*[–-]\s*\d+|(?:\s*,\s*|\s+and\s+)(?:§\s*)?\d+(?:[–-]\d+)?)*)")
 
 
@@ -256,8 +250,6 @@ class Refs:
         frag = f"#L{a}" + (f"-L{b}" if b else "")
         return f"{self.repo}/blob/{self.commit}/{full}{frag}", full
 
-
-# ---------------------------------------------------------------- code rendering
 
 def render_comment(text, ctx, kind, refs, page):
     """A comment: escaped, `code` spans linked when they name a declaration, § numbers linked."""
@@ -430,8 +422,6 @@ def lean_page(stem, ctx, refs, repo, commit):
             f'<script type="application/json" id="lean-decls">{json.dumps(index, ensure_ascii=False).replace("</", "<\\/")}</script>')
 
 
-# ---------------------------------------------------------------- mapping and primitives
-
 def rustify(frag, refs):
     """Rust references in the text of `frag` (HTML) as links: `file.rs:a-b`. Text inside a link stays."""
     def one(m):
@@ -535,7 +525,15 @@ def builtin_lines(root):
     return out
 
 
-# ---------------------------------------------------------------- the page
+def directive_cards(root):
+    """`\\satex@⟨name⟩` -> card for satex's comment directives, from `Machine::DIRECTIVES` (what completion offers too)."""
+    text = (root / "src/analysis/machine/directive.rs").read_text()
+    table = text[text.index("DIRECTIVES"):]
+    table = table[:table.index("];")]
+    return {f"\\satex@{n}": {"k": "satex directive", "sig": f"%\\satex@{n}{{…}}", "doc": about,
+                               "at": "src/analysis/machine/directive.rs"}
+            for n, about in re.findall(r'\("(\w+)", "([^"]*)"\)', table)}
+
 
 def build(root, repo, commit, env_decls, semantics_ids):
     """Writes the four Lean pages; returns (formal body HTML with the placeholders filled, the primitive rows, ctx, refs)."""
@@ -562,8 +560,6 @@ def check_links(out, used):
     if bad:
         raise Missing(f"{len(bad)} link targets are missing, e.g. " + ", ".join(bad[:8]))
 
-
-# ---------------------------------------------------------------- cards of control sequences
 
 # A name ends in a letter or colon, else it is a fragment (`\\l_`, `\\KV@`); a one-character name is ASCII punctuation.
 CS_TOKEN = re.compile(r"\\(?:[A-Za-z@:_]*[A-Za-z:]|[,;:!\-/_^\"'`=.~&%$#{}()\[\]|@\\])(?![A-Za-z@:_])")
