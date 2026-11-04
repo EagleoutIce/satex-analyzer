@@ -1680,6 +1680,10 @@ impl Machine<'_> {
             let set = text.at.get(start..).unwrap_or_default().iter().filter(|s| s.modes == Modes::HORIZONTAL).count();
             self.out.justified_text += set as u64;
         }
+        // § 890: the penalty between two lines may force a break.
+        if n.para.lines.1 > 1 && self.line_penalty_may_force() {
+            self.material |= BREAKS;
+        }
         // A hyphen is set only at a line's end (§ 902): one line, none.
         self.mark_hyphens(n.para.lines.1 <= 1 && !n.para.lost);
         if n.para.lost {
@@ -1740,6 +1744,48 @@ impl Machine<'_> {
         if self.mode == Modes::VERTICAL && n.forced[0].is_some() {
             self.replay_forced(n.forced);
         }
+    }
+
+    /// tex.web § 890, etex_man § 3.12: whether the penalty between two lines
+    /// may be -10000 or less: the least interline penalty plus whichever of
+    /// the club, widow and broken penalties are negative.
+    fn line_penalty_may_force(&mut self) -> bool {
+        let mut least = 0;
+        for (param, array, add) in [
+            ("interlinepenalty", "interlinepenalties", false),
+            ("clubpenalty", "clubpenalties", true),
+            ("widowpenalty", "widowpenalties", true),
+            ("displaywidowpenalty", "displaywidowpenalties", true),
+            ("brokenpenalty", "", true),
+        ] {
+            let count = match array {
+                "" => Some(0),
+                _ => {
+                    // Looked up, not interned: a name never set is no array.
+                    match self.out.interner.lookup(&format!("\u{4}{array}.count")) {
+                        Some(sym) if self.env.get(sym).is_some() => self.env.value(sym).as_int(),
+                        _ => Some(0),
+                    }
+                }
+            };
+            let values: Vec<_> = match count {
+                Some(0) => vec![self.int_parameter(param)],
+                Some(k) => (1..=k).map(|i| self.engine_int(&format!("{array}.{i}"))).collect(),
+                None => vec![None],
+            };
+            let Some(low) = values.into_iter().try_fold(i64::MAX, |m, v| v.map(|v| m.min(v))) else { return true };
+            least += if add { low.min(0) } else { low };
+        }
+        least <= -10000
+    }
+
+    /// tex.web §§ 1145, 1199-1205: whether a display, which breaks the
+    /// paragraph's lines before it, may put a forced break on the list.
+    pub(crate) fn display_may_force(&mut self) -> bool {
+        self.line_penalty_may_force()
+            || ["predisplaypenalty", "postdisplaypenalty"]
+                .iter()
+                .any(|p| self.int_parameter(p).is_none_or(|v| v <= -10000))
     }
 
     /// `\penalty⟨first⟩`, then `\vbox{}\penalty⟨second⟩`, through names of
@@ -1804,8 +1850,9 @@ impl Machine<'_> {
     }
 
     /// An unknown command may have started or ended a paragraph.
-    pub(crate) fn widen_mode(&mut self) {
-        self.material = MATERIAL | BOXED | BREAKS;
+    /// `breaks`: it may have added a forced break (tex.web § 970).
+    pub(crate) fn widen_mode(&mut self, breaks: bool) {
+        self.material |= MATERIAL | BOXED | if breaks { BREAKS } else { 0 };
         self.set_badness(None);
         self.natural = None;
         let mut mode = self.mode;
@@ -2591,7 +2638,12 @@ impl Machine<'_> {
                     // whatsits and marks, no box.
                     self.append_item(Item::Zero);
                 } else if state != BoxState::Void {
+                    // A list with no forced break brings none, whatever else it holds.
+                    let breaks = self.material & BREAKS;
                     self.unpackage(state, dims, first, solid);
+                    if calm {
+                        self.material = self.material & !BREAKS | breaks;
+                    }
                     // § 1110: the list's tail is the box's last item.
                     if state == BoxState::VBox
                         && self.list_kind() == Some(false)
@@ -4046,7 +4098,9 @@ impl Machine<'_> {
                 text.kept.push(at);
             }
         }
-        if matches!(item, Item::Unknown | Item::Penalty(None)) | matches!(item, Item::Penalty(Some(p)) if p <= -10000) {
+        // A penalty in a horizontal list breaks a line, not the list (§ 1103).
+        let forced = matches!(item, Item::Penalty(p) if p.is_none_or(|p| p <= -10000));
+        if matches!(item, Item::Unknown) || forced && self.mode.meets(Modes::ANY_VERTICAL) {
             self.material |= BREAKS;
         }
         self.material |=

@@ -481,7 +481,7 @@ pub fn call(m: &mut Machine, id: u32, by: Sym, span: Span) {
         Some(tokens) => m.push_tokens(Rc::from(tokens)),
         None => {
             m.note_gap("lua-function", by, span);
-            m.widen_mode();
+            m.widen_mode(true);
             let unknown = m.unknown_text(Unk::Any, span);
             m.push_tokens(Rc::from(vec![unknown]));
         }

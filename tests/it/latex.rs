@@ -3769,6 +3769,35 @@ fn a_split_to_maxdimen_takes_a_list_without_forced_breaks() {
     assert_ne!(body(&a, "F"), "v");
 }
 
+/// tex.web §§ 890, 970-979: a list whose characters TeX does not know
+/// holds no forced break, so it splits off whole to `\maxdimen`, marks or
+/// a nested box's penalty notwithstanding; lines that a penalty of -10000
+/// parts, or a smaller target, leave a rest.
+#[test]
+fn a_split_of_unknown_text_to_maxdimen_leaves_a_void_rest() {
+    if !installed() {
+        return;
+    }
+    let spaced = r"\t{} ".repeat(80);
+    let a = analyze(&format!(
+        r"\documentclass{{article}}\begin{{document}}\splitmaxdepth=\maxdimen \edef\t{{\pdfuniformdeviate 100000}}
+\setbox2\vbox{{\t\par}}\setbox3\vsplit2 to\maxdimen \xdef\A{{\ifvoid2 v\else n\fi}}
+\setbox2\vbox{{\interlinepenalty=-10000 {spaced}\par}}\setbox3\vsplit2 to\maxdimen \xdef\B{{\ifvoid2 v\else n\fi}}
+\setbox2\vbox{{\t\penalty-10000\t\par}}\setbox3\vsplit2 to\maxdimen \xdef\C{{\ifvoid2 v\else n\fi}}
+\setbox1\vbox{{\t\par}}\setbox2\vbox{{\unvcopy1\vskip5pt\unvcopy1}}\setbox3\vsplit2 to 10pt \xdef\D{{\ifvoid2 v\else n\fi}}
+\setbox2\vbox{{\unvcopy1\mark{{a}}\unvcopy1}}\setbox3\vsplit2 to\maxdimen \xdef\M{{\ifvoid2 v\else n\fi}}
+\setbox2\vbox{{\unvcopy1\vbox{{\penalty-10000}}\unvcopy1}}\setbox3\vsplit2 to\maxdimen \xdef\N{{\ifvoid2 v\else n\fi}}
+\setbox2\vbox{{\unvcopy1\penalty-10000\unvcopy1}}\setbox3\vsplit2 to\maxdimen \xdef\F{{\ifvoid2 v\else n\fi}}
+\end{{document}}"
+    ));
+    let got: Vec<String> = ["A", "B", "C", "D", "M", "N", "F"].iter().map(|n| body(&a, n)).collect();
+    // pdflatex: v n v n v v n; satex may not know the n cases.
+    assert_eq!([&got[0], &got[2], &got[4], &got[5]], ["v"; 4]);
+    for k in [1, 3, 6] {
+        assert_ne!(got[k], "v", "{k}");
+    }
+}
+
 /// A float page: its marks pass (latex.ltx `\__mark_prepare_and_extract:nn`)
 /// leaves the main list empty, so a second `\clearpage` ships nothing.
 #[test]

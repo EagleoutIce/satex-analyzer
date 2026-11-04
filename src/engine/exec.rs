@@ -589,7 +589,7 @@ impl Machine<'_> {
             }
             P::Unmodeled | P::AlignMark => {
                 self.note_gap("unmodeled-primitive", by, span);
-                self.widen_mode();
+                self.widen_mode(true);
             }
             P::GlueParameter { .. }
             | P::TokensParameter
@@ -3374,7 +3374,7 @@ impl Machine<'_> {
             // start a paragraph. Read the operand to stay in step and widen the
             // mode. Reads go through [`Machine::owned_value`], unknown meanwhile.
             None => {
-                self.widen_mode();
+                self.widen_mode(true);
                 true
             }
         }

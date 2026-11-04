@@ -7225,7 +7225,15 @@ will look undefined",
             }
             // A command whose meaning is unknown may do anything to the mode.
             None if token.cs().is_some_and(|sym| matches!(self.env.meaning(sym), Meaning::Unknown)) => {
-                self.widen_mode()
+                // Characters put no penalty on a list (§ 1090), but a math
+                // shift among them may set a display (§ 1145).
+                let breaks = match self.typed_text_of(token) {
+                    Some((class, _)) if !class.meets(TextClass::CS) => {
+                        class.meets(TextClass::OTHER) && self.display_may_force()
+                    }
+                    _ => true,
+                };
+                self.widen_mode(breaks);
             }
             _ => {
                 crate::analysis::observe::text_break(self);
@@ -8733,7 +8741,7 @@ will look undefined",
                 self.finish_shape();
             }
             Meaning::Macro(m) => self.expand_macro(sym, m, span),
-            Meaning::Undefined if self.may_be_defined(sym) => self.widen_mode(),
+            Meaning::Undefined if self.may_be_defined(sym) => self.widen_mode(true),
             Meaning::Undefined => {
                 // An expl3 name carries its own arity in its signature, so a
                 // kernel function this build does not model can still be
