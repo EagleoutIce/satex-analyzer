@@ -1010,3 +1010,64 @@ fn a_definition_carries_its_source_comment() {
     assert!(text.contains("Greets someone."), "{text}");
     assert!(text.contains("⟨arg1⟩ is the name to greet"), "{text}");
 }
+
+fn chain_of(record: &Record) -> Vec<(String, String)> {
+    let steps = record.get("chain").and_then(Json::as_array).cloned().unwrap_or_default();
+    steps
+        .iter()
+        .map(|s| {
+            let text = |k: &str| s.get(k).and_then(Json::as_str).unwrap_or_default().to_string();
+            (text("role"), text("package"))
+        })
+        .collect()
+}
+
+#[test]
+fn a_package_overwriting_a_package_shows_the_whole_chain() {
+    if !installed() {
+        return;
+    }
+    let analysis =
+        analyze_latex("\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\nx\n\\end{document}\n");
+    let record = explain_one(&analysis, "ref");
+    let chain = chain_of(&record);
+    let packages: Vec<&str> = chain.iter().map(|(_, p)| p.as_str()).collect();
+    assert_eq!(packages.first(), Some(&"kernel"), "{chain:?}");
+    // hyperref's own `\let\ref` is a scoped copy in `\pdfstringdef`, no definition
+    assert_eq!(packages, ["kernel", "nameref"], "{chain:?}");
+    assert_eq!(chain.last().map(|(r, _)| r.as_str()), Some("in force"));
+}
+
+#[test]
+fn redefining_a_kernel_name_in_the_document_is_kernel_then_document() {
+    if !installed() {
+        return;
+    }
+    let analysis =
+        analyze_latex("\\documentclass{article}\n\\renewcommand\\emph[1]{X}\n\\begin{document}\n\\end{document}\n");
+    let chain = chain_of(&explain_one(&analysis, "emph"));
+    assert_eq!(chain.first().map(|(_, p)| p.as_str()), Some("kernel"), "{chain:?}");
+    assert_eq!(chain.last().map(|(r, _)| r.as_str()), Some("in force"), "{chain:?}");
+    let record = explain_one(&analysis, "emph");
+    let steps = record["chain"].as_array().unwrap();
+    assert_eq!(steps.last().unwrap()["package"], Json::Null, "the document is no package");
+}
+
+#[test]
+fn a_let_saved_original_is_named_on_the_step_it_saved() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex(
+        "\\documentclass{article}\n\\makeatletter\n\\let\\my@emph\\emph\n\\renewcommand\\emph[1]{Y\\my@emph{#1}}\n\\makeatother\n\\begin{document}\n\\end{document}\n",
+    );
+    let record = explain_one(&analysis, "emph");
+    let steps = record["chain"].as_array().expect("a chain");
+    assert_eq!(steps[0]["saved"], json!([r"\my@emph"]), "{steps:?}");
+}
+
+#[test]
+fn a_name_defined_once_has_no_chain() {
+    let analysis = analyze(r"\def\once{x}");
+    assert!(explain_one(&analysis, "once").get("chain").is_none());
+}

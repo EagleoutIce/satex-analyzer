@@ -1878,3 +1878,5 @@ table.prim td { vertical-align: top; } table.long.prim td:nth-child(3) { white-s
 }
 @container drawlist (max-width: 30rem) { .draw-what .draw-cat { display: none; } }
 @media (max-width: 52rem) { .draw-list { zoom: 1; } }
+
+.xcard .x-step { white-space: normal; } .xcard .x-chain { font-size: 12px; } .xcard dd > div + div { margin-top: .2rem; }

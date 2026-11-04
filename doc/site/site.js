@@ -449,6 +449,25 @@
   const traceButton = (r) => !document.body.classList.contains('play') || !/^\\/.test(r.name) ? ''
     : r.uses !== 0 && (self.satexCalled?.(r.name) ?? true) ? ` <button type="button" class="small ghost x-trace" data-trace="${esc(r.name)}" title="step through how a call of ${csName(r.name)} expands">Trace</button>`
       : ` <button type="button" class="small ghost x-trace" data-try="${esc(r.effective ?? r.name)}" title="the project never calls ${csName(r.name)}: try a call in a scratch run, its arguments yours to fill in">Try</button>`;
+  /** The meanings a name held, oldest first, each step a link to its source line: `latex.ltx:1 (kernel) → hyperref.sty:2 (redefined)
+   * → nameref.sty:3 (in force here)`, with what a `\let` saved of the old meaning. Long chains show the last two, `+N earlier` opens the rest. */
+  function chainOf(chain, keep = 2) {
+    const step = (c) => {
+      const what = c.role === 'kernel' ? 'kernel' : c.package ? `${c.from ?? 'package'} ${esc(c.package)}` : 'document';
+      const saves = c.saved?.length ? ` <span class="muted">saves the old meaning as ${c.saved.map(csChip).join(' ')}</span>` : '';
+      const role = c.role === 'kernel' ? '' : c.role === 'in force' ? ' in force here' : ' redefined';
+      return `<span class="x-step"><a class="place" href="#" data-path="${esc(c.path)}" data-line="${c.line}" title="open ${esc(c.path)} at line ${c.line}">${esc(c.file)}:${c.line}</a> <span class="muted">(${what}${role})</span>${saves}</span>`;
+    };
+    const hidden = chain.length > keep ? chain.slice(0, -keep) : [];
+    const early = hidden.length ? `<details class="x-more"><summary>+${hidden.length} earlier</summary>${hidden.map(step).join(' → ')} →</details> ` : '';
+    return early + chain.slice(hidden.length).map(step).join(' → ');
+  }
+  /** The `redefined by` row: one chain, or one per meaning a use may hold. */
+  function chainRow(r) {
+    const alts = r.one_of?.filter((a) => a.chain?.length);
+    if (alts?.length) return alts.map((a) => `<div>${chainOf(a.chain)}</div>`).join('');
+    return r.chain?.length ? chainOf(r.chain) : '';
+  }
   /** One explain record as a card: signature, body, by, defined at, context, uses, expands. */
   function explain(r) {
     const rows = [];
@@ -479,6 +498,8 @@
     const owner = r.class ? pkgChip('class', r.class) : r.package ? (r.package === 'kernel' ? pkgChip('kernel', 'the kernel') : pkgChip('package', r.package)) : '';
     if (r.path && r.line) rows.push(['defined at', `${placeLink(r.path, r.line, r.file)}${owner ? ` ${owner}` : ''}`]);
     else if (owner) rows.push(['from', owner]);
+    const redefined = chainRow(r);
+    if (redefined) rows.push(['redefined by', redefined]);
     // `in environments via \tikz@installcommands: tikzpicture, scope`: each name a link to its explanation
     if (r.context) rows.push(['context', esc(r.context)
       .replace(/: ([^:]+?)(?=, in |, outside|$)/g, (m, list) => `: ${list.split(', ').map((e) => `<code class="cs-ref env-ref" data-cs="\\${e}" tabindex="0">${e}</code>`).join(' ')}`)
@@ -509,7 +530,7 @@
     return `<div class="xcard brief"><div class="x-head"><code class="x-name">${csName(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}` +
       `${where ? ` <span class="x-where">${where}</span>` : ''}${traceButton(r)}</div>` +
       (r.does ? `<div class="x-does">${esc(r.does)}</div>` : '') + (use ? `<div class="x-use">${use}</div>` : '') +
-      (r.together?.length ? `<div class="x-with muted">defined together with ${chipList(r.together, csChip)}</div>` : '') + (r.error ? `<div class="x-err">${esc(r.error)}</div>` : '') +
+      (chainRow(r) ? `<div class="x-chain"><span class="muted">redefined by</span> ${chainRow(r)}</div>` : '') + (r.together?.length ? `<div class="x-with muted">defined together with ${chipList(r.together, csChip)}</div>` : '') + (r.error ? `<div class="x-err">${esc(r.error)}</div>` : '') +
       (docs ? `<div class="x-docs">${docs}</div>` : '') + '</div>';
   }
   /** Any other record value for a table cell: lists as chips, never raw JSON. */

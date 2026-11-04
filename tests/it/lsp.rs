@@ -4003,3 +4003,32 @@ fn a_root_named_relative_resumes_after_a_body_edit() {
         "the edit ran from the start: {runs:?}"
     );
 }
+
+#[test]
+fn hover_shows_the_redefinition_chain() {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-chain-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("chain.tex");
+    let source = "\\catcode`\\{=1 \\catcode`\\}=2 \n\\def\\a{1}\n\\def\\a{2}\n\\a\n";
+    std::fs::write(&file, source).unwrap();
+    let uri = fixture_uri(&file);
+    let mut server = Server::start(&dir);
+    let init_id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+    server.response(init_id);
+    server.notify("initialized", json!({}));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": source } }),
+    );
+    server.notification("textDocument/publishDiagnostics");
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 3, "character": 1 } }),
+    );
+    let hover = server.response(id);
+    let text = hover["result"]["contents"]["value"].as_str().unwrap_or_default();
+    assert!(
+        text.contains("Redefined by: `chain.tex:2` (document, redefined) → `chain.tex:3` (document, in force here)"),
+        "{text}"
+    );
+}

@@ -4,6 +4,7 @@
 use crate::fixed::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use regex::Regex;
 use std::fmt::Write as _;
@@ -4998,8 +4999,99 @@ fn source_comment(analysis: &Analysis, at: Span) -> Option<crate::lsp::doccommen
     crate::lsp::doccomment::above(&text, at.line as usize)
 }
 
+/// Every meaning `def`'s name held before it, oldest first, ending at `def`: the kernel's, then each
+/// earlier definition (a package's, the document's), each with the names a `\let` saved its
+/// predecessor as. `None` when `def` is the name's only meaning.
+fn redefinition_chain(analysis: &Analysis, def: &crate::analysis::facts::Definition) -> Option<Json> {
+    use crate::analysis::facts::Definition;
+    let mut prior: Vec<&Definition> = analysis
+        .facts
+        .defs
+        .iter()
+        .filter(|d| d.name == def.name && d.node < def.node && d.via != Some(d.name))
+        .filter(|d| d.tag != "alias" && d.span != def.span && !is_kernel_file(analysis, d.span.file))
+        .collect();
+    prior.sort_by_key(|d| d.node);
+    prior.dedup_by_key(|d| d.span);
+    let kernel = analysis.kernel_sites.get(&def.name).copied();
+    if prior.is_empty() && kernel.is_none_or(|k| k.file == def.span.file && k.line == def.span.line) {
+        return None;
+    }
+    // The kernel macro's text lies between its site and the next one.
+    let next = kernel.and_then(|k| {
+        analysis.kernel_sites.values().filter(|s| s.file == k.file && s.line > k.line).map(|s| s.line).min()
+    });
+    let copies: Vec<&Definition> = analysis
+        .facts
+        .defs
+        .iter()
+        .filter(|d| d.tag == "alias" && d.name != def.name && d.node < def.node)
+        .filter(|d| d.mac.is_some())
+        .collect();
+    let saved = |from: Option<&Definition>, to: &Definition| -> Vec<String> {
+        let mut names: Vec<String> = copies
+            .iter()
+            .filter(|c| c.node > from.map_or(0, |f| f.node) && c.span.file == to.span.file && c.node < to.node)
+            .filter(|c| {
+                let text = &c.mac.as_ref().expect("filtered").replacement_text;
+                match from {
+                    Some(f) => f.mac.as_ref().is_some_and(|m| Rc::ptr_eq(&m.replacement_text, text)),
+                    None => text.first().is_some_and(|t| {
+                        kernel.is_some_and(|k| {
+                            t.span.file == k.file && t.span.line >= k.line && next.is_none_or(|n| t.span.line < n)
+                        })
+                    }),
+                }
+            })
+            .map(|c| analysis.interner.cs(c.name))
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    };
+    let step = |span: Span, package: Option<Sym>, role: &str, saved: Vec<String>| {
+        let mut step = place(analysis, span);
+        step.insert("role".into(), json!(role));
+        let owner = class_or_package(analysis, package, span.file);
+        // a hook-run definition names no package: its file does
+        let named = match package {
+            Some(p) => Some(analysis.interner.name(p).to_string()),
+            None if origin(analysis, span.file) == "library" => {
+                Path::new(&analysis.file_name(span.file)).file_stem().and_then(|n| n.to_str()).map(str::to_string)
+            }
+            None => None,
+        };
+        step.insert("package".into(), json!(named));
+        step.insert("from".into(), json!(owner));
+        if !saved.is_empty() {
+            step.insert("saved".into(), json!(saved));
+        }
+        Json::Object(step)
+    };
+    let mut steps: Vec<Json> = Vec::new();
+    let mut before: Option<&Definition> = None;
+    if let Some(k) = kernel {
+        let mut s = step(k, None, "kernel", Vec::new());
+        s["package"] = json!("kernel");
+        steps.push(s);
+    }
+    for (i, d) in prior.iter().copied().chain(std::iter::once(def)).enumerate() {
+        let role = if i == prior.len() { "in force" } else { "redefined" };
+        let tail = saved(before, d);
+        if let Some(last) = steps.last_mut().filter(|_| !tail.is_empty()) {
+            last["saved"] = json!(tail);
+        }
+        steps.push(step(d.span, d.package, role, Vec::new()));
+        before = Some(d);
+    }
+    Some(Json::Array(steps))
+}
+
 fn record_for_def(analysis: &Analysis, def: &crate::analysis::facts::Definition, window: Window) -> Record {
     let mut record = place(analysis, def.span);
+    if let Some(chain) = redefinition_chain(analysis, def) {
+        record.insert("chain".into(), chain);
+    }
     record.insert("name".into(), json!(analysis.interner.cs(def.name)));
     record.insert("tag".into(), json!(def.tag));
     record.insert("by".into(), json!(analysis.interner.cs(def.by)));
@@ -5739,7 +5831,7 @@ pub fn explain_at(
                     if reached.len() > 1 {
                         let one_of: Vec<serde_json::Value> = reached
                             .iter()
-                            .map(|d| json!({ "line": d.span.line, "body": def_body(analysis, d) }))
+                            .map(|d| json!({ "line": d.span.line, "body": def_body(analysis, d), "chain": redefinition_chain(analysis, d) }))
                             .collect();
                         record.insert("one_of".into(), json!(one_of));
                     }

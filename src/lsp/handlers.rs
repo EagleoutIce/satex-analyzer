@@ -391,6 +391,38 @@ pub fn markdown_hover(markdown: String) -> Hover {
     }
 }
 
+/// A redefinition chain as one line: `latex.ltx:12 (kernel) → hyperref.sty:3 (redefined) → …`, its
+/// first steps folded into `+N earlier` past the last two.
+fn chain_line(chain: &Json) -> String {
+    let steps = chain.as_array().map_or(&[][..], Vec::as_slice);
+    let text = |s: &Json, k: &str| s.get(k).and_then(Json::as_str).unwrap_or_default().to_string();
+    let one = |s: &Json| {
+        let what = match text(s, "role").as_str() {
+            "kernel" => "kernel".to_string(),
+            role => {
+                let who =
+                    if s.get("package").is_some_and(Json::is_string) { text(s, "package") } else { "document".into() };
+                format!("{who}, {}", if role == "in force" { "in force here" } else { "redefined" })
+            }
+        };
+        let saves = match s.get("saved").and_then(Json::as_array) {
+            Some(names) if !names.is_empty() => {
+                let names: Vec<&str> = names.iter().filter_map(Json::as_str).collect();
+                format!(", saves the old meaning as `{}`", names.join("`, `"))
+            }
+            _ => String::new(),
+        };
+        format!("`{}:{}` ({what}{saves})", text(s, "file"), s.get("line").and_then(Json::as_u64).unwrap_or_default())
+    };
+    let keep = steps.len().saturating_sub(2);
+    let mut parts: Vec<String> = Vec::new();
+    if keep > 0 {
+        parts.push(format!("+{keep} earlier"));
+    }
+    parts.extend(steps[keep..].iter().map(one));
+    parts.join(" → ")
+}
+
 pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Option<String> {
     let (mut records, _) = query::explain(analysis, &[name.to_string()], false).ok()?;
     // The definition in force at the cursor first, the others after it.
@@ -450,6 +482,13 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
                 markdown.push_str(&format!("- {shown} (line {line})\n"));
             }
             markdown.push('\n');
+        }
+        let chains: Vec<&Json> = match record.get("one_of").and_then(Json::as_array) {
+            Some(alts) => alts.iter().filter_map(|a| a.get("chain")).filter(|c| c.is_array()).collect(),
+            None => record.get("chain").into_iter().collect(),
+        };
+        for chain in chains {
+            markdown.push_str(&format!("Redefined by: {}\n\n", chain_line(chain)));
         }
         // Each argument once: its type and what the comment above the definition says of it.
         let doc = documented(record);
