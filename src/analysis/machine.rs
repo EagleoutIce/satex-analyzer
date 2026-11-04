@@ -1471,6 +1471,13 @@ pub struct Machine<'a> {
     pub(crate) fetched: Vec<(u32, u32)>,
     /// Ranges of boxes used inside a box that is not placed yet.
     pub(crate) carried_chars: Vec<(u32, u32)>,
+    /// Ranges of boxes set into a register, disjoint and ascending: a box
+    /// enclosing them carries them only if the register is used in it.
+    pub(crate) aside: Vec<(u32, u32)>,
+    /// A `^` or `_` waiting for its script: whether a superscript.
+    pub(crate) script_pending: Option<bool>,
+    /// The group depths of the `{…}` scripts open, innermost last.
+    pub(crate) script_groups: Vec<usize>,
     /// What a shorthand definition's name meant before § 1224 made it
     /// `\relax` for the number scan, for [`Machine::define`].
     pub(crate) redefines_hint: Option<(Sym, (bool, bool))>,
@@ -2377,6 +2384,9 @@ impl<'a> Machine<'a> {
             box_chars: Default::default(),
             fetched: Vec::new(),
             carried_chars: Vec::new(),
+            aside: Vec::new(),
+            script_pending: None,
+            script_groups: Vec::new(),
             redefines_hint: None,
             text_apart: false,
             source: None,
@@ -7111,6 +7121,11 @@ will look undefined",
                 _ if !plain || script => self.natural = None,
                 _ => {}
             }
+        }
+        if self.mode.meets(crate::engine::mode::Modes::ANY_MATH)
+            && let Some(c @ (Catcode::Sup | Catcode::Sub)) = self.category_of(token)
+        {
+            self.note_script(c == Catcode::Sup);
         }
         match token.tok {
             Tok::Cs(sym) => {

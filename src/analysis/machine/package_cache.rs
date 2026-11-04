@@ -1539,6 +1539,9 @@ impl Machine<'_> {
             box_chars: _,
             fetched: _,
             carried_chars: _,
+            aside: _,
+            script_pending: _,
+            script_groups: _,
             redefines_hint: _,
             text_apart: _,
             // Scratch of one widened conditional.

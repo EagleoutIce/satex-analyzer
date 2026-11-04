@@ -828,16 +828,157 @@ fn a_forced_line_break_is_marked_in_its_paragraph() {
 
 /// The typeset record of a document body, run in a scratch directory.
 fn typeset_rows(tag: &str, preamble: &str, body: &str) -> Vec<serde_json::Value> {
+    typeset_doc(
+        tag,
+        &format!("\\documentclass{{article}}\n{preamble}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"),
+        &[],
+    )
+}
+
+/// The typeset record of a whole document, with extra `--set` settings.
+fn typeset_doc(tag: &str, source: &str, sets: &[&str]) -> Vec<serde_json::Value> {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("typeset-{tag}"));
     std::fs::create_dir_all(&dir).unwrap();
-    let source = format!("\\documentclass{{article}}\n{preamble}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
     std::fs::write(dir.join("t.tex"), source).unwrap();
-    let out = crate::support::satex()
-        .current_dir(&dir)
-        .args(["query", "typeset", "-f", "t.tex", "--format", "json", "--set", "limits.seconds=0"])
-        .output()
-        .expect("satex runs");
+    let mut args = vec!["query", "typeset", "-f", "t.tex", "--format", "json", "--set", "limits.seconds=0"];
+    for set in sets {
+        args.extend(["--set", set]);
+    }
+    let out = crate::support::satex().current_dir(&dir).args(args).output().expect("satex runs");
     serde_json::from_slice(&out.stdout).expect("json")
+}
+
+/// The paragraphs of typeset rows, by their text.
+fn paragraph<'a>(rows: &'a [serde_json::Value], text: &str) -> &'a serde_json::Value {
+    rows.iter()
+        .find(|r| r["kind"] == "paragraph" && r["detail"].as_str().is_some_and(|d| d.contains(text)))
+        .unwrap_or_else(|| panic!("a paragraph with {text}: {rows:?}"))
+}
+
+/// The marks of a row's alignment channel, in order.
+fn marks(row: &serde_json::Value) -> Vec<String> {
+    row["align"].as_array().into_iter().flatten().filter_map(|m| m["mark"].as_str().map(String::from)).collect()
+}
+
+/// A box set into a register inside a box that is placed stays off the page
+/// (amsmath measures `(` that way in every math size change): its text is
+/// boxed, the placed box's own text is not.
+#[test]
+fn a_box_set_aside_inside_a_placed_box_is_not_placed() {
+    if !crate::support::installed() {
+        return;
+    }
+    let rows = typeset_rows("aside", "", "\\mbox{ab\\setbox0=\\hbox{(}cd} ef");
+    let row = paragraph(&rows, "ab");
+    let marked = row["marked"].as_str().unwrap();
+    assert!(marked.contains("\u{E000}⟦\u{E001}(\u{E000}⟧\u{E001}"), "the measured ( is boxed: {row}");
+    assert!(!marked.contains("⟦\u{E001}a") && !marked.contains("⟦\u{E001}c"), "the placed text is not: {row}");
+    // text set wholly in an unplaced box is kept, marked held (a float the run did not follow)
+    let body = "x\n\n\\begin{center}\n\\setbox3=\\hbox{kept aside}\n\\end{center}\n\ny";
+    let rows = typeset_rows("held", "", body);
+    assert_eq!(paragraph(&rows, "kept aside")["held"], true, "{rows:?}");
+}
+
+/// An alignment beginning right where an environment begins belongs to it,
+/// with its rules, and each cell says where its infinite glue stood: a `c`
+/// column fills on both sides of its text, an `l` column after it.
+#[test]
+fn a_tabular_keeps_its_begin_and_its_column_fills() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\begin{table}\\caption{C}\n\\begin{tabular}{lc}A&B\\\\\\hline x&y\\end{tabular}\\end{table}";
+    let rows = typeset_rows("tabular", "", body);
+    let table = paragraph(&rows, "A");
+    let m = marks(table);
+    assert_eq!(m.first().map(String::as_str), Some("begin"), "{table}");
+    assert!(table["marked"].as_str().unwrap().contains("―"), "the \\hline rules a row: {table}");
+    // the first row: `l` (text, then fill), the cell break, `c` (fill, text, fill)
+    let row: Vec<&str> = m.iter().map(String::as_str).skip(1).take_while(|&k| k != "row").collect();
+    assert_eq!(row, ["fill", "cell", "fill", "fill"], "{table}");
+    assert!(!marks(paragraph(&rows, "Table 1")).contains(&"begin".to_string()));
+}
+
+/// A page `\clearpage` ships out stands between the paragraphs it parts, numbered.
+#[test]
+fn a_shipped_page_is_a_record_between_paragraphs() {
+    if !crate::support::installed() {
+        return;
+    }
+    let rows = typeset_rows("pages", "", "One.\\clearpage\nTwo.");
+    let kinds: Vec<String> = rows
+        .iter()
+        .filter(|r| r["kind"] != "assumption")
+        .map(|r| format!("{} {}", r["kind"].as_str().unwrap(), r["detail"].as_str().unwrap_or("")))
+        .collect();
+    assert_eq!(kinds, ["paragraph One.", "page page 1 → 2", "paragraph Two.", "page page 2"]);
+}
+
+/// Text set while the driver's literals moved the drawing far off the page
+/// (pgf's `\pgfsys@begininvisible`, beamer's covered text) is marked
+/// `hide` … `show`: it keeps its place, not its ink.
+#[test]
+fn text_set_off_the_page_is_hidden() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "a \\pdfliteral{1 0 0 1 2000 2000 cm}bc\\pdfliteral{1 0 0 1 -2000 -2000 cm} d";
+    let rows = typeset_rows("invisible", "", body);
+    let row = paragraph(&rows, "bc");
+    let at = |k: &str| row["align"].as_array().unwrap().iter().find(|m| m["mark"] == k).and_then(|m| m["at"].as_u64());
+    let text = row["detail"].as_str().unwrap();
+    assert_eq!(
+        (at("hide"), at("show")),
+        (text.find("bc").map(|b| b as u64), text.find(" d").map(|b| b as u64)),
+        "{row}"
+    );
+}
+
+/// The rows of a page keep the order their boxes went onto it: a box made
+/// after another but placed above it ranks first (a frame's title).
+#[test]
+fn rows_rank_by_where_their_boxes_were_placed() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\setbox1=\\vbox{body text\\par}\\setbox2=\\vbox{the title\\par}\\box2 \\box1";
+    let rows = typeset_rows("placed", "", body);
+    let rank = |t: &str| paragraph(&rows, t)["placed"].as_u64().expect("placed");
+    assert!(rank("the title") < rank("body text"), "{rows:?}");
+}
+
+/// beamer's `\pause`: one page per step, the text after a pause covered
+/// (set, hidden) on the steps before it: "One", "One two", "One two three".
+#[test]
+fn beamer_pause_covers_text_per_step() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{Pause}\n  One \\pause two \\pause three\n\\end{frame}\n\\end{document}\n";
+    let rows = typeset_doc("pause", source, &["limits.steps=400000000"]);
+    let pages = rows.iter().filter(|r| r["kind"] == "page").count();
+    assert_eq!(pages, 3, "{rows:?}");
+    // each step's visible words: the text outside `hide` … `show`
+    let shown: Vec<String> = rows
+        .iter()
+        .filter(|r| r["kind"] == "paragraph" && r["detail"].as_str().is_some_and(|d| d.contains("One")))
+        .map(|r| {
+            let text: Vec<char> = r["detail"].as_str().unwrap().chars().collect();
+            let mut out = String::new();
+            let mut hidden = false;
+            let ms = r["align"].as_array().cloned().unwrap_or_default();
+            for (k, c) in text.iter().enumerate() {
+                for m in ms.iter().filter(|m| m["at"].as_u64() == Some(k as u64)) {
+                    hidden = m["mark"] == "hide" || (hidden && m["mark"] != "show");
+                }
+                if !hidden {
+                    out.push(*c);
+                }
+            }
+            out.split_whitespace().collect::<Vec<_>>().join(" ")
+        })
+        .collect();
+    assert_eq!(shown, ["One", "One two", "One two three"]);
 }
 
 /// Each typeset character finds its source: a run of source text counts on
@@ -988,4 +1129,36 @@ fn a_page_that_flips_every_run_keeps_the_text_before_it() {
     );
     let texts: Vec<&str> = rows.iter().filter_map(|r| r["detail"].as_str()).collect();
     assert!(texts.iter().any(|t| t.contains("The label was on page")), "{texts:?}");
+}
+
+/// `\fbox` draws its rules around a box made before: the text is one framed
+/// box, its rules no longer notes of their own; `\rule` keeps its size.
+#[test]
+fn a_framed_box_and_a_rule_keep_their_layout() {
+    if !crate::support::installed() {
+        return;
+    }
+    let rows = typeset_rows("frame", "", "See \\fbox{boxed words} and \\rule{2cm}{4pt} here.");
+    let row = paragraph(&rows, "boxed");
+    let m = marks(row);
+    let at = |k: &str| row["align"].as_array().unwrap().iter().find(|x| x["mark"] == k).and_then(|x| x["at"].as_u64());
+    let text = row["detail"].as_str().unwrap();
+    assert_eq!(at("frame"), text.find("boxed").map(|b| b as u64), "{row}");
+    assert_eq!(at("frameend"), text.find(" and").map(|b| b as u64), "{row}");
+    assert!(!text.contains('―') && !text.contains('│'), "the frame's rules are the frame: {row}");
+    // 2cm and 4pt as TeX scales them, to the hundredth of a point
+    let bar = m.iter().find(|k| k.starts_with("bar ")).expect("a bar's size");
+    assert_eq!(bar, "bar 56.91 4.00", "{row}");
+}
+
+/// A math script is marked from `^`/`_` to the end of its character or group.
+#[test]
+fn math_scripts_are_marked() {
+    if !crate::support::installed() {
+        return;
+    }
+    let rows = typeset_rows("scripts", "", "$x^2 + y_{ab}$");
+    let row = paragraph(&rows, "x");
+    let m: Vec<String> = marks(row).into_iter().filter(|k| ["sup", "sub", "scriptend"].contains(&k.as_str())).collect();
+    assert_eq!(m, ["sup", "scriptend", "sub", "scriptend"], "{row}");
 }

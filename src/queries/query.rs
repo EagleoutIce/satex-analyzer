@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 
 use serde_json::{Map, Value as Json, json};
 
-use crate::analysis::facts::{Load, LoadStatus};
+use crate::analysis::facts::{Load, LoadStatus, Rule};
 use crate::analysis::graph::EdgeKind;
 use crate::analysis::machine::Analysis;
 use crate::engine::builtins::{LoadKind, OccKind};
@@ -471,6 +471,12 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 /// One whose end some path made and another may not have has `open`.
 /// `│` is a thin `\vrule` (a table's `|`), `―` an `\hrule` (`\hline`),
 /// `▬` a wider `\vrule` (`\rule`).
+/// A page `\shipout` sent out is a `page` record after the paragraph it
+/// followed. A paragraph set wholly in boxes the run never saw placed is
+/// `held`; `placed` ranks it by when its box went onto a shipped list.
+/// `align` also marks `fill` (infinite glue), `sub`/`sup` … `scriptend`,
+/// `hide` … `show` (text set off the page), `frame` … `frameend` (rules
+/// drawn around boxes) and `bar W H` (a `\rule`'s size in pt).
 /// `keys` lists the labels, references and citations of the user's files
 /// with the place in `detail` where each stands. `fonts` lists where the
 /// font changes, as [`font_styles`] names it.
@@ -541,11 +547,22 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         };
         let (from, ..) = &envs[k];
         let outer = envs.iter().find(|e| within(from, e)).unwrap_or(&envs[k]);
+        // how many of the user's environments it stands in, itself included
+        record.insert("depth".into(), json!(envs.iter().filter(|e| within(from, e)).count().max(1)));
         let labels: Vec<&str> =
             named.iter().filter(|(s, kind, _)| *kind == "label" && within(s, outer)).map(|n| n.2).collect();
         record.insert("outer".into(), json!({"env": outer.2, "line": outer.0.line, "labels": labels}));
     };
     let mut env: Option<usize> = None;
+    // text set while the drawing stands off the page (beamer's covered text, \pgfsys@begininvisible
+    // shifting by 2000bp): `hide` and `show` marks around it, so a view keeps its space but not its ink
+    let hidden = invisible(&analysis.facts.literals);
+    let mut ink_off = false;
+    // the paragraph's first character on the page
+    let mut seg_from: Option<u32> = None;
+    // the order in which the run put a character's box on a list it shipped: TeX's order on the page
+    // (a frame's title box goes above its body, though set after it)
+    let rank = |i: u32| text.placed.iter().position(|r| r.0 <= i && i < r.1);
     let mut foot = String::new();
     let push_foot = |out: &mut Vec<Record>, foot: &mut String, at: Span, keys: &mut Keys<'_>| {
         if foot.trim().is_empty() {
@@ -562,13 +579,52 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let mut last_site: Option<Span> = None;
     // where the paragraph being set began: its `\parskip` is the one in force there
     let mut began = 0usize;
-    let mut flush = |i: usize, line: &mut String, keys: &mut std::collections::VecDeque<_>| {
-        while let Some((_, mark)) = aligns.next_if(|a| a.0.0 as usize <= i) {
+    // a page `\shipout` sent out, after the paragraph it followed: its number and the user's line then
+    let mut pages = text.pages.iter().enumerate().peekable();
+    let shipped = |k: usize, at: Span, last: bool| {
+        let mut record = place(analysis, at);
+        record.insert("kind".into(), json!("page"));
+        record.insert("page".into(), json!(k + 1));
+        record.insert("last".into(), json!(last));
+        record.insert(
+            "detail".into(),
+            json!(if last { format!("page {}", k + 1) } else { format!("page {} → {}", k + 1, k + 2) }),
+        );
+        record
+    };
+    let mut frame_ends = {
+        let mut v: Vec<&(u32, u32)> = text.frames.iter().collect();
+        v.sort_by_key(|f| f.1);
+        v.into_iter().peekable()
+    };
+    let mut frame_starts = {
+        let mut v: Vec<u32> = text.frames.iter().map(|f| f.0).collect();
+        v.sort_unstable();
+        v.into_iter().peekable()
+    };
+    // closing an environment: an alignment beginning here belongs to the next one
+    let mut flush = |i: usize, line: &mut String, keys: &mut std::collections::VecDeque<_>, closing: bool| {
+        while let Some((_, mark)) =
+            aligns.next_if(|a| a.0.0 as usize <= i && !(closing && a.0.1 == crate::analysis::facts::Align::Begin))
+        {
             line.push(KEY);
             keys.push_back((ALIGN, mark.as_str().into()));
         }
-        while let Some(&(_, rule)) = rules.next_if(|r| r.0 as usize <= i) {
-            line.push_str(&note(rule.glyph()));
+        // a framed box ends: the rules that drew its frame are the frame
+        let mut framed = None;
+        while let Some(&&(_, end)) = frame_ends.peek().filter(|e| e.1 as usize <= i) {
+            frame_ends.next();
+            line.push(KEY);
+            keys.push_back((ALIGN, "frameend".into()));
+            framed = Some(end);
+        }
+        // so do the rules at its place (a `\toprule`)
+        let begins = aligns.peek().is_some_and(|a| a.0.0 as usize <= i);
+        while let Some(&(at, rule)) = rules.next_if(|r| r.0 as usize <= i && !begins) {
+            if framed == Some(at) && !matches!(rule, Rule::Bar(..)) {
+                continue;
+            }
+            rule_note(line, keys, rule);
         }
     };
     for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
@@ -630,6 +686,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                 note(&MATH.to_string())
             );
         }
+        let lands = on_page[i] && !c_is_space(&c);
         let piece = if boxed { format!("{}{c}{}", note("⟦"), note("⟧")) } else { c };
         // an insert's text (a footnote) goes to the foot, after the paragraph that set it
         if text.inserts.iter().any(|&(a, b)| (a..b).contains(&(i as u32))) {
@@ -639,17 +696,26 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         let here = env_at(site);
         // the rules and marks closing an environment belong to it
         if env.is_some() && here != env {
-            flush(i, &mut line, &mut keys);
+            flush(i, &mut line, &mut keys, true);
         }
         if (text.pars.binary_search(&(i as u32)).is_ok() || here != env) && !line.trim().is_empty() {
             close(&mut line, &mut choice, &mut causes);
+            let shown = held(&line);
             let mut record = paragraph(
                 analysis,
                 first.take().unwrap_or(site),
-                &std::mem::take(&mut line),
+                shown.as_deref().unwrap_or(&line),
                 std::mem::take(&mut causes),
                 &mut keys,
             );
+            line.clear();
+            ink_off = false;
+            if shown.is_some() {
+                record.insert("held".into(), json!(true));
+            }
+            if let Some(k) = seg_from.take().and_then(rank) {
+                record.insert("placed".into(), json!(k));
+            }
             if text.kept.binary_search(&(i as u32)).is_ok() {
                 record.insert("kept".into(), json!(true));
             }
@@ -669,6 +735,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             }
             out.push(record);
             push_foot(&mut out, &mut foot, site, &mut keys);
+            while let Some((k, &(_, at))) = pages.next_if(|(_, p)| p.0 as usize <= i) {
+                out.push(shipped(k, at, false));
+            }
             style = "";
             on_line = None;
         }
@@ -679,7 +748,10 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         if !piece.trim().is_empty() {
             first.get_or_insert(site);
         }
-        flush(i, &mut line, &mut keys);
+        if lands {
+            seg_from.get_or_insert(i as u32);
+        }
+        flush(i, &mut line, &mut keys, false);
         match arm {
             Some((_, on, _)) => {
                 if choice.as_ref().is_some_and(|(n, ..)| *n != on) {
@@ -725,6 +797,16 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                     line.push(KEY);
                     keys.push_back((LIG, lig.as_str().into()));
                 }
+                while frame_starts.next_if(|&a| a as usize <= i).is_some() {
+                    line.push(KEY);
+                    keys.push_back((ALIGN, "frame".into()));
+                }
+                let off = hidden.iter().any(|r| r.contains(&(i as u32)));
+                if off != ink_off {
+                    line.push(KEY);
+                    keys.push_back((ALIGN, if off { "hide" } else { "show" }.into()));
+                    ink_off = off;
+                }
                 line.push_str(&piece);
             }
         }
@@ -738,11 +820,23 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         line.push(KEY);
         keys.push_back((ALIGN, mark.as_str().into()));
     }
+    for _ in frame_ends {
+        line.push(KEY);
+        keys.push_back((ALIGN, "frameend".into()));
+    }
     for &(_, rule) in rules {
-        line.push_str(&note(rule.glyph()));
+        rule_note(&mut line, &mut keys, rule);
     }
     if !line.trim().is_empty() {
-        let mut record = paragraph(analysis, first.unwrap_or_default(), &line, causes, &mut keys);
+        let shown = held(&line);
+        let mut record =
+            paragraph(analysis, first.unwrap_or_default(), shown.as_deref().unwrap_or(&line), causes, &mut keys);
+        if shown.is_some() {
+            record.insert("held".into(), json!(true));
+        }
+        if let Some(k) = seg_from.and_then(rank) {
+            record.insert("placed".into(), json!(k));
+        }
         if let Ok(k) = text.just.binary_search_by_key(&(began as u32), |s| s.0) {
             record.insert("just".into(), json!(text.just[k].1.name()));
         }
@@ -757,6 +851,10 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         out.push(record);
     }
     push_foot(&mut out, &mut foot, first.unwrap_or_default(), &mut keys);
+    let total = text.pages.len();
+    for (k, &(_, at)) in pages {
+        out.push(shipped(k, at, k + 1 == total));
+    }
     // A kernel read only partly leaves the document names the engine's
     // format defines (`\documentclass` set as text), so none of the text is
     // sure; a run that stopped early never set the rest.
@@ -789,6 +887,45 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             record.insert("detail".into(), json!(d.code));
             out.push(record);
         }
+    }
+    out
+}
+
+/// A rule between characters as its note; a bar with its size first, as an
+/// alignment mark `bar W H` (pt), so a view draws it that large.
+fn rule_note(line: &mut String, keys: &mut Keys<'_>, rule: Rule) {
+    if let Rule::Bar(w, h) = rule {
+        line.push(KEY);
+        keys.push_back((ALIGN, format!("bar {:.2} {:.2}", w as f64 / 65536.0, h as f64 / 65536.0).into()));
+    }
+    line.push_str(&note(rule.glyph()));
+}
+
+/// The character ranges set while the drawing stood far off the page: the
+/// driver's literals moved the origin by a translation (`1 0 0 1 x y cm`) of
+/// at least `OFF_PAGE` bp and had not moved it back, as pgf's
+/// `\pgfsys@begininvisible` does for beamer's covered text.
+fn invisible(literals: &[crate::analysis::facts::Literal]) -> Vec<std::ops::Range<u32>> {
+    const OFF_PAGE: f64 = 1000.0;
+    let (mut out, mut shift, mut from) = (Vec::new(), (0.0, 0.0), None);
+    for l in literals {
+        let words: Vec<&str> = l.text.split_whitespace().collect();
+        for w in words.windows(7).filter(|w| w[6] == "cm" && w[..4] == ["1", "0", "0", "1"]) {
+            let (Ok(x), Ok(y)) = (w[4].parse::<f64>(), w[5].parse::<f64>()) else { continue };
+            shift = (shift.0 + x, shift.1 + y);
+        }
+        let off = f64::max(shift.0.abs(), shift.1.abs()) >= OFF_PAGE;
+        match (off, from) {
+            (true, None) => from = Some(l.chars),
+            (false, Some(a)) => {
+                out.push(a..l.chars);
+                from = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(a) = from {
+        out.push(a..u32::MAX);
     }
     out
 }
@@ -1288,6 +1425,20 @@ fn math_atoms(
 /// `s` as satex's own notation, not a typeset character.
 fn note(s: &str) -> String {
     format!("{}{s}{}", NOTE.0, NOTE.1)
+}
+
+/// A paragraph all of whose text was set in boxes the run never saw placed
+/// (a float the run could not follow to its page) is held, not measured:
+/// its text without the box notes. Text boxed among placed text stays boxed.
+fn held(line: &str) -> Option<String> {
+    let (open, close) = (note("⟦"), note("⟧"));
+    let visible = |s: &str| unmarked(s).chars().any(|c| c != KEY && !c.is_whitespace());
+    let mut outside = String::new();
+    for (k, part) in line.split(open.as_str()).enumerate() {
+        outside.push_str(if k == 0 { part } else { part.split_once(close.as_str()).map_or("", |(_, rest)| rest) });
+    }
+    let bare = line.replace(open.as_str(), "").replace(close.as_str(), "");
+    (bare != line && !visible(&outside) && visible(&bare)).then_some(bare)
 }
 
 fn unmarked(s: &str) -> String {

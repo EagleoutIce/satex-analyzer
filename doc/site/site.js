@@ -524,16 +524,22 @@
    * `end`) make a grid: a row opens at its first character, so an `\hline` before it rules its top. */
   const RULES = { '│': ['ts-vrule', 'a \\vrule: a table\'s |'], '―': ['ts-hrule', 'an \\hrule: \\hline'], '▬': ['ts-bar', 'a \\rule'] };
   /** `marked` with each key and font change as a note of its own, where it stands. `at` counts every
-   * character but the note brackets, a note's own (a hyphen's `·`) too, and a key never parts a note. */
+   * character but the note brackets and a math note's, a note's own (a hyphen's `·`) too, and a key never parts a note. */
   function withKeys(marked, keys = [], fonts = [], align = [], ligatures = [], lines = []) {
     const at = [...(keys ?? []).filter((k) => k?.key != null), ...(fonts ?? []), ...(align ?? []), ...(ligatures ?? []), ...(lines ?? [])].sort((a, b) => a.at - b.at);
     if (!at.length) return marked;
-    let out = '', seen = 0, i = 0, note = false;
+    // a math note (`\u0006` and its class) is no text the query counts
+    let out = '', seen = 0, i = 0, note = false, math = false, first = false;
     const mark = (k) => k.style != null ? `\u0002${k.style}\u0001${k.color ?? ''}` : k.line != null ? `\u0007${k.line}` : k.mark != null ? `\u0003${k.mark}` : k.from != null ? `\u0005${k.from}\u0001${k.to}` : `\u0001${k.kind ?? 'key'}\u0001${k.key}`;
     const put = (n) => { while (i < at.length && at[i].at <= n) out += `\uE000${mark(at[i++])}\uE001`; };
     for (const c of marked) {
-      if (c === '\uE000') { put(seen); note = true; } else if (c === '\uE001') note = false;
-      else { if (!note) put(seen); seen++; }
+      if (c === '\uE000') { put(seen); note = first = true; } else if (c === '\uE001') note = math = false;
+      else {
+        if (first && c === '\u0006') math = true;
+        first = false;
+        if (!note) put(seen);
+        if (!math) seen++;
+      }
       out += c;
     }
     put(Infinity);
@@ -577,7 +583,22 @@
     };
     // a box of a set width in the line (a contents line's number, its page) is set that wide; leaders fill the rest
     let boxes = 0;
+    // whether the box or cell open now set text yet: a fill before it pushes the text right, one after left
+    let inked = false, hidden = 0, framed = 0, bar = null, scripts = 0;
     const grid = (mark) => {
+      if (mark === 'fill') return `<i class="ts-fill ts-fill-${inked ? 'r' : 'l'}"></i>`;
+      // a math script, to its character or its group's end
+      if (mark === 'sup' || mark === 'sub') { scripts++; return `<span class="ts-${mark}">`; }
+      if (mark === 'scriptend') { if (!scripts) return ''; scripts--; return '</span>'; }
+      // a box with rules on its sides around boxes used in it (`\fbox`): one framed box
+      if (mark === 'frame') { framed++; return '<span class="ts-frame" title="a framed box: its rules drawn around it">'; }
+      if (mark === 'frameend') { if (!framed) return ''; framed--; return '</span>'; }
+      // the next bar's size, in pt
+      if (mark.startsWith('bar ')) { bar = mark.slice(4).split(' ').map(parseFloat); return ''; }
+      // text set while the drawing stood off the page: it keeps its space, not its ink (beamer's covered text)
+      if (mark === 'hide') { hidden++; return '<span class="ts-hidden" title="covered: set here, its space kept, not visible on this page">'; }
+      if (mark === 'show') { if (!hidden) return ''; hidden--; return '</span>'; }
+      if (mark !== 'boxend') inked = false;
       if (mark.startsWith('box ')) { boxes++; return `<span class="ts-boxto" style="min-width: ${parseFloat(mark.slice(4))}pt">`; }
       if (mark === 'boxend') { if (!boxes) return ''; boxes--; return '</span>\u0000'; }
       if (mark === 'leaders') return '<span class="ts-leaders" aria-hidden="true"></span>';
@@ -595,6 +616,7 @@
       const note = /^\uE000([^\uE001]*)\uE001$/.exec(part)?.[1];
       if (note === undefined) {
         if (row !== null && !part.trim()) return '';
+        if (part.trim()) inked = true;
         const tr = table ? opened() : '';
         return tr + mathSpan((font || ink) && part ? `<span${font ? ` class="${font}"` : ''}${ink ? ` style="color: ${esc(ink)}"` : ''}>${joined(part)}</span>` : joined(part));
       }
@@ -610,13 +632,154 @@
       if (note === '⟧') { if (!open) return tr; open--; return `${tr}</span>`; }
       if (note[0] === '\u0001') { const [, kind, key] = note.split('\u0001'); return `${tr}<span class="ts-key ts-key-${esc(kind)}" title="${esc(kind)}">${esc(key)}</span>`; }
       if (note[0] === '▢') { const sk = sketches?.[drawn++]; return sk ? tr + sketchSvg(sk) : `${tr}<span class="ts-note">${esc(note)}</span>`; }
+      if (note === '▬' && bar?.[0] > 0) {
+        const [w, h] = bar;
+        bar = null;
+        return `${tr}<span class="ts-bar" style="width: ${w}pt; height: ${Math.max(h, 0.4)}pt" title="a \\rule ${w}pt wide, ${h}pt high"></span>`;
+      }
       if (RULES[note]) return `${tr}<span class="${RULES[note][0]}" title="${RULES[note][1]}"></span>`;
       return `${tr}<span class="ts-note">${esc(note)}</span>`;
-    }).join('').replace(/<span class="ts-boxto" style="[^"]*"><\/span>\u0000/g, '');
+    }).join('').replace(/<span class="ts-boxto" style="[^"]*">(?:<i class="ts-fill[^"]*"><\/i>)*<\/span>\u0000/g, '');
     // set boxes at both ends (a contents line, a label) align the line as a row
     const aligned = html.startsWith('<span class="ts-boxto"') && html.endsWith('\u0000') || html.includes('ts-leaders');
     if (picture) return sketchSvg(picture);
-    return (aligned ? '<i class="ts-row" hidden></i>' : '') + html.replaceAll('\u0000', '') + '</span>'.repeat(open + 2 * table + boxes);
+    // infinite glue at both ends of a line (`\hbox to\hsize{\hfil …\hfil}`): the line is centred by it
+    const done = html.replaceAll('\u0000', '') + '</span>'.repeat(open + 2 * table + boxes + hidden + framed + scripts);
+    if (/^<i class="ts-fill/.test(done) && /<i class="ts-fill[^"]*"><\/i>$/.test(done)) return `<span class="ts-fillrow">${done}</span>`;
+    return (aligned ? '<i class="ts-row" hidden></i>' : '') + done;
+  }
+  /** One typeset paragraph as a row of the view's grid: the source line in the gutter, one rail per
+   * environment it stands in, then its text. `depth` adds the levels of a folded file around it. */
+  const tsRow = (r, depth = 0, k = r.k) => {
+    const d = (r.depth ?? 0) + depth;
+    return `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}${r.footnote ? ' ts-foot' : ''}${r.held ? ' ts-held' : ''}"${r.env ? ` data-env="${esc(r.env)}" title="set in ${esc(r.env)}"` : ''}${r.just && r.just !== 'justified' ? ` data-just="${esc(r.just)}"` : ''}` +
+      `${k != null ? ` data-k="${k}"` : ''} data-path="${esc(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${esc(r.detail ?? '')}"${r.lines?.length ? ` data-lines="${esc(JSON.stringify(r.lines))}"` : ''}` +
+      ` style="--depth: ${d}${typeof r.skip === 'number' && !r.heading ? `; --skip: ${Math.max(r.skip, 0)}pt` : ''}">` +
+      `<span class="ts-at">${r.line ?? ''}</span><span class="ts-rails" aria-hidden="true"></span>` +
+      `<span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`;
+  };
+  /** A page `\shipout` sent out, as a labelled line where the next one begins. */
+  const tsPage = (r) => `<div class="ts-page" role="separator" data-line="${r.line}" title="the run shipped page ${r.page} out while reading line ${r.line}">` +
+    `<span class="ts-at"></span><span class="ts-rails" aria-hidden="true"></span><span class="ts-page-label">${esc(r.detail)}</span></div>`;
+  /** The typeset view of a `typeset` query's rows: paragraphs in a grid of one gutter and rails, page breaks as
+   * lines, an environment instance of the user's file as one block with its name, a run from another file folded
+   * (`closed` the ones folded by hand). `file` names the open file, else every paragraph is its own. A block the run
+   * set again page after page from the same lines (a beamer frame's overlays) is a card: the page's own text (its
+   * title, what the output routine set) as its header, one step per page, a stepper and a diff between steps. */
+  function typesetView(rows, { file = null, closed = new Set(), plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`, lineOf = null } = {}) {
+    // each row knows its place in `rows`: a view finds the record (its sites) behind a paragraph
+    const shown = rows.map((r, k) => ({ ...r, k })).filter((r) => r.kind === 'paragraph' || r.kind === 'page');
+    const mine = (r) => !file || (r.path ?? '').endsWith(file);
+    const keyOf = (r) => r.kind === 'paragraph' && mine(r) && r.outer ? `${r.outer.env}@${r.outer.line}` : null;
+    const html = [];
+    for (let i = 0; i < shown.length;) {
+      const r = shown[i];
+      if (r.kind === 'page') { html.push(tsPage(r)); i++; continue; }
+      if (!mine(r)) {
+        let j = i;
+        while (j < shown.length && shown[j].kind === 'paragraph' && shown[j].path === r.path) j++;
+        const run = shown.slice(i, j), name = (r.path ?? '').split('/').pop(), id = `${r.path}|${r.line}`;
+        html.push(`<details class="ts-other" data-id="${esc(id)}"${closed.has(id) ? '' : ' open'}><summary><span class="ts-at"></span><span class="ts-rails" aria-hidden="true"></span><span class="ts-file">${esc(name)}</span> <span class="muted">${plural(run.length, 'paragraph')}</span></summary>${run.map((x) => tsRow(x, 1)).join('')}</details>`);
+        i = j;
+        continue;
+      }
+      const key = keyOf(r);
+      if (!key) { html.push(tsRow(r)); i++; continue; }
+      // the instance's rows and the pages between them, and the page that ends it
+      let j = i;
+      while (j < shown.length && (keyOf(shown[j]) === key || shown[j].kind === 'page' && keyOf(shown[j + 1] ?? {}) === key)) j++;
+      if (shown[j]?.kind === 'page') j++;
+      // the placement the environment was given where it begins (`[ht]`), as the source has it
+      const place = lineOf?.(r.outer.line)?.match(new RegExp(`\\\\begin\\{${r.outer.env.replace(/[*]/g, '\\*')}\\}\\s*\\[([^\\]]*)\\]`))?.[1];
+      html.push(tsBlock(shown.slice(i, j), r.outer, place));
+      i = j;
+    }
+    const rails = Math.max(0, ...shown.map((r) => (r.depth ?? 0) + (mine(r) ? 0 : 1)));
+    return html.length ? `<div class="ts-view" style="--rails: ${rails}">${html.join('')}</div>` : '';
+  }
+  /** One environment instance: its chip, then its rows; a card with steps when its pages repeat its lines. */
+  function tsBlock(items, o, place) {
+    const steps = [[]];
+    for (const x of items) if (x.kind === 'page') steps.push([]); else steps.at(-1).push(x);
+    while (steps.length > 1 && !steps.at(-1).length) steps.pop();
+    // a page's rows in the order its boxes went onto the page (`placed`), not the order they were set:
+    // rows placed above text set before them are its head (a frame's title)
+    const heads = steps.map((rs) => {
+      const order = rs.map((x, k) => [x, k]).sort((a, b) => (a[0].placed ?? Infinity) - (b[0].placed ?? Infinity) || a[1] - b[1]);
+      rs.splice(0, rs.length, ...order.map(([x]) => x));
+      let n = 0;
+      while (n < order.length - 1 && order.slice(n + 1).some(([, k]) => k < order[n][1])) n++;
+      return rs.splice(0, n);
+    });
+    const body = (rs) => rs;
+    const first = (rs) => body(rs)[0]?.line;
+    // each page set the same lines again: the overlays of one frame
+    const stepped = steps.length > 1 && steps.every((rs) => body(rs).length && first(rs) === first(steps[0]));
+    const chip = `<span class="ts-block-env">${esc(o.env)}</span>${place ? `<code class="ts-block-place" title="placement: where LaTeX may put it">[${esc(place)}]</code>` : ''}<span class="ts-block-line">line ${o.line}</span>${(o.labels ?? []).map((l) => `<code class="ts-block-label" title="label">${esc(l)}</code>`).join('')}`;
+    const head = (more = '', lead = '') => `<div class="ts-block-head"><span class="ts-at"></span><span class="ts-rails" aria-hidden="true"></span><span class="ts-block-chip">${lead}${chip}${more}</span></div>`;
+    if (!stepped) return `<div class="ts-block" data-env="${esc(o.env)}" data-line="${o.line}">${head()}${items.map((x) => x.kind === 'page' ? tsPage(x) : tsRow(x)).join('')}</div>`;
+    // the page's own text with letters in it, the first step's: the card's title
+    const title = heads[0].filter((x) => /[\p{L}\p{N}]/u.test(x.detail ?? '')).map((x) => x.detail.trim()).join(' · ');
+    const n = steps.length;
+    const stepper = `<span class="ts-stepper" role="group" aria-label="overlay step">${steps.map((_, k) => `<button type="button" data-step="${k + 1}" aria-pressed="${k === 0}" title="step ${k + 1} of ${n}: the page the run shipped ${k + 1}${k ? '' : 'st'} for this ${esc(o.env)}">${k + 1}</button>`).join('')}</span>` +
+      `<label class="ts-diff-toggle" title="what this step adds to the one before (green) and takes away (red)"><input type="checkbox"> diff</label>`;
+    return `<div class="ts-block ts-card" data-env="${esc(o.env)}" data-line="${o.line}" data-step="1">` +
+      head(stepper, title ? `<span class="ts-card-title">${esc(title)}</span>` : '').replace('ts-block-head', 'ts-block-head ts-card-head') +
+      steps.map((rs, k) => `<div class="ts-step" data-step="${k + 1}"${k ? ' hidden' : ''}>${body(rs).map((x) => tsRow(x)).join('')}</div>`).join('') +
+      '<div class="ts-step-diff" hidden></div></div>';
+  }
+  /** A step's words as the page shows them: covered text, boxes, keys and line marks left out. */
+  const stepWords = (step) => {
+    const c = step.cloneNode(true);
+    c.querySelectorAll('.ts-hidden, .ts-box, .ts-key, .ts-ln, .ts-at, .ts-env, .ts-finding').forEach((x) => x.remove());
+    return [...c.querySelectorAll('.ts-text')].map((t) => t.textContent.trim().split(/\s+/).filter(Boolean));
+  };
+  /** Word diff of two steps, row by row as the later one has them: an LCS of all words. */
+  function stepDiff(before, after) {
+    const a = before.flat(), b = after.flat();
+    const L = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+    for (let x = a.length - 1; x >= 0; x--) for (let y = b.length - 1; y >= 0; y--) L[x][y] = a[x] === b[y] ? L[x + 1][y + 1] + 1 : Math.max(L[x + 1][y], L[x][y + 1]);
+    const out = [];
+    let x = 0, y = 0;
+    while (x < a.length || y < b.length) {
+      if (x < a.length && y < b.length && a[x] === b[y]) { out.push(esc(b[y])); x++; y++; }
+      else if (y < b.length && (x >= a.length || L[x][y + 1] >= L[x + 1][y])) { out.push(`<ins>${esc(b[y++])}</ins>`); }
+      else out.push(`<del>${esc(a[x++])}</del>`);
+    }
+    // a run of added or removed words is one mark
+    const merged = out.join(' ').replace(/<\/ins> <ins>/g, ' ').replace(/<\/del> <del>/g, ' ');
+    return `<p class="ts ts-diff"><span class="ts-at"></span><span class="ts-rails" aria-hidden="true"></span><span class="ts-text">${merged || '<span class="muted">no text</span>'}</span></p>`;
+  }
+  /** The view's cards answer their steppers and diff switches; once per container. */
+  function typesetWire(root) {
+    if (root.dataset.wired) return;
+    root.dataset.wired = '1';
+    const show = (card) => {
+      const k = +card.dataset.step, diff = card.querySelector('.ts-diff-toggle input')?.checked;
+      const steps = [...card.querySelectorAll(':scope > .ts-step')];
+      steps.forEach((s, i) => { s.hidden = diff || i + 1 !== k; });
+      card.querySelectorAll('.ts-stepper button').forEach((b) => b.setAttribute('aria-pressed', String(+b.dataset.step === k)));
+      const box = card.querySelector(':scope > .ts-step-diff');
+      box.hidden = !diff;
+      if (diff) box.innerHTML = stepDiff(k > 1 ? stepWords(steps[k - 2]) : [], stepWords(steps[k - 1]));
+    };
+    root.addEventListener('click', (e) => {
+      const b = e.target.closest?.('.ts-stepper button');
+      if (!b) return;
+      e.stopPropagation();
+      const card = b.closest('.ts-card');
+      card.dataset.step = b.dataset.step;
+      show(card);
+    });
+    root.addEventListener('change', (e) => { const card = e.target.closest?.('.ts-diff-toggle') && e.target.closest('.ts-card'); if (card) show(card); });
+    root.addEventListener('keydown', (e) => {
+      const card = e.target.closest?.('.ts-card');
+      if (!card || !['ArrowLeft', 'ArrowRight'].includes(e.key) || !e.target.closest('.ts-stepper')) return;
+      const n = card.querySelectorAll(':scope > .ts-step').length;
+      card.dataset.step = Math.min(n, Math.max(1, +card.dataset.step + (e.key === 'ArrowRight' ? 1 : -1)));
+      show(card);
+      card.querySelector(`.ts-stepper button[data-step="${card.dataset.step}"]`)?.focus();
+    });
   }
   /** The Markdown satex writes, for hovers and rule explanations: headings, paragraphs, lists,
    * fenced or indented code, links, emphasis. */
@@ -672,7 +835,7 @@
     return sections(main) + (more ? `<details class="more"><summary>More definitions</summary>${sections(more)}</details>` : '');
   };
 
-  self.satexCards = { chipList, explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation, withKeys, hover: hoverCard, useOf, duration };
+  self.satexCards = { chipList, explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation, withKeys, typesetView, typesetWire, hover: hoverCard, useOf, duration };
   // A rule named anywhere on the site, as a link into the rules page or its code or number in a
   // code span, shows its card. The cards' data is the rules the build wrote, fetched once.
   const RULES_URL = new URL('rules.json', document.currentScript?.src ?? location.href);

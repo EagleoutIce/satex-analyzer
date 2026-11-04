@@ -1360,13 +1360,15 @@
   /** The groups of other files unfolded, kept across checks. */
   const tsClosed = new Set();
   typesetBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) tsClosed.delete(id); else tsClosed.add(id); } }, true);
+  /** The open file's paragraphs in the view, a folded file's and the cursor's excerpts not. */
+  const tsOwn = () => [...typesetBody.querySelectorAll('p.ts[data-line]:not(.ts-excerpt)')].filter((p) => !p.closest('.ts-other'));
   /** The paragraphs the selection (else the cursor) touches, marked; with "only at cursor" the others hidden. */
   function typesetFollow() {
     const [from, to] = editor?.range?.() ?? [editor?.position(), editor?.position()];
     if (!from) return;
     // a selection that ends at a line's start does not take that line
     const first = from.line + 1, last = to.line + 1 - Number(to.line > from.line && to.character === 0);
-    const own = [...typesetBody.querySelectorAll(':scope > p.ts[data-line]')];
+    const own = tsOwn();
     const here = own.filter((p, i) => +p.dataset.line <= last && (i + 1 >= own.length || +own[i + 1].dataset.line > first));
     for (const p of typesetBody.querySelectorAll('p.ts')) p.classList.toggle('ts-current', here.includes(p));
     const only = tsHere;
@@ -1390,7 +1392,7 @@
     const plain = p.dataset.plain ?? '';
     if (!plain) return '';
     const src = editor.text().split('\n'), start = +p.dataset.line - 1;
-    const after = p.parentElement.querySelectorAll(':scope > p.ts[data-line]:not(.ts-excerpt)'), k0 = [...after].indexOf(p);
+    const after = tsOwn(), k0 = after.indexOf(p);
     const next = after[k0 + 1] ? +after[k0 + 1].dataset.line - 1 : src.length;
     const marks = [{ line: start + 1, at: 0 }, ...JSON.parse(p.dataset.lines || '[]').filter((m) => m.line > start + 1 && m.line <= next)].sort((x, y) => x.line - y.line || x.at - y.at);
     /** A source position as an offset in the text: its line's mark, then its share of the source up to the next mark. */
@@ -1416,10 +1418,15 @@
       range = nearest(plain, w && !w[3] ? w[2].replace(/^\W+|\W+$/g, '') : '', at);
       if (!range) for (const x of plain.matchAll(/\S+/g)) if (x.index + x[0].length > Math.min(at, plain.length - 1)) { range = [x.index, x.index + x[0].length]; break; }
     }
+    // the run's own provenance: every character set while the lines at the cursor were read (a call's whole text)
+    const rec = typesetRows?.[+p.dataset.k];
+    const lines = [from.line + 1, to.line + 1 - Number(to.line > from.line && to.character === 0)];
+    const own = rec && siteHits(rec, state.file, ([l]) => lines[0] <= l && l <= lines[1]);
+    if (own?.first >= 0) range = [own.first, own.last + 1];
     const [a, b] = range && range[1] > range[0] ? range : [0, (plain.match(/^\s*\S+/)?.[0] ?? plain).length];
     const word = (t) => t.match(/\S+\s*$/)?.[0] ?? '', then = (t) => t.match(/^\s*\S+/)?.[0] ?? '';
     const [pre, post] = [word(plain.slice(0, a)), then(plain.slice(b))];
-    return `<p class="ts ts-excerpt"><span class="ts-at">${p.dataset.line}</span><span class="ts-text"><span class="ts-grey">${a > pre.length ? '… ' : ''}${escape(pre)}</span><mark>${escape(plain.slice(a, b))}</mark>` +
+    return `<p class="ts ts-excerpt" style="${escape(p.getAttribute('style') ?? '')}"><span class="ts-at">${p.dataset.line}</span><span class="ts-rails" aria-hidden="true"></span><span class="ts-text"><span class="ts-grey">${a > pre.length ? '… ' : ''}${escape(pre)}</span><mark>${escape(plain.slice(a, b))}</mark>` +
       `<span class="ts-grey">${escape(post)}${b + post.length < plain.length ? ' …' : ''}</span></span></p>`;
   }
   /** 'all' or 'at cursor': one state, the buttons' aria-pressed drawn from it (a hidden checkbox the browser restores was a second one). */
@@ -1434,7 +1441,7 @@
   /** The open file's findings on the paragraphs they stand in: a mark in the margin, the worst first, shown with the findings switch. */
   function typesetFindings() {
     typesetBody.querySelectorAll('.ts-finding').forEach((m) => m.remove());
-    const own = [...typesetBody.querySelectorAll(':scope > p.ts[data-line]')], ds = diagnostics[uri()] ?? [];
+    const own = tsOwn(), ds = diagnostics[uri()] ?? [];
     own.forEach((p, i) => {
       const [from, to] = [+p.dataset.line, own[i + 1] ? +own[i + 1].dataset.line : Infinity];
       const fs = ds.filter((d) => d.range.start.line + 1 >= from && d.range.start.line + 1 < to);
@@ -1457,35 +1464,13 @@
     typesetRows = rows;
     shownFor(typesetBody, target, diagnosticVersions[target]);
     if (pdfOverlayOn?.findings) pdfOverlay();
-    const paragraphs = rows.filter((r) => r.kind === 'paragraph');
-    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"${r.env ? ` data-env="${escape(r.env)}" title="set in ${escape(r.env)}"` : ''}${r.just && r.just !== 'justified' ? ` data-just="${escape(r.just)}"` : ''} data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${escape(r.detail ?? '')}"${r.lines?.length ? ` data-lines="${escape(JSON.stringify(r.lines))}"` : ''}><span class="ts-at">${r.line}</span><span class="ts-text">${r.env ? `<span class="ts-env">${escape(r.env)}</span>` : ''}${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`;
-    // the whole document in order: this file's paragraphs as they are, a run from another file folded into one line
-    const html = [];
-    // A document whose text all stands in top-level environments (beamer's frames) is a row of pages:
-    // a rule with the environment's line and labels where the next one begins.
-    const own = paragraphs.filter((p) => p.path?.endsWith(state.file) && !p.footnote);
-    const slides = own.length > 0 && own.every((p) => p.outer) && new Set(own.map((p) => p.outer.line)).size > 1;
-    let shown = null;
-    for (let i = 0; i < paragraphs.length;) {
-      const r = paragraphs[i], o = slides && r.path?.endsWith(state.file) ? r.outer : null;
-      if (o && o.line !== shown) {
-        // the frame's title first (its heading), then the environment and its line
-        const head = own.find((p) => p.outer?.line === o.line && p.heading), title = (head?.detail ?? '').replace(/^[^\p{L}\p{N}]+/u, '').trim();
-        html.push(`<div class="ts-slide" role="separator">${title ? `<span class="ts-slide-title">${escape(clip(title))}</span>` : ''}<span class="ts-slide-env">${escape(o.env)}</span><span class="ts-slide-line">line ${o.line}</span>${o.labels.map((l) => `<code class="ts-slide-label" title="label">${escape(l)}</code>`).join('')}</div>`);
-      }
-      if (o) shown = o.line;
-      if (r.path?.endsWith(state.file)) { html.push(row(r)); i++; continue; }
-      let j = i;
-      while (j < paragraphs.length && paragraphs[j].path === r.path) j++;
-      const run = paragraphs.slice(i, j), name = (r.path ?? '').split('/').pop();
-      const id = `${r.path}|${r.line}`;
-      html.push(`<details class="ts-other" data-id="${escape(id)}"${tsClosed.has(id) ? '' : ' open'}><summary><span class="ts-file">${escape(name)}</span> <span class="muted">${plural(run.length, 'paragraph')}</span></summary>${run.map(row).join('')}</details>`);
-      i = j;
-    }
-    typesetBody.innerHTML = html.length ? html.join('') : '<p class="muted">The document sets no paragraph.</p>';
+    const lines = state.texts[state.file]?.split('\n') ?? [];
+    const html = cards.typesetView(rows, { file: state.file, closed: tsClosed, plural, lineOf: (n) => lines[n - 1] });
+    typesetBody.innerHTML = html || '<p class="muted">The document sets no paragraph.</p>';
     typesetFindings();
     typesetFollow();
   }
+  cards.typesetWire(typesetBody);
   typesetBody.addEventListener('click', (e) => {
     const p = e.target.closest('.ts');
     if (!p) return;
@@ -4856,25 +4841,30 @@
       if (!w) return '';
       [from, to] = [[from[0], w[0] + 1], [from[0], w[1] + 1]];
     }
-    const out = [];
-    for (const r of typesetRows ?? []) {
-      if (!r.sites) continue;
-      // `marked` is `detail` with its notes bracketed: a note (a hyphen's ·) is no text, a math note not even in `detail`
-      const marked = [...(r.marked ?? r.detail ?? '')];
-      let k = 0, i = 0, hit = '', note = false, math = false;
-      for (let j = 0; j < marked.length; j++) {
-        const c = marked[j];
-        if (c === '') { note = true; math = marked[j + 1] === '\u0006'; continue; }
-        if (c === '') { note = math = false; continue; }
-        if (math) continue;
-        while (k + 1 < r.sites.length && r.sites[k + 1].at <= i) k++;
-        const s = r.sites[k], p = s && [s.line, s.col + (s.same ? 0 : i - s.at)];
-        hit += !note && s && s.at <= i && String(s.path ?? r.path ?? '').endsWith(file) && !before(p, from) && before(p, to) ? c : ' ';
-        i++;
-      }
-      if (hit.trim()) out.push(hit.trim().replace(/\s+/g, ' '));
+    return (typesetRows ?? []).map((r) => siteHits(r, file, (p) => !before(p, from) && before(p, to)).text).filter(Boolean).join(' ');
+  }
+  /** The characters of row `r` whose source site (the run's `sites`: where the user's file was read when it was set)
+   * `wanted` takes: their text, and the first and last one's offset in `detail`. */
+  function siteHits(r, file, wanted) {
+    if (!r.sites) return { text: '' };
+    // `marked` is `detail` with its notes bracketed: a note (a hyphen's ·) is no text, a math note not even in `detail`
+    const marked = [...(r.marked ?? r.detail ?? '')];
+    // `i` counts as `sites` do (a note's own characters too), `d` as `detail` does
+    let k = 0, i = 0, d = 0, hit = '', note = false, math = false, first = -1, last = -1;
+    for (let j = 0; j < marked.length; j++) {
+      const c = marked[j];
+      if (c === '\uE000') { note = true; math = marked[j + 1] === '\u0006'; continue; }
+      if (c === '\uE001') { note = math = false; continue; }
+      if (math) continue;
+      while (k + 1 < r.sites.length && r.sites[k + 1].at <= i) k++;
+      const s = r.sites[k], p = s && [s.line, s.col + (s.same ? 0 : i - s.at)];
+      const on = !note && s && s.at <= i && String(s.path ?? r.path ?? '').endsWith(file) && wanted(p);
+      hit += on ? c : ' ';
+      if (on && c.trim()) { if (first < 0) first = d; last = d; }
+      if (!note) d++;
+      i++;
     }
-    return out.join(' ');
+    return { text: hit.trim().replace(/\s+/g, ' '), first, last };
   }
   /** The words of the rows `rects`, in reading order. */
   const pdfRowWords = (rects) => rects.flatMap((r) => (pdf.wordList ?? []).filter((w) => w[0] === r.page && w[4] >= r.t && w[2] <= r.d && w[3] > r.l - 2 && w[1] < r.r + 2))

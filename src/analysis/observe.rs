@@ -1288,7 +1288,10 @@ pub fn rule(m: &mut Machine, vertical: bool, [width, height, depth]: [Option<Opt
     let zero = |d: Option<Option<i64>>| d == Some(Some(0));
     let kind = match vertical {
         true if zero(width) => return,
-        true if width.flatten().is_some_and(|w| w > 65536) => crate::analysis::facts::Rule::Bar,
+        true if width.flatten().is_some_and(|w| w > 65536) => {
+            let size = |d: Option<Option<i64>>| d.flatten().unwrap_or(0);
+            crate::analysis::facts::Rule::Bar(size(width), size(height) + size(depth))
+        }
         true => crate::analysis::facts::Rule::Vertical,
         false if zero(height) && (depth.is_none() || zero(depth)) => return,
         false => crate::analysis::facts::Rule::Horizontal,
@@ -1310,6 +1313,18 @@ pub fn align(m: &mut Machine, mark: crate::analysis::facts::Align) {
     let at = text.at.len() as u32;
     if text.align.len() < m.cfg.limits.facts && !text.align.ends_with(&[(at, mark)]) {
         text.align.push((at, mark));
+    }
+}
+
+/// `\shipout` sends a page out.
+pub fn page(m: &mut Machine, span: Span) {
+    if m.package().is_some() || m.reading_format() {
+        return;
+    }
+    let site = m.call_site(span);
+    let text = &mut m.out.facts.text;
+    if text.pages.len() < m.cfg.limits.facts {
+        text.pages.push((text.at.len() as u32, site));
     }
 }
 
@@ -1511,4 +1526,8 @@ fn set(m: &mut Machine, c: char, span: Span) {
     text.chars.push(c);
     text.at.push(crate::analysis::facts::Spot { span, font_state, modes: m.mode, broken, apart, certain });
     text.site.push(site);
+    // a script of one character ends with it
+    if m.script_pending.take().is_some() && m.mode.within(crate::engine::mode::Modes::ANY_MATH) {
+        align(m, crate::analysis::facts::Align::ScriptEnd);
+    }
 }

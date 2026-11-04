@@ -406,6 +406,12 @@ pub struct Text {
     /// For the first character of a paragraph: how its lines are aligned,
     /// from `\leftskip` and `\rightskip` as the run had them there.
     pub just: Vec<(u32, Just)>,
+    /// Where `\shipout` sent a page out: the number of characters set
+    /// before it, ascending, and the place in the user's files read then.
+    pub pages: Vec<(u32, Span)>,
+    /// Character ranges of boxes used in a box that has rules on its sides
+    /// and no text of its own (`\fbox`): one framed box around them.
+    pub frames: Vec<(u32, u32)>,
 }
 
 /// How a paragraph's lines sit between the margins.
@@ -446,6 +452,12 @@ pub enum Align {
     Leaders,
     /// A forced line break in a paragraph (`\\`, `\newline`: a penalty of -10000).
     Break,
+    /// Glue that stretches infinitely (`\hfil`, `\hfill`, `\hss`): where
+    /// it stands in a box or cell sets how the rest sits in it.
+    Fill,
+    /// A math script begins (`^`: true, `_`: false), and ends.
+    Script(bool),
+    ScriptEnd,
 }
 
 impl Align {
@@ -459,6 +471,9 @@ impl Align {
             Align::BoxEnd => "boxend".into(),
             Align::Leaders => "leaders".into(),
             Align::Break => "break".into(),
+            Align::Fill => "fill".into(),
+            Align::Script(sup) => (if sup { "sup" } else { "sub" }).into(),
+            Align::ScriptEnd => "scriptend".into(),
         }
     }
 }
@@ -470,8 +485,9 @@ pub enum Rule {
     Vertical,
     /// An `\hrule`: `\hline`, a line across.
     Horizontal,
-    /// A `\vrule` wider than 1pt: a bar in the line (`\rule{1cm}{2pt}`).
-    Bar,
+    /// A `\vrule` wider than 1pt: a bar in the line (`\rule{1cm}{2pt}`),
+    /// its width and its height plus depth (sp), 0 where the run did not know it.
+    Bar(crate::engine::value::Scaled, crate::engine::value::Scaled),
 }
 
 impl Rule {
@@ -480,7 +496,7 @@ impl Rule {
         match self {
             Rule::Vertical => "│",
             Rule::Horizontal => "―",
-            Rule::Bar => "▬",
+            Rule::Bar(..) => "▬",
         }
     }
 }

@@ -1017,6 +1017,9 @@ const EQNO: u8 = 1;
 /// The `part` of a box group that makes the box of leaders.
 const LEADERS: u8 = 2;
 
+/// The `part` of a box group that makes the box `\shipout` sends out.
+const SHIPPED: u8 = 3;
+
 /// tex.web § 1071 `box_context`: where the box goes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BoxContext {
@@ -1954,6 +1957,10 @@ impl Machine<'_> {
         if math.is_empty() {
             return;
         }
+        // a `{…}` script: it ends with its group
+        if self.script_pending.take().is_some() {
+            self.script_groups.push(self.env.depth());
+        }
         let code = if math == self.mode { Some(group::MATH) } else { None };
         // tex.web §§ 1153, 1186: a math group is one atom, ordinary or of
         // the type `\mathord` … `\mathinner` gave it, whose list starts
@@ -1989,6 +1996,10 @@ impl Machine<'_> {
     /// `package`, § 1186, § 1100), and a `\discretionary` or `\mathchoice`
     /// goes on to its next part (tex.web §§ 1119, 1174).
     pub(crate) fn group_closed(&mut self, nest: Option<Nest>, span: Span) {
+        while self.script_groups.last().is_some_and(|&d| self.env.depth() < d) {
+            self.script_groups.pop();
+            crate::analysis::observe::align(self, crate::analysis::facts::Align::ScriptEnd);
+        }
         let Some(mut nest) = nest else { return };
         // tex.web § 1132: a `}` ending a row stands for a missing `\cr`.
         if nest.code == Some(group::ALIGN) && nest.align.is_some() {
@@ -2139,8 +2150,8 @@ impl Machine<'_> {
         let now = self.out.facts.text.at.len() as u32;
         let inside = nest.list.within(Modes::INTERNAL_VERTICAL.union(Modes::RESTRICTED_HORIZONTAL));
         if let Some((register, global, within)) = nest.target {
-            let mut ranges = std::mem::take(&mut self.carried_chars);
-            ranges.push((nest.from, now));
+            let ranges = self.gather_chars(nest.from, now);
+            self.set_aside(nest.from, now);
             self.set_box_chars(register, ranges);
             self.set_box(register, kind, global, within);
             if kind != BoxState::Unknown {
@@ -2191,7 +2202,8 @@ impl Machine<'_> {
                 self.set_box_last(register, n.tail[0]);
             }
         } else if nest.placed {
-            self.place_chars(vec![(nest.from, now)], inside);
+            let own = self.gather_chars(nest.from, now);
+            self.place_chars(own, inside);
             let dims = self.shifted(dims, nest.shift);
             self.append_item(Item::Box(dims));
             // § 1076: `\vadjust` material in it follows it on the list.
@@ -2281,6 +2293,13 @@ impl Machine<'_> {
                 rows.natural = natural;
                 self.env.set_nest(rows);
                 self.template_row_start();
+            }
+        } else if nest.part == SHIPPED {
+            // its text and the boxes used in it reach the page
+            let own = self.gather_chars(nest.from, now);
+            self.place_chars(own, false);
+            if kind == BoxState::Unknown {
+                self.natural = None;
             }
         } else if nest.part == LEADERS {
             self.leader_size(dims.map(Some));
@@ -2448,7 +2467,10 @@ impl Machine<'_> {
                 }
                 self.scan_box(BoxContext::Leaders, span)
             }
-            ModeCmd::ShipOut => self.scan_box(BoxContext::Ship, span),
+            ModeCmd::ShipOut => {
+                crate::analysis::observe::page(self, span);
+                self.scan_box(BoxContext::Ship, span)
+            }
             // tex.web § 1099 `begin_insert_or_adjust`.
             ModeCmd::Insert { vadjust } => {
                 if !vadjust {
@@ -2713,6 +2735,9 @@ impl Machine<'_> {
                     2 => (unit(1, 1), unit(1, 1)),
                     _ => (unit(-1, 1), unit(0, 0)),
                 };
+                if code <= 2 && self.mode.meets(Modes::ANY_HORIZONTAL) {
+                    crate::analysis::observe::align(self, crate::analysis::facts::Align::Fill);
+                }
                 self.append_item(Item::glue(Some(0), Some(Glue { width: 0, stretch, shrink })))
             }
             Material::NoBoundary => {
@@ -3627,7 +3652,7 @@ impl Machine<'_> {
             // tex.web § 1078: the leader box itself goes on no list, but
             // the list's packing counts its size (§§ 656, 671).
             BoxContext::Leaders => nest.part = LEADERS,
-            BoxContext::Ship => {}
+            BoxContext::Ship => nest.part = SHIPPED,
         }
         self.env.set_nest(nest);
         if modes == Modes::INTERNAL_VERTICAL {
@@ -5218,6 +5243,14 @@ impl Machine<'_> {
         }
     }
 
+    /// A `^` or `_` in math, any style: where its script begins, for a view.
+    pub(crate) fn note_script(&mut self, sup: bool) {
+        if self.package().is_none() && !self.reading_format() {
+            self.script_pending = Some(sup);
+            crate::analysis::observe::align(self, crate::analysis::facts::Align::Script(sup));
+        }
+    }
+
     /// The style of a script in `style` (tex.web § 702): one size down, to
     /// scriptscript at most, and cramped for a subscript.
     fn script_style(style: u8, sup: bool) -> u8 {
@@ -5857,6 +5890,55 @@ impl Machine<'_> {
         if let Some(n) = register {
             self.box_chars.insert(n, ranges);
         }
+    }
+
+    /// The text set from `from` to `now` but in the boxes set aside on the way.
+    fn own_chars(&self, from: u32, now: u32) -> Vec<(u32, u32)> {
+        let (mut out, mut at) = (Vec::new(), from);
+        let first = self.aside.partition_point(|a| a.1 <= from);
+        for &(a, b) in self.aside[first..].iter().take_while(|a| a.0 < now) {
+            if a > at {
+                out.push((at, a));
+            }
+            at = at.max(b);
+        }
+        if at < now {
+            out.push((at, now));
+        }
+        out
+    }
+
+    /// What a box made from `from` to `now` holds, in the order of its list:
+    /// boxes made earlier and used in it first, then what was set in it and
+    /// the boxes made in it, as set.
+    fn gather_chars(&mut self, from: u32, now: u32) -> Vec<(u32, u32)> {
+        let carried = std::mem::take(&mut self.carried_chars);
+        let (mut ranges, mut within): (Vec<_>, Vec<_>) = carried.into_iter().partition(|r| r.0 < from);
+        // no text of its own, boxes made before used in it, rules both ways at its place: a frame around them
+        let text = &mut self.out.facts.text;
+        let ruled = |k| text.rules.iter().rev().take_while(|r| r.0 == from).any(|r| r.1 == k);
+        if from == now
+            && ruled(crate::analysis::facts::Rule::Vertical)
+            && ruled(crate::analysis::facts::Rule::Horizontal)
+            && let (Some(a), Some(b)) = (ranges.iter().map(|r| r.0).min(), ranges.iter().map(|r| r.1).max())
+            && text.frames.last() != Some(&(a, b))
+            && text.frames.len() < self.cfg.limits.facts
+        {
+            text.frames.push((a, b));
+        }
+        within.extend(self.own_chars(from, now));
+        within.sort_by_key(|r| r.0);
+        ranges.extend(within);
+        ranges
+    }
+
+    /// The text from `from` to `now` went into a register, not the enclosing list.
+    fn set_aside(&mut self, mut from: u32, now: u32) {
+        while let Some(&(a, _)) = self.aside.last().filter(|l| l.1 > from) {
+            self.aside.pop();
+            from = from.min(a);
+        }
+        self.aside.push((from, now));
     }
 
     /// A box's text reached the list: the page when no box encloses the
