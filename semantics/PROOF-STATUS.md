@@ -1,56 +1,81 @@
-# Soundness proof status (job 3)
+# Soundness proof status
 
 > Written with AI assistance from Claude Code (Claude Opus 5.5; build fixes with Claude Sonnet 5.5), directed and reviewed by the author.
 
 File: `lean/Satex/Soundness.lean`, imported from `lean/Satex.lean`.
-`lake build` succeeds (Lean 4.35.0, core only). No `sorry` in any file. No false statement found while compiling.
-Where a lemma is false for the model, the theorem takes the failing property as a named hypothesis, and the counterexample is below.
-Check the build first: the proofs rely on `omega`, `split`, `simp only [f]` with equation lemmas, and defeq through `ite`/`match`.
+`lake build` succeeds (Lean 4.35.0, core only). No `sorry` in any file.
+`lean/Satex/Axioms.lean` checks with `#guard_msgs` that the main theorems use only `propext`, `Classical.choice` and `Quot.sound`. The build fails if that changes.
 
-## Proven (modulo the build)
+## The main theorem
+
+`satex_sound_and_terminating`: with a per-step budget, every concrete run of a document is covered by an abstract run, no abstract run is infinite, and none is longer than its budget.
+The budget cut moves to a state that covers everything, so the cut makes the run coarser, never unsound.
+
+Its local obligation is split by family (`run_covered_families`). A step reads a command and its operands, then runs the command's effect.
+Two hypotheses remain, both named:
+
+- `hread : ReadCovers Read read`: the abstract reading (mouth and scanners) covers TeX's reading, state and command.
+- `hother : Covered AState.γ (AStep L read) Other`: the families that have no transfer in the model yet (list below).
+
+## Proven
 
 | Area | Theorems |
 | --- | --- |
-| generic domain | `AbsDom`, `γ_join`, `join_mono`, `Sound` closed under fork/join, decided arm, sequencing, weakening, `top` |
-| generic loop | `loopAbs_post`, `loopAbs_sound` (any number of passes), `loopPasses_le` (≤ k + 1 rounds) |
-| intervals | `itv_le_refl/trans`, `itv_join_lub`, `itv_γ_join`, `itv_γ_widen` (inside the word), `widen_chain_changes_le_two` (a widening chain changes at most twice) |
-| glue hulls | `ghLe_*`, `gh_join_l/r`, `gh_γ_mono`, `hullItv_cover`, `hullGlue_cover` |
-| values | `aval_join_sound` (CHANGES item 1, given `HullSound`), `avalDom : AbsDom Val AVal` |
-| assignment | `assign_global_sound` (§ 279), `assign_local_sound` (§ 277, level pinned), `define_sound` (`\globaldefs`), `pinned_of_plain` |
-| conditionals | `branch_sound` (item 6), `compare_sound` (`\ifnum`/`\ifdim` decide soundly), `astate_join_sound` (item 10, join at `\fi`) |
-| expansion | `atext_γ_append`, `substitute_sound` (§ 390), `dropToks_sound` (known delimiters, § 397), `text_meaning_body` |
-| loop head | `loopHead_post`, `loopHead_sound` (k passes, widening, summary), `loopHead_rounds` |
-| global | `run_covered` (induction on `Concrete.Steps`), `paths_covered`, `sound_and_terminating` (budgeted run: covers every concrete trace, well-founded, length ≤ budget) |
+| generic domain | `AbsDom`, `γ_join`, `join_mono`, `Sound` closed under fork, decided arm, sequencing, weakening, `top` |
+| generic loop | `loopAbs_post`, `loopAbs_sound`, `loopPasses_le` (≤ k + 1 rounds) |
+| intervals | `itv_join_lub`, `itv_γ_join`, `itv_γ_widen`, `widen_chain_changes_le_two` |
+| glue hulls | `gh_join_l/r`, `gh_γ_mono`, `hullItv_cover`, `hullGlue_cover` |
+| text hull | `hull_sound` (P3 and P4 fixed), `admits_union_l/r`, `printInt_number` |
+| values | `aval_join_sound` (no hypothesis), `avalDom`, `aval_widen_sound` (item 2: values in the 32-bit word) |
+| assignment | `assign_global_sound` (§ 279), `assign_local_sound` (§ 277, any level, under `many` frames: P1 fixed), `define_sound` (`\globaldefs`), `weakAssign_sound` (item 4) |
+| grouping | `beginGroup_sound` (§ 274), `endGroup_sound` (item 5, §§ 281–283: plain and `many` frames, `\aftergroup` as one list: P2 fixed) |
+| summaries | `summaryHavoc_sound` (item 9 corrected: levels and save entries of written locations: P5 fixed) |
+| conditionals | `branch_sound` (item 6), `compare_sound`, `astate_join_sound` (item 10) |
+| arguments | `scanDelim_sound` (item 7, over typed holes, digits and one-of tokens, delimiters across items: R2-1, R2-6), `dropAbs_sound` (leading tokens), `stripBraces_sound` (§ 400), `substitute_sound` (§ 390) |
+| loop head | `loopHead_post`, `loopHead_sound`, `loopHead_rounds` |
+| global | `run_covered`, `run_covered_families`, `fam_covered` (assignment and grouping effects), `budget_star`, `sound_and_terminating`, `satex_sound_and_terminating` |
 
-## Open (no `sorry`, simply not stated as proven)
+## Audit (2026-11-04)
 
-- `endGroup_sound` (item 5) is false as modelled: see P2. It also needs P1's pin.
-- `scanDelim_sound`, `scanUndelim_sound` and `scanParams_sound` (item 7) need a lemma relating `Concrete.firstDelim` to `scanDelim` over holes. Only the known-token part, `dropToks_sound`, is done.
-- `expand_sound` (item 8) needs item 7 and the `Expand` rule for macro calls.
-- `weakAssign_sound` (item 4) needs a fold over `assign_*`. It only applies when levels are pinned.
-- `AVal.widen_sound` (item 2) needs `HullSound` and `inWord` on every interval.
-- The `TClass` order (`le`/`union` upper bound) is not proven. It needs a 16-boolean case split, and core Lean has no `bv_decide`.
-- The `Ty` lattice is not proven. Types add no narrowing, so soundness does not depend on them.
-- A local-soundness lemma for each `Exec` rule. The global theorems take it as the hypothesis `hloc`.
+Every theorem was checked for hypotheses that never hold or assume the result.
 
-## Counterexamples: where the model (and maybe the Rust) is not sound
+- `HullSound` was false (P3, P4). The model is fixed and the lemma proven. No theorem takes it any more.
+- `assign_local_sound` needed the level pinned. It now holds at any level.
+- `hloc` assumed local soundness of every step. It is now split: the effects of assignment and grouping are proven, and the reading and the other families are named hypotheses.
+- `budget_covers` needed one abstract step per concrete step. It now takes any abstract run per step and cuts it where the budget ends.
+- `loopHead_sound`'s `hs` asks the summary to be a post-fixpoint of the abstract body. A body that saves entries changes the save stack, so `summaryHavoc` meets `hs` only for bodies without local writes. `summaryHavoc_sound` covers every run directly from the concrete footprint instead, which is what the Rust's summary relies on.
+- `γ` is not trivial anywhere. `AVal.top` and the cut state are the only states covering everything. `AState.γ` pins values, known levels, the save, conditional and input stacks, and the mode.
 
-- **P1. Local assignment under a `many` group frame.** `AState.assign` gives a new value the level `a.curLevel`, and decides whether to save by that level. With a `many` frame, `a.curLevel` is not pinned to the concrete level.
-  - Example: abstract save `[group c true]` at `curLevel` 2, and a concrete state with zero copies (`curLevel` 1). Then `\count0=1` locally makes the abstract level 2 and the concrete level 1, which breaks `γ`. The abstract run also pushes a restore that the concrete run lacks, so `SaveRel` fails.
-  - The Rust ("levels per slot", "stacks as intervals") should be checked for the same effect: a later `}` restores, or fails to restore, by a wrong level.
-- **P2. `\aftergroup` tokens.** Concrete `unsave` pushes all inserted tokens as one backed-up list. `AState.unsave` pushes one level per token, and `InputRel` compares level by level. So `{\aftergroup\a\aftergroup\b}` is not covered. This is a representation mismatch in the model only: make `InputRel` flatten adjacent backed-up levels, or push one list.
-- **P3. `TClass.admits` applies the hex restriction to signs.** Take `number ∪ {l, hex}`: the union has `hex = true` and does not admit `-` (`.char 45 .other` is not a hex code). So `AText.hull` of `[digits [-5,-5]]` and a hex-letter hole misses `-5`. The Rust `TextClass` keeps SIGN apart from OTHER (tex.rs:421), so this is likely a model bug. Restrict `admits` by `hex` only for the letter and other kinds.
-- **P4. `AText.hull` requires balanced text.** `Hole.γ` demands `balanced p`, but `AVal.toks` admits unbalanced members (`[tok '{']`). Concrete token registers are always balanced, so either add `balanced` to `AVal.γ` for toks, or drop it from the hull. Because of P3 and P4, `HullSound` is false today.
-- **P5. `summaryHavoc` keeps levels and the save stack.** A body that runs `\count0=1` at group level 2, while `\count0` was set at level 1, pushes a restore entry on its first pass and changes the slot level. The summary keeps `a.save` and `a.level`, so `γ` fails. CHANGES item 9 is false as stated.
-  - Possibly also in the Rust: if a loop or call summary moves a slot's level without the save entry, a later exact local write inside the same group is not restored at `}` (for example `\count0=7 {…summarized loop… \count0=5} \the\count0` gives 5 instead of 7). Check `widen_slot` in env.rs.
-- **P6. The budget cut needs a real top.** `sound_and_terminating` holds only if a cut moves to a state that covers everything. `AState` has no such state (input, save and cond are exact). The Rust cut widens assignments only, not catcodes, groups, files, streams or `\write` (domains.md "Known limits", row 2). So cut runs are not covered.
+## Model changes in this round
+
+- **P1, P5.** A write whose save entry the model cannot decide leaves `touched l` on the save stack: any number of restore entries for `l` may sit in that frame (`SaveRel.skip`). Closing the frame makes `l` unknown, as the Rust's `unfold` widens saved slots. Levels are `Option Nat`. `AState.pinned` says whether `curLevel` is TeX's group level. It is lost where a `many` frame closes.
+- **P2.** `closeFrom` collects `\aftergroup` tokens into one backed-up list, as `Concrete.unsave` does.
+- **P3.** `hex` restricts letters and others only (`hexOk`).
+- **P4.** `AVal.γ` of token lists requires balanced text. Token registers always hold balanced text.
+- **P6.** The budget cut is the state covering everything (`none`, `bγ = True`). The Rust cut (`resync`) now joins categories and makes the groups the region opened a `many` frame (test `a_cut_keeps_the_groups_the_region_opened_open`: TeX gives 31, SaTeX gave 7). Lines the skipped rest would write to open files stay an assumption of the Rust, reported as `region-writes` (domains.md "Known limits").
+- `weakAssign` writes `touched` and the join of the levels (`lvJoin`). The old fold of `assign` pushed restore entries TeX never made.
+- `scanDelim` is now the list of cuts of the input whose right side may begin with the delimiter (`AText.cuts`, `dropAbs`). The old scanner missed a delimiter that starts in one item and ends in a later one, and passed one-of tokens with unbalanced members whole.
+- `stripBraces` keeps the argument or its tokens as one hole.
+- `primitives.tsv`: the 204 `Exec.unmodeled` rows and the 11 open rows all name rules now. Exact: LuaTeX's math parameters (`mathParam`, 113 rows), `\toksapp` and relatives (`toksApp`), `\textfont` and relatives (`famFont`), `\letcharcode`, cramped styles, `\hjcode`, `\attribute`, `\hyphenationmin`, eTeX names. Over: LuaTeX direction, local box and math-noad primitives (`Exec.lua`, any assignment), backend ones (`Exec.operands`), font copies (`fontCopy`), `\ifcondition` (`Test.condition`). `Exec.unmodeled` is gone.
+
+## Open
+
+- `ReadCovers`: an abstract mouth and abstract scanners (`Next`, `ScanInt`, `ScanDimen`, `Internal`, `MatchParams` over `AInput`). Without it `scanDelim_sound` is not yet linked to `Expand.macro`.
+- `scanUndelim_sound`: not proven. Fixed on the way: a hole of class `c` may hold only spaces, and a one-of's rest is its members' suffixes. Still open: a one-of member with an unbalanced `{` whose group ends in a later item (`groupBody` passes non-token items whole).
+- `expand_sound` (item 8): needs `ReadCovers` and `scanUndelim_sound`.
+- Families without a transfer (`Other`): expansion primitives other than macro calls, boxes and typesetting, files and streams, `\write`, `\afterassignment` (`finishAssign`), modes, the output routine.
+- The `TClass` order (`TClass.le`) and the `Ty` lattice. Types add no narrowing, so soundness does not depend on them.
+
+## Counterexamples resolved
+
+P1–P5 of the previous status are fixed in the model as above. P6 is fixed in the Rust for categories and groups. Writes past a cut are a reported assumption. The REVIEW-2 findings R2-1 and R2-6 are covered by `scanDelim_sound`.
 
 ## How D1–D11 meet the proof
 
 - D1 breaks `loopHead_sound`'s hypothesis `hg` (`grows = false → join ≤ head`): a loop can stop before its fixpoint.
-- D4 and D5 break `hs` (the summary must be a post-fixpoint above the entry).
-- D6 and D9 break the `may_run` havoc, which would need every write.
-- D7 and D8 break completeness of `scanParams` (item 7): a concrete argument split has no abstract pair.
-- D10 is outside `itv_γ_widen` (`inWord`), because `Num::full(false)` is used as a top that it is not.
+- D4 and D5 break the footprint `summaryHavoc_sound` needs: the summary must cover every location a run may write.
+- D6 and D9 break the `may_run` havoc, which needs every write.
+- D7 and D8 break `scanDelim_sound`: a cut the Rust prunes may be one TeX takes.
+- D10 is outside `aval_widen_sound` (`AValInWord`).
 - D11: the model havocs here, so `expandWith` stays sound, but the Rust does not.
-- D2 and D3 weaken the havoc used by `loopHead`'s `widen` (`hw`) and `summary` (`hs`).
+- D2 and D3 weaken the havoc used by `loopHead`'s `widen` (`hw`) and the summary.

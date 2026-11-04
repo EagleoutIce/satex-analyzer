@@ -42,28 +42,28 @@ Line numbers are of HEAD 26ef7ce (2026-11-04, branch `getting-sound`). New findi
 | `AText.γ` | — | the model's meaning of an abstract token list: the concatenation of its items' texts |
 | `AText.hull` | `run_hull`, env.rs:2286 | Rust finer (keeps one typed token when all texts are one, and printed integers) |
 | `Ty`, `Ty.parent`, `Ty.join`, `Ty.le` | `Ty`, `parent`, `join`, `leq`, src/analysis/roles.rs:210-414 | same, case for case. `γ` is a parameter (`Ty.Admissible`): types add no narrowing to the run |
-| `ASave`, `SaveRel` | the journal `Entry`, `Mark` with `many`, env.rs:46-170 | same. Levels: Rust's 0 is the model's 1 (`level_one`) |
+| `ASave`, `SaveRel` | the journal `Entry`, `Mark` with `many`, env.rs:46-170 | same for sure entries. Levels: Rust's 0 is the model's 1 (`level_one`). `touched` has no Rust entry: where the model cannot decide a save, the Rust decides it by its frame-relative level and widens the saved slots at `unfold`. Model coarser: a touched location is unknown at its frame's end |
 | `ACond`, `CondRel` | `CondFrame` with `many`, explore.rs `Key.conds` | same |
-| `AState`, `AState.γ` | `Env` + `PathState`, env.rs:173; machine.rs | catcode sets, files written (`Outputs`), streams (`Streams` of `At` hulls, machine.rs:1158-1261, joined by `join_streams`, pinned by `pin_stream`, machine.rs:4168), `Wild` name families, `Corr` arm pairing and marks are not modelled |
+| `AState`, `AState.γ` | `Env` + `PathState`, env.rs:173; machine.rs | levels `Option Nat` (`none`: any). `pinned`: the group level is TeX's. The Rust counts a `many` mark as one level and keeps comparing levels relative to frames, finer than the model, which stops trusting levels once a `many` frame closed. Also: | catcode sets, files written (`Outputs`), streams (`Streams` of `At` hulls, machine.rs:1158-1261, joined by `join_streams`, pinned by `pin_stream`, machine.rs:4168), `Wild` name families, `Corr` arm pairing and marks are not modelled |
 | `APaths`, `APaths.γ` | `Paths` (parked/arrived configs), explore.rs | same |
 
 ## Transfers
 
 | Lean | Rust | Status |
 | --- | --- | --- |
-| `AState.assign` | `Env::set` / `set_tracked`, env.rs:839-880 | same (tex.web §§ 277, 279) |
-| `AState.weakAssign` | `weaken_registers`, src/engine/exec.rs:3726 (`weaken_register_range` 3738) | same up to `limits.value_set` locations |
+| `AState.assign` | `Env::set` / `set_tracked`, env.rs:839-880 | same where the level is known (tex.web §§ 277, 279). Unknown level or unpinned: `touched` (P1, P5) |
+| `AState.weakAssign`, `weakAt` | `weaken_registers`, src/engine/exec.rs:3726 (`weaken_register_range` 3738) | same values up to `limits.value_set` locations. Levels: the model joins old and new (`lvJoin`) and leaves `touched`. Not checked against the Rust's levels |
 | `AState.havocRegs` | `weaken_registers` past the bound, `register_top`, exec.rs:5037 (dimension top too small: R2-5) | same |
-| `AState.beginGroup`, `unsave`, `restoreOne`, `endGroupN` | `push_group`, `pop_group`, `unwind_into`, env.rs:957, 1045, 1108 | same for plain frames (§§ 282-283). `many` frames: `many_from`, env.rs:1968, and the closer's fork (domains.md "Stacks as intervals") |
+| `AState.beginGroup`, `restoreOne`, `closeFrom`, `endGroup` | `push_group`, `pop_group`, `unwind_into`, env.rs:957, 1045, 1108 | same for plain frames (§§ 282-283), `\aftergroup` tokens as one list (`pop_group`). `many` frames: `unfold`, env.rs:750 (one copy closes and its saved slots widen, or none is left and the closer acts below), `many_from`, env.rs:1968 |
 | `branch` | `Machine::branch`, explore.rs:304 | same while choices remain. Past `limits.choices`/`RUNS`/hot site, `branch` gives `None`; each caller must then over-approximate. D8's callers do so since 2026-11-04 (`unforked_end`) |
 | `ifNumTest`, `ifNumNarrow` | `\ifnum` over `member_nums`, exec.rs:5228; `Num::narrow` | same |
 | `AState.joinable`, `AState.join` | `join_configs`, explore.rs:2755; `Env::join_paths`, env.rs:1580 | Rust finer: joins paths in different groups ("in the groups of the path that goes on") and keeps arms paired (`Corr`). The model keeps such paths apart. Open: not checked |
-| `scanDelim`, `afterItem`, `stripBraces` | `read_delimited`, machine.rs:10343; `find_delimiter`, machine.rs:10224; `strip_braces`, machine.rs:12511; holes: `hole`, `hides_delimiter`, `tail_split`, machine.rs:10753-10890 | **deviates**: a split-off rest of unknown text is taken to hold no delimiter (D7); a scan refused a fork assumes the argument does not end in unknown text (D8); a scan reading past a one-of token into a `\fi` ends there (`joined_at`, machine.rs:10383), an assumption. A refused fork makes the scan fuzzy, which a refuted give-back ignores (R2-1). A delimiter across a one-of's end and unknown text is missed (R2-6). Give-back rewinds the file (`give_back`, machine.rs:4792) |
+| `scanDelim`, `AText.cuts`, `dropAbs`, `stripBraces` | `read_delimited`, machine.rs:10343; `find_delimiter`, machine.rs:10224; `strip_braces`, machine.rs:12511; holes: `hole`, `hides_delimiter`, `tail_split`, machine.rs:10753-10890 | **deviates**: a split-off rest of unknown text is taken to hold no delimiter (D7); a scan refused a fork assumes the argument does not end in unknown text (D8); a scan reading past a one-of token into a `\fi` ends there (`joined_at`, machine.rs:10383), an assumption. R2-1 and R2-6 fixed (REVIEW-2 "Status"). The model lists every cut of the input and keeps those whose right side may begin with the delimiter. The Rust prunes cuts further by brace depth and `hides_delimiter`, finer. Give-back rewinds the file (`give_back`, machine.rs:4792). `stripBraces`: the model keeps the argument or its tokens as one hole, the Rust strips known frames exactly (finer) |
 | `scanUndelim`, `groupBody` | `read_undelimited`, machine.rs:9887 | same in shape |
-| `readLead`, `scanArgs`, `scanParams`, `splitParams`, `substitute` | `read_arguments`, `read_call_arguments`, machine.rs:9722-9750 | same in shape; `\par` in a non-`\long` argument (§ 396) and `#{` are not modelled |
+| `scanArgs`, `scanParams`, `splitParams`, `substitute` | `read_arguments`, `read_call_arguments`, machine.rs:9722-9750 | same in shape; `\par` in a non-`\long` argument (§ 396) and `#{` are not modelled. Leading tokens: `dropAbs` |
 | `expandWith` | macro call with meaning-set split (`limits.meaning_splits`) | a set left unsplit runs `may_run` over its macros (2026-11-04). **deviates** for `top`: Rust havocs nothing, reported as Assumption `unknown-text-run` (D11) |
 | `loopHead`, `loopRounds`, `loopRounds_le` | loop heads, explore.rs:946-1124 (`widen_after`, `paths.loops`) | same in shape. The Rust summarizes a diverging head only when its loop is registered (`paths.loops`, explore.rs:1069-1124); otherwise it goes on, and only the line budget ends it (`Machine::charge`, machine.rs:7315) |
-| `summaryHavoc` | `Machine::summarize`, explore.rs:1452, via `Env::widen` with `Reach::Havoc`, env.rs:1226 | **deviates** (D2, D3, D5) |
+| `summaryHavoc` | `Machine::summarize`, explore.rs:1452, via `Env::widen` with `Reach::Havoc`, env.rs:1226 | **deviates** (D2, D3, D5). Levels and save entries: the model makes written locations' levels unknown and leaves `touched` (P5). The Rust keeps the level per slot and restores to the value TeX gives or unknown digits (`semantics::model_deviations::group_ends_restore_after_open_groups_and_summaries`) |
 | `callSummaryRust` vs `callSummarySound` | `summarize_call`, `apply_summary`, src/analysis/machine/calls.rs:161, 197 | **deviates** (D4) |
 | `mayRunSound` | `Machine::may_run`, machine.rs (also via `widen_conditional`, exec.rs:2370) | coarser since 2026-11-04 for registers, parameters, codes, `\gdef`/`\xdef`, built names. **deviates** past `limits.may_run_depth` (reported) and for `\let` targets (D6 e) |
 | `dropErrors`, `DropSound` | `certain_error`, machine.rs:6883; `retract`, machine.rs:5591 | same: drops only paths whose error comes from library code (`own_file` keeps document errors). A refuted run's diagnostics are retracted (explore.rs:812), also for a cycle ended by `no_arm`, which is a run (R2-2) |
@@ -126,13 +126,26 @@ Each lets the Rust lose a concrete outcome the model keeps.
 - **D11 (fixed 2026-11-04 for joined sets; top reported, not havocked). Executing a name of unknown meaning widens nothing.**
   domains.md "Known limits", first row. The model's `expandWith` havocs.
 
-PROOF-STATUS P1, P5, P6 in the Rust (2026-11-04): P1 and P5 are not
-seen there. Groups a loop left open and a summarized loop inside a group
-give the value TeX gives or unknown digits at the group's end
+PROOF-STATUS P1, P5, P6 (2026-11-04). P1 and P5 are not seen in the Rust.
+Groups a loop left open and a summarized loop inside a group give the value
+TeX gives or unknown digits at the group's end
 (`semantics::model_deviations::group_ends_restore_after_open_groups_and_summaries`).
-P6: a cut now joins each category the skipped region changed with its old
-one (`resync`). Groups, files, streams and `\write` past a cut are still
-not widened (domains.md "Known limits").
+The model now covers both with `touched` save entries (`assign_local_sound`,
+`summaryHavoc_sound`, `endGroup_sound`). P6: the model's cut covers
+everything. The Rust cut (`resync`) joins each category the skipped region
+changed with its old one (`region-catcodes`), and makes the groups the
+region opened one `many` frame (2026-11-04, test
+`a_cut_keeps_the_groups_the_region_opened_open`; groups of different kinds
+are closed and reported, `region-groups`). Lines the skipped rest would
+write to open files are assumed not written, reported as `region-writes`.
+That assumption is where the Rust's cut is not the model's.
+
+Primitives the Rust registers as `Unmodeled` (builtins.rs) now have
+`Concrete` rules (`primitives.tsv`): exact ones for LuaTeX's math parameters
+(`mathParam`), `\toksapp` and relatives (`toksApp`), `\textfont` and
+relatives (`famFont`), `\letcharcode`; over-approximating ones otherwise
+(`Exec.lua`, `Exec.operands`, `fontCopy`, `Test.condition`). The Rust still
+reports each as unsupported when it runs.
 
 Not soundness: `Ty::parent` puts `Reg(k)` under `Top`, not under
 `Register` (roles.rs:371-401), though `register` is documented as "a

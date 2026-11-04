@@ -11,151 +11,151 @@ Ucharcat	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
 Udelcode	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
 Udelcodenum	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
 Udelimiter	Exec.operands	tex.web §§ 1151–1186	over
-Udelimiterover	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Udelimiterunder	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Uhextensible	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Uleft	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+Udelimiterover	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Udelimiterunder	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Uhextensible	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Uleft	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 Umathaccent	Exec.operands	tex.web §§ 1151–1186	over
-Umathaxis	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathbinbinspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathbinclosespacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathbininnerspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathbinopenspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathbinopspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathbinordspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathbinpunctspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathbinrelspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+Umathaxis	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbinbinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbinclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbininnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbinopenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbinopspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbinordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbinpunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbinrelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
 Umathchar	Exec.operands	tex.web §§ 1151–1186	over
-Umathcharclass	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathchardef	-	tex.web § 1234; pdfTeX/XeTeX/LuaTeX manuals	open
-Umathcharfam	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+Umathcharclass	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+Umathchardef	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Umathcharfam	Internal.unknowable,Exec.illegal	LuaTeX manual	over
 Umathcharnum	Exec.operands	tex.web §§ 1151–1186	over
-Umathcharnumdef	-	tex.web § 1234; pdfTeX/XeTeX/LuaTeX manuals	open
-Umathcharslot	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathclosebinspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathcloseclosespacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathcloseinnerspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathcloseopenspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathcloseopspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathcloseordspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathclosepunctspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathcloserelspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+Umathcharnumdef	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Umathcharslot	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+Umathclosebinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathcloseclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathcloseinnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathcloseopenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathcloseopspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathcloseordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathclosepunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathcloserelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
 Umathcode	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
 Umathcodenum	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
-Umathconnectoroverlapmin	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathfractiondelsize	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathfractiondenomdown	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathfractiondenomvgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathfractionnumup	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathfractionnumvgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathfractionrule	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathinnerbinspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathinnerclosespacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathinnerinnerspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathinneropenspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathinneropspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathinnerordspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathinnerpunctspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathinnerrelspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathlimitabovebgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathlimitabovekern	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathlimitabovevgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathlimitbelowbgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathlimitbelowkern	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathlimitbelowvgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathnolimitsubfactor	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathnolimitsupfactor	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathopbinspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathopclosespacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathopenbinspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathopenclosespacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathopeninnerspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathopenopenspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathopenopspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathopenordspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathopenpunctspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathopenrelspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathoperatorsize	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathopinnerspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathopopenspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathopopspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathopordspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathoppunctspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathoprelspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathordbinspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathordclosespacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathordinnerspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathordopenspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathordopspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathordordspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathordpunctspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathordrelspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathoverbarkern	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathoverbarrule	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathoverbarvgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathoverdelimiterbgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathoverdelimitervgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathpunctbinspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathpunctclosespacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathpunctinnerspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathpunctopenspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathpunctopspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathpunctordspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathpunctpunctspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathpunctrelspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathquad	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathradicaldegreeafter	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathradicaldegreebefore	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathradicaldegreeraise	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathradicalkern	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathradicalrule	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathradicalvgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathrelbinspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathrelclosespacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathrelinnerspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathrelopenspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathrelopspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathrelordspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathrelpunctspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathrelrelspacing	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathskewedfractionhgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathskewedfractionvgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathspaceafterscript	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathstackdenomdown	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathstacknumup	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathstackvgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathsubshiftdown	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathsubshiftdrop	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathsubsupshiftdown	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathsubsupvgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathsubtopmax	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathsupbottommin	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathsupshiftdrop	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathsupshiftup	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathsupsubbottommax	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathunderbarkern	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathunderbarrule	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathunderbarvgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathunderdelimiterbgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umathunderdelimitervgap	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Umiddle	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Unosubscript	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Unosuperscript	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Uoverdelimiter	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+Umathconnectoroverlapmin	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathfractiondelsize	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathfractiondenomdown	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathfractiondenomvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathfractionnumup	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathfractionnumvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathfractionrule	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinnerbinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinnerclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinnerinnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinneropenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinneropspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinnerordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinnerpunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinnerrelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathlimitabovebgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathlimitabovekern	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathlimitabovevgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathlimitbelowbgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathlimitbelowkern	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathlimitbelowvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathnolimitsubfactor	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathnolimitsupfactor	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopbinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopenbinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopenclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopeninnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopenopenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopenopspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopenordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopenpunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopenrelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoperatorsize	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopinnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopopenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopopspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoppunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoprelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordbinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordinnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordopenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordopspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordpunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordrelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoverbarkern	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoverbarrule	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoverbarvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoverdelimiterbgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoverdelimitervgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctbinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctinnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctopenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctopspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctpunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctrelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathquad	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathradicaldegreeafter	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathradicaldegreebefore	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathradicaldegreeraise	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathradicalkern	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathradicalrule	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathradicalvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelbinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelinnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelopenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelopspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelpunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelrelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathskewedfractionhgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathskewedfractionvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathspaceafterscript	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathstackdenomdown	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathstacknumup	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathstackvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsubshiftdown	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsubshiftdrop	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsubsupshiftdown	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsubsupvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsubtopmax	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsupbottommin	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsupshiftdrop	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsupshiftup	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsupsubbottommax	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathunderbarkern	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathunderbarrule	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathunderbarvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathunderdelimiterbgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathunderdelimitervgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umiddle	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Unosubscript	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Unosuperscript	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Uoverdelimiter	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
 Uradical	Exec.operands	tex.web §§ 1151–1186	over
-Uright	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Uroot	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Uskewed	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Uskewedwithdelims	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Ustack	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Ustartdisplaymath	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Ustartmath	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Ustopdisplaymath	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Ustopmath	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Usubscript	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Usuperscript	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Uunderdelimiter	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-Uvextensible	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+Uright	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Uroot	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Uskewed	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Uskewedwithdelims	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Ustack	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Ustartdisplaymath	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Ustartmath	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Ustopdisplaymath	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Ustopmath	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Usubscript	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Usuperscript	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Uunderdelimiter	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Uvextensible	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
 XeTeXOTcountfeatures	Internal.unknowable,Exec.illegal	XeTeX manual	over
 XeTeXOTcountlanguages	Internal.unknowable,Exec.illegal	XeTeX manual	over
 XeTeXOTcountscripts	Internal.unknowable,Exec.illegal	XeTeX manual	over
@@ -199,9 +199,9 @@ XeTeXlinebreakpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 XeTeXlinebreakskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
 XeTeXmathaccent	Exec.operands	tex.web §§ 1151–1186	over
 XeTeXmathchar	Exec.operands	tex.web §§ 1151–1186	over
-XeTeXmathchardef	-	tex.web § 1234; pdfTeX/XeTeX/LuaTeX manuals	open
+XeTeXmathchardef	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 XeTeXmathcharnum	Exec.operands	tex.web §§ 1151–1186	over
-XeTeXmathcharnumdef	-	tex.web § 1234; pdfTeX/XeTeX/LuaTeX manuals	open
+XeTeXmathcharnumdef	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 XeTeXmathcode	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
 XeTeXmathcodenum	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
 XeTeXpdffile	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
@@ -235,9 +235,9 @@ alignmark	Exec.illegal	LuaTeX manual, "Macros"; tex.web § 1045	exact
 aligntab	Exec.alignTab	LuaTeX manual, "Macros"; tex.web § 1128	exact
 atop	Exec.operands	tex.web §§ 1151–1186	over
 atopwithdelims	Exec.operands	tex.web §§ 1151–1186	over
-attribute	-	tex.web § 1234; pdfTeX/XeTeX/LuaTeX manuals	open
+attribute	Exec.specialTable,Internal.specialTable	LuaTeX manual	exact
 attributedef	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
-automaticdiscretionary	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+automaticdiscretionary	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121; LuaTeX manual	over
 automatichyphenmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 automatichyphenpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 badness	Internal.unknowable,Exec.illegal	tex.web §§ 416–424	over
@@ -250,14 +250,14 @@ begingroup	Exec.begingroup	tex.web § 1063	exact
 belowdisplayshortskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
 belowdisplayskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
 binoppenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-bodydir	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+bodydir	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 bodydirection	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 botmark	Expand.marks	tex.web § 386	over
 botmarks	Expand.marksClass	etex_man § 3.12	over
-boundary	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+boundary	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
 box	Exec.box,BeginBox.box	tex.web § 1079	exact
-boxdir	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-boxdirection	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+boxdir	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+boxdirection	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 boxmaxdepth	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
 breakafterdirmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 brokenpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
@@ -266,21 +266,21 @@ catcodetable	Exec.lua	LuaTeX manual, "Lua related primitives", "Catcode tables"	
 char	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
 chardef	Exec.shorthandDef	tex.web § 1224	exact
 cleaders	Exec.leaders,BoxEnd.leaders	tex.web § 1078	over
-clearmarks	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+clearmarks	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 closein	Exec.closein	tex.web § 1275	exact
 closeout	Exec.write,Exec.immediate,WriteCmd.openNow,WriteCmd.closeNow	tex.web §§ 1351–1374	over
 clubpenalties	Exec.penalties,Internal.penalties	etex_man § 3.13	exact
 clubpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 compoundhyphenmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 copy	Exec.box,BeginBox.copy	tex.web §§ 1079–1086	exact
-copyfont	-	tex.web § 1234; pdfTeX/XeTeX/LuaTeX manuals	open
+copyfont	Exec.fontCopy	pdfTeX/LuaTeX manuals	over
 count	Exec.register,Internal.register	tex.web §§ 413, 1224	exact
 countdef	Exec.shorthandDef	tex.web § 1224	exact
 cr	Exec.alignment	tex.web §§ 768–812	over
-crampeddisplaystyle	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-crampedscriptscriptstyle	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-crampedscriptstyle	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-crampedtextstyle	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+crampeddisplaystyle	Exec.mathStyle	tex.web § 1169; LuaTeX manual, "Math styles"	exact
+crampedscriptscriptstyle	Exec.mathStyle	tex.web § 1169; LuaTeX manual, "Math styles"	exact
+crampedscriptstyle	Exec.mathStyle	tex.web § 1169; LuaTeX manual, "Math styles"	exact
+crampedtextstyle	Exec.mathStyle	tex.web § 1169; LuaTeX manual, "Math styles"	exact
 crcr	Exec.alignment	tex.web §§ 768–812	over
 creationdate	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
 csname	Expand.csname	tex.web § 372	exact
@@ -295,7 +295,7 @@ deadcycles	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 def	Exec.def_	tex.web § 1218	exact
 defaulthyphenchar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 defaultskewchar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-deferred	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+deferred	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 delcode	Exec.code,Internal.code	tex.web § 1232	exact
 delimiter	Exec.operands	tex.web §§ 1151–1186	over
 delimiterfactor	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
@@ -318,13 +318,13 @@ doublehyphendemerits	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 dp	Exec.boxDim,Internal.boxDim	tex.web §§ 420, 1247	exact
 draftmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 dump	Exec.end_,Exec.endInHorizontal	tex.web § 1054	over
-dviextension	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-dvifeedback	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-dvivariable	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-eTeXVersion	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-eTeXglueshrinkorder	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-eTeXgluestretchorder	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-eTeXminorversion	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+dviextension	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+dvifeedback	Expand.convertOther	LuaTeX manual	over
+dvivariable	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+eTeXVersion	Internal.etexVersion,Exec.illegal	etex_man § 3; LuaTeX manual	exact
+eTeXglueshrinkorder	Internal.glueComp,Exec.illegal	etex_man § 3; LuaTeX manual	exact
+eTeXgluestretchorder	Internal.glueComp,Exec.illegal	etex_man § 3; LuaTeX manual	exact
+eTeXminorversion	Internal.constant,Exec.illegal	etex_man § 3; LuaTeX manual	exact
 eTeXrevision	Expand.etexRevision	etex_man § 3.1	exact
 eTeXversion	Internal.etexVersion,Exec.illegal	etex_man § 3	exact
 edef	Exec.edef	tex.web § 1218	exact
@@ -339,15 +339,15 @@ endcsname	Exec.endcsname	tex.web § 1135	exact
 endgroup	Exec.endgroup	tex.web § 1069	exact
 endinput	Expand.endinput	tex.web § 362	exact
 endlinechar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-endlocalcontrol	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+endlocalcontrol	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 eqno	Exec.eqno	tex.web § 1140	over
 errhelp	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
 errmessage	Exec.message	tex.web § 1279	exact
 errorcontextlines	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 errorstopmode	Exec.interaction	tex.web § 1265	exact
 escapechar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-etoksapp	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-etokspre	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+etoksapp	Exec.toksApp	LuaTeX manual, "Token lists"	exact
+etokspre	Exec.toksApp	LuaTeX manual, "Token lists"	exact
 everycr	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
 everydisplay	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
 everyeof	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
@@ -362,7 +362,7 @@ exhyphenpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 expandafter	Expand.expandafterX	tex.web § 368	exact
 expanded	Expand.expanded	pdfTeX manual, "\expanded"	exact
 expandglyphsinfont	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
-explicitdiscretionary	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+explicitdiscretionary	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121; LuaTeX manual	over
 explicithyphenpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 fam	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 fi	Expand.fi	tex.web § 510	exact
@@ -383,10 +383,10 @@ fontcharwd	Internal.unknowable,Exec.illegal	etex_man § 3	over
 fontdimen	Exec.fontdimen,Internal.fontdimen	tex.web §§ 578, 1253	exact
 fontid	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
 fontname	Expand.fontname	tex.web § 470	exact
-formatname	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+formatname	Expand.convertOther	LuaTeX manual	over
 futurelet	Exec.futurelet	tex.web § 1221	exact
 gdef	Exec.def_	tex.web § 1218	exact
-gleaders	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+gleaders	Exec.leaders,BoxEnd.leaders	tex.web § 1078; LuaTeX manual	over
 glet	Exec.glet	LuaTeX manual, "Macros"	exact
 global	Exec.prefix_	tex.web § 1211	exact
 globaldefs	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
@@ -397,8 +397,8 @@ gluestretch	Internal.glueComp,Exec.illegal	etex_man § 3	exact
 gluestretchorder	Internal.glueComp,Exec.illegal	etex_man § 3	exact
 gluetomu	Internal.glueToMu,Exec.illegal	etex_man § 3	exact
 glyphdimensionsmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-gtoksapp	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-gtokspre	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+gtoksapp	Exec.toksApp	LuaTeX manual, "Token lists"	exact
+gtokspre	Exec.toksApp	LuaTeX manual, "Token lists"	exact
 halign	Exec.alignment	tex.web §§ 768–812	over
 hangafter	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 hangindent	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
@@ -408,10 +408,10 @@ hfil	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricte
 hfill	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
 hfilneg	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
 hfuzz	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
-hjcode	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+hjcode	Exec.specialTable,Internal.specialTable	LuaTeX manual	exact
 hoffset	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
 holdinginserts	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-hpack	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+hpack	Exec.box,BeginBox.open_	tex.web §§ 1079–1086; LuaTeX manual, "Boxes"	over
 hrule	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
 hsize	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
 hskip	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
@@ -419,7 +419,7 @@ hss	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted
 ht	Exec.boxDim,Internal.boxDim	tex.web §§ 420, 1247	exact
 hyphenation	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
 hyphenationbounds	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-hyphenationmin	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+hyphenationmin	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228; LuaTeX manual	exact
 hyphenchar	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
 hyphenpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 hyphenpenaltymode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
@@ -428,7 +428,7 @@ ifabsdim	Expand.ifTrue,Expand.ifFalse,Test.dim	pdfTeX manual, "\ifpdfabsdim"	exa
 ifabsnum	Expand.ifTrue,Expand.ifFalse,Test.num	pdfTeX manual, "\ifpdfabsnum"	exact
 ifcase	Expand.ifcase	tex.web § 509	exact
 ifcat	Expand.ifTrue,Expand.ifFalse,Test.cats	tex.web §§ 501–508	exact
-ifcondition	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+ifcondition	Expand.ifTrue,Expand.ifFalse,Test.condition	LuaTeX manual, "Conditions"	over
 ifcsname	Expand.ifTrue,Expand.ifFalse,Test.csname	etex_man § 3.6	exact
 ifdefined	Expand.ifTrue,Expand.ifFalse,Test.defined	etex_man § 3.6	exact
 ifdim	Expand.ifTrue,Expand.ifFalse,Test.dim	tex.web §§ 501–508	exact
@@ -455,14 +455,14 @@ ignoreligaturesinfont	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 13
 ignoreprimitiveerror	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 ignorespaces	Exec.ignorespaces	tex.web § 1045	exact
 immediate	Exec.immediate	tex.web § 1375	exact
-immediateassigned	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-immediateassignment	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+immediateassigned	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+immediateassignment	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 indent	Exec.startPar	tex.web §§ 1088–1093; pdfTeX manual	exact
 initcatcodetable	Exec.lua	LuaTeX manual, "Lua related primitives", "Catcode tables"	over
 input	Expand.input,Expand.inputMissing,Expand.inputPrompt	tex.web §§ 526–537	exact
 inputlineno	Internal.inputLineNo,Exec.illegal	tex.web §§ 416–424	exact
 insert	Exec.insert	tex.web §§ 1097–1100	exact
-insertht	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+insertht	Internal.unknowable,Exec.illegal	LuaTeX manual	over
 insertpenalties	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 interactionmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 interlinepenalties	Exec.penalties,Internal.penalties	etex_man § 3.13	exact
@@ -479,35 +479,35 @@ lastlinefit	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 lastnamedcs	Expand.lastnamedcs	LuaTeX manual, "Macros"	exact
 lastnodetype	Internal.lastNodeType,Exec.illegal	etex_man § 3	exact
 lastpenalty	Internal.lastPenalty,Exec.illegal	tex.web §§ 416–424	exact
-lastsavedboxresourceindex	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-lastsavedimageresourceindex	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-lastsavedimageresourcepages	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+lastsavedboxresourceindex	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+lastsavedimageresourceindex	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+lastsavedimageresourcepages	Internal.unknowable,Exec.illegal	LuaTeX manual	over
 lastskip	Internal.lastSkip,Exec.illegal	tex.web §§ 416–424	exact
-lastxpos	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-lastypos	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+lastxpos	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+lastypos	Internal.unknowable,Exec.illegal	LuaTeX manual	over
 latelua	Exec.lua	LuaTeX manual, "Lua related primitives", "Catcode tables"	over
 lateluafunction	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
 lccode	Exec.code,Internal.code	tex.web § 1232	exact
 leaders	Exec.leaders,BoxEnd.leaders	tex.web § 1078	over
 left	Exec.left	tex.web §§ 1191–1192; etex.ch	exact
-leftghost	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+leftghost	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121; LuaTeX manual	over
 lefthyphenmin	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 leftmarginkern	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
 leftskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
 leqno	Exec.eqno	tex.web § 1140	over
 let	Exec.let_	tex.web § 1221	exact
-letcharcode	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-letterspacefont	-	tex.web § 1234; pdfTeX/XeTeX/LuaTeX manuals	open
+letcharcode	Exec.letCharcode	LuaTeX manual, "Macros"	exact
+letterspacefont	Exec.fontCopy	pdfTeX/LuaTeX manuals	over
 limits	Exec.operands	tex.web §§ 1151–1186	over
-linedir	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+linedir	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 linedirection	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 linepenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 lineskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
 lineskiplimit	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
 localbrokenpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 localinterlinepenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-localleftbox	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-localrightbox	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+localleftbox	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+localrightbox	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 long	Exec.prefix_	tex.web § 1211	exact
 looseness	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 lower	Exec.shift	tex.web § 1073	exact
@@ -520,8 +520,8 @@ luadef	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
 luaescapestring	Expand.lua	LuaTeX manual, "Lua related primitives"	over
 luafunction	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
 luafunctioncall	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
-luatexbanner	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-luatexrevision	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+luatexbanner	Expand.convertOther	LuaTeX manual	over
+luatexrevision	Expand.convertOther	LuaTeX manual	over
 luatexversion	Internal.constant,Exec.illegal	LuaTeX manual	exact
 mag	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 mark	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
@@ -535,7 +535,7 @@ mathclose	Exec.operands	tex.web §§ 1151–1186	over
 mathcode	Exec.code,Internal.code	tex.web § 1232	exact
 mathdefaultsmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 mathdelimitersmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-mathdir	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+mathdir	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 mathdirection	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 mathdisplayskipmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 mathemptydisplaymode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
@@ -547,7 +547,7 @@ mathitalicsmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 mathnolimitsmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 mathop	Exec.operands	tex.web §§ 1151–1186	over
 mathopen	Exec.operands	tex.web §§ 1151–1186	over
-mathoption	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+mathoption	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 mathord	Exec.operands	tex.web §§ 1151–1186	over
 mathpenaltiesmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 mathpunct	Exec.operands	tex.web §§ 1151–1186	over
@@ -558,7 +558,7 @@ mathrulethicknessmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 mathscriptboxmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 mathscriptcharmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 mathscriptsmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-mathstyle	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+mathstyle	Internal.unknowable,Exec.illegal	LuaTeX manual	over
 mathsurround	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
 mathsurroundmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 mathsurroundskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
@@ -583,7 +583,7 @@ newlinechar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 noalign	Exec.alignment	tex.web § 785	over
 noboundary	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
 noexpand	Expand.noexpandX	tex.web §§ 358, 367	exact
-nohrule	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+nohrule	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121; LuaTeX manual	over
 noindent	Exec.startPar	tex.web §§ 1088–1093; pdfTeX manual	exact
 nokerns	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 noligs	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
@@ -592,7 +592,7 @@ nonscript	Exec.operands	tex.web §§ 1151–1186	over
 nonstopmode	Exec.interaction	tex.web § 1265	exact
 normaldeviate	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
 nospaces	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-novrule	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+novrule	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121; LuaTeX manual	over
 nulldelimiterspace	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
 nullfont	Exec.selectFont	tex.web § 1217	exact
 number	Expand.number	tex.web § 470	exact
@@ -612,7 +612,7 @@ overline	Exec.operands	tex.web §§ 1151–1186	over
 overwithdelims	Exec.operands	tex.web §§ 1151–1186	over
 pagebottomoffset	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
 pagedepth	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
-pagedir	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+pagedir	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 pagedirection	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 pagediscards	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
 pagefilllstretch	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
@@ -628,7 +628,7 @@ pagetopoffset	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
 pagetotal	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
 pagewidth	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
 par	Exec.parEnd,Exec.parOther	tex.web §§ 1094–1096	over
-pardir	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+pardir	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 pardirection	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 parfillskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
 parindent	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
@@ -649,7 +649,7 @@ pdfcatalog	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	o
 pdfcolorstack	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
 pdfcolorstackinit	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
 pdfcompresslevel	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-pdfcopyfont	-	tex.web § 1234; pdfTeX/XeTeX/LuaTeX manuals	open
+pdfcopyfont	Exec.fontCopy	pdfTeX/LuaTeX manuals	over
 pdfcreationdate	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
 pdfdecimaldigits	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 pdfdest	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
@@ -665,7 +665,7 @@ pdfescapename	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
 pdfescapestring	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
 pdfextension	Exec.operands	pdfTeX manual, "Primitives"	over
 pdffakespace	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
-pdffeedback	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+pdffeedback	Expand.convertOther	LuaTeX manual	over
 pdffiledump	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
 pdffilemoddate	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
 pdffilesize	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
@@ -797,7 +797,7 @@ prevgraf	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 primitive	Expand.primitive	pdfTeX manual, "\pdfprimitive"	exact
 protected	Exec.prefix_	etex_man § 3.4	exact
 protrudechars	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-protrusionboundary	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+protrusionboundary	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
 pxdimen	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
 quitvmode	Exec.startPar	tex.web §§ 1088–1093; pdfTeX manual	exact
 radical	Exec.operands	tex.web §§ 1151–1186	over
@@ -809,22 +809,22 @@ relax	Exec.relax	tex.web § 1045	exact
 relpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 resettimer	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
 right	Exec.right,Exec.rightExtra	tex.web §§ 1191–1192; etex.ch	exact
-rightghost	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+rightghost	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121; LuaTeX manual	over
 righthyphenmin	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 rightmarginkern	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
 rightskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
 romannumeral	Expand.romannumeral	tex.web §§ 69, 470	exact
 rpcode	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
-saveboxresource	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+saveboxresource	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
 savecatcodetable	Exec.lua	LuaTeX manual, "Lua related primitives", "Catcode tables"	over
 saveimageresource	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
-savepos	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+savepos	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
 savinghyphcodes	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 savingvdiscards	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 scantextokens	Expand.scantokens	LuaTeX manual, "\scantextokens"	exact
 scantokens	Expand.scantokens	etex_man § 3.9	exact
-scriptfont	-	tex.web § 1234; pdfTeX/XeTeX/LuaTeX manuals	open
-scriptscriptfont	-	tex.web § 1234; pdfTeX/XeTeX/LuaTeX manuals	open
+scriptfont	Exec.famFont,Internal.famFont	tex.web §§ 415, 1234	exact
+scriptscriptfont	Exec.famFont,Internal.famFont	tex.web §§ 415, 1234	exact
 scriptscriptstyle	Exec.mathStyle	tex.web § 1169	exact
 scriptspace	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
 scriptstyle	Exec.mathStyle	tex.web § 1169	exact
@@ -874,23 +874,23 @@ suppressprimitiveerror	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 synctex	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 tabskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
 tagcode	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
-textdir	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+textdir	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 textdirection	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-textfont	-	tex.web § 1234; pdfTeX/XeTeX/LuaTeX manuals	open
+textfont	Exec.famFont,Internal.famFont	tex.web §§ 415, 1234	exact
 textstyle	Exec.mathStyle	tex.web § 1169	exact
 the	Expand.the	tex.web § 465	exact
 thickmuskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
 thinmuskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
 time	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 toks	Exec.register,Internal.register	tex.web §§ 413, 1224	exact
-toksapp	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+toksapp	Exec.toksApp	LuaTeX manual, "Token lists"	exact
 toksdef	Exec.shorthandDef	tex.web § 1224	exact
-tokspre	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+tokspre	Exec.toksApp	LuaTeX manual, "Token lists"	exact
 tolerance	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 topmark	Expand.marks	tex.web § 386	over
 topmarks	Expand.marksClass	etex_man § 3.12	over
 topskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
-tpack	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+tpack	Exec.box,BeginBox.open_	tex.web §§ 1079–1086; LuaTeX manual, "Boxes"	over
 tracingassigns	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 tracingcommands	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 tracingfonts	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
@@ -921,8 +921,8 @@ unskip	Exec.operands	tex.web §§ 1057–1061, 1105	over
 unvbox	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
 unvcopy	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
 uppercase	Exec.caseShift	tex.web §§ 1285–1288	exact
-useboxresource	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-useimageresource	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+useboxresource	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+useimageresource	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
 vadjust	Exec.vadjust	tex.web §§ 1097–1100	exact
 valign	Exec.alignment	tex.web §§ 768–812	over
 variablefam	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
@@ -934,7 +934,7 @@ vfill	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestrict
 vfilneg	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
 vfuzz	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
 voffset	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
-vpack	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+vpack	Exec.box,BeginBox.open_	tex.web §§ 1079–1086; LuaTeX manual, "Boxes"	over
 vrule	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
 vsize	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
 vskip	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
@@ -944,11 +944,11 @@ vtop	Exec.box,BeginBox.open_	tex.web §§ 1079–1086	over
 wd	Exec.boxDim,Internal.boxDim	tex.web §§ 420, 1247	exact
 widowpenalties	Exec.penalties,Internal.penalties	etex_man § 3.13	exact
 widowpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-wordboundary	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+wordboundary	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
 write	Exec.write,Exec.immediate,WriteCmd.writeNow,WriteCmd.writeLater	tex.web §§ 1350–1374	over
 xdef	Exec.edef	tex.web § 1218	exact
 xleaders	Exec.leaders,BoxEnd.leaders	tex.web § 1078	over
 xspaceskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
-xtoksapp	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
-xtokspre	Exec.unmodeled	builtins.rs Unmodeled (SEM § 14)	over
+xtoksapp	Exec.toksApp	LuaTeX manual, "Token lists"	exact
+xtokspre	Exec.toksApp	LuaTeX manual, "Token lists"	exact
 year	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact

@@ -775,6 +775,7 @@ def _root_.Satex.IfOp.code : IfOp → Int
   | .vboxIf => 11 | .ifx => 12 | .eof => 13 | .iftrue => 14 | .iffalse => 15
   | .ifcase => 16 | .defined => 17 | .csname => 18 | .fontchar => 19
   | .absnum => 20 | .absdim => 21 | .incsname => 22 | .primitive => 23
+  | .condition => 24   -- LuaTeX; the number is not checked against luatex.web
 
 def itemCode : Option Item → Int
   | none => -1
@@ -912,6 +913,22 @@ inductive BodyRaw : State → Nat → TokList → State → Prop
   | tok {s s1 s2 : State} {d : Nat} {ts : TokList} {t : Token} :
       Next s t s1 → t.isBgroup = false → t.isEgroup = false → BodyRaw s1 d ts s2 →
       BodyRaw s d (t.stored :: ts) s2
+
+def nameOfMeaning : Meaning → String
+  | .prim n _ => n
+  | _ => ""
+
+/-- Math families (§ 1234 `scan_four_bit_int`; XeTeX and LuaTeX have 256). -/
+def famCount (E : Engine) : Nat := if E.unicode then 256 else 16
+
+/-- LuaTeX's math style numbers: display 0, then text, script,
+scriptscript, each followed by its cramped form (LuaTeX manual, "Math
+styles"). -/
+def styleIndex : String → Nat
+  | "displaystyle" => 0 | "crampeddisplaystyle" => 1
+  | "textstyle" => 2 | "crampedtextstyle" => 3
+  | "scriptstyle" => 4 | "crampedscriptstyle" => 5
+  | "scriptscriptstyle" => 6 | _ => 7
 
 /-! ## The gullet and the scanners (mutual: expansion happens inside scans) -/
 
@@ -1142,6 +1159,15 @@ inductive Stretch (E : Engine) : Bool → String → State → Int × Nat → St
   | present {s s1 s2 : State} {mu : Bool} {kw : String} {v : Int × Nat} :
       Keyword E s kw.toList [] true s1 → ScanDimen E true mu s1 v s2 → Stretch E mu kw s v s2
 
+/-- LuaTeX `scan_math_style`: a style command, or its number. -/
+inductive MathStyleArg (E : Engine) : State → Nat → State → Prop
+  | cmd {s s1 : State} {t : Token} :
+      XNonRelax E s t s1 → cmdOf s1 t = some (.mode "mathstyle") →
+      MathStyleArg E s (styleIndex (nameOfMeaning (meaningTok s1 t))) s1
+  | num {s s1 s2 : State} {t : Token} {i : Int} :
+      XNonRelax E s t s1 → cmdOf s1 t ≠ some (.mode "mathstyle") → ScanInt E (backInput t s1) i s2 →
+      0 ≤ i → i ≤ 7 → MathStyleArg E s i.toNat s2
+
 /-- `scan_something_internal` (§ 413): the value of an internal quantity
 whose token comes next. -/
 inductive Internal (E : Engine) : State → IVal → State → Prop
@@ -1287,6 +1313,14 @@ inductive Internal (E : Engine) : State → IVal → State → Prop
       Internal E s (.int (let m := s2.intAt (.special n 0)
                           if i < 0 then 0 else if i = 0 then m else
                           s2.intAt (.special n (if i > m then m.toNat else i.toNat)))) s2
+  /-- LuaTeX `\Umath…` parameters, per math style. -/
+  | mathParam {s s1 s2 : State} {t : Token} {n : String} {k : RegKind} {st : Nat} :
+      Next s t s1 → cmdOf s1 t = some (.mathParam n k) → MathStyleArg E s1 st s2 →
+      Internal E s (valOfLoc k (s2.get (.special n st))) s2
+  /-- `\textfont n` and relatives (§ 415): a font identifier. -/
+  | famFont {s s1 s2 : State} {t : Token} {size : Nat} {fam : Int} :
+      Next s t s1 → cmdOf s1 t = some (.famFont size) → ScanInt E s1 fam s2 → 0 ≤ fam →
+      fam.toNat < famCount E → Internal E s (.font (s2.intAt (.famFont size fam.toNat)).toNat) s2
   /-- Other per-character or per-class tables (`\XeTeXcharclass`,
   `\Umathcode`, …): read back as stored at the operand's index. -/
   | specialTable {s s1 s2 : State} {t : Token} {n : String} {i : Int} :
@@ -1545,6 +1579,9 @@ inductive Test (E : Engine) : IfOp → State → Bool → State → Prop
   | fontchar {s s1 s2 : State} {f : Nat} {c : Int} :
       Internal E s (.font f) s1 → ScanInt E s1 c s2 → Test E .fontchar s (E.hasChar f c.toNat) s2
   | incsname {s : State} : Test E .incsname s (decide (s.inCsname > 0)) s
+  /-- **[over]** LuaTeX `\ifcondition`: the test expands what follows, any
+  answer (LuaTeX manual, "Conditions"). -/
+  | condition {s s1 : State} {b : Bool} : s1.vfs = s.vfs → Test E .condition s b s1
   | primitive {s s1 : State} {t : Token} :
       Next s t s1 →
       Test E .primitive s (match t with
@@ -2031,6 +2068,14 @@ inductive BoxEnd (E : Engine) : BoxContext → BoxVal → State → State → Pr
   | shipout {s : State} {b : BoxVal} {o : List Output} :
       BoxEnd E .shipout b s { s with out := o ++ s.out }
 
+/-- The group a box command opens. LuaTeX's `\hpack`, `\vpack`, `\tpack`
+are `\hbox`, `\vbox`, `\vtop` without callbacks (LuaTeX manual, "Boxes"). -/
+def boxKind : String → Option GroupCode
+  | "hbox" | "hpack" => some .hbox
+  | "vbox" | "vpack" => some .vbox
+  | "vtop" | "tpack" => some .vtop
+  | _ => none
+
 /-- `begin_box` (§§ 1079–1084) in a context. -/
 inductive BeginBox (E : Engine) : BoxContext → State → Token → State → Prop
   /-- `\box n`: the register is emptied in place, no save entry (§ 1079). -/
@@ -2059,17 +2104,16 @@ inductive BeginBox (E : Engine) : BoxContext → State → Token → State → P
         { s3 with eqtb := upd s3.eqtb (.reg .box n.toNat) { s3.eqtb (.reg .box n.toNat) with val := .box r } } s4 →
       BeginBox E ctx s t s4
   /-- `\hbox`, `\vbox`, `\vtop` (§ 1083): spec, `{`, a group of its own. -/
-  | open_ {s s1 s2 s3 : State} {ctx : BoxContext} {t b : Token} {n : String} :
-      cmdOf s t = some (.boxCmd n) → (n = "hbox" ∨ n = "vbox" ∨ n = "vtop") →
+  | open_ {s s1 s2 s3 : State} {ctx : BoxContext} {t b : Token} {n : String} {g : GroupCode} :
+      cmdOf s t = some (.boxCmd n) → boxKind n = some g →
       BoxSpec E s s1 → XNonRelax E s1 b s2 → b.isBgroup = true →
-      s3 = (let g : GroupCode := if n = "hbox" then .hbox else if n = "vbox" then .vbox else .vtop
-            let s4 := pushNest { kind := if n = "hbox" then .horizontal else .vertical, inner := true }
+      s3 = (let s4 := pushNest { kind := if g = .hbox then .horizontal else .vertical, inner := true }
                         (newSaveLevel g (some ctx) s2)
-            insertEvery (if n = "hbox" then "everyhbox" else "everyvbox") s4) →
+            insertEvery (if g = .hbox then "everyhbox" else "everyvbox") s4) →
       BeginBox E ctx s t s3
 
 def isBoxCmd : Option Cmd → Bool
-  | some (.boxCmd n) => n == "copy" || n == "lastbox" || n == "vsplit" || n == "hbox" || n == "vbox" || n == "vtop"
+  | some (.boxCmd n) => n == "copy" || n == "lastbox" || n == "vsplit" || (boxKind n).isSome
   | some (.register .box) => true
   | _ => false
 
@@ -2087,10 +2131,6 @@ inductive Delim (E : Engine) : State → State → Prop
       XNonRelax E s (.char c k) s1 → (k = .letter ∨ k = .other) → Delim E s s1
   | cmd {s s1 s2 : State} {t : Token} {n : String} {c : Cmd} :
       XNonRelax E s t s1 → meaningTok s1 t = .prim n c → Operands E s1 (E.opsOf n) s2 → Delim E s s2
-
-def nameOfMeaning : Meaning → String
-  | .prim n _ => n
-  | _ => ""
 
 def charOfMeaning : Meaning → Option CharCode
   | .char c .letter => some c
@@ -2114,6 +2154,14 @@ inductive Dimens (E : Engine) : Nat → State → List Int → State → Prop
   | nil {s : State} : Dimens E 0 s [] s
   | cons {s s1 s2 : State} {n : Nat} {d : Int × Nat} {ds : List Int} :
       ScanDimen E false false s d s1 → Dimens E n s1 ds s2 → Dimens E (n + 1) s (d.1 :: ds) s2
+
+/-- LuaTeX's toks register operand: a `\toksdef` name or a number. -/
+inductive ToksReg (E : Engine) : State → Nat → State → Prop
+  | name {s s1 : State} {t : Token} {i : Nat} :
+      XNonRelax E s t s1 → meaningTok s1 t = .reg .toks i → ToksReg E s i s1
+  | num {s s1 s2 : State} {t : Token} {n : Int} :
+      XNonRelax E s t s1 → (∀ i, meaningTok s1 t ≠ .reg .toks i) → ScanInt E (backInput t s1) n s2 →
+      0 ≤ n → n.toNat ≤ E.maxReg → ToksReg E s n.toNat s2
 
 /-- `n` integers (penalty arrays). -/
 inductive Ints (E : Engine) : Nat → State → List Int → State → Prop
@@ -2391,6 +2439,37 @@ inductive Exec (E : Engine) : State → State → Prop
             "displaywidowpenalties", "XeTeXinterchartoks"] →
       ScanInt E s1 i s2 → OptEquals E s2 s3 → ScanInt E s3 v s4 →
       Exec E s (assignTo s4 (.special nm i.toNat) (.int v))
+  /-- LuaTeX `\Umath…` parameters: per math style a dimension, a math glue
+(the spacings) or an integer (LuaTeX manual, "Math parameter settings"). -/
+  | mathParam {s s1 s2 s3 s4 : State} {t : Token} {n : String} {k : RegKind} {st : Nat} {v : Val} :
+      Head s t s1 → cmdOf s1 t = some (.mathParam n k) → MathStyleArg E s1 st s2 →
+      OptEquals E s2 s3 → Value E k s3 v s4 → Exec E s (assignTo s4 (.special n st) v)
+  /-- LuaTeX `\toksapp`, `\tokspre` and their expanding (`e`, `x`) and
+  global (`g`, `x`) forms: a toks register, then a text put at its end or
+  front (LuaTeX manual, "Token lists"). -/
+  | toksApp {s s1 s2 s3 : State} {t : Token} {ex gl front : Bool} {i : Nat} {ts : TokList} :
+      Head s t s1 → cmdOf s1 t = some (.toksApp ex gl front) → ToksReg E s1 i s2 →
+      (if ex then ExpandedText E s2 ts s3 else GeneralText E false s2 ts s3) →
+      Exec E s (finishAssign (define s3 (gl || pfxGlobal s3) (.reg .toks i)
+        (.toks (if front then ts ++ s3.toksAt (.reg .toks i) else s3.toksAt (.reg .toks i) ++ ts))))
+  /-- `\textfont n = f` and relatives (§ 1234). -/
+  | famFont {s s1 s2 s3 s4 : State} {t : Token} {size : Nat} {fam : Int} {f : Nat} :
+      Head s t s1 → cmdOf s1 t = some (.famFont size) → ScanInt E s1 fam s2 → 0 ≤ fam →
+      fam.toNat < famCount E → OptEquals E s2 s3 → Internal E s3 (.font f) s4 →
+      Exec E s (assignTo s4 (.famFont size fam.toNat) (.int (Int.ofNat f)))
+  /-- LuaTeX `\letcharcode c = t`: the active character `c` means what `t`
+  means (LuaTeX manual, "Macros"). -/
+  | letCharcode {s s1 s2 s3 s4 : State} {t u : Token} {c : Int} :
+      Head s t s1 → cmdOf s1 t = some .letCharcode → ScanInt E s1 c s2 → 0 ≤ c →
+      c.toNat ≤ charMax E → OptEquals E s2 s3 → Next s3 u s4 →
+      Exec E s (assignTo s4 (.meaning (.active c.toNat)) (.meaning (meaningTok s4 u)))
+  /-- **[over]** `\copyfont`, `\pdfcopyfont`, `\letterspacefont` (pdfTeX and
+  LuaTeX manuals): a name for a copy of a font, letter-spaced by an integer
+  for the last. The copy's number is any. -/
+  | fontCopy {s s1 s2 s3 s4 : State} {t : Token} {sp : Bool} {r : CsRef} {f f' : Nat} {k : Int} :
+      Head s t s1 → cmdOf s1 t = some (.fontCopy sp) → RToken s1 r s2 → Internal E s2 (.font f) s3 →
+      (if sp then ScanInt E s3 k s4 else s4 = s3) →
+      Exec E s (assignTo s4 (.meaning r) (.meaning (.font f')))
   /-- **[over]** `\XeTeXinterchartoks a b = {…}`: stored where SaTeX reads
   it, which this formalisation leaves open: any value. -/
   | interchartoks {s s1 s2 s3 s4 : State} {t : Token} {i j : Int} {v : Val} :
@@ -2663,14 +2742,6 @@ inductive Exec (E : Engine) : State → State → Prop
   | setFontId {s s1 s2 : State} {t : Token} {f : Int} :
       Head s t s1 → cmdOf s1 t = some .setFontId → ScanInt E s1 f s2 →
       Exec E s (assignTo s2 .curFont (.int f))
-  /-- **[over]** A primitive SaTeX does not model (`Unmodeled`): it reads
-  no operands there (an assumption SaTeX reports as unsupported) and may
-  change the mode and the list. -/
-  | unmodeled {s s1 : State} {t : Token} {m : Mode} {i : List Item} :
-      Head s t s1 → cmdOf s1 t = some .unmodeled →
-      Exec E s (match s1.nest with
-        | l :: rest => { s1 with nest := { l with mode := m, items := i } :: rest }
-        | [] => s1)
 
 /-! ## The step relation -/
 

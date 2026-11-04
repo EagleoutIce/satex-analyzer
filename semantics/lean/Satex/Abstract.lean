@@ -45,7 +45,16 @@ structure Limits where
   callSummaryAfter : Nat := 2 -- limits.call_summary_after
   deriving Inhabited
 
-/-! ## 1. Intervals: `Num` (src/engine/value.rs) -/
+/-! ## 1. Intervals: `Num` (src/engine/value.rs)
+
+Intuition. Counts and dimensions are 32-bit words, and documents test them
+against constants (`\ifnum\count0>3`). An interval answers such a test
+whenever all its members agree, and narrows on each arm. Relational domains
+(octagons, polyhedra) would relate registers, but TeX code rarely compares
+two unknowns, and they cost far more per join. A small set of intervals
+(`limits.interval_set`) keeps disjoint cases apart before taking the hull.
+Widening jumps a moving bound to the word's end, so a chain changes at most
+twice (`widen_chain_changes_le_two`). -/
 
 structure Itv where
   lo : Int
@@ -191,7 +200,9 @@ end GlueHull
 /-! ## 3. Text classes: `TextClass` (src/engine/tex.rs)
 
 A class is the set of token kinds unknown text may hold. `hex` is a
-restriction: its letters and others are hex digits. -/
+restriction: its letters and others are hex digits. Kinds rather than
+character sets: a scan only asks whether text may hold a digit, a sign, a
+brace or a name, and seven bits answer that. -/
 
 inductive Kind where
   | digit | sign | letter | other | space | brace | cs
@@ -256,16 +267,16 @@ def kindOf : Token → Kind
   | .char _ _ => .other
   | _ => .cs
 
+/-- Whether a token passes the `hex` restriction: letters and others must
+be hex digits; digits, signs, spaces, braces and names are not restricted
+(`TextClass::holds` keeps SIGN apart from OTHER, tex.rs). -/
+def hexOk (t : Token) : Prop :=
+  (kindOf t = .letter ∨ kindOf t = .other) → ∃ c k, t = .char c k ∧ isHexCode c = true
+
 /-- Whether text of class `k` may hold token `t`. A class with names may
 hold anything (`CS` is "anything" in tex.rs). -/
 def TClass.admits (k : TClass) (t : Token) : Prop :=
-  k.c = true ∨
-    (k.has (kindOf t) = true ∧
-      (k.hex = true →
-        match t with
-        | .char c .letter => isHexCode c = true
-        | .char c .other => isHexCode c = true
-        | _ => True))
+  k.c = true ∨ (k.has (kindOf t) = true ∧ (k.hex = true → hexOk t))
 
 /-- Braces balanced, never closing below zero (§ 473). -/
 def balancedFrom : Nat → TokList → Bool
@@ -344,7 +355,10 @@ def AText.hull (xs : List AText) : AText :=
 /-! ## 5. Meaning sets: `Binding.may` (src/engine/env.rs)
 
 A member is a known meaning or a parameterless macro whose body is
-abstract text (`macro_hull`, a widened macro). -/
+abstract text (`macro_hull`, a widened macro). A name defined on two arms
+keeps both meanings, so a later call runs each. Going to `top` at once
+would lose every macro a conditional defines. Past `limits.meaning_set` the
+set does go to `top`. -/
 
 inductive AMeaning where
   | exact (m : Meaning)
@@ -379,7 +393,7 @@ def AVal.γ : AVal → Val → Prop
   | .meanings ms, v => ∃ a m, a ∈ ms ∧ v = .meaning m ∧ a.γ m
   | .ints ms, v => ∃ i n, i ∈ ms ∧ v = .int n ∧ i.γ n
   | .glues ms, v => ∃ h g, h ∈ ms ∧ v = .glue g ∧ h.γ g
-  | .toks ms, v => ∃ a p, a ∈ ms ∧ v = .toks p ∧ AText.γ a p
+  | .toks ms, v => ∃ a p, a ∈ ms ∧ v = .toks p ∧ AText.γ a p ∧ balanced p = true
   | .box mv w h d, v =>
     (mv = true ∧ v = .box .void) ∨
       ∃ x y z, (v = .box (.hbox x y z) ∨ v = .box (.vbox x y z)) ∧ w.γ x ∧ h.γ y ∧ d.γ z
@@ -514,16 +528,34 @@ end Ty
 
 /-! ## 8. The abstract state
 
-`eqtb` maps each location to an abstract value; levels are kept exactly
-(src/engine/env.rs keeps `level` per slot). Group and conditional frames
-may stand for any number of copies (`many`, "stacks as intervals"). The
-modes are a set (`Modes`, src/engine/mode.rs). -/
+Intuition. TeX's eqtb is a total map with a level per entry, and a save
+stack that undoes local writes at `}` (§§ 268–284). SaTeX keeps both, with
+abstract values. Two things make them inexact, and each has one device:
+
+- A loop that opens groups and does not close them leaves a stack of unknown
+  height. A `many` frame stands for zero or more alike groups ("stacks as
+  intervals"), listing the locations its copies may have saved.
+- A write whose save entry SaTeX cannot decide (an unknown level under a
+  `many` frame, or a summarized loop) leaves a `touched` entry: any number
+  of restore entries for that location, with any values, may sit in this
+  frame. Closing the frame makes the location unknown.
+
+Alternatives: tracking the exact level of every copy (unbounded), or
+widening the whole state at an unknown write (too coarse: one write would
+lose every value). `touched` loses only the written location, and only at
+the frame's end, which is what the Rust does (`unfold` widens the saved
+slots, env.rs). -/
 
 inductive ASave where
-  | restore (l : Loc) (old : AVal) (lvl : Nat)
+  /-- A restore entry the run made for sure: old value and level. -/
+  | restore (l : Loc) (old : AVal) (lv : Option Nat)
+  /-- Any number of restore entries for `l`, any values. -/
+  | touched (l : Loc)
   | retain (l : Loc)
   | insertToken (t : Token)
-  | group (c : GroupCode) (many : Bool)
+  /-- A group; `many = some ls`: zero or more alike groups whose copies may
+  save the locations `ls`. -/
+  | group (c : GroupCode) (many : Option (List Loc))
   deriving Inhabited
 
 inductive AInput where
@@ -537,36 +569,53 @@ structure ACond where
   many : Bool := false
   deriving Inhabited
 
+/-- Levels: `some n` is exact, `none` is any level. `pinned`: `curLevel` is
+TeX's group level; it is lost where a `many` frame closes. -/
 structure AState where
   eqtb : Loc → AVal
-  level : Loc → Nat
+  level : Loc → Option Nat
   curLevel : Nat := 1
+  pinned : Bool := true
   save : List ASave := []
   input : List AInput := []
   cond : List ACond := []
   modes : List ModeKind := [.vertical]
 
-/-- The save stack: a `many` group frame stands for zero or more concrete
-groups of its code, whose restore entries are any. -/
+/-- Whether the frame on top of `fr` has a `touched l` entry. -/
+def Touched (l : Loc) : List ASave → Prop
+  | [] => False
+  | .group _ _ :: _ => False
+  | .touched l' :: rest => l' = l ∨ Touched l rest
+  | _ :: rest => Touched l rest
+
+/-- The save stack. A `touched l` entry lets restore entries for `l`
+appear anywhere above it in its frame (`skip`). A `many` frame stands for
+zero or more groups of its code, each with restore entries for its
+locations. -/
 inductive SaveRel : List ASave → List SaveEntry → Prop
   | nil : SaveRel [] []
-  | restore {l : Loc} {a : AVal} {lv : Nat} {e : Entry} {rest : List ASave} {crest : List SaveEntry} :
-      a.γ e.val → e.level = lv → SaveRel rest crest →
+  | restore {l : Loc} {a : AVal} {lv : Option Nat} {e : Entry} {rest : List ASave}
+      {crest : List SaveEntry} :
+      a.γ e.val → (∀ n, lv = some n → e.level = n) → SaveRel rest crest →
       SaveRel (.restore l a lv :: rest) (.restore l e :: crest)
+  | touched {l : Loc} {rest : List ASave} {crest : List SaveEntry} :
+      SaveRel rest crest → SaveRel (.touched l :: rest) crest
+  | skip {l : Loc} {e : Entry} {rest : List ASave} {crest : List SaveEntry} :
+      Touched l rest → SaveRel rest crest → SaveRel rest (.restore l e :: crest)
   | retain {l : Loc} {rest : List ASave} {crest : List SaveEntry} :
       SaveRel rest crest → SaveRel (.retain l :: rest) (.retain l :: crest)
   | insertToken {t : Token} {rest : List ASave} {crest : List SaveEntry} :
       SaveRel rest crest → SaveRel (.insertToken t :: rest) (.insertToken t :: crest)
   | group {c : GroupCode} {ctx : Option BoxContext} {line : Nat} {rest : List ASave}
       {crest : List SaveEntry} :
-      SaveRel rest crest → SaveRel (.group c false :: rest) (.group c ctx line :: crest)
-  | manyNone {c : GroupCode} {rest : List ASave} {crest : List SaveEntry} :
-      SaveRel rest crest → SaveRel (.group c true :: rest) crest
-  | manyMore {c : GroupCode} {ctx : Option BoxContext} {line : Nat} {rest : List ASave}
-      {crest pre : List SaveEntry} :
-      SaveRel (.group c true :: rest) crest →
-      (∀ e, e ∈ pre → ∃ l old, e = .restore l old) →
-      SaveRel (.group c true :: rest) (pre ++ (SaveEntry.group c ctx line :: crest))
+      SaveRel rest crest → SaveRel (.group c none :: rest) (.group c ctx line :: crest)
+  | manyNone {c : GroupCode} {ls : List Loc} {rest : List ASave} {crest : List SaveEntry} :
+      SaveRel rest crest → SaveRel (.group c (some ls) :: rest) crest
+  | manyMore {c : GroupCode} {ls : List Loc} {ctx : Option BoxContext} {line : Nat}
+      {rest : List ASave} {crest pre : List SaveEntry} :
+      SaveRel (.group c (some ls) :: rest) crest →
+      (∀ e, e ∈ pre → ∃ l old, e = .restore l old ∧ l ∈ ls) →
+      SaveRel (.group c (some ls) :: rest) (pre ++ (SaveEntry.group c ctx line :: crest))
 
 /-- The conditional stack, `many` frames as above. -/
 inductive CondRel : List ACond → List CondLevel → Prop
@@ -590,12 +639,11 @@ def InputRel : List AInput → List InputLevel → Prop
   | a :: xs, c :: ys => a.γ c ∧ InputRel xs ys
   | _, _ => False
 
-/-- `γ` of an abstract state. With `many` frames the group level is
-any level the frames allow, so it is not pinned. -/
+/-- `γ` of an abstract state. -/
 def AState.γ (a : AState) (s : State) : Prop :=
   (∀ l, (a.eqtb l).γ (s.eqtb l).val) ∧
-  (∀ l, a.level l = (s.eqtb l).level) ∧
-  ((∀ f, f ∈ a.save → ∀ c, f ≠ .group c true) → a.curLevel = s.curLevel) ∧
+  (∀ l n, a.level l = some n → (s.eqtb l).level = n) ∧
+  (a.pinned = true → a.curLevel = s.curLevel) ∧
   SaveRel a.save s.save ∧
   CondRel a.cond s.cond ∧
   InputRel a.input s.input ∧
@@ -609,76 +657,93 @@ def APaths.γ (ps : APaths) (s : State) : Prop := ∃ a, a ∈ ps ∧ a.γ s
 
 /-! ## 9. Transfer: assignment and grouping (§§ 268–284)
 
-Mirrors Core's `eq_define`/`geq_define`; Rust: `Env::set`, `Env::pop_group`. -/
+Mirrors Core's `eq_define`/`geq_define`; Rust: `Env::set`, `Env::pop_group`.
+A local write saves the old entry exactly when TeX would; where the level
+is not known it leaves `touched` instead (see section 8). -/
 
 namespace AState
 
-def setAt (a : AState) (l : Loc) (v : AVal) (lv : Nat) : AState :=
+def setAt (a : AState) (l : Loc) (v : AVal) (lv : Option Nat) : AState :=
   { a with eqtb := upd a.eqtb l v, level := upd a.level l lv }
+
+/-- `touched l` on the save stack. -/
+def touch (a : AState) (l : Loc) : AState := { a with save := .touched l :: a.save }
 
 /-- § 277 `eq_define` (local) and § 279 `geq_define` (global). -/
 def assign (a : AState) (glob : Bool) (l : Loc) (v : AVal) : AState :=
-  if glob then a.setAt l v 1
-  else if a.level l = a.curLevel then a.setAt l v a.curLevel
-  else if a.curLevel > 1 then
-    { a.setAt l v a.curLevel with save := .restore l (a.eqtb l) (a.level l) :: a.save }
-  else a.setAt l v a.curLevel
+  if glob then a.setAt l v (some 1)
+  else if !a.pinned then (a.touch l).setAt l v none
+  else match a.level l with
+    | some n =>
+      if n = a.curLevel ∨ a.curLevel ≤ 1 then a.setAt l v (some a.curLevel)
+      else { a with save := .restore l (a.eqtb l) (some n) :: a.save }.setAt l v (some a.curLevel)
+    | none =>
+      if a.curLevel ≤ 1 then a.setAt l v (some a.curLevel)
+      else (a.touch l).setAt l v (some a.curLevel)
+
+/-- The level a write gives, if known. -/
+def newLevel (a : AState) (glob : Bool) : Option Nat :=
+  if glob then some 1 else if a.pinned then some a.curLevel else none
+
+/-- Two levels as one: equal, or unknown. -/
+def lvJoin (x y : Option Nat) : Option Nat := if x = y then x else none
+
+/-- A write that may or may not happen at `l`: the old value or `v`, the old
+level or the new one, and maybe a save entry (`touched`). -/
+def weakAt (L : Limits) (a : AState) (glob : Bool) (l : Loc) (v : AVal) : AState :=
+  (a.touch l).setAt l (AVal.join L (a.eqtb l) v) (lvJoin (a.level l) (a.newLevel glob))
 
 /-- A write through an index not pinned to one location (`weaken_registers`,
-src/engine/exec.rs): each location it may name joins the new value. -/
+src/engine/exec.rs): each location it may name may be the one written. -/
 def weakAssign (L : Limits) (a : AState) (glob : Bool) (ls : List Loc) (v : AVal) : AState :=
-  ls.foldl (fun (s : AState) (l : Loc) => s.assign glob l (AVal.join L (s.eqtb l) v)) a
+  ls.foldl (fun (s : AState) (l : Loc) => s.weakAt L glob l v) a
 
 /-- Past `limits.value_set` locations: every register of the kind may hold
-anything (`register_top`). Levels: a weak write may be local or global, so
-no restore entry is trusted for these; kept exact here, see mapping.md. -/
+anything (`register_top`). -/
 def havocRegs (a : AState) (k : RegKind) : AState :=
   { a with eqtb := fun l => match l with
       | .reg k' i => if k' = k then .top else a.eqtb (.reg k' i)
       | l' => a.eqtb l' }
 
 def beginGroup (a : AState) (c : GroupCode) : AState :=
-  { a with save := .group c false :: a.save, curLevel := a.curLevel + 1 }
+  { a with save := .group c none :: a.save, curLevel := a.curLevel + 1 }
 
-/-- One restore (§ 283): a global write since keeps its value. -/
-def restoreOne (a : AState) (l : Loc) (old : AVal) (lv : Nat) : AState :=
-  if a.level l = 1 then a else a.setAt l old lv
+/-- One restore (§ 283): a location written globally since (level one)
+keeps its value; an unknown level may go either way. -/
+def restoreOne (L : Limits) (a : AState) (l : Loc) (old : AVal) (lv : Option Nat) : AState :=
+  match a.level l with
+  | some 1 => a
+  | some _ => a.setAt l old lv
+  | none => a.setAt l (AVal.join L (a.eqtb l) old) none
 
-/-- Unwind to the group frame (§ 282). `none`: no frame (an error). -/
-def unsave : Nat → AState → List ASave → Option (AState × List ASave)
-  | 0, _, _ => none
-  | _, _, [] => none
-  | n + 1, a, .restore l old lv :: rest => unsave n (a.restoreOne l old lv) rest
-  | n + 1, a, .retain _ :: rest => unsave n a rest
-  | n + 1, a, .insertToken t :: rest =>
-    unsave n { a with input := AInput.toks .backedUp [AItem.tok t] :: a.input } rest
-  | _, a, .group c m :: rest => some (a, .group c m :: rest)
+/-- The state after a frame closed: the tokens saved by `\aftergroup` come
+back as one list (§ 282). -/
+def closed (a : AState) (ins : TokList) (rest : List ASave) : AState :=
+  { a with save := rest, curLevel := a.curLevel - 1,
+           input := if ins = [] then a.input else .toks .backedUp (AText.ofList ins) :: a.input }
 
-/-- The value a location may hold after a `many` frame closes once: its
-saved value or its current one (saved names widened). -/
-def widenSaved (L : Limits) (a : AState) (fr : List ASave) : AState :=
-  fr.foldl (fun (s : AState) (f : ASave) => match f with
-    | .restore l old _ => { s with eqtb := upd s.eqtb l (AVal.join L (s.eqtb l) old) }
-    | _ => s) a
+/-- Every location of `ls` unknown. -/
+def forget (a : AState) (ls : List Loc) : AState := ls.foldl (fun s l => s.setAt l .top none) a
 
-/-- `}` / `\endgroup`: a plain frame closes. A `many` frame forks: one copy
-closes and the frame stays (the saved names widened), or no copy is left
-and the closer acts below it. `n` bounds the frames looked through. -/
-def endGroupN (L : Limits) : Nat → AState → GroupCode → List AState
-  | 0, _, _ => []
-  | n + 1, a, c =>
-    match unsave (a.save.length + 1) a a.save with
-    | some (a', .group c' false :: rest) =>
-      if c' = c then [{ a' with save := rest, curLevel := a'.curLevel - 1 }] else []
-    | some (a', .group c' true :: rest) =>
-      if c' = c then
-        { widenSaved L a a.save with save := ASave.group c' true :: rest } ::
-          endGroupN L n { a' with save := rest } c
-      else []
-    | _ => []
+/-- `}` / `\endgroup` closing a group of code `c` (§§ 281–283): undo the
+entries down to the frame and collect the `\aftergroup` tokens in order. A
+plain frame closes. A `many` frame forks: one copy closes and the frame
+stays, its locations unknown; or no copy is left and the closer acts below
+it. Either way the group level is no longer pinned. -/
+def closeFrom (L : Limits) (c : GroupCode) : AState → TokList → List ASave → List AState
+  | _, _, [] => []
+  | a, ins, .restore l old lv :: rest => closeFrom L c (a.restoreOne L l old lv) ins rest
+  | a, ins, .touched l :: rest => closeFrom L c (a.setAt l .top none) ins rest
+  | a, ins, .retain _ :: rest => closeFrom L c a ins rest
+  | a, ins, .insertToken t :: rest => closeFrom L c a (t :: ins) rest
+  | a, ins, .group c' none :: rest => if c' = c then [a.closed ins rest] else []
+  | a, ins, .group c' (some ls) :: rest =>
+    (if c' = c then
+      [{ (a.closed ins (.group c' (some ls) :: rest)).forget ls with
+          curLevel := a.curLevel, pinned := false }] else []) ++
+      closeFrom L c { a with pinned := false } ins rest
 
-def endGroup (L : Limits) (a : AState) (c : GroupCode) : List AState :=
-  endGroupN L (a.save.length + 1) a c
+def endGroup (L : Limits) (a : AState) (c : GroupCode) : List AState := closeFrom L c a [] a.save
 
 end AState
 
@@ -726,71 +791,58 @@ def AState.joinable (a b : AState) : Prop :=
 def AState.join (L : Limits) (a b : AState) : AState :=
   { a with
     eqtb := fun l => AVal.join L (a.eqtb l) (b.eqtb l),
+    pinned := a.pinned && b.pinned,
     modes := a.modes ++ b.modes.filter (fun m => !(a.modes.contains m)) }
 
 /-! ## 11. Transfer: macro expansion and argument scanning (§§ 389–399)
 
-Arguments are read from the top token-list level. Over a typed hole a scan
-cannot know where its argument ends; it forks over the places that remain
-possible, and a hole that cannot hold the delimiter is passed whole. -/
+Intuition. A delimited argument is a cut of the input: the text before the
+delimiter and the text after it (§ 392). Over abstract text a cut falls
+between two items or inside one, so the scan lists every cut whose right
+side may begin with the delimiter. There are at most two cuts per item, so
+the list is finite. A hole's pieces are holes of its class, and they are
+balanced because TeX only matches a delimiter at brace depth 0.
 
-/-- Whether a hole may hold token `t`: its class admits `t`'s kind. -/
-def Hole.mayHold (h : Hole) (t : Token) : Bool :=
-  h.cls.c || h.cls.has (kindOf t)
+Alternatives: matching inside holes precisely (needs contents a hole does
+not have), or stopping at the first hole (loses every macro call whose
+argument holds unknown text). The Rust prunes the cuts further: by brace
+depth, and by whether an item may hold a delimiter token (`hides_delimiter`).
+Arguments are read from the top token-list level. -/
 
 /-- What is left of a hole after a scan took a part of it. -/
 def Hole.part (h : Hole) : Hole := { h with nonempty := false }
 
-/-- Whether an item that is not one known token may hold `t`. -/
-def AItem.mayHold : AItem → Token → Bool
-  | .tok t, t' => t == t'
-  | .hole h, t => h.mayHold t
-  | .digits _, t => TClass.number.has (kindOf t)
-  | .oneOf alts, t => alts.any (fun p => p.contains t)
+def prefixes (p : TokList) : List TokList := (List.range (p.length + 1)).map p.take
+def suffixes (p : TokList) : List TokList := (List.range (p.length + 1)).map p.drop
 
-/-- A part of an item a scan took or left: unknown text of its class. -/
-def AItem.part : AItem → AItem
-  | .hole h => .hole h.part
-  | it => .hole { cls := it.cls }
+/-- The cuts inside an item: its left and right pieces. A known token has
+none. Typed digits split into number text; a one-of splits each member. -/
+def AItem.cuts : AItem → List (AItem × AItem)
+  | .tok _ => []
+  | .hole h => [(.hole h.part, .hole h.part)]
+  | .digits _ => [(.hole { cls := TClass.number }, .hole { cls := TClass.number })]
+  | .oneOf alts => [(.oneOf (alts.flatMap prefixes), .oneOf (alts.flatMap suffixes))]
 
-/-- Tokens `ds` at the head of `xs` as known tokens: the rest, if so. -/
-def dropToks : TokList → AText → Option AText
-  | [], xs => some xs
-  | d :: ds, AItem.tok t :: xs => if t = d then dropToks ds xs else none
-  | _ :: _, _ => none
+/-- Every cut of an abstract text: before an item, or inside one. -/
+def AText.cuts : AText → List (AText × AText)
+  | [] => [([], [])]
+  | it :: xs => ([], it :: xs) :: (it.cuts.map (fun c => ([c.1], c.2 :: xs)) ++
+      (AText.cuts xs).map (fun c => (it :: c.1, c.2)))
 
-/-- The rests a delimiter `δ` may leave when it may start inside an item:
-every suffix of `δ` may be what lies after the item. -/
-def afterItem (δ : TokList) (rest : AText) : List AText :=
-  (List.range (δ.length + 1)).filterMap (fun i => dropToks (δ.drop i) rest)
+/-- Known tokens `δ` at the head of an abstract text: the rests (§ 397, the
+leading and the delimiting tokens of a parameter text). A known token must
+match. Another item may end `δ` inside it, or hold a part of `δ` whole. -/
+def dropAbs : TokList → AText → List AText
+  | [], x => [x]
+  | _ :: _, [] => []
+  | d :: ds, .tok t :: x => if t = d then dropAbs ds x else []
+  | d :: ds, it :: x =>
+    it.cuts.map (fun c => c.2 :: x) ++
+      (List.range (ds.length + 2)).flatMap (fun i => dropAbs ((d :: ds).drop i) x)
 
-/-- A delimited argument (§ 392): the pairs (argument, rest). `depth` is the
-brace depth so far; the delimiter counts only at depth 0. An unmatched `}`
-or the end of the text gives no pair (TeX's error, under assume_compiles).
-An item that may hold a delimiter token forks: the delimiter starts in it,
-or the scan reads on past it. -/
-def scanDelim (δ : TokList) : Nat → AText → List (AText × AText)
-  | _, [] => []
-  | depth, AItem.tok t :: rest =>
-    let here : List (AText × AText) :=
-      (match depth, δ with
-      | 0, d :: ds =>
-        if t = d then (match dropToks ds rest with
-          | some r => [([], r)]
-          | none => [])
-        else []
-      | _, _ => [])
-    let deeper : List (AText × AText) :=
-      if t.isBgroup then scanDelim δ (depth + 1) rest
-      else if t.isEgroup then (if depth = 0 then [] else scanDelim δ (depth - 1) rest)
-      else scanDelim δ depth rest
-    here ++ deeper.map (fun (p : AText × AText) => (AItem.tok t :: p.1, p.2))
-  | depth, it :: rest =>
-    let inside : List (AText × AText) :=
-      if δ.any (fun d => it.mayHold d) then
-        (afterItem δ rest).map (fun (r : AText) => ([it.part], it.part :: r))
-      else []
-    inside ++ (scanDelim δ depth rest).map (fun (p : AText × AText) => (it :: p.1, p.2))
+/-- A delimited argument (§ 392): the pairs (argument, rest). -/
+def scanDelim (δ : TokList) (x : AText) : List (AText × AText) :=
+  (AText.cuts x).flatMap (fun c => (dropAbs δ c.2).map (fun r => (c.1, r)))
 
 /-- The body of a group whose `{` was read: up to its matching `}`. -/
 def groupBody : Nat → AText → Option (AText × AText)
@@ -815,12 +867,12 @@ def scanUndelim : AText → List (AText × AText)
     else [([AItem.tok t], rest)]
   | AItem.hole h :: rest =>
     ([AItem.hole h.part], AItem.hole h.part :: rest) ::
-      (if h.nonempty = false || h.cls.sp then scanUndelim rest else [])
+      (if h.nonempty = false || h.cls.sp || h.cls.c then scanUndelim rest else [])
   | AItem.digits _ :: rest =>
     [([AItem.hole { cls := TClass.number, nonempty := true, maxLen := some 1 }],
       AItem.hole { cls := TClass.digits } :: rest)]
   | AItem.oneOf alts :: rest =>
-    ([AItem.hole { cls := TClass.any }], AItem.hole { cls := TClass.any } :: rest) ::
+    ([AItem.hole { cls := TClass.any }], AItem.oneOf (alts.flatMap suffixes) :: rest) ::
       (if alts.any (fun p => p.all (fun t => t.isSpace)) then scanUndelim rest else [])
 
 /-- `#n` replaced by the n-th argument (§ 390 `macro_call`; `outParam n`
@@ -837,30 +889,9 @@ def splitParams : List ParamItem → TokList × List TokList
   | .tok t :: ps => let r := splitParams ps; (t :: r.1, r.2)
   | .arg :: ps => let r := splitParams ps; ([], r.1 :: r.2)
 
-/-- The leading tokens of a parameter text must come first (§ 397). Over an
-item that may hold them, they may end in it or past it. -/
-def readLead (lead : TokList) (rest : AText) : List AText :=
-  match dropToks lead rest with
-  | some r => [r]
-  | none =>
-    match rest with
-    | it :: r =>
-      if lead.any (fun d => it.mayHold d) && !(match it with | AItem.tok _ => true | _ => false)
-      then (it.part :: r) :: afterItem lead r
-      else []
-    | [] => []
-
 /-- § 400: a delimited argument that is one `{…}` group loses its braces.
-Both readings are kept where the frame is known tokens. -/
-def stripBraces (xa : AText) : List AText :=
-  match xa with
-  | AItem.tok t :: mid =>
-    if t.isBgroup then
-      match mid.reverse with
-      | AItem.tok u :: midRev => if u.isEgroup then [xa, midRev.reverse] else [xa]
-      | _ => [xa]
-    else [xa]
-  | _ => [xa]
+Either reading: the argument, or its tokens as one hole. -/
+def stripBraces (xa : AText) : List AText := [xa, AText.hull [xa]]
 
 def stripAll (ps : List (AText × AText)) : List (AText × AText) :=
   ps.foldr (fun (p : AText × AText) (acc : List (AText × AText)) =>
@@ -869,14 +900,14 @@ def stripAll (ps : List (AText × AText)) : List (AText × AText) :=
 def scanArgs : List TokList → AText → List (List AText × AText)
   | [], rest => [([], rest)]
   | δ :: ds, rest =>
-    let firsts := if δ.isEmpty then scanUndelim rest else stripAll (scanDelim δ 0 rest)
+    let firsts := if δ.isEmpty then scanUndelim rest else stripAll (scanDelim δ rest)
     firsts.foldr (fun (p : AText × AText) (acc : List (List AText × AText)) =>
       (scanArgs ds p.2).map (fun (q : List AText × AText) => (p.1 :: q.1, q.2)) ++ acc) []
 
 /-- All the ways a macro's parameter text may match the abstract input. -/
 def scanParams (ps : List ParamItem) (rest : AText) : List (List AText × AText) :=
   let sp := splitParams ps
-  (readLead sp.1 rest).foldr (fun (r : AText) (acc : List (List AText × AText)) =>
+  (dropAbs sp.1 rest).foldr (fun (r : AText) (acc : List (List AText × AText)) =>
     scanArgs sp.2 r ++ acc) []
 
 /-- Expanding a control sequence (§ 366): split per member of its meaning
@@ -906,6 +937,12 @@ def expandWith (havoc : AState → AState) (a : AState) (r : CsRef) : List AStat
 def havocAll (a : AState) : AState := { a with eqtb := fun _ => .top }
 
 /-! ## 12. Loops: k passes, widening, the forced summary
+
+Intuition. A loop runs `k` joining passes. A head still growing is widened,
+and one still growing after that is summarized: every location the body may
+write holds anything. This forces convergence in a bounded number of rounds
+whatever the precision (`loopRounds_le`). Iterating to a precise fixpoint
+would need a finite-height lattice, which token lists are not.
 
 `loopHead` mirrors explore.rs: each round joins the pass into the head;
 from round `widenAfter` the join is widened; a head still growing at
@@ -944,9 +981,12 @@ theorem loopRounds_le (L : Limits) (join widen : AState → AState → AState)
     all_goals first | omega | exact Nat.succ_le_succ (ih _ _)
 
 /-- The sound loop summary: every location the body may write (`writes`
-must cover every pass, not only the passes seen) holds anything. -/
+must cover every pass, not only the passes seen) holds anything, at any
+level, and may have been saved in the current frame (`touched`). -/
 def summaryHavoc (writes : List Loc) (a : AState) : AState :=
-  { a with eqtb := fun l => if writes.contains l then .top else a.eqtb l }
+  { a with eqtb := fun l => if writes.contains l then .top else a.eqtb l,
+           level := fun l => if writes.contains l then none else a.level l,
+           save := writes.map ASave.touched ++ a.save }
 
 /-! ## 13. Call summaries (src/analysis/machine/calls.rs)
 

@@ -3,3 +3,4 @@ import Satex.Core
 import Satex.Concrete
 import Satex.Abstract
 import Satex.Soundness
+import Satex.Axioms

@@ -201,6 +201,7 @@ inductive IfOp where
   | charIf | catIf | num | dim | odd | vmode | hmode | mmode | inner | void
   | hboxIf | vboxIf | ifx | eof | iftrue | iffalse | ifcase
   | defined | csname | fontchar | absnum | absdim | incsname | primitive
+  | condition                       -- LuaTeX \ifcondition
   deriving DecidableEq, Repr, Inhabited
 
 /-- `\fi`, `\else`, `\or` (§ 489). -/
@@ -264,8 +265,12 @@ inductive Cmd where
   | boxCmd (n : String)             -- \hbox \vbox \vtop \vcenter \copy \box \lastbox \vsplit
   | operands (ops : List Operand)   -- scanned, effect not modelled (SEM § 14)
   | lua (n : String)
+  | mathParam (n : String) (k : RegKind)       -- LuaTeX `\Umath…` per style
+  | toksApp (expand glob front : Bool)       -- LuaTeX `\toksapp` family
+  | famFont (size : Nat)                     -- \textfont 0, \scriptfont 1, \scriptscriptfont 2
+  | letCharcode                              -- LuaTeX `\letcharcode`
+  | fontCopy (spacing : Bool)                -- \copyfont, \pdfcopyfont; \letterspacefont
   | alignMark | alignTab
-  | unmodeled
   deriving Inhabited
 
 /-! ## Meanings (§ 210, SEM § 5) -/

@@ -3,6 +3,30 @@
 Coordination log for the three semantics jobs. Newest first. Core names are
 stable once published; a change to one is announced here first.
 
+## Lean round (2026-11-04)
+
+* Core: `Cmd.mathParam`, `toksApp`, `famFont`, `letCharcode`, `fontCopy`
+  added; `Cmd.unmodeled` removed (no primitive uses it); `IfOp.condition`
+  added (LuaTeX `\ifcondition`).
+* Concrete: rules `Exec.mathParam`, `toksApp`, `famFont`, `letCharcode`,
+  `fontCopy`, `Internal.mathParam`, `famFont`, `Test.condition`; helpers
+  `MathStyleArg`, `ToksReg`, `styleIndex`, `famCount`, `boxKind` (`\hpack`,
+  `\vpack`, `\tpack`). `Exec.unmodeled` removed.
+* Abstract: `AState.level : Loc → Option Nat`, `AState.pinned`;
+  `ASave.restore` takes `Option Nat`, `ASave.touched` added, `ASave.group`
+  takes `Option (List Loc)` (the locations a `many` frame's copies save);
+  `SaveRel.skip`; `Touched`. `unsave`/`endGroupN`/`widenSaved` replaced by
+  `closeFrom` (and `closed`, `forget`); `weakAssign` via `weakAt`,
+  `newLevel`, `lvJoin`. `TClass.admits` via `hexOk`; `AVal.γ` of token lists
+  requires `balanced`. Scanning: `AItem.cuts`, `AText.cuts`, `dropAbs`,
+  `prefixes`, `suffixes`; `scanDelim δ x` (no depth argument);
+  `readLead`, `afterItem`, `dropToks`, `mayHold` removed; `stripBraces`
+  keeps the argument or its hull. `summaryHavoc` also forgets levels and
+  leaves `touched`.
+* Soundness: see PROOF-STATUS.md. `run_covered` and `sound_and_terminating`
+  take `Covered γ T Step` (a covering abstract run per step).
+  `satex_sound_and_terminating` splits the obligation by family.
+
 ## Job 1 (concrete semantics)
 
 * Published `lean/Satex/Core.lean`: `Cat`, `CsRef`, `Token`, `TokList`,
