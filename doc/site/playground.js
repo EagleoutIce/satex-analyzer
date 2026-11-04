@@ -1614,7 +1614,7 @@
     $('view-title').textContent = t.view.title;
     self.satexViews.render(t.view, $('view-body'), {
       markdown: (md) => card(md),
-      apply: (edits) => { dialog.close(); fix({ title: t.view.title, edit: { changes: { [t.target]: edits } } }); },
+      apply: (edits) => { dialog.close(); fix({ title: t.view.title, edit: Array.isArray(edits) ? { changes: { [t.target]: edits } } : edits }); },
     });
     if (!dialog.open) dialog.showModal();
   }
@@ -1624,6 +1624,14 @@
     const i = tools.findIndex((t) => t.view?.plugin === plugin);
     if (i >= 0) runTool(i); else if (rows.length) runTool(rows[0][2]);
   }
+  // a value of the units hover writes itself in place of the length
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('a.cmd-edit');
+    if (!a) return;
+    e.preventDefault();
+    const [target, range, newText] = JSON.parse(decodeURIComponent(a.dataset.args));
+    fix({ title: `Convert to ${newText}`, edit: { changes: { [target]: [{ range, newText }] } } });
+  });
   document.addEventListener('click', (e) => { const b = e.target.closest('[data-tool]'); if (b) { e.preventDefault(); runTool(+b.dataset.tool); } });
   $('view-close').onclick = () => $('play-view').close();
   /** The open file's fixes at once, as the language server merges them (render.rs `fix_all`): per rule, per category or all. */
@@ -3297,7 +3305,16 @@
   const LOCAL = {
     rename: { about: 'rename the command or label at the cursor, in every file', run: (rest) => rest[0] ? renameTo(rest[0].replace(/^\\/, '')) : renameBox() },
     fix: { about: 'apply the safe fixes, of one rule if given', run: (rest) => fixAll(rest[0], false) },
+    manage: { about: 'open a manager: glossary, bibliography, index or theorem', run: (rest) => manage(rest[0] ?? 'glossary') },
   };
+  /** A type plugin's manager: `satex/view` without a position. */
+  async function manage(plugin) {
+    sync();
+    const [view] = (await lsp('satex/view', { textDocument: { uri: uri() }, plugin }).catch(() => [])) ?? [];
+    if (!view) return toast(`No ${plugin} here`);
+    tools = [{ view, target: uri() }];
+    runTool(0);
+  }
   /** Runs `line` (or the command line): a playground command, or satex. */
   function execute(line = args.value) {
     if (!editor) return;
@@ -4015,6 +4032,7 @@
     const embed = `<iframe src="${new URL('../draw/index.html', location.href).href}" title="Draw a symbol" width="720" height="560" style="border:0"></iframe>`;
     const code = $('play-draw-embed'), copyBtn = $('play-draw-embed-copy');
     if (code && copyBtn) {
+      self.satexEmbedFold?.(code.closest('.draw-embed'));
       code.textContent = embed;
       copyBtn.onclick = () => {
         navigator.clipboard?.writeText(embed).catch(() => {});

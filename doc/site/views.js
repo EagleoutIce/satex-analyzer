@@ -5,6 +5,11 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const el = (tag, cls, html) => Object.assign(document.createElement(tag), cls ? { className: cls } : {}, html != null ? { innerHTML: html } : {});
   const fill = (text, vars) => text.replace(/\$\{(\w+)\}/g, (m, k) => vars[k] ?? m);
+  // a WorkspaceEdit `{changes: {uri: [TextEdit]}}` with its templates filled, and several as one
+  const filled = (edit, vars) => ({ changes: Object.fromEntries(Object.entries(edit?.changes ?? {}).map(([u, es]) => [u, es.map((e) => ({ range: e.range, newText: fill(e.newText, vars) }))])) });
+  const merge = (edits) => ({ changes: edits.reduce((all, e) => { for (const [u, es] of Object.entries(e.changes)) (all[u] ??= []).push(...es); return all; }, {}) });
+  // braces that close in order, as TeX reads a value (a `\{` is no group)
+  const balanced = (text) => { let d = 0; for (const m of text.replace(/\\./g, '').matchAll(/[{}]/g)) if ((d += m[0] === '{' ? 1 : -1) < 0) return false; return d === 0; };
 
   // colors: rgb in 0..1 to each model's spec, as xcolor writes them (xcolor § 6.3)
   const clamp = (v) => Math.min(1, Math.max(0, v));
@@ -83,6 +88,103 @@
       input.onkeydown = (e) => { if (e.key === 'Enter') list.querySelector('button')?.click(); };
       draw();
       box.append(input, list);
+      setTimeout(() => input.focus(), 0);
+      return box;
+    },
+    // a manager: searchable, sortable records; each opens to its fields (edited through edit
+    // templates, `${value}` the new text), a table and actions; `add` is a form of templates
+    records: (s, view, ctx) => {
+      const box = el('div', 'tv-records');
+      const head = el('div', 'tv-row');
+      const input = Object.assign(el('input', 'tv-input'), { placeholder: s.placeholder ?? 'search', spellcheck: false, ariaLabel: s.placeholder ?? 'search' });
+      const sort = el('select', 'tv-input', (s.sorts ?? []).map((k) => `<option>${esc(k)}</option>`).join(''));
+      sort.ariaLabel = 'sort by';
+      head.append(input);
+      if (s.sorts?.length > 1) head.append(sort);
+      const list = el('div', 'tv-list');
+      let open = s.items.find((r) => r.title === s.focus) ?? null;
+      const draw = () => {
+        const q = input.value.trim().toLowerCase(), by = sort.value;
+        const hit = (r) => !q || q.split(/\s+/).every((w) => (r.search ?? r.title).toLowerCase().includes(w));
+        const key = (r) => String(r.sort?.[by] ?? r.title).toLowerCase();
+        const rows = s.items.filter(hit).sort((a, b) => key(a).localeCompare(key(b), undefined, { numeric: true }));
+        list.replaceChildren(...rows.slice(0, 300).map((r) => {
+          const item = el('div', 'tv-record' + (open === r ? ' on' : ''));
+          const b = el('button', 'tv-choice', `<b>${esc(r.title)}${r.badge ? ` <em class="tv-badge">${esc(r.badge)}</em>` : ''}</b><span>${esc(r.detail ?? '')}</span>`);
+          b.type = 'button';
+          b.ariaExpanded = String(open === r);
+          b.onclick = () => { open = open === r ? null : r; draw(); };
+          item.append(b);
+          if (open === r) item.append(record(r));
+          return item;
+        }));
+        if (!rows.length) list.append(el('div', 'tv-text', `<p>${esc(s.empty ?? 'nothing found')}</p>`));
+      };
+      const record = (r) => {
+        const body = el('div', 'tv-body');
+        if (r.fields?.length) body.append(form(r.fields, r.save ?? 'Save', (vals, changed) => merge(r.fields.filter((f) => changed.has(f.name)).map((f) => filled(f.edit, { value: vals[f.name] })))));
+        for (const f of r.forms ?? []) body.append(form(f.fields, f.title, (vals) => filled(f.edit, vals)));
+        if (r.table?.rows.length) body.append(RENDER.table(r.table));
+        if (r.actions?.length) {
+          const acts = el('div', 'tv-actions');
+          for (const a of r.actions) {
+            const b = el('button', 'tv-button', esc(a.title));
+            b.type = 'button';
+            b.disabled = !!a.disabled;
+            b.title = a.disabled ?? '';
+            b.onclick = () => ctx.apply(a.edit);
+            acts.append(b);
+          }
+          body.append(acts);
+          const why = r.actions.filter((a) => a.disabled).map((a) => `${a.title}: ${a.disabled}`);
+          if (why.length) body.append(el('div', 'tv-text', why.map((w) => `<p>${esc(w)}</p>`).join('')));
+        }
+        return body;
+      };
+      // labelled inputs; `go(values, changed names)` makes the edit, applied when every value is balanced
+      const form = (fields, title, go) => {
+        const f = el('form', 'tv-form');
+        const ins = fields.map((d) => {
+          const lab = el('label', 'tv-field', `<span>${esc(d.name)}</span>`);
+          const i = Object.assign(el(d.choices ? 'select' : d.long ? 'textarea' : 'input', 'tv-input'), { spellcheck: false, name: d.name });
+          if (d.choices) i.innerHTML = d.choices.map((c) => `<option${c === d.value ? ' selected' : ''}>${esc(c)}</option>`).join('');
+          else i.value = d.value ?? '';
+          if (d.placeholder) i.placeholder = d.placeholder;
+          i.oninput = () => i.classList.toggle('tv-bad', !balanced(i.value));
+          lab.append(i);
+          f.append(lab);
+          return [d, i];
+        });
+        const b = el('button', 'tv-button tv-primary', esc(title));
+        b.type = 'submit';
+        f.append(el('div', 'tv-actions'));
+        f.lastChild.append(b);
+        f.onsubmit = (e) => {
+          e.preventDefault();
+          if (ins.some(([, i]) => !balanced(i.value))) return;
+          const vals = Object.fromEntries(ins.map(([d, i]) => [d.name, i.value]));
+          const changed = new Set(ins.filter(([d, i]) => i.value !== (d.value ?? '')).map(([d]) => d.name));
+          if (changed.size || !fields.some((d) => 'value' in d)) ctx.apply(go(vals, changed));
+        };
+        return f;
+      };
+      input.oninput = draw;
+      sort.onchange = draw;
+      draw();
+      box.append(head, list);
+      if (s.add) {
+        const more = el('details', 'tv-add', `<summary>${esc(s.add.title)}</summary>`);
+        const kinds = s.add.kinds ?? [s.add];
+        const pick = el('select', 'tv-input', kinds.map((k) => `<option>${esc(k.name ?? s.add.title)}</option>`).join(''));
+        pick.ariaLabel = 'kind';
+        const slot = el('div');
+        const show = () => { const k = kinds[pick.selectedIndex]; slot.replaceChildren(form(k.fields, s.add.title, (vals) => filled(k.edit, vals))); };
+        pick.onchange = show;
+        if (kinds.length > 1) more.append(pick);
+        more.append(slot);
+        show();
+        box.append(more);
+      }
       setTimeout(() => input.focus(), 0);
       return box;
     },
@@ -546,6 +648,15 @@
 .tv-chip { font: inherit; font-size: .78rem; display: inline-flex; align-items: center; gap: .3rem; padding: .15rem .5rem .15rem .25rem; border-radius: 999px; border: 1px solid var(--tv-border); background: var(--tv-sunk); color: var(--tv-fg); cursor: pointer; }
 .tv-chip i { width: .9rem; height: .9rem; border-radius: 50%; border: 1px solid #8886; }
 .tv-chip:hover { border-color: var(--tv-accent); }
+.tv-records { display: grid; gap: .5rem; } .tv-records > .tv-list { max-height: 60vh; }
+.tv-record.on { border: 1px solid var(--tv-border); border-radius: 8px; background: var(--tv-sunk); }
+.tv-record > .tv-choice { width: 100%; } .tv-record > .tv-choice b { font-weight: 600; } .tv-badge { font-style: normal; font-weight: 400; font-size: .7rem; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--tv-border); color: var(--tv-muted); }
+.tv-body { display: grid; gap: .6rem; padding: .3rem .6rem .7rem; min-width: 0; } .tv-body .tv-table { font-size: .8rem; display: block; overflow-x: auto; }
+.tv-form { display: grid; gap: .4rem; } .tv-field { display: grid; grid-template-columns: 7rem 1fr; gap: .5rem; align-items: center; font-size: .8rem; color: var(--tv-muted); }
+.tv-field textarea { min-height: 3.2rem; resize: vertical; } .tv-field .tv-input { font-family: ui-monospace, monospace; font-size: .82rem; }
+.tv-button:disabled { opacity: .5; cursor: not-allowed; }
+.tv-add summary { cursor: pointer; font-size: .85rem; color: var(--tv-accent); } .tv-add[open] { display: grid; gap: .5rem; } .tv-add > select { justify-self: start; }
+@media (max-width: 560px) { .tv-field { grid-template-columns: 1fr; gap: .15rem; } }
 @media (max-width: 560px) { .tv-color { grid-template-columns: 1fr; } .tv-pick { max-width: 16rem; } }
 .tv-draw { display: grid; gap: .5rem; min-width: min(40rem, 100%); } .tv-tools { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
 .tv-muted { color: var(--tv-muted); font-size: .78rem; } .tv-sel { align-items: center; min-height: 2rem; } .tv-sel input { flex: 1; font-size: .88rem; }

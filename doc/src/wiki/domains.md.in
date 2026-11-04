@@ -448,7 +448,7 @@ Where `satex` does not yet reach the invariant:
 | Limit | What can be missed |
 | --- | --- |
 | executing a character of unknown category | only an active character runs code (tex.web §§ 232, 344), and only its bindings are joined in. Groups, modes, files and `\write`s it would make are not. A name built from unknown text (`\csname`) may be any control sequence. Executing it is reported as `unknown-text-run`, assumed to change no state. |
-| a recursion cut at its bound | assignments are widened, catcodes, groups, files, streams and `\write` are not (their sound top would stop the run) |
+| a recursion cut at its bound | assignments are widened. A category the region changed is its old or its new one. Groups the region opened stand for any number of them (`many`), or are closed if they differ in kind (`region-groups`). Lines the rest would write to open files are assumed not written (`region-writes`): their top, unknown text in every open file, would make each later read of it unknown |
 | a file the run wrote with unknown text that is also on disk | read as on disk |
 | loops spanning call sites | met again only through an undecided conditional, otherwise left to the stall limit |
 

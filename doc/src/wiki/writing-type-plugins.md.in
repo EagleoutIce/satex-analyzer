@@ -47,5 +47,8 @@ Every number a plugin uses is a setting. A plugin reads the run's facts, never a
 | `converter` | `lo`, `hi` (sp), `units: [{name, sp}]`, `unit`, `decimals`, `range` | a length in every unit; clicking a unit writes it over `range` |
 | `color` | `name`, `rgb`, `models`, `expressions`, `defined: [{name, rgb, css}]`, `pick`, `apply: {title, name, edits}` | the picker; `apply`'s `newText` holds `${model}`, `${spec}`, `${name}` |
 | `drawing` | `range`, `body`, `nodes: [{name, shape, x, y, w, h, line}]`, `grid`, `spacing`, `wrap`, `extra`, `note` | a canvas of a picture's body. It writes the body over `range`, wrapped in a `tikzpicture` when `wrap`, plus `extra` |
+| `records` | `placeholder`, `sorts`, `focus`, `items: [{title, detail, badge, search, sort, fields, forms, table, actions}]`, `add: {title, kinds: [{name, fields, edit}]}` | a manager: a searchable, sortable list, a record opens to a form of its fields, more forms, a table and buttons |
 
-Edits are LSP `TextEdit`s on the document the view was asked for. A new kind needs a renderer: `satexViews.RENDER[kind] = (section, view, ctx) => element`. The models that need no page are tested in node: `node doc/site/views.test.mjs`.
+In `records`, every `edit` is a WorkspaceEdit (`{changes: {uri: [TextEdit]}}`), so a record may write another file. A field is `{name, value, edit}`, and its `newText` holds `${value}`. A form's fields name the template variables, as `${key}`. An action with `disabled` shows the reason and applies nothing. The renderer applies nothing while a value's braces do not balance.
+
+Edits are LSP `TextEdit`s on the document the view was asked for, or a WorkspaceEdit. A new kind needs a renderer: `satexViews.RENDER[kind] = (section, view, ctx) => element`. The models that need no page are tested in node: `node doc/site/views.test.mjs`.

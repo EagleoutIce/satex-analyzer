@@ -17,7 +17,8 @@ pub fn numbered(file: &Path, text: &str) -> Vec<(String, usize)> {
     let mut join = false;
     for (n, raw) in text.lines().enumerate() {
         let line = match dtx {
-            true => raw.strip_prefix('%').filter(|l| !l.starts_with('%')).unwrap_or(""),
+            // a `%` in the documentation ends its line, as in any TeX source
+            true => cut_comment(raw.strip_prefix('%').filter(|l| !l.starts_with('%')).unwrap_or("")),
             false => cut_comment(raw),
         };
         let (line, comment) = match line.find("^^A") {
@@ -71,8 +72,8 @@ pub fn names(list: &str) -> Vec<String> {
 
 /// Commands dropped with their arguments.
 fn dropped(name: &str) -> bool {
-    const DROP: [&str; 12] =
-        ["begin", "end", "label", "index", "changes", "footnote", "ref", "cite", "hspace", "vspace", "url", "item"];
+    const DROP: [&str; 11] =
+        ["begin", "end", "label", "index", "changes", "footnote", "cite", "hspace", "vspace", "url", "item"];
     DROP.contains(&name) || name.starts_with("Describe") || name.starts_with("Special")
 }
 
@@ -138,7 +139,7 @@ fn command<'a>(rest: &'a str, code: bool, out: &mut String) -> &'a str {
             out.push_str(&format!("{open}{}{close}", meta(a)));
             rest
         }
-        "texttt" | "pkg" | "env" | "cls" | "opt" | "file" | "key" => {
+        "texttt" | "pkg" | "env" | "cls" | "opt" | "file" | "key" | "ref" | "pageref" => {
             let (a, rest) = arg(rest);
             out.push_str(&format!("{tick}{}{tick}", render(a, true)));
             rest
@@ -171,6 +172,16 @@ fn command<'a>(rest: &'a str, code: bool, out: &mut String) -> &'a str {
         }
         _ if name.ends_with("TeX") => {
             out.push_str(name);
+            rest
+        }
+        "ldots" | "dots" => {
+            out.push('…');
+            rest
+        }
+        // A command the manual's class defines (`\tikzname`, `\xcolor`): shown, not lost from the
+        // sentence. One with an argument (`\Meta{x}`) stands for that argument.
+        _ if !code && !rest.starts_with('{') => {
+            out.push_str(&format!("`\\{name}`"));
             rest
         }
         _ => rest,
@@ -240,27 +251,98 @@ pub fn sentence(text: &str) -> Option<String> {
 pub fn description(after: &str, usage_of: Option<&str>) -> Option<String> {
     const META: [&str; 6] = ["\\changes", "\\begin{macro}", "\\Special", "\\Describe", "\\label", "\\index"];
     const LEAD: usize = 6;
-    let mut para: Vec<&str> = Vec::new();
-    for (n, line) in after.split('\n').enumerate() {
-        let lead = para.is_empty();
-        if lead && n > LEAD {
+    let meta = |line: &str| META.iter().any(|m| line.starts_with(m));
+    // Past the lead: metadata with all its arguments, however many lines
+    // they span (`\changes{v1}{date}{text\n text}`), and usage lines.
+    let mut rest = after;
+    // The names anchored below this one (`\begin{macro}{\patch@level}`): a paragraph naming one is theirs.
+    let mut stacked: Vec<String> = Vec::new();
+    loop {
+        let start = rest.trim_start_matches([' ', '\n']);
+        if after[..after.len() - start.len()].matches('\n').count() > LEAD {
             return None;
         }
-        if line.is_empty() || META.iter().any(|m| line.starts_with(m)) {
-            if lead {
-                continue;
+        let line = start.split('\n').next().unwrap_or_default();
+        if meta(line) {
+            let len = start[1..].chars().take_while(char::is_ascii_alphabetic).count() + 1;
+            let mut tail = &start[len..];
+            let mut args = Vec::new();
+            while let Some((a, t)) = group(tail, '{', '}').or_else(|| group(tail, '[', ']')) {
+                args.push(a);
+                tail = t;
             }
+            if line.starts_with("\\begin{macro}") {
+                stacked.extend(args.get(1).map(|a| names(a)).unwrap_or_default());
+            }
+            rest = tail;
+        } else if !line.is_empty()
+            && (usage_of.is_some_and(|name| usage(&render(line, true), name).is_some())
+                || placeholders_only(&render(line, true)))
+        {
+            rest = &start[line.len()..];
+        } else {
+            rest = start;
             break;
         }
-        if line.starts_with("\\begin{") || line.starts_with("\\end{") || line.starts_with("\\section") {
+    }
+    let mut para: Vec<&str> = Vec::new();
+    for line in rest.split('\n') {
+        let ends = ["\\begin{", "\\end{", "\\section"].iter().any(|m| line.starts_with(m));
+        if line.is_empty() || meta(line) || ends {
             break;
-        }
-        if lead && usage_of.is_some_and(|name| usage(&render(line, true), name).is_some()) {
-            continue;
         }
         para.push(line);
     }
-    sentence(&render(&para.join(" "), false))
+    let para = para.join(" ");
+    // A paragraph of prose is balanced: an unbalanced one is the tail of some argument.
+    let names = |s: &String, n: &str| s.contains(&format!("`\\{n}`"));
+    let theirs = |s: &String| stacked.iter().any(|n| names(s, n)) && usage_of.is_none_or(|own| !names(s, own));
+    balanced(&para).then(|| sentence(&render(&para, false))).flatten().filter(|s| is_sentence(s) && !theirs(s))
+}
+
+/// Whether `s` reads as a sentence: it starts as one (a capital, code, a
+/// placeholder or emphasis) and ends as one (`.`, `!`, `?`, `:` or a cut).
+/// A fragment (`in the THEN case`, `kernel`, `New macro`) does not.
+pub fn is_sentence(s: &str) -> bool {
+    let starts = s.chars().next().is_some_and(|c| c.is_uppercase() || "`⟨*\\".contains(c));
+    starts && s.trim_end().ends_with(['.', '!', '?', ':', '…']) && s.split_whitespace().count() > 1
+}
+
+/// A usage line without the name: `{⟨color⟩}[⟨model⟩]`, groups of placeholders only.
+fn placeholders_only(line: &str) -> bool {
+    let mut rest = line.trim();
+    let mut any = false;
+    while let Some(open @ ('{' | '[' | '(')) = rest.chars().next() {
+        let close = match open {
+            '{' => '}',
+            '[' => ']',
+            _ => ')',
+        };
+        let Some((inner, after)) = group(rest, open, close) else { return false };
+        any |= inner.contains('⟨');
+        rest = after.trim_start();
+    }
+    any && rest.is_empty()
+}
+
+/// Whether every `}` of `s` closes a `{` before it and every `{` is
+/// closed, outside `|verbatim|` and past escapes (`\{`).
+fn balanced(s: &str) -> bool {
+    let (mut depth, mut verb, mut escaped) = (0i32, false, false);
+    for c in s.chars() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '|' => verb = !verb,
+            '{' if !verb => depth += 1,
+            '}' if !verb => depth -= 1,
+            _ => {}
+        }
+        if depth < 0 {
+            return false;
+        }
+    }
+    depth == 0
 }
 
 /// The commands an l3doc anchor names: `[TF]` stands for the `T`, `F` and

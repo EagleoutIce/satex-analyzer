@@ -500,8 +500,18 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
         }
         // A type plugin's dialogs at a position ([`plugins::views`]).
         "satex/view" => {
-            let p: lsp_types::TextDocumentPositionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
-            Ok(Json::Array(ask(engine_tx, |reply| EngineMsg::View(p.text_document.uri, p.position, reply))?))
+            // `plugin` without `position`: that plugin's manager, as a sidebar opens it
+            #[derive(serde::Deserialize)]
+            struct ViewParams {
+                #[serde(rename = "textDocument")]
+                doc: lsp_types::TextDocumentIdentifier,
+                #[serde(default)]
+                position: Option<Position>,
+                #[serde(default)]
+                plugin: Option<String>,
+            }
+            let p: ViewParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            Ok(Json::Array(ask(engine_tx, |reply| EngineMsg::View(p.doc.uri, p.position, p.plugin, reply))?))
         }
         "textDocument/prepareRename" => {
             let p: lsp_types::TextDocumentPositionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
@@ -640,7 +650,7 @@ enum EngineMsg {
     /// The lint fixes of a document, and the type plugins' actions at a position.
     CodeAction(Uri, Position, Sender<Vec<Json>>),
     Dialog(Ask, Sender<Result<Json, String>>),
-    View(Uri, Position, Sender<Vec<Json>>),
+    View(Uri, Option<Position>, Option<String>, Sender<Vec<Json>>),
     Presentation(Uri, lsp_types::Range, lsp_types::Color, Sender<Vec<lsp_types::ColorPresentation>>),
     Inlays(Uri, Sender<Vec<lsp_types::InlayHint>>),
     Lenses(Uri, Sender<Vec<lsp_types::CodeLens>>),
@@ -1328,10 +1338,11 @@ impl Engine {
                 });
                 let _ = reply.send(result.unwrap_or_default());
             }
-            EngineMsg::View(uri, pos, reply) => {
+            EngineMsg::View(uri, pos, plugin, reply) => {
                 let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc(&self.docs, &uri, |analysis, text| {
-                    plugins::views(analysis, text, &path, handlers::to_pos(text, pos))
+                let result = with_doc(&self.docs, &uri, |analysis, text| match (pos, plugin) {
+                    (None, Some(name)) => plugins::manager(analysis, text, &path, &name).into_iter().collect(),
+                    (pos, _) => plugins::views(analysis, text, &path, handlers::to_pos(text, pos.unwrap_or_default())),
                 });
                 let _ = reply.send(result.unwrap_or_default());
             }

@@ -251,6 +251,12 @@ impl Machine<'_> {
         }
     }
 
+    /// A value scan met what it cannot decide. Outside one the flag would
+    /// outlive the scan that set it ([`Machine::scanning_value`]).
+    fn undecided_scan(&mut self) {
+        self.scan_undecided |= self.scanning > 0;
+    }
+
     /// tex.web § 441: optional signs, spaces between them skipped.
     /// Returns whether they negate and the first token after them.
     fn scan_signs(&mut self) -> Option<(bool, Token)> {
@@ -263,11 +269,11 @@ impl Machine<'_> {
                 // A name-a-join may resolve to one of several sign macros
                 // (pgfmath's `\pgfmath@sign`, empty or `-`). Not knowing
                 // which makes the negation unknown, so the number is read on.
-                Tok::Cs(sym) if self.signs_only(sym) => self.scan_undecided = true,
+                Tok::Cs(sym) if self.signs_only(sym) => self.undecided_scan(),
                 // A digit or `-` (`\the` of an unknown dimension): the sign
                 // is unknown, and so is the number its digits start.
                 Tok::Chr(crate::engine::tex::UNKNOWN_CHAR, Catcode::Other) => {
-                    self.scan_undecided = true;
+                    self.undecided_scan();
                     return Some((
                         negative,
                         Token::new(Tok::Chr(crate::engine::tex::UNKNOWN_DIGIT, Catcode::Other), token.span),

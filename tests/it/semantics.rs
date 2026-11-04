@@ -2906,6 +2906,21 @@ mod model_deviations {
         assert!(!got.is_empty() && got.iter().all(|b| b != "11"), "{got:?}");
     }
 
+    /// P6: groups a cut region opened may be any number afterwards: the
+    /// skipped rest may open more (here TeX opens 60 and the cut sees 20).
+    #[test]
+    fn a_cut_keeps_the_groups_the_region_opened_open() {
+        let closers = r"\endgroup".repeat(30);
+        let analysis = run(
+            &format!(
+                r"\count0=7 \count1=60 \def\r{{\ifnum\count1>0 \begingroup\count0=\count1 \advance\count1 -1 \r\relax\fi}}\r{closers}\edef\R{{\the\count0}}"
+            ),
+            |l| l.expansion_stack = 20,
+        );
+        let got = bodies(&analysis);
+        assert!(!got.is_empty() && got.iter().all(|b| b == "31" || b.contains("unknown")), "{got:?}");
+    }
+
     /// D1: a join with a name of any meaning is any meaning, whichever side
     /// it is on.
     #[test]
@@ -3033,4 +3048,88 @@ mod model_deviations {
         let got = bodies(&analysis);
         assert!(!got.is_empty() && !got.iter().any(|b| b.contains("one of") && b.contains("digits")), "{got:?}");
     }
+}
+
+/// Each card's text is a sentence that documents the name, and its usage
+/// names every argument, never by a bare number: a kernel internal the
+/// documented source has no prose for says so instead of quoting a change
+/// note (`\@writefile`: "in the THEN case").
+#[test]
+fn scope_cards_say_what_a_name_does_and_name_its_arguments() {
+    let analysis = crate::support::analyze_latex("\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n");
+    let rows = query::scope(&analysis, None, true);
+    let row = |name: &str| rows.iter().find(|r| r["name"] == name).unwrap_or_else(|| panic!("{name} in scope")).clone();
+    for name in ["\\@writefile", "\\DeclareOption", "\\newcommand", "\\section", "\\relax", "\\tl_set:Nn"] {
+        let r = row(name);
+        let usage = r["usage"].as_str().expect("a usage");
+        assert!(usage.starts_with(name), "{name}: {usage}");
+        // every argument named: no `{1}`, `[2]`
+        let args: String =
+            usage[name.len()..].split('⟨').map(|p| p.split_once('⟩').map_or(p, |(_, after)| after)).collect();
+        assert!(!args.chars().any(|c| c.is_ascii_digit()), "{name}: {usage}");
+        if let Some(does) = r.get("does").and_then(|d| d.as_str()) {
+            assert!(
+                does.starts_with(|c: char| c.is_uppercase() || c == '`') && does.ends_with('.'),
+                "{name}: {does:?}"
+            );
+        }
+    }
+    // its first argument is the name of a file the run checks with `\@ifundefined{tf@#1}`
+    assert_eq!(row("\\@writefile")["usage"], "\\@writefile{⟨name⟩}{⟨arg2⟩}");
+    assert_eq!(row("\\@writefile").get("does"), None, "no prose documents it");
+    // l3doc's syntax line names the arguments, where the installation has the documented sources
+    if row("\\tl_set:Nn").get("does").is_some() {
+        assert_eq!(row("\\tl_set:Nn")["usage"], "\\tl_set:Nn{⟨tl var⟩}{⟨tokens⟩}");
+    }
+    for name in ["\\DeclareOption", "\\newcommand", "\\section", "\\relax"] {
+        assert!(row(name).get("does").is_some(), "{name} is documented");
+    }
+}
+
+/// A signature names optional arguments by role, a default only as a
+/// hint, never its value or number as the label; a project's package is
+/// named, not "document", and its comment documents its macros.
+#[test]
+fn signatures_name_optional_arguments_and_project_packages() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/scratch/sig-names");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("mine.sty"), "\\ProvidesPackage{mine}\n% Frames the text.\n% #1: the text to frame\n\\newcommand{\\myframe}[1]{\\fbox{#1}}\n").unwrap();
+    let main = dir.join("main.tex");
+    std::fs::write(&main, "\\documentclass{article}\n\\usepackage{mine}\n\\begin{document}\nx\n\\end{document}\n")
+        .unwrap();
+    let source = std::fs::read_to_string(&main).unwrap();
+    let analysis = satex::analysis::machine::Machine::analyze(&source, Some(main.as_path()), &crate::support::config());
+    let (records, _) =
+        query::explain(&analysis, &["newcommand".into(), "includegraphics".into(), "section".into()], false).unwrap();
+    for r in &records {
+        let usage = r["usage"].as_str().unwrap();
+        // outside the names, a digit is only a default's hint
+        let args: String = usage[r["name"].as_str().unwrap().len()..]
+            .split('⟨')
+            .map(|p| p.split_once('⟩').map_or(p, |(_, after)| after))
+            .collect();
+        assert!(!args.replace(" = 0", "").chars().any(|c| c.is_ascii_digit()), "{usage}");
+    }
+    let newcommand =
+        records.iter().find(|r| r["name"] == "\\newcommand").unwrap()["usage"].as_str().unwrap().to_string();
+    assert!(newcommand.contains("{⟨command⟩}") && newcommand.contains(" = 0]"), "{newcommand}");
+    let rows = query::scope(&analysis, None, true);
+    let frame = rows.iter().find(|r| r["name"] == "\\myframe").expect("\\myframe in scope");
+    assert_eq!(frame["package"], "mine");
+    assert_eq!(frame["usage"], "\\myframe{⟨the text to frame⟩}");
+    assert_eq!(frame["does"], "Frames the text.");
+}
+
+/// A definition local to a group a package's code opened ends with it:
+/// `ifthen`'s `\let\ref…` while `\ifthenelse` runs never provides `\ref`.
+#[test]
+fn a_group_local_copy_never_provides_a_name() {
+    let analysis = crate::support::analyze_latex(
+        "\\documentclass{article}\n\\usepackage{ifthen}\n\\ifthenelse{\\equal{a}{a}}{}{}\n\\begin{document}\n\\ref{x}\n\\end{document}\n",
+    );
+    let rows = query::scope(&analysis, None, true);
+    let r = rows.iter().find(|r| r["name"] == "\\ref").expect("\\ref in scope");
+    assert_ne!(r.get("file").and_then(|f| f.as_str()), Some("ifthen.sty"), "{r:?}");
+    let (records, _) = query::explain(&analysis, &["ref".into()], false).unwrap();
+    assert!(records.iter().all(|r| r.get("file").and_then(|f| f.as_str()) != Some("ifthen.sty")), "{records:?}");
 }

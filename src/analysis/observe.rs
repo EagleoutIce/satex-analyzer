@@ -4,11 +4,12 @@
 
 use crate::analysis::facts::CsnameRole;
 use crate::analysis::machine::Machine;
+use crate::analysis::roles::Ty;
 use crate::engine::builtins::{Cond, OccKind, PdfOp, Primitive};
-use crate::engine::tex::{Catcode, Span, Tok, Token};
+use crate::engine::tex::{Catcode, RegKind, Span, Tok, Token};
 
 /// TeX read the token at `span` as `ty`: a fact of the user's own files.
-pub fn arg_type(m: &mut Machine, span: Span, ty: crate::analysis::roles::Ty) {
+pub fn arg_type(m: &mut Machine, span: Span, ty: Ty) {
     if !m.own_file(span.file) || m.out.facts.types.len() >= m.cfg.limits.facts {
         return;
     }
@@ -19,7 +20,18 @@ pub fn arg_type(m: &mut Machine, span: Span, ty: crate::analysis::roles::Ty) {
         return;
     }
     *slot = slot.join(ty);
+    // a length: the font its `em` and `ex` are read in
+    if matches!(ty, Ty::Dimen | Ty::Glue | Ty::Reg(RegKind::Dimen | RegKind::Skip)) {
+        let font = m.observed_font_state();
+        let fonts = m.out.facts.length_fonts.entry(span).or_default();
+        if !fonts.contains(&font) && fonts.len() < LENGTH_FONTS {
+            fonts.push(font);
+        }
+    }
 }
+
+/// Fonts kept per length: a length read in more is shown against these.
+const LENGTH_FONTS: usize = 8;
 
 /// A `\csname` formed `name` from the user's text at `at`, its first `from`
 /// characters put before it by the code: the kind of name the text is

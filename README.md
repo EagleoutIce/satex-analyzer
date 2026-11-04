@@ -505,7 +505,7 @@ $ satex slice -f samples/paper.tex '\ifdraft'
 
 \RequirePackage{xcolor}
 
-… 51 more lines omitted
+… 58 more lines omitted
 ```
 
 </details>
@@ -517,7 +517,7 @@ $ satex scope -f samples/paper.tex --at 20:1
 tag          name                           effecti…  does      file                
 macro        \Weird                         \Weird …            paper.tex           @ paper.tex:16:1
 macro        \WeirdMore                     \WeirdM…            paper.tex           @ paper.tex:14:1
-… 10272 more lines omitted
+… 10265 more lines omitted
 ```
 
 </details>
@@ -632,7 +632,7 @@ index   step         name                        detail                    file
 8412    open-file    \article                    /usr/local/texlive/YYYY…  paper.tex      @ paper.tex:1:1
 10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
 10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
-… 207 more lines omitted
+… 208 more lines omitted
 ```
 
 </details>

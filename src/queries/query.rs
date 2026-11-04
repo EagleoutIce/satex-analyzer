@@ -3890,15 +3890,18 @@ fn internal_name(analysis: &Analysis, name: &str) -> bool {
 /// packages it loaded, then the kernel — `tier` is the sort key, `origin`
 /// what `package` shows.
 fn origin_of(analysis: &Analysis, package: Option<Sym>, file: FileId) -> (u8, Json) {
-    if origin(analysis, file) == "document" {
-        return (0, json!("document"));
-    }
+    // A package the project ships is that package (`mypackage`), not the document.
+    let ours = origin(analysis, file) == "document";
     match package {
-        Some(sym) => (1, json!(analysis.interner.name(sym))),
+        Some(sym) => (if ours { 0 } else { 1 }, json!(analysis.interner.name(sym))),
+        None if ours => (0, json!("document")),
         // Installation content with no package attributed to it (a
         // package's own sub-file, an encoding definition file): named by
-        // the file it came from rather than the bare word "package".
-        None => (1, json!(analysis.short_name(file))),
+        // the file it came from; a package or class file by its stem.
+        None => {
+            let short = analysis.short_name(file);
+            (1, json!(short.strip_suffix(".sty").or_else(|| short.strip_suffix(".cls")).unwrap_or(short)))
+        }
     }
 }
 
@@ -3936,6 +3939,13 @@ pub fn scope_named(
             .filter_map(|e| e.node)
             .min()
     });
+    let top = file_depths(analysis);
+    // a project's own group may still be open at the position
+    let holds = |d: &crate::analysis::facts::Definition| {
+        lasting(d, &top) || (before.is_some() && analysis.project_file(d.span.file))
+    };
+    // a name with a lasting definition shows that one, else its latest
+    let mut lasts: HashMap<Sym, bool> = HashMap::default();
     for (i, def) in analysis.facts.defs.iter().enumerate() {
         let visible = match before {
             None => true,
@@ -3943,12 +3953,19 @@ pub fn scope_named(
             Some(_) => cut.flatten().is_none_or(|cut| def.node < cut),
         };
         if visible && named(analysis.interner.name(def.name)) {
-            latest.insert(def.name, i);
+            let lasts_now = holds(def);
+            let had = lasts.get(&def.name).copied().unwrap_or(false);
+            // a passing definition never hides the format's own
+            if lasts_now || (!had && !analysis.kernel_sites.contains_key(&def.name)) {
+                latest.insert(def.name, i);
+                lasts.insert(def.name, lasts_now || had);
+            }
         }
     }
     let shown = |row: &&ScopeRow| all || row.plain;
     let row = |i: usize| {
-        rows.defs[i].get_or_init(|| crate::util::progress::unpaused(|| def_row(analysis, &analysis.facts.defs[i])))
+        rows.defs[i]
+            .get_or_init(|| crate::util::progress::unpaused(|| def_row(analysis, &analysis.facts.defs[i], &rows.first)))
     };
     let defs = latest.values().filter_map(|&i| row(i).as_ref()).filter(shown);
     let rest = rows.rest.iter().filter(|r| named(&r.name)).filter(shown);
@@ -3975,10 +3992,16 @@ pub struct ScopeRow {
 #[derive(Clone)]
 pub struct ScopeRows {
     defs: Vec<std::sync::OnceLock<Option<ScopeRow>>>,
+    /// Each name's first definition the run made: its provider's.
+    first: HashMap<Sym, usize>,
     rest: Vec<ScopeRow>,
 }
 
-fn def_row(analysis: &Analysis, def: &crate::analysis::facts::Definition) -> Option<ScopeRow> {
+fn def_row(
+    analysis: &Analysis,
+    def: &crate::analysis::facts::Definition,
+    first: &HashMap<Sym, usize>,
+) -> Option<ScopeRow> {
     let name = analysis.interner.name(def.name);
     if unprintable_name(name) {
         return None;
@@ -3988,9 +4011,24 @@ fn def_row(analysis: &Analysis, def: &crate::analysis::facts::Definition) -> Opt
     record.insert("tag".into(), json!(def.tag));
     record.insert("effective".into(), json!(effective_of(analysis, def.name, def.mac.as_deref(), None)));
     let (tier, origin) = origin_of(analysis, def.package, def.span.file);
-    record.insert("package".into(), origin);
+    record.insert("package".into(), origin.clone());
+    // Who provides the name: the format when it defined it, else the
+    // package of its first definition; a later one only redefines it.
+    let provider = match (analysis.kernel_sites.contains_key(&def.name), first.get(&def.name)) {
+        (true, _) => json!("kernel"),
+        (false, Some(&i)) => origin_of(analysis, analysis.facts.defs[i].package, analysis.facts.defs[i].span.file).1,
+        (false, None) => origin,
+    };
+    record.insert("provider".into(), provider);
     let file = analysis.files.get(usize::from(def.span.file)).map(|f| std::path::PathBuf::from(&f.path));
-    if let Some(does) = scope_does(analysis, name, &analysis.env.meaning(def.name), file) {
+    let (does, usage) = scope_does(analysis, name, &analysis.env.meaning(def.name), file);
+    // the comment block above a definition in the project's files documents it
+    let comment = source_comment(analysis, def.span);
+    let said = comment.as_ref().map_or(&[][..], |c| &c.params[..]);
+    record
+        .insert("usage".into(), json!(usage_of(analysis, def.name, def.mac.as_deref(), None, usage.as_deref(), said)));
+    let does = does.or_else(|| comment.as_ref().map(|c| c.text.clone()).filter(|t| !t.is_empty()));
+    if let Some(does) = does {
         record.insert("does".into(), json!(does));
     }
     Some(ScopeRow { name: name.to_string(), tier, record, plain: !internal_name(analysis, name) })
@@ -3998,7 +4036,12 @@ fn def_row(analysis: &Analysis, def: &crate::analysis::facts::Definition) -> Opt
 
 fn scope_rows(analysis: &Analysis) -> ScopeRows {
     let defs = analysis.facts.defs.iter().map(|_| std::sync::OnceLock::new()).collect();
-    let recorded: BTreeSet<Sym> = analysis.facts.defs.iter().map(|d| d.name).collect();
+    // the names a definition shows; one with only passing definitions shows the format's meaning
+    let top = file_depths(analysis);
+    let recorded: BTreeSet<Sym> = (analysis.facts.defs.iter())
+        .filter(|d| lasting(d, &top) || !analysis.kernel_sites.contains_key(&d.name))
+        .map(|d| d.name)
+        .collect();
     let mut rest = Vec::new();
     for i in 0..analysis.interner.len() as u32 {
         let sym = Sym(i);
@@ -4033,12 +4076,24 @@ fn scope_rows(analysis: &Analysis) -> ScopeRows {
         record.insert("tag".into(), json!(if paired { "environment" } else { tag }));
         record.insert("effective".into(), json!(effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), None)));
         record.insert("package".into(), json!("kernel"));
-        if let Some(does) = scope_does(analysis, name, &meaning, None) {
+        record.insert("provider".into(), json!("kernel"));
+        // the file the format read its definition from, whose package documents it
+        let file = analysis.kernel_sites.get(&sym).and_then(|span| analysis.files.get(usize::from(span.file)));
+        let (does, usage) = scope_does(analysis, name, &meaning, file.map(|f| std::path::PathBuf::from(&f.path)));
+        record.insert(
+            "usage".into(),
+            json!(usage_of(analysis, sym, meaning.as_macro().map(|m| &**m), None, usage.as_deref(), &[])),
+        );
+        if let Some(does) = does {
             record.insert("does".into(), json!(does));
         }
         rest.push(ScopeRow { name: name.to_string(), tier: 2, record, plain });
     }
-    ScopeRows { defs, rest }
+    let mut first = HashMap::default();
+    for (i, d) in analysis.facts.defs.iter().enumerate() {
+        first.entry(d.name).or_insert(i);
+    }
+    ScopeRows { defs, first, rest }
 }
 
 /// How many arguments a command consumes, as a range: what its parameter
@@ -4050,7 +4105,11 @@ fn scope_rows(analysis: &Analysis) -> ScopeRows {
 /// `{1}` a mandatory argument, `[2]` an optional one, `*` a star form.  The
 /// interpreter records it while the command runs, so it describes what the
 /// command really consumes rather than what a table says it should.
-fn observed_shape(analysis: &Analysis, sym: crate::engine::tex::Sym) -> Option<String> {
+fn observed_shape(
+    analysis: &Analysis,
+    sym: crate::engine::tex::Sym,
+    slot: &dyn Fn(u8, char) -> String,
+) -> Option<String> {
     let shape = analysis.facts.shapes.get(&sym)?;
     let mut out = String::new();
     let mut items = shape.chars();
@@ -4062,7 +4121,7 @@ fn observed_shape(analysis: &Analysis, sym: crate::engine::tex::Sym) -> Option<S
         }
         let close = items.next()?;
         n += 1;
-        let _ = write!(out, "{open}{n}{close}");
+        let _ = write!(out, "{open}{}{close}", slot(n, open));
     }
     Some(out)
 }
@@ -4202,6 +4261,90 @@ fn effective_of(
     mac: Option<&crate::engine::tex::MacroDef>,
     view: Option<crate::analysis::probe::State>,
 ) -> String {
+    shape_of(analysis, sym, mac, view, None)
+}
+
+/// How a call of `sym` reads, each argument by name, never a bare number
+/// or a default: the name the documentation's usage line `doc` gives the
+/// argument in the same kind of bracket, in order, else the type the run
+/// gives it, else its place (`⟨arg2⟩`).
+fn usage_of(
+    analysis: &Analysis,
+    sym: crate::engine::tex::Sym,
+    mac: Option<&crate::engine::tex::MacroDef>,
+    view: Option<crate::analysis::probe::State>,
+    doc: Option<&str>,
+    said: &[(u8, String)],
+) -> String {
+    let calls = std::cell::RefCell::new(Vec::new());
+    shape_of(
+        analysis,
+        sym,
+        mac,
+        view,
+        Some(&|n, open| {
+            calls.borrow_mut().push((n, open));
+            String::new()
+        }),
+    );
+    let calls = calls.into_inner();
+    // `{⟨cmd⟩}[⟨nargs⟩]`: each placeholder with the bracket before it.
+    let given: Vec<(char, &str)> = doc
+        .map(|d| {
+            d.split('⟨')
+                .zip(d.split('⟨').skip(1))
+                // a bare placeholder (`\tl_set:Nn ⟨tl var⟩`) is a mandatory argument
+                .filter_map(|(before, p)| {
+                    let open = before.chars().last().filter(|c| "[(<".contains(*c)).unwrap_or('{');
+                    Some((open, p.split_once('⟩')?.0))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut documented: HashMap<u8, &str> = HashMap::default();
+    let mut next = 0;
+    for &(n, open) in &calls {
+        if let Some(k) = given[next.min(given.len())..].iter().position(|(o, _)| *o == open) {
+            documented.insert(n, given[next + k].1);
+            next += k + 1;
+        }
+    }
+    let types = match calls.iter().any(|(n, _)| *n > 0) {
+        true => slot_types(analysis, sym, probed(analysis, sym, mac, view).as_ref()).1,
+        false => Vec::new(),
+    };
+    let typed = |n: u8| {
+        use crate::analysis::roles::Ty;
+        types
+            .iter()
+            .find(|(k, t)| *k == usize::from(n) && !matches!(t, Ty::Bottom | Ty::Top))
+            .map(|(_, t)| t.to_string())
+    };
+    shape_of(
+        analysis,
+        sym,
+        mac,
+        view,
+        Some(&|n, _| {
+            let commented = said.iter().find(|(k, _)| *k == n).map(|(_, t)| t.trim_end_matches('.').to_string());
+            let name = commented.or_else(|| documented.get(&n).map(|d| d.to_string())).or_else(|| typed(n));
+            let place = if n == 0 { "command".to_string() } else { format!("arg{n}") };
+            format!("⟨{}⟩", name.unwrap_or(place))
+        }),
+    )
+}
+
+/// [`effective_of`]; with `named`, each argument by the name it gives
+/// argument `n` opened by a bracket (`0`: the name a definer defines),
+/// a default as a hint (`[⟨arguments⟩ = 0]`), never as the label.
+fn shape_of(
+    analysis: &Analysis,
+    sym: crate::engine::tex::Sym,
+    mac: Option<&crate::engine::tex::MacroDef>,
+    view: Option<crate::analysis::probe::State>,
+    named: Option<&dyn Fn(u8, char) -> String>,
+) -> String {
+    let slot = |n: u8, open: char| named.map_or_else(|| n.to_string(), |f| f(n, open));
     use crate::engine::tex::ArgType as A;
     let cs = analysis.interner.cs(sym);
     let mut body = String::new();
@@ -4227,13 +4370,16 @@ fn effective_of(
                     A::Star => star = true,
                     A::Mandatory => {
                         n += 1;
-                        let _ = write!(body, "{{{n}}}");
+                        let _ = write!(body, "{{{}}}", slot(n, '{'));
                     }
                     // its default shows, and it takes its parameter number all the same:
                     // `#1` of the types is the optional argument
                     A::Optional(Some(default)) => {
                         n += 1;
-                        let _ = write!(body, "[{default}]");
+                        let _ = match named {
+                            Some(_) => write!(body, "[{} = {default}]", slot(n, '[')),
+                            None => write!(body, "[{default}]"),
+                        };
                     }
                     A::TokenFlag(c) => {
                         let _ = write!(body, "{c}?");
@@ -4243,6 +4389,9 @@ fn effective_of(
                         let _ = write!(body, " [{word}{value}]");
                     }
                     A::Quantity(value) if value == crate::analysis::probe::SWITCH => body.push_str(value),
+                    A::Quantity(value) if value == "cs" && named.is_some() => {
+                        let _ = write!(body, "{{{}}}", slot(0, '{'));
+                    }
                     A::Quantity(value) => {
                         let _ = write!(body, "⟨{value}⟩");
                     }
@@ -4250,25 +4399,26 @@ fn effective_of(
                         n += 1;
                         let mark = if *required { "" } else { "?" };
                         let _ = match default {
+                            Some(d) if named.is_some() => write!(body, "{open}{} = {d}{close}{mark}", slot(n, *open)),
                             Some(d) => write!(body, "{open}{d}{close}{mark}"),
-                            None => write!(body, "{open}{n}{close}{mark}"),
+                            None => write!(body, "{open}{}{close}{mark}", slot(n, *open)),
                         };
                     }
                     A::Embellishment(e) => {
                         for c in e.chars() {
                             n += 1;
-                            let _ = write!(body, "{c}{{{n}}}?");
+                            let _ = write!(body, "{c}{{{}}}?", slot(n, '{'));
                         }
                     }
                     A::Optional(None) => {
                         n += 1;
-                        let _ = write!(body, "[{n}]");
+                        let _ = write!(body, "[{}]", slot(n, '['));
                     }
                     // `#{`: the `{` stays, for what follows to read.
                     A::Until(delimiter) => {
                         n += 1;
                         let delimiter = if delimiter == "{" { "" } else { delimiter };
-                        let _ = write!(body, "{{{n}}}{delimiter}");
+                        let _ = write!(body, "{{{}}}{delimiter}", slot(n, '{'));
                     }
                     // A control word's name ends before the text, which
                     // the call writes after a space.
@@ -4289,11 +4439,17 @@ fn effective_of(
         (None, Some(mac), _) => {
             for _ in 0..mac.parameter_text.arity {
                 n += 1;
-                let _ = write!(body, "{{{n}}}");
+                let _ = write!(body, "{{{}}}", slot(n, '{'));
             }
         }
         // no complete probe: The TeXbook's syntax where one is known, not a count of arguments
-        (None, None, Some(_)) if crate::lsp::primitives::usage(crate::engine::tex::bare_name(&cs)).is_some() => {
+        // only while the name still means its own primitive (`\let\def\relax` does not)
+        (None, None, Some(prim))
+            if crate::lsp::primitives::usage(crate::engine::tex::bare_name(&cs)).is_some()
+                && crate::engine::builtins::primitive_names(analysis.plugins.engine)
+                    .get(crate::engine::tex::bare_name(&cs))
+                    == Some(&prim) =>
+        {
             return format!(
                 "{cs}{}",
                 crate::lsp::primitives::usage(crate::engine::tex::bare_name(&cs)).unwrap_or_default()
@@ -4302,12 +4458,12 @@ fn effective_of(
         (None, None, Some(prim)) => {
             let (low, high) = crate::engine::builtins::takes(prim);
             for i in 1..=low {
-                let _ = write!(body, "{{{i}}}");
+                let _ = write!(body, "{{{}}}", slot(i, '{'));
             }
             match high {
                 Some(high) => {
                     for i in (low + 1)..=high {
-                        let _ = write!(body, "[{i}]");
+                        let _ = write!(body, "[{}]", slot(i, '['));
                     }
                 }
                 None => body.push_str("[..]"),
@@ -4321,7 +4477,7 @@ fn effective_of(
     // What the command was seen to read wins when it read more than that.
     let seen = analysis.facts.shapes.get(&sym);
     let stated = declared.chars().filter(|c| matches!(c, '{' | '[' | '(' | '*')).count();
-    if let (Some(shape), Some(observed)) = (seen, observed_shape(analysis, sym))
+    if let (Some(shape), Some(observed)) = (seen, observed_shape(analysis, sym, &slot))
         && shape_items(shape) > stated
     {
         return format!("{cs}{observed}");
@@ -4525,21 +4681,32 @@ fn describe_meaning(analysis: &Analysis, name: &str, meaning: &Meaning) -> Optio
 
 /// What [`scope`] says `name` does: its description, else what the manual
 /// of the package defining it (`file`, else the format) says, else what
-/// the run made it: `\theX` prints counter `X` where `\c@X` is one.
-fn scope_does(analysis: &Analysis, name: &str, meaning: &Meaning, file: Option<std::path::PathBuf>) -> Option<String> {
-    if let Some(does) = describe_meaning(analysis, name, meaning) {
-        return Some(does.to_string());
-    }
+/// the run made it: `\theX` prints counter `X` where `\c@X` is one. And
+/// the usage line the manual gives.
+fn scope_does(
+    analysis: &Analysis,
+    name: &str,
+    meaning: &Meaning,
+    file: Option<std::path::PathBuf>,
+) -> (Option<String>, Option<String>) {
     let file = file.or_else(|| crate::caches::distribution::tex_file(&analysis.distribution.roots, "latex.ltx"));
+    // A macro the format puts in a primitive's place (`\par`, `\-`): the
+    // format's source comments explain its code, not the command.
+    let primitive = crate::engine::builtins::primitive_names(analysis.plugins.engine).contains_key(name);
     let mined = file
-        .filter(|_| analysis.settings.plugins.docs && meaning.as_macro().is_some())
-        .and_then(|f| crate::plugins::docs::index(&analysis.settings.docs).lookup_now(&f, name)?.text);
-    mined.or_else(|| {
+        .filter(|_| analysis.settings.plugins.docs && meaning.as_macro().is_some() && !primitive)
+        .and_then(|f| crate::plugins::docs::index(&analysis.settings.docs).lookup_now(&f, name));
+    let usage = mined.as_ref().and_then(|m| m.usage.clone());
+    if let Some(does) = describe_meaning(analysis, name, meaning) {
+        return (Some(does.to_string()), usage);
+    }
+    let does = mined.and_then(|m| m.text).or_else(|| {
         let counter = name.strip_prefix("the")?;
         let reg = analysis.interner.lookup(&format!("c@{counter}"))?;
         matches!(analysis.env.meaning(reg), Meaning::Register(crate::engine::tex::RegKind::Count, _))
             .then(|| format!("The printed value of counter {counter}."))
-    })
+    });
+    (does, usage)
 }
 
 /// Adds the `documentation`/`reference` link and, when the name has one, the
@@ -4761,15 +4928,45 @@ fn insert_call_shape(
     if let Some(p) = probe.as_ref().filter(|p| forms && !p.forms.is_empty()) {
         record.insert("forms".into(), json!(p.forms.iter().map(|f| f.raw.clone()).collect::<Vec<_>>()));
     }
+    let (named, types) = slot_types(analysis, sym, probe.as_ref());
+    if !named.is_empty() {
+        record.insert("roles".into(), json!(named));
+    }
+    if !types.is_empty() {
+        record.insert("types".into(), json!(types.iter().map(|(arg, t)| format!("#{arg} {t}")).collect::<Vec<_>>()));
+    }
+    record.insert("effective".into(), json!(effective_of(analysis, sym, mac, view)));
+    let said: Vec<(u8, String)> = (record.get("arguments").and_then(Json::as_array).into_iter().flatten())
+        .filter_map(|a| {
+            let (n, text) = a.as_str()?.strip_prefix("⟨arg")?.split_once("⟩ ")?;
+            Some((n.parse().ok()?, text.to_string()))
+        })
+        .collect();
+    record.insert("usage".into(), json!(usage_of(analysis, sym, mac, view, None, &said)));
+    // what the expansion gives where TeX reads a quantity (`\the\c@page`: a number)
+    if let Some(ty) = mac.and_then(|m| crate::analysis::roles::yields(analysis, m)) {
+        record.insert("yields".into(), json!(ty.to_string()));
+    }
+    if let Some(error) = probe.and_then(|p| p.error) {
+        record.insert("error".into(), json!(error));
+    }
+}
+
+/// What the run says each numbered argument of `sym` is: its roles,
+/// written with the argument's place (`#2`), and its type by place.
+fn slot_types(
+    analysis: &Analysis,
+    sym: Sym,
+    probe: Option<&crate::analysis::probe::Probed>,
+) -> (Vec<String>, Vec<(usize, crate::analysis::roles::Ty)>) {
     let roles = crate::analysis::roles::roles(analysis, analysis.interner.name(sym));
     // Roles and types name the braced arguments; the record names every
     // argument by its place in the usage line.
-    let slots = argument_slots(probe.as_ref().map_or(&[][..], |p| &p.spec.items[..]));
+    let slots = argument_slots(probe.map_or(&[][..], |p| &p.spec.items[..]));
     // A braced group stands for the next item that reads one: a numbered
     // argument, or a name the call defines (`\newcommand{\x}`), which has
     // no number and takes no type here.
     let braced_items: Vec<Option<usize>> = probe
-        .as_ref()
         .map_or(&[][..], |p| &p.spec.items[..])
         .iter()
         .filter_map(|item| {
@@ -4791,9 +4988,6 @@ fn insert_call_shape(
             ToString::to_string(r).replacen(&format!("#{}", r.arg + 1), &at, 1)
         })
         .collect();
-    if !named.is_empty() {
-        record.insert("roles".into(), json!(named));
-    }
     use crate::analysis::roles::{RoleKind, Ty};
     let mut types: Vec<(usize, Ty)> = crate::analysis::roles::arg_types(&roles)
         .into_iter()
@@ -4842,7 +5036,7 @@ fn insert_call_shape(
     }
     // A control sequence the call defines as a conditional (`\newif`).
     let mut place_of = 0;
-    for item in probe.as_ref().map_or(&[][..], |p| &p.spec.items[..]) {
+    for item in probe.map_or(&[][..], |p| &p.spec.items[..]) {
         use crate::engine::tex::ArgType as A;
         match item {
             A::Quantity(k) if k == crate::analysis::probe::SWITCH => types.push((place_of + 1, Ty::Switch)),
@@ -4853,17 +5047,7 @@ fn insert_call_shape(
     }
     types.sort_by_key(|(n, _)| *n);
     types.dedup_by_key(|(n, _)| *n);
-    if !types.is_empty() {
-        record.insert("types".into(), json!(types.iter().map(|(arg, t)| format!("#{arg} {t}")).collect::<Vec<_>>()));
-    }
-    record.insert("effective".into(), json!(effective_of(analysis, sym, mac, view)));
-    // what the expansion gives where TeX reads a quantity (`\the\c@page`: a number)
-    if let Some(ty) = mac.and_then(|m| crate::analysis::roles::yields(analysis, m)) {
-        record.insert("yields".into(), json!(ty.to_string()));
-    }
-    if let Some(error) = probe.and_then(|p| p.error) {
-        record.insert("error".into(), json!(error));
-    }
+    (named, types)
 }
 
 /// The run called `sym` and no call raised an error: its uses decide, not a
@@ -5043,8 +5227,31 @@ fn def_body(analysis: &Analysis, def: &crate::analysis::facts::Definition) -> St
 /// The latest definition of `sym` at or before `boundary`; `None` for the
 /// boundary means no cutoff, so the latest definition overall.
 fn def_at(analysis: &Analysis, sym: Sym, boundary: Option<NodeId>) -> Option<&crate::analysis::facts::Definition> {
+    let top = file_depths(analysis);
     let defs = || analysis.facts.defs.iter().filter(|d| d.name == sym).filter(|d| boundary.is_none_or(|b| d.node <= b));
-    defs().filter(|d| d.via != Some(sym)).max_by_key(|d| d.node).or_else(|| defs().max_by_key(|d| d.node))
+    let lasting = || defs().filter(|d| lasting(d, &top));
+    (lasting().filter(|d| d.via != Some(sym)).max_by_key(|d| d.node))
+        .or_else(|| lasting().max_by_key(|d| d.node))
+        // a passing one only for a name the format does not define
+        .or_else(|| defs().filter(|_| !analysis.kernel_sites.contains_key(&sym)).max_by_key(|d| d.node))
+}
+
+/// The group depth each file's own top-level code ran at: the least depth
+/// of a definition it made.
+fn file_depths(analysis: &Analysis) -> HashMap<FileId, u16> {
+    let mut top: HashMap<FileId, u16> = HashMap::default();
+    for d in &analysis.facts.defs {
+        let at = top.entry(d.span.file).or_insert(d.depth);
+        *at = (*at).min(d.depth);
+    }
+    top
+}
+
+/// Whether `def` outlives the code that made it: global, or local at its
+/// file's top level. A local one inside a group its file's code opened
+/// (`ifthen`'s `\let\ref…` while `\ifthenelse` runs) ends with that group.
+fn lasting(def: &crate::analysis::facts::Definition, top: &HashMap<FileId, u16>) -> bool {
+    def.global || top.get(&def.span.file).is_none_or(|t| def.depth <= *t)
 }
 
 /// The environments open at `node`, outermost first, replayed from the
@@ -5539,9 +5746,9 @@ pub fn docs(analysis: &Analysis) -> Vec<Record> {
     out
 }
 
-/// Each name (with or without its backslash) and the package or class of the
-/// installation that defines it loading the fewest files
-/// ([`crate::caches::exports::Exports::providers`]); a name no file defines is left out.
+/// Each name (with or without its backslash) and the package of the
+/// installation that defines it, the most loaded of several
+/// ([`crate::caches::exports::Exports::provider`]); a name no file defines is left out.
 pub fn providers(analysis: &Analysis, names: &[String]) -> Vec<Record> {
     let exports = crate::caches::exports::Exports::of(
         &analysis.distribution.roots,
@@ -5552,7 +5759,7 @@ pub fn providers(analysis: &Analysis, names: &[String]) -> Vec<Record> {
         .iter()
         .filter_map(|name| {
             let bare = name.trim_start_matches('\\').to_string();
-            let (file, _) = exports.providers(std::slice::from_ref(&bare)).into_iter().next()?;
+            let file = exports.provider(&bare)?;
             let mut record = Record::new();
             record.insert("name".into(), json!(format!("\\{bare}")));
             record.insert("package".into(), json!(file.trim_end_matches(".sty")));

@@ -8,7 +8,7 @@ import { openDialog } from './dialogs';
 import { Actions } from './sidebar';
 import { STALE, Status, Work } from './status';
 import { Steps, TraceEvent } from './steps';
-import { openView, ViewActions } from './views';
+import { manage, openView, ViewActions } from './views';
 
 const INSTALL_HINT = 'Install it with `cargo install satex-analyzer`, download a release from https://github.com/EagleoutIce/satex-analyzer/releases, or set `satex.path`.';
 let client: LanguageClient | undefined;
@@ -196,11 +196,11 @@ export function activate(context: vscode.ExtensionContext): void {
                     published.set(uri.toString(), [uri, diagnostics]);
                     next(uri, shown(diagnostics));
                 },
-                // a hover's "Edit table…" link runs `satex.openDialog`, and only that command
+                // a hover's "Edit table…" link runs `satex.openDialog`; the units hover's values write themselves (`satex.applyEdit`)
                 provideHover: async (document, position, token, next) => {
                     const hover = await next(document, position, token);
                     for (const c of hover?.contents ?? []) {
-                        if (c instanceof vscode.MarkdownString && c.value.includes('command:satex.openDialog')) { c.isTrusted = { enabledCommands: ['satex.openDialog'] }; }
+                        if (c instanceof vscode.MarkdownString) { c.isTrusted = { enabledCommands: ['satex.openDialog', 'satex.applyEdit'] }; }
                     }
                     return hover;
                 },
@@ -230,8 +230,14 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('satex.restart', () => client?.restart()),
         vscode.commands.registerCommand('satex.showOutput', () => client?.outputChannel.show(true)),
         // type plugins' dialogs (color picker, length converter, drawing): the server's `satex/view` in a webview
+        vscode.commands.registerCommand('satex.applyEdit', async (uri: string, range: vscode.Range, newText: string) => {
+            const edit = new vscode.WorkspaceEdit();
+            edit.replace(vscode.Uri.parse(uri), new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character), newText);
+            await vscode.workspace.applyEdit(edit);
+        }),
         vscode.commands.registerCommand('satex.openView', (uri?: vscode.Uri | string, at?: vscode.Position, plugin?: string) => openView(context, client, uri, at, plugin)),
         vscode.languages.registerCodeActionsProvider(['latex', 'tex'].map(language => ({ language })), new ViewActions(() => client)),
+        vscode.commands.registerCommand('satex.manage', () => manage(context, client)),
         vscode.commands.registerCommand('satex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
         client.onNotification('satex/status', working),
         client.onDidChangeState(e => status.down(e.newState === State.Stopped)));

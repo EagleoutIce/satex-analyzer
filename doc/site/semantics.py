@@ -627,33 +627,41 @@ def cards(names, rows, ctx, refs, scope, engines, previews, builtins, defs=None)
             card["pv"] = pv
         if env:
             card["k"] = "environment"
-            if rec and rec.get("package"):
-                card["pkg"] = rec["package"]
-            card["doc"] = (rec or {}).get("does") or f"The `{env.group(1)}` environment."
+            if rec and (rec.get("provider") or rec.get("package")):
+                card["pkg"] = rec.get("provider") or rec["package"]
             if rec and rec.get("file"):
                 card["at"] = f'{rec["file"]}:{rec["line"]}'
+            card["doc"] = (rec or {}).get("does") or no_doc(card)
         elif rec or row:
             tag = rec.get("tag") if rec else None
-            pkg = rec.get("package") if rec else None
+            # the provider defined it first; the package in force may only redefine it
+            pkg = (rec.get("provider") or rec.get("package")) if rec else None
+            again = rec.get("package") if rec else None
+            whose = "class" if rec and str(rec.get("file", "")).endswith(".cls") and pkg == again else "package"
             if row or tag == "primitive":
                 card["k"] = "primitive"
             elif pkg in ("kernel", "latex.ltx"):
                 card["k"] = "kernel macro" if tag != "alias" else "kernel alias"
             else:
-                card["k"] = "package macro" if tag != "alias" else "package alias"
+                card["k"] = f"{whose} macro" if tag != "alias" else f"{whose} alias"
             if pkg and card["k"] != "primitive":
                 card["pkg"] = pkg
+                if again and again not in (pkg, "document"):
+                    card["re"] = again
             if card["k"] == "primitive":
                 have = [e for e, ns in engines.items() if name in ns]
                 if have:
                     card["e"] = "all engines" if name in every else ", ".join(have)
             if rec:
-                if rec.get("effective") and rec["effective"] != name:
-                    card["sig"] = rec["effective"]
-                if rec.get("does"):
-                    card["doc"] = rec["does"]
+                # the usage line with its arguments named by the manual or the run, never numbered
+                if rec.get("usage") and rec["usage"] != name:
+                    card["sig"] = rec["usage"]
                 if rec.get("file"):
                     card["at"] = f'{rec["file"]}:{rec["line"]}'
+                if rec.get("does"):
+                    card["doc"] = rec["does"]
+                elif card["k"] != "primitive":
+                    card["doc"] = no_doc(card)
         if row:
             _, rule, source, kind = row
             sem = {"kind": {"exact": "exact", "over": "over-approximated", "open": "no rule yet"}.get(kind, kind), "row": f"wiki/formal-semantics.html#{prim_id(row[0])}"}
@@ -673,11 +681,34 @@ def cards(names, rows, ctx, refs, scope, engines, previews, builtins, defs=None)
                 sem["src"] = source
             card["sem"] = sem
             refs.used.add(("wiki/formal-semantics.html", prim_id(row[0])))
+            if not card.get("doc"):
+                card["doc"] = primitive_doc(rule, source, card.get("e"))
         if not card and name in defs:
             title, kind = defs[name]
             card.update(k=kind, at=f"the example on {title}")
-        out[name] = card or {"k": "undefined", "doc": "Not defined by TeX, LaTeX or a loaded package."}
+        out[name] = card or {"k": "undefined", "doc": "No definition found: the probe document, which loads the pages' packages, "
+                                                      "does not define it at its top level."}
     return out
+
+
+def no_doc(card):
+    """What a card says when no documentation source speaks for its name: where it is defined, never a guess."""
+    return f'No documentation found. Defined at `{card["at"]}`.' if card.get("at") else "No documentation found."
+
+
+# What a primitive is, by the semantics rule primitives.tsv gives it.
+RULE_SAYS = {"intPar": "An integer parameter", "dimPar": "A dimension parameter", "gluePar": "A glue parameter",
+             "specialTable": "A per-character table", "convertOther": "Expands to text computed from its operands",
+             "ifTrue": "A conditional", "constant": "A constant", "unknowable": "A quantity known only while the engine runs",
+             "lua": "Runs Lua code", "operands": "A typesetting or output command", "illegal": "An internal quantity"}
+
+
+def primitive_doc(rule, source, engines):
+    """A primitive's line from its semantics row: what its rule makes it and where it is documented."""
+    said = next((RULE_SAYS[r.split(".")[-1]] for r in rule.split(",") if r.split(".")[-1] in RULE_SAYS), None)
+    whose = f" of {engines}" if engines and engines != "all engines" else ""
+    where = f", documented in the {source}" if source else ""
+    return f"{said or 'A primitive'}{whose}{where}."
 
 
 DEFINERS = [(r"(?:\\(?:gdef|edef|xdef|def)|\\(?:re)?newcommand\*?|\\(?:Provide|Declare)(?:Robust)?Command\*?|\\(?:New|Renew|Provide|Declare)(?:Expandable)?DocumentCommand)\s*\{?\s*(\\[A-Za-z@]+)", "macro"),

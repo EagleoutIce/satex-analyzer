@@ -8,8 +8,9 @@ interface Edit { range: { start: { line: number; character: number }; end: { lin
 const VERB: Record<string, string> = { color: 'Pick', units: 'Convert', environment: '', tikz: '' };
 
 /** The views at a position, from the server. */
-async function views(client: LanguageClient, doc: vscode.TextDocument, at: vscode.Position): Promise<View[]> {
-    const params = { textDocument: { uri: doc.uri.toString() }, position: { line: at.line, character: at.character } };
+async function views(client: LanguageClient, doc: vscode.TextDocument, at?: vscode.Position, plugin?: string): Promise<View[]> {
+    // without a position, the plugin's manager
+    const params = at ? { textDocument: { uri: doc.uri.toString() }, position: { line: at.line, character: at.character } } : { textDocument: { uri: doc.uri.toString() }, plugin };
     return (await client.sendRequest<View[]>('satex/view', params).catch(() => [])) ?? [];
 }
 
@@ -28,13 +29,13 @@ export class ViewActions implements vscode.CodeActionProvider {
 }
 
 /** Opens the view of `plugin` (else the first) at `at` in a webview beside the editor. */
-export async function openView(context: vscode.ExtensionContext, client: LanguageClient | undefined, uri?: vscode.Uri | string, at?: vscode.Position | { line: number; character: number }, plugin?: string): Promise<void> {
+export async function openView(context: vscode.ExtensionContext, client: LanguageClient | undefined, uri?: vscode.Uri | string, at?: vscode.Position | { line: number; character: number }, plugin?: string, manage = false): Promise<void> {
     const editor = vscode.window.activeTextEditor;
     // a code lens from the server passes its arguments as JSON
     const doc = uri ? await vscode.workspace.openTextDocument(typeof uri === 'string' ? vscode.Uri.parse(uri) : uri) : editor?.document;
-    const pos = at ? new vscode.Position(at.line, at.character) : editor?.selection.active;
-    if (!client || !doc || !pos) { return; }
-    const all = await views(client, doc, pos);
+    const pos = manage ? undefined : at ? new vscode.Position(at.line, at.character) : editor?.selection.active;
+    if (!client || !doc || (!pos && !manage)) { return; }
+    const all = await views(client, doc, pos, plugin);
     const view = all.find(v => v.plugin === plugin) ?? all[0];
     if (!view) { void vscode.window.showInformationMessage('satex: no view here'); return; }
     const media = vscode.Uri.joinPath(context.extensionUri, 'media');
@@ -53,12 +54,22 @@ const view = ${JSON.stringify(view).replace(/</g, '\\u003c')};
 document.querySelector('h3').textContent = view.title;
 satexViews.render(view, document.getElementById('view'), { apply: (edits) => vscode.postMessage({ edits }) });
 </script></body></html>`;
-    panel.webview.onDidReceiveMessage(async (m: { edits: Edit[] }) => {
+    // a view applies TextEdits on its document or a WorkspaceEdit `{changes: {uri: edits}}`
+    panel.webview.onDidReceiveMessage(async (m: { edits: Edit[] | { changes: Record<string, Edit[]> } }) => {
         const edit = new vscode.WorkspaceEdit();
-        for (const e of m.edits) {
-            edit.replace(doc.uri, new vscode.Range(e.range.start.line, e.range.start.character, e.range.end.line, e.range.end.character), e.newText);
+        const changes = Array.isArray(m.edits) ? { [doc.uri.toString()]: m.edits } : m.edits.changes;
+        for (const [uri, edits] of Object.entries(changes)) {
+            for (const e of edits) {
+                edit.replace(vscode.Uri.parse(uri), new vscode.Range(e.range.start.line, e.range.start.character, e.range.end.line, e.range.end.character), e.newText);
+            }
         }
         await vscode.workspace.applyEdit(edit);
         panel.dispose();
     });
+}
+
+/** The managers (`satex/view` without a position): glossary, bibliography, index, theorems. */
+export async function manage(context: vscode.ExtensionContext, client: LanguageClient | undefined): Promise<void> {
+    const pick = await vscode.window.showQuickPick(['glossary', 'bibliography', 'index', 'theorem'], { placeHolder: 'Manage' });
+    if (pick) { await openView(context, client, undefined, undefined, pick, true); }
 }

@@ -184,6 +184,24 @@ fn same_facts(a: &Analysis, b: &Analysis) {
     }
 }
 
+/// tagpdf replays whole: the random ids (`\\int_rand:n`) its namespaces
+/// get fork, and their paths leave fewer finished input levels below the
+/// file than it opened on. The replay reports what reading it did.
+#[test]
+fn tagpdf_replays_whole_and_reports_the_same() {
+    if !installed() {
+        return;
+    }
+    let dir = project("tagpdf");
+    let document = "\\documentclass{article}\n\\usepackage{tagpdf}\n\\begin{document}\nx\n\\end{document}\n";
+    let first = run(&dir, document);
+    let second = run(&dir, document);
+    assert_eq!(served(&second, "tagpdf"), Some(true), "{:?}", second.package_caches);
+    assert!(second.served_steps * 10 > second.load_steps * 9, "{} of {}", second.served_steps, second.load_steps);
+    assert_eq!(first.steps, second.steps);
+    same_facts(&first, &second);
+}
+
 #[test]
 fn a_second_run_replays_the_package_and_reports_the_same() {
     let dir = project("replay");

@@ -44,15 +44,10 @@ impl TypePlugin for Units {
 
     fn hover(&self, cx: &Cx, hit: &super::Hit) -> Option<String> {
         if let Some(lit) = literal(cx) {
-            let mut md = crate::lsp::handlers::heading("length", &lit.written);
-            md.push_str(&table(cx, Num::exact(lit.sp)));
-            return Some(md);
+            return Some(card(cx, &format!("`{}`", lit.written), Num::exact(lit.sp), Some(&lit)));
         }
         let (name, num) = register(cx.analysis, hit)?;
-        let mut md = crate::lsp::handlers::heading("length", &format!("\\{name}"));
-        md.push_str(&format!("{} at the end of the run\n\n", shown(num)));
-        md.push_str(&table(cx, num));
-        Some(md)
+        Some(card(cx, &format!("`\\{name}` at the end of the run"), num, None))
     }
 
     fn complete(&self, cx: &Cx, hit: &super::Hit) -> Option<Vec<CompletionItem>> {
@@ -108,7 +103,13 @@ impl TypePlugin for Units {
             .iter()
             .filter(|(u, ..)| *u != "mu")
             .map(|(u, n, d)| json!({ "name": u, "sp": UNIT as f64 * *n as f64 / *d as f64 }))
-            .chain(font_units(cx).into_iter().map(|(u, sp)| json!({ "name": u, "sp": sp as f64 })))
+            .chain(
+                fonts_at(cx, lit.as_ref().map(|l| l.from))
+                    .first()
+                    .into_iter()
+                    .flat_map(|f| [("em", f.1[0]), ("ex", f.1[1])])
+                    .filter_map(|(u, sp)| Some(json!({ "name": u, "sp": sp? as f64 }))),
+            )
             .collect();
         let mut sections = vec![json!({
             "kind": "converter",
@@ -175,11 +176,15 @@ fn literal(cx: &Cx) -> Option<Literal> {
 /// A length register's name and its value when the run ended.
 fn register(analysis: &Analysis, hit: &super::Hit) -> Option<(String, Num)> {
     let name = hit.typed.as_deref()?.trim_start_matches('\\');
+    Some((name.to_string(), register_value(analysis, name)?))
+}
+
+/// The value of the length register `\name` when the run ended.
+fn register_value(analysis: &Analysis, name: &str) -> Option<Num> {
     let sym = analysis.interner.lookup(name)?;
     let Meaning::Register(kind, n) = analysis.env.meaning(sym) else { return None };
     let reg = analysis.interner.lookup(&format!("\u{2}{}{n}", kind.as_str()))?;
-    let (_, num) = analysis.env.num(reg)?;
-    Some((name.to_string(), num))
+    Some(analysis.env.num(reg)?.1)
 }
 
 /// `(n, d)` of a unit: `n/d` points.
@@ -204,59 +209,162 @@ fn converted(sp: i64, name: &str, decimals: u8) -> (String, i64) {
     (format!("{s}{name}"), off)
 }
 
-/// The rows: each configured unit, then em and ex where the font is known, then sp.
-fn table(cx: &Cx, num: Num) -> String {
+/// Units most lengths are read in; the rest are TeX's own.
+const EVERYDAY: [&str; 4] = ["pt", "mm", "cm", "in"];
+/// Cells of the to-scale bar.
+const BAR: usize = 20;
+
+/// The hover: a headline in the everyday units, a to-scale bar, `em` and `ex` of the font in
+/// force, and TeX's own units in a grid. With a literal, each value is a link that writes it
+/// in place of the literal.
+fn card(cx: &Cx, head: &str, num: Num, lit: Option<&Literal>) -> String {
     let cfg = &cx.cfg().units;
-    let mut out = String::from("| unit | value |\n|---|---|\n");
-    let row = |per: f64| {
-        let v = |sp: i64| trimmed(sp as f64 / per, 5);
-        if num.lo == num.hi { v(num.lo) } else { format!("{} … {}", v(num.lo), v(num.hi)) }
+    let exact = num.lo == num.hi;
+    let own = lit.map(|l| l.unit.as_str());
+    // `u`'s value as (text, reads back as the same sp); an interval as a range
+    let value = |u: &str, places: u8| -> Option<(String, bool)> {
+        let (n, d) = unit(u)?;
+        if exact {
+            let (t, off) = converted(num.lo, u, places);
+            return Some((t[..t.len() - u.len()].to_string(), off == 0));
+        }
+        let per = UNIT as f64 * n as f64 / d as f64;
+        let v = |sp: i64| trimmed(sp as f64 / per, places);
+        Some(if exact { (v(num.lo), true) } else { (format!("{} … {}", v(num.lo), v(num.hi)), false) })
     };
-    for u in &cfg.units {
-        if let Some((n, d)) = unit(u) {
-            out.push_str(&format!("| {u} | {} |\n", row(UNIT as f64 * n as f64 / d as f64)));
+    let link = |u: &str, shown: &str, text: &str| match lit {
+        Some(l) if exact => {
+            let args = json!([cx.uri(), range(cx.doc, l.line, l.from, l.to), format!("{text}{u}")]);
+            format!("[{shown}](command:satex.applyEdit?{})", encode(&args.to_string()))
+        }
+        _ => shown.to_string(),
+    };
+    let mut md = format!("### {head}");
+    for u in EVERYDAY.iter().filter(|u| Some(**u) != own && cfg.units.iter().any(|c| c == *u)) {
+        if let Some((t, ok)) = value(u, cfg.decimals) {
+            md.push_str(&format!(" {} {}", if ok { "=" } else { "≈" }, link(u, &format!("{t} {u}"), &t)));
         }
     }
-    let fonts = font_units(cx);
-    for (u, sp) in &fonts {
-        out.push_str(&format!("| {u} | {} |\n", row(*sp as f64)));
+    md.push_str("\n\n");
+    if let Some(bar) = bar(cx, num) {
+        md.push_str(&format!("{bar}\n\n"));
     }
-    out.push_str(&format!("| sp | {} |\n\n", shown_sp(num)));
-    if fonts.is_empty() {
-        out.push_str("`em` and `ex` depend on the font where the length is read: none was set before it.\n");
-    } else {
-        out.push_str("`em` and `ex` of the font of the text set just before.\n");
+    if let Some(line) = font_line(cx, num, lit) {
+        md.push_str(&format!("{line}\n\n"));
     }
-    out
+    let mut cells = Vec::new();
+    for (u, ..) in UNITS.iter().filter(|(u, ..)| *u != "mu" && !EVERYDAY.contains(u) && Some(*u) != own) {
+        if let Some((t, _)) = value(u, 3) {
+            cells.push((*u, link(u, &t, &t)));
+        }
+    }
+    let row = |f: &dyn Fn(&(&str, String)) -> String| cells.iter().map(f).collect::<Vec<_>>().join(" | ");
+    md.push_str(&format!(
+        "| {} |\n|{}\n| {} |\n",
+        row(&|c| c.0.to_string()),
+        "---:|".repeat(cells.len()),
+        row(&|c| c.1.clone())
+    ));
+    md
 }
 
-/// `em` and `ex` in sp: the quad and x-height (`\fontdimen6`, `5`) of the font of the text set
-/// last before the cursor in this file, when the run loaded its metrics.
-fn font_units(cx: &Cx) -> Vec<(&'static str, i64)> {
-    let Some(file) = super::super::type_at::file_of(cx.analysis, cx.path) else { return Vec::new() };
-    let spots = &cx.analysis.facts.text.at;
-    let before = spots
-        .iter()
-        .rev()
-        .find(|s| s.span.file == file && (s.span.line, s.span.col) <= (cx.pos.line, cx.pos.col) && s.font_state != 0);
-    let Some(state) = before.and_then(|s| cx.analysis.font_states.get(usize::from(s.font_state))) else {
-        return Vec::new();
-    };
-    let mut fonts = crate::linter::italics::Fonts::of(cx.analysis);
-    let Some((metrics, size)) = fonts.metrics(state.font) else { return Vec::new() };
-    [("em", 6), ("ex", 5)]
-        .into_iter()
-        .filter_map(|(u, k)| Some((u, metrics.param(k, size).filter(|v| *v > 0)?)))
+/// `= 1.2 em ≈ 2.79 ex in cmr10 at 10pt`: the length in the `em` and `ex` of the font in force
+/// where it was read; with several possible fonts, a range and each font.
+fn font_line(cx: &Cx, num: Num, lit: Option<&Literal>) -> Option<String> {
+    let fonts = fonts_at(cx, lit.map(|l| l.from));
+    if fonts.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for (unit, k) in [("em", 0), ("ex", 1)] {
+        let per: Vec<i64> = fonts.iter().filter_map(|f| f.1[k]).collect();
+        let (Some(&small), Some(&big)) = (per.iter().min(), per.iter().max()) else { continue };
+        let at = |sp: i64, per: i64| sp as f64 / per as f64;
+        let (lo, hi) =
+            (at(num.lo, if num.lo < 0 { small } else { big }), at(num.hi, if num.hi < 0 { big } else { small }));
+        if num.lo == num.hi && small == big {
+            let t = trimmed(lo, 2);
+            let same = t.parse::<f64>().is_ok_and(|v| (v * small as f64).round() as i64 == num.lo);
+            parts.push(format!("{} {t} {unit}", if same { "=" } else { "≈" }));
+        } else {
+            parts.push(format!("≈ {} … {} {unit}", trimmed(lo.min(hi), 2), trimmed(lo.max(hi), 2)));
+        }
+    }
+    let names: Vec<&str> = fonts.iter().map(|f| f.0.as_str()).collect();
+    Some(format!("{} in {}", parts.join(" "), names.join(", ")))
+}
+
+/// The length against `\textwidth` when known and not smaller, else against 1 cm, 10 cm or 1 m.
+fn bar(cx: &Cx, num: Num) -> Option<String> {
+    if num.lo != num.hi || num.lo <= 0 {
+        return None;
+    }
+    let width = register_value(cx.analysis, "textwidth")
+        .filter(|w| w.lo == w.hi && w.lo >= num.lo)
+        .map(|w| (w.lo, "`\\textwidth`".to_string()));
+    let (whole, name) = width.or_else(|| {
+        [1, 10, 100].iter().find_map(|cm| {
+            let sp = (UNIT as f64 * 72.27 / 2.54 * f64::from(*cm)) as i64;
+            (num.lo <= sp).then(|| (sp, format!("{cm} cm")))
+        })
+    })?;
+    let eighths = ((num.lo as f64 / whole as f64) * (BAR * 8) as f64).round().max(1.0) as usize;
+    let mut bar = "█".repeat(eighths / 8);
+    if eighths % 8 > 0 {
+        bar.push(['▏', '▎', '▍', '▌', '▋', '▊', '▉'][eighths % 8 - 1]);
+    }
+    let pad = BAR.saturating_sub(bar.chars().count());
+    Some(format!("`{bar}{}` {}% of {name}", "░".repeat(pad), (num.lo as f64 * 100.0 / whole as f64).round()))
+}
+
+/// Percent-encoding of a command link's argument.
+fn encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
         .collect()
 }
 
-fn shown(num: Num) -> String {
-    let pt = |sp: i64| format!("{}pt", trimmed(sp as f64 / UNIT as f64, 5));
-    if num.lo == num.hi { pt(num.lo) } else { format!("between {} and {}", pt(num.lo), pt(num.hi)) }
-}
-
-fn shown_sp(num: Num) -> String {
-    if num.lo == num.hi { num.lo.to_string() } else { format!("{} … {}", num.lo, num.hi) }
+/// The fonts a length at `col` of the cursor's line was read in, each as its name and size and
+/// its `em` and `ex` (`\fontdimen6`, `5`) in sp: the run's record of that length, else the font of
+/// the text set last before the cursor in this file.
+fn fonts_at(cx: &Cx, col: Option<u32>) -> Vec<(String, [Option<i64>; 2])> {
+    let analysis = cx.analysis;
+    let Some(file) = super::super::type_at::file_of(analysis, cx.path) else { return Vec::new() };
+    let here = (cx.pos.line, cx.pos.col);
+    let recorded = col
+        .and_then(|c| analysis.facts.length_fonts.get(&crate::engine::tex::Span { file, line: cx.pos.line, col: c }));
+    let states: Vec<u16> = match recorded {
+        Some(r) => r.clone(),
+        None => analysis
+            .facts
+            .text
+            .at
+            .iter()
+            .rev()
+            .find(|s| s.span.file == file && (s.span.line, s.span.col) <= here && s.font_state != 0)
+            .map(|s| vec![s.font_state])
+            .unwrap_or_default(),
+    };
+    let mut fonts = crate::linter::italics::Fonts::of(analysis);
+    let mut out: Vec<(String, [Option<i64>; 2])> = Vec::new();
+    for state in states.iter().filter_map(|s| analysis.font_states.get(usize::from(*s))) {
+        let Some((metrics, size)) = fonts.metrics(state.font) else { continue };
+        let Some(used) = analysis.fonts.get(usize::from(state.font)).and_then(Option::as_ref) else { continue };
+        let entry = (
+            format!("{} at {}pt", used.name, trimmed(size as f64 / UNIT as f64, 2)),
+            [6, 5].map(|k| metrics.param(k, size).filter(|v| *v > 0)),
+        );
+        if !out.contains(&entry) {
+            out.push(entry);
+        }
+    }
+    out
 }
 
 /// `v` with at most `places` decimals and no trailing zeros.

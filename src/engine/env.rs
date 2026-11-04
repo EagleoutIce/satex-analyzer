@@ -985,15 +985,22 @@ impl Env {
     }
 
     /// Close the innermost group if it was opened after group `id`, as
-    /// `\endgroup` would (tex.web §§ 281-283), unless a math group. A value
+    /// `\endgroup` would (tex.web §§ 281-283), unless a math group, or with
+    /// `keep_many` one that stands for any number (it may stay open). A value
     /// it puts back that was itself written since assignment `since` may
     /// hold anything: the dropped text would have run on and written again.
     /// Returns whether it closed.
-    pub fn close_since(&mut self, id: u64, since: u64, catcodes: &mut CatcodeTable, typed: &Typed) -> bool {
-        let n = self
-            .marks
-            .last()
-            .is_some_and(|mark| mark.id > id && matches!(mark.kind, GroupKind::Simple | GroupKind::SemiSimple));
+    pub fn close_since(
+        &mut self,
+        id: u64,
+        since: u64,
+        keep_many: bool,
+        catcodes: &mut CatcodeTable,
+        typed: &Typed,
+    ) -> bool {
+        let n = self.marks.last().is_some_and(|mark| {
+            mark.id > id && !(keep_many && mark.many) && matches!(mark.kind, GroupKind::Simple | GroupKind::SemiSimple)
+        });
         if n {
             let mut restored = Vec::new();
             self.effective += 1;

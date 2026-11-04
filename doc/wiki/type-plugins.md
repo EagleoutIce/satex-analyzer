@@ -8,13 +8,19 @@ Each plugin has a block under `type_plugins:` in `satex.yaml`. `enabled: false` 
 
 ```text
 $ satex query type-plugins -f samples/paper.tex
-name         types                                       
-keys         options, option key, pgf key, declared key  
-units        dimen, glue, dimen register, skip register  
-color        color name                                  
-environment  environment name                            
-table                                                    
-image        graphic file                                
+name          types                                       
+keys          options, option key, pgf key, declared key  
+units         dimen, glue, dimen register, skip register  
+color         color name                                  
+environment   environment name                            
+table         environment the run met                     
+image         graphic file                                
+tikz          environment the run met                     
+savebox       environment name                            
+glossary      declared key                                
+bibliography  citation key                                
+index         index entry                                 
+theorem       environment name                            
 ```
 
 ## What each editor gets
@@ -28,6 +34,7 @@ image        graphic file
 | lens | `textDocument/codeLens`, one handler over every plugin | a button above the line | a code lens | a code lens |
 | colors | `textDocument/documentColor`, `colorPresentation` | swatches, a click opens the picker | the native color picker | swatches where supported |
 | dialog (table, image) | `satex/dialog`, `satex/dialogApply` | a button above the line, a link in the hover | a code lens and a webview beside the editor (`satex: Edit Table or Image…`) | the code actions with their defaults |
+| manage | `satex/view` with `plugin`, no `position` | the `manage` command | `satex: Manage…` | the view at a name |
 
 ## keys
 
@@ -83,5 +90,29 @@ A `tikzpicture` the run met: a lens "Edit drawing…" on its `\begin` line and t
 - Mermaid: paste a flowchart (`graph TD`, `A[x] -->|y| B((z))`) to add its nodes, ranked by longest path, `spacing` cm apart. Export writes the picture's nodes and arrows as a flowchart.
 
 On a blank line of the document body, "Insert tikzpicture" writes a small picture and the view "New drawing" starts an empty one. Both add `\usepackage{tikz}` when the run has no tikz.
+
+## savebox
+
+On the name of a `\begin` in the document's body. "Store in a box" moves the environment to the preamble as a saved box and writes `\usebox` in its place: `\newsavebox` and `\sbox`, or `lrbox` when its `\begin` made characters of what TeX's initial catcodes make commands (`&` in TikZ, everything in a listing). A body the run read in vertical mode goes into a `minipage` of `\textwidth`. Identical copies get a second action that stores one box for all of them. The hover says which applies. Content that reads where it stands is refused, with the reason: a label, reference or citation the run met in it, or a command whose code reads a counter or a reference (`\thepage`, `\footnote`).
+
+## Managers
+
+The next four are managers. Each opens on a name of its type, focused on that name, or without a position from a sidebar (`satex/view` with `plugin` and no `position`). A manager is one searchable, sortable list. A record opens to its fields, a table and its actions. A field edit writes the source back, so the run sees it at once.
+
+### glossary
+
+Every key a document call declared (`\newglossaryentry`, `\newacronym`, acro's `\DeclareAcronym`), taken from the run, not a list of commands. The fields are the key list's keys, else each argument named by the field the run stored its text in (`\glo@cfg@short`). The table holds the uses and every value the run stored, the plural and first forms too. Unused entries are marked. Delete is refused while an entry is used. "Replace uses and delete" moves the uses to another key first. A new entry is written like the first one of the same command in the document.
+
+### bibliography
+
+The entries of the databases the run read. Search by key, author, title, year or type, sort by each. Fields are edited in the `.bib` file. An entry is deleted only while nothing cites it. A new entry gets the fields the document's style reads of its type: a `.bst` function's fields, or biblatex's data model.
+
+### index
+
+Every term an index line carried (`\index{graph!directed}`), by its top level, sorted as makeindex sorts it, with the subentries and where each stands. Renaming a term rewrites it in every call.
+
+### theorem
+
+Every environment a document call defined together with its number (`\the⟨env⟩`), with any package: the counter it owns, shares or is numbered within, and the commands its code has that the others lack (its style). Each instance shows its labels and the lines referencing them. Renaming rewrites the definition, both ends of each instance and the kinds that share its counter. Numbering writes the group the document's own calls of the same command use for a shared counter or a parent counter.
 
 Writing a plugin: [Writing a type plugin](writing-type-plugins.md).

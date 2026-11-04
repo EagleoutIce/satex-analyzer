@@ -433,10 +433,13 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
         } else if let Some((m, does)) = mined.and_then(|m| Some((m, m.text.as_deref()?))) {
             markdown.push_str(&format!("{does} {}\n\n", extracted_from_manual(m)));
         }
-        if let Some(sig) = text("signature").filter(|s| !s.is_empty()) {
-            markdown.push_str(&format!("`\\{name}{}`\n\n", usage(sig)));
-        } else if let Some(usage) = mined.and_then(|m| m.usage.as_deref()) {
+        // The manual's usage line, else the run's, its arguments named by role.
+        if let Some(usage) = mined.and_then(|m| m.usage.as_deref()) {
             markdown.push_str(&format!("`{usage}`\n\n"));
+        } else if let Some(usage) = text("usage").filter(|u| u.contains('⟨')) {
+            markdown.push_str(&format!("`{usage}`\n\n"));
+        } else if let Some(sig) = text("signature").filter(|s| !s.is_empty()) {
+            markdown.push_str(&format!("`\\{name}{}`\n\n", usage(sig)));
         }
         if let Some(one_of) = record.get("one_of").and_then(Json::as_array) {
             markdown.push_str("Here it holds one of, by path:\n");
@@ -481,12 +484,21 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
                 markdown.push_str(&format!("```tex\n{}\n```\n\n", doc.example.join("\n")));
             }
         } else if let Some(body) = text("body").filter(|b| {
+            // a primitive, or a name standing for itself, expands to nothing worth a line
             text("signature").is_none_or(str::is_empty)
+                && text("tag") != Some("primitive")
+                && *b != format!("\\{name}")
                 && !b.is_empty()
                 && b.chars().count() <= analysis.settings.conventions.completion.body
         }) {
             // No comment and no arguments: what it stands for says most (`\draw` is `\path [draw]`).
             markdown.push_str(&format!("Expands to `{body}`\n\n"));
+        }
+        let said = text("does").is_some()
+            || mined.is_some_and(|m| m.text.is_some())
+            || doc.as_ref().is_some_and(|d| !d.text.is_empty());
+        if let (false, Some(file), Some(line)) = (said, text("file"), record.get("line").and_then(Json::as_u64)) {
+            markdown.push_str(&format!("No documentation found. Defined at `{file}:{line}`.\n\n"));
         }
         let mut foot = Vec::new();
         if let (Some(file), Some(line)) = (text("file"), record.get("line").and_then(Json::as_u64)) {
@@ -2508,7 +2520,8 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
         if label.is_empty() || (internal && !matches!(tag, "macro" | "primitive" | "environment" | "alias")) {
             return None;
         }
-        let effective = record.get("effective").and_then(Json::as_str).unwrap_or("");
+        // the usage line, its arguments named, else the bare shape
+        let effective = record.get("usage").or_else(|| record.get("effective")).and_then(Json::as_str).unwrap_or("");
         let package = record.get("package").and_then(Json::as_str).unwrap_or("");
         let tier = match (package, internal) {
             ("document", _) => tiers.document,

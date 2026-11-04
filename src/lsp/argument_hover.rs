@@ -14,11 +14,10 @@ use std::path::Path;
 pub(super) fn typed_hover(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> Option<String> {
     // the whole name: asked at its end
     let found = super::plugins::hover_types(analysis, doc, path, pos);
-    if let Some(md) = super::plugins::hover(analysis, doc, path, pos, &found) {
-        return Some(md);
-    }
+    let plugin = super::plugins::hover(analysis, doc, path, pos, &found);
     let key = found.item.typed.trim();
-    found.hits.iter().find_map(|hit| {
+    // what the run knows of the name, then what a plugin adds
+    let own = found.hits.iter().find_map(|hit| {
         let key = hit.typed.as_deref().unwrap_or(key);
         match hit.ty {
             _ if key.is_empty() => None,
@@ -30,7 +29,11 @@ pub(super) fn typed_hover(analysis: &Analysis, doc: &Text, path: &str, pos: Pos)
             Ty::Named(RegKind::Count) => command_hover(analysis, &format!("c@{key}"), None),
             _ => None,
         }
-    })
+    });
+    match (own, plugin) {
+        (Some(own), Some(plugin)) => Some(format!("{own}\n\n---\n\n{plugin}")),
+        (own, plugin) => own.or(plugin),
+    }
 }
 
 /// A file argument: the load the run made of it, else the file beside the document when there is one.

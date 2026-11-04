@@ -673,6 +673,21 @@ type_plugins:  # editor features for text of a type: hover, completion, code act
       #! affects: output
     spacing: 2.0  # the distance in cm between the ranks of an imported Mermaid flowchart
       #! affects: output
+  savebox:  # a \begin name of a picture, listing or other environment the run met
+    enabled: true  # "Store in a box": move it to the preamble as a saved box, refused where it reads its position
+      #! affects: output
+  glossary:  # declared keys: glossary entries, acronyms, abbreviations
+    enabled: true  # a manager: search, edit fields, add like the document's own, delete or replace uses
+      #! affects: output
+  bibliography:  # citation keys and the .bib entries the run read
+    enabled: true  # a manager: search by key, author, title, year; edit fields, add per entry type, delete unused
+      #! affects: output
+  index:  # index terms (\index{term!sub})
+    enabled: true  # a manager: terms with subentries in sorted order, rename a term everywhere
+      #! affects: output
+  theorem:  # theorem-like environments the run defined
+    enabled: true  # a manager: kinds with counters and styles, instances with labels and references, rename, numbering
+      #! affects: output
 
 slice:  # what satex slice leaves out
   trim: true  # leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \begin{document} reads
@@ -905,6 +920,7 @@ A package is cached per **read set**: the meanings, registers, hooks, options an
 - **Rejected** when a file it read changed, a name now resolves to another file, or the state disagrees. `-v` says why. `satex summary` shows `cached`, `stored`, `stale: …`.
 - **Not cached**: loads under a conditional or in a group, or that ran out of budget or left a group open.
 - **Nested loads** have their own entries. The outer one resumes at the next line at rest.
+- **Steps** stay what reading would take: `--stats-json` gives `served_steps`, the part replayed, beside `steps`.
 - **`satex cache build`** prepares the kernel and `cache.index.packages` (or named packages) for `cache.index.engines`, in parallel on `limits.threads`. It reports progress per package and only rebuilds stale ones (`--refresh` forces).
 - **Pruning** keeps this build's kernel and four recent ones, then trims by `limits.cache_size` (2 GiB) least-recently used. `satex cache prune` does only that.
 

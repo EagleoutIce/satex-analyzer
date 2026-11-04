@@ -24,6 +24,14 @@ enum Place {
 struct Model {
     types: Vec<String>,
     fields: Vec<String>,
+    /// Per entry type, the fields its style reads of it.
+    of_type: Vec<(String, Vec<String>)>,
+}
+
+/// Per entry type of the document's style, the fields the style reads of it: what a new
+/// entry of that type is made with.
+pub(super) fn type_fields(analysis: &Analysis, path: &str) -> Vec<(String, Vec<String>)> {
+    model(analysis, path).of_type
 }
 
 /// The place the cursor is in and the word typed so far, or `None` in a
@@ -124,24 +132,53 @@ fn group(text: &str) -> Option<(&str, &str)> {
 /// functions that start a bibitem.
 fn bst_model(text: &str) -> Model {
     let text = uncommented(text);
-    let fields = text
+    let fields: Vec<String> = text
         .split("ENTRY")
         .nth(1)
         .and_then(group)
         .map(|(g, _)| g.split_whitespace().map(str::to_lowercase).collect())
         .unwrap_or_default();
     let mut types = Vec::new();
+    let mut bodies: Vec<(&str, &str)> = Vec::new();
     let mut rest = text.as_str();
     while let Some(at) = rest.find("FUNCTION") {
         rest = &rest[at + "FUNCTION".len()..];
         let Some((name, after)) = group(rest) else { break };
         let Some((body, _)) = group(after) else { break };
         let name = name.trim();
+        bodies.push((name, body));
         if body.contains("output.bibitem") && !name.contains(['.', '$']) {
             types.push(name.to_string());
         }
     }
-    Model { types, fields }
+    // the fields a type's function reads, itself or through the functions it calls
+    let words = |body: &str| {
+        body.split(|c: char| c.is_whitespace() || "{}\"#'".contains(c))
+            .filter(|w| !w.is_empty())
+            .map(String::from)
+            .collect::<Vec<_>>()
+    };
+    let of_type = types
+        .iter()
+        .map(|t| {
+            let mut seen = vec![t.clone()];
+            let mut out: Vec<String> = Vec::new();
+            let mut todo = vec![t.clone()];
+            while let Some(f) = todo.pop() {
+                let Some((_, body)) = bodies.iter().find(|b| b.0 == f) else { continue };
+                for w in words(body) {
+                    if fields.contains(&w) && !out.contains(&w) {
+                        out.push(w);
+                    } else if bodies.iter().any(|b| b.0 == w) && !seen.contains(&w) {
+                        seen.push(w.clone());
+                        todo.push(w);
+                    }
+                }
+            }
+            (t.clone(), out)
+        })
+        .collect();
+    Model { types, fields, of_type }
 }
 
 /// biblatex's `blx-dm.def`: the names its `\DeclareDatamodelEntrytypes` and
@@ -159,6 +196,18 @@ fn datamodel(text: &str) -> Model {
                 if !names.contains(&n) {
                     names.push(n);
                 }
+            }
+        }
+    }
+    // `\DeclareDatamodelEntryfields[type]{fields}`: per type
+    for part in text.split("\\DeclareDatamodelEntryfields[").skip(1) {
+        let Some((kinds, rest)) = part.split_once(']') else { continue };
+        let Some((list, _)) = group(rest) else { continue };
+        let names: Vec<String> = list.split(',').map(str::trim).filter(|n| !n.is_empty()).map(String::from).collect();
+        for kind in kinds.split(',').map(str::trim) {
+            match model.of_type.iter_mut().find(|t| t.0 == kind) {
+                Some(t) => t.1.extend(names.iter().cloned()),
+                None => model.of_type.push((kind.to_string(), names.clone())),
             }
         }
     }

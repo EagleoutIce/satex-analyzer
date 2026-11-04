@@ -164,6 +164,12 @@ and `\c` in the input. ([*TeXbook*][texbook] ch. 20.)
 
 ## 7. Argument matching
 
+A macro's parameter text is a pattern, and reading the arguments matches it
+against the input with no expansion. A delimited argument is a cut of the
+input: what lies before the delimiter at brace level 0. Over unknown text
+`satex` lists every cut that may begin the delimiter (`scanDelim` in the
+[formal model](doc/wiki/formal-semantics.md)).
+
 * An **undelimited** argument is the next token, or, if that token begins a
   group, the whole group with one level of braces removed. Leading spaces are
   skipped. ([*TeXbook*][texbook] ch. 20.)
@@ -349,6 +355,14 @@ and merges the resulting environments: a name defined in one arm becomes
 makes `satex controls` able to say what a package option governs.
 
 ## 10. Grouping and the save stack
+
+A group makes assignments temporary: the first local write to a name in a
+group saves the old entry, and the group's end puts it back. Two numbers
+decide a save: the level the entry was set at and the current level. Where
+`satex` knows neither exactly (a loop left groups open, a loop was
+summarized), it records that the name may have been saved, and the name is
+unknown at the group's end (`touched` in the
+[formal model](doc/wiki/formal-semantics.md)).
 
 A group is opened by a begin-group *character* (`{`, catcode 1) and closed by
 an end-group character (`}`, catcode 2), including a control sequence whose

@@ -137,10 +137,12 @@
     const codes = [];
     const text = esc(t).replace(/``.+?``|`[^`]+`/g, (p) => {
       const code = p.startsWith('``') ? p.slice(2, -2).trim() : p.slice(1, -1), at = code.match(/^([\w./-]+\.\w+):(\d+)$/);
-      codes.push(at ? placeLink(at[1], +at[2]) : `<code>${code}</code>`);
+      const bar = code.match(/^([\u2588-\u258F]+)(░*)$/);
+      codes.push(at ? placeLink(at[1], +at[2]) : bar ? `<code class="bar"><b>${bar[1]}</b><i>${bar[2]}</i></code>` : `<code>${code}</code>`);
       return `\u0000${codes.length - 1}\u0000`;
     });
-    return text.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    return text.replace(/\[([^\]]+)\]\(command:satex\.applyEdit\?([^)\s]+)\)/g, '<a href="#" class="cmd-edit" data-args="$2" title="write this in place of the length">$1</a>')
+      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
       .replace(/\*\(([^*]+)\)\*/g, '<span class="x-from">($1)</span>').replace(/\*([^*\s][^*]*)\*/g, '<em>$1</em>')
       .replace(/\u0000(\d+)\u0000/g, (_, i) => codes[+i]);
   };
@@ -251,6 +253,17 @@
     };
     return { el, show, hide, later };
   }
+  /** An "Use as a widget" line folds into a small button after a moment; a click opens it again. */
+  self.satexEmbedFold = (line) => {
+    if (!line || line.dataset.fold) return;
+    line.dataset.fold = '1';
+    const open = Object.assign(document.createElement('button'), { type: 'button', className: 'ghost small embed-open', textContent: '</> Embed', title: 'Show the snippet that embeds this as a widget' });
+    open.onclick = () => { line.classList.remove('folded'); open.hidden = true; clearTimeout(line._t); line._t = setTimeout(fold, 6000); };
+    const fold = () => { if (!line.matches(':hover, :focus-within')) { line.classList.add('folded'); open.hidden = false; } else line._t = setTimeout(fold, 1500); };
+    open.hidden = true;
+    line.after(open);
+    line._t = setTimeout(fold, 1500);
+  };
   const tips = self.satexTip = { card: floating('tip-card'), note: floating('tip-note') };
   // One progress bar for the site: a share when the work has a total (and the time left once it is
   // known), a moving shimmer when it has none. `satexProgress.html(done)` writes one, `.set(el, done)`
@@ -316,7 +329,7 @@
     const csCard = (name, c) => {
       const chip = (t, cls = '') => `<span class="cs-chip ${cls}">${esc(t)}</span>`;
       const sem = c.sem;
-      return `<div class="cs-card"><div class="cs-head"><b>${esc(name)}</b>${c.k ? chip(c.k, 'cs-k') : ''}${c.pkg ? chip(c.pkg) : ''}${c.e ? chip(c.e) : ''}</div>` +
+      return `<div class="cs-card"><div class="cs-head"><b>${esc(name)}</b>${c.k ? chip(c.k, 'cs-k') : ''}${c.pkg ? chip(`from ${c.pkg}`) : ''}${c.re ? chip(`redefined by ${c.re}`) : ''}${c.e ? chip(c.e) : ''}</div>` +
         (c.pv ? `<div class="cs-pv">${c.pv}</div>` : '') +
         (c.sig ? `<div class="cs-sig"><code>${esc(c.sig)}</code></div>` : '') +
         (c.doc ? `<p>${esc(c.doc).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` : '') +
@@ -610,7 +623,9 @@
   const indented = (b) => b.split('\n').every((l) => !l.trim() || /^ {4}/.test(l));
   const table = (b) => {
     const rows = b.trim().split('\n').map((l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim()));
-    return `<table class="md-table"><thead><tr>${rows[0].map((c) => `<th>${inline(c)}</th>`).join('')}</tr></thead><tbody>${rows.slice(2).map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    // `--:` aligns a column right
+    const right = rows[1].map((c) => /:$/.test(c) ? ' class="r"' : '');
+    return `<table class="md-table"><thead><tr>${rows[0].map((c, i) => `<th${right[i]}>${inline(c)}</th>`).join('')}</tr></thead><tbody>${rows.slice(2).map((r) => `<tr>${r.map((c, i) => `<td${right[i]}>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
   };
   const isTable = (b) => /^\s*\|.*\|\s*\n\s*\|?\s*:?-{3,}/.test(b);
   const markdown = (text) => text.split(/^```\w*\n([\s\S]*?)^```\s*$/m).map((part, i) => i % 2 ? `<pre><code>${esc(part)}</code></pre>`

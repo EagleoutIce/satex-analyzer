@@ -60,7 +60,7 @@ Every name the document or its packages define. `origin` is `document` for files
 
 ```text
 $ satex query definitions -f samples/paper.tex --filter 'tag=macro and arity>0'
-tag    name      paramet…  comment                body      file                  
+tag    name      paramet…  comment   arguments    body      file                  
 macro  \__sys_…  #1                               \str_if…  expl3-code.tex        @ expl3-code.tex:1539:17
 macro  \sys_gs…  #1                               \tex_se…  expl3-code.tex        @ expl3-code.tex:1531:34
 macro  \reserv…  #1.sty\…                         \def \r…  latex.ltx             @ latex.ltx:18742:20
@@ -348,7 +348,7 @@ index   step         name                        detail                    file
 10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
 10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
 10272   define       \ifdraft                    iffalse                   paper.tex      @ paper.tex:3:7
-… 206 more lines omitted
+… 207 more lines omitted
 ```
 
 `--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile, and `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown. `--include-internal` adds packages, classes and the kernel. `--format compact` prints at most 8 text lines instead: what each top-level call of the main file expands to, and each conditional's outcome. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
@@ -442,7 +442,7 @@ $ satex slice -f samples/paper.tex '\ifdraft'
 
 \RequirePackage{xcolor}
 
-… 51 more lines omitted
+… 58 more lines omitted
 ```
 
 ```text
@@ -453,7 +453,7 @@ $ satex slice -f samples/paper.tex --where 'kind=begin-environment and key=figur
 
 \RequirePackage{xcolor}
 
-… 82 more lines omitted
+… 89 more lines omitted
 ```
 
 `--out DIR` writes the slice as a standalone project: the main file plus the local packages, classes, graphics and bibliographies it needs, paths preserved.
@@ -465,10 +465,10 @@ $ satex slice -f samples/paper.tex --where 'kind=begin-environment and key=figur
 ```text
 $ satex controls my@draft my@wide -f samples/mypackage.sty
 tag    name         for       means                              detail    file           
-use    \newcommand  my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:23:3
-macro  \mymode      my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:23:15
-use    \newcommand  my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:25:3
-macro  \mymode      my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:25:15
+use    \newcommand  my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:29:3
+macro  \mymode      my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:29:15
+use    \newcommand  my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:31:3
+macro  \mymode      my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:31:15
 ```
 
 # JSON requests
@@ -505,20 +505,20 @@ $ satex query --request doc/src/wiki/request-example.json
     "hints": [],
     "records": [
       {
+        "arguments": [
+          "⟨arg1⟩ the text to box"
+        ],
         "arity": 1,
         "body": "\\fbox {#1}",
         "by": "\\newcommand",
         "certain": true,
         "col": 13,
+        "comment": "Draws a frame around its argument.",
         "context": "outside environments",
         "effective": "\\mybox{1}",
         "file": "mypackage.sty",
-        "line": 19,
+        "line": 21,
         "name": "\\mybox",
         "package": null,
-        "path": "samples/mypackage.sty",
-        "signature": "m",
-        "tag": "macro",
-        "takes": {
-… 23 more lines omitted
+… 28 more lines omitted
 ```

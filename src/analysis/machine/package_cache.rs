@@ -830,6 +830,7 @@ pub(super) struct Recorder {
     pub(super) file: FileId,
     pub(super) expansions_start: usize,
     pub(super) log: Log,
+    /// Input levels left to read below the file ([`Machine::file_on_top`]).
     frame: usize,
     name: String,
     cache: PathBuf,
@@ -875,6 +876,7 @@ pub(super) struct Recorder {
 #[derive(Clone)]
 pub(super) struct Suspended {
     pub(super) file: FileId,
+    /// As [`Recorder`]'s.
     frame: usize,
     name: String,
     kind: LoadKind,
@@ -1581,12 +1583,25 @@ impl Machine<'_> {
     }
 
     /// Mouth for a package file: resuming where cache left off, after installing fitting segments.
+    /// The input levels below `n` that still have something to read: a
+    /// load's file is known by them, as a join drops levels that are read.
+    fn live_below(&self, n: usize) -> usize {
+        self.input.iter().take(n).filter(|f| super::explore::place(f).is_some()).count()
+    }
+
+    /// A file is on top of the input, over `below` levels left to read.
+    fn file_on_top(&self, below: usize) -> bool {
+        matches!(self.input.last(), Some(Frame::File { .. })) && self.live_below(self.input.len() - 1) == below
+    }
+
     /// The package a cache is currently being recorded for, so the run
     /// loop can draw a progress spinner without seeing into [`Recorder`].
     /// The package being cached and the input frame of its file.
     pub(super) fn recording_package(&self) -> Option<(&str, usize)> {
         let rec = self.package_capture.as_deref()?;
-        Some((&rec.label, rec.frame))
+        let file = rec.file;
+        let at = self.input.iter().rposition(|f| matches!(f, Frame::File { mouth, .. } if mouth.file == file));
+        Some((&rec.label, at.unwrap_or(self.input.len())))
     }
 
     pub(super) fn open_package(&mut self, source: &str, id: FileId, name: &str, kind: LoadKind, span: Span) -> Mouth {
@@ -1612,9 +1627,10 @@ impl Machine<'_> {
         // A segment that read the clock replays that run's clock: only
         // under the same `clock:` setting.
         key.put(&self.cfg.clock.to_string());
+        let frame = self.live_below(self.input.len());
         let load = Suspended {
             file: id,
-            frame: self.input.len(),
+            frame,
             name: name.to_string(),
             kind,
             cache: {
@@ -1629,7 +1645,7 @@ impl Machine<'_> {
             },
             site: span,
             root: self.root_state(span, &path),
-            rest: self.rest_state(self.input.len() + 1),
+            rest: self.rest_state(frame + 1),
             parent: None,
             parent_id: None,
         };
@@ -1661,7 +1677,7 @@ impl Machine<'_> {
         let Some(mark) = mouth.quiet_line_mark(&self.catcodes).filter(|m| !m.ended && mouth.file == load.file) else {
             return;
         };
-        if load.frame + 1 != self.input.len() || self.rest_state(load.frame + 1) != load.rest {
+        if !self.file_on_top(load.frame) || self.rest_state(load.frame + 1) != load.rest {
             return;
         }
         let Some(load) = self.suspended.pop() else { return };
@@ -1770,6 +1786,7 @@ impl Machine<'_> {
         }
         let from = u64::from(resume.unwrap_or(0));
         if served > 0 {
+            self.out.served_steps += served;
             self.out.timings.credit_tokens(id, served);
             self.out.cached_files.insert(id);
             // The lines the cache stands for count as read (progress).
@@ -2601,7 +2618,7 @@ impl Machine<'_> {
     /// Checkpoint when the package's file is at line start and interpreter matches initial state.
     pub(super) fn maybe_checkpoint(&mut self) {
         let Some(rec) = self.package_capture.as_ref() else { return };
-        if rec.frame + 1 != self.input.len() || rec.log.spoiled.is_some() {
+        if !self.file_on_top(rec.frame) || rec.log.spoiled.is_some() {
             return;
         }
         let Some(Frame::File { mouth, .. }) = self.input.last() else { return };
@@ -2719,7 +2736,7 @@ impl Machine<'_> {
     /// The read already counted the token a replay will count again.
     pub(super) fn checkpoint_at_end(&mut self) {
         let Some(rec) = self.package_capture.as_ref() else { return };
-        if rec.frame + 1 != self.input.len() || rec.log.spoiled.is_some() {
+        if !self.file_on_top(rec.frame) || rec.log.spoiled.is_some() {
             return;
         }
         let Some(Frame::File { mouth, .. }) = self.input.last() else { return };

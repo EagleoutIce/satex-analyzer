@@ -371,6 +371,8 @@ pub struct Analysis {
     pub steps: u64,
     /// The part of `steps` spent in outermost class and package loads, read or replayed.
     pub load_steps: u64,
+    /// The part of `steps` replayed from package caches, not run.
+    pub served_steps: u64,
     /// The limits that cut the run somewhere, in the order first reached.
     pub limits: Vec<LimitHit>,
     /// Source lines read from files, each counted to where it stopped.
@@ -2105,7 +2107,7 @@ const SPLIT_CATS: u32 = 4;
 /// a summary's own assumption that a loop closed its levels. A path always
 /// gets past those, and a loop around them is bounded by its summary, so
 /// cutting there only drops the callers' code that follows.
-const CUT_EXEMPT: [&str; 8] = [
+const CUT_EXEMPT: [&str; 10] = [
     "repeated-failure",
     "budget-exhausted",
     "limit-reached",
@@ -2114,6 +2116,8 @@ const CUT_EXEMPT: [&str; 8] = [
     "line-budget-cut",
     "region-skipped",
     "region-catcodes",
+    "region-groups",
+    "region-writes",
 ];
 
 /// [`LineGuard`]'s line and fork charges, held over a cacheable load.
@@ -2161,6 +2165,8 @@ struct Region {
     /// Characters whose category changed since the last source token, with
     /// the category they had then.
     catcodes: Vec<(char, Catcode, u16)>,
+    /// The group depth at the last source token.
+    depth: usize,
 }
 
 /// Gaps the repeated-failure cut takes although they are satex's own
@@ -2317,6 +2323,7 @@ impl<'a> Machine<'a> {
                 typeset: String::new(),
                 steps: 0,
                 load_steps: 0,
+                served_steps: 0,
                 limits: Vec::new(),
                 lines: 0,
                 exhausted: false,
@@ -3770,7 +3777,7 @@ will look undefined",
         let id = self.register_file(source.display().to_string(), LoadKind::Input);
         // A run of its own: the preamble neither inherits the kernel's spent steps
         // nor leaves anything on the input stack for the document to read as its own.
-        (self.out.steps, self.out.load_steps) = (0, 0);
+        (self.out.steps, self.out.load_steps, self.out.served_steps) = (0, 0, 0);
         self.halted = false;
         self.input.push(Frame::Boundary);
         let base = self.input.len();
@@ -3839,7 +3846,7 @@ will look undefined",
         // counter namespace yet either. Both learn it the same way.
         self.counter_namespace = None;
         self.out.exhausted = false;
-        (self.out.steps, self.out.load_steps) = (0, 0);
+        (self.out.steps, self.out.load_steps, self.out.served_steps) = (0, 0, 0);
         // Steps of the kernel's: a build would otherwise leave the document's
         // loops open to the stall check a cached kernel leaves them closed to.
         self.region = Region::default();
@@ -4602,7 +4609,7 @@ will look undefined",
                         .position(|n| n.is_some_and(|n| n.code == Some(crate::engine::mode::group::OUTPUT)));
                     if let Some(p) = output {
                         let conds = nests[p].map_or(0, |n| n.conds as usize);
-                        self.close_since((conds, self.env.group_id_at(p), self.env.assignments));
+                        self.close_since((conds, self.env.group_id_at(p), self.env.assignments), false);
                     }
                 }
                 if let Some(sym) = expanding.filter(|_| !upper) {
@@ -5253,9 +5260,10 @@ will look undefined",
     /// and replays go on in the region it began. A lone path is the furthest.
     fn read_on(&mut self, span: Span, main: bool) {
         self.region.catcodes.clear();
+        self.region.depth = self.env.depth();
         let progress = self.source_progress;
         if main && (progress > self.region.progress || (self.waiting == 0 && progress != self.region.progress)) {
-            self.region = Region { progress: self.source_progress, span, ..Region::default() };
+            self.region = Region { progress: self.source_progress, span, depth: self.env.depth(), ..Region::default() };
         }
     }
 
@@ -7464,7 +7472,8 @@ will look undefined",
             self.widen_since(self.doc_mark);
             return (0, 0);
         };
-        let closed = self.close_since(at);
+        // A cut keeps the groups its region opened open (`resync`).
+        let closed = self.close_since(at, called);
         // What the dropped calls assigned and the closed groups left holds
         // anything of its kind; values the groups gave back stay.
         self.widen_since(at.2);
@@ -7476,7 +7485,7 @@ will look undefined",
     /// what they put back that was written since assignment `at.2` is
     /// widened ([`crate::engine::env::Env::close_since`]). Returns the groups and conditionals
     /// closed.
-    pub(crate) fn close_since(&mut self, at: (usize, u64, u64)) -> (usize, usize) {
+    pub(crate) fn close_since(&mut self, at: (usize, u64, u64), keep_many: bool) -> (usize, usize) {
         let conds = self.conds.len().saturating_sub(at.0);
         for _ in 0..conds {
             self.pop_conditional();
@@ -7489,7 +7498,7 @@ will look undefined",
             let nest = self.env.nest();
             let syms = self.typed_syms();
             let typed = crate::engine::env::typed!(self, syms);
-            if !self.env.close_since(at.1, at.2, &mut self.catcodes, &typed) {
+            if !self.env.close_since(at.1, at.2, keep_many, &mut self.catcodes, &typed) {
                 break;
             }
             self.group_dropped(nest, span);
@@ -7826,6 +7835,18 @@ will look undefined",
     fn resync(&mut self) {
         self.leak_call_recs();
         let output = self.output_active();
+        // Groups the skipped expansion opened stand for any number of them
+        // (P6): its rest may close them or open more. Giving up the lists
+        // below leaves them open.
+        let from = self.region.depth.min(self.env.depth());
+        if self.env.depth() > from && !self.env.many_since(from) {
+            self.diagnose(
+                Severity::Assumption,
+                "region-groups",
+                self.region.span,
+                "a skipped expansion opened groups of different kinds; they are closed as its rest might, and assumed not left open".to_string(),
+            );
+        }
         self.give_up_lists(false, true);
         // An output routine's text flows nowhere: no unknown token for it.
         if std::mem::take(&mut self.guard_seen.cut) && !(output && !self.output_active()) {
@@ -7849,6 +7870,18 @@ will look undefined",
                 "region-catcodes",
                 self.region.span,
                 format!("a skipped expansion changed the category of {chars:?}; each is its old one or the one set, and later changes the cut skipped are assumed not made"),
+            );
+        }
+        // Lines the skipped rest would write are not known (P6). Their top,
+        // a line of unknown text in every file open for writing, would make
+        // each later read of it unknown; so it is an assumption, said here.
+        if !self.stream_files.is_empty() {
+            self.diagnose(
+                Severity::Assumption,
+                "region-writes",
+                self.region.span,
+                "a skipped expansion may have written more to the files open for writing; that is assumed not done"
+                    .to_string(),
             );
         }
     }

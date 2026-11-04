@@ -618,20 +618,22 @@ def previews_run(satex, work, libs):
     return json.dumps({r["name"]: r["svg"] for r in rows if r["svg"]}).encode()
 
 
-def providers(missing):
-    """The packages (`.sty` stems of the installation) whose files define one of the control sequences `missing`: a
-    `\\def`, `\\newcommand`, `\\DeclareRobustCommand`, `\\NewDocumentCommand` and kin of it. The shortest path per name."""
+def providers(satex, work, missing):
+    """The packages that define the control sequences `missing`, by `satex query`'s `providers`: the installed files whose
+    text defines each name through a definer the run saw. Classes are left out: a card's run loads packages."""
     if not missing:
         return set()
-    top = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()) / "tex"
-    alt = "|".join(re.escape(m[1:]) for m in missing)
-    rx = re.compile(r"\\(?:[gex]?def|(?:re)?newcommand|(?:Provide|Declare)(?:Robust)?Command|(?:New|Declare|Provide)(?:Expandable)?DocumentCommand|DeclareMathOperator|newglossaryentry)\*?\s*\{?\\(" + alt + r")(?![A-Za-z@])")
-    done = subprocess.run(["grep", "-rlE", "--include=*.sty", "-e", r"(def|command|Command|Operator)\*?\s*\{?\\(" + alt + ")", str(top)], capture_output=True, text=True)
-    best = {}
-    for f in sorted(done.stdout.split(), key=lambda f: (len(f), f)):
-        for m in rx.finditer(Path(f).read_text(errors="replace")):
-            best.setdefault("\\" + m.group(1), Path(f).stem)
-    return set(best.values())
+    doc = work / "cards" / "providers.tex"
+    doc.write_text("\\documentclass{article}\n\\begin{document}\n\\end{document}\n")
+    request = json.dumps({"file": doc.name, "queries": [{"type": "providers", "names": sorted(missing)}]})
+    env = dict(os.environ, SATEX_CACHE=str(work / "cache-pdftex"))
+    done = subprocess.run([str(satex), *KERNELS[0][2], "query", "--request", "-", "-f", doc.name], input=request, cwd=doc.parent,
+                          env=env, capture_output=True, text=True)
+    try:
+        rows = json.loads(done.stdout)[0]["records"]
+    except (json.JSONDecodeError, IndexError, KeyError):
+        return set()
+    return {r["package"] for r in rows if not r["package"].endswith(".cls")}
 
 
 def scope_cards(satex, work, names):
@@ -658,11 +660,28 @@ def scope_cards(satex, work, names):
         text = "\\documentclass{article}\n" + "".join(f"\\usepackage{{{n}}}\n" for n in wanted) + "\\begin{document}\n\\end{document}\n"
         records = {r["name"]: r for r in scope("pdftex", KERNELS[0][2], text)}
         # a name no loaded package defines: the installed packages that define it, each loaded alone
-        for n in sorted(providers([x for x in names if x not in records and re.fullmatch(r"\\[A-Za-z]{3,}", x)])):
+        for n in sorted(providers(satex, work, [x for x in names if x not in records and re.fullmatch(r"\\[A-Za-z@]+", x)])):
             more = scope("pdftex", KERNELS[0][2], "\\documentclass{article}\n" + f"\\usepackage{{{n}}}\n\\begin{{document}}\n\\end{{document}}\n")
             for r in more:
                 if r["name"] in names:
                     records.setdefault(r["name"], r)
+        # the usage lines by a probe of each card's name, its arguments named by role (`scope` reads parameter texts only)
+        doc = tmp / "pdftex.tex"
+        doc.write_text(text)
+        asked = sorted(n for n in names if n in records and records[n].get("tag") != "primitive")
+        env = dict(os.environ, SATEX_CACHE=str(work / "cache-pdftex"))
+        done = subprocess.run([str(satex), *KERNELS[0][2], "--format", "json", "explain", *asked, "-f", doc.name], cwd=tmp, env=env,
+                              capture_output=True, text=True) if asked else None
+        try:
+            seen = set()
+            for r in json.loads(done.stdout) if done else []:
+                # the first record is the meaning in force
+                # the manual's names (`scope`'s usage) win over the probe's places
+                if r.get("usage") and r["name"] in records and r["name"] not in seen and "⟨" not in records[r["name"]].get("usage", ""):
+                    records[r["name"]]["usage"] = r["usage"]
+                seen.add(r["name"])
+        except json.JSONDecodeError:
+            pass
         engines = {label: {r["name"] for r in scope(kernel, flags, "\\documentclass{article}\n\\begin{document}\n\\end{document}\n", ["--filter", "tag=primitive"])}
                    for kernel, label, flags in KERNELS if kernel != "plain"}
         return records, engines

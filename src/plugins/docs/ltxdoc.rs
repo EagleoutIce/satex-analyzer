@@ -24,7 +24,8 @@ impl DocPlugin for Ltxdoc {
         };
         for env in &config.ltxdoc_environments {
             for (at, opts, list, after) in anchors(&doc, env) {
-                let text = description(after, None);
+                let own = names(list);
+                let text = description(after, own.first().map(String::as_str));
                 out.extend(
                     variants(opts, names(list)).into_iter().map(|n| entry(n, None, text.clone(), Audience::Code, at)),
                 );
@@ -115,5 +116,20 @@ mod tests {
         let at = |n: &str| get(n).at.map(|p| (p.line, p.section));
         assert_eq!(at("ifthenelse"), Some((line("DescribeMacro"), Some("Tests".into()))));
         assert_eq!(at("@latex@info"), Some((line("{\\@latex@info}"), Some("Tests".into()))));
+    }
+
+    /// A `\changes` text spanning lines is metadata to its end: its tail
+    /// (`in the THEN case}`) never stands in for a description.
+    #[test]
+    fn metadata_arguments_are_no_description() {
+        let dtx = "% \\begin{macro}{\\@writefile}\n% \\changes{v1}{1995}{Added missing percent and use \\cs{relax}\n%  in the THEN case}\n% \\changes{v2}{2018}{Mask the endline\n%    char (github/73)}\n%    \\begin{macrocode}\n\\long\\def\\@writefile#1#2{}\n%    \\end{macrocode}\n%    If we write to the file we first prepare it.\n";
+        let mut out = Vec::new();
+        Ltxdoc.mine(&DocsConfig::default(), Path::new("ltmiscen.dtx"), dtx, &mut out);
+        let entry = out.iter().find(|e| e.name == "@writefile").expect("anchored");
+        assert_eq!(entry.text, None);
+        let after = "% \\begin{macro}{\\x}\n% \\changes{v1}{1995}{Split\n%  over lines}\n% Sets the {value}.\n";
+        let mut out = Vec::new();
+        Ltxdoc.mine(&DocsConfig::default(), Path::new("x.dtx"), after, &mut out);
+        assert_eq!(out[0].text.as_deref(), Some("Sets the value."));
     }
 }

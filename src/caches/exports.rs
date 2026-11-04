@@ -217,15 +217,32 @@ impl Exports {
 
     /// The `n` packages loaded most often by others.
     pub fn most_loaded(&self, n: usize) -> Vec<String> {
+        let count = self.load_counts();
+        let mut order: Vec<usize> = (0..self.files.len()).filter(|&i| self.files[i].ends_with(".sty")).collect();
+        order.sort_by(|&a, &b| count[b].cmp(&count[a]).then(self.files[a].cmp(&self.files[b])));
+        order.into_iter().take(n).map(|i| self.files[i].trim_end_matches(".sty").to_string()).collect()
+    }
+
+    /// How many files load each file.
+    fn load_counts(&self) -> Vec<usize> {
         let mut count = vec![0usize; self.files.len()];
         for to in &self.loads {
             for &t in to {
                 count[t as usize] += 1;
             }
         }
-        let mut order: Vec<usize> = (0..self.files.len()).filter(|&i| self.files[i].ends_with(".sty")).collect();
-        order.sort_by(|&a, &b| count[b].cmp(&count[a]).then(self.files[a].cmp(&self.files[b])));
-        order.into_iter().take(n).map(|i| self.files[i].trim_end_matches(".sty").to_string()).collect()
+        count
+    }
+
+    /// The package that defines `name` itself, the one loaded most often
+    /// when several do: the provider a document most likely means.
+    pub fn provider(&self, name: &str) -> Option<String> {
+        let count = self.load_counts();
+        let files = self.defines.get(name)?;
+        let best = files.iter().filter(|&&f| self.files[f as usize].ends_with(".sty")).max_by(|&&a, &&b| {
+            count[a as usize].cmp(&count[b as usize]).then(self.files[b as usize].cmp(&self.files[a as usize]))
+        })?;
+        Some(self.files[*best as usize].clone())
     }
 
     /// `file` and what it loads, transitively.

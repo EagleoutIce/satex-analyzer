@@ -455,6 +455,11 @@ pub struct TypePlugins {
     pub table: Switch,
     pub image: Switch,
     pub tikz: TikzPlugin,
+    pub glossary: Switch,
+    pub bibliography: Switch,
+    pub index: Switch,
+    pub theorem: Switch,
+    pub savebox: Switch,
 }
 
 /// A plugin with nothing to tune: `enabled` only.

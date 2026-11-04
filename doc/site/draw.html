@@ -46,7 +46,9 @@
   const embed = `<iframe src="${location.origin}${location.pathname}" title="Draw a symbol" width="720" height="560" style="border:0"></iframe>`;
   addEventListener('DOMContentLoaded', () => {
     // an embedded pad needs no snippet of itself
-    if (parent !== self) document.querySelector('.draw-embed').hidden = true;
+    const line = document.querySelector('.draw-embed');
+    if (parent !== self) { line.remove(); return; }
+    self.satexEmbedFold?.(line);
     document.getElementById('draw-embed').textContent = embed;
     const button = document.getElementById('draw-embed-copy');
     button.onclick = () => { copy(embed); button.textContent = 'Copied'; setTimeout(() => (button.textContent = 'Copy'), 1500); };

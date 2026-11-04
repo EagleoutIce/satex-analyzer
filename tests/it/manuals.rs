@@ -55,3 +55,67 @@ fn every_package_has_a_line_about_it() {
         assert!(line.as_deref().is_some_and(|l| l.split_whitespace().count() > 1), "{file}: {line:?}");
     }
 }
+
+/// The texts of every `\changes` in `source`, each on one line.
+fn change_notes(source: &str) -> Vec<String> {
+    let doc: String = source.lines().map(|l| l.trim_start_matches('%').trim()).collect::<Vec<_>>().join(" ");
+    doc.split("\\changes")
+        .skip(1)
+        .filter_map(|rest| {
+            // the third of its groups, braces nested
+            let mut groups = Vec::new();
+            let mut rest = rest.trim_start();
+            while groups.len() < 3 && rest.starts_with('{') {
+                let mut depth = 0;
+                let end = rest
+                    .char_indices()
+                    .find(|&(_, c)| {
+                        depth += match c {
+                            '{' => 1,
+                            '}' => -1,
+                            _ => 0,
+                        };
+                        depth == 0
+                    })?
+                    .0;
+                groups.push(rest[1..end].to_string());
+                rest = rest[end + 1..].trim_start();
+            }
+            groups.get(2).cloned()
+        })
+        .collect()
+}
+
+/// A description is a sentence of the documentation's prose: it starts and
+/// ends as one, and it is no part of a `\changes`
+/// note (`\changes{v1.0z}{1995/07/13}{… use \cs{relax} in the THEN case}`).
+#[test]
+fn descriptions_are_sentences_of_the_prose() {
+    let words = |s: &str| {
+        s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect::<Vec<_>>()
+    };
+    for file in ["latex.ltx", "graphicx.sty", "xcolor.sty", "array.sty", "hyperref.sty", "expl3.sty"] {
+        let Some(entries) = mined(file) else { continue };
+        let mut notes: HashMap<String, Vec<Vec<String>>> = HashMap::new();
+        for entry in entries.values() {
+            let Some(text) = &entry.text else { continue };
+            let first = text.chars().next().unwrap_or(' ');
+            assert!(
+                first.is_uppercase() || "`⟨*\\".contains(first),
+                "{file}: \\{} starts mid-sentence: {text:?}",
+                entry.name
+            );
+            assert!(text.ends_with(['.', '!', '?', ':', '…']), "{file}: \\{} is no sentence: {text:?}", entry.name);
+            let Some(at) = &entry.at else { continue };
+            let notes = notes.entry(at.path.clone()).or_insert_with(|| {
+                change_notes(&std::fs::read_to_string(&at.path).unwrap_or_default()).iter().map(|n| words(n)).collect()
+            });
+            let said = words(text);
+            assert!(
+                said.len() < 3 || !notes.iter().any(|n| n.windows(said.len()).any(|w| w == said.as_slice())),
+                "{file}: \\{}'s text is a change note: {text:?}",
+                entry.name
+            );
+        }
+    }
+}

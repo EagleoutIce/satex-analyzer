@@ -3322,7 +3322,8 @@ impl Machine<'_> {
         let value = scan(self);
         self.scanning -= 1;
         let undecided = self.scan_undecided;
-        self.scan_undecided = outer || undecided;
+        // The enclosing scan learns of it; past the outermost, the value said it.
+        self.scan_undecided = (outer || undecided) && self.scanning > 0;
         if undecided {
             // What a register read under an undecided condition held is
             // not the only thing the value may be.

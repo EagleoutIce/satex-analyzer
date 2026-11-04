@@ -68,14 +68,14 @@ impl TypePlugin for Environment {
 
 /// The `\begin` and `\end` of the environment whose name is at the cursor: lines and the column
 /// (from 1) of each name, and the required arguments the `\begin` line gives after it.
-struct Pair {
-    name: String,
-    begin: (u32, u32),
-    end: (u32, u32),
+pub(super) struct Pair {
+    pub name: String,
+    pub begin: (u32, u32),
+    pub end: (u32, u32),
 }
 
 /// The pair the run met around the cursor, matched by nesting in this file.
-fn pair(cx: &Cx) -> Option<Pair> {
+pub(super) fn pair(cx: &Cx) -> Option<Pair> {
     let name = cx.at.item.typed.trim().to_string();
     let (b, o) = super::pairs(cx.analysis, cx.path, &name)
         .into_iter()

@@ -3397,6 +3397,20 @@
     "type_plugins": {
       "description": "editor features for text of a type: hover, completion, code actions and dialogs (satex query type-plugins)",
       "properties": {
+        "bibliography": {
+          "description": "citation keys and the .bib entries the run read",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "a manager: search by key, author, title, year; edit fields, add per entry type, delete unused",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
+            }
+          },
+          "type": "object"
+        },
         "color": {
           "description": "color names and xcolor expressions",
           "properties": {
@@ -3442,6 +3456,20 @@
           },
           "type": "object"
         },
+        "glossary": {
+          "description": "declared keys: glossary entries, acronyms, abbreviations",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "a manager: search, edit fields, add like the document's own, delete or replace uses",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
+            }
+          },
+          "type": "object"
+        },
         "image": {
           "description": "figures: the files \\includegraphics reads",
           "properties": {
@@ -3453,6 +3481,20 @@
                 "output"
               ],
               "x-example": "`enabled: false`: no image lens, dialog or actions"
+            }
+          },
+          "type": "object"
+        },
+        "index": {
+          "description": "index terms (\\index{term!sub})",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "a manager: terms with subentries in sorted order, rename a term everywhere",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
             }
           },
           "type": "object"
@@ -3480,6 +3522,20 @@
           },
           "type": "object"
         },
+        "savebox": {
+          "description": "a \\begin name of a picture, listing or other environment the run met",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "\"Store in a box\": move it to the preamble as a saved box, refused where it reads its position",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
+            }
+          },
+          "type": "object"
+        },
         "table": {
           "description": "tables: environments whose code reaches \\@array (tabular, tabular*, tabularx, array)",
           "properties": {
@@ -3491,6 +3547,20 @@
                 "output"
               ],
               "x-example": "`enabled: false`: no table lens, dialog or rewrites"
+            }
+          },
+          "type": "object"
+        },
+        "theorem": {
+          "description": "theorem-like environments the run defined",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "a manager: kinds with counters and styles, instances with labels and references, rename, numbering",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
             }
           },
           "type": "object"

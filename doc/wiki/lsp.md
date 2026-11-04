@@ -55,7 +55,25 @@ Completion and hover ask one query, the **type at the cursor** (`src/lsp/type_at
 
 An argument's purpose, its **role**, decides the offer. Roles come from, in order: what the run saw calls do, the command's own body (through any number of wrappers, with literal prefixes), and a seed table for kernel and common package commands the project does not redefine. So `\newcommand\secref[1]{\ref{sec:#1}}` completes `intro` for the label `sec:intro` before it is ever used.
 
-Each argument also has a **type** ([`Ty`](domains.md#argument-types-the-ty-lattice)), shown in hover, signature help and the completion's usage line: `\setlength{1: skip register}{2: glue}`. A hover adds a short explanation from `src/data/knowledge.md`: of the command itself (`\\` as a line break, `\hfill`, `\vspace`, `\rule`, …) and of the quantities it reads (glue, dimen, number, box).
+Each argument also has a **type** ([`Ty`](domains.md#argument-types-the-ty-lattice)), shown in hover, signature help and the completion's usage line: `\setlength{⟨skip register⟩}{⟨glue⟩}`. A hover adds a short explanation from `src/data/knowledge.md`: of the command itself (`\\` as a line break, `\hfill`, `\vspace`, `\rule`, …) and of the quantities it reads (glue, dimen, number, box).
+
+### Where a card's text comes from
+
+A card says what documents the name, and nothing else:
+
+1. The description table (`src/data/describe.tsv`) for primitives and the kernel's user commands.
+2. The package's documented sources: a `\DescribeMacro` paragraph, a `\begin{macro}` section, an l3doc `function` block. Only prose counts: a `\changes` note, a usage line or a fragment never stands in for a description.
+3. In the project's own files, the comment block right above a definition, or the comment that ends its line. `% #1: the text to box` names the argument.
+
+When none of them speaks, the card says `No documentation found. Defined at file:line`. The usage line names each argument by the documentation's syntax line, else by the type the run gives it, else by its place (`⟨arg2⟩`). A default is a hint (`[⟨number⟩ = 0]`), never the label. The `from` chip names the package that defines the name first; a package that redefines it shows as `redefined by`.
+
+```tex
+% Draws a frame around its argument.
+% #1: the text to box
+\newcommand{\mybox}[1]{\fbox{#1}}
+```
+
+Hover over `\mybox` shows `\mybox{⟨the text to box⟩}`, from `mypackage`.
 
 ### Hover extras
 

@@ -6,11 +6,16 @@
 //! `type_plugins.<name>` switches and tunes each; `satex query type-plugins`
 //! lists them.
 
+mod bibliography;
 mod color;
 mod environment;
+mod glossary;
 mod image;
+mod index;
 mod keys;
+mod savebox;
 mod table;
+mod theorem;
 mod tikz;
 mod units;
 
@@ -73,6 +78,10 @@ pub(super) trait TypePlugin: Sync {
     fn view(&self, _cx: &Cx, _hit: &Hit) -> Option<Json> {
         None
     }
+    /// A manager of the whole document's names of its kind, opened without a position (a sidebar).
+    fn manage(&self, _cx: &Cx) -> Option<Json> {
+        None
+    }
     /// Whole-document features: colors (`textDocument/documentColor`).
     fn colors(&self, _analysis: &Analysis, _doc: &Text, _path: &str) -> Vec<ColorInformation> {
         Vec::new()
@@ -86,8 +95,20 @@ pub(super) trait TypePlugin: Sync {
 }
 
 /// Every plugin, in the order they answer.
-pub(super) static PLUGINS: &[&dyn TypePlugin] =
-    &[&keys::Keys, &units::Units, &color::Color, &environment::Environment, &table::Table, &image::Image, &tikz::Tikz];
+pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
+    &keys::Keys,
+    &units::Units,
+    &color::Color,
+    &environment::Environment,
+    &table::Table,
+    &image::Image,
+    &tikz::Tikz,
+    &savebox::Savebox,
+    &glossary::Glossary,
+    &bibliography::Bibliography,
+    &index::Index,
+    &theorem::Theorem,
+];
 
 /// The hit a plugin without types is asked with.
 static PLACE: std::sync::LazyLock<Hit> = std::sync::LazyLock::new(|| Hit::of(Ty::Bottom));
@@ -160,6 +181,15 @@ pub(super) fn views(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> Ve
         }
     }
     out
+}
+
+/// `satex/view` with a plugin and no position: its manager.
+pub(super) fn manager(analysis: &Analysis, doc: &Text, path: &str, name: &str) -> Option<Json> {
+    let at = At { hits: Vec::new(), place: None, item: super::type_at::Item { typed: String::new(), col: 1 } };
+    let cx = context(analysis, doc, path, Pos::new(1, 1), &at);
+    let mut v = on(analysis).find(|p| p.name() == name)?.manage(&cx)?;
+    v["plugin"] = json!(name);
+    Some(v)
 }
 
 pub(super) fn colors(analysis: &Analysis, doc: &Text, path: &str) -> Vec<ColorInformation> {
@@ -243,6 +273,11 @@ pub(super) fn button(action: &CodeAction) -> Json {
     json!({ "title": action.title, "edits": edits.unwrap_or_default() })
 }
 
+/// A WorkspaceEdit of `edits` on the file `path`, as views write them.
+pub(super) fn edit_of(path: &str, edits: Vec<lsp_types::TextEdit>) -> Json {
+    json!({ "changes": { super::handlers::path_uri(path).as_str(): edits } })
+}
+
 /// The LSP range of characters `from..to` (columns from 1) of line `line`.
 pub(super) fn range(doc: &Text, line: u32, from: u32, to: u32) -> lsp_types::Range {
     lsp_types::Range {
@@ -275,4 +310,145 @@ pub(super) fn command_hover(analysis: &Analysis, doc: &Text, path: &str, pos: Po
     let hit = Hit { typed: Some(name.to_string()), ..Hit::of(ty) };
     let at = At { hits: vec![hit], place: None, item: super::type_at::Item { typed: name.to_string(), col: pos.col } };
     hover(analysis, doc, path, pos, &at)
+}
+
+/// One argument of a call as written: its delimiter and the bytes inside it.
+#[derive(Clone, Debug)]
+pub(super) struct Group {
+    pub open: char,
+    pub inner: std::ops::Range<usize>,
+}
+
+/// The call whose `\` stands at byte `at` of `text`: the end of its name, its `[…]`/`{…}`
+/// groups as written (spaces, one line end and comments between them), and its end.
+pub(super) fn call_at(text: &str, at: usize) -> Option<(usize, Vec<Group>, usize)> {
+    let b = text.as_bytes();
+    if b.get(at) != Some(&b'\\') {
+        return None;
+    }
+    let mut i = at + 1;
+    while b.get(i).is_some_and(|c| c.is_ascii_alphabetic() || *c == b'@') {
+        i += 1;
+    }
+    if b.get(i) == Some(&b'*') {
+        i += 1;
+    }
+    let name_end = i;
+    let mut groups = Vec::new();
+    let mut end = i;
+    loop {
+        let mut j = end;
+        let mut breaks = 0;
+        while let Some(&c) = b.get(j) {
+            match c {
+                b' ' | b'\t' => j += 1,
+                b'\n' if breaks == 0 => (breaks, j) = (1, j + 1),
+                b'%' => j = text[j..].find('\n').map_or(b.len(), |k| j + k),
+                _ => break,
+            }
+        }
+        let open = match b.get(j) {
+            Some(b'{') => '{',
+            Some(b'[') => '[',
+            _ => break,
+        };
+        let close = closing(text, j, open)?;
+        groups.push(Group { open, inner: j + 1..close });
+        end = close + 1;
+    }
+    Some((name_end, groups, end))
+}
+
+/// The byte of the delimiter closing the group opened at `at` (`{` nests, `[` ends at the
+/// first `]` outside braces), skipping escaped characters and comments.
+pub(super) fn closing(text: &str, at: usize, open: char) -> Option<usize> {
+    let b = text.as_bytes();
+    let mut depth = 0i32;
+    let mut i = at + 1;
+    while let Some(&c) = b.get(i) {
+        match c {
+            b'\\' => i += 1,
+            b'%' => i = text[i..].find('\n').map_or(b.len(), |k| i + k),
+            b'{' => depth += 1,
+            b'}' if depth == 0 && open == '{' => return Some(i),
+            b'}' => depth -= 1,
+            b']' if depth == 0 && open == '[' => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The `key=value` items of a key list written in `text[range]`: each key and the bytes of its
+/// value as written (braces kept), top-level commas only.
+pub(super) fn key_values(text: &str, range: std::ops::Range<usize>) -> Vec<(String, std::ops::Range<usize>)> {
+    let mut out = Vec::new();
+    let mut depth = 0;
+    let mut start = range.start;
+    let b = text.as_bytes();
+    for i in range.start..=range.end {
+        let c = if i == range.end { b',' } else { b[i] };
+        match c {
+            b'{' => depth += 1,
+            b'}' => depth -= 1,
+            b',' if depth == 0 => {
+                let item = &text[start..i];
+                if let Some(eq) = item.find('=') {
+                    let key = item[..eq].trim().to_string();
+                    let v = &item[eq + 1..];
+                    let lead = v.len() - v.trim_start().len();
+                    let from = start + eq + 1 + lead;
+                    let to = from + v.trim().len();
+                    if !key.is_empty() && !key.contains(['{', '}', '\\']) {
+                        out.push((key, from..to));
+                    }
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// A value without the one pair of braces around all of it.
+pub(super) fn unbraced(value: &str) -> &str {
+    let v = value.trim();
+    match v.strip_prefix('{').and_then(|r| r.strip_suffix('}')) {
+        Some(inner) if closing(v, 0, '{') == Some(v.len() - 1) => inner,
+        _ => v,
+    }
+}
+
+/// The LSP range of bytes `from..to` of `doc`.
+pub(super) fn span(doc: &Text, from: usize, to: usize) -> lsp_types::Range {
+    lsp_types::Range {
+        start: super::handlers::to_lsp(doc, doc.pos(from)),
+        end: super::handlers::to_lsp(doc, doc.pos(to)),
+    }
+}
+
+/// An edit of bytes `from..to` of `doc`.
+pub(super) fn put(doc: &Text, from: usize, to: usize, text: impl Into<String>) -> lsp_types::TextEdit {
+    lsp_types::TextEdit { range: span(doc, from, to), new_text: text.into() }
+}
+
+/// The bytes of `from..to` widened to whole lines when nothing else stands on them: what a
+/// deletion removes.
+pub(super) fn lines_of(text: &str, from: usize, to: usize) -> (usize, usize) {
+    let start = text[..from].rfind('\n').map_or(0, |i| i + 1);
+    let end = text[to..].find('\n').map_or(text.len(), |i| to + i + 1);
+    let alone = text[start..from].trim().is_empty() && text[to..end].trim().is_empty();
+    if alone { (start, end) } else { (from, to) }
+}
+
+/// The byte of the occurrence at `span` in `doc`, when it stands in the file at `path`.
+pub(super) fn byte_of(cx: &Cx, s: crate::engine::tex::Span) -> Option<usize> {
+    (super::type_at::file_of(cx.analysis, cx.path) == Some(s.file)).then(|| cx.doc.offset(Pos::new(s.line, s.col)))?
+}
+
+/// A record's `fields` entry: a name, its value as written and the edit that writes a new one.
+pub(super) fn field(cx: &Cx, name: &str, value: &str, from: usize, to: usize, template: &str) -> Json {
+    json!({ "name": name, "value": value, "long": value.len() > 40, "edit": edit_of(cx.path, vec![put(cx.doc, from, to, template)]) })
 }

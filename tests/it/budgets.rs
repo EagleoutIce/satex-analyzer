@@ -188,6 +188,44 @@ fn pgfmath_parse_of_typed_numbers() {
     }
 }
 
+/// The steps a warm run runs: the second of two in one cache directory,
+/// less what the package caches replayed.
+fn warm_steps(name: &str, source: &str) -> Option<u64> {
+    if !crate::support::installed() {
+        return None;
+    }
+    let cfg = satex::project::config::Config {
+        cache: Cache { dir: Some(fresh(name)), ..Default::default() },
+        load: Load { packages: true, classes: true, ..Default::default() },
+        ..crate::support::config()
+    };
+    crate::support::seed_kernel(&cfg);
+    let cold = Machine::analyze(source, None, &cfg);
+    let warm = Machine::analyze(source, None, &cfg);
+    eprintln!("budget {name}: {} steps, {} served, cold {}", warm.steps, warm.served_steps, cold.steps);
+    without(name, &warm, &["line-budget-cut", "budget-exhausted"]);
+    Some(warm.steps - warm.served_steps)
+}
+
+/// What a warm run of a short document may run, its loads replayed.
+const WARM: u64 = 500_000;
+
+#[test]
+fn document_metadata_warm() {
+    let source = "\\DocumentMetadata{lang=en}\n\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
+    if let Some(steps) = warm_steps("metadata-warm", source) {
+        within("metadata warm", steps, WARM);
+    }
+}
+
+#[test]
+fn tagpdf_warm() {
+    let source = "\\documentclass{article}\n\\usepackage{tagpdf}\n\\begin{document}\nx\n\\end{document}\n";
+    if let Some(steps) = warm_steps("tagpdf-warm", source) {
+        within("tagpdf warm", steps, WARM);
+    }
+}
+
 #[test]
 fn document_metadata() {
     let source = "\\DocumentMetadata{}\\documentclass{article}\\begin{document}x\\end{document}";

@@ -566,6 +566,9 @@ pub struct Facts {
     /// run ([`crate::analysis::roles::Ty`]): a scanner's quantity, a register an
     /// assignment named, a register's name a `\csname` formed.
     pub types: crate::fixed::HashMap<Span, crate::analysis::roles::Ty>,
+    /// The font states ([`crate::analysis::machine::Analysis::font_states`] rows) in force where a
+    /// length was scanned at a span of the user's files: what its `em` and `ex` mean there.
+    pub length_fonts: crate::fixed::HashMap<Span, Vec<u16>>,
     /// Each expl3 variable a module function of the user's files made or
     /// set, with that function ([`crate::analysis::roles::VarKind::of_function`]):
     /// what the conventions lints check names against.

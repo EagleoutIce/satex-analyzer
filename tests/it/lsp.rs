@@ -1408,7 +1408,7 @@ fn hover_explains_quantities_and_completion_types_arguments() {
     assert!(hover.contains("#### About *glue*") && hover.contains("plus"), "{hover}");
     let items = complete(&mut server, &uri, 4, 6);
     let detail = items.iter().find(|i| i["label"] == "setlength").and_then(|i| i["detail"].as_str());
-    assert!(detail.is_some_and(|d| d.contains("{1: skip register}") && d.contains("{2: glue}")), "{detail:?}");
+    assert!(detail.is_some_and(|d| d.contains("{⟨skip register⟩}{⟨glue⟩}")), "{detail:?}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1939,7 +1939,7 @@ fn typeset_of_a_root_splits_the_bibliography() {
     if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
-    let rows = typeset_of_a_root("bibliography");
+    let rows = typeset_of_a_root("bibliography-split");
     let details: Vec<&str> = rows.iter().filter_map(|r| r["detail"].as_str()).collect();
     // a heading: no page break may part it from what follows
     assert!(
@@ -3005,9 +3005,17 @@ fn diagnostics_name_the_version_they_are_of() {
 
 /// [`open_loaded`] with `--set` flags for the server.
 fn open_set(tag: &str, text: &str, sets: &[&str]) -> (Server, String, std::path::PathBuf) {
+    open_with(tag, text, &[], sets)
+}
+
+/// [`open_set`] with more files beside `main.tex`.
+fn open_with(tag: &str, text: &str, files: &[(&str, &str)], sets: &[&str]) -> (Server, String, std::path::PathBuf) {
     let dir = crate::support::tmp_root().join(format!("satex-lsp-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("main.tex"), text).unwrap();
+    for (name, body) in files {
+        std::fs::write(dir.join(name), body).unwrap();
+    }
     let mut args = vec!["--set", "limits.seconds=0"];
     for s in sets {
         args.extend(["--set", s]);
@@ -3044,6 +3052,22 @@ fn col(text: &str, line: usize, needle: &str, off: usize) -> u32 {
     (text.lines().nth(line).unwrap().find(needle).unwrap() + off) as u32
 }
 
+/// `em` and `ex` of the font in force where the length is read: `12pt` in an article at 10pt is
+/// 1.2 em, and 12 / the x-height of cmr10 ex.
+#[test]
+fn units_hover_gives_em_and_ex_of_the_font_in_force() {
+    // cmr10's x-height (`\fontdimen5`) in pt, as cmr10.tfm stores it
+    const XHEIGHT: f64 = 4.30554;
+    let text = "\\documentclass{article}\n\\begin{document}\nText \\vspace{12pt} and\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("units-font", text, &[]);
+    let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 2, col(text, 2, "12pt", 1)));
+    let ex = format!("{:.2}", 12.0 / XHEIGHT);
+    assert!(md.contains(&format!("≈ 1.2 em ≈ {ex} ex in cmr10 at 10pt")), "{md}");
+    assert!(!md.contains("depend on the font"), "{md}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// A length in the source: hover in every unit with the sp, convert actions that say whether
 /// they are exact, a converter view; `\textwidth` shows its value when the run ended.
 #[test]
@@ -3052,7 +3076,10 @@ fn units_plugin_converts_lengths() {
     let (mut server, uri, dir) = open_set("units", text, &["type_plugins.units.units=[pt,cm,pc]"]);
     let c = col(text, 2, "12pt", 1);
     let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 2, c));
-    assert!(md.contains("| cm | 0.42175 |") && md.contains("| sp | 786432 |"), "{md}");
+    // everyday units in the headline (≈ where inexact), a to-scale bar, TeX's own units in a grid
+    assert!(md.starts_with("### `12pt` ≈ [0.42 cm](command:satex.applyEdit?"), "{md}");
+    assert!(md.contains("% of `\\textwidth`") && md.contains("| pc |") && md.contains("[786432]("), "{md}");
+    assert!(!md.contains("TeX stores"), "{md}");
     let actions = at(&mut server, &uri, "textDocument/codeAction", 2, c);
     let titles: Vec<&str> = actions.as_array().unwrap().iter().filter_map(|a| a["title"].as_str()).collect();
     assert!(titles.iter().any(|t| t.starts_with("Convert 12pt to 0.42cm (≈")), "{titles:?}");
@@ -3069,7 +3096,11 @@ fn units_plugin_converts_lengths() {
     assert_eq!(views[0]["sections"][0]["lo"], 786432);
     // a length register: its value when the run ended
     let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 2, col(text, 2, "textwidth", 2)));
-    assert!(md.contains("at the end of the run") && md.contains("| cm |"), "{md}");
+    assert!(
+        md.contains("### `\\textwidth` at the end of the run = 345 pt ≈ 12.13 cm")
+            && md.contains("100% of `\\textwidth`"),
+        "{md}"
+    );
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
     // switched off: none of it
@@ -3425,6 +3456,259 @@ fn tikz_plugin_new_drawing_and_off() {
     );
     let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
     assert_eq!(server.response(id)["result"], json!([]));
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A primitive, or a name that stands for itself, has no "Expands to" line.
+#[test]
+fn a_primitive_never_expands_to_itself() {
+    for (tag, text) in [
+        ("par-plain", "\\par\n\\bye\n"),
+        ("par-latex", "\\documentclass{article}\n\\begin{document}\n\\par\n\\end{document}\n"),
+    ] {
+        let line = text.lines().position(|l| l == "\\par").unwrap() as u32;
+        let (mut server, uri, _, dir) = open_unsaved(tag, text);
+        let id = server.request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": 2 } }),
+        );
+        let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+        assert!(!hover.contains("Expands to `\\par`"), "{tag}: {hover}");
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Applies the WorkspaceEdit `edit` (with `${name}` templates filled from `vars`) to `text`,
+/// the file `uri`: what the view renderer does.
+fn applied(text: &str, uri: &str, edit: &Value, vars: &[(&str, &str)]) -> String {
+    let mut edits: Vec<(usize, usize, String)> = edit["changes"][uri]
+        .as_array()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .map(|e| {
+            let off = |p: &Value| {
+                let line = p["line"].as_u64().unwrap() as usize;
+                let start: usize = text.split_inclusive('\n').take(line).map(str::len).sum();
+                start + p["character"].as_u64().unwrap() as usize
+            };
+            let mut t = e["newText"].as_str().unwrap().to_string();
+            for (k, v) in vars {
+                t = t.replace(&format!("${{{k}}}"), v);
+            }
+            (off(&e["range"]["start"]), off(&e["range"]["end"]), t)
+        })
+        .collect();
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = text.to_string();
+    for (a, b, t) in edits {
+        out.replace_range(a..b, &t);
+    }
+    out
+}
+
+/// The manager `plugin` opens without a position, as a sidebar asks.
+fn manager(server: &mut Server, uri: &str, plugin: &str) -> Value {
+    let id = server.request("satex/view", json!({ "textDocument": { "uri": uri }, "plugin": plugin }));
+    server.response(id)["result"][0].clone()
+}
+
+fn record<'a>(view: &'a Value, title: &str) -> &'a Value {
+    view["sections"][0]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["title"] == title)
+        .unwrap_or_else(|| panic!("{title}: {view}"))
+}
+
+fn field_of<'a>(record: &'a Value, name: &str) -> &'a Value {
+    record["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == name)
+        .unwrap_or_else(|| panic!("{name}: {record}"))
+}
+
+const GLOSSARY: &str = "\\documentclass{article}\n\\usepackage{glossaries}\n\\newglossaryentry{graph}{name={graph},description={a set of nodes and edges},plural={graphs}}\n\\newglossaryentry{tree}{name=tree,description={a connected acyclic graph}}\n\\newacronym{cfg}{CFG}{control flow graph}\n\\begin{document}\nA \\gls{graph} and \\glspl{graph}, a \\gls{cfg}.\n\\end{document}\n";
+
+/// The glossary manager: every declared key with its fields, uses and the run's stored forms;
+/// editing a field writes the call, a new entry is made like the document's, deleting refuses
+/// while used and replacing the uses first moves them.
+#[test]
+fn glossary_manager_round_trips() {
+    let (mut server, uri, dir) = open_set("glossary", GLOSSARY, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 6, 9);
+    let view = manager(&mut server, &uri, "glossary");
+    let graph = record(&view, "graph");
+    assert_eq!(graph["badge"], Value::Null, "{graph}");
+    assert_eq!(record(&view, "tree")["badge"], "unused");
+    let rows = graph["table"]["rows"].to_string();
+    assert!(rows.contains("line 7") && rows.contains("graphs"), "{rows}");
+    // a field: the description, written back in braces
+    let desc = field_of(graph, "description");
+    assert_eq!(desc["value"], "a set of nodes and edges");
+    let out = applied(GLOSSARY, &uri, &desc["edit"], &[("value", "nodes, edges")]);
+    assert!(out.contains("description={nodes, edges},plural"), "{out}");
+    // the acronym's groups are named by the fields the run stored their text in
+    let cfg = record(&view, "cfg");
+    let names: Vec<&str> = cfg["fields"].as_array().unwrap().iter().filter_map(|f| f["name"].as_str()).collect();
+    assert!(names.contains(&"short") && names.contains(&"long"), "{names:?}");
+    // delete: refused while used, allowed when unused
+    let used = &graph["actions"][0];
+    assert!(used["disabled"].as_str().is_some_and(|r| r.contains("used 2 times")), "{used}");
+    let tree = record(&view, "tree");
+    assert_eq!(tree["actions"][0]["disabled"], Value::Null);
+    let out = applied(GLOSSARY, &uri, &tree["actions"][0]["edit"], &[]);
+    assert!(!out.contains("{tree}") && out.contains("{cfg}"), "{out}");
+    // replace the uses of graph by tree, then delete graph
+    let replace = &graph["forms"][0];
+    let out = applied(GLOSSARY, &uri, &replace["edit"], &[("key", "tree")]);
+    assert!(out.contains("A \\gls{tree} and \\glspl{tree}") && !out.contains("{graph}"), "{out}");
+    // add: a call like the document's own
+    let kinds = view["sections"][0]["add"]["kinds"].as_array().unwrap();
+    let new = kinds.iter().find(|k| k["name"] == "\\newglossaryentry").expect("newglossaryentry kind");
+    let vars = [("key", "dag"), ("name", "DAG"), ("description", "a directed acyclic graph"), ("plural", "DAGs")];
+    let out = applied(GLOSSARY, &uri, &new["edit"], &vars);
+    assert!(out.contains("\\newglossaryentry{dag}{name={DAG},description={a directed acyclic graph},plural={DAGs}}\n\\newglossaryentry{tree}") || out.contains("{dag}{name={DAG}"), "{out}");
+    // the view at a use focuses that key
+    let views = at(&mut server, &uri, "satex/view", 6, 9);
+    let mine = views.as_array().unwrap().iter().find(|v| v["plugin"] == "glossary").expect("glossary view at \\gls");
+    assert_eq!(mine["sections"][0]["focus"], "graph");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn managers_switch_off() {
+    for plugin in ["glossary", "theorem", "bibliography", "index"] {
+        let set = format!("type_plugins.{plugin}.enabled=false");
+        let (mut server, uri, dir) = open_set(&format!("off-{plugin}"), GLOSSARY, &[&set]);
+        assert_eq!(manager(&mut server, &uri, plugin), Value::Null, "{plugin}");
+        server.shutdown();
+        std::fs::remove_dir_all(dir).ok();
+    }
+    let (mut server, uri, dir) = open_set("off-savebox", SAVEBOX, &["type_plugins.savebox.enabled=false"]);
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 4, 9);
+    assert!(!actions.to_string().contains("in a box"), "{actions}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+const REFS: &str = "@book{knuth,\n  author = {Donald E. Knuth},\n  title = {The {\\TeX}book},\n  year = 1984,\n  publisher = {Addison-Wesley}\n}\n\n@article{lamport,\n  author = {Leslie Lamport},\n  title = {Time, Clocks},\n  journal = {CACM},\n  year = {1978}\n}\n";
+const CITES: &str = "\\documentclass{article}\n\\usepackage{makeidx}\n\\makeindex\n\\begin{document}\nText \\cite{knuth} \\index{graph} \\index{graph!directed} \\index{tree}.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
+
+/// The bibliography manager: the entries of the database the run read, cited where; a field
+/// edit writes the `.bib` file, an uncited entry deletes, a cited one refuses, a new entry has
+/// the fields the style reads of its type. The index manager: terms with subentries, rename.
+#[test]
+fn bibliography_and_index_managers_round_trip() {
+    let (mut server, uri, dir) = open_with("bibmgr", CITES, &[("refs.bib", REFS)], &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 4, 12);
+    let view = manager(&mut server, &uri, "bibliography");
+    let knuth = record(&view, "knuth");
+    assert!(knuth["table"]["rows"].to_string().contains("line 5"), "{knuth}");
+    assert!(knuth["actions"][0]["disabled"].is_string(), "{knuth}");
+    let bib_uri = knuth["fields"][0]["edit"]["changes"].as_object().unwrap().keys().next().unwrap().clone();
+    assert!(bib_uri.ends_with("refs.bib"), "{bib_uri}");
+    let year = field_of(knuth, "year");
+    assert_eq!(year["value"], "1984");
+    let out = applied(REFS, &bib_uri, &year["edit"], &[("value", "1986")]);
+    assert!(out.contains("year = {1986},"), "{out}");
+    let lamport = record(&view, "lamport");
+    assert_eq!(lamport["badge"], "uncited");
+    let out = applied(REFS, &bib_uri, &lamport["actions"][0]["edit"], &[]);
+    assert!(!out.contains("lamport") && out.contains("knuth"), "{out}");
+    let kinds = view["sections"][0]["add"]["kinds"].as_array().unwrap();
+    let article = kinds.iter().find(|k| k["name"] == "article").expect("article from plain.bst");
+    let fields: Vec<&str> = article["fields"].as_array().unwrap().iter().filter_map(|f| f["name"].as_str()).collect();
+    assert!(fields.contains(&"journal") && fields.contains(&"author"), "{fields:?}");
+    let index = manager(&mut server, &uri, "index");
+    let graph = record(&index, "graph");
+    assert!(graph["table"]["rows"].to_string().contains("directed"), "{graph}");
+    let out = applied(CITES, &uri, &field_of(graph, "term")["edit"], &[("value", "network")]);
+    assert!(out.contains("\\index{network} \\index{network!directed} \\index{tree}"), "{out}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+const THEOREMS: &str = "\\documentclass{article}\n\\usepackage{amsthm}\n\\newtheorem{theorem}{Theorem}[section]\n\\newtheorem{lemma}[theorem]{Lemma}\n\\theoremstyle{definition}\n\\newtheorem{definition}{Definition}\n\\begin{document}\n\\section{A}\n\\begin{theorem}\\label{thm:a}\nX.\n\\end{theorem}\n\\begin{lemma}\nY.\n\\end{lemma}\nSee \\ref{thm:a}.\n\\end{document}\n";
+
+/// The theorem manager: the kinds the run defined with a number, their counters, instances
+/// with labels and references; renaming rewrites the definition, both ends and the kinds
+/// sharing the counter; numbering writes the group the document's own calls use.
+#[test]
+fn theorem_manager_round_trips() {
+    let (mut server, uri, dir) = open_set("thmmgr", THEOREMS, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 8, 9);
+    let view = manager(&mut server, &uri, "theorem");
+    let theorem = record(&view, "theorem");
+    assert!(theorem["detail"].as_str().unwrap().contains("within section"), "{theorem}");
+    assert!(record(&view, "lemma")["detail"].as_str().unwrap().contains("shares theorem"), "{view}");
+    assert_eq!(record(&view, "definition")["badge"], "unused");
+    let rows = theorem["table"]["rows"].to_string();
+    assert!(rows.contains("thm:a") && rows.contains("15"), "{rows}");
+    let out = applied(THEOREMS, &uri, &field_of(theorem, "environment")["edit"], &[("value", "thm")]);
+    assert!(out.contains("\\newtheorem{thm}{Theorem}[section]\n\\newtheorem{lemma}[thm]{Lemma}"), "{out}");
+    assert!(out.contains("\\begin{thm}\\label{thm:a}\nX.\n\\end{thm}"), "{out}");
+    // definition: numbered within section, in the slot \newtheorem's calls use
+    let def = record(&view, "definition");
+    let within =
+        def["forms"].as_array().unwrap().iter().find(|f| f["title"] == "Set numbered within").expect("within form");
+    let out = applied(THEOREMS, &uri, &within["edit"], &[("counter", "section")]);
+    assert!(out.contains("\\newtheorem{definition}{Definition}[section]"), "{out}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+const SAVEBOX: &str = "\\documentclass{article}\n\\usepackage{tikz}\n\\usepackage{listings}\n\\begin{document}\n\\begin{tikzpicture}\n\\draw (0,0) -- (1,1);\n\\end{tikzpicture}\n\\begin{tikzpicture}\n\\draw (0,0) -- (1,1);\n\\end{tikzpicture}\n\\begin{lstlisting}\nx = {a % b}\n\\end{lstlisting}\n\\begin{tikzpicture}\n\\node {\\thepage};\n\\end{tikzpicture}\n\\begin{minipage}{2cm}Hi\\end{minipage}\n\\end{document}\n";
+
+/// "Store in a box": a picture moves to the preamble in an `lrbox` (tikz changes catcodes),
+/// identical copies share one box, a listing gets a minipage, a picture reading `\thepage` is
+/// refused, and a box of plain text goes through `\sbox`.
+#[test]
+fn savebox_stores_and_refuses() {
+    let (mut server, uri, dir) = open_set("savebox", SAVEBOX, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 4, 9);
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 4, 9);
+    let find = |title: &str| {
+        actions.as_array().unwrap().iter().find(|a| a["title"].as_str().is_some_and(|t| t.starts_with(title))).cloned()
+    };
+    let one = find("Store tikzpicture in a box").unwrap_or_else(|| panic!("{actions}"));
+    let out = applied(SAVEBOX, &uri, &one["edit"], &[]);
+    // tikz makes `&` a character at its `\\begin`: the body is read as the environment reads it
+    assert!(
+        out.contains("\\newsavebox{\\tikzpicturebox}\n\\begin{lrbox}{\\tikzpicturebox}\n\\begin{tikzpicture}"),
+        "{out}"
+    );
+    assert!(out.contains("\\begin{document}\n\\usebox{\\tikzpicturebox}\n\\begin{tikzpicture}"), "{out}");
+    let both = find("Store 2 identical tikzpicture").unwrap_or_else(|| panic!("{actions}"));
+    let out = applied(SAVEBOX, &uri, &both["edit"], &[]);
+    assert_eq!(out.matches("\\usebox{\\tikzpicturebox}").count(), 2, "{out}");
+    let hover = hover_md(&at(&mut server, &uri, "textDocument/hover", 4, 9));
+    assert!(hover.contains("Storable in a box"), "{hover}");
+    // the listing: verbatim, so through lrbox
+    let listing = at(&mut server, &uri, "textDocument/codeAction", 10, 9);
+    let store = listing
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["title"].as_str().is_some_and(|t| t.contains("in a box")))
+        .cloned();
+    let out = applied(SAVEBOX, &uri, &store.unwrap_or_else(|| panic!("{listing}"))["edit"], &[]);
+    assert!(out.contains("\\begin{lrbox}{\\lstlistingbox}\n\\begin{minipage}"), "{out}");
+    // \thepage reads where it stands
+    let page = hover_md(&at(&mut server, &uri, "textDocument/hover", 13, 9));
+    assert!(page.contains("Not storable") && page.contains("thepage"), "{page}");
+    let none = at(&mut server, &uri, "textDocument/codeAction", 13, 9);
+    assert!(!none.to_string().contains("in a box"), "{none}");
+    let plain = at(&mut server, &uri, "textDocument/codeAction", 16, 9);
+    let store =
+        plain.as_array().unwrap().iter().find(|a| a["title"].as_str().is_some_and(|t| t.contains("in a box"))).cloned();
+    let out = applied(SAVEBOX, &uri, &store.unwrap_or_else(|| panic!("{plain}"))["edit"], &[]);
+    assert!(out.contains("\\sbox{\\minipagebox}{%\n\\begin{minipage}{2cm}Hi\\end{minipage}%\n}"), "{out}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }

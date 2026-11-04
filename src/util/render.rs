@@ -578,7 +578,7 @@ fn place_key(record: &Record) -> (String, u64, u64) {
     )
 }
 
-fn plural(count: usize, word: &str) -> String {
+pub(crate) fn plural(count: usize, word: &str) -> String {
     format!("{count} {word}{}", if count == 1 { "" } else { "s" })
 }
 
@@ -1122,6 +1122,7 @@ pub fn stats_json(analysis: &crate::analysis::machine::Analysis, elapsed: std::t
         "lines": analysis.lines,
         "steps": analysis.steps,
         "load_steps": analysis.load_steps,
+        "served_steps": analysis.served_steps,
         "definitions": facts.defs.len(),
         "expansions": facts.expansions.len(),
         "forks": analysis.forks,

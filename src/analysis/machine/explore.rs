@@ -1745,7 +1745,7 @@ impl Machine<'_> {
         if (open.0 > closes.0 || open.1 > closes.1) && self.many_since(at.0, from) {
             return;
         }
-        let (groups, conds) = self.close_since(at);
+        let (groups, conds) = self.close_since(at, false);
         if (groups, conds) != (0, 0) && (conds as i64 > closes.0 || groups as i64 > closes.1) {
             self.diagnose(
                 Severity::Assumption,

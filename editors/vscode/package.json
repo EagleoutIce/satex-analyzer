@@ -150,6 +150,11 @@
         "category": "satex"
       },
       {
+        "command": "satex.manage",
+        "title": "Manage Glossary, Bibliography, Index or Theorems",
+        "category": "satex"
+      },
+      {
         "command": "satex.traceAtCursor",
         "title": "Trace Expansion Here",
         "category": "satex"
