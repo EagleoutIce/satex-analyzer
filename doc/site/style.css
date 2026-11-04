@@ -1494,7 +1494,14 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .boot-stages li.on { color: var(--accent); border-color: var(--accent); }
 .boot-stages li.done { color: var(--c2); border-color: color-mix(in srgb, var(--c2) 40%, transparent); }
 .boot-stages li.done::before { content: "✓ "; }
-.boot-bar { display: block; width: 100%; }
+.boot-bar { display: flex; gap: 3px; width: 100%; height: .5rem; }
+.boot-bar i { position: relative; flex-basis: 0; min-width: 0; overflow: hidden; border-radius: 3px; background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.boot-bar b { position: absolute; inset: 0 auto 0 0; width: calc(var(--done, 0) * 100%); background: var(--accent); transition: width .3s var(--ease); }
+.boot-bar .done b { background: var(--c2); }
+.boot-bar .on.idle { --bs: repeating-linear-gradient(-45deg, var(--accent) 0 5px, color-mix(in srgb, var(--accent) 35%, transparent) 5px 10px); background-image: var(--bs); background-size: 14.15px 100%; animation: boot-pole .8s linear infinite; }
+.boot-bar .on:not(.idle) b { background-image: repeating-linear-gradient(-45deg, transparent 0 5px, rgb(255 255 255 / .28) 5px 10px); background-size: 14.15px 100%; animation: boot-pole .8s linear infinite; }
+@keyframes boot-pole { to { background-position-x: 14.15px; } }
+@media (prefers-reduced-motion: reduce) { .boot-bar .on, .boot-bar .on b { animation: none !important; } }
 .boot-hide { justify-self: end; }
 /* a phone keeps the caches' rows short: a row's details list what it defines */
 @media (max-width: 40rem) { .cache-table td > .chips { display: none; } }
@@ -1657,3 +1664,61 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 }
 /* phone: the playground's header wraps its nav like every page */
 @media (max-width: 36rem) { body.play .top { flex-wrap: wrap; } body.play .top nav { flex-wrap: wrap; overflow: visible; mask-image: none; } }
+
+/* the views as tabs where they fit, else one menu */
+#pdf-views-sel { display: none; box-sizing: border-box; height: var(--bar-h, 1.6rem); max-width: 100%; font-size: .72rem; font-weight: 600; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--accent); background: var(--bg); color: var(--fg); cursor: pointer; }
+#pdf-views-sel.pdf-err { color: var(--error); border-color: var(--error); }
+#pdf-views-sel:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pdf-bar.views-menu #pdf-views-sel { display: inline-block; }
+.pdf-bar.views-menu .pdf-views { display: none; }
+#play-pdf.pdf-folded #pdf-views-sel { display: none; }
+
+/* the overlay steps of one beamer frame: one card, a stepper in its strip */
+.pdf .pdf-frame { flex: none; width: calc(var(--pdf-zoom, 1) * 100%); margin-bottom: .5rem; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); overflow: hidden; }
+.pdf .pdf-frame .pdf-page { width: 100%; margin: 0; box-shadow: none; }
+.pdf-frame-bar { display: flex; align-items: center; gap: .3rem; padding: .15rem .4rem; font-size: .72rem; color: var(--muted); border-bottom: 1px solid var(--border); }
+.pdf-frame-bar > span { flex: 1; } .pdf-frame-bar b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.pdf-frame-bar button:disabled { opacity: .35; cursor: default; }
+.pdf-frame-bar button { cursor: pointer; }
+
+/* "here" is a scope, not a layer: apart after a divider, two states in one control */
+.ts-scope { display: inline-flex; margin-left: auto; padding-left: .6rem; position: relative; font-size: .72rem; }
+.ts-scope::before { content: ""; position: absolute; left: 0; top: .15rem; bottom: .15rem; border-left: 1px solid var(--border); }
+.ts-scope button { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: .25rem; padding: .05rem .55rem; border: 1px solid var(--border); color: var(--muted); cursor: pointer; white-space: nowrap; font-weight: 500; }
+.ts-scope button:first-of-type { border-radius: 999px 0 0 999px; } .ts-scope button:last-of-type { border-radius: 0 999px 999px 0; margin-left: -1px; }
+.ts-scope button[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); border-color: var(--accent); position: relative; z-index: 1; }
+.ts-scope button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ts-scope button:hover:not([aria-pressed=true]) { color: var(--fg); }
+
+.pdf-sub-toggle[hidden] { display: none; }
+.pdf-layer .count { margin-left: .3rem; font-size: .64rem; font-weight: 600; color: var(--muted); }
+/* the layers menu stays inside the pane: its rows wrap, it scrolls instead of being cut off */
+.pdf-layer-list { max-width: min(20rem, calc(100vw - 1.5rem)); max-height: calc(100vh - 8rem); overflow: auto; box-sizing: border-box; }
+.pdf-layer { min-width: 0; }
+
+/* the preview of a PDF or an image in the file lists */
+.fd-prev { display: grid; gap: .25rem; max-width: 18rem; font-size: .72rem; }
+.fd-prev img, .fd-prev embed { width: 18rem; max-width: 100%; max-height: 14rem; object-fit: contain; background: #fff; border-radius: 4px; border: 1px solid var(--border); }
+.fd-prev embed { height: 14rem; }
+/* the semantics chapters: hover cards of control sequences and Lean names, the Lean pages, the primitive table */
+.tip-note:has(.cs-card) { pointer-events: auto; white-space: normal; max-width: min(30rem, calc(100vw - 16px)); }
+code.cs { border-bottom: 1px dotted var(--muted); cursor: help; }
+.cs-head { display: flex; flex-wrap: wrap; gap: .25rem .4rem; align-items: baseline; } .cs-head b { color: var(--accent); font-weight: 600; word-break: break-all; }
+.cs-chip { font-size: .68rem; padding: 0 .4rem; border-radius: 999px; background: var(--sunk); color: var(--muted); } .cs-chip.cs-k { color: var(--fg); }
+.cs-sig, .cs-sem, .cs-src { margin-top: .3rem; font-size: .74rem; } .cs-src { color: var(--muted); } .cs-sig code { white-space: pre-wrap; word-break: break-word; }
+.cs-pv { margin: .3rem 0; background: #fff; border-radius: 4px; padding: .2rem .4rem; max-height: 4rem; overflow: hidden; } .cs-pv svg { max-height: 3.6rem; width: auto; max-width: 100%; }
+.tip-note .cs-card a { color: var(--accent); }
+nav.chapters { display: flex; flex-wrap: wrap; gap: .3rem 1.2rem; align-items: baseline; font-size: .85rem; color: var(--muted); border-block: 1px solid var(--border); padding: .35rem 0; margin: .6rem 0 1.2rem; }
+nav.chapters span { font-weight: 600; margin-right: auto; }
+.chapter-nav { font-size: .85rem; color: var(--muted); } .lean-note { font-size: .85rem; color: var(--muted); }
+pre.lean { font-size: .78rem; line-height: 1.5; overflow-x: auto; padding: .8rem 1rem; tab-size: 2; }
+pre.lean code { background: none; padding: 0; font-size: inherit; white-space: pre; }
+pre.lean .lc { color: var(--muted); font-style: italic; } pre.lean .lc code { font-style: normal; } pre.lean .lc.doc { color: color-mix(in srgb, var(--muted) 75%, var(--fg)); }
+pre.lean .lk { color: light-dark(#8a2be2, #c9a0ff); font-weight: 600; } pre.lean .ls { color: light-dark(#1a7f37, #6fd08c); } pre.lean .ln { color: light-dark(#a1460a, #f0a35e); }
+a.ld { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--muted); } a.ld:hover { color: var(--accent); border-bottom-style: solid; }
+a.ld.d-inductive, .dn.d-inductive { color: light-dark(#0b3d91, #8fb3ff); } a.ld.d-constructor, .dn.d-constructor { color: light-dark(#8e44ad, #d6a2f0); }
+a.ld.d-theorem, .dn.d-theorem { color: light-dark(#1a7f37, #6fd08c); } .dn { font-weight: 600; }
+.decl { scroll-margin-top: 4.5rem; } .decl:target + * { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+a.web { border-bottom: 1px dotted var(--muted); }
+table.prim td { vertical-align: top; } table.long.prim td:nth-child(3) { white-space: normal; min-width: 11rem; width: auto; } table.long.prim td:last-child { font-size: .78rem; } table.prim tr:target { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.sem { font-size: .72rem; padding: 0 .4rem; border-radius: 999px; background: var(--sunk); white-space: nowrap; } .sem-exact { color: var(--safe); } .sem-over { color: var(--warning); } .sem-open { color: var(--error); }

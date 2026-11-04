@@ -8,6 +8,8 @@
 Each domain below says what it abstracts and how it joins, narrows and widens.
 When those happen is in [SEMANTICS § 14](https://eagleoutice.github.io/satex-analyzer/SEMANTICS#14-where-satex-is-not-exact).
 
+This chapter builds on [what TeX does](Semantics). The [formal model](Formal-semantics) states both in Lean.
+
 One invariant holds everywhere: a construct is followed **exactly**, or its result is **over-approximated** and a diagnostic says so. `satex` never guesses one outcome.
 
 - [`Value`](#value-what-a-control-sequence-or-register-holds) and [the set lift `OneOf`](#the-set-lift-oneof)

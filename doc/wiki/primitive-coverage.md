@@ -4,6 +4,8 @@
 
 # Primitive coverage
 
+The [formal model](Formal-semantics) gives each primitive a rule. This chapter says what the interpreter does with it.
+
 [tex.web](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web) parts 24-49 define TeX82's primitives. The [eTeX manual](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf), the [pdfTeX manual](https://mirrors.ctan.org/systems/doc/pdftex/manual/pdftex-a.pdf), the [XeTeX reference](https://tug.org/xetex/) and the [LuaTeX manual](https://mirrors.ctan.org/systems/doc/luatex/luatex.pdf) add the rest.
 
 `src/engine/builtins.rs` maps every one of these names to a `Primitive`, and `builtins::verdict` judges each `Primitive` from what `src/engine/exec.rs`, `src/engine/mode.rs` and `src/engine/commands.rs` do with it. This page is generated from both, so it cannot drift from the interpreter. Every **modeled as** cell links to the arm of `builtins::verdict` that judges the primitive, built from `file!()` and `line!()` at that arm rather than from a table typed by hand. See [Domains](Domains) for the values a primitive's operands and results are tracked as, and [Lints](Lints) and [Chktex-Coverage](Chktex-Coverage) for what a lint rule builds on top of a primitive's real effect.

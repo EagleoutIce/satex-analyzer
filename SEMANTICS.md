@@ -6,6 +6,7 @@ This document states what `satex` believes TeX, ε-TeX and LaTeX2e do. Every
 claim here is a claim about the engines, not about `satex`. Where `satex`
 deliberately departs from them, the departure is marked **[abstraction]** and
 justified.
+After [why TeX is hard](Challenges), this chapter says what TeX does. The [abstract domains](Domains) come next.
 
 Sources: [*TeXbook*][texbook] (Knuth, *The TeXbook*, cited by chapter, since it has no
 numbered sections), [*tex.web*][tex.web] (Knuth, *TeX: The Program*, cited by module

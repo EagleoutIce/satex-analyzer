@@ -1,7 +1,7 @@
 # Why TeX is hard to analyze
 
 satex analyzes TeX, and LaTeX on top of it, by running it on abstract values.
-This page lists what makes that harder than for other languages. Under each problem: what SaTeX does about it, and the research behind that.
+This page lists what makes that harder than for other languages. Under each problem: what SaTeX does about it, and the research behind that. The problems come first, [what TeX does](Semantics) is the next chapter.
 Every example is a complete document. Below each one, a table puts the text one pdflatex run ships (read from the boxes `\tracingoutput` logs, random seed 7) next to the text satex computes (`satex query typeset`), paragraph by paragraph. If a row is not equal, a short list says why: which conditional stayed undecided. Two collapsed blocks show the commands that ran, with the computed text and with a trace of what each call inserted, what each primitive set and how each conditional went.
 
 How to read a table. In the satex column the notation is **bold**, so a literal `{`, `|` or `…` in the text stays plain:

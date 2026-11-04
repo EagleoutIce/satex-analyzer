@@ -52,7 +52,7 @@ Line numbers are of HEAD 26ef7ce (2026-11-04, branch `getting-sound`). New findi
 | `AState.assign` | `Env::set` / `set_tracked`, env.rs:839-880 | same (tex.web §§ 277, 279) |
 | `AState.weakAssign` | `weaken_registers`, src/engine/exec.rs:3726 (`weaken_register_range` 3738) | same up to `limits.value_set` locations |
 | `AState.havocRegs` | `weaken_registers` past the bound, `register_top`, exec.rs:5037 (dimension top too small: R2-5) | same |
-| `AState.beginGroup`, `unsave`, `restoreOne`, `endGroup` | `push_group`, `pop_group`, `unwind_into`, env.rs:957, 1045, 1108 | same for plain frames (§§ 282-283). `many` frames: `many_from`, env.rs:1968, and the closer's fork (domains.md "Stacks as intervals") |
+| `AState.beginGroup`, `unsave`, `restoreOne`, `endGroupN` | `push_group`, `pop_group`, `unwind_into`, env.rs:957, 1045, 1108 | same for plain frames (§§ 282-283). `many` frames: `many_from`, env.rs:1968, and the closer's fork (domains.md "Stacks as intervals") |
 | `branch` | `Machine::branch`, explore.rs:304 | same while choices remain. Past `limits.choices`/`RUNS`/hot site, `branch` gives `None`; each caller must then over-approximate. D8's callers do so since 2026-11-04 (`unforked_end`) |
 | `ifNumTest`, `ifNumNarrow` | `\ifnum` over `member_nums`, exec.rs:5228; `Num::narrow` | same |
 | `AState.joinable`, `AState.join` | `join_configs`, explore.rs:2755; `Env::join_paths`, env.rs:1580 | Rust finer: joins paths in different groups ("in the groups of the path that goes on") and keeps arms paired (`Corr`). The model keeps such paths apart. Open: not checked |

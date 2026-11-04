@@ -12,6 +12,8 @@ files` says the samples and the offered packages read, and its caches from `sate
 import argparse, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, threading, time, tomllib
 from pathlib import Path
 
+import semantics as sem
+
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "doc" / "site"
 
@@ -212,6 +214,26 @@ def sidebar(table):
             return m.group(0)
         return f"[{m.group(1)}](@ROOT@{dst}{'#' + anchor if anchor else ''})"
     return re.sub(r"\[([^\]]*)\]\(([^)\s]+)\)", target, text)
+
+
+def chapters(table):
+    """The Semantics section of the sidebar in reading order: (title, site page) of its top-level entries."""
+    text = (ROOT / "doc/wiki/_Sidebar.md").read_text()
+    block = text.split("[📖 Semantics]", 1)[1].split("\n\n", 1)[0]
+    by_name = wiki(table)
+    return [(m[1], by_name[m[2].split("#")[0].lower()]) for m in re.finditer(r"^- \[([^\]]+)\]\(([^)]+)\)", block, flags=re.M)]
+
+
+def chapter_nav(dst, order):
+    """The strip above and below a chapter of the semantics: where it stands, the previous and the next one."""
+    pages_ = [d for _, d in order]
+    if dst not in pages_:
+        return ""
+    i, root = pages_.index(dst), "../" * dst.count("/")
+    link = lambda j, arrow: f'<a href="{root}{order[j][1]}">{arrow}</a>' if 0 <= j < len(order) else ""
+    return (f'<nav class="chapters" aria-label="chapters of the semantics"><span>Chapter {i + 1} of {len(order)}</span>'
+            f'{link(i - 1, "&larr; " + html.escape(order[i - 1][0].split(":")[0]) if i else "")}'
+            f'{link(i + 1, html.escape(order[i + 1][0].split(":")[0]) + " &rarr;" if i + 1 < len(order) else "")}</nav>')
 
 
 MERMAID = ('<script type="module">import m from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";'
@@ -572,6 +594,21 @@ def previews(satex, work, tree):
     """Completion's pictures of the arrow tips and patterns the bundled TikZ libraries declare,
     drawn by TeX here (`satex query previews`): the browser has no TeX to draw them."""
     libs = sorted(p.name.removeprefix("tikzlibrary").removesuffix(".code.tex") for p in tree.rglob("tikzlibrary*.code.tex"))
+    data = memo(work, "previews", [BINARY, libs], lambda: previews_run(satex, work, libs))
+    PREVIEWS.update(json.loads(data))
+    return data
+
+
+# The pictures of arrow tips and patterns (`kind:name` -> SVG), for the playground's completion and the wiki's hover cards.
+PREVIEWS = {}
+
+
+def PREVIEW_NAMES():
+    """The names (without their kind) that have a picture."""
+    return {k.split(":", 1)[1] for k in PREVIEWS}
+
+
+def previews_run(satex, work, libs):
     doc = work / "previews" / "previews.tex"
     doc.parent.mkdir(parents=True, exist_ok=True)
     doc.write_text("\\documentclass{article}\n\\usepackage{tikz}\n" + "".join(f"\\usetikzlibrary{{{l}}}\n" for l in libs)
@@ -579,6 +616,35 @@ def previews(satex, work, tree):
     env = dict(os.environ, SATEX_CACHE=str(work / "cache-previews"))
     rows = json.loads(run(str(satex), "--format", "json", "query", "previews", "-f", str(doc), cwd=doc.parent, env=env))
     return json.dumps({r["name"]: r["svg"] for r in rows if r["svg"]}).encode()
+
+
+def scope_cards(satex, work, names):
+    """What `satex scope --all` knows of the control sequences the pages name, for their hover cards: the records
+    by name from a document loading the packages the pages use, and each engine's primitives. Memoized."""
+    found = re.compile(r"\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^{}#\\]*)\}")
+    texts = [p.read_text() for p in [ROOT / "README.md", ROOT / "SEMANTICS.md", *(ROOT / "doc/wiki").glob("*.md")]]
+    wanted = sorted({n.strip() for t in texts for g in found.findall(t) for n in g.split(",") if re.fullmatch(r"[A-Za-z][\w-]*", n.strip())})
+    wanted = [n for n in wanted if subprocess.run(["kpsewhich", f"{n}.sty"], capture_output=True, text=True).stdout.strip()]
+    tmp = work / "cards"
+    tmp.mkdir(exist_ok=True)
+
+    def scope(kernel, flags, text, extra=()):
+        doc = tmp / f"{kernel}.tex"
+        doc.write_text(text)
+        env = dict(os.environ, SATEX_CACHE=str(work / f"cache-{kernel}"))
+        done = subprocess.run([str(satex), *flags, "--format", "json", "scope", "--all", *extra, "-f", doc.name], cwd=tmp, env=env, capture_output=True, text=True)
+        try:
+            return json.loads(done.stdout)
+        except json.JSONDecodeError:
+            return []
+
+    def make():
+        text = "\\documentclass{article}\n" + "".join(f"\\usepackage{{{n}}}\n" for n in wanted) + "\\begin{document}\n\\end{document}\n"
+        records = {r["name"]: r for r in scope("pdftex", KERNELS[0][2], text)}
+        engines = {label: {r["name"] for r in scope(kernel, flags, "\\documentclass{article}\n\\begin{document}\n\\end{document}\n", ["--filter", "tag=primitive"])}
+                   for kernel, label, flags in KERNELS if kernel != "plain"}
+        return records, engines
+    return memo(work, "cards-scope", [BINARY, wanted], make)
 
 
 def mine(satex, work, names):
@@ -847,6 +913,7 @@ def playground(satex, wasm, work, out):
         work, "bundle", [KEY, LISTINGS.get("@stamp"), offered, sources_, tree_digest(ROOT / "samples"), (SITE / "playground.yaml").read_text(),
                          inspect.getsource(bundle)],
         lambda: bundle(satex, work))
+    PREVIEWS.update(json.loads(tables[0].get("/cache/previews.json") or b"{}"))
     documented = manuals(satex, work, tables, packages, offered, mining.result())
     side.shutdown()
     # `cargo playground` builds the wasm meanwhile and names it done here.
@@ -1179,11 +1246,12 @@ def symbols(satex, project, env):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--satex", type=Path, required=True, help="the native satex binary")
-    ap.add_argument("--wasm", type=Path, required=True, help="directory with the Emscripten satex.js and satex.wasm")
+    ap.add_argument("--wasm", type=Path, default=Path("."), help="directory with the Emscripten satex.js and satex.wasm")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--work", type=Path, help="scratch directory (default: OUT/../site-work)")
     ap.add_argument("--precompress", action="store_true",
                     help="write a .gz beside each compressible file, for a server that serves those as GitHub Pages compresses")
+    ap.add_argument("--docs-only", action="store_true", help="only the documentation pages (the wiki, the semantics and the hover cards): no playground, home, draw or bench pages")
     ap.add_argument("--fresh", action="store_true", help="redo every satex run instead of reusing WORK/listings.json and WORK/memo")
     ap.add_argument("--keep-listings", action="store_true",
                     help="reuse the files each package was listed to read across satex builds (a development loop: "
@@ -1196,7 +1264,7 @@ def main():
     global BINARY, KEY, FRESH, SATEX, SITE, EXAMPLES, LISTINGS_FILE
     SATEX = args.satex.resolve()
     BINARY, FRESH = digest(args.satex.resolve().read_bytes()), args.fresh
-    KEY = json.loads(subprocess.run([str(args.satex), "cache", "--format", "json"], capture_output=True, text=True).stdout or "{}").get("key") or BINARY
+    KEY = BINARY if args.docs_only else json.loads(subprocess.run([str(args.satex), "cache", "--format", "json"], capture_output=True, text=True).stdout or "{}").get("key") or BINARY
     out, work = args.out.resolve(), (args.work or args.out.resolve().parent / "site-work").resolve()
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
@@ -1231,6 +1299,16 @@ def main():
     }
     table = pages()
     nav = sidebar(table)
+    order = chapters(table)
+    # The Lean model: names and types from the environment, memoized while the sources stay the same.
+    lean_src = ROOT / "semantics/lean"
+    lean_files = sorted(lean_src.rglob("*.lean"), key=str) + [SITE / "export.lean"]
+    lean_files = [p for p in lean_files if ".lake" not in p.parts]
+    decls = memo(work, "lean-decls", [digest(b"".join(p.read_bytes() for p in lean_files))], lambda: sem.export(lean_src, SITE / "export.lean"))
+    commit = run("git", "-C", str(ROOT), "rev-parse", "HEAD").strip()
+    sem_ids = {m[1]: m[1] + "-" + re.sub(r"\s", "-", re.sub(r"[^\w\s-]", "", m[2].replace("`", "").lower())) for m in re.finditer(r"^## (\d+)\. (.+)$", (ROOT / "SEMANTICS.md").read_text(), flags=re.M)}
+    lean_env, refs, lean, lean_pages, _ = sem.build(ROOT, repo, commit, decls, sem_ids)
+    lean_table = {f"semantics/lean/Satex/{s}.lean": f"lean/{s.lower()}.html" for s in sem.LEAN}
     stamp = os.environ.get("SOURCE_DATE_EPOCH")
     built = (datetime.datetime.fromtimestamp(int(stamp), datetime.UTC) if stamp else datetime.datetime.now(datetime.UTC)).date().isoformat()
 
@@ -1248,22 +1326,57 @@ def main():
         (out / dst).write_text(text)
 
     def docs():
+        done = []
         for src, dst in table.items():
             text = strip_banner((ROOT / src).read_text())
-            body = rewrite(markdown(text), src, table, homepage, repo, out, "../" * dst.count("/"))
-            page(dst, title_of(text), body)
+            body = rewrite(markdown(text), src, table | lean_table, homepage, repo, out, "../" * dst.count("/"))
+            if dst == "wiki/formal-semantics.html":
+                body = formal(body)
+            nav_html = chapter_nav(dst, order)
+            body = body.replace("</h1>", "</h1>" + nav_html, 1) + nav_html if nav_html else body
+            done.append((dst, title_of(text), body))
+        return done
+
+    def formal(body):
+        """The formal page: its two placeholders filled from semantics/mapping.md and primitives.tsv."""
+        lean.prefix, lean.here, lean.used = "../lean/", None, {}
+        mapped = sem.mapping((ROOT / "semantics/mapping.md").read_text().split("\n", 1)[1], lean, refs, lambda t: rewrite(markdown(t), "semantics/mapping.md", table | lean_table, homepage, repo, out, "../"))
+        prims, rows = sem.primitives((ROOT / "semantics/primitives.tsv").read_text(), lean, refs, sem.builtin_lines(ROOT))
+        formal.rows = rows
+        index = {n: sem.hover(d) for n, d in lean.used.items()}
+        return body.replace("<!--satex-site:mapping-->", mapped).replace("<!--satex-site:primitives-->", prims) + \
+            f'<script type="application/json" id="lean-decls">{json.dumps(index, ensure_ascii=False).replace("</", "<\\/")}</script>'
 
     # The pages beside the playground's satex runs: they need none of them.
     with concurrent.futures.ThreadPoolExecutor(1) as side:
         pages_done = side.submit(docs)
-        manifest, shown = playground(args.satex.resolve(), args.wasm.resolve(), work, out)
-        pages_done.result()
+        manifest, shown = ({"symbols": ""}, "") if args.docs_only else playground(args.satex.resolve(), args.wasm.resolve(), work, out)
+        written = pages_done.result()
     save_listings()
     manifest["worker"] = (SITE / "worker.js").read_text()
     readme = (ROOT / "README.md").read_text()
     md = lambda text: rewrite(markdown(text), "README.md", table, homepage, repo, out, "")
     parts = {"intro": md(intro(readme)), "install": md(install(readme)), "examples": shown,
              "manifest": json.dumps(manifest).replace("</", "<\\/"), "root": "../"}
+    # Hover cards: every code span naming a control sequence, on every page; the data of those names in one JSON.
+    names, pending = set(), []
+    for dst, title, body in written:
+        body, found = sem.mark_cards(body, PREVIEW_NAMES())
+        names |= found
+        pending.append((dst, title, body))
+    for key in ("intro", "install"):
+        parts[key], found = sem.mark_cards(parts[key], PREVIEW_NAMES())
+        names |= found
+    card_data = sem.cards(names, formal.rows, lean, refs, *scope_cards(args.satex.resolve(), work, names), {k.split(":", 1)[1]: v for k, v in PREVIEWS.items()}, sem.builtin_lines(ROOT))
+    assets["cards"] = emit(out, "cs-cards.json", json.dumps(card_data, ensure_ascii=False, separators=(",", ":")).encode())
+    print(f"cards: {len(card_data)} of {len(names)} control sequences named in code spans", file=sys.stderr)
+    for dst, title, body in pending:
+        page(dst, title, body)
+    for stem, body in lean_pages.items():
+        page(f"lean/{stem.lower()}.html", f"{stem}.lean", body)
+    if args.docs_only:
+        sem.check_links(out, refs.used)
+        return
     home = fill((SITE / "home.html").read_text(), {**assets, **parts, "version": release, "versiontitle": release_title, "repository": repo,
                                                        "description": html.escape(cargo["description"])})
     page("index.html", "satex", home, side=False)
@@ -1279,6 +1392,7 @@ def main():
         (out / "bench/data.json").write_text("[]\n")
     page("bench/index.html", "Benchmarks", fill((SITE / "bench.html").read_text(), {"root": "../", "repository": repo}), side=False)
     (out / ".nojekyll").write_text("")
+    sem.check_links(out, refs.used)
     offline(out)
     if args.precompress:
         precompress(out)

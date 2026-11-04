@@ -189,6 +189,14 @@ fn build(root: &Path, body: &[u8], runs: &mut Vec<Value>) -> Result<Value, Strin
                 .current_dir(&work),
         );
     }
+    // The PDF's own page labels (beamer gives the overlay steps of a frame one range, so one label)
+    let labels: Value = Command::new("qpdf")
+        .args(["--json=2", "--json-key=pagelabels"])
+        .arg(&pdf)
+        .output()
+        .ok()
+        .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
+        .map_or(json!([]), |v| v["pagelabels"].clone());
     let mut pages: Vec<String> = std::fs::read_dir(&work)
         .map_err(|e| e.to_string())?
         .filter_map(|e| e.ok()?.file_name().into_string().ok())
@@ -219,6 +227,7 @@ fn build(root: &Path, body: &[u8], runs: &mut Vec<Value>) -> Result<Value, Strin
         "pdf": pdf.is_file().then(|| stem.with_extension("pdf")),
         "synctex": work.join(stem.with_extension("synctex.gz")).is_file().then(|| stem.with_extension("synctex.gz")),
         "pages": pages,
+        "pagelabels": labels,
         "words": work.join("words.html").is_file().then_some("words.html"),
         "links": work.join("links.json").is_file().then_some("links.json"),
         "dpi": 144,

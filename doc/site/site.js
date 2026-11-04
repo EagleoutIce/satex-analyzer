@@ -300,6 +300,41 @@
     });
     document.addEventListener('pointerdown', (e) => { if (e.target.closest?.('.tip-note .ty-chip')) return; untitle(); note.hide(); if (!e.target.closest?.('.tip-card')) tips.card.hide(); }, true);
   }
+  // ------------------------------------------------------------ cards of control sequences and Lean names
+  // A code span naming a control sequence (`code.cs`) shows its card from the build's one JSON index
+  // (loaded on the first hover, from the file next to the site, so it works offline). A name of the Lean
+  // model (`[data-lean]`) shows its type and doc comment from the page's own `#lean-decls`.
+  {
+    const meta = document.querySelector('meta[name=satex-cards]'), base = meta ? new URL('.', new URL(meta.content, location.href)).href : '';
+    let cards = null;
+    const load = () => (cards ??= meta ? fetch(meta.content).then((r) => r.json()).catch(() => ({})) : Promise.resolve({}));
+    const lean = (() => { try { return JSON.parse(document.getElementById('lean-decls')?.textContent ?? '{}'); } catch { return {}; } })();
+    const go = (href) => esc(new URL(href, base).href);
+    const csCard = (name, c) => {
+      const chip = (t, cls = '') => `<span class="cs-chip ${cls}">${esc(t)}</span>`;
+      const sem = c.sem;
+      return `<div class="cs-card"><div class="cs-head"><b>${esc(name)}</b>${c.k ? chip(c.k, 'cs-k') : ''}${c.pkg ? chip(c.pkg) : ''}${c.e ? chip(c.e) : ''}</div>` +
+        (c.pv ? `<div class="cs-pv">${c.pv}</div>` : '') +
+        (c.sig ? `<div class="cs-sig"><code>${esc(c.sig)}</code></div>` : '') +
+        (c.doc ? `<p>${esc(c.doc).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` : '') +
+        (sem ? `<div class="cs-sem"><a href="${go(sem.row)}">${esc(sem.kind)}</a>` +
+          (sem.rules?.length ? ` · rule ${sem.rules.map(([n, h]) => `<a href="${go(h)}">${esc(n)}</a>`).join(', ')}` : '') +
+          (sem.rust ? ` · <a href="${esc(sem.rust[1])}">${esc(sem.rust[0])}</a>` : '') + (sem.src ? `<div class="cs-src">${esc(sem.src)}</div>` : '') + '</div>' : '') +
+        (c.at ? `<div class="cs-src">defined at ${esc(c.at)}</div>` : '') + '</div>';
+    };
+    const leanCard = (name, d) => `<div class="cs-card"><div class="cs-head"><b>${esc(name.replace(/^Satex\./, ''))}</b><span class="cs-chip cs-k">${esc(d.k)}</span></div>` +
+      (d.t ? `<div class="cs-sig"><code>${esc(d.t)}</code></div>` : '') +
+      (d.d ? `<p>${esc(d.d).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` : '') + `<div class="cs-src">${esc(d.f)}.lean:${d.l}</div></div>`;
+    document.addEventListener('mouseover', async (e) => {
+      const cs = e.target.closest?.('code.cs[data-cs]'), ln = e.target.closest?.('[data-lean]');
+      const el = cs ?? ln;
+      if (!el) return;
+      let html = '';
+      if (cs) { const c = (await load())[cs.dataset.cs]; html = c ? csCard(cs.dataset.cs, c) : ''; }
+      else if (lean[ln.dataset.lean]) html = leanCard(ln.dataset.lean, lean[ln.dataset.lean]);
+      if (html && el.matches(':hover')) tips.note.show(el, html, el.closest('.tip, .cm-tooltip'));
+    });
+  }
   /** explain's `types` (`#1 skip register`) by argument name: `{ arg1: 'skip register' }`. */
   const typesOf = (r) => Object.fromEntries((r.types ?? []).map((t) => t.match(/^#(\d+) (.+)$/)).filter(Boolean).map(([, n, t]) => [`arg${n}`, t]));
   const KIND = { mand: 'mandatory', opt: 'optional', emb: 'an embellishment' };

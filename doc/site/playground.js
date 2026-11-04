@@ -1290,6 +1290,12 @@
       `<span class="ts-grey">${escape(post)}${b + post.length < plain.length ? ' …' : ''}</span></span></p>`;
   }
   $('typeset-here')?.addEventListener('change', typesetFollow);
+  for (const b of document.querySelectorAll('.ts-scope button')) b.onclick = () => {
+    const box = /** @type {HTMLInputElement} */ ($('typeset-here'));
+    box.checked = b.dataset.scope === 'here';
+    for (const x of document.querySelectorAll('.ts-scope button')) x.setAttribute('aria-pressed', String(x === b));
+    box.dispatchEvent(new Event('change'));
+  };
   /** The open file's findings on the paragraphs they stand in: a mark in the margin, the worst first, shown with the findings switch. */
   function typesetFindings() {
     typesetBody.querySelectorAll('.ts-finding').forEach((m) => m.remove());
@@ -1541,8 +1547,26 @@
     if (locs.length === 1) return open(locs[0]);
     showMenu(locs.map((l) => [l[0].protocol === 'file:' ? `${decodeURIComponent(l[0].pathname).split('/').pop()}:${l[1].line + 1}` : l[0].href, '', () => open(l)]), x, y);
   }
+  /** Binary inputs never open as text: a PDF or an image in a tab of the browser, another binary as a download. */
+  const BINARY = /\.(pdf|png|jpe?g|gif|webp|bmp|tiff?|eps|ps|tfm|pfb|otf|ttf|ofm|jp2)$/i, SHOWN = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+  const binaries = new Map();
+  /** The file as a blob URL, read from the bundle (or the project) once, with how it shows: `kind` is `pdf`, `img` or null. */
+  function binaryOf(file) {
+    if (!binaries.has(file)) {
+      const ext = /\.(\w+)$/.exec(file)?.[1].toLowerCase() ?? '', type = SHOWN[ext];
+      binaries.set(file, ask({ type: 'read', path: file }).then((got) => got?.data ? { url: URL.createObjectURL(new Blob([got.data], type ? { type } : {})), kind: !type ? null : ext === 'pdf' ? 'pdf' : 'img', name: file.split('/').pop(), size: got.data.length } : null).catch(() => null));
+    }
+    return binaries.get(file);
+  }
+  async function openBinary(file) {
+    const b = await binaryOf(file);
+    if (!b) return toast(`${file.split('/').pop()} is not available`);
+    if (b.kind) return void window.open(b.url, '_blank');
+    Object.assign(document.createElement('a'), { href: b.url, download: b.name }).click();
+  }
   /** `file` (a path or a bare name) at `start`; a file outside the project opens read-only. */
   async function openPlace(file, start = { line: 0, character: 0 }, end = start) {
+    if (BINARY.test(file)) return openBinary(file);
     const name = file.startsWith(`${state.dir}/`) ? file.slice(state.dir.length + 1) : Object.keys(state.texts).find((n) => n === file) ?? null;
     let target = name in state.texts ? name : null;
     if (!target) {
@@ -3738,13 +3762,30 @@
     const groups = Map.groupBy(read, (r) => r.kind === 'absent' ? 'looked for, absent' : (String(r.file).match(/\.([A-Za-z0-9]+)$/)?.[1] ?? 'other'));
     const order = [...groups.keys()].sort((a, b) => Number(a === 'looked for, absent') - Number(b === 'looked for, absent') || groups.get(b).length - groups.get(a).length);
     const item = (r) => r.kind === 'absent' ? `<li><code>${escape(r.file)}</code></li>`
-      : `<li><a href="#" class="fd-open" data-path="${escape(r.path ?? r.file)}" title="${escape(r.path ?? r.file)}">${escape(String(r.file).split('/').pop())}</a> <span class="muted">${escape(r.kind ?? '')}</span></li>`;
+      : `<li><a href="#" class="fd-open" data-path="${escape(r.path ?? r.file)}"${BINARY.test(r.file) ? '' : ` title="${escape(r.path ?? r.file)}"`}>${escape(String(r.file).split('/').pop())}</a> <span class="muted">${escape(r.kind ?? '')}</span></li>`;
     const readHtml = order.map((g) => `<details class="fd-group"${g === 'tex' ? ' open' : ''}><summary><code>${escape(g)}</code> <span class="muted">${plural(groups.get(g).length, 'file')}</span></summary><ul class="fd-list">${groups.get(g).map(item).join('')}</ul></details>`).join('');
     $('written-body').innerHTML = `<h4 class="fd-head">Written in SaTeX's analysis <span class="muted">${plural(writtenFiles.length, 'file')}, computed by SaTeX, not by a TeX build</span></h4>`
       + (writtenFiles.length ? '<p class="muted wf-note">SaTeX runs the document as LaTeX would and keeps what it writes in memory, on every path: each file is empty when its analysis starts, the next run reads what this one wrote. What a real compile wrote is in the PDF tab, under Files.</p>' + writtenFiles.map(writtenCard).join('') : '<p class="muted">The analysis writes no file.</p>')
       + (libs.length ? `<h4 class="fd-head">Loaded in SaTeX's run <span class="muted">${plural(libs.length, 'file')}, with the version each says it is</span></h4>${libHtml}` : '')
       + (read.length ? `<h4 class="fd-head">Read in SaTeX's run <span class="muted">${plural(read.length, 'file')}</span></h4>${readHtml}` : '');
   };
+  // a hover on a PDF or an image of the lists shows a preview in the site's note: the first page, the picture
+  {
+    let hovered = null;
+    $('written-body').addEventListener('mouseover', async (e) => {
+      const a = e.target.closest?.('.fd-open');
+      if (a === hovered) return;
+      hovered = a;
+      if (!a || !BINARY.test(a.dataset.path)) return;
+      await new Promise((r) => setTimeout(r, 300));
+      if (hovered !== a) return;
+      const b = await binaryOf(a.dataset.path);
+      if (hovered !== a || !b?.kind) return;
+      const cap = `<div class="fd-cap">${escape(b.name)} <span class="muted">${Math.max(1, Math.round(b.size / 1024))} KiB, click to open</span></div>`;
+      self.satexTip.note.show(a, `<div class="fd-prev">${cap}${b.kind === 'pdf' ? `<embed src="${b.url}#page=1&toolbar=0&navpanes=0&view=Fit" type="application/pdf">` : `<img src="${b.url}" alt="${escape(b.name)}">`}</div>`);
+    });
+    $('written-body').addEventListener('mouseout', (e) => { if (e.target.closest?.('.fd-open')) { hovered = null; self.satexTip.note.hide(150); } });
+  }
   $('written-body').addEventListener('click', (e) => {
     const open = e.target.closest('.fd-open');
     if (open) { e.preventDefault(); openPlace(open.dataset.path); return; }
@@ -3878,18 +3919,34 @@
   addEventListener('online', () => probeServer());
   addEventListener('offline', () => probeServer());
   /** Zoom of the pages as a factor of the pane's width, in the address's `zoom` like the symbol list's. */
-  const pdfZoom = { value: Math.min(4, Math.max(0.3, Number(new URLSearchParams(location.search).get('zoom')) || 1)) };
-  function pdfZoomTo(z) {
+  const pdfZoom = { value: 1, fit: /** @type {'' | 'width' | 'page'} */ ('') };
+  {
+    const z = new URLSearchParams(location.search).get('zoom');
+    if (z === 'fit' || z === 'page') pdfZoom.fit = z === 'fit' ? 'width' : 'page'; else pdfZoom.value = Math.min(4, Math.max(0.3, Number(z) || 1));
+  }
+  /** `fit` keeps the zoom at the pane (width: the page as wide as the pane; page: the whole first page in view); a number zoom ends it. */
+  function pdfZoomTo(z, fit = '') {
+    pdfZoom.fit = fit;
+    if (fit) {
+      const img = pdfBody.querySelector('.pdf-page img'), w = pdfBody.clientWidth - 2, h = pdfBody.clientHeight - 8;
+      z = fit === 'page' && img?.naturalWidth && w > 0 ? Math.min(1, h / (w * img.naturalHeight / img.naturalWidth)) : 1;
+    }
     pdfZoom.value = Math.min(4, Math.max(0.3, Math.round(z * 100) / 100));
     pdfBody.style.setProperty('--pdf-zoom', String(pdfZoom.value));
     $('pdf-zoom-level').textContent = `${Math.round(pdfZoom.value * 100)}%`;
+    const f = $('pdf-zoom-fit');
+    f.setAttribute('aria-pressed', String(!!fit));
+    f.title = fit === 'width' ? 'Fitted to the width (click: fit the whole page)' : fit === 'page' ? 'Fitted to the whole page (click: fit the width)' : 'Fit the page width (click again: fit the whole page)';
+    f.setAttribute('aria-label', fit === 'width' ? 'fit whole page' : 'fit width');
     const q = new URLSearchParams(location.search);
-    if (pdfZoom.value !== 1) q.set('zoom', String(pdfZoom.value)); else q.delete('zoom');
+    if (fit) q.set('zoom', fit === 'page' ? 'page' : 'fit'); else if (pdfZoom.value !== 1) q.set('zoom', String(pdfZoom.value)); else q.delete('zoom');
     history.replaceState(null, '', `${location.pathname}${q.size ? `?${q}` : ''}${location.hash}`);
   }
-  pdfZoomTo(pdfZoom.value);
+  pdfZoomTo(pdfZoom.value, pdfZoom.fit);
   $('pdf-zoom-out').onclick = (e) => { e.preventDefault(); pdfZoomTo(pdfZoom.value / 1.25); };
   $('pdf-zoom-in').onclick = (e) => { e.preventDefault(); pdfZoomTo(pdfZoom.value * 1.25); };
+  $('pdf-zoom-fit').onclick = (e) => { e.preventDefault(); pdfZoomTo(0, pdfZoom.fit === 'width' ? 'page' : 'width'); };
+  new ResizeObserver(() => { if (pdfZoom.fit) pdfZoomTo(0, pdfZoom.fit); }).observe(pdfBody);
   pdfBody.addEventListener('wheel', (e) => { if (e.ctrlKey && e.target.closest('.pdf-pages')) { e.preventDefault(); pdfZoomTo(pdfZoom.value * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); } }, { passive: false });
   /** A binary file (an image) as base64 text for the request, once per file. */
   const b64s = new WeakMap();
@@ -4020,8 +4077,10 @@
     const tab = ([id, label, n]) => `<button type="button" role="tab" data-view="${id}" aria-selected="${id === pdfView}"${id === 'messages' && errors ? ' class="pdf-err"' : ''}>${label}${n !== '' ? ` <b class="count">${n}</b>` : ''}</button>`;
     const log = (title, text) => text ? `<h4>${title}</h4><pre>${escape(text)}</pre>` : '';
     $('pdf-views').innerHTML = views.map(tab).join('');
+    pdfViewsSel.innerHTML = views.map(([id, label, n]) => `<option value="${id}"${id === pdfView ? ' selected' : ''}>${label}${n !== '' ? ` (${n})` : ''}</option>`).join('');
+    pdfViewsSel.classList.toggle('pdf-err', !!errors);
     pdfBody.innerHTML = (pdf.error ? `<p class="pdf-head x-err">${escape(pdf.error)}</p>` : '')
-      + `<div class="pdf-pages" data-view="pages">${pdf.slice ? '<div class="pdf-sep" role="separator"><b class="pdf-badge">slice</b><span>not the full build</span></div>' : ''}${pages.map((n, i) => `<div class="pdf-page" data-page="${i + 1}"><img src="${file(n)}" alt="page ${i + 1}" draggable="false">${pdfLinks(i + 1)}</div>`).join('') || '<p class="muted">No pages.</p>'}</div>`
+      + `<div class="pdf-pages" data-view="pages">${pdf.slice ? '<div class="pdf-sep" role="separator"><b class="pdf-badge">slice</b><span>not the full build</span></div>' : ''}${pdfFrames(pages).map((g, frame) => { frame += 1; const html = g.map((i) => `<div class="pdf-page" data-page="${i + 1}"><img src="${file(pages[i])}" alt="page ${i + 1}" draggable="false">${pdfLinks(i + 1)}</div>`).join(''); return g.length < 2 ? html : `<div class="pdf-frame" data-step="${g.length - 1}"><div class="pdf-frame-bar" role="group" aria-label="overlay steps"><span><b>frame ${frame}</b> · step <b class="pdf-step">${g.length}/${g.length}</b></span><button type="button" class="small ghost icon" data-step="-1" title="Previous step" aria-label="previous step">&#x2039;</button><button type="button" class="small ghost icon" data-step="1" title="Next step" aria-label="next step">&#x203A;</button></div>${html}</div>`; }).join('') || '<p class="muted">No pages.</p>'}</div>`
       + `<div class="pdf-text" data-view="messages">${records.length ? `<ul class="diagnostics pdf-records">${records.map(pdfRecord).join('')}</ul>` : '<p class="muted">The log has no error or warning.</p>'}</div>`
       + `<div class="pdf-text pdf-log" data-view="log">${(pdf.logs ? Object.entries(pdf.logs).map(([n, t]) => log(escape(n), t)).join('') : log('TeX log', pdf.log)) + log('Console: what satex compile and latexmk printed', pdf.stderr) || '<p class="muted">The build wrote no log.</p>'}</div>`
       + `<div class="pdf-text" data-view="files"><p class="muted">What the build wrote beside the sources. Each opens in a new tab, ↓ saves it. <a href="${escape(zip.href)}" download="${escape(zip.download)}">All of them with the sources as compiled, as one zip</a>.</p><ul class="pdf-cmds">${(pdf.outputs ?? []).map((o) => `<li><a href="${file(o.name)}" target="_blank" rel="noopener">${escape(o.name)}</a> <a href="${file(o.name)}" download="${escape(o.name.split('/').pop())}" title="save ${escape(o.name)}" aria-label="save ${escape(o.name)}">↓</a> <span class="muted">${size(o.size)}</span></li>`).join('')}</ul></div>`
@@ -4029,7 +4088,8 @@
       + `<ol class="pdf-cmds">${runs.map(pdfCommand).join('')}</ol>`
       + (shows.length ? `<details class="pdf-shows"><summary class="muted">How the playground shows the build (${shows.length})</summary><ol class="pdf-cmds">${shows.map(pdfCommand).join('')}</ol></details>` : '') + '</div>';
     pdfViewShow();
-    pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => { if (pdfFollowOn) pdfFollow(true); pdfOverlay(); }, { once: true }));
+    pdfBody.querySelectorAll('.pdf-frame').forEach((f) => pdfStep(f, +f.dataset.step));
+    pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => { if (pdfZoom.fit === 'page') pdfZoomTo(0, 'page'); if (pdfFollowOn) pdfFollow(true); pdfOverlay(); }, { once: true }));
   }
   /** The commands of the build: the server's, the engine runs `satex compile` names on its console (`$ …`) after it. */
   const pdfRuns = () => (pdf.commands ?? []).flatMap((r) => [r, ...(/ compile( |$)/.test(r.command) ? String(pdf.stderr ?? '').split('\n').filter((l) => l.startsWith('$ ')).map((l) => ({ command: l.slice(2), inner: true })) : [])]);
@@ -4042,6 +4102,7 @@
   let pdfView = 'pages';
   function pdfViewShow() {
     for (const t of $('pdf-views').querySelectorAll('[data-view]')) t.setAttribute('aria-selected', String(t.dataset.view === pdfView));
+    pdfViewsSel.value = pdfView;
     for (const v of pdfBody.querySelectorAll(':scope > [data-view]')) v.hidden = v.dataset.view !== pdfView;
   }
   /** A page's size in bp, from its image. */
@@ -4054,10 +4115,10 @@
   /** Where `file:line` stands on its first page: one rectangle per baseline, in bp. Only the points TeX set
    * (glue, kerns, math, the current point), not the boxes, which carry the line where a whole frame or float closed.
    * Glue lies between words, so a row grows to the words beside its first and last point. */
-  function pdfRects(file, line) {
+  function pdfRects(file, line, all = false) {
     const rows = new Map(), hits = (pdf.boxes ?? []).filter((b) => b.file === file && b.line === line && 'xgk$'.includes(b.kind));
-    for (const b of hits.filter((b) => b.page === hits[0].page)) {
-      const key = Math.round(b.y / 6), o = rows.get(key); // one row per baseline, a lowered letter (the E of \TeX) in it
+    for (const b of hits.filter((b) => all || b.page === hits[0].page)) {
+      const key = `${b.page}|${Math.round(b.y / 6)}`, o = rows.get(key); // one row per baseline, a lowered letter (the E of \TeX) in it
       rows.set(key, { page: b.page, y: b.y, l: Math.min(o?.l ?? b.x, b.x), r: Math.max(o?.r ?? 0, b.x + 4), t: b.y - 8, d: b.y + 2 });
     }
     for (const r of rows.values()) {
@@ -4200,10 +4261,30 @@
     const r = page?.getBoundingClientRect();
     return { page: +(page?.dataset.page ?? 1), y: r ? (top - r.top) / r.height : 0, file: state.file, at: editor.position() };
   }
+  /** The pages as runs of one PDF page label: beamer gives the overlay steps of a frame the same one. Others stand alone. */
+  function pdfFrames(pages) {
+    // the ranges of /PageLabels: a page's label is its range's prefix and, with a numbering style, its number
+    const ranges = pdf.pagelabels ?? [], runs = [], label = (i) => { const r = ranges.findLast((x) => x.index <= i); return r ? `${r.label['/P'] ?? ''}${r.label['/S'] ? (r.label['/St'] ?? 1) + i - r.index : ''}` : ''; };
+    pages.forEach((_, i) => { const last = runs.at(-1); if (last && label(i) && label(i) === label(last.at(-1))) last.push(i); else runs.push([i]); });
+    return runs;
+  }
+  /** Shows step `k` (or the one holding `page`) of a frame, the others hidden. */
+  function pdfStep(frame, k) {
+    const pagesOf = [...frame.querySelectorAll('.pdf-page')];
+    k = Math.min(pagesOf.length - 1, Math.max(0, k));
+    frame.dataset.step = String(k);
+    pagesOf.forEach((p, i) => { p.hidden = i !== k; });
+    frame.querySelector('.pdf-step').textContent = `${k + 1}/${pagesOf.length}`;
+    frame.querySelector('[data-step="-1"]').disabled = k === 0;
+    frame.querySelector('[data-step="1"]').disabled = k === pagesOf.length - 1;
+  }
+  const pdfReveal = (el) => { const f = el?.closest('.pdf-frame'); if (f && el.hidden) pdfStep(f, [...f.querySelectorAll('.pdf-page')].indexOf(el)); };
+  pdfBody.addEventListener('click', (e) => { const b = e.target.closest('.pdf-frame-bar button'); if (b) { const f = b.closest('.pdf-frame'); pdfStep(f, +f.dataset.step + +b.dataset.step); } });
   /** Scrolls the pages to `y` (a fraction) of `page`, `x` into view when given. */
   function pdfScroll(page, y, x) {
     const pages = pdfBody.querySelector('.pdf-pages'), el = pages?.querySelector(`.pdf-page[data-page="${page}"]`);
     if (!el) return;
+    pdfReveal(el);
     const a = el.getBoundingClientRect(), b = pages.getBoundingClientRect();
     pages.scrollTop += a.top + y * a.height - b.top;
     const left = x === undefined ? null : a.left + x * a.width;
@@ -4303,9 +4384,17 @@
   /** The keys placed on the pages, as the overlay's chips index them. */
   let pdfKeys = [];
   /** The view tabs fade at the bar's edge while some stand past it. */
-  const pdfViewsFit = () => { const v = $('pdf-views'); v.classList.toggle('overflows', v.scrollWidth > v.clientWidth + 1 && v.scrollLeft + v.clientWidth < v.scrollWidth - 1); };
-  $('pdf-views').addEventListener('scroll', pdfViewsFit, { passive: true });
-  new ResizeObserver(pdfViewsFit).observe($('pdf-views'));
+  /** Where the tabs do not fit the bar, the views are one menu (a select: keyboard and touch for free). */
+  const pdfViewsSel = Object.assign(document.createElement('select'), { id: 'pdf-views-sel', title: 'The view of the build' });
+  pdfViewsSel.setAttribute('aria-label', 'view');
+  pdfViewsSel.onchange = () => { pdfView = pdfViewsSel.value; pdfViewShow(); };
+  $('pdf-views').after(pdfViewsSel);
+  const pdfViewsFit = () => {
+    const v = $('pdf-views'), bar = v.parentElement;
+    bar.classList.remove('views-menu');
+    if (v.scrollWidth > v.clientWidth + 1 || bar.scrollWidth > bar.clientWidth + 1) bar.classList.add('views-menu');
+  };
+  new ResizeObserver(pdfViewsFit).observe($('pdf-views').parentElement);
   new MutationObserver(pdfViewsFit).observe($('pdf-views'), { childList: true, subtree: true });
   /** The layers drawn over the pages, each switched on its own and remembered per viewer. */
   const PDF_LAYERS = [
@@ -4322,6 +4411,9 @@
   const PDF_FACETS = new Map([['defs', 0], ['refs', 0], ['findings', 0], ['envs', 0], ['figures', 0]]);
   var pdfHide = new Set(); // var: a check may render before this line ran
   try { pdfHide = new Set(JSON.parse(localStorage.getItem('satex-pdf-facets') ?? '[]')); } catch {}
+  /** Environments begun in class and package code (beamer's own nesting): off unless asked, kept per viewer. */
+  var pdfInternal = false; // var: a check may render before this line ran
+  try { pdfInternal = localStorage.getItem('satex-pdf-internal') === 'on'; } catch {}
   const pdfShown = (layer, group, key) => !pdfHide.has(`${layer}|${group}|${key}`);
   const DEF_KIND = ['label', 'bibitem'], REF_KIND = /^(ref|cite|gls|glossary|index|acr)/;
   const facetTally = (items) => [...Map.groupBy(items, (x) => x[0])].map(([key, xs]) => [key, xs[0][1] ?? key, xs.length]).sort((a, b) => b[2] - a[2] || String(a[0]).localeCompare(String(b[0])));
@@ -4331,12 +4423,36 @@
   /** The environments' extents, from the begin and end occurrences: [begin, end, file]. */
   function pdfEnvPairs() {
     const open = [], out = [];
-    for (const o of occurrences.filter((o) => o.kind === 'begin-environment' || o.kind === 'end-environment').sort((a, b) => occFile(a).localeCompare(occFile(b)) || a.line - b.line || (a.col ?? 0) - (b.col ?? 0))) {
+    // a begin the user wrote has its \begin{name} in their file at the place the run read it (a macro's, like beamer's frame handling, only borders it)
+    const at = (o) => (o.expanded && occFile(o.expanded) === occFile(o) ? { ...o, line: o.expanded.line, col: o.expanded.col } : o);
+    const own = (b) => (state.texts[occFile(b)] ?? '').split('\n')[b.line - 1]?.includes(`\\begin{${b.key}}`);
+    for (const o of occurrences.filter((o) => o.kind === 'begin-environment' || o.kind === 'end-environment').map(at).sort((a, b) => occFile(a).localeCompare(occFile(b)) || a.line - b.line || (a.col ?? 0) - (b.col ?? 0))) {
       if (o.kind === 'begin-environment') { open.push(o); continue; }
       const k = open.findLastIndex((b) => b.key === o.key && occFile(b) === occFile(o));
-      if (k >= 0) out.push([...open.splice(k, 1), o, open.filter((x) => occFile(x) === occFile(o)).length]);
+      if (k >= 0) out.push([...open.splice(k, 1), o]);
     }
-    return out;
+    // beamer reads a frame's body again and again (once per overlay pass) and ends it where it began: the end is then the \end in the source,
+    // a begin seen again is one environment, and the depth is the nesting of what is left
+    const text = (f) => (state.texts[f] ?? '').split('\n');
+    const endOf = (b, o) => {
+      if (o.line > b.line) return o;
+      let depth = 0;
+      const lines = text(occFile(b));
+      for (let l = b.line - 1; l < lines.length; l++) {
+        for (const m of lines[l].matchAll(new RegExp(`\\\\(begin|end)\\{${b.key.replace(/[*]/g, '\\*')}\\}`, 'g'))) {
+          depth += m[1] === 'begin' ? 1 : -1;
+          if (!depth) return { ...o, line: l + 1 };
+        }
+      }
+      return o;
+    };
+    const seen = new Set(), pairs = [];
+    for (const [b, o] of out) {
+      const e = endOf(b, o), key = `${occFile(b)}|${b.key}|${b.line}|${e.line}`;
+      if (!seen.has(key)) { seen.add(key); pairs.push([b, e]); }
+    }
+    const kept = pdfInternal ? pairs : pairs.filter(([b]) => own(b));
+    return kept.map(([b, o]) => [b, o, kept.filter(([b2, o2]) => b2 !== b && occFile(b2) === occFile(b) && b2.line <= b.line && o2.line >= o.line && (b2.line < b.line || o2.line > o.line)).length]);
   }
   /** The groups of a layer's sub-filters. */
   function pdfFacetGroups(layer) {
@@ -4356,7 +4472,9 @@
   function pdfFacetsDraw() {
     for (const d of $('pdf-layer-list').querySelectorAll('.pdf-sub')) {
       const layer = d.dataset.sub, list = d.querySelector('.pdf-sub-list');
-      const html = pdfFacetGroups(layer).filter(([, , rows]) => rows.length).map(([g, title, rows]) => `<div class="pdf-sub-group"><span class="muted">${escape(title)}</span>${rows.map(([key, label, n]) => `<label><input type="checkbox" data-facet="${escape(`${layer}|${g}|${key}`)}"${pdfShown(layer, g, key) ? ' checked' : ''}>${escape(label)} <b class="count">${n}</b></label>`).join('')}</div>`).join('') || '<span class="muted">nothing yet</span>';
+      const internal = layer === 'envs' ? `<div class="pdf-sub-group"><label><input type="checkbox" data-internal${pdfInternal ? ' checked' : ''}>internal (class, packages)</label></div>` : '';
+      const html = pdfFacetGroups(layer).filter(([, , rows]) => rows.length).map(([g, title, rows]) => `<div class="pdf-sub-group"><span class="muted">${escape(title)}</span>${rows.map(([key, label, n]) => `<label><input type="checkbox" data-facet="${escape(`${layer}|${g}|${key}`)}"${pdfShown(layer, g, key) ? ' checked' : ''}>${escape(label)} <b class="count">${n}</b></label>`).join('')}</div>`).join('') + internal;
+      d.previousElementSibling.hidden = !html;
       if (list.dataset.html !== html) { list.innerHTML = html; list.dataset.html = html; }
     }
   }
@@ -4366,7 +4484,7 @@
     if ('keys' in kept) kept.defs = kept.refs = kept.keys;
     for (const k of Object.keys(pdfOverlayOn)) pdfOverlayOn[k] = !!kept[k];
   } catch {}
-  $('pdf-layer-list').innerHTML = PDF_LAYERS.map(([k, name, about]) => `<div class="pdf-layer-row"><label class="pdf-layer" title="${escape(about)}"><input type="checkbox" data-layer="${k}"${pdfOverlayOn[k] ? ' checked' : ''}><i class="pdf-swatch sw-${k}"></i>${escape(name)}</label>${PDF_FACETS.has(k) ? `<button type="button" class="pdf-sub-toggle" aria-expanded="false" title="Filter ${escape(name)}" aria-label="filter ${escape(name)}"></button><div class="pdf-sub" data-sub="${k}" hidden><div class="pdf-sub-list"></div></div>` : ''}</div>`).join('');
+  $('pdf-layer-list').innerHTML = PDF_LAYERS.map(([k, name, about]) => `<div class="pdf-layer-row"><label class="pdf-layer" title="${escape(about)}"><input type="checkbox" data-layer="${k}"${pdfOverlayOn[k] ? ' checked' : ''}><i class="pdf-swatch sw-${k}"></i>${escape(name)}<b class="count pdf-layer-n"></b></label>${PDF_FACETS.has(k) ? `<button type="button" class="pdf-sub-toggle" hidden aria-expanded="false" title="Filter ${escape(name)}" aria-label="filter ${escape(name)}"></button><div class="pdf-sub" data-sub="${k}" hidden><div class="pdf-sub-list"></div></div>` : ''}</div>`).join('');
   // a layer's filters fold open under its row, the chevron stays in the row
   $('pdf-layer-list').addEventListener('click', (e) => {
     const t = e.target.closest('.pdf-sub-toggle');
@@ -4401,6 +4519,12 @@
       pdfNear = e.target.checked;
       try { localStorage.setItem('satex-pdf-near', pdfNear ? 'on' : 'off'); } catch {}
       pdfNearDraw();
+      return;
+    }
+    if (e.target.dataset?.internal !== undefined) {
+      pdfInternal = e.target.checked;
+      try { localStorage.setItem('satex-pdf-internal', pdfInternal ? 'on' : 'off'); } catch {}
+      pdfOverlay();
       return;
     }
     if (e.target.dataset?.facet) {
@@ -4484,6 +4608,10 @@
     shownFor(pdfBody, uri(), diagnosticVersions[uri()], 'ov-stale');
     pdfFacetsDraw();
     pdfOverlayDraw();
+    for (const [k, cls] of [['envs', 'pdf-env'], ['figures', 'pdf-fig'], ['findings', 'pdf-finding']]) {
+      const n = pdfBody.querySelectorAll(`.pdf-ov.${cls}`).length;
+      $('pdf-layer-list').querySelector(`[data-layer="${k}"]`).parentElement.querySelector('.pdf-layer-n').textContent = pdfOverlayOn[k] && n ? String(n) : '';
+    }
     pdfLabelsFit();
     if (pdfNear) pdfNearSoon();
   }
@@ -4515,7 +4643,7 @@
       const wh = size(page);
       if (wh) put(page, `<span class="pdf-ov ${cls}" style="${pdfPlace(l / wh[0], t / wh[1], (r - l) / wh[0], (d - t) / wh[1])}"${title ? ` title="${escape(title)}"` : ''}>${inner}</span>`);
     };
-    const blocks = pdfBlocks(), rowsOf = (file, a, b) => { const out = []; for (let l = a; l <= b; l++) out.push(...pdfRects(file, l)); return out; };
+    const blocks = pdfBlocks(), rowsOf = (file, a, b) => { const out = []; for (let l = a; l <= b; l++) out.push(...pdfRects(file, l, true)); return out; };
     pdfKeys = [];
     const wantKind = (k) => DEF_KIND.includes(k) ? pdfOverlayOn.defs && pdfShown('defs', 'kind', k) : REF_KIND.test(k) && pdfOverlayOn.refs && pdfShown('refs', 'kind', k);
     for (const os of Map.groupBy(occurrences.filter((o) => wantKind(o.kind)), (o) => `${occFile(o)}:${o.line}`).values()) {
@@ -5150,7 +5278,7 @@
       const logo = document.querySelector('header .brand img')?.cloneNode(), version = document.querySelector('header a.version')?.textContent.trim() ?? '';
       boot.el.innerHTML = `<div class="boot-card"><div class="boot-logo"></div><p class="boot-title"></p><p class="muted boot-version">SaTeX ${escape(version)}</p>`
         + `<ol class="boot-stages">${BOOT.map(([n, label]) => `<li data-stage="${n}">${label}</li>`).join('')}</ol>`
-        + '<span class="sx-progress boot-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span class="sx-fill"></span></span><p class="muted boot-text" aria-live="polite"></p>'
+        + `<span class="boot-bar" role="progressbar" aria-label="loading" aria-valuemin="0" aria-valuemax="100">${BOOT.map(([, , w]) => `<i style="flex-grow:${w * 100}"><b></b></i>`).join('')}</span><p class="muted boot-text" aria-live="polite"></p>`
         + '<button type="button" class="small ghost boot-hide" title="keep loading in the background">Hide</button></div>';
       if (logo) boot.el.querySelector('.boot-logo').append(logo);
       boot.el.querySelector('.boot-hide').onclick = bootClose;
@@ -5165,6 +5293,18 @@
     boot.el.hidden = false;
     bootStep('', null, '');
   }
+  /** The bar's segments: each stage's share filled to its own progress, a stage with none known striped. */
+  function bootBar(at, unknown) {
+    let from = 0;
+    const bar = boot.el.querySelector('.boot-bar');
+    bar.setAttribute('aria-valuenow', String(Math.round(at * 100)));
+    bar.querySelectorAll('i').forEach((seg, i) => {
+      const w = BOOT[i][2], f = Math.min(1, Math.max(0, (at - from) / w));
+      from += w;
+      seg.style.setProperty('--done', String(f));
+      seg.className = f >= 1 ? 'done' : i === boot.stage ? 'on' + (unknown || f === 0 ? ' idle' : '') : '';
+    });
+  }
   function bootStep(name, done, text) {
     if (!boot?.open) return;
     const k = BOOT.findIndex(([n]) => n === name);
@@ -5178,7 +5318,7 @@
       boot.at = Math.max(boot.at, before + BOOT[k][2] * (Number.isFinite(done) ? done : 0));
       boot.el.querySelectorAll('[data-stage]').forEach((li, i) => { li.className = i < k ? 'done' : i === k ? 'on' : ''; });
     }
-    self.satexProgress.set(boot.el.querySelector('.boot-bar'), boot.at);
+    bootBar(boot.at, k >= 0 && !Number.isFinite(done));
     boot.el.querySelector('.boot-text').textContent = text;
   }
   /** The card goes once satex has started and no download is left. */
@@ -5193,7 +5333,7 @@
   function bootClose() {
     if (!boot?.open) return;
     boot.open = false;
-    self.satexProgress.set(boot.el.querySelector('.boot-bar'), 1);
+    bootBar(1, false);
     boot.el.classList.add('gone');
     setTimeout(() => { if (!boot.open) boot.el.hidden = true; }, 350);
   }
