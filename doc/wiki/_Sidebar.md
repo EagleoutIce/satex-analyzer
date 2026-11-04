@@ -2,7 +2,6 @@
 
 **[🔍 Lints](Lints)**
 - [chktex compliance](Chktex-Coverage)
-- [Primitive coverage](Primitive-coverage)
 
 **[❓ Queries](Queries)**
 - [Explain](Queries#explain)
@@ -21,15 +20,15 @@
 - [IntelliJ plugin](Intellij)
 
 **[📖 Semantics](Semantics)**
-- [Where satex is not exact](Semantics#14-where-satex-is-not-exact)
-- [Caches](Semantics#15-caches)
-
-**[🧗 Why TeX is hard](Challenges)**
-
-**[🔬 Abstract domains](Domains)**
-- [`Value` and `OneOf`](Domains#value-what-a-control-sequence-or-register-holds)
-- [Boxes and paragraphs](Domains#modes-and-box-dimensions)
-- [Unknown text](Domains#unknown-text-the-textclass-lattice)
-- [Files written in the run](Domains#files-written-in-the-run)
-- [The join, in general](Domains#the-join-in-general)
-- [`limits`](Domains#limits-where-the-domains-stop-being-precise)
+- [Why TeX is hard](Challenges)
+- [Concrete: what TeX does](Semantics)
+  - [Where satex is not exact](Semantics#14-where-satex-is-not-exact)
+  - [Caches](Semantics#15-caches)
+- [Abstract: the domains](Domains)
+  - [`Value` and `OneOf`](Domains#value-what-a-control-sequence-or-register-holds)
+  - [Boxes and paragraphs](Domains#modes-and-box-dimensions)
+  - [Unknown text](Domains#unknown-text-the-textclass-lattice)
+  - [Files written in the run](Domains#files-written-in-the-run)
+  - [The join, in general](Domains#the-join-in-general)
+  - [`limits`](Domains#limits-where-the-domains-stop-being-precise)
+- [Primitive coverage](Primitive-coverage)
