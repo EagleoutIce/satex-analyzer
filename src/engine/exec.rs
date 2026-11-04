@@ -1476,9 +1476,13 @@ impl Machine<'_> {
             crate::analysis::observe::slot(self, &name, from, at);
         }
         let sym = self.intern(&name);
-        if let Meaning::Register(kind, _) = self.env.shape(sym) {
+        let before = self.env.read_parts(sym);
+        let register = if let Meaning::Register(kind, _) = self.env.shape(sym) {
             crate::analysis::observe::arg_type(self, at, crate::analysis::roles::Ty::Named(kind));
-        }
+            true
+        } else {
+            false
+        };
         let relax = Meaning::Primitive(Primitive::Relax);
         if !self.env.is_defined(sym) {
             // A name of a family a loop may have defined (`\a5` after a
@@ -1508,6 +1512,10 @@ impl Machine<'_> {
             self.carried.foreign_names.insert((sym, at));
         }
         self.built_name = Some((sym, at));
+        // What it read only decided the `\relax` (or the observation of a register).
+        if !register {
+            self.env.moot_reads(sym, before);
+        }
         self.unread(Token::new(Tok::Cs(sym), at));
     }
 

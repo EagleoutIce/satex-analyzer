@@ -202,6 +202,46 @@ fn tagpdf_replays_whole_and_reports_the_same() {
     same_facts(&first, &second);
 }
 
+/// expl3's `\seq_map_inline:Nn` gsets `\__seq_map_<level>:w`, whose
+/// `\csname` asks whether the name exists only to make it `\relax`. A package
+/// recorded where earlier maps left those functions is served where none
+/// did, and the replay reports what reading it does.
+#[test]
+fn a_map_function_some_earlier_package_left_does_not_key_the_cache() {
+    if !installed() {
+        return;
+    }
+    let nested = |name: &str| {
+        format!(
+            "\\ProvidesExplPackage{{{name}}}{{2020/01/01}}{{1}}{{t}}\n\\seq_new:N \\g_{name}_seq\n\
+             \\seq_gput_right:Nn \\g_{name}_seq {{a}}\n\
+             \\seq_map_inline:Nn \\g_{name}_seq {{ \\seq_map_inline:Nn \\g_{name}_seq {{\n\
+             \\seq_map_inline:Nn \\g_{name}_seq {{ \\cs_gset:cpn {{{name}_##1####1########1}} {{}} }} }} }}\n\
+             \\cs_new:Npn \\{name}done {{}}\n"
+        )
+    };
+    let dir = project("mapped");
+    std::fs::write(dir.join("mapper.sty"), nested("mapper")).expect("mapper.sty");
+    // What an earlier map leaves: the map functions of its levels.
+    let made: String =
+        (1..=3).map(|level| format!("\\expandafter\\gdef\\csname __seq_map_{level}:w\\endcsname#1{{}}\n")).collect();
+    let both =
+        format!("\\documentclass{{article}}\n{made}\\usepackage{{mapper}}\n\\begin{{document}}x\\end{{document}}\n");
+    let alone = "\\documentclass{article}\n\\usepackage{mapper}\n\\begin{document}x\\end{document}\n";
+    run(&dir, &both);
+    let replayed = run(&dir, alone);
+    assert_eq!(served(&replayed, "mapper"), Some(true), "{:?}", replayed.package_caches);
+    assert!(defined(&replayed, "mapperdone"));
+    for entry in std::fs::read_dir(dir.join("cache")).expect("cache directory").flatten() {
+        if entry.file_name().to_string_lossy().starts_with("package-mapper-") {
+            std::fs::remove_file(entry.path()).expect("mapper's cache");
+        }
+    }
+    let read = run(&dir, alone);
+    assert_ne!(served(&read, "mapper"), Some(true), "{:?}", read.package_caches);
+    same_facts(&read, &replayed);
+}
+
 #[test]
 fn a_second_run_replays_the_package_and_reports_the_same() {
     let dir = project("replay");

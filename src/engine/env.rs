@@ -307,6 +307,9 @@ struct Reads {
     /// text holds what the slot held then, where and how long.
     touched: LookupSet<u32>,
     splices: LookupMap<u32, (usize, usize)>,
+    /// Read parts a `\csname` added that a whole overwrite before any other
+    /// read makes moot (`\cs_gset:cpn`): the effect is the same either way.
+    moot: LookupMap<u32, u8>,
 }
 
 /// The save stack as it stood where paths split: groups can open and close
@@ -459,6 +462,7 @@ impl Env {
             return;
         }
         let mut reads = self.reads.borrow_mut();
+        reads.moot.remove(&sym.0);
         let kind = match kind {
             ReadKind::Meaning if reads.copying == Some(sym.0) => ReadKind::Copy,
             kind => kind,
@@ -475,6 +479,42 @@ impl Env {
         };
         if !covered {
             *reads.read.entry(sym.0).or_insert(0) |= kind.bit();
+        }
+    }
+
+    fn drop_moot(&self, sym: u32) {
+        if !self.tracking.get() {
+            return;
+        }
+        let mut reads = self.reads.borrow_mut();
+        let Some(bits) = reads.moot.remove(&sym) else { return };
+        if let Some(read) = reads.read.get_mut(&sym) {
+            *read &= !bits;
+            if *read == 0 {
+                reads.read.remove(&sym);
+            }
+        }
+    }
+
+    /// The parts of `sym` read so far, for [`Env::moot_reads`].
+    pub fn read_parts(&self, sym: Sym) -> u8 {
+        if !self.tracking.get() {
+            return 0;
+        }
+        self.reads.borrow().read.get(&sym.0).copied().unwrap_or(0)
+    }
+
+    /// The parts of `sym` read since `before` ([`Env::read_parts`]) are
+    /// dropped if the whole meaning is overwritten for good (globally, or
+    /// outside every group) before anything reads `sym` again.
+    pub fn moot_reads(&self, sym: Sym, before: u8) {
+        if !self.tracking.get() || self.paths > 0 {
+            return;
+        }
+        let mut reads = self.reads.borrow_mut();
+        let added = reads.read.get(&sym.0).copied().unwrap_or(0) & !before;
+        if added != 0 {
+            reads.moot.insert(sym.0, added);
         }
     }
 
@@ -496,7 +536,10 @@ impl Env {
     /// The reads recorded since the last call. Starts a new record of them.
     /// What has been written stays known.
     pub fn take_read_marks(&self) -> Vec<(Sym, u8)> {
-        let read = std::mem::take(&mut self.reads.borrow_mut().read);
+        let mut reads = self.reads.borrow_mut();
+        reads.moot.clear();
+        let read = std::mem::take(&mut reads.read);
+        drop(reads);
         let mut out: Vec<(Sym, u8)> = read.into_iter().map(|(sym, bits)| (Sym(sym), bits)).collect();
         out.sort_by_key(|(sym, _)| *sym);
         out
@@ -854,6 +897,9 @@ impl Env {
         self.recent.push(sym.0);
         self.recent_at.push(self.assignments);
         let stamp = std::mem::replace(&mut self.stamp[i], self.assignments);
+        if (global || self.marks.is_empty()) && writes & ReadKind::Meaning.bit() != 0 && self.paths == 0 {
+            self.drop_moot(sym.0);
+        }
         if global {
             self.note_write(sym.0, writes);
             binding.global = true;

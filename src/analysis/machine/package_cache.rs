@@ -232,6 +232,12 @@ struct CachedBinding {
     global: bool,
     /// Where the old text goes in the new meaning (stored without the old).
     splice: Option<u32>,
+    /// The text kept from the one it held where the segment began: that
+    /// many tokens from its start and its end, and that text's digest. The
+    /// meaning holds only what is between.
+    edit: Option<(u32, u32, u64)>,
+    /// The meanings a join left it, one of which it holds.
+    may: Option<Vec<Meaning>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -249,6 +255,8 @@ struct CachedDefinition {
     mac: Option<Rc<MacroDef>>,
     /// As [`CachedBinding::splice`], for `mac`.
     splice: Option<u32>,
+    /// As [`CachedBinding::edit`], for `mac`.
+    edit: Option<(u32, u32, u64)>,
     depth: u16,
     global: bool,
     redefines: bool,
@@ -1100,6 +1108,42 @@ fn storage_register(name: &str) -> Option<(RegKind, i64)> {
 }
 
 impl Machine<'_> {
+    /// A text's digest by names and places, the same in every run.
+    fn text_digest(&self, text: &[Token]) -> u64 {
+        let mut hash = Fnv::new();
+        let (mut file, mut roots) = (None, None);
+        for t in text {
+            match t.tok {
+                crate::engine::tex::Tok::Cs(sym) => {
+                    hash.write(&[0]);
+                    hash.write(self.out.interner.name(sym).as_bytes());
+                }
+                crate::engine::tex::Tok::Chr(c, cat) => hash.write(&[
+                    1,
+                    cat as u8,
+                    (c as u32 >> 24) as u8,
+                    (c as u32 >> 16) as u8,
+                    (c as u32 >> 8) as u8,
+                    c as u32 as u8,
+                ]),
+                crate::engine::tex::Tok::Param(n) => hash.write(&[2, n]),
+            }
+            if file != Some(t.span.file) {
+                file = Some(t.span.file);
+                match self.out.files.get(t.span.file as usize) {
+                    _ if t.span.file == self.out.main_file => hash.write(MAIN.as_bytes()),
+                    Some(f) => {
+                        hash.write(roots.get_or_insert_with(|| self.cache_roots()).canonical(&f.path).as_bytes())
+                    }
+                    None => hash.put(&t.span.file),
+                }
+            }
+            hash.write(&t.span.line.to_le_bytes());
+            hash.write(&t.span.col.to_le_bytes());
+        }
+        hash.0
+    }
+
     /// The roots cached paths are written against: this run's TeX trees
     /// and the document's directory.
     pub(crate) fn cache_roots(&self) -> crate::caches::format::Roots {
@@ -2024,6 +2068,17 @@ impl Machine<'_> {
             let text = self.env.slot(sym).and_then(|b| crate::engine::env::copied_text(&b.meaning)).cloned()?;
             origs.insert(sym, text);
         }
+        // Edited texts: the text they were edited from must be the one here.
+        let mut bases: HashMap<Sym, Rc<[Token]>> = HashMap::default();
+        let edits = st.bindings.iter().filter_map(|(sym, b, _)| Some((*sym, b.as_ref()?.edit?)));
+        for (sym, (head, tail, digest)) in edits.chain(st.definitions.iter().filter_map(|d| Some((d.name, d.edit?)))) {
+            let sym = &sym;
+            let base = self.env.slot(*sym).and_then(|b| b.meaning.as_macro()).map(|m| m.replacement_text.clone())?;
+            if base.len() < (head + tail) as usize || self.text_digest(&base) != digest {
+                return None;
+            }
+            bases.insert(*sym, base);
+        }
         origins.extend(st.origins.iter().copied());
         for (path, _, entry) in &st.files {
             let path = roots.decode(path);
@@ -2129,8 +2184,12 @@ impl Machine<'_> {
         for (sym, binding, bits) in &st.bindings {
             written.push((*sym, *bits));
             let Some(b) = binding else { continue };
-            let mut meaning = match (b.splice, origs.get(sym)) {
-                (Some(at), Some(orig)) => with_text(&b.meaning, |text| splice_in(text, at as usize, orig))?,
+            let mut meaning = match (b.splice, origs.get(sym), b.edit, bases.get(sym)) {
+                (Some(at), Some(orig), ..) => with_text(&b.meaning, |text| splice_in(text, at as usize, orig))?,
+                (_, _, Some((head, tail, _)), Some(base)) => with_text(&b.meaning, |text| {
+                    let (head, tail) = (head as usize, base.len() - tail as usize);
+                    Some(base[..head].iter().chain(text).chain(&base[tail..]).copied().collect())
+                })?,
                 _ => b.meaning.clone(),
             };
             if b.splice.is_some() {
@@ -2155,7 +2214,14 @@ impl Machine<'_> {
             for d in &b.defs {
                 defs.extend(self.resolve_vertex(&st, &mut ids, &reached, before, site, *d, 0));
             }
-            let binding = Binding { meaning, value, defs, certain: b.certain, global: b.global, may: None };
+            let binding = Binding {
+                meaning,
+                value,
+                defs,
+                certain: b.certain,
+                global: b.global,
+                may: b.may.clone().map(Into::into),
+            };
             self.env.set(*sym, binding, b.global);
         }
         for (counter, _, after, defs) in &st.moved {
@@ -2176,6 +2242,14 @@ impl Machine<'_> {
                 (Some(at), Some(mac), Some(orig)) => {
                     let mut mac = (**mac).clone();
                     mac.replacement_text = splice_in(&mac.replacement_text, at as usize, orig)?;
+                    Some(Rc::new(mac))
+                }
+                (None, Some(mac), _) if d.edit.is_some() => {
+                    let ((head, tail, _), base) = (d.edit?, bases.get(&d.name)?);
+                    let mut mac = (**mac).clone();
+                    let (head, tail) = (head as usize, base.len() - tail as usize);
+                    mac.replacement_text =
+                        base[..head].iter().chain(mac.replacement_text.iter()).chain(&base[tail..]).copied().collect();
                     Some(Rc::new(mac))
                 }
                 _ => d.mac.clone(),
@@ -3072,9 +3146,21 @@ impl Machine<'_> {
                 if spliced.is_none() && self.env.carries(*sym) {
                     whole.borrow_mut().push(*sym);
                 }
+                // A text grown or edited where it stood: only the change is stored.
+                let edited = self.env.slot(*sym).filter(|_| spliced.is_none()).and_then(|b| {
+                    let base = seg_binding(*sym)?.meaning.as_macro()?.replacement_text.clone();
+                    let (head, tail) = edit_of(&b.meaning.as_macro()?.replacement_text, &base)?;
+                    let middle = with_text(&b.meaning, |t| Some(t[head..t.len() - tail].iter().copied().collect()))?;
+                    Some((middle, (head as u32, tail as u32, self.text_digest(&base))))
+                });
                 let b = self.env.slot(*sym).map(|b| CachedBinding {
                     splice: spliced.as_ref().map(|(_, at)| *at),
-                    meaning: spliced.as_ref().map_or_else(|| b.meaning.clone(), |(m, _)| m.clone()),
+                    edit: edited.as_ref().map(|(_, e)| *e),
+                    may: b.may.as_ref().map(|may| may.to_vec()),
+                    meaning: match (&spliced, &edited) {
+                        (Some((m, _)), _) | (None, Some((m, _))) => m.clone(),
+                        _ => b.meaning.clone(),
+                    },
                     value: b.value.clone(),
                     // Pre-load definitions stand for what defines it where replayed.
                     defs: {
@@ -3120,10 +3206,19 @@ impl Machine<'_> {
                 if spliced.is_none() && splice.is_some() {
                     whole.borrow_mut().push(d.name);
                 }
-                (d, relative, spliced)
+                let edited = d.mac.as_ref().filter(|_| spliced.is_none()).and_then(|mac| {
+                    let base = seg_binding(d.name)?.meaning.as_macro()?.replacement_text.clone();
+                    let (head, tail) = edit_of(&mac.replacement_text, &base)?;
+                    let mut mac = (**mac).clone();
+                    let text = &mac.replacement_text;
+                    mac.replacement_text = text[head..text.len() - tail].iter().copied().collect();
+                    Some((Rc::new(mac), (head as u32, tail as u32, self.text_digest(&base))))
+                });
+                (d, relative, spliced, edited)
             })
-            .map(|(d, relative, spliced)| CachedDefinition {
+            .map(|(d, relative, spliced, edited)| CachedDefinition {
                 splice: spliced.as_ref().map(|(_, at)| *at),
+                edit: edited.as_ref().map(|(_, e)| *e),
                 relative: *relative,
                 name: d.name,
                 by: d.by,
@@ -3133,7 +3228,10 @@ impl Machine<'_> {
                 span: span_out(d.span, site),
                 package: d.package,
                 node: vref(d.node),
-                mac: spliced.map_or_else(|| d.mac.clone(), |(mac, _)| Some(mac)),
+                mac: match (spliced, edited) {
+                    (Some((mac, _)), _) | (None, Some((mac, _))) => Some(mac),
+                    _ => d.mac.clone(),
+                },
                 depth: d.depth,
                 global: d.global,
                 redefines: d.redefines,
@@ -3141,6 +3239,7 @@ impl Machine<'_> {
                 cds: cds(&d.cds),
             })
             .collect();
+        let definitions = merge_sites(definitions);
         let now = self.site_progress();
         let mut expansions = Vec::new();
         for (key, base) in &rec.log.sites {
@@ -3494,6 +3593,38 @@ fn cut(text: &[Token], at: usize, len: usize, orig: &[Token]) -> Option<Rc<[Toke
         return None;
     }
     Some(text[..at].iter().chain(&text[at + len..]).copied().collect())
+}
+
+/// One definition per site, as a replay leaves them: a site met again keeps
+/// its first fact, certain only if every one was, with the last text.
+fn merge_sites(definitions: Vec<CachedDefinition>) -> Vec<CachedDefinition> {
+    let mut at: HashMap<(Span, Sym, Option<Sym>), usize> = HashMap::default();
+    let mut out: Vec<CachedDefinition> = Vec::with_capacity(definitions.len());
+    for d in definitions {
+        match at.get(&(d.span, d.name, d.package)) {
+            Some(&i) => {
+                let first = &mut out[i];
+                first.certain &= d.certain;
+                (first.mac, first.splice, first.edit) = (d.mac, d.splice, d.edit);
+            }
+            None => {
+                at.insert((d.span, d.name, d.package), out.len());
+                out.push(d);
+            }
+        }
+    }
+    out
+}
+
+/// How many tokens a new text keeps from the start and the end of the one
+/// it replaced, when that is worth storing as an edit.
+fn edit_of(text: &[Token], base: &[Token]) -> Option<(usize, usize)> {
+    const WORTH: usize = 64;
+    let same = |x: &Token, y: &Token| x.tok == y.tok && x.span == y.span;
+    let head = text.iter().zip(base).take_while(|(x, y)| same(x, y)).count();
+    let room = text.len().min(base.len()) - head;
+    let tail = text.iter().rev().zip(base.iter().rev()).take(room).take_while(|(x, y)| same(x, y)).count();
+    (head + tail >= WORTH).then_some((head, tail))
 }
 
 /// `text` with `orig` put in at `at`.
