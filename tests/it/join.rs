@@ -386,6 +386,39 @@ fn certain_error_drops_its_path() {
     assert!(with_code(&kept, "assumed-compiles").is_empty());
 }
 
+/// Rows about `\argcs` other than the drop's own note.
+fn raised_on_arm(analysis: &Analysis) -> Vec<String> {
+    let rows = analysis.facts.diagnostics.iter().filter(|d| d.code != "assumed-compiles");
+    rows.filter(|d| d.message.contains("argcs")).map(|d| format!("{}: {}", d.code, d.message)).collect()
+}
+
+/// What a library arm refuted under `analysis.assume_compiles` raised is
+/// retracted with it: only the drop is said. Where every arm raises it,
+/// no path is refuted and the rows stay; so they do without the
+/// assumption.
+#[test]
+fn a_refuted_path_retracts_what_it_raised() {
+    let lib = crate::support::scratch_dir(
+        crate::support::tmp_root().join(format!("satex-join-retract-{}", std::process::id())),
+    );
+    let run = |arm: &str, compiles: bool| {
+        std::fs::write(lib.join("arm.tex"), arm).unwrap();
+        let source = format!(r"\input {}/arm.tex \edef\z{{\m}}", crate::support::tex_path(&lib));
+        let mut cfg = satex::project::config::Config { arm_joins: true, ..crate::support::bare() };
+        cfg.load.inputs = true;
+        cfg.analysis.assume_compiles = compiles;
+        Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg)
+    };
+    let one = r"\def\argcs#1{}\ifnum\pdfuniformdeviate2=0 \def\m{a}\argcs\par\else\def\m{b}\fi ";
+    let dropped = run(one, true);
+    assert_eq!(with_code(&dropped, "assumed-compiles").len(), 1);
+    assert_eq!(raised_on_arm(&dropped), Vec::<String>::new());
+    assert!(!raised_on_arm(&run(one, false)).is_empty(), "kept without the assumption");
+    let both = r"\def\argcs#1{}\ifnum\pdfuniformdeviate2=0 \def\m{a}\argcs\par\else\def\m{b}\argcs\par\fi ";
+    let kept = run(both, true);
+    assert!(!raised_on_arm(&kept).is_empty(), "no arm compiles: {:?}", with_code(&kept, "assumed-compiles"));
+}
+
 /// Once the running path raises a certain error too, nothing compiles: the
 /// dropped path runs on at once and joins it, so the text after is read
 /// once. Before, it ran on only after the end, and read the rest again.

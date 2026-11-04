@@ -1345,6 +1345,7 @@ impl Machine<'_> {
             dropping: _,
             dropping_possible: _,
             dropping_breaks: _,
+            dropping_nested: _,
             keep_errors: _,
             approximated: _,
             cut_taint: _,
@@ -1462,6 +1463,8 @@ impl Machine<'_> {
             // Output bookkeeping, not runtime state.
             diag_seen: _,
             diag_floor: _,
+            diag_raised: _,
+            diag_live: _,
             quantity: _,
             text_broken: _,
             box_chars: _,

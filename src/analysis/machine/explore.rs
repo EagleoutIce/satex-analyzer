@@ -246,6 +246,8 @@ struct Shelved {
     error: String,
     at: Span,
     counts: Counts,
+    /// The raises its run made ([`Machine::retract`]), if it is dropped.
+    rows: std::ops::Range<usize>,
 }
 
 /// Diagnostics made, as (counter, how many).
@@ -707,6 +709,7 @@ impl Machine<'_> {
         let shelved = std::mem::take(&mut paths.shelved);
         if !paths.failed {
             for s in shelved {
+                self.retract(s.rows);
                 self.report_dropped(&s.error, s.at);
             }
             return;
@@ -782,7 +785,7 @@ impl Machine<'_> {
         self.runs = 0;
         let mut outcomes = Vec::new();
         let mut first = None;
-        let mut dropped: Vec<(Config, String, Counts)> = Vec::new();
+        let mut dropped: Vec<(Config, String, Counts, std::ops::Range<usize>)> = Vec::new();
         // Each run and each re-entry after a cut is paid, as in the drive.
         let mut mark = if head { self.out.steps.wrapping_sub(1) } else { self.out.steps };
         loop {
@@ -790,7 +793,12 @@ impl Machine<'_> {
             self.choices.clear();
             self.infeasible = false;
             self.at_join = false;
-            (self.dropping, self.dropping_possible, self.dropping_breaks) = (None, false, false);
+            // A top run starts clean; a nested one keeps what its path raised.
+            (self.dropping, self.dropping_possible, self.dropping_breaks, self.dropping_nested) = match paths.top {
+                true => (None, false, false, false),
+                false => start.dropping.clone(),
+            };
+            let rows_from = self.raised_mark();
             let going = match self.unit {
                 Unit::Command => self.command(),
                 unit => self.scan_step(unit),
@@ -800,14 +808,32 @@ impl Machine<'_> {
             // A run that was cut ends the region it is in: other sequences
             // of arms would only be cut there again.
             let next = next_script(&self.choices, self.infeasible);
-            let error = self.dropping.take().filter(|_| paths.top && !self.infeasible);
+            let rows = rows_from..self.raised_mark();
+            // A refuted run raised nothing.
+            if self.infeasible {
+                self.retract(rows.clone());
+            }
+            // A nested drive's path keeps an error whose recovery breaks
+            // library code's brackets: the enclosing command's run drops it
+            // where another path is surely a run. Any other TeX recovers
+            // from where it stands.
+            if !paths.top {
+                match self.dropping_breaks {
+                    true => self.dropping_nested = true,
+                    false => (self.dropping, self.dropping_possible) = (None, false),
+                }
+            }
+            let error = match paths.top {
+                true => self.dropping.take().filter(|_| !self.infeasible),
+                false => None,
+            };
             // An error that may not be TeX's drops its path only where
             // another is surely a run: one that approximated nothing since
             // the paths parted. Else it goes on, as TeX recovers, unless the
             // recovery breaks library code's brackets: then it is contained.
             let error = match error {
                 Some(e) if self.dropping_possible && !Self::exact_other(paths, &outcomes) => {
-                    if going && self.dropping_breaks {
+                    if going && self.dropping_breaks && !self.dropping_nested {
                         self.contain_fault(&e, file);
                     }
                     None
@@ -823,7 +849,7 @@ impl Machine<'_> {
                     let base = paths.fork.as_ref().expect("others wait");
                     let (state, env, at) = (self.save_path(), self.env.path(base), self.position_span());
                     let counts = self.made_counts(counters.0);
-                    paths.shelved.push(Shelved { config: Config::new(state, env, !going), error, at, counts });
+                    paths.shelved.push(Shelved { config: Config::new(state, env, !going), error, at, counts, rows });
                     self.restore_path(start);
                     self.env.rewind(&fork);
                     self.env.unfork(fork);
@@ -849,7 +875,7 @@ impl Machine<'_> {
                 let (state, env) = (self.save_path(), self.env.path(base));
                 let config = Config::new(state, env, !going);
                 match error {
-                    Some(error) => dropped.push((config, error, self.made_counts(counters.0))),
+                    Some(error) => dropped.push((config, error, self.made_counts(counters.0), rows)),
                     None => outcomes.push(config),
                 }
             }
@@ -871,9 +897,9 @@ impl Machine<'_> {
             paths.failed |= !dropped.is_empty();
             outcomes.extend(dropped.drain(..).map(|d| d.0));
         }
-        for (config, error, counts) in dropped {
+        for (config, error, counts, rows) in dropped {
             let at = self.position_span();
-            paths.shelved.push(Shelved { config, error, at, counts });
+            paths.shelved.push(Shelved { config, error, at, counts, rows });
         }
         if outcomes.is_empty() {
             return Next::None;
@@ -1805,6 +1831,7 @@ impl Machine<'_> {
             std::mem::take(&mut paths.shelved).into_iter().partition(closed);
         paths.shelved = kept;
         for s in gone {
+            self.retract(s.rows);
             self.report_dropped(&s.error, s.at);
         }
     }
@@ -2805,6 +2832,12 @@ impl Machine<'_> {
         }
         x.material |= y.material;
         x.approximated |= y.approximated;
+        // An error raised on every joined path is the join's: a path
+        // without one is a run, its recovery the other's.
+        x.dropping = match (x.dropping.0.take(), &y.dropping) {
+            (Some(e), (Some(_), p, b, n)) => (Some(e), x.dropping.1 || *p, x.dropping.2 || *b, x.dropping.3 || *n),
+            _ => (None, false, false, false),
+        };
         for (p, q) in x.scan_starts.iter_mut().zip(&y.scan_starts) {
             p.1 |= q.1;
         }

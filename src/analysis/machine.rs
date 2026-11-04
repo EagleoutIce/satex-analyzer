@@ -1555,6 +1555,10 @@ pub struct Machine<'a> {
     /// Diagnostics before this index belong to a finished cache segment and
     /// are not counted into.
     pub(crate) diag_floor: usize,
+    /// The row of every raise, in order: a run's raises are a range of it.
+    diag_raised: Vec<usize>,
+    /// Per row, its raises on paths not refuted ([`Machine::retract`]).
+    diag_live: Vec<u32>,
     pub(crate) halted: bool,
     /// A missing package or class was just reported: its prompt skips it.
     pub(crate) missing_prompt: bool,
@@ -1822,6 +1826,9 @@ pub struct Machine<'a> {
     /// `dropping` is a possible engine error whose recovery breaks the
     /// code's brackets ([`BREAKING`]): its path is contained, not run on.
     pub(crate) dropping_breaks: bool,
+    /// `dropping` came out of a nested drive: the enclosing run drops its
+    /// path where another is surely a run, but contains nothing for it.
+    pub(crate) dropping_nested: bool,
     /// Paths with certain errors run on: no path compiles
     /// ([`Machine::settle`]).
     pub(crate) keep_errors: bool,
@@ -1965,6 +1972,9 @@ struct PathState {
     at_join: bool,
     fi_mark: Option<(Span, usize)>,
     approximated: bool,
+    /// An error a nested drive's path raised: it is the enclosing
+    /// command's run's to drop or contain ([`Machine::explore`]).
+    dropping: (Option<String>, bool, bool, bool),
     cut_taint: Option<usize>,
     call_recs: Rc<Vec<calls::CallRec>>,
     guard_seen: GuardSeen,
@@ -2393,6 +2403,8 @@ impl<'a> Machine<'a> {
             narrowing: None,
             diag_seen: Default::default(),
             diag_floor: 0,
+            diag_raised: Vec::new(),
+            diag_live: Vec::new(),
             conds: Rc::default(),
             testing: Vec::new(),
             testing_kind: Vec::new(),
@@ -2487,6 +2499,7 @@ impl<'a> Machine<'a> {
             dropping: None,
             dropping_possible: false,
             dropping_breaks: false,
+            dropping_nested: false,
             keep_errors: false,
             approximated: false,
             cut_taint: None,
@@ -3054,6 +3067,9 @@ impl<'a> Machine<'a> {
         m.collect_fonts();
         m.out.env = std::mem::take(&mut m.env);
         m.out.catcodes = m.catcodes.clone();
+        let live = std::mem::take(&mut m.diag_live);
+        let mut row = 0..;
+        m.out.facts.diagnostics.retain(|_| live.get(row.next().unwrap_or_default()).is_none_or(|&n| n > 0));
         m.out
     }
 
@@ -5542,6 +5558,8 @@ will look undefined",
             let cuts =
                 matches!(severity, Severity::Unsupported | Severity::Assumption) || CUT_IMPRECISE.contains(&code);
             self.undo.push(Undo::Count(i, d.count));
+            self.diag_raised.push(i);
+            self.diag_live[i] += 1;
             if cuts && bound > 0 && !CUT_EXEMPT.contains(&code) {
                 if d.count >= bound {
                     return;
@@ -5558,9 +5576,28 @@ will look undefined",
             return;
         }
         self.diag_seen.insert(key, diagnostics.len());
+        self.diag_raised.push(diagnostics.len());
+        // Rows made otherwise (a cached package's) stay.
+        self.diag_live.resize(diagnostics.len() + 1, 1);
+        self.diag_live[diagnostics.len()] = 1;
         let after = self.out.facts.occurrences.len();
         let diagnostics = &mut self.out.facts.diagnostics;
         diagnostics.push(Diagnostic { severity, code, message, span, count: 1, origin, after });
+    }
+
+    /// The raises `raised` ([`Machine::raised_mark`] on) were made on a
+    /// path refuted as no run of the document: a row only such raises
+    /// made is not reported. Rows still count, so repeats are cut as before.
+    pub(crate) fn retract(&mut self, raised: std::ops::Range<usize>) {
+        for k in raised {
+            let i = self.diag_raised[k];
+            self.diag_live[i] = self.diag_live[i].saturating_sub(1);
+        }
+    }
+
+    /// Where the next raise goes in the log [`Machine::retract`] reads.
+    pub(crate) fn raised_mark(&self) -> usize {
+        self.diag_raised.len()
     }
 
     /// The innermost place in the user's own files on the input stack:
@@ -11597,6 +11634,7 @@ will look undefined",
             at_join: self.at_join,
             fi_mark: self.fi_mark,
             approximated: self.approximated,
+            dropping: (self.dropping.clone(), self.dropping_possible, self.dropping_breaks, self.dropping_nested),
             cut_taint: self.cut_taint,
             call_recs: self.call_recs.clone(),
             guard_seen: self.guard_seen,
@@ -11642,6 +11680,7 @@ will look undefined",
         self.at_join = state.at_join;
         self.fi_mark = state.fi_mark;
         self.approximated = state.approximated;
+        (self.dropping, self.dropping_possible, self.dropping_breaks, self.dropping_nested) = state.dropping;
         self.cut_taint = state.cut_taint;
         self.call_recs = state.call_recs;
         self.guard_seen = state.guard_seen;
