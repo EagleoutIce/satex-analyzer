@@ -1,7 +1,7 @@
 # Why TeX is hard to analyze
 
 satex analyzes TeX, and LaTeX on top of it, by running it on abstract values.
-This page lists what makes that harder than for other languages. Under each problem: how satex answers it, and the research behind that.
+This page lists what makes that harder than for other languages. Under each problem: what SaTeX does about it, and the research behind that.
 Every example is a complete document. Below each one, a table puts the text one pdflatex run ships (read from the boxes `\tracingoutput` logs, random seed 7) next to the text satex computes (`satex query typeset`), paragraph by paragraph. If a row is not equal, a short list says why: which conditional stayed undecided. Two collapsed blocks show the commands that ran, with the computed text and with a trace of what each call inserted, what each primitive set and how each conditional went.
 
 How to read a table. In the satex column the notation is **bold**, so a literal `{`, `|` or `…` in the text stays plain:
@@ -63,7 +63,7 @@ Macros take token lists, build names with `\csname`, mutate (`\g@addto@macro`), 
 
 {{example: doc/src/wiki/challenges/02-code-is-data.tex}}
 
-**How satex answers it.** Code is data in satex too: a definition is a store update, and the program continues from the new store. This follows [Dalla Preda, Giacobazzi and Debray](https://www2.cs.arizona.edu/~debray/Publications/metamorphism.html), who track the versions of self-modifying code as abstract values (phase semantics).
+**What SaTeX does.** Code is data in satex too: a definition is a store update, and the program continues from the new store. This follows [Dalla Preda, Giacobazzi and Debray](https://www2.cs.arizona.edu/~debray/Publications/metamorphism.html), who track the versions of self-modifying code as abstract values (phase semantics).
 
 
 {{example: doc/src/wiki/challenges/r4-self-modifying.tex}}
@@ -75,7 +75,7 @@ Many macros also push their own end markers into the stream, or use `\aftergroup
 
 {{example: doc/src/wiki/challenges/03-arguments.tex}}
 
-**How satex answers it.** An unknown token list is abstracted as a regular language over token classes, as [Christensen, Møller and Schwartzbach](https://www.brics.dk/JSA/) do for strings and [Unevalizer](https://www.cs.au.dk/~amoeller/papers/unevalizer/) for JavaScript's `eval`. So `\ifx` and argument reading still decide what they can, and a catcode write to an unknown character never touches a structural one.
+**What SaTeX does.** An unknown token list is abstracted as a regular language over token classes, as [Christensen, Møller and Schwartzbach](https://www.brics.dk/JSA/) do for strings and [Unevalizer](https://www.cs.au.dk/~amoeller/papers/unevalizer/) for JavaScript's `eval`. So `\ifx` and argument reading still decide what they can, and a catcode write to an unknown character never touches a structural one.
 
 
 {{example: doc/src/wiki/challenges/r5-token-domain.tex}}
@@ -89,7 +89,7 @@ Without a model of it, every float may land here or later, and every breakable b
 
 {{example: doc/src/wiki/challenges/04-typesetting.tex}}
 
-**How satex answers it.** Typesetting is modelled only as far as a decision reads it. Relations between values matter here: [octagons](https://doi.org/10.1007/s10990-006-8609-1) and zonotopes keep that a dimension minus itself is zero, where intervals forget it, so impossible branches survive and paths multiply, as in pgf's math.
+**What SaTeX does.** Typesetting is modelled only as far as a decision reads it. Relations between values matter here: [octagons](https://doi.org/10.1007/s10990-006-8609-1) and zonotopes keep that a dimension minus itself is zero, where intervals forget it, so impossible branches survive and paths multiply, as in pgf's math.
 
 
 {{example: doc/src/wiki/challenges/r6-relational.tex}}
@@ -125,7 +125,7 @@ One unknown spreads: forks multiply, and arms with different code cannot be merg
 
 {{example: doc/src/wiki/challenges/06-unknown.tex}}
 
-**How satex answers it.** Unknown conditions stay as choices, as in [TypeChef](https://doi.org/10.1145/2048066.2048128), [SuperC](https://doi.org/10.1145/2254064.2254103) and variational execution, which keep presence conditions and values as choices. One token stream with a choice node replaces two forked paths, and the rest is shared. After a bounded number of forks at one conditional, the arms are skipped to `\fi` and their effects over-approximated on one path.
+**What SaTeX does.** Unknown conditions stay as choices, as in [TypeChef](https://doi.org/10.1145/2048066.2048128), [SuperC](https://doi.org/10.1145/2254064.2254103) and variational execution, which keep presence conditions and values as choices. One token stream with a choice node replaces two forked paths, and the rest is shared. After a bounded number of forks at one conditional, the arms are skipped to `\fi` and their effects over-approximated on one path.
 
 
 {{example: doc/src/wiki/challenges/r3-choice.tex}}
@@ -150,7 +150,7 @@ Their length can depend on an unknown value.
 
 {{example: doc/src/wiki/challenges/07-termination.tex}}
 
-**How satex answers it.** [Van Horn and Might](https://doi.org/10.1145/1863543.1863553) derive an analysis from the concrete machine and keep the continuation in the store under finitely many addresses, so the analysis ends by construction. Pushdown variants ([PDCFA](https://arxiv.org/abs/1007.4268)) keep calls and returns matched. For TeX the pending input of a recursion grows with its depth, so satex bounds it. How many passes a loop on an unknown gets before a summary replaces it is a cost question, as in state merging by [Kuznetsov et al.](https://doi.org/10.1145/2254064.2254088), who merge when an estimate says it pays.
+**What SaTeX does.** [Van Horn and Might](https://doi.org/10.1145/1863543.1863553) derive an analysis from the concrete machine and keep the continuation in the store under finitely many addresses, so the analysis ends by construction. Pushdown variants ([PDCFA](https://arxiv.org/abs/1007.4268)) keep calls and returns matched. For TeX the pending input of a recursion grows with its depth, so satex bounds it. How many passes a loop on an unknown gets before a summary replaces it is a cost question, as in state merging by [Kuznetsov et al.](https://doi.org/10.1145/2254064.2254088), who merge when an estimate says it pays.
 
 
 {{example: doc/src/wiki/challenges/r1-input-stack.tex}}
@@ -170,7 +170,7 @@ Macros call each other in a cycle and define the macros that continue it. Names 
 
 {{example: doc/src/wiki/challenges/09-progressive.tex}}
 
-**How satex answers it.** Supercompilers ([Sørensen and Glück](https://arxiv.org/abs/1005.5278), [Leuschel](https://doi.org/10.1007/3-540-36377-7_17)) stop when a new configuration embeds an earlier one (homeomorphic embedding) and replace both by their most specific generalization (anti-unification). This catches a loop whose key grows every pass, which an equality test misses. Together with the self-modifying view of problem 2, each new definition is a new version of the program, not a new program.
+**What SaTeX does.** Supercompilers ([Sørensen and Glück](https://arxiv.org/abs/1005.5278), [Leuschel](https://doi.org/10.1007/3-540-36377-7_17)) stop when a new configuration embeds an earlier one (homeomorphic embedding) and replace both by their most specific generalization (anti-unification). This catches a loop whose key grows every pass, which an equality test misses. Together with the self-modifying view of problem 2, each new definition is a new version of the program, not a new program.
 
 
 {{example: doc/src/wiki/challenges/r2-growing-key.tex}}
@@ -193,7 +193,7 @@ In this example the label moves away from the page the last run recorded. The ke
 
 {{example: doc/src/wiki/challenges/11-fixpoint.tex}}
 
-**How satex answers it.** satex runs the build itself, as latexmk does, and never needs a file an engine wrote. The files a run writes live in a virtual file system, and the first run starts without any. When a run ends, a file it read back sends it round again only where a changed line names a key the run read (a reference, a citation, a key it used) or a macro it expanded or defined (`\@abspage@last` at each shipout, a note column's `\slnc@note`), up to `limits.build_runs` rounds. A line nobody refers to, or one that only changes what a table of contents sets, needs no other round: what such a round would refine is typesetting alone. A round resumes from the last checkpoint before the first read of a changed file, so the part of the document before it is not analyzed again. A file in which a round changed a line already there (a label's page, a counter written back) is from then on the join of what the rounds wrote, so its text only grows and the build settles. Lines only added, as `\bibcite` after the bibliography's first round, stay exact. Past the last round, what still changes is joined the same way: a [widening](https://doi.org/10.1145/512950.512973) of the [Kleene iteration](https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem) the build is. The files an earlier engine run left on disk are read only with `load.build_files`.
+**What SaTeX does.** satex runs the build itself, as latexmk does, and never needs a file an engine wrote. The files a run writes live in a virtual file system, and the first run starts without any. When a run ends, a file it read back sends it round again only where a changed line names a key the run read (a reference, a citation, a key it used) or a macro it expanded or defined (`\@abspage@last` at each shipout, a note column's `\slnc@note`), up to `limits.build_runs` rounds. A line nobody refers to, or one that only changes what a table of contents sets, needs no other round: what such a round would refine is typesetting alone. A round resumes from the last checkpoint before the first read of a changed file, so the part of the document before it is not analyzed again. A file in which a round changed a line already there (a label's page, a counter written back) is from then on the join of what the rounds wrote, so its text only grows and the build settles. Lines only added, as `\bibcite` after the bibliography's first round, stay exact. Past the last round, what still changes is joined the same way: a [widening](https://doi.org/10.1145/512950.512973) of the [Kleene iteration](https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem) the build is. The files an earlier engine run left on disk are read only with `load.build_files`.
 
 ## Where satex is still wrong or stuck
 
