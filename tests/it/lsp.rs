@@ -3375,22 +3375,66 @@ fn command_items_carry_their_signature() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// "Change environment": on a `\begin` name, the environments the document uses as actions and
-/// all of them in the view; center → flushright edits that pair's two names only.
+/// "Change environment": one view on a `\\begin` name listing only environments making the same
+/// kind of material (no flat actions); center → flushright edits that pair's two names only.
 #[test]
 fn change_environment_edits_both_ends_only() {
-    let text = "\\documentclass{article}\n\\begin{document}\n\\begin{center}\nA\n\\end{center}\n\\begin{flushright}B\\end{flushright}\n\\begin{center}C\\end{center}\n\\end{document}\n";
+    let text = "\\documentclass{article}\n\\usepackage{longtable,tabularx}\n\\begin{document}\n\\begin{center}\nA\n\\end{center}\n\\begin{flushright}B\\end{flushright}\n\\begin{tabular}{l}x\\end{tabular}\n\\begin{itemize}\\item a\\end{itemize}\n\\begin{figure}F\\end{figure}\n\\end{document}\n";
     let (mut server, uri, dir) = open_set("change-env", text, &[]);
-    let _ = at(&mut server, &uri, "textDocument/hover", 2, 9);
-    let actions = at(&mut server, &uri, "textDocument/codeAction", 2, 9);
-    let to = actions.as_array().unwrap().iter().find(|a| a["title"] == "Change center to flushright");
-    let edits = to.expect("flushright offered")["edit"]["changes"][&uri].as_array().unwrap().clone();
-    let lines: Vec<u64> = edits.iter().map(|e| e["range"]["start"]["line"].as_u64().unwrap()).collect();
-    assert_eq!(lines, [2, 4], "{edits:?}");
-    assert!(edits.iter().all(|e| e["newText"] == "flushright"));
-    let views = at(&mut server, &uri, "satex/view", 2, 9);
-    let items = views[0]["sections"][0]["items"].as_array().cloned().unwrap_or_default();
-    assert!(items.iter().any(|i| i["title"] == "itemize"), "{views}");
+    let _ = at(&mut server, &uri, "textDocument/hover", 3, 9);
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 3, 9);
+    let flat =
+        actions.as_array().unwrap().iter().any(|a| a["title"].as_str().is_some_and(|t| t.starts_with("Change ")));
+    assert!(!flat, "{actions}");
+    let items = |line: u32, col: u32, server: &mut Server| -> Vec<Value> {
+        let views = at(server, &uri, "satex/view", line, col);
+        let view = views.as_array().into_iter().flatten().find(|v| v["plugin"] == "environment");
+        view.map(|v| v["sections"][0]["items"].as_array().cloned().unwrap_or_default()).unwrap_or_default()
+    };
+    let names =
+        |items: &[Value]| -> Vec<String> { items.iter().map(|i| i["title"].as_str().unwrap().to_string()).collect() };
+    let center = items(3, 9, &mut server);
+    let to = center.iter().find(|i| i["title"] == "flushright").expect("flushright offered");
+    let lines: Vec<u64> =
+        to["edits"].as_array().unwrap().iter().map(|e| e["range"]["start"]["line"].as_u64().unwrap()).collect();
+    assert_eq!(lines, [3, 5], "{to}");
+    let center = names(&center);
+    assert!(!center.iter().any(|n| ["itemize", "tabular", "figure", "document"].contains(&n.as_str())), "{center:?}");
+    let tabular = names(&items(7, 9, &mut server));
+    for want in ["array", "tabular*", "longtable"] {
+        assert!(tabular.iter().any(|n| n == want), "{want} missing from {tabular:?}");
+    }
+    for not in ["center", "document", "equation", "figure", "table", "itemize"] {
+        assert!(!tabular.iter().any(|n| n == not), "{not} offered for a tabular: {tabular:?}");
+    }
+    let itemize = names(&items(8, 9, &mut server));
+    assert!(itemize.iter().any(|n| n == "enumerate") && !itemize.iter().any(|n| n == "center"), "{itemize:?}");
+    let figure = names(&items(9, 9, &mut server));
+    assert!(figure.iter().any(|n| n == "table") && !figure.iter().any(|n| n == "tabular"), "{figure:?}");
+    assert!(items(2, 9, &mut server).is_empty(), "document is switched to nothing");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A relative `-f` root, run first for an input it reads: the root's own lens still finds its
+/// table (the run cached under the canonical key keeps the name it was started with).
+#[test]
+fn lenses_of_a_relative_root_run_through_its_input() {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-relroot-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "\\documentclass{article}\n\\input{part}\n\\begin{document}\n\\begin{tabular}{l}\nx\n\\end{tabular}\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    std::fs::write(dir.join("part.tex"), "\\newcommand\\x{y}\n").unwrap();
+    let mut server =
+        Server::start_with(&crate::support::test_cache(), &dir, &["--set", "limits.seconds=0", "-f", "main.tex"]);
+    let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+    server.response(id);
+    server.notify("initialized", json!({}));
+    let _ = open_file(&mut server, &dir, "part.tex");
+    let (uri, _) = open_file(&mut server, &dir, "main.tex");
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].clone();
+    assert!(lenses.as_array().unwrap().iter().any(|l| l["command"]["title"] == "Edit table…"), "{lenses}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }

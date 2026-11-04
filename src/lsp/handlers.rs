@@ -2421,11 +2421,12 @@ pub(super) fn environments(analysis: &Analysis, pos: Pos) -> Vec<(String, bool)>
     out
 }
 
-/// The names the bodies of `name`'s code spell, breadth-first through the
+/// The names the bodies of `name`'s code spell (or build with `\csname`), breadth-first through the
 /// meanings the run ended with, up to `limit` macros.
 pub(super) fn body_reach(analysis: &Analysis, name: &str, limit: usize) -> BTreeSet<crate::engine::tex::Sym> {
     let mut seen = BTreeSet::new();
     let mut queue: std::collections::VecDeque<_> = analysis.interner.lookup(name).into_iter().collect();
+    let csname = analysis.interner.lookup("csname");
     let mut expanded = 0;
     while let Some(sym) = queue.pop_front() {
         let Some(mac) = analysis.env.meaning(sym).as_macro().cloned() else { continue };
@@ -2433,13 +2434,37 @@ pub(super) fn body_reach(analysis: &Analysis, name: &str, limit: usize) -> BTree
         if expanded > limit {
             break;
         }
-        for cs in mac.replacement_text.iter().filter_map(|t| t.cs()) {
-            if seen.insert(cs) {
-                queue.push_back(cs);
+        let toks = &mac.replacement_text;
+        // a name built of characters, `\csname tabular*\endcsname`, is reached as well
+        let built = |i: usize| {
+            let name: String = (toks[i + 1..].iter())
+                .map_while(|t| match t.tok {
+                    crate::engine::tex::Tok::Chr(c, _) => Some(c),
+                    _ => None,
+                })
+                .collect();
+            (!name.is_empty()).then(|| analysis.interner.lookup(&name)).flatten()
+        };
+        for (i, cs) in toks.iter().enumerate().filter_map(|(i, t)| Some((i, t.cs()?))) {
+            let named = (Some(cs) == csname).then(|| built(i)).flatten();
+            for cs in std::iter::once(cs).chain(named) {
+                if seen.insert(cs) {
+                    queue.push_back(cs);
+                }
             }
         }
     }
     seen
+}
+
+/// The kind of material an environment makes: the first kernel builder its code reaches, the most
+/// specific first (an alignment preamble, a list, a trivlist, a float); `None`: no kind.
+pub(super) fn material(analysis: &Analysis, name: &str) -> Option<usize> {
+    const BUILDERS: [&[&str]; 4] = [&["@mkpream"], &["list"], &["@trivlist"], &["@float", "@dblfloat"]];
+    let reach = body_reach(analysis, name, 400);
+    BUILDERS
+        .iter()
+        .position(|names| names.iter().any(|n| analysis.interner.lookup(n).is_some_and(|s| reach.contains(&s))))
 }
 
 /// Builds what completion reads of `analysis` once, ahead of the first request.

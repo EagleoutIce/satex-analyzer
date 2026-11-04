@@ -829,6 +829,18 @@ async function browser() {
       await send('Page.navigate', { url: base + 'play/index.html' });
       await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 180000);
       });
+      await section('lenses', async () => {
+      // the plugins' lenses show by default: the paper's tabular (its root reads an input) and the drawing
+      const lenses = `[...document.querySelectorAll('.cm-lens')].map((b) => b.textContent)`;
+      for (const [file, lens] of [['paper.tex', 'Edit table…'], ['spacing.tex', 'Edit drawing…']]) {
+        await send('Page.navigate', { url: base + 'play/index.html#' + file });
+        const seen = await until(`return ${lenses}.includes(${JSON.stringify(lens)})`, 180000);
+        await shot(`lens-${file}`);
+        check(`${file} shows "${lens}"`, seen, JSON.stringify(await js(`return ${lenses}`)));
+      }
+      await send('Page.navigate', { url: base + 'play/index.html' });
+      await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 180000);
+      });
       await section('settings', async () => {
       // a satex.yaml key set in the settings dialog reaches the run: `clock` fixes what \\year reads
       await open('clock', '\\documentclass{article}\n\\begin{document}\nYear \\the\\year.\n\\end{document}\n');

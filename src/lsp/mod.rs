@@ -778,6 +778,11 @@ impl Engine {
     fn new(mut cfg: Config, root: PathBuf, main: Option<PathBuf>, outbox: Sender<Notification>) -> Self {
         // Completion reads the key family an argument feeds off the calls.
         cfg.record_arguments = true;
+        // One spelling per file: a run cached under a canonical key keeps the
+        // name it was started with, so a relative `-f` would leave the open
+        // document's own file unmatched by every per-file feature.
+        let absolute = |p: PathBuf| std::path::absolute(&p).unwrap_or(p);
+        let (root, main) = (absolute(root), main.map(absolute));
         Engine {
             docs: HashMap::default(),
             actions: HashMap::default(),

@@ -42,7 +42,7 @@ VS Code's own color picker goes through `textDocument/colorPresentation`, which 
 
 ## environment
 
-On the name of a `\begin` or `\end` the run met. Its view lists every environment defined there with its required arguments. Picking one changes this occurrence only: both names, and the arguments, kept where both environments take them, added empty or dropped otherwise. Every client also gets one action per environment the document already uses ("Change center to flushright"). Renaming an environment the project does not define is refused: it would change only its uses.
+On the name of a `\begin` or `\end` the run met. Its view, "Change environment…", lists the environments defined there that make the same kind of material, with their required arguments. The kind is the first kernel builder the environment's code reaches, the most specific first: an alignment preamble (`tabular`, `array`, `longtable`), a list (`itemize`), a trivlist (`center`), a float (`figure`, `table`). An environment that reaches none, as `document`, offers no change. Picking one changes this occurrence only: both names, and the arguments, kept where both environments take them, added empty or dropped otherwise. Renaming an environment the project does not define is refused: it would change only its uses.
 
 ## table
 

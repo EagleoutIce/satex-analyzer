@@ -1,14 +1,13 @@
 //! Environments: on the name of a `\begin` or `\end` the run met, "Change environment…" switches
 //! that one occurrence to another environment available there, rewriting both ends and adding or
-//! dropping the required arguments. The view lists every environment there with its arguments;
-//! every client also gets one action per environment the document already uses.
+//! dropping the required arguments. The view lists the environments there that make the same
+//! kind of material ([`handlers::material`]), with their arguments.
 
 use super::{Cx, Hit, TypePlugin, button, rewrite};
 use crate::analysis::roles::{KeyKind, Ty, braced_groups};
-use crate::engine::builtins::OccKind;
 use crate::lsp::handlers;
 use crate::project::config::TypePlugins;
-use lsp_types::{CodeAction, TextEdit};
+use lsp_types::TextEdit;
 use serde_json::{Value as Json, json};
 
 pub(super) struct Environment;
@@ -24,31 +23,18 @@ impl TypePlugin for Environment {
         &[Ty::Key(KeyKind::Environment)]
     }
     fn features(&self) -> &'static [&'static str] {
-        &["actions", "view"]
+        &["view"]
     }
     fn enabled(&self, cfg: &TypePlugins) -> bool {
         cfg.environment.enabled
     }
 
-    fn actions(&self, cx: &Cx, _hit: &Hit) -> Vec<CodeAction> {
-        let Some(pair) = pair(cx) else { return Vec::new() };
-        // the environments the document already uses, as plain actions any client applies
-        let used: std::collections::BTreeSet<&str> = (cx.analysis.facts.occurrences.iter())
-            .filter(|o| o.kind == OccKind::BeginEnvironment && o.key != pair.name)
-            .filter(|o| super::super::type_at::file_of(cx.analysis, cx.path) == Some(o.span.file))
-            .map(|o| o.key.as_str())
-            .collect();
-        // the dialog with every environment is the view: VS Code's light bulb and the playground open it
-        used.into_iter()
-            .map(|env| rewrite(cx, format!("Change {} to {env}", pair.name), edits(cx, &pair, env)))
-            .collect()
-    }
-
     fn view(&self, cx: &Cx, _hit: &Hit) -> Option<Json> {
         let pair = pair(cx)?;
-        let items: Vec<Json> = handlers::environments(cx.analysis, cx.pos)
-            .into_iter()
-            .filter(|(env, _)| *env != pair.name)
+        // only environments that make the same kind of material: a tabular becomes an alignment
+        let kind = handlers::material(cx.analysis, &pair.name);
+        let items: Vec<Json> = (handlers::environments(cx.analysis, cx.pos).into_iter())
+            .filter(|(env, _)| kind.is_some() && *env != pair.name && handlers::material(cx.analysis, env) == kind)
             .map(|(env, _)| {
                 let n = handlers::environment_arguments(cx.analysis, &env);
                 let args: String = (1..=n).map(|i| format!("{{⟨{i}⟩}}")).collect();
@@ -56,11 +42,14 @@ impl TypePlugin for Environment {
                 json!({ "title": env, "detail": args, "edits": button(&action)["edits"] })
             })
             .collect();
+        if items.is_empty() {
+            return None;
+        }
         Some(json!({
-            "title": format!("Change environment {}", pair.name),
+            "title": "Change environment",
             "sections": [
                 { "kind": "choices", "placeholder": "environment", "items": items },
-                { "kind": "text", "markdown": "Changes this occurrence only: its `\\begin` and `\\end`, and its required arguments (kept where both take them, empty where the new one takes more)." },
+                { "kind": "text", "markdown": format!("Changes this `{}` only, to an environment making the same kind of material: its `\\begin` and `\\end`, and its required arguments (kept where both take them, empty where the new one takes more).", pair.name) },
             ],
         }))
     }

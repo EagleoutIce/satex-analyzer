@@ -326,7 +326,8 @@ fn model_spec(cx: &Cx, hit: &Hit) -> Option<(Range, String)> {
 /// `textDocument/documentColor`: each color name a color command used in this file, with the
 /// value the run gave it.
 pub(super) fn document_colors(analysis: &Analysis, doc: &Text, path: &str) -> Vec<ColorInformation> {
-    let file = |i: u16| analysis.files.get(usize::from(i)).is_some_and(|f| f.path == path);
+    let own = super::super::type_at::file_of(analysis, path);
+    let file = |i: u16| own == Some(i);
     let value = |name: &str| {
         analysis
             .facts

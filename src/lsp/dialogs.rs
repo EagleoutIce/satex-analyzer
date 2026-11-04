@@ -41,7 +41,8 @@ struct Target {
 
 /// Every table and figure of the file at `path` the run met.
 fn targets(analysis: &Analysis, doc: &Text, path: &str) -> Vec<Target> {
-    let mine = |i: u16| analysis.files.get(usize::from(i)).is_some_and(|f| f.path == path);
+    let file = super::type_at::file_of(analysis, path);
+    let mine = |i: u16| file == Some(i);
     let cfg = &analysis.settings.type_plugins;
     let text = doc.body();
     let at = |line: u32, col: u32| doc.offset(Pos::new(line, col)).or_else(|| doc.offset(Pos::new(line, 1)));
