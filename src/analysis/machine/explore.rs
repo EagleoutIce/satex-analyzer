@@ -2583,8 +2583,11 @@ impl Machine<'_> {
     /// first, for seeing why they do not meet.
     /// At -vvvv, each new 256 MiB high: what the main tables hold.
     fn report_memory(&mut self, paths: &Paths) {
+        if self.cfg.verbose < 4 {
+            return;
+        }
         let mb = crate::analysis::budget::in_use() >> 28;
-        if self.cfg.verbose < 4 || mb <= self.out.memory_reported {
+        if mb <= self.out.memory_reported {
             return;
         }
         self.out.memory_reported = mb;

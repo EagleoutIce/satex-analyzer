@@ -99,6 +99,30 @@ fn interpreting(c: &mut Criterion) {
     group.finish();
 }
 
+/// Interpreter throughput on self-contained inputs: criterion reports
+/// elements per second, here the analysis steps (tokens read), so a
+/// tracked run shows steps/s apart from the inputs' sizes.
+fn throughput(c: &mut Criterion) {
+    let cfg = local();
+    let fib = r"\def\loop#1\repeat{\def\body{#1}\iterate}
+\def\iterate{\body \let\next\iterate \else\let\next\relax\fi \next}
+\countdef\n=200 \n=0
+\def\fib#1{\ifnum#1<2 #1\else\the\numexpr\fib{\numexpr#1-1\relax}+\fib{\numexpr#1-2\relax}\relax\fi}
+\loop \edef\x{\csname y\the\n\endcsname \fib{10}}\advance\n by 1 \ifnum\n<200 \repeat
+";
+    let inputs = [("macro_loop", fib.to_string()), ("document", document(400))];
+    let mut group = c.benchmark_group("throughput");
+    group.measurement_time(Duration::from_secs(8));
+    for (name, source) in &inputs {
+        let steps = Machine::analyze(source, None, &cfg).steps;
+        group.throughput(Throughput::Elements(steps));
+        group.bench_with_input(BenchmarkId::new("steps", name), source, |b, source| {
+            b.iter(|| black_box(Machine::analyze(source, None, &cfg).steps))
+        });
+    }
+    group.finish();
+}
+
 fn querying(c: &mut Criterion) {
     let analysis = Machine::analyze(&document(200), None, &local());
     let filter = Filter::parse(r#"tag=macro and name~"^..hl""#).expect("valid filter");
@@ -116,5 +140,5 @@ fn querying(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, tokenizing, interpreting, querying);
+criterion_group!(benches, tokenizing, interpreting, throughput, querying);
 criterion_main!(benches);

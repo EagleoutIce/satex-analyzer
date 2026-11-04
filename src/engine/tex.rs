@@ -37,7 +37,7 @@ pub mod codec {
     pub enum Mode {
         /// Names and paths are written out in full: equal bytes mean equal
         /// values in any run.
-        Hash { names: Vec<Rc<str>>, files: Vec<Rc<str>> },
+        Hash { names: Rc<Vec<Rc<str>>>, files: Vec<Rc<str>> },
         /// Numbers are written as indices into tables built on the way.
         Encode { syms: HashMap<u32, u32>, sym_order: Vec<u32>, files: HashMap<FileId, u32>, file_order: Vec<FileId> },
         /// Indices are read back through the tables of the run installing it.
@@ -493,7 +493,8 @@ impl std::hash::Hasher for NameHasher {
 #[derive(Default, Clone)]
 pub struct Interner {
     map: std::collections::HashMap<Rc<str>, Sym, NameHash>,
-    names: Vec<Rc<str>>,
+    /// Shared with the package caches' hash mode, which reads it per load.
+    names: Rc<Vec<Rc<str>>>,
     /// While a package cache is being captured: every name asked for, in the
     /// order it was first asked for, which is the order a run that does not
     /// have them yet would number them in.
@@ -508,7 +509,7 @@ impl Interner {
     pub fn from_names(names: Vec<String>) -> Interner {
         let mut interner = Interner::default();
         interner.map.reserve(names.len());
-        interner.names.reserve(names.len());
+        Rc::make_mut(&mut interner.names).reserve(names.len());
         for name in names {
             interner.intern(&name);
         }
@@ -521,7 +522,7 @@ impl Interner {
             None => {
                 let rc: Rc<str> = Rc::from(s);
                 let sym = Sym(self.names.len() as u32);
-                self.names.push(rc.clone());
+                Rc::make_mut(&mut self.names).push(rc.clone());
                 self.map.insert(rc, sym);
                 sym
             }
@@ -601,7 +602,7 @@ impl Interner {
         self.names.is_empty()
     }
     /// Every name, in symbol order, sharing the interner's strings.
-    pub fn names(&self) -> Vec<Rc<str>> {
+    pub fn names(&self) -> Rc<Vec<Rc<str>>> {
         self.names.clone()
     }
 }

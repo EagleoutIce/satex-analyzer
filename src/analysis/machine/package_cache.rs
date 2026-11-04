@@ -752,11 +752,12 @@ pub(super) struct Log {
 /// Initial state of a load; reads are compared against it.
 #[derive(Clone)]
 struct Before {
-    slots: Vec<Option<Binding>>,
+    /// Shares the run's chunks: a write after it copies one chunk, not every binding.
+    slots: crate::fixed::Chunked<Option<Binding>>,
     aliases: HashMap<Sym, Sym>,
     lists: Lists,
-    /// Name of each pre-load definition vertex.
-    def_owner: HashMap<NodeId, Sym>,
+    /// Name of each pre-load definition vertex, made when a segment is encoded.
+    def_owner: std::cell::OnceCell<Rc<HashMap<NodeId, Sym>>>,
     vertices: usize,
     loads: usize,
     counters: Vec<(u8, Option<i64>)>,
@@ -767,6 +768,20 @@ struct Before {
     /// Call the load is read on behalf of.
     reader: Option<NodeId>,
     carried: Carried,
+}
+
+impl Before {
+    fn def_owner(&self) -> &HashMap<NodeId, Sym> {
+        self.def_owner.get_or_init(|| {
+            let mut owner = HashMap::default();
+            for (i, slot) in self.slots.iter().enumerate() {
+                for def in slot.iter().flat_map(|b| b.defs.iter()) {
+                    owner.entry(*def).or_insert(Sym(i as u32));
+                }
+            }
+            Rc::new(owner)
+        })
+    }
 }
 
 /// Where each log stood at the last checkpoint.
@@ -1339,14 +1354,7 @@ impl Machine<'_> {
 
     /// The state a load begins in, which its reads are compared with.
     fn before_state(&self) -> Before {
-        let slots: Vec<Option<Binding>> =
-            (0..self.out.interner.len() as u32).map(|i| self.env.get(Sym(i)).cloned()).collect();
-        let mut def_owner = HashMap::default();
-        for (i, slot) in slots.iter().enumerate() {
-            for def in slot.iter().flat_map(|b| b.defs.iter()) {
-                def_owner.entry(*def).or_insert(Sym(i as u32));
-            }
-        }
+        let slots = self.env.bindings(self.out.interner.len());
         let graph = &self.out.graph;
         let counters = ALLOCATION_COUNTERS
             .map(|n| {
@@ -1357,7 +1365,7 @@ impl Machine<'_> {
             slots,
             aliases: self.env.aliases.clone(),
             lists: self.lists(),
-            def_owner,
+            def_owner: std::cell::OnceCell::new(),
             vertices: graph.len(),
             reader: graph.reader,
             loads: self.out.facts.loads.len(),
@@ -3066,7 +3074,7 @@ impl Machine<'_> {
         let vref = |id: NodeId| -> VRef {
             if (id as usize) < before.vertices
                 && !reached_all.contains(&id)
-                && let Some(owner) = before.def_owner.get(&id)
+                && let Some(owner) = before.def_owner().get(&id)
             {
                 return VRef::Before(*owner);
             }

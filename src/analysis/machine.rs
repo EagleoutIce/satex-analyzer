@@ -771,8 +771,10 @@ impl Input {
         self.0.push(Rc::new(frame));
     }
 
-    pub(crate) fn pop(&mut self) -> Option<Frame> {
-        self.0.pop().map(Rc::unwrap_or_clone)
+    /// The top frame, still shared with the states that hold it: a frame
+    /// popped is mostly looked at, not changed.
+    pub(crate) fn pop(&mut self) -> Option<Rc<Frame>> {
+        self.0.pop()
     }
 }
 
@@ -4606,12 +4608,13 @@ will look undefined",
     }
 
     fn pop_frame(&mut self) {
-        match self.input.pop() {
-            Some(Frame::Boundary) => {}
-            Some(Frame::Returned(tokens)) => {
+        let Some(frame) = self.input.pop() else { return };
+        match &*frame {
+            Frame::Boundary => {}
+            Frame::Returned(tokens) => {
                 self.held_tokens = self.held_tokens.saturating_sub(tokens.len());
             }
-            Some(Frame::Tokens { expanding, held, upper, .. }) => {
+            &Frame::Tokens { expanding, held, upper, .. } => {
                 self.held_tokens = self.held_tokens.saturating_sub(held);
                 // § 1025: the output routine's text read to its end with its
                 // group still open (a cut dropped the closing brace): the
@@ -4638,8 +4641,11 @@ will look undefined",
                     }
                 }
             }
-            Some(Frame::Pseudo { .. }) => self.bump_expanding(self.pseudo_file, -1),
-            Some(Frame::File { mut mouth, package, depth, conds, ends_at, .. }) => {
+            Frame::Pseudo { .. } => self.bump_expanding(self.pseudo_file, -1),
+            Frame::File { .. } => {
+                let Frame::File { mut mouth, package, depth, conds, ends_at, .. } = Rc::unwrap_or_clone(frame) else {
+                    unreachable!("matched a file")
+                };
                 self.pass_directives_on(&mut mouth);
                 self.source_progress = self.source_progress.max(ends_at.unwrap_or_default());
                 self.out.timings.leave_file();
@@ -4673,7 +4679,6 @@ will look undefined",
                     self.building = None;
                 }
             }
-            _ => {}
         }
     }
 

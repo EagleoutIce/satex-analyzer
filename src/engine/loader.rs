@@ -202,17 +202,12 @@ fn case_folded_name(dir: &Path, rel: &str) -> Option<String> {
     let name_str = path.file_name()?.to_str()?;
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let Ok(entries) = std::fs::read_dir(dir.join(parent)) else { return None };
+    // The name before the file test: a stat per entry was a hot cost.
     entries.flatten().find_map(|e| {
-        if !e.path().is_file() {
-            return None;
-        }
         let file_name = e.file_name();
         let file_str = file_name.to_str()?;
-        if file_str.eq_ignore_ascii_case(name_str) && !file_str.eq(name_str) {
-            Some(file_str.to_string())
-        } else {
-            None
-        }
+        (file_str.eq_ignore_ascii_case(name_str) && file_str != name_str && e.path().is_file())
+            .then(|| file_str.to_string())
     })
 }
 

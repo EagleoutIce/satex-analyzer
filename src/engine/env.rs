@@ -439,6 +439,15 @@ impl Env {
 
     /// The binding, without recording a read.
     #[inline]
+    /// The bindings of the first `n` names, sharing their chunks, read as
+    /// [`Env::get`] reads each.
+    pub fn bindings(&self, n: usize) -> crate::fixed::Chunked<Option<Binding>> {
+        if self.tracking.get() || self.logging.get() {
+            (0..n as u32).for_each(|i| _ = self.get(Sym(i)));
+        }
+        self.slots.clone()
+    }
+
     pub fn slot(&self, sym: Sym) -> Option<&Binding> {
         self.slots.get(sym.0 as usize).and_then(|s| s.as_ref())
     }

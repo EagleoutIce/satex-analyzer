@@ -68,6 +68,7 @@ impl Run {
 
     /// Counts this thread's allocations for the run until the guard drops.
     pub fn enter(&self) -> Entered {
+        settle();
         Entered { outer: CURRENT.with(|c| c.replace(Some(self.0))) }
     }
 }
@@ -79,6 +80,7 @@ pub struct Entered {
 
 impl Drop for Entered {
     fn drop(&mut self) {
+        settle();
         CURRENT.with(|c| c.set(self.outer));
     }
 }
@@ -101,37 +103,77 @@ fn ceiling() -> usize {
 /// so a library user gets a count of zero and no memory limit.
 pub struct Counted;
 
-/// Counts `bytes` more as live; false, counting nothing, when that would pass
-/// the ceiling.
-fn take(bytes: usize) -> bool {
+thread_local! {
+    /// Bytes this thread allocated (or freed, negative) for its counter that
+    /// the counter does not hold yet: an atomic update per allocation was a
+    /// hot cost, so they go in batches of [`BATCH`].
+    static PENDING: Cell<isize> = const { Cell::new(0) };
+}
+
+/// How far a thread's count may run ahead of its counter.
+const BATCH: isize = 256 << 10;
+
+/// Counts `bytes` more as live (negative: freed); false, counting nothing,
+/// when that would pass the ceiling.
+fn count(bytes: isize) -> bool {
+    match PENDING.try_with(|p| {
+        let now = p.get() + bytes;
+        p.set(now);
+        now
+    }) {
+        Ok(now) if now.abs() < BATCH => true,
+        Ok(now) => {
+            _ = PENDING.try_with(|p| p.set(0));
+            flush(now, bytes)
+        }
+        Err(_) => flush(bytes, bytes),
+    }
+}
+
+/// The pending bytes of this thread to its counter now.
+fn settle() {
+    if let Ok(now) = PENDING.try_with(|p| p.replace(0))
+        && now != 0
+    {
+        flush(now, 0);
+    }
+}
+
+/// Adds `bytes` to the counter; past the ceiling it takes back `last`, the
+/// allocation that crossed it, and says no.
+fn flush(bytes: isize, last: isize) -> bool {
     let counter = current();
-    let now = counter.live.fetch_add(bytes as isize, Ordering::Relaxed) + bytes as isize;
-    TOTAL.fetch_add(bytes as isize, Ordering::Relaxed);
+    let now = counter.live.fetch_add(bytes, Ordering::Relaxed) + bytes;
+    TOTAL.fetch_add(bytes, Ordering::Relaxed);
     let ceiling = ceiling();
-    if ceiling > 0
+    if last > 0
+        && ceiling > 0
         && !std::ptr::eq(counter, &PROCESS)
         // The run's own bytes only: runs side by side are stopped together
         // between tokens ([`held`]), never by failing one's allocation.
         // A ceiling past `isize::MAX` (on wasm32) is no ceiling, not a negative one.
         && now > isize::try_from(ceiling).unwrap_or(isize::MAX)
     {
-        counter.live.fetch_sub(bytes as isize, Ordering::Relaxed);
-        TOTAL.fetch_sub(bytes as isize, Ordering::Relaxed);
+        counter.live.fetch_sub(last, Ordering::Relaxed);
+        TOTAL.fetch_sub(last, Ordering::Relaxed);
         return false;
     }
     let limit = LIMIT.load(Ordering::Relaxed);
-    if limit > 0 && now as usize > limit {
+    if limit > 0 && now > 0 && now as usize > limit {
         counter.over.store(true, Ordering::Relaxed);
     }
-    if now as usize > counter.peak.load(Ordering::Relaxed) {
+    if now > 0 && now as usize > counter.peak.load(Ordering::Relaxed) {
         counter.peak.fetch_max(now as usize, Ordering::Relaxed);
     }
     true
 }
 
+fn take(bytes: usize) -> bool {
+    count(bytes as isize)
+}
+
 fn give(bytes: usize) {
-    current().live.fetch_sub(bytes as isize, Ordering::Relaxed);
-    TOTAL.fetch_sub(bytes as isize, Ordering::Relaxed);
+    count(-(bytes as isize));
 }
 
 unsafe impl GlobalAlloc for Counted {
@@ -168,6 +210,7 @@ unsafe impl GlobalAlloc for Counted {
 
 /// Bytes this run (or, outside one, the process) holds right now.
 pub fn in_use() -> usize {
+    settle();
     current().live()
 }
 
@@ -184,6 +227,7 @@ pub fn over() -> bool {
 
 /// The most this run has held at once.
 pub fn peak() -> usize {
+    settle();
     current().peak.load(Ordering::Relaxed)
 }
 

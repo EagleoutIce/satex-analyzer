@@ -39,10 +39,12 @@ impl Machine<'_> {
         self.restore_settings();
         // A look-ahead or an argument may have read past the comment: the
         // directive still comes before what is read next.
-        let Some(mouth) = self.file_mouth() else { return false };
-        if mouth.directives.is_empty() {
+        // Looked at shared first: taking a frame to write copies it.
+        let none = |f: &Frame| matches!(f, Frame::File { mouth, .. } if mouth.directives.is_empty());
+        if self.input.iter().rev().find(|f| matches!(f, Frame::File { .. })).is_none_or(none) {
             return false;
         }
+        let Some(mouth) = self.file_mouth() else { return false };
         let (file, directives) = (mouth.file, std::mem::take(&mut mouth.directives));
         if !self.own_file(file) || self.halted {
             return false;
