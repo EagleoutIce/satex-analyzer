@@ -1087,7 +1087,7 @@ analysis:
 
 `analysis.assume_forced_page_breaks` (default `true`): Assumes pages break only where something forces it (`\clearpage`, `\newpage`, `\end`). `false` also follows a page break wherever the page may have filled, one path each way.
 
-`analysis.assume_messages_output_only` (default `true`): Assumes formatting a message for the terminal or log (expl3's `\iow_wrap`) changes nothing but the text it writes. A message over unknown text then writes unknown text, on one path, reported as an `assumption`. `false` wraps it for real, a path per way it may wrap.
+`analysis.assume_messages_output_only` (default `true`): Assumes formatting a message for the terminal or log (expl3's `\iow_wrap:nnnN`) changes nothing but the text it writes. A message over unknown text then writes unknown text, on one path, reported as an `assumption`. `false` wraps it for real, a path per way it may wrap.
 
 ## Stubs
 

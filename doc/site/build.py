@@ -650,6 +650,16 @@ def scope_cards(satex, work, names):
         except json.JSONDecodeError:
             return []
 
+    def probe(text):
+        doc = tmp / "shapes.tex"
+        doc.write_text(text)
+        done = subprocess.run([str(satex), *KERNELS[0][2], "--format", "json", "query", "diagnostics", "-f", doc.name], cwd=tmp,
+                              env=dict(os.environ, SATEX_CACHE=str(work / "cache-pdftex")), capture_output=True, text=True)
+        try:
+            return json.loads(done.stdout)
+        except json.JSONDecodeError:
+            return []
+
     def make():
         text = "\\documentclass{article}\n" + "".join(f"\\usepackage{{{n}}}\n" for n in wanted) + "\\begin{document}\n\\end{document}\n"
         records = {r["name"]: r for r in scope("pdftex", KERNELS[0][2], text)}
@@ -678,8 +688,84 @@ def scope_cards(satex, work, names):
             pass
         engines = {label: {r["name"] for r in scope(kernel, flags, "\\documentclass{article}\n\\begin{document}\n\\end{document}\n", ["--filter", "tag=primitive"])}
                    for kernel, label, flags in KERNELS if kernel != "plain"}
-        return records, engines
-    return memo(work, "cards-scope", [BINARY, wanted, sorted(names)], make)
+        return records, engines, templates(scope, probe, names)
+    return memo(work, "cards-scope-keyed2", [BINARY, wanted, sorted(names)], make)
+
+
+# Declarations whose names are made from a key: the probe declares one key, a record naming it is a template for any key.
+KEYED = ["\\newcounter{KEY}", "\\newglossaryentry{KEY}{name={n},description={d}}", "\\newlabel{KEY}{{1}{1}}", "\\bibcite{KEY}{1}", "\\newif\\ifKEY"]
+
+
+def templates(scope, probe, names):
+    """[(regex, record, declaration)]: the names the run of each `KEYED` declaration defines, with the key a hole. `scope` lists the
+    named definitions. A name a `\\csname` makes (`\\r@key`) is no definition there, so each shape `\\x@key` among `names` is asserted
+    defined after the declaration in a probe, and kept where the assertion holds."""
+    key = "qzk"
+    uses = KEYED
+    text = "\\documentclass{article}\n\\usepackage{glossaries}\n\\begin{document}\n" + "".join(u.replace("KEY", key) + "\n" for u in uses) + "\\end{document}\n"
+    out = []
+    for r in scope("pdftex", KERNELS[0][2], text):
+        if r.get("package") == "document" and key in r["name"] and 4 <= r["line"] < 4 + len(uses):
+            rx = re.compile("[A-Za-z@]+".join(map(re.escape, r["name"].split(key))))
+            out.append((rx, r, uses[r["line"] - 4].replace("KEY", "⟨key⟩")))
+    shapes = sorted({re.sub(r"[A-Za-z]+$", key, n) for n in names if re.fullmatch(r"\\[A-Za-z]@[A-Za-z]+", n)})
+    for u in KEYED:
+        body = "".join(f"\\@ifundefined{{{x[1:]}}}{{\\count@=0 }}{{\\count@=1 }}\n%\\satex@assert{{\\count@ = 1}}\n" for x in shapes)
+        for d in probe("\\documentclass{article}\n\\makeatletter\n" + u.replace("KEY", key) + "\n" + body + "\\begin{document}\n\\end{document}\n"):
+            if d.get("code") == "assert-holds" and d["line"] >= 5 and d["line"] % 2 == 1:
+                x = shapes[(d["line"] - 5) // 2]
+                out.append((re.compile("[A-Za-z]+".join(map(re.escape, x.split(key)))), {"tag": "macro"}, u.replace("KEY", "⟨key⟩")))
+    return out
+
+
+def source_fallback():
+    """name -> card for a name no run defines, from the installed sources of what the text around it names: the files of
+    the packages and formats its page mentions (`word.sty`, `.ltx`, `.cls`), the files it cites, `latex.ltx`, and satex's own
+    sources. A definer there gives its place. A name only ever a macro's delimiter in `latex.ltx` says so. A string in satex's sources says that."""
+    pages = [ROOT / "README.md", ROOT / "SEMANTICS.md", *(ROOT / "doc/wiki").glob("*.md")]
+    texts = {p: p.read_text() for p in pages}
+    kernel = Path(subprocess.run(["kpsewhich", "latex.ltx"], capture_output=True, text=True).stdout.strip())
+    seen = {}
+
+    def defined(path):
+        if path not in seen:
+            text = path.read_text(errors="replace")
+            seen[path] = {}
+            for n, k, at in sem.definitions(text):
+                seen[path].setdefault(n, (k, text.count("\n", 0, at) + 1))
+        return seen[path]
+
+    def card(name):
+        around = [t for t in texts.values() if re.search(re.escape(name) + r"(?![\w@])", t)]
+        words = sorted({w for t in around for w in re.findall(r"[a-z][a-z0-9-]{2,}", t)})
+        found = [Path(l) for i in range(0, len(words), 400) for ext in ("sty", "ltx", "cls")
+                 for l in subprocess.run(["kpsewhich", *(f"{w}.{ext}" for w in words[i:i + 400])], capture_output=True, text=True).stdout.split()]
+        cited = [ROOT / m for t in around for m in re.findall(r"[\w/.-]+\.tex", t) if (ROOT / m).is_file()]
+        for path in [kernel]:
+            if (hit := defined(path).get(name)):
+                at = f"{path.relative_to(ROOT) if path.is_relative_to(ROOT) else path.name}:{hit[1]}"
+                return {"k": hit[0], "at": at, "doc": f"No documentation found. Defined at `{at}`."}
+        text = kernel.read_text(errors="replace")
+        use = re.search(r"#\d" + re.escape(name) + r"(?![\w@])", text)
+        if use and not re.search(r"\\(?:[gex]?def|let)\s*" + re.escape(name) + r"(?![\w@])", text):
+            line = text.count("\n", 0, use.start()) + 1
+            return {"k": "delimiter", "at": f"latex.ltx:{line}", "doc": f"A delimiter: the kernel ends macro parameters with it (`latex.ltx:{line}`) and never defines it."}
+        for path in [*found, *cited]:
+            if (hit := defined(path).get(name)):
+                at = f"{path.relative_to(ROOT) if path.is_relative_to(ROOT) else path.name}:{hit[1]}"
+                return {"k": hit[0], "at": at, "doc": f"No documentation found. Defined at `{at}`."}
+        write = re.search(r"\\string" + re.escape(name) + r"(?![\w@])", text)
+        if write:
+            line = text.count("\n", 0, write.start()) + 1
+            return {"k": "file entry", "at": f"latex.ltx:{line}", "doc": f"Not a macro: the kernel writes `{name}` into a file (`latex.ltx:{line}`) and never defines it. The program that reads the file does."}
+        for path in sorted((ROOT / "src").rglob("*.rs")):
+            src = path.read_text()
+            if (at := src.find('"' + name.replace("\\", "\\\\") + '"')) >= 0:
+                line = src.count("\n", 0, at) + 1
+                above = [l.strip().removeprefix("///").strip() for l in src[:at].splitlines()[:-1][-8:] if l.strip().startswith("///")]
+                return {"k": "marker", "at": f"{path.relative_to(ROOT)}:{line}", "doc": f"A marker satex looks for in a source, never run: {' '.join(above)}"}
+        return None
+    return card
 
 
 def mine(satex, work, names):
@@ -1402,12 +1488,12 @@ def main():
     for key in ("intro", "install"):
         parts[key], found = sem.mark_cards(parts[key], PREVIEW_NAMES())
         names |= found
-    card_data = sem.cards(names, formal.rows, lean, refs, *scope_cards(args.satex.resolve(), work, names), {k.split(":", 1)[1]: v for k, v in PREVIEWS.items()}, sem.builtin_lines(ROOT), sem.example_defs(pending))
+    card_data = sem.cards(names, formal.rows, lean, refs, *scope_cards(args.satex.resolve(), work, names), {k.split(":", 1)[1]: v for k, v in PREVIEWS.items()}, sem.builtin_lines(ROOT), sem.example_defs(pending), source_fallback())
     # satex's own comment directives: no package defines them
     card_data.update((k, v) for k, v in sem.directive_cards(ROOT).items() if k in card_data)
     assets["cards"] = emit(out, "cs-cards.json", json.dumps(card_data, ensure_ascii=False, separators=(",", ":")).encode())
     print(f"cards: {len(card_data)} of {len(names)} control sequences named in code spans", file=sys.stderr)
-    left = {k: v.get("k", "") for k, v in card_data.items() if v.get("k") == "undefined" or v.get("at", "").startswith("the example")}
+    left = {k: v.get("k", "") for k, v in card_data.items() if v.get("k") == "undefined" or v.get("at", "").startswith(("the example", "the text", "the pattern"))}
     print(f"cards: {sum(v == 'undefined' for v in left.values())} names without a definition, {len(left) - sum(v == 'undefined' for v in left.values())} defined by an example: "
           + " ".join(sorted(k for k, v in left.items() if v == "undefined")), file=sys.stderr)
     for dst, title, body in pending:

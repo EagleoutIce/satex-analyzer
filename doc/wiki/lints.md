@@ -598,7 +598,7 @@ See [interface3 § Naming functions and variables](https://ctan.org/pkg/l3kernel
 
 An expl3 name carries its signature after the colon ([interface3](https://ctan.org/pkg/expl3), "Naming conventions"): one letter per argument, `N` a single token, `n` a braced group.
 
-What the function really consumes (the calls the run saw, or probe input for one the document defines) takes a different number of arguments, or an optional one or a star, which no expl3 signature has. `\foo:nn` that takes one argument leaves the second for whatever follows.
+What the function really consumes (the calls the run saw, or probe input for one the document defines) takes a different number of arguments, or an optional one or a star, which no expl3 signature has. `\foo:nn⟨a⟩` that takes one argument leaves the second for whatever follows.
 
 Fix by renaming the function to the signature it has, or its parameter text.
 

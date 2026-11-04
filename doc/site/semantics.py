@@ -606,7 +606,7 @@ def mark_cards(body, extra=()):
     return "".join(p if i % 2 else re.sub(r"<code>([^<]*)</code>", one, p) for i, p in enumerate(parts)), names
 
 
-def cards(names, rows, ctx, refs, scope, engines, previews, builtins, defs=None):
+def cards(names, rows, ctx, refs, scope, engines, templates, previews, builtins, defs=None, fallback=None):
     """name -> card: kind (primitive / kernel macro / package macro), engines, the semantics row with links to its
     Lean rule and Rust site, signature, documentation, a preview picture. `scope` is `satex scope --all`'s records by name,
     `engines` the primitives of each engine (label -> names), `rows` primitives.tsv's, `defs` example_defs'.
@@ -680,8 +680,16 @@ def cards(names, rows, ctx, refs, scope, engines, previews, builtins, defs=None)
             if not card.get("doc"):
                 card["doc"] = primitive_doc(rule, source, card.get("e"))
         if not card and name in defs:
-            title, kind = defs[name]
-            card.update(k=kind, at=f"the example on {title}")
+            card.update(defs[name])
+            if card["k"] == "prefix":
+                like = sorted(n for n in scope if n.startswith(name) and n != name and n[1:].isalpha())[:4]
+                card["doc"] = f"A prefix, not a name: `{name}…` stands for the control sequences that begin with it" + (f", such as {', '.join(f'`{n}`' for n in like)}." if like else ".")
+        if not card:
+            hit = next(((rx, r, d) for rx, r, d in templates if rx.fullmatch(name)), None)
+            if hit:
+                card.update(k=hit[1].get("tag", "macro"), at="a declaration of the same shape", doc=f"Made by `{hit[2]}`: satex's run of that declaration on a probe defines it.")
+        if not card and fallback:
+            card = fallback(name) or {}
         out[name] = card or {"k": "undefined", "doc": "No definition found: the probe document, which loads the pages' packages, "
                                                       "does not define it at its top level."}
     return out
@@ -713,21 +721,38 @@ DEFINERS = [(r"(?:\\(?:gdef|edef|xdef|def)|\\(?:re)?newcommand\*?|\\(?:Provide|D
             (r"\\newif\s*\\if([A-Za-z@]+)", "conditional"),
             (r"\\newcounter\s*\{([A-Za-z@]+)\}", "counter"),
             (r"\\(?:new|renew)environment\*?\s*\{([A-Za-z@]+)\}", "environment"),
-            (r"\\(?:cs|bool|int|dim|tl|seq|clist|prop|box)_(?:new|set|gset)[A-Za-z_]*:[A-Za-z]*\s*(\\[A-Za-z_:@]+)", "expl3 name")]
+            (r"\\(?:cs|bool|int|dim|tl|seq|clist|prop|box)_(?:new|set|gset)[A-Za-z_]*:[A-Za-z]*\s*⟨?(\\[A-Za-z_:@]+)", "expl3 name")]
+
+
+def definitions(text):
+    """(name, kind, offset) of what the definers in `text` define: the macros of `\\newif` and `\\newcounter`, the environment's two."""
+    for rx, kind in DEFINERS:
+        for m in re.finditer(rx, text):
+            n = m.group(m.lastindex)
+            k = kind or {"count": "count register", "dimen": "dimen register", "skip": "skip register", "muskip": "muskip register", "toks": "token register", "box": "box register"}[m.group(1)]
+            names = {"conditional": [f"\\if{n}", f"\\{n}true", f"\\{n}false"], "counter": [f"\\c@{n}", f"\\the{n}"], "environment": [f"\\{n}", f"\\end{n}"]}.get(kind, [n])
+            for x in names:
+                yield x, k, m.start()
 
 
 def example_defs(pages):
-    """name -> (page title, kind) for the names the pages' code blocks define: `\\def`, `\\newcommand`, `\\newcount`, `\\newif`
-    (its three macros), `\\newcounter` (`\\c@name`), environments (`\\name`, `\\endname`). `pages` are (dst, title, body)."""
-    out = {}
+    """name -> card parts for the names the pages' text makes up: what the code blocks and code spans define (`definitions`),
+    the names inside a `⟨…⟩` pattern, which stand for any name, and a name before `…`, a prefix. `pages` are (dst, title, body)."""
+    out, frag = {}, {}
     for _, title, body in pages:
-        for pre in re.findall(r"<pre\b.*?</pre>", body, flags=re.S):
-            text = html.unescape(re.sub(r"<[^>]*>", "", pre))
-            for rx, kind in DEFINERS:
-                for m in re.finditer(rx, text):
-                    n = m.group(m.lastindex)
-                    k = kind or {"count": "count register", "dimen": "dimen register", "skip": "skip register", "muskip": "muskip register", "toks": "token register", "box": "box register"}[m.group(1)]
-                    names = {"conditional": [f"\\if{n}", f"\\{n}true", f"\\{n}false"], "counter": [f"\\c@{n}", f"\\the{n}"], "environment": [f"\\{n}", f"\\end{n}"]}.get(kind, [n])
-                    for x in names:
-                        out.setdefault(x, (title, k if kind != "conditional" else "conditional"))
-    return out
+        for i, part in enumerate(re.split(r"(<pre\b.*?</pre>)", body, flags=re.S)):
+            spans = [part] if i % 2 else re.findall(r"<code\b.*?</code>", part, flags=re.S)
+            for span in spans:
+                text = html.unescape(re.sub(r"<[^>]*>", "", span))
+                at = f"the {'example' if i % 2 else 'text'} on {title}"
+                for x, k, _ in definitions(text):
+                    out.setdefault(x, {"k": k, "at": at})
+                for m in re.finditer(r"(\\[A-Za-z@]+)…", text):
+                    frag.setdefault(m.group(1), {"k": "prefix", "at": at})
+                if "⟨" in text:
+                    for _, _, x in cs_keys(text):
+                        out.setdefault(x, {"k": "example name", "at": f"the pattern on {title}",
+                                           "doc": "A name made up in a pattern, where ⟨…⟩ stands for any text. The text defines no such command."})
+    return {**out, **frag}
+
+

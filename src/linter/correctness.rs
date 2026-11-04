@@ -69,7 +69,7 @@ per argument, `N` a single token, `n` a braced group.
 
 What the function really consumes (the calls the run saw, or probe input
 for one the document defines) takes a different number of arguments, or an
-optional one or a star, which no expl3 signature has.  `\\foo:nn` that takes
+optional one or a star, which no expl3 signature has.  `\\foo:nn⟨a⟩` that takes
 one argument leaves the second for whatever follows.
 
 Fix by renaming the function to the signature it has, or its parameter

@@ -1345,7 +1345,7 @@ pub struct AnalysisConfig {
     /// page may have filled, one path each way.
     pub assume_forced_page_breaks: bool,
     /// Assumes formatting a message for the terminal or log (expl3's
-    /// `\iow_wrap`) changes nothing but the text it writes. A message over
+    /// `\iow_wrap:nnnN`) changes nothing but the text it writes. A message over
     /// unknown text then writes unknown text, on one path, reported as an
     /// `assumption`. `false` wraps it for real, a path per way it may wrap.
     pub assume_messages_output_only: bool,
