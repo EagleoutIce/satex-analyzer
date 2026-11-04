@@ -1453,7 +1453,7 @@
   const withKeys = cards.withKeys;
   /** The paragraphs of the last typeset, with the source site of their characters: the PDF's findings mark only theirs. */
   var typesetRows = null;
-  async function typeset(target) {
+  async function typeset(target, of = diagnosticVersions[target]) {
     if (target !== uri()) return;
     // a step of its own in the status card, when nothing else is going on
     const alone = !act.phase;
@@ -1462,7 +1462,7 @@
     if (alone && act.phase === 'Typesetting') idle();
     if (!rows || target !== uri()) return;
     typesetRows = rows;
-    shownFor(typesetBody, target, diagnosticVersions[target]);
+    shownFor(typesetBody, target, of);
     if (pdfOverlayOn?.findings) pdfOverlay();
     const lines = state.texts[state.file]?.split('\n') ?? [];
     const html = cards.typesetView(rows, { file: state.file, closed: tsClosed, plural, lineOf: (n) => lines[n - 1] });
@@ -5602,7 +5602,7 @@
   const PHASE = { unpacking: ['Unpacking', 'Unpacking the TeX files…'], importing: ['Importing', 'Importing the kernel caches…'] };
   /* The start, and an uploaded project, as one card over the page: the logo, the version, the stages in one bar.
    * Each stage holds its share of the bar; a stage's own progress (bytes, lines read) fills its share. */
-  const BOOT = /** @type {[string, string, number][]} */ ([['Fetching', 'downloads', 0.45], ['Unpacking', 'TeX files', 0.12], ['Importing', 'caches', 0.12], ['Starting', 'SaTeX starts', 0.12], ['Example', 'example files', 0.19]]);
+  const BOOT = /** @type {[string, string, number][]} */ ([['Fetching', 'downloads', 0.55], ['Unpacking', 'TeX files', 0.15], ['Importing', 'caches', 0.15], ['Starting', 'SaTeX starts', 0.15]]);
   var boot = { el: /** @type {HTMLElement | null} */ (null), at: 0, stage: -1, open: false, started: false }; // var: busy may run before this line
   function bootOpen(title) {
     if (!boot.el) {
@@ -5640,8 +5640,9 @@
   }
   function bootStep(name, done, text) {
     if (!boot?.open) return;
-    // a download once the engine started is the example's own files, asked for on demand: its own stage
-    if (name === 'Fetching' && boot.stage >= 3) name = 'Example';
+    // a download once the engine started is the example's own files, asked for on demand: the editor is
+    // usable, so the card goes and the status line shows that download
+    if (name === 'Fetching' && boot.stage >= 3) { if (boot.started) bootClose(); return; }
     const k = BOOT.findIndex(([n]) => n === name);
     // The card covers what blocks the editor: every download, and satex starting. A download after
     // satex started keeps the card open on its text, stages never run backwards, and the first
@@ -5800,7 +5801,7 @@
       const names = [...new Set([...waiting, ...inFlight])].map((id) => PACKAGES.get(id).label).join(', ');
       busy('Loading', `Loading ${plural(names.split(', ').length, 'package')}…`);
       status.title = names;
-      if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok && !outdated(p)) { show(p.uri, p.diagnostics, p.version); typeset(p.uri); } });
+      if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok && !outdated(p)) { show(p.uri, p.diagnostics, p.version); typeset(p.uri, p.version); } });
       // loads another step started (a start since superseded): once in, the server starts again on them, unless a start is under way
       else Promise.allSettled([...inFlight].map((id) => fetchedPackages.get(id))).then(() => { if (!outdated(p) && p.uri === uri() && !following) restart(); });
       return;
@@ -5815,7 +5816,7 @@
     // what was answered from the last run meanwhile is asked again of this one
     explanations.clear(); scopeAsked.clear(); explained = ''; explainSoon();
     show(p.uri, p.diagnostics, p.version);
-    typeset(p.uri);
+    typeset(p.uri, p.version); // tagged with this run's version: `show` sets the shown one only after its code-action round trip
     outline();
     if (p.uri === uri()) {
       colorize();
@@ -5893,6 +5894,7 @@
    * remaining bundles are fetched in the background (play/offline.json lists them), so it also works without its server. */
   const offlineBox = $('offline'), offlineText = $('offline-text'), offlineBtn = $('offline-btn');
   const offlineState = { todo: [], total: 0, got: 0, stop: false, running: false };
+  /** The status line's offline note: only while packages are still being fetched; once everything is kept, nothing is shown. */
   const offlineShow = (text, button = '', title = '') => {
     offlineBox.hidden = !text;
     offlineText.textContent = text;
@@ -5910,7 +5912,7 @@
       const todo = list.more.filter(([p]) => !have.has(new URL(p, base).href));
       Object.assign(offlineState, { todo, total: todo.reduce((n, [, s]) => n + s, 0), got: 0 });
     } catch (e) { console.warn('offline mode unavailable', e); return; }
-    if (!offlineState.todo.length) { offlineShow('available offline', '', 'the page, SaTeX and every package are kept in this browser'); return; }
+    if (!offlineState.todo.length) { offlineShow(''); return; }
     let off = false;
     try { off = localStorage.getItem('satex-offline') === 'off'; } catch {}
     if (navigator.connection?.saveData || off) { offlineShow('', `Keep offline (${mib(offlineState.total)} MiB)`, 'fetch every package now, so the playground works without its server'); return; }
@@ -5947,7 +5949,7 @@
     await Promise.all([one(), one()]);
     s.running = false;
     s.todo = next;
-    if (!next.length) offlineShow('available offline', '', 'the page, SaTeX and every package are kept in this browser');
+    if (!next.length) offlineShow('');
     else s.got = s.total - next.reduce((n, [, z]) => n + z, 0), offlineShow(failed ? 'offline copy paused: no connection' : `offline copy stopped at ${mib(s.got)} of ${mib(s.total)} MiB`, 'Resume', 'fetch the rest of the packages');
   }
   offlineBtn.onclick = () => {

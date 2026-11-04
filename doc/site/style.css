@@ -220,6 +220,8 @@ code .arg { font-size: 12px; padding: 0 .3rem; }
 .cs:hover { text-decoration: none; background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .place { font: 12.5px ui-monospace, Menlo, monospace; }
 .stale { opacity: .55; transition: opacity var(--quick); }
+/* a dimmed panel the reader points at or works in is read again: full strength while hovered or focused */
+.stale:hover, .stale:focus-within { opacity: 1; }
 .ov-stale .pdf-ov { opacity: .35; }
 #explain-body .xcard + .xcard, .output .xcard + .xcard { margin-top: .7rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
 .output .xcard { white-space: normal; } .upstream { font-size: .8rem; white-space: nowrap; }

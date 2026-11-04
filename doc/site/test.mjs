@@ -442,6 +442,9 @@ async function browser() {
       const narrow = await js(`return [...document.querySelectorAll('#typeset-body .ts-text')].filter((t) => t.textContent.trim().length > 12)
         .filter((t) => t.getBoundingClientRect().width < 8 * parseFloat(getComputedStyle(t).fontSize)).map((t) => t.textContent.trim().slice(0, 30))`);
       check('typeset paragraphs keep the width of the pane', narrow.length === 0, JSON.stringify(narrow));
+      // once the run has ended no view of the open file is dimmed: a view is stale only while a newer analysis is pending
+      const dim = await until(`return !document.querySelector('#status.busy, .busy') && !document.querySelector('#typeset-body.stale, #explain-body.stale, #findings-list.stale, #play-list.stale')`, 15000);
+      check('no view is dimmed after the run ends', dim, await js(`return [...document.querySelectorAll('.stale')].map((e) => e.id || e.className).join(' ')`));
       });
       await section('outline', async () => {
       // a label belongs to the section it stands in, though the run reports labels after every section
