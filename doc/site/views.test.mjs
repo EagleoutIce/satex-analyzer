@@ -69,4 +69,58 @@ const text = mermaidOut(read.items.filter((i) => i.type === 'node'), read.items.
 const back = mermaidIn(text);
 assert.deepEqual(graph(back), graph(mermaidIn(flow)));
 assert.equal(back.dir, 'TD');
+
+// forest trees: bracket → state → bracket, untouched text as it was
+const F = self.satexViews.forest;
+const tree = `
+for tree={draw, s sep=5mm},
+  % a comment [not a node]
+[VP [DP, name=dp]
+    [V$'$ [V]  [{D, P}, edge={red, thick}]]
+]
+\\draw (dp) -- (!r1);
+`;
+const tr = F.parse(tree);
+assert.equal(F.emit(tr), tree, 'untouched, the tree comes back as it was');
+assert.equal(tr.root.content, 'VP');
+assert.deepEqual(tr.root.children.map((c) => c.content), ['DP', "V$'$"]);
+assert.deepEqual(tr.root.children[0].opts, ['name=dp']);
+assert.deepEqual(tr.root.children[1].children[1].opts, ['edge={red, thick}']);
+assert.equal(tr.root.children[1].children[1].content, '{D, P}');
+assert.ok(tr.post.includes('\\draw'));
+assert.deepEqual(F.splitTop('a, b={c,d}, e'), ['a', 'b={c,d}', 'e']);
+assert.equal(tr.pre.slice(...F.forTree(tr.pre)), 'draw, s sep=5mm');
+// edits: rename, options, add, delete, move; the rest keeps its text
+const [dp, vbar] = tr.root.children;
+Object.assign(dp, { content: 'NP', dirty: true });
+Object.assign(vbar.children[0], { opts: ['circle'], dirty: true });
+vbar.children.push(F.fresh('new, one'));
+F.move(tr, dp, vbar, 'child');
+F.setForTree(tr, 'draw');
+F.settle(tr);
+const edited = F.emit(tr);
+assert.equal(edited, `
+for tree={draw},
+  % a comment [not a node]
+[VP
+    [V$'$ [V, circle]  [{D, P}, edge={red, thick}]  [{new, one}]  [NP, name=dp]]
+]
+\\draw (dp) -- (!r1);
+`);
+assert.equal(F.emit(F.parse(edited)), edited, 'the edited tree reads back as itself');
+// a node cannot move into its own subtree
+assert.equal(F.move(tr, vbar, vbar.children[0], 'child'), false);
+// an indented outline
+const outline = '- S\n  - NP\n    - the cat\n  * VP\n\t- sat\n';
+const [s0] = F.outlineIn(outline);
+const fresh = { pre: '\n', root: s0, post: '\n' };
+s0.place = '';
+F.settle(fresh);
+assert.equal(F.emit(fresh), '\n[S [NP [the cat]] [VP [sat]]]\n');
+assert.equal(F.outlineOut(s0), '- S\n  - NP\n    - the cat\n  - VP\n    - sat');
+// a preamble without `for tree` gets one
+const bare = F.parse('\n[a [b]]\n');
+F.setForTree(bare, 'circle');
+assert.equal(F.emit(bare), '\nfor tree={circle}\n[a [b]]\n');
+assert.equal(F.parse('no tree here'), null);
 console.log('ok views.test.mjs');

@@ -3456,6 +3456,21 @@
           },
           "type": "object"
         },
+        "forest": {
+          "description": "a forest environment the run met, a blank line of the document body",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "\"Edit tree…\": add, delete, rename and drag nodes, node and `for tree` options, indented outlines in",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: no tree lens, action or dialog"
+            }
+          },
+          "type": "object"
+        },
         "glossary": {
           "description": "declared keys: glossary entries, acronyms, abbreviations",
           "properties": {

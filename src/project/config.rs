@@ -455,6 +455,7 @@ pub struct TypePlugins {
     pub table: Switch,
     pub image: Switch,
     pub tikz: TikzPlugin,
+    pub forest: Switch,
     pub glossary: Switch,
     pub bibliography: Switch,
     pub index: Switch,

@@ -605,6 +605,273 @@
   }
   RENDER.drawing = drawing;
 
+  // trees (forest plugin): the bracket notation `[content, options [child] …]` after the
+  // preamble (`for tree={…}, …`); untouched text comes back as it was
+  /** Splits `s` at top-level commas, braces kept. */
+  function splitTop(s) {
+    const out = [];
+    let depth = 0, from = 0;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (c === '\\') i++;
+      else if (c === '{') depth++;
+      else if (c === '}') depth--;
+      else if (c === ',' && depth === 0) { out.push(s.slice(from, i)); from = i + 1; }
+    }
+    out.push(s.slice(from));
+    return out.map((o) => o.trim()).filter(Boolean);
+  }
+  /** A node's head `content, options` as its parts, the text around them kept. */
+  function head(text) {
+    let depth = 0, comma = -1;
+    for (let i = 0; i < text.length && comma < 0; i++) {
+      const c = text[i];
+      if (c === '\\') i++;
+      else if (c === '{') depth++;
+      else if (c === '}') depth--;
+      else if (c === ',' && depth === 0) comma = i;
+    }
+    const part = comma < 0 ? text : text.slice(0, comma), rest = comma < 0 ? '' : text.slice(comma + 1);
+    const lead = part.match(/^\s*/)[0], content = part.trim(), tail = (comma < 0 ? part : rest).match(/\s*$/)[0];
+    return { lead, content, mid: comma < 0 ? '' : part.slice(lead.length + content.length), opts: comma < 0 ? [] : splitTop(rest), optsText: rest.slice(0, rest.length - tail.length), tail, hasOpts: comma >= 0 };
+  }
+  /** A forest body: `{pre, root, post}`, each node `{place, …head, children, inner}`; null without a tree. */
+  function treeParse(body) {
+    let i = 0;
+    const skip = () => { // to the next top-level `[` or `]`, over groups, escapes and comments
+      let depth = 0;
+      for (; i < body.length; i++) {
+        const c = body[i];
+        if (c === '\\') i++;
+        else if (c === '%') { while (i < body.length && body[i] !== '\n') i++; }
+        else if (c === '{') depth++;
+        else if (c === '}') depth--;
+        else if ((c === '[' || c === ']') && depth === 0) return;
+      }
+    };
+    const ws = (from) => { const m = body.slice(from, i).match(/\s*$/)[0]; return [body.slice(from, i - m.length), m]; };
+    skip();
+    if (body[i] !== '[') return null;
+    const [pre, rootLead] = ws(0);
+    const node = (place) => {
+      i++; // `[`
+      let from = i;
+      skip();
+      const [h, gap] = ws(from);
+      const n = { place, ...head(h), children: [], inner: '' };
+      let pending = gap;
+      while (body[i] === '[') {
+        n.children.push(node(pending));
+        from = i;
+        skip();
+        if (body.slice(from, i).trim()) throw new Error(`text between nodes: ${body.slice(from, i).trim()}`);
+        pending = body.slice(from, i);
+      }
+      if (body[i] !== ']') throw new Error('a node is not closed');
+      // head + gap with no children: the gap is the head's own tail
+      if (!n.children.length) { n.tail += pending; pending = ''; }
+      n.inner = pending;
+      i++;
+      return n;
+    };
+    const root = node(rootLead);
+    return { pre, root, post: body.slice(i) };
+  }
+  const braced = (s) => /[,[\]]/.test(s.replace(/\{[^{}]*\}/g, '')) ? `{${s}}` : s;
+  /** A node's text: an untouched head as it was, an edited one written from its parts. */
+  function nodeOut(n) {
+    const h = n.dirty ? n.lead + braced(n.content) + (n.opts.length ? `${n.hasOpts ? n.mid : ''}, ${n.opts.join(', ')}` : '') + n.tail
+      : n.lead + n.content + n.mid + (n.hasOpts ? ',' + n.optsText : '') + n.tail;
+    return `${n.place ?? ''}[${h}${n.children.map(nodeOut).join('')}${n.inner}]`;
+  }
+  const treeEmit = (t) => t.pre + nodeOut(t.root) + t.post;
+  /** A new or moved node's `place` (the white space before its `[`): as the sibling before it has it. */
+  function settle(t) {
+    const walk = (n, depth) => {
+      n.children.forEach((c, k) => {
+        if (c.place == null || c.moved) {
+          const ok = (o) => o !== c && o.place != null && !o.moved;
+          const other = n.children.slice(0, k).reverse().find(ok) ?? n.children.find(ok);
+          c.place = other ? other.place : (n.inner.includes('\n') || t.root.place?.includes('\n') ? `\n${'  '.repeat(depth + 2)}` : ' ');
+          c.moved = false;
+        }
+        walk(c, depth + 1);
+      });
+    };
+    walk(t.root, 0);
+  }
+  const fresh = (content) => ({ place: null, lead: '', content, mid: '', opts: [], optsText: '', tail: '', hasOpts: false, children: [], inner: '', dirty: true });
+  /** An indented outline (`-`, `*`, `+`, `1.` markers dropped) as nodes. */
+  function outlineIn(src) {
+    const top = { children: [] }, stack = [[-1, top]];
+    for (const raw of src.split('\n')) {
+      if (!raw.trim()) continue;
+      const depth = raw.replace(/\t/g, '    ').match(/^ */)[0].length, text = raw.trim().replace(/^(?:[-*+]|\d+[.)])\s+/, '');
+      while (stack.length > 1 && stack[stack.length - 1][0] >= depth) stack.pop();
+      const n = fresh(text);
+      stack[stack.length - 1][1].children.push(n);
+      stack.push([depth, n]);
+    }
+    return top.children;
+  }
+  const outlineOut = (n, d = 0) => [`${'  '.repeat(d)}- ${n.content}`, ...n.children.map((c) => outlineOut(c, d + 1))].join('\n');
+  // the store's moves: by path into the tree
+  const parentOf = (t, x) => { const go = (n) => n.children.includes(x) ? n : n.children.map(go).find(Boolean); return go(t.root); };
+  const within = (a, b) => a === b || a.children.some((c) => within(c, b));
+  /** Moves `n` before or after `target` (`where` = 'before' | 'after'), or under it ('child'). */
+  function move(t, n, target, where) {
+    if (within(n, target)) return false;
+    const from = parentOf(t, n);
+    if (!from) return false;
+    from.children.splice(from.children.indexOf(n), 1);
+    n.moved = true;
+    if (where === 'child') target.children.push(n);
+    else { const p = parentOf(t, target); if (!p) return false; p.children.splice(p.children.indexOf(target) + (where === 'after'), 0, n); }
+    return true;
+  }
+  /** The `for tree={…}` option of the preamble: `[start, end]` of its braces' inside, or null. */
+  function forTree(pre) {
+    const m = /for\s+tree\s*=\s*\{/.exec(pre);
+    if (!m) return null;
+    let depth = 1, i = m.index + m[0].length;
+    for (; i < pre.length && depth; i++) if (pre[i] === '\\') i++; else if (pre[i] === '{') depth++; else if (pre[i] === '}') depth--;
+    return depth ? null : [m.index + m[0].length, i - 1];
+  }
+  function setForTree(t, text) {
+    const at = forTree(t.pre);
+    if (at) t.pre = t.pre.slice(0, at[0]) + text + t.pre.slice(at[1]);
+    else if (text.trim()) {
+      const lead = t.pre.match(/^\s*/)[0], rest = t.pre.slice(lead.length);
+      t.pre = rest ? `${lead}for tree={${text}}, ${rest}` : `${t.root.place ?? '\n'}for tree={${text}}`;
+    }
+  }
+  /** Leaves side by side, each `width(n)` wide, parents centered over their children, a level per row. */
+  function treeLayout(root, width = () => 1) {
+    const out = [];
+    let leaf = 0;
+    const walk = (n, depth) => {
+      const kids = n.children.map((c) => walk(c, depth + 1));
+      const x = kids.length ? (kids[0].x + kids[kids.length - 1].x) / 2 : (leaf += width(n)) - width(n) / 2;
+      const it = { n, x, y: -depth };
+      out.push(it);
+      return it;
+    };
+    walk(root, 0);
+    return out;
+  }
+  const forestFns = { splitTop, head, parse: treeParse, emit: treeEmit, settle, fresh, outlineIn, outlineOut, move, forTree, setForTree, layout: treeLayout };
+
+  function forest(s, view, ctx) {
+    const root = el('div', 'tv-draw');
+    let t;
+    try { t = s.wrap ? { pre: '\n  ', root: fresh('root'), post: '\n' } : treeParse(s.body); } catch (e) { t = null; root.append(el('div', 'tv-text', esc(`The tree reads as code only: ${e.message}`))); }
+    if (!t) { if (!root.childElementCount) root.append(el('div', 'tv-text', 'No bracket tree in this environment.')); return root; }
+    if (s.wrap) t.root.place = '';
+    // what forest computed, in creation order, which is the bracket order
+    const order = []; const pre = (n) => { order.push(n); n.children.forEach(pre); }; pre(t.root);
+    const run = (s.nodes ?? []).length === order.length && s.nodes.every((r, k) => r.content === order[k].content) ? new Map(order.map((n, k) => [n, s.nodes[k]])) : new Map();
+    let sel = t.root, dragging = null, changed = 0;
+    const svg = svgEl('svg', { class: 'tv-canvas', role: 'img', 'aria-label': 'tree' });
+    const side = el('div', 'tv-forest-side');
+    const status = el('span', 'tv-muted');
+    const write = el('button', 'tv-button tv-primary', s.wrap ? 'Insert tree' : 'Write');
+    const touch = () => { changed++; draw(); };
+    const button = (row, label, f, title) => { const b = el('button', 'tv-button', esc(label)); b.type = 'button'; b.onclick = f; if (title) b.title = title; row.append(b); return b; };
+    const field = (label, value, f) => {
+      const row = el('label', 'tv-row');
+      const input = Object.assign(el('input', 'tv-input'), { value, spellcheck: false, ariaLabel: label });
+      input.oninput = () => { f(input.value); changed++; drawTree(); status.textContent = `${changed} change${changed > 1 ? 's' : ''} to write`; write.disabled = false; };
+      row.append(el('span', 'tv-muted', esc(label)), input);
+      return row;
+    };
+    const at = (e) => { const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; return p.matrixTransform(svg.getScreenCTM().inverse()); };
+    function drawTree() {
+      const text = (n) => n.content.replace(/^\{(.*)\}$/, '$1') || (n.children.length ? '∘' : '·');
+      const wide = (n) => Math.max(0.5, 0.17 * text(n).length + 0.3);
+      const pos = treeLayout(t.root, (n) => wide(n) + 0.3);
+      // positions from the run when it computed every one (forest's x, y in pt; y grows up)
+      const known = run.size && [...run.values()].every((r) => r.x != null && r.y != null);
+      const scale = 1 / 28.45;
+      for (const p of pos) if (known && !changed) { const r = run.get(p.n); p.x = r.x * scale; p.y = r.y * scale; } else p.y *= 1.1;
+      const by = new Map(pos.map((p) => [p.n, p]));
+      const xs = pos.map((p) => p.x), ys = pos.map((p) => p.y);
+      // at least 8 by 4 units, so a small tree keeps its letters small
+      const w = Math.max(8, Math.max(...xs) - Math.min(...xs) + 2), h = Math.max(4, Math.max(...ys) - Math.min(...ys) + 1.2);
+      const box = [(Math.max(...xs) + Math.min(...xs) - w) / 2, -Math.max(...ys) - 0.6, w, h];
+      svg.setAttribute('viewBox', box.join(' '));
+      const out = [];
+      for (const p of pos) for (const c of p.n.children) out.push(svgEl('line', { class: 'tv-tree-edge', x1: p.x, y1: -p.y + 0.2, x2: by.get(c).x, y2: -by.get(c).y - 0.2 }));
+      for (const p of pos) {
+        const label = text(p.n), w = wide(p.n);
+        const g = svgEl('g', { class: `tv-node${sel === p.n ? ' on' : ''}${p.n.dirty ? ' dirty' : ''}`, 'data-content': p.n.content });
+        g.append(svgEl('rect', { x: p.x - w / 2, y: -p.y - 0.2, width: w, height: 0.4, rx: 0.08 }), Object.assign(svgEl('text', { x: p.x, y: -p.y }), { textContent: label }));
+        const name = run.get(p.n)?.name;
+        if (name) g.append(Object.assign(svgEl('title'), { textContent: `name: ${name}` }));
+        g.onpointerdown = (e) => { e.stopPropagation(); sel = p.n; dragging = p.n; try { svg.setPointerCapture(e.pointerId); } catch { /* synthetic */ } draw(); };
+        g.dataset.x = p.x; g.dataset.w = w;
+        out.push(g);
+        p.g = g;
+      }
+      // a drop: on a node's left or right third a sibling before or after it, in the middle its last child
+      svg.onpointerup = (e) => {
+        const n = dragging; dragging = null;
+        if (!n) return;
+        const q = at(e), hit = pos.find((p) => Math.abs(q.x - p.x) < +p.g.dataset.w / 2 && Math.abs(-q.y - p.y) < 0.3);
+        if (!hit || hit.n === n) return;
+        const third = (q.x - hit.x) / +hit.g.dataset.w;
+        const where = hit.n === t.root ? 'child' : third < -1 / 6 ? 'before' : third > 1 / 6 ? 'after' : 'child';
+        if (move(t, n, hit.n, where)) touch();
+      };
+      svg.replaceChildren(...out);
+    }
+    function draw() {
+      drawTree();
+      side.replaceChildren();
+      const n = sel;
+      side.append(field('content', n.content, (v) => { n.content = v; n.dirty = true; }),
+        field('options', n.opts.join(', '), (v) => { n.opts = splitTop(v); n.dirty = true; }));
+      const row = el('div', 'tv-actions');
+      button(row, 'Add child', () => { const c = fresh('new'); n.children.push(c); sel = c; touch(); });
+      const parent = parentOf(t, n);
+      if (parent) {
+        button(row, 'Add sibling', () => { const c = fresh('new'); parent.children.splice(parent.children.indexOf(n) + 1, 0, c); sel = c; touch(); });
+        button(row, '←', () => { const k = parent.children.indexOf(n); if (k > 0) { move(t, n, parent.children[k - 1], 'before'); touch(); } }, 'move left');
+        button(row, '→', () => { const k = parent.children.indexOf(n); if (k < parent.children.length - 1) { move(t, n, parent.children[k + 1], 'after'); touch(); } }, 'move right');
+        button(row, 'Delete', () => { parent.children.splice(parent.children.indexOf(n), 1); sel = parent; touch(); });
+      }
+      side.append(row);
+      status.textContent = changed ? `${changed} change${changed > 1 ? 's' : ''} to write` : 'no changes';
+      write.disabled = !changed && !s.wrap;
+    }
+    const opts = el('div', 'tv-forest-tree');
+    const ft = forTree(t.pre);
+    opts.append(el('h4', 'tv-h', 'Every node (for tree)'), field('for tree', ft ? t.pre.slice(...ft) : '', (v) => setForTree(t, v)));
+    const rest = t.pre.trim();
+    if (rest && !(ft && rest.replace(/^for\s+tree\s*=\s*\{[\s\S]*\}\s*,?$/, '') === '')) opts.append(el('pre', 'tv-kept', esc(rest)));
+    // indented outlines in and out
+    const out = el('details', 'tv-mermaid', '<summary>Indented outline</summary>');
+    const text = Object.assign(el('textarea', 'tv-input'), { rows: 5, spellcheck: false, placeholder: '- root\n  - child\n    - grandchild\n  - child', ariaLabel: 'outline' });
+    const orow = el('div', 'tv-actions');
+    button(orow, 'Add under selection', () => { const kids = outlineIn(text.value); if (!kids.length) return; sel.children.push(...kids); touch(); });
+    button(orow, 'Replace tree', () => { const kids = outlineIn(text.value); if (!kids.length) return; const r = kids.length === 1 ? kids[0] : Object.assign(fresh(''), { children: kids }); r.place = t.root.place; r.lead = t.root.lead; t.root = r; sel = r; touch(); });
+    button(orow, 'Export', () => { text.value = outlineOut(t.root); text.select(); });
+    out.append(text, orow);
+    write.type = 'button';
+    write.onclick = () => {
+      settle(t);
+      const body = treeEmit(t);
+      ctx.apply([{ range: s.range, newText: s.wrap ? `\\begin{forest}${body}\\end{forest}` : body }, ...(s.extra ? [s.extra] : [])]);
+    };
+    const foot = el('div', 'tv-actions tv-foot');
+    foot.append(status, write);
+    root.append(svg, side, opts, out);
+    if (s.note) root.append(el('div', 'tv-text', ctx.markdown(s.note)));
+    root.append(foot);
+    draw();
+    return root;
+  }
+  RENDER.forest = forest;
+
   const STYLE = `
 .tv { --tv-bg: var(--panel, var(--vscode-editor-background, #fff)); --tv-fg: var(--fg, var(--vscode-foreground, #222)); --tv-muted: var(--muted, var(--vscode-descriptionForeground, #666));
   --tv-border: var(--border, var(--vscode-widget-border, #ccc)); --tv-accent: var(--accent, var(--vscode-button-background, #0b3d91)); --tv-accent-fg: var(--accent-fg, var(--vscode-button-foreground, #fff));
@@ -672,6 +939,8 @@
 .tv-path { fill: none; stroke: var(--tv-muted); stroke-width: .03; stroke-dasharray: .1 .07; }
 .tv-kept pre { margin: .15rem 0; padding: .3rem .5rem; border-radius: 6px; background: var(--tv-sunk); font-size: .75rem; white-space: pre-wrap; color: var(--tv-muted); }
 .tv-mermaid summary { cursor: pointer; font-size: .82rem; color: var(--tv-muted); } .tv-mermaid textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; margin: .4rem 0; }
+.tv-tree-edge { stroke: currentColor; stroke-width: .02; } .tv-node.dirty rect { stroke: var(--tv-accent); }
+.tv-forest-side, .tv-forest-tree { display: grid; gap: .4rem; } .tv-forest-side .tv-row > span, .tv-forest-tree .tv-row > span { min-width: 4.5rem; align-self: center; }
 .tv-foot { justify-content: flex-end; align-items: center; } .tv-foot .tv-muted { margin-right: auto; }`;
 
   /** Renders `view` into `container`; `ctx.apply(edits)` writes, `ctx.markdown(md)` makes HTML. */
@@ -687,5 +956,5 @@
     container.replaceChildren(root);
     return root;
   }
-  self.satexViews = { render, RENDER, SPEC, mix, drawing: { parse, emit, mermaidIn, mermaidOut, layout, importMermaid } };
+  self.satexViews = { render, RENDER, SPEC, mix, drawing: { parse, emit, mermaidIn, mermaidOut, layout, importMermaid }, forest: forestFns };
 })();

@@ -17,6 +17,11 @@ const FLOAT_AFTER_TITLE_STEPS: u64 = 55_299_093;
 /// Target 20M; measured 32.5M on 2026-11-04 (rerun-checked), see plan.
 const NOTECOLUMN_MA_STEPS: u64 = 40_597_274;
 
+/// Target 20M; measured 32.7M on 2026-11-04 (seven forest trees, about 4.7M each).
+const FOREST_OPTIONS_STEPS: u64 = 40_919_660;
+/// Target 20M; measured 22.9M on 2026-11-04 (six forest trees).
+const FOREST_NAMES_STEPS: u64 = 28_658_778;
+
 /// Diagnostics that mean the run was cut short.
 const CUT_CODES: [&str; 3] = ["limit-reached", "budget-exhausted", "analysis-ended-early"];
 
@@ -195,6 +200,42 @@ fixtures! {
     tikz_node_with_an_undefined_name_in_math("tikz_node_undefined_in_math", "mwe.tex");
     /// PNG images scaled to keep their aspect ratio inside beamer columns.
     beamer_raster_images_scaled_to_their_aspect("beamer_raster_images", "mwe.tex");
+}
+
+fixtures! {
+    /// The edges library: `forked edges`, `folder` and a directory tree.
+    forest_edges_library("forest_libraries", "mwe.tex");
+    forest_linguistics_library("forest_linguistics", "mwe.tex");
+    /// A math node with a superscript (`V$'$`) beside a sibling and above children: its box
+    /// leaves the packing unknown, pgfmath errs in library code (open root R1).
+    forest_math_node_with_superscript("forest_math_content", "mwe.tex");
+}
+
+/// forest as documents use it: `for tree`, `s sep`, `l sep`, `edge`, `grow'`, `tier`,
+/// `delay`, `before typesetting nodes`, a `\forestset` style. Seven trees.
+#[test]
+fn forest_options_and_stages() {
+    check_within("forest_options", "mwe.tex", &[], &[], FOREST_OPTIONS_STEPS);
+}
+
+/// `name`, relative nodes (`!u`, `!r1`), `tikz` per node, `\Forest`, `.wrap pgfmath arg`.
+#[test]
+fn forest_names_and_relative_nodes() {
+    check_within("forest_names", "mwe.tex", &[], &[], FOREST_NAMES_STEPS);
+}
+
+/// Math nodes (`\frac`, a subscript): the tree typesets its contents and nothing else, as
+/// pdftotext reads `x2 1 2 yi`. Unknown packing typesets stray `pt` text (open root R1).
+#[test]
+fn forest_math_nodes_typeset_only_their_contents() {
+    let Some(analysis) = check("forest_math_nodes", "mwe.tex", &[]) else { return };
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
+    let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
+    assert!(texts.iter().all(|t| !t.contains("pt")), "{texts:?}");
 }
 
 /// Capabilities: unknown inputs, typesetting feedback, package interpreters.

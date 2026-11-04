@@ -7,9 +7,9 @@
 use super::{Cx, Hit, TypePlugin, rewrite};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{Ty, braced_groups};
-use crate::linter::fix::{Pos, Text};
+use crate::linter::fix::Text;
 use crate::project::config::TypePlugins;
-use lsp_types::{CodeAction, CodeLens, Command, Range, TextEdit};
+use lsp_types::{CodeAction, CodeLens, TextEdit};
 use serde_json::{Value as Json, json};
 
 pub(super) struct Tikz;
@@ -39,7 +39,7 @@ impl TypePlugin for Tikz {
 
     /// Outside a picture, on a blank line of the body: a picture to start from.
     fn actions(&self, cx: &Cx, _hit: &Hit) -> Vec<CodeAction> {
-        let Some(new) = blank(cx) else { return Vec::new() };
+        let Some(new) = super::blank(cx, ENV, "tikz") else { return Vec::new() };
         let note = if new.preamble.is_some() { " (adds \\usepackage{tikz})" } else { "" };
         let mut edits = vec![TextEdit { range: new.at, new_text: wrap(TEMPLATE) }];
         edits.extend(new.preamble);
@@ -48,12 +48,13 @@ impl TypePlugin for Tikz {
 
     fn view(&self, cx: &Cx, _hit: &Hit) -> Option<Json> {
         let cfg = &cx.cfg().tikz;
-        let (title, drawing) = match picture(cx.analysis, cx.doc, cx.path, cx.pos.line) {
-            Some(p) => {
-                ("Edit drawing", json!({ "range": p.body, "body": slice(cx.doc, p.body), "nodes": nodes(cx, &p) }))
-            }
+        let (title, drawing) = match super::body(cx.analysis, cx.doc, cx.path, cx.pos.line, ENV, true) {
+            Some(p) => (
+                "Edit drawing",
+                json!({ "range": p.range, "body": super::slice(cx.doc, p.range), "nodes": nodes(cx, &p) }),
+            ),
             None => {
-                let new = blank(cx)?;
+                let new = super::blank(cx, ENV, "tikz")?;
                 let note = new.preamble.as_ref().map(|_| "adds `\\usepackage{tikz}` before `\\begin{document}`");
                 (
                     "New drawing",
@@ -69,92 +70,8 @@ impl TypePlugin for Tikz {
     }
 
     fn lenses(&self, analysis: &Analysis, doc: &Text, path: &str) -> Vec<CodeLens> {
-        let uri = super::super::handlers::path_uri(path);
-        super::pairs(analysis, path, ENV)
-            .into_iter()
-            .map(|(b, _)| {
-                let at = super::super::handlers::to_lsp(doc, Pos::new(b.span.line, 1));
-                let command = Command {
-                    title: "Edit drawing…".into(),
-                    command: "satex.openView".into(),
-                    arguments: Some(vec![json!(uri.as_str()), json!(at), json!("tikz")]),
-                };
-                CodeLens { range: Range { start: at, end: at }, command: Some(command), data: None }
-            })
-            .collect()
+        super::env_lenses(analysis, doc, path, ENV, "Edit drawing…", "tikz")
     }
-}
-
-/// A picture: the range of its body, between the `\begin` with its options and the `\end`.
-struct Picture {
-    lines: (u32, u32),
-    body: Range,
-}
-
-/// The innermost picture the run met around `line`.
-fn picture(analysis: &Analysis, doc: &Text, path: &str, line: u32) -> Option<Picture> {
-    let (b, e) = super::pairs(analysis, path, ENV)
-        .into_iter()
-        .filter(|(b, e)| b.span.line <= line && line <= e.span.line)
-        .min_by_key(|(b, e)| e.span.line - b.span.line)?;
-    let text = doc.body();
-    let begin = format!("\\begin{{{ENV}}}");
-    let from = doc.offset(Pos::new(b.span.line, 1))?;
-    let mut start = from + text[from..].find(&begin)? + begin.len();
-    // the options, possibly over lines
-    let rest = &text[start..];
-    let ws = rest.len() - rest.trim_start().len();
-    if rest[ws..].starts_with('[') {
-        let mut depth = 0;
-        for (i, c) in rest[ws..].char_indices() {
-            match c {
-                '[' | '{' => depth += 1,
-                ']' | '}' => depth -= 1,
-                _ => {}
-            }
-            if depth == 0 {
-                start += ws + i + 1;
-                break;
-            }
-        }
-    }
-    let to = doc.offset(Pos::new(e.span.line, 1))?;
-    let end = to + text[to..].find(&format!("\\end{{{ENV}}}"))?;
-    let lsp = |o: usize| super::super::handlers::to_lsp(doc, doc.pos(o));
-    (start <= end)
-        .then(|| Picture { lines: (b.span.line, e.span.line), body: Range { start: lsp(start), end: lsp(end) } })
-}
-
-fn slice(doc: &Text, r: Range) -> String {
-    let at = |p: lsp_types::Position| doc.offset(super::super::handlers::to_pos(doc, p)).unwrap_or(0);
-    doc.body()[at(r.start)..at(r.end)].to_string()
-}
-
-/// A new picture's place: the blank line at the cursor in the document body, outside any
-/// picture, and `\usepackage{tikz}` before `\begin{document}` when the run has no tikz.
-struct New {
-    at: Range,
-    preamble: Option<TextEdit>,
-}
-
-fn blank(cx: &Cx) -> Option<New> {
-    let line = cx.pos.line;
-    let inside = |(b, e): &(&crate::analysis::facts::Occurrence, &crate::analysis::facts::Occurrence)| {
-        b.span.line < line && line < e.span.line
-    };
-    let (document, _) = super::pairs(cx.analysis, cx.path, "document").into_iter().find(inside)?;
-    if !cx.doc.line(line).trim().is_empty() || super::pairs(cx.analysis, cx.path, ENV).iter().any(inside) {
-        return None;
-    }
-    let point = |l: u32| {
-        let p = super::super::handlers::to_lsp(cx.doc, Pos::new(l, 1));
-        Range { start: p, end: p }
-    };
-    let loaded = cx.analysis.interner.lookup(ENV).is_some_and(|s| cx.analysis.env.is_defined(s));
-    let preamble =
-        (!loaded).then(|| TextEdit { range: point(document.span.line), new_text: "\\usepackage{tikz}\n".into() });
-    let end = super::super::handlers::to_lsp(cx.doc, Pos::new(line, cx.doc.line(line).chars().count() as u32 + 1));
-    Some(New { at: Range { start: point(line).start, end }, preamble })
 }
 
 /// A picture's text around `body`.
@@ -164,7 +81,7 @@ fn wrap(body: &str) -> String {
 
 /// The nodes the run made in the picture: name, shape, and where pgf put each (cm) when the
 /// run computed it, last definition winning.
-fn nodes(cx: &Cx, p: &Picture) -> Vec<Json> {
+fn nodes(cx: &Cx, p: &super::Body) -> Vec<Json> {
     let a = cx.analysis;
     let Some(file) = super::super::type_at::file_of(a, cx.path) else { return Vec::new() };
     let mut out: Vec<(String, [String; 3], u32)> = Vec::new();

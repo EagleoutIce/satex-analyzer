@@ -5,7 +5,7 @@ import { LanguageClient } from 'vscode-languageclient/node';
 interface View { plugin: string; title: string; sections: unknown[] }
 interface Edit { range: { start: { line: number; character: number }; end: { line: number; character: number } }; newText: string }
 
-const VERB: Record<string, string> = { color: 'Pick', units: 'Convert', environment: '', tikz: '' };
+const VERB: Record<string, string> = { color: 'Pick', units: 'Convert', environment: '', tikz: '', forest: '' };
 
 /** The views at a position, from the server. */
 async function views(client: LanguageClient, doc: vscode.TextDocument, at?: vscode.Position, plugin?: string): Promise<View[]> {

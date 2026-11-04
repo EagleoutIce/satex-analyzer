@@ -688,6 +688,10 @@ type_plugins:  # editor features for text of a type: hover, completion, code act
   theorem:  # theorem-like environments the run defined
     enabled: true  # a manager: kinds with counters and styles, instances with labels and references, rename, numbering
       #! affects: output
+  forest:  # a forest environment the run met, a blank line of the document body
+    enabled: true  # "Edit tree…": add, delete, rename and drag nodes, node and `for tree` options, indented outlines in
+      #! affects: output
+      #! example: `enabled: false`: no tree lens, action or dialog
 
 slice:  # what satex slice leaves out
   trim: true  # leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \begin{document} reads

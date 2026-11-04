@@ -1,0 +1,29 @@
+\documentclass{article}
+\usepackage{forest}
+
+\begin{document}
+\begin{forest}
+[CP [C, name=c] [TP [DP, name=dp] [T' [T] [VP [t, name=tr]]]]]
+\draw[->] (tr) to[out=south west, in=south] (dp);
+\draw[dashed] (c) -- (dp);
+\end{forest}
+
+\begin{forest}
+[A [B, name=b [C]] [D [E, tikz={\draw[->] () -- (!u);}]]]
+\draw (b) -- (!r1.south);
+\end{forest}
+
+Inline \Forest{[a [b] [c]]} tree.
+
+\Forest{for tree={circle,draw}[1[2][3]]}
+
+\begin{forest}
+[a [b] [c [d] [e]]]
+\end{forest}
+\begin{forest}
+for tree={content/.wrap pgfmath arg={#1\textsubscript{##1}}{level()}}
+[r [s] [t]]
+\end{forest}
+
+\gdef\SatexReachedEnd{}
+\end{document}

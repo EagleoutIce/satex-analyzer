@@ -115,4 +115,16 @@ Every term an index line carried (`\index{graph!directed}`), by its top level, s
 
 Every environment a document call defined together with its number (`\the⟨env⟩`), with any package: the counter it owns, shares or is numbered within, and the commands its code has that the others lack (its style). Each instance shows its labels and the lines referencing them. Renaming rewrites the definition, both ends of each instance and the kinds that share its counter. Numbering writes the group the document's own calls of the same command use for a shared counter or a parent counter.
 
+## forest
+
+A `forest` environment the run met: a lens "Edit tree…" on its `\begin` line and the view anywhere inside. The dialog reads the bracket notation `[content, options [child] …]` and draws the tree. Where the run computed forest's packing for every node (`fRsT⟨id⟩/x` and `/y`), it draws the nodes there. A node's `name` shows on hover.
+
+- Select a node to edit its content and its options. Add a child or a sibling, delete a node with its subtree, move it left or right.
+- Drag a node onto another: onto its middle it becomes the last child, onto its left or right third a sibling before or after it.
+- `for tree={…}` in the preamble edits as one field. The rest of the preamble and the code after the tree stay as they were.
+- Indented outline: paste lines indented by depth (`-`, `*`, `+` or `1.` markers dropped) to add them under the selected node or to replace the tree. Export writes the tree as such an outline.
+- It writes only what changed. An untouched node keeps its text, spacing and comments. A new or moved node takes the spacing of the sibling before it. Content with a comma or a bracket goes in braces.
+
+On a blank line of the document body, "Insert forest tree" writes a small tree and the view "New tree" starts one. Both add `\usepackage{forest}` when the run has no forest.
+
 Writing a plugin: [Writing a type plugin](writing-type-plugins.md).

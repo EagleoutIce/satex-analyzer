@@ -3439,6 +3439,60 @@ fn lenses_of_a_relative_root_run_through_its_input() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+const TREE: &str = "\\documentclass{article}\n\\usepackage{forest}\n\\begin{document}\n\\begin{forest}\n  for tree={draw}\n  [VP [DP, name=dp] [V]]\n\\end{forest}\n\n\\end{document}\n";
+
+/// "Edit tree…": a lens on the tree, a view with its body and the nodes forest made, in
+/// bracket order with their content; a blank line offers a new tree.
+#[test]
+fn forest_plugin_shows_the_runs_nodes() {
+    let (mut server, uri, dir) = open_set("forest", TREE, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 5, 3);
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].clone();
+    let lens = lenses.as_array().unwrap().iter().find(|l| l["command"]["arguments"][2] == "forest").cloned();
+    assert_eq!(lens.expect("a tree lens")["range"]["start"]["line"], 3, "{lenses}");
+    let views = at(&mut server, &uri, "satex/view", 5, 3);
+    let tree = &views.as_array().unwrap().iter().find(|v| v["plugin"] == "forest").expect("a tree")["sections"][0];
+    assert_eq!(tree["kind"], "forest");
+    let body = TREE.split_once("\\begin{forest}").unwrap().1.split_once("\\end{forest}").unwrap().0;
+    assert_eq!(tree["body"], body);
+    let contents: Vec<&str> = tree["nodes"].as_array().unwrap().iter().filter_map(|n| n["content"].as_str()).collect();
+    assert_eq!(contents, ["VP", "DP", "V"], "{tree}");
+    assert_eq!(tree["nodes"][1]["name"], "dp", "{tree}");
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 7, 0);
+    assert!(actions.as_array().unwrap().iter().any(|a| a["title"] == "Insert forest tree"), "{actions}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Without forest the new tree loads it; `enabled: false` takes lens, view and action away.
+#[test]
+fn forest_plugin_new_tree_and_off() {
+    let text = "\\documentclass{article}\n\\begin{document}\nText\n\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("forest-new", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 2, 1);
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 3, 0);
+    let new =
+        actions.as_array().unwrap().iter().find(|a| a["title"] == "Insert forest tree (adds \\usepackage{forest})");
+    let edits = new.expect("a new tree")["edit"]["changes"][&uri].as_array().unwrap().clone();
+    assert!(edits[0]["newText"].as_str().unwrap().starts_with("\\begin{forest}"), "{edits:?}");
+    assert_eq!(edits[1]["newText"], "\\usepackage{forest}\n");
+    let views = at(&mut server, &uri, "satex/view", 3, 0);
+    assert!(views.as_array().unwrap().iter().any(|v| v["plugin"] == "forest" && v["title"] == "New tree"), "{views}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    let (mut server, uri, dir) = open_set("forest-off", TREE, &["type_plugins.forest.enabled=false"]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 5, 3);
+    assert!(!at(&mut server, &uri, "satex/view", 5, 3).as_array().unwrap().iter().any(|v| v["plugin"] == "forest"));
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 7, 0);
+    assert!(!actions.as_array().unwrap().iter().any(|a| a["title"].as_str().unwrap_or_default().contains("forest")));
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].clone();
+    assert!(!lenses.as_array().unwrap().iter().any(|l| l["command"]["arguments"][2] == "forest"), "{lenses}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 const PICTURE: &str = "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}[x=1cm]\n  \\node[draw] (a) at (0,0) {Start};\n  \\node[draw, circle] (b) at (3,1) {End};\n  \\draw[->] (a) -- (b);\n  \\foreach \\i in {1,2} { \\node (c\\i) at (\\i,-2) {\\i}; }\n\\end{tikzpicture}\n\n\\end{document}\n";
 
 /// "Edit drawing…": a lens on the picture, a view with its body and the nodes the run made,

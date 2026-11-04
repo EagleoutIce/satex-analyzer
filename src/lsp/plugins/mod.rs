@@ -9,6 +9,7 @@
 mod bibliography;
 mod color;
 mod environment;
+mod forest;
 mod glossary;
 mod image;
 mod index;
@@ -25,7 +26,7 @@ use crate::analysis::machine::Analysis;
 use crate::analysis::roles::Ty;
 use crate::linter::fix::{Pos, Text};
 use crate::project::config::TypePlugins;
-use lsp_types::{CodeAction, CodeLens, ColorInformation, CompletionItem, InlayHint};
+use lsp_types::{CodeAction, CodeLens, ColorInformation, Command, CompletionItem, InlayHint, Range, TextEdit};
 use serde_json::{Value as Json, json};
 
 /// What a feature sees: the run, the document and the types at the position.
@@ -103,6 +104,7 @@ pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
     &table::Table,
     &image::Image,
     &tikz::Tikz,
+    &forest::Forest,
     &savebox::Savebox,
     &glossary::Glossary,
     &bibliography::Bibliography,
@@ -225,6 +227,101 @@ pub(super) fn pairs<'a>(analysis: &'a Analysis, path: &str, name: &str) -> Vec<(
         }
     }
     out
+}
+
+/// An environment's body: its lines and the range between `\begin{env}` (with its `[…]`
+/// options when it takes them) and `\end{env}`.
+pub(super) struct Body {
+    pub lines: (u32, u32),
+    pub range: Range,
+}
+
+/// The body of the innermost `env` the run met around `line`.
+pub(super) fn body(analysis: &Analysis, doc: &Text, path: &str, line: u32, env: &str, options: bool) -> Option<Body> {
+    let (b, e) = pairs(analysis, path, env)
+        .into_iter()
+        .filter(|(b, e)| b.span.line <= line && line <= e.span.line)
+        .min_by_key(|(b, e)| e.span.line - b.span.line)?;
+    let text = doc.body();
+    let begin = format!("\\begin{{{env}}}");
+    let from = doc.offset(Pos::new(b.span.line, 1))?;
+    let mut start = from + text[from..].find(&begin)? + begin.len();
+    let rest = &text[start..];
+    let ws = rest.len() - rest.trim_start().len();
+    if options && rest[ws..].starts_with('[') {
+        let mut depth = 0;
+        for (i, c) in rest[ws..].char_indices() {
+            match c {
+                '[' | '{' => depth += 1,
+                ']' | '}' => depth -= 1,
+                _ => {}
+            }
+            if depth == 0 {
+                start += ws + i + 1;
+                break;
+            }
+        }
+    }
+    let to = doc.offset(Pos::new(e.span.line, 1))?;
+    let end = to + text[to..].find(&format!("\\end{{{env}}}"))?;
+    let lsp = |o: usize| super::handlers::to_lsp(doc, doc.pos(o));
+    (start <= end)
+        .then(|| Body { lines: (b.span.line, e.span.line), range: Range { start: lsp(start), end: lsp(end) } })
+}
+
+/// The text of `r`.
+pub(super) fn slice(doc: &Text, r: Range) -> String {
+    let at = |p: lsp_types::Position| doc.offset(super::handlers::to_pos(doc, p)).unwrap_or(0);
+    doc.body()[at(r.start)..at(r.end)].to_string()
+}
+
+/// A new environment's place: the blank line at the cursor in the document body, outside any
+/// `env`, and `\usepackage{package}` before `\begin{document}` when the run has no `env`.
+pub(super) struct New {
+    pub at: Range,
+    pub preamble: Option<TextEdit>,
+}
+
+pub(super) fn blank(cx: &Cx, env: &str, package: &str) -> Option<New> {
+    let line = cx.pos.line;
+    let inside = |(b, e): &(&Occurrence, &Occurrence)| b.span.line < line && line < e.span.line;
+    let (document, _) = pairs(cx.analysis, cx.path, "document").into_iter().find(inside)?;
+    if !cx.doc.line(line).trim().is_empty() || pairs(cx.analysis, cx.path, env).iter().any(inside) {
+        return None;
+    }
+    let point = |l: u32| {
+        let p = super::handlers::to_lsp(cx.doc, Pos::new(l, 1));
+        Range { start: p, end: p }
+    };
+    let loaded = cx.analysis.interner.lookup(env).is_some_and(|s| cx.analysis.env.is_defined(s));
+    let preamble = (!loaded)
+        .then(|| TextEdit { range: point(document.span.line), new_text: format!("\\usepackage{{{package}}}\n") });
+    let end = super::handlers::to_lsp(cx.doc, Pos::new(line, cx.doc.line(line).chars().count() as u32 + 1));
+    Some(New { at: Range { start: point(line).start, end }, preamble })
+}
+
+/// A lens `title` on each `env` the run met, opening `plugin`'s view.
+pub(super) fn env_lenses(
+    analysis: &Analysis,
+    doc: &Text,
+    path: &str,
+    env: &str,
+    title: &str,
+    plugin: &str,
+) -> Vec<CodeLens> {
+    let uri = super::handlers::path_uri(path);
+    pairs(analysis, path, env)
+        .into_iter()
+        .map(|(b, _)| {
+            let at = super::handlers::to_lsp(doc, Pos::new(b.span.line, 1));
+            let command = Command {
+                title: title.into(),
+                command: "satex.openView".into(),
+                arguments: Some(vec![json!(uri.as_str()), json!(at), json!(plugin)]),
+            };
+            CodeLens { range: Range { start: at, end: at }, command: Some(command), data: None }
+        })
+        .collect()
 }
 
 /// The types of the whole word at `pos`, asked at its end, as hover asks.

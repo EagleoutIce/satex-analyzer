@@ -14,3 +14,5 @@ documents::pictures_around_a_tcolorbox_keep_their_anchors_local
 lsp::color_plugin_converts_a_definition
 budgets::document_metadata_warm
 budgets::tagpdf_warm
+documents::forest_math_node_with_superscript
+documents::forest_math_nodes_typeset_only_their_contents
