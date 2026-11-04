@@ -262,6 +262,9 @@ conventions:  # how TeX is usually written, where the text alone does not say
     shown: 300  # commands one answer lists. The editor asks again as more is typed
       #! affects: output, speed
       #! example: `shown: 50`
+    signatures: 4  # items, best first, whose signature a probe reads where the listing has none
+      #! affects: output, speed
+      #! example: `signatures: 0`: only signatures the listing knows
     key_depth: 3  # levels below a key family that are listed, so a subkey is found by any part of its path
       #! affects: output
       #! example: `key_depth: 1`
@@ -625,6 +628,43 @@ lsp:  # how satex lsp serves an editor
     #! example: `1000`: fast typing triggers one run per pause, not per keystroke
   # port: 2087  # a TCP port to serve on instead of stdio
     #! affects: output
+
+type_plugins:  # editor features for text of a type: hover, completion, code actions and dialogs (satex query type-plugins)
+  keys:  # key lists: pgfkeys, l3keys, kvoptions and package options
+    enabled: true  # completion and hover docs in key lists
+      #! affects: output
+      #! example: `enabled: false`: no key items or key hovers
+    family_continue: true  # accepting a family (`/demo`) inserts `/demo/` and opens its keys
+      #! affects: output
+  units:  # dimensions: `12pt`, `\textwidth`, a value range
+    enabled: true  # hover in every unit, a converter dialog and convert actions
+      #! affects: output
+      #! example: `enabled: false`: no conversions on a length
+    units: [pt, mm, cm, in, bp]  # the units a hover shows and the conversions offered
+      #! affects: output
+      #! example: `units: [cm, mm]`
+    decimals: 2  # decimals a converted length is written with
+      #! affects: output
+      #! range: 0..6
+  color:  # color names and xcolor expressions
+    enabled: true  # swatches, picker dialog, model conversions and color completion
+      #! affects: output
+      #! example: `enabled: false`: no color items, swatches or picker
+    swatches: true  # a swatch next to each color a color command uses
+      #! affects: output
+    name: mycolor  # what a color the picker defines is called, numbered when taken
+      #! affects: output
+  environment:  # the name of a \begin or \end
+    enabled: true  # "Change environment…": switch one occurrence, both ends and its arguments
+      #! affects: output
+  table:  # tables: environments whose code reaches \@array (tabular, tabular*, tabularx, array)
+    enabled: true  # a code lens and hover link to the grid dialog, booktabs and siunitx rewrites
+      #! affects: output
+      #! example: `enabled: false`: no table lens, dialog or rewrites
+  image:  # figures: the files \includegraphics reads
+    enabled: true  # a code lens and hover link to the crop, rotate and size dialog, rotate and fit actions
+      #! affects: output
+      #! example: `enabled: false`: no image lens, dialog or actions
 
 slice:  # what satex slice leaves out
   trim: true  # leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \begin{document} reads

@@ -320,6 +320,25 @@ fn the_same_package_after_a_different_preamble_is_served_and_reports_what_readin
 }
 
 #[test]
+fn a_replay_keeps_the_primitive_copies_made_before_the_load() {
+    // Recorded where `\mydraft` is no copy of `\pdfdraftmode`: replayed
+    // where it is one, the copy stays and the test on it stays decided.
+    let dir = project("aliases");
+    std::fs::write(dir.join("few.sty"), "\\ProvidesPackage{few}\n\\def\\fewmacro{x}\n").expect("few.sty");
+    let document = |preamble: &str, body: &str| {
+        format!(
+            "\\documentclass{{article}}\n{preamble}\\usepackage{{few}}\n\\begin{{document}}{body}\\end{{document}}\n"
+        )
+    };
+    run(&dir, &document("", ""));
+    let warm = run(&dir, &document("\\let\\mydraft\\pdfdraftmode\n", "\\ifnum\\mydraft=0 \\else\\notdefined\\fi"));
+    assert_eq!(served(&warm, "few"), Some(true), "{:?}", warm.package_caches);
+    // Lost, it forks: two paths join that "differed in \mydraft".
+    let wrong: Vec<_> = warm.facts.diagnostics.iter().filter(|d| d.message.contains("draft")).collect();
+    assert!(wrong.is_empty(), "{wrong:?}");
+}
+
+#[test]
 fn a_prior_definition_the_package_tests_makes_it_miss() {
     let dir = project("tested");
     run(&dir, DOCUMENT);

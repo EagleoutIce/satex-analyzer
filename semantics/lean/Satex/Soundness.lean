@@ -2,6 +2,9 @@
 Satex.Soundness: the abstract run of `Satex.Abstract` over-approximates every
 concrete run of `Satex.Concrete`, and it terminates.
 
+Written with AI assistance from Claude Code (Claude Opus 5.5; build fixes with
+Claude Sonnet 5.5), directed and reviewed by the author.
+
 Part 1 is domain-independent: orders, the loop with k passes and a summary,
 simulation, the budget. Part 2 instantiates it with job 2's domains and
 transfers against job 1's `Step`. Open items and counterexamples:

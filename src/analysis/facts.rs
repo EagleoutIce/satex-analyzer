@@ -367,8 +367,12 @@ pub struct Text {
     /// further text: no page break may part the paragraph from what comes
     /// next, as after a heading (LaTeX's `\@xsect`, plain's `\beginsection`).
     pub kept: Vec<u32>,
+    /// The ends in `pars` some path made and another may not have: there
+    /// the paragraph may go on, ascending.
+    pub open: Vec<u32>,
     /// For a character set under an undecided conditional: its index, the
-    /// outermost conditional's node and the arm taken.
+    /// outermost conditional's node and the arm taken. One both arms set
+    /// is listed once per arm.
     pub arms: Vec<(u32, crate::engine::env::NodeId, bool)>,
     /// Characters a loop set again, so any number of times, ascending.
     pub repeats: Vec<u32>,
@@ -399,6 +403,32 @@ pub struct Text {
     /// For the first character of a paragraph: the width of `\parskip` (sp)
     /// the run had there, when it was exactly one value.
     pub skips: Vec<(u32, crate::engine::value::Scaled)>,
+    /// For the first character of a paragraph: how its lines are aligned,
+    /// from `\leftskip` and `\rightskip` as the run had them there.
+    pub just: Vec<(u32, Just)>,
+}
+
+/// How a paragraph's lines sit between the margins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Just {
+    Justified,
+    Left,
+    Right,
+    Center,
+    /// A skip the run could not decide.
+    Unknown,
+}
+
+impl Just {
+    pub fn name(self) -> &'static str {
+        match self {
+            Just::Justified => "justified",
+            Just::Left => "left",
+            Just::Right => "right",
+            Just::Center => "center",
+            Just::Unknown => "unknown",
+        }
+    }
 }
 
 /// Where an alignment begins, ends a cell (`&`) or a row (`\cr`), and

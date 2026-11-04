@@ -4,9 +4,11 @@ import { existsSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { LanguageClient, State, StreamInfo } from 'vscode-languageclient/node';
+import { openDialog } from './dialogs';
 import { Actions } from './sidebar';
 import { STALE, Status, Work } from './status';
 import { Steps, TraceEvent } from './steps';
+import { openView, ViewActions } from './views';
 
 const INSTALL_HINT = 'Install it with `cargo install satex-analyzer`, download a release from https://github.com/EagleoutIce/satex-analyzer/releases, or set `satex.path`.';
 let client: LanguageClient | undefined;
@@ -194,6 +196,14 @@ export function activate(context: vscode.ExtensionContext): void {
                     published.set(uri.toString(), [uri, diagnostics]);
                     next(uri, shown(diagnostics));
                 },
+                // a hover's "Edit table…" link runs `satex.openDialog`, and only that command
+                provideHover: async (document, position, token, next) => {
+                    const hover = await next(document, position, token);
+                    for (const c of hover?.contents ?? []) {
+                        if (c instanceof vscode.MarkdownString && c.value.includes('command:satex.openDialog')) { c.isTrusted = { enabledCommands: ['satex.openDialog'] }; }
+                    }
+                    return hover;
+                },
             },
         });
     const working = (work: Work) => {
@@ -215,8 +225,13 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('satex.compile', compile),
         vscode.commands.registerCommand('satex.focus', () => vscode.commands.executeCommand('workbench.actions.view.problems')),
         vscode.commands.registerCommand('satex.caches', showCaches),
+        // the table and image dialogs (src/lsp/dialogs.rs): `satex/dialog` in a webview
+        vscode.commands.registerCommand('satex.openDialog', (arg) => openDialog(context, client, arg)),
         vscode.commands.registerCommand('satex.restart', () => client?.restart()),
         vscode.commands.registerCommand('satex.showOutput', () => client?.outputChannel.show(true)),
+        // type plugins' dialogs (color picker, length converter): the server's `satex/view` in a webview
+        vscode.commands.registerCommand('satex.openView', (uri?: vscode.Uri, at?: vscode.Position, plugin?: string) => openView(context, client, uri, at, plugin)),
+        vscode.languages.registerCodeActionsProvider(['latex', 'tex'].map(language => ({ language })), new ViewActions(() => client)),
         vscode.commands.registerCommand('satex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
         client.onNotification('satex/status', working),
         client.onDidChangeState(e => status.down(e.newState === State.Stopped)));

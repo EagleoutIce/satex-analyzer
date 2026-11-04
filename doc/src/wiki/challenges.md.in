@@ -9,10 +9,11 @@ How to read a table. In the satex column the notation is **bold**, so a literal 
 | Notation | Meaning |
 |---|---|
 | `⟦x⟧` | text in a box satex cannot place: never shipped, or placed only on some paths. A box that is placed (`\box`, `\copy`, `\unhbox`, `\raise` and relatives) reads as plain text in order. A box that is never shipped does not count against equality, its row keeps the mark ⊇ |
-| `{a\|b}` | a choice: an undecided conditional, one arm each |
+| `{a\|b}` | a choice: an undecided conditional or another place paths part, one arm each |
 | `⟨?⟩` | an unknown character |
 | `c…` | `c` repeated one or more times by a summarized loop |
 | `de·pen` | `·` is a hyphenation point where the line breaker may set a hyphen |
+| `a ¶ b` | a paragraph end some paths make and others do not: `a` may go on into `b` |
 | ✓ | equal |
 | ⊇ | covers: pdflatex's text is one of satex's choices, so the result is sound but less precise |
 | ✗ | differs: unsound, a bug |

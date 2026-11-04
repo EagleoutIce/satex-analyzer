@@ -435,14 +435,86 @@ pub struct LspConfig {
     /// How long an edit waits with no further edits before it is
     /// re-analyzed, so fast typing coalesces into one run.
     pub debounce_ms: u64,
-    /// Shows a color swatch next to each color name a color command uses,
-    /// with the value the run gave it (xcolor and packages built on it).
-    pub color_previews: bool,
 }
 
 impl Default for LspConfig {
     fn default() -> LspConfig {
-        LspConfig { port: None, host: "127.0.0.1".into(), debounce_ms: 300, color_previews: true }
+        LspConfig { port: None, host: "127.0.0.1".into(), debounce_ms: 300 }
+    }
+}
+
+/// `type_plugins:` in `satex.yaml`: the editor features each type plugin
+/// ([`crate::lsp::plugins`]) adds where text of its type stands.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TypePlugins {
+    pub keys: KeysPlugin,
+    pub units: UnitsPlugin,
+    pub color: ColorPlugin,
+    pub environment: Switch,
+    pub table: Switch,
+    pub image: Switch,
+}
+
+/// A plugin with nothing to tune: `enabled` only.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Switch {
+    pub enabled: bool,
+}
+
+impl Default for Switch {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+/// `type_plugins.keys:` key lists (pgfkeys, l3keys, kvoptions, package options).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct KeysPlugin {
+    pub enabled: bool,
+    /// After a family's name, the completion goes on with its keys.
+    pub family_continue: bool,
+}
+
+impl Default for KeysPlugin {
+    fn default() -> Self {
+        Self { enabled: true, family_continue: true }
+    }
+}
+
+/// `type_plugins.units:` dimensions (`12pt`, `\textwidth`).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UnitsPlugin {
+    pub enabled: bool,
+    /// The units a hover shows a length in, and the conversions offered.
+    pub units: Vec<String>,
+    /// Decimals a converted length is written with.
+    pub decimals: u8,
+}
+
+impl Default for UnitsPlugin {
+    fn default() -> Self {
+        Self { enabled: true, units: ["pt", "mm", "cm", "in", "bp"].map(String::from).to_vec(), decimals: 2 }
+    }
+}
+
+/// `type_plugins.color:` color names and color expressions.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ColorPlugin {
+    pub enabled: bool,
+    /// A swatch next to each color a color command uses.
+    pub swatches: bool,
+    /// The name a color the picker defines starts with.
+    pub name: String,
+}
+
+impl Default for ColorPlugin {
+    fn default() -> Self {
+        Self { enabled: true, swatches: true, name: "mycolor".into() }
     }
 }
 
@@ -900,6 +972,8 @@ area! {
     Completion {
         /// Commands one answer lists.
         shown: usize = 300,
+        /// Items, best first, whose signature the probe reads where the listing gives none.
+        signatures: usize = 4,
         /// Levels below a directory key that are listed.
         key_depth: usize = 3,
         /// Installed files whose identification is read.
@@ -1462,6 +1536,9 @@ pub struct Config {
     /// What `satex slice` leaves out.
     #[serde(default)]
     pub slice: SliceConfig,
+    /// The editor features each type plugin adds.
+    #[serde(default)]
+    pub type_plugins: TypePlugins,
 }
 
 impl Default for Config {
@@ -1519,6 +1596,7 @@ impl Default for Config {
             docs: DocsConfig::default(),
             style_prompt: StylePrompt::default(),
             slice: SliceConfig::default(),
+            type_plugins: TypePlugins::default(),
         }
     }
 }

@@ -100,3 +100,12 @@ fn every_row_names_lean_rules() {
     }
     assert!(wrong.is_empty(), "rules not found in Concrete.lean: {wrong:?}");
 }
+
+/// `--list`, the wiki and the playground show the queries in this order: by name.
+#[test]
+fn queries_are_listed_by_name() {
+    let names: Vec<&str> = satex::queries::query::Query::ALL.iter().map(|(n, _)| *n).collect();
+    let mut sorted = names.clone();
+    sorted.sort_unstable();
+    assert_eq!(names, sorted);
+}

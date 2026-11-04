@@ -96,7 +96,10 @@ const TEMPLATES: &[(&str, &str)] = &[
     ("doc/src/wiki/queries.md.in", "doc/wiki/queries.md"),
     ("doc/src/wiki/configuration.md.in", "doc/wiki/configuration.md"),
     ("doc/src/wiki/lsp.md.in", "doc/wiki/lsp.md"),
+    ("doc/src/wiki/type-plugins.md.in", "doc/wiki/type-plugins.md"),
+    ("doc/src/wiki/writing-type-plugins.md.in", "doc/wiki/writing-type-plugins.md"),
     ("doc/src/wiki/intellij.md.in", "doc/wiki/intellij.md"),
+    ("doc/src/wiki/vscode.md.in", "doc/wiki/vscode.md"),
     ("doc/src/wiki/domains.md.in", "doc/wiki/domains.md"),
     ("doc/src/wiki/challenges.md.in", "doc/wiki/challenges.md"),
     ("doc/src/chktex-coverage.md.in", "doc/chktex-coverage.md"),
@@ -916,28 +919,22 @@ fn example(path: &str) -> Result<String, String> {
             .unwrap_or_default()
     };
     let rows = json(&["query", "typeset"]);
-    let of = |kind: &str| -> Vec<String> {
-        rows.iter().filter(|r| r["kind"] == kind).filter_map(|r| r["detail"].as_str().map(String::from)).collect()
-    };
-    let computed = of("paragraph");
     let paragraphs: Vec<&serde_json::Value> = rows.iter().filter(|r| r["kind"] == "paragraph").collect();
-    let record = |c: &str| paragraphs.iter().find(|r| r["detail"] == c).copied();
+    let detail = |r: &serde_json::Value| r["detail"].as_str().unwrap_or("").to_string();
+    let computed: Vec<(String, bool)> =
+        paragraphs.iter().map(|r| (detail(r), r["open"].as_bool().unwrap_or(false))).collect();
     let mark = |v: &str| match v {
         "equal" => "✓",
         "covers" => "⊇",
         _ => "✗",
     };
-    // Pair paragraphs in order. A computed one that may be empty and does
-    // not match the next shipped one stands alone.
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    let mut engine = shipped.iter().peekable();
-    for c in &computed {
-        let alone = satex::queries::query::typeset_verdict(c, "") != "DIFFERS"
-            && engine.peek().is_none_or(|e| satex::queries::query::typeset_verdict(c, e) == "DIFFERS");
-        let e = if alone { String::new() } else { engine.next().cloned().unwrap_or_default() };
-        pairs.push((e, c.clone()));
-    }
-    pairs.extend(engine.map(|e| (e.clone(), String::new())));
+    // Each shipped paragraph beside the computed ones it pairs with: an open
+    // one (on some path it goes on) with those it may go on into.
+    let mut pairs: Vec<(String, &[&serde_json::Value])> = satex::queries::query::pair_paragraphs(&computed, &shipped)
+        .into_iter()
+        .map(|(e, range)| (e, &paragraphs[range]))
+        .collect();
+    let joined = |c: &[&serde_json::Value]| c.iter().map(|r| detail(r)).collect::<Vec<_>>().join(" ");
     // An assumption the document's own code made, not one a package made
     // while loading (the clock, for example).
     let assumed: Vec<String> = rows
@@ -945,20 +942,23 @@ fn example(path: &str) -> Result<String, String> {
         .filter(|r| r["kind"] == "assumption" && r["file"] == file.as_str())
         .filter_map(|r| r["detail"].as_str().map(String::from))
         .collect();
-    if !assumed.is_empty() {
-        pairs.push((String::new(), format!("assumes {}", assumed.join(", "))));
-    }
     let escape = |l: &str| l.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-    // satex's notation (choice, repeat, box, unknown) is bold, text is plain.
-    let styled = |c: &str| {
-        let marked = record(c).and_then(|r| r["marked"].as_str()).unwrap_or(c);
+    // satex's notation (choice, repeat, box, unknown) is bold, text is plain;
+    // `¶` where an open paragraph went on into the next.
+    let styled = |c: &[&serde_json::Value]| {
         let mut html = String::new();
-        for (i, part) in marked.split('\u{E000}').enumerate() {
-            match part.split_once('\u{E001}') {
-                Some((notation, text)) if i > 0 => {
-                    let _ = write!(html, "<b>{}</b>{}", escape(notation), escape(text));
+        for (k, r) in c.iter().enumerate() {
+            if k > 0 {
+                html.push_str(" <b>¶</b> ");
+            }
+            let marked = r["marked"].as_str().unwrap_or("");
+            for (i, part) in marked.split('\u{E000}').enumerate() {
+                match part.split_once('\u{E001}') {
+                    Some((notation, text)) if i > 0 => {
+                        let _ = write!(html, "<b>{}</b>{}", escape(notation), escape(text));
+                    }
+                    _ => html.push_str(&escape(part)),
                 }
-                _ => html.push_str(&escape(part)),
             }
         }
         html
@@ -966,17 +966,18 @@ fn example(path: &str) -> Result<String, String> {
     // A box that is never shipped is not on the page.
     let boxes = Regex::new("⟦[^⟧]*⟧").expect("boxes regex");
     let boxed_only = |c: &str| c.contains('⟦') && boxes.replace_all(c, "").trim().is_empty();
-    pairs.retain(|(e, c)| (!e.is_empty() || !c.is_empty()) && !(e.is_empty() && boxed_only(c)));
+    pairs.retain(|(e, c)| (!e.is_empty() || !joined(c).is_empty()) && !(e.is_empty() && boxed_only(&joined(c))));
     let mut table = String::from("<table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>\n");
     let mut wrong = None;
     let mut why: Vec<String> = Vec::new();
     for (e, c) in &pairs {
-        let m = if c.starts_with("assumes ") { "" } else { mark(satex::queries::query::typeset_verdict(c, e)) };
+        let text = joined(c);
+        let m = mark(satex::queries::query::typeset_verdict(&text, e));
         if m == "✗" && wrong.is_none() {
-            wrong = Some((e.clone(), c.clone()));
+            wrong = Some((e.clone(), text.clone()));
         }
-        if !m.is_empty() && m != "✓" {
-            for cause in record(c).and_then(|r| r["causes"].as_array()).into_iter().flatten() {
+        if m != "✓" {
+            for cause in c.iter().flat_map(|r| r["causes"].as_array()).flatten() {
                 let (mark, line) = (cause["mark"].as_str().unwrap_or(""), &cause["line"]);
                 let test = cause["test"].as_str().unwrap_or("");
                 let reads: Vec<String> = cause["reads"]
@@ -986,7 +987,9 @@ fn example(path: &str) -> Result<String, String> {
                     .filter_map(|r| r.as_str())
                     .map(|r| format!("`{r}`"))
                     .collect();
+                let parted = cause["parted"].as_str().unwrap_or("");
                 why.push(match (test.is_empty(), reads.is_empty()) {
+                    _ if !parted.is_empty() => format!("- `{mark}`: l.{line} is set on paths parted at {parted}."),
                     (true, _) => format!("- `{mark}`: l.{line} sets a character the run could not compute."),
                     (false, true) => format!("- `{mark}`: l.{line} `{test}` is undecided."),
                     (false, false) => {
@@ -1000,6 +1003,13 @@ fn example(path: &str) -> Result<String, String> {
             "<tr><td><code>{}</code></td><td><code>{}</code></td><td>{m}</td></tr>",
             escape(e),
             styled(c)
+        );
+    }
+    if !assumed.is_empty() {
+        let _ = writeln!(
+            table,
+            "<tr><td><code></code></td><td><code>assumes {}</code></td><td></td></tr>",
+            escape(&assumed.join(", "))
         );
     }
     table.push_str("</table>\n");

@@ -132,8 +132,12 @@
         <span class="sep"></span><button type="button" class="lib-kind" data-f="mode" data-v="" aria-pressed="true">all</button><button type="button" class="lib-kind" data-f="mode" data-v="math" aria-pressed="false">math</button><button type="button" class="lib-kind" data-f="mode" data-v="text" aria-pressed="false">text</button></div>
       <div class="draw-box"><div class="draw-pad"><canvas id="draw-pad" width="256" height="256" aria-label="drawing area"></canvas><p id="draw-total" class="muted draw-total draw-meta"></p></div>
         <div class="draw-results"><ol id="draw-list" class="draw-list" aria-live="polite"></ol></div></div>
+      <p class="draw-foot draw-embed" title="Paste it into a page to embed the pad. A pick posts {type: 'satex-draw', text, package} to that page"><span>Use as a widget</span><code id="play-draw-embed"></code><button type="button" class="ghost small" id="play-draw-embed-copy">Copy</button></p>
       <template id="draw-about">Draw a symbol to find it. Inspired by <a href="https://detexify.kirelabs.org" target="_blank" rel="noopener">Detexify</a>.
         See also the <a href="https://ctan.org/pkg/comprehensive" target="_blank" rel="noopener">Comprehensive LaTeX Symbol List</a>.</template></dialog>
+    <dialog id="play-view" class="cache-dialog view-dialog" aria-labelledby="view-title">
+      <header><h3 id="view-title"></h3><button type="button" class="ghost small" id="view-close" aria-label="close">✕</button></header>
+      <div id="view-body" class="view-body"></div></dialog>
     <dialog id="play-cache" class="cache-dialog" aria-labelledby="cache-title">
       <header><h3 id="cache-title">Caches</h3><button type="button" class="ghost small" id="cache-close" aria-label="close">✕</button></header>
       <p class="muted cache-note">Analysis results kept in this browser. A dropped entry is rebuilt when needed.</p>
@@ -164,4 +168,6 @@
 <div id="play-drop" class="drop" hidden>Drop files, a folder or a .zip</div>
 <script id="satex-play" type="application/json">{{manifest}}</script>
 <script src="{{root}}{{drawjs}}" defer></script>
+<script src="{{root}}{{viewsjs}}" defer></script>
+<script src="{{root}}{{dialogsjs}}" defer></script>
 <script src="{{root}}{{playjs}}" defer></script>

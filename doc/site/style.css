@@ -945,6 +945,13 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .cfg-changed { box-shadow: inset 3px 0 0 var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .cfg-value { margin: 0; min-width: 0; } .cfg-value :is(input[type=text], input[type=number], select) { width: 100%; box-sizing: border-box; padding: .2rem .5rem; border: 1px solid var(--border); border-radius: 6px; background-color: var(--sunk); color: var(--fg); font-size: .8rem; }
 .cache-dialog.ask-dialog { height: fit-content; width: min(32rem, calc(100vw - 2rem)); }
+/* a type plugin's view (src/lsp/plugins, rendered by views.js) */
+.cache-dialog.view-dialog { height: fit-content; max-height: 90vh; width: min(40rem, calc(100vw - 1rem)); }
+.view-body { padding: 1rem; overflow: auto; }
+.sig-active { color: var(--accent); text-decoration: underline; }
+.cm-tooltip.cm-completionInfo .cm-item-card { max-width: 28rem; font-size: .85rem; }
+.hover-tools { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .5rem; padding-top: .5rem; border-top: 1px solid var(--border); }
+.cm-tooltip-autocomplete .cm-completionDetail .cm-hex { font: .8rem ui-monospace, monospace; }
 .ask-foot { display: flex; justify-content: flex-end; gap: .5rem; margin: .8rem 0 0; padding: .6rem 1rem; border-top: 1px solid var(--border); }
 /* a fixed size: the pad never moves under the pen while the results fill in */
 .cache-dialog.draw-dialog { height: min(86vh, 52rem); } .draw-dialog .draw-box { flex: 1; min-height: 0; } .draw-dialog .draw-list { max-height: 100%; overflow: auto; }
@@ -1174,6 +1181,9 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .typeset.show-findings .ts-finding.f-error { background: var(--error); } .typeset.show-findings .ts-finding:is(.f-info, .f-hint) { background: var(--c4); }
 .typeset.show-findings p.ts:has(.ts-finding) .ts-text { text-decoration: underline wavy color-mix(in srgb, var(--warning) 45%, transparent); text-underline-offset: 3px; }
 .typeset.show-findings p.ts:has(.f-error) .ts-text { text-decoration-color: color-mix(in srgb, var(--error) 45%, transparent); }
+.typeset .ts[data-just] .ts-text { flex: 1; min-width: 0; }
+.typeset .ts[data-just=center] .ts-text { text-align: center; } .typeset .ts[data-just=right] .ts-text { text-align: right; } .typeset .ts[data-just=left] .ts-text { text-align: left; }
+.typeset .ts[data-just=unknown] .ts-text::after { content: "alignment undecided"; margin-left: .5rem; padding: 0 .4rem; border: 1px dashed var(--border); border-radius: 999px; font: .66rem ui-monospace, Menlo, monospace; color: var(--muted); }
 .typeset .ts-env { display: none; } .typeset.show-envs .ts-env { display: inline-block; float: right; margin-left: .4rem; padding: 0 .4rem; border-radius: 999px; font: .66rem ui-monospace, Menlo, monospace; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 
 .o-sec { position: relative; } .o-sec[hidden] { display: none; }
@@ -1421,7 +1431,7 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf-bar select { font: inherit; font-size: .72rem; padding: 0 .2rem; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); }
 .pdf-bar select[hidden] { display: none; }
 .pdf-bar .pdf-state { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .74rem; }
-.pdf-bar .pdf-state a { color: inherit; font-weight: 600; } .pdf-bar .pdf-state .x-err { color: var(--error); }
+.pdf-bar .pdf-state a { color: inherit; } .pdf-bar .pdf-state .pdf-open { color: var(--accent); text-decoration: none; padding: 0 .15rem; } .pdf-bar .pdf-state .x-err { color: var(--error); }
 .pdf-bar .pdf-views { display: inline-flex; flex-wrap: wrap; gap: .2rem; }
 .pdf-bar .pdf-views:empty { display: none; }
 .pdf-bar .pdf-views button { font-size: .7rem; padding: .02rem .5rem; border-radius: 999px; border: 1px solid var(--border); background: none; color: var(--muted); cursor: pointer; display: inline-flex; gap: .25rem; align-items: center; font-weight: 500; }
@@ -1517,10 +1527,11 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf-bar .icon[aria-pressed=true] { color: var(--accent); border-color: var(--accent); }
 .pdf-split { display: inline-flex; position: relative; flex: none; }
 .pdf-split > button { border-radius: 999px 0 0 999px; }
-.pdf-split #pdf-compile { min-width: 5.6rem; text-align: center; }
+.pdf-split #pdf-compile { min-width: 4.6rem; text-align: center; }
 /* continuous compile: a calm dot that breathes, and "auto" beside the label; the dot turns while a build runs */
 .pdf-split #pdf-compile.auto::before { content: ""; display: inline-block; width: .42rem; height: .42rem; margin-right: .4rem; border-radius: 50%; background: currentColor; vertical-align: .08em; animation: pdf-breathe 3.2s ease-in-out infinite; }
-.pdf-split #pdf-compile.auto::after { content: " · auto"; font-size: .66rem; opacity: .8; }
+/* the split button stays one piece: no lift on hover, a tint instead (auto is the breathing dot; the title says it) */
+.pdf-split > button:hover:not(:disabled), .pdf-split summary:hover { transform: none; box-shadow: none; filter: brightness(1.08); }
 #play-pdf.pdf-running #pdf-compile.auto::before { animation-duration: .9s; }
 @keyframes pdf-breathe { 50% { opacity: .3; transform: scale(.7); } }
 .pdf-bar .pdf-state { flex: 1 1 0; }
@@ -1565,9 +1576,9 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 #play-config .cfg-yed .cm-editor { height: auto; min-height: 12rem; }
 .cfg-opt-why { display: block; margin-top: .15rem; font-size: .72rem; line-height: 1.3; } .cfg-chip-hint { flex: 1 0 100%; font-size: .72rem; color: var(--error); }
 /* the outline's keys: definitions green and uses blue, as the PDF layers draw them */
-.o-def { color: #1a7f37; background: color-mix(in srgb, #1a7f37 14%, transparent); }
-.o-use { color: #1d5fb8; background: color-mix(in srgb, #1d5fb8 14%, transparent); border-radius: 999px; }
-:root[data-theme=dark] .o-def, .dark .o-def { color: #5fd38a; } :root[data-theme=dark] .o-use, .dark .o-use { color: #7db4f5; }
+/* light-dark() follows the page's color scheme, also when dark comes from the system setting */
+.o-def { --o: light-dark(#1a7f37, #5fd38a); color: var(--o); background: color-mix(in srgb, var(--o) 16%, transparent); }
+.o-use { --o: light-dark(#1d5fb8, #7db4f5); color: var(--o); background: color-mix(in srgb, var(--o) 16%, transparent); border-radius: 999px; }
 .o-undef { color: var(--error); box-shadow: inset 0 0 0 1px var(--error); border-radius: 999px; }
 .o-cat { padding: .1rem 0 .1rem 1.1rem; } .o-cat > summary { cursor: pointer; font-size: .78rem; color: var(--muted); list-style: none; } .o-cat > summary::-webkit-details-marker { display: none; }
 .o-cat > summary::before { content: ""; display: inline-block; margin-right: .4rem; border: solid transparent; border-width: .22rem 0 .22rem .36rem; border-left-color: var(--muted); transition: transform var(--quick); }
@@ -1722,3 +1733,10 @@ a.ld.d-theorem, .dn.d-theorem { color: light-dark(#1a7f37, #6fd08c); } .dn { fon
 a.web { border-bottom: 1px dotted var(--muted); }
 table.prim td { vertical-align: top; } table.long.prim td:nth-child(3) { white-space: normal; min-width: 11rem; width: auto; } table.long.prim td:last-child { font-size: .78rem; } table.prim tr:target { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .sem { font-size: .72rem; padding: 0 .4rem; border-radius: 999px; background: var(--sunk); white-space: nowrap; } .sem-exact { color: var(--safe); } .sem-over { color: var(--warning); } .sem-open { color: var(--error); }
+/* a code lens above a table or figure: the button that opens its dialog (dialogs.js) */
+.cm-lens-line { white-space: pre; font: .78em/1.5 system-ui, sans-serif; color: var(--muted); padding-left: 4px; }
+.cm-lens { font: inherit; color: var(--accent); background: none; border: 0; padding: 0 .2rem; cursor: pointer; border-radius: 4px; }
+.cm-lens::before { content: "▦ "; }
+.cm-lens:hover, .cm-lens:focus-visible { background: var(--sunk); text-decoration: underline; }
+.sd-hover-open { margin: 0; }
+.sd-hover-open a::before { content: "▦ "; }

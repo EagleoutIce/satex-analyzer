@@ -9,10 +9,11 @@ How to read a table. In the satex column the notation is **bold**, so a literal 
 | Notation | Meaning |
 |---|---|
 | `⟦x⟧` | text in a box satex cannot place: never shipped, or placed only on some paths. A box that is placed (`\box`, `\copy`, `\unhbox`, `\raise` and relatives) reads as plain text in order. A box that is never shipped does not count against equality, its row keeps the mark ⊇ |
-| `{a\|b}` | a choice: an undecided conditional, one arm each |
+| `{a\|b}` | a choice: an undecided conditional or another place paths part, one arm each |
 | `⟨?⟩` | an unknown character |
 | `c…` | `c` repeated one or more times by a summarized loop |
 | `de·pen` | `·` is a hyphenation point where the line breaker may set a hyphen |
+| `a ¶ b` | a paragraph end some paths make and others do not: `a` may go on into `b` |
 | ✓ | equal |
 | ⊇ | covers: pdflatex's text is one of satex's choices, so the result is sound but less precise |
 | ✗ | differs: unsound, a bug |
@@ -582,7 +583,7 @@ l.7 \ref ⇒ \__cmd_start:nNNnnn {s}\ref  \ref code {… (defines \l__cmd_enviro
 l.8 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 474 more)
 l.8 \ref ⇒ \__cmd_start:nNNnnn {s}\ref  \ref code {… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 51 more)
 l.9 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 474 more)
-… 2 more
+… 3 more
 ```
 
 </details>
@@ -870,7 +871,6 @@ Inside one run the output routine is a cycle of its own: it fires when a page fi
 
 In this example the label moves away from the page the last run recorded. The kept `.aux` says page 1, so this run breaks the page and writes page 2. The next run reads 2, does not break, and writes 1 again. latexmk gives up after its maximum number of runs.
 
-<!-- satex: wrong -->
 ```tex
 \documentclass{article}
 \usepackage{refcount}
@@ -882,24 +882,24 @@ The label was on page \pageref{x}.
 ```
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>The label was on page 1.</code></td><td><code><b>{</b>The label was on page <b>⟨?⟩</b>. Here. <b>|</b>The label was on page 2. Here. <b>}</b></code></td><td>✗</td></tr>
-<tr><td><code>Here.</code></td><td><code><b>{</b>Here. <b>|</b><b>}</b></code></td><td>⊇</td></tr>
+<tr><td><code>The label was on page 1.</code></td><td><code>The label was on page <b>{</b><b>⟨?⟩</b><b>|</b>2<b>}</b>.</code></td><td>⊇</td></tr>
+<tr><td><code>Here.</code></td><td><code>Here.</code></td><td>✓</td></tr>
+<tr><td><code></code></td><td><code><b>{</b>Here. <b>|</b><b>}</b></code></td><td>⊇</td></tr>
 <tr><td><code></code></td><td><code>assumes assumed-compiles</code></td><td></td></tr>
 </table>
-
-Differs: pdflatex ships `The label was on page 1.` where satex computes `{The label was on page ⟨?⟩. Here. |The label was on page 2. Here. }`.
 
 Why:
 
 - `⟨?⟩`: l.4 sets a character the run could not compute.
-- `{The label was on page ⟨?⟩. Here. |The label was on page …`: l.9729 sets a character the run could not compute.
-- `{Here. |}`: l.9729 sets a character the run could not compute.
+- `{⟨?⟩|2}`: l.4 is set on paths parted at 11-fixpoint.tex:4.
+- `{Here. |}`: l.5 `\ifnum\getpagerefnumber{x}=1` is undecided, it reads `\getpagerefnumber`.
 
 <details><summary>Computed text</summary>
 
 ```sh
 $ satex query typeset -f 11-fixpoint.tex --set limits.seconds=60
-4:2  paragraph  {The label was on page ⟨?⟩. Here. |The label was on page 2. Here. }
+4:2  paragraph  The label was on page {⟨?⟩|2}.
+6:11  paragraph  Here.
 6:11  paragraph  {Here. |}
 7:15  assumption  assumed-compiles
 assumption  clock-assumed
@@ -912,13 +912,8 @@ assumption  clock-assumed
 ```sh
 $ satex trace --format compact -f 11-fixpoint.tex --set limits.seconds=60
 l.4 \pageref ⇒ \__cmd_start:nNNnnn {s}\pageref  \pagere… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 18 more)
-l.4 \pageref ⇒ \__cmd_start:nNNnnn {s}\pageref  \pagere…
 l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex…
-l.5 \ifnum\getpagerefnumber{x}=1 ⇒ 2 = 1: false
-l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex…
-l.5 \ifnum\getpagerefnumber{x}=1 ⇒ undecided
-l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex…
-… 4 more
+l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex… (defines \par \@outputbox@reinsertbskip \@elt … 544 more)
 ```
 
 </details>
@@ -930,4 +925,4 @@ l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex…
 Each example runs under a 60 second limit.
 This list is computed when the page is built: every example above whose table has a row marked ✗.
 
-- [11. A document is a fixpoint computation](#11-a-document-is-a-fixpoint-computation)
+None: every example above is computed exactly or covered soundly.

@@ -15,9 +15,13 @@
 - [Profiles](Configuration#profiles)
 - [Plugins](Configuration#plugins)
 
-**[🧩 Language server](Lsp)**
-- [Editor setup](Lsp#editor-setup)
-- [IntelliJ plugin](Intellij)
+**[🧩 Editors](Lsp)**
+- [VS Code](Vscode)
+- [IntelliJ](Intellij)
+- [Neovim, TeXstudio, any LSP client](Lsp#editor-setup)
+- [What the language server offers](Lsp#capabilities)
+- [Type plugins](Type-plugins)
+  - [Writing a type plugin](Writing-type-plugins)
 
 **[📖 Semantics](Semantics)**
 - [Why TeX is hard](Challenges)

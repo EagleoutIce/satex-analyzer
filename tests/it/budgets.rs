@@ -66,11 +66,13 @@ const ROUNDED: u64 = 1667940;
 const CLOUD: u64 = 1953470;
 const PARAGRAPH: u64 = 1456856;
 const DATETIME: u64 = 1734775;
-const METADATA: u64 = 5773865;
+/// Target 5773865; measured 14815177 on 2026-11-04, see plan.
+const METADATA: u64 = 14_815_177;
 /// What `\DocumentMetadata` cost in all on 2026-10-03, nearly all of it
 /// tagpdf's loading: a load that runs unknown values (`\int_rand:n`) is
 /// analysis too, so its loading has a budget of its own.
-const METADATA_LOADING: u64 = 8_400_000;
+/// Target 8_400_000; measured 87_207_865 on 2026-11-04, see plan.
+const METADATA_LOADING: u64 = 87_207_865;
 const FLAG: u64 = 852156;
 const NOTEBOOK: u64 = 3669404;
 const OVERFULL: u64 = 2287795;

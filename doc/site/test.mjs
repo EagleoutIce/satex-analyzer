@@ -1101,6 +1101,13 @@ async function browser() {
       && !!document.querySelector('#play-files-tree .root[data-name="thesis.tex"]') && !document.querySelector('#play-tabs .ro')`, 20000),
       await js(`return [...document.querySelectorAll('#play-files-tree .file')].map((f) => f.dataset.name).join()`));
     check('an input file is analyzed with its root', await until(`return !!document.querySelector('#play-files-tree [data-name="chapter.tex"] .tcount')`, 60000));
+    // switching files replaces the whole text: no decoration range (linked names, marks) may stretch over the new one
+    await mouse(...await spot('\\begin{', 8));
+    const stale = await until(`return document.querySelectorAll('.cm-linked').length === 2`, 20000);
+    await js(`document.querySelector('#play-tabs [data-name="chapter.tex"]').click()`);
+    check('a file switch leaves no stale decorations', stale && await until(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent === 'chapter.tex'`, 5000)
+      && await js(`return document.querySelectorAll('.cm-linked, .cm-refmark, .cm-flash, .cm-hold, .cm-deflink').length`) === 0);
+    await js(`document.querySelector('#play-tabs [data-name="thesis.tex"]').click()`);
     await shot('play-project');
     // renaming a file renames the root's \input of it
     await until(`return !!document.querySelector('#play-files-tree [data-name="chapter.tex"] [data-act=rename]')`, 10000);

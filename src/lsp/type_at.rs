@@ -111,6 +111,21 @@ pub(super) fn type_at(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> 
             at.hits.push(Hit::of(ty));
         }
     }
+    // a color the run looked up or defined by this text, from a call on this line: the type
+    // holds where the read went through a cached package's code and left no slot
+    if let Some(file) = file {
+        let name = at.item.typed.trim();
+        let here = |n: &str, s: Span| n == name && s.file == file && s.line == pos.line && s.col <= pos.col;
+        let colored = analysis.facts.color_uses.iter().any(|u| here(&u.name, u.span))
+            || analysis
+                .facts
+                .colors
+                .iter()
+                .any(|c| here(&c.name, c.span) || c.spec_span.is_some_and(|s| here(&c.name, Span { col: 1, ..s })));
+        if colored && !name.is_empty() && !at.hits.iter().any(|h| h.ty == Ty::Key(KeyKind::Color)) {
+            at.hits.push(Hit::of(Ty::Key(KeyKind::Color)));
+        }
+    }
     at.hits.extend(super::handlers::node_hits(analysis, doc, pos));
     if dimension(before, after) {
         at.hits.push(Hit::of(Ty::Dimen));
@@ -125,11 +140,13 @@ pub(super) fn type_at(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> 
 /// braced one, the key list or the options of a bracketed one.
 fn argument_types(analysis: &Analysis, p: &Place) -> Vec<Hit> {
     let mut all = roles::roles_probed(analysis, &p.cmd);
-    // a command the run looked colors up through: which argument names one, from its probe
+    // a command the run looked colors up or defined them through: which argument names one, from its probe
     let sym = analysis.interner.lookup(&p.cmd);
-    if sym.is_some_and(|s| analysis.facts.color_uses.iter().any(|u| u.via == Some(s)))
-        && !all.iter().any(|r| r.kind == RoleKind::Type(Ty::Key(KeyKind::Color)))
-    {
+    let via = |s| {
+        analysis.facts.color_uses.iter().any(|u| u.via == Some(s))
+            || analysis.facts.colors.iter().any(|c| c.via == Some(s))
+    };
+    if sym.is_some_and(via) && !all.iter().any(|r| r.kind == RoleKind::Type(Ty::Key(KeyKind::Color))) {
         let probed = sym.map(|s| crate::analysis::probe::argument_roles(analysis, s)).unwrap_or_default();
         all.extend(probed.into_iter().filter(|r| r.kind == RoleKind::Type(Ty::Key(KeyKind::Color))));
     }

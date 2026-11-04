@@ -469,6 +469,17 @@
               ],
               "x-example": "`shown: 50`"
             },
+            "signatures": {
+              "default": 4,
+              "description": "items, best first, whose signature a probe reads where the listing has none",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output",
+                "speed"
+              ],
+              "x-example": "`signatures: 0`: only signatures the listing knows"
+            },
             "tiers": {
               "description": "the rank of each kind of command, lowest listed first",
               "properties": {
@@ -1836,6 +1847,17 @@
           ],
           "x-example": "`80`: a huge document finishes with fewer paths kept"
         },
+        "digit_lengths": {
+          "default": 3,
+          "description": "how many digit counts a number of unknown digits is read apart into, one path each; past them the longer counts are one path",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "lower: `\\int_rand:n {16777215}` read digit by digit forks less; higher: pgfmath tells two from three digits"
+        },
         "expansion_depth": {
           "default": 512,
           "description": "how often a macro may call itself inside itself before its recursion is approximated",
@@ -2583,10 +2605,6 @@
     "lsp": {
       "description": "how satex lsp serves an editor",
       "properties": {
-        "color_previews": {
-          "default": true,
-          "type": "boolean"
-        },
         "debounce_ms": {
           "default": 300,
           "description": "how long to wait after an edit before analyzing again. Lower answers sooner but runs more often",
@@ -3376,6 +3394,153 @@
     "trace_lines": {},
     "trace_steps": {},
     "trace_stop": {},
+    "type_plugins": {
+      "description": "editor features for text of a type: hover, completion, code actions and dialogs (satex query type-plugins)",
+      "properties": {
+        "color": {
+          "description": "color names and xcolor expressions",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "swatches, picker dialog, model conversions and color completion",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: no color items, swatches or picker"
+            },
+            "name": {
+              "default": "mycolor",
+              "description": "what a color the picker defines is called, numbered when taken",
+              "type": "string",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "swatches": {
+              "default": true,
+              "description": "a swatch next to each color a color command uses",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "environment": {
+          "description": "the name of a \\begin or \\end",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "\"Change environment…\": switch one occurrence, both ends and its arguments",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "image": {
+          "description": "figures: the files \\includegraphics reads",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "a code lens and hover link to the crop, rotate and size dialog, rotate and fit actions",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: no image lens, dialog or actions"
+            }
+          },
+          "type": "object"
+        },
+        "keys": {
+          "description": "key lists: pgfkeys, l3keys, kvoptions and package options",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "completion and hover docs in key lists",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: no key items or key hovers"
+            },
+            "family_continue": {
+              "default": true,
+              "description": "accepting a family (`/demo`) inserts `/demo/` and opens its keys",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "table": {
+          "description": "tables: environments whose code reaches \\@array (tabular, tabular*, tabularx, array)",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "a code lens and hover link to the grid dialog, booktabs and siunitx rewrites",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: no table lens, dialog or rewrites"
+            }
+          },
+          "type": "object"
+        },
+        "units": {
+          "description": "dimensions: `12pt`, `\\textwidth`, a value range",
+          "properties": {
+            "decimals": {
+              "default": 2,
+              "description": "decimals a converted length is written with",
+              "maximum": 6,
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "enabled": {
+              "default": true,
+              "description": "hover in every unit, a converter dialog and convert actions",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: no conversions on a length"
+            },
+            "units": {
+              "default": [
+                "pt",
+                "mm",
+                "cm",
+                "in",
+                "bp"
+              ],
+              "description": "the units a hover shows and the conversions offered",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`units: [cm, mm]`"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
     "verbose": {
       "default": 0,
       "minimum": 0,

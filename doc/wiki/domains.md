@@ -116,7 +116,7 @@ A widened macro whose members all hold a token holds one too, so `\ifx` can stil
 
 `Dim { lo, hi }` is one length: box sizes, added up as `hpack` ([§ 649](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L12910)) and `vpack` ([§ 668](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L13152)) do. An item `satex` cannot follow widens the size to `Dim::ANY`. It is never left out.
 
-- **Join.** Each length joins to its hull. A word still being set on one path keeps its last character pending (it may kern or form a ligature with the next one, § 1034). If the paths differ there, each pending character is settled first: its box plus every kern the font may put after it, from any character or the boundary (`settled_for_join`). One that may form a ligature cannot be settled, and the sizes widen.
+- **Join.** Each length joins to its hull. A word still being set on one path keeps its last character pending (it may kern or form a ligature with the next one, [§ 1034](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L20114)). If the paths differ there, each pending character is settled first: its box plus every kern the font may put after it, from any character or the boundary (`settled_for_join`). One that may form a ligature cannot be settled, and the sizes widen.
 - **Unknown digits.** A digit the run wrote as unknown is a box from the narrowest to the widest of its candidates, plus every kern the font may put on either side. One that may form a ligature is unmetered.
 
 The list's tail (`Last`) is what `\lastskip`, `\lastkern`, `\lastpenalty` and `\lastnodetype` read:
@@ -310,15 +310,18 @@ flowchart LR
   t46["option key"]:::key
   t47["pgf key"]:::key
   t48["environment name"]:::key
-  t49["file"]:::file
-  t50["TeX file (.tex)"]:::file
-  t51["package (.sty)"]:::file
-  t52["class (.cls)"]:::file
-  t53["bibliography database (.bib)"]:::file
-  t54["bibliography style (.bst)"]:::file
-  t55["biblatex bibliography style (.bbx)"]:::file
-  t56["biblatex citation style (.cbx)"]:::file
-  t57["graphic file"]:::file
+  t49["declared key"]:::key
+  t50["index entry"]:::key
+  t51["color name"]:::key
+  t52["file"]:::file
+  t53["TeX file (.tex)"]:::file
+  t54["package (.sty)"]:::file
+  t55["class (.cls)"]:::file
+  t56["bibliography database (.bib)"]:::file
+  t57["bibliography style (.bst)"]:::file
+  t58["biblatex bibliography style (.bbx)"]:::file
+  t59["biblatex citation style (.cbx)"]:::file
+  t60["graphic file"]:::file
   subgraph g0_register[" "]
     direction LR
     t7
@@ -360,20 +363,23 @@ flowchart LR
     t46
     t47
     t48
-  end
-  t43 --> g43_key
-  subgraph g49_file[" "]
-    direction LR
+    t49
     t50
     t51
-    t52
+  end
+  t43 --> g43_key
+  subgraph g52_file[" "]
+    direction LR
     t53
     t54
     t55
     t56
     t57
+    t58
+    t59
+    t60
   end
-  t49 --> g49_file
+  t52 --> g52_file
   t0 --> t1
   t1 --> t2
   t4 --> t3
@@ -395,7 +401,7 @@ flowchart LR
   t4 --> t29
   t5 --> t30
   t13 --> t43
-  t13 --> t49
+  t13 --> t52
   classDef top fill:#eef0f2,stroke:#8a8f98,color:#1f2328
   classDef quantity fill:#dbeafe,stroke:#3b82f6,color:#1f2328
   classDef register fill:#ffedd5,stroke:#f97316,color:#1f2328
@@ -579,7 +585,7 @@ The knobs that trade precision for a bounded search ([`src/project/config.rs`](h
 | [`limits.loop_heads`](Configuration#configurable-limits-for-the-analysis) | 512 | How many loops one run remembers with their merged states. Past them the oldest is forgotten, and summarized when it comes back. |
 | [`limits.call_summary_after`](Configuration#configurable-limits-for-the-analysis) | 2 | After this many runs of one call at one place, a call with unknown arguments reuses their merged result instead of running again. `\pgfmathparse{\x}` with an unknown `\x` is then one step. 0 never does. |
 | [`limits.meaning_set`](Configuration#configurable-limits-for-the-analysis) | 8 | How many possible meanings a name keeps after branches merge. Past them its meaning is unknown. |
-| [`limits.value_set`](Configuration#configurable-limits-for-the-analysis) | 8 | How many exact values a count or length keeps after branches merge. Past them only its range is kept, so `{1, 5}` becomes `1..5`. |
+| [`limits.value_set`](Configuration#configurable-limits-for-the-analysis) | 8 | How many exact values a count or length keeps after branches merge. Past them only its range is kept, so `{1, 5}` becomes `1..5`. Also the places an `\openin` stream keeps apart (texts and their lines) before it is unknown. |
 
 ## Writes through an unknown index
 

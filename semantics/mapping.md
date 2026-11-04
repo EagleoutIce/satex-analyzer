@@ -1,5 +1,7 @@
 # Abstract semantics: Lean model to Rust
 
+> Written with AI assistance from Claude Code (Claude Opus 5.5; build fixes with Claude Sonnet 5.5), directed and reviewed by the author.
+
 Each row maps a definition of `lean/Satex/Abstract.lean` to the Rust code
 that implements it. Status:
 

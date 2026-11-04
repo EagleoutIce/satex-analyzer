@@ -102,8 +102,14 @@ fn family<'a>(
         defs.iter().filter(|d| sym.is_some() && d.subject == sym).map(|d| d.span).collect()
     };
     let members: Vec<&Definition> = defs.into_iter().filter(|d| spans.contains(&d.span)).collect();
-    // A key no declaration turned into a name: a label, a citation.
+    // A key no declaration turned into a name: a label, a citation. An environment or a command
+    // whose definition the project may not edit is no such key: renaming it changes only its uses.
     if members.is_empty() {
+        if let Some(owner) = defined_elsewhere(analysis, name) {
+            return Err(format!(
+                "`{name}` is defined by {owner}: renaming it here would only change its uses. Use 'Change environment' to switch this one."
+            ));
+        }
         return Ok((members, name.to_string(), true));
     }
     let subject = members.iter().find_map(|d| d.subject).map(|s| analysis.interner.name(s).to_string());
@@ -119,6 +125,23 @@ fn family<'a>(
         }
     }
     Ok((members, key, keyed))
+}
+
+/// Who defines `name` when the run used it as an environment or it names a defined control
+/// sequence, and no file of the project does: the LaTeX kernel, else the file of its definition.
+fn defined_elsewhere(analysis: &Analysis, name: &str) -> Option<String> {
+    let env = (analysis.facts.occurrences.iter())
+        .any(|o| matches!(o.kind, OccKind::BeginEnvironment | OccKind::EndEnvironment) && o.key == name);
+    let sym = analysis.interner.lookup(name).filter(|s| analysis.env.is_defined(*s));
+    if !env && sym.is_none() {
+        return None;
+    }
+    let kernel = sym.is_some_and(|s| analysis.kernel_sites.contains_key(&s));
+    match sym.and_then(|s| analysis.facts.defs.iter().rev().find(|d| d.name == s)) {
+        Some(d) if writable(analysis, d.span.file).is_some() => None,
+        Some(d) if !kernel => Some(format!("`{}`", analysis.short_name(d.span.file))),
+        _ => Some("the LaTeX kernel".to_string()),
+    }
 }
 
 /// Where a declaration spells its key.  The span is the name when a call

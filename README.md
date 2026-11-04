@@ -15,7 +15,7 @@ The first runs of `satex` are slow because it reads, interprets and caches the (
 
 ----
 
-_SaTeX_ is actively developed by *Florian Sihler* (contact me at: <florian.sihler@uni-ulm.de>) under the [MIT License](LICENSE). Contributions are welcome (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+_SaTeX_ is actively developed by [Florian Sihler](https://eagleoutice.github.io/) (contact me at: <florian.sihler@uni-ulm.de>) under the [MIT License](LICENSE). Contributions are welcome (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 The development and initial Rust codebase is strongly assisted by Claude Code (from architecture descriptions, TeX semantics and [flowR](https://flowr-analysis.github.io/flowr/)). It is still *work in progress*.
 Please avoid AI-only contributions. The humans who submit code are responsible for it.
@@ -185,31 +185,31 @@ Context-sensitive diagnostics: undefined names, duplicates, dead code and misuse
 
 ```text
 $ satex lint -f samples/paper.tex
-correctness (1)
+correctness (39)
 
-  ◆ C001 already-defined (1)
-    paper.tex:24:1  \repeat is already defined
-      24 │ \newcommand{\repeat}[1]{#1\repeat{#1}}
-         │ ^^^^^^^^^^^
-         = unsafe fix: use `\renewcommand{\repeat}` instead
+  ◆ C008 math-still-open (1)
+    paper.tex:49:1  math mode was still on where the paragraph ended: missing $ inserted before \end
+      49 │ \end{equation}
+         │ ^^^^
+         = hint: close the formula
 
-style (9)
+  ◆ C015 undefined-control-sequence (32)
+    paper.tex:1:1  `\documentclass` is never defined in this run
+      1 │ \documentclass[11pt]{article}
+        │ ^^^^^^^^^^^^^^
+        = hint: define `\documentclass` or load the package that provides it
 
-  ● S033 inconsistent-precision (1)
-    paper.tex:70:16  numeric column 2 mixes 1 to 2 decimal places: give every number one precision
-      70 │     Ours     & 0.92  \\
-         │                ^
-         = hint: round them by hand, or let siunitx `S` round with `round-mode = places`
+    paper.tex:3:1  `\newif` is never defined in this run
+      3 │ \newif\ifdraft
+        │ ^^^^^^
+        = hint: define `\newif` or load the package that provides it
 
-  ● S037 numbers-not-aligned (1)
-    paper.tex:70:16  numeric column 2 is set `c`: align its decimal separators with siunitx `S`, or at least use `r`
-      70 │     Ours     & 0.92  \\
-         │                ^
-         = hint: add `\usepackage{siunitx}`, set column 2 as `S` and brace its header: `{Score}`
+    paper.tex:3:7  `\ifdraft` is never defined in this run
+      3 │ \newif\ifdraft
+        │       ^^^^^^^^
+        = hint: define `\ifdraft` or load the package that provides it
 
-  ● S040 primitive-tex-command (1)
-    paper.tex:22:1  `\csname` is plain TeX. Here it uses a control sequence by name
-… 49 more lines omitted
+… 31 more lines omitted
 ```
 
 <details>
@@ -359,13 +359,13 @@ For CI, output formats include `--format github` (GitHub Actions annotations) an
 
 ```text
 $ satex lint -f samples/paper.tex --format github
-::error file=samples/paper.tex,line=24,col=1,title=C001 already-defined::\repeat is already defined
-::notice file=samples/paper.tex,line=76,col=1,title=S050 unused-label::label `sec:conclusion` is never referenced
-::notice file=samples/paper.tex,line=42,col=1,title=S050 unused-label::label `sec:method` is never referenced
-::notice file=samples/paper.tex,line=22,col=1,title=S040 primitive-tex-command::`\csname` is plain TeX. Here it uses a control sequence by name
-::notice file=samples/preamble.tex,line=1,col=1,title=S049 unused-definition::\hello is never used
-::notice file=samples/paper.tex,line=14,col=1,title=S049 unused-definition::\WeirdMore is never used
-… 5 more lines omitted
+::error file=samples/paper.tex,line=1,col=1,title=C015 undefined-control-sequence::`\documentclass` is never defined in this run
+::error file=samples/paper.tex,line=3,col=1,title=C015 undefined-control-sequence::`\newif` is never defined in this run
+::error file=samples/paper.tex,line=3,col=7,title=C015 undefined-control-sequence::`\ifdraft` is never defined in this run
+::error file=samples/paper.tex,line=4,col=1,title=C015 undefined-control-sequence::`\usepackage` is never defined in this run
+::error file=samples/paper.tex,line=5,col=1,title=C015 undefined-control-sequence::`\usepackage` is never defined in this run
+::error file=samples/paper.tex,line=6,col=1,title=C015 undefined-control-sequence::`\usepackage` is never defined in this run
+… 42 more lines omitted
 ```
 
 </details>
@@ -385,41 +385,11 @@ Use `--all` to obtain lists every definition and `--at` to ask at a specific pla
 
 ```text
 $ satex explain -f samples/paper.tex '\usepackage'
-\usepackage @ latex.ltx:18619:25
-  tag            alias
-  when           preamble
-  context        outside environments
-  effective      \usepackage[1]{2}[3]
-  signature      omo
-  roles          #2 package
-  types          #1 options, #2 package (.sty), #3 date, at least
-  takes          1-3
-  uses           4 times, in this run
-  by             \let
-  does           Loads packages.
-  documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
-  expands        \@fileswithoptions
-  body           \@fileswithoptions \@pkgextension 
-  reference      https://texdoc.org/serve/source2e/0
-  file           /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx:18619
-
-\usepackage @ latex.ltx:9521:22
-  tag            alias
-  when           document
-  context        outside environments
-  effective      \usepackage
-  error          LaTeX Error: Can be used only in preamble.
-  roles          #1 package
-  types          #1 package (.sty)
-  takes          0
-  uses           0 times, in this run
-  by             \let
-  does           Loads packages.
-  documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
-  may_expand     \@fileswithoptions
-  body           \@latex@error {Can be used only in preamble}\@eha 
-  reference      https://texdoc.org/serve/source2e/0
-  file           /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx:9521
+recognized gaps
+  budget-exhausted 1× first at paper.tex:0
+  format-truncated 1× first at paper.tex:0
+  limit-reached 1× first at latex.ltx:109
+  unterminated-conditional 1× first at latex.ltx:105
 ```
 </details>
 
@@ -428,18 +398,11 @@ $ satex explain -f samples/paper.tex '\usepackage'
 
 ```text
 $ satex explain -f samples/paper.tex '\norm'
-\norm @ paper.tex:12:13
-  tag         macro
-  context     outside environments
-  effective   \norm{1}
-  signature   m
-  takes       1
-  uses        2 times, in this run
-  by          \newcommand
-  expands     \left, \right
-  may_expand  \hat
-  body        \left \lVert #1\right \rVert 
-  file        samples/paper.tex:12
+recognized gaps
+  budget-exhausted 1× first at paper.tex:0
+  format-truncated 1× first at paper.tex:0
+  limit-reached 1× first at latex.ltx:109
+  unterminated-conditional 1× first at latex.ltx:105
 ```
 
 </details>
@@ -456,14 +419,14 @@ A document summary shows the commands, dependencies, and metadata of a document.
 ```text
 $ satex summary -f samples/paper.tex
 paper.tex
-  identified LaTeX2e document, class article [2025/01/22 v1.4n Standard LaTeX document class][11pt]
-  title A Sample Document for saTeX
-  author satex Test Suite
+  identified TeX input
   engine pdflatex (build configuration)
   provider texlive (TeX 3.141592653 (TeX Live 2026)) (detected)
   platform linux (this machine)
   kernel latex2e (default)
-… 28 more lines omitted
+  output pdf (build configuration)
+  build system latexmkrc (latexmk: pdf_mode=1, pdflatex=pdflatex -interaction=nonstopmode… (found beside the document)
+… 21 more lines omitted
 ```
 
 ### Explore Package Options and Feature Flags
@@ -476,11 +439,11 @@ The `controls` command shows the switches and options a package or class defines
 
 ```text
 $ satex controls -f samples/paper.tex
-tag     name       count  value                                  governs  file           
-option  article           11pt                                            paper.tex      @ paper.tex:1:1
-switch  \ifdraft          false                                  236      paper.tex      @ paper.tex:3:7
-offers  amsmath    15     alignedleftspaceno, alignedleftspace…           amsmath.sty    @ amsmath.sty:45:16
-… 9 more lines omitted
+  `--all` adds the switches and options the kernel and the packages bring
+recognized gaps
+  budget-exhausted 1× first at paper.tex:0
+  format-truncated 1× first at paper.tex:0
+… 2 more lines omitted
 ```
 
 </details>
@@ -489,6 +452,11 @@ offers  amsmath    15     alignedleftspaceno, alignedleftspace…           amsm
 
 ```text
 $ satex query options -f samples/paper.tex --for itemize
+recognized gaps
+  budget-exhausted 1× first at paper.tex:0
+  format-truncated 1× first at paper.tex:0
+  limit-reached 1× first at latex.ltx:109
+  unterminated-conditional 1× first at latex.ltx:105
 ```
 
 </details>
@@ -499,13 +467,12 @@ A compilable document by default. `--where EXPR` slices to every occurrence or d
 
 ```text
 $ satex slice -f samples/paper.tex '\ifdraft'
-\begin{filecontents*}[overwrite]{mypackage.sty}
-\NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{mypackage}[2024/01/01 v1.0 Sample package for satex]
-
-\RequirePackage{xcolor}
-
-… 53 more lines omitted
+  `\ifdraft` names nothing the run reached, so the slice is empty
+recognized gaps
+  budget-exhausted 1× first at paper.tex:0
+  format-truncated 1× first at paper.tex:0
+  limit-reached 1× first at latex.ltx:109
+  unterminated-conditional 1× first at latex.ltx:105
 ```
 
 </details>
@@ -514,10 +481,10 @@ $ satex slice -f samples/paper.tex '\ifdraft'
 
 ```text
 $ satex scope -f samples/paper.tex --at 20:1
-tag          name                           effecti…  does      file                
-macro        \Weird                         \Weird …            paper.tex           @ paper.tex:16:1
-macro        \WeirdMore                     \WeirdM…            paper.tex           @ paper.tex:14:1
-… 10272 more lines omitted
+tag        name                                            effecti…  does      file          
+macro      \Weird                                          \Weird …            paper.tex     @ paper.tex:16:1
+macro      \WeirdMore                                      \WeirdM…            paper.tex     @ paper.tex:14:1
+… 6636 more lines omitted
 ```
 
 </details>
@@ -528,13 +495,7 @@ Shows what a build costs: which packages and files dominate, and what to do abou
 
 ```text
 $ satex lint -f samples/paper.tex --filter 'category=performance'
-performance (1)
-
-  ● P003 preamble-cost (1)
-    paper.tex:26:1  5 packages requested directly, 275 files read, 76% of the tokens the build takes
-      26 │ \begin{document}
-         │ ^^^^^^
-… 5 more lines omitted
+0 errors, 0 warnings, 0 suggestions, 0 performance notes, 0 precision notes
 ```
 
 `--timings` breaks the time down per phase and file, `--stats` sums up counts and wall time. Both measure the run itself and change between runs.
@@ -547,7 +508,7 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 $ satex cache
 cache
   source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
-  holds 197762 definitions
+  holds 197802 definitions
   state cached
 … 2 more lines omitted
 ```
@@ -562,14 +523,14 @@ The commands a document defines itself, without packages and without internal `@
 
 ```text
 $ satex query definitions -f samples/paper.tex --filter 'origin=document and not package~. and not name~@'
-tag     name         parameters    comment                           body      file          
-switch  \ifdraft                                                               paper.tex     @ paper.tex:3:7
-switch  \drafttrue                                                   \let \i…  paper.tex     @ paper.tex:3:7
-switch  \draftfalse                                                  \let \i…  paper.tex     @ paper.tex:3:7
-macro   \hello                                                       world     preamble.tex  @ preamble.tex:1:1
-macro   \highlight   #1            Standard single-argument macros.  \textbf…  paper.tex     @ paper.tex:11:13
-macro   \norm        #1                                              \left \…  paper.tex     @ paper.tex:12:13
-macro   \WeirdMore   super #1\;                                       #1       paper.tex     @ paper.tex:14:1
+tag    name        parameters                       by    body                 file          
+macro  \hello                                       \def  world                preamble.tex  @ preamble.tex:1:1
+macro  \WeirdMore  super #1\;                       \def   #1                  paper.tex     @ paper.tex:14:1
+macro  \Weird      key: #1, value: #2, magic: #3\;  \def  \texttt {key: #1, …  paper.tex     @ paper.tex:16:1
+macro  \DocName                                     \def  Document             paper.tex     @ paper.tex:28:1
+recognized gaps
+  budget-exhausted 1× first at paper.tex:0
+  format-truncated 1× first at paper.tex:0
 … 2 more lines omitted
 ```
 
@@ -579,27 +540,28 @@ macro   \WeirdMore   super #1\;                                       #1       p
 ```text
 $ satex query --list
 name              
-definitions       
-expansions        
-dependencies      
-occurrences       
-recursion         
 calls             
+catcodes          
+definitions       
+dependencies      
 dependency-graph  
-trace             
-files             
 diagnostics       
 distribution      
-catcodes          
-side-effects      
-project           
-plugins           
-produces          
+expansions        
+files             
 gaps              
-pgfkeys           
+occurrences       
 options           
-typeset           
+pgfkeys           
+plugins           
 previews          
+produces          
+project           
+recursion         
+side-effects      
+trace             
+type-plugins      
+typeset           
 ```
 
 </details>
@@ -626,12 +588,12 @@ previews
 
 ```text
 $ satex trace -f samples/paper.tex
-index   step        name                        detail                     file           
-678     expand      \documentclass                                         paper.tex      @ paper.tex:1:1
-8412    open-file   \article                    /usr/local/texlive/YYYY/…  paper.tex      @ paper.tex:1:1
-10261   expand      \par                                                   paper.tex      @ paper.tex:2:1
-10268   expand      \newif                                                 paper.tex      @ paper.tex:3:1
-… 172 more lines omitted
+index  step         name            detail                                     file          
+0      undefined    \documentclass                                             paper.tex     @ paper.tex:1:1
+1      open-group   {                                                          paper.tex     @ paper.tex:1:21
+2      close-group  }                                                          paper.tex     @ paper.tex:1:29
+3      execute      \par                                                       paper.tex     @ paper.tex:2:1
+… 132 more lines omitted
 ```
 
 </details>

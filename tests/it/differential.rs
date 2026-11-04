@@ -393,10 +393,18 @@ fn typeset_covers(stem: &str) {
     // would let a challenge pass without being followed.
     let cut: Vec<&serde_json::Value> = rows.iter().filter(|r| r.get("cut").is_some()).collect();
     assert!(cut.is_empty(), "{stem}: the run was cut short: {cut:?}");
-    let computed: Vec<&str> =
-        rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
-    let verdict = satex::queries::query::typeset_verdict(&computed.join(" "), &engine.join(" "));
-    assert_ne!(verdict, "DIFFERS", "{stem}: pdflatex sets {engine:?}, satex computes {computed:?}");
+    // Paragraph by paragraph, as the challenges page compares them.
+    let computed: Vec<(String, bool)> = rows
+        .iter()
+        .filter(|r| r["kind"] == "paragraph")
+        .map(|r| (r["detail"].as_str().unwrap_or("").to_string(), r["open"].as_bool().unwrap_or(false)))
+        .collect();
+    let engine: Vec<String> = engine.into_iter().map(String::from).collect();
+    for (e, range) in satex::queries::query::pair_paragraphs(&computed, &engine) {
+        let c = computed[range].iter().map(|c| c.0.as_str()).collect::<Vec<_>>().join(" ");
+        let verdict = satex::queries::query::typeset_verdict(&c, &e);
+        assert_ne!(verdict, "DIFFERS", "{stem}: pdflatex sets {e:?}, satex computes {c:?} (all: {computed:?})");
+    }
 }
 
 /// A kernel read only partly sets nothing sure: without `\documentclass`
@@ -509,6 +517,34 @@ fn paragraph_lines_match_pdflatex() {
     );
 }
 
+/// A paragraph end only some paths make leaves the paragraph open: a run
+/// that did not break there is covered by it taken with the next one.
+#[test]
+fn an_open_paragraph_pairs_with_what_it_may_go_on_into() {
+    use satex::queries::query::{pair_paragraphs, typeset_verdict};
+    let paragraphs = |page: &str| -> Vec<(String, bool)> {
+        [(format!("The label was on page {page}."), true), ("Here.".into(), true), ("{Here. |}".into(), false)].into()
+    };
+    let covered = |computed: &[(String, bool)], set: &[&str]| {
+        let set: Vec<String> = set.iter().map(|s| s.to_string()).collect();
+        pair_paragraphs(computed, &set).into_iter().all(|(e, range)| {
+            let c = computed[range].iter().map(|c| c.0.as_str()).collect::<Vec<_>>().join(" ");
+            typeset_verdict(&c, &e) != "DIFFERS"
+        })
+    };
+    // `⟨?⟩` may stand for more than one character, so it may swallow a run on.
+    for computed in [paragraphs("{1|2}"), paragraphs("{⟨?⟩|2}")] {
+        assert!(covered(&computed, &["The label was on page 1.", "Here."]), "{computed:?}");
+        assert!(covered(&computed, &["The label was on page 2. Here."]), "{computed:?}");
+    }
+    let computed = paragraphs("{1|2}");
+    // A closed end stays one: nothing goes on past it.
+    let closed: Vec<(String, bool)> = computed.iter().map(|(t, _)| (t.clone(), false)).collect();
+    let set = vec!["The label was on page 2. Here.".to_string()];
+    let pairs = pair_paragraphs(&closed, &set);
+    assert!(pairs.iter().all(|(_, r)| r.len() <= 1), "{pairs:?}");
+}
+
 /// One test per challenge, named by its capability.
 macro_rules! challenges {
     ($($test:ident: $stem:literal,)*) => {
@@ -538,6 +574,7 @@ challenges! {
     typeset_unknown_inputs_relational: "r6-relational",
     typeset_termination_merge_cost: "r7-merge-cost",
     typeset_typesetting_feedback_hyphenation: "s2-rounded-paragraph",
+    typeset_fixpoint: "11-fixpoint",
 }
 
 /// `\quad` after a section number is space on the page: the computed text
@@ -662,6 +699,29 @@ fn text_of_parted_paths_stays_alternatives() {
     let text: Vec<&str> =
         rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
     assert!(matches!(text[..], ["Z{By|Ax}Q"] | ["Z{Ax|By}Q"]), "{text:?}");
+}
+
+/// A character both arms of an undecided conditional set is no choice:
+/// `{Z|}` would say a path may lack it.
+#[test]
+fn text_both_arms_set_is_no_choice() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-both-arms");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("j.tex"),
+        "\\catcode`\\{=1 \\catcode`\\}=2\n\\def\\z{Z}\\ifodd\\year \\z\\else\\z\\fi Q\\par\n\\end\n",
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "j.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .args(["--set", "engine=tex", "--set", "kernel=plain", "--set", "clock=unknown"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let text: Vec<&str> =
+        rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
+    assert_eq!(text, ["ZQ"]);
 }
 
 /// Capability: typesetting feedback. The ligatures the font's program

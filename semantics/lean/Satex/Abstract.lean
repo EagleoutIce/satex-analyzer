@@ -1,6 +1,9 @@
 /-
 Satex.Abstract: what SaTeX's abstract interpreter computes.
 
+Written with AI assistance from Claude Code (Claude Opus 5.5; build fixes with
+Claude Sonnet 5.5), directed and reviewed by the author.
+
 Each domain is given with its order, join, widening and concretization `γ`
 into the objects of `Satex.Core`. Transfers follow the concrete rule
 families of `Satex.Concrete`: assignment and grouping (§§ 268–284),

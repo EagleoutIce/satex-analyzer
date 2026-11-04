@@ -27,13 +27,16 @@
 
 mod argument_hover;
 mod bib;
+mod dialogs;
 mod directive;
 pub(crate) mod doccomment;
+mod graphic;
 mod handlers;
 pub mod knowledge;
+pub(crate) mod plugins;
 pub(crate) mod primitives;
+mod tabular;
 mod type_at;
-mod units;
 mod unreached;
 #[cfg(target_os = "emscripten")]
 mod wasm;
@@ -186,11 +189,14 @@ fn server_capabilities() -> ServerCapabilities {
             work_done_progress_options: Default::default(),
         }),
         completion_provider: Some(CompletionOptions {
-            trigger_characters: Some(vec!["\\".into(), "{".into()]),
+            // a key list's next item opens with nothing typed: after `{`, `[`, `,` and `=`
+            trigger_characters: Some(["\\", "{", "[", ",", "="].map(String::from).to_vec()),
             resolve_provider: Some(true),
             ..Default::default()
         }),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+        code_lens_provider: Some(lsp_types::CodeLensOptions { resolve_provider: Some(false) }),
+        inlay_hint_provider: Some(OneOf::Left(true)),
         execute_command_provider: Some(ExecuteCommandOptions {
             commands: vec![EXECUTE_COMMAND.to_string(), STYLE_COMMAND.to_string()],
             ..Default::default()
@@ -355,11 +361,11 @@ fn rule_cards(req: &Request, findings: &Findings) -> Option<String> {
     (!cards.is_empty()).then(|| cards.join("\n\n---\n\n"))
 }
 
-/// A hover's answer with `cards` after what it says, or as all it says.
+/// A hover's answer with the findings' `cards` first, then what the hover of the text says.
 fn with_cards(mut response: Response, cards: Option<String>) -> Response {
     let (Some(cards), Ok(result)) = (cards, response.response_result.as_mut()) else { return response };
     match result.pointer_mut("/contents/value").and_then(|v| v.as_str().map(str::to_string).zip(Some(v))) {
-        Some((text, value)) => *value = Json::String(format!("{text}\n\n---\n\n{cards}")),
+        Some((text, value)) => *value = Json::String(format!("{cards}\n\n---\n\n{text}")),
         None => *result = serde_json::json!({ "contents": { "kind": "markdown", "value": cards } }),
     }
     response
@@ -479,15 +485,18 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
         }
         "textDocument/colorPresentation" => {
             let p: lsp_types::ColorPresentationParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
-            let c = p.color;
-            let hex = |v: f32| format!("{:02X}", (v.clamp(0.0, 1.0) * 255.0).round() as u8);
-            let label = format!("[HTML]{{{}{}{}}}", hex(c.red), hex(c.green), hex(c.blue));
-            Ok(serde_json::to_value(vec![lsp_types::ColorPresentation {
-                label,
-                text_edit: None,
-                additional_text_edits: None,
-            }])
-            .unwrap())
+            let out = ask(engine_tx, |reply| EngineMsg::Presentation(p.text_document.uri, p.range, p.color, reply))?;
+            Ok(serde_json::to_value(out).unwrap())
+        }
+        "textDocument/inlayHint" => {
+            let p: lsp_types::InlayHintParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let out = ask(engine_tx, |reply| EngineMsg::Inlays(p.text_document.uri, reply))?;
+            Ok(serde_json::to_value(out).unwrap())
+        }
+        // A type plugin's dialogs at a position ([`plugins::views`]).
+        "satex/view" => {
+            let p: lsp_types::TextDocumentPositionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            Ok(Json::Array(ask(engine_tx, |reply| EngineMsg::View(p.text_document.uri, p.position, reply))?))
         }
         "textDocument/prepareRename" => {
             let p: lsp_types::TextDocumentPositionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
@@ -508,8 +517,25 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
         }
         "textDocument/codeAction" => {
             let p: CodeActionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
-            let actions = ask(engine_tx, |reply| EngineMsg::CodeAction(p.text_document.uri, reply))?;
+            let uri = p.text_document.uri;
+            let mut actions = ask(engine_tx, |reply| EngineMsg::CodeAction(uri.clone(), p.range.start, reply))?;
+            let dialogs = ask(engine_tx, |reply| EngineMsg::Dialog(Ask::Actions(uri, p.range), reply))??;
+            actions.extend(dialogs.as_array().cloned().unwrap_or_default());
             Ok(Json::Array(actions))
+        }
+        // The table and image dialogs (`dialogs.rs`): their code lenses, their state, the text they write.
+        "textDocument/codeLens" => {
+            let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
+            ask(engine_tx, |reply| EngineMsg::Dialog(Ask::Lenses(uri), reply))?
+        }
+        "satex/dialog" => {
+            let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
+            let pos: Position = serde_json::from_value(params["position"].clone()).map_err(|e| e.to_string())?;
+            ask(engine_tx, |reply| EngineMsg::Dialog(Ask::Open(uri, pos), reply))?
+        }
+        "satex/dialogApply" => {
+            let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
+            ask(engine_tx, |reply| EngineMsg::Dialog(Ask::Apply(uri, params), reply))?
         }
         "workspace/executeCommand" => {
             let p: ExecuteCommandParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
@@ -610,7 +636,12 @@ enum EngineMsg {
     PrepareRename(Uri, Position, Sender<Option<lsp_types::PrepareRenameResponse>>),
     Rename(Uri, Position, String, Sender<Result<lsp_types::WorkspaceEdit, String>>),
     WorkspaceSymbol(String, Sender<Vec<lsp_types::SymbolInformation>>),
-    CodeAction(Uri, Sender<Vec<Json>>),
+    /// The lint fixes of a document, and the type plugins' actions at a position.
+    CodeAction(Uri, Position, Sender<Vec<Json>>),
+    Dialog(Ask, Sender<Result<Json, String>>),
+    View(Uri, Position, Sender<Vec<Json>>),
+    Presentation(Uri, lsp_types::Range, lsp_types::Color, Sender<Vec<lsp_types::ColorPresentation>>),
+    Inlays(Uri, Sender<Vec<lsp_types::InlayHint>>),
     ExecuteCommand(Json, Sender<Result<Vec<Json>, String>>),
     /// A style prompt's answer for a rule: the path of the `satex.yaml` written.
     Style(String, crate::project::config::StyleChoice, Sender<Result<Json, String>>),
@@ -618,6 +649,15 @@ enum EngineMsg {
     Written(Uri, Sender<Vec<Json>>),
     Caches(Uri, Sender<Vec<String>>),
     Shutdown,
+}
+
+/// What a dialog request asks ([`dialogs`]).
+enum Ask {
+    Lenses(Uri),
+    Actions(Uri, lsp_types::Range),
+    Open(Uri, Position),
+    /// `{textDocument, kind, range, state}`.
+    Apply(Uri, Json),
 }
 
 #[derive(Clone)]
@@ -717,6 +757,9 @@ impl EngineMsg {
             | EngineMsg::Typeset(uri, ..)
             | EngineMsg::Written(uri, ..)
             | EngineMsg::Caches(uri, ..) => Some(uri),
+            EngineMsg::Dialog(Ask::Lenses(uri) | Ask::Actions(uri, _) | Ask::Open(uri, _) | Ask::Apply(uri, _), _) => {
+                Some(uri)
+            }
             _ => None,
         }
     }
@@ -1247,6 +1290,7 @@ impl Engine {
             | EngineMsg::Typeset(..)
             | EngineMsg::Written(..)
             | EngineMsg::Caches(..)
+            | EngineMsg::Dialog(..)
             | EngineMsg::WorkspaceSymbol(..)) => {
                 // A completion never waits for a run: it answers from the last one.
                 if !matches!(msg, EngineMsg::Completion(..))
@@ -1265,14 +1309,26 @@ impl Engine {
             }
             EngineMsg::Colors(uri, reply) => {
                 let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = self
-                    .cfg
-                    .lsp
-                    .color_previews
-                    .then(|| {
-                        with_doc(&self.docs, &uri, |analysis, text| handlers::document_colors(analysis, text, &path))
-                    })
-                    .flatten();
+                let result = with_doc(&self.docs, &uri, |analysis, text| plugins::colors(analysis, text, &path));
+                let _ = reply.send(result.unwrap_or_default());
+            }
+            EngineMsg::Inlays(uri, reply) => {
+                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result = with_doc(&self.docs, &uri, |analysis, text| plugins::inlays(analysis, text, &path));
+                let _ = reply.send(result.unwrap_or_default());
+            }
+            EngineMsg::Presentation(uri, range, color, reply) => {
+                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result = with_doc(&self.docs, &uri, |analysis, text| {
+                    plugins::color_presentations(analysis, text, &path, range, color)
+                });
+                let _ = reply.send(result.unwrap_or_default());
+            }
+            EngineMsg::View(uri, pos, reply) => {
+                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result = with_doc(&self.docs, &uri, |analysis, text| {
+                    plugins::views(analysis, text, &path, handlers::to_pos(text, pos))
+                });
                 let _ = reply.send(result.unwrap_or_default());
             }
             EngineMsg::Links(uri, reply) => {
@@ -1297,9 +1353,15 @@ impl Engine {
                 .unwrap_or_else(|| Err("document is not open".to_string()));
                 let _ = reply.send(result);
             }
-            EngineMsg::CodeAction(uri, reply) => {
+            EngineMsg::CodeAction(uri, pos, reply) => {
                 self.fresh(&uri);
-                let _ = reply.send(self.actions.get(&uri).cloned().unwrap_or_default());
+                let mut out = self.actions.get(&uri).cloned().unwrap_or_default();
+                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let typed = with_doc(&self.docs, &uri, |analysis, text| {
+                    plugins::actions(analysis, text, &path, handlers::to_pos(text, pos))
+                });
+                out.extend(typed.into_iter().flatten().map(|a| serde_json::to_value(a).unwrap_or_default()));
+                let _ = reply.send(out);
             }
             EngineMsg::Style(code, choice, reply) => {
                 let _ = reply.send(self.answer_style(code, choice));
@@ -1342,9 +1404,26 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
                         }
                         markdown
                     });
-                    return markdown.map(|m| handlers::markdown_hover(handlers::placed(analysis, m, &name, &path, at)));
+                    // what a type plugin adds for the name's type (a length register's value in every unit)
+                    let typed = plugins::command_hover(analysis, text, &path, at, &name);
+                    let markdown = match (markdown, typed) {
+                        (Some(m), Some(t)) => Some(format!("{m}\n\n{t}")),
+                        (m, t) => m.or(t),
+                    };
+                    let link = dialogs::hover_link(analysis, text, &path, uri.as_str(), pos);
+                    let markdown = markdown.map(|m| handlers::placed(analysis, m, &name, &path, at));
+                    return with_link(markdown, link).map(handlers::markdown_hover);
                 }
-                handlers::hover(analysis, text, &path, pos)
+                let link = dialogs::hover_link(analysis, text, &path, uri.as_str(), pos);
+                match (handlers::hover(analysis, text, &path, pos), link) {
+                    (Some(mut h), Some(link)) => {
+                        if let lsp_types::HoverContents::Markup(m) = &mut h.contents {
+                            m.value = format!("{link}\n\n---\n\n{}", m.value);
+                        }
+                        Some(h)
+                    }
+                    (h, link) => h.or_else(|| link.map(handlers::markdown_hover)),
+                }
             });
             let _ = reply.send(result.flatten());
         }
@@ -1486,9 +1565,36 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
             };
             let _ = reply.send(with_doc(docs, &uri, |analysis, _| report(analysis)).unwrap_or_default());
         }
+        EngineMsg::Dialog(ask, reply) => {
+            let uri = match &ask {
+                Ask::Lenses(u) | Ask::Actions(u, _) | Ask::Open(u, _) | Ask::Apply(u, _) => u.clone(),
+            };
+            let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+            let result = with_doc(docs, &uri, |analysis, text| match ask {
+                Ask::Lenses(_) => {
+                    Ok(serde_json::to_value(dialogs::lenses(analysis, text, &path, uri.as_str())).unwrap())
+                }
+                Ask::Actions(_, range) => Ok(Json::Array(dialogs::actions(analysis, text, &path, uri.as_str(), range))),
+                Ask::Open(_, pos) => Ok(dialogs::dialog(analysis, text, &path, pos).unwrap_or(Json::Null)),
+                Ask::Apply(_, p) => {
+                    let range = serde_json::from_value(p["range"].clone()).map_err(|e| e.to_string())?;
+                    let kind = p["kind"].as_str().unwrap_or_default();
+                    dialogs::apply(analysis, text, kind, range, &p["state"], p["op"].as_str())
+                }
+            });
+            let _ = reply.send(result.unwrap_or(Ok(Json::Null)));
+        }
         msg => return Some(msg),
     }
     None
+}
+
+/// A hover's text with the dialog's link first.
+fn with_link(markdown: Option<String>, link: Option<String>) -> Option<String> {
+    match (markdown, link) {
+        (Some(m), Some(l)) => Some(format!("{l}\n\n---\n\n{m}")),
+        (m, l) => m.or(l),
+    }
 }
 
 fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) {

@@ -1438,12 +1438,22 @@ fn set(m: &mut Machine, c: char, span: Span) {
     // Both paths through an undecided conditional digest what follows it,
     // so the one character on the page arrives here once per path.
     if !certain && text.at.last().is_some_and(|last| last.span == span) && text.chars.ends_with(c) {
-        // The same arm setting it again is a loop pass.
+        // The same arm setting it again is a loop pass; the other arm of
+        // the same conditional setting it puts it in both.
         let last = text.at.len() as u32 - 1;
-        if first.is_some_and(|cd| text.arms.last() == Some(&(last, cd.on, cd.taken)))
-            && text.repeats.last() != Some(&last)
-        {
+        let tags = text.arms.iter().rev().take_while(|a| a.0 == last);
+        let (mut same, mut other) = (false, false);
+        for &(_, on, taken) in tags {
+            same |= first.is_some_and(|cd| (on, taken) == (cd.on, cd.taken));
+            other |= first.is_some_and(|cd| on == cd.on);
+        }
+        if same && text.repeats.last() != Some(&last) {
             text.repeats.push(last);
+        } else if other
+            && !same
+            && let Some(cd) = first
+        {
+            text.arms.push((last, cd.on, cd.taken));
         }
         return;
     }
@@ -1455,9 +1465,24 @@ fn set(m: &mut Machine, c: char, span: Span) {
         (at == 0 || text.pars.last() == Some(&at)) && text.skips.last().is_none_or(|s| s.0 != at)
     };
     let skip = if starts { m.glue_parameter("parskip").map(|g| g.width) } else { None };
+    let just = starts.then(|| {
+        use crate::analysis::facts::Just;
+        match (m.glue_parameter("leftskip"), m.glue_parameter("rightskip")) {
+            (Some(l), Some(r)) => match (l.stretch.amount > 0, r.stretch.amount > 0) {
+                (true, true) => Just::Center,
+                (false, true) => Just::Left,
+                (true, false) => Just::Right,
+                _ => Just::Justified,
+            },
+            _ => Just::Unknown,
+        }
+    });
     let text = &mut m.out.facts.text;
     if let Some(skip) = skip {
         text.skips.push((text.at.len() as u32, skip));
+    }
+    if let Some(just) = just {
+        text.just.push((text.at.len() as u32, just));
     }
     if let Some(code) = code.and_then(|v| u16::try_from(v).ok()) {
         text.math.push((text.at.len() as u32, code));

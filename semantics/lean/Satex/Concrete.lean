@@ -1,6 +1,9 @@
 /-
 Satex.Concrete: the concrete semantics of the TeX SaTeX interprets.
 
+Written with AI assistance from Claude Code (Claude Opus 5.5; build fixes with
+Claude Sonnet 5.5), directed and reviewed by the author.
+
 `Step E s s'` is one step of TeX's main loop: one expansion in the gullet
 (§ 366 `expand`), or one command of the stomach (§ 1030 `main_control`),
 including the operands that command scans. Scanners are big-step relations

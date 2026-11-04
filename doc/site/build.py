@@ -618,6 +618,22 @@ def previews_run(satex, work, libs):
     return json.dumps({r["name"]: r["svg"] for r in rows if r["svg"]}).encode()
 
 
+def providers(missing):
+    """The packages (`.sty` stems of the installation) whose files define one of the control sequences `missing`: a
+    `\\def`, `\\newcommand`, `\\DeclareRobustCommand`, `\\NewDocumentCommand` and kin of it. The shortest path per name."""
+    if not missing:
+        return set()
+    top = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()) / "tex"
+    alt = "|".join(re.escape(m[1:]) for m in missing)
+    rx = re.compile(r"\\(?:[gex]?def|(?:re)?newcommand|(?:Provide|Declare)(?:Robust)?Command|(?:New|Declare|Provide)(?:Expandable)?DocumentCommand|DeclareMathOperator|newglossaryentry)\*?\s*\{?\\(" + alt + r")(?![A-Za-z@])")
+    done = subprocess.run(["grep", "-rlE", "--include=*.sty", "-e", r"(def|command|Command|Operator)\*?\s*\{?\\(" + alt + ")", str(top)], capture_output=True, text=True)
+    best = {}
+    for f in sorted(done.stdout.split(), key=lambda f: (len(f), f)):
+        for m in rx.finditer(Path(f).read_text(errors="replace")):
+            best.setdefault("\\" + m.group(1), Path(f).stem)
+    return set(best.values())
+
+
 def scope_cards(satex, work, names):
     """What `satex scope --all` knows of the control sequences the pages name, for their hover cards: the records
     by name from a document loading the packages the pages use, and each engine's primitives. Memoized."""
@@ -641,10 +657,16 @@ def scope_cards(satex, work, names):
     def make():
         text = "\\documentclass{article}\n" + "".join(f"\\usepackage{{{n}}}\n" for n in wanted) + "\\begin{document}\n\\end{document}\n"
         records = {r["name"]: r for r in scope("pdftex", KERNELS[0][2], text)}
+        # a name no loaded package defines: the installed packages that define it, each loaded alone
+        for n in sorted(providers([x for x in names if x not in records and re.fullmatch(r"\\[A-Za-z]{3,}", x)])):
+            more = scope("pdftex", KERNELS[0][2], "\\documentclass{article}\n" + f"\\usepackage{{{n}}}\n\\begin{{document}}\n\\end{{document}}\n")
+            for r in more:
+                if r["name"] in names:
+                    records.setdefault(r["name"], r)
         engines = {label: {r["name"] for r in scope(kernel, flags, "\\documentclass{article}\n\\begin{document}\n\\end{document}\n", ["--filter", "tag=primitive"])}
                    for kernel, label, flags in KERNELS if kernel != "plain"}
         return records, engines
-    return memo(work, "cards-scope", [BINARY, wanted], make)
+    return memo(work, "cards-scope", [BINARY, wanted, sorted(names)], make)
 
 
 def mine(satex, work, names):
@@ -1296,6 +1318,8 @@ def main():
         "cmjs": emit(out, "codemirror.js", (SITE / "codemirror.js").read_bytes()),
         "playjs": emit(out, "play/playground.js", (SITE / "playground.js").read_bytes()),
         "drawjs": emit(out, "draw.js", (SITE / "draw.js").read_bytes()),
+        "viewsjs": emit(out, "views.js", (SITE / "views.js").read_bytes()),
+        "dialogsjs": emit(out, "dialogs.js", (SITE / "dialogs.js").read_bytes()),
     }
     table = pages()
     nav = sidebar(table)
@@ -1367,9 +1391,12 @@ def main():
     for key in ("intro", "install"):
         parts[key], found = sem.mark_cards(parts[key], PREVIEW_NAMES())
         names |= found
-    card_data = sem.cards(names, formal.rows, lean, refs, *scope_cards(args.satex.resolve(), work, names), {k.split(":", 1)[1]: v for k, v in PREVIEWS.items()}, sem.builtin_lines(ROOT))
+    card_data = sem.cards(names, formal.rows, lean, refs, *scope_cards(args.satex.resolve(), work, names), {k.split(":", 1)[1]: v for k, v in PREVIEWS.items()}, sem.builtin_lines(ROOT), sem.example_defs(pending))
     assets["cards"] = emit(out, "cs-cards.json", json.dumps(card_data, ensure_ascii=False, separators=(",", ":")).encode())
     print(f"cards: {len(card_data)} of {len(names)} control sequences named in code spans", file=sys.stderr)
+    left = {k: v["k"] for k, v in card_data.items() if v["k"] == "undefined" or v.get("at", "").startswith("the example")}
+    print(f"cards: {sum(v == 'undefined' for v in left.values())} names without a definition, {len(left) - sum(v == 'undefined' for v in left.values())} defined by an example: "
+          + " ".join(sorted(k for k, v in left.items() if v == "undefined")), file=sys.stderr)
     for dst, title, body in pending:
         page(dst, title, body)
     for stem, body in lean_pages.items():

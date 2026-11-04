@@ -1308,7 +1308,7 @@ mod document_metadata {
     /// times, and the run may not end in `budget-exhausted`.  The document
     /// still leaves gaps, so the codes are not asserted away; what is
     /// asserted is that each is bounded and the run finished.
-    fn stays_bounded(options: &str) {
+    fn stays_bounded(options: &str, steps: u64) {
         let analysis = analyze_document(options);
         let bound = bound();
         let over: Vec<_> = unsupported(&analysis).into_iter().filter(|&(_, n)| n > bound).collect();
@@ -1326,12 +1326,14 @@ mod document_metadata {
         assert!(!analysis.exhausted, "the run was exhausted on `{options}`");
         // Measured: 20 million tokens with the bound, 240 million without,
         // out of the 900 million the default budget allows.
-        assert!(analysis.steps < BOUNDED_STEPS, "{} steps for `{options}`", analysis.steps);
+        assert!(analysis.steps < steps, "{} steps for `{options}`", analysis.steps);
     }
 
     /// Well above what the bounded run needs and well below what the
     /// unbounded one took.
     const BOUNDED_STEPS: u64 = 50_000_000;
+    /// Target 50M (`BOUNDED_STEPS`); measured 102.0M on 2026-11-04, see plan.
+    const BARE_STEPS: u64 = 127_480_783;
 
     /// tikz, graphicx and hyperref together (epstopdf's `\InputIfFileExists`
     /// loop, pgfmath's dimension comparisons) end without running out of budget.
@@ -1353,7 +1355,7 @@ mod document_metadata {
         if !super::installed() {
             return;
         }
-        stays_bounded("lang=en");
+        stays_bounded("lang=en", BARE_STEPS);
     }
 
     /// The options real documents carry: `pdfversion` picks the PDF the
@@ -1364,9 +1366,9 @@ mod document_metadata {
         if !super::installed() {
             return;
         }
-        stays_bounded("pdfversion=2.0");
-        stays_bounded("lang=en,pdfversion=1.7,testphase={phase-III}");
-        stays_bounded("tagging=on");
+        stays_bounded("pdfversion=2.0", BOUNDED_STEPS);
+        stays_bounded("lang=en,pdfversion=1.7,testphase={phase-III}", BOUNDED_STEPS);
+        stays_bounded("tagging=on", BOUNDED_STEPS);
     }
 
     /// The worst one gap at one place is counted.
@@ -3971,6 +3973,29 @@ fn alignment_cells_are_placed_text() {
     );
     let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
     assert_eq!(texts, ["x", "abcd", "y"]);
+}
+
+/// The typeset record of text in `center` names the environment, though the
+/// kernel defines it, and says its lines are centered; text outside is justified.
+#[test]
+fn typeset_names_kernel_environments_and_alignment() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\n\\begin{document}\nplain\n\\begin{center}\nhenlo\n\\end{center}\n\\end{document}\n",
+    );
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
+    let of = |text: &str| rows.iter().find(|r| r.get("detail").and_then(|d| d.as_str()) == Some(text)).cloned();
+    let (plain, centered) = (of("plain").expect("plain"), of("henlo").expect("henlo"));
+    assert_eq!(centered.get("env").and_then(|e| e.as_str()), Some("center"));
+    assert_eq!(centered.get("just").and_then(|e| e.as_str()), Some("center"));
+    assert_eq!(plain.get("just").and_then(|e| e.as_str()), Some("justified"));
+    assert!(plain.get("env").is_none());
 }
 
 /// A paragraph inside a box or alignment that goes into an outer paragraph

@@ -160,7 +160,7 @@ fn stdio_session_drives_the_feature_set() {
     let init = server.response(init_id);
     let capabilities = &init["result"]["capabilities"];
     assert_eq!(capabilities["hoverProvider"], json!(true));
-    assert_eq!(capabilities["completionProvider"]["triggerCharacters"], json!(["\\", "{"]));
+    assert_eq!(capabilities["completionProvider"]["triggerCharacters"], json!(["\\", "{", "[", ",", "="]));
     server.notify("initialized", json!({}));
 
     server.notify(
@@ -1865,12 +1865,12 @@ fn hovering_a_key_shows_its_definition() {
         server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
     };
     let size = hover(15);
-    assert!(size.contains("key of `\\zset`") && size.contains("`big`") && size.contains("`small`"), "{size}");
-    assert!(hover(12).is_empty() || !hover(12).contains("key of"), "a value is no key");
+    assert!(size.contains("Key `size` of `\\zset`") && size.contains("`big`") && size.contains("`small`"), "{size}");
+    assert!(hover(12).is_empty() || !hover(12).contains("` of `"), "a value is no key");
     // after the list closed, a word is no key of it
-    assert!(!hover(27).contains("key of"), "outside the list");
+    assert!(!hover(27).contains("Key `"), "outside the list");
     // the first key of a list has no comma before it
-    assert!(hover(8).contains("key of `\\zset`"), "{}", hover(8));
+    assert!(hover(8).contains("` of `\\zset`"), "{}", hover(8));
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
@@ -2383,22 +2383,22 @@ const TYPED: &str = "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{do
 #[test]
 fn hover_names_the_class() {
     let hover = argument_hover("hclass", TYPED, 0, 18);
-    assert!(hover.contains("article") && hover.contains("class"), "{hover}");
+    assert!(hover.contains("article") && hover.to_lowercase().contains("class"), "{hover}");
 }
 
 #[test]
 fn hover_names_the_package() {
     let hover = argument_hover("hpkg", TYPED, 1, 14);
-    assert!(hover.contains("amsmath") && hover.contains("package"), "{hover}");
+    assert!(hover.contains("amsmath") && hover.to_lowercase().contains("package"), "{hover}");
 }
 
 #[test]
 fn hover_pairs_begin_and_end() {
     let hover = argument_hover("henv", TYPED, 5, 8);
-    assert!(hover.contains("itemize") && hover.contains("environment"), "{hover}");
+    assert!(hover.contains("itemize") && hover.to_lowercase().contains("environment"), "{hover}");
     assert!(hover.contains("`\\begin` on line 4, `\\end` on line 6"), "{hover}");
     let document = argument_hover("hdoc", TYPED, 2, 10);
-    assert!(document.contains("document") && document.contains("environment"), "{document}");
+    assert!(document.contains("document") && document.to_lowercase().contains("environment"), "{document}");
 }
 
 #[test]
@@ -2901,9 +2901,9 @@ fn hover_follows_the_type_at_the_cursor() {
         server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
     };
     let color = hover(6, "\\textcolor{");
-    assert!(color.contains("`brand`: color") && color.contains("rgb 0.20 0.40 0.60"), "{color}");
+    assert!(color.contains("Color `brand`") && color.contains("| rgb | `0.2,0.4,0.6` |"), "{color}");
     let label = hover(6, "\\ref{");
-    assert!(label.contains("`sec:one`: label"), "{label}");
+    assert!(label.contains("Label `sec:one`"), "{label}");
     // the same word in prose is no label
     assert!(!hover(16, "page ").contains(": label"));
     server.shutdown();
@@ -2999,4 +2999,367 @@ fn diagnostics_name_the_version_they_are_of() {
     assert_eq!(three["params"]["diagnostics"], two["params"]["diagnostics"]);
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// --- type plugins (src/lsp/plugins) ---
+
+/// [`open_loaded`] with `--set` flags for the server.
+fn open_set(tag: &str, text: &str, sets: &[&str]) -> (Server, String, std::path::PathBuf) {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.tex"), text).unwrap();
+    let mut args = vec!["--set", "limits.seconds=0"];
+    for s in sets {
+        args.extend(["--set", s]);
+    }
+    let mut server = Server::start_with(&crate::support::test_cache(), &dir, &args);
+    let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+    server.response(id);
+    server.notify("initialized", json!({}));
+    let (uri, _) = open_file(&mut server, &dir, "main.tex");
+    // the first findings may come before the run settles: wait out a debounce
+    std::thread::sleep(std::time::Duration::from_millis(satex::project::config::LspConfig::default().debounce_ms) * 2);
+    (server, uri, dir)
+}
+
+/// The result of `method` at 0-based `line`:`character`.
+fn at(server: &mut Server, uri: &str, method: &str, line: u32, character: u32) -> Value {
+    let p = json!({ "line": line, "character": character });
+    let params = match method {
+        "textDocument/codeAction" => {
+            json!({ "textDocument": { "uri": uri }, "range": { "start": p, "end": p }, "context": { "diagnostics": [] } })
+        }
+        _ => json!({ "textDocument": { "uri": uri }, "position": p }),
+    };
+    let id = server.request(method, params);
+    server.response(id)["result"].clone()
+}
+
+fn hover_md(v: &Value) -> String {
+    v["contents"]["value"].as_str().unwrap_or_default().to_string()
+}
+
+/// The column of the first `needle` on 0-based `line` of `text`, plus `off`.
+fn col(text: &str, line: usize, needle: &str, off: usize) -> u32 {
+    (text.lines().nth(line).unwrap().find(needle).unwrap() + off) as u32
+}
+
+/// A length in the source: hover in every unit with the sp, convert actions that say whether
+/// they are exact, a converter view; `\textwidth` shows its value when the run ended.
+#[test]
+fn units_plugin_converts_lengths() {
+    let text = "\\documentclass{article}\n\\begin{document}\nText \\vspace{12pt} and \\hspace{24pt} \\the\\textwidth\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("units", text, &["type_plugins.units.units=[pt,cm,pc]"]);
+    let c = col(text, 2, "12pt", 1);
+    let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 2, c));
+    assert!(md.contains("| cm | 0.42175 |") && md.contains("| sp | 786432 |"), "{md}");
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 2, c);
+    let titles: Vec<&str> = actions.as_array().unwrap().iter().filter_map(|a| a["title"].as_str()).collect();
+    assert!(titles.iter().any(|t| t.starts_with("Convert 12pt to 0.42cm (≈")), "{titles:?}");
+    // 24pt is exactly 2pc (a pica is 12pt)
+    let pica = at(&mut server, &uri, "textDocument/codeAction", 2, col(text, 2, "24pt", 2));
+    let exact =
+        pica.as_array().unwrap().iter().find(|a| a["title"].as_str().is_some_and(|t| t.contains("to 2pc (exact)")));
+    let edit = &exact.expect("exact picas")["edit"]["changes"][&uri][0];
+    assert_eq!(edit["newText"], "2pc");
+    assert_eq!(edit["range"]["start"]["character"], col(text, 2, "24pt", 0));
+    let views = at(&mut server, &uri, "satex/view", 2, c);
+    assert_eq!(views[0]["plugin"], "units", "{views}");
+    assert_eq!(views[0]["sections"][0]["kind"], "converter");
+    assert_eq!(views[0]["sections"][0]["lo"], 786432);
+    // a length register: its value when the run ended
+    let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 2, col(text, 2, "textwidth", 2)));
+    assert!(md.contains("at the end of the run") && md.contains("| cm |"), "{md}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    // switched off: none of it
+    let (mut server, uri, dir) = open_set("units-off", text, &["type_plugins.units.enabled=false"]);
+    assert!(!hover_md(&at(&mut server, &uri, "textDocument/hover", 2, c)).contains("| cm |"));
+    assert_eq!(at(&mut server, &uri, "textDocument/codeAction", 2, c), json!([]));
+    assert_eq!(at(&mut server, &uri, "satex/view", 2, c), json!([]));
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Colors with xcolor: items with their hex, hover in every model, an expression mixed, a picker
+/// that writes `[model]{spec}` into `\color`, a `\definecolor` in a TikZ-like key, VS Code's
+/// presentation, and `\definecolor` model conversions.
+#[test]
+fn color_plugin_with_xcolor() {
+    let text = "\\documentclass{article}\n\\usepackage{xcolor}\n\\definecolor{brand}{rgb}{0,0.5,0.5}\n\\begin{document}\n\\color{brand} \\textcolor{red!40!blue}{x} \\color{}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("color", text, &[]);
+    // a hover waits for the run, a completion does not
+    let c = col(text, 4, "brand", 1);
+    let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 4, c));
+    assert!(md.contains("| HTML | `008080` |") && md.contains("| cmyk | `1,0,0,0.5` |"), "{md}");
+    let items = complete(&mut server, &uri, 4, col(text, 4, "{}", 1));
+    let brand = items.iter().find(|i| i["label"] == "brand").expect("brand offered");
+    assert_eq!(brand["detail"], "#008080");
+    let mixed = hover_md(&at(&mut server, &uri, "textDocument/hover", 4, col(text, 4, "red!40", 1)));
+    assert!(mixed.contains("`660099`"), "{mixed}");
+    let views = at(&mut server, &uri, "satex/view", 4, c);
+    let color = &views[0]["sections"][0];
+    assert_eq!(color["kind"], "color", "{views}");
+    assert_eq!(color["models"][0], "HTML");
+    assert_eq!(color["apply"]["edits"][0]["newText"], "[${model}]{${spec}}");
+    assert!(color["defined"].as_array().unwrap().iter().any(|d| d["name"] == "brand"));
+    let id = server.request(
+        "textDocument/colorPresentation",
+        json!({ "textDocument": { "uri": uri }, "color": { "red": 1.0, "green": 0.0, "blue": 0.0, "alpha": 1.0 },
+                "range": { "start": { "line": 4, "character": c - 1 }, "end": { "line": 4, "character": c + 4 } } }),
+    );
+    let shown = server.response(id)["result"].clone();
+    assert_eq!(shown[0]["textEdit"]["newText"], "[HTML]{FF0000}", "{shown}");
+    let id = server.request("textDocument/documentColor", json!({ "textDocument": { "uri": uri } }));
+    let colors = server.response(id)["result"].clone();
+    assert!(colors.as_array().is_some_and(|c| !c.is_empty()), "{colors}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A `\definecolor`'s spec converts to another model. Red: the name a `\definecolor` defines
+/// has no color type at the cursor yet (no slot, no use), so no plugin triggers there.
+#[test]
+fn color_plugin_converts_a_definition() {
+    let text = "\\documentclass{article}\n\\usepackage{xcolor}\n\\definecolor{brand}{rgb}{0,0.5,0.5}\n\\begin{document}\n\\color{brand} x\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("color-def", text, &[]);
+    // the definition's spec in another model
+    let conv = at(&mut server, &uri, "textDocument/codeAction", 2, col(text, 2, "brand", 1));
+    let html =
+        conv.as_array().unwrap().iter().find(|a| a["title"].as_str().is_some_and(|t| t.starts_with("Convert to HTML")));
+    let probe = hover_md(&at(&mut server, &uri, "textDocument/hover", 2, col(text, 2, "brand", 1)));
+    assert!(html.is_some(), "{conv}\n{probe}");
+    assert_eq!(html.expect("to HTML")["edit"]["changes"][&uri][0]["newText"], "{HTML}{008080}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Without xcolor the picker defines a color in a model the color package reads; switched off,
+/// no items, swatches or views.
+#[test]
+fn color_plugin_without_xcolor_and_off() {
+    let text = "\\documentclass{article}\n\\usepackage{color}\n\\definecolor{brand}{rgb}{0,0.5,0.5}\n\\begin{document}\n\\color{brand} x\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("color-plain", text, &[]);
+    let c = col(text, 4, "brand", 1);
+    let views = at(&mut server, &uri, "satex/view", 4, c);
+    let color = &views[0]["sections"][0];
+    assert_eq!(color["models"], json!(["rgb", "cmyk", "gray"]), "{views}");
+    let edits = color["apply"]["edits"].as_array().unwrap();
+    assert!(edits[0]["newText"].as_str().unwrap().starts_with("\\definecolor{${name}}"), "{edits:?}");
+    assert_eq!(edits[0]["range"]["start"]["line"], 3);
+    assert_eq!(edits[1]["newText"], "${name}");
+    assert_eq!(color["apply"]["name"], "mycolor");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    let (mut server, uri, dir) = open_set("color-off", text, &["type_plugins.color.enabled=false"]);
+    // the core's names a `\csname` formed stay; the plugin's color items (kind 16) go
+    assert!(complete(&mut server, &uri, 4, c).iter().all(|i| i["kind"] != 16));
+    assert_eq!(at(&mut server, &uri, "satex/view", 4, c), json!([]));
+    let id = server.request("textDocument/documentColor", json!({ "textDocument": { "uri": uri } }));
+    assert_eq!(server.response(id)["result"], json!([]));
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Key lists: completion with nothing typed after `,`, a family that goes on with its keys, hover
+/// docs on a family; switched off, no key items.
+#[test]
+fn keys_plugin_completes_and_documents_keys() {
+    let text = "\\documentclass{article}\n\\usepackage{pgfkeys}\n% /demo is a good family\n\\pgfkeys{/demo/.is family}\n\\pgfkeys{/demo,\n  mode/.is choice, mode/fast/.code={}, mode/safe/.code={},\n  width/.initial=2cm,\n}\n\\begin{document}\n\\pgfkeys{/demo/mode=fast, /demo}\n\\pgfkeys{/demo/mode=fast, }\n\\pgfkeys{/de}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("keys", text, &[]);
+    let empty = complete(&mut server, &uri, 10, col(text, 10, ", }", 2));
+    assert!(labels(&empty).iter().any(|l| l.starts_with("/demo")), "{:?}", labels(&empty));
+    let family = complete(&mut server, &uri, 11, col(text, 11, "}", 0));
+    let demo = family.iter().find(|i| i["label"] == "/demo").expect("the family offered");
+    assert_eq!(demo["textEdit"]["newText"], "/demo/", "{demo}");
+    assert_eq!(demo["command"]["command"], "editor.action.triggerSuggest");
+    let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 9, col(text, 9, ", /demo", 4)));
+    assert!(md.contains("is family") && md.contains("good family"), "{md}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    let (mut server, uri, dir) = open_set("keys-off", text, &["type_plugins.keys.enabled=false"]);
+    let family = complete(&mut server, &uri, 11, col(text, 11, "}", 0));
+    assert!(!labels(&family).contains(&"/demo"), "{:?}", labels(&family));
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// The text `range` (an LSP range) covers in `text`.
+fn ranged(text: &str, range: &Value) -> String {
+    let at = |p: &Value| {
+        let line = p["line"].as_u64().unwrap() as usize;
+        let start: usize = text.split_inclusive('\n').take(line).map(str::len).sum();
+        start + p["character"].as_u64().unwrap() as usize
+    };
+    text[at(&range["start"])..at(&range["end"])].to_string()
+}
+
+/// A table and each figure get a code lens and a hover link to their
+/// dialog; the dialog's state, unchanged, writes the text it came from; the
+/// code actions rewrite the table for booktabs and siunitx, adding the
+/// packages the preamble lacks, and rotate or fit the figure.
+#[test]
+fn tables_and_figures_open_dialogs_that_write_them_back() {
+    let text = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{tabular}{|l|c|}\n  \\hline\n  Method & Score \\\\ \\hline\n  Ours & 0.92 \\\\ % best\n  \\multicolumn{2}{c}{a {&} b} \\\\\n  Base & 11.5 \\\\\n  \\hline\n\\end{tabular}\n\\includegraphics[trim=1cm 2 3 4,clip,angle=90,width=3cm]{fig}\n\\includegraphics[viewport=0 0 100 50, clip]{fig}\n\\end{document}\n";
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-dialogs-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.tex"), text).unwrap();
+    let banner = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/documents/includegraphics/title-banner-image.pdf");
+    std::fs::copy(banner, dir.join("fig.pdf")).unwrap();
+    let mut server = serve(&dir, true);
+    let (uri, _) = open_file(&mut server, &dir, "main.tex");
+    let mut ask = |method: &str, params: Value| {
+        let id = server.request(method, params);
+        server.response(id)["result"].clone()
+    };
+    let lenses = ask("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses: Vec<(u64, &str)> = (lenses.as_array().unwrap().iter())
+        .map(|l| (l["range"]["start"]["line"].as_u64().unwrap(), l["command"]["title"].as_str().unwrap()))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|(line, t)| (line, if t.contains("table") { "table" } else { "image" }))
+        .collect();
+    let (table, figure) = (3, 11);
+    assert_eq!(lenses, [(table, "table"), (figure, "image"), (figure + 1, "image")]);
+    let hover = ask(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": table, "character": 3 } }),
+    );
+    assert!(hover["contents"]["value"].as_str().unwrap().contains("command:satex.openDialog"), "{hover}");
+    for line in [table, figure, figure + 1] {
+        let view = ask(
+            "satex/dialog",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": 1 } }),
+        );
+        let applied = ask(
+            "satex/dialogApply",
+            json!({ "textDocument": { "uri": uri }, "kind": view["kind"], "range": view["range"], "state": view["state"] }),
+        );
+        assert_eq!(applied["edits"][0]["newText"].as_str().unwrap(), ranged(text, &view["range"]), "{view}");
+        if view["kind"] == "image" {
+            assert!(view["state"]["natural"].is_array(), "the engine's size of the file: {view}");
+        }
+        if line == figure + 1 {
+            assert_eq!(view["state"]["viewport"], true, "{view}");
+        }
+    }
+    let at = |line: u64| json!({ "start": { "line": line, "character": 0 }, "end": { "line": line, "character": 0 } });
+    let actions = ask(
+        "textDocument/codeAction",
+        json!({ "textDocument": { "uri": uri }, "range": at(table + 2), "context": { "diagnostics": [] } }),
+    );
+    let titled =
+        |t: &str| actions.as_array().unwrap().iter().find(|a| a["title"].as_str().unwrap().starts_with(t)).cloned();
+    assert!(titled("Edit table").is_some_and(|a| a["command"]["command"] == "satex.openDialog"), "{actions}");
+    let booktabs = titled("Convert table to booktabs").expect("a booktabs rewrite");
+    assert!(booktabs["title"].as_str().unwrap().contains("\\usepackage{booktabs}"), "{booktabs}");
+    let edits = booktabs["edit"]["changes"][&uri].as_array().unwrap().clone();
+    let new = edits[0]["newText"].as_str().unwrap();
+    assert!(
+        new.starts_with(
+            "\\begin{tabular}{lc}\n  \\toprule\n  Method & Score \\\\ \\midrule\n  Ours & 0.92 \\\\ % best\n"
+        ),
+        "{new}"
+    );
+    assert!(new.ends_with("  \\bottomrule\n\\end{tabular}"), "{new}");
+    assert_eq!(edits[1]["newText"], "\\usepackage{booktabs}\n");
+    let siunitx = titled("Align numbers with siunitx").expect("an S column rewrite");
+    let new = siunitx["edit"]["changes"][&uri][0]["newText"].as_str().unwrap().to_string();
+    assert!(new.starts_with("\\begin{tabular}{|l|S[table-format=2.2]|}\n  \\hline\n  Method & {Score} \\\\"), "{new}");
+    let actions = ask(
+        "textDocument/codeAction",
+        json!({ "textDocument": { "uri": uri }, "range": at(figure), "context": { "diagnostics": [] } }),
+    );
+    let rotate =
+        (actions.as_array().unwrap().iter()).find(|a| a["title"] == "Rotate image by 90°").expect("a rotation");
+    assert_eq!(
+        rotate["edit"]["changes"][&uri][0]["newText"],
+        "\\includegraphics[trim=1cm 2 3 4,clip,angle=180,width=3cm]{fig}"
+    );
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Switched off, the table and image plugins offer no lens, hover link or action.
+#[test]
+fn switched_off_dialog_plugins_offer_nothing() {
+    let text = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{tabular}{l}\na \\\\\n\\end{tabular}\n\\includegraphics{example-image}\n\\end{document}\n";
+    let off = ["type_plugins.table.enabled=false", "type_plugins.image.enabled=false"];
+    let (mut server, uri, dir) = open_set("dialogs-off", text, &off);
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    assert_eq!(server.response(id)["result"], json!([]));
+    let range = json!({ "start": { "line": 3, "character": 0 }, "end": { "line": 6, "character": 0 } });
+    let id = server.request(
+        "textDocument/codeAction",
+        json!({ "textDocument": { "uri": uri }, "range": range, "context": { "diagnostics": [] } }),
+    );
+    let actions = server.response(id)["result"].clone();
+    assert!(!actions.to_string().contains("satex.openDialog"), "{actions}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Inside a finding's range the hover shows the finding first, then the hover of the word under
+/// the cursor: the macro's card on `\label`, the label's card on its key.
+#[test]
+fn a_finding_s_hover_keeps_the_word_s_hover() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\section{A}\\label{sec:x} text\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("finding-hover", text, &[]);
+    let card = |md: &str| md.find("unused-label");
+    let on_cs = hover_md(&at(&mut server, &uri, "textDocument/hover", 2, col(text, 2, "\\label", 2)));
+    let macro_at = on_cs.find("\\label").filter(|_| on_cs.contains("---"));
+    assert!(card(&on_cs).is_some() && macro_at.is_some(), "{on_cs}");
+    assert!(card(&on_cs) < on_cs.rfind("---"), "the finding comes first: {on_cs}");
+    // the macro's full card: its signature with typed arguments
+    assert!(on_cs.contains("`\\label{⟨"), "the signature: {on_cs}");
+    let on_key = hover_md(&at(&mut server, &uri, "textDocument/hover", 2, col(text, 2, "sec:x", 2)));
+    let key_at = on_key.find("Label `sec:x`");
+    assert!(card(&on_key).is_some() && key_at.is_some() && card(&on_key) < key_at, "{on_key}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A command item carries its signature beside the label, a tab stop per argument (an optional
+/// one with its brackets), opens the signature help once accepted, and resolves to its card.
+#[test]
+fn command_items_carry_their_signature() {
+    let text = "\\documentclass{article}\n\\newcommand\\greet[2][hi]{#1 #2}\n\\begin{document}\n\\greet{you}\n\\gre\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("signature-items", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 3, 2);
+    let items = complete(&mut server, &uri, 4, 4);
+    let greet = items.iter().find(|i| i["label"] == "greet").expect("greet offered");
+    let signature = greet["labelDetails"]["detail"].as_str().unwrap_or_default();
+    assert!(signature.starts_with("[⟨") && signature.matches('⟨').count() == 2, "{greet}");
+    let snippet = greet["insertText"].as_str().unwrap_or_default();
+    let stops = (1..=3).filter(|n| snippet.contains(&format!("${{{n}:"))).count();
+    assert_eq!(stops, 2, "{snippet}");
+    assert!(snippet.contains("${1:[") && snippet.ends_with("$0"), "{snippet}");
+    assert_eq!(greet["command"]["command"], "editor.action.triggerParameterHints");
+    let id = server.request("completionItem/resolve", greet.clone());
+    let resolved = server.response(id)["result"].clone();
+    let card = resolved["documentation"]["value"].as_str().unwrap_or_default();
+    assert!(card.contains("\\greet"), "{resolved}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// "Change environment": on a `\begin` name, the environments the document uses as actions and
+/// all of them in the view; center → flushright edits that pair's two names only.
+#[test]
+fn change_environment_edits_both_ends_only() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\begin{center}\nA\n\\end{center}\n\\begin{flushright}B\\end{flushright}\n\\begin{center}C\\end{center}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("change-env", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 2, 9);
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 2, 9);
+    let to = actions.as_array().unwrap().iter().find(|a| a["title"] == "Change center to flushright");
+    let edits = to.expect("flushright offered")["edit"]["changes"][&uri].as_array().unwrap().clone();
+    let lines: Vec<u64> = edits.iter().map(|e| e["range"]["start"]["line"].as_u64().unwrap()).collect();
+    assert_eq!(lines, [2, 4], "{edits:?}");
+    assert!(edits.iter().all(|e| e["newText"] == "flushright"));
+    let views = at(&mut server, &uri, "satex/view", 2, 9);
+    let items = views[0]["sections"][0]["items"].as_array().cloned().unwrap_or_default();
+    assert!(items.iter().any(|i| i["title"] == "itemize"), "{views}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
 }

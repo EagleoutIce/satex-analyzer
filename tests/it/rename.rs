@@ -117,3 +117,22 @@ fn a_counter_moves_with_the_names_it_allocates() {
         assert_eq!(sites, ["2:13=phase", "4:14=phase", "4:23=phase"], "from {line}:{col}");
     }
 }
+
+/// An environment the kernel defines is no key of the project: a rename would change only its
+/// uses, so it is refused, saying who defines it.
+#[test]
+fn a_kernel_environment_is_refused() {
+    if !installed() {
+        return;
+    }
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let fixture = write(
+        "kernel-env",
+        "\\documentclass{article}\n\\begin{document}\n\\begin{center}x\\end{center}\n\\begin{itemize}\\item y\\end{itemize}\n\\end{document}\n",
+        cfg,
+    );
+    for (line, name) in [(3, "center"), (4, "itemize")] {
+        let refused = rename(&fixture, line, 8, name, false, "other").expect_err("refused");
+        assert!(refused.contains("renaming it here would only change its uses"), "{refused}");
+    }
+}

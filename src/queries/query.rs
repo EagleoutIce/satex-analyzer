@@ -281,31 +281,35 @@ pub enum Query {
     /// The arrow tips and patterns the run declared, drawn by TeX; see
     /// [`crate::queries::preview::sheet`].
     Previews,
+    /// The editor's type plugins, their types and features ([`crate::lsp::plugins`]).
+    TypePlugins,
 }
 
 impl Query {
-    pub const ALL: [(&'static str, Query); 21] = [
-        ("definitions", Query::Definitions),
-        ("expansions", Query::Expansions),
-        ("dependencies", Query::Dependencies),
-        ("occurrences", Query::Occurrences),
-        ("recursion", Query::Recursion),
+    /// Sorted by name: `--list`, the wiki and the playground show this order.
+    pub const ALL: [(&'static str, Query); 22] = [
         ("calls", Query::Calls),
+        ("catcodes", Query::Catcodes),
+        ("definitions", Query::Definitions),
+        ("dependencies", Query::Dependencies),
         ("dependency-graph", Query::DependencyGraph),
-        ("trace", Query::Trace),
-        ("files", Query::Files),
         ("diagnostics", Query::Diagnostics),
         ("distribution", Query::Distribution),
-        ("catcodes", Query::Catcodes),
-        ("side-effects", Query::SideEffects),
-        ("project", Query::Project),
-        ("plugins", Query::Plugins),
-        ("produces", Query::Produces),
+        ("expansions", Query::Expansions),
+        ("files", Query::Files),
         ("gaps", Query::Gaps),
-        ("pgfkeys", Query::Pgfkeys),
+        ("occurrences", Query::Occurrences),
         ("options", Query::Options),
-        ("typeset", Query::Typeset),
+        ("pgfkeys", Query::Pgfkeys),
+        ("plugins", Query::Plugins),
         ("previews", Query::Previews),
+        ("produces", Query::Produces),
+        ("project", Query::Project),
+        ("recursion", Query::Recursion),
+        ("side-effects", Query::SideEffects),
+        ("trace", Query::Trace),
+        ("type-plugins", Query::TypePlugins),
+        ("typeset", Query::Typeset),
     ];
 
     pub fn parse(name: &str) -> Option<Query> {
@@ -340,6 +344,7 @@ impl Query {
             Query::Options => "the keys an environment or command's optional argument accepts",
             Query::Typeset => "the text the document typesets, one row per paragraph",
             Query::Previews => "arrow tips and patterns the run declared, drawn by TeX",
+            Query::TypePlugins => "the editor's type plugins: the types each triggers on and its features",
         }
     }
 }
@@ -463,6 +468,7 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 /// `⟨?⟩` paragraph with `cut` set: `kernel` when the kernel was read only
 /// partly (it is then the only paragraph), `run` when the document was. A
 /// paragraph no page break may part from what follows (a heading) has `kept`.
+/// One whose end some path made and another may not have has `open`.
 /// `│` is a thin `\vrule` (a table's `|`), `―` an `\hrule` (`\hline`),
 /// `▬` a wider `\vrule` (`\rule`).
 /// `keys` lists the labels, references and citations of the user's files
@@ -475,15 +481,19 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let marks: Vec<String> = text.align.iter().map(|(_, mark)| mark.name()).collect();
     let mut aligns = text.align.iter().zip(&marks).peekable();
     let mut out = Vec::new();
-    let (mut line, mut first, mut choice) = (String::new(), None, None::<(crate::engine::env::NodeId, [String; 2])>);
+    let (mut line, mut first, mut choice) = (String::new(), None, None::<Choice>);
     let mut causes: Vec<Cause> = Vec::new();
-    let close =
-        |line: &mut String, choice: &mut Option<(crate::engine::env::NodeId, [String; 2])>, causes: &mut Vec<Cause>| {
-            if let Some((on, [yes, no])) = choice.take() {
-                let _ = write!(line, "{}{yes}{}{no}{}", note("{"), note("|"), note("}"));
-                causes.push(Cause::Choice(on, format!("{{{}|{}}}", unmarked(&yes), unmarked(&no))));
+    let close = |line: &mut String, choice: &mut Option<Choice>, causes: &mut Vec<Cause>| {
+        if let Some((on, site, [yes, no])) = choice.take() {
+            // what both arms set is no choice
+            if yes == no {
+                line.push_str(&yes);
+                return;
             }
-        };
+            let _ = write!(line, "{}{yes}{}{no}{}", note("{"), note("|"), note("}"));
+            causes.push(Cause::Choice(on, site, format!("{{{}|{}}}", unmarked(&yes), unmarked(&no))));
+        }
+    };
     let mut on_page = vec![false; text.at.len()];
     for &(from, to) in &text.placed {
         let end = on_page.len();
@@ -575,7 +585,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         for &(_, kind, key) in &named[from..upto] {
             keys.push_back((kind, key.into()));
             match choice.as_mut() {
-                Some((_, arms)) => arms[0].push(KEY),
+                Some((_, _, arms)) => arms[0].push(KEY),
                 None => line.push(KEY),
             }
         }
@@ -587,7 +597,14 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             line.push_str(&note(&format!("▢ {label}")));
             sketches.push(sketch);
         }
-        let arm = arms.next_if(|a| a.0 as usize <= i).filter(|a| a.0 as usize == i);
+        let mut taken_by: Vec<bool> = Vec::new();
+        let mut arm = None;
+        while let Some(a) = arms.next_if(|a| a.0 as usize <= i) {
+            if a.0 as usize == i && arm.is_none_or(|(_, on, _)| on == a.1) {
+                arm = Some(*a);
+                taken_by.push(a.2);
+            }
+        }
         let boxed = !on_page[i]
             && spot.modes.within(
                 crate::engine::mode::Modes::INTERNAL_VERTICAL.union(crate::engine::mode::Modes::RESTRICTED_HORIZONTAL),
@@ -636,6 +653,12 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             if text.kept.binary_search(&(i as u32)).is_ok() {
                 record.insert("kept".into(), json!(true));
             }
+            if text.open.binary_search(&(i as u32)).is_ok() {
+                record.insert("open".into(), json!(true));
+            }
+            if let Ok(k) = text.just.binary_search_by_key(&(began as u32), |s| s.0) {
+                record.insert("just".into(), json!(text.just[k].1.name()));
+            }
             if let Ok(k) = text.skips.binary_search_by_key(&(began as u32), |s| s.0) {
                 record.insert("skip".into(), json!(text.skips[k].1 as f64 / f64::from(1 << 16)));
             }
@@ -658,11 +681,14 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         }
         flush(i, &mut line, &mut keys);
         match arm {
-            Some(&(_, on, taken)) => {
-                if choice.as_ref().is_some_and(|(n, _)| *n != on) {
+            Some((_, on, _)) => {
+                if choice.as_ref().is_some_and(|(n, ..)| *n != on) {
                     close(&mut line, &mut choice, &mut causes);
                 }
-                choice.get_or_insert_with(|| (on, Default::default())).1[usize::from(!taken)].push_str(&piece);
+                let arms = &mut choice.get_or_insert_with(|| (on, site, Default::default())).2;
+                for taken in taken_by {
+                    arms[usize::from(!taken)].push_str(&piece);
+                }
             }
             None => {
                 close(&mut line, &mut choice, &mut causes);
@@ -717,6 +743,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     }
     if !line.trim().is_empty() {
         let mut record = paragraph(analysis, first.unwrap_or_default(), &line, causes, &mut keys);
+        if let Ok(k) = text.just.binary_search_by_key(&(began as u32), |s| s.0) {
+            record.insert("just".into(), json!(text.just[k].1.name()));
+        }
         if let Ok(k) = text.skips.binary_search_by_key(&(began as u32), |s| s.0) {
             record.insert("skip".into(), json!(text.skips[k].1 as f64 / f64::from(1 << 16)));
         }
@@ -842,10 +871,14 @@ pub fn typeset_by(analysis: &Analysis, at: Span) -> Option<String> {
     (!out.is_empty()).then_some(out)
 }
 
+/// A choice being set: where paths parted, the first user site it is set at, and each arm's text.
+type Choice = (crate::engine::env::NodeId, Span, [String; 2]);
+
 /// What made a character of the typeset text uncertain.
 enum Cause {
-    /// A `{a|b}` choice set under the undecided conditional at this node.
-    Choice(crate::engine::env::NodeId, String),
+    /// A `{a|b}` choice set where paths parted at this node (an undecided
+    /// conditional or a split), first set at this place in the user's files.
+    Choice(crate::engine::env::NodeId, Span, String),
     /// A character the run could not compute, set here.
     Unknown(Span),
 }
@@ -1097,7 +1130,7 @@ fn public(c: char) -> String {
 }
 
 fn strip_private(s: &str) -> String {
-    s.chars().filter(|c| !matches!(*c, '\u{10FF00}'..='\u{10FFFF}')).collect()
+    s.chars().map(public).collect()
 }
 
 /// `s` cut to about 60 characters.
@@ -1345,17 +1378,34 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
     let mut seen: Vec<(String, u32)> = Vec::new();
     let mut why = Vec::new();
     for cause in causes {
-        let (mark, line, test, reads) = match cause {
-            Cause::Choice(on, mark) => {
-                let site = analysis.graph.vertices.get(on as usize).map(|v| v.span).unwrap_or_default();
+        let (mark, line, test, reads, parted) = match cause {
+            Cause::Choice(on, set, mark) => {
+                let vertex = analysis.graph.vertices.get(on as usize);
+                let site = vertex.map(|v| v.span).unwrap_or_default();
                 let (test, reads) = test_text(analysis, site);
-                (mark, site.line, test, reads)
+                // A test in library code is named by what it tested, at the user's line that led there.
+                match origin(analysis, site.file) == "document" && !test.is_empty() {
+                    true => (mark, site.line, test, reads, String::new()),
+                    false => {
+                        // a name the run made up (an unknown value's) says less than its place
+                        let name = vertex.map(|v| analysis.interner.name(v.name)).unwrap_or_default();
+                        let named = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphabetic() || c == '@');
+                        let file = analysis.file_name(site.file);
+                        let file = Path::new(file).file_name().map_or(file.into(), |f| f.to_string_lossy());
+                        let parted = if named { format!("`\\{name}`") } else { format!("{file}:{}", site.line) };
+                        (mark, set.line, String::new(), Vec::new(), parted)
+                    }
+                }
             }
-            Cause::Unknown(site) => ("⟨?⟩".to_string(), site.line, String::new(), Vec::new()),
+            Cause::Unknown(site) => ("⟨?⟩".to_string(), site.line, String::new(), Vec::new(), String::new()),
         };
         if !seen.contains(&(mark.clone(), line)) {
             seen.push((mark.clone(), line));
-            why.push(json!({"mark": clip(&strip_private(&mark)), "line": line, "test": clip(&strip_private(&test)), "reads": reads}));
+            let mut cause = json!({"mark": clip(&strip_private(&mark)), "line": line, "test": clip(&strip_private(&test)), "reads": reads});
+            if !parted.is_empty() {
+                cause["parted"] = json!(strip_private(&parted));
+            }
+            why.push(cause);
         }
     }
     if !why.is_empty() {
@@ -1414,6 +1464,48 @@ fn tidy(line: &str) -> String {
         .to_string()
 }
 
+/// The paragraphs [`typeset`] computes (text, and whether it is `open`:
+/// on some path it goes on into the next) paired in order with the ones an
+/// engine set. A computed one that may be empty and does not match the next
+/// set one stands alone. An open one that does not cover the next set one
+/// is taken with the ones it may go on into. Each pair holds the set text
+/// (empty: none) and the range of computed paragraphs.
+pub fn pair_paragraphs(computed: &[(String, bool)], set: &[String]) -> Vec<(String, std::ops::Range<usize>)> {
+    let text = |r: std::ops::Range<usize>| computed[r].iter().map(|c| c.0.as_str()).collect::<Vec<_>>().join(" ");
+    let mut pairs = Vec::new();
+    let mut engine = set.iter().peekable();
+    let mut k = 0;
+    while k < computed.len() {
+        let e = engine.peek().map(|e| e.as_str());
+        let mut end = k + 1;
+        if let Some(e) = e {
+            let mut j = k + 1;
+            while typeset_verdict(&text(k..j), e) == "DIFFERS" && computed[j - 1].1 && j < computed.len() {
+                j += 1;
+            }
+            if typeset_verdict(&text(k..j), e) != "DIFFERS" {
+                end = j;
+            }
+        }
+        let c = text(k..end);
+        let alone = typeset_verdict(&c, "") != "DIFFERS" && e.is_none_or(|e| typeset_verdict(&c, e) == "DIFFERS");
+        // Past the last set one, an open paragraph's next one may be its own rest.
+        if let Some(last) = pairs.last_mut().filter(|_| e.is_none() && !alone && computed[k - 1].1) {
+            let (set, range): &mut (String, std::ops::Range<usize>) = last;
+            if typeset_verdict(&text(range.start..end), set) != "DIFFERS" {
+                range.end = end;
+                k = end;
+                continue;
+            }
+        }
+        let e = if alone { String::new() } else { engine.next().cloned().unwrap_or_default() };
+        pairs.push((e, k..end));
+        k = end;
+    }
+    pairs.extend(engine.map(|e| (e.clone(), computed.len()..computed.len())));
+    pairs
+}
+
 /// How the text [`typeset`] computes compares with what an engine set,
 /// whitespace aside: `equal`, `covers` (the engine's text is one of the
 /// choices, so sound), or `DIFFERS` (unsound).
@@ -1466,6 +1558,7 @@ pub fn run(analysis: &Analysis, query: Query, filter: &Filter) -> Vec<Record> {
         Query::SideEffects => side_effects(analysis),
         Query::Project => project(analysis),
         Query::Plugins => plugins(analysis),
+        Query::TypePlugins => crate::lsp::plugins::list(&analysis.settings.type_plugins),
         // The text to look for arrives with `--text`, which `run` has no
         // room for: `cmd::query` calls `produces` directly.
         Query::Produces => Vec::new(),
@@ -4001,6 +4094,13 @@ pub fn signature(
     probed(analysis, sym, Some(mac), Some(crate::analysis::probe::State::End)).filter(|p| p.complete).map(|p| p.spec)
 }
 
+/// What a call of the macro `sym` reads as the probe found it (`\\greet[hi]{2}`), for one name
+/// where a listing gave only its definition's own text.
+pub fn effective_probed(analysis: &Analysis, sym: crate::engine::tex::Sym) -> String {
+    let meaning = analysis.env.meaning(sym);
+    effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), Some(crate::analysis::probe::State::End))
+}
+
 /// `view` is `None` where a listing reports many names at once and only
 /// what the definition itself says is wanted: its ltcmd specification or
 /// its parameter text.  Otherwise the probe says what a call reads.  Either
@@ -5944,6 +6044,8 @@ pub fn resolve_key(analysis: &Analysis, cmd: &str, key: &str) -> Option<Record> 
     };
     let mut record = match options.iter().find(named) {
         Some(r) => r.clone(),
+        // a path names its key whatever families the command reads (`\pgfkeys{/demo}`)
+        None if key.starts_with('/') => stored_keys(analysis, Some(key)).into_iter().find(|r| text(r, "key") == key)?,
         None => {
             let mut families: Vec<String> = options.iter().map(|r| text(r, "family")).collect();
             families.dedup();

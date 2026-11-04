@@ -159,3 +159,32 @@ fn a_rerun_resumes_where_the_document_begins() {
     assert_eq!(checkpoints.resumed.map(|(_, line)| line), Some(opens), "{} runs", analysis.build_runs);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A known document is one path however often the editor builds it: the
+/// second build reads the files the first left, which hold what it writes.
+#[test]
+fn a_known_document_built_again_typesets_one_path() {
+    if !installed() {
+        return;
+    }
+    let main = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/paper.tex");
+    let text = std::fs::read_to_string(&main).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    for build in 1..=2 {
+        let analysis = Machine::build(&mut checkpoints, &text, &main, &cfg, true);
+        let rows = satex::queries::query::run(
+            &analysis,
+            satex::queries::query::Query::Typeset,
+            &satex::queries::query::Filter::Always,
+        );
+        // A choice is `{a|b}` in the notation's private-use brackets.
+        let optional: Vec<&str> = rows
+            .iter()
+            .filter(|r| r["kind"] == "paragraph")
+            .filter_map(|r| r["marked"].as_str())
+            .filter(|m| m.contains("\u{E000}{\u{E001}"))
+            .collect();
+        assert!(optional.is_empty(), "build {build}: {optional:?}");
+    }
+}

@@ -272,6 +272,8 @@
     let titled = null;
     const untitle = () => { if (titled) { titled.title = titled.dataset.title; delete titled.dataset.title; titled = null; } };
     document.addEventListener('mouseover', (e) => {
+      // inside an open note (a card with links): leave it as it is, so its links can be clicked
+      if (e.target.closest?.('.tip-note') && !note.el.hidden) return;
       const a = e.target.closest?.('a.ty[data-ty]'), chip = e.target.closest?.('.arg[data-tip]');
       const ty = a?.dataset.ty ?? chip?.querySelector('a.ty[data-ty]')?.dataset.ty;
       // one heading and one description: the type's card when there is one, else the chip's own note
@@ -288,7 +290,8 @@
         return;
       }
       untitle();
-      if (!html) { if (!e.target.closest?.('.tip-note')) note.hide(); return; }
+      // a short grace period: the pointer crosses the gap between a name and its card
+      if (!html) { if (!e.target.closest?.('.tip-note')) note.hide(250); return; }
       note.show(chip ?? a, html, (chip ?? a).closest('.tip, .cm-tooltip'));
     });
     // a related type in a type card opens its own card in place
@@ -326,7 +329,7 @@
       (d.t ? `<div class="cs-sig"><code>${esc(d.t)}</code></div>` : '') +
       (d.d ? `<p>${esc(d.d).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` : '') + `<div class="cs-src">${esc(d.f)}.lean:${d.l}</div></div>`;
     document.addEventListener('mouseover', async (e) => {
-      const cs = e.target.closest?.('code.cs[data-cs]'), ln = e.target.closest?.('[data-lean]');
+      const cs = e.target.closest?.('code.cs[data-cs] span[data-cs], code.cs[data-cs]'), ln = e.target.closest?.('[data-lean]');
       const el = cs ?? ln;
       if (!el) return;
       let html = '';

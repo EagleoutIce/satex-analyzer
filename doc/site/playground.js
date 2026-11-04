@@ -635,20 +635,20 @@
   const phase = (text, done = null, stage = null) => text ? busy('Analyzing', text[0].toUpperCase() + text.slice(1), { done, stage }) : idle();
   function checking() { phase(`Analyzing ${state.file}…`); checkStart = performance.now(); }
 
-  /** Completion order: the project's own commands, then the documented ones, internals
-   * (`@`, `_`, `:` in the name) last; within each, the closest matches first: a prefix of the
-   * label, a part of it, a part of what the item is found by (a citation's title), then the typed
-   * characters in order (`m/f` finds `mode/fast`); then the server's order and shorter names. */
+  /** Completion order: how well the item matches first (the exact name, a prefix of the label, a part
+   * of it, a part of what it is found by such as a citation's title, the typed characters in order:
+   * `m/f` finds `mode/fast`); then the project's own commands, documented ones, internals (`@`, `_`, `:`)
+   * last; then the server's order and shorter names. */
   const tier = (i) => /\(document\)$/.test(i.detail ?? '') ? 0 : /[@_:]/.test(i.label) ? 2 : 1;
   const subsequence = (text, typed) => { let k = 0; for (const c of text) if (c === typed[k]) k++; return k === typed.length; };
   const closeness = (i, typed) => {
     const label = i.label.toLowerCase(), found = (i.filterText ?? '').toLowerCase();
-    return label.startsWith(typed) ? 0 : label.includes(typed) ? 1 : found.includes(typed) ? 2
+    return label === typed ? -1 : label.startsWith(typed) ? 0 : label.includes(typed) ? 1 : found.includes(typed) ? 2
       : subsequence(label, typed) || subsequence(found, typed) ? 3 : null;
   };
   const rank = (items, typed) => items
     .map((i) => [i, tier(i), closeness(i, typed.toLowerCase())]).filter((x) => x[2] !== null)
-    .sort((a, b) => a[1] - b[1] || a[2] - b[2] || (a[0].sortText ?? '').localeCompare(b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
+    .sort((a, b) => a[2] - b[2] || a[1] - b[1] || (a[0].sortText ?? '').localeCompare(b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
   /** The `#rrggbb` of a Color item (kind 16) whose documentation is one, else null. */
   const colorOf = (item) => {
     const doc = typeof item.documentation === 'string' ? item.documentation : item.documentation?.value;
@@ -773,9 +773,37 @@
       return {
         from, to: edit ? Math.max(at(ctx.state.doc, edit.range.end), ctx.pos) : ctx.pos, filter: false,
         options: rank(items, typed).slice(0, 200).map((i) => ({
-          label: i.label, usage: i.detail, preview: i.data?.preview, color: colorOf(i), type: KIND[i.kind] ?? 'text',
-          apply: i.insertTextFormat === 2 ? ac.snippet((i.insertText ?? i.textEdit?.newText ?? i.label).replace(/\$\{?(\d+)\}?/g, '#{$1}')) : i.textEdit?.newText ?? i.insertText ?? i.label,
+          label: i.label, usage: colorOf(i) ? null : i.labelDetails?.detail ? `${i.labelDetails.detail}${i.labelDetails.description ? ` (${i.labelDetails.description})` : ''}` : i.detail,
+          hex: colorOf(i), preview: i.data?.preview, color: colorOf(i), type: KIND[i.kind] ?? 'text',
+          // the side panel: a command's card, the one hover and Explain show; else the server's documentation
+          info: before === '\\' ? () => itemInfo(i) : undefined,
+          apply: again(i, i.insertTextFormat === 2 ? ac.snippet((i.insertText ?? i.textEdit?.newText ?? i.label).replace(/\$\{?(\d+)\}?/g, '#{$1}')) : i.textEdit?.newText ?? i.insertText ?? i.label),
         })),
+      };
+    }
+    /** A completion item's side panel: the shared macro card, else its resolved documentation. */
+    async function itemInfo(i) {
+      const name = `\\${i.label}`, rs = await explainRecords(name).catch(() => []);
+      let html = macroCard(name, null, rs);
+      if (!html) {
+        const r = await lsp('completionItem/resolve', i).catch(() => null), d = r?.documentation;
+        const md = typeof d === 'string' ? d : d?.value;
+        html = md ? card(md) : '';
+      }
+      return html ? Object.assign(document.createElement('div'), { className: 'hover cm-item-card', innerHTML: html }) : null;
+    }
+    /** An item whose command reopens completion (a key family's `/demo/`): inserted, then completion opens on its keys. */
+    function again(item, apply) {
+      if (item.command?.command === 'editor.action.triggerParameterHints') return (v, c, from, to) => {
+        if (typeof apply === 'function') apply(v, c, from, to);
+        else v.dispatch({ changes: { from, to, insert: apply }, selection: { anchor: from + apply.length }, userEvent: 'input.complete' });
+        setTimeout(() => v.dom.dispatchEvent(new CustomEvent('satex-signature', { bubbles: true })), 0);
+      };
+      if (item.command?.command !== 'editor.action.triggerSuggest') return apply;
+      return (v, c, from, to) => {
+        if (typeof apply === 'function') apply(v, c, from, to);
+        else v.dispatch({ changes: { from, to, insert: apply }, selection: { anchor: from + apply.length }, userEvent: 'input.complete' });
+        setTimeout(() => ac.startCompletion(v), 0);
       };
     }
     // a brace typed before a command closes too (`\\cite{` before `\\end`); TeX has no quote pairs
@@ -789,43 +817,85 @@
         .then((r) => { if (key && r) keptHovers.set(key, r); return r; });
       const result = running && keptHovers.has(key) ? keptHovers.get(key) : await asking;
       const c = result?.contents;
-      const value = typeof c === 'string' ? c : c?.value ?? (Array.isArray(c) ? c.map((x) => x.value ?? x).join('\n') : '');
+      let value = typeof c === 'string' ? c : c?.value ?? (Array.isArray(c) ? c.map((x) => x.value ?? x).join('\n') : '');
+      // `[Edit table…](command:satex.openDialog?…)`: the dialog's link, a button here
+      let opens = '';
+      value = value.replace(/\[([^\]]+)\]\(command:satex\.openDialog\?([^ )]+)[^)]*\)(\n\n---\n\n)?/g, (m, title, q) => {
+        const pos = JSON.parse(decodeURIComponent(q))?.[0]?.position;
+        opens += `<p class="sd-hover-open"><a href="#" class="sd-open" data-position='${escape(JSON.stringify(pos))}'>${escape(title)}</a></p>`;
+        return '';
+      }).trim();
       const p = position(v.state.doc, pos), found = findingsAt(p.line, p.character);
-      if (!value && !found.length) return null;
+      const tools = value && !running ? await typedTools(p) : [];
+      // a command: the same card as the Explain panel, the server's Markdown until its records are there
+      const macro = word?.[3] && !running ? macroCard(`\\${word[2]}`, p, await Promise.race([explainRecords(`\\${word[2]}`), new Promise((r) => setTimeout(() => r([]), 1500))])) : '';
+      if (!value && !opens && !found.length) return null;
+      // the card stays over the word it is of: in a finding's range, each word has its own hover
       const range = result?.range, [from, to] = range ? [at(v.state.doc, range.start), at(v.state.doc, range.end)]
-        : found.length ? span(found[0][0].range) : [pos, pos];
-      return { from, to, html: found.map(([d]) => findingCard(d) + explanation(d)).join('') + (value ? `<div class="hover">${card(value)}</div>` : '') };
+        : word ? [line.from + word[0], line.from + word[1]] : found.length ? span(found[0][0].range) : [pos, pos];
+      const buttons = tools.length ? `<div class="hover-tools">${tools.map(([label, , i]) => `<button type="button" class="small ghost" data-tool="${i}">${escape(label)}</button>`).join('')}</div>` : '';
+      const body = macro || (value ? card(value) : '');
+      return { from, to, html: found.map(([d]) => findingCard(d) + explanation(d)).join('') + (body || opens ? `<div class="hover">${opens}${body}${buttons}</div>` : '') };
     }
+    // Another file or project replaces the whole text: every range-based decoration field starts empty, in this one place
+    // (a mapped range would otherwise stretch over the new text).
+    const reset = st.StateEffect.define();
+    const resetting = (tr) => tr.effects.some((e) => e.is(reset));
     // Ctrl (Cmd) held over a command underlines it as a link to its definition.
     const link = st.StateEffect.define();
     const linkField = st.StateField.define({
       create: () => view.Decoration.none,
-      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(link) ? (e.value ? view.Decoration.set([view.Decoration.mark({ class: 'cm-deflink' }).range(...e.value)]) : view.Decoration.none) : d, deco.map(tr.changes)),
+      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(link) ? (e.value ? view.Decoration.set([view.Decoration.mark({ class: 'cm-deflink' }).range(...e.value)]) : view.Decoration.none) : d, resetting(tr) ? view.Decoration.none : deco.map(tr.changes)),
       provide: (f) => view.EditorView.decorations.from(f),
     });
     // The places Find references lists, marked in the open file.
     const marks = st.StateEffect.define(), flashes = st.StateEffect.define();
     const markField = st.StateField.define({
       create: () => view.Decoration.none,
-      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(marks) ? view.Decoration.set(e.value.map(([f, t]) => view.Decoration.mark({ class: 'cm-refmark' }).range(f, t)), true) : d, deco.map(tr.changes)),
+      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(marks) ? view.Decoration.set(e.value.map(([f, t]) => view.Decoration.mark({ class: 'cm-refmark' }).range(f, t)), true) : d, resetting(tr) ? view.Decoration.none : deco.map(tr.changes)),
       provide: (f) => view.EditorView.decorations.from(f),
     });
     // A finding's place, flashed for a moment when its row is clicked; never a selection.
     const flashField = st.StateField.define({
       create: () => view.Decoration.none,
-      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(flashes) ? view.Decoration.set(e.value.map(([f, t, cls = 'cm-flash']) => view.Decoration.mark({ class: cls }).range(f, t)), true) : d, deco.map(tr.changes)),
+      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(flashes) ? view.Decoration.set(e.value.map(([f, t, cls = 'cm-flash']) => view.Decoration.mark({ class: cls }).range(f, t)), true) : d, resetting(tr) ? view.Decoration.none : deco.map(tr.changes)),
       provide: (f) => view.EditorView.decorations.from(f),
     });
     // A swatch before each color the server resolved (`textDocument/documentColor`), as editors show them.
     class Swatch extends view.WidgetType {
       constructor(css) { super(); this.css = css; }
       eq(o) { return o.css === this.css; }
-      toDOM() { return Object.assign(document.createElement('span'), { className: 'cm-swatch', title: this.css, style: `background:${this.css}` }); }
+      toDOM(v) {
+        const dot = Object.assign(document.createElement('span'), { className: 'cm-swatch', title: `${this.css}: click to pick a color`, style: `background:${this.css}` });
+        dot.onmousedown = (e) => { e.preventDefault(); openViews(position(v.state.doc, v.posAtDOM(dot)), 'color'); };
+        return dot;
+      }
     }
     const swatches = st.StateEffect.define();
     const swatchField = st.StateField.define({
       create: () => view.Decoration.none,
-      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(swatches) ? view.Decoration.set(e.value.map(([at, css]) => view.Decoration.widget({ widget: new Swatch(css), side: -1 }).range(at)), true) : d, deco.map(tr.changes)),
+      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(swatches) ? view.Decoration.set(e.value.map(([at, css]) => view.Decoration.widget({ widget: new Swatch(css), side: -1 }).range(at)), true) : d, resetting(tr) ? view.Decoration.none : deco.map(tr.changes)),
+      provide: (f) => view.EditorView.decorations.from(f),
+    });
+    // A code lens above each table and figure (`textDocument/codeLens`): the button that opens its dialog.
+    class Lens extends view.WidgetType {
+      constructor(lens) { super(); this.lens = lens; }
+      eq(o) { return o.lens.command.title === this.lens.command.title && o.lens.range.start.line === this.lens.range.start.line; }
+      toDOM() {
+        const c = this.lens.command, line = this.lens.range.start.line;
+        const b = Object.assign(document.createElement('button'), { type: 'button', className: 'cm-lens', textContent: c.title, title: `${c.title.replace('…', '')}: open the dialog` });
+        b.onclick = (e) => { e.preventDefault(); openDialog(c.arguments?.[0]?.position ?? { line, character: 0 }); };
+        const div = Object.assign(document.createElement('div'), { className: 'cm-lens-line' });
+        const indent = /^\s*/.exec(ev.state.doc.line(Math.min(line + 1, ev.state.doc.lines)).text)[0];
+        div.append(indent.replace(/\t/g, '    '), b);
+        return div;
+      }
+      ignoreEvent() { return false; }
+    }
+    const lensSet = st.StateEffect.define();
+    const lensField = st.StateField.define({
+      create: () => view.Decoration.none,
+      update: (deco, tr) => tr.effects.reduce((d, e) => e.is(lensSet) ? view.Decoration.set(e.value.map(([at, l]) => view.Decoration.widget({ widget: new Lens(l), side: -1, block: true }).range(at)), true) : d, deco.map(tr.changes)),
       provide: (f) => view.EditorView.decorations.from(f),
     });
     // A `\begin` name and its `\end` name, from the server's linked editing:
@@ -834,7 +904,7 @@
     const linkedField = st.StateField.define({
       create: () => null,
       update: (r, tr) => tr.effects.reduce((v, e) => e.is(linkedSet) ? e.value : v,
-        r && tr.docChanged ? r.map(([f, t]) => [tr.changes.mapPos(f, -1), tr.changes.mapPos(t, 1)]) : r),
+        resetting(tr) ? null : r && tr.docChanged ? r.map(([f, t]) => [tr.changes.mapPos(f, -1), tr.changes.mapPos(t, 1)]) : r),
       provide: (f) => view.EditorView.decorations.from(f, (r) => view.Decoration.set((r ?? []).filter(([a, b]) => a < b)
         .map(([a, b]) => view.Decoration.mark({ class: 'cm-linked' }).range(a, b)), true)),
     });
@@ -885,7 +955,7 @@
     });
     // The main file's heat (`heatShow`): a strip in the gutter, darker where a line read more tokens.
     const heatSet = st.StateEffect.define();
-    const heatField = st.StateField.define({ create: () => null, update: (h, tr) => tr.effects.reduce((v, e) => e.is(heatSet) ? e.value : v, tr.docChanged ? null : h) });
+    const heatField = st.StateField.define({ create: () => null, update: (h, tr) => tr.effects.reduce((v, e) => e.is(heatSet) ? e.value : v, tr.docChanged || resetting(tr) ? null : h) });
     class HeatMark extends view.GutterMarker {
       constructor(share, n) { super(); this.share = share; this.n = n; }
       eq(o) { return o.n === this.n && o.share === this.share; }
@@ -905,15 +975,16 @@
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
         span.innerHTML = (use ? cards.usage(use).html : '') + (from ? ` <span class="muted">${escape(from)}</span>` : '');
         // what the item draws (a line width, dash pattern, arrow tip or pattern), from the server
+        // a color: its swatch, then its hex as text (no usage line: `#0` is no parameter)
         if (c.color) {
           const swatch = Object.assign(document.createElement('span'), { className: 'cm-swatch', title: c.color });
           swatch.style.background = c.color;
-          span.prepend(swatch);
+          span.replaceChildren(swatch, Object.assign(document.createElement('code'), { className: 'cm-hex', textContent: c.hex }));
         }
         if (c.preview) span.prepend(Object.assign(document.createElement('img'), { className: 'cm-preview', src: `data:image/svg+xml;utf8,${encodeURIComponent(c.preview)}`, alt: '' }));
         return span;
       } }] }),
-        linkField, markField, flashField, swatchField, linkedField, heatField, heatGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
+        linkField, markField, flashField, swatchField, lensField, linkedField, heatField, heatGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
         EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([])],
     });
     // the site's light/dark choice (site.js) picks the editor's theme
@@ -969,6 +1040,18 @@
       }, 250);
     });
     parent.addEventListener('mouseleave', unhover);
+    // After a command is accepted: its signature, the argument being typed marked (`textDocument/signatureHelp`).
+    parent.addEventListener('satex-signature', async () => {
+      const head = ev.state.selection.main.head, help = await lsp('textDocument/signatureHelp', { textDocument: { uri: uri() }, position: position(ev.state.doc, head) }).catch(() => null);
+      const sig = help?.signatures?.[help.activeSignature ?? 0], c = ev.coordsAtPos(head);
+      if (!sig || !c) return;
+      const p = sig.parameters?.[help.activeParameter ?? sig.activeParameter ?? 0]?.label;
+      const label = escape(sig.label), mark = typeof p === 'string' ? escape(p) : Array.isArray(p) ? escape(sig.label.slice(p[0], p[1])) : null;
+      const doc = typeof sig.documentation === 'string' ? sig.documentation : sig.documentation?.value;
+      tips.card.show({ left: c.left, top: c.top, right: c.right, bottom: c.bottom },
+        `<div class="hover"><p><code>${mark ? label.replace(mark, `<b class="sig-active">${mark}</b>`) : label}</code></p>${doc ? card(doc) : ''}</div>`);
+      hovered = { from: head, to: head };
+    });
     // a modifier alone (a screenshot shortcut, ctrl for the link) keeps the card
     parent.addEventListener('keydown', (e) => ['Control', 'Meta', 'Shift', 'Alt', 'OS', 'Super'].includes(e.key) || unhover());
     addEventListener('keyup', (e) => (e.key === 'Control' || e.key === 'Meta') && underline(null));
@@ -997,7 +1080,7 @@
     return {
       text: () => doc().toString(),
       // another file's text starts at its top: the last file's scroll position may lie past its end
-      set: (t, readOnly = false) => { ev.dispatch({ effects: lang.reconfigure(/\.bib$/.test(state.file) ? tex.bib : tex.language) }); ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, selection: { anchor: 0 }, effects: lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : []) }); ev.scrollDOM.scrollTop = 0; },
+      set: (t, readOnly = false) => { ev.dispatch({ effects: lang.reconfigure(/\.bib$/.test(state.file) ? tex.bib : tex.language) }); ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, selection: { anchor: 0 }, effects: [reset.of(null), lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : [])] }); ev.scrollDOM.scrollTop = 0; },
       apply: (edits) => ev.dispatch({ changes: edits.map((e) => { const [from, to] = span(e.range); return { from, to, insert: e.newText }; }) }),
       diagnostics: (ds) => ev.dispatch(lint.setDiagnostics(ev.state, ds.map((d, i) => {
         const [from, to] = span(d.range);
@@ -1009,6 +1092,7 @@
         };
       }))),
       complete: () => ac.startCompletion(ev),
+      lenses: (list) => ev.dispatch({ effects: lensSet.of(list.map((l) => [doc().line(Math.min(l.range.start.line + 1, doc().lines)).from, l]).sort((a, b) => a[0] - b[0])) }),
       colors: (list) => ev.dispatch({ effects: swatches.of(list.map(([p, css]) => [at(doc(), p), css]).filter(([a]) => a != null && a <= doc().length)) }),
       heat: (lines) => ev.dispatch({ effects: heatSet.of(lines?.size ? { lines, most: Math.max(...lines.values()) } : null) }),
       cursor: () => [ev.state.selection.main.anchor, ev.state.selection.main.head],
@@ -1323,7 +1407,7 @@
     shownFor(typesetBody, target, diagnosticVersions[target]);
     if (pdfOverlayOn?.findings) pdfOverlay();
     const paragraphs = rows.filter((r) => r.kind === 'paragraph');
-    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"${r.env ? ` data-env="${escape(r.env)}" title="set in ${escape(r.env)}"` : ''} data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${escape(r.detail ?? '')}"${r.lines?.length ? ` data-lines="${escape(JSON.stringify(r.lines))}"` : ''}><span class="ts-at">${r.line}</span><span class="ts-text">${r.env ? `<span class="ts-env">${escape(r.env)}</span>` : ''}${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`;
+    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}"${r.env ? ` data-env="${escape(r.env)}" title="set in ${escape(r.env)}"` : ''}${r.just && r.just !== 'justified' ? ` data-just="${escape(r.just)}"` : ''} data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${escape(r.detail ?? '')}"${r.lines?.length ? ` data-lines="${escape(JSON.stringify(r.lines))}"` : ''}><span class="ts-at">${r.line}</span><span class="ts-text">${r.env ? `<span class="ts-env">${escape(r.env)}</span>` : ''}${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`;
     // the whole document in order: this file's paragraphs as they are, a run from another file folded into one line
     const html = [];
     // A document whose text all stands in top-level environments (beamer's frames) is a row of pages:
@@ -1506,6 +1590,42 @@
     const away = !(uri() in changes) && elsewhere[0], name = away && Object.keys(state.texts).find((n) => uri(n) === away);
     if (name) openPlace(name, changes[away][0].range.start);
   }
+  /** What the type plugins offer at `p` (src/lsp/plugins): their views (`satex/view`) and code
+   * actions, as [label, hint, index] rows; `runTool(index)` opens or applies one. */
+  let tools = [];
+  async function typedTools(p) {
+    const doc = { uri: uri() };
+    const [views, actions] = await Promise.all([
+      lsp('satex/view', { textDocument: doc, position: p }).catch(() => []),
+      lsp('textDocument/codeAction', { textDocument: doc, range: { start: p, end: p }, context: { diagnostics: [] } }).catch(() => []),
+    ]);
+    const own = (actions ?? []).filter((a) => !a.diagnostics?.length && !a.data?.scope && a.edit);
+    tools = [...(views ?? []).map((view) => ({ view, target: doc.uri })), ...own.map((action) => ({ action }))];
+    // an action that only opens a view (VS Code's `satex.openView`) is the view here
+    tools = tools.filter((t) => !t.action || t.action.edit);
+    return tools.map((t, i) => [t.view ? `${VIEW_VERB[t.view.plugin] ?? 'Open'} ${t.view.title}…`.trim() : t.action.title, t.view ? t.view.plugin : 'rewrite', i]);
+  }
+  const VIEW_VERB = { color: 'Pick', units: 'Convert', environment: '' };
+  function runTool(i) {
+    const t = tools[i];
+    if (t?.action) return fix(t.action);
+    if (!t?.view) return;
+    const dialog = $('play-view');
+    $('view-title').textContent = t.view.title;
+    self.satexViews.render(t.view, $('view-body'), {
+      markdown: (md) => card(md),
+      apply: (edits) => { dialog.close(); fix({ title: t.view.title, edit: { changes: { [t.target]: edits } } }); },
+    });
+    if (!dialog.open) dialog.showModal();
+  }
+  /** The views at `p`, the one of `plugin` opened at once. */
+  async function openViews(p, plugin) {
+    const rows = await typedTools(p);
+    const i = tools.findIndex((t) => t.view?.plugin === plugin);
+    if (i >= 0) runTool(i); else if (rows.length) runTool(rows[0][2]);
+  }
+  document.addEventListener('click', (e) => { const b = e.target.closest('[data-tool]'); if (b) { e.preventDefault(); runTool(+b.dataset.tool); } });
+  $('view-close').onclick = () => $('play-view').close();
   /** The open file's fixes at once, as the language server merges them (render.rs `fix_all`): per rule, per category or all. */
   var fixAlls = {}; // var: a render may run before this line
   /** What a fix-all of `scope` (`rule`, `category`, `all`) and `key` applies: the server's action, else the one fix there is. */
@@ -1684,7 +1804,9 @@
     const fixes = found.flatMap((d) => d.fixes);
     const rules = [...new Set(found.filter((d) => d.fixes.length).map((d) => d.code))];
     const editable = !(state.file in state.ro);
+    const tools = editable ? await typedTools(p) : [];
     const items = [
+      ...tools.map(([label, hint, i]) => [label, hint, () => runTool(i)]),
       ...(w?.[3] ? [['Go to definition', 'Ctrl+click', () => definition(x, y)]] : []),
       ...(w && editable ? [['Find references', '', references]] : []), ...(renamable ? [['Rename symbol', 'F2', renameBox]] : []),
       ...(w?.[3] ? [['Explain', '', focusExplain], ['Show expansions', '', () => expansions(w)], ['Trace expansion', '', () => traceCall(`\\${w[2]}`, { file: state.file, line: p.line + 1, col: w[0] + 1 })]] : []),
@@ -1764,6 +1886,18 @@
     }
     return Promise.all(names.map((n) => explanations.get(key(n))));
   }
+  /** A command's card from its explain records, the one the Explain panel, the editor's hover and a
+   * finding's hover all show: the definition in force at `at` first, the others folded; '' for none. */
+  function macroCard(name, at, rs) {
+    const shown = rs.filter((r) => r.name === name);
+    if (!shown.length) return '';
+    const text = editor.text(), begin = text.split('\n').findIndex((l) => /\\begin\s*\{document\}/.test(l));
+    const now = at && shown.length > 1 ? (begin >= 0 ? at.line < begin : /\\documentclass/.test(text)) ? 'preamble' : 'document' : null;
+    let first = shown.filter((r) => !now || r.when === now), rest = shown.filter((r) => !first.includes(r));
+    if (!first.length) [first, rest] = [shown.slice(0, 1), shown.slice(1)];
+    return first.map(cards.explain).join('') +
+      (rest.length ? `<details class="more"><summary>More definitions</summary>${rest.map(cards.explain).join('')}</details>` : '');
+  }
   /** The Explain macro panel shows `name`: its full record, or the hover until that is back. */
   async function explainName(name, at = null, records = null) {
     const k = `${name}|${version}|${state.file}`;
@@ -1780,14 +1914,8 @@
     if (explained !== k) return;
     explainBody.classList.remove('stale');
     shownFor(explainBody, uri(), sentVersions.get(uri()));
-    const shown = rs.filter((r) => r.name === name);
-    // the definition in force at the caret first, the others folded
-    const text = editor.text(), begin = text.split('\n').findIndex((l) => /\\begin\s*\{document\}/.test(l));
-    const now = at && shown.length > 1 ? (begin >= 0 ? at.line < begin : /\\documentclass/.test(text)) ? 'preamble' : 'document' : null;
-    let first = shown.filter((r) => !now || r.when === now), rest = shown.filter((r) => !first.includes(r));
-    if (!first.length) [first, rest] = [shown.slice(0, 1), shown.slice(1)];
-    if (shown.length) explainBody.innerHTML = first.map(cards.explain).join('') +
-      (rest.length ? `<details class="more"><summary>More definitions</summary>${rest.map(cards.explain).join('')}</details>` : '');
+    const html = macroCard(name, at, rs);
+    if (html) explainBody.innerHTML = html;
     else if (!explainBody.querySelector('.hover')) explainBody.innerHTML = `<p class="muted">SaTeX knows no ${escape(name)} here.</p>`;
   }
   /** Any control-sequence chip (`.cs-ref`, a name chip `a.cs`) shows the name's hover card after a short rest. The records are kept per name. */
@@ -3882,6 +4010,19 @@
       } catch (e) { self.postMessage({ error: String(e?.message ?? e) }); }
     };
   }
+  // the draw popup offers the same embed snippet as the /draw page: that page's address beside this one
+  {
+    const embed = `<iframe src="${new URL('../draw/index.html', location.href).href}" title="Draw a symbol" width="720" height="560" style="border:0"></iframe>`;
+    const code = $('play-draw-embed'), copyBtn = $('play-draw-embed-copy');
+    if (code && copyBtn) {
+      code.textContent = embed;
+      copyBtn.onclick = () => {
+        navigator.clipboard?.writeText(embed).catch(() => {});
+        copyBtn.textContent = 'Copied';
+        setTimeout(() => (copyBtn.textContent = 'Copy'), 1500);
+      };
+    }
+  }
   const pdfBody = $('pdf-body'), pdfStatus = $('pdf-status'), pdfButtons = [$('pdf-compile')];
   var pdf = null, pdfWorker = null, pdfLine = '', pdfBusy = false, pdfWarming = false; // var: the cursor may move before this line runs
   /** The server builds its native caches once after a rebuild; a Compile meanwhile waits for that. */
@@ -4066,7 +4207,7 @@
     // the title line: what the build gave, its views, its files as one zip
     $('play-pdf').classList.toggle('pdf-is-slice', !!pdf.slice);
     pdfStatus.innerHTML = (pdf.slice ? '<b class="pdf-badge" title="Only what the cursor\'s line needs, built alone. Its lines are not the file\'s.">slice</b> ' : '') + (pdf.error ? `<span class="x-err" title="${escape(pdf.error)}">${escape(pdf.error)}</span>`
-      : `${pdf.pdf ? `<a href="${file(pdf.pdf)}" target="_blank" rel="noopener">${escape(pdf.pdf)}</a>, ${plural(pages.length, 'page')}` : '<span class="x-err">no PDF</span>'}`
+      : `${pdf.pdf ? `${plural(pages.length, 'page')} <a class="pdf-open" href="${file(pdf.pdf)}" target="_blank" rel="noopener" title="open ${escape(pdf.pdf)} in a new tab" aria-label="open ${escape(pdf.pdf)}">&#x2197;</a>` : '<span class="x-err">no PDF</span>'}`
       + [errors && `<span class="x-err">${plural(errors, 'error')}</span>`, records.length - errors && plural(records.length - errors, 'warning')].filter(Boolean).map((t, i) => (i ? ', ' : ' · ') + t).join('') + `${pdfSummary ? ` <span class="muted">· ${escape(pdfSummary)}</span>` : ''}`);
     const zip = /** @type {HTMLAnchorElement} */ ($('pdf-zip'));
     zip.hidden = !pdf.base;
@@ -5033,6 +5174,40 @@
     }).catch(() => {});
   }
 
+  /** The code lenses of the open file: an "Edit table…" above each table, "Edit image…" above each figure. */
+  async function lensify() {
+    const found = await lsp('textDocument/codeLens', { textDocument: { uri: uri() } }).catch(() => null);
+    editor?.lenses?.(found ?? []);
+  }
+  /** The compile server's PNG of a PDF's first page, else null: a static host has no renderer. */
+  async function pdfPage(data) {
+    const r = await fetch(`${COMPILE}/render`, { method: 'POST', body: data }).catch(() => null);
+    return r?.ok && /image/.test(r.headers.get('content-type') ?? '') ? URL.createObjectURL(await r.blob()) : null;
+  }
+  /** The table or image dialog at `position` of the open file (`satex/dialog`, doc/site/dialogs.js). */
+  async function openDialog(position) {
+    const target = uri();
+    const v = await lsp('satex/dialog', { textDocument: { uri: target }, position }).catch(() => null);
+    if (!v) return toast('No table or figure here the analysis met: analyze first');
+    self.satexDialogs.open(v, {
+      apply: (state, op) => lsp('satex/dialogApply', { textDocument: { uri: target }, kind: v.kind, range: v.range, state, op }),
+      commit: (edits) => { if (target === uri()) editor.apply(edits); else toast('The file changed meanwhile: not written'); },
+      image: async (path) => {
+        const b = await binaryOf(path);
+        if (b?.kind !== 'pdf') return b;
+        const data = await ask({ type: 'read', path }).then((g) => g?.data).catch(() => null);
+        const url = data && await pdfPage(data);
+        return url ? { url, kind: 'img' } : { url: null, kind: 'pdf' };
+      },
+    });
+  }
+  // a hover's "Edit table…" link opens the dialog
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest?.('a.sd-open');
+    if (!a) return;
+    e.preventDefault();
+    openDialog(JSON.parse(a.dataset.position));
+  });
   /** The colors of the open file as swatches; none when the server offers none. */
   async function colorize() {
     const found = await lsp('textDocument/documentColor', { textDocument: { uri: uri() } }).catch(() => null);
@@ -5269,7 +5444,7 @@
   const PHASE = { unpacking: ['Unpacking', 'Unpacking the TeX files…'], importing: ['Importing', 'Importing the kernel caches…'] };
   /* The start, and an uploaded project, as one card over the page: the logo, the version, the stages in one bar.
    * Each stage holds its share of the bar; a stage's own progress (bytes, lines read) fills its share. */
-  const BOOT = /** @type {[string, string, number][]} */ ([['Fetching', 'downloads', 0.55], ['Unpacking', 'TeX files', 0.15], ['Importing', 'caches', 0.15], ['Starting', 'SaTeX starts', 0.15]]);
+  const BOOT = /** @type {[string, string, number][]} */ ([['Fetching', 'downloads', 0.45], ['Unpacking', 'TeX files', 0.12], ['Importing', 'caches', 0.12], ['Starting', 'SaTeX starts', 0.12], ['Example', 'example files', 0.19]]);
   var boot = { el: /** @type {HTMLElement | null} */ (null), at: 0, stage: -1, open: false, started: false }; // var: busy may run before this line
   function bootOpen(title) {
     if (!boot.el) {
@@ -5307,6 +5482,8 @@
   }
   function bootStep(name, done, text) {
     if (!boot?.open) return;
+    // a download once the engine started is the example's own files, asked for on demand: its own stage
+    if (name === 'Fetching' && boot.stage >= 3) name = 'Example';
     const k = BOOT.findIndex(([n]) => n === name);
     // The card covers what blocks the editor: every download, and satex starting. A download after
     // satex started keeps the card open on its text, stages never run backwards, and the first
@@ -5473,6 +5650,7 @@
     outline();
     if (p.uri === uri()) {
       colorize();
+      lensify();
       // a failed download leaves the findings as they are: final
       if (absent.length) fetchAbsent(absent).then((ok) => { if (!ok && seq === published.get(p.uri)) { provisional = ''; render(); } });
     }

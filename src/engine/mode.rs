@@ -1606,10 +1606,19 @@ impl Machine<'_> {
             .flatten()
             .take_while(|n| n.target.is_none())
             .any(|n| n.mode.meets(Modes::HORIZONTAL));
+        let exact = self.exact();
         let text = &mut self.out.facts.text;
         let at = text.at.len() as u32;
-        if !inner && text.pars.last() != Some(&at) {
+        if inner {
+            return;
+        }
+        if text.pars.last() != Some(&at) {
             text.pars.push(at);
+            if !exact {
+                text.open.push(at);
+            }
+        } else if exact && text.open.last() == Some(&at) {
+            text.open.pop();
         }
     }
 

@@ -1,6 +1,9 @@
 /-
 Satex.Core: the objects TeX computes with, as SaTeX reads them.
 
+Written with AI assistance from Claude Code (Claude Opus 5.5; build fixes with
+Claude Sonnet 5.5), directed and reviewed by the author.
+
 Shared by all semantics jobs. Names here are stable once published (see
 semantics/CHANGES.md). Citations: tex.web module numbers (§), the eTeX
 manual (etex_man), the pdfTeX, XeTeX and LuaTeX manuals, SEMANTICS.md (SEM).

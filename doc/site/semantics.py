@@ -565,38 +565,74 @@ def check_links(out, used):
 
 # ---------------------------------------------------------------- cards of control sequences
 
-CS_NAME = re.compile(r"(\\(?:[A-Za-z@:_]+|[^A-Za-z\s]))\*?(?:\s*[{\[(].*)?", re.S)
+# A name ends in a letter or colon, else it is a fragment (`\\l_`, `\\KV@`); a one-character name is ASCII punctuation.
+CS_TOKEN = re.compile(r"\\(?:[A-Za-z@:_]*[A-Za-z:]|[,;:!\-/_^\"'`=.~&%$#{}()\[\]|@\\])(?![A-Za-z@:_])")
+ENV_USE = re.compile(r"\\(?:begin|end)\{([A-Za-z@*][\w@*-]*)\}")
+
+
+def cs_keys(text):
+    """The card keys a code span's text names, in order: its control sequences, `\\begin{env}` as one key. A span
+    that does not start with a control sequence names none. Fragments like `\\begin{` key `\\begin`."""
+    text = text.strip()
+    if not CS_TOKEN.match(text):
+        return []
+    out, i = [], 0
+    while (m := CS_TOKEN.search(text, i)):
+        e = ENV_USE.match(text, m.start())
+        out.append((m.start(), (e or m).end(), e.group(0) if e else m.group()))
+        i = out[-1][1]
+    return out
 
 
 def mark_cards(body, extra=()):
-    """`body` with every inline code span that names a control sequence (or a name in `extra`, e.g. an arrow tip with a preview)
-    marked `class="cs" data-cs="name"`. Returns the HTML and the names marked."""
+    """`body` with every inline code span that names control sequences (or a name in `extra`, e.g. an arrow tip with a preview)
+    marked `class="cs" data-cs="name"`, the name its first one. A span naming several marks each in a `span`.
+    Returns the HTML and the names marked."""
     names, parts = set(), re.split(r"(<pre\b.*?</pre>)", body, flags=re.S)
 
     def one(m):
         text = html.unescape(m.group(1))
-        c = CS_NAME.fullmatch(text.strip())
-        name = c.group(1) if c else text.strip() if text.strip() in extra else None
-        if not name:
-            return m.group(0)
-        names.add(name)
-        return f'<code class="cs" data-cs="{attr(name)}">{m.group(1)}</code>'
+        ks = cs_keys(text)
+        if not ks:
+            if text.strip() not in extra:
+                return m.group(0)
+            names.add(text.strip())
+            return f'<code class="cs" data-cs="{attr(text.strip())}">{m.group(1)}</code>'
+        names.update(k for _, _, k in ks)
+        inner, at = m.group(1), 0
+        if len(ks) > 1:
+            inner = ""
+            for s, e, k in ks:
+                inner += html.escape(text[at:s], quote=False) + f'<span data-cs="{attr(k)}">{html.escape(text[s:e], quote=False)}</span>'
+                at = e
+            inner += html.escape(text[at:], quote=False)
+        return f'<code class="cs" data-cs="{attr(ks[0][2])}">{inner}</code>'
     return "".join(p if i % 2 else re.sub(r"<code>([^<]*)</code>", one, p) for i, p in enumerate(parts)), names
 
 
-def cards(names, rows, ctx, refs, scope, engines, previews, builtins):
+def cards(names, rows, ctx, refs, scope, engines, previews, builtins, defs=None):
     """name -> card: kind (primitive / kernel macro / package macro), engines, the semantics row with links to its
     Lean rule and Rust site, signature, documentation, a preview picture. `scope` is `satex scope --all`'s records by name,
-    `engines` the primitives of each engine (label -> names), `rows` primitives.tsv's."""
+    `engines` the primitives of each engine (label -> names), `rows` primitives.tsv's, `defs` example_defs'.
+    Every name gets a card: an environment's from its start macro, an example's own from its definition, else a minimal one."""
+    defs = defs or {}
     by_row = {cs_of(r[0]): r for r in rows}
     every = set.intersection(*engines.values()) if engines else set()
     out = {}
     for name in sorted(names):
-        card, rec, row = {}, scope.get(name), by_row.get(name)
+        env = ENV_USE.fullmatch(name)
+        card, rec, row = {}, scope.get("\\" + env.group(1) if env else name), by_row.get(name)
         pv = previews.get(name)
         if pv:
             card["pv"] = pv
-        if rec or row:
+        if env:
+            card["k"] = "environment"
+            if rec and rec.get("package"):
+                card["pkg"] = rec["package"]
+            card["doc"] = (rec or {}).get("does") or f"The `{env.group(1)}` environment."
+            if rec and rec.get("file"):
+                card["at"] = f'{rec["file"]}:{rec["line"]}'
+        elif rec or row:
             tag = rec.get("tag") if rec else None
             pkg = rec.get("package") if rec else None
             if row or tag == "primitive":
@@ -637,6 +673,34 @@ def cards(names, rows, ctx, refs, scope, engines, previews, builtins):
                 sem["src"] = source
             card["sem"] = sem
             refs.used.add(("wiki/formal-semantics.html", prim_id(row[0])))
-        if card:
-            out[name] = card
+        if not card and name in defs:
+            title, kind = defs[name]
+            card.update(k=kind, at=f"the example on {title}")
+        out[name] = card or {"k": "undefined", "doc": "Not defined by TeX, LaTeX or a loaded package."}
+    return out
+
+
+DEFINERS = [(r"(?:\\(?:gdef|edef|xdef|def)|\\(?:re)?newcommand\*?|\\(?:Provide|Declare)(?:Robust)?Command\*?|\\(?:New|Renew|Provide|Declare)(?:Expandable)?DocumentCommand)\s*\{?\s*(\\[A-Za-z@]+)", "macro"),
+            (r"\\let\s*(\\[A-Za-z@]+)", "alias"),
+            (r"\\new(count|dimen|skip|muskip|toks|box)\s*(\\[A-Za-z@]+)", None),
+            (r"\\newif\s*\\if([A-Za-z@]+)", "conditional"),
+            (r"\\newcounter\s*\{([A-Za-z@]+)\}", "counter"),
+            (r"\\(?:new|renew)environment\*?\s*\{([A-Za-z@]+)\}", "environment"),
+            (r"\\(?:cs|bool|int|dim|tl|seq|clist|prop|box)_(?:new|set|gset)[A-Za-z_]*:[A-Za-z]*\s*(\\[A-Za-z_:@]+)", "expl3 name")]
+
+
+def example_defs(pages):
+    """name -> (page title, kind) for the names the pages' code blocks define: `\\def`, `\\newcommand`, `\\newcount`, `\\newif`
+    (its three macros), `\\newcounter` (`\\c@name`), environments (`\\name`, `\\endname`). `pages` are (dst, title, body)."""
+    out = {}
+    for _, title, body in pages:
+        for pre in re.findall(r"<pre\b.*?</pre>", body, flags=re.S):
+            text = html.unescape(re.sub(r"<[^>]*>", "", pre))
+            for rx, kind in DEFINERS:
+                for m in re.finditer(rx, text):
+                    n = m.group(m.lastindex)
+                    k = kind or {"count": "count register", "dimen": "dimen register", "skip": "skip register", "muskip": "muskip register", "toks": "token register", "box": "box register"}[m.group(1)]
+                    names = {"conditional": [f"\\if{n}", f"\\{n}true", f"\\{n}false"], "counter": [f"\\c@{n}", f"\\the{n}"], "environment": [f"\\{n}", f"\\end{n}"]}.get(kind, [n])
+                    for x in names:
+                        out.setdefault(x, (title, k if kind != "conditional" else "conditional"))
     return out

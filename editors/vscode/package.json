@@ -145,6 +145,11 @@
     ],
     "commands": [
       {
+        "command": "satex.openView",
+        "title": "Open Picker or Converter Here",
+        "category": "satex"
+      },
+      {
         "command": "satex.traceAtCursor",
         "title": "Trace Expansion Here",
         "category": "satex"
@@ -202,11 +207,16 @@
         "command": "satex.openSettings",
         "title": "Open Settings",
         "category": "satex"
+      },
+      {
+        "command": "satex.openDialog",
+        "title": "Edit Table or Image…",
+        "category": "satex"
       }
     ]
   },
   "scripts": {
-    "compile": "tsc --noEmit -p . && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --minify --sourcemap --outfile=out/extension.js",
+    "compile": "node -e \"for (const f of ['views.js', 'dialogs.js']) require('fs').copyFileSync('../../doc/site/' + f, 'media/' + f)\" && tsc --noEmit -p . && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --minify --sourcemap --outfile=out/extension.js",
     "lint": "eslint src",
     "vscode:prepublish": "npm run compile",
     "package": "vsce package --no-dependencies",

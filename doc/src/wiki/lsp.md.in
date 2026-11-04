@@ -30,6 +30,8 @@ satex lsp --port 9257 --host 0.0.0.0
 | Rename | `textDocument/prepareRename`, `rename` | `satex query definitions`/`expansions`/`occurrences` |
 | Linked editing | `textDocument/linkedEditingRange` | a `\begin` name and its `\end`, paired by nesting in the open text |
 | Any query | `workspace/executeCommand` (`satex/query`) | a [query request](queries.md#json-requests). Without `file` it reads the open document |
+| Colors | `textDocument/documentColor`, `colorPresentation` | the [color plugin](type-plugins.md#color) |
+| Dialogs | `satex/view` (`{textDocument, position}`) | the [type plugins](type-plugins.md)' views: a color picker, a length converter |
 
 **Roots.** A file is analyzed through the root document that reads it. A file no root reads gets an information diagnostic `unreachable-file`. It is then read after a root's preamble, apart from that root's results.
 
@@ -41,7 +43,7 @@ satex lsp --port 9257 --host 0.0.0.0
 
 | Context | Offers |
 | --- | --- |
-| after `\` | commands in scope, with argument snippets |
+| after `\` | commands in scope: the signature beside the name (`[⟨options⟩]{⟨label⟩}`), a tab stop per argument named by its type (an optional one with its brackets), the signature help once accepted, the command's card as documentation |
 | `\begin{` | environment names |
 | a reference or citation argument | the document's labels or keys, by the argument's key kind (`\ref{` never offers citations) |
 | a file argument | matching files of its kind, the project's and the installation's |

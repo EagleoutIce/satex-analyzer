@@ -342,22 +342,64 @@ struct Scalars {
 }
 
 /// The state a checkpoint leaves that changes now and then: stored only
-/// when it differs from the checkpoint before.
+/// when it differs from the checkpoint before. The keyed lists and `loaded`
+/// hold only what changed since the load began (`None`: removed), so a
+/// replay keeps what the run had before the load, whatever run recorded it.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Default)]
 struct Lists {
     catcodes: Vec<(char, u8)>,
     end_line: i32,
+    /// The packages read: every one in a snapshot, those added since the load began in a change.
     loaded: Vec<String>,
     class_options: Vec<String>,
-    verbatim: Vec<String>,
+    verbatim: Keyed<String, ()>,
     section: Option<String>,
     lua: Vec<PathBuf>,
     counter_namespace: Option<String>,
-    streams: Vec<(i64, Vec<(Vec<String>, usize, usize)>)>,
-    outputs: Vec<(String, Option<String>)>,
-    pending: Vec<(String, String)>,
-    aliases: Vec<(Sym, Sym)>,
+    streams: Keyed<i64, Vec<(Vec<String>, usize, usize)>>,
+    outputs: Keyed<String, Option<String>>,
+    pending: Keyed<String, String>,
+    aliases: Keyed<Sym, Sym>,
     wild: crate::analysis::machine::Wild,
+}
+
+/// Entries by key, in key order; `None` removes the key.
+type Keyed<K, V> = Vec<(K, Option<V>)>;
+
+fn keyed<K: Ord, V>(entries: impl IntoIterator<Item = (K, V)>) -> Keyed<K, V> {
+    let mut all: Vec<_> = entries.into_iter().map(|(k, v)| (k, Some(v))).collect();
+    all.sort_by(|a, b| a.0.cmp(&b.0));
+    all
+}
+
+/// The entries of `now` that differ from `from`.
+fn changed<K: Ord + Clone, V: PartialEq + Clone>(from: &Keyed<K, V>, now: &Keyed<K, V>) -> Keyed<K, V> {
+    let from: std::collections::BTreeMap<_, _> = from.iter().cloned().collect();
+    let mut out: Keyed<K, V> = now.iter().filter(|(k, v)| from.get(k) != Some(v)).cloned().collect();
+    let gone = |k: &K| now.binary_search_by(|e| e.0.cmp(k)).is_err();
+    out.extend(from.into_iter().filter(|(k, v)| v.is_some() && gone(k)).map(|(k, _)| (k, None)));
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// `from` with `changes` applied, the entries left.
+fn patched<K: Ord + Clone, V: Clone>(from: &Keyed<K, V>, changes: &Keyed<K, V>) -> Vec<(K, V)> {
+    let mut all: std::collections::BTreeMap<_, _> = from.iter().cloned().collect();
+    all.extend(changes.iter().cloned());
+    all.into_iter().filter_map(|(k, v)| Some((k, v?))).collect()
+}
+
+impl Lists {
+    fn changed_since(mut self, from: &Lists) -> Lists {
+        // A load only adds to them (one path records).
+        self.loaded = self.loaded.split_off(from.loaded.len().min(self.loaded.len()));
+        self.verbatim = changed(&from.verbatim, &self.verbatim);
+        self.streams = changed(&from.streams, &self.streams);
+        self.outputs = changed(&from.outputs, &self.outputs);
+        self.pending = changed(&from.pending, &self.pending);
+        self.aliases = changed(&from.aliases, &self.aliases);
+        self
+    }
 }
 
 /// One cached diagnostic: severity, code, message, span, and the gap it names, if any.
@@ -704,6 +746,7 @@ pub(super) struct Log {
 struct Before {
     slots: Vec<Option<Binding>>,
     aliases: HashMap<Sym, Sym>,
+    lists: Lists,
     /// Name of each pre-load definition vertex.
     def_owner: HashMap<NodeId, Sym>,
     vertices: usize,
@@ -1226,6 +1269,28 @@ impl Machine<'_> {
         parts
     }
 
+    /// The run's lists as a checkpoint stores them, every entry set.
+    fn lists(&self) -> Lists {
+        let roots = self.cache_roots();
+        Lists {
+            catcodes: self.catcodes.diff(&CatcodeTable::latex()),
+            end_line: self.end_line.0,
+            loaded: self.loaded.to_vec(),
+            class_options: self.class_options.clone(),
+            wild: self.wild.clone(),
+            verbatim: keyed(self.verbatim_environments.iter().map(|n| (n.clone(), ()))),
+            section: self.section.as_deref().map(str::to_string),
+            lua: self.lua.files().iter().map(|f| PathBuf::from(roots.encode(&f.display().to_string()))).collect(),
+            counter_namespace: self.counter_namespace.clone(),
+            streams: keyed(
+                self.streams.iter().map(|(n, t)| (*n, t.iter().map(|a| (a.lines.to_vec(), a.lo, a.hi)).collect())),
+            ),
+            outputs: keyed(self.outputs.iter().map(|(n, t)| (n.clone(), t.clone()))),
+            pending: keyed(self.pending.iter().map(|(n, l)| (n.clone(), l.clone()))),
+            aliases: keyed(self.env.aliases.iter().map(|(k, v)| (*k, *v))),
+        }
+    }
+
     /// The state a load begins in, which its reads are compared with.
     fn before_state(&self) -> Before {
         let slots: Vec<Option<Binding>> =
@@ -1245,6 +1310,7 @@ impl Machine<'_> {
         Before {
             slots,
             aliases: self.env.aliases.clone(),
+            lists: self.lists(),
             def_owner,
             vertices: graph.len(),
             reader: graph.reader,
@@ -2322,10 +2388,12 @@ impl Machine<'_> {
             catcodes.apply(&lists.catcodes);
             self.catcodes = catcodes;
             self.end_line = EndLineChar(lists.end_line);
-            self.loaded = Rc::new(lists.loaded.clone());
+            let from = &before.lists;
+            self.loaded = Rc::new([&from.loaded[..], &lists.loaded[..]].concat());
             self.class_options = lists.class_options.clone();
             self.wild = lists.wild.clone();
-            self.verbatim_environments = lists.verbatim.iter().cloned().collect();
+            self.verbatim_environments =
+                patched(&from.verbatim, &lists.verbatim).into_iter().map(|(n, ())| n).collect();
             self.section = lists.section.as_deref().map(Rc::from);
             self.lua
                 .set_files(lists.lua.iter().map(|f| PathBuf::from(roots.decode(&f.display().to_string()))).collect());
@@ -2335,11 +2403,12 @@ impl Machine<'_> {
                 lo: *lo,
                 hi: *hi,
             };
+            let streams = patched(&from.streams, &lists.streams);
             self.streams =
-                Rc::new(lists.streams.iter().map(|(n, texts)| (*n, Rc::new(texts.iter().map(at).collect()))).collect());
-            self.outputs = Rc::new(lists.outputs.iter().cloned().collect());
-            self.pending = Rc::new(lists.pending.iter().cloned().collect());
-            self.env.aliases = lists.aliases.iter().copied().collect();
+                Rc::new(streams.iter().map(|(n, texts)| (*n, Rc::new(texts.iter().map(at).collect()))).collect());
+            self.outputs = Rc::new(patched(&from.outputs, &lists.outputs).into_iter().collect());
+            self.pending = Rc::new(patched(&from.pending, &lists.pending).into_iter().collect());
+            self.env.aliases = patched(&from.aliases, &lists.aliases).into_iter().collect();
         }
         // Changes count from the load's start, like the scalars.
         self.carried = before.carried.clone();
@@ -3176,45 +3245,7 @@ impl Machine<'_> {
             .iter()
             .map(|(load, provided)| (*load as i64 - before.loads as i64, provided.clone()))
             .collect();
-        let lists = Lists {
-            catcodes: self.catcodes.diff(&CatcodeTable::latex()),
-            end_line: self.end_line.0,
-            loaded: self.loaded.to_vec(),
-            class_options: self.class_options.clone(),
-            wild: self.wild.clone(),
-            verbatim: {
-                let mut v: Vec<_> = self.verbatim_environments.iter().cloned().collect();
-                v.sort();
-                v
-            },
-            section: self.section.as_deref().map(str::to_string),
-            lua: self.lua.files().iter().map(|f| PathBuf::from(roots.encode(&f.display().to_string()))).collect(),
-            counter_namespace: self.counter_namespace.clone(),
-            streams: {
-                let mut s: Vec<_> = self
-                    .streams
-                    .iter()
-                    .map(|(n, t)| (*n, t.iter().map(|a| (a.lines.to_vec(), a.lo, a.hi)).collect()))
-                    .collect();
-                s.sort_by_key(|(n, ..)| *n);
-                s
-            },
-            outputs: {
-                let mut o: Vec<_> = self.outputs.iter().map(|(n, t)| (n.clone(), t.clone())).collect();
-                o.sort();
-                o
-            },
-            pending: {
-                let mut p: Vec<_> = self.pending.iter().map(|(n, l)| (n.clone(), l.clone())).collect();
-                p.sort();
-                p
-            },
-            aliases: {
-                let mut a: Vec<_> = self.env.aliases.iter().map(|(k, v)| (*k, *v)).collect();
-                a.sort();
-                a
-            },
-        };
+        let lists = self.lists().changed_since(&before.lists);
         let lists = (rec.lists.as_ref() != Some(&lists)).then_some(lists);
         let identifying = self.identifying.map(|i| i as i64 - before.loads as i64);
         let scalars = Scalars {

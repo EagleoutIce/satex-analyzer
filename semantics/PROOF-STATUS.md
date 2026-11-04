@@ -1,5 +1,7 @@
 # Soundness proof status (job 3)
 
+> Written with AI assistance from Claude Code (Claude Opus 5.5; build fixes with Claude Sonnet 5.5), directed and reviewed by the author.
+
 File: `lean/Satex/Soundness.lean`, imported from `lean/Satex.lean`.
 `lake build` succeeds (Lean 4.35.0, core only). No `sorry` in any file. No false statement found while compiling.
 Where a lemma is false for the model, the theorem takes the failing property as a named hypothesis, and the counterexample is below.

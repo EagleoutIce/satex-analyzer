@@ -77,6 +77,16 @@ pub fn respond(
     site: &Path,
 ) -> std::io::Result<()> {
     let root = compile_root(site);
+    // `POST /__satex/compile/render`: a PDF's first page as PNG, for the image dialog (doc/site/dialogs.js)
+    if method == "POST" && rest == "/render" {
+        return match render(&root, body) {
+            Some(png) => super::send(stream, method, "page.png", "no-cache", false, png),
+            None => std::io::Write::write_all(
+                stream,
+                b"HTTP/1.1 422 Unprocessable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            ),
+        };
+    }
     if method == "POST" && rest.is_empty() {
         let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
         let mut runs = Vec::new();
@@ -111,6 +121,22 @@ pub fn respond(
             b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         ),
     }
+}
+
+/// The first page of the PDF `pdf` as PNG, by `pdftocairo`.
+fn render(root: &Path, pdf: &[u8]) -> Option<Vec<u8>> {
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let dir = root.join(format!("render-{at}"));
+    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::write(dir.join("in.pdf"), pdf).ok()?;
+    let ok = Command::new("pdftocairo")
+        .args(["-png", "-singlefile", "-f", "1", "-l", "1", "-r", "96", "in.pdf", "page"])
+        .current_dir(&dir)
+        .status()
+        .is_ok_and(|s| s.success());
+    let png = ok.then(|| std::fs::read(dir.join("page.png")).ok()).flatten();
+    let _ = std::fs::remove_dir_all(&dir);
+    png
 }
 
 /// One build of the request's project in a new directory under `root`.
