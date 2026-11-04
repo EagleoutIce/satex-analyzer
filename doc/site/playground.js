@@ -12,7 +12,7 @@
     let again = false;
     try { again = sessionStorage.getItem('satex-recovered') === '1'; sessionStorage.setItem('satex-recovered', '1'); } catch {}
     if (again) { document.getElementById('play-status').textContent = `The playground did not start: ${error?.message ?? error}`; return; }
-    try { for (const k of Object.keys(localStorage)) if (k.startsWith('satex')) localStorage.removeItem(k); } catch {}
+    try { for (const k of Object.keys(localStorage)) if (k.startsWith('satex') && k !== 'satex-drafts') localStorage.removeItem(k); } catch {}
     try { indexedDB.deleteDatabase('satex-playground'); } catch {}
     try { sessionStorage.setItem('satex-note', 'The stored layout, settings and caches did not fit this version of the playground: they were reset.'); } catch {}
     location.reload();
@@ -350,22 +350,37 @@
     failWaiters(new Error(e.message || 'the worker stopped'));
     recoverWorker(e.message || 'the worker stopped');
   }
+  /** The waiter for a reply, no longer owed once answered (the watchdog counts what is owed). */
+  const answer = (type) => { const w = waiting[type]; delete waiting[type]; return w; };
   function failWaiters(error) {
     for (const [k, w] of Object.entries(waiting)) { delete waiting[k]; w.reject(error); }
   }
-  /** How long the worker may stay silent while it owes an answer before it counts as stuck. A slow run can be
-   * silent for long, so each restart for silence doubles it until a run finishes. */
-  const HANG_MS = 120000;
+  /** How long the worker may stay silent while it owes an answer before it counts as stuck: a run reports its
+   * progress every few seconds (chaos.mjs measures the longest silence). Each restart for silence doubles it until a run finishes. */
+  const HANG_MS = 30000;
   let hang = HANG_MS;
-  const hangLimit = () => self.satexHangMs ?? hang;
-  let lastHeard = performance.now(), recovering = false;
+  // a server starting (an instance over every file) is given the start's own limit, restart() says when that passes
+  const hangLimit = () => self.satexHangMs ?? (act.phase === 'Starting' ? START_MS + 5000 : hang);
+  let lastHeard = performance.now(), recovering = false, maxGap = 0, recoveries = 0, recent = [];
   /** A stuck or dead worker is replaced: the new one gets the kernel, bundles and files the old one had,
    * then the language server starts again on them. What the page shows from the last finished run stays. */
   async function recoverWorker(why, note = `The language server stopped (${why}). Restarting it, the findings shown are from its last run.`) {
     if (recovering || !booted) return;
+    // a worker that keeps dying on this document (out of memory) is not restarted in a loop: the line says so, a click tries again
+    const now = performance.now();
+    recent = [...recent.filter((t) => now - t < 120000), now];
+    if (recent.length > 3 && why !== 'asked again') {
+      worker.terminate();
+      failWaiters(new Error(why));
+      for (const p of pending.values()) p.resolve(null);
+      pending.clear(); order.length = 0; running = 0;
+      return stoppedLine(`The language server keeps stopping on this project (${escape(why)}).`, () => { recent = []; recoverWorker('asked again', 'Restarting the language server…'); });
+    }
     recovering = true;
+    recoveries++;
     if (why.startsWith('no answer')) hang *= 2;
     const old = worker;
+    starts++; // a start under way was the old worker's: it stops quietly, this one starts again
     try {
       old.terminate();
       failWaiters(new Error(why));
@@ -378,11 +393,11 @@
       const w = newWorker();
       const replies = {};
       w.onmessage = ({ data }) => (data.type === 'error' ? replies[REPLY[data.of]]?.reject(new Error(data.message.split('\n')[0])) : replies[data.type]?.resolve(data));
-      const send = (msg) => new Promise((resolve, reject) => {
+      const send = (msg) => within(new Promise((resolve, reject) => {
         const reply = REPLY[msg.type];
         if (reply) replies[reply] = { resolve, reject }; else resolve(null);
         w.postMessage(msg);
-      });
+      }), START_MS, `the new worker's ${msg.type}`);
       for (const msg of mirrored) await send(msg);
       await send({ type: 'project', dir: runnerFiles.dir, files: runnerFiles.files, replace: true });
       w.onmessage = (e) => onWorkerMessage(e);
@@ -390,18 +405,29 @@
       worker = w;
       lastHeard = performance.now();
       recovering = false;
+      for (const [msg, transfer] of held.splice(0)) post(msg, transfer);
       synced = 0;
       await restart();
     } catch (e) {
-      busy('Stopped', `The language server could not be restarted: ${e.message}`);
-      status.dataset.done = 'error';
+      stoppedLine(`The language server could not be restarted: ${escape(e.message)}.`, () => recoverWorker('asked again', 'Restarting the language server…'));
     } finally {
       recovering = false;
     }
   }
+  /** Work that cannot go on by itself: the status line says why, that the text is kept, and offers to try again. */
+  function stoppedLine(why, retry) {
+    idle();
+    status.innerHTML = `<span class="st-msg">${why} Your text is kept.</span> <button type="button" class="small ghost" id="play-retry">Try again</button>`;
+    status.dataset.done = 'error';
+    $('play-retry').onclick = retry;
+  }
+  /** `p`, or an error naming `what` once `ms` pass without its answer. */
+  const within = (p, ms, what) => Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error(`${what} got no answer in ${Math.round(ms / 1000)} s`)), ms))]);
   setInterval(() => {
     // a status that says Analyzing with nothing in flight is stale: findings held back are shown, the bar goes
     if (act.phase === 'Analyzing' && !running && !analysisQueued && !pending.size && performance.now() - act.changed > 10000) { if (heldFindings) publish(heldFindings); phase(); }
+    // a step that says nothing new for a while (a kernel cache built) shows its time, so the line is seen to live
+    else if (act.phase && performance.now() - act.changed > 5000 && status.textContent === act.shown) status.textContent = act.shown = `${act.text} · ${secs(performance.now() - act.since)}`;
     if (!recovering && performance.now() - lastHeard > hangLimit() && (running > 0 || pending.size || Object.keys(waiting).length))
       recoverWorker(`no answer for ${Math.round(hangLimit() / 1000)} s`);
   }, 2000);
@@ -418,7 +444,10 @@
   const MIRROR = new Set(['init', 'bundle', 'bundles']);
   const mirrored = [], runnerFiles = { dir: '', files: {} };
   let runner = null, mirrorable = true;
+  /** What is asked while a new worker replaces a stuck one waits for it: the old one would never answer. */
+  const held = [];
   function post(msg, transfer = []) {
+    if (recovering) { held.push([msg, transfer]); return; }
     // a file:// page hands its buffers over, so a second worker cannot get them: commands share the first
     if (msg.given) mirrorable = false;
     if (MIRROR.has(msg.type)) mirrored.push(msg);
@@ -437,6 +466,8 @@
     const replies = {};
     let chain = Promise.resolve();
     w.onmessage = ({ data }) => (data.type === 'error' ? replies[REPLY[data.of]]?.reject(new Error(data.message.split('\n')[0])) : replies[data.type]?.resolve(data));
+    // a crashed console worker fails its command, and the next command starts a new one
+    w.onerror = (e) => { e.preventDefault?.(); runner = null; for (const r of Object.values(replies)) r.reject(new Error(e.message || 'the console worker stopped')); };
     // one message at a time, as the first worker gets them through `ask`: the next waits for this one's reply
     const send = (msg) => {
       const done = chain.then(() => new Promise((resolve, reject) => {
@@ -472,6 +503,8 @@
   /** Findings of a text older than the server's: the editor no longer has it. */
   const outdated = (p) => p.version != null && (sentVersions.get(p.uri) ?? -Infinity) > p.version;
   function lsp(method, params, notify = false) {
+    // while a new worker starts, nothing is asked of the old one: restart() then tells the new one everything
+    if (recovering) return notify ? null : Promise.resolve(null);
     const message = { jsonrpc: '2.0', method, params, ...(notify ? {} : { id: nextId++ }) };
     const runs = method === 'satex/analyze';
     // A read-only question asked while a run goes on is answered from the last finished one, never queued behind it.
@@ -540,7 +573,21 @@
     timer = setTimeout(sync, /\\[A-Za-z@]*$|\{[^{}\s]*$/.test(before) ? 1500 : 400);
     markStale();
     pdfEdited();
+    keepDrafts();
   }
+  /** Drafts: the examples' edited and added files, kept in this browser, so a reload, a crash or a closed tab loses no text. */
+  const DRAFTS = 'satex-drafts';
+  let draftTimer = 0;
+  function keepDrafts(now = false) {
+    clearTimeout(draftTimer);
+    if (!now) { draftTimer = setTimeout(() => keepDrafts(true), 300); return; }
+    if (state.upload || !sampleTexts) return;
+    if (editor && state.file && !(state.file in state.ro)) state.texts[state.file] = editor.text();
+    const texts = Object.fromEntries(Object.entries(state.texts).filter(([n, t]) => !(n in state.ro) && t !== sampleTexts[n]));
+    try { if (Object.keys(texts).length) localStorage.setItem(DRAFTS, JSON.stringify({ texts, lists: state.lists })); else localStorage.removeItem(DRAFTS); } catch {}
+  }
+  addEventListener('pagehide', () => keepDrafts(true));
+  const drafts = () => { try { return JSON.parse(localStorage.getItem(DRAFTS) ?? 'null') ?? {}; } catch { return {}; } };
   /** After an analysis, the command list the server would offer after a `\\`, asked once at a command
    * of the file: the first `\\` typed then completes at once. */
   function prefetchCommands() {
@@ -966,10 +1013,10 @@
       lineMarker: (v, line) => { const h = v.state.field(heatField), n = h?.lines.get(v.state.doc.lineAt(line.from).number); return n ? new HeatMark(Math.max(0.12, Math.log1p(n) / Math.log1p(h.most)).toFixed(2), n) : null; },
       lineMarkerChange: (u) => u.startState.field(heatField) !== u.state.field(heatField),
     });
-    const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment();
+    const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment(), setup = new st.Compartment();
     const ev = new EditorView({
       parent, doc: text,
-      extensions: [basicSetup, closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), lint.lintGutter({ tooltipFilter: () => [] }), lint.linter(null, { tooltipFilter: () => [] }), ac.autocompletion({ override: [complete], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
+      extensions: [setup.of(basicSetup), closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), lint.lintGutter({ tooltipFilter: () => [] }), lint.linter(null, { tooltipFilter: () => [] }), ac.autocompletion({ override: [complete], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
         // the detail: a usage line colored like the hover's, then where it comes from
         const span = Object.assign(document.createElement('span'), { className: 'cm-completionDetail' });
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
@@ -998,7 +1045,7 @@
       const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY });
       if (pos == null) return null;
       const l = doc().lineAt(pos), w = wordAt(l.text, pos - l.from);
-      return w && (w[3] || resolves.get(l.from + w[0])) ? [l.from + w[0], l.from + w[1]] : null;
+      return w && (w[3] || resolves.get(l.from + w[0]) || fileArg(l.text, pos - l.from)) ? [l.from + w[0], l.from + w[1]] : null;
     };
     function resolve(e) {
       const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY });
@@ -1006,7 +1053,8 @@
       const l = doc().lineAt(pos), w = wordAt(l.text, pos - l.from);
       if (!w || w[3] || resolves.has(l.from + w[0])) return;
       resolves.set(l.from + w[0], false);
-      lsp('textDocument/definition', { textDocument: { uri: uri() }, position: position(doc(), pos) }).catch(() => null).then((r) => {
+      if (fileArg(l.text, pos - l.from)) { resolves.set(l.from + w[0], true); return underline(under(e)); }
+      definitionAt(doc().toString(), position(doc(), pos)).then((r) => {
         if (!(Array.isArray(r) ? r.length : r)) return;
         resolves.set(l.from + w[0], true);
         underline(under(e));
@@ -1080,7 +1128,8 @@
     return {
       text: () => doc().toString(),
       // another file's text starts at its top: the last file's scroll position may lie past its end
-      set: (t, readOnly = false) => { ev.dispatch({ effects: lang.reconfigure(/\.bib$/.test(state.file) ? tex.bib : tex.language) }); ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, selection: { anchor: 0 }, effects: [reset.of(null), lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : [])] }); ev.scrollDOM.scrollTop = 0; },
+      // another file: its text without the last one's undo history (an undo never brings another file's text back)
+      set: (t, readOnly = false) => { ev.dispatch({ effects: [setup.reconfigure([]), lang.reconfigure(/\.bib$/.test(state.file) ? tex.bib : tex.language)] }); ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, selection: { anchor: 0 }, effects: [reset.of(null), lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : [])] }); ev.dispatch({ effects: setup.reconfigure(basicSetup) }); ev.scrollDOM.scrollTop = 0; },
       apply: (edits) => ev.dispatch({ changes: edits.map((e) => { const [from, to] = span(e.range); return { from, to, insert: e.newText }; }) }),
       diagnostics: (ds) => ev.dispatch(lint.setDiagnostics(ev.state, ds.map((d, i) => {
         const [from, to] = span(d.range);
@@ -1320,7 +1369,7 @@
     const own = [...typesetBody.querySelectorAll(':scope > p.ts[data-line]')];
     const here = own.filter((p, i) => +p.dataset.line <= last && (i + 1 >= own.length || +own[i + 1].dataset.line > first));
     for (const p of typesetBody.querySelectorAll('p.ts')) p.classList.toggle('ts-current', here.includes(p));
-    const only = !!$('typeset-here')?.checked;
+    const only = tsHere;
     typesetBody.classList.toggle('ts-only-here', only);
     // nothing set where the cursor stands: said so, not the whole document
     typesetBody.querySelector('.ts-nothing')?.remove();
@@ -1373,13 +1422,15 @@
     return `<p class="ts ts-excerpt"><span class="ts-at">${p.dataset.line}</span><span class="ts-text"><span class="ts-grey">${a > pre.length ? '… ' : ''}${escape(pre)}</span><mark>${escape(plain.slice(a, b))}</mark>` +
       `<span class="ts-grey">${escape(post)}${b + post.length < plain.length ? ' …' : ''}</span></span></p>`;
   }
-  $('typeset-here')?.addEventListener('change', typesetFollow);
-  for (const b of document.querySelectorAll('.ts-scope button')) b.onclick = () => {
-    const box = /** @type {HTMLInputElement} */ ($('typeset-here'));
-    box.checked = b.dataset.scope === 'here';
-    for (const x of document.querySelectorAll('.ts-scope button')) x.setAttribute('aria-pressed', String(x === b));
-    box.dispatchEvent(new Event('change'));
+  /** 'all' or 'at cursor': one state, the buttons' aria-pressed drawn from it (a hidden checkbox the browser restores was a second one). */
+  var tsHere = false; // var: a cursor move may run typesetFollow before this line
+  const tsScope = (here) => {
+    tsHere = here;
+    for (const x of document.querySelectorAll('.ts-scope button')) x.setAttribute('aria-pressed', String((x.dataset.scope === 'here') === here));
+    typesetFollow();
   };
+  for (const b of document.querySelectorAll('.ts-scope button')) b.onclick = () => tsScope(b.dataset.scope === 'here');
+  tsScope(false);
   /** The open file's findings on the paragraphs they stand in: a mark in the margin, the worst first, shown with the findings switch. */
   function typesetFindings() {
     typesetBody.querySelectorAll('.ts-finding').forEach((m) => m.remove());
@@ -1666,9 +1717,38 @@
 
   /** The definition of the command at the cursor: a project file's tab, a bundle file read-only, or a
    * primitive's documentation; with several (redefinitions, the kernel's), a menu of them all. */
+  /** Navigation never waits behind a run. A file argument (`\\input{chapter}`) names its file: opened from the text alone.
+   * A name's definition comes from the last answer for it while the worker is busy; only a name not asked before waits. */
+  const FILE_ARG = /\\(?:input|include|subfile|InputIfFileExists|bibliography|addbibresource|includegraphics|addplot\s*(?:\[[^\]]*\])?\s*table)\s*(?:\[[^\]]*\])?\s*\{([^{}]*)\}/g;
+  function fileArg(line, col) {
+    for (const m of line.matchAll(FILE_ARG)) {
+      const from = m.index + m[0].length - m[1].length - 1;
+      if (col < from || col > from + m[1].length) continue;
+      // the comma-separated name under the column
+      let at = from;
+      for (const part of m[1].split(',')) {
+        if (col <= at + part.length) {
+          const n = part.trim();
+          return [n, `${n}.tex`, `${n}.bib`].find((f) => state.files.includes(f) || f in state.bins) ?? null;
+        }
+        at += part.length + 1;
+      }
+    }
+    return null;
+  }
+  const defIndex = new Map(); // `uri name` -> the last definition answer for it
+  async function definitionAt(text, p) {
+    const line = text.split('\n', p.line + 1)[p.line] ?? '', file = fileArg(line, p.character);
+    if (file) return [{ uri: uri(file), range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } }];
+    const w = wordAt(line, p.character), k = w && `${uri()} ${w[2]}`;
+    if (k && running > 0 && defIndex.has(k)) return defIndex.get(k);
+    const r = await lsp('textDocument/definition', { textDocument: { uri: uri() }, position: p }).catch(() => null);
+    if (k && (Array.isArray(r) ? r.length : r)) { if (defIndex.size > 500) defIndex.delete(defIndex.keys().next().value); defIndex.set(k, r); }
+    return r;
+  }
   async function definition(x = innerWidth / 2, y = innerHeight / 3) {
     sync();
-    const r = await lsp('textDocument/definition', { textDocument: { uri: uri() }, position: editor.position() }).catch(() => null);
+    const r = await definitionAt(editor.text(), editor.position());
     const locs = (Array.isArray(r) ? r : r ? [r] : []).map((l) => [new URL(l.uri ?? l.targetUri), (l.range ?? l.targetSelectionRange).start]);
     if (!locs.length) return toast('No definition found');
     const open = ([url, start]) => url.protocol === 'file:' ? openPlace(decodeURIComponent(url.pathname), start) : window.open(url.href, '_blank', 'noopener');
@@ -3467,11 +3547,21 @@
   /** Starts the language server again: another kernel, project or root. */
   /** How long the language server may take to answer its first message. */
   const START_MS = 90000;
+  /** Each start counts: one superseded by a newer (a switch while the last one starts) stops quietly at its next step. */
+  let starts = 0;
   async function restart() {
+    const gen = ++starts, stale = () => gen !== starts;
     following = true;
+    pdfOwner();
     sync();
     await followRoot();
-    await fetchPackages(wanted_(named(Object.entries(state.texts).filter(([n]) => !(n in state.ro)).map(([, t]) => t))));
+    if (stale()) return false;
+    const names = named(Object.entries(state.texts).filter(([n]) => !(n in state.ro)).map(([, t]) => t));
+    await fetchPackages(wanted_(names));
+    // what the project needs and a background load still fetches
+    const loading = wanted_(names, state.kernel, true).filter((id) => inFlight.has(id) || background.has(id));
+    if (loading.length) { busy('Fetching', `Fetching ${plural(loading.length, 'package')}…`); await Promise.allSettled(loading.map((id) => fetchedPackages.get(id))); idle(); }
+    if (stale()) return false;
     store();
     opened.clear();
     for (const u of Object.keys(diagnostics)) if (!u.startsWith(`file://${state.dir}/`)) delete diagnostics[u];
@@ -3486,6 +3576,7 @@
     // a server that does not answer, or stops, never leaves the page starting: it says so and offers another try
     const started = await Promise.race([lsp('initialize', { processId: null, rootUri: `file://${state.dir}`, capabilities: {} }),
       new Promise((done) => setTimeout(() => done(null), START_MS))]);
+    if (stale()) return false;
     if (!started) {
       following = false;
       idle();
@@ -3497,6 +3588,8 @@
       return;
     }
     try { localStorage.removeItem('satex-start'); } catch {}
+    // an error said before (a failed start, a stopped server) is over: the line comes back to ready, not to it
+    if (status.dataset.done === 'error') { status.dataset.done = 'ready'; act.rest = 'Ready. Findings update as you type.'; }
     // the server answered: the card may go once no download is left, whichever phase idle() last saw
     boot.started = true;
     bootSettled();
@@ -3509,6 +3602,7 @@
     synced = version;
     typedSincePush = false;
     following = false;
+    return true;
   }
 
   // ---------------------------------------------------------------- the file tree and the tabs
@@ -3594,9 +3688,8 @@
   /** An example in place of the project: its files (as last edited), its root, its command. */
   async function example(ex, { file = ex, list = null, root = ex, command = null } = {}) {
     if (!editor || !(ex in sampleTexts)) return;
-    exampleAt = performance.now();
     sync();
-    if (state.upload) Object.assign(state, { dir: '/work', texts: { ...sampleTexts }, upload: false, lists: {}, bins: {} });
+    if (state.upload) Object.assign(state, { dir: '/work', texts: { ...sampleTexts, ...drafts().texts }, upload: false, lists: drafts().lists ?? {}, bins: {} });
     for (const n of Object.keys(state.ro)) delete state.texts[n];
     state.ro = {};
     state.files = state.lists[ex] ??= list ?? [ex, ...(projects[ex] ?? [])];
@@ -3607,7 +3700,7 @@
     editor.set(state.texts[state.file]);
     history.replaceState(null, '', `#${encodeURIComponent(ex)}`);
     redraw();
-    await restart();
+    if (!await restart()) return;
     args.value = command ?? commandOf(ex);
     outBox.hidden = true;
     if (!plainLint()) start();
@@ -3629,7 +3722,7 @@
     if (!changed.length || (!state.upload && what === state.example)) return Promise.resolve(true);
     const box = $('play-replace');
     $('replace-text').innerHTML = `Open ${escape(what)} in place of ${state.upload ? 'your project' : escape(state.example)}? ` +
-      `Your edits to ${changed.map((n) => `<code>${escape(n)}</code>`).join(', ')} are ${state.upload ? 'lost' : 'kept until you leave the page'}. Copy a link first to keep them.`;
+      `Your edits to ${changed.map((n) => `<code>${escape(n)}</code>`).join(', ')} are ${state.upload ? 'lost' : 'replaced'}. Copy a link first to keep them.`;
     box.returnValue = '';
     box.showModal();
     return new Promise((done) => box.addEventListener('close', () => {
@@ -3637,7 +3730,8 @@
       done(box.returnValue === 'replace');
     }, { once: true }));
   }
-  const exampleAsked = async (ex) => { if (await replaceOk(ex, encodeURIComponent(ex))) await example(ex); };
+  // an example's edits stay (drafts): switching between examples asks nothing; an upload's would be lost
+  const exampleAsked = async (ex) => { if (!state.upload || await replaceOk(ex, encodeURIComponent(ex))) await example(ex); };
   examplesBox.onclick = (e) => { const row = e.target.closest('[data-example]'); if (row) exampleAsked(row.dataset.example); };
   treeBox.onclick = (e) => {
     const folder = e.target.closest('[data-folder]');
@@ -3659,6 +3753,12 @@
       ...(/\.(tex|ltx)$/.test(name) && name !== state.root ? [['Use as root', '', () => makeRoot(name)]] : []),
       ['Open', '', () => choose(name)],
       ...(ro ? [] : [['Rename…', 'F2', () => renameFile(name)], ['Delete', '', () => deleteFile(name)]]),
+      // an example's file as it came: the kept draft goes
+      ...(!state.upload && name in sampleTexts && (name === state.file ? editor.text() : state.texts[name]) !== sampleTexts[name] ? [['Undo all my edits', '', () => {
+        if (name === state.file) editor.set(sampleTexts[name]); else state.texts[name] = sampleTexts[name];
+        if (opened.has(uri(name)) && name !== state.file) lsp('textDocument/didChange', { textDocument: { uri: uri(name), version: ++version }, contentChanges: [{ text: sampleTexts[name] }] }, true);
+        keepDrafts(true); analyze(); toast(`${name} is as it came`);
+      }]] : []),
     ], e.clientX, e.clientY);
   };
   treeBox.addEventListener('keydown', (e) => { const row = e.target.closest?.('.file[data-name]'); if (e.key === 'F2' && row && !e.target.closest('.renaming')) { e.preventDefault(); renameFile(row.dataset.name); } });
@@ -3778,7 +3878,6 @@
   async function fetchKernel(i) {
     const entry = manifest.kernels[i];
     if (!state.loaded.has(i)) {
-      bootAgain();
       busy('Fetching', `Fetching the ${entry.label} kernel (${size(entry.size)})…`);
       const t = performance.now();
       const given = location.protocol === 'file:' ? await local(entry.bundle) : undefined;
@@ -3800,7 +3899,7 @@
   const MISSING = /(?:`([^`\s]+)`|(\S+\.(?:sty|cls))) is not in this installation/g;
   const NAMED = /\\(?:documentclass|usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
   /** The bundles of the current kernel for `names` (a class too), and what those need, not yet asked for. */
-  function wanted_(names, k = state.kernel) {
+  function wanted_(names, k = state.kernel, all = false) {
     const kernel = manifest.kernels[k].id;
     const todo = new Set();
     const add = (id) => {
@@ -3813,31 +3912,54 @@
       const held = HOLDER.get(`${kernel}/${n}`) ?? HOLDER.get(`${kernel}/${n}.sty`) ?? HOLDER.get(`${kernel}/${n}.cls`);
       add(`${kernel}/${n.replace(/\.sty$/, '')}`); add(`${kernel}/${n}`); add(`${kernel}/${n}.cls`); if (held) add(held);
     }
-    return [...todo].filter((id) => !fetchedPackages.has(id));
+    return [...todo].filter((id) => all || !fetchedPackages.has(id));
   }
   /** The packages and classes the project's own files name. */
   const named = (texts) => [...new Set(texts.flatMap((t) => [...String(t).matchAll(NAMED)].flatMap((m) => m[1].split(',').map((x) => x.trim()).filter(Boolean))))];
-  const missing = (texts) => wanted_([...new Set(texts.flatMap((t) => [...String(t).matchAll(MISSING)].map((m) => m[1] ?? m[2])))]);
+  const missing = (texts, all = false) => wanted_([...new Set(texts.flatMap((t) => [...String(t).matchAll(MISSING)].map((m) => m[1] ?? m[2])))], state.kernel, all);
   const loadedList = [], inFlight = new Set();
   let loadedBytes = 0;
-  async function fetchPackages(ids) {
+  /** `quiet`: in the background, after the open document's first run; the status line stays the analysis'. */
+  let quietLoads = 0;
+  const background = new Set();
+  /** packages.txt's first section, after the open document's first run: a batch at a time while the page is idle, so a switch waits for one batch at most. */
+  async function preload() {
+    const todo = wanted_(manifest.preload ?? []);
+    while (todo.length) {
+      while (act.phase || running > 0 || pending.size || !boot.started) await new Promise((r) => setTimeout(r, 500));
+      const batch = [];
+      for (let bytes = 0; todo.length && bytes < 2 ** 21;) { const id = todo.shift(); if (!fetchedPackages.has(id)) { batch.push(id); bytes += PACKAGES.get(id).size; } }
+      if (batch.length && !await fetchPackages(batch, true)) return;
+    }
+  }
+  async function fetchPackages(ids, quiet = false) {
     if (!ids.length) return false;
-    bootAgain();
     const entries = ids.map((id) => PACKAGES.get(id));
     const label = entries.map((e) => e.label).join(', ');
-    busy('Fetching', `Fetching ${plural(entries.length, 'package')}, ${size(entries.reduce((n, e) => n + e.size, 0))}…`);
-    status.title = entries.map((e) => `${e.label} ${size(e.size)}`).join(', ');
+    if (!quiet) busy('Fetching', `Fetching ${plural(entries.length, 'package')}, ${size(entries.reduce((n, e) => n + e.size, 0))}…`);
+    if (!quiet) status.title = entries.map((e) => `${e.label} ${size(e.size)}`).join(', ');
     const t = performance.now();
     const given = location.protocol === 'file:' ? await Promise.all(entries.map((e) => local(e.bundle))) : undefined;
     const load = ask({ type: 'bundles', base, entries, given }, given ? given.map((g) => g.buffer) : []);
-    ids.forEach((id) => { fetchedPackages.set(id, load); inFlight.add(id); });
-    try { await load; } catch (e) { ids.forEach((id) => fetchedPackages.delete(id)); toast(/: 404$/m.test(e.message) ? 'The playground was updated since this page loaded: reload it to fetch packages.' : `${label} did not load: ${e.message.split('\n')[0]}`); return false; } finally { ids.forEach((id) => inFlight.delete(id)); }
+    // a background load is no package the shown findings wait for
+    const flying = quiet ? background : inFlight;
+    ids.forEach((id) => { fetchedPackages.set(id, load); flying.add(id); });
+    quietLoads += +quiet;
+    try { await load; } catch (e) {
+      ids.forEach((id) => fetchedPackages.delete(id));
+      // said where the work was shown, the status line, and once more as a note; the next edit tries again
+      const why = /: 404$/m.test(e.message) ? 'The playground was updated since this page loaded: reload it to fetch packages.' : `${label} did not load (${navigator.onLine === false ? 'offline' : e.message.split('\n')[0]}). The next edit tries again.`;
+      if (!quiet) { loads.clear(); idle(why); status.dataset.done = 'error'; toast(why); }
+      return false;
+    } finally { ids.forEach((id) => flying.delete(id)); quietLoads -= +quiet; }
     // the file index cached before this bundle was in the file system does not list its files: drop it, so the next start rebuilds it
     try { const stale = ((await ask({ type: 'caches' })).entries ?? []).filter((e) => /\/index-/.test(e.path)).map((e) => e.path); if (stale.length) await ask({ type: 'uncache', paths: stale }); } catch {}
-    loads.clear();
-    idle();
-    status.textContent = `${plural(entries.length, 'package')} fetched in ${secs(performance.now() - t)}`;
-    status.title = label;
+    if (!quiet) {
+      loads.clear();
+      idle();
+      status.textContent = `${plural(entries.length, 'package')} fetched in ${secs(performance.now() - t)}`;
+      status.title = label;
+    }
     status.dataset.packages = [...fetchedPackages.keys()].join(' ');
     loadedList.push(...entries.map((e) => `${e.label} ${size(e.size)}`));
     loadedBytes += entries.reduce((n, e) => n + e.size, 0);
@@ -4016,9 +4138,9 @@
       return out;
     };
     const text = async (url, gzip) => { const r = await fetch(url); return gzip ? new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).text() : r.text(); };
-    self.onmessage = async ({ data: { url, request } }) => {
+    self.onmessage = async ({ data: { url, request, timeout } }) => {
       try {
-        const answer = await (await fetch(url, { method: 'POST', body: JSON.stringify(request) })).json();
+        const answer = await (await fetch(url, { method: 'POST', body: JSON.stringify(request), signal: AbortSignal.timeout(timeout) })).json();
         if (answer.synctex) answer.boxes = parse(await text(`${url}/${answer.base}${answer.synctex}`, true));
         if (answer.words) answer.wordList = words(await text(`${url}/${answer.base}${answer.words}`));
         // a PDF whose objects do not parse only lacks its links
@@ -4126,8 +4248,15 @@
   const pdfSets = () => { const f = [...manifest.kernels[state.kernel].args, ...configFlags()]; return f.filter((_, i) => f[i - 1] === '--set'); };
   /** Builds the project, or with `slice` only what the cursor's line needs. `cached` only shows a kept build. `alone`: a standalone slice's text, built on its own. */
   async function compile(slice = false, cached = false, alone = null) {
-    if (!(await pdfServer) && !(await probeServer())) { toast('Compiling needs the playground server'); return; }
-    // one build at a time: a newer request waits, the newest only
+    // a click is answered at once, in the PDF pane: one build at a time, a newer request waits (the newest only) and says so
+    if (!cached && $('play-pdf').hidden) showPanel('play-pdf');
+    if (pdfBusy) { if (!cached) { pdfQueued = [slice, false, alone]; $('play-pdf').classList.add('pdf-running'); pdfStatus.textContent = pdfWarming ? 'compiling once the compile server has finished its setup…' : 'compiling next, once the build under way ends…'; flare([pdfStatus], true); } return; }
+    if (!cached) { $('play-pdf').classList.add('pdf-running'); pdfStatus.textContent = 'compiling: asking the compile server…'; }
+    if (!(await pdfServer) && !(await probeServer())) {
+      $('play-pdf').classList.remove('pdf-running');
+      if (!cached) { pdfStatus.innerHTML = `<span class="x-err">${NO_SERVER_SHORT}</span>`; toast(NO_SERVER_SHORT); }
+      return;
+    }
     if (pdfBusy) { if (!cached) pdfQueued = [slice, false, alone]; return; }
     push();
     const root = alone === null ? state.root ?? state.file : `slice-of-${(state.root ?? state.file).split('/').pop()}`, p = editor.position();
@@ -4139,6 +4268,7 @@
     $('play-pdf').classList.toggle('pdf-running', !cached);
     // the zip is of the build shown: none while the next one runs
     $('pdf-zip').setAttribute('aria-disabled', String(!cached));
+    const dir = state.dir;
     pdfWorker.onmessage = ({ data }) => {
       clearInterval(tick);
       pdfBusy = false;
@@ -4149,15 +4279,28 @@
       if (data.none || cached && pdf?.slice) pdfStatus.textContent = pdfSummary;
       else {
         pdfSummary = data.error ? '' : `${what} in ${data.cached ? 'cache' : secs(performance.now() - start)}`;
-        pdf = { ...data, slice, root };
+        pdf = { ...data, slice, root, dir };
         pdfShow();
+        pdfOwner();
         pdfLoaded(!data.error && !(data.records ?? []).some((r) => r.severity === 'error'));
         // a failed request may be the server gone: say so plainly
         if (data.error) probeServer().then((up) => { if (!up) { pdfStatus.textContent = 'needs the playground server'; toast('Compiling needs the playground server'); } });
       }
       if (next) compile(...next);
     };
-    pdfWorker.postMessage({ url: COMPILE, request: { main: root, files: alone === null ? pdfFiles() : { [root]: alone }, sets: pdfSets(), ...(slice ? { at } : {}), ...(cached ? { cached } : {}) } });
+    pdfWorker.postMessage({ url: COMPILE, timeout: COMPILE_MS, request: { main: root, files: alone === null ? pdfFiles() : { [root]: alone }, sets: pdfSets(), ...(slice ? { at } : {}), ...(cached ? { cached } : {}) } });
+  }
+  /** How long a build may take before the page gives up on it: the server's own limit is shorter. */
+  const COMPILE_MS = 600000;
+  const NO_SERVER_SHORT = 'Compiling needs the playground server (cargo playground), which this page cannot reach.';
+  /** The PDF is of one project and root: after a switch it dims, says whose it is, and takes no clicks, until a build of this one replaces it. */
+  function pdfOwner() {
+    const el = $('play-pdf'), other = !!pdf && (pdf.dir !== state.dir || (!pdf.slice && pdf.root !== (state.root ?? state.file)));
+    const became = other && !el.classList.contains('pdf-other');
+    el.classList.toggle('pdf-other', other);
+    pdfBody.querySelector('.pdf-owner')?.remove();
+    if (other) pdfBody.insertAdjacentHTML('afterbegin', `<p class="pdf-owner">Built for ${escape(pdf.root)}${pdf.dir !== state.dir ? ' of another project' : ''}. <button type="button" class="small">Compile ${escape(state.root ?? state.file)}</button></p>`);
+    if (became && pdfAuto.on && serverUp) compile();
   }
   /** A build asked for while one runs (the newest only), and what the last build said. */
   var pdfQueued = null, pdfSummary = '';
@@ -4190,7 +4333,7 @@
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 's' || mod && e.key === 'Enter' && e.target.closest?.('#play-pdf')) {
       e.preventDefault();
-      if (pdfButtons[0].disabled && !pdfBusy) { probeServer().then((up) => { if (up) compile(); else toast('Compiling needs the playground server (cargo playground)'); }); } else compile();
+      compile();
     }
   });
   /** A short jitter on failure, a soft pulse on success: on each of `els`, once. */
@@ -4324,7 +4467,7 @@
   /** The cursor's line marked on the pages, scrolled into view when it moved. */
   function pdfFollow(again = false) {
     const pos = editor?.position();
-    if (!pdf?.boxes || pdf.slice || !pos || !again && !pdfFollowOn) return;
+    if (!pdf?.boxes || pdf.slice || !pos || !again && !pdfFollowOn || $('play-pdf').classList.contains('pdf-other')) return;
     const line = pos.line + 1, key = `${state.file}:${line}`;
     if (key === pdfLine && !again) return;
     pdfLine = key;
@@ -4377,6 +4520,8 @@
   // a double click selects nothing on the pages (the browser paints the image and its overlays)
   pdfBody.addEventListener('mousedown', (e) => { if (e.detail > 1 && e.target.closest('.pdf-pages')) e.preventDefault(); });
   pdfBody.addEventListener('click', (e) => {
+    if (e.target.closest('.pdf-owner button')) { compile(); return; }
+    if ($('play-pdf').classList.contains('pdf-other')) { e.preventDefault(); return; }
     const chip = e.target.closest('.pdf-key');
     if (chip) { e.preventDefault(); pdfToTarget(pdfKeys[+chip.dataset.k]); return; }
     const rec = e.target.closest('.pdf-records li');
@@ -5148,7 +5293,8 @@
     if (docs) parts.push(`<a href="${docs}" target="_blank" rel="noopener">documentation ↗</a>`);
     return parts.map((p) => `<div>${p}</div>`).join('');
   }
-  const loadCaches = async () => { await usage(); drawCaches((await ask({ type: 'caches' })).entries); };
+  // a worker restarted meanwhile fails the question: the next run asks again
+  const loadCaches = async () => { try { await usage(); drawCaches((await ask({ type: 'caches' })).entries); } catch {} };
   cacheFilter.oninput = () => drawCaches();
   cacheBox.querySelector('thead').onclick = (e) => {
     const key = e.target.closest('th[data-sort]')?.dataset.sort;
@@ -5249,7 +5395,11 @@
   }
   /** After findings or a run name missing packages: fetch them, start over. */
   async function fetchMissing(texts) {
-    if (!await fetchPackages(missing(texts))) return false;
+    const ids = missing(texts), flying = missing(texts, true).filter((id) => background.has(id));
+    if (!ids.length && !flying.length) return false;
+    if (ids.length && !await fetchPackages(ids)) return false;
+    // one the background load fetches now: waited for, not fetched twice
+    if (flying.length) { busy('Fetching', `Fetching ${plural(flying.length, 'package')}…`); await Promise.allSettled(flying.map((id) => fetchedPackages.get(id))); idle(); }
     await restart();
     if (!plainLint()) await start();
     return true;
@@ -5429,7 +5579,7 @@
       if (link.f in state.texts) choose(link.f);
       args.value = link.a;
     } else {
-      if (state.upload) Object.assign(state, { dir: '/work', texts: { ...sampleTexts }, upload: false, lists: {}, bins: {} });
+      if (state.upload) Object.assign(state, { dir: '/work', texts: { ...sampleTexts, ...drafts().texts }, upload: false, lists: drafts().lists ?? {}, bins: {} });
       Object.assign(state.texts, link.p);
       delete state.lists[link.x];
       await example(link.x, { file: link.f, list: link.l, root: link.r, command: link.a });
@@ -5458,7 +5608,7 @@
 
   /** What the page is doing, in one place: the status bar's text and bar, and a card with the details on hover. */
   const bar = $('play-progress'), loads = new Map(), actBox = $('act-detail');
-  const act = { phase: '', text: '', shown: '', since: 0, changed: 0, got: 0, all: 0, started: 0, rest: '', steps: [], run: 0, after: '', version: -1, ended: 0 };
+  const act = { phase: '', text: '', shown: '', lastSecond: /** @type {number | null} */ (null), since: 0, changed: 0, got: 0, all: 0, started: 0, rest: '', steps: [], run: 0, after: '', version: -1, ended: 0 };
   const PHASE = { unpacking: ['Unpacking', 'Unpacking the TeX files…'], importing: ['Importing', 'Importing the kernel caches…'] };
   /* The start, and an uploaded project, as one card over the page: the logo, the version, the stages in one bar.
    * Each stage holds its share of the bar; a stage's own progress (bytes, lines read) fills its share. */
@@ -5516,12 +5666,7 @@
     bootBar(boot.at, k >= 0 && !Number.isFinite(done));
     boot.el.querySelector('.boot-text').textContent = text;
   }
-  /** The card goes once satex has started and no download is left. */
-  /** A switch to an example that needs downloads brings the loading card back, until they end. */
-  let exampleAt = -1e9;
-  function bootAgain() {
-    if (boot?.started && !boot.open && performance.now() - exampleAt < 30000) bootOpen('Loading the example');
-  }
+  /** The card goes once satex has started and no download is left. It never comes back: later downloads show in the status line. */
   function bootSettled() {
     if (boot?.started && !loads.size && !inFlight.size) bootClose();
   }
@@ -5562,7 +5707,10 @@
     // a status without both counts shows work going on, not a share of it; with them, the time left
     self.satexProgress.set(bar, Number.isFinite(done) ? done : null);
     const left = Number.isFinite(done) ? self.satexProgress.left(done, now - act.since) : null;
-    status.textContent = act.shown = left ? `${text} · about ${left} s left` : text;
+    // an estimate that keeps saying a second is left is overrun (the work goes on past the text's end): the time spent instead
+    act.lastSecond = left === 1 ? act.lastSecond ?? now : null;
+    const overrun = act.lastSecond !== null && now - act.lastSecond > 3000;
+    status.textContent = act.shown = overrun ? `${text} · ${secs(now - act.started)}` : left ? `${text} · about ${left} s left` : text;
     status.title = '';
     status.dataset.busy = '';
     drawAct();
@@ -5604,8 +5752,18 @@
       const last = g.end === act.steps.length - 1, until = last ? now : act.steps[g.end + 1].at;
       return `<li class="act-run"><details data-run="${escape(g.run)}"${actOpen.get(g.run) ?? last ? ' open' : ''}><summary><span>${escape(g.run)}</span><span class="act-t">${secs(until - g.at)}</span></summary><ol class="act-steps">${g.rows.join('')}</ol></details></li>`;
     }).join('');
-    const rows = [['run', `${act.run}${act.after ? ` ${act.after}` : ''}`], ['doing', escape(act.text.replace(/…$/, ''))], ...(act.all ? [['bytes', `${mib(act.got)} of ${mib(act.all)} MiB`]] : []),
-      ...(act.where ? [['at', escape(act.where)]] : []), ['steps', `<ol class="act-steps">${steps_}</ol>`], ['in this step', s(act.since)], ['since start', s(act.started)], ['last change', `${s(act.changed)} ago`]];
+    // each kind of step once, with how often and how long; steps under 50 ms only in the full list
+    const kinds = new Map();
+    act.steps.forEach((st, i) => {
+      const last = i === act.steps.length - 1, g = kinds.get(st.label) ?? kinds.set(st.label, { n: 0, ms: 0, now: false }).get(st.label);
+      g.n++; g.ms += (last ? now : act.steps[i + 1].at) - st.at; g.now ||= last;
+    });
+    const summary = [...kinds].filter(([, g]) => g.now || g.ms >= 50).map(([label, g]) =>
+      `<li class="act-step${g.now ? ' act-now' : ''}"><span>${escape(label)}${g.n > 1 ? ` · ${g.n}×` : ''}</span><span class="act-t">${secs(g.ms)}</span></li>`).join('');
+    const build = act.steps.at(-1)?.run;
+    const rows = [['run', `${act.run}${act.after ? ` ${act.after}` : ''}`], ['doing', escape(act.text.replace(/…$/, ''))], ...(build ? [['build', escape(build)]] : []), ...(act.all ? [['bytes', `${mib(act.got)} of ${mib(act.all)} MiB`]] : []),
+      ...(act.where ? [['at', escape(act.where)]] : []), ['steps', `<ol class="act-steps">${summary}</ol>${act.steps.length > kinds.size || summary.length < kinds.size ? `<details class="act-all" data-run="all"${actOpen.get('all') ? ' open' : ''}><summary class="muted">all ${act.steps.length} steps</summary><ol class="act-steps">${steps_}</ol></details>` : ''}`],
+      ['in this step', s(act.since)], ['since start', s(act.started)], ['last change', `${s(act.changed)} ago`]];
     actBox.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
   }
   var actOpen = new Map(); // var: drawAct may run before this line; build run -> opened or closed by the viewer
@@ -5623,6 +5781,7 @@
   actHost.addEventListener('mouseenter', () => showAct(true)); actHost.addEventListener('mouseleave', () => showAct(false));
   actHost.addEventListener('focusin', (e) => { if (e.target.matches(':focus-visible')) showAct(true); }); actHost.addEventListener('focusout', () => showAct(false));
   function progressed({ label, loaded, total }) {
+    if (quietLoads) return; // a background load: the status line is the analysis'
     if (PHASE[label]) { busy(PHASE[label][0], PHASE[label][1]); return; }
     loads.set(label, [loaded, total]);
     const [got, all] = [...loads.values()].reduce(([g, a], [l, t]) => [g + l, a + t], [0, 0]);
@@ -5652,6 +5811,8 @@
       busy('Loading', `Loading ${plural(names.split(', ').length, 'package')}…`);
       status.title = names;
       if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok && !outdated(p)) { show(p.uri, p.diagnostics, p.version); typeset(p.uri); } });
+      // loads another step started (a start since superseded): once in, the server starts again on them, unless a start is under way
+      else Promise.allSettled([...inFlight].map((id) => fetchedPackages.get(id))).then(() => { if (!outdated(p) && p.uri === uri() && !following) restart(); });
       return;
     }
     // A run that missed files a bundle holds is redone once they are in: its findings
@@ -5678,7 +5839,20 @@
     if (p.uri === uri()) lsp('satex/caches', { textDocument: { uri: p.uri } }).then((r) => cacheReport((r ?? []).map((l) => ['err', l]))).catch(() => {});
     fetchMissing(unresolved);
   }
+  /** The server aborted (a panic, out of memory): it starts again on the same texts, with a note. One that
+   * keeps aborting stops, saying why, with a way to try again. */
+  let aborts = [];
+  function serverStopped(why) {
+    const now = performance.now();
+    aborts = [...aborts.filter((t) => now - t < 60000), now];
+    if (aborts.length > 2) {
+      return stoppedLine(`The language server stopped again: ${escape(why)}.`, () => { aborts = []; restart(); });
+    }
+    toast(`The language server stopped (${why}). It starts again on your text.`);
+    restart();
+  }
   async function onWorkerMessage({ data }) {
+    if (running > 0 || pending.size) maxGap = Math.max(maxGap, Math.round(performance.now() - lastHeard));
     lastHeard = performance.now();
     if (data.type === 'lsp') {
       running -= order.shift() ? 1 : 0;
@@ -5697,6 +5871,8 @@
     } else if (data.type === 'status') {
       traceLive?.(data);
       if (data.text && act.phase === 'Analyzing') phase(data.text, data.total ? Math.min(data.reached / data.total, 1) : null, data);
+      // a run cannot be stopped: the last project's goes on before the new server starts, and the line says so
+      else if (data.text && act.phase === 'Starting' && running > 0) busy('Starting', `Starting once the last run ends (${data.text.replace(/^Analyzing /, '')})`, { done: data.total ? Math.min(data.reached / data.total, 1) : null });
     } else if (data.type === 'progress') {
       progressed(data);
     } else if (data.type === 'error' && data.of === 'lsp') {
@@ -5705,10 +5881,11 @@
       for (const p of pending.values()) p.resolve(null);
       pending.clear();
       drainAnalysis();
+      serverStopped(data.message.split('\n')[0]);
     } else if (data.type === 'error') {
-      waiting[REPLY[data.of]]?.reject(new Error(data.message.split('\n')[0]));
+      answer(REPLY[data.of])?.reject(new Error(data.message.split('\n')[0]));
     } else {
-      waiting[data.type]?.resolve(data);
+      answer(data.type)?.resolve(data);
     }
   }
 
@@ -5788,6 +5965,16 @@
   };
   addEventListener('online', () => { if (!offlineState.running && offlineState.todo.length && offlineBtn.textContent === 'Resume' && offlineText.textContent.includes('no connection')) offlineRun(); });
 
+  /** What doc/site/chaos.mjs reads of the page: what it shows and for which text. Read-only. */
+  self.satexHealth = () => ({
+    busy: 'busy' in status.dataset, phase: act.phase, status: status.textContent, quiet: Math.round(performance.now() - act.changed), heard: Math.round(performance.now() - lastHeard),
+    boot: !!boot.open, example: state.example, file: state.file, root: state.root, dir: state.dir, version, text: editor?.text() ?? null,
+    list: shownOf.get(list)?.slice(0, 2) ?? null, listStale: list.classList.contains('stale'), sent: sentVersions.get(uri()) ?? null,
+    shown: diagnosticVersions[uri()] ?? null, due: timer !== null || dirty, running, pending: pending.size, waiting: Object.keys(waiting), queued: analysisQueued, recovering,
+    pdf: pdf ? { dir: pdf.dir, root: pdf.root } : null, pdfOther: $('play-pdf').classList.contains('pdf-other'), pdfBusy, gap: maxGap, undimmed: [...shownOf].filter(([el, [t, , cls]]) => t !== uri() && !el.classList.contains(cls)).map(([el]) => el.id || el.className), loading: [...inFlight], held: held.length, recoveries, runs: act.run, step: act.steps.at(-1)?.label ?? '', since: Math.round(performance.now() - act.started),
+  });
+  /** chaos.mjs: the worker crashes (an error event) or hangs (goes silent). */
+  self.satexKill = (how) => { worker.terminate(); if (how === 'crash') onWorkerError({ message: 'the worker crashed' }); };
   (async () => {
     let given;
     if (location.protocol === 'file:') {
@@ -5805,7 +5992,10 @@
     const link = hash.startsWith('s=') ? await restore(hash.slice(2)) : null;
     if (hash.startsWith('open=')) history.replaceState(null, '', location.pathname);
     const ex = link ? link.x : hash in sampleTexts && !shared.has(hash) ? hash : projectOf(hash) ?? manifest.sample;
-    state.texts = { ...sampleTexts, ...(link?.x ? link.p : {}) };
+    const kept = drafts(), restored = Object.keys(kept.texts ?? {}).filter((n) => typeof kept.texts[n] === 'string');
+    state.texts = { ...sampleTexts, ...Object.fromEntries(restored.map((n) => [n, kept.texts[n]])), ...(link?.x ? link.p : {}) };
+    if (kept.lists && typeof kept.lists === 'object') state.lists = Object.fromEntries(Object.entries(kept.lists).filter(([ex, l]) => ex in sampleTexts && Array.isArray(l) && l.every((n) => n in state.texts)));
+    if (restored.length) toast(`Your edits to ${restored.slice(0, 3).join(', ')}${restored.length > 3 ? ` and ${restored.length - 3} more` : ''} are restored from this browser.`);
     const k = manifest.kernels.findIndex((x) => x.id === link?.k);
     if (link?.s) configKeep(link.s);
     // stored settings satex refuses, or with which the last start failed, are set aside: the page starts with the defaults
@@ -5819,8 +6009,6 @@
     }
     if (k >= 0) { manualKernel = true; if (k > 0) await kernel(k); }
     kernelBox.value = String(state.kernel);
-    // packages.txt's first section, fetched while the editor loads
-    const preloading = fetchPackages(wanted_(manifest.preload ?? [])).catch(() => false);
     try {
       editor = await codemirror($('play-editor'), '');
       $('play-source').remove();
@@ -5831,12 +6019,12 @@
     button.textContent = 'Run';
     button.disabled = false;
     if (setting) cfgFromLink(setting);
-    await preloading;
     if (link) await openLink(link);
     else await example(ex, { file: shared.has(hash) ? hash : ex });
     const opening = hash.match(/^open=(.+):(\d+)$/);
     if (opening) await openPlace(opening[1], { line: Number(opening[2]) - 1, character: 0 });
     offlineSetup();
+    preload().catch(() => {});
     if (!plainLint()) return link && !link.x ? start() : undefined;
     status.textContent = 'Ready. Findings update as you type.';
     status.dataset.done = 'ready';

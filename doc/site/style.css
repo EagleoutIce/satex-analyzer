@@ -1744,6 +1744,10 @@ table.prim td { vertical-align: top; } table.long.prim td:nth-child(3) { white-s
 .cm-lens:hover, .cm-lens:focus-visible { background: var(--sunk); text-decoration: underline; }
 .sd-hover-open { margin: 0; }
 .sd-hover-open a::before { content: "▦ "; }
+/* a PDF of another project or root: dimmed, no clicks, says whose it is */
+#play-pdf.pdf-other .pdf-pages, #play-pdf.pdf-other .pdf-text { opacity: .35; filter: grayscale(1); pointer-events: none; }
+.pdf-owner { position: sticky; top: 0; z-index: 3; margin: 0; padding: .4rem .6rem; background: var(--bg); border-bottom: 1px solid var(--border); font-size: .85rem; }
+#play-pdf.pdf-running #pdf-compile { cursor: progress; box-shadow: inset 0 -2px 0 var(--accent); }
 .hover .md-table { display: block; max-width: 100%; overflow-x: auto; }
 
 /* the embed snippet folds into a button (site.js satexEmbedFold) */

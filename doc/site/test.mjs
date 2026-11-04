@@ -1105,10 +1105,9 @@ async function browser() {
       await js(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent + ' / ' + document.getElementById('play-toast').textContent`));
 
     // projects: an example's files in the tree, its root marked; an \input file is analyzed with the root
-    // the open example is edited: the page asks first, and Replace goes on
+    // the open example is edited: its edits are kept (drafts), the switch asks nothing
     await js(`document.querySelector('#play-examples [data-example="thesis.tex"]').click()`);
-    check('an edited project is not replaced unasked', await until(`return document.getElementById('play-replace').open`, 5000));
-    await js(`document.querySelector('#play-replace button[value=replace]').click()`);
+    check('an edited example switches unasked, its edits kept', await js(`await new Promise((r) => setTimeout(r, 500)); return !document.getElementById('play-replace').open && /"texts"/.test(localStorage.getItem('satex-drafts') ?? '')`));
     check('an example is a project', await until(`return [...document.querySelectorAll('#play-files-tree .file')].map((f) => f.dataset.name).join() === 'chapter.tex,refs.bib,thesis.tex'
       && !!document.querySelector('#play-files-tree .root[data-name="thesis.tex"]') && !document.querySelector('#play-tabs .ro')`, 20000),
       await js(`return [...document.querySelectorAll('#play-files-tree .file')].map((f) => f.dataset.name).join()`));

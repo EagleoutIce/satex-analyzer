@@ -11,6 +11,7 @@
  * @param {(status: any) => void} [status]
  */
 function SatexEngine(createSatex, progress = () => {}, store = null, status = () => {}) {
+  const STALL_MS = 30000;
   const files = new Map();
   let wasm = null;
   /** The cache directory outlives the page in `store` (the worker's is IndexedDB), under the
@@ -32,15 +33,22 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
    * arrives: `total` from the manifest, since a compressed transfer's length is not
    * the length the body has once the browser decoded it. */
   async function fetched(url, label, total) {
+    // a download that stalls (no byte for STALL_MS) fails, saying so, instead of waiting for good
+    const stop = new AbortController();
+    let stall = 0;
+    const watch = () => { clearTimeout(stall); stall = setTimeout(() => stop.abort(new Error(`${label}: no data for ${STALL_MS / 1000} s`)), STALL_MS); };
+    watch();
     // the server gone: what the service worker (or an earlier visit) kept
-    const response = await fetch(url).catch((e) => globalThis.caches?.match(url).then((kept) => kept ?? Promise.reject(e)));
-    if (!response.ok) throw new Error(`${url}: ${response.status}`);
-    if (!response.body) return response;
+    const response = await fetch(url, { signal: stop.signal }).catch((e) => globalThis.caches?.match(url).then((kept) => kept ?? Promise.reject(e)))
+      .catch((e) => { clearTimeout(stall); throw e; });
+    if (!response.ok) { clearTimeout(stall); throw new Error(`${url}: ${response.status}`); }
+    if (!response.body) { clearTimeout(stall); return response; }
     const size = total || Number(response.headers.get('Content-Length')) || 0;
     let loaded = 0;
     progress(label, 0, size);
     const counted = response.body.pipeThrough(new TransformStream({
-      transform(chunk, out) { loaded += chunk.byteLength; progress(label, loaded, size); out.enqueue(chunk); },
+      transform(chunk, out) { watch(); loaded += chunk.byteLength; progress(label, loaded, size); out.enqueue(chunk); },
+      flush() { clearTimeout(stall); },
     }));
     return new Response(counted, { headers: response.headers });
   }
@@ -291,7 +299,15 @@ if (typeof module === 'object' && module.exports) {
       remove: (space, paths) => tx('readwrite', (s, u) => { for (const path of paths) { s.delete([space, path]); u.delete([space, path]); } }),
     };
   };
-  self.onmessage = async ({ data }) => {
+  /** Messages are answered in the order they came (the page pairs each reply with its request by that order):
+   * one at a time, except downloads, which the page sends one at a time itself. Two `lsp` messages after a
+   * `reset` would otherwise each start a server of their own. */
+  let serial = Promise.resolve();
+  self.onmessage = ({ data }) => {
+    if (['init', 'bundle', 'bundles'].includes(data.type)) handle(data);
+    else serial = serial.then(() => handle(data));
+  };
+  const handle = async (data) => {
     try {
       if (data.type === 'init') {
         const given = data.given ?? {};
