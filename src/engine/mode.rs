@@ -4596,7 +4596,10 @@ impl Machine<'_> {
         let known = font.and_then(|f| Some((f, self.font_metrics(f)?, self.font_size(f)?)));
         let Some((font, metrics, size)) = known else { return self.unmetered_char(c) };
         if !metrics.has_char(c) {
-            return self.unmetered_char(c);
+            return match char::from_u32(c).and_then(crate::engine::tex::unknown_number_chars) {
+                Some(chars) => self.unknown_number_char(c, &metrics, size, chars),
+                None => self.unmetered_char(c),
+            };
         }
         let mut n = self.natural.expect("checked above");
         // tex.web § 1039: a character equal to `\hyphenchar` is followed by a discretionary.
@@ -5286,6 +5289,59 @@ impl Machine<'_> {
         (n.math_prev, n.script, n.math_box) = (None, None, None);
         n.scripted = (!both).then_some(Scripted { after: n.along, ..record });
         self.natural = Some(n);
+    }
+
+    /// A character that is one of `chars` (an unknown digit): a box as wide
+    /// as the widest and as narrow as the narrowest, each with any kern a
+    /// character of the font may put before or after it. A ligature it may
+    /// form leaves it unmetered.
+    fn unknown_number_char(&mut self, c: u32, metrics: &crate::engine::tfm::Metrics, size: Scaled, chars: &str) {
+        let mut kern = (0, 0);
+        let mut boxes = Vec::new();
+        for m in chars.chars().map(u32::from) {
+            let hull = metrics
+                .char_box(m, size)
+                .zip(kern_hull(metrics, m, size, true))
+                .zip(kern_hull(metrics, m, size, false));
+            let Some(((b, before), after)) = hull else { return self.unmetered_char(c) };
+            kern = (kern.0.min(before.0 + after.0), kern.1.max(before.1 + after.1));
+            boxes.push(b);
+        }
+        self.end_word();
+        let Some(mut n) = self.natural else { return };
+        let span = |f: fn(&crate::engine::tfm::CharBox) -> Scaled| {
+            (boxes.iter().map(f).min().unwrap_or(0), boxes.iter().map(f).max().unwrap_or(0))
+        };
+        let (w, h, d) = (span(|b| b.width), span(|b| b.height), span(|b| b.depth));
+        let sf = n.space_factor;
+        n.character([Dim::range(w.0 + kern.0, w.1 + kern.1), Dim::range(h.0, h.1), Dim::range(d.0, d.1)]);
+        n.para.breakpoints = n.para.breakpoints.saturating_add(1);
+        n.pushed(Last::Char(None));
+        n.space_factor = self.space_factor_after(c, sf);
+        self.natural = Some(n);
+    }
+
+    /// `n`'s pending character settled as if any character, or none, came
+    /// next: its box and every kern it may get, so a path still setting a
+    /// word joins one whose word ended without losing the sizes. `n` as it
+    /// is where the next character may form a ligature with it, or the
+    /// font is not known. A join reads the fork's bindings, where a font
+    /// keeps the name and size it was loaded with (tex.web § 1257); one
+    /// loaded since is not there.
+    pub(crate) fn settled_for_join(&mut self, mut n: Natural) -> Natural {
+        let Some((font, c)) = n.pending else { return n };
+        let Some((metrics, size)) = self.font_metrics(font).zip(self.font_size(font)) else { return n };
+        let Some((b, (lo, hi))) = metrics.char_box(c, size).zip(kern_hull(&metrics, c, size, false)) else { return n };
+        n.pending = None;
+        n.character([Dim::range(b.width + lo, b.width + hi), Dim::exact(b.height), Dim::exact(b.depth)]);
+        n.para.items = None;
+        // A boundary kern may end the word (tex.web § 1040).
+        if n.tail[0] == Last::Char(None) && (lo, hi) == (0, 0) {
+            n.tail[0] = Last::Char(Some((font, c)));
+        } else if (lo, hi) != (0, 0) {
+            n.tail = [Last::UNKNOWN; TAIL];
+        }
+        n
     }
 
     /// A character whose font satex has no metrics for, or which the font
@@ -6020,3 +6076,25 @@ fn box_value(state: BoxState) -> Value {
 
 /// [`Nest::part`] of a math group that is a script.
 const SCRIPT_GROUP: u8 = 0xff;
+
+/// The kerns the font may put on one side of `c`, `before` it or after,
+/// from any character or the boundary; 0 for a neighbour that is none.
+/// `None` where a ligature may form there instead.
+fn kern_hull(metrics: &crate::engine::tfm::Metrics, c: u32, size: Scaled, before: bool) -> Option<(Scaled, Scaled)> {
+    use crate::engine::tfm::LigKern;
+    let (lo, hi) = metrics.char_range();
+    let others = (lo.max(0)..=hi.max(0)).filter_map(|x| u32::try_from(x).ok());
+    let mut steps: Box<dyn Iterator<Item = Option<LigKern>>> = match before {
+        true => Box::new(others.map(|x| metrics.lig_kern(x, c, size)).chain([metrics.left_boundary(c, size)])),
+        false => Box::new(
+            others
+                .map(|x| metrics.lig_kern(c, x, size))
+                .chain([metrics.boundary_char().and_then(|x| metrics.lig_kern(c, x, size))]),
+        ),
+    };
+    steps.try_fold((0, 0), |(a, b), step| match step {
+        Some(LigKern::Lig { .. }) => None,
+        Some(LigKern::Kern(k)) => Some((a.min(k), b.max(k))),
+        None => Some((a, b)),
+    })
+}

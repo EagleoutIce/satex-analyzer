@@ -2649,6 +2649,8 @@ impl<'a> Machine<'a> {
         let base = Machine::base_of(Some(path));
         let mut placed: Vec<PathBuf> = Vec::new();
         let mut widened: HashSet<PathBuf> = HashSet::default();
+        // Each file's texts the runs wrote, to tell a cycle from growth.
+        let mut written: HashMap<PathBuf, HashSet<String>> = HashMap::default();
         let mut run = 1;
         // `limits.seconds` bounds the build, not each run: a run starts only
         // while the time left would let one more as long as the last finish.
@@ -2750,13 +2752,19 @@ impl<'a> Machine<'a> {
                     if widen {
                         widened.insert(at.clone());
                     }
+                    let fresh: Vec<String> = text.iter().flat_map(|t| texts_of(t)).map(str::to_string).collect();
+                    let seen = written.entry(at.clone()).or_default();
                     let text = match text {
                         Some(t) if run + 1 < runs && !widen => t.clone(),
-                        Some(t) => {
-                            widen_text(now.as_deref().unwrap_or_default(), t, usize::from(cfg.limits.meaning_set))
-                        }
+                        Some(t) => widen_text(
+                            now.as_deref().unwrap_or_default(),
+                            t,
+                            usize::from(cfg.limits.meaning_set),
+                            |x| seen.contains(x),
+                        ),
                         None => crate::engine::tex::UNKNOWN_ANY.to_string(),
                     };
+                    seen.extend(fresh);
                     (now.as_deref() != Some(text.as_str())).then_some((at, text, again))
                 })
                 .collect();
@@ -13986,14 +13994,16 @@ fn line_key(l: &str) -> &str {
 
 /// `new` joined into the texts `old` holds, each new text into its
 /// nearest ([`nearness`]). A text whose lines pair with none stays apart
-/// while fewer than `bound` are kept, so reruns settle.
-fn widen_text(old: &str, new: &str, bound: usize) -> String {
+/// while fewer than `bound` are kept, so reruns settle. A text an earlier
+/// run wrote too (`seen`: the runs cycle) keeps digits place by place; a
+/// new one (the runs grow) widens its digits to any.
+fn widen_text(old: &str, new: &str, bound: usize, seen: impl Fn(&str) -> bool) -> String {
     let mut texts: Vec<String> = texts_of(old).into_iter().map(str::to_string).collect();
     for t in texts_of(new) {
         let full = texts.len() >= bound.max(1);
         match texts.iter_mut().max_by_key(|x| nearness(x, t)) {
             Some(x) if x == t => {}
-            Some(x) if full || nearness(x, t).0 => *x = join_written(x, t),
+            Some(x) if full || nearness(x, t).0 => *x = join_written(x, t, seen(t)),
             _ => texts.push(t.to_string()),
         }
     }
@@ -14020,7 +14030,7 @@ fn either_text(a: &str, b: &str, bound: usize) -> String {
             continue;
         }
         if let Some(x) = texts.iter_mut().find(|x| nearness(x, t).0) {
-            *x = join_written(x, t);
+            *x = join_written(x, t, true);
             continue;
         }
         texts.push(t.to_string());
@@ -14029,7 +14039,7 @@ fn either_text(a: &str, b: &str, bound: usize) -> String {
             let pairs = (0..n).flat_map(|i| (i + 1..n).map(move |j| (i, j)));
             if let Some((i, j)) = pairs.max_by_key(|&(i, j)| nearness(&texts[i], &texts[j])) {
                 let x = texts.remove(j);
-                texts[i] = join_written(&texts[i], &x);
+                texts[i] = join_written(&texts[i], &x, true);
             }
         }
     }
@@ -14066,7 +14076,7 @@ fn join_pending(a: &Pending, b: &Pending, bound: usize) -> Pending {
 /// with stay, lines between that pair up join one by one ([`join_line`]),
 /// any other difference is one line of unknown text. An unknown line
 /// absorbs the unknown line before it, so joins settle.
-fn join_written(a: &str, b: &str) -> String {
+fn join_written(a: &str, b: &str, digits: bool) -> String {
     if a == b {
         return a.to_string();
     }
@@ -14097,7 +14107,7 @@ fn join_written(a: &str, b: &str) -> String {
     }
     let stretch = |out: &mut Vec<String>, p: &[&str], q: &[&str]| {
         if p.len() == q.len() {
-            p.iter().zip(q).for_each(|(p, q)| push(out, join_line(p, q)));
+            p.iter().zip(q).for_each(|(p, q)| push(out, join_line(p, q, digits)));
         } else {
             // Line ends read back as spaces, an empty line as `\par`.
             let class = p.iter().chain(q).fold(crate::engine::tex::TextClass::SPACE.0, |c, l| {
@@ -14110,7 +14120,7 @@ fn join_written(a: &str, b: &str) -> String {
     while i < mx.len() && j < my.len() {
         if line_key(mx[i]) == line_key(my[j]) {
             stretch(&mut out, &mx[from.0..i], &my[from.1..j]);
-            push(&mut out, join_line(mx[i], my[j]));
+            push(&mut out, join_line(mx[i], my[j], digits));
             (i, j) = (i + 1, j + 1);
             from = (i, j);
         } else if common[i + 1][j] >= common[i][j + 1] {
@@ -14143,7 +14153,7 @@ fn written_char(class: u8, one: bool) -> char {
 /// and end with stay, the place is one unknown character of both parts'
 /// class. A control word cut into, unknown text next to the place and
 /// unbalanced braces become part of it.
-fn join_line(p: &str, q: &str) -> String {
+fn join_line(p: &str, q: &str, digits: bool) -> String {
     if p == q {
         return p.to_string();
     }
@@ -14173,7 +14183,7 @@ fn join_line(p: &str, q: &str) -> String {
             let mut out = String::new();
             let ends = braces(&x).into_iter().map(Some).chain([None]);
             for ((a, b), brace) in p.split(['{', '}']).zip(q.split(['{', '}'])).zip(ends) {
-                out.push_str(&join_line(a, b));
+                out.push_str(&join_line(a, b, digits));
                 out.extend(brace);
             }
             return out;
@@ -14185,6 +14195,20 @@ fn join_line(p: &str, q: &str) -> String {
         tail -= x[x.len() - tail..].iter().take_while(|c| letter(c)).count();
     }
     let parts = part(head, tail);
+    // Digits apart in as many places: one digit each, so a page number
+    // keeps its length (and its width) rather than becoming any digits.
+    let digit = |c: &char| c.is_ascii_digit() || crate::engine::tex::is_unknown_digit(*c);
+    if digits && parts[0].len() == parts[1].len() && parts.iter().all(|s| s.iter().all(digit)) {
+        let one = |a: char, b: char| match (a, b) {
+            _ if a == b => a,
+            ('0' | crate::engine::tex::UNKNOWN_DIGIT, _) | (_, '0' | crate::engine::tex::UNKNOWN_DIGIT) => {
+                crate::engine::tex::UNKNOWN_DIGIT
+            }
+            _ => crate::engine::tex::UNKNOWN_NONZERO,
+        };
+        let mid = parts[0].iter().zip(parts[1]).map(|(&a, &b)| one(a, b));
+        return x[..head].iter().copied().chain(mid).chain(x[x.len() - tail..].iter().copied()).collect();
+    }
     let class = parts.iter().flat_map(|s| s.iter()).fold(0, |c, &ch| c | char_class(ch));
     // Surely one character: each part holds one that is not unknown text
     // that may be empty.
@@ -14199,6 +14223,9 @@ fn char_class(c: char) -> u8 {
     use crate::engine::tex::{Catcode as C, TextClass as T};
     if let Some((class, _)) = crate::engine::tex::written_class(c) {
         return class.0;
+    }
+    if crate::engine::tex::is_unknown_digit(c) {
+        return T::DIGIT.0;
     }
     let cat = match c {
         '@' => return T::LETTER.0 | T::OTHER.0,
@@ -14215,8 +14242,35 @@ fn char_class(c: char) -> u8 {
 
 #[cfg(test)]
 mod written {
-    use super::{either_text, join_line, texts_of};
+    use super::{either_text, join_line, texts_of, widen_text};
     use crate::engine::tex::UNKNOWN_ANY;
+
+    /// Pages apart in digits of one length join digit by digit: the page
+    /// keeps its length, so its width stays bounded. Lengths apart do not.
+    #[test]
+    fn pages_of_one_length_join_digit_by_digit() {
+        use crate::engine::tex::{UNKNOWN_DIGIT as D, UNKNOWN_NONZERO as N};
+        let line = |page: &str| format!("\\newlabel{{x}}{{{{}}{{{page}}}{{}}{{}}{{}}}}");
+        assert_eq!(join_line(&line("1"), &line("2"), true), line(&N.to_string()));
+        assert_eq!(join_line(&line("10"), &line("20"), true), line(&format!("{N}0")));
+        assert_eq!(join_line(&line("12"), &line("30"), true), line(&format!("{N}{D}")));
+        let apart = join_line(&line("9"), &line("10"), true);
+        assert!(!apart.contains(N) && !apart.contains(D), "{apart:?}");
+    }
+
+    /// A rerun widens a page a run wrote before (the runs cycle: 1, 2, 1)
+    /// digit by digit, and a page no run wrote (they grow: 1, 2, 3) to any
+    /// digits, so a counter written back settles a run sooner.
+    #[test]
+    fn a_rerun_keeps_digits_only_where_the_runs_cycle() {
+        use crate::engine::tex::{UNKNOWN_DIGIT as D, UNKNOWN_NONZERO as N};
+        let line = |page: &str| format!("\\newlabel{{x}}{{{{}}{{{page}}}{{}}{{}}{{}}}}\n");
+        let earlier = [line("1"), line("2")];
+        let seen = |t: &str| earlier.iter().any(|e| e == t);
+        assert_eq!(widen_text(&line("2"), &line("1"), 8, seen), line(&N.to_string()));
+        let grown = widen_text(&line("2"), &line("3"), 8, seen);
+        assert!(!grown.contains(N) && !grown.contains(D), "{grown:?}");
+    }
 
     /// Two lines that differ on both sides of a brace join per braced part:
     /// the page stays a number, not a line of any text.
@@ -14225,6 +14279,7 @@ mod written {
         let joined = join_line(
             "\\newlabel{n.5}{{2}{\\numexpr +\\z@ \\relax }}",
             "\\newlabel{n.5}{{3}{\\numexpr +\\@ne \\relax }}",
+            true,
         );
         // The page a written digit, the value an unknown name: the braces and the rest stay.
         assert!(joined.starts_with("\\newlabel{n.5}{{") && joined.ends_with(" \\relax }}"), "{joined:?}");

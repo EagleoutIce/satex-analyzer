@@ -927,3 +927,64 @@ fn a_written_unknown_line_reads_back_typed() {
     assert!(defined.contains(&"fits".to_string()) && defined.contains(&"again".to_string()), "{defined:?}");
     assert!(with_code(&analysis, "missing-number").is_empty(), "{:?}", with_code(&analysis, "missing-number"));
 }
+
+/// A word still set on one path (`2`, which may kern with what follows)
+/// and ended on the other (`3\relax`) joins with each pending character
+/// settled against any next one: cmr10's digits kern with nothing, so
+/// the box keeps its width and the test after it is decided.
+#[test]
+fn a_word_set_on_one_path_and_ended_on_the_other_keeps_its_width() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex(
+        r"\documentclass{article}
+\begin{document}
+\setbox2\hbox{2.}
+\setbox0\hbox{\ifodd\pdfrandomseed 2\else 3\relax\fi.}
+\ifdim\wd0=\wd2 \gdef\Same{}\else\gdef\Apart{}\fi
+\end{document}",
+    );
+    let names = names(&analysis);
+    assert!(names.contains(&"Same".to_string()) && !names.contains(&"Apart".to_string()), "{names:?}");
+}
+
+/// Settling keeps every kern the pending character may get: `AV` kerns
+/// (14.17pt) where `B\relax V` does not (14.58pt), so a box under 14.2pt
+/// stays possible.
+#[test]
+fn a_settled_word_keeps_the_kern_it_may_get() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex(
+        r"\documentclass{article}
+\begin{document}
+\setbox0\hbox{\ifodd\pdfrandomseed A\else B\relax\fi V}
+\ifdim\wd0<14.2pt \gdef\Kerned{}\fi
+\ifdim\wd0>14.5pt \gdef\Plain{}\fi
+\end{document}",
+    );
+    let names = names(&analysis);
+    assert!(names.contains(&"Kerned".to_string()) && names.contains(&"Plain".to_string()), "{names:?}");
+}
+
+/// A pending character that may form a ligature is not settled: `fi` is
+/// one 5.56pt ligature, narrower than `f` and `i` side by side, so a box
+/// under 5.6pt stays possible.
+#[test]
+fn a_word_that_may_ligature_is_not_settled() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex(
+        r"\documentclass{article}
+\begin{document}
+\setbox0\hbox{\ifodd\pdfrandomseed f\else x\relax\fi i}
+\ifdim\wd0<5.6pt \gdef\Ligature{}\fi
+\ifdim\wd0>8pt \gdef\Wide{}\fi
+\end{document}",
+    );
+    let names = names(&analysis);
+    assert!(names.contains(&"Ligature".to_string()) && names.contains(&"Wide".to_string()), "{names:?}");
+}

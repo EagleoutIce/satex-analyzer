@@ -1696,6 +1696,11 @@ impl Mouth {
                 self.written = written_class(c);
                 return Some(Token::new(Tok::Cs(it.intern(UNKNOWN_CS)), span));
             }
+            // One unknown digit the run wrote: a digit, whatever the category of its code.
+            if written && is_unknown_digit(c) {
+                self.state = LineState::Middle;
+                return Some(Token::new(Tok::Chr(c, Catcode::Other), span));
+            }
             match cat {
                 Catcode::Ignored | Catcode::Invalid => continue,
                 Catcode::Comment => {

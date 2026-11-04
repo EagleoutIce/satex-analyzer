@@ -2828,7 +2828,15 @@ impl Machine<'_> {
         // What either path wrote may be in the files (tex.web § 1370).
         x.outputs = super::join_outputs(&x.outputs, &y.outputs, usize::from(self.limits.meaning_set));
         x.pending = super::join_pending(&x.pending, &y.pending, usize::from(self.limits.meaning_set));
-        x.natural = crate::engine::mode::join_natural(x.natural, y.natural);
+        // A word still set on one path and ended on the other: each pending
+        // character settles, so the sizes join rather than widen.
+        let (p, q) = match (x.natural, y.natural) {
+            (Some(p), Some(q)) if p.pending != q.pending => {
+                (Some(self.settled_for_join(p)), Some(self.settled_for_join(q)))
+            }
+            pair => pair,
+        };
+        x.natural = crate::engine::mode::join_natural(p, q);
         x.main_tail = x.main_tail.merge(y.main_tail);
         x.main_depth =
             crate::engine::mode::Dim::range(x.main_depth.lo.min(y.main_depth.lo), x.main_depth.hi.max(y.main_depth.hi));
