@@ -1,0 +1,16 @@
+% Exercises: book class with front/main/back matter, parts, two-sided headers, index entries.
+\documentclass[twoside,11pt]{book}
+\usepackage{makeidx}\makeindex
+\begin{document}
+\frontmatter\title{A Book}\author{B. Ooker}\maketitle
+\chapter*{Preface}The preface.\tableofcontents
+\mainmatter
+\part{Basics}
+\chapter{Start}\section{One}Text\index{text}.\section{Two}More\index{more!text}.
+\chapter{Next}\section{Three}Text referencing Chapter~\ref{ch:last}.
+\part{Advanced}
+\chapter{Last}\label{ch:last}\section{Four}Done\index{done}.
+\appendix\chapter{Appendix}Appendix.
+\backmatter\chapter{Notes}Notes.
+\printindex
+\end{document}

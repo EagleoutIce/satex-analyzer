@@ -1,0 +1,12 @@
+% Exercises: booktabs, siunitx (S columns, \SI, \num, \qty), multirow, cellspacing, \cmidrule.
+\documentclass{article}
+\usepackage{booktabs,multirow,siunitx,array}
+\sisetup{round-mode=places,round-precision=2,table-format=3.2}
+\begin{document}
+\begin{table}\centering\caption{Measurements}
+\begin{tabular}{l S[table-format=2.3] S S}\toprule
+\multirow{2}{*}{Name}&\multicolumn{3}{c}{Value}\\\cmidrule(lr){2-4}
+&{A}&{B}&{C}\\\midrule
+one&1.234&12.5&100.25\\two&22.5&3.14159&7\\three&3&2.718&11.1\\\bottomrule\end{tabular}\end{table}
+\SI{12.5}{\meter\per\second}, \num{1234567.89}, \ang{45}, \SI{3e8}{\meter\per\second}, \si{\kilo\gram\metre\per\second\squared}, \SIrange{1}{5}{\milli\second}.
+\end{document}

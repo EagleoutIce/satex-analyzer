@@ -1,0 +1,14 @@
+% Exercises: report class, chapters, appendix, tables of contents/figures/tables, headers.
+\documentclass[11pt]{report}
+\usepackage{fancyhdr,graphicx,booktabs}
+\pagestyle{fancy}\fancyhf{}\fancyhead[L]{\leftmark}\fancyfoot[C]{\thepage}
+\begin{document}
+\title{A Report}\author{R. Eporter}\maketitle
+\tableofcontents\listoffigures\listoftables
+\chapter{Introduction}\section{Motivation}Some text.\label{c:intro}
+\begin{figure}[ht]\centering\rule{4cm}{2cm}\caption{A rule as figure.}\label{fig:r}\end{figure}
+\chapter{Method}\section{Setup}See Chapter~\ref{c:intro} and Figure~\ref{fig:r}.
+\begin{table}[ht]\centering\caption{A table.}\begin{tabular}{lr}\toprule A&B\\\midrule 1&2\\ 3&4\\\bottomrule\end{tabular}\end{table}
+\chapter{Results}\section{Numbers}\subsection{Detail}\subsubsection{More}Text.\paragraph{Para}text.
+\appendix\chapter{Extra}\section{Proofs}Appendix text.
+\end{document}

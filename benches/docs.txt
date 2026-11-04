@@ -9,3 +9,46 @@ tests/fixtures/documents/forest_savebox/mwe.tex
 benches/docs/pgfmath_loop.tex
 benches/docs/tikz_loop.tex
 benches/docs/macro_loop.tex
+benches/docs/acmart_paper.tex -tex
+benches/docs/algorithm2e_doc.tex -tex
+benches/docs/algorithmicx_doc.tex -tex
+benches/docs/amsmath_amsthm.tex -tex
+benches/docs/article_basic.tex -tex
+benches/docs/beamer_overlays.tex -tex
+benches/docs/biblatex_biber.tex -tex
+benches/docs/big_article.tex -tex
+benches/docs/big_book.tex -tex
+benches/docs/big_refs.tex -tex
+benches/docs/big_tables.tex -tex
+benches/docs/book_frontmatter.tex -tex
+benches/docs/booktabs_siunitx.tex -tex
+benches/docs/circuitikz_doc.tex -tex
+benches/docs/elsarticle_paper.tex -tex
+benches/docs/expl3_doc.tex -tex
+benches/docs/figures_subcaption.tex -tex
+benches/docs/fontspec_luatex.tex -tex -pdftex -xetex
+benches/docs/fontspec_xetex.tex -tex -pdftex -luatex
+benches/docs/forest_doc.tex -tex
+benches/docs/glossaries_doc.tex -tex
+benches/docs/hyperref_cleveref.tex -tex
+benches/docs/ieeetran_paper.tex -tex
+benches/docs/listings_doc.tex -tex
+benches/docs/llncs_paper.tex -tex
+benches/docs/makeidx_doc.tex -tex
+benches/docs/math_heavy_20p.tex -tex
+benches/docs/mathtools_doc.tex -tex
+benches/docs/memoir_doc.tex -tex
+benches/docs/microtype_doc.tex -tex
+benches/docs/natbib_bibtex.tex -tex
+benches/docs/pgfplots_doc.tex -tex
+benches/docs/plain_tex_doc.tex
+benches/docs/report_chapters.tex -tex
+benches/docs/scrartcl_doc.tex -tex
+benches/docs/scrbook_doc.tex -tex
+benches/docs/tabularx_longtable.tex -tex
+benches/docs/tagpdf_doc.tex -tex -xetex
+benches/docs/tcolorbox_doc.tex -tex
+benches/docs/tikz_diagrams.tex -tex
+benches/docs/varioref_doc.tex -tex
+benches/docs/wrapfig_doc.tex -tex
+benches/docs/thesis/main.tex -tex

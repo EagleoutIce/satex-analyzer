@@ -1,0 +1,11 @@
+% Exercises: forest trees (bracket syntax, styles, edges, tikz inside nodes, for tree).
+\documentclass{article}
+\usepackage[linguistics]{forest}
+\begin{document}
+\begin{forest}for tree={draw,rounded corners,s sep=8mm}
+[S[NP[Det[the]][N[cat]]][VP[V[sat]][PP[P[on]][NP[Det[the]][N[mat]]]]]]\end{forest}
+\begin{forest}for tree={grow=east,l sep=12mm,edge={->}}
+[root[a[a1][a2]][b[b1[b11][b12]][b2]][c]]\end{forest}
+\begin{forest}for tree={draw,fill=yellow!20}
+[A,name=top[B[C][D]][E]]\end{forest}
+\end{document}

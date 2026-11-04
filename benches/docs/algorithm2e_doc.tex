@@ -1,0 +1,14 @@
+% Exercises: algorithm2e (\KwIn, \If, \For, \While, procedures, captions, \eIf, comments).
+\documentclass{article}
+\usepackage{amssymb}\usepackage[ruled,vlined]{algorithm2e}
+\begin{document}
+\listofalgorithms
+\begin{algorithm}[H]\caption{Euclid}\label{alg:e}
+\KwIn{$a,b\in\mathbb N$}\KwOut{$\gcd(a,b)$}
+\While{$b\neq0$}{$t\leftarrow b$\; $b\leftarrow a\bmod b$\; $a\leftarrow t$\;}
+\Return{$a$}\end{algorithm}
+\begin{algorithm}\caption{Sort}\SetKwFunction{FSort}{Sort}\SetKwProg{Fn}{Function}{:}{end}
+\Fn{\FSort{$A$}}{\For{$i\leftarrow 1$ \KwTo $n$}{\eIf{$A[i]>A[i+1]$}{swap\;}{skip\; \tcp{comment}}}\uIf{x}{y\;}\ElseIf{z}{w\;}\Else{v\;}}
+\end{algorithm}
+Algorithm~\ref{alg:e}.
+\end{document}

@@ -1,0 +1,9 @@
+% Exercises: biblatex with biber backend, \autocite/\textcite, \printbibliography, sections.
+\documentclass{article}
+\usepackage[style=authoryear,backend=biber]{biblatex}
+\addbibresource{refs.bib}
+\begin{document}
+\section{Citations}
+\textcite{knuth84} wrote; \autocite{lamport94,cousot77}; \parencite[12]{turing36}. \nocite{doe20}
+\printbibliography
+\end{document}

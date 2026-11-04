@@ -1,0 +1,9 @@
+% Exercises: wrapfig and floatflt-like text wrapping around floats with long paragraphs.
+\documentclass{article}
+\usepackage{wrapfig,lipsum,graphicx}
+\begin{document}
+\begin{wrapfigure}{r}{0.35\textwidth}\centering\rule{4cm}{3cm}\caption{Wrapped right}\end{wrapfigure}
+\lipsum[1-3]
+\begin{wraptable}{l}{0.4\textwidth}\centering\begin{tabular}{ll}a&b\\c&d\end{tabular}\caption{Wrapped table}\end{wraptable}
+\lipsum[4-6]
+\end{document}

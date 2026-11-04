@@ -1,0 +1,9 @@
+% Exercises: circuitikz small circuits with bipoles, labels, nodes, voltage/current annotations.
+\documentclass{article}
+\usepackage[siunitx]{circuitikz}
+\begin{document}
+\begin{circuitikz}\draw(0,0)to[battery1,l=$V_s$](0,3)to[R=\SI{10}{\kilo\ohm},i>^=$i$](3,3)to[C=$C_1$](3,0)--(0,0);
+\draw(3,3)--(5,3)to[L=$L$](5,0)--(3,0);\draw(0,0)node[ground]{};\end{circuitikz}
+\begin{circuitikz}\draw(0,0)node[op amp](A){}(A.-)--++(-1,0)to[R=$R_1$]++(-2,0)(A.out)to[short,-o]++(1,0);\end{circuitikz}
+\begin{circuitikz}\draw(0,0)to[american voltage source]++(0,2)to[american resistor]++(2,0)to[D*]++(0,-2)--(0,0);\end{circuitikz}
+\end{document}

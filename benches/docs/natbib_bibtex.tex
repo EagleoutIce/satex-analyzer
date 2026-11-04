@@ -1,0 +1,9 @@
+% Exercises: natbib author-year citations (\citet, \citep, \citeauthor), bibtex with plainnat.
+\documentclass{article}
+\usepackage[authoryear,round]{natbib}
+\begin{document}
+\section{Citations}
+\citet{knuth84} showed it; \citep{lamport94,knuth86} agree; \citep[see][p.~3]{turing36}.
+\citeauthor{cousot77} (\citeyear{cousot77}). Also \citealp{pgf}, \nocite{doe20,roe19}
+\bibliographystyle{plainnat}\bibliography{refs}
+\end{document}

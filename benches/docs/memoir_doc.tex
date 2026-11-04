@@ -1,0 +1,14 @@
+% Exercises: memoir class, chapter styles, page styles, epigraphs, sidebars-free layout.
+\documentclass[11pt,twoside]{memoir}
+\chapterstyle{section}\pagestyle{headings}
+\begin{document}
+\frontmatter\title{Memoir Sample}\author{M. Emoir}\date{}\maketitle\tableofcontents*
+\mainmatter
+\chapter{First}\epigraph{Quote}{Source}
+\section{Alpha}Text.\footnote{A note.}\subsection{Sub}More.
+\begin{figure}\centering\rule{3cm}{1cm}\caption{Fig}\label{f:a}\end{figure}
+\chapter{Second}See Figure~\ref{f:a}.\newpage\section{Beta}Text.
+\begin{verse}A line\\Another line\end{verse}
+\appendix\chapter{Appx}Text.
+\backmatter\chapter{Colophon}End.
+\end{document}
