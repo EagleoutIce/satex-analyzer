@@ -5,13 +5,13 @@
 //! view that writes what works at the position: `\color[HTML]{…}` where an
 //! xcolor command takes a model, else a `\definecolor` it adds.
 
-use super::{Cx, Hit, TypePlugin, button, rewrite};
+use super::{Cx, Hit, TypePlugin};
 use crate::analysis::facts::ColorDef;
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{KeyKind, Ty};
 use crate::linter::fix::{Pos, Text};
 use crate::project::config::TypePlugins;
-use lsp_types::{CodeAction, ColorInformation, CompletionItem, CompletionItemKind, Position, Range, TextEdit};
+use lsp_types::{ColorInformation, CompletionItem, CompletionItemKind, Position, Range, TextEdit};
 use serde_json::{Value as Json, json};
 
 pub(super) struct Color;
@@ -33,7 +33,7 @@ impl TypePlugin for Color {
         &[Ty::Key(KeyKind::Color)]
     }
     fn features(&self) -> &'static [&'static str] {
-        &["hover", "complete", "actions", "view", "colors"]
+        &["hover", "complete", "view", "colors"]
     }
     fn enabled(&self, cfg: &TypePlugins) -> bool {
         cfg.color.enabled
@@ -47,9 +47,18 @@ impl TypePlugin for Color {
         match rgb {
             Some(rgb) => {
                 md.push_str(&format!("![{}]({})\n\n", hex(rgb), swatch_uri(rgb)));
+                // on a definition, each spec is a link that rewrites it in that model
+                let slot = defined_here(cx, name).then(|| model_spec(cx, hit)).flatten();
                 md.push_str("| model | spec |\n|---|---|\n");
                 for (model, spec) in specs(rgb, xcolor(cx.analysis)) {
-                    md.push_str(&format!("| {model} | `{spec}` |\n"));
+                    let shown = format!("`{spec}`");
+                    let cell = match &slot {
+                        Some((range, m)) if *m != model => {
+                            super::units::apply_link(cx, *range, &shown, &format!("{{{model}}}{{{spec}}}"), true)
+                        }
+                        _ => shown,
+                    };
+                    md.push_str(&format!("| {model} | {cell} |\n"));
                 }
             }
             None if name.contains('!') => md.push_str("An xcolor expression of colors the run did not fix.\n"),
@@ -65,27 +74,6 @@ impl TypePlugin for Color {
         Some(items(cx.analysis, cx.path, cx.pos))
     }
 
-    fn actions(&self, cx: &Cx, hit: &Hit) -> Vec<CodeAction> {
-        // a definition's `{model}{spec}` after the name, rewritten in another model
-        let name = name(cx, hit);
-        let file = super::super::type_at::file_of(cx.analysis, cx.path);
-        let here = |s: crate::engine::tex::Span| s.line == cx.pos.line && Some(s.file) == file;
-        let Some(def) = (cx.analysis.facts.colors.iter().rev())
-            .find(|c| c.name == name && (here(c.span) || c.spec_span.is_some_and(here)))
-        else {
-            return Vec::new();
-        };
-        let (Some(rgb), Some((range, model))) = (value(def), model_spec(cx, hit)) else { return Vec::new() };
-        specs(rgb, xcolor(cx.analysis))
-            .into_iter()
-            .filter(|(m, _)| *m != model)
-            .map(|(m, s)| {
-                let edit = TextEdit { range, new_text: format!("{{{m}}}{{{s}}}") };
-                rewrite(cx, format!("Convert to {m}: {{{s}}}"), vec![edit])
-            })
-            .collect()
-    }
-
     fn view(&self, cx: &Cx, hit: &Hit) -> Option<Json> {
         let name = name(cx, hit).to_string();
         let rgb = value_at(cx.analysis, cx.doc, cx.path, cx.pos, &name);
@@ -98,7 +86,7 @@ impl TypePlugin for Color {
         let models: Vec<&str> =
             if x { vec!["HTML", "rgb", "RGB", "cmyk", "gray", "hsb"] } else { vec!["rgb", "cmyk", "gray"] };
         let writes = slot.map(|r| writes(cx, r));
-        let mut sections = vec![json!({
+        let sections = vec![json!({
             "kind": "color",
             "name": name,
             "rgb": rgb,
@@ -109,10 +97,6 @@ impl TypePlugin for Color {
             "pick": slot,
             "apply": writes,
         })];
-        let actions: Vec<Json> = self.actions(cx, hit).iter().map(button).collect();
-        if !actions.is_empty() {
-            sections.push(json!({ "kind": "actions", "items": actions }));
-        }
         Some(json!({ "title": format!("Color {name}"), "sections": sections }))
     }
 
@@ -122,6 +106,13 @@ impl TypePlugin for Color {
         }
         document_colors(analysis, doc, path)
     }
+}
+
+/// Whether `name` is defined on the cursor's line.
+fn defined_here(cx: &Cx, name: &str) -> bool {
+    let file = super::super::type_at::file_of(cx.analysis, cx.path);
+    let here = |s: crate::engine::tex::Span| s.line == cx.pos.line && Some(s.file) == file;
+    cx.analysis.facts.colors.iter().any(|c| c.name == name && (here(c.span) || c.spec_span.is_some_and(here)))
 }
 
 /// The color's name or expression at the cursor.

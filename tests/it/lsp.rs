@@ -3090,8 +3090,8 @@ fn units_hover_gives_em_and_ex_of_the_font_in_force() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// A length in the source: hover in every unit with the sp, convert actions that say whether
-/// they are exact, a converter view; `\textwidth` shows its value when the run ended.
+/// A length in the source: hover in every unit with the sp, each value a link that writes it
+/// and says whether it is exact, a converter view; `\textwidth` shows its value when the run ended.
 #[test]
 fn units_plugin_converts_lengths() {
     let text = "\\documentclass{article}\n\\begin{document}\nText \\vspace{12pt} and \\hspace{24pt} \\the\\textwidth\n\\end{document}\n";
@@ -3102,16 +3102,13 @@ fn units_plugin_converts_lengths() {
     assert!(md.starts_with("### `12pt` ≈ [0.42 cm](command:satex.applyEdit?"), "{md}");
     assert!(md.contains("% of `\\textwidth`") && md.contains("| pc |") && md.contains("[786432]("), "{md}");
     assert!(!md.contains("TeX stores"), "{md}");
+    // each value is the action: no separate convert buttons
     let actions = at(&mut server, &uri, "textDocument/codeAction", 2, c);
     let titles: Vec<&str> = actions.as_array().unwrap().iter().filter_map(|a| a["title"].as_str()).collect();
-    assert!(titles.iter().any(|t| t.starts_with("Convert 12pt to 0.42cm (≈")), "{titles:?}");
-    // 24pt is exactly 2pc (a pica is 12pt)
-    let pica = at(&mut server, &uri, "textDocument/codeAction", 2, col(text, 2, "24pt", 2));
-    let exact =
-        pica.as_array().unwrap().iter().find(|a| a["title"].as_str().is_some_and(|t| t.contains("to 2pc (exact)")));
-    let edit = &exact.expect("exact picas")["edit"]["changes"][&uri][0];
-    assert_eq!(edit["newText"], "2pc");
-    assert_eq!(edit["range"]["start"]["character"], col(text, 2, "24pt", 0));
+    assert!(!titles.iter().any(|t| t.starts_with("Convert")), "{titles:?}");
+    // 24pt is exactly 2pc (a pica is 12pt): its link writes `2pc`, marked exact
+    let pica = hover_md(&at(&mut server, &uri, "textDocument/hover", 2, col(text, 2, "24pt", 2)));
+    assert!(pica.contains("%222pc%22%2Ctrue%5D"), "{pica}");
     let views = at(&mut server, &uri, "satex/view", 2, c);
     assert_eq!(views[0]["plugin"], "units", "{views}");
     assert_eq!(views[0]["sections"][0]["kind"], "converter");
@@ -3176,13 +3173,9 @@ fn color_plugin_with_xcolor() {
 fn color_plugin_converts_a_definition() {
     let text = "\\documentclass{article}\n\\usepackage{xcolor}\n\\definecolor{brand}{rgb}{0,0.5,0.5}\n\\begin{document}\n\\color{brand} x\n\\end{document}\n";
     let (mut server, uri, dir) = open_set("color-def", text, &[]);
-    // the definition's spec in another model
-    let conv = at(&mut server, &uri, "textDocument/codeAction", 2, col(text, 2, "brand", 1));
-    let html =
-        conv.as_array().unwrap().iter().find(|a| a["title"].as_str().is_some_and(|t| t.starts_with("Convert to HTML")));
-    let probe = hover_md(&at(&mut server, &uri, "textDocument/hover", 2, col(text, 2, "brand", 1)));
-    assert!(html.is_some(), "{conv}\n{probe}");
-    assert_eq!(html.expect("to HTML")["edit"]["changes"][&uri][0]["newText"], "{HTML}{008080}");
+    // the definition's spec in another model: a link on the hover's value
+    let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 2, col(text, 2, "brand", 1)));
+    assert!(md.contains("%7BHTML%7D%7B008080%7D"), "{md}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
@@ -3325,6 +3318,23 @@ fn tables_and_figures_open_dialogs_that_write_them_back() {
             assert_eq!(view["state"]["viewport"], true, "{view}");
         }
     }
+    // an X column switches to tabularx; a \multirow cell and the X column add their packages, with notes
+    let view =
+        ask("satex/dialog", json!({ "textDocument": { "uri": uri }, "position": { "line": table, "character": 1 } }));
+    let mut state = view["state"].clone();
+    state["cols"][1]["align"] = json!("X");
+    state["rows"][1]["cells"][0]["text"] = json!("\\multirow{2}{*}{Ours}");
+    let applied = ask(
+        "satex/dialogApply",
+        json!({ "textDocument": { "uri": uri }, "kind": "table", "range": view["range"], "state": state }),
+    );
+    let new = applied["edits"][0]["newText"].as_str().unwrap();
+    assert!(new.starts_with("\\begin{tabularx}{\\linewidth}{|l|X|}") && new.ends_with("\\end{tabularx}"), "{applied}");
+    assert!(new.contains("\\multirow{2}{*}{Ours} & 0.92"), "{new}");
+    let packages: Vec<&str> =
+        applied["edits"].as_array().unwrap()[1..].iter().filter_map(|e| e["newText"].as_str()).collect();
+    assert_eq!(packages, ["\\usepackage{tabularx}\n", "\\usepackage{multirow}\n"], "{applied}");
+    assert_eq!(applied["state"]["env"], "tabularx", "{applied}");
     let at = |line: u64| json!({ "start": { "line": line, "character": 0 }, "end": { "line": line, "character": 0 } });
     let actions = ask(
         "textDocument/codeAction",

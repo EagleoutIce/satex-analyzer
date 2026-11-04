@@ -140,7 +140,12 @@
       codes.push(at ? placeLink(at[1], +at[2]) : bar ? `<code class="bar"><b>${bar[1]}</b><i>${bar[2]}</i></code>` : `<code>${code}</code>`);
       return `\u0000${codes.length - 1}\u0000`;
     });
-    return text.replace(/\[([^\]]+)\]\(command:satex\.applyEdit\?([^)\s]+)\)/g, '<a href="#" class="cmd-edit" data-args="$2" title="write this in place of the length">$1</a>')
+    return text.replace(/\[([^\]]+)\]\(command:satex\.applyEdit\?([^)\s]+)\)/g, (_, shown, args) => {
+      // `[uri, range, text, exact]`: the value is the action
+      let to = '', exact = false;
+      try { [, , to, exact] = JSON.parse(decodeURIComponent(args)); } catch {}
+      return `<a href="#" role="button" class="cmd-edit${exact ? ' exact' : ''}" data-args="${args}" title="write as ${esc(to)}${exact ? ' (exact)' : ' (rounded)'}">${shown}</a>`;
+    })
       .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
       .replace(/\*\(([^*]+)\)\*/g, '<span class="x-from">($1)</span>').replace(/\*([^*\s][^*]*)\*/g, '<em>$1</em>')
       .replace(/\u0000(\d+)\u0000/g, (_, i) => codes[+i]);

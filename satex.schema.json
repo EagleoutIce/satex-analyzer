@@ -3772,7 +3772,7 @@
             },
             "enabled": {
               "default": true,
-              "description": "hover in every unit, a converter dialog and convert actions",
+              "description": "hover in every unit (each value writes itself) and a converter dialog",
               "type": "boolean",
               "x-affects": [
                 "output"

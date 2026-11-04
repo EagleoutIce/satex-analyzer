@@ -1153,6 +1153,7 @@
       colors: (list) => ev.dispatch({ effects: swatches.of(list.map(([p, css]) => [at(doc(), p), css]).filter(([a]) => a != null && a <= doc().length)) }),
       heat: (lines) => ev.dispatch({ effects: heatSet.of(lines?.size ? { lines, most: Math.max(...lines.values()) } : null) }),
       cursor: () => [ev.state.selection.main.anchor, ev.state.selection.main.head],
+      scroll: (top) => top == null ? ev.scrollDOM.scrollTop : (ev.scrollDOM.scrollTop = top),
       select: ([anchor, head] = [0, 0]) => { const n = doc().length; ev.dispatch({ selection: { anchor: Math.min(anchor, n), head: Math.min(head, n) }, scrollIntoView: true }); },
       position: () => position(doc(), ev.state.selection.main.head),
       range: () => [position(doc(), ev.state.selection.main.from), position(doc(), ev.state.selection.main.to)],
@@ -1441,11 +1442,12 @@
   var tsHere = false; // var: a cursor move may run typesetFollow before this line
   const tsScope = (here) => {
     tsHere = here;
+    self.satexStore.set('typeset-scope', here ? 'here' : null);
     for (const x of document.querySelectorAll('.ts-scope button')) x.setAttribute('aria-pressed', String((x.dataset.scope === 'here') === here));
     typesetFollow();
   };
   for (const b of document.querySelectorAll('.ts-scope button')) b.onclick = () => tsScope(b.dataset.scope === 'here');
-  tsScope(false);
+  tsScope(self.satexStore.get('typeset-scope') === 'here');
   /** The open file's findings on the paragraphs they stand in: a mark in the margin, the worst first, shown with the findings switch. */
   function typesetFindings() {
     typesetBody.querySelectorAll('.ts-finding').forEach((m) => m.remove());
@@ -1680,6 +1682,9 @@
   });
   document.addEventListener('click', (e) => { const b = e.target.closest('[data-tool]'); if (b) { e.preventDefault(); runTool(+b.dataset.tool); } });
   $('view-close').onclick = () => $('play-view').close();
+  $('cfg-reset-view').onclick = () => resetView();
+  // every dialog is the widgets' popup: peek, detach, full screen, kept per dialog (dialogs.js)
+  for (const d of document.querySelectorAll('dialog.cache-dialog:not(.ask-dialog)')) self.satexDialogs?.enhance(d);
   /** The open file's fixes at once, as the language server merges them (render.rs `fix_all`): per rule, per category or all. */
   var fixAlls = {}; // var: a render may run before this line
   /** What a fix-all of `scope` (`rule`, `category`, `all`) and `key` applies: the server's action, else the one fix there is. */
@@ -3374,12 +3379,13 @@
 
   // ---------------------------------------------------------------- the command line
 
-  const past = []; // the command line's history
-  let back = 0;
+  const past = self.satexStore.get('console-history', []).filter((x) => typeof x === 'string'); // the command line's history, kept
+  let back = past.length;
   /** The playground's own commands, next to satex's: language server edits in the editor. */
   const LOCAL = {
     rename: { about: 'rename the command or label at the cursor, in every file', run: (rest) => rest[0] ? renameTo(rest[0].replace(/^\\/, '')) : renameBox() },
     fix: { about: 'apply the safe fixes, of one rule if given', run: (rest) => fixAll(rest[0], false) },
+    'reset-view': { about: 'forget the kept view (panels, tabs, cursor places, zoom, dialog places); edits and settings stay', run: resetView },
     manage: { about: 'open a manager: glossary, bibliography, index or theorem', run: (rest) => manage(rest[0] ?? 'glossary') },
   };
   /** A type plugin's manager: `satex/view` without a position. */
@@ -3390,12 +3396,20 @@
     tools = [{ view, target: uri() }];
     runTool(0);
   }
+  /** Forgets every kept view state and reloads; the drafts, the settings and the theme stay. */
+  function resetView() {
+    const stay = new Set([DRAFTS, 'satex-config', 'satex-theme', 'satex-download-ok', 'satex-offline']);
+    self.satexStore.clear();
+    try { for (const k of Object.keys(localStorage)) if (k.startsWith('satex-') && !stay.has(k)) localStorage.removeItem(k); } catch {}
+    removeEventListener('pagehide', keepView);
+    location.reload();
+  }
   /** Runs `line` (or the command line): a playground command, or satex. */
   function execute(line = args.value) {
     if (!editor) return;
     args.value = line;
     menu.hidden = true;
-    if (past.at(-1) !== line) past.push(line);
+    if (past.at(-1) !== line) { past.push(line); self.satexStore.set('console-history', past.slice(-50)); }
     back = past.length;
     const a = words(line).filter((x) => x !== 'satex');
     if (a[0] in LOCAL) return LOCAL[a[0]].run(a.slice(1));
@@ -3646,15 +3660,35 @@
   const redraw = () => { drawTabs(); drawTree(); };
   /** The command a sample comes with: plain lint unless the manifest says otherwise. */
   const commandOf = (name) => manifest.commands?.[name] ?? 'lint';
+  /** The example's view kept per browser (satexStore): the open file, the tabs, each file's cursor and scroll. */
+  const viewKey = () => `view:${state.example}`;
+  function keepView() {
+    if (!editor || state.upload || !state.file) return;
+    const v = self.satexStore.get(viewKey(), {});
+    v.file = state.file;
+    v.open = state.open;
+    (v.at ??= {})[state.file] = { c: editor.cursor(), y: Math.round(editor.scroll()) };
+    self.satexStore.set(viewKey(), v);
+  }
+  function restoreAt() {
+    const at = self.satexStore.get(viewKey(), {}).at?.[state.file];
+    if (!at) return;
+    editor.select(at.c);
+    requestAnimationFrame(() => editor.scroll(at.y));
+  }
+  addEventListener('pagehide', keepView);
   /** Shows `name` in the editor, as a tab; the language server gets it if it does not have it. */
   function choose(name) {
     if (!editor || !(name in state.texts)) return;
     if (!state.open.includes(name)) state.open.push(name);
     if (name === state.file) return redraw();
+    keepView();
     sync();
     state.file = name;
     redraw();
     editor.set(state.texts[name], name in state.ro);
+    restoreAt();
+    keepView();
     drawRefs();
     open(name);
     synced = version; // the server has this text: opened with it, or kept in sync with it
@@ -3691,8 +3725,13 @@
     // each example in its own directory: its project sees its own files only
     state.dir = `/work/ex/${ex.replace(/\.[^.]+$/, '')}`;
     manualKernel = false;
+    if (state.example && state.example !== ex) keepView();
     Object.assign(state, { example: ex, root: state.files.includes(root) ? root : ex, open: [...state.files], file: state.files.includes(file) ? file : ex });
+    const kept = self.satexStore.get(viewKey(), {});
+    if (file === ex && state.files.includes(kept.file)) state.file = kept.file;
+    if (Array.isArray(kept.open) && kept.open.length && kept.open.every((n) => state.files.includes(n))) state.open = [...new Set([...kept.open, state.file])];
     editor.set(state.texts[state.file]);
+    restoreAt();
     history.replaceState(null, '', `#${encodeURIComponent(ex)}`);
     redraw();
     if (!await restart()) return;
@@ -4198,7 +4237,10 @@
   const pdfZoom = { value: 1, fit: /** @type {'' | 'width' | 'page'} */ ('') };
   {
     const z = new URLSearchParams(location.search).get('zoom');
-    if (z === 'fit' || z === 'page') pdfZoom.fit = z === 'fit' ? 'width' : 'page'; else pdfZoom.value = Math.min(4, Math.max(0.3, Number(z) || 1));
+    const kept = self.satexStore.get('pdf-zoom');
+    if (z === 'fit' || z === 'page') pdfZoom.fit = z === 'fit' ? 'width' : 'page';
+    else if (!z && kept) Object.assign(pdfZoom, { value: Math.min(4, Math.max(0.3, Number(kept.value) || 1)), fit: ['', 'width', 'page'].includes(kept.fit) ? kept.fit : '' });
+    else pdfZoom.value = Math.min(4, Math.max(0.3, Number(z) || 1));
   }
   /** `fit` keeps the zoom at the pane (width: the page as wide as the pane; page: the whole first page in view); a number zoom ends it. */
   function pdfZoomTo(z, fit = '') {
@@ -4208,6 +4250,7 @@
       z = fit === 'page' && img?.naturalWidth && w > 0 ? Math.min(1, h / (w * img.naturalHeight / img.naturalWidth)) : 1;
     }
     pdfZoom.value = Math.min(4, Math.max(0.3, Math.round(z * 100) / 100));
+    self.satexStore.set('pdf-zoom', { value: pdfZoom.value, fit });
     pdfBody.style.setProperty('--pdf-zoom', String(pdfZoom.value));
     $('pdf-zoom-level').textContent = `${Math.round(pdfZoom.value * 100)}%`;
     const f = $('pdf-zoom-fit');
@@ -5405,6 +5448,9 @@
       },
     });
   }
+  /** Opens a widget at a place (0-based) of the open file, a manager by its kind ('manager', 'glossary'): media.mjs and the tests drive the page through it. */
+  self.satexWidget = (plugin, line = 0, character = 0) => ['table', 'image'].includes(plugin) ? openDialog({ line, character })
+    : plugin === 'manager' ? manage(line || 'glossary') : openViews({ line, character }, plugin);
   // a hover's "Edit table…" link opens the dialog
   document.addEventListener('click', (e) => {
     const a = e.target.closest?.('a.sd-open');

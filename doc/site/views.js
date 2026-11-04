@@ -203,14 +203,13 @@
         grid.innerHTML = '';
         const range = s.lo !== s.hi && Number(input.value) === Number(show(s.lo, s.unit));
         for (const u of s.units) {
-          const cell = el('button', 'tv-unit', `<b>${range ? `${show(s.lo, u.name)} … ${show(s.hi, u.name)}` : show(sp(), u.name)}</b><span>${esc(u.name)}</span>`);
+          // the value written: rounded to `decimals`; exact when TeX reads it back as the same sp
+          const v = +(sp() / per[u.name]).toFixed(s.decimals ?? 2), exact = !range && Math.round(v * per[u.name]) === sp();
+          const cell = el('button', 'tv-unit' + (exact ? ' exact' : ''), `<b>${range ? `${show(s.lo, u.name)} … ${show(s.hi, u.name)}` : show(sp(), u.name)}</b><span>${esc(u.name)}${exact ? ' · exact' : ''}</span>`);
           cell.type = 'button';
-          cell.title = s.range ? `write ${show(sp(), u.name)}${u.name} here` : u.name;
           cell.disabled = !s.range || range || u.name === 'em' || u.name === 'ex';
-          cell.onclick = () => {
-            const d = s.decimals ?? 2, v = +(sp() / per[u.name]).toFixed(d);
-            ctx.apply([{ range: s.range, newText: `${v}${u.name}` }]);
-          };
+          cell.title = cell.disabled ? u.name : `write as ${v}${u.name}${exact ? ' (exact)' : ' (rounded)'}`;
+          cell.onclick = () => ctx.apply([{ range: s.range, newText: `${v}${u.name}` }]);
           grid.append(cell);
         }
       };
@@ -298,7 +297,12 @@
         swatch.querySelector('.tv-is').style.background = hex(c);
         for (const t of tabs.children) t.classList.toggle('on', t.textContent === model);
         if (document.activeElement !== spec) spec.value = SPEC[model](c);
-        all.innerHTML = s.models.map((m) => `<span><b>${esc(m)}</b> ${esc(SPEC[m](c))}</span>`).join('');
+        // each model's value is its own action: a click writes the color in that model
+        all.replaceChildren(...s.models.map((m) => {
+          const b = el(s.apply ? 'button' : 'span', 'tv-spec-value' + (m === model ? ' on' : ''), `<b>${esc(m)}</b> ${esc(SPEC[m](c))}`);
+          if (s.apply) { b.type = 'button'; b.title = `write as [${m}]{${SPEC[m](c)}}`; b.onclick = () => { model = m; draw(); foot.querySelector('.tv-primary')?.click(); }; }
+          return b;
+        }));
         const w = foot.querySelector('.tv-primary');
         if (w) w.textContent = expr ? `Write ${expr}` : s.apply.edits.length > 1 ? `Define ${s.apply.name} as ${model} ${SPEC[model](c)}` : `Write [${model}]{${SPEC[model](c)}}`;
       }
@@ -889,7 +893,11 @@
 .tv-units { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr)); gap: .4rem; }
 .tv-unit { font: inherit; display: flex; flex-direction: column; align-items: flex-start; gap: .1rem; padding: .45rem .6rem; border-radius: 8px; border: 1px solid var(--tv-border); background: var(--tv-sunk); color: var(--tv-fg); cursor: pointer; text-align: left; }
 .tv-unit b { font-variant-numeric: tabular-nums; font-weight: 600; } .tv-unit span { font-size: .72rem; color: var(--tv-muted); }
-.tv-unit:not(:disabled):hover { border-color: var(--tv-accent); } .tv-unit:disabled { cursor: default; opacity: .85; }
+.tv-unit:not(:disabled):hover, .tv-unit:focus-visible { border-color: var(--tv-accent); background: color-mix(in srgb, var(--tv-accent) 10%, var(--tv-sunk)); transform: translateY(-1px); } .tv-unit:disabled { cursor: default; opacity: .85; }
+.tv-specs .tv-spec-value { font: inherit; display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 6px; padding: .1rem .35rem; color: inherit; font-variant-numeric: tabular-nums; }
+button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-spec-value:focus-visible { background: color-mix(in srgb, var(--tv-accent) 12%, transparent); color: var(--tv-accent); outline: none; }
+.tv-unit { transition: border-color .12s, background .12s, transform .12s; } .tv-unit.exact b { color: var(--tv-accent); }
+@media (prefers-reduced-motion: reduce) { .tv-unit { transition: none; } .tv-unit:hover { transform: none; } }
 .tv-choices { display: grid; gap: .5rem; } .tv-list { display: grid; gap: .2rem; max-height: 50vh; overflow: auto; }
 .tv-choice { font: inherit; display: flex; justify-content: space-between; gap: 1rem; padding: .35rem .6rem; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--tv-fg); cursor: pointer; text-align: left; }
 .tv-choice:hover, .tv-choice:focus { border-color: var(--tv-accent); background: var(--tv-sunk); } .tv-choice span { color: var(--tv-muted); font-family: ui-monospace, monospace; font-size: .8rem; }

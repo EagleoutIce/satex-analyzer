@@ -1,15 +1,15 @@
 //! Lengths: a dimension written in the source (`2.5cm`, `-3pt`) or a length
 //! register (`\textwidth`). Hover shows it in every configured unit and in
-//! scaled points; actions rewrite a literal in another unit, saying whether
-//! TeX reads the new text as the same scaled points; the view is a converter.
+//! scaled points; each value is a link that writes the literal in that unit,
+//! marked exact when TeX reads it back as the same scaled points; the view is a converter.
 
-use super::{Cx, TypePlugin, button, range, rewrite};
+use super::{Cx, TypePlugin, range};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::Ty;
 use crate::engine::tex::{Meaning, RegKind};
 use crate::engine::value::{Num, UNIT, UNITS, parse_dimen};
 use crate::project::config::TypePlugins;
-use lsp_types::{CodeAction, CompletionItem, CompletionItemKind, TextEdit};
+use lsp_types::{CompletionItem, CompletionItemKind};
 use serde_json::{Value as Json, json};
 
 pub(super) struct Units;
@@ -33,13 +33,13 @@ impl TypePlugin for Units {
         "hover"
     }
     fn about(&self) -> &'static str {
-        "a length in every unit, convert actions and a converter view"
+        "a length in every unit, each value a click that writes it, and a converter view"
     }
     fn types(&self) -> &'static [Ty] {
         &[Ty::Dimen, Ty::Glue, Ty::Reg(RegKind::Dimen), Ty::Reg(RegKind::Skip)]
     }
     fn features(&self) -> &'static [&'static str] {
-        &["hover", "complete", "actions", "view"]
+        &["hover", "complete", "view"]
     }
     fn enabled(&self, cfg: &TypePlugins) -> bool {
         cfg.units.enabled
@@ -75,24 +75,6 @@ impl TypePlugin for Units {
         Some(items.collect())
     }
 
-    fn actions(&self, cx: &Cx, _hit: &super::Hit) -> Vec<CodeAction> {
-        let Some(lit) = literal(cx) else { return Vec::new() };
-        let cfg = &cx.cfg().units;
-        let edit = |text: String| TextEdit { range: range(cx.doc, lit.line, lit.from, lit.to), new_text: text };
-        cfg.units
-            .iter()
-            .filter(|u| **u != lit.unit && unit(u).is_some())
-            .map(|u| {
-                let (text, off) = converted(lit.sp, u, cfg.decimals);
-                let note = match off {
-                    0 => "exact".to_string(),
-                    d => format!("≈, {d:+} sp"),
-                };
-                rewrite(cx, format!("Convert {} to {text} ({note})", lit.written), vec![edit(text.clone())])
-            })
-            .collect()
-    }
-
     fn view(&self, cx: &Cx, hit: &super::Hit) -> Option<Json> {
         let lit = literal(cx);
         let (title, num) = match &lit {
@@ -114,20 +96,18 @@ impl TypePlugin for Units {
                     .filter_map(|(u, sp)| Some(json!({ "name": u, "sp": sp? as f64 }))),
             )
             .collect();
-        let mut sections = vec![json!({
-            "kind": "converter",
-            "lo": num.lo, "hi": num.hi,
-            "units": units,
-            "decimals": cx.cfg().units.decimals,
-            "unit": lit.as_ref().map_or("pt", |l| l.unit.as_str()),
-            // the client writes `<number><unit>` here, when the length is a literal
-            "range": lit.as_ref().map(|l| range(cx.doc, l.line, l.from, l.to)),
-        })];
-        let actions: Vec<Json> = self.actions(cx, hit).iter().map(button).collect();
-        if !actions.is_empty() {
-            sections.push(json!({ "kind": "actions", "items": actions }));
-        }
-        sections.push(json!({ "kind": "text", "markdown": NOTE }));
+        let sections = vec![
+            json!({
+                "kind": "converter",
+                "lo": num.lo, "hi": num.hi,
+                "units": units,
+                "decimals": cx.cfg().units.decimals,
+                "unit": lit.as_ref().map_or("pt", |l| l.unit.as_str()),
+                // the client writes `<number><unit>` here, when the length is a literal
+                "range": lit.as_ref().map(|l| range(cx.doc, l.line, l.from, l.to)),
+            }),
+            json!({ "kind": "text", "markdown": NOTE }),
+        ];
         Some(json!({ "title": title, "sections": sections }))
     }
 }
@@ -235,17 +215,14 @@ fn card(cx: &Cx, head: &str, num: Num, lit: Option<&Literal>) -> String {
         let v = |sp: i64| trimmed(sp as f64 / per, places);
         Some(if exact { (v(num.lo), true) } else { (format!("{} … {}", v(num.lo), v(num.hi)), false) })
     };
-    let link = |u: &str, shown: &str, text: &str| match lit {
-        Some(l) if exact => {
-            let args = json!([cx.uri(), range(cx.doc, l.line, l.from, l.to), format!("{text}{u}")]);
-            format!("[{shown}](command:satex.applyEdit?{})", encode(&args.to_string()))
-        }
+    let link = |u: &str, shown: &str, text: &str, same: bool| match lit {
+        Some(l) if exact => apply_link(cx, range(cx.doc, l.line, l.from, l.to), shown, &format!("{text}{u}"), same),
         _ => shown.to_string(),
     };
     let mut md = format!("### {head}");
     for u in EVERYDAY.iter().filter(|u| Some(**u) != own && cfg.units.iter().any(|c| c == *u)) {
         if let Some((t, ok)) = value(u, cfg.decimals) {
-            md.push_str(&format!(" {} {}", if ok { "=" } else { "≈" }, link(u, &format!("{t} {u}"), &t)));
+            md.push_str(&format!(" {} {}", if ok { "=" } else { "≈" }, link(u, &format!("{t} {u}"), &t, ok)));
         }
     }
     md.push_str("\n\n");
@@ -257,8 +234,8 @@ fn card(cx: &Cx, head: &str, num: Num, lit: Option<&Literal>) -> String {
     }
     let mut cells = Vec::new();
     for (u, ..) in UNITS.iter().filter(|(u, ..)| *u != "mu" && !EVERYDAY.contains(u) && Some(*u) != own) {
-        if let Some((t, _)) = value(u, 3) {
-            cells.push((*u, link(u, &t, &t)));
+        if let Some((t, ok)) = value(u, 3) {
+            cells.push((*u, link(u, &t, &t, ok)));
         }
     }
     let row = |f: &dyn Fn(&(&str, String)) -> String| cells.iter().map(f).collect::<Vec<_>>().join(" | ");
@@ -318,6 +295,13 @@ fn bar(cx: &Cx, num: Num) -> Option<String> {
     }
     let pad = BAR.saturating_sub(bar.chars().count());
     Some(format!("`{bar}{}` {}% of {name}", "░".repeat(pad), (num.lo as f64 * 100.0 / whole as f64).round()))
+}
+
+/// A hover link that writes `text` over `range` (`satex.applyEdit`); `exact` tells the
+/// client the new text reads back as the same value.
+pub(super) fn apply_link(cx: &Cx, range: lsp_types::Range, shown: &str, text: &str, exact: bool) -> String {
+    let args = json!([cx.uri(), range, text, exact]);
+    format!("[{shown}](command:satex.applyEdit?{})", encode(&args.to_string()))
 }
 
 /// Percent-encoding of a command link's argument.

@@ -385,8 +385,13 @@ fn body_rows(b: &str, t: &mut Table) {
             if indent.is_none() && !line_has_row {
                 indent = Some(cur.clone());
             }
+            // a row opening with an empty cell (under a `\multirow`) keeps its spaces past the indent
+            let extra = match rest.starts_with('&') {
+                true => cur.len().saturating_sub(indent.as_ref().map_or(0, String::len)),
+                false => 0,
+            };
             cur.clear();
-            row_start = Some(i);
+            row_start = Some(i - extra);
         }
         let c = rest.chars().next().unwrap_or(' ');
         match c {
@@ -596,6 +601,16 @@ pub fn booktabs(t: &mut Table) {
     }
 }
 
+/// `tabularx` for a `tabular` with `X` columns (they need a width); whether it switched.
+pub fn to_tabularx(t: &mut Table) -> bool {
+    let switch = t.env == "tabular" && t.cols.iter().any(|c| c.align == "X");
+    if switch {
+        t.env = "tabularx".into();
+        t.width = Some("\\linewidth".into());
+    }
+    switch
+}
+
 /// A number siunitx reads: digits, a decimal mark, an exponent, an uncertainty.
 fn number(s: &str) -> Option<(usize, usize)> {
     let s = s.trim().trim_start_matches(['+', '-', '−']);
@@ -717,6 +732,17 @@ mod tests {
         assert_eq!(
             out,
             "\\begin{tabular}{lS[table-format=2.2]}\n\\toprule\nMethod & {Score} \\\\ \\midrule\nOurs & 0.92 \\\\ \\cmidrule(lr){1-2}\nBase & 11.5 \\\\\n\\bottomrule\n\\end{tabular}"
+        );
+    }
+
+    #[test]
+    fn x_columns_switch_to_tabularx_and_multirow_cells_round_trip() {
+        let mut t = parse("\\begin{tabular}{lX}\n\\multirow{2}{*}{a} & b \\\\\n & c \\\\\n\\end{tabular}").unwrap();
+        assert_eq!(t.rows[0].cells[0].text, "\\multirow{2}{*}{a}");
+        assert!(to_tabularx(&mut t) && !to_tabularx(&mut t));
+        assert_eq!(
+            emit(&t),
+            "\\begin{tabularx}{\\linewidth}{lX}\n\\multirow{2}{*}{a} & b \\\\\n & c \\\\\n\\end{tabularx}"
         );
     }
 

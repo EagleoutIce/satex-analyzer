@@ -146,15 +146,16 @@ fn percent(s: &str) -> String {
         .collect()
 }
 
-/// What the packages loaded allow: booktabs' rules, siunitx's columns.
+/// What the packages loaded allow: booktabs' rules, siunitx's, tabularx's and array's columns, multirow.
 fn context(analysis: &Analysis, doc: &Text) -> Json {
-    let loaded = |p: &str| crate::linter::shared::loaded(analysis, p);
-    json!({
-        "booktabs": loaded("booktabs"),
-        "siunitx": loaded("siunitx"),
-        "preamble": doc.body().contains("\\begin{document}"),
-    })
+    let mut ctx: serde_json::Map<String, Json> =
+        PACKAGES.iter().map(|p| (p.to_string(), json!(crate::linter::shared::loaded(analysis, p)))).collect();
+    ctx.insert("preamble".into(), json!(doc.body().contains("\\begin{document}")));
+    Json::Object(ctx)
 }
+
+/// The packages a table dialog offers features of.
+const PACKAGES: [&str; 5] = ["booktabs", "siunitx", "tabularx", "array", "multirow"];
 
 /// The figure's natural size in bp, as the engine reads the file.
 fn natural(file: Option<&str>, page: i64) -> Option<[f64; 2]> {
@@ -192,9 +193,14 @@ pub fn dialog(analysis: &Analysis, doc: &Text, path: &str, pos: Position) -> Opt
     Some(json!({ "kind": t.kind.name(), "range": lsp_range(doc, t.start, t.end), "state": state, "context": ctx }))
 }
 
-/// The packages a table's text needs that are not loaded, with the commands that tell.
-const NEEDS: [(&str, &[&str]); 2] =
-    [("booktabs", &["\\toprule", "\\midrule", "\\bottomrule", "\\cmidrule", "\\addlinespace"]), ("siunitx", &[])];
+/// The packages a table's text needs, with the commands and the column letters that tell.
+const NEEDS: [(&str, &[&str], &[&str]); 5] = [
+    ("booktabs", &["\\toprule", "\\midrule", "\\bottomrule", "\\cmidrule", "\\addlinespace"], &[]),
+    ("siunitx", &[], &["S"]),
+    ("tabularx", &[], &["X"]),
+    ("array", &[], &["m", "b"]),
+    ("multirow", &["\\multirow"], &[]),
+];
 
 /// The `\usepackage` lines `text` needs, and the place before `\begin{document}`.
 fn packages(
@@ -203,14 +209,11 @@ fn packages(
     text: &str,
     table: Option<&tabular::Table>,
 ) -> (Vec<String>, Option<usize>) {
-    let s_cols = table.is_some_and(|t| t.cols.iter().any(|c| c.align == "S"));
+    let col = |a: &&str| table.is_some_and(|t| t.cols.iter().any(|c| c.align == *a));
     let want: Vec<String> = NEEDS
         .iter()
-        .filter(|(p, cmds)| match *p {
-            "siunitx" => s_cols,
-            _ => cmds.iter().any(|c| text.contains(c)),
-        })
-        .map(|(p, _)| p.to_string())
+        .filter(|(_, cmds, cols)| cmds.iter().any(|c| text.contains(c)) || cols.iter().any(col))
+        .map(|(p, ..)| p.to_string())
         .filter(|p| !crate::linter::shared::loaded(analysis, p))
         .collect();
     (want, doc.body().find("\\begin{document}"))
@@ -231,6 +234,7 @@ pub fn apply(
         doc.offset(to_pos(doc, range.end)).ok_or("range outside the text")?,
     );
     let written = doc.body().get(start..end).ok_or("range outside the text")?;
+    let (mut notes, mut switched) = (Vec::new(), false);
     let (text, table) = match kind {
         "table" => {
             let mut t: tabular::Table = serde_json::from_value(state.clone()).map_err(|e| e.to_string())?;
@@ -238,6 +242,10 @@ pub fn apply(
                 Some("booktabs") => tabular::booktabs(&mut t),
                 Some("siunitx") if !tabular::siunitx(&mut t) => return Err("no column holds only numbers".into()),
                 _ => {}
+            }
+            switched = tabular::to_tabularx(&mut t);
+            if switched {
+                notes.push("X columns: written as tabularx, \\linewidth wide".to_string());
             }
             (tabular::emit(&t), Some(t))
         }
@@ -248,7 +256,6 @@ pub fn apply(
         k => return Err(format!("no dialog `{k}`")),
     };
     let mut edits = vec![json!({ "range": range, "newText": text })];
-    let mut notes = Vec::new();
     let (want, at) = packages(analysis, doc, &text, table.as_ref());
     for p in want {
         match at {
@@ -260,7 +267,7 @@ pub fn apply(
             None => notes.push(format!("needs \\usepackage{{{p}}} in the preamble")),
         }
     }
-    let state = op.and(table.as_ref()).map(|t| serde_json::to_value(t).unwrap_or_default());
+    let state = table.filter(|_| op.is_some() || switched).map(|t| serde_json::to_value(t).unwrap_or_default());
     Ok(json!({ "edits": edits, "notes": notes, "state": state }))
 }
 

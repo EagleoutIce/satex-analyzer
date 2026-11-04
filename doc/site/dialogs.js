@@ -1,4 +1,6 @@
-// The table and image dialogs of `satex/dialog`: one component for the playground and the VS Code webview.
+// The widgets' shared parts for the playground and the VS Code webview: one popup frame for every
+// dialog (full screen, detach into a movable panel, peek at the page under it, kept per name),
+// the table and image dialogs of `satex/dialog`, and a small store for what survives a reload.
 // `open(view, host)`: `view` is the server's `{kind, range, state, context}`; `host` writes and shows:
 //   host.apply(state, op?) -> Promise<{state?, edits, notes}>   (the server's `satex/dialogApply`, nothing written)
 //   host.commit(edits) -> void                                  (writes the edits)
@@ -6,65 +8,141 @@
 //   host.parent: an element to render into (VS Code), else a modal <dialog>.
 (() => {
   const CSS = `
-.sd { --c-bg: var(--panel, var(--vscode-editor-background, #fff)); --c-fg: var(--fg, var(--vscode-foreground, #1b1d21));
+.sd, dialog.pop { --c-bg: var(--panel, var(--vscode-editor-background, #fff)); --c-fg: var(--fg, var(--vscode-foreground, #1b1d21));
   --c-border: var(--border, var(--vscode-panel-border, #d6dae1)); --c-accent: var(--accent, var(--vscode-focusBorder, #0b3d91));
   --c-sunk: var(--sunk, var(--vscode-input-background, #f1f3f6)); --c-muted: var(--muted, var(--vscode-descriptionForeground, #5c6270));
   --c-accent-fg: var(--accent-fg, var(--vscode-button-foreground, #fff));
-  color: var(--c-fg); background: var(--c-bg); font: 13px/1.4 system-ui, sans-serif; display: flex; flex-direction: column; min-height: 0; }
-dialog.sd-dialog { width: min(1100px, 96vw); max-width: none; height: min(88vh, 46rem); padding: 0; border: 1px solid var(--c-border); border-radius: 12px; }
+  --c-sel: color-mix(in srgb, var(--c-accent) 14%, transparent); --c-hover: color-mix(in srgb, var(--c-accent) 7%, transparent);
+  --ease: cubic-bezier(.2, .7, .2, 1); }
+.sd { color: var(--c-fg); background: var(--c-bg); font: 13px/1.45 system-ui, sans-serif; display: flex; flex-direction: column; min-height: 0; }
+dialog.sd-dialog { width: min(1180px, 96vw); max-width: none; height: min(88vh, 50rem); padding: 0; border: 1px solid var(--c-border); border-radius: 14px; color: var(--c-fg); background: var(--c-bg); }
 dialog.sd-dialog[open] { display: flex; }
 dialog.sd-dialog > .sd { flex: 1; min-width: 0; }
-dialog.sd-dialog::backdrop { background: rgb(0 0 0 / .35); }
-.sd > header, .sd > footer { max-width: none; width: auto; margin: 0; box-sizing: border-box; display: flex; align-items: center; gap: .5rem; padding: .55rem .9rem; flex-wrap: wrap; }
+/* the popup frame: any dialog with a header gets the same tools and states */
+dialog.pop { box-shadow: 0 24px 64px -16px rgb(0 0 0 / .35), 0 2px 8px rgb(0 0 0 / .12); }
+dialog.pop[open] { animation: pop-in .18s var(--ease); }
+dialog.pop::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(2px); transition: opacity .15s; }
+@keyframes pop-in { from { opacity: 0; transform: translateY(6px) scale(.985); } }
+dialog.pop.pop-full { width: 100vw !important; height: 100vh !important; max-height: none !important; max-width: none; margin: 0; inset: 0; border-radius: 0; }
+dialog.pop.pop-free { position: fixed; z-index: 1000; margin: 0; resize: both; overflow: hidden; min-width: 18rem; min-height: 10rem; max-height: none; }
+dialog.pop.pop-free > header, dialog.pop.pop-free > .sd > header { cursor: move; user-select: none; }
+dialog.pop.pop-peek { opacity: .06; pointer-events: none; transition: opacity .12s; }
+dialog.pop.pop-peek::backdrop { opacity: 0; }
+.pop-tools { display: inline-flex; gap: .15rem; margin-left: auto; }
+.pop-tools + button { margin-left: .15rem; }
+.pop-tools button, .sd .pop-tools button, .sd .sd-icon { display: inline-grid; place-items: center; width: 1.9rem; height: 1.9rem; padding: 0; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--c-muted); cursor: pointer; transition: background .12s, color .12s; }
+.pop-tools button:hover, .pop-tools button[aria-pressed=true], .sd .pop-tools button:hover:not(:disabled), .sd .pop-tools button[aria-pressed=true], .sd .sd-icon:hover:not(:disabled) { background: var(--c-sunk); color: var(--c-fg); }
+.pop-tools svg, .sd-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.sd > header, .sd > footer { max-width: none; width: auto; margin: 0; box-sizing: border-box; display: flex; align-items: center; gap: .5rem; padding: .55rem .6rem .55rem 1rem; flex-wrap: wrap; }
 .sd > header { border-bottom: 1px solid var(--c-border); }
-.sd > header h3 { margin: 0; font-size: 1rem; flex: 1; }
-.sd > footer { border-top: 1px solid var(--c-border); justify-content: flex-end; }
-.sd-body { flex: 1; min-height: 0; overflow: auto; padding: .7rem .9rem; display: grid; gap: .8rem; grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem); }
+.sd > header h3 { margin: 0; font-size: 1rem; font-weight: 650; letter-spacing: -.01em; }
+.sd > header .sd-sub { color: var(--c-muted); font-size: .8rem; }
+.sd > footer { border-top: 1px solid var(--c-border); justify-content: flex-end; padding: .55rem 1rem; }
+.sd-body { flex: 1; min-height: 0; overflow: auto; padding: .9rem 1rem; display: grid; gap: 1.1rem; grid-template-columns: minmax(0, 1fr) minmax(17rem, 23rem); }
 .sd-body > * { min-width: 0; }
-@media (max-width: 760px) { .sd-body { grid-template-columns: 1fr; } }
-.sd button, .sd select, .sd input { font: inherit; color: inherit; max-width: 100%; }
-.sd button { background: var(--c-sunk); border: 1px solid var(--c-border); border-radius: 6px; padding: .2rem .55rem; cursor: pointer; }
-.sd button:hover { border-color: var(--c-accent); }
-.sd button.sd-primary { background: var(--c-accent); color: var(--c-accent-fg); border-color: var(--c-accent); }
-.sd button[aria-pressed=true] { outline: 2px solid var(--c-accent); outline-offset: -1px; }
-.sd input, .sd select { background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 5px; padding: .15rem .3rem; min-width: 0; }
-.sd-bar { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; margin-bottom: .5rem; }
-.sd-bar .sd-sep { width: 1px; align-self: stretch; background: var(--c-border); margin: 0 .2rem; }
+@media (max-width: 760px) { .sd-body { grid-template-columns: 1fr; padding: .7rem; } .sd > header { padding-left: .8rem; } }
+@media (max-width: 600px) { dialog.sd-dialog { width: 100vw; height: 100dvh; max-height: none; margin: 0; border-radius: 0; border: 0; } .pop-tools .pop-btn:nth-child(2) { display: none; } }
+.sd button, .sd select, .sd input, .sd textarea { font: inherit; color: inherit; max-width: 100%; }
+.sd button { background: var(--c-sunk); border: 1px solid var(--c-border); border-radius: 8px; padding: .25rem .65rem; cursor: pointer; transition: border-color .12s, background .12s; }
+.sd button:hover:not(:disabled) { border-color: var(--c-accent); }
+.sd button:disabled { opacity: .45; cursor: default; }
+.sd button:focus-visible, .sd select:focus-visible, .sd input:focus-visible, .sd textarea:focus-visible, .sd [tabindex]:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
+.sd button.sd-primary { background: var(--c-accent); color: var(--c-accent-fg); border-color: var(--c-accent); font-weight: 600; padding: .3rem 1rem; }
+.sd button.sd-ghost { background: none; border-color: transparent; }
+.sd button.sd-ghost:hover:not(:disabled) { background: var(--c-sunk); border-color: transparent; }
+.sd button[aria-pressed=true] { background: var(--c-bg); border-color: var(--c-accent); color: var(--c-accent); }
+.sd input, .sd select, .sd textarea { background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 6px; padding: .2rem .35rem; min-width: 0; }
+.sd-seg { display: inline-flex; border: 1px solid var(--c-border); border-radius: 8px; overflow: hidden; }
+.sd-seg button { border: 0; border-radius: 0; background: none; padding: .2rem .7rem; }
+.sd-seg button + button { border-left: 1px solid var(--c-border); }
+.sd-seg button[aria-pressed=true] { background: var(--c-sel); color: var(--c-accent); }
+.sd-bar { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin-bottom: .7rem; }
+.sd-bar .sd-sep { width: 1px; align-self: stretch; background: var(--c-border); margin: 0 .25rem; }
 .sd-muted { color: var(--c-muted); font-size: .85em; }
 .sd-note { color: var(--warning, var(--vscode-editorWarning-foreground, #8a5a00)); font-size: .85em; }
-.sd-tex { margin: 0; padding: .5rem; background: var(--c-sunk); border-radius: 6px; font: 12px/1.35 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 18rem; }
-.sd-side h4 { margin: .6rem 0 .3rem; font-size: .9rem; }
+.sd-note:empty { display: none; }
+.sd-tex { margin: 0; padding: .6rem .7rem; background: var(--c-sunk); border-radius: 8px; font: 12px/1.45 ui-monospace, monospace; white-space: pre; overflow: auto; max-height: 16rem; }
+.sd-side { display: flex; flex-direction: column; gap: .2rem; }
+.sd-side h4 { margin: .7rem 0 .3rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--c-muted); font-weight: 650; }
 .sd-side h4:first-child { margin-top: 0; }
-.sd-grid { border-collapse: collapse; }
-.sd-grid td, .sd-grid th { padding: 0; border: 1px dashed var(--c-border); }
-.sd-grid th { font-weight: normal; padding: .15rem; background: var(--c-sunk); }
-.sd-grid th select { width: 100%; }
-.sd-grid th input { width: 4.5rem; margin-top: .15rem; }
-.sd-grid td input { border: 0; border-radius: 0; width: 100%; min-width: 4rem; padding: .3rem .4rem; background: transparent; }
-.sd-grid td.sd-cur { outline: 2px solid var(--c-accent); outline-offset: -2px; }
-.sd-grid td[data-align=c] input, .sd-grid td[data-align=S] input { text-align: center; }
-.sd-grid td[data-align=r] input { text-align: right; }
-.sd-grid tr.sd-rule td { border: 0; padding: 0 0 0 .2rem; height: 1.3rem; }
-.sd-grid tr.sd-rule td.sd-ruled { background: linear-gradient(var(--c-fg), var(--c-fg)) 0 50% / 100% var(--w, 1px) no-repeat; }
-.sd-grid .sd-rh { border: 0; padding: 0 .3rem; text-align: right; color: var(--c-muted); font-size: .8em; white-space: nowrap; }
-.sd-grid tr.sd-rule select { font-size: .78em; padding: 0 .1rem; }
-.sd-grid th.sd-v { width: .6rem; min-width: .6rem; border: 0; background: none; cursor: pointer; padding: 0; }
-.sd-grid th.sd-v.on { background: linear-gradient(var(--c-fg), var(--c-fg)) 50% 0 / 1px 100% no-repeat; }
-.sd-chip { display: inline-block; font: 11px ui-monospace, monospace; background: var(--c-sunk); border-radius: 4px; padding: 0 .3rem; margin-right: .2rem; }
-.sd-stage { position: relative; display: inline-block; touch-action: none; user-select: none; background: repeating-conic-gradient(#8882 0 25%, transparent 0 50%) 0 0 / 16px 16px; max-width: 100%; }
-.sd-stage img, .sd-stage .sd-ph { display: block; max-width: 100%; max-height: 52vh; }
-.sd-ph { display: grid; place-items: center; text-align: center; color: var(--c-muted); border: 1px dashed var(--c-border); padding: 1rem; box-sizing: border-box; }
-.sd-crop { position: absolute; box-shadow: 0 0 0 9999px rgb(0 0 0 / .45); outline: 1px solid #fff; cursor: move; }
-.sd-stage { overflow: hidden; }
-.sd-h { position: absolute; width: 14px; height: 14px; background: #fff; border: 1px solid #000; border-radius: 3px; transform: translate(-50%, -50%); }
-.sd-prev-box { display: grid; place-items: center; min-height: 9rem; background: var(--c-sunk); border-radius: 6px; overflow: hidden; padding: .5rem; }
-.sd-prev-crop { overflow: hidden; position: relative; outline: 1px solid var(--c-border); }
-.sd-prev-crop > * { position: absolute; display: block; max-width: none; max-height: none; }
+.sd-chip { display: inline-block; font: 11px ui-monospace, monospace; background: var(--c-sunk); border-radius: 4px; padding: 0 .3rem; margin-right: .2rem; white-space: nowrap; }
 .sd-row { display: flex; gap: .35rem; align-items: center; flex-wrap: wrap; margin: .25rem 0; }
 .sd-row label { display: inline-flex; gap: .25rem; align-items: center; }
 .sd-num { width: 4.2rem; }
 .sd-len { width: 9rem; }
 .sd-inline { height: 100%; }
+.sd kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--c-border); border-bottom-width: 2px; border-radius: 4px; padding: 0 .25rem; }
+/* table grid: a spreadsheet of TeX cells */
+.sd-wrap { position: relative; overflow: auto; padding: 2.9rem .2rem 2.6rem; }
+.sd-grid { border-collapse: separate; border-spacing: 0; outline: none; }
+.sd-grid td, .sd-grid th { padding: 0; background: none; border: 0; }
+.sd-grid th.sd-colh { padding: 0 .2rem .35rem; vertical-align: bottom; font-weight: normal; position: relative; }
+.sd-grid th.sd-colh select { width: 100%; min-width: 5.5rem; }
+.sd-grid th.sd-colh input { width: 100%; margin-top: .2rem; box-sizing: border-box; }
+.sd-grid td.sd-cell { vertical-align: middle; position: relative; border: 1px solid var(--c-border); background: var(--c-bg); min-width: 5rem; height: 2.1rem; padding: 0 .55rem !important; white-space: nowrap; cursor: cell; transition: background .1s; outline: none; font: 13px/1.3 ui-monospace, monospace; }
+.sd-grid td.sd-cell + td.sd-cell { border-left-width: 0; }
+.sd-grid tr.sd-data + tr.sd-rule + tr.sd-data .sd-cell { border-top-width: 0; }
+.sd-grid td.sd-cell[data-align=c], .sd-grid td.sd-cell[data-align=S] { text-align: center; }
+.sd-grid td.sd-cell[data-align=r] { text-align: right; }
+.sd-grid td.sd-cell:hover { background: var(--c-hover); }
+.sd-grid td.sd-cell.sel { background: var(--c-sel); }
+.sd-grid td.sd-cell.cur { box-shadow: inset 0 0 0 2px var(--c-accent); z-index: 1; }
+.sd-cell.merged::after { content: ''; position: absolute; right: 3px; top: 3px; width: 5px; height: 5px; border-radius: 50%; background: var(--c-accent); opacity: .55; }
+.sd-cell input { position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box; border: 0; border-radius: 0; box-shadow: inset 0 0 0 2px var(--c-accent); background: var(--c-bg); font: inherit; padding: 0 .5rem; text-align: inherit; z-index: 2; }
+.sd-cell .sd-ph { color: var(--c-muted); opacity: .5; }
+.sd-grid .sd-rh { border: 0; padding: 0 .45rem 0 0 !important; text-align: right; color: var(--c-muted); font-size: .78em; white-space: nowrap; position: relative; min-width: 2.2rem; }
+.sd-grid .sd-rh .sd-n { display: inline-block; min-width: 1.2em; }
+.sd-grid tr.sd-rule td { height: .7rem; border: 0; }
+.sd-grid tr.sd-rule td.sd-rh { height: auto; }
+.sd-grid tr.sd-rule td.sd-ruled { background: linear-gradient(var(--c-fg), var(--c-fg)) 0 50% / 100% var(--w, 1px) no-repeat; }
+.sd-grid tr.sd-rule select { font-size: .72em; padding: 0 .1rem; border-color: transparent; background: none; color: var(--c-muted); transition: opacity .12s; }
+.sd-grid tr.sd-rule select.none { opacity: 0; }
+.sd-grid tr.sd-rule:hover select.none, .sd-grid tr.sd-rule select.none:focus { opacity: 1; }
+.sd-grid tr.sd-rule:hover select, .sd-grid tr.sd-rule select:focus { border-color: var(--c-border); color: var(--c-fg); }
+.sd-grid .sd-chips { white-space: nowrap; padding-left: .4rem !important; }
+.sd-grid td.sd-vcol, .sd-grid th.sd-vcol { width: .55rem; min-width: .55rem; cursor: pointer; border: 0; }
+.sd-grid th.sd-vcol.on, .sd-grid td.sd-vcol.on { background: linear-gradient(var(--c-fg), var(--c-fg)) 50% 0 / 1px 100% no-repeat; }
+.sd-grid th.sd-vcol:hover { background: linear-gradient(var(--c-accent), var(--c-accent)) 50% 0 / 2px 100% no-repeat; }
+/* ghost rows and columns: dashed, a + on hover */
+.sd-ghost { border: 1.5px dashed var(--c-border) !important; border-radius: 8px; color: transparent; text-align: center; cursor: pointer; transition: color .12s, border-color .12s, background .12s; user-select: none; }
+.sd-ghost:hover, .sd-ghost:focus-visible { color: var(--c-accent); border-color: var(--c-accent) !important; background: var(--c-hover); outline: none; }
+.sd-grid td.sd-gr { height: 1.6rem; font-weight: 600; }
+.sd-grid .sd-gc { width: 1.6rem; min-width: 1.6rem; font-weight: 600; border-radius: 0; border-top-style: none !important; border-bottom-style: none !important; }
+.sd-grid th.sd-gc { border-top-style: dashed !important; border-radius: 8px 8px 0 0; vertical-align: middle; }
+.sd-grid tr.sd-last .sd-gc { border-bottom-style: dashed !important; border-radius: 0 0 8px 8px; }
+.sd-grid:has(.sd-gcL:hover) .sd-gcL, .sd-grid:has(.sd-gcR:hover) .sd-gcR { color: var(--c-accent); border-color: var(--c-accent) !important; background: var(--c-hover); }
+
+.sd-grid tr.sd-ghost-row td:not(.sd-ghost) { border: 0; }
+/* the − on a hovered row or column */
+.sd-del { position: absolute; display: grid; place-items: center; width: 1.25rem; height: 1.25rem; padding: 0 !important; border-radius: 50% !important; font-size: .85rem; line-height: 1; opacity: 0; transform: scale(.8); transition: opacity .12s, transform .12s; color: var(--error, #b42318); }
+tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opacity: 1; transform: none; }
+.sd-rh .sd-del { left: .1rem; top: 50%; margin-top: -.625rem; }
+.sd-colh .sd-del { right: -.35rem; top: -.55rem; }
+/* the selection's floating bar */
+.sd-selbar { position: absolute; z-index: 5; display: flex; gap: .15rem; align-items: center; padding: .2rem; background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 10px; box-shadow: 0 8px 24px -8px rgb(0 0 0 / .3); transition: opacity .12s, transform .12s var(--ease); white-space: nowrap; }
+.sd-selbar[hidden] { display: flex; opacity: 0; transform: translateY(4px); pointer-events: none; }
+.sd .sd-selbar button { border: 0; background: none; padding: .25rem .5rem; border-radius: 6px; display: inline-grid; place-items: center; min-height: 1.75rem; }
+.sd-selbar svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.sd-selbar button:hover:not(:disabled) { background: var(--c-sunk); }
+.sd-selbar .sd-sep { width: 1px; align-self: stretch; background: var(--c-border); margin: .1rem .15rem; }
+/* the typeset preview: as LaTeX sets the table */
+.sd-prev { display: grid; place-items: center; padding: 1rem .6rem; background: var(--c-sunk); border-radius: 8px; overflow: auto; }
+.sd-prev table { border-collapse: collapse; font: 15px/1.35 "Latin Modern Roman", "CMU Serif", "Computer Modern Serif", Georgia, serif; color: var(--c-fg); }
+.sd-prev td, .sd-prev tr { padding: .12rem .5rem; vertical-align: top; border: 0; background: none; }
+.sd-prev td.mr { vertical-align: middle; }
+.sd-prev .math { font-style: italic; }
+.sd-import { display: grid; gap: .35rem; }
+.sd-import textarea { min-height: 5rem; font: 12px/1.4 ui-monospace, monospace; resize: vertical; }
+@media (prefers-reduced-motion: reduce) { dialog.pop[open], .sd *, .sd-selbar { animation: none !important; transition: none !important; } }
+/* image */
+.sd-stage { position: relative; display: inline-block; touch-action: none; user-select: none; background: repeating-conic-gradient(#8882 0 25%, transparent 0 50%) 0 0 / 16px 16px; max-width: 100%; overflow: hidden; border-radius: 6px; }
+.sd-stage img, .sd-stage .sd-ph { display: block; max-width: 100%; max-height: 52vh; }
+.sd-ph { display: grid; place-items: center; text-align: center; color: var(--c-muted); border: 1px dashed var(--c-border); padding: 1rem; box-sizing: border-box; }
+.sd-crop { position: absolute; box-shadow: 0 0 0 9999px rgb(0 0 0 / .45); outline: 1px solid #fff; cursor: move; }
+.sd-h { position: absolute; width: 14px; height: 14px; background: #fff; border: 1px solid #000; border-radius: 3px; transform: translate(-50%, -50%); }
+.sd-prev-box { display: grid; place-items: center; min-height: 9rem; background: var(--c-sunk); border-radius: 8px; overflow: hidden; padding: .5rem; }
+.sd-prev-crop { overflow: hidden; position: relative; outline: 1px solid var(--c-border); }
+.sd-prev-crop > * { position: absolute; display: block; max-width: none; max-height: none; }
 `;
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   const h = (tag, attrs = {}, ...kids) => {
@@ -72,6 +150,7 @@ dialog.sd-dialog::backdrop { background: rgb(0 0 0 / .35); }
     for (const [k, v] of Object.entries(attrs)) {
       if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
       else if (k === 'class') e.className = v;
+      else if (k === 'html') e.innerHTML = v;
       else if (v === true) e.setAttribute(k, '');
       else if (v !== false && v != null) e.setAttribute(k, v);
     }
@@ -80,21 +159,151 @@ dialog.sd-dialog::backdrop { background: rgb(0 0 0 / .35); }
   };
   const clone = (x) => JSON.parse(JSON.stringify(x));
   let styled = false;
+  const style = () => { if (!styled && self.document) { document.head.append(h('style', {}, CSS)); styled = true; } };
 
-  /** The frame both dialogs share: title, body, the TeX they write with its notes, Apply. */
-  function frame(view, host, title, render) {
-    if (!styled) { document.head.append(h('style', {}, CSS)); styled = true; }
-    const root = h('div', { class: 'sd' + (host.parent ? ' sd-inline' : '') });
-    const tex = h('pre', { class: 'sd-tex', 'aria-label': 'the TeX written' });
-    const notes = h('div', { class: 'sd-note' });
-    let result = null, timer = 0, seq = 0;
-    const close = () => { dlg?.close(); dlg?.remove(); host.closed?.(); };
-    const apply = h('button', { type: 'button', class: 'sd-primary', onclick: () => { if (result) { host.commit(result.edits); close(); } } }, 'Apply');
+  // ------------------------------------------------------------ store
+
+  /** What survives a reload: JSON under `satex:<key>`, dropped when written by another layout version. */
+  const VERSION = 1;
+  const store = {
+    get(key, fallback = null) {
+      try {
+        const v = JSON.parse(localStorage.getItem(`satex:${key}`) ?? 'null');
+        return v && v.v === VERSION ? v.x : fallback;
+      } catch { return fallback; }
+    },
+    set(key, value) {
+      try { if (value == null) localStorage.removeItem(`satex:${key}`); else localStorage.setItem(`satex:${key}`, JSON.stringify({ v: VERSION, x: value })); } catch {}
+    },
+    /** Forgets every kept view state (not the drafts). */
+    clear() { try { for (const k of Object.keys(localStorage)) if (k.startsWith('satex:')) localStorage.removeItem(k); } catch {} },
+  };
+
+  // ------------------------------------------------------------ popup
+
+  const ICON = {
+    peek: '<svg viewBox="0 0 16 16"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>',
+    free: '<svg viewBox="0 0 16 16"><rect x="2" y="4.5" width="9.5" height="9" rx="1.5"/><path d="M8 2h6v6M14 2 8.5 7.5"/></svg>',
+    dock: '<svg viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M5 8h6M8 5v6" opacity=".0"/><path d="M2 5.5h12"/></svg>',
+    full: '<svg viewBox="0 0 16 16"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg>',
+    unfull: '<svg viewBox="0 0 16 16"><path d="M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4"/></svg>',
+  };
+  /** Gives `dlg` (a <dialog> with a header) the popup's tools: peek (hold, or Alt+P), detach into a
+   * movable, resizable panel (Alt+D), full screen (Alt+F); each dialog's mode and place are kept by `name`. */
+  function enhance(dlg, name = dlg.id || 'dialog') {
+    if (dlg.dataset.pop) return dlg;
+    style();
+    dlg.dataset.pop = name;
+    dlg.classList.add('pop');
+    const header = dlg.querySelector(':scope > header, :scope > .sd > header');
+    if (!header) return dlg;
+    const kept = () => store.get(`pop:${name}`, {});
+    const keep = (patch) => store.set(`pop:${name}`, { ...kept(), ...patch });
+    const btn = (icon, label, keys) => h('button', { type: 'button', class: 'pop-btn', title: `${label} (${keys})`, 'aria-label': label, 'aria-pressed': 'false', html: ICON[icon] });
+    const peek = btn('peek', 'Peek: hold to see the page underneath', 'hold, or Alt+P');
+    const free = btn('free', 'Detach into a movable panel', 'Alt+D');
+    const full = btn('full', 'Full screen', 'Alt+F');
+    const tools = h('span', { class: 'pop-tools' }, peek, free, full);
+    const close = [...header.querySelectorAll(':scope > button')].pop();
+    header.insertBefore(tools, close ?? null);
+    const setFull = (on) => {
+      dlg.classList.toggle('pop-full', on);
+      full.setAttribute('aria-pressed', String(on));
+      full.innerHTML = on ? ICON.unfull : ICON.full;
+      keep({ full: on });
+    };
+    const place = (r) => {
+      const W = innerWidth, H = innerHeight, w = Math.min(r.w, W), hh = Math.min(r.h, H);
+      Object.assign(dlg.style, { left: `${Math.max(0, Math.min(r.x, W - w))}px`, top: `${Math.max(0, Math.min(r.y, H - hh))}px`, width: `${w}px`, height: `${hh}px` });
+    };
+    const setFree = (on, rect) => {
+      const open = dlg.open;
+      const r = rect ?? (() => { const b = dlg.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; })();
+      if (open) dlg.close();
+      dlg.classList.toggle('pop-free', on);
+      if (on) { setFull(false); place(r); } else for (const k of ['left', 'top', 'width', 'height']) dlg.style[k] = '';
+      free.setAttribute('aria-pressed', String(on));
+      free.innerHTML = on ? ICON.dock : ICON.free;
+      free.title = on ? 'Dock: back to a dialog (Alt+D)' : 'Detach into a movable panel (Alt+D)';
+      keep({ free: on, rect: on ? r : kept().rect });
+      if (open) on ? dlg.show() : dlg.showModal();
+    };
+    full.onclick = () => { if (dlg.classList.contains('pop-free')) setFree(false); setFull(!dlg.classList.contains('pop-full')); };
+    free.onclick = () => setFree(!dlg.classList.contains('pop-free'));
+    const peeking = (on) => { dlg.classList.toggle('pop-peek', on); peek.setAttribute('aria-pressed', String(on)); };
+    peek.addEventListener('pointerdown', (e) => { e.preventDefault(); peek.setPointerCapture(e.pointerId); peeking(true); });
+    for (const ev of ['pointerup', 'pointercancel']) peek.addEventListener(ev, () => peeking(false));
+    peek.addEventListener('click', (e) => { if (e.detail === 0) peeking(!dlg.classList.contains('pop-peek')); });
+    // a peek ends with any key or click on the page
+    addEventListener('pointerdown', () => { if (dlg.classList.contains('pop-peek') && !peek.matches(':active')) peeking(false); }, true);
+    dlg.addEventListener('keydown', (e) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'p') { e.preventDefault(); peeking(!dlg.classList.contains('pop-peek')); }
+      else if (k === 'd') { e.preventDefault(); setFree(!dlg.classList.contains('pop-free')); }
+      else if (k === 'f') { e.preventDefault(); full.click(); }
+    });
+    addEventListener('keydown', (e) => { if (dlg.classList.contains('pop-peek') && !(e.altKey && e.key.toLowerCase() === 'p')) peeking(false); }, true);
+    // a detached panel moves by its header and keeps its size
+    header.addEventListener('pointerdown', (e) => {
+      if (!dlg.classList.contains('pop-free') || e.button || e.target.closest('button, input, select, label, a')) return;
+      e.preventDefault();
+      const b = dlg.getBoundingClientRect(), x0 = e.clientX - b.left, y0 = e.clientY - b.top;
+      const move = (m) => place({ x: m.clientX - x0, y: m.clientY - y0, w: b.width, h: b.height });
+      const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); const r = dlg.getBoundingClientRect(); keep({ rect: { x: r.left, y: r.top, w: r.width, h: r.height } }); };
+      addEventListener('pointermove', move);
+      addEventListener('pointerup', up);
+    });
+    new ResizeObserver(() => {
+      if (!dlg.classList.contains('pop-free') || !dlg.open) return;
+      const r = dlg.getBoundingClientRect();
+      if (r.width && r.height) keep({ rect: { x: r.left, y: r.top, w: r.width, h: r.height } });
+    }).observe(dlg);
+    // opened again: as it was left
+    const restore = () => {
+      const k = kept();
+      if (k.full && !dlg.classList.contains('pop-full')) setFull(true);
+      if (k.free && !dlg.classList.contains('pop-free') && k.rect) setFree(true, k.rect);
+    };
+    new MutationObserver(() => { if (dlg.open) restore(); }).observe(dlg, { attributes: true, attributeFilter: ['open'] });
+    if (dlg.open) restore();
+    return dlg;
+  }
+
+  /** The frame every widget shares: header (title, tools, close), body, footer with the primary action.
+   * `opts`: {name, title, sub, main, side, foot, actions: [button…], parent, onClose}. */
+  function popup(opts) {
+    style();
+    const root = h('div', { class: 'sd' + (opts.parent ? ' sd-inline' : '') });
+    let dlg = null;
+    const close = () => { if (dlg) { dlg.close(); dlg.remove(); } opts.onClose?.(); };
     root.append(
-      h('header', {}, h('h3', {}, title), host.parent ? null : h('button', { type: 'button', 'aria-label': 'close', onclick: close }, '✕')),
-      h('div', { class: 'sd-body' }, render.main, h('div', { class: 'sd-side' }, render.side, h('h4', {}, 'Written as'), tex, notes)),
-      h('footer', {}, h('span', { class: 'sd-muted', style: 'flex:1' }, render.foot ?? ''), host.parent ? null : h('button', { type: 'button', onclick: close }, 'Cancel'), apply),
+      h('header', {}, h('h3', {}, opts.title), opts.sub ? h('span', { class: 'sd-sub' }, opts.sub) : null,
+        opts.parent ? null : h('button', { type: 'button', class: 'sd-icon', 'aria-label': 'close', title: 'Close (Esc)', html: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>', onclick: close })),
+      h('div', { class: 'sd-body' }, opts.main, opts.side ? h('div', { class: 'sd-side' }, opts.side) : null),
+      h('footer', {}, h('span', { class: 'sd-muted', style: 'flex:1;min-width:10rem' }, opts.foot ?? ''), opts.parent ? null : h('button', { type: 'button', class: 'sd-ghost', onclick: close }, 'Cancel'), ...(opts.actions ?? [])),
     );
+    if (opts.parent) opts.parent.replaceChildren(root);
+    else {
+      // one dialog per widget: opening it again replaces the open one
+      for (const old of document.querySelectorAll(`dialog.sd-dialog[data-pop="${opts.name ?? 'widget'}"]`)) { old.close(); old.remove(); }
+      dlg = h('dialog', { class: 'sd-dialog', 'aria-label': opts.title }, root);
+      document.body.append(dlg);
+      enhance(dlg, opts.name ?? 'widget');
+      dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+      dlg.showModal();
+    }
+    return { root, close, dialog: dlg };
+  }
+
+  /** The frame of a dialog that writes TeX: Apply sends the server's last edits; `render.main/side` fill it. */
+  function frame(view, host, title, render) {
+    const tex = h('pre', { class: 'sd-tex', 'aria-label': 'the TeX written' });
+    const notes = h('div', { class: 'sd-note', role: 'status' });
+    let result = null, timer = 0, seq = 0;
+    const apply = h('button', { type: 'button', class: 'sd-primary', title: 'Write it (Ctrl+Enter)', onclick: () => { if (result) { host.commit(result.edits); p.close(); } } }, 'Apply');
+    const p = popup({ name: view.kind, title, sub: render.sub, main: render.main, side: [render.side, h('h4', {}, 'Written as'), tex, notes], foot: render.foot, actions: [apply], parent: host.parent, onClose: () => host.closed?.() });
+    p.root.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); apply.click(); } });
     /** Asks the server for the text `state` writes; `op` transforms the state first (booktabs, siunitx). */
     const refresh = (op) => {
       clearTimeout(timer);
@@ -102,31 +311,32 @@ dialog.sd-dialog::backdrop { background: rgb(0 0 0 / .35); }
         timer = setTimeout(async () => {
           const mine = ++seq;
           const r = await host.apply(view.state, op).catch((e) => ({ error: e.message }));
-          if (mine !== seq) return done();
-          if (r?.error) { notes.textContent = r.error; apply.disabled = true; return done(); }
+          if (mine !== seq) return done(false);
+          if (r?.error) { notes.textContent = r.error; apply.disabled = !result; return done(false); }
           result = r;
           if (r.state) { view.state = r.state; render.redraw(); }
           tex.textContent = r.edits?.[0]?.newText ?? '';
           notes.textContent = (r.notes ?? []).join('; ');
           apply.disabled = false;
-          done();
-        }, op ? 0 : 150);
+          done(true);
+        }, op ? 0 : 120);
       });
     };
-    let dlg = null;
-    if (host.parent) host.parent.replaceChildren(root);
-    else {
-      dlg = h('dialog', { class: 'sd-dialog', 'aria-label': title }, root);
-      dlg.addEventListener('close', () => dlg.remove());
-      document.body.append(dlg);
-      dlg.showModal();
-    }
-    return { refresh, root };
+    return { refresh, root: p.root, close: p.close };
   }
 
+  // ------------------------------------------------------------ table model (no DOM: views.test.mjs)
 
-  const ALIGNS = [['l', 'left'], ['c', 'center'], ['r', 'right'], ['p', 'paragraph p{…}'], ['S', 'siunitx S']];
   const RULES = ['\\hline', '\\toprule', '\\midrule', '\\bottomrule'];
+  const blank = () => ({ text: '', span: 1, spec: '' });
+  const balanced = (t) => { let d = 0; for (const m of t.replace(/\\./g, '').matchAll(/[{}]/g)) if ((d += m[0] === '{' ? 1 : -1) < 0) return false; return d === 0; };
+  const MR = /^\\multirow\s*\{(\d+)\}\s*\{([^{}]*)\}\s*\{([\s\S]*)\}$/;
+  /** A cell's `\multirow{n}{width}{text}`: [n, width, text] when it is one. */
+  const multirow = (c) => { const m = c.text.trim().match(MR); return m && balanced(m[3]) ? [+m[1], m[2], m[3]] : null; };
+  const rowsOf = (c) => multirow(c)?.[0] ?? 1;
+  const inner = (c) => multirow(c)?.[2] ?? c.text;
+  const setInner = (c, t) => { const m = multirow(c); c.text = m ? `\\multirow{${m[0]}}{${m[1]}}{${t}}` : t; };
+  const setRows = (c, n) => { const m = multirow(c), t = inner(c); c.text = n > 1 ? `\\multirow{${n}}{${m?.[1] ?? '*'}}{${t}}` : t; };
   const width = (row) => row.cells.reduce((n, c) => n + Math.max(1, c.span), 0);
   /** The index of the cell covering column `col`, and the column it starts at. */
   function cellAt(row, col) {
@@ -138,46 +348,135 @@ dialog.sd-dialog::backdrop { background: rgb(0 0 0 / .35); }
     }
     return [-1, at];
   }
-  const blank = () => ({ text: '', span: 1, spec: '' });
-
-  function table(view, host) {
-    const t = () => view.state;
-    const ctx = view.context ?? {};
-    let cur = [0, 0]; // row, column
-    const main = h('div');
-    const side = h('div');
-    const ui = { main, side, redraw: () => draw(), foot: 'Rows the dialog leaves as they are keep their text.' };
-    const f = frame(view, host, 'Edit table', ui);
-    const change = (fn) => { fn(t()); draw(); f.refresh(); };
-    const ops = {
-      addRow: (s) => {
-        const r = Math.min(cur[0], s.rows.length - 1);
-        if (r >= 0 && !s.rows[r].end) s.rows[r].end = '\\\\';
-        s.rows.splice(r + 1, 0, { before: [], inline: false, cells: s.cols.map(blank), end: r + 1 < s.rows.length || s.rows.length === 0 ? '\\\\' : '\\\\', comment: '', raw: '' });
-        cur = [r + 1, cur[1]];
-      },
-      delRow: (s) => { if (s.rows.length > 1) { const [gone] = s.rows.splice(cur[0], 1); if (s.rows[cur[0]]) s.rows[cur[0]].before = [...gone.before, ...s.rows[cur[0]].before]; cur[0] = Math.min(cur[0], s.rows.length - 1); } },
-      moveRow: (s, d) => {
-        const a = cur[0], b = a + d;
-        if (b < 0 || b >= s.rows.length) return;
-        for (const k of ['cells', 'raw', 'comment']) [s.rows[a][k], s.rows[b][k]] = [s.rows[b][k], s.rows[a][k]];
-        cur[0] = b;
-      },
-      addCol: (s) => {
-        const at = Math.min(cur[1] + 1, s.cols.length);
-        s.cols.splice(at, 0, { align: 'l', arg: '', pre: '', post: '' });
-        s.seps.splice(at === s.cols.length - 1 ? at : at + 1, 0, '');
-        for (const r of s.rows) {
-          const [i, start] = cellAt(r, at);
-          if (i < 0) r.cells.push(blank());
-          else if (start === at) r.cells.splice(i, 0, blank());
-          else r.cells[i].span++;
+  /** Per row and column: the cell there `{r, i, c, span, rows}` (a `\multirow` covers the rows below it). */
+  function layout(s) {
+    const map = s.rows.map(() => []);
+    s.rows.forEach((row, r) => {
+      let c = 0;
+      row.cells.forEach((cell, i) => {
+        const span = Math.max(1, cell.span), n = rowsOf(cell);
+        for (let k = 0; k < span; k++) map[r][c + k] ??= { r, i, c, span, rows: 1 };
+        if (n > 1) {
+          const owner = { r, i, c, span, rows: Math.min(n, s.rows.length - r) };
+          for (let j = 0; j < owner.rows; j++) for (let k = 0; k < span; k++) map[r + j][c + k] = owner;
         }
-        cur[1] = at;
-      },
-      delCol: (s) => {
-        if (s.cols.length < 2) return;
-        const c = cur[1];
+        c += span;
+      });
+    });
+    return map;
+  }
+  /** `[r0, c0, r1, c1]` grown until it holds whole cells, merged ones included. */
+  function normalize(s, [r0, c0, r1, c1]) {
+    [r0, r1] = [Math.min(r0, r1), Math.max(r0, r1)];
+    [c0, c1] = [Math.min(c0, c1), Math.max(c0, c1)];
+    const map = layout(s);
+    for (let grown = true; grown;) {
+      grown = false;
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+        const o = map[r]?.[c];
+        if (!o) continue;
+        const [a, b, x, y] = [Math.min(r0, o.r), Math.min(c0, o.c), Math.max(r1, o.r + o.rows - 1), Math.max(c1, o.c + o.span - 1)];
+        if (a !== r0 || b !== c0 || x !== r1 || y !== c1) { [r0, c0, r1, c1] = [a, b, x, y]; grown = true; }
+      }
+    }
+    return [r0, c0, r1, c1];
+  }
+  /** Pads `row` to `n` columns with blank cells. */
+  const pad = (row, n) => { while (width(row) < n) row.cells.push(blank()); };
+  /** Merges the cells of `row` over columns c0..c1 into one `\multicolumn`; returns it. */
+  function mergeRow(s, row, c0, c1) {
+    pad(row, c1 + 1);
+    const [i0] = cellAt(row, c0), [i1] = cellAt(row, c1);
+    if (i0 === i1) return row.cells[i0];
+    const parts = row.cells.slice(i0, i1 + 1);
+    const cell = { text: parts.map(inner).filter((t) => t.trim()).join(' '), span: parts.reduce((n, c) => n + Math.max(1, c.span), 0), spec: parts[0].spec || 'c' };
+    row.cells.splice(i0, i1 - i0 + 1, cell);
+    return cell;
+  }
+  const T = {
+    multirow, rowsOf, inner, setInner, layout, normalize, cellAt, width, RULES,
+    /** Merges the block: a row span is a `\multicolumn`, a column span a `\multirow`, a block both. */
+    merge(s, rect) {
+      const [r0, c0, r1, c1] = normalize(s, rect);
+      if (r0 === r1 && c0 === c1) return false;
+      const texts = [];
+      for (let r = r0; r <= r1; r++) {
+        pad(s.rows[r], c1 + 1);
+        for (const c of s.rows[r].cells.slice(cellAt(s.rows[r], c0)[0], cellAt(s.rows[r], c1)[0] + 1)) if (inner(c).trim()) texts.push(inner(c).trim());
+      }
+      for (let r = r0; r <= r1; r++) {
+        const cell = c1 > c0 ? mergeRow(s, s.rows[r], c0, c1) : s.rows[r].cells[cellAt(s.rows[r], c0)[0]];
+        cell.text = r === r0 ? texts.join(' ') : '';
+        if (r === r0) setRows(cell, r1 - r0 + 1);
+      }
+      return true;
+    },
+    /** Splits every merged cell in the block. */
+    split(s, rect) {
+      const [r0, c0, r1, c1] = normalize(s, rect);
+      for (let r = r0; r <= r1; r++) {
+        const row = s.rows[r];
+        for (let i = cellAt(row, c1)[0]; i >= 0 && i >= cellAt(row, c0)[0]; i--) {
+          const c = row.cells[i];
+          if (rowsOf(c) > 1) setRows(c, 1);
+          if (c.span > 1) { const n = c.span; c.span = 1; c.spec = ''; row.cells.splice(i + 1, 0, ...Array.from({ length: n - 1 }, blank)); }
+        }
+      }
+    },
+    /** Aligns the block: whole columns by their spec, else each cell by a `\multicolumn{n}{a}`. */
+    align(s, rect, a) {
+      const [r0, c0, r1, c1] = normalize(s, rect);
+      if (r0 === 0 && r1 === s.rows.length - 1) {
+        for (let c = c0; c <= c1; c++) { const col = s.cols[c]; if (['l', 'c', 'r', 'S'].includes(col.align) || !col.align) { col.align = a; col.arg = ''; } }
+        for (let r = r0; r <= r1; r++) for (const cell of s.rows[r].cells) if (cell.span === 1 && /^[lcr]$/.test(cell.spec)) cell.spec = '';
+        return;
+      }
+      for (let r = r0; r <= r1; r++) {
+        const row = s.rows[r];
+        for (let i = cellAt(row, c0)[0]; i >= 0 && i <= cellAt(row, c1)[0]; i++) {
+          const cell = row.cells[i];
+          cell.spec = cell.spec ? cell.spec.replace(/[lcr]/, a) : a;
+          if (cell.span === 1 && cell.spec === s.cols[cellAt(row, c0)[1]]?.align) cell.spec = '';
+        }
+      }
+    },
+    clear(s, rect) {
+      const [r0, c0, r1, c1] = normalize(s, rect);
+      for (let r = r0; r <= r1; r++) { const row = s.rows[r]; for (let i = cellAt(row, c0)[0]; i >= 0 && i <= cellAt(row, c1)[0]; i++) setInner(row.cells[i], ''); }
+    },
+    insertRow(s, at) {
+      const rule = at === s.rows.length && s.rows.length && !s.rows.at(-1).end;
+      if (rule) s.rows.at(-1).end = '\\\\';
+      s.rows.splice(at, 0, { before: [], inline: false, cells: s.cols.map(blank), end: '\\\\', comment: '', raw: '' });
+      // a rule that opened the table stays on top
+      if (at === 0 && s.rows[1]?.before.length) { s.rows[0].before = s.rows[1].before.filter((x) => x === '\\toprule' || x === '\\hline'); s.rows[1].before = s.rows[1].before.filter((x) => !s.rows[0].before.includes(x)); }
+    },
+    deleteRows(s, r0, r1) {
+      if (r1 - r0 + 1 >= s.rows.length) return false;
+      // a \multirow from above reaching in shrinks
+      const map = layout(s);
+      for (let c = 0; c < s.cols.length; c++) {
+        const o = map[r0]?.[c];
+        if (o && o.r < r0 && o.c === c) setRows(s.rows[o.r].cells[o.i], Math.max(1, o.rows - (Math.min(r1, o.r + o.rows - 1) - r0 + 1)));
+      }
+      const gone = s.rows.splice(r0, r1 - r0 + 1);
+      if (s.rows[r0]) s.rows[r0].before = [...gone[0].before, ...s.rows[r0].before.filter((x) => !gone[0].before.includes(x))];
+      else s.after = [...gone.at(-1).before.filter((x) => !RULES.includes(x)), ...s.after];
+      return true;
+    },
+    insertCol(s, at) {
+      s.cols.splice(at, 0, { align: 'l', arg: '', pre: '', post: '' });
+      s.seps.splice(Math.max(1, Math.min(at, s.cols.length - 1)), 0, '');
+      for (const r of s.rows) {
+        const [i, start] = cellAt(r, at);
+        if (i < 0) { if (width(r) === at || at === 0) r.cells.splice(at === 0 ? 0 : r.cells.length, 0, blank()); }
+        else if (start === at) r.cells.splice(i, 0, blank());
+        else r.cells[i].span++;
+      }
+    },
+    deleteCols(s, c0, c1) {
+      if (c1 - c0 + 1 >= s.cols.length) return false;
+      for (let c = c1; c >= c0; c--) {
         s.cols.splice(c, 1);
         s.seps.splice(c === s.cols.length ? c : c + 1, 1);
         for (const r of s.rows) {
@@ -185,101 +484,446 @@ dialog.sd-dialog::backdrop { background: rgb(0 0 0 / .35); }
           if (i < 0) continue;
           if (r.cells[i].span > 1) r.cells[i].span--; else r.cells.splice(i, 1);
         }
-        cur[1] = Math.min(c, s.cols.length - 1);
-      },
-      moveCol: (s, d) => {
-        const a = cur[1], b = a + d;
-        if (b < 0 || b >= s.cols.length) return;
-        const pairs = s.rows.map((r) => [cellAt(r, a), cellAt(r, b)]);
-        if (pairs.some(([[i], [j]], k) => i >= 0 && j >= 0 && (s.rows[k].cells[i].span > 1 || s.rows[k].cells[j].span > 1))) return note('A merged cell spans the columns: split it first.');
-        [s.cols[a], s.cols[b]] = [s.cols[b], s.cols[a]];
-        s.rows.forEach((r, k) => { const [[i], [j]] = pairs[k]; if (i >= 0 && j >= 0) [r.cells[i], r.cells[j]] = [r.cells[j], r.cells[i]]; });
-        cur[1] = b;
-      },
-      merge: (s) => {
-        const r = s.rows[cur[0]], [i] = cellAt(r, cur[1]);
-        if (i < 0 || i + 1 >= r.cells.length) return;
-        const [a, b] = [r.cells[i], r.cells[i + 1]];
-        a.text = [a.text, b.text].filter((x) => x.trim()).join(' ');
-        a.span = Math.max(1, a.span) + Math.max(1, b.span);
-        a.spec ||= 'c';
-        r.cells.splice(i + 1, 1);
-      },
-      split: (s) => {
-        const r = s.rows[cur[0]], [i] = cellAt(r, cur[1]);
-        if (i < 0 || r.cells[i].span < 2) return;
-        r.cells[i].span--;
-        if (r.cells[i].span === 1) r.cells[i].spec = '';
-        r.cells.splice(i + 1, 0, blank());
-      },
-    };
-    const msg = h('span', { class: 'sd-note' });
+      }
+      return true;
+    },
+    moveRow(s, r, d) {
+      const b = r + d;
+      if (b < 0 || b >= s.rows.length) return false;
+      for (const k of ['cells', 'raw', 'comment']) [s.rows[r][k], s.rows[b][k]] = [s.rows[b][k], s.rows[r][k]];
+      return true;
+    },
+    moveCol(s, a, d) {
+      const b = a + d;
+      if (b < 0 || b >= s.cols.length) return false;
+      const pairs = s.rows.map((r) => [cellAt(r, a), cellAt(r, b)]);
+      if (pairs.some(([[i], [j]], k) => i >= 0 && j >= 0 && (s.rows[k].cells[i].span > 1 || s.rows[k].cells[j].span > 1))) return false;
+      [s.cols[a], s.cols[b]] = [s.cols[b], s.cols[a]];
+      s.rows.forEach((r, k) => { const [[i], [j]] = pairs[k]; if (i >= 0 && j >= 0) [r.cells[i], r.cells[j]] = [r.cells[j], r.cells[i]]; });
+      return true;
+    },
+    /** 'format': `&`s lined up, one space around; 'compact': no padding. Every row is written anew. */
+    setStyle(s, mode) {
+      s.style.aligned = mode === 'format';
+      s.style.spaced = mode === 'format';
+      for (const r of s.rows) r.raw = '';
+    },
+    styleOf: (s) => s.style.aligned ? 'format' : !s.style.spaced ? 'compact' : '',
+    /** The rows before the first rule below the top: the header. */
+    header(s) { const k = s.rows.findIndex((r, i) => i > 0 && r.before.some((x) => RULES.includes(x.trim()))); return k > 0 && k <= 3 ? k : 0; },
+    /** TeX to the text it shows: specials unescaped, font commands and math shifts dropped. */
+    plain(tex) {
+      let t = String(tex).replace(/\\textbackslash(\{\})?/g, '\u0001').replace(/\\textasciitilde(\{\})?/g, '\u0002').replace(/\\textasciicircum(\{\})?/g, '\u0003');
+      for (let k = 0; k < 4; k++) t = t.replace(/\\(?:textbf|textit|emph|texttt|textrm|textsf|textsc|underline|mathrm|mathbf|text|mbox)\s*\{([^{}]*)\}/g, '$1');
+      t = t.replace(/\\([&%$#_{}])/g, '\u0004$1').replace(/~/g, ' ').replace(/(?<!\u0004)[{}$]/g, '').replace(/\u0004/g, '');
+      return t.replace(/\\,/g, ' ').replace(/\u0001/g, '\\').replace(/\u0002/g, '~').replace(/\u0003/g, '^').replace(/ /g, ' ').trim();
+    },
+    /** Text to TeX: the specials escaped. */
+    tex(text) {
+      return String(text).replace(/[\\&%$#_{}~^]/g, (c) => ({ '\\': '\\textbackslash{}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}' })[c] ?? `\\${c}`);
+    },
+    /** CSV (or TSV with `sep` '\t') of the cells' text; a merged cell's text in its first column. */
+    toCSV(s, sep = ',', rect = null, raw = false) {
+      const [r0, c0, r1, c1] = rect ?? [0, 0, s.rows.length - 1, s.cols.length - 1];
+      const map = layout(s), q = (v) => /["\n\r,;\t]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+      const lines = [];
+      for (let r = r0; r <= r1; r++) {
+        const out = [];
+        for (let c = c0; c <= c1; c++) {
+          const o = map[r][c], own = o && o.r === r && o.c === c;
+          const t = own ? inner(s.rows[r].cells[o.i]) : '';
+          out.push(q(raw ? t : T.plain(t)));
+        }
+        lines.push(out.join(sep));
+      }
+      return lines.join('\n');
+    },
+    /** Rows of fields from CSV, TSV or `;`-separated text (the separator guessed from the first line). */
+    parseCSV(text) {
+      const first = text.split('\n')[0];
+      const sep = first.includes('\t') ? '\t' : (first.split(';').length > first.split(',').length ? ';' : ',');
+      const rows = [[]];
+      let f = '', quoted = false;
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (quoted) { if (ch === '"' && text[i + 1] === '"') { f += '"'; i++; } else if (ch === '"') quoted = false; else f += ch; }
+        else if (ch === '"' && f === '') quoted = true;
+        else if (ch === sep) { rows.at(-1).push(f); f = ''; }
+        else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; rows.at(-1).push(f); f = ''; rows.push([]); }
+        else f += ch;
+      }
+      rows.at(-1).push(f);
+      while (rows.length > 1 && rows.at(-1).every((x) => x === '')) rows.pop();
+      return rows;
+    },
+    /** The table as JSON: columns, header rows, each cell's text and TeX (with its span). */
+    toJSON(s) {
+      return {
+        format: 'satex-table', columns: s.cols.map((c) => ({ align: c.align, ...(c.arg ? { arg: c.arg } : {}) })), header: T.header(s),
+        rows: s.rows.map((r) => r.cells.map((c) => ({ text: T.plain(inner(c)), tex: c.text, ...(c.span > 1 ? { span: c.span } : {}), ...(c.spec ? { spec: c.spec } : {}) }))),
+      };
+    },
+    /** Replaces the rows (and columns, from JSON) by `rows` of cells; rules stay where they stood. */
+    fill(s, rows, cols = null) {
+      const n = Math.max(1, cols?.length ?? 0, ...rows.map((r) => r.reduce((k, c) => k + Math.max(1, c.span ?? 1), 0)));
+      const old = s.rows, lastEnd = old.at(-1)?.end ?? '\\\\';
+      s.rows = rows.map((cells, k) => ({ before: old[k]?.before ?? [], inline: old[k]?.inline ?? false, cells, end: k < rows.length - 1 ? '\\\\' : lastEnd || '\\\\', comment: '', raw: '' }));
+      for (const r of s.rows) pad(r, n);
+      const kept = s.cols;
+      s.cols = Array.from({ length: n }, (_, k) => cols?.[k] ? { align: cols[k].align ?? 'l', arg: cols[k].arg ?? '', pre: kept[k]?.pre ?? '', post: kept[k]?.post ?? '' } : kept[k] ?? { align: 'l', arg: '', pre: '', post: '' });
+      const outer = [s.seps[0] ?? '', s.seps.at(-1) ?? ''];
+      s.seps = Array.from({ length: n + 1 }, (_, k) => k === 0 ? outer[0] : k === n ? outer[1] : s.seps[k] ?? '');
+    },
+    /** Imports CSV/TSV (text, escaped) or this dialog's JSON (TeX as written); false when unreadable. */
+    importText(s, text) {
+      const t = text.trim();
+      if (t.startsWith('{')) {
+        let j;
+        try { j = JSON.parse(t); } catch { return false; }
+        if (!Array.isArray(j.rows)) return false;
+        T.fill(s, j.rows.map((r) => r.map((c) => typeof c === 'string' ? { text: T.tex(c), span: 1, spec: '' } : { text: c.tex ?? T.tex(c.text ?? ''), span: c.span ?? 1, spec: c.spec ?? '' })), j.columns);
+        return true;
+      }
+      const rows = T.parseCSV(t);
+      if (!rows.length || !rows[0].length) return false;
+      T.fill(s, rows.map((r) => r.map((v) => ({ text: T.tex(v.trim()), span: 1, spec: '' }))));
+      return true;
+    },
+    /** Pastes `grid` (rows of TeX) with its top left at (r, c), growing the table as needed. */
+    paste(s, r, c, grid) {
+      while (s.rows.length < r + grid.length) T.insertRow(s, s.rows.length);
+      const w = Math.max(...grid.map((g) => g.length));
+      while (s.cols.length < c + w) T.insertCol(s, s.cols.length);
+      grid.forEach((g, i) => g.forEach((v, j) => {
+        const row = s.rows[r + i];
+        pad(row, c + j + 1);
+        const [k, start] = cellAt(row, c + j);
+        if (k >= 0 && start === c + j) setInner(row.cells[k], v);
+      }));
+    },
+    numeric: (t) => /^\s*[+\-−]?(\d+([.,]\d*)?|[.,]\d+)([eE][+-]?\d+)?\s*$/.test(t),
+  };
+
+  // ------------------------------------------------------------ table dialog
+
+  /** Column types: the ones the packages loaded give, the rest offered with the package they add. */
+  const COLS = [
+    ['l', 'left', null], ['c', 'center', null], ['r', 'right', null], ['p', 'paragraph p{width}', null],
+    ['m', 'middle m{width}', 'array'], ['b', 'bottom b{width}', 'array'], ['X', 'fill X', 'tabularx'], ['S', 'number S', 'siunitx'],
+  ];
+  const WIDTH = ['p', 'm', 'b'];
+  const SVG = (d) => `<svg viewBox="0 0 16 16">${d}</svg>`;
+  const AL = { l: SVG('<path d="M2.5 4h11M2.5 8h7M2.5 12h9"/>'), c: SVG('<path d="M2.5 4h11M4.5 8h7M3.5 12h9"/>'), r: SVG('<path d="M2.5 4h11M6.5 8h7M4.5 12h9"/>') };
+
+  function table(view, host) {
+    const t = () => view.state;
+    const ctx = view.context ?? {};
+    const main = h('div', { class: 'sd-tab' });
+    const side = h('div');
+    let anchor = [0, 0], focus = [0, 0], editing = null;
+    const undo = [], redo = [];
+    const f = frame(view, host, 'Edit table', {
+      main, side, sub: `${t().env} · ${t().rows.length} × ${t().cols.length}`, redraw: () => draw(),
+      foot: h('span', {}, 'Select with drag or ', h('kbd', {}, 'Shift'), '+arrows, type to edit, ', h('kbd', {}, 'Ctrl+Z'), ' undo, ', h('kbd', {}, 'Ctrl+Enter'), ' apply.'),
+    });
+    const snapshot = () => { undo.push(JSON.stringify(t())); if (undo.length > 200) undo.shift(); redo.length = 0; };
+    /** Every edit: undoable, drawn, written. */
+    const change = (fn, op) => { snapshot(); const ok = fn(t()); if (ok === false) undo.pop(); draw(); f.refresh(op); return ok; };
+    const travel = (from, to) => { if (!from.length) return; to.push(JSON.stringify(t())); view.state = JSON.parse(from.pop()); draw(); f.refresh(); };
+    const rect = () => T.normalize(t(), [anchor[0], anchor[1], focus[0], focus[1]]);
     const note = (m) => { msg.textContent = m; setTimeout(() => { if (msg.textContent === m) msg.textContent = ''; }, 4000); };
-    const btn = (label, title, fn) => h('button', { type: 'button', title, 'aria-label': title, onclick: () => change(fn) }, label);
     const pkg = (name) => ctx[name] ? '' : ` (adds \\usepackage{${name}})`;
-    const bar = h('div', { class: 'sd-bar' },
-      btn('+ row', 'Add a row below the current one', ops.addRow), btn('− row', 'Remove the current row', ops.delRow),
-      btn('↑', 'Move the row up', (s) => ops.moveRow(s, -1)), btn('↓', 'Move the row down', (s) => ops.moveRow(s, 1)),
+
+    // the toolbar: output style and rewrites; the selection's actions float beside it
+    const seg = (mode, label, title) => h('button', { type: 'button', 'data-style': mode, title, onclick: () => change((s) => T.setStyle(s, mode)) }, label);
+    const styleSeg = h('span', { class: 'sd-seg', role: 'group', 'aria-label': 'how the rows are written' },
+      seg('format', 'Format', 'One row per line, the & lined up'), seg('compact', 'Compact', 'One row per line, no padding'));
+    const msg = h('span', { class: 'sd-note', role: 'status' });
+    main.append(h('div', { class: 'sd-bar' },
+      styleSeg, h('span', { class: 'sd-sep' }),
+      h('button', { type: 'button', title: `booktabs' rules: \\toprule, \\midrule, \\bottomrule, no vertical rules${pkg('booktabs')}`, onclick: () => { snapshot(); f.refresh('booktabs'); } }, 'booktabs'),
+      h('button', { type: 'button', title: `Numeric columns as siunitx S columns aligned at the decimal mark${pkg('siunitx')}`, onclick: () => { snapshot(); f.refresh('siunitx').then((ok) => { if (!ok) undo.pop(); }); } }, 'Numbers → S'),
       h('span', { class: 'sd-sep' }),
-      btn('+ col', 'Add a column right of the current one', ops.addCol), btn('− col', 'Remove the current column', ops.delCol),
-      btn('←', 'Move the column left', (s) => ops.moveCol(s, -1)), btn('→', 'Move the column right', (s) => ops.moveCol(s, 1)),
-      h('span', { class: 'sd-sep' }),
-      btn('Merge →', 'Merge the cell with the next (\\multicolumn)', ops.merge), btn('Split', 'Split a merged cell', ops.split),
-      msg);
-    const grid = h('table', { class: 'sd-grid' });
-    main.append(bar, h('div', { style: 'overflow:auto' }, grid));
+      h('button', { type: 'button', class: 'sd-icon', title: 'Undo (Ctrl+Z)', 'aria-label': 'undo', html: SVG('<path d="M5.5 3 2.5 6l3 3"/><path d="M2.5 6h7a4 4 0 0 1 0 8H7"/>'), onclick: () => travel(undo, redo) }),
+      h('button', { type: 'button', class: 'sd-icon', title: 'Redo (Ctrl+Y)', 'aria-label': 'redo', html: SVG('<path d="M10.5 3l3 3-3 3"/><path d="M13.5 6h-7a4 4 0 0 0 0 8H9"/>'), onclick: () => travel(redo, undo) }),
+      msg));
+    const grid = h('table', { class: 'sd-grid', role: 'grid', 'aria-label': 'the table\'s cells', 'aria-multiselectable': 'true' });
+    const bar = h('div', { class: 'sd-selbar', hidden: true, role: 'toolbar', 'aria-label': 'the selection' });
+    const wrap = h('div', { class: 'sd-wrap' }, grid, bar);
+    main.append(wrap);
+
+    // the side: typeset preview, the data in and out
+    const prev = h('div', { class: 'sd-prev', 'aria-label': 'the table as typeset' });
+    const importBox = h('textarea', { placeholder: 'Paste CSV, TSV (from a spreadsheet) or the JSON exported here', 'aria-label': 'data to import', spellcheck: 'false' });
+    const file = h('input', { type: 'file', accept: '.csv,.tsv,.txt,.json,text/csv,application/json', 'aria-label': 'import a file', style: 'max-width:12rem' });
+    const download = (name, text, type) => { const a = h('a', { href: URL.createObjectURL(new Blob([text], { type })), download: name }); document.body.append(a); a.click(); a.remove(); };
+    const copy = (text, what) => navigator.clipboard?.writeText(text).then(() => note(`${what} copied`), () => note('the clipboard refused'));
+    const doImport = (text) => {
+      const ok = change((s) => T.importText(s, text));
+      if (!ok) return note('Neither CSV nor this dialog\'s JSON');
+      importBox.value = '';
+      // numbers become S columns when siunitx is loaded
+      const s = t(), nums = s.cols.some((_, c) => s.rows.slice(T.header(s) || 1).every((r) => { const [i, at] = T.cellAt(r, c); return i >= 0 && at === c && (T.numeric(T.plain(r.cells[i].text)) || !r.cells[i].text.trim()); }));
+      if (ctx.siunitx && nums && /^[\s\d.,+\-]*$/.test(text) === false && !text.trim().startsWith('{')) f.refresh('siunitx');
+      note(`${s.rows.length} rows, ${s.cols.length} columns imported`);
+    };
+    file.onchange = async () => { const fl = file.files?.[0]; if (fl) doImport(await fl.text()); file.value = ''; };
     side.append(
-      h('h4', {}, 'Rewrite'),
-      h('div', { class: 'sd-row' }, h('button', { type: 'button', title: `booktabs' rules: \\toprule, \\midrule, \\bottomrule, no vertical rules${pkg('booktabs')}`, onclick: () => f.refresh('booktabs') }, 'Convert to booktabs')),
-      h('div', { class: 'sd-row' }, h('button', { type: 'button', title: `Numeric columns as siunitx S columns aligned at the decimal mark${pkg('siunitx')}`, onclick: () => f.refresh('siunitx') }, 'Numbers as siunitx S')),
-      ctx.booktabs && ctx.siunitx ? null : h('p', { class: 'sd-muted' }, `${['booktabs', 'siunitx'].filter((p) => !ctx[p]).join(' and ')} not loaded here: using it adds its \\usepackage to the preamble.`),
+      h('h4', {}, 'Preview'), prev,
+      h('h4', {}, 'Data'),
+      h('div', { class: 'sd-row' },
+        h('button', { type: 'button', title: 'Copy the cells as CSV (text, TeX unescaped)', onclick: () => copy(T.toCSV(t()), 'CSV') }, 'Copy CSV'),
+        h('button', { type: 'button', title: 'Download the cells as CSV', onclick: () => download('table.csv', T.toCSV(t()), 'text/csv') }, 'CSV ↓'),
+        h('button', { type: 'button', title: 'Download as JSON: each cell\'s text and TeX, the header rows marked', onclick: () => download('table.json', JSON.stringify(T.toJSON(t()), null, 2), 'application/json') }, 'JSON ↓')),
+      h('details', { class: 'sd-import' }, h('summary', {}, 'Import CSV / JSON…'),
+        h('div', { class: 'sd-import' }, importBox, h('div', { class: 'sd-row' }, file, h('button', { type: 'button', onclick: () => doImport(importBox.value) }, 'Import'))),
+        h('p', { class: 'sd-muted' }, `Text is escaped for TeX (& % $ # _ { } ~ ^ \\). ${ctx.siunitx ? 'Numeric columns become siunitx S columns.' : ''} Rules stay where they stood.`)),
     );
+
     /** A rule gap: the rules before row `k` (or after the last, `k === rows.length`). */
-    function ruleRow(k) {
+    function ruleRow(k, taken) {
       const s = t(), items = k < s.rows.length ? s.rows[k].before : s.after;
       const main = items.find((x) => RULES.includes(x)) ?? '';
       const choices = ['', '\\hline', ...(ctx.booktabs || items.some((x) => /rule/.test(x)) ? ['\\toprule', '\\midrule', '\\bottomrule'] : [])];
-      const sel = h('select', { 'aria-label': `rule ${k === s.rows.length ? 'after the last row' : `before row ${k + 1}`}`, onchange: () => change(() => {
+      const sel = h('select', { class: main ? '' : 'none', 'aria-label': `rule ${k === s.rows.length ? 'after the last row' : `before row ${k + 1}`}`, title: 'the rule here', onchange: () => change(() => {
         const i = items.findIndex((x) => RULES.includes(x));
         if (i >= 0) { if (sel.value) items[i] = sel.value; else items.splice(i, 1); } else if (sel.value) items.unshift(sel.value);
       }) }, choices.map((c) => h('option', { value: c, selected: c === main }, c || '—')));
       const others = items.filter((x) => !RULES.includes(x)).map((x) => h('span', { class: 'sd-chip', title: x }, x.length > 24 ? x.slice(0, 22) + '…' : x));
-      const n = s.cols.length * 2 + 1;
-      return h('tr', { class: 'sd-rule' }, h('td', { class: 'sd-rh' }, sel), h('td', { colspan: n, class: main ? 'sd-ruled' : '', style: main === '\\toprule' || main === '\\bottomrule' ? '--w:2px' : '' }, others));
+      const w = main === '\\toprule' || main === '\\bottomrule' ? '--w:2px' : main === '\\midrule' ? '--w:1.2px' : '';
+      const tds = [];
+      for (let g = 0; g < 2 * s.cols.length + 1; g++) if (!taken.has(g)) tds.push(h('td', { class: main ? 'sd-ruled' : '', style: w }));
+      const edge = (side) => k > 0 && k < s.rows.length ? h('td', { class: `sd-ghost sd-gc sd-gc${side}`, 'aria-hidden': 'true' }) : h('td');
+      return h('tr', { class: 'sd-rule' }, h('td', { class: 'sd-rh' }, sel), edge('L'), tds, edge('R'), h('td', { class: 'sd-chips' }, others));
     }
-    function draw() {
+    const ghostRow = (at, label) => {
       const s = t();
-      const vbar = (k) => h('th', { class: 'sd-v' + (s.seps[k]?.includes('|') ? ' on' : ''), title: 'vertical rule (click)', onclick: () => change((s) => { s.seps[k] = s.seps[k].includes('|') ? s.seps[k].replace(/\|/g, '') : s.seps[k] + '|'; }) });
-      const head = h('tr', {}, h('th', { class: 'sd-rh' }), s.cols.flatMap((c, k) => {
-        const known = ALIGNS.some(([a]) => a === c.align);
-        const sel = h('select', { 'aria-label': `column ${k + 1} alignment`, onchange: () => change(() => { c.align = sel.value; if (c.align === 'p' && !c.arg) c.arg = '3cm'; if (!['p', 'S', 'm', 'b'].includes(c.align)) c.arg = ''; }) },
-          [...ALIGNS, ...(known ? [] : [[c.align, c.align]])].map(([a, n]) => h('option', { value: a, selected: a === c.align }, n)));
-        const arg = ['p', 'm', 'b', 'S'].includes(c.align) ? h('input', { value: c.arg, 'aria-label': `column ${k + 1} argument`, placeholder: c.align === 'S' ? 'options' : 'width', oninput: (e) => { c.arg = e.target.value; f.refresh(); } }) : null;
-        return [vbar(k), h('th', { onclick: () => { cur[1] = k; } }, sel, arg)];
-      }), vbar(s.cols.length));
-      const rows = [];
+      return h('tr', { class: 'sd-ghost-row' }, h('td', { class: 'sd-rh' }), h('td'),
+        h('td', { class: 'sd-ghost sd-gr', colspan: 2 * s.cols.length + 1, tabindex: 0, role: 'button', title: label, 'aria-label': label, onclick: () => { change((s) => T.insertRow(s, at)); select([at, focus[1]]); }, onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.target.click(); } } }, '+'),
+        h('td'));
+    };
+    function draw() {
+      const s = t(), map = T.layout(s), n = s.cols.length;
+      for (const b of styleSeg.children) b.setAttribute('aria-pressed', String(b.dataset.style === T.styleOf(s)));
+      const vbar = (k, tag = 'th') => h(tag, { class: 'sd-vcol' + (s.seps[k]?.includes('|') ? ' on' : ''), title: 'vertical rule (click)', onclick: () => change((s) => { s.seps[k] = s.seps[k].includes('|') ? s.seps[k].replace(/\|/g, '') : s.seps[k] + '|'; }) });
+      const ghostCol = (at, label, tag = 'th') => h(tag, { class: `sd-ghost sd-gc sd-gc${at ? 'R' : 'L'}`, tabindex: tag === 'th' ? 0 : -1, role: 'button', title: label, 'aria-label': label,
+        onclick: () => { change((s) => T.insertCol(s, at)); select([focus[0], at]); }, onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.target.click(); } } }, tag === 'th' ? '+' : '');
+      const head = h('tr', {}, h('th', { class: 'sd-rh' }), ghostCol(0, 'Add a column at the start'), s.cols.flatMap((c, k) => {
+        const loaded = COLS.filter(([, , p]) => !p || ctx[p]), more = COLS.filter(([, , p]) => p && !ctx[p]);
+        const known = COLS.some(([a]) => a === c.align);
+        const sel = h('select', { 'aria-label': `column ${k + 1} type`, title: 'the column type', onchange: () => change(() => {
+          c.align = sel.value;
+          if (WIDTH.includes(c.align) && !c.arg) c.arg = '3cm';
+          if (!WIDTH.includes(c.align) && c.align !== 'S') c.arg = '';
+        }) },
+        loaded.map(([a, nm]) => h('option', { value: a, selected: a === c.align }, nm)),
+        more.length ? h('optgroup', { label: 'adds a package' }, more.map(([a, nm, p]) => h('option', { value: a, selected: a === c.align }, `${nm} · ${p}`))) : null,
+        known ? null : h('option', { value: c.align, selected: true }, c.align));
+        const arg = WIDTH.includes(c.align) || c.align === 'S' ? h('input', { value: c.arg, 'aria-label': `column ${k + 1} ${c.align === 'S' ? 'options' : 'width'}`, placeholder: c.align === 'S' ? 'table-format=…' : 'width', onfocus: () => snapshot(), oninput: (e) => { c.arg = e.target.value; f.refresh(); } }) : null;
+        const del = n > 1 ? h('button', { type: 'button', class: 'sd-del', title: `Remove column ${k + 1}`, 'aria-label': `remove column ${k + 1}`, onclick: () => { change((s) => T.deleteCols(s, k, k)); select([focus[0], Math.min(k, t().cols.length - 1)]); } }, '−') : null;
+        return [vbar(k), h('th', { class: 'sd-colh' }, sel, arg, del)];
+      }), vbar(n), ghostCol(n, 'Add a column at the end'));
+      const rows = [ghostRow(0, 'Add a row at the top')];
+      // grid columns a clean \multirow takes in the rule rows below its first
+      const taken = s.rows.map(() => new Set());
+      const clean = (o) => { for (let j = 1; j < o.rows; j++) { const r = s.rows[o.r + j], [i, at] = T.cellAt(r, o.c); if (i < 0 || at !== o.c || Math.max(1, r.cells[i].span) !== o.span || r.cells[i].text.trim()) return false; } return true; };
+      const skip = s.rows.map(() => new Set());
+      map.forEach((line, k) => line.forEach((o, c) => {
+        if (!o || o.r !== k || o.c !== c || o.rows < 2 || !clean(o)) return;
+        o.clean = true;
+        for (let j = 1; j < o.rows; j++) { skip[k + j].add(o.c); for (let g = 2 * o.c; g < 2 * (o.c + o.span); g++) taken[k + j].add(g); }
+      }));
+      const [r0, c0, r1, c1] = rect();
       s.rows.forEach((r, k) => {
-        rows.push(ruleRow(k));
+        rows.push(ruleRow(k, taken[k]));
         let col = 0;
-        const short = s.cols.length - width(r);
-        const tds = r.cells.flatMap((c, i) => {
-          const span = Math.max(1, c.span), at = col, align = (c.spec || s.cols[at]?.align || 'l').replace(/[^lcrS]/g, '')[0] ?? 'l';
+        const tds = [];
+        r.cells.forEach((c, i) => {
+          const span = Math.max(1, c.span), at = col;
           col += span;
-          const input = h('input', { value: c.text, 'aria-label': `row ${k + 1} column ${at + 1}`, oninput: (e) => { c.text = e.target.value; f.refresh(); }, onfocus: () => { cur = [k, at]; mark(); } });
-          const spec = span > 1 ? h('input', { value: c.spec, title: '\\multicolumn spec', 'aria-label': 'merged cell spec', style: 'width:3rem;font-size:.8em', oninput: (e) => { c.spec = e.target.value; f.refresh(); } }) : null;
-          return [h('td', { colspan: span * 2 + (i === r.cells.length - 1 && short <= 0 ? 1 : 0), 'data-r': k, 'data-c': at, 'data-align': align }, spec ? h('div', { style: 'display:flex' }, input, spec) : input)];
+          if (skip[k].has(at)) return;
+          const o = map[k][at], n = o && o.r === k && o.clean ? o.rows : 1;
+          const align = (c.spec || s.cols[at]?.align || 'l').replace(/[^lcrS]/g, '')[0] ?? 'l';
+          const text = T.inner(c);
+          const sel = !(k + n - 1 < r0 || k > r1 || at + span - 1 < c0 || at > c1);
+          const merged = span > 1 || T.rowsOf(c) > 1;
+          tds.push(h('td', {
+            class: 'sd-cell' + (sel ? ' sel' : '') + (k === focus[0] && at <= focus[1] && focus[1] < at + span ? ' cur' : '') + (merged ? ' merged' : ''),
+            colspan: 2 * span, rowspan: n > 1 ? 2 * n - 1 : null, tabindex: -1, role: 'gridcell', 'aria-selected': String(sel),
+            'data-r': k, 'data-c': at, 'data-align': align, title: merged ? `merged: ${span > 1 ? `\\multicolumn{${span}}{${c.spec}}` : ''}${T.rowsOf(c) > 1 ? ` \\multirow{${T.rowsOf(c)}}` : ''}` : null,
+          }, text ? text : h('span', { class: 'sd-ph' }, '·')));
         });
-        rows.push(h('tr', {}, h('td', { class: 'sd-rh' }, String(k + 1)), tds, short > 0 ? h('td', { colspan: short * 2 + 1, class: 'sd-muted' }) : null));
+        const short = n - T.width(r);
+        if (short > 0) tds.push(h('td', { colspan: 2 * short, class: 'sd-muted' }));
+        const del = s.rows.length > 1 ? h('button', { type: 'button', class: 'sd-del', title: `Remove row ${k + 1}`, 'aria-label': `remove row ${k + 1}`, onclick: () => { change((s) => T.deleteRows(s, k, k)); select([Math.min(k, t().rows.length - 1), focus[1]]); } }, '−') : null;
+        rows.push(h('tr', { class: 'sd-data' + (k === s.rows.length - 1 ? ' sd-last' : '') }, h('td', { class: 'sd-rh' }, del, h('span', { class: 'sd-n' }, String(k + 1))), ghostCol(0, 'Add a column at the start', 'td'), tds, vbar(n, 'td'), ghostCol(n, 'Add a column at the end', 'td')));
       });
-      rows.push(ruleRow(s.rows.length));
+      rows.push(ruleRow(s.rows.length, new Set()), ghostRow(s.rows.length, 'Add a row at the bottom'));
       grid.replaceChildren(h('thead', {}, head), h('tbody', {}, rows));
-      mark();
+      preview();
+      placeBar();
     }
-    function mark() {
-      for (const td of grid.querySelectorAll('td[data-r]')) td.classList.toggle('sd-cur', +td.dataset.r === cur[0] && +td.dataset.c === cur[1]);
+    const cellEl = ([r, c]) => grid.querySelector(`td.sd-cell[data-r="${r}"][data-c="${c}"]`) ?? (() => { const o = T.layout(t())[r]?.[c]; return o && grid.querySelector(`td.sd-cell[data-r="${o.r}"][data-c="${o.c}"]`); })();
+    /** Moves the selection: `to` the new focus, the anchor stays when `extend`. */
+    function select(to, extend = false) {
+      const s = t();
+      to = [Math.max(0, Math.min(s.rows.length - 1, to[0])), Math.max(0, Math.min(s.cols.length - 1, to[1]))];
+      focus = to;
+      if (!extend) anchor = to;
+      draw();
+      cellEl(focus)?.focus({ preventScroll: false });
+    }
+    // the selection's actions, floating at its top right
+    function placeBar() {
+      const s = t(), [r0, c0, r1, c1] = rect(), one = r0 === r1 && c0 === c1;
+      const first = cellEl([r0, c0]), last = cellEl([r1, c1]);
+      if (!first || !last || editing || !wrap.contains(document.activeElement) && !wrap.matches(':hover')) { bar.hidden = true; return; }
+      const map = T.layout(s);
+      let merged = false;
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) { const o = map[r][c]; if (o && (o.span > 1 || o.rows > 1 || T.rowsOf(s.rows[o.r].cells[o.i]) > 1)) merged = true; }
+      const what = r0 === r1 ? '\\multicolumn' : c0 === c1 ? '\\multirow' : '\\multicolumn + \\multirow';
+      const b = (label, title, fn, disabled = false) => h('button', { type: 'button', title, 'aria-label': title, disabled, html: label, onclick: fn });
+      const rows = r1 - r0 + 1, cols = c1 - c0 + 1;
+      bar.replaceChildren(
+        b('Merge', `Merge ${rows * cols} cells (${what})${r1 > r0 ? pkg('multirow') : ''}`, () => { change((s) => T.merge(s, [r0, c0, r1, c1])); anchor = focus = [r0, c0]; draw(); cellEl(focus)?.focus(); }, one),
+        b('Split', 'Split the merged cells', () => change((s) => T.split(s, [r0, c0, r1, c1])), !merged),
+        h('span', { class: 'sd-sep' }),
+        ...['l', 'c', 'r'].map((a) => b(AL[a], `Align ${{ l: 'left', c: 'center', r: 'right' }[a]}${r0 === 0 && r1 === s.rows.length - 1 ? ' (the column type)' : ' (\\multicolumn{1})'}`, () => change((s) => T.align(s, [r0, c0, r1, c1], a)))),
+        h('span', { class: 'sd-sep' }),
+        b(SVG('<path d="M3 5h10M3 11h10"/><path d="M6 8h4" stroke-width="2"/>'), `Delete ${rows > 1 ? `rows ${r0 + 1}–${r1 + 1}` : `row ${r0 + 1}`}`, () => { change((s) => T.deleteRows(s, r0, r1)) || note('A table keeps one row'); select([Math.min(r0, t().rows.length - 1), c0]); }, rows === s.rows.length),
+        b(SVG('<path d="M5 3v10M11 3v10"/><path d="M8 6v4" stroke-width="2"/>'), `Delete ${cols > 1 ? `columns ${c0 + 1}–${c1 + 1}` : `column ${c0 + 1}`}`, () => { change((s) => T.deleteCols(s, c0, c1)) || note('A table keeps one column'); select([r0, Math.min(c0, t().cols.length - 1)]); }, cols === s.cols.length),
+        b(SVG('<path d="M4 4l8 8M12 4l-8 8"/>'), 'Clear the cells (Delete)', () => change((s) => T.clear(s, [r0, c0, r1, c1]))),
+      );
+      // above the grid, in line with the selection: it never covers a cell
+      const wr = wrap.getBoundingClientRect(), a = first.getBoundingClientRect();
+      bar.style.top = `${grid.offsetTop - bar.offsetHeight - 8}px`;
+      bar.style.left = `${Math.max(0, Math.min(a.left - wr.left + wrap.scrollLeft, wrap.scrollWidth - bar.offsetWidth - 4))}px`;
+      bar.hidden = false;
+    }
+    wrap.addEventListener('focusout', () => setTimeout(placeBar, 0));
+    wrap.addEventListener('focusin', () => placeBar());
+
+    // editing in place: Enter, F2, a double click or typing opens the cell's TeX
+    function edit(r, c, seed = null) {
+      const s = t(), o = T.layout(s)[r]?.[c];
+      if (!o) return;
+      const td = cellEl([o.r, o.c]), cell = s.rows[o.r].cells[o.i], was = T.inner(cell);
+      snapshot();
+      const input = h('input', { value: seed ?? was, 'aria-label': `row ${o.r + 1} column ${o.c + 1}`, spellcheck: 'false' });
+      editing = { input, done: false };
+      bar.hidden = true;
+      td.replaceChildren(input);
+      input.focus();
+      if (seed == null) input.select(); else input.setSelectionRange(input.value.length, input.value.length);
+      const write = () => { T.setInner(cell, input.value); f.refresh(); };
+      if (seed != null) write();
+      input.oninput = write;
+      const finish = (keep, move) => {
+        if (editing?.done) return;
+        editing.done = true;
+        if (!keep) { T.setInner(cell, was); undo.pop(); f.refresh(); } else if (input.value === was) undo.pop();
+        editing = null;
+        anchor = focus = [o.r, o.c];
+        if (move) { const nx = move === 'down' ? [o.r + T.rowsOf(cell), o.c] : move === 'right' ? [o.r, o.c + Math.max(1, cell.span)] : [o.r, o.c - 1]; select(nx); }
+        else { draw(); cellEl(focus)?.focus(); }
+      };
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); finish(true, 'down'); }
+        else if (e.key === 'Tab') { e.preventDefault(); finish(true, e.shiftKey ? 'left' : 'right'); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+      };
+      input.onblur = () => { if (editing && !editing.done) finish(true); };
+    }
+    grid.addEventListener('click', (e) => { const g = e.target.closest('tr.sd-rule .sd-gc'); if (g) grid.querySelector(`tr.sd-data .sd-gc${g.classList.contains('sd-gcL') ? 'L' : 'R'}`)?.click(); });
+    const at = (e) => { const td = e.target.closest?.('td.sd-cell'); return td ? [+td.dataset.r, +td.dataset.c] : null; };
+    let dragging = false;
+    grid.addEventListener('pointerdown', (e) => {
+      const p = at(e);
+      if (!p || e.button || editing && e.target.closest('input')) return;
+      e.preventDefault();
+      dragging = true;
+      select(p, e.shiftKey);
+    });
+    grid.addEventListener('pointerover', (e) => { const p = at(e); if (dragging && p && (p[0] !== focus[0] || p[1] !== focus[1])) select(p, true); });
+    addEventListener('pointerup', () => { dragging = false; });
+    grid.addEventListener('dblclick', (e) => { const p = at(e); if (p) edit(...p); });
+    grid.addEventListener('keydown', (e) => {
+      if (editing || !e.target.closest('td.sd-cell')) return;
+      const s = t(), mod = e.ctrlKey || e.metaKey, o = T.layout(s)[focus[0]][focus[1]];
+      const step = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key];
+      if (step && e.altKey) {
+        e.preventDefault();
+        const ok = step[0] ? change((s) => T.moveRow(s, focus[0], step[0])) : change((s) => T.moveCol(s, focus[1], step[1]));
+        if (ok === false) return note(step[0] ? 'No row there' : 'A merged cell spans the columns: split it first');
+        anchor = focus = [focus[0] + step[0], focus[1] + step[1]];
+        return select(focus);
+      }
+      if (step) {
+        e.preventDefault();
+        const from = e.shiftKey ? focus : [o.r, o.c];
+        const nx = [from[0] + (step[0] > 0 ? (e.shiftKey ? 1 : o.rows) : step[0]), from[1] + (step[1] > 0 ? (e.shiftKey ? 1 : o.span) : step[1])];
+        return select(nx, e.shiftKey);
+      }
+      if (e.key === 'Tab') { e.preventDefault(); return select([focus[0], focus[1] + (e.shiftKey ? -1 : o.span)]); }
+      if (e.key === 'Enter' || e.key === 'F2') { e.preventDefault(); return edit(...focus); }
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); return change((s) => T.clear(s, rect())); }
+      if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); anchor = [0, 0]; focus = [s.rows.length - 1, s.cols.length - 1]; draw(); cellEl(focus)?.focus(); return; }
+      if (e.key.length === 1 && !mod && !e.altKey) { e.preventDefault(); return edit(...focus, e.key); }
+    });
+    // copy and paste: TSV, so a spreadsheet's cells paste in; our own copy keeps the TeX
+    grid.addEventListener('copy', (e) => {
+      if (editing) return;
+      e.preventDefault();
+      e.clipboardData.setData('text/plain', T.toCSV(t(), '\t', rect()));
+      e.clipboardData.setData('text/x-satex-cells', T.toCSV(t(), '\t', rect(), true));
+    });
+    grid.addEventListener('cut', (e) => { if (editing) return; grid.dispatchEvent(new ClipboardEvent('copy', { clipboardData: e.clipboardData })); e.preventDefault(); e.clipboardData.setData('text/plain', T.toCSV(t(), '\t', rect())); change((s) => T.clear(s, rect())); });
+    grid.addEventListener('paste', (e) => {
+      if (editing) return;
+      e.preventDefault();
+      const own = e.clipboardData.getData('text/x-satex-cells'), text = own || e.clipboardData.getData('text/plain');
+      if (!text) return;
+      const rows = T.parseCSV(text.replace(/\n$/, '')).map((r) => r.map((v) => own ? v : T.tex(v)));
+      const [r0, c0] = rect();
+      change((s) => T.paste(s, r0, c0, rows));
+      anchor = [r0, c0]; focus = [r0 + rows.length - 1, c0 + Math.max(...rows.map((r) => r.length)) - 1];
+      draw(); cellEl(focus)?.focus();
+    });
+    f.root.addEventListener('keydown', (e) => {
+      if (editing || e.target.closest('input, textarea, select')) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && !e.shiftKey && e.key.toLowerCase() === 'z') { e.preventDefault(); travel(undo, redo); }
+      else if (mod && (e.key.toLowerCase() === 'y' || e.shiftKey && e.key.toLowerCase() === 'z')) { e.preventDefault(); travel(redo, undo); }
+    });
+
+    /** The table as LaTeX sets it: alignment, spans, rules (booktabs' weights), vertical rules. */
+    function preview() {
+      const s = t(), map = T.layout(s), n = s.cols.length, html = (x) => esc(T.plain(x)).replace(/\^\{?(\w+)\}?/g, '<sup>$1</sup>');
+      const rule = (items) => { const m = items.find((x) => RULES.includes(x)); return m === '\\toprule' || m === '\\bottomrule' ? '1.2px' : m === '\\midrule' ? '.7px' : m === '\\hline' ? '.5px' : ''; };
+      const cl = (items) => { const out = new Set(); for (const x of items) { const m = x.match(/^\\c(?:mid)?rule(?:\([^)]*\))?\{(\d+)-(\d+)\}/); if (m) for (let c = +m[1] - 1; c < +m[2]; c++) out.add(c); } return out; };
+      const vb = (k) => s.seps[k]?.includes('|') ? '.5px solid' : '';
+      const body = s.rows.map((r, k) => {
+        const top = rule(r.before), part = cl(r.before);
+        let col = 0;
+        const tds = r.cells.map((c) => {
+          const span = Math.max(1, c.span), at = col;
+          col += span;
+          const o = map[k][at];
+          if (o && o.r < k) return '';
+          const a = (c.spec || s.cols[at]?.align || 'l').replace(/[^lcrSpmbX]/g, '')[0] ?? 'l';
+          const align = { c: 'center', r: 'right', S: 'center' }[a] ?? 'left';
+          const wide = ['p', 'm', 'b'].includes(a) && span === 1 ? `width:${/^\d/.test(s.cols[at].arg) ? s.cols[at].arg.replace(/cm$/, '') * 37.8 + 'px' : '8em'};white-space:normal;` : a === 'X' ? 'width:100%;' : '';
+          const st = [`text-align:${align}`, top || part.has(at) ? `border-top:${top || '.5px'} solid` : '', k === s.rows.length - 1 && rule(s.after) ? `border-bottom:${rule(s.after)} solid` : '', at === 0 && vb(0) ? `border-left:${vb(0)}` : '', vb(at + span) ? `border-right:${vb(at + span)}` : '', wide].filter(Boolean).join(';');
+          const rs = o && o.r === k && o.rows > 1 ? ` rowspan="${o.rows}" class="mr"` : '';
+          return `<td colspan="${span}"${rs} style="${st}">${html(T.inner(c)) || '&nbsp;'}</td>`;
+        }).join('');
+        return `<tr>${tds}${col < n ? `<td colspan="${n - col}"></td>` : ''}</tr>`;
+      }).join('');
+      prev.innerHTML = `<table${t().env === 'tabularx' ? ' style="width:100%"' : ''}>${body}</table>`;
     }
     draw();
     f.refresh();
+    setTimeout(() => cellEl(focus)?.focus(), 0);
     return f;
   }
 
@@ -290,7 +934,7 @@ dialog.sd-dialog::backdrop { background: rgb(0 0 0 / .35); }
     const ctx = view.context ?? {};
     const main = h('div');
     const side = h('div');
-    const f = frame(view, host, `Edit image ${s().file}`, { main, side, redraw: () => sync(), foot: 'Crop, rotation and size are written as \\includegraphics options (graphicx).' });
+    const f = frame(view, host, 'Edit image', { main, side, sub: s().file, redraw: () => sync(), foot: 'Crop, rotation and size are written as \\includegraphics options (graphicx).' });
     let nat = s().natural; // [w, h] bp
     const stage = h('div', { class: 'sd-stage' });
     const crop = h('div', { class: 'sd-crop' });
@@ -409,13 +1053,17 @@ dialog.sd-dialog::backdrop { background: rgb(0 0 0 / .35); }
     stage.addEventListener('pointercancel', end);
     sync();
     return f;
+
   }
 
-  self.satexDialogs = {
+  const api = {
     open(view, host) {
       if (view?.kind === 'table') return table(view, host);
       if (view?.kind === 'image') return image(view, host);
       return null;
     },
+    popup, enhance, store, table: T,
   };
+  self.satexDialogs = api;
+  self.satexStore = store;
 })();

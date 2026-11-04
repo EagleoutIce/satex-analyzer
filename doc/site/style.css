@@ -1677,7 +1677,10 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .md-table .r { white-space: nowrap; text-align: right; padding: .1rem 0 .1rem .8rem; }
 .md-table + p, .hover h4 + p { margin-top: .3rem; }
 .hover code.bar { letter-spacing: 0; padding: .05rem .3rem; } .hover code.bar b { color: var(--accent, #3b82f6); font-weight: 400; } .hover code.bar i { color: var(--border); font-style: normal; }
-a.cmd-edit { text-decoration: none; border-bottom: 1px dotted var(--muted); cursor: pointer; } a.cmd-edit:hover { border-bottom-style: solid; }
+/* a value that is its own action (units, colors): click writes it; exact ones underlined solid */
+a.cmd-edit { text-decoration: none; color: inherit; border-bottom: 1px dotted var(--muted); cursor: pointer; border-radius: 3px; padding: 0 .1em; transition: background .1s, color .1s; }
+a.cmd-edit.exact { border-bottom: 1.5px solid color-mix(in srgb, var(--accent) 60%, transparent); }
+a.cmd-edit:hover, a.cmd-edit:focus-visible { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); outline: none; border-bottom-color: var(--accent); }
 /* phone: the settings rows stack, the PDF bar wraps so no tool is cut off */
 @media (max-width: 36rem) {
   .cfg-row, .cfg-wide { grid-template-columns: minmax(0, 1fr) auto; }
