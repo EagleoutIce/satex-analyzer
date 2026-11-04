@@ -1522,6 +1522,8 @@
     checkStart = 0;
     phase();
     $('fix-all').innerHTML = editableFile() ? fixAllButton('all') : '';
+    // the unsafe switch only where there is something to fix
+    document.querySelector('.fix-bar').hidden = !$('fix-all').innerHTML;
     lspStatus.textContent = state.file in state.ro ? 'read-only file' : provisional ? `provisional: ${provisional} still downloading; the check runs again once ${provisional.includes(', ') ? 'they are' : 'it is'} in` : listed.length ? '' : 'none';
     list.classList.toggle('provisional', !!provisional);
     markStale();
@@ -4232,17 +4234,18 @@
   /** The settings of the playground's runs (the kernel's and Settings'), as the `KEY=VALUE` of each `--set`. */
   const pdfSets = () => { const f = [...manifest.kernels[state.kernel].args, ...configFlags()]; return f.filter((_, i) => f[i - 1] === '--set'); };
   /** Builds the project, or with `slice` only what the cursor's line needs. `cached` only shows a kept build. `alone`: a standalone slice's text, built on its own. */
-  async function compile(slice = false, cached = false, alone = null) {
-    // a click is answered at once, in the PDF pane: one build at a time, a newer request waits (the newest only) and says so
-    if (!cached && $('play-pdf').hidden) showPanel('play-pdf');
-    if (pdfBusy) { if (!cached) { pdfQueued = [slice, false, alone]; $('play-pdf').classList.add('pdf-running'); pdfStatus.textContent = pdfWarming ? 'compiling once the compile server has finished its setup…' : 'compiling next, once the build under way ends…'; flare([pdfStatus], true); } return; }
+  async function compile(slice = false, cached = false, alone = null, auto = false) {
+    // a click is answered at once, in the PDF pane: one build at a time, a newer request waits (the newest only) and says so.
+    // A build nobody clicked for (auto, on save, after a switch) leaves the open tab alone.
+    if (!cached && !auto && $('play-pdf').hidden) showPanel('play-pdf');
+    if (pdfBusy) { if (!cached) { pdfQueued = [slice, false, alone, true]; $('play-pdf').classList.add('pdf-running'); pdfStatus.textContent = pdfWarming ? 'compiling once the compile server has finished its setup…' : 'compiling next, once the build under way ends…'; flare([pdfStatus], true); } return; }
     if (!cached) { $('play-pdf').classList.add('pdf-running'); pdfStatus.textContent = 'compiling: asking the compile server…'; }
     if (!(await pdfServer) && !(await probeServer())) {
       $('play-pdf').classList.remove('pdf-running');
       if (!cached) { pdfStatus.innerHTML = `<span class="x-err">${NO_SERVER_SHORT}</span>`; toast(NO_SERVER_SHORT); }
       return;
     }
-    if (pdfBusy) { if (!cached) pdfQueued = [slice, false, alone]; return; }
+    if (pdfBusy) { if (!cached) pdfQueued = [slice, false, alone, true]; return; }
     push();
     const root = alone === null ? state.root ?? state.file : `slice-of-${(state.root ?? state.file).split('/').pop()}`, p = editor.position();
     const at = `${state.file === root ? '' : `${state.file}:`}${p.line + 1}:${p.character + 1}`;
@@ -4285,7 +4288,7 @@
     el.classList.toggle('pdf-other', other);
     pdfBody.querySelector('.pdf-owner')?.remove();
     if (other) pdfBody.insertAdjacentHTML('afterbegin', `<p class="pdf-owner">Built for ${escape(pdf.root)}${pdf.dir !== state.dir ? ' of another project' : ''}. <button type="button" class="small">Compile ${escape(state.root ?? state.file)}</button></p>`);
-    if (became && pdfAuto.on && serverUp) compile();
+    if (became && pdfAuto.on && serverUp) compile(false, false, null, true);
   }
   /** A build asked for while one runs (the newest only), and what the last build said. */
   var pdfQueued = null, pdfSummary = '';
@@ -4309,7 +4312,7 @@
   function pdfEdited() {
     if (!pdfAuto?.on || pdf?.slice) return;
     clearTimeout(pdfAuto.timer);
-    pdfAuto.timer = setTimeout(() => { if (pdfAuto.on && !pdfButtons[0].disabled) compile(); }, pdfAuto.delay);
+    pdfAuto.timer = setTimeout(() => { if (pdfAuto.on && !pdfButtons[0].disabled) compile(false, false, null, true); }, pdfAuto.delay);
   }
   /** The last build of this very text, kept by the server, shown when the page opens. */
   const pdfRestore = () => compile(false, true);
@@ -4318,7 +4321,7 @@
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 's' || mod && e.key === 'Enter' && e.target.closest?.('#play-pdf')) {
       e.preventDefault();
-      compile();
+      compile(false, false, null, true);
     }
   });
   /** A short jitter on failure, a soft pulse on success: on each of `els`, once. */
@@ -4472,7 +4475,9 @@
       const [w, h] = pageSize(img), pad = 1.5;
       el.insertAdjacentHTML('beforeend', `<div class="pdf-mark${cls}" style="${pdfPlace((l - pad) / w, (t - pad) / h, (r - l + 2 * pad) / w, (d - t + 2 * pad) / h)}"></div>`);
     };
-    for (const r of rects) mark(r.page, coarse ? ' coarse' : '', r.l, r.t, r.r, r.d);
+    // a whole frame or float: one outline per page around all of it, not one per line
+    const union = (rs) => Object.values(rs.reduce((u, r) => { const b = u[r.page]; u[r.page] = b ? { page: r.page, l: Math.min(b.l, r.l), t: Math.min(b.t, r.t), r: Math.max(b.r, r.r), d: Math.max(b.d, r.d) } : { ...r }; return u; }, {}));
+    for (const r of coarse ? union(rects) : rects) mark(r.page, coarse ? ' coarse' : '', r.l, r.t, r.r, r.d);
     const word = same[Math.min(nth, same.length - 1)];
     if (word) mark(word[0], ' word', word[1], word[2], word[3], word[4]);
     const first = pdfBody.querySelector('.pdf-mark'), pages = pdfBody.querySelector('.pdf-pages');

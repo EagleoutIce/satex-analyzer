@@ -1185,7 +1185,7 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .typeset.show-findings p.ts:has(.f-error) .ts-text { text-decoration-color: color-mix(in srgb, var(--error) 45%, transparent); }
 .typeset .ts[data-just] .ts-text { flex: 1; min-width: 0; }
 .typeset .ts[data-just=center] .ts-text { text-align: center; } .typeset .ts[data-just=right] .ts-text { text-align: right; } .typeset .ts[data-just=left] .ts-text { text-align: left; }
-.typeset .ts[data-just=unknown] .ts-text::after { content: "alignment undecided"; margin-left: .5rem; padding: 0 .4rem; border: 1px dashed var(--border); border-radius: 999px; font: .66rem ui-monospace, Menlo, monospace; color: var(--muted); }
+.typeset .ts[data-just=unknown] .ts-text::after { content: "aligned differently on different paths"; margin-left: .5rem; padding: 0 .4rem; border: 1px dashed var(--border); border-radius: 999px; font: .66rem ui-monospace, Menlo, monospace; color: var(--muted); }
 .typeset .ts-env { display: none; } .typeset.show-envs .ts-env { display: inline-block; float: right; margin-left: .4rem; padding: 0 .4rem; border-radius: 999px; font: .66rem ui-monospace, Menlo, monospace; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 
 .o-sec { position: relative; } .o-sec[hidden] { display: none; }
