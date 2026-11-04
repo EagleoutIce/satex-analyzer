@@ -1509,6 +1509,8 @@ pub struct Machine<'a> {
     pub(crate) scans: Vec<Accum>,
     /// The running command took an arm that does not exist.
     infeasible: bool,
+    /// The running path ended as a run of its own ([`Machine::end_path`]).
+    ended_run: bool,
     /// What the running command changed of the counters in [`Undo`].
     undo: Vec<Undo>,
     /// Paths waiting in the innermost drive, for progress reports.
@@ -2388,6 +2390,7 @@ impl<'a> Machine<'a> {
             lone: false,
             scans: Vec::new(),
             infeasible: false,
+            ended_run: false,
             undo: Vec::new(),
             waiting: 0,
             parted: false,
@@ -4437,12 +4440,14 @@ will look undefined",
                         // that character could mean (tex.web §§ 232, 344).
                         let unknown = mouth.last_unknown.take();
                         let written = mouth.written.take();
+                        let digit = mouth.digit.take();
                         if let Some(c) = unknown {
                             self.unknown_chars.insert(t.span, c);
                         }
-                        let t = match written {
-                            Some((class, one)) => self.unknown_text(Unk::Class(class, one, None, &[]), t.span),
-                            None => t,
+                        let t = match (written, digit) {
+                            (Some((class, one)), _) => self.unknown_text(Unk::Class(class, one, None, &[]), t.span),
+                            (_, Some(c)) => self.written_digit(c, t.span),
+                            _ => t,
                         };
                         // A letter or an other character either way: one of the two tokens.
                         let plain = (1 << Catcode::Letter as u8) | (1 << Catcode::Other as u8);
@@ -9208,6 +9213,9 @@ will look undefined",
             self.expand_stub(sym, node, span);
             return;
         }
+        if self.message_output_only(sym, &m, span) {
+            return;
+        }
 
         // Widening decided before the arguments are read: a tail-recursive
         // loop would otherwise have its next iteration's tokens eaten by a
@@ -9394,7 +9402,7 @@ will look undefined",
             );
             match alone {
                 true => self.cut_call(sym, span, "cycle_after", false, "it meets the state it was in before".into()),
-                false => self.no_arm(),
+                false => self.end_path(),
             }
             return;
         }
@@ -10273,9 +10281,18 @@ will look undefined",
             }
         }
         if !far.is_empty() {
-            // No text holds it: the token is one more token of the argument.
+            // No text holds it: the token is one more token of the argument,
+            // unless a text ends in the delimiter's first tokens, which may
+            // run on into what comes after (tex.web § 392): a path per text.
             if inside.is_empty() {
-                return OneOfScan::Pass;
+                let begins = |x: &[Token]| {
+                    let seen: Vec<Tok> = out.iter().chain(x).map(|t| t.tok).collect();
+                    (1..delimiter.len().min(seen.len() + 1)).any(|j| seen[seen.len() - j..] == delimiter[..j])
+                };
+                if !far.iter().any(|&i| !texts[i].is_empty() && begins(&texts[i])) {
+                    return OneOfScan::Pass;
+                }
+                return if self.split_one_of(t) { OneOfScan::Again } else { OneOfScan::Unknown };
             }
             // Some do: two paths, each with the token for one group of
             // texts. Read as unknown text instead, the scan would end in
@@ -10417,11 +10434,13 @@ will look undefined",
                           k: usize,
                           span: Span,
                           end: &str,
-                          mark: &Option<SourceMark>|
+                          mark: &Option<SourceMark>,
+                          fuzzy: Option<Span>|
          -> Vec<Token> {
             // Joined where the document goes on, such a path would carry
-            // what library code did on no run into it.
-            if m.cfg.compiles() && m.probe.is_none() {
+            // what library code did on no run into it. Past a refused fork
+            // (`fuzzy`) the argument may have ended sooner: a run, kept.
+            if m.cfg.compiles() && m.probe.is_none() && fuzzy.is_none() {
                 m.no_arm();
                 return Vec::new();
             }
@@ -10452,7 +10471,7 @@ will look undefined",
                 // a run TeX would stop with an error: never the document's.
                 if let Some(k) = source_at.filter(|_| self.runaway == Runaway::FileEnded) {
                     let span = out[k].span;
-                    return gives_back(self, &mut out, k, span, "the end of the file", &mark);
+                    return gives_back(self, &mut out, k, span, "the end of the file", &mark, fuzzy);
                 }
                 break;
             };
@@ -11278,9 +11297,27 @@ will look undefined",
             if let Some((class, one)) = mouth.written.take() {
                 t = self.unknown_text(Unk::Class(class, one, None, &[]), at);
             }
+            if let Some(c) = mouth.digit.take() {
+                t = self.written_digit(c, at);
+            }
             out.push(t);
         }
         out
+    }
+
+    /// An unknown digit a run wrote, read where some digit is not of
+    /// category 12: one of the digits of another category now, each as it
+    /// reads (tex.web § 343), or the unknown digit for those still 12.
+    fn written_digit(&mut self, c: char, span: Span) -> Token {
+        let digits = crate::engine::tex::unknown_number_chars(c).unwrap_or_default();
+        let mut toks: Vec<Tok> = (digits.chars())
+            .map(|d| Tok::Chr(d, self.catcodes.get(d)))
+            .filter(|t| !matches!(t, Tok::Chr(_, Catcode::Other)))
+            .collect();
+        if toks.len() < digits.chars().count() {
+            toks.push(Tok::Chr(c, Catcode::Other));
+        }
+        self.one_of(toks.into_iter().map(|t| Rc::from([Token::new(t, span)])).collect(), span)
     }
 
     /// Tokenize a string under the current catcodes.

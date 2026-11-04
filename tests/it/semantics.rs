@@ -2924,4 +2924,113 @@ mod model_deviations {
         assert_eq!((ab.meaning.clone(), ab.may.clone()), (Meaning::Unknown, None));
         assert_eq!((ba.meaning, ba.may), (ab.meaning, ab.may));
     }
+
+    /// Plain TeX in a directory of its own, `files` beside it and `library`
+    /// files in a texmf tree outside it, with `limits` changed.
+    fn run_in(name: &str, source: &str, library: &[(&str, &str)], limits: impl Fn(&mut Limits)) -> Analysis {
+        let dir = crate::support::scratch_dir(crate::support::tmp_root().join(name));
+        let (tree, doc) = (dir.join("tree"), dir.join("doc"));
+        for d in [&tree, &doc] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        for (file, text) in library {
+            std::fs::create_dir_all(tree.join("tex/plain/lib")).unwrap();
+            std::fs::write(tree.join("tex/plain/lib").join(file), text).unwrap();
+        }
+        let main = doc.join("main.tex");
+        let source = format!("{PRELUDE}{source}");
+        std::fs::write(&main, &source).unwrap();
+        let mut cfg = Config {
+            load: Load { packages: false, classes: false, format: false, ..Default::default() },
+            texmf: Texmf { roots: vec![tree], kpsewhich: false, ..Default::default() },
+            ..crate::support::config()
+        };
+        limits(&mut cfg.limits);
+        Machine::analyze(&source, Some(&main), &cfg)
+    }
+
+    /// R2-1: a library scan that read the document to its end after a
+    /// refused fork where the argument may end sooner is no refuted run:
+    /// the text is given back and the document is read on.
+    #[test]
+    fn a_library_scan_past_a_refused_end_reads_the_document_on() {
+        let lib = [("lib.tex", "\\long\\def\\grab#1x1{}\\def\\go{\\expandafter\\grab\\expandafter x\\the\\count1}\n")];
+        let analysis = run_in(
+            "rv2-library-scan",
+            "\\input lib \\count1=\\pdfuniformdeviate 300 \\advance\\count1 by 1 \\go\n\\def\\R{after}\n",
+            &lib,
+            |l| l.choices = 0,
+        );
+        assert!(bodies(&analysis).contains(&"after".to_string()), "{:?}", bodies(&analysis));
+    }
+
+    /// R2-2: a path that meets a state it was in before hangs in TeX: it
+    /// ends, but its warning stays, as does the other arm of its fork.
+    #[test]
+    fn a_cycle_on_one_arm_is_reported() {
+        let analysis = run(r"\def\r{\r}\ifodd\pdfuniformdeviate 2 \else\r\fi\def\R{done}", |_| {});
+        assert!(!diagnosed(&analysis, "endless-loop").is_empty());
+        assert!(bodies(&analysis).contains(&"done".to_string()), "{:?}", bodies(&analysis));
+    }
+
+    /// R2-3: an unknown digit written to a file is read back under the
+    /// categories in force at the read, not as category 12 always.
+    #[test]
+    fn a_written_unknown_digit_reads_with_the_categories_of_the_read() {
+        let analysis = run_in(
+            "rv2-written-digit",
+            "\\immediate\\openout1=t.tex \\ifodd\\pdfuniformdeviate 2 \\immediate\\write1{\\string\\x{a}{1}}%\n\
+             \\else\\immediate\\write1{\\string\\x{a}{2}}\\fi\\immediate\\closeout1\n\
+             \\def\\x#1#2{#2}\\catcode`\\1=13 \\def1{\\def\\R{one}}\\input t \n",
+            &[],
+            |_| {},
+        );
+        assert!(bodies(&analysis).contains(&"one".to_string()), "{:?}", bodies(&analysis));
+    }
+
+    /// R2-4: `\ifx` against a one-of token with an empty member compares
+    /// first tokens (the next token for the empty one), never macros.
+    #[test]
+    fn ifx_of_a_one_of_with_an_empty_member_compares_first_tokens() {
+        let analysis = run(
+            "\\ifodd\\pdfuniformdeviate 2 \\toks0={ab}\\else\\toks0={}\\fi
+             %\\satex@configure{limits.choices=0}
+             \\expandafter\\ifx\\expandafter a\\the\\toks0 \\def\\R{T}\\else\\def\\R{F}\\fi",
+            |_| {},
+        );
+        // Decided false on the `ab` path before: never only `F`.
+        let got = bodies(&analysis);
+        let open = !diagnosed(&analysis, "undecided-condition").is_empty();
+        assert!(open || got.iter().any(|b| b == "T"), "{got:?}");
+    }
+
+    /// R2-5: a box may be wider than `\maxdimen` (hpack does not check,
+    /// tex.web § 656), and a count takes its width as it is (§ 461
+    /// checks dimensions only): the sum is no top.
+    #[test]
+    fn a_box_wider_than_maxdimen_stays_wider() {
+        let analysis = run(
+            r"\dimen0=16383.99999pt \setbox0\hbox{\kern\dimen0\kern\dimen0}%
+              \count1=\wd0 \ifnum\count1>\dimen0 \def\R{big}\else\def\R{small}\fi",
+            |_| {},
+        );
+        // TeX: 2147483646.
+        assert_eq!(bodies(&analysis), ["big"]);
+    }
+
+    /// R2-6: a delimiter may run from the end of a one-of member into
+    /// unknown text after it: `za` then digits from `1`, delimiter `a1`.
+    #[test]
+    fn a_delimiter_from_a_one_of_end_into_unknown_text_ends_there() {
+        let analysis = run(
+            "\\count1=\\pdfuniformdeviate 10 \\advance\\count1 by 10
+             \\ifodd\\pdfuniformdeviate 2 \\toks0={za}\\else\\toks0={q}\\fi\\edef\\x{\\the\\toks0 \\the\\count1}
+             %\\satex@configure{limits.choices=0}
+             \\def\\grab#1a1{\\def\\R{#1}}\\expandafter\\grab\\x a1",
+            |_| {},
+        );
+        // TeX: `z`, or `q` and the digits. Never `za` and the digits.
+        let got = bodies(&analysis);
+        assert!(!got.is_empty() && !got.iter().any(|b| b.contains("one of") && b.contains("digits")), "{got:?}");
+    }
 }

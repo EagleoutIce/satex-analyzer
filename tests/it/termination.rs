@@ -1118,6 +1118,60 @@ Some text with microtype protrusion and expansion.
         );
     }
 
+    /// `analysis.assume_messages_output_only`: a wrap over unknown text is
+    /// one step that leaves unknown string text, said as an assumption;
+    /// the code the wrap runs before it (#3, the text's expansion) still
+    /// runs, and a wrap over known text runs for real.
+    fn wrap_call(name: &str, text: &str, assume: bool) -> Option<Analysis> {
+        let preamble = format!(
+            r"\ExplSyntaxOn
+\int_new:N \g_my_int
+\tl_set:Ne \l_my_tl {{ \int_eval:n {{ \pdfuniformdeviate 99 }} }}
+\iow_wrap:nnnN {{ {text} }} {{ }} {{ \int_gset:Nn \g_my_int {{ 5 }} }} \iow_term:n
+\cs_gset:Npe \After {{ \int_use:N \g_my_int }}
+\ExplSyntaxOff"
+        );
+        latex(name, &document(&preamble, "Text."), |cfg| cfg.analysis.assume_messages_output_only = assume)
+    }
+
+    fn assumed(a: &Analysis) -> usize {
+        a.facts.diagnostics.iter().filter(|d| d.code == "message-output-only").count()
+    }
+
+    #[test]
+    fn a_wrap_over_unknown_text_is_assumed_output_only() {
+        let Some(a) = wrap_call(
+            "iow-assume-unknown",
+            r"value~\l_my_tl~and~more~words~than~fit~on~one~line~of~the~terminal~here",
+            true,
+        ) else {
+            return;
+        };
+        converged(&a, WRAP_FORKS);
+        assert_eq!(assumed(&a), 1);
+        assert_eq!(crate::support::body(&a, "After"), "5");
+        assert!(crate::support::defined(&a, "SatexReachedEnd"));
+    }
+
+    #[test]
+    fn a_wrap_over_known_text_runs_for_real() {
+        let Some(a) =
+            wrap_call("iow-assume-known", r"value~and~more~words~than~fit~on~one~line~of~the~terminal~here", true)
+        else {
+            return;
+        };
+        assert_eq!(assumed(&a), 0);
+        assert_eq!(crate::support::body(&a, "After"), "5");
+    }
+
+    #[test]
+    fn a_wrap_without_the_assumption_runs_for_real() {
+        let Some(a) = wrap_call("iow-assume-off", r"value~\l_my_tl", false) else { return };
+        assert_eq!(assumed(&a), 0);
+        assert_eq!(crate::support::body(&a, "After"), "5");
+        assert!(crate::support::defined(&a, "SatexReachedEnd"));
+    }
+
     /// A loop whose flag a macro in a widened conditional clears
     /// (scrlayer-notecolumn's `\ifeof\slnc@file\@tempswafalse\fi` over a
     /// joined stream): the flag may be false after it, so the loop may end.

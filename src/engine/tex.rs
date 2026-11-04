@@ -230,6 +230,24 @@ pub fn written_class(c: char) -> Option<(TextClass, bool)> {
     Some((TextClass((i / 2) as u8), i % 2 == 1))
 }
 
+/// Whether written text of `class` reads back as that class: its digits,
+/// signs, spaces, braces and ASCII letters have the categories it names.
+/// Other characters are taken to (a named gap: `\string` may write an
+/// escape character).
+fn reads_as_written(cats: &CatcodeTable, class: TextClass) -> bool {
+    let rows: [(TextClass, &str, Catcode); 6] = [
+        (TextClass::DIGIT, "0123456789", Catcode::Other),
+        (TextClass::SIGN, "+-.,", Catcode::Other),
+        (TextClass::SPACE, " ", Catcode::Space),
+        (TextClass::BRACE, "{", Catcode::Begin),
+        (TextClass::BRACE, "}", Catcode::End),
+        (TextClass::LETTER, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", Catcode::Letter),
+    ];
+    (rows.iter())
+        .filter(|(bits, ..)| class.meets(*bits))
+        .all(|(_, chars, cat)| chars.chars().all(|c| cats.cats(c) == 1 << *cat as u16))
+}
+
 /// Whether `c` is one character of unknown text.
 pub fn is_unknown_char(c: char) -> bool {
     unknown_number_chars(c).is_some() || matches!(c, UNKNOWN_LETTER | UNKNOWN_OTHER | UNKNOWN_ANY)
@@ -1234,6 +1252,9 @@ pub struct Mouth {
     /// The class of the typed unknown text a run wrote that the last token
     /// stands for ([`written_unknown`]).
     pub written: Option<(TextClass, bool)>,
+    /// The unknown digit a run wrote that the last token stands for, its
+    /// digits of other categories now: one of them, each as it reads now.
+    pub digit: Option<char>,
     pub file: FileId,
     /// The `%\satex@…` directives of comments read since the reader last
     /// took them ([`Directive`]).
@@ -1311,6 +1332,7 @@ impl Mouth {
             last_unknown: None,
             undecided: None,
             written: None,
+            digit: None,
             file,
             directives: Vec::new(),
         }
@@ -1351,6 +1373,61 @@ impl Mouth {
             force_eof: self.force_eof,
             ended,
         })
+    }
+
+    /// [`Mouth::line_mark`], or the start of the next line when the rest of
+    /// this one makes no token under `cats` (ignored characters, trailing
+    /// spaces, a comment, an end of line that adds nothing): standing there
+    /// reads the same tokens. expl3 code ends every line so.
+    pub fn quiet_line_mark(&self, cats: &CatcodeTable) -> Option<LineMark> {
+        if let Some(mark) = self.line_mark() {
+            return Some(mark);
+        }
+        if self.force_eof.is_some() || self.line_end.is_unknown() {
+            return None;
+        }
+        let mut at = self.pos;
+        let mut comment = false;
+        while let Some(&c) = self.src.get(at) {
+            if c == '\n' || c == '\r' {
+                break;
+            }
+            if comment {
+                at += 1;
+                continue;
+            }
+            match cats.get(c) {
+                _ if cats.is_unknown(c) || c == '^' => return None,
+                Catcode::Ignored | Catcode::Invalid => at += 1,
+                _ if c == ' ' && self.line_ends_at(at) => at += 1,
+                Catcode::Comment => {
+                    let text: String = self.src[at + 1..].iter().take(DIRECTIVE.len()).collect();
+                    if text == DIRECTIVE {
+                        return None;
+                    }
+                    (comment, at) = (true, at + 1);
+                }
+                _ => return None,
+            }
+        }
+        // What the end of the line adds (tex.web § 347): nothing, or a
+        // space skipped outside state M.
+        let quiet = comment
+            || self.line_end.char().is_none_or(|e| match cats.get(e) {
+                Catcode::Ignored | Catcode::Comment | Catcode::Invalid => true,
+                Catcode::Space => self.state != LineState::Middle,
+                _ => false,
+            });
+        if !quiet {
+            return None;
+        }
+        let mut next = self.clone();
+        next.pos = at;
+        if next.peek_at(0).is_none() {
+            return None;
+        }
+        next.end_line();
+        (next.col == 1).then(|| next.line_mark()).flatten()
     }
 
     /// A mouth over the file `src`: its last line ends even without a
@@ -1690,15 +1767,24 @@ impl Mouth {
                 return Some(Token::new(Tok::Cs(it.intern(UNKNOWN_CS)), span));
             }
             // Text a run wrote to a file it did not know: the same unknown
-            // text read back.
+            // text read back where the categories it was written in hold
+            // now (tex.web § 343), else any text.
             if written && (c == UNKNOWN_ANY || written_class(c).is_some()) {
                 self.state = LineState::Middle;
-                self.written = written_class(c);
+                self.written = written_class(c).filter(|&(class, _)| reads_as_written(cats, class));
                 return Some(Token::new(Tok::Cs(it.intern(UNKNOWN_CS)), span));
             }
-            // One unknown digit the run wrote: a digit, whatever the category of its code.
+            // One unknown digit the run wrote: a digit where every digit it
+            // stands for is of category 12 now.
             if written && is_unknown_digit(c) {
                 self.state = LineState::Middle;
+                if !reads_as_written(cats, TextClass::DIGIT) {
+                    let plain = |d: char| {
+                        !cats.is_unknown(d) && matches!(cats.get(d), Catcode::Letter | Catcode::Other | Catcode::Active)
+                    };
+                    self.digit = unknown_number_chars(c).filter(|ds| ds.chars().all(plain)).map(|_| c);
+                    return Some(Token::new(Tok::Cs(it.intern(UNKNOWN_CS)), span));
+                }
                 return Some(Token::new(Tok::Chr(c, Catcode::Other), span));
             }
             match cat {
@@ -2113,4 +2199,54 @@ impl Meaning {
 /// the null control sequence.
 pub fn bare_name(name: &str) -> &str {
     name.strip_prefix('\\').filter(|rest| !rest.is_empty()).unwrap_or(name)
+}
+
+#[cfg(test)]
+mod quiet_marks {
+    use super::*;
+
+    /// After `\x{}` on the first line: where a quiet mark stands, if any.
+    fn mark_after(src: &str, expl: bool, end_line: i32) -> Option<(u32, u32)> {
+        let mut cats = CatcodeTable::latex();
+        if expl {
+            cats.set(' ', Catcode::Ignored);
+        }
+        let mut it = Interner::default();
+        let mut mouth = Mouth::file(src, 0);
+        for _ in 0..3 {
+            mouth.next_with(&cats, &mut it, EndLineChar(end_line)).expect("a token");
+        }
+        mouth.quiet_line_mark(&cats).map(|m| (m.line, m.col))
+    }
+
+    #[test]
+    fn a_line_end_that_adds_no_token_marks_the_next_line() {
+        // expl3: the appended space is ignored.
+        assert_eq!(mark_after("\\x{}\n\\y\n", true, 32), Some((2, 1)));
+        // A comment, ignored characters, trailing spaces.
+        assert_eq!(mark_after("\\x{}% c\n\\y\n", false, 13), Some((2, 1)));
+        assert_eq!(mark_after("\\x{}   \n\\y\n", true, 32), Some((2, 1)));
+        // No appended character at all.
+        assert_eq!(mark_after("\\x{}\n\\y\n", false, -1), Some((2, 1)));
+    }
+
+    #[test]
+    fn a_line_end_that_adds_a_token_marks_nothing() {
+        // A space token in state M, text, a directive, a `^^` escape.
+        assert_eq!(mark_after("\\x{}\n\\y\n", false, 13), None);
+        assert_eq!(mark_after("\\x{}a\n\\y\n", true, 32), None);
+        assert_eq!(mark_after("\\x{}%\\satex@x\n\\y\n", false, 13), None);
+        assert_eq!(mark_after("\\x{}^^20\n\\y\n", true, 32), None);
+    }
+
+    #[test]
+    fn a_quiet_last_line_marks_the_end_of_the_file() {
+        let cats = CatcodeTable::latex();
+        let mut it = Interner::default();
+        let mut mouth = Mouth::file("\\x{}%", 0);
+        for _ in 0..3 {
+            mouth.next_with(&cats, &mut it, EndLineChar(13)).expect("a token");
+        }
+        assert!(mouth.quiet_line_mark(&cats).is_some_and(|m| m.ended));
+    }
 }

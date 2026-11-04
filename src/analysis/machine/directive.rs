@@ -146,7 +146,7 @@ impl Machine<'_> {
             Some(true) => "already holds".to_string(),
             Some(false) => {
                 self.diagnose(Severity::Info, ASSUMED, span, format!("`{text}` fails here: the path is dropped"));
-                return self.no_arm();
+                return self.end_path();
             }
             None if atoms.len() == 1 => {
                 let mut narrowed = Vec::new();

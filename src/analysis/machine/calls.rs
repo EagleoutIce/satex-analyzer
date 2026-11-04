@@ -347,7 +347,46 @@ impl Machine<'_> {
     }
 }
 
+/// expl3's message formatting: the macro that wraps the text in the
+/// token list into lines, inside the group `\iow_wrap:nnnN` opens.
+const WRAP: (&str, &str) = ("__iow_wrap_do:", "l__iow_wrap_tl");
+
 impl Machine<'_> {
+    /// `analysis.assume_messages_output_only`: wrapping a message's
+    /// unknown text into lines changes nothing but that text. The wrap
+    /// runs in the group of `\iow_wrap:nnnN`, which drops all it sets
+    /// besides the text it hands on. So the text becomes unknown string
+    /// text, one path, where the real wrap splits on each unknown chunk.
+    /// `true` when it did.
+    pub(crate) fn message_output_only(&mut self, sym: Sym, m: &crate::engine::tex::MacroDef, span: Span) -> bool {
+        if !self.cfg.analysis.assume_messages_output_only
+            || m.parameter_text.arity != 0
+            || self.name(sym) != WRAP.0
+            || self.env.group_level() == 0
+        {
+            return false;
+        }
+        let tl = self.intern(WRAP.1);
+        let Some(b) = self.env.slot(tl).cloned() else { return false };
+        let Meaning::Macro(d) = &b.meaning else { return false };
+        if b.may.is_none() && !self.has_unknown(&d.replacement_text) {
+            return false;
+        }
+        let text = self.unknown_text(super::Unk::Class(crate::engine::tex::TextClass::WIDE, false, None, &[]), span);
+        let d = crate::engine::tex::MacroDef { replacement_text: Rc::from([text]), ..(**d).clone() };
+        let b = Binding { meaning: Meaning::Macro(Rc::new(d)), may: None, ..b };
+        self.env.set(tl, b, false);
+        self.approximated = true;
+        self.diagnose(
+            Severity::Assumption,
+            "message-output-only",
+            span,
+            "a message over unknown text is assumed to change nothing but the text it writes: its wrapped text is unknown"
+                .to_string(),
+        );
+        true
+    }
+
     /// Runs that left a name different in more than data: code, braces,
     /// a stack, a meaning. Their join would be text that may run as
     /// anything, or name anything, so they are not joined. Data is a number,

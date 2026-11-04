@@ -2890,15 +2890,16 @@ impl Machine<'_> {
 
     /// One operand of `\ifx`: the token, and for a one-of token
     /// ([`Machine::one_of`]) the first token of each text, the rests
-    /// put back. Texts that may be empty leave it unknown.
+    /// put back. An empty text's first token is the one after it.
     fn ifx_operand(&mut self) -> Option<(Token, Option<Vec<Token>>)> {
         let mut t = self.next_token()?;
         if self.split_empty(t) {
             t = self.next_token()?;
         }
-        let Some(texts) = self.one_of_members(t) else { return Some((t, None)) };
+        let Some(mut texts) = self.one_of_members(t) else { return Some((t, None)) };
         if texts.iter().any(|x| x.is_empty()) {
-            return Some((t, None));
+            let Some(n) = self.next_token() else { return Some((t, None)) };
+            texts = texts.iter().map(|x| x.iter().copied().chain([n]).collect()).collect();
         }
         let firsts = texts.iter().map(|x| x[0]).collect();
         self.unread_rests(&texts, t.span);

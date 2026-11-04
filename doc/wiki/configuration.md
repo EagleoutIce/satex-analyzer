@@ -515,6 +515,9 @@ analysis:
   assume_forced_page_breaks: true  # assume pages break only where a penalty forces it
     #! affects: precision, soundness
     #! example: off: `\thepage` after a long paragraph may also be one more
+  assume_messages_output_only: true  # assume wrapping a message for the terminal or log changes nothing but the text written
+    #! affects: precision, soundness
+    #! example: off: a message over unknown text is wrapped a path per way it may break into lines
 
 # shell_escape: restricted # which programs \write18 may run: none, restricted or full. Unset: what the build files ask for
 #! affects: precision, soundness
@@ -955,6 +958,8 @@ analysis:
 `analysis.assume_environment` (default `true`): Assumes the build sees this machine's environment variables, as Lua's `os.getenv` reads them. `false` makes every variable unknown.
 
 `analysis.assume_forced_page_breaks` (default `true`): Assumes pages break only where something forces it (`\clearpage`, `\newpage`, `\end`). `false` also follows a page break wherever the page may have filled, one path each way.
+
+`analysis.assume_messages_output_only` (default `true`): Assumes formatting a message for the terminal or log (expl3's `\iow_wrap`) changes nothing but the text it writes. A message over unknown text then writes unknown text, on one path, reported as an `assumption`. `false` wraps it for real, a path per way it may wrap.
 
 ## Stubs
 

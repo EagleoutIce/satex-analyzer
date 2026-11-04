@@ -346,6 +346,14 @@ impl Machine<'_> {
         self.halted = true;
     }
 
+    /// The path ends here as a run of its own (TeX loops forever, an
+    /// assumption fails): no other path stands for it, but it is no
+    /// refutation, so what it raised stays and later arms are explored.
+    pub(crate) fn end_path(&mut self) {
+        self.no_arm();
+        self.ended_run = true;
+    }
+
     /// Whether the running path took an arm over unknown text or over a
     /// meaning or text a join left: what it meets next holds only where
     /// that text has the arm's shape.
@@ -791,7 +799,7 @@ impl Machine<'_> {
         loop {
             self.charge(&mut mark);
             self.choices.clear();
-            self.infeasible = false;
+            (self.infeasible, self.ended_run) = (false, false);
             self.at_join = false;
             // A top run starts clean; a nested one keeps what its path raised.
             (self.dropping, self.dropping_possible, self.dropping_breaks, self.dropping_nested) = match paths.top {
@@ -807,10 +815,11 @@ impl Machine<'_> {
             first = first.or(self.choices.first().copied());
             // A run that was cut ends the region it is in: other sequences
             // of arms would only be cut there again.
-            let next = next_script(&self.choices, self.infeasible);
+            let refuted = self.infeasible && !self.ended_run;
+            let next = next_script(&self.choices, refuted);
             let rows = rows_from..self.raised_mark();
             // A refuted run raised nothing.
-            if self.infeasible {
+            if refuted {
                 self.retract(rows.clone());
             }
             // A nested drive's path keeps an error whose recovery breaks

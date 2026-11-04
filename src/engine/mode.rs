@@ -228,18 +228,19 @@ impl Default for Dim {
 }
 
 impl Dim {
-    /// Every length TeX holds: the top of the lattice.
-    pub const ANY: Dim = Dim { lo: -crate::engine::value::MAX_DIMEN, hi: crate::engine::value::MAX_DIMEN };
+    /// Every length TeX holds, the 32-bit word: the top of the lattice.
+    /// Lists add up and `\advance` adds past `\maxdimen` unchecked
+    /// (tex.web §§ 656, 668, 1238); only a scan checks it (§ 461).
+    pub const ANY: Dim = Dim { lo: crate::engine::value::WORD_MIN, hi: crate::engine::value::WORD_MAX };
 
     pub const fn exact(v: Scaled) -> Dim {
         Dim { lo: v, hi: v }
     }
 
-    /// A length whose sum passed `\maxdimen` is TeX's "Dimension too
-    /// large", whose outcome is not modeled: any length then.
+    /// A length whose sum left the word wraps, which is not modeled: any
+    /// length then.
     fn bounded(lo: Scaled, hi: Scaled) -> Dim {
-        let max = crate::engine::value::MAX_DIMEN;
-        if lo < -max || hi > max || lo > hi { Dim::ANY } else { Dim { lo, hi } }
+        if lo < Dim::ANY.lo || hi > Dim::ANY.hi || lo > hi { Dim::ANY } else { Dim { lo, hi } }
     }
 
     pub fn range(lo: Scaled, hi: Scaled) -> Dim {

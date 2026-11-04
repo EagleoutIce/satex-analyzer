@@ -1392,6 +1392,7 @@ impl Machine<'_> {
             runs: _,
             replayable: _,
             infeasible: _,
+            ended_run: _,
             undo: _,
             waiting: _,
             parted: _,
@@ -1591,7 +1592,9 @@ impl Machine<'_> {
     pub(super) fn maybe_resume(&mut self) {
         let Some(load) = self.suspended.last() else { return };
         let Some(Frame::File { mouth, .. }) = self.input.last() else { return };
-        let Some(mark) = mouth.line_mark().filter(|m| !m.ended && mouth.file == load.file) else { return };
+        let Some(mark) = mouth.quiet_line_mark(&self.catcodes).filter(|m| !m.ended && mouth.file == load.file) else {
+            return;
+        };
         if load.frame + 1 != self.input.len() || self.rest_state(load.frame + 1) != load.rest {
             return;
         }
@@ -2536,7 +2539,7 @@ impl Machine<'_> {
         if mouth.file != rec.file {
             return;
         }
-        let Some(mark) = mouth.line_mark() else { return };
+        let Some(mark) = mouth.quiet_line_mark(&self.catcodes) else { return };
         let long_enough = self.out.steps - rec.marks.steps >= SEGMENT_TOKENS;
         let tail = mouth.left() <= self.cfg.cache.tail;
         if mark.line <= rec.last_line || !(long_enough || mark.ended || tail) {

@@ -188,8 +188,10 @@ impl Num {
         Num { lo: lo.min(hi), hi: hi.max(lo) }
     }
 
-    /// Every value of the kind: what an unknown typesetting result is.
-    /// A count reaches `-2^31` by `\advance` (tex.web § 1238 checks no overflow).
+    /// Every value of the kind a scan gives: a dimension is checked
+    /// against `\maxdimen` (tex.web § 461), a count reaches `-2^31` by
+    /// `\advance` (§ 1238 checks no overflow). Stored dimensions are
+    /// [`crate::engine::mode::Dim::ANY`].
     pub fn full(dimen: bool) -> Num {
         match dimen {
             true => Num::range(-MAX_DIMEN, MAX_DIMEN),
