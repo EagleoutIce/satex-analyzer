@@ -15,9 +15,10 @@ Each plugin has a block under `type_plugins:` in `satex.yaml`. `enabled: false` 
 | hover | `textDocument/hover` | hover card | hover | hover |
 | complete | `textDocument/completion` | completion | completion | completion |
 | actions | `textDocument/codeAction` at the cursor | hover card buttons, context menu | light bulb | code actions |
-| view | `satex/view` | a dialog | a webview beside the editor (light bulb or `satex: Open Picker or Converter Here`) | the actions and the hover instead |
+| view | `satex/view` | a dialog | a webview beside the editor (light bulb or `satex: Open Picker, Converter or Drawing Here`) | the actions and the hover instead |
+| lens | `textDocument/codeLens`, one handler over every plugin | a button above the line | a code lens | a code lens |
 | colors | `textDocument/documentColor`, `colorPresentation` | swatches, a click opens the picker | the native color picker | swatches where supported |
-| dialog (table, image) | `textDocument/codeLens`, `satex/dialog`, `satex/dialogApply` | a button above the line, a link in the hover | a code lens and a webview beside the editor (`satex: Edit Table or Image…`) | the code actions with their defaults |
+| dialog (table, image) | `satex/dialog`, `satex/dialogApply` | a button above the line, a link in the hover | a code lens and a webview beside the editor (`satex: Edit Table or Image…`) | the code actions with their defaults |
 
 ## keys
 
@@ -62,5 +63,16 @@ A figure is a file `\includegraphics` read. Its code lens and hover link open a 
 - graphicx reads the keys in order: `angle=90,width=3cm` makes the rotated figure 3cm wide, `width=3cm,angle=90` makes it 3cm high. The dialog's *size applies to* chooses the order.
 
 A key the dialog does not edit (`page`, `draft`) stays where it was, and so do a crop it cannot read and the units of an unchanged crop. A client without dialogs gets two code actions: rotate by 90° and fit to `\linewidth`.
+
+## tikz
+
+A `tikzpicture` the run met: a lens "Edit drawing…" on its `\begin` line and the view anywhere inside. The canvas shows the nodes the run made, where pgf put each, with its shape and size (`\pgf@sh@ns@⟨node⟩` and its saved anchors). Plain paths between coordinates show too.
+
+- Tools: add a rectangle or circle node, move one by drag (snapped to `grid` cm), connect two with `->`, `<->` or `--`, delete, edit a label.
+- It writes `\node[draw] (n1) at (x,y) {label};` and `\draw[->] (a) -- (b);`. Statements it did not change stay as they were.
+- Anything else stays code and shows read-only: a `\foreach`, a scope, a node placed relative to another. A node the run put elsewhere than its text says counts as code too. Nothing is dropped.
+- Mermaid: paste a flowchart (`graph TD`, `A[x] -->|y| B((z))`) to add its nodes, ranked by longest path, `spacing` cm apart. Export writes the picture's nodes and arrows as a flowchart.
+
+On a blank line of the document body, "Insert tikzpicture" writes a small picture and the view "New drawing" starts an empty one. Both add `\usepackage{tikz}` when the run has no tikz.
 
 Writing a plugin: [Writing a type plugin](writing-type-plugins.md).

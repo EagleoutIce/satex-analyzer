@@ -116,6 +116,7 @@ jobs:
         run: |
           python3 -m http.server -d site 8000 > /dev/null 2>&1 &
           sleep 2
+          node doc/site/views.test.mjs
           node doc/site/test.mjs http://localhost:8000/
 
       - uses: actions/upload-pages-artifact@v3

@@ -3495,6 +3495,39 @@
           },
           "type": "object"
         },
+        "tikz": {
+          "description": "a tikzpicture the run met, a blank line of the document body",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "\"Edit drawing…\": nodes and arrows on a canvas, Mermaid import and export",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: no drawing lens, action or dialog"
+            },
+            "grid": {
+              "default": 0.5,
+              "description": "the grid in cm a dragged or added node snaps to",
+              "minimum": 0,
+              "type": "number",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "spacing": {
+              "default": 2.0,
+              "description": "the distance in cm between the ranks of an imported Mermaid flowchart",
+              "minimum": 0,
+              "type": "number",
+              "x-affects": [
+                "output"
+              ]
+            }
+          },
+          "type": "object"
+        },
         "units": {
           "description": "dimensions: `12pt`, `\\textwidth`, a value range",
           "properties": {

@@ -35,11 +35,13 @@ The call graph: which control sequences a macro's replacement text invokes.
 
 ```text
 $ satex query calls -f samples/paper.tex --filter 'name=\maketitle'
-recognized gaps
-  budget-exhausted 1× first at paper.tex:0
-  format-truncated 1× first at paper.tex:0
-  limit-reached 1× first at expl3-code.tex:3655
-  unbalanced-group 1× first at expl3-code.tex:2040
+name        callee                  
+\maketitle  \@ifnextchar            
+\maketitle  \let                    
+\maketitle  \@footnotetext          
+\maketitle  \@footnotemark          
+\maketitle  \H@@footnotetext        
+… 6 more lines omitted
 ```
 
 ## catcodes
@@ -50,11 +52,6 @@ Explicit category code assignments (`\catcode`) the document makes. `doc/src/wik
 $ satex query catcodes -f doc/src/wiki/queries/demo.tex
 code  kind    key  detail     
 13    Active  !    was Other  
-recognized gaps
-  budget-exhausted 1× first at demo.tex:0
-  format-truncated 1× first at demo.tex:0
-  limit-reached 1× first at expl3-code.tex:5060
-  unterminated-conditional 1× first at expl3-code.tex:1931
 ```
 
 ## definitions
@@ -63,13 +60,13 @@ Every name the document or its packages define. `origin` is `document` for files
 
 ```text
 $ satex query definitions -f samples/paper.tex --filter 'tag=macro and arity>0'
-tag    name        parameters                       takes  by    body               file       
-macro  \WeirdMore  super #1\;                       1      \def   #1                paper.tex  @ paper.tex:14:1
-macro  \Weird      key: #1, value: #2, magic: #3\;  3      \def  \texttt {key: #1…  paper.tex  @ paper.tex:16:1
-recognized gaps
-  budget-exhausted 1× first at paper.tex:0
-  format-truncated 1× first at paper.tex:0
-… 2 more lines omitted
+tag    name      paramet…  comment                body      file                  
+macro  \__sys_…  #1                               \str_if…  expl3-code.tex        @ expl3-code.tex:1539:17
+macro  \sys_gs…  #1                               \tex_se…  expl3-code.tex        @ expl3-code.tex:1531:34
+macro  \reserv…  #1.sty\…                         \def \r…  latex.ltx             @ latex.ltx:18742:20
+macro  \reserv…  #10#2#{                          \expand…  latex.ltx             @ latex.ltx:1277:3
+macro  \reserv…  #1\@nil                          \@for \…  latex.ltx             @ latex.ltx:18611:3
+… 2591 more lines omitted
 ```
 
 ## dependencies
@@ -78,10 +75,13 @@ The files, packages and classes the document reads, and what loaded each. Lua mo
 
 ```text
 $ satex query dependencies -f samples/paper.tex --filter 'kind=package'
-recognized gaps
-  budget-exhausted 1× first at paper.tex:0
-  format-truncated 1× first at paper.tex:0
-  limit-reached 1× first at expl3-code.tex:6517
+kind     status          name            by              file                
+package  read            amsmath                         paper.tex           @ paper.tex:4:1
+package  read            amstext         amsmath         amsmath.sty         @ amsmath.sty:126:1
+package  read            amsgen          amstext         amstext.sty         @ amstext.sty:27:1
+package  read            amsbsy          amsmath         amsmath.sty         @ amsmath.sty:127:1
+package  already-loaded  amsgen          amsbsy          amsbsy.sty          @ amsbsy.sty:27:1
+… 49 more lines omitted
 ```
 
 ## dependency-graph
@@ -90,13 +90,13 @@ The dependency graph as records. `satex dependencies` renders it as DOT or JSON.
 
 ```text
 $ satex query dependency-graph -f samples/paper.tex --filter 'file=paper.tex'
-tag                  name                file       
-use                  Missing $ inserted  paper.tex  @ paper.tex:12:23
-variable-definition  \WeirdMore          paper.tex  @ paper.tex:14:1
-macro-definition     \WeirdMore          paper.tex  @ paper.tex:14:1
-variable-definition  \Weird              paper.tex  @ paper.tex:16:1
-macro-definition     \Weird              paper.tex  @ paper.tex:16:1
-… 14 more lines omitted
+tag                  name                                                          file       
+macro-call           \documentclass                                                paper.tex  @ paper.tex:1:1
+variable-definition  \pkgcls@targetdate                                            paper.tex  @ paper.tex:1:1
+use                  @                                                             paper.tex  @ paper.tex:1:1
+use                  11pt                                                          paper.tex  @ paper.tex:1:1
+macro-call           \value                                                        paper.tex  @ paper.tex:0:0
+… 542 more lines omitted
 ```
 
 ## diagnostics
@@ -105,13 +105,13 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 
 ```text
 $ satex query diagnostics -f samples/paper.tex
-severity     code                      count  message                             file       
-unsupported  budget-exhausted          1      analysis stopped: time limit (lim…  paper.tex  @ paper.tex:0:0
-unsupported  limit-reached             1      limits.seconds (300) was reached;…  latex.ltx  @ latex.ltx:109:37
-unsupported  unterminated-conditional  1      no matching \fi before the input …  latex.ltx  @ latex.ltx:105:1
-unsupported  format-truncated          1      /usr/local/texlive/YYYY/texmf-dis…  paper.tex  @ paper.tex:0:0
-warning      script-outside-math       1      missing $ inserted before \left     paper.tex  @ paper.tex:12:23
-… 13 more lines omitted
+severity     code                          count  message              file            
+imprecision  call-summarized               1      a call with unknow…  latex.ltx       @ latex.ltx:1824:12
+imprecision  call-summarized               1      a call with unknow…  hyperref.sty    @ hyperref.sty:2143:24
+imprecision  argument-ends-in-unknown      1      a delimited argume…  latex.ltx       @ latex.ltx:20534:3
+imprecision  unknown-name                  5      a name built from …  latex.ltx       @ latex.ltx:20322:31
+imprecision  unknown-name                  5      a name built from …  latex.ltx       @ latex.ltx:20322:41
+… 22 more lines omitted
 ```
 
 ## distribution
@@ -126,7 +126,7 @@ texmf-tree                                                                      
 texmf-tree                                                                        ~/.texliveYYYY/texmf-var  
 texmf-tree                                                                        /usr/local/texlive/texmf-local        
 texmf-tree                                                                        /usr/local/texlive/YYYY/texmf-config  
-… 5388 more lines omitted
+… 5384 more lines omitted
 ```
 
 ## expansions
@@ -135,13 +135,13 @@ Every macro call, with how many times it was expanded.
 
 ```text
 $ satex query expansions -f samples/paper.tex --filter 'name=\newcommand'
-name         count  file       
-\newcommand  1      paper.tex  @ paper.tex:11:1
-\newcommand  1      paper.tex  @ paper.tex:12:1
-\newcommand  1      paper.tex  @ paper.tex:24:1
-recognized gaps
-  budget-exhausted 1× first at paper.tex:0
-… 3 more lines omitted
+name         count  package         file                
+\newcommand  1      article         article.cls         @ article.cls:48:1
+\newcommand  1      article         article.cls         @ article.cls:203:3
+\newcommand  1      article         article.cls         @ article.cls:268:1
+\newcommand  1      article         article.cls         @ article.cls:302:1
+\newcommand  1      article         article.cls         @ article.cls:306:1
+… 163 more lines omitted
 ```
 
 ## files
@@ -150,13 +150,13 @@ Every file read while analyzing the document, in the order it was opened.
 
 ```text
 $ satex query files -f samples/paper.tex
-id  kind    file            
-0   input   paper.tex       
-1   input   latex.ltx       
-2   input   texsys.cfg      
-3   input   texsys.aux      
-4   input   expl3.ltx       
-… 10 more lines omitted
+id   kind     file                                      
+0    input    paper.tex                                 
+1    input    latex.ltx                                 
+2    input    texsys.cfg                                
+3    input    texsys.aux                                
+4    input    expl3.ltx                                 
+… 290 more lines omitted
 ```
 
 ## gaps
@@ -165,11 +165,8 @@ Lists the places the run could not interpret, grouped by cause. Widened recursio
 
 ```text
 $ satex query gaps -f doc/src/wiki/challenges/06-unknown.tex
-severity     code                    count  message                   file            
-unsupported  budget-exhausted        1      analysis stopped: time …  06-unknown.tex  @ 06-unknown.tex:0:0
-unsupported  format-truncated        1      /usr/local/texlive/YYYY…  06-unknown.tex  @ 06-unknown.tex:0:0
-unsupported  limit-reached           1      limits.seconds (300) wa…  expl3-code.tex  @ expl3-code.tex:20976:36
-unsupported  unbalanced-conditional  1      end of 06-unknown.tex o…  06-unknown.tex  @ 06-unknown.tex:0:0
+severity     code                    count  message                        file            
+unsupported  unbalanced-conditional  1      end of 06-unknown.tex occurr…  06-unknown.tex  @ 06-unknown.tex:0:0
 ```
 
 ## occurrences
@@ -178,11 +175,13 @@ Package and class identification banners, passed options, and other one-off even
 
 ```text
 $ satex query occurrences -f samples/paper.tex --filter 'kind=identification'
-recognized gaps
-  budget-exhausted 1× first at paper.tex:0
-  format-truncated 1× first at paper.tex:0
-  limit-reached 1× first at expl3-code.tex:10401
-  unterminated-conditional 1× first at expl3-code.tex:2804
+kind            key                   detail                  file                  
+identification  article               2025/01/22 v1.4n Stan…  article.cls           @ article.cls:45:1
+identification  size11.clo            2025/01/22 v1.4n Stan…  size11.clo            @ size11.clo:44:1
+identification  amsmath               2025/07/09 v2.17z AMS…  amsmath.sty           @ amsmath.sty:29:1
+identification  amstext               2024/11/17 v2.01 AMS …  amstext.sty           @ amstext.sty:26:1
+identification  amsgen                1999/11/30 v2.0 gener…  amsgen.sty            @ amsgen.sty:26:1
+… 38 more lines omitted
 ```
 
 ## options
@@ -195,8 +194,8 @@ This needs call arguments recorded (`record_arguments`). `query options` and `--
 
 ```text
 $ satex query options --for mybanner -f samples/mypackage.sty
-recognized gaps
-  missing-endcsname 2× first at expl3-code.tex:1492
+kind        name       detail                                                                                  
+positional  \mybanner  takes an optional argument (\mybanner[plain]) not read through a recognized key family  
 ```
 
 ## pgfkeys
@@ -437,12 +436,13 @@ The criterion is a name, `--at [FILE:]LINE:COL[-LINE[:COL]]` (a range, to the en
 
 ```text
 $ satex slice -f samples/paper.tex '\ifdraft'
-  `\ifdraft` names nothing the run reached, so the slice is empty
-recognized gaps
-  budget-exhausted 1× first at paper.tex:0
-  format-truncated 1× first at paper.tex:0
-  limit-reached 1× first at latex.ltx:109
-  unterminated-conditional 1× first at latex.ltx:105
+\begin{filecontents*}[overwrite]{mypackage.sty}
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{mypackage}[2024/01/01 v1.0 Sample package for satex]
+
+\RequirePackage{xcolor}
+
+… 51 more lines omitted
 ```
 
 ```text

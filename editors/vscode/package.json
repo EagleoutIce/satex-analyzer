@@ -146,7 +146,7 @@
     "commands": [
       {
         "command": "satex.openView",
-        "title": "Open Picker or Converter Here",
+        "title": "Open Picker, Converter or Drawing Here",
         "category": "satex"
       },
       {

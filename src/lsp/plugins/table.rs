@@ -3,8 +3,11 @@
 //! dialog (`satex/dialog`), booktabs and siunitx rewrites as code actions.
 
 use super::TypePlugin;
+use crate::analysis::machine::Analysis;
 use crate::analysis::roles::Ty;
+use crate::linter::fix::Text;
 use crate::project::config::TypePlugins;
+use lsp_types::CodeLens;
 
 pub(super) struct Table;
 
@@ -24,5 +27,8 @@ impl TypePlugin for Table {
     }
     fn enabled(&self, cfg: &TypePlugins) -> bool {
         cfg.table.enabled
+    }
+    fn lenses(&self, analysis: &Analysis, doc: &Text, path: &str) -> Vec<CodeLens> {
+        crate::lsp::dialogs::lenses(analysis, doc, path, crate::lsp::dialogs::Kind::Table)
     }
 }

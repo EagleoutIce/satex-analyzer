@@ -3363,3 +3363,68 @@ fn change_environment_edits_both_ends_only() {
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
+
+const PICTURE: &str = "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}[x=1cm]\n  \\node[draw] (a) at (0,0) {Start};\n  \\node[draw, circle] (b) at (3,1) {End};\n  \\draw[->] (a) -- (b);\n  \\foreach \\i in {1,2} { \\node (c\\i) at (\\i,-2) {\\i}; }\n\\end{tikzpicture}\n\n\\end{document}\n";
+
+/// "Edit drawing…": a lens on the picture, a view with its body and the nodes the run made,
+/// with where pgf put them (the loop's too); a blank line offers a new picture.
+#[test]
+fn tikz_plugin_shows_the_runs_nodes() {
+    let (mut server, uri, dir) = open_set("tikz", PICTURE, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 4, 3);
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].clone();
+    assert_eq!(lenses[0]["range"]["start"]["line"], 3, "{lenses}");
+    assert_eq!(lenses[0]["command"]["arguments"][2], "tikz", "{lenses}");
+    let views = at(&mut server, &uri, "satex/view", 5, 3);
+    let draw = &views.as_array().unwrap().iter().find(|v| v["plugin"] == "tikz").expect("a drawing")["sections"][0];
+    assert_eq!(draw["kind"], "drawing");
+    let body = PICTURE.split_once("[x=1cm]").unwrap().1.split_once("\\end{tikzpicture}").unwrap().0;
+    assert_eq!(draw["body"], body);
+    let node =
+        |name: &str| draw["nodes"].as_array().unwrap().iter().find(|n| n["name"] == name).cloned().unwrap_or_default();
+    assert_eq!(
+        (node("a")["shape"].as_str(), node("b")["shape"].as_str()),
+        (Some("rectangle"), Some("circle")),
+        "{draw}"
+    );
+    let near = |n: &Value, x: f64, y: f64| {
+        (n["x"].as_f64().unwrap() - x).abs() < 0.01 && (n["y"].as_f64().unwrap() - y).abs() < 0.01
+    };
+    assert!(near(&node("b"), 3.0, 1.0) && near(&node("c2"), 2.0, -2.0), "{draw}");
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 9, 0);
+    assert!(actions.as_array().unwrap().iter().any(|a| a["title"] == "Insert tikzpicture"), "{actions}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Without tikz the new picture loads it; `enabled: false` takes lens, view and action away.
+#[test]
+fn tikz_plugin_new_drawing_and_off() {
+    let text = "\\documentclass{article}\n\\begin{document}\nText\n\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("tikz-new", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 2, 1);
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 3, 0);
+    let new = actions.as_array().unwrap().iter().find(|a| a["title"] == "Insert tikzpicture (adds \\usepackage{tikz})");
+    let edits = new.expect("a new picture")["edit"]["changes"][&uri].as_array().unwrap().clone();
+    assert!(edits[0]["newText"].as_str().unwrap().starts_with("\\begin{tikzpicture}"), "{edits:?}");
+    assert_eq!(
+        (edits[1]["range"]["start"]["line"].as_u64(), edits[1]["newText"].as_str()),
+        (Some(1), Some("\\usepackage{tikz}\n"))
+    );
+    assert_eq!(at(&mut server, &uri, "satex/view", 3, 0)[0]["title"], "New drawing");
+    assert_eq!(at(&mut server, &uri, "satex/view", 2, 1), json!([]), "not on a line with text");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    let (mut server, uri, dir) = open_set("tikz-off", PICTURE, &["type_plugins.tikz.enabled=false"]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 4, 3);
+    assert_eq!(at(&mut server, &uri, "satex/view", 5, 3), json!([]));
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 9, 0);
+    assert!(
+        !actions.as_array().unwrap().iter().any(|a| a["title"].as_str().unwrap_or_default().contains("tikzpicture"))
+    );
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    assert_eq!(server.response(id)["result"], json!([]));
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}

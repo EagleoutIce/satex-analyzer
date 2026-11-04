@@ -1394,7 +1394,7 @@ def main():
     card_data = sem.cards(names, formal.rows, lean, refs, *scope_cards(args.satex.resolve(), work, names), {k.split(":", 1)[1]: v for k, v in PREVIEWS.items()}, sem.builtin_lines(ROOT), sem.example_defs(pending))
     assets["cards"] = emit(out, "cs-cards.json", json.dumps(card_data, ensure_ascii=False, separators=(",", ":")).encode())
     print(f"cards: {len(card_data)} of {len(names)} control sequences named in code spans", file=sys.stderr)
-    left = {k: v["k"] for k, v in card_data.items() if v["k"] == "undefined" or v.get("at", "").startswith("the example")}
+    left = {k: v.get("k", "") for k, v in card_data.items() if v.get("k") == "undefined" or v.get("at", "").startswith("the example")}
     print(f"cards: {sum(v == 'undefined' for v in left.values())} names without a definition, {len(left) - sum(v == 'undefined' for v in left.values())} defined by an example: "
           + " ".join(sorted(k for k, v in left.items() if v == "undefined")), file=sys.stderr)
     for dst, title, body in pending:

@@ -648,6 +648,14 @@ type_plugins:  # editor features for text of a type: hover, completion, code act
     enabled: true  # a code lens and hover link to the crop, rotate and size dialog, rotate and fit actions
       #! affects: output
       #! example: `enabled: false`: no image lens, dialog or actions
+  tikz:  # a tikzpicture the run met, a blank line of the document body
+    enabled: true  # "Edit drawing…": nodes and arrows on a canvas, Mermaid import and export
+      #! affects: output
+      #! example: `enabled: false`: no drawing lens, action or dialog
+    grid: 0.5  # the grid in cm a dragged or added node snaps to
+      #! affects: output
+    spacing: 2.0  # the distance in cm between the ranks of an imported Mermaid flowchart
+      #! affects: output
 
 slice:  # what satex slice leaves out
   trim: true  # leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \begin{document} reads

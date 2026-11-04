@@ -11,14 +11,16 @@ mod environment;
 mod image;
 mod keys;
 mod table;
+mod tikz;
 mod units;
 
 use super::type_at::{At, Hit};
+use crate::analysis::facts::Occurrence;
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::Ty;
 use crate::linter::fix::{Pos, Text};
 use crate::project::config::TypePlugins;
-use lsp_types::{CodeAction, ColorInformation, CompletionItem, InlayHint};
+use lsp_types::{CodeAction, CodeLens, ColorInformation, CompletionItem, InlayHint};
 use serde_json::{Value as Json, json};
 
 /// What a feature sees: the run, the document and the types at the position.
@@ -47,7 +49,8 @@ pub(super) trait TypePlugin: Sync {
     fn name(&self) -> &'static str;
     /// One line for `satex query type-plugins` and the wiki.
     fn about(&self) -> &'static str;
-    /// The types of the lattice it triggers on.
+    /// The types of the lattice it triggers on; none: the run's place triggers it (an
+    /// environment the run met), asked with a [`Ty::Bottom`] hit.
     fn types(&self) -> &'static [Ty];
     /// The features it implements: hover, complete, actions, view, colors, inlay.
     fn features(&self) -> &'static [&'static str];
@@ -77,20 +80,28 @@ pub(super) trait TypePlugin: Sync {
     fn inlays(&self, _analysis: &Analysis, _doc: &Text, _path: &str) -> Vec<InlayHint> {
         Vec::new()
     }
+    fn lenses(&self, _analysis: &Analysis, _doc: &Text, _path: &str) -> Vec<CodeLens> {
+        Vec::new()
+    }
 }
 
 /// Every plugin, in the order they answer.
 pub(super) static PLUGINS: &[&dyn TypePlugin] =
-    &[&keys::Keys, &units::Units, &color::Color, &environment::Environment, &table::Table, &image::Image];
+    &[&keys::Keys, &units::Units, &color::Color, &environment::Environment, &table::Table, &image::Image, &tikz::Tikz];
+
+/// The hit a plugin without types is asked with.
+static PLACE: std::sync::LazyLock<Hit> = std::sync::LazyLock::new(|| Hit::of(Ty::Bottom));
 
 /// The enabled plugins.
 fn on(analysis: &Analysis) -> impl Iterator<Item = &'static dyn TypePlugin> + '_ {
     PLUGINS.iter().copied().filter(|p| p.enabled(&analysis.settings.type_plugins))
 }
 
-/// Each enabled plugin that wants a hit at `cx`, with the hit, the most precise type first.
+/// Each enabled plugin that wants a hit at `cx`, with the hit, the most precise type first; then
+/// those the run's place triggers.
 fn triggered<'a>(cx: &'a Cx<'a>) -> impl Iterator<Item = (&'static dyn TypePlugin, &'a Hit)> + 'a {
-    cx.at.hits.iter().flat_map(move |h| on(cx.analysis).filter(move |p| p.wants(h)).map(move |p| (p, h)))
+    let typed = cx.at.hits.iter().flat_map(move |h| on(cx.analysis).filter(move |p| p.wants(h)).map(move |p| (p, h)));
+    typed.chain(on(cx.analysis).filter(|p| p.types().is_empty()).map(|p| (p, &*PLACE)))
 }
 
 /// What a feature at `pos` sees.
@@ -159,6 +170,33 @@ pub(super) fn inlays(analysis: &Analysis, doc: &Text, path: &str) -> Vec<InlayHi
     on(analysis).flat_map(|p| p.inlays(analysis, doc, path)).collect()
 }
 
+pub(super) fn lenses(analysis: &Analysis, doc: &Text, path: &str) -> Vec<CodeLens> {
+    on(analysis).flat_map(|p| p.lenses(analysis, doc, path)).collect()
+}
+
+/// The `\begin` and `\end` occurrences of each `name` environment the run met in `path`,
+/// matched by nesting, in the order they close.
+pub(super) fn pairs<'a>(analysis: &'a Analysis, path: &str, name: &str) -> Vec<(&'a Occurrence, &'a Occurrence)> {
+    use crate::engine::builtins::OccKind;
+    let Some(file) = super::type_at::file_of(analysis, path) else { return Vec::new() };
+    let mut ends: Vec<&Occurrence> = (analysis.facts.occurrences.iter())
+        .filter(|o| matches!(o.kind, OccKind::BeginEnvironment | OccKind::EndEnvironment))
+        .filter(|o| o.key == name && o.span.file == file)
+        .collect();
+    ends.sort_by_key(|o| (o.span.line, o.span.col));
+    ends.dedup_by_key(|o| (o.span.line, o.span.col, o.kind));
+    let mut open = Vec::new();
+    let mut out = Vec::new();
+    for o in ends {
+        if o.kind == OccKind::BeginEnvironment {
+            open.push(o);
+        } else if let Some(b) = open.pop() {
+            out.push((b, o));
+        }
+    }
+    out
+}
+
 /// The types of the whole word at `pos`, asked at its end, as hover asks.
 pub(super) fn hover_types(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> At {
     let line = doc.line(pos.line);
@@ -175,7 +213,11 @@ pub fn list(cfg: &TypePlugins) -> Vec<crate::queries::query::Record> {
             let mut r = crate::queries::query::Record::new();
             r.insert("name".into(), json!(p.name()));
             r.insert("enabled".into(), json!(p.enabled(cfg)));
-            r.insert("types".into(), json!(p.types().iter().map(Ty::to_string).collect::<Vec<_>>()));
+            let mut types: Vec<String> = p.types().iter().map(Ty::to_string).collect();
+            if types.is_empty() {
+                types.push("environment the run met".into());
+            }
+            r.insert("types".into(), json!(types));
             r.insert("features".into(), json!(p.features()));
             r.insert("about".into(), json!(p.about()));
             r

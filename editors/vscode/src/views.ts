@@ -5,7 +5,7 @@ import { LanguageClient } from 'vscode-languageclient/node';
 interface View { plugin: string; title: string; sections: unknown[] }
 interface Edit { range: { start: { line: number; character: number }; end: { line: number; character: number } }; newText: string }
 
-const VERB: Record<string, string> = { color: 'Pick', units: 'Convert', environment: '' };
+const VERB: Record<string, string> = { color: 'Pick', units: 'Convert', environment: '', tikz: '' };
 
 /** The views at a position, from the server. */
 async function views(client: LanguageClient, doc: vscode.TextDocument, at: vscode.Position): Promise<View[]> {
@@ -28,10 +28,11 @@ export class ViewActions implements vscode.CodeActionProvider {
 }
 
 /** Opens the view of `plugin` (else the first) at `at` in a webview beside the editor. */
-export async function openView(context: vscode.ExtensionContext, client: LanguageClient | undefined, uri?: vscode.Uri, at?: vscode.Position, plugin?: string): Promise<void> {
+export async function openView(context: vscode.ExtensionContext, client: LanguageClient | undefined, uri?: vscode.Uri | string, at?: vscode.Position | { line: number; character: number }, plugin?: string): Promise<void> {
     const editor = vscode.window.activeTextEditor;
-    const doc = uri ? await vscode.workspace.openTextDocument(uri) : editor?.document;
-    const pos = at ?? editor?.selection.active;
+    // a code lens from the server passes its arguments as JSON
+    const doc = uri ? await vscode.workspace.openTextDocument(typeof uri === 'string' ? vscode.Uri.parse(uri) : uri) : editor?.document;
+    const pos = at ? new vscode.Position(at.line, at.character) : editor?.selection.active;
     if (!client || !doc || !pos) { return; }
     const all = await views(client, doc, pos);
     const view = all.find(v => v.plugin === plugin) ?? all[0];

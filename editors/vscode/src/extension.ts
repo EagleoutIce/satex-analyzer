@@ -229,8 +229,8 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('satex.openDialog', (arg) => openDialog(context, client, arg)),
         vscode.commands.registerCommand('satex.restart', () => client?.restart()),
         vscode.commands.registerCommand('satex.showOutput', () => client?.outputChannel.show(true)),
-        // type plugins' dialogs (color picker, length converter): the server's `satex/view` in a webview
-        vscode.commands.registerCommand('satex.openView', (uri?: vscode.Uri, at?: vscode.Position, plugin?: string) => openView(context, client, uri, at, plugin)),
+        // type plugins' dialogs (color picker, length converter, drawing): the server's `satex/view` in a webview
+        vscode.commands.registerCommand('satex.openView', (uri?: vscode.Uri | string, at?: vscode.Position, plugin?: string) => openView(context, client, uri, at, plugin)),
         vscode.languages.registerCodeActionsProvider(['latex', 'tex'].map(language => ({ language })), new ViewActions(() => client)),
         vscode.commands.registerCommand('satex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
         client.onNotification('satex/status', working),

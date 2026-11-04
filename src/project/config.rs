@@ -454,6 +454,7 @@ pub struct TypePlugins {
     pub environment: Switch,
     pub table: Switch,
     pub image: Switch,
+    pub tikz: TikzPlugin,
 }
 
 /// A plugin with nothing to tune: `enabled` only.
@@ -515,6 +516,23 @@ pub struct ColorPlugin {
 impl Default for ColorPlugin {
     fn default() -> Self {
         Self { enabled: true, swatches: true, name: "mycolor".into() }
+    }
+}
+
+/// `type_plugins.tikz:` the drawing dialog of a `tikzpicture`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TikzPlugin {
+    pub enabled: bool,
+    /// The grid a dragged or added node snaps to, in cm.
+    pub grid: f64,
+    /// The distance between the ranks of an imported Mermaid flowchart, in cm.
+    pub spacing: f64,
+}
+
+impl Default for TikzPlugin {
+    fn default() -> Self {
+        Self { enabled: true, grid: 0.5, spacing: 2.0 }
     }
 }
 

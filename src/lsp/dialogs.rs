@@ -104,10 +104,13 @@ fn open_command(kind: Kind, uri: &str, at: Position) -> Command {
     Command { title: title.into(), command: OPEN.into(), arguments: Some(vec![json!({ "uri": uri, "position": at })]) }
 }
 
-/// A code lens above each table and figure: the dialog's entry.
-pub fn lenses(analysis: &Analysis, doc: &Text, path: &str, uri: &str) -> Vec<CodeLens> {
+/// A code lens above each table or figure of `kind`: the dialog's entry.
+pub(super) fn lenses(analysis: &Analysis, doc: &Text, path: &str, kind: Kind) -> Vec<CodeLens> {
+    let uri = super::handlers::path_uri(path);
+    let uri = uri.as_str();
     targets(analysis, doc, path)
         .into_iter()
+        .filter(|t| t.kind == kind)
         .map(|t| {
             let range = lsp_range(doc, t.start, t.start);
             CodeLens { range, command: Some(open_command(t.kind, uri, range.start)), data: None }

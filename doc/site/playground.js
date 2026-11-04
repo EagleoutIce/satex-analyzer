@@ -877,14 +877,14 @@
       update: (deco, tr) => tr.effects.reduce((d, e) => e.is(swatches) ? view.Decoration.set(e.value.map(([at, css]) => view.Decoration.widget({ widget: new Swatch(css), side: -1 }).range(at)), true) : d, resetting(tr) ? view.Decoration.none : deco.map(tr.changes)),
       provide: (f) => view.EditorView.decorations.from(f),
     });
-    // A code lens above each table and figure (`textDocument/codeLens`): the button that opens its dialog.
+    // A code lens above each table, figure and drawing (`textDocument/codeLens`): the button that opens its dialog.
     class Lens extends view.WidgetType {
       constructor(lens) { super(); this.lens = lens; }
       eq(o) { return o.lens.command.title === this.lens.command.title && o.lens.range.start.line === this.lens.range.start.line; }
       toDOM() {
         const c = this.lens.command, line = this.lens.range.start.line;
         const b = Object.assign(document.createElement('button'), { type: 'button', className: 'cm-lens', textContent: c.title, title: `${c.title.replace('…', '')}: open the dialog` });
-        b.onclick = (e) => { e.preventDefault(); openDialog(c.arguments?.[0]?.position ?? { line, character: 0 }); };
+        b.onclick = (e) => { e.preventDefault(); if (c.command === 'satex.openView') openViews(c.arguments[1], c.arguments[2]); else openDialog(c.arguments?.[0]?.position ?? { line, character: 0 }); };
         const div = Object.assign(document.createElement('div'), { className: 'cm-lens-line' });
         const indent = /^\s*/.exec(ev.state.doc.line(Math.min(line + 1, ev.state.doc.lines)).text)[0];
         div.append(indent.replace(/\t/g, '    '), b);
@@ -1605,7 +1605,7 @@
     tools = tools.filter((t) => !t.action || t.action.edit);
     return tools.map((t, i) => [t.view ? `${VIEW_VERB[t.view.plugin] ?? 'Open'} ${t.view.title}…`.trim() : t.action.title, t.view ? t.view.plugin : 'rewrite', i]);
   }
-  const VIEW_VERB = { color: 'Pick', units: 'Convert', environment: '' };
+  const VIEW_VERB = { color: 'Pick', units: 'Convert', environment: '', tikz: '' };
   function runTool(i) {
     const t = tools[i];
     if (t?.action) return fix(t.action);
@@ -5174,7 +5174,7 @@
     }).catch(() => {});
   }
 
-  /** The code lenses of the open file: an "Edit table…" above each table, "Edit image…" above each figure. */
+  /** The code lenses of the open file, one per plugin target: "Edit table…", "Edit image…", "Edit drawing…". */
   async function lensify() {
     const found = await lsp('textDocument/codeLens', { textDocument: { uri: uri() } }).catch(() => null);
     editor?.lenses?.(found ?? []);

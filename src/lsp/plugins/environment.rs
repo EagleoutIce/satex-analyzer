@@ -77,31 +77,15 @@ struct Pair {
 /// The pair the run met around the cursor, matched by nesting in this file.
 fn pair(cx: &Cx) -> Option<Pair> {
     let name = cx.at.item.typed.trim().to_string();
-    let file = super::super::type_at::file_of(cx.analysis, cx.path)?;
-    let mut ends: Vec<&crate::analysis::facts::Occurrence> = (cx.analysis.facts.occurrences.iter())
-        .filter(|o| matches!(o.kind, OccKind::BeginEnvironment | OccKind::EndEnvironment))
-        .filter(|o| o.key == name && o.span.file == file)
-        .collect();
-    ends.sort_by_key(|o| (o.span.line, o.span.col));
-    ends.dedup_by_key(|o| (o.span.line, o.span.col, o.kind));
-    let mut open = Vec::new();
-    for o in ends {
-        match o.kind {
-            OccKind::BeginEnvironment => open.push(o),
-            _ => {
-                let Some(b) = open.pop() else { continue };
-                if b.span.line == cx.pos.line || o.span.line == cx.pos.line {
-                    let at = |line: u32, from: u32, word: &str| name_col(cx.doc.line(line), from, word, &name);
-                    return Some(Pair {
-                        begin: (b.span.line, at(b.span.line, b.span.col, "begin")?),
-                        end: (o.span.line, at(o.span.line, o.span.col, "end")?),
-                        name,
-                    });
-                }
-            }
-        }
-    }
-    None
+    let (b, o) = super::pairs(cx.analysis, cx.path, &name)
+        .into_iter()
+        .find(|(b, o)| b.span.line == cx.pos.line || o.span.line == cx.pos.line)?;
+    let at = |line: u32, from: u32, word: &str| name_col(cx.doc.line(line), from, word, &name);
+    Some(Pair {
+        begin: (b.span.line, at(b.span.line, b.span.col, "begin")?),
+        end: (o.span.line, at(o.span.line, o.span.col, "end")?),
+        name,
+    })
 }
 
 /// The column of `name` in `\word{name}` at or after column `from` of `line`.

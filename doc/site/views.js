@@ -205,6 +205,304 @@
     },
   };
 
+  // drawings (tikz plugin): a picture's text as statements; nodes `\node[…] (n) at (x,y) {…};`
+  // and arrows `\draw[->] (a) -- (b);` are edited, any other statement is kept as code
+  const NUM = String.raw`(-?\d*\.?\d+)\s*(?:cm)?`;
+  const NODE = new RegExp(String.raw`^\\(node|coordinate)\s*(?:\[([^\]]*)\])?\s*\(([\w -]+)\)\s*at\s*\(\s*${NUM}\s*,\s*${NUM}\s*\)\s*(?:\{([^{}]*)\})?\s*;$`);
+  const EDGE = /^\\draw\s*(?:\[([^\]]*)\])?\s*\(([\w -]+)\)\s*--\s*(?:node\s*(?:\[([^\]]*)\])?\s*\{([^{}]*)\}\s*)?\(([\w -]+)\)\s*;$/;
+  const PATH = /^\\draw\s*(?:\[[^\]]*\])?\s*(\([^()]*\)(?:\s*--\s*\([^()]*\))+)\s*;$/;
+  const ARROWS = ['->', '<->', '<-', '-'];
+  const opts = (s) => (s ?? '').split(',').map((o) => o.trim()).filter(Boolean);
+  const fmt = (v) => String(+(+v).toFixed(3));
+  /** A picture's body as statements `{text, lead, code, type…}` and the text after the last. */
+  function parse(body) {
+    const items = [];
+    let depth = 0, from = 0, groups = 0, glued = false;
+    const cut = (i, semi) => {
+      const text = body.slice(from, i), code = text.replace(/^(\s|%[^\n]*\n?)*/, '');
+      const it = { text, lead: text.slice(0, text.length - code.length), code, type: 'code' };
+      const n = !glued && code.match(NODE), e = !glued && code.match(EDGE);
+      if (n) Object.assign(it, { type: 'node', coordinate: n[1] === 'coordinate', opts: opts(n[2]), name: n[3].trim(), x: +n[4], y: +n[5], label: n[6] ?? '' });
+      else if (e) {
+        const o = opts(e[1]);
+        Object.assign(it, { type: 'edge', arrow: o.find((x) => ARROWS.includes(x)) ?? '-', opts: o.filter((x) => !ARROWS.includes(x)), from: e[2].trim(), at: e[3] ?? '', label: e[4] ?? '', to: e[5].trim() });
+      }
+      items.push(it);
+      from = i;
+      // `\foreach \x in {…}` with its body on the next line: that statement is the loop's
+      glued = !semi && groups < 2 && /^\\foreach\b/.test(code);
+      groups = 0;
+    };
+    for (let i = 0; i < body.length; i++) {
+      const c = body[i];
+      if (c === '\\') { i++; continue; }
+      if (c === '%') { while (i < body.length && body[i] !== '\n') i++; continue; }
+      if ('{['.includes(c)) groups += depth++ === 0 && c === '{';
+      else if ('}]'.includes(c)) {
+        // a group closed at the end of its line (`\foreach … { … }`) ends a statement too
+        if (--depth === 0 && c === '}' && /^[ \t]*(%[^\n]*)?\n/.test(body.slice(i + 1))) cut(i + 1, false);
+      } else if (c === ';' && depth === 0) cut(i + 1, true);
+    }
+    return { items, tail: body.slice(from) };
+  }
+  const nodeText = (n) => n.coordinate ? `\\coordinate (${n.name}) at (${fmt(n.x)},${fmt(n.y)});`
+    : `\\node${n.opts.length ? `[${n.opts.join(', ')}]` : ''} (${n.name}) at (${fmt(n.x)},${fmt(n.y)}) {${n.label}};`;
+  const edgeText = (e) => {
+    const o = [...(e.arrow === '-' ? [] : [e.arrow]), ...e.opts];
+    return `\\draw${o.length ? `[${o.join(', ')}]` : ''} (${e.from}) -- ${e.label ? `node[${e.at || 'above'}] {${e.label}} ` : ''}(${e.to});`;
+  };
+  /** The body again: untouched statements as they were, edited and new ones written out. */
+  function emit({ items, tail }) {
+    const indent = items.find((i) => i.lead.includes('\n'))?.lead.split('\n').pop() ?? '  ';
+    const text = (i) => (i.lead || `\n${indent}`) + (i.type === 'node' ? nodeText(i) : edgeText(i));
+    const kept = items.filter((i) => !i.deleted && i.lead), added = items.filter((i) => !i.deleted && !i.lead);
+    // new statements go after the last one's line, its comment included
+    const line = tail.match(/^[^\n]*/)[0];
+    return kept.map((i) => i.dirty ? text(i) : i.text).join('') + line + added.map(text).join('') + tail.slice(line.length);
+  }
+  // Mermaid flowcharts (`graph TD`, `A[x] -->|y| B((z))`)
+  const MNODE = /^\s*([A-Za-z_][\w]*)\s*(?:\(\((.*?)\)\)|\[(.*?)\]|\((.*?)\)|\{(.*?)\})?/;
+  const MLINK = /^\s*(?:(<-->|-->|---|==>|-\.->)|--\s*(.+?)\s*(-->|---))\s*(?:\|([^|]*)\|)?/;
+  const unquote = (s) => s?.trim().replace(/^"(.*)"$/, '$1');
+  /** A flowchart's nodes in order of appearance and its edges. */
+  function mermaidIn(src) {
+    const nodes = new Map(), edges = [];
+    let dir = 'TD';
+    const node = (m) => {
+      const [, id, circle, rect, round, rhomb] = m;
+      const label = unquote(circle ?? rect ?? round ?? rhomb);
+      const n = nodes.get(id) ?? { name: id, label: id, shape: 'rectangle' };
+      if (label != null) Object.assign(n, { label, shape: circle != null ? 'circle' : round != null ? 'rounded' : 'rectangle' });
+      nodes.set(id, n);
+      return id;
+    };
+    for (const line of src.split(/\n|;/).map((l) => l.replace(/%%.*/, '').trim()).filter(Boolean)) {
+      const head = line.match(/^(?:graph|flowchart)\s+(TD|TB|LR|RL|BT)\b/);
+      if (head) { dir = head[1] === 'TB' ? 'TD' : head[1]; continue; }
+      let m = line.match(MNODE), rest = line;
+      if (!m) continue;
+      let from = node(m);
+      rest = rest.slice(m[0].length);
+      while ((m = rest.match(MLINK))) {
+        rest = rest.slice(m[0].length);
+        const t = rest.match(MNODE);
+        if (!t) break;
+        rest = rest.slice(t[0].length);
+        const to = node(t), kind = m[1] ?? m[3];
+        edges.push({ from, to, arrow: kind === '<-->' ? '<->' : kind === '---' ? '-' : '->', label: unquote(m[4] ?? m[2]) ?? '' });
+        from = to;
+      }
+    }
+    return { dir, nodes: [...nodes.values()], edges };
+  }
+  /** Positions by rank (the longest path from a source), `spacing` cm apart, centered per rank. */
+  function layout({ dir, nodes, edges }, spacing = 2) {
+    // a depth-first walk in order of appearance drops the edges that close a cycle
+    const state = new Map(), dag = [];
+    const walk = (u) => {
+      state.set(u, 1);
+      for (const e of edges.filter((e) => e.from === u)) if (!state.has(e.to)) { dag.push(e); walk(e.to); } else if (state.get(e.to) === 2) dag.push(e);
+      state.set(u, 2);
+    };
+    for (const n of nodes) if (!state.has(n.name)) walk(n.name);
+    const rank = new Map(nodes.map((n) => [n.name, 0]));
+    for (let k = 0; k < nodes.length; k++) for (const e of dag) rank.set(e.to, Math.max(rank.get(e.to), rank.get(e.from) + 1));
+    const per = new Map();
+    for (const n of nodes) per.set(rank.get(n.name), [...(per.get(rank.get(n.name)) ?? []), n]);
+    for (const [r, row] of per) row.forEach((n, i) => {
+      const across = (i - (row.length - 1) / 2) * spacing, along = r * spacing;
+      [n.x, n.y] = { TD: [across, -along], BT: [across, along], LR: [along, -across], RL: [-along, -across] }[dir] ?? [across, -along];
+    });
+    return nodes;
+  }
+  const SHAPE_OPTS = { rectangle: ['draw'], circle: ['draw', 'circle'], rounded: ['draw', 'rounded corners'] };
+  const shapeOf = (n) => n.opts?.includes('circle') ? 'circle' : n.opts?.includes('rounded corners') ? 'rounded' : n.shape ?? 'rectangle';
+  /** The flowchart of `nodes` and `edges`, top-down unless wider than tall. */
+  function mermaidOut(nodes, edges) {
+    const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
+    const wide = nodes.length && Math.max(...xs) - Math.min(...xs) > Math.max(...ys) - Math.min(...ys);
+    const id = (s) => s.replace(/\W/g, '_');
+    const q = (s) => /[[\](){}|"]/.test(s) ? `"${s.replace(/"/g, '#quot;')}"` : s;
+    const box = (n) => { const l = q(n.label || n.name); return { circle: `((${l}))`, rounded: `(${l})` }[shapeOf(n)] ?? `[${l}]`; };
+    const link = { '->': '-->', '<->': '<-->', '<-': '-->', '-': '---' };
+    return [`graph ${wide ? 'LR' : 'TD'}`, ...nodes.map((n) => `  ${id(n.name)}${box(n)}`),
+      ...edges.map((e) => { const [a, b] = e.arrow === '<-' ? [e.to, e.from] : [e.from, e.to]; return `  ${id(a)} ${link[e.arrow] ?? '-->'}${e.label ? `|${q(e.label)}|` : ''} ${id(b)}`; })].join('\n');
+  }
+  /** Adds a flowchart to `state`: names already there are reused, the rest laid out below. */
+  function importMermaid(state, src, spacing) {
+    const g = mermaidIn(src), have = new Set(state.items.filter((i) => i.type === 'node' && !i.deleted).map((i) => i.name));
+    const ys = state.items.filter((i) => i.type === 'node' && !i.deleted).map((i) => i.y);
+    const below = ys.length ? Math.min(...ys) - spacing : 0;
+    for (const n of layout(g, spacing)) if (!have.has(n.name)) state.items.push({ type: 'node', dirty: true, lead: '', name: n.name, label: n.label, opts: SHAPE_OPTS[n.shape], x: n.x, y: n.y + below });
+    for (const e of g.edges) state.items.push({ type: 'edge', dirty: true, lead: '', from: e.from, to: e.to, arrow: e.arrow, opts: [], label: e.label, at: '' });
+    return g;
+  }
+
+  // the dialog: an SVG canvas in cm (y up), a tool bar, the selection's label, code kept, Mermaid
+  const NS = 'http://www.w3.org/2000/svg';
+  const svgEl = (tag, attrs = {}) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
+  function drawing(s, view, ctx) {
+    const state = parse(s.body), grid = s.grid || 0.5, run = new Map((s.nodes ?? []).map((n) => [n.name, n]));
+    // a node the run put elsewhere than its text says (a scope, a loop) is not plain: code
+    for (const it of state.items) { const r = run.get(it.name); if (it.type === 'node' && r?.x != null && Math.hypot(r.x - it.x, r.y - it.y) > 0.05) it.type = 'code'; }
+    let tool = 'select', arrow = '->', sel = null, pending = null, box = null;
+    const live = () => state.items.filter((i) => !i.deleted);
+    const own = () => live().filter((i) => i.type === 'node');
+    // the nodes the run made that no statement here edits: read-only where the run placed them
+    const fixed = () => [...run.values()].filter((n) => n.x != null && !own().some((o) => o.name === n.name));
+    const nodes = () => [...own(), ...fixed().map((n) => ({ ...n, fixed: true, label: n.name }))];
+    const size = (n) => { const r = run.get(n.name); return r?.w != null && !n.dirty ? [r.w, r.h] : n.coordinate ? [0.15, 0.15] : [Math.max(0.6, 0.19 * (n.label || ' ').length + 0.3), 0.6]; };
+    const snap = (v) => Math.round(v / grid) * grid;
+    const root = el('div', 'tv-draw');
+    const bar = el('div', 'tv-tools');
+    const TOOLS = [['select', 'Move'], ['rectangle', 'Rectangle'], ['circle', 'Circle'], ['connect', 'Connect'], ['delete', 'Delete']];
+    for (const [k, label] of TOOLS) {
+      const b = el('button', 'tv-tab', esc(label));
+      b.type = 'button';
+      b.dataset.tool = k;
+      b.onclick = () => { tool = k; pending = null; draw(); };
+      bar.append(b);
+    }
+    const arrows = el('select', 'tv-input', ['->', '<->', '--'].map((a) => `<option>${a}</option>`).join(''));
+    arrows.ariaLabel = 'arrow';
+    arrows.onchange = () => { arrow = arrows.value === '--' ? '-' : arrows.value; };
+    bar.append(arrows, el('span', 'tv-muted', `grid ${grid} cm`));
+    const svg = svgEl('svg', { class: 'tv-canvas', role: 'img', 'aria-label': 'drawing' });
+    const side = el('div', 'tv-row tv-sel');
+    const kept = el('div', 'tv-kept');
+    const status = el('span', 'tv-muted');
+    // where a pointer is, in cm
+    const at = (e) => { const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; const q = p.matrixTransform(svg.getScreenCTM().inverse()); return [q.x, -q.y]; };
+    const fresh = (base) => { let k = 1; while (nodes().some((n) => n.name === `${base}${k}`)) k++; return `${base}${k}`; };
+    const add = (it) => { state.items.push({ dirty: true, lead: '', opts: [], label: '', ...it }); };
+    const pick = (n) => {
+      if (tool === 'delete') return remove(n);
+      if (tool === 'connect') {
+        if (!pending) { pending = n.name; return draw(); }
+        if (pending !== n.name) add({ type: 'edge', from: pending, to: n.name, arrow, at: '' });
+        pending = null;
+        return draw(true);
+      }
+      sel = n;
+      draw();
+    };
+    const remove = (it) => {
+      if (it.fixed) return;
+      it.deleted = true;
+      if (it.type === 'node') for (const e of live()) if (e.type === 'edge' && (e.from === it.name || e.to === it.name)) e.deleted = true;
+      sel = null;
+      draw(true);
+    };
+    svg.onpointerdown = (e) => {
+      if (e.target !== svg && !e.target.classList.contains('tv-grid')) return;
+      if (tool !== 'rectangle' && tool !== 'circle') { sel = null; pending = null; return draw(); }
+      const [x, y] = at(e).map(snap);
+      add({ type: 'node', name: fresh('n'), label: 'Node', opts: SHAPE_OPTS[tool], x, y });
+      sel = state.items[state.items.length - 1];
+      tool = 'select';
+      draw(true);
+      side.querySelector('input')?.select();
+    };
+    const drag = (g, n) => g.onpointerdown = (e) => {
+      e.stopPropagation();
+      if (n.fixed || tool !== 'select') return pick(n);
+      sel = n;
+      const [x0, y0] = at(e), [nx, ny] = [n.x, n.y];
+      try { svg.setPointerCapture(e.pointerId); } catch { /* a synthetic pointer */ }
+      svg.onpointermove = (ev) => { const [x, y] = at(ev); n.x = snap(nx + x - x0); n.y = snap(ny + y - y0); n.dirty ||= n.x !== nx || n.y !== ny; draw(); };
+      svg.onpointerup = () => { svg.onpointermove = svg.onpointerup = null; draw(true); };
+      draw();
+    };
+    function draw(refit = false) {
+      for (const b of bar.querySelectorAll('[data-tool]')) b.classList.toggle('on', b.dataset.tool === tool);
+      const all = nodes(), by = new Map(all.map((n) => [n.name, n]));
+      if (refit || !box) {
+        const xs = all.flatMap((n) => [n.x - size(n)[0] / 2, n.x + size(n)[0] / 2]), ys = all.flatMap((n) => [n.y - size(n)[1] / 2, n.y + size(n)[1] / 2]);
+        for (const it of live()) for (const [x, y] of it.path ?? []) { xs.push(x); ys.push(y); }
+        const lo = [Math.min(0, ...xs) - 1, Math.min(0, ...ys) - 1], hi = [Math.max(4, ...xs) + 1, Math.max(2, ...ys) + 1];
+        box = [Math.floor(lo[0]), Math.floor(lo[1]), Math.ceil(hi[0]) - Math.floor(lo[0]), Math.ceil(hi[1]) - Math.floor(lo[1])];
+        // at least 4:3, widened on both sides, so the grid fills the canvas
+        const wide = Math.ceil(Math.max(0, box[3] * 4 / 3 - box[2]) / 2);
+        box = [box[0] - wide, box[1], box[2] + 2 * wide, box[3]];
+        svg.setAttribute('viewBox', `${box[0]} ${-box[1] - box[3]} ${box[2]} ${box[3]}`);
+      }
+      const lines = [];
+      for (let x = box[0]; x <= box[0] + box[2]; x += grid) lines.push(`M${x} ${-box[1]}V${-box[1] - box[3]}`);
+      for (let y = box[1]; y <= box[1] + box[3]; y += grid) lines.push(`M${box[0]} ${-y}H${box[0] + box[2]}`);
+      const out = [svgEl('path', { class: 'tv-grid', d: lines.join('') }), svgEl('defs')];
+      out[1].innerHTML = `<marker id="tv-tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>`;
+      // the plain paths kept as code
+      for (const it of live()) if (it.path) out.push(svgEl('polyline', { class: 'tv-path', points: it.path.map(([x, y]) => `${x},${-y}`).join(' ') }));
+      for (const e of live().filter((i) => i.type === 'edge')) {
+        const a = by.get(e.from), b = by.get(e.to);
+        if (!a || !b) continue;
+        // from border to border: cut each end where the line leaves its node's box
+        const end = (p, q) => { const [w, h] = size(p), dx = q.x - p.x, dy = q.y - p.y, t = Math.min(Math.abs(w / 2 / (dx || 1e-9)), Math.abs(h / 2 / (dy || 1e-9)), 0.5); return [p.x + dx * t, p.y + dy * t]; };
+        const [p, q] = [end(a, b), end(b, a)];
+        const g = svgEl('g', { class: `tv-edge${sel === e ? ' on' : ''}` });
+        const line = svgEl('line', { x1: p[0], y1: -p[1], x2: q[0], y2: -q[1] });
+        if (e.arrow.includes('>')) line.setAttribute('marker-end', 'url(#tv-tip)');
+        if (e.arrow.includes('<')) line.setAttribute('marker-start', 'url(#tv-tip)');
+        const hit = svgEl('line', { x1: p[0], y1: -p[1], x2: q[0], y2: -q[1], class: 'tv-hit' });
+        g.append(hit, line);
+        if (e.label) g.append(Object.assign(svgEl('text', { x: (p[0] + q[0]) / 2, y: -(p[1] + q[1]) / 2 - 0.15 }), { textContent: e.label }));
+        g.onpointerdown = (ev) => { ev.stopPropagation(); if (tool === 'delete') remove(e); else { sel = e; draw(); } };
+        out.push(g);
+      }
+      for (const n of all) {
+        const [w, h] = size(n), shape = shapeOf(n);
+        const g = svgEl('g', { class: `tv-node${n.fixed ? ' fixed' : ''}${n.opts?.includes('draw') || n.fixed ? '' : ' bare'}${sel === n ? ' on' : ''}${pending === n.name ? ' pending' : ''}` });
+        g.append(shape === 'circle' ? svgEl('circle', { cx: n.x, cy: -n.y, r: Math.max(w, h) / 2 })
+          : svgEl('rect', { x: n.x - w / 2, y: -n.y - h / 2, width: w, height: h, rx: shape === 'rounded' ? 0.15 : 0 }));
+        g.append(Object.assign(svgEl('text', { x: n.x, y: -n.y }), { textContent: n.coordinate ? '' : n.label }));
+        if (n.fixed) g.append(Object.assign(svgEl('title'), { textContent: `${n.name}: made by code (line ${n.line + 1}), kept as it is` }));
+        drag(g, n);
+        out.push(g);
+      }
+      svg.replaceChildren(...out);
+      // the selection: its label, or why it is read-only
+      side.replaceChildren();
+      if (sel && !sel.deleted && !sel.fixed && !sel.coordinate) {
+        const name = el('span', 'tv-muted', esc(sel.type === 'edge' ? `${sel.from} ${sel.arrow === '-' ? '--' : sel.arrow} ${sel.to}` : `(${sel.name})`));
+        const label = Object.assign(el('input', 'tv-input'), { value: sel.label, placeholder: 'label', spellcheck: false, ariaLabel: 'label' });
+        label.oninput = () => { sel.label = label.value; sel.dirty = true; draw(); side.querySelector('input').focus(); };
+        const del = el('button', 'tv-button', 'Delete');
+        del.type = 'button';
+        del.onclick = () => remove(sel);
+        side.append(name, label, del);
+      } else side.append(el('span', 'tv-muted', esc(tool === 'connect' ? (pending ? `from (${pending}): click the target node` : 'click the node an arrow starts at') : tool === 'select' ? 'drag a node; click one to edit its label' : tool === 'delete' ? 'click what to delete' : 'click the canvas to place a node')));
+      const changed = state.items.filter((i) => i.dirty || i.deleted).length;
+      status.textContent = changed ? `${changed} statement${changed > 1 ? 's' : ''} to write` : 'no changes';
+      write.disabled = !changed && !s.wrap;
+    }
+    // what stays code: listed read-only, never dropped
+    const code = state.items.filter((i) => i.type === 'code' && i.code.trim());
+    for (const it of code) { const m = it.code.match(PATH); if (m) { const pts = [...m[1].matchAll(/\(\s*(-?[\d.]+)\s*(?:cm)?\s*,\s*(-?[\d.]+)\s*(?:cm)?\s*\)/g)].map((p) => [+p[1], +p[2]]); if (pts.length === m[1].split('--').length) it.path = pts; } }
+    if (code.length) kept.innerHTML = `<h4 class="tv-h">Kept as code (${code.length})</h4>` + code.map((i) => `<pre>${esc(i.code.length > 160 ? i.code.slice(0, 160) + '…' : i.code)}</pre>`).join('');
+    // Mermaid in and out
+    const mer = el('details', 'tv-mermaid', '<summary>Mermaid flowchart</summary>');
+    const text = Object.assign(el('textarea', 'tv-input'), { rows: 5, spellcheck: false, placeholder: 'graph TD\n  A[Start] --> B((End))', ariaLabel: 'Mermaid' });
+    const mrow = el('div', 'tv-actions');
+    const button = (label, f) => { const b = el('button', 'tv-button', label); b.type = 'button'; b.onclick = f; mrow.append(b); };
+    button('Import', () => { if (importMermaid(state, text.value, s.spacing || 2).nodes.length) draw(true); });
+    button('Export', () => { text.value = mermaidOut(nodes(), live().filter((i) => i.type === 'edge')); text.select(); });
+    mer.append(text, mrow);
+    const foot = el('div', 'tv-actions tv-foot');
+    const write = el('button', 'tv-button tv-primary', s.wrap ? 'Insert drawing' : 'Write');
+    write.type = 'button';
+    write.onclick = () => {
+      const body = emit(state);
+      ctx.apply([{ range: s.range, newText: s.wrap ? `\\begin{tikzpicture}${body}\n\\end{tikzpicture}` : body }, ...(s.extra ? [s.extra] : [])]);
+    };
+    foot.append(status, write);
+    root.append(bar, svg, side, mer, kept);
+    if (s.note) root.append(el('div', 'tv-text', ctx.markdown(s.note)));
+    root.append(foot);
+    draw(true);
+    return root;
+  }
+  RENDER.drawing = drawing;
+
   const STYLE = `
 .tv { --tv-bg: var(--panel, var(--vscode-editor-background, #fff)); --tv-fg: var(--fg, var(--vscode-foreground, #222)); --tv-muted: var(--muted, var(--vscode-descriptionForeground, #666));
   --tv-border: var(--border, var(--vscode-widget-border, #ccc)); --tv-accent: var(--accent, var(--vscode-button-background, #0b3d91)); --tv-accent-fg: var(--accent-fg, var(--vscode-button-foreground, #fff));
@@ -248,7 +546,22 @@
 .tv-chip { font: inherit; font-size: .78rem; display: inline-flex; align-items: center; gap: .3rem; padding: .15rem .5rem .15rem .25rem; border-radius: 999px; border: 1px solid var(--tv-border); background: var(--tv-sunk); color: var(--tv-fg); cursor: pointer; }
 .tv-chip i { width: .9rem; height: .9rem; border-radius: 50%; border: 1px solid #8886; }
 .tv-chip:hover { border-color: var(--tv-accent); }
-@media (max-width: 560px) { .tv-color { grid-template-columns: 1fr; } .tv-pick { max-width: 16rem; } }`;
+@media (max-width: 560px) { .tv-color { grid-template-columns: 1fr; } .tv-pick { max-width: 16rem; } }
+.tv-draw { display: grid; gap: .5rem; min-width: min(40rem, 100%); } .tv-tools { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+.tv-muted { color: var(--tv-muted); font-size: .78rem; } .tv-sel { align-items: center; min-height: 2rem; } .tv-sel input { flex: 1; font-size: .88rem; }
+.tv-canvas { width: 100%; max-height: 55vh; background: var(--tv-sunk); border: 1px solid var(--tv-border); border-radius: 8px; touch-action: none; color: var(--tv-fg); font-family: ui-sans-serif, system-ui, sans-serif; }
+.tv-grid { stroke: var(--tv-border); stroke-width: .01; fill: none; }
+.tv-canvas text { font-size: .32px; text-anchor: middle; dominant-baseline: central; fill: currentColor; pointer-events: none; }
+.tv-node { cursor: grab; } .tv-node rect, .tv-node circle { fill: var(--tv-bg); stroke: currentColor; stroke-width: .03; }
+.tv-node.bare rect, .tv-node.bare circle { stroke-dasharray: .04 .06; stroke-width: .015; }
+.tv-node.fixed { cursor: not-allowed; color: var(--tv-muted); } .tv-node.fixed rect, .tv-node.fixed circle { stroke-dasharray: .1 .07; }
+.tv-node.on rect, .tv-node.on circle, .tv-node.pending rect, .tv-node.pending circle { stroke: var(--tv-accent); stroke-width: .06; }
+.tv-edge line { stroke: currentColor; stroke-width: .03; } .tv-edge line.tv-hit { stroke: transparent; stroke-width: .3; cursor: pointer; }
+.tv-edge.on line:not(.tv-hit) { stroke: var(--tv-accent); stroke-width: .05; } .tv-edge text { font-size: .26px; }
+.tv-path { fill: none; stroke: var(--tv-muted); stroke-width: .03; stroke-dasharray: .1 .07; }
+.tv-kept pre { margin: .15rem 0; padding: .3rem .5rem; border-radius: 6px; background: var(--tv-sunk); font-size: .75rem; white-space: pre-wrap; color: var(--tv-muted); }
+.tv-mermaid summary { cursor: pointer; font-size: .82rem; color: var(--tv-muted); } .tv-mermaid textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; margin: .4rem 0; }
+.tv-foot { justify-content: flex-end; align-items: center; } .tv-foot .tv-muted { margin-right: auto; }`;
 
   /** Renders `view` into `container`; `ctx.apply(edits)` writes, `ctx.markdown(md)` makes HTML. */
   function render(view, container, ctx) {
@@ -263,5 +576,5 @@
     container.replaceChildren(root);
     return root;
   }
-  self.satexViews = { render, RENDER, SPEC, mix };
+  self.satexViews = { render, RENDER, SPEC, mix, drawing: { parse, emit, mermaidIn, mermaidOut, layout, importMermaid } };
 })();

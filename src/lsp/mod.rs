@@ -493,6 +493,11 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             let out = ask(engine_tx, |reply| EngineMsg::Inlays(p.text_document.uri, reply))?;
             Ok(serde_json::to_value(out).unwrap())
         }
+        "textDocument/codeLens" => {
+            let p: lsp_types::CodeLensParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let out = ask(engine_tx, |reply| EngineMsg::Lenses(p.text_document.uri, reply))?;
+            Ok(serde_json::to_value(out).unwrap())
+        }
         // A type plugin's dialogs at a position ([`plugins::views`]).
         "satex/view" => {
             let p: lsp_types::TextDocumentPositionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
@@ -523,11 +528,7 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             actions.extend(dialogs.as_array().cloned().unwrap_or_default());
             Ok(Json::Array(actions))
         }
-        // The table and image dialogs (`dialogs.rs`): their code lenses, their state, the text they write.
-        "textDocument/codeLens" => {
-            let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
-            ask(engine_tx, |reply| EngineMsg::Dialog(Ask::Lenses(uri), reply))?
-        }
+        // The table and image dialogs (`dialogs.rs`): their state, the text they write.
         "satex/dialog" => {
             let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
             let pos: Position = serde_json::from_value(params["position"].clone()).map_err(|e| e.to_string())?;
@@ -642,6 +643,7 @@ enum EngineMsg {
     View(Uri, Position, Sender<Vec<Json>>),
     Presentation(Uri, lsp_types::Range, lsp_types::Color, Sender<Vec<lsp_types::ColorPresentation>>),
     Inlays(Uri, Sender<Vec<lsp_types::InlayHint>>),
+    Lenses(Uri, Sender<Vec<lsp_types::CodeLens>>),
     ExecuteCommand(Json, Sender<Result<Vec<Json>, String>>),
     /// A style prompt's answer for a rule: the path of the `satex.yaml` written.
     Style(String, crate::project::config::StyleChoice, Sender<Result<Json, String>>),
@@ -653,7 +655,6 @@ enum EngineMsg {
 
 /// What a dialog request asks ([`dialogs`]).
 enum Ask {
-    Lenses(Uri),
     Actions(Uri, lsp_types::Range),
     Open(Uri, Position),
     /// `{textDocument, kind, range, state}`.
@@ -757,9 +758,7 @@ impl EngineMsg {
             | EngineMsg::Typeset(uri, ..)
             | EngineMsg::Written(uri, ..)
             | EngineMsg::Caches(uri, ..) => Some(uri),
-            EngineMsg::Dialog(Ask::Lenses(uri) | Ask::Actions(uri, _) | Ask::Open(uri, _) | Ask::Apply(uri, _), _) => {
-                Some(uri)
-            }
+            EngineMsg::Dialog(Ask::Actions(uri, _) | Ask::Open(uri, _) | Ask::Apply(uri, _), _) => Some(uri),
             _ => None,
         }
     }
@@ -1317,6 +1316,11 @@ impl Engine {
                 let result = with_doc(&self.docs, &uri, |analysis, text| plugins::inlays(analysis, text, &path));
                 let _ = reply.send(result.unwrap_or_default());
             }
+            EngineMsg::Lenses(uri, reply) => {
+                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result = with_doc(&self.docs, &uri, |analysis, text| plugins::lenses(analysis, text, &path));
+                let _ = reply.send(result.unwrap_or_default());
+            }
             EngineMsg::Presentation(uri, range, color, reply) => {
                 let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
                 let result = with_doc(&self.docs, &uri, |analysis, text| {
@@ -1567,13 +1571,10 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
         }
         EngineMsg::Dialog(ask, reply) => {
             let uri = match &ask {
-                Ask::Lenses(u) | Ask::Actions(u, _) | Ask::Open(u, _) | Ask::Apply(u, _) => u.clone(),
+                Ask::Actions(u, _) | Ask::Open(u, _) | Ask::Apply(u, _) => u.clone(),
             };
             let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
             let result = with_doc(docs, &uri, |analysis, text| match ask {
-                Ask::Lenses(_) => {
-                    Ok(serde_json::to_value(dialogs::lenses(analysis, text, &path, uri.as_str())).unwrap())
-                }
                 Ask::Actions(_, range) => Ok(Json::Array(dialogs::actions(analysis, text, &path, uri.as_str(), range))),
                 Ask::Open(_, pos) => Ok(dialogs::dialog(analysis, text, &path, pos).unwrap_or(Json::Null)),
                 Ask::Apply(_, p) => {
