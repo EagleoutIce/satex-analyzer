@@ -20,7 +20,7 @@ impl TypePlugin for Units {
 }
 ```
 
-`Cx` holds the run, the document, the position and the types found there. `Hit` is one of those types, with the text it is part of. The registry asks each enabled plugin whose `wants(hit)` holds; by default that is `types()` containing the hit's type. `complete` returns `None` to leave a hit to the next plugin. A plugin with no `types()` is triggered by the run's place (an environment the run met, as `tikz`): it is asked once, with a `Ty::Bottom` hit, and finds its place with `pairs(analysis, path, environment)`. `lenses` adds code lenses to the whole document. An `incremental` plugin implements `reuse(edit)` instead: whether the last run still holds after the edit, `Fresh` (positions outside the edit stay), `Shifted` (the edited line's rest moves) or `Provisional`, decided from the run's facts and stated as a soundness condition on its doc comment.
+`Cx` holds the run, the document, the position and the types found there. `Hit` is one of those types, with the text it is part of. The registry asks each enabled plugin whose `wants(hit)` holds, by default that is `types()` containing the hit's type. `complete` returns `None` to leave a hit to the next plugin. A plugin with no `types()` is triggered by the run's place (an environment the run met, as `tikz`): it is asked once, with a `Ty::Bottom` hit, and finds its place with `pairs(analysis, path, environment)`. `lenses` adds code lenses to the whole document. An `incremental` plugin implements `reuse(edit)` instead: whether the last run still holds after the edit, `Fresh` (positions outside the edit stay), `Shifted` (the edited line's rest moves) or `Provisional`, decided from the run's facts and stated as a soundness condition on its doc comment.
 
 Steps:
 
@@ -44,9 +44,9 @@ Every number a plugin uses is a setting. A plugin reads the run's facts, never a
 | `text` | `markdown` | a note |
 | `table` | `columns`, `rows` | a table |
 | `actions` | `items: [{title, edits}]` | a button per item, which applies its edits |
-| `choices` | `placeholder`, `items: [{title, detail, edits}]` | a filterable list; a choice applies its edits |
-| `converter` | `lo`, `hi` (sp), `units: [{name, sp}]`, `unit`, `decimals`, `range` | a length in every unit; clicking a unit writes it over `range` |
-| `color` | `name`, `rgb`, `models`, `expressions`, `defined: [{name, rgb, css}]`, `pick`, `apply: {title, name, edits}` | the picker; `apply`'s `newText` holds `${model}`, `${spec}`, `${name}` |
+| `choices` | `placeholder`, `items: [{title, detail, edits}]` | a filterable list, a choice applies its edits |
+| `converter` | `lo`, `hi` (sp), `units: [{name, sp}]`, `unit`, `decimals`, `range` | a length in every unit, clicking a unit writes it over `range` |
+| `color` | `name`, `rgb`, `models`, `expressions`, `defined: [{name, rgb, css}]`, `pick`, `apply: {title, name, edits}` | the picker, `apply`'s `newText` holds `${model}`, `${spec}`, `${name}` |
 | `drawing` | `range`, `body`, `nodes: [{name, shape, x, y, w, h, line}]`, `grid`, `spacing`, `wrap`, `extra`, `note` | a canvas of a picture's body. It writes the body over `range`, wrapped in a `tikzpicture` when `wrap`, plus `extra` |
 | `records` | `placeholder`, `sorts`, `focus`, `items: [{title, detail, badge, search, sort, fields, forms, table, actions}]`, `add: {title, kinds: [{name, fields, edit}]}` | a manager: a searchable, sortable list, a record opens to a form of its fields, more forms, a table and buttons |
 

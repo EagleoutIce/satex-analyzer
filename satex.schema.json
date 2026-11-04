@@ -3971,7 +3971,7 @@
           "properties": {
             "enabled": {
               "default": true,
-              "description": "keep the last run instead of analyzing again; the rules still read the new text",
+              "description": "keep the last run instead of analyzing again, the rules still read the new text",
               "type": "boolean",
               "x-affects": [
                 "speed"

@@ -4,7 +4,7 @@ The [concrete rules](Semantics) and the [abstract domains](Domains) as a Lean 4 
 The model is core Lean, no mathlib, and `lake build` passes with no `sorry`.
 It states what TeX does and what satex computes in place of it. It does not check the Rust. The [mapping](#lean-and-rust) says where the two differ.
 
-> **AI assistance.** The Lean model (`Core`, `Concrete`, `Abstract`, `Soundness`), its mapping to the Rust code and the primitive table were written with AI assistance from Claude Code (Claude Opus 5.5; the build fixes with Claude Sonnet 5.5), directed and reviewed by the author. The global theorem proves the effects of assignment and grouping and names what is left: the abstract reading of commands and the families without a transfer. See [`PROOF-STATUS.md`](../semantics/PROOF-STATUS.md).
+> **AI assistance.** The Lean model (`Core`, `Concrete`, `Abstract`, `Soundness`), its mapping to the Rust code and the primitive table were written with AI assistance from Claude Code (Claude Opus 5.5, the build fixes with Claude Sonnet 5.5), directed and reviewed by the author. The global theorem proves the effects of assignment and grouping and names what is left: the abstract reading of commands and the families without a transfer. See [`PROOF-STATUS.md`](../semantics/PROOF-STATUS.md).
 
 Every Lean file is shown as code on this site. Each name links to its definition. Hovering a name shows its type and doc comment. Section numbers (`§ 207`) link to the line of `tex.web` that defines them.
 

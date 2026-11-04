@@ -55,7 +55,7 @@ A color name or an xcolor expression (`red!40!blue`). Completion lists the color
 
 The picker (`view`) has a saturation and brightness square, a hue strip, the spec in each model and the colors defined at the position. It writes what works at the position:
 
-- the first argument of an xcolor command (`\color`, `\textcolor`, `\colorbox`): `\color[HTML]{1F77B4}`;
+- the first argument of an xcolor command (`\color`, `\textcolor`, `\colorbox`): `\color[HTML]{1F77B4}`
 - anywhere else (a TikZ key, a command without a model argument, or without xcolor): a `\definecolor{mycolor}{…}{…}` before `\begin{document}` and its name in place. Without any color package it adds `\usepackage{xcolor}` too.
 
 VS Code's own color picker goes through `textDocument/colorPresentation`, which writes the same.
@@ -70,7 +70,7 @@ A table is an environment whose code reaches `\@array`: `tabular`, `tabular*`, `
 
 Two rewrites are code actions and buttons in the dialog:
 
-- booktabs: `\toprule` first, `\midrule` between, `\bottomrule` last, `\cmidrule(lr)` for `\cline`, no vertical rules;
+- booktabs: `\toprule` first, `\midrule` between, `\bottomrule` last, `\cmidrule(lr)` for `\cline`, no vertical rules
 - siunitx: a column whose cells below the header are all numbers becomes `S[table-format=I.D]`, its header cell braced.
 
 Either adds `\usepackage{booktabs}` or `\usepackage{siunitx}` before `\begin{document}` when the document does not load it, and says so.
@@ -79,8 +79,8 @@ Either adds `\usepackage{booktabs}` or `\usepackage{siunitx}` before `\begin{doc
 
 A figure is a file `\includegraphics` read. Its code lens and hover link open a dialog with the figure: a PNG or JPEG as it is, a PDF's first page as `pdftocairo` renders it where one is installed (the playground's server, VS Code), else its box. The engine's own size of the file (`natural`, in bp) scales the crop. The dialog crops with drag handles, rotates in 90° steps or by any angle, and sizes by `width`, `height`, `scale` and `keepaspectratio`. It writes graphicx options:
 
-- `trim=l b r t` in bp with `clip`, or `viewport=llx lly urx ury` where the figure had one;
-- `angle` counterclockwise;
+- `trim=l b r t` in bp with `clip`, or `viewport=llx lly urx ury` where the figure had one
+- `angle` counterclockwise
 - graphicx reads the keys in order: `angle=90,width=3cm` makes the rotated figure 3cm wide, `width=3cm,angle=90` makes it 3cm high. The dialog's *size applies to* chooses the order.
 
 A key the dialog does not edit (`page`, `draft`) stays where it was, and so do a crop it cannot read and the units of an unchanged crop. A client without dialogs gets two code actions: rotate by 90° and fit to `\linewidth`.
@@ -138,6 +138,6 @@ An incremental plugin decides for one edit whether the last run still holds. It 
 
 - `comment_edit`: every read of the line had its comment begin before the edit, and the edit adds or removes no line end. TeX drops a comment's characters unread ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L7326)), so no read sees them. A `%` of category 12 (verbatim, `\catcode`) is no comment there and is not taken. A `%\satex@` directive and a magic comment (`% !TeX`) change a run, so an edit that makes, changes or removes one is not taken either. The rules read the new text, so a `satex-disable` comment or a comment marker counts at once.
 - `whitespace_edit`: copies of a space put into a run of it where every read skipped one in state N or S. The copies are read at the same moment under the same categories, so they are skipped too, and the line gets no new line end, so no `\par`. Or white space where no read got to: the line before it was never read to its end, and the run stopped at no limit. A user pattern (`lints.user-pattern`) may match spaces, so with one set only the second case is taken. A new line in the middle of the text is never taken: it moves every line after it.
-- `typing`: letters typed into a control word the run met undefined on every path, while the new name has no meaning or definition in the run. Its results stand, marked provisional, until typing pauses for `pause_ms`; then the run follows. This one is not claimed sound, only likely. The playground asks for its runs itself, so there it runs at once.
+- `typing`: letters typed into a control word the run met undefined on every path, while the new name has no meaning or definition in the run. Its results stand, marked provisional, until typing pauses for `pause_ms`, then the run follows. This one is not claimed sound, only likely. The playground asks for its runs itself, so there it runs at once.
 
 Writing a plugin: [Writing a type plugin](writing-type-plugins.md).

@@ -718,7 +718,7 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
       #! affects: output
   comment_edit:  # an edit inside a comment every read of its line skipped, no %\satex@ directive or magic comment
     #! category: incremental
-    enabled: true  # keep the last run instead of analyzing again; the rules still read the new text
+    enabled: true  # keep the last run instead of analyzing again, the rules still read the new text
       #! affects: speed
       #! example: `enabled: false`: typing in a comment runs the document again
   whitespace_edit:  # spaces added where every read skipped one, white space past the last line read
