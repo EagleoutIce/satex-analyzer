@@ -834,6 +834,7 @@ fn overview_json(
         "version": env!("CARGO_PKG_VERSION"),
         "commit": if commit.is_empty() { None } else { Some(commit) },
         "built": env!("SATEX_BUILD_TIME"),
+        "source": env!("SATEX_SOURCE_ID"),
         "repository": env!("CARGO_PKG_REPOSITORY"),
         "plugin_count": plugins.values().filter_map(|items| items.as_array()).map(Vec::len).sum::<usize>(),
         "plugins": plugins,

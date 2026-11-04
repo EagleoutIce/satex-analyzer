@@ -122,7 +122,8 @@ fn main() {
 }
 
 /// The built binary to run: `SATEX_DOC_BIN`, or the `satex` cargo built
-/// beside this one (`cargo run --release --features doc --bin satex-doc` builds both).
+/// beside this one. `cargo run --bin satex-doc` builds only satex-doc, so
+/// [`current`] checks that binary against this one's source.
 fn bin() -> String {
     if let Ok(bin) = std::env::var("SATEX_DOC_BIN") {
         return bin;
@@ -132,6 +133,46 @@ fn bin() -> String {
         .and_then(|exe| Some(exe.parent()?.join(format!("satex{}", std::env::consts::EXE_SUFFIX))))
         .filter(|bin| bin.exists())
         .map_or_else(|| "satex".to_string(), |bin| bin.display().to_string())
+}
+
+/// `satex --version --format json`'s source id.
+fn source_id(bin: &str) -> Option<String> {
+    let out = Command::new(bin).args(["--version", "--format", "json"]).output().ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    Some(json["source"].as_str()?.to_string())
+}
+
+/// Ok when `bin` was built from this binary's source. Run by cargo
+/// (`CARGO` set) on its sibling `satex`, rebuilds that in the same profile
+/// and target directory; otherwise refuses, so no page comes from a stale build.
+fn current(bin: &str) -> Result<(), String> {
+    const ID: &str = env!("SATEX_SOURCE_ID");
+    if source_id(bin).as_deref() == Some(ID) {
+        return Ok(());
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let dir = exe.parent().ok_or("no directory of satex-doc")?;
+    let (Ok(cargo), None) = (std::env::var("CARGO"), std::env::var_os("SATEX_DOC_BIN")) else {
+        return Err(format!(
+            "{bin} is built from other source than satex-doc. Rebuild both: `cargo build --features doc --bin satex --bin satex-doc`"
+        ));
+    };
+    let profile = match dir.file_name().and_then(|n| n.to_str()) {
+        Some("debug") => "dev",
+        Some(name) => name,
+        None => return Err("no profile directory".into()),
+    };
+    eprintln!("satex-doc: {bin} is stale, building it ({profile})");
+    let target = dir.parent().ok_or("no target directory")?;
+    let built = Command::new(cargo)
+        .args(["build", "--profile", profile, "--bin", "satex"])
+        .env("CARGO_TARGET_DIR", target)
+        .status()
+        .map_err(|e| format!("cargo build: {e}"))?;
+    match built.success() && source_id(bin).as_deref() == Some(ID) {
+        true => Ok(()),
+        false => Err(format!("{bin} is still not built from this source")),
+    }
 }
 
 /// The file recording which installation the checked-in output was generated
@@ -242,6 +283,7 @@ fn run(check: bool) -> Result<(), String> {
     if !Path::new(&bin).exists() {
         return Err(format!("{bin} not found. Run `cargo build --release` first"));
     }
+    current(&bin)?;
     // The first run against a cold cache reports the kernel as interpreted
     // rather than cached, so the generated text would differ from the next
     // run's.  One warm-up run settles it.

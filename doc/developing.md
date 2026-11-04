@@ -38,6 +38,31 @@ cargo test --profile fast --test it -- semantics::    # one module
 cargo test --profile fast --test it -- latex::cloud   # tests whose name contains "cloud"
 ```
 
+### Tiers
+
+`scripts/test-tier.sh` builds once and runs the suite in tiers chosen by measured seconds:
+
+| tier | runs | use it |
+| --- | --- | --- |
+| `quick` | tests under 1 s, the cheapest test of every module, tests not measured yet | after every edit |
+| `fast` | all but `tests/slow.txt` and `tests/known-red.txt`, plus the unit tests | before a commit |
+| `slow` | `tests/slow.txt` | before a push |
+| `reds` | each known red alone, says which turned green | after a root fix |
+| `measure` | fast and slow with timings, rewrites `tests/times.txt` and `tests/slow.txt` | when tests were added or got slower |
+
+```sh
+scripts/test-tier.sh quick                # the edit loop
+scripts/test-tier.sh fast latex:: join::  # only tests whose name contains a filter
+scripts/test-tier.sh fast -- --nocapture  # libtest arguments after --
+```
+
+The tests run in parallel shards, `SHARDS` processes of `THREADS` threads, balanced by `tests/times.txt`.
+Each shard gets its own `target/scratch/lock2.sh` slot when that script exists.
+Run the tier script itself outside a slot, or it runs all shards in its own.
+All shards share the suite's caches in `target/scratch/test-cache`, so the kernel and every package are built once.
+A shard killed by the OOM killer reruns its unfinished tests, then one at a time, and names what still does not finish.
+`scripts/precommit.sh` runs `fast` and then `slow`.
+
 Integration tests live in `tests/it/<area>.rs`, one module per area, collected by `tests/it/main.rs` into a single `it` binary.
 `cargo test` links one test binary and libtest schedules every test across all cores instead of running 49 small binaries sequentially.
 CI splits the run into shards by module (`scripts/ci-test.sh`) to keep any one job under its time limit.
@@ -127,6 +152,10 @@ Wiki pages in `doc/wiki/` and parts of the README are generated from templates i
 cargo run --profile fast --features doc --bin satex-doc              # regenerate
 cargo run --profile fast --features doc --bin satex-doc -- --check   # CI: is everything current?
 ```
+
+`satex-doc` runs the `satex` binary beside it.
+`cargo run` builds only `satex-doc`, so `satex-doc` compares the source id both were built from and rebuilds a stale `satex` first.
+Run outside cargo, or with `SATEX_DOC_BIN`, it refuses a stale binary instead.
 
 Citations of TeX's sources name a section, as in `tex.web § 366`. Links point to a fixed upstream commit and line so they keep working when upstream changes.
 

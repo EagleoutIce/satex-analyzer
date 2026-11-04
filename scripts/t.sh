@@ -3,6 +3,7 @@
 #   scripts/t.sh [libtest args: filter, --skip x, --exact, ...]
 # Env: PROFILE (fast), THREADS (12), JOBS (12), BUILD_LOCK ($CARGO_TARGET_DIR/.build.lock),
 #      CARGO_TARGET_DIR, CAP=0 to skip the systemd-run memory/CPU cap,
+#      BUILD_ONLY=1 to only build and print the test binaries,
 #      TIMES=1 to print every test's seconds (libtest --report-time).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -11,14 +12,18 @@ cd "$(dirname "$0")/.."
 export RUST_MIN_STACK=${RUST_MIN_STACK:-$(sed -n 's/^RUST_MIN_STACK *= *"\([0-9]*\)"/\1/p' .cargo/config.toml)}
 export CARGO_BUILD_JOBS=${JOBS:-12} RUST_TEST_THREADS=${THREADS:-${RUST_TEST_THREADS:-12}}
 cap=()
-[ "${CAP:-1}" = 0 ] || cap=(systemd-run --user --scope -q -p MemoryMax=20G -p MemorySwapMax=0 -p CPUQuota=1200% nice -n 10)
+# In a lock2.sh slot (cap.sh sets SATEX_SLOT) the slot's cap applies.
+[ "${CAP:-1}" = 0 ] || [ -n "${SATEX_SLOT:-}" ] || cap=(systemd-run --user --scope -q -p MemoryMax=20G -p MemorySwapMax=0 -p CPUQuota=1200% nice -n 10)
 # one lock per build folder: builds into different target dirs never wait on each other
 lock=${BUILD_LOCK:-${CARGO_TARGET_DIR:-target}/.build.lock}
 mkdir -p "$(dirname "$lock")"
 # Only the build holds the lock: it is gone when this pipeline ends.
-bin=$(flock "$lock" "${cap[@]}" cargo test --profile "${PROFILE:-fast}" --test it --no-run --message-format=json |
-    sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | grep '/it-' | tail -1)
+# BUILD_ONLY=1 builds the unit tests too and prints both binaries' paths.
+bins=$(flock "$lock" "${cap[@]}" cargo test --profile "${PROFILE:-fast}" --test it ${BUILD_ONLY:+--lib} --no-run --message-format=json |
+    sed -n '/"kind":\["\(lib\|test\)"\]/s/.*"executable":"\([^"]*\)".*/\1/p')
+bin=$(grep '/it-' <<<"$bins" | tail -1)
 [ -n "$bin" ] || { echo "no test binary built" >&2; exit 1; }
+[ -z "${BUILD_ONLY:-}" ] || { echo "$bins"; exit; }
 # The bootstrap variable would rebuild everything, so only the binary sees it.
 [ -z "${TIMES:-}" ] || set -- -Z unstable-options --report-time "$@"
 exec "${cap[@]}" env ${TIMES:+RUSTC_BOOTSTRAP=1} "$bin" "$@"
