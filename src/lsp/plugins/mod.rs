@@ -10,11 +10,13 @@ mod bibliography;
 mod color;
 mod environment;
 mod forest;
+mod frame;
 mod glossary;
 mod image;
 pub(super) mod incremental;
 mod index;
 mod keys;
+mod overlay;
 mod savebox;
 mod table;
 mod theorem;
@@ -120,6 +122,8 @@ pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
     &bibliography::Bibliography,
     &index::Index,
     &theorem::Theorem,
+    &overlay::Overlay,
+    &frame::Frame,
     &incremental::CommentEdit,
     &incremental::WhitespaceEdit,
     &incremental::Typing,

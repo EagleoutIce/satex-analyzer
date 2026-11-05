@@ -80,6 +80,14 @@ On a blank line of the document body, "Insert tikzpicture" writes a small pictur
 
 On the name of a `\begin` in the document's body. "Store in a box" moves the environment to the preamble as a saved box and writes `\usebox` in its place: `\newsavebox` and `\sbox`, or `lrbox` when its `\begin` made characters of what TeX's initial catcodes make commands (`&` in TikZ, everything in a listing). A body the run read in vertical mode goes into a `minipage` of `\textwidth`. Identical copies get a second action that stores one box for all of them. The hover says which applies. Content that reads where it stands is refused, with the reason: a label, reference or citation the run met in it, or a command whose code reads a counter or a reference (`\thepage`, `\footnote`).
 
+## overlay
+
+On an overlay specification, text a command reads between `<` and `>` (`\only<2->{…}`, `\item<+->`). The frame is the innermost environment whose lines the run shipped pages at, one page per slide. Hover lists the slides on which the run set the material visibly: the braced group after the `>`, else the one before the `<` (`\only{…}<2>`), else the rest of the line. Text set off the page (`\uncover`'s covered text) does not count. Completion offers each step `k` and `k-` of the frame's slides.
+
+## frame
+
+On each frame of a document whose run defined `\includeonlyframes`: a lens "Compile only this frame", its view and a code action. They write `\includeonlyframes{label}` before `\begin{document}`, replacing an earlier one, and add `label=frame⟨n⟩` to the frame's options when it has no label. The view's `compile` field carries the setup as data for a client to compile with: `engine`, `label`, the frame's `lines` and the `edit`.
+
 ## Managers
 
 The next four are managers. Each opens on a name of its type, focused on that name, or without a position from a sidebar (`satex/view` with `plugin` and no `position`). A manager is one searchable, sortable list. A record opens to its fields, a table and its actions. A field edit writes the source back, so the run sees it at once.

@@ -9336,6 +9336,7 @@ will look undefined",
         let site = self.scratch.arg_site.replace(at);
         let arguments = self.read_arguments(&m);
         self.scratch.arg_site = site;
+        crate::analysis::observe::between_angles(self, &m.parameter_text, &arguments);
         let abandoned = self.scan_abandoned;
         if let Some(watch) = &mut self.probe {
             let text = &m.parameter_text;

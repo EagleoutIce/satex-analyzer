@@ -129,11 +129,13 @@ fn command<'a>(rest: &'a str, code: bool, out: &mut String) -> &'a str {
             out.push_str(&meta(a));
             rest
         }
-        "marg" | "Arg" | "oarg" | "parg" => {
+        "marg" | "Arg" | "oarg" | "parg" | "sarg" => {
             let (a, rest) = arg(rest);
             let (open, close) = match name {
                 "oarg" => ('[', ']'),
                 "parg" => ('(', ')'),
+                // beamer's guide: an overlay specification
+                "sarg" => ('<', '>'),
                 _ => ('{', '}'),
             };
             out.push_str(&format!("{open}{}{close}", meta(a)));
@@ -208,6 +210,7 @@ pub fn usage(line: &str, name: &str) -> Option<String> {
                 Some('[') => ']',
                 Some('⟨') => '⟩',
                 Some('(') => ')',
+                Some('<') => '>',
                 Some('*') => {
                     out.push_str(gap);
                     out.push('*');
@@ -520,6 +523,9 @@ mod tests {
         let doc = render("|\\ifthenelse{|\\meta{test}|}{|\\meta{then}|}{|\\meta{else}|}|", true);
         assert_eq!(usage(&doc, "ifthenelse").as_deref(), Some("\\ifthenelse{⟨test⟩}{⟨then⟩}{⟨else⟩}"));
         assert_eq!(usage("\\iffoo{⟨x⟩}", "if"), None);
+        let beamer = render("\\cs{alt}\\sarg{overlay specification}\\marg{default text}\\marg{alternative text}", true);
+        let sig = "\\alt<⟨overlay specification⟩>{⟨default text⟩}{⟨alternative text⟩}";
+        assert_eq!(usage(&beamer, "alt").as_deref(), Some(sig));
         let text = render("Errors, for the \\LaTeX{} core (\\emph{cf.}~\\cs{q_nil}). More.", false);
         assert_eq!(sentence(&text).as_deref(), Some("Errors, for the LaTeX core (*cf.* `\\q_nil`)."));
     }

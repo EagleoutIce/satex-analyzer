@@ -927,7 +927,7 @@ fn rule_note(line: &mut String, keys: &mut Keys<'_>, rule: Rule) {
 /// driver's literals moved the origin by a translation (`1 0 0 1 x y cm`) of
 /// at least `OFF_PAGE` bp and had not moved it back, as pgf's
 /// `\pgfsys@begininvisible` does for beamer's covered text.
-fn invisible(literals: &[crate::analysis::facts::Literal]) -> Vec<std::ops::Range<u32>> {
+pub(crate) fn invisible(literals: &[crate::analysis::facts::Literal]) -> Vec<std::ops::Range<u32>> {
     const OFF_PAGE: f64 = 1000.0;
     let (mut out, mut shift, mut from) = (Vec::new(), (0.0, 0.0), None);
     for l in literals {

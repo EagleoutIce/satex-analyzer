@@ -276,64 +276,65 @@ flowchart LR
   t12["text"]:::text
   t13["name"]:::text
   t14["definition body"]:::text
-  t15["tl variable"]:::expl3
-  t16["str variable"]:::expl3
-  t17["clist variable"]:::expl3
-  t18["seq variable"]:::expl3
-  t19["prop variable"]:::expl3
-  t20["fp variable"]:::expl3
-  t21["bool variable"]:::expl3
-  t22["regex variable"]:::expl3
-  t23["coffin variable"]:::expl3
-  t24["flag variable"]:::expl3
-  t25["intarray variable"]:::expl3
-  t26["cctab variable"]:::expl3
-  t27["count register"]:::register
-  t28["dimen register"]:::register
-  t29["skip register"]:::register
-  t30["muskip register"]:::register
-  t31["toks register"]:::register
-  t32["box register"]:::register
-  t33["read register"]:::register
-  t34["write register"]:::register
-  t35["counter"]:::register
-  t36["dimen name"]:::register
-  t37["skip name"]:::register
-  t38["muskip name"]:::register
-  t39["toks name"]:::register
-  t40["box name"]:::register
-  t41["read name"]:::register
-  t42["write name"]:::register
-  t43["key"]:::key
-  t44["label"]:::key
-  t45["citation key"]:::key
-  t46["option key"]:::key
-  t47["pgf key"]:::key
-  t48["environment name"]:::key
-  t49["declared key"]:::key
-  t50["index entry"]:::key
-  t51["color name"]:::key
-  t52["file"]:::file
-  t53["TeX file (.tex)"]:::file
-  t54["package (.sty)"]:::file
-  t55["class (.cls)"]:::file
-  t56["bibliography database (.bib)"]:::file
-  t57["bibliography style (.bst)"]:::file
-  t58["biblatex bibliography style (.bbx)"]:::file
-  t59["biblatex citation style (.cbx)"]:::file
-  t60["graphic file"]:::file
+  t15["overlay specification"]:::text
+  t16["tl variable"]:::expl3
+  t17["str variable"]:::expl3
+  t18["clist variable"]:::expl3
+  t19["seq variable"]:::expl3
+  t20["prop variable"]:::expl3
+  t21["fp variable"]:::expl3
+  t22["bool variable"]:::expl3
+  t23["regex variable"]:::expl3
+  t24["coffin variable"]:::expl3
+  t25["flag variable"]:::expl3
+  t26["intarray variable"]:::expl3
+  t27["cctab variable"]:::expl3
+  t28["count register"]:::register
+  t29["dimen register"]:::register
+  t30["skip register"]:::register
+  t31["muskip register"]:::register
+  t32["toks register"]:::register
+  t33["box register"]:::register
+  t34["read register"]:::register
+  t35["write register"]:::register
+  t36["counter"]:::register
+  t37["dimen name"]:::register
+  t38["skip name"]:::register
+  t39["muskip name"]:::register
+  t40["toks name"]:::register
+  t41["box name"]:::register
+  t42["read name"]:::register
+  t43["write name"]:::register
+  t44["key"]:::key
+  t45["label"]:::key
+  t46["citation key"]:::key
+  t47["option key"]:::key
+  t48["pgf key"]:::key
+  t49["environment name"]:::key
+  t50["declared key"]:::key
+  t51["index entry"]:::key
+  t52["color name"]:::key
+  t53["file"]:::file
+  t54["TeX file (.tex)"]:::file
+  t55["package (.sty)"]:::file
+  t56["class (.cls)"]:::file
+  t57["bibliography database (.bib)"]:::file
+  t58["bibliography style (.bst)"]:::file
+  t59["biblatex bibliography style (.bbx)"]:::file
+  t60["biblatex citation style (.cbx)"]:::file
+  t61["theme (.sty)"]:::file
+  t62["graphic file"]:::file
   subgraph g0_register[" "]
     direction LR
     t7
-    t31
     t32
     t33
     t34
+    t35
   end
   t0 --> g0_register
   subgraph g8_expl3[" "]
     direction LR
-    t18
     t19
     t20
     t21
@@ -342,11 +343,18 @@ flowchart LR
     t24
     t25
     t26
+    t27
   end
   t8 --> g8_expl3
+  subgraph g12_text[" "]
+    direction LR
+    t11
+    t14
+    t15
+  end
+  t12 --> g12_text
   subgraph g13_register[" "]
     direction LR
-    t35
     t36
     t37
     t38
@@ -354,11 +362,11 @@ flowchart LR
     t40
     t41
     t42
+    t43
   end
   t13 --> g13_register
-  subgraph g43_key[" "]
+  subgraph g44_key[" "]
     direction LR
-    t44
     t45
     t46
     t47
@@ -366,11 +374,11 @@ flowchart LR
     t49
     t50
     t51
+    t52
   end
-  t43 --> g43_key
-  subgraph g52_file[" "]
+  t44 --> g44_key
+  subgraph g53_file[" "]
     direction LR
-    t53
     t54
     t55
     t56
@@ -378,8 +386,10 @@ flowchart LR
     t58
     t59
     t60
+    t61
+    t62
   end
-  t52 --> g52_file
+  t53 --> g53_file
   t0 --> t1
   t1 --> t2
   t4 --> t3
@@ -389,19 +399,17 @@ flowchart LR
   t0 --> t8
   t8 --> t9
   t0 --> t10
-  t12 --> t11
   t0 --> t12
   t12 --> t13
-  t12 --> t14
-  t8 --> t15
-  t15 --> t16
-  t15 --> t17
-  t2 --> t27
-  t3 --> t28
-  t4 --> t29
-  t5 --> t30
-  t13 --> t43
-  t13 --> t52
+  t8 --> t16
+  t16 --> t17
+  t16 --> t18
+  t2 --> t28
+  t3 --> t29
+  t4 --> t30
+  t5 --> t31
+  t13 --> t44
+  t13 --> t53
   classDef top fill:#eef0f2,stroke:#8a8f98,color:#1f2328
   classDef quantity fill:#dbeafe,stroke:#3b82f6,color:#1f2328
   classDef register fill:#ffedd5,stroke:#f97316,color:#1f2328
@@ -449,18 +457,21 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 | `bibliography style (.bst)` | a BibTeX style | `\bibliographystyle{⟨plain⟩}` |
 | `biblatex bibliography style (.bbx)` | a biblatex bibliography style | `\usepackage[style=⟨authoryear⟩]{biblatex}` |
 | `biblatex citation style (.cbx)` | a biblatex citation style | `\usepackage[citestyle=⟨numeric⟩]{biblatex}` |
+| `theme (.sty)` | a package the code names by a prefix around the text, below `file` | `\usetheme{⟨Madrid⟩}` |
 | `graphic file` | a figure, its extension decided by the run | `\includegraphics{⟨fig⟩}` |
 | `control sequence` | a control sequence an assignment defines | `\def⟨\foo⟩{}` |
 | `conditional` | a conditional `\newif` defines, `\if⟨name⟩`, below `control sequence` | `\newif⟨\ifdraft⟩` |
 | `tl variable`, `seq variable`, `prop variable`, `fp variable`, `bool variable`, `regex variable`, `coffin variable`, `flag variable`, `intarray variable`, `cctab variable` | an expl3 variable, by the module of the function that made or set it in the run (`\tl_set:Nn`, `\seq_new:N`) | `\tl_set:Nn⟨\l_my_tl⟩{x}` |
 | `str variable`, `clist variable` | a string or comma list, which expl3 keeps as token lists, below `tl variable` | `\str_set:Nn⟨\l_my_str⟩{x}` |
 | `options` | the key list a load takes in its optional argument | `\usepackage⟨[a,b]⟩{x}` |
+| `overlay specification` | text a command reads between `<` and `>`, beamer's overlay specification, below `text` | `\only<⟨2-⟩>{x}` |
 | `definition body` | a definition's replacement text, code, below `text` | `\def\x{⟨\kern1pt⟩}` |
 | `nothing` | no text, below every type |  |
 
 - **Join**: the nearest type above both (`Ty::join`). A dimen and a skip register give `glue`, a label and a citation key give `key`, a `.bib` and a `.tex` use give `file`. The lattice is a tree, so disagreeing uses never stay a set.
 - **expl3 variables.** A name a definition reads (`get_r_token`) while a module function of a variable kind runs (`\tl_…:N…`, `\seq_…:c…`) is a variable of that kind: what the run did, not the name's suffix. Register-backed kinds (`int`, `dim`, `skip`, `muskip`, `box`, `ior`/`iow`) are registers of their kind.
 - **Where types come from.** A scanner's read of the argument (`Facts::types`, joined per place). Else its role (a label is a `key`, a load a `file`, `\bibdata` a `.bib`). Else its macro's body (`roles::assigned`, [tex.web §§ 1057](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L20524), [1224](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L22902)): `#1` after `\penalty` is a number, `#1` heading an assignment a `register`, `#1` inside `\csname` a `name`.
+- **Overlays and themes.** Text a macro's parameter text reads between literal `<` and `>` (`\def\a<#1>`) is an `overlay specification`, so beamer's `\only<2->` is typed by its code, not by its name. A package a load names behind a prefix of the code's own (`beamertheme⟨name⟩.sty`) is a `theme`.
 - **Wrappers** inherit the types of arguments they hand on whole.
 - **Use.** Types order what an editor offers. They add no narrowing to the run: the scanners already read into the [value domains](#value-what-a-control-sequence-or-register-holds).
 

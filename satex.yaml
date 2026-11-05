@@ -709,6 +709,10 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
     decimals: 2  # decimals a converted length is written with
       #! affects: output
       #! range: 0..6
+  overlay:  # an overlay specification, text a command reads between < and > (beamer's \only<2->)
+    #! category: hover
+    enabled: true  # the slides of the frame the material shows on, completion of the frame's steps
+      #! affects: output
   keys:  # key lists: pgfkeys, l3keys, kvoptions and package options
     #! category: completion
     enabled: true  # completion and hover docs in key lists
@@ -734,6 +738,10 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
     pause_ms: 1500  # how long typing pauses before the run follows
       #! affects: speed
       #! example: `3000`: a name typed slowly is run once
+  frame:  # a beamer frame the run met
+    #! category: build
+    enabled: true  # "Compile only this frame": \includeonlyframes with the frame's label, one added when it has none
+      #! affects: output
 
 slice:  # what satex slice leaves out
   trim: true  # leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \begin{document} reads

@@ -4013,6 +4013,21 @@
           "type": "object",
           "x-category": "widget"
         },
+        "frame": {
+          "description": "a beamer frame the run met",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "\"Compile only this frame\": \\includeonlyframes with the frame's label, one added when it has none",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
+            }
+          },
+          "type": "object",
+          "x-category": "build"
+        },
         "glossary": {
           "description": "declared keys: glossary entries, acronyms, abbreviations",
           "properties": {
@@ -4082,6 +4097,21 @@
           },
           "type": "object",
           "x-category": "completion"
+        },
+        "overlay": {
+          "description": "an overlay specification, text a command reads between < and > (beamer's \\only<2->)",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "the slides of the frame the material shows on, completion of the frame's steps",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
+            }
+          },
+          "type": "object",
+          "x-category": "hover"
         },
         "savebox": {
           "description": "a \\begin name of a picture, listing or other environment the run met",

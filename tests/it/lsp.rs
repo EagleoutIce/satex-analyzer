@@ -4075,3 +4075,115 @@ fn a_run_stops_for_a_newer_text_and_publishes_only_its_findings() {
     assert!(said.contains("undefinedsecond") && !said.contains("undefinedfirst"), "{said}");
     server.shutdown();
 }
+
+/// Slides: two frames, the second labelled; overlays absolute, nested, incremental and trailing.
+const SLIDES: &str = "\\documentclass{beamer}\n\\usetheme{default}\n\\begin{document}\n\\begin{frame}{Steps}\n  \\only<2>{Two.}\n  \\uncover<3>{Three.}\n  \\only<2-3>{Outer \\uncover<3>{inner}}\n  \\alt<2>{Alt}{Main}\n  \\only{Trail}<1>\n\\end{frame}\n\\begin{frame}[t,label=inc]{Inc}\n  \\begin{itemize}\n    \\item<+-> Ant\n    \\item<+-> Bee\n  \\end{itemize}\n\\end{frame}\n\\begin{frame}[t]{Opt}\n  Body\n\\end{frame}\n\\end{document}\n";
+
+fn hover_at(server: &mut Server, uri: &str, text: &str, line: usize, needle: &str, off: usize) -> String {
+    hover_md(&at(server, uri, "textDocument/hover", line as u32, col(text, line, needle, off)))
+}
+
+/// The hover of `\only`, `\uncover`, `\onslide`, `\visible` and `\alt` shows the overlay
+/// specification `<…>` and the bodies.
+#[test]
+fn beamer_signatures_show_the_overlay_and_bodies() {
+    let (mut server, uri, dir) = open_set("bmrsig", SLIDES, &[]);
+    for (line, cmd) in [(4, "\\only"), (5, "\\uncover"), (7, "\\alt")] {
+        let h = hover_at(&mut server, &uri, SLIDES, line, cmd, 2);
+        assert!(h.contains(&format!("{cmd}<")) && h.contains(">{"), "{cmd}: {h}");
+    }
+    let alt = hover_at(&mut server, &uri, SLIDES, 7, "\\alt", 2);
+    assert!(alt.matches('{').count() >= 2, "{alt}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// An overlay's hover lists the slides its material shows on, from the pages the run shipped:
+/// absolute, covered (`\uncover`), nested, trailing and incremental (`<+->`) specifications.
+#[test]
+fn overlay_hover_lists_the_slides_material_shows_on() {
+    let (mut server, uri, dir) = open_set("bmrovl", SLIDES, &[]);
+    let h = |s: &mut Server, line, needle, off| hover_at(s, &uri, SLIDES, line, needle, off);
+    assert!(h(&mut server, 4, "<2>", 1).contains("slide 2 of 3"), "{}", h(&mut server, 4, "<2>", 1));
+    assert!(h(&mut server, 5, "<3>", 1).contains("slide 3 of 3"), "{}", h(&mut server, 5, "<3>", 1));
+    assert!(h(&mut server, 6, "<2-3>", 1).contains("slides 2, 3 of 3"), "{}", h(&mut server, 6, "<2-3>", 1));
+    assert!(h(&mut server, 6, "<3>", 1).contains("slide 3 of 3"), "{}", h(&mut server, 6, "<3>", 1));
+    assert!(h(&mut server, 8, "<1>", 1).contains("slide 1 of 3"), "{}", h(&mut server, 8, "<1>", 1));
+    assert!(h(&mut server, 12, "<+->", 1).contains("slides 1, 2 of 2"), "{}", h(&mut server, 12, "<+->", 1));
+    assert!(h(&mut server, 13, "<+->", 1).contains("slide 2 of 2"), "{}", h(&mut server, 13, "<+->", 1));
+    // the steps of the frame, not of another
+    let steps = labels(&complete(&mut server, &uri, 4, col(SLIDES, 4, "<2>", 1))).join(" ");
+    assert_eq!(steps, "1 1- 2 2- 3 3-");
+    let steps = labels(&complete(&mut server, &uri, 12, col(SLIDES, 12, "<+->", 1))).join(" ");
+    assert_eq!(steps, "1 1- 2 2-");
+    // `<` that is no overlay: math
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// "Compile only this frame": a lens per frame; the setup adds `\includeonlyframes` before
+/// `\begin{document}`, and a label to a frame without one; a labelled frame keeps its own.
+#[test]
+fn compile_only_this_frame() {
+    let (mut server, uri, dir) = open_set("bmrframe", SLIDES, &[]);
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].clone();
+    let frames: Vec<u64> = (lenses.as_array().unwrap().iter())
+        .filter(|l| l["command"]["title"] == "Compile only this frame")
+        .map(|l| l["range"]["start"]["line"].as_u64().unwrap())
+        .collect();
+    assert_eq!(frames, [3, 10, 16], "{lenses}");
+    let views = at(&mut server, &uri, "satex/view", 4, 3);
+    let view = views.as_array().unwrap().iter().find(|v| v["plugin"] == "frame").expect("frame view").clone();
+    assert_eq!(view["compile"]["label"], "frame1", "{view}");
+    let out = applied(SLIDES, &uri, &view["compile"]["edit"], &[]);
+    assert!(out.contains("\\includeonlyframes{frame1}\n\\begin{document}"), "{out}");
+    assert!(out.contains("\\begin{frame}[label=frame1]{Steps}"), "{out}");
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 12, 5);
+    let act = (actions.as_array().unwrap().iter())
+        .find(|a| a["title"].as_str().is_some_and(|t| t.starts_with("Compile only this frame")))
+        .unwrap_or_else(|| panic!("{actions}"))
+        .clone();
+    let out = applied(SLIDES, &uri, &act["edit"], &[]);
+    assert!(out.contains("\\includeonlyframes{inc}\n\\begin{document}"), "{out}");
+    assert!(out.contains("\\begin{frame}[t,label=inc]{Inc}"), "{out}");
+    // options without a label: one is added to them
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 17, 3);
+    let act = (actions.as_array().unwrap().iter())
+        .find(|a| a["title"].as_str().is_some_and(|t| t.starts_with("Compile only this frame")))
+        .unwrap_or_else(|| panic!("{actions}"))
+        .clone();
+    let out = applied(SLIDES, &uri, &act["edit"], &[]);
+    assert!(
+        out.contains("\\begin{frame}[t,label=frame3]{Opt}") && out.contains("\\includeonlyframes{frame3}"),
+        "{out}"
+    );
+    // outside any frame: nothing
+    let preamble = at(&mut server, &uri, "textDocument/codeAction", 1, 2);
+    assert!(!preamble.to_string().contains("Compile only"), "{preamble}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Switched off, neither plugin answers; in an article no frame lens appears.
+#[test]
+fn overlay_and_frame_plugins_switch_off() {
+    let sets = ["type_plugins.overlay.enabled=false", "type_plugins.frame.enabled=false"];
+    let (mut server, uri, dir) = open_set("bmroff", SLIDES, &sets);
+    let h = hover_at(&mut server, &uri, SLIDES, 4, "<2>", 1);
+    assert!(!h.contains("Overlay"), "{h}");
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].to_string();
+    assert!(!lenses.contains("Compile only"), "{lenses}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    let article = "\\documentclass{article}\n\\begin{document}\nA $a<b$ \\begin{itemize}\\item x\\end{itemize}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("bmrart", article, &[]);
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].to_string();
+    assert!(!lenses.contains("Compile only"), "{lenses}");
+    let h = hover_md(&at(&mut server, &uri, "textDocument/hover", 2, 5));
+    assert!(!h.contains("Overlay"), "{h}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}

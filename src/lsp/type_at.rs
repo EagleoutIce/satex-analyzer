@@ -87,7 +87,16 @@ pub(super) fn type_at(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> 
     let mut at = At { hits: Vec::new(), place: None, item };
     let code = uncommented(before);
     let lead = &before[..before.len() - at.item.typed.len()];
-    if code.len() < before.len() || lead.ends_with('\\') {
+    if code.len() < before.len() {
+        return at;
+    }
+    if let Some(k) = overlay(analysis, doc, path, pos, &at.item) {
+        let typed = at.item.typed[k + 1..].trim_end_matches('>').to_string();
+        at.item = Item { col: at.item.col + at.item.typed[..=k].chars().count() as u32, typed };
+        at.hits.push(Hit::of(Ty::Overlay));
+        return at;
+    }
+    if lead.ends_with('\\') {
         return at;
     }
     at.place = place(doc, pos);
@@ -136,6 +145,40 @@ pub(super) fn type_at(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> 
     at
 }
 
+/// The byte of the `<` in `item` when the text after it is an overlay specification: the run read
+/// text there as one, or the command or environment before the `<` reads one elsewhere in the file.
+fn overlay(analysis: &Analysis, doc: &Text, path: &str, pos: Pos, item: &Item) -> Option<usize> {
+    let k = item.typed.rfind('<')?;
+    if item.typed[k + 1..].trim_end_matches('>').contains(['>', '<']) {
+        return None;
+    }
+    let file = file_of(analysis, path)?;
+    let col = item.col + item.typed[..=k].chars().count() as u32;
+    let read = |line: u32, col: u32| analysis.facts.types.get(&Span { file, line, col }) == Some(&Ty::Overlay);
+    if read(pos.line, col) {
+        return Some(k);
+    }
+    // what stands before a `<`: a control word, or a `\begin`'s `{name}`
+    let head = |line: &str, lt: usize| -> Option<String> {
+        let before = &line[..lt];
+        let word = before.trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '@');
+        if word.len() < before.len() && word.ends_with('\\') {
+            return Some(before[word.len() - 1..].to_string());
+        }
+        let open = before.strip_suffix('}')?.rfind("\\begin{")?;
+        Some(before[open..].to_string())
+    };
+    let line = doc.line(pos.line);
+    let lt = crate::engine::source::byte_of_col(line, col - 1);
+    let mine = head(line, lt)?;
+    let seen = analysis.facts.types.iter().filter(|(s, t)| **t == Ty::Overlay && s.file == file).any(|(s, _)| {
+        let l = doc.line(s.line);
+        let at = crate::engine::source::byte_of_col(l, s.col);
+        at > 0 && l.get(at - 1..at) == Some("<") && head(l, at - 1).as_deref() == Some(mine.as_str())
+    });
+    seen.then_some(k)
+}
+
 /// What the argument `p` takes, by its command's roles: per role of a
 /// braced one, the key list or the options of a bracketed one.
 fn argument_types(analysis: &Analysis, p: &Place) -> Vec<Hit> {
@@ -163,12 +206,12 @@ fn argument_types(analysis: &Analysis, p: &Place) -> Vec<Hit> {
     let nth = p.nth();
     // a role of no kind of name (a message, a write carrying the text) offers nothing
     let mine: Vec<&roles::Role> =
-        all.iter().filter(|r| r.arg == nth && !matches!(r.kind.ty(), Ty::Key(KeyKind::Any) | Ty::Bottom)).collect();
+        all.iter().filter(|r| r.arg == nth && !matches!(r.ty(), Ty::Key(KeyKind::Any) | Ty::Bottom)).collect();
     let mut out: Vec<Hit> = mine
         .iter()
         .map(|r| Hit {
             defines: matches!(r.kind, RoleKind::Occ(OccKind::Label | OccKind::BibItem)),
-            ..hit(r.kind.ty(), &r.prefix, &r.suffix, matches!(r.kind, RoleKind::Load(_)))
+            ..hit(r.ty(), &r.prefix, &r.suffix, matches!(r.kind, RoleKind::Load(_)))
         })
         .collect();
     // a key list: a command the run saw store keys, or a `/path` in the list
@@ -178,7 +221,7 @@ fn argument_types(analysis: &Analysis, p: &Place) -> Vec<Hit> {
         RoleKind::Type(t) => !matches!(t, Ty::Key(_) | Ty::File(_)),
     });
     let path = p.inside.split(',').any(|k| k.trim_start().starts_with('/'));
-    let declared = mine.iter().any(|r| r.kind.ty() == Ty::Key(KeyKind::Declared));
+    let declared = mine.iter().any(|r| r.ty() == Ty::Key(KeyKind::Declared));
     if keyed && (declared || path || !crate::queries::query::options(analysis, &p.cmd).is_empty()) {
         out.insert(0, hit(Ty::Key(KeyKind::Option), "", "", false));
     }

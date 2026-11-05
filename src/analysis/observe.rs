@@ -16,7 +16,11 @@ pub fn arg_type(m: &mut Machine, span: Span, ty: Ty) {
     let slot = m.out.facts.types.entry(span).or_insert(crate::analysis::roles::Ty::Bottom);
     // The token a `\csname` formed stands at the name's first character:
     // what reads that token reads the register, not this text.
-    if matches!(*slot, crate::analysis::roles::Ty::Named(_)) && !matches!(ty, crate::analysis::roles::Ty::Named(_)) {
+    // An overlay specification likewise: its decoding reads its parts, not this text.
+    if ty == Ty::Overlay {
+        *slot = ty;
+    }
+    if matches!(*slot, Ty::Named(_) | Ty::Overlay) && !matches!(ty, Ty::Named(_)) {
         return;
     }
     *slot = slot.join(ty);
@@ -26,6 +30,23 @@ pub fn arg_type(m: &mut Machine, span: Span, ty: Ty) {
         let fonts = m.out.facts.length_fonts.entry(span).or_default();
         if !fonts.contains(&font) && fonts.len() < LENGTH_FONTS {
             fonts.push(font);
+        }
+    }
+}
+
+/// The arguments a parameter text reads between literal `<` and `>` (`\\def\\a<#1>`): overlay
+/// specifications, typed at their first token.
+pub fn between_angles(m: &mut Machine, text: &crate::engine::tex::ParameterText, arguments: &[Vec<Token>]) {
+    use crate::engine::tex::ParamItem as P;
+    let angle = |i: Option<&P>, c: char| matches!(i, Some(P::Lit(Tok::Chr(d, Catcode::Other))) if *d == c);
+    for (i, item) in text.items.iter().enumerate() {
+        let P::Param(n) = item else { continue };
+        if i > 0
+            && angle(text.items.get(i - 1), '<')
+            && angle(text.items.get(i + 1), '>')
+            && let Some(first) = arguments.get(usize::from(*n) - 1).and_then(|a| a.first())
+        {
+            arg_type(m, first.span, Ty::Overlay);
         }
     }
 }

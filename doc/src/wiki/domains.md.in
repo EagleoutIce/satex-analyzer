@@ -298,18 +298,21 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 | `bibliography style (.bst)` | a BibTeX style | `\bibliographystyle{⟨plain⟩}` |
 | `biblatex bibliography style (.bbx)` | a biblatex bibliography style | `\usepackage[style=⟨authoryear⟩]{biblatex}` |
 | `biblatex citation style (.cbx)` | a biblatex citation style | `\usepackage[citestyle=⟨numeric⟩]{biblatex}` |
+| `theme (.sty)` | a package the code names by a prefix around the text, below `file` | `\usetheme{⟨Madrid⟩}` |
 | `graphic file` | a figure, its extension decided by the run | `\includegraphics{⟨fig⟩}` |
 | `control sequence` | a control sequence an assignment defines | `\def⟨\foo⟩{}` |
 | `conditional` | a conditional `\newif` defines, `\if⟨name⟩`, below `control sequence` | `\newif⟨\ifdraft⟩` |
 | `tl variable`, `seq variable`, `prop variable`, `fp variable`, `bool variable`, `regex variable`, `coffin variable`, `flag variable`, `intarray variable`, `cctab variable` | an expl3 variable, by the module of the function that made or set it in the run (`\tl_set:Nn`, `\seq_new:N`) | `\tl_set:Nn⟨\l_my_tl⟩{x}` |
 | `str variable`, `clist variable` | a string or comma list, which expl3 keeps as token lists, below `tl variable` | `\str_set:Nn⟨\l_my_str⟩{x}` |
 | `options` | the key list a load takes in its optional argument | `\usepackage⟨[a,b]⟩{x}` |
+| `overlay specification` | text a command reads between `<` and `>`, beamer's overlay specification, below `text` | `\only<⟨2-⟩>{x}` |
 | `definition body` | a definition's replacement text, code, below `text` | `\def\x{⟨\kern1pt⟩}` |
 | `nothing` | no text, below every type |  |
 
 - **Join**: the nearest type above both (`Ty::join`). A dimen and a skip register give `glue`, a label and a citation key give `key`, a `.bib` and a `.tex` use give `file`. The lattice is a tree, so disagreeing uses never stay a set.
 - **expl3 variables.** A name a definition reads (`get_r_token`) while a module function of a variable kind runs (`\tl_…:N…`, `\seq_…:c…`) is a variable of that kind: what the run did, not the name's suffix. Register-backed kinds (`int`, `dim`, `skip`, `muskip`, `box`, `ior`/`iow`) are registers of their kind.
 - **Where types come from.** A scanner's read of the argument (`Facts::types`, joined per place). Else its role (a label is a `key`, a load a `file`, `\bibdata` a `.bib`). Else its macro's body (`roles::assigned`, tex.web §§ 1057, 1224): `#1` after `\penalty` is a number, `#1` heading an assignment a `register`, `#1` inside `\csname` a `name`.
+- **Overlays and themes.** Text a macro's parameter text reads between literal `<` and `>` (`\def\a<#1>`) is an `overlay specification`, so beamer's `\only<2->` is typed by its code, not by its name. A package a load names behind a prefix of the code's own (`beamertheme⟨name⟩.sty`) is a `theme`.
 - **Wrappers** inherit the types of arguments they hand on whole.
 - **Use.** Types order what an editor offers. They add no narrowing to the run: the scanners already read into the [value domains](#value-what-a-control-sequence-or-register-holds).
 

@@ -149,6 +149,9 @@ pub enum FileKind {
     Bst,
     Bbx,
     Cbx,
+    /// A package the code names by a prefix around the argument: beamer's
+    /// `\\usetheme{x}` loads `beamerthemex.sty`.
+    Theme,
     /// A figure: the extensions come from the run's own graphics.
     Graphic,
     Any,
@@ -157,7 +160,7 @@ pub enum FileKind {
 /// Each kind's extension, label (as signatures and hovers say it) and the
 /// installation's tree of such files, empty where none: the run decides a
 /// graphic's extension, and the `.tex` files of the tree are documentation.
-const FILE_KINDS: [(FileKind, &str, &str, &str); 9] = [
+const FILE_KINDS: [(FileKind, &str, &str, &str); 10] = [
     (FileKind::Tex, "tex", "TeX file", ""),
     (FileKind::Sty, "sty", "package", "tex"),
     (FileKind::Cls, "cls", "class", "tex"),
@@ -165,6 +168,7 @@ const FILE_KINDS: [(FileKind, &str, &str, &str); 9] = [
     (FileKind::Bst, "bst", "bibliography style", "bibtex/bst"),
     (FileKind::Bbx, "bbx", "biblatex bibliography style", "tex"),
     (FileKind::Cbx, "cbx", "biblatex citation style", "tex"),
+    (FileKind::Theme, "sty", "theme", "tex"),
     (FileKind::Graphic, "", "graphic file", ""),
     (FileKind::Any, "", "file", ""),
 ];
@@ -244,6 +248,8 @@ pub enum Ty {
     Var(VarKind),
     /// The key list a loading command takes in its optional argument.
     Options,
+    /// Text a command reads between `<` and `>`: beamer's overlay specification (`<2->`).
+    Overlay,
     /// A release date a body compares with the one a file provides
     /// (`2020/01/01`, read as a number): the file must be at least that new.
     Date,
@@ -276,6 +282,7 @@ impl Ty {
         let files = FILE_KINDS.iter().map(|r| r.0).filter(|k| *k != FileKind::Any);
         let mut out = vec![
             Top, Quantity, Number, Dimen, Glue, MuGlue, Box, Register, Cs, Switch, Options, Date, Text, Name, Body,
+            Overlay,
         ];
         out.extend(VarKind::ALL.map(Var));
         out.extend(regs.clone().map(Reg));
@@ -352,6 +359,10 @@ impl Ty {
             File(FileKind::Bbx) => ("a biblatex bibliography style", "`\\usepackage[style=⟨authoryear⟩]{biblatex}`"),
             File(FileKind::Cbx) => ("a biblatex citation style", "`\\usepackage[citestyle=⟨numeric⟩]{biblatex}`"),
             File(FileKind::Graphic) => ("a figure, its extension decided by the run", "`\\includegraphics{⟨fig⟩}`"),
+            File(FileKind::Theme) => ("a package the code names by a prefix around the text", "`\\usetheme{⟨Madrid⟩}`"),
+            Overlay => {
+                ("text a command reads between `<` and `>`, beamer's overlay specification", "`\\only<⟨2-⟩>{x}`")
+            }
             Cs => ("a control sequence an assignment defines", "`\\def⟨\\foo⟩{}`"),
             Switch => ("a conditional `\\newif` defines, `\\if⟨name⟩`", "`\\newif⟨\\ifdraft⟩`"),
             Var(VarKind::Str | VarKind::Clist) => {
@@ -378,7 +389,7 @@ impl Ty {
             Reg(RegKind::Dimen) => Dimen,
             Reg(RegKind::MuSkip) => MuGlue,
             Named(_) | Key(KeyKind::Any) | File(FileKind::Any) => Name,
-            Name | Body | Date => Text,
+            Name | Body | Date | Overlay => Text,
             Key(_) => Key(KeyKind::Any),
             File(_) => File(FileKind::Any),
             Switch
@@ -476,6 +487,7 @@ impl std::fmt::Display for Ty {
                 Ty::Switch => "conditional",
                 Ty::Var(_) => unreachable!("written above"),
                 Ty::Options => "options",
+                Ty::Overlay => "overlay specification",
                 Ty::Date => "date, at least",
                 Ty::Body => "definition body",
                 Ty::Text => "text",
@@ -509,6 +521,16 @@ pub struct Role {
     pub kind: RoleKind,
     pub prefix: String,
     pub suffix: String,
+}
+
+impl Role {
+    /// The type it gives its argument: a package the code names behind a prefix is a theme.
+    pub fn ty(&self) -> Ty {
+        match self.kind {
+            RoleKind::Load(LoadKind::Package) if !self.prefix.is_empty() => Ty::File(FileKind::Theme),
+            k => k.ty(),
+        }
+    }
 }
 
 /// How deep the flow follows macros calling macros.
@@ -612,7 +634,7 @@ pub fn arg_types(roles: &[Role]) -> Vec<(usize, Ty)> {
     // the program reading it as a file is a file.
     let read = |r: &&Role| {
         let others = |f: &dyn Fn(&Role) -> bool| roles.iter().any(|o| o.arg == r.arg && f(o));
-        let file = |o: &Role| !matches!(o.kind, RoleKind::Type(_)) && matches!(o.kind.ty(), Ty::File(_));
+        let file = |o: &Role| !matches!(o.kind, RoleKind::Type(_)) && matches!(o.ty(), Ty::File(_));
         match r.kind {
             RoleKind::Type(t) => t != Ty::Name || !others(&|o| !matches!(o.kind, RoleKind::Type(_))),
             _ => !others(&|o| matches!(o.kind, RoleKind::Type(t) if t != Ty::Name)) && (file(r) || !others(&file)),
@@ -621,8 +643,8 @@ pub fn arg_types(roles: &[Role]) -> Vec<(usize, Ty)> {
     let mut out: Vec<(usize, Ty)> = Vec::new();
     for r in roles.iter().filter(read) {
         match out.iter_mut().find(|(arg, _)| *arg == r.arg) {
-            Some((_, t)) => *t = t.join(r.kind.ty()),
-            None => out.push((r.arg, r.kind.ty())),
+            Some((_, t)) => *t = t.join(r.ty()),
+            None => out.push((r.arg, r.ty())),
         }
     }
     out.sort_by_key(|(arg, _)| *arg);

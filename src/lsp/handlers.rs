@@ -1609,7 +1609,9 @@ fn typed_items(
             (Ty::Key(KeyKind::Environment), Some(arg)) => environment_items(analysis, doc, arg, after, pos),
             (Ty::File(kind), _) if hit.file && !(hit.prefix.is_empty() && hit.suffix.is_empty()) => {
                 let ext = match kind {
-                    crate::analysis::roles::FileKind::Sty | crate::analysis::roles::FileKind::Cls => kind.ext(),
+                    crate::analysis::roles::FileKind::Sty
+                    | crate::analysis::roles::FileKind::Cls
+                    | crate::analysis::roles::FileKind::Theme => kind.ext(),
                     _ => None,
                 };
                 library_items(analysis, &hit.prefix, &hit.suffix, ext.map(|e| format!(".{e}")).as_deref(), typed)

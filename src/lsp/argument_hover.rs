@@ -24,7 +24,7 @@ pub(super) fn typed_hover(analysis: &Analysis, doc: &Text, path: &str, pos: Pos)
             Ty::Key(KeyKind::Cite) => cite_hover(analysis, key),
             Ty::Key(KeyKind::Label) => label_hover(analysis, &format!("{}{key}", hit.prefix)),
             Ty::Key(KeyKind::Environment) => environment_hover(analysis, path, pos, key),
-            Ty::File(FileKind::Cls | FileKind::Sty) => load_hover(analysis, path, pos, key),
+            Ty::File(FileKind::Cls | FileKind::Sty | FileKind::Theme) => load_hover(analysis, path, pos, key),
             Ty::File(kind) => file_hover(analysis, path, pos, key, kind),
             Ty::Named(RegKind::Count) => command_hover(analysis, &format!("c@{key}"), None),
             _ => None,
