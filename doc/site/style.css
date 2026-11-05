@@ -1837,3 +1837,6 @@ table.prim td { vertical-align: top; } table.long.prim td:nth-child(3) { white-s
 @media (max-width: 52rem) { .draw-list { zoom: 1; } }
 
 .xcard .x-step { white-space: normal; } .xcard .x-chain { font-size: 12px; } .xcard dd > div + div { margin-top: .2rem; }
+
+/* the lens line above a widget's target: off unless the lenses setting is on (the gutter mark opens it) */
+body:not(.show-lenses) .cm-lens-line { display: none; }

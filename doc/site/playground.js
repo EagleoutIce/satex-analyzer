@@ -1738,6 +1738,10 @@
   document.addEventListener('click', (e) => { const b = e.target.closest('[data-tool]'); if (b) { e.preventDefault(); runTool(+b.dataset.tool); } });
   $('view-close').onclick = () => $('play-view').close();
   $('cfg-reset-view').onclick = () => resetView();
+  // widgets open from their gutter mark; the lens line above them only when asked for
+  const lensesShown = (on) => { document.body.classList.toggle('show-lenses', on); $('cfg-lenses').checked = on; self.satexStore.set('lenses', on || null); };
+  lensesShown(self.satexStore.get('lenses') === true);
+  $('cfg-lenses').onchange = (e) => lensesShown(e.target.checked);
   // every dialog is the widgets' popup: peek, detach, full screen, kept per dialog (dialogs.js)
   for (const d of document.querySelectorAll('dialog.cache-dialog:not(.ask-dialog)')) self.satexDialogs?.enhance(d);
   /** The open file's fixes at once, as the language server merges them (render.rs `fix_all`): per rule, per category or all. */
