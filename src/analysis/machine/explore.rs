@@ -437,6 +437,9 @@ impl Machine<'_> {
                 if self.cfg.verbose >= 4 {
                     crate::util::progress::note!("satex: {} paths at {:?}", self.out.peak_paths, self.position_span());
                 }
+                if std::env::var_os("SATEX_WHY_APART").is_some() {
+                    why_apart(&paths, self.position_span(), &self.out);
+                }
             }
             self.report_progress();
             self.report_paths(&paths, commands);
@@ -3415,4 +3418,68 @@ fn many_from<T: PartialEq + Copy>(a: &[(T, bool)], b: &[(T, bool)]) -> Option<(u
         return None;
     }
     Some((if n > 0 && a[n - 1] == (t, true) { n - 1 } else { n }, t))
+}
+
+/// Debug (`SATEX_WHY_APART`): what keeps the waiting paths from joining.
+fn why_apart(paths: &Paths, at: Span, out: &Analysis) {
+    let s = |s: Span| format!("{}:{}", out.short_name(s.file), s.line);
+    let p = &paths.parked;
+    let (mut progress, mut stacks, mut tags, mut ended) = (0, 0, 0, 0);
+    let (mut conds, mut groups, mut scans, mut first) = (0, 0, 0, None::<String>);
+    let mut sample = None::<String>;
+    let pairs = p.len() * p.len().saturating_sub(1) / 2;
+    for (i, a) in p.iter().enumerate() {
+        for b in &p[i + 1..] {
+            if a.ended || b.ended {
+                ended += 1;
+            } else if a.key.progress != b.key.progress {
+                progress += 1;
+            } else if !same_stacks(a, b) {
+                stacks += 1;
+                let (x, y) = (&a.key, &b.key);
+                if x.conds != y.conds {
+                    conds += 1;
+                }
+                if x.groups != y.groups {
+                    groups += 1;
+                }
+                if x.scans != y.scans {
+                    scans += 1;
+                }
+                if first.is_none() {
+                    first = Some(format!(
+                        "conds {:?} vs {:?} | groups {:?} vs {:?}",
+                        x.conds.iter().map(|c| s(c.0.1)).collect::<Vec<_>>(),
+                        y.conds.iter().map(|c| s(c.0.1)).collect::<Vec<_>>(),
+                        x.groups,
+                        y.groups
+                    ));
+                }
+            } else if !same_code(&a.tag, &b.tag) {
+                tags += 1;
+            } else if sample.is_none() {
+                let text = |c: &Config| {
+                    let frames = live_frames(&c.state.input);
+                    match pending(&frames) {
+                        Some(t) => crate::engine::tex::detokenize(&t[..t.len().min(24)], &out.interner),
+                        None => format!("<{} frames, a file below>", frames.len()),
+                    }
+                };
+                sample = Some(format!("A: {} || B: {}", text(a), text(b)));
+            }
+        }
+    }
+    let at_progress: std::collections::BTreeSet<u64> = p.iter().map(|c| c.key.progress).collect();
+    eprintln!(
+        "why-apart {}: {} waiting, {pairs} pairs: progress {progress} ({} places), stacks {stacks}, tags {tags}, ended {ended}, rest (alike) {}",
+        s(at),
+        p.len(),
+        at_progress.len(),
+        pairs - progress - stacks - tags - ended
+    );
+    eprintln!("why-apart   alike pair input: {}", sample.unwrap_or_default());
+    eprintln!(
+        "why-apart   stacks differ in: conds {conds}, groups {groups}, scans {scans}; e.g. {}",
+        first.unwrap_or_default()
+    );
 }
