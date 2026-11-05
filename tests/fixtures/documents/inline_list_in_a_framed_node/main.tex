@@ -1,0 +1,27 @@
+% An inline list in a node of text width, framed by a fit node: enumitem
+% boxes each item and unboxes it, so the paragraph breaks as TeX breaks it,
+% the node's anchors stay known, and no path parts on the fit.
+\documentclass{article}
+\usepackage[inline]{enumitem}
+\usepackage{tikz}
+\usetikzlibrary{positioning,fit,backgrounds}
+\newlist{steps}{enumerate*}{1}
+\setlist[steps]{label=\color{darkgray!7!black}\emph{\roman*)},itemjoin={{, }},itemjoin*={{, and }}}
+\NewDocumentEnvironment{question}{+m +m +b}{\bigskip\begin{tikzpicture}[remember picture,node distance=\baselineskip-5pt]
+  \node[inner sep=0pt,text width=\textwidth,align=justify] (B) {#3};
+  \node[inner sep=0pt,above=of B.north west,anchor=south west] (Q) {\emph{#1}};
+  \node[inner sep=0pt,above=of B.north east,anchor=south east] (R) {#2};
+  \tikzset{remember picture,overlay}
+  \node[rounded corners=1mm,inner sep=3mm,fill=lightgray!20,fit=(Q)(R)(B),on background layer] (F) {};
+\end{tikzpicture}}{}
+\begin{document}
+\begin{question}{How is this done?}{Q1}
+  A few words before
+  \begin{steps}
+    \item the first step of the work
+    \item the second step with more words
+  \end{steps}.
+  Some words follow the list here.
+\end{question}
+\gdef\SatexReachedEnd{}
+\end{document}

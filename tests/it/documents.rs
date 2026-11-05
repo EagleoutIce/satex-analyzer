@@ -534,6 +534,15 @@ fn inline_math_nodes_in_a_saved_box_stay_known() {
     assert_eq!(a.peak_paths, 1, "paths parted");
 }
 
+/// An enumitem inline list in a node of text width: each item is boxed
+/// and unboxed, and `\unhbox` puts its items back (tex.web § 1110), so
+/// the paragraph keeps its height and the fit node no path parts on.
+#[test]
+fn inline_list_in_a_framed_node_stays_known() {
+    let Some(a) = check("inline_list_in_a_framed_node", "main.tex", &[]) else { return };
+    assert!(a.peak_paths <= 2, "{} paths", a.peak_paths);
+}
+
 /// The same with sub- and superscripts, nested and in pairs: the formulas
 /// are rigid, so their paragraphs keep their height (tex.web §§ 756-759).
 #[test]

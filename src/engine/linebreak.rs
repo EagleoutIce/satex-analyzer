@@ -50,7 +50,7 @@ impl Kp {
     pub(crate) fn glue(g: Glue) -> Kp {
         Kp::Glue { w: g.width, st: g.stretch.amount, sto: g.stretch.order, sh: g.shrink.amount, sho: g.shrink.order }
     }
-    fn width(self) -> Scaled {
+    pub(crate) fn width(self) -> Scaled {
         match self {
             Kp::Box { w, .. } | Kp::Glue { w, .. } | Kp::Kern { w, .. } => w,
             _ => 0,

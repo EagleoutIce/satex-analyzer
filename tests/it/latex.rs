@@ -3147,8 +3147,8 @@ fn inline_math_with_fractions_and_primes_has_its_size() {
 
 /// `\unhbox` of any hbox adds its list's natural width (tex.web § 1110),
 /// whatever it was packed to, and an `\unskip` after it takes away the
-/// glue the list ended in: tikz's `align` lines in an `\halign`. Widths
-/// as `pdflatex` prints.
+/// glue the list ended in: tikz's `align` lines in an `\halign`. The space
+/// factor stays the one before it. Widths as `pdflatex` prints.
 #[test]
 fn an_unhboxed_list_keeps_its_natural_width() {
     if !installed() {
@@ -3162,6 +3162,8 @@ fn an_unhboxed_list_keeps_its_natural_width() {
         (r"\setbox1\hbox{word}\setbox0\hbox{\unhbox1}", "21.4167pt"),
         (r"\setbox1\hbox to 50pt{a\hfil b}\setbox0\hbox{\unhbox1}", "10.55559pt"),
         (r"\setbox1\hbox{Ab }\setbox0\hbox{x\unhbox1\unskip}", "18.33339pt"),
+        (r"\setbox0\hbox{x.\setbox1\hbox{a}\unhbox1\relax\space b}", "23.05562pt"),
+        (r"\setbox0\hbox{x\setbox1\hbox{a.}\unhbox1\relax\space b}", "21.9445pt"),
     ];
     let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
     for (i, (f, _)) in cases.iter().enumerate() {
@@ -3175,6 +3177,39 @@ fn an_unhboxed_list_keeps_its_natural_width() {
         .map(|(i, (f, _))| (f.to_string(), body(&analysis, &format!("W{}", (b'a' + i as u8) as char))))
         .collect();
     let want: Vec<(String, String)> = cases.iter().map(|(f, w)| (f.to_string(), w.to_string())).collect();
+    assert_eq!(got, want);
+}
+
+/// `\unhbox` puts the box's items back (tex.web § 1110), so a paragraph
+/// breaks them as TeX does: an enumitem inline list boxes each item, and a
+/// tikz node of text width set it. Height/depth as `pdflatex` prints.
+#[test]
+fn an_unhboxed_list_breaks_into_lines() {
+    if !installed() {
+        return;
+    }
+    let words = r"Some words \setbox1\hbox{in the box of words and other text}\unhbox1, finding more words that wrap.";
+    let list = r"Some words in \begin{inlenum}\item reading all the input files \item writing the output and the summary report\end{inlenum}.";
+    let cases = [
+        (120, r"\setbox1\hbox{in}Some words \unhbox1, finding.", "6.94444pt/1.94444pt"),
+        (150, words, "30.94444pt/1.94444pt"),
+        (250, words, "18.94444pt/1.94444pt"),
+        (200, list, "31.5pt/1.94444pt"),
+        (300, list, "19.5pt/1.94444pt"),
+    ];
+    let mut src = String::from(
+        "\\documentclass{article}\n\\usepackage[inline]{enumitem}\n\\newlist{inlenum}{enumerate*}{1}\n\
+         \\setlist[inlenum]{label=\\emph{\\roman*)},itemjoin={{, }},itemjoin*={{, and }}}\n\\begin{document}\n",
+    );
+    for (i, (hsize, f, _)) in cases.iter().enumerate() {
+        let name = (b'a' + i as u8) as char;
+        src.push_str(&format!("\\setbox0\\vbox{{\\hsize={hsize}pt {f}}}\\xdef\\H{name}{{\\the\\ht0/\\the\\dp0}}\n"));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    let got: Vec<String> =
+        (0..cases.len()).map(|i| body(&analysis, &format!("H{}", (b'a' + i as u8) as char))).collect();
+    let want: Vec<String> = cases.iter().map(|(_, _, w)| w.to_string()).collect();
     assert_eq!(got, want);
 }
 

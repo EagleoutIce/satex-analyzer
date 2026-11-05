@@ -140,12 +140,12 @@ A box register holds width, height and depth as `Dim`s, read by `\wd`, `\ht`, `\
 | characters | TFM width, height, depth, kerns and ligatures. A font without metrics widens. |
 | `hpack` / `vpack` | height, depth (resp. width) start at zero (tex.web §§ 649, 668). `vpack` moves depth past `\boxmaxdepth` into the height. `\vtop` (§ 1087), `\vcenter` (§ 736). |
 | inline math | characters, `\mathchardef` atoms, italic corrections, class spacing (§§ 752-766), `\mathsurround` (§ 1196). Binary atoms, operators, fractions and lost groups widen. `\left`/`\middle`/`\right` (etex.ch). |
-| `\unhbox`, `\unvbox` | the natural size recorded at packing (§ 1110), the tail kept |
+| `\unhbox`, `\unvbox` | the natural size recorded at packing (§ 1110), the tail kept, an hbox's recorded items go back onto the list, so a paragraph breaks them |
 | `\write`, `\openout`, `\closeout` | nothing when `\immediate`, else a whatsit (§§ 1352, 1375) |
 | `\discretionary` | its unbroken text (§§ 651, 1119) |
 | unknown box | `Dim::ANY` for all sizes |
 
-- **Recorded lists.** A vertical list records its items (boxes, rules, interline glue, glue, kerns, penalties, whatsits, marks). With a record, `\vsplit` runs `vert_break` exactly (§§ 968-977). Without one, the split part is packed to the asked height and the rest is bounded.
+- **Recorded lists.** An hbox records its items for `\unhbox`. A vertical list records its items (boxes, rules, interline glue, glue, kerns, penalties, whatsits, marks). With a record, `\vsplit` runs `vert_break` exactly (§§ 968-977). Without one, the split part is packed to the asked height and the rest is bounded.
 - **Forced breaks.** A vbox register knows whether it may hold one. `\vsplit` to `\maxdimen` of a list without one takes it whole (§§ 972-974).
 - **`\vadjust` breaks.** A paragraph keeps the forced breaks its `\vadjust` material carries, in order, each with whether a box came before it (up to 7: three floats and a `\pagebreak`; past that the last slot stands for the rest, a known limit). After the paragraph's lines they reach the page builder as that material (§ 889). The page builder decides whether one finds the page empty (§ 1000).
 - **Main vertical list.** Tracked from the empty page (§ 991): discardables on an empty page drop (§ 1000), the first box or line takes `\topskip` glue (§ 1001), `\pagetotal` is the length moved so far, without the glue and kerns still waiting (§§ 1003, 1004), page dimensions read back until material arrives (§§ 1004, 1245). A page whose first box follows a whatsit can break at its `\topskip` (§ 973), which LaTeX's `\clearpage` relies on.

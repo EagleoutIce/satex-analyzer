@@ -2215,6 +2215,14 @@ impl Machine<'_> {
                 let v = crate::engine::linebreak::list_value(Some(self.vlist_of(id)));
                 self.set_box_slot(register, "vl", v);
             }
+            // What `\unhbox` puts back (§ 1110): the recorded list, where it sums to the natural width.
+            if kind == BoxState::HBox
+                && let Some(id) = n.para.items
+                && n.along.known() == Some(self.kp_list(id).iter().map(|k| k.width()).sum())
+            {
+                let v = crate::engine::linebreak::list_value(Some(self.vlist_of(id)));
+                self.set_box_slot(register, "vl", v);
+            }
             if kind == BoxState::VBox && n.held > 0 {
                 self.set_box_slot(register, "held", Value::Int(n.held.into()));
             }
@@ -2669,6 +2677,10 @@ impl Machine<'_> {
                 let last = self.box_last(n);
                 let line = self.box_line(n);
                 let calm = self.box_calm(n);
+                let list = n.and_then(|k| {
+                    let key = self.intern(&format!("\u{4}box.vl.{k}"));
+                    crate::engine::linebreak::vlist(self.box_slot(key))
+                });
                 let held = self.natural.map(|m| m.held.saturating_add(self.box_held(n)));
                 let state = self.fetch_box(n, take);
                 // A vbox's forced breaks come along onto a vertical list.
@@ -2717,7 +2729,7 @@ impl Machine<'_> {
                 } else if state != BoxState::Void {
                     // A list with no forced break brings none, whatever else it holds.
                     let breaks = self.material & BREAKS;
-                    self.unpackage(state, dims, first, solid);
+                    self.unpackage(state, dims, first, solid, list);
                     if calm {
                         self.material = self.material & !BREAKS | breaks;
                     }
@@ -3669,10 +3681,8 @@ impl Machine<'_> {
         };
         let to = self.scan_spec();
         self.open_list(code, modes, 0, span);
-        // An hbox packed to a size of its own is as bad as its glue lets it
-        // be (§ 658): the line breaker's record of the items sums it.
-        if to != Packing::Natural
-            && modes == Modes::RESTRICTED_HORIZONTAL
+        // An hbox's items: its badness sums them (§ 658), `\unhbox` puts them back (§ 1110).
+        if modes == Modes::RESTRICTED_HORIZONTAL
             && let Some(n) = &mut self.natural
         {
             n.para.items = Some(0);
@@ -4497,7 +4507,30 @@ impl Machine<'_> {
     /// boxes and rules packed naturally, recorded as its `first`, with
     /// `solid` of them: § 1110 moves `tail` to the list's last, so the
     /// tail is then known. Any other hbox adds its recorded sum along.
-    fn unpackage(&mut self, state: BoxState, [w, h, d]: [Dim; 3], first: Option<Dim>, solid: Option<u8>) {
+    fn unpackage(
+        &mut self,
+        state: BoxState,
+        dims: [Dim; 3],
+        first: Option<Dim>,
+        solid: Option<u8>,
+        list: Option<crate::engine::linebreak::VList>,
+    ) {
+        // § 1110 leaves the space factor as it was.
+        let sf = self.natural.map(|n| n.space_factor);
+        self.unpackage_items(state, dims, first, solid, list);
+        if let (Some(n), Some(sf)) = (&mut self.natural, sf) {
+            n.space_factor = sf;
+        }
+    }
+
+    fn unpackage_items(
+        &mut self,
+        state: BoxState,
+        [w, h, d]: [Dim; 3],
+        first: Option<Dim>,
+        solid: Option<u8>,
+        list: Option<crate::engine::linebreak::VList>,
+    ) {
         crate::analysis::observe::box_break(self);
         match (state, self.list_kind()) {
             (BoxState::HBox, Some(true)) if let Some((along, k)) = first.zip(solid) => {
@@ -4517,8 +4550,18 @@ impl Machine<'_> {
             // moves the list, glue unset), so they add the sum along it
             // that was recorded when it was packed.
             (BoxState::HBox, Some(true)) => {
+                self.end_word();
+                let mut items = self.natural.and_then(|n| n.para.items);
                 self.append_item(Item::Box([first.unwrap_or(Dim::ANY), h, d]));
                 self.unfollowed_breaks();
+                // The recorded items themselves: the line breaker breaks them as TeX does.
+                match list {
+                    Some((list, _)) => list.iter().for_each(|&k| self.kp_push(&mut items, k)),
+                    None => items = None,
+                }
+                if let Some(n) = &mut self.natural {
+                    n.para.items = items;
+                }
             }
             // A naturally packed list adds up to the box's height and
             // depth, and begins with its recorded first box.
@@ -4534,10 +4577,9 @@ impl Machine<'_> {
             }
             _ => return self.append_item(Item::Unknown),
         }
-        // What the list ends in, and its space factor, are the box's.
+        // What the list ends in is the box's.
         if let Some(n) = &mut self.natural {
             n.tail = [Last::UNKNOWN; TAIL];
-            n.space_factor = None;
             n.para.items = n.para.items.filter(|_| state == BoxState::HBox);
         }
     }
