@@ -15,7 +15,7 @@ The first runs of `satex` are slow because it reads, interprets and caches the (
 
 ----
 
-_SaTeX_ is actively developed by [Florian Sihler](https://eagleoutice.github.io/) (contact me at: <florian.sihler@uni-ulm.de>) under the [MIT License](LICENSE). Contributions are welcome (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+_SaTeX_ is actively developed by [Florian Sihler](https://eagleoutice.github.io/portfolio/) (contact me at: <florian.sihler@uni-ulm.de>) under the [MIT License](LICENSE). Contributions are welcome (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 The development and initial Rust codebase is strongly assisted by Claude Code (from architecture descriptions, TeX semantics and [flowR](https://flowr-analysis.github.io/flowr/)). It is still *work in progress*.
 Please avoid AI-only contributions. The humans who submit code are responsible for it.

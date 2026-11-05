@@ -51,8 +51,6 @@ exclude = [
   "^file://.*/doc/(wiki/)?[A-Z][A-Za-z-]*(#.*)?$",
   # wiki-style page links in the root pages (README, SEMANTICS): pages of the wiki, not files
   "^file://[^#]*/[A-Z][A-Za-z-]*(#.*)?$",
-  # the author's own page, linked with the name: its availability is not the repository's
-  "^https://eagleoutice\\.github\\.io/$",
   "^file://.*/releases$",
   "^https://doi\\.org/10\\.1145/",
 ]
