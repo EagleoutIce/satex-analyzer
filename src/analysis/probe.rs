@@ -22,49 +22,80 @@ const QUESTION_RUNS: u64 = 8;
 /// [`background`] stop, and what they found is not kept.
 pub static WANTED: AtomicBool = AtomicBool::new(false);
 
-thread_local! {
-    static BACKGROUND: Cell<bool> = const { Cell::new(false) };
+static STOPPING: AtomicBool = AtomicBool::new(false);
+
+/// What the work under way on this thread is: what may stop its probes early.
+#[derive(Default)]
+struct Context {
+    /// Nobody waits for it: [`background`].
+    background: bool,
     /// When the run a lint reads began: its probes share the run's
     /// `limits.seconds` instead of each starting afresh.
-    static RUN_STARTED: Cell<Option<std::time::Instant>> = const { Cell::new(None) };
+    started: Option<std::time::Instant>,
+    /// Whether the run is no longer wanted (a newer edit came): [`cancellable`].
+    cancel: Option<Rc<dyn Fn() -> bool>>,
+}
+
+thread_local! {
+    static CONTEXT: std::cell::RefCell<Context> = std::cell::RefCell::new(Context::default());
+    static POLLS: Cell<u32> = const { Cell::new(0) };
+}
+
+/// `f` in the context `set` makes of this thread's, restored after.
+fn within<T>(set: impl FnOnce(&mut Context), f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Context>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            CONTEXT.set(self.0.take().unwrap_or_default());
+        }
+    }
+    let mut inner = CONTEXT.with_borrow(|c| Context { cancel: c.cancel.clone(), ..*c });
+    set(&mut inner);
+    let _restore = Restore(Some(CONTEXT.replace(inner)));
+    f()
 }
 
 pub(crate) fn run_started() -> Option<std::time::Instant> {
-    RUN_STARTED.get()
+    CONTEXT.with_borrow(|c| c.started)
 }
 
 /// `f` with the probes it runs held to the time budget of the run that
 /// began at `started`.
 pub fn within_run<T>(started: Option<std::time::Instant>, f: impl FnOnce() -> T) -> T {
-    let outer = RUN_STARTED.replace(started);
-    let out = f();
-    RUN_STARTED.set(outer);
-    out
+    within(|c| c.started = started, f)
 }
 
 /// `f` run as work nobody waits for: `None` when a request came first.
 pub fn background<T>(f: impl FnOnce() -> T) -> Option<T> {
-    BACKGROUND.set(true);
-    let out = f();
-    BACKGROUND.set(false);
-    (!preempted()).then_some(out)
-}
-
-static STOPPING: AtomicBool = AtomicBool::new(false);
-
-thread_local! {
-    /// Whether the run under way is no longer wanted (a newer edit came): [`cancellable`].
-    static CANCEL: std::cell::RefCell<Option<Box<dyn Fn() -> bool>>> = const { std::cell::RefCell::new(None) };
-    static POLLS: Cell<u32> = const { Cell::new(0) };
+    within(
+        |c| c.background = true,
+        || {
+            let out = f();
+            (!preempted()).then_some(out)
+        },
+    )
 }
 
 /// `f`, a run that stops at its next budget check once `cancelled` says so; whether it did.
 /// What such a run leaves is no analysis of anything: the caller drops it.
 pub fn cancellable<T>(cancelled: Box<dyn Fn() -> bool>, f: impl FnOnce() -> T) -> (T, bool) {
-    let outer = CANCEL.replace(Some(cancelled));
-    let out = f();
-    let cancelled = CANCEL.replace(outer).is_some_and(|c| c());
-    (out, cancelled)
+    within(
+        |c| c.cancel = Some(cancelled.into()),
+        || {
+            let out = f();
+            (out, stale())
+        },
+    )
+}
+
+/// `f`, a request answered in a pause of other work: none of that work's background,
+/// deadline or cancellation holds for it.
+pub fn apart<T>(f: impl FnOnce() -> T) -> T {
+    within(|c| *c = Context::default(), f)
+}
+
+fn stale() -> bool {
+    CONTEXT.with_borrow(|c| c.cancel.clone()).is_some_and(|c| c())
 }
 
 /// Asked at the machine's budget checks: every 16th asks [`cancellable`]'s test, which may
@@ -72,7 +103,7 @@ pub fn cancellable<T>(cancelled: Box<dyn Fn() -> bool>, f: impl FnOnce() -> T) -
 pub(crate) fn run_cancelled() -> bool {
     let n = POLLS.get().wrapping_add(1);
     POLLS.set(n);
-    n.is_multiple_of(16) && CANCEL.with_borrow(|c| c.as_ref().is_some_and(|c| c()))
+    n.is_multiple_of(16) && stale()
 }
 
 /// Stops every run at its next budget check (the server's `exit`).
@@ -82,7 +113,13 @@ pub fn stop_all() {
 
 /// The process exits, or a request waits and this is [`background`] work.
 pub(crate) fn preempted() -> bool {
-    STOPPING.load(Ordering::Relaxed) || (BACKGROUND.get() && WANTED.load(Ordering::Relaxed))
+    STOPPING.load(Ordering::Relaxed) || (CONTEXT.with_borrow(|c| c.background) && WANTED.load(Ordering::Relaxed))
+}
+
+/// Whether what the probes under `cfg` just found is whole: nothing stopped them early.
+/// Only then is it cached.
+fn whole(cfg: &Config) -> bool {
+    !preempted() && !past_run_deadline(cfg) && !stale()
 }
 
 /// Tokens the runs of one question read so far, and what they may read ([`QUESTION_RUNS`]).
@@ -306,8 +343,7 @@ pub fn probe(analysis: &Analysis, sym: Sym, at: State) -> Option<Probed> {
             .derive()
     });
     // One cut by a lint's deadline is no answer for a later hover.
-    if !preempted()
-        && !past_run_deadline(&cfg)
+    if whole(&cfg)
         && let Ok(mut probes) = analysis.probes.lock()
     {
         probes.insert((sym, at), found.clone());
@@ -351,7 +387,9 @@ pub fn argument_roles(analysis: &Analysis, sym: Sym) -> Vec<crate::analysis::rol
             }
         }
     }
-    if let Ok(mut cache) = analysis.probed_roles.lock() {
+    if whole(&cfg)
+        && let Ok(mut cache) = analysis.probed_roles.lock()
+    {
         cache.insert(name, found.clone());
     }
     found
@@ -492,7 +530,7 @@ pub fn probe_contexts(analysis: &Analysis, sym: Sym) -> Vec<(Option<Sym>, Option
     };
     let mut found = vec![bare(None)];
     found.extend(candidate_environments(analysis, sym).into_iter().map(|env| bare(Some(env))));
-    if !preempted()
+    if whole(&analysis.settings)
         && let Ok(mut cache) = analysis.context_probes.lock()
     {
         cache.insert(sym, found.clone());

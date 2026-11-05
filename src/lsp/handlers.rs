@@ -2522,11 +2522,9 @@ pub fn warm(analysis: &Analysis) {
 
 /// The fewest arguments each defined name takes, once per analysis.
 fn takes(analysis: &Analysis) -> &crate::fixed::HashMap<String, u8> {
-    analysis.takes.get_or_init(|| {
+    crate::util::progress::built(&analysis.takes, || {
         let defs = analysis.facts.defs.iter();
-        crate::util::progress::unpaused(|| {
-            defs.filter_map(|d| Some((analysis.interner.cs(d.name), query::takes_min(analysis, d)?))).collect()
-        })
+        defs.filter_map(|d| Some((analysis.interner.cs(d.name), query::takes_min(analysis, d)?))).collect()
     })
 }
 

@@ -331,10 +331,14 @@ pub fn pausing<T>(pause: Pause, f: impl FnOnce() -> T) -> T {
     f()
 }
 
-/// Runs `f` without pauses: what fills a cache that a paused request reads.
-pub fn unpaused<T>(f: impl FnOnce() -> T) -> T {
-    let _restore = Restore(PAUSE.take());
-    f()
+/// `cell`'s value, made by `f` if there is none. `f` may pause, and a request answered
+/// there may make the value too: the first one made stays.
+pub fn built<T>(cell: &std::sync::OnceLock<T>, f: impl FnOnce() -> T) -> &T {
+    if let Some(value) = cell.get() {
+        return value;
+    }
+    let value = f();
+    cell.get_or_init(|| value)
 }
 
 struct Restore(Option<Pause>);

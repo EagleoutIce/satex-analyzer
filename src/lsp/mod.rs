@@ -877,27 +877,22 @@ impl Engine {
         {
             carry_probes(old, &analysis);
         }
-        // the last run's rows of the format's names, for the completions of this one
         let prior = changed.then(|| doc.analysis.clone()).flatten();
-        doc.analysis = Some(analysis.clone());
-        (doc.analyzed, doc.shift) = (Some(text.clone()), None);
-        self.runs.retain(|_, run| Rc::strong_count(&run.analysis) > 1);
-        if changed {
-            self.refresh_hovers(uri);
-        }
         if fresh {
-            self.publish_run(&analysis, &path, &versions, None);
-            // What a completion reads of the new run, built once its diagnostics are out, while
-            // the last run answers: the format's names carried over from the last run. The
-            // playground's server answers only once a message is done: there the first
-            // completion builds the rest.
-            if let Some(prior) = prior {
-                self.serving(|_| crate::queries::query::carry_scope(&prior, &analysis));
+            // What a completion reads of the new run is built first, while the last run (or the
+            // installation) answers: the format's names carried over from the last run. Its
+            // diagnostics then say it answers. The playground's server answers only once a
+            // message is done: there the first completion builds the rest.
+            if let Some(prior) = &prior {
+                self.serving(|_| crate::queries::query::carry_scope(prior, &analysis));
             }
             if !cfg!(target_os = "emscripten") {
                 self.serving(|_| handlers::warm(&analysis));
             }
+            self.install(uri, &analysis, &text, changed);
+            self.publish_run(&analysis, &path, &versions, None);
         } else {
+            self.install(uri, &analysis, &text, changed);
             // the same texts under newer versions: the same diagnostics, of these versions
             let again: Vec<PublishDiagnosticsParams> = (self.published.values_mut())
                 .filter(|(run, _)| run.upgrade().is_some_and(|r| Rc::ptr_eq(&r, &analysis)))
@@ -912,6 +907,17 @@ impl Engine {
             self.send_diagnostics(again);
         }
         crate::util::progress::idle();
+    }
+
+    /// `analysis` of `text`, the one `uri`'s requests are answered from.
+    fn install(&mut self, uri: &Uri, analysis: &Rc<Analysis>, text: &str, changed: bool) {
+        let Some(doc) = self.docs.get_mut(uri) else { return };
+        doc.analysis = Some(analysis.clone());
+        (doc.analyzed, doc.shift) = (Some(text.to_string()), None);
+        self.runs.retain(|_, run| Rc::strong_count(&run.analysis) > 1);
+        if changed {
+            self.refresh_hovers(uri);
+        }
     }
 
     /// Lints `analysis` and publishes its diagnostics under `versions`, moved by `shift`
@@ -1237,7 +1243,8 @@ impl Engine {
                         waiting.borrow_mut().push(msg);
                     }
                     msg => {
-                        if let Some(msg) = answer(&docs, &hovers, blank.as_deref(), msg) {
+                        let answered = crate::analysis::probe::apart(|| answer(&docs, &hovers, blank.as_deref(), msg));
+                        if let Some(msg) = answered {
                             waiting.borrow_mut().push(msg);
                         }
                     }

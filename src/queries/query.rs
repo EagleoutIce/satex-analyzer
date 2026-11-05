@@ -4107,7 +4107,7 @@ pub fn scope_named(
     all: bool,
     named: impl Fn(&str) -> bool,
 ) -> Vec<Record> {
-    let rows = analysis.scope_rows.get_or_init(|| crate::util::progress::unpaused(|| scope_rows(analysis)));
+    let rows = crate::util::progress::built(&analysis.scope_rows, || scope_rows(analysis));
     let mut latest: BTreeMap<Sym, usize> = BTreeMap::new();
     // A definition in a file no user file reads (the kernel's, run by
     // `\begin{document}`) has no place there: it holds once the run has
@@ -4147,8 +4147,7 @@ pub fn scope_named(
     }
     let shown = |row: &&ScopeRow| all || row.plain;
     let row = |i: usize| {
-        rows.defs[i]
-            .get_or_init(|| crate::util::progress::unpaused(|| def_row(analysis, &analysis.facts.defs[i], &rows.first)))
+        crate::util::progress::built(&rows.defs[i], || def_row(analysis, &analysis.facts.defs[i], &rows.first))
     };
     let defs = latest.values().filter_map(|&i| row(i).as_ref()).filter(shown);
     let rest = rows.rest.iter().filter(|r| named(&r.name)).filter(shown);
@@ -4225,9 +4224,7 @@ fn scope_rows(analysis: &Analysis) -> ScopeRows {
 /// where the name has the same number and meaning in both: an edit seldom changes them.
 pub fn carry_scope(prior: &Analysis, analysis: &Analysis) {
     if let Some(rows) = prior.scope_rows.get() {
-        analysis
-            .scope_rows
-            .get_or_init(|| crate::util::progress::unpaused(|| scope_rows_from(analysis, Some((prior, rows)))));
+        crate::util::progress::built(&analysis.scope_rows, || scope_rows_from(analysis, Some((prior, rows))));
     }
 }
 
@@ -4249,6 +4246,7 @@ fn scope_rows_from(analysis: &Analysis, prior: Option<(&Analysis, &ScopeRows)>) 
         .collect();
     let mut rest = Vec::new();
     for i in 0..analysis.interner.len() as u32 {
+        crate::util::progress::pause();
         let sym = Sym(i);
         // A name the document defines later, but not yet at this position,
         // is not the kernel's meaning to show — `env.meaning` is the run's

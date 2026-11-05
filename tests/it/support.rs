@@ -67,7 +67,9 @@ pub fn bare() -> Config {
 /// temporary directory. A test process removes what processes no longer
 /// running left there, so runs never pile up (where `/proc` tells which
 /// are running). On Windows the directory's long name: a short one
-/// (`RUNNER~1`) has a `~`, active in LaTeX.
+/// (`RUNNER~1`) has a `~`, active in LaTeX. Its `satex.yaml` ends the config
+/// cascade: a `TMPDIR` inside a project (`target/tmp`) or the user's global
+/// config never applies to a test.
 pub fn tmp_root() -> PathBuf {
     static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     ROOT.get_or_init(|| {
@@ -85,6 +87,8 @@ pub fn tmp_root() -> PathBuf {
                 }
             }
         }
+        std::fs::create_dir_all(&base).expect("a scratch base");
+        let _ = std::fs::write(base.join("satex.yaml"), "project: {ignore_other_configs: true}\n");
         let root = base.join(std::process::id().to_string());
         std::fs::create_dir_all(&root).expect("a scratch root");
         root
