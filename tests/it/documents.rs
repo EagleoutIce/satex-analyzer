@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use crate::support::{defined, installed};
+use crate::support::{defined, installed, undefined};
 use satex::analysis::facts::Severity;
 use satex::analysis::machine::{Analysis, Machine};
 use satex::engine::builtins::OccKind;
@@ -56,11 +56,11 @@ fn check_within(id: &str, main: &str, also: &[&str], allowed: &[&str], budget: u
     crate::support::seed_kernel(&cfg);
     let analysis = Machine::analyze(&source, Some(&path), &cfg);
     let mut failures = Vec::new();
-    if !defined(&analysis, "SatexReachedEnd") {
+    if undefined(&analysis, "SatexReachedEnd") {
         failures.push("\\SatexReachedEnd is undefined: the end was not reached".to_string());
     }
     for name in afters(&source) {
-        if !defined(&analysis, &name) {
+        if undefined(&analysis, &name) {
             failures.push(format!("\\{name} is undefined: the text after a construct was lost"));
         }
     }
@@ -258,14 +258,14 @@ fn tcolorbox_with_a_footnote_in_a_list_item_ends() {
 #[test]
 fn tcolorbox_of_unknown_height_keeps_its_anchors_local() {
     let Some(analysis) = check("tcolorbox_unknown_height_anchors", "mwe.tex", &[]) else { return };
-    assert!(!defined(&analysis, "southwest"), "\\southwest leaked out of the box's groups");
+    assert!(undefined(&analysis, "southwest"), "\\southwest leaked out of the box's groups");
 }
 
 /// Mutations of the box above: known height, a nested box, and anchors
 /// read by pictures before and after it. None leaves \southwest defined.
 fn box_anchors_stay_local(main: &str) {
     let Some(analysis) = check("tcolorbox_anchor_variants", main, &[]) else { return };
-    assert!(!defined(&analysis, "southwest"), "\\southwest leaked out of the groups ({main})");
+    assert!(undefined(&analysis, "southwest"), "\\southwest leaked out of the groups ({main})");
 }
 
 #[test]
@@ -460,7 +460,7 @@ fn cut_widens_only_what_the_recursion_wrote() {
     let path = dir("cut_keeps_earlier_writes").join("mwe.tex");
     let source = std::fs::read_to_string(&path).expect("fixture source");
     let a = Machine::analyze(&source, Some(&path), &crate::support::discover(&dir("cut_keeps_earlier_writes")));
-    assert!(defined(&a, "SatexReachedEnd") && !defined(&a, "EscapeWidened"));
+    assert!(defined(&a, "SatexReachedEnd") && undefined(&a, "EscapeWidened"));
 }
 
 /// `\def\z{\z}\z` loops forever in TeX (tex.web § 390), so it is
@@ -476,7 +476,7 @@ fn include_after_endless_macro_is_read() {
 #[test]
 fn group_around_summarized_loop_closes_before_include() {
     let Some(a) = check("group_cut_include", "main.tex", &["ch1"]) else { return };
-    assert!(!defined(&a, "ProtectLeaked"));
+    assert!(undefined(&a, "ProtectLeaked"));
 }
 
 /// A recursion cut while its levels stand in groups opened and
@@ -490,7 +490,7 @@ fn cut_recursion_closes_macro_groups() {
     let path = dir("loop_macro_groups").join("mwe.tex");
     let source = std::fs::read_to_string(&path).expect("fixture source");
     let a = Machine::analyze(&source, Some(&path), &crate::support::discover(&dir("loop_macro_groups")));
-    assert!(defined(&a, "SatexReachedEnd") && !defined(&a, "Leaked"));
+    assert!(defined(&a, "SatexReachedEnd") && undefined(&a, "Leaked"));
 }
 
 /// A branch met once shallow and then deeper in one call is no loop pass:
@@ -635,7 +635,7 @@ fn rounding_an_unknown_dimension_ends_bounded() {
         assert!(a.steps <= control.steps + 1_000_000, "{main}: {} steps over {}", a.steps, control.steps);
         assert!(a.limits.is_empty(), "{main}: limits hit");
         for name in ["NegativeRound", "NegativeFloor", "NegativeInt", "HugeRound"] {
-            assert!(!defined(&a, name), "{main}: \\{name} is defined: the result is not bounded");
+            assert!(undefined(&a, name), "{main}: \\{name} is defined: the result is not bounded");
         }
     }
 }
@@ -723,5 +723,5 @@ fn notecolumn_slnc_on_master_thesis_title_page() {
 #[test]
 fn a_map_at_an_unknown_depth_keeps_its_items() {
     let Some(a) = check("expl3_map_unknown_depth", "main.tex", &[]) else { return };
-    assert!(crate::support::defined(&a, "X"), "the map body never ran");
+    assert!(crate::support::maybe_defined(&a, "X"), "the map body never ran");
 }

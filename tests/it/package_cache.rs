@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::support::{defined, installed};
+use crate::support::{defined, installed, undefined};
 use satex::analysis::facts::LoadStatus;
 use satex::analysis::machine::{Analysis, Machine};
 use satex::project::config::{Cache, Config};
@@ -615,7 +615,7 @@ fn a_package_loaded_from_an_input_file_is_cached() {
     let edited = run(&dir, document);
     assert_eq!(served(&edited, "vialocal"), Some(false), "{:?}", edited.package_caches);
     assert_eq!(served(&edited, "viaother"), Some(true), "{:?}", edited.package_caches);
-    assert!(defined(&edited, "added") && !defined(&edited, "localcount"));
+    assert!(defined(&edited, "added") && undefined(&edited, "localcount"));
     same_facts(&run_cold(&dir, document), &edited);
 }
 
@@ -660,7 +660,7 @@ fn a_name_the_package_no_longer_defines_is_undefined() {
     std::fs::write(&path, text.replacen("innermacro", "innermacrx", 1)).expect("inner.sty");
     std::fs::File::options().write(true).open(&path).and_then(|f| f.set_modified(modified)).expect("set mtime");
     let again = run(&dir, source);
-    assert!(!defined(&again, "innermacro"));
+    assert!(crate::support::undefined(&again, "innermacro"));
     assert!(undefined(&again), "{:?}", again.package_caches);
 }
 
@@ -765,11 +765,11 @@ fn two_projects_sharing_a_cache_do_not_shadow_each_others_package() {
 
     let from_a = analyze(&a, DOCUMENT, &cfg_for(&a));
     assert!(defined(&from_a, "onlyinA"), "a's own package was read: {:?}", from_a.package_caches);
-    assert!(!defined(&from_a, "onlyinB"), "a must not see b's package");
+    assert!(undefined(&from_a, "onlyinB"), "a must not see b's package");
 
     let from_b = analyze(&b, DOCUMENT, &cfg_for(&b));
     assert!(defined(&from_b, "onlyinB"), "b must read its own outer.sty, not a's cache: {:?}", from_b.package_caches);
-    assert!(!defined(&from_b, "onlyinA"), "b must not see a's package");
+    assert!(undefined(&from_b, "onlyinA"), "b must not see a's package");
     assert_ne!(
         served(&from_b, "outer"),
         Some(true),
@@ -782,12 +782,12 @@ fn two_projects_sharing_a_cache_do_not_shadow_each_others_package() {
     let a_again = analyze(&a, DOCUMENT, &cfg_for(&a));
     assert_eq!(served(&a_again, "outer"), Some(true), "{:?}", a_again.package_caches);
     assert!(defined(&a_again, "onlyinA"));
-    assert!(!defined(&a_again, "onlyinB"));
+    assert!(undefined(&a_again, "onlyinB"));
 
     let b_again = analyze(&b, DOCUMENT, &cfg_for(&b));
     assert_eq!(served(&b_again, "outer"), Some(true), "{:?}", b_again.package_caches);
     assert!(defined(&b_again, "onlyinB"));
-    assert!(!defined(&b_again, "onlyinA"));
+    assert!(undefined(&b_again, "onlyinA"));
 }
 
 #[test]
@@ -1086,7 +1086,7 @@ fn a_list_the_package_inspects_before_appending_makes_it_miss() {
     let source = doc("b");
     let warm = run_latex(&dir, &source, true);
     assert_ne!(served(&warm, "inspector"), Some(true), "{:?}", warm.package_caches);
-    assert!(!defined(&warm, "wasa"));
+    assert!(undefined(&warm, "wasa"));
     assert_eq!(text_of(&warm, "biglist").as_deref(), Some("b,inspector"));
     same_facts(&run_cold(&dir, &source), &warm);
 }

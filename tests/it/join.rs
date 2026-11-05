@@ -1049,3 +1049,35 @@ fn paired_lists_copied_together_keep_their_pairing() {
     );
     assert_eq!(crate::support::last_body(&analysis, "F"), r"\elt \bA ");
 }
+
+/// A name one arm defines is only maybe defined after the join, so a check
+/// that a run reached a marker fails when only some paths did.
+#[test]
+fn a_marker_one_arm_defines_is_not_surely_defined() {
+    let analysis = analyze(r"\ifnum\pdfuniformdeviate2=0 \gdef\reached{}\fi");
+    assert!(!crate::support::defined(&analysis, "reached") && !crate::support::undefined(&analysis, "reached"));
+}
+
+/// Library code that reads two lists a join decorrelated may meet a state
+/// no run has: an error raised there is possible, never certain.
+#[test]
+fn an_error_after_a_split_of_joined_lists_is_not_certain() {
+    let dir = crate::support::scratch_dir(
+        crate::support::tmp_root().join(format!("satex-joined-error-{}", std::process::id())),
+    );
+    let tree = crate::support::mini_texmf(&dir);
+    std::fs::write(
+        tree.join("tex/latex/demo/lists.sty"),
+        "\\chardef\\bA=1 \\def\\T{}\\def\\D{\\elt\\bA}\n\
+         \\ifnum\\pdfuniformdeviate2=0 \\def\\T{\\elt\\bA}\\def\\D{}\\fi\n\
+         \\let\\elt\\relax \\xdef\\F{\\T\\D}\\def\\one{\\elt\\bA}\n\
+         \\ifx\\F\\one\\else\\errmessage{lost}\\fi\n",
+    )
+    .expect("lists.sty");
+    let source = "\\usepackage{lists}\n";
+    let path = dir.join("doc.tex");
+    std::fs::write(&path, source).expect("doc.tex");
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::mini_config(&tree, &dir.join("cache")));
+    let certain: Vec<_> = analysis.facts.raised.iter().filter(|r| r.certain).map(|r| r.text.clone()).collect();
+    assert!(certain.is_empty(), "{certain:?}");
+}

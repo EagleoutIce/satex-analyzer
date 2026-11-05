@@ -206,10 +206,19 @@ pub fn last_body(analysis: &Analysis, name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Whether `name` has any meaning at all in the environment `analysis` ended
-/// with.
+/// Whether `name` has a meaning on every path `analysis` ended with.
 pub fn defined(analysis: &Analysis, name: &str) -> bool {
-    analysis.interner.lookup(name).is_some_and(|sym| analysis.env.is_defined(sym))
+    analysis.interner.lookup(name).is_some_and(|sym| analysis.env.surely_defined(sym))
+}
+
+/// Whether `name` has a meaning on some path `analysis` ended with.
+pub fn maybe_defined(analysis: &Analysis, name: &str) -> bool {
+    !undefined(analysis, name)
+}
+
+/// Whether `name` has no meaning on any path `analysis` ended with.
+pub fn undefined(analysis: &Analysis, name: &str) -> bool {
+    !analysis.interner.lookup(name).is_some_and(|sym| analysis.env.is_defined(sym))
 }
 
 // Without a format the catcodes are INITEX's (tex.web § 232).

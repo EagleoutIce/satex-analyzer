@@ -689,7 +689,7 @@ fn the_lualatex_kernel_is_cached_and_expl3_works() {
     assert!(cold.format.as_ref().is_some_and(|f| !f.cached), "the first run interpreted the kernel");
     assert!(warm.format.as_ref().is_some_and(|f| f.cached), "the second run installed the cached kernel");
     for a in [&cold, &warm] {
-        assert!(crate::support::defined(a, "same") && !crate::support::defined(a, "different"));
+        assert!(crate::support::defined(a, "same") && crate::support::undefined(a, "different"));
         let missing: Vec<String> = a
             .facts
             .diagnostics

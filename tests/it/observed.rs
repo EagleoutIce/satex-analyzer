@@ -280,7 +280,7 @@ fn the_page_is_empty_after_a_forced_page_break() {
 \end{document}",
     );
     assert!(crate::support::defined(&analysis, "PageEmpty"));
-    assert!(!crate::support::defined(&analysis, "PageTouched"), "the page room is not known");
+    assert!(crate::support::undefined(&analysis, "PageTouched"), "the page room is not known");
 }
 
 /// tex.web § 370: an undefined name is an error and adds nothing, so the
@@ -294,7 +294,7 @@ fn an_undefined_name_in_math_sets_nothing() {
 \end{document}",
     );
     assert!(crate::support::defined(&analysis, "WdZero"));
-    assert!(!crate::support::defined(&analysis, "WdOther"), "the width is not known");
+    assert!(crate::support::undefined(&analysis, "WdOther"), "the width is not known");
 }
 
 #[test]

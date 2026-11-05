@@ -764,6 +764,13 @@ impl Env {
         !matches!(self.slot(sym).map(|b| &b.meaning), None | Some(Meaning::Undefined))
     }
 
+    /// Whether `sym` has a meaning on every path: a join that left it
+    /// undefined on one is only maybe defined.
+    pub fn surely_defined(&self, sym: Sym) -> bool {
+        self.is_defined(sym)
+            && self.slot(sym).is_none_or(|b| b.may.as_deref().is_none_or(|m| !m.contains(&Meaning::Undefined)))
+    }
+
     /// Slots that hold a meaning, which is what a format cache stores: a
     /// rebuild and a cache hit then report the same number.
     pub fn meaning_count(&self) -> usize {

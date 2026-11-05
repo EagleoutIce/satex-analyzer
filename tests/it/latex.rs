@@ -1,7 +1,7 @@
 //! LaTeX2e as documented: what the kernel's own interfaces do.
 
 use crate::support::analyze_latex as analyze;
-use crate::support::{assert_body, broken_gaps, codes, marks};
+use crate::support::{assert_body, broken_gaps, codes, marks, maybe_defined, undefined};
 use crate::support::{defined, installed, last_body as body};
 use satex::analysis::machine::{Analysis, Machine};
 use satex::engine::builtins::OccKind;
@@ -910,7 +910,7 @@ fn verbatim_bodies_are_read_line_by_line_with_an_active_end_of_line() {
     );
     // tex.web § 49: the active end of line prints as `^^M`, not raw.
     assert_eq!(body(&analysis, "r"), "a^^Mb");
-    assert!(!defined(&analysis, "bad"));
+    assert!(undefined(&analysis, "bad"));
     assert!(defined(&analysis, "after"));
 }
 
@@ -1017,9 +1017,9 @@ fn unkern_in_inline_math_widens_its_size() {
 \ifdim\skip1=0pt \def\zero{}\else\def\nonzero{}\fi
 \end{document}",
     );
-    assert!(defined(&analysis, "exact"));
-    assert!(defined(&analysis, "zero"));
-    assert!(!defined(&analysis, "nonzero"));
+    assert!(maybe_defined(&analysis, "exact"));
+    assert!(maybe_defined(&analysis, "zero"));
+    assert!(undefined(&analysis, "nonzero"));
 }
 
 /// An inline formula's size with scripts: a braced one-character script, a
@@ -3408,7 +3408,7 @@ fn the_build_reruns_only_for_what_it_read() {
         "\\documentclass{article}\\begin{document}\\ref{s}\\makeatletter\\@ifundefined{r@s}{\\gdef\\U{}}{\\gdef\\D{}}\\makeatother\\section{S}\\label{s}\\end{document}\n",
     );
     assert_eq!(referenced.build_runs, 2);
-    assert!(defined(&referenced, "D") && !defined(&referenced, "U"));
+    assert!(defined(&referenced, "D") && undefined(&referenced, "U"));
     // A `.lof` line defining a macro: read back, it matters only where the
     // run expanded that macro.
     let lof = |used: &str| {
@@ -3481,14 +3481,14 @@ fn the_build_makes_a_bbl_from_the_cited_entries() {
     let path = dir.join("doc.tex");
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
-    assert!(defined(&analysis, "Found") && !defined(&analysis, "Missing"), "{:?}", analysis.build_runs);
-    assert!(defined(&analysis, "Unset") && !defined(&analysis, "Set"));
+    assert!(defined(&analysis, "Found") && undefined(&analysis, "Missing"), "{:?}", analysis.build_runs);
+    assert!(defined(&analysis, "Unset") && undefined(&analysis, "Set"));
     // biblatex reads biber's format: its toggle says the file was found.
     let source = "\\documentclass{article}\\usepackage[style=authoryear]{biblatex}\\addbibresource{refs.bib}\\begin{document}\\cite{k1}\\printbibliography\\makeatletter\\iftoggle{blx@bbldone}{\\gdef\\Found{}}{\\gdef\\Missing{}}\\makeatother\\end{document}\n";
     let path = dir.join("blx.tex");
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
-    assert!(defined(&analysis, "Found") && !defined(&analysis, "Missing"), "{:?}", analysis.build_runs);
+    assert!(defined(&analysis, "Found") && undefined(&analysis, "Missing"), "{:?}", analysis.build_runs);
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -3509,7 +3509,7 @@ fn the_aux_of_two_paths_holds_what_either_wrote() {
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
     std::fs::remove_dir_all(dir).ok();
-    assert!(defined(&analysis, "GotA") && defined(&analysis, "GotB"));
+    assert!(maybe_defined(&analysis, "GotA") && maybe_defined(&analysis, "GotB"));
 }
 
 /// Paths that wrote the `.aux` with different numbers of lines leave
@@ -3530,7 +3530,7 @@ fn the_aux_texts_of_two_paths_are_read_apart() {
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
     std::fs::remove_dir_all(dir).ok();
-    assert!(defined(&analysis, "GotA") && defined(&analysis, "GotB"));
+    assert!(maybe_defined(&analysis, "GotA") && maybe_defined(&analysis, "GotB"));
 }
 
 /// Paths that read different `.aux` texts join inside a verbatim group,
@@ -3550,7 +3550,7 @@ fn a_category_saved_twice_in_a_group_comes_back_as_first_saved() {
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
     std::fs::remove_dir_all(dir).ok();
-    assert!(!defined(&analysis, "Leaked"));
+    assert!(undefined(&analysis, "Leaked"));
 }
 
 /// `\romannumeral` of a number in a small interval is one of its numerals
@@ -3562,7 +3562,7 @@ fn a_roman_numeral_of_a_small_interval_names_each_value() {
     }
     let source = "\\documentclass{article}\\count255=\\pdfuniformdeviate 2 \\advance\\count255 1 \\expandafter\\gdef\\csname R\\romannumeral\\count255\\endcsname{}\\begin{document}x\\end{document}\n";
     let a = analyze(source);
-    assert!(defined(&a, "Ri") && defined(&a, "Rii"));
+    assert!(maybe_defined(&a, "Ri") && maybe_defined(&a, "Rii"));
 }
 
 /// A join left `\Val` one of two texts. Library code that splits it at a
@@ -3611,8 +3611,8 @@ fn ifx_splits_a_body_a_join_left() {
     let path = dir.join("main.tex");
     std::fs::write(&path, source).unwrap();
     let a = Machine::analyze(source, Some(&path), &crate::support::config());
-    assert!(defined(&a, "E") && defined(&a, "N"));
-    assert!(!defined(&a, "Never"));
+    assert!(maybe_defined(&a, "E") && maybe_defined(&a, "N"));
+    assert!(undefined(&a, "Never"));
     std::fs::remove_dir_all(root).ok();
 }
 

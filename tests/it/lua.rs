@@ -2,7 +2,7 @@
 //! what it prints of literals is read back, the modules it loads are
 //! dependencies, and catcode tables switch the regime.
 
-use crate::support::{analyze_latex, defined};
+use crate::support::{analyze_latex, defined, undefined};
 use satex::analysis::machine::{Analysis, Machine};
 use satex::engine::builtins::{LoadKind, OccKind};
 use satex::plugins::Kernel;
@@ -42,7 +42,7 @@ fn an_extension_reads_its_general_texts() {
 #[test]
 fn a_conditional_print_is_a_gap_not_a_guess() {
     let analysis = primitives("\\directlua{if os.clock() > 1 then tex.print(\"\\\\def\\\\a{}\") end}");
-    assert!(!defined(&analysis, "a"));
+    assert!(undefined(&analysis, "a"));
     assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
 }
 
@@ -185,7 +185,7 @@ fn a_test_of_an_unknown_value_is_unknown() {
     assert!(defined(&primitives(&source("1 > 0")), "a"));
     for test in ["os.clock() + 1", "os.clock() == 0", "type(os.clock()) == 'number'", "not os.clock()"] {
         let analysis = primitives(&source(test));
-        assert!(!defined(&analysis, "a") && !defined(&analysis, "b"), "{test}");
+        assert!(undefined(&analysis, "a") && undefined(&analysis, "b"), "{test}");
         assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"), "{test}");
     }
 }
@@ -198,7 +198,7 @@ fn a_library_function_satex_lacks_is_not_an_error_pcall_catches() {
             "\\directlua{{if pcall({call}) then tex.print('\\string\\\\gdef\\string\\\\a{{}}') else tex.print('\\string\\\\gdef\\string\\\\b{{}}') end}}"
         );
         let analysis = primitives(&source);
-        assert!(!defined(&analysis, "a") && !defined(&analysis, "b"), "{call}");
+        assert!(undefined(&analysis, "a") && undefined(&analysis, "b"), "{call}");
         assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"), "{call}");
     }
     // A field LuaTeX does not have is nil, as there.
@@ -256,6 +256,6 @@ fn lua_run_off_leaves_the_output_unknown() {
     let mut cfg = Config { engine: Some(Engine::LuaTeX), kernel: Some(Kernel::None), ..crate::support::config() };
     cfg.lua.run = false;
     let analysis = Machine::analyze(&format!("\\catcode`\\{{=1 \\catcode`\\}}=2 {source}"), None, &cfg);
-    assert!(!defined(&analysis, "a"));
+    assert!(undefined(&analysis, "a"));
     assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
 }

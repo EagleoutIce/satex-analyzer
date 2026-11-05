@@ -22,7 +22,12 @@ fn analyze_files(source: &str, main: &std::path::Path) -> Analysis {
 
 /// Which of `names` are defined, as one string, so a failure names them all.
 fn state(analysis: &Analysis, names: &[&str]) -> String {
-    names.iter().map(|n| format!("{n}={}", u8::from(defined(analysis, n)))).collect::<Vec<_>>().join(" ")
+    let mark = |n: &str| match (defined(analysis, n), crate::support::maybe_defined(analysis, n)) {
+        (true, _) => "1",
+        (false, true) => "?",
+        _ => "0",
+    };
+    names.iter().map(|n| format!("{n}={}", mark(n))).collect::<Vec<_>>().join(" ")
 }
 
 /// A scratch directory of its own per test.
@@ -263,7 +268,7 @@ fn endinput_under_an_undecided_condition_reads_on() {
     // certain.
     let source = "\\ifnum\\pdfuniformdeviate2=0 \\endinput\\fi\\def\\after{a}\n\\def\\two{2}\n";
     let analysis = analyze(source);
-    assert_eq!(state(&analysis, &["after", "two"]), "after=1 two=1");
+    assert_eq!(state(&analysis, &["after", "two"]), "after=1 two=?");
     let two = definition(&analysis, "two").expect("read on the path that did not end");
     assert!(!two.certain, "a line only one path reads is not certain");
 }

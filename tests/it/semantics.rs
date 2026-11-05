@@ -2672,7 +2672,7 @@ fn a_delimiter_only_straddles_text_that_cannot_hold_it() {
          \\def\\rm|#1|\\End#2{\\def#2{#1}}\\expandafter\\rm\\expandafter|\\s\\End\\r",
     );
     assert!(crate::support::defined(&analysis, "r"), "the argument ends where `|` ends the text");
-    assert!(!crate::support::defined(&analysis, "End"), "`\\End` is never an argument");
+    assert!(crate::support::undefined(&analysis, "End"), "`\\End` is never an argument");
 }
 
 /// `\s` holds `fill` an unknown number of times (at least once), then
@@ -2693,7 +2693,7 @@ fn a_delimiter_the_text_cannot_hold_is_met_after_it() {
         let analysis = delimited_over_unknown_repeats(fill, delimiter);
         let case = format!("{fill} then {delimiter}");
         assert!(crate::support::defined(&analysis, "r"), "{case}: the argument ends at the delimiter after the text");
-        assert!(!crate::support::defined(&analysis, "End"), "{case}: `\\End` is never an argument");
+        assert!(crate::support::undefined(&analysis, "End"), "{case}: `\\End` is never an argument");
     }
 }
 
@@ -2732,7 +2732,7 @@ fn delimiters_over_unknown_text_agree_with_tex() {
             // Without `\End` in the text TeX finds the delimiter only at
             // its end, whatever the count: `#2` is `\r`.
             assert!(crate::support::defined(&analysis, "r"), "{case}: TeX defines \\r");
-            assert!(!crate::support::defined(&analysis, "End"), "{case}: TeX never defines \\End");
+            assert!(crate::support::undefined(&analysis, "End"), "{case}: TeX never defines \\End");
         }
     }
 }

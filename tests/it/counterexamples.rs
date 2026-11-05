@@ -1063,9 +1063,9 @@ fn a_register_joined_after_a_mode_split_keeps_only_the_paths_values() {
         eprintln!("{} {} {}:{} {}", d.code, d.severity.as_str(), d.span.line, d.span.col, d.message);
     }
     assert_eq!(last_body(&analysis, "v"), "273");
-    assert!(!crate::support::defined(&analysis, "bad"), "\\count10 read a value no path assigned");
+    assert!(crate::support::undefined(&analysis, "bad"), "\\count10 read a value no path assigned");
     assert!(crate::support::defined(&analysis, "ge"));
-    assert!(!crate::support::defined(&analysis, "lt"));
+    assert!(crate::support::undefined(&analysis, "lt"));
 }
 
 /// tex.web § 433: a register number past the range is "Bad register code"
@@ -1081,7 +1081,7 @@ fn an_out_of_range_register_number_touches_no_other_register() {
     );
     assert!(crate::support::defined(&analysis, "zero"));
     assert!(crate::support::defined(&analysis, "kept"));
-    assert!(!crate::support::defined(&analysis, "bad"), "\\count10 read a value no assignment gave it");
+    assert!(crate::support::undefined(&analysis, "bad"), "\\count10 read a value no assignment gave it");
     assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "bad-register-code"));
 }
 
