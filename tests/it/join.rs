@@ -1081,3 +1081,16 @@ fn an_error_after_a_split_of_joined_lists_is_not_certain() {
     let certain: Vec<_> = analysis.facts.raised.iter().filter(|r| r.certain).map(|r| r.text.clone()).collect();
     assert!(certain.is_empty(), "{certain:?}");
 }
+
+/// A loop whose first passes leave a name alone: the passes not run may
+/// still define it, so after the loop it is maybe defined, never undefined.
+#[test]
+fn a_loop_defines_late_what_its_first_passes_do_not() {
+    let a = analyze(
+        "\\def\\loop#1\\repeat{\\def\\body{#1}\\iterate}\
+         \\def\\iterate{\\body\\let\\next\\iterate\\else\\let\\next\\relax\\fi\\next}\
+         \\count1=0 \\loop\\advance\\count1 1 \\ifnum\\count1>3 \\gdef\\late{}\\fi\
+         \\ifnum\\count1<\\pdfuniformdeviate100 \\repeat",
+    );
+    assert!(crate::support::maybe_defined(&a, "late"), "\\late is never defined after the loop");
+}

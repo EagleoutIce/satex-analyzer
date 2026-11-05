@@ -2891,15 +2891,24 @@ impl Machine<'_> {
         };
         x.natural = crate::engine::mode::join_natural(p, q);
         // a pass that changed the list's length may run any number of times
-        if widen
-            && let (Some(p), Some(q), Some(n)) = (p, q, x.natural.as_mut())
-            && p.along != q.along
-        {
-            n.along = crate::engine::mode::Dim::ANY;
+        if widen && let (Some(p), Some(q), Some(n)) = (p, q, x.natural.as_mut()) {
+            if p.along != q.along {
+                n.along = crate::engine::mode::Dim::ANY;
+            }
+            if p.para.along != q.para.along {
+                n.para.along = crate::engine::mode::Dim::ANY;
+            }
         }
         x.main_tail = x.main_tail.merge(y.main_tail);
         x.main_depth =
             crate::engine::mode::Dim::range(x.main_depth.lo.min(y.main_depth.lo), x.main_depth.hi.max(y.main_depth.hi));
+        // The length of the list a pass built is state as a name is: a
+        // join that holds more of it (a page grown by one more rule) runs a
+        // pass more, so the passes not run are covered by the widened one.
+        let length = |n: Option<crate::engine::mode::Natural>| n.map(|n| (n.along, n.para.along));
+        if length(x.natural) != length(a.state.natural) {
+            growth.parts.push("list");
+        }
         // A family a pass defined names in is growth: the join does not
         // hold it in its bindings.
         if x.wild.lacks(&y.wild) {

@@ -326,7 +326,7 @@ pub struct Para {
     /// § 668): the length down to its last box's baseline, and that box's
     /// depth. Its first height and `\prevdepth` are the paragraph's
     /// `first` and `prev_depth`.
-    along: Dim,
+    pub(crate) along: Dim,
     depth: Dim,
     /// The line parameters the lines were set with: `line_break` reads them
     /// at `\par`, so they must not have changed by then.
