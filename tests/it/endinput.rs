@@ -8,7 +8,7 @@
 //! engine wrote.
 
 use crate::support::{PRELUDE, analyze_plain as analyze, diagnosed};
-use crate::support::{defined, installed, last_body as body, last_definition as definition};
+use crate::support::{installed, last_body as body, last_definition as definition};
 use satex::analysis::machine::{Analysis, Machine};
 use satex::plugins::Kernel;
 use satex::project::config::{Cache, Config, Engine, Load, Texmf};
