@@ -1850,9 +1850,6 @@ pub struct Machine<'a> {
     package_capture: Option<Box<package_cache::Recorder>>,
     /// Loads whose recording waits for a nested load to end.
     suspended: Vec<package_cache::Suspended>,
-    /// The file nesting the document itself is read at: loads it makes
-    /// directly are the ones a package cache serves.
-    document_file_depth: u16,
     /// Set while a read pops the frame it ran out of: that read has counted
     /// the token it goes on to return from the frame below.
     popping_in_read: bool,
@@ -2569,7 +2566,6 @@ impl<'a> Machine<'a> {
             command_level: false,
             package_capture: None,
             suspended: Vec::new(),
-            document_file_depth: 0,
             popping_in_read: false,
             reading_command: false,
             name_token: None,
@@ -3082,7 +3078,6 @@ impl<'a> Machine<'a> {
             m.install_docstrip();
         }
         m.out.timings.start(Phase::Document);
-        m.document_file_depth = m.file_depth;
         m.out.timings.enter_file(id);
         m.input.push(Frame::File {
             mouth: Mouth::file(code, id),

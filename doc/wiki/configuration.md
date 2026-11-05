@@ -1008,8 +1008,9 @@ The interpreted kernel is cached after the first run (`satex cache`, `satex cach
 A package is cached per **read set**: the meanings, registers, hooks, options and catcodes it consulted, with the values seen. Its **effect** (bindings, hooks, facts, diagnostics) is replayed in any later run that agrees with the read set. Register allocations are renumbered on replay.
 
 - **Rejected** when a file it read changed, a name now resolves to another file, or the state disagrees. `-v` says why. `satex summary` shows `cached`, `stored`, `stale: …`.
-- **Not cached**: loads under a conditional or in a group, or that ran out of budget or left a group open.
-- **Nested loads** have their own entries. The outer one resumes at the next line at rest.
+- **Not cached**: loads under a conditional or in a group, or that ran out of budget or left a group open. `-v` names each one and why.
+- **Nested loads** have their own entries, also from a file `\input` in between. The outer one resumes at its next line at rest.
+- **Project files** (frozen or not) are cached like installed ones. The key holds their content, so an edit reads them again.
 - **Lookaheads** that read a line ahead (`\@ifnextchar` after `\RequirePackage`, beamer's `\mode`) give it back to the file. That line then starts at rest too.
 - **Steps** stay what reading would take: `--stats-json` gives `served_steps`, the part replayed, beside `steps`.
 - **Size**: a text a segment grew or edited is stored as the change to the text it began with. A replay checks that text by digest first. A site defined again in one segment keeps one fact.

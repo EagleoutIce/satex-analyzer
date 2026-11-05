@@ -1206,37 +1206,34 @@ impl Machine<'_> {
         )
     }
 
-    /// Whether the file can be served from or recorded into cache: a package/class the document or a
-    /// recorded load reads, no conditionals.
-    fn cacheable_at_push(&self, kind: LoadKind) -> bool {
-        // The file a nested load is read from must be the one recorded or suspended.
-        let outer = self.package_capture.as_ref().map(|r| &r.rest).or(self.suspended.last().map(|s| &s.rest));
-        let placed = self.file_depth == outer.map_or(self.document_file_depth, |r| r.file_depth) + 1;
-        let reason = if !matches!(kind, LoadKind::Package | LoadKind::Class)
-            || !self.cfg.cache.enabled
-            || self.cfg.trace
-            || self.budget.is_some()
-            || !placed
-        {
-            return false;
-        } else if self.on_paths() || !self.cds.is_empty() || self.conds.iter().any(|c| c.dep) {
-            "it is loaded under a conditional"
-        } else if self.env.depth() != 0 {
-            "it is loaded inside a group"
-        } else if !self.held.is_empty() || self.edef_depth != 0 || self.scanning != 0 {
-            "it is loaded from inside an expansion"
-        } else if !self.testing.is_empty() || self.pdf_string {
-            "it is loaded while a test is read"
-        } else if self.halted || self.out.exhausted {
-            "the analysis ran out of budget"
-        } else if self.pressure > 0 {
-            DEGRADED
-        } else {
-            return true;
-        };
+    /// Whether the file can be served from or recorded into cache: a package/class read at rest, at
+    /// any input depth. Below it the input stays as it is: a replay reads only the file, and a
+    /// suspended outer load resumes only once its own file is on top again at rest.
+    fn cacheable_at_push(&self, kind: LoadKind, name: &str) -> bool {
+        let reason =
+            if !matches!(kind, LoadKind::Package | LoadKind::Class) || !self.cfg.cache.enabled || self.budget.is_some()
+            {
+                return false;
+            } else if self.cfg.trace {
+                "the run traces"
+            } else if self.on_paths() || !self.cds.is_empty() || self.conds.iter().any(|c| c.dep) {
+                "it is loaded under a conditional"
+            } else if self.env.depth() != 0 {
+                "it is loaded inside a group"
+            } else if !self.held.is_empty() || self.edef_depth != 0 || self.scanning != 0 {
+                "it is loaded from inside an expansion"
+            } else if !self.testing.is_empty() || self.pdf_string {
+                "it is loaded while a test is read"
+            } else if self.halted || self.out.exhausted {
+                "the analysis ran out of budget"
+            } else if self.pressure > 0 {
+                DEGRADED
+            } else {
+                return true;
+            };
         if self.cfg.verbose >= 1 {
             crate::util::progress::note!(
-                "satex: a load is not cached: {reason} ({} conditionals open, {} undecided, branch depth {})",
+                "satex: {name} is not cached: {reason} ({} conditionals open, {} undecided, branch depth {})",
                 self.conds.len(),
                 self.cds.len(),
                 self.env.forking()
@@ -1650,7 +1647,6 @@ impl Machine<'_> {
             // Only during `\edef` body scan.
             copy_target: _,
             copies: _,
-            document_file_depth: _,
             popping_in_read: _,
             reading_command: _,
             trace_full: _,
@@ -1748,7 +1744,7 @@ impl Machine<'_> {
     }
 
     pub(super) fn open_package(&mut self, source: &str, id: FileId, name: &str, kind: LoadKind, span: Span) -> Mouth {
-        if !self.cacheable_at_push(kind) {
+        if !self.cacheable_at_push(kind, name) {
             return Mouth::file(source, id);
         }
         // Only an outermost load waits for another process building its cache: it holds no lock
@@ -1871,7 +1867,7 @@ impl Machine<'_> {
             return;
         }
         let Some(load) = self.suspended.pop() else { return };
-        if !self.cacheable_at_push(load.kind) {
+        if !self.cacheable_at_push(load.kind, &load.name) {
             self.suspended.push(load);
             return;
         }

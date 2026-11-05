@@ -581,6 +581,44 @@ fn a_changed_package_file_is_read_again() {
     assert!(defined(&again, "added"));
 }
 
+/// A package loaded from a file `\input` by a class, and one from a file the
+/// document `\input`s: each has its own entry, the class resumes after the
+/// input, a second run serves all three and reports what reading does, and
+/// an edit to the package reads only it again.
+#[test]
+fn a_package_loaded_from_an_input_file_is_cached() {
+    if !installed() {
+        return;
+    }
+    let dir = project("via-input");
+    let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).expect(name);
+    write(
+        "viaclass.cls",
+        "\\ProvidesClass{viaclass}\n\\LoadClass{article}\n\\input{viasetup.tex}\n\\def\\afterinput{}\n",
+    );
+    write("viasetup.tex", "\\RequirePackage{vialocal}\n\\def\\setupdone{}\n");
+    write("vialocal.sty", "\\ProvidesPackage{vialocal}\n\\def\\localmacro{L}\n\\newcount\\localcount\n");
+    write("viadoc.tex", "\\RequirePackage{viaother}\n");
+    write("viaother.sty", "\\ProvidesPackage{viaother}\n\\def\\othermacro{O}\n");
+    let document =
+        "\\documentclass{viaclass}\n\\input{viadoc.tex}\n\\begin{document}\\localmacro\\othermacro\\end{document}\n";
+    let read = run(&dir, document);
+    let replayed = run(&dir, document);
+    for name in ["vialocal", "viaother", "viaclass"] {
+        assert_eq!(served(&read, name), Some(false), "{name}: {:?}", read.package_caches);
+        assert_eq!(served(&replayed, name), Some(true), "{name}: {:?}", replayed.package_caches);
+    }
+    assert!(defined(&replayed, "afterinput") && defined(&replayed, "setupdone"));
+    assert_eq!(differing_facts(&read, &replayed), Vec::<String>::new());
+    same_facts(&read, &replayed);
+    write("vialocal.sty", "\\ProvidesPackage{vialocal}\n\\def\\localmacro{M}\n\\def\\added{}\n");
+    let edited = run(&dir, document);
+    assert_eq!(served(&edited, "vialocal"), Some(false), "{:?}", edited.package_caches);
+    assert_eq!(served(&edited, "viaother"), Some(true), "{:?}", edited.package_caches);
+    assert!(defined(&edited, "added") && !defined(&edited, "localcount"));
+    same_facts(&run_cold(&dir, document), &edited);
+}
+
 /// An edit that keeps the size and the modification time (a save within
 /// the same second, `cp -p`) still makes the cache stale.
 #[test]
