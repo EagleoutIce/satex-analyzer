@@ -429,6 +429,8 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .ctx li, .ctx button { display: flex; justify-content: space-between; gap: 1.2rem; padding: .3rem .6rem; border-radius: 6px; cursor: pointer; background: none; border: 0; color: var(--fg); font: inherit; font-weight: 400; text-align: left; white-space: nowrap; }
 .ctx li:hover, .ctx button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 14%, transparent); transform: none; box-shadow: none; }
 .ctx[hidden], .menu-wrap .ctx[hidden] { display: none; }
+.ctx li:focus, .ctx li[aria-expanded=true] { outline: none; background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.ctx-nested { animation: none; }
 .renamebox { position: fixed; z-index: 36; font: 13px ui-monospace, Menlo, monospace; padding: .2rem .5rem; border: 1px solid var(--accent); border-radius: 6px; background: var(--panel); color: var(--fg); box-shadow: var(--shadow); outline: none; }
 .cm-linked { outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 2px; }
 .cm-deflink { text-decoration: underline; color: var(--accent); cursor: pointer; }

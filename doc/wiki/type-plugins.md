@@ -36,8 +36,8 @@ build        l3build
 | --- | --- | --- | --- | --- |
 | hover | `textDocument/hover` | hover card | hover | hover |
 | complete | `textDocument/completion` | completion | completion | completion |
-| actions | `textDocument/codeAction` at the cursor | hover card buttons, context menu | light bulb | code actions |
-| view | `satex/view` | a dialog | a webview beside the editor (light bulb or `satex: Open Picker, Converter or Drawing Here`) | the actions and the hover instead |
+| actions | `textDocument/codeAction` at the cursor | the context menu's Refactor submenu | light bulb | code actions |
+| view | `satex/view` | a dialog, first in the context menu and as hover card buttons | a webview beside the editor (light bulb or `satex: Open Picker, Converter or Drawing Here`) | the actions and the hover instead |
 | lens | `textDocument/codeLens`, one handler over every plugin | a button above the line | a code lens | a code lens |
 | colors | `textDocument/documentColor`, `colorPresentation` | swatches, a click opens the picker | the native color picker | swatches where supported |
 | dialog (table, image) | `satex/dialog`, `satex/dialogApply` | a button above the line, a link in the hover | a code lens and a webview beside the editor (`satex: Edit Table or Image…`) | the code actions with their defaults |
@@ -46,6 +46,7 @@ build        l3build
 ## keys
 
 Key lists of pgfkeys, l3keys, kvoptions and xkeyval, and package options. Completion opens at `{`, `[`, `,` and `=` with nothing typed. A family (`/demo`) inserts `/demo/` and opens again on its keys (`family_continue`). Hover shows the key's handler kind, its initial or default value, where it was defined and the comment next to the definition.
+Its view ("Edit keys…") lists the same keys; a choice writes one at the cursor.
 
 ## units
 

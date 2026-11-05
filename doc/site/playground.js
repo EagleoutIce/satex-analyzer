@@ -888,7 +888,8 @@
       // the card stays over the word it is of: in a finding's range, each word has its own hover
       const range = result?.range, [from, to] = range ? [at(v.state.doc, range.start), at(v.state.doc, range.end)]
         : word ? [line.from + word[0], line.from + word[1]] : found.length ? span(found[0][0].range) : [pos, pos];
-      const buttons = tools.length ? `<div class="hover-tools">${tools.map(([label, , i]) => `<button type="button" class="small ghost" data-tool="${i}">${escape(label)}</button>`).join('')}</div>` : '';
+      const widgets = tools.filter((t) => t[3]);
+      const buttons = widgets.length ? `<div class="hover-tools">${widgets.map(([label, , i]) => `<button type="button" class="small ghost" data-tool="${i}">${escape(label)}</button>`).join('')}</div>` : '';
       const body = macro || (value ? card(value) : '');
       return { from, to, html: found.map(([d]) => findingCard(d) + explanation(d)).join('') + (body || opens ? `<div class="hover">${opens}${body}${buttons}</div>` : '') };
     }
@@ -1039,9 +1040,10 @@
         if (c.preview) span.prepend(Object.assign(document.createElement('img'), { className: 'cm-preview', src: `data:image/svg+xml;utf8,${encodeURIComponent(c.preview)}`, alt: '' }));
         return span;
       } }] }),
-        linkField, markField, flashField, swatchField, lensField, linkedField, heatField, heatGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
+        linkField, markField, flashField, swatchField, lensField, linkedField, heatField, heatGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
         EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([])],
     });
+    ev.dom.satexView = ev; // doc/site/showcase.mjs reads the text and the places through it
     // the site's light/dark choice (site.js) picks the editor's theme
     const scheme = () => ev.dispatch({ effects: theme.reconfigure(self.siteDark?.() ? oneDark : []) });
     new MutationObserver(scheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
@@ -1638,8 +1640,8 @@
     const away = !(uri() in changes) && elsewhere[0], name = away && Object.keys(state.texts).find((n) => uri(n) === away);
     if (name) openPlace(name, changes[away][0].range.start);
   }
-  /** What the type plugins offer at `p` (src/lsp/plugins): their views (`satex/view`) and code
-   * actions, as [label, hint, index] rows; `runTool(index)` opens or applies one. */
+  /** What the type plugins offer at `p` (src/lsp/plugins): the widgets (their views, `satex/view`, and
+   * the actions that open a dialog) and the rewrites, as [label, hint, index, widget] rows; `runTool(index)` opens or applies one. */
   let tools = [];
   async function typedTools(p) {
     const doc = { uri: uri() };
@@ -1647,16 +1649,20 @@
       lsp('satex/view', { textDocument: doc, position: p }).catch(() => []),
       lsp('textDocument/codeAction', { textDocument: doc, range: { start: p, end: p }, context: { diagnostics: [] } }).catch(() => []),
     ]);
-    const own = (actions ?? []).filter((a) => !a.diagnostics?.length && !a.data?.scope && a.edit);
-    tools = [...(views ?? []).map((view) => ({ view, target: doc.uri })), ...own.map((action) => ({ action }))];
-    // an action that only opens a view (VS Code's `satex.openView`) is the view here
-    tools = tools.filter((t) => !t.action || t.action.edit);
-    return tools.map((t, i) => [t.view ? `${VIEW_VERB[t.view.plugin] ?? 'Open'} ${t.view.title}…`.trim() : t.action.title, t.view ? t.view.plugin : 'rewrite', i]);
+    const own = (actions ?? []).filter((a) => !a.diagnostics?.length && !a.data?.scope);
+    // an action that only opens a dialog (`satex.openDialog`, VS Code's `satex.openView`) is a widget here
+    const opens = own.filter((a) => !a.edit && /^satex\.open(Dialog|View)$/.test(a.command?.command ?? ''));
+    tools = [...(views ?? []).map((view) => ({ view, target: doc.uri })), ...opens.map((open) => ({ open: open.command })), ...own.filter((a) => a.edit).map((action) => ({ action }))];
+    const verb = (v) => VIEW_VERB[v.plugin] ?? 'Edit', title = (v) => verb(v) ? v.title.replace(/^\p{Lu}(?!\p{Lu})/u, (c) => c.toLowerCase()) : v.title;
+    const label = (t) => t.view ? `${verb(t.view)} ${title(t.view)}…`.trim() : (t.open ?? t.action).title;
+    const seen = new Set();
+    return tools.map((t, i) => [label(t), t.view ? t.view.plugin : t.open ? 'dialog' : 'rewrite', i, !t.action]).filter(([l, , , w]) => !w || !seen.has(l) && seen.add(l));
   }
-  const VIEW_VERB = { color: 'Pick', units: 'Convert', environment: '', tikz: '' };
+  const VIEW_VERB = { color: 'Pick', units: 'Convert', environment: '', tikz: '', keys: 'Edit' };
   function runTool(i) {
     const t = tools[i];
     if (t?.action) return fix(t.action);
+    if (t?.open) return t.open.command === 'satex.openView' ? openViews(t.open.arguments[1], t.open.arguments[2]) : openDialog(t.open.arguments?.[0]?.position);
     if (!t?.view) return;
     const dialog = $('play-view');
     $('view-title').textContent = t.view.title;
@@ -1881,9 +1887,12 @@
     const text = editor.text(), [a, b] = editor.cursor().map((o) => text.slice(0, o).split('\n').length).sort((x, y) => x - y);
     const place = a === b ? `${a}:1` : `${a}:1-${b}`, what = a === b ? 'line' : 'selection';
     return [['Backward', ''], ['Forward', ' --forward']].map(([way, flag]) =>
-      [`${way} slice from this ${what}`, '', () => execute(`slice --at ${state.file === state.root ? '' : `${state.file}:`}${place}${flag}`)]);
+      [`${way} from this ${what}`, '', () => execute(`slice --at ${state.file === state.root ? '' : `${state.file}:`}${place}${flag}`)]);
   }
-  /** The editor's context menu at the cursor: the symbol's actions, the fixes there, a link to the line. */
+  /** A group of menu rows: a submenu row `[label ▸]`, its one row as is, nothing when empty. */
+  const group = (label, rows) => rows.length > 1 ? [[label, '', rows]] : rows;
+  /** The editor's context menu at the cursor: the widgets there first, then the symbol's navigation, then
+   * one submenu per group (Explain, Fix, Refactor, Slice), a link to the line last. */
   async function menuAt(x, y) {
     const w = editor.word(), p = editor.position();
     sync(); // renaming is offered where the server says the name is the project's own
@@ -1892,30 +1901,87 @@
     const fixes = found.flatMap((d) => d.fixes);
     const rules = [...new Set(found.filter((d) => d.fixes.length).map((d) => d.code))];
     const editable = !(state.file in state.ro);
-    const tools = editable ? await typedTools(p) : [];
+    const rows = editable ? await typedTools(p) : [];
+    const run = ([label, hint, i]) => [label, hint, () => runTool(i)];
     const items = [
-      ...tools.map(([label, hint, i]) => [label, hint, () => runTool(i)]),
+      ...rows.filter((r) => r[3]).map(run),
       ...(w?.[3] ? [['Go to definition', 'Ctrl+click', () => definition(x, y)]] : []),
       ...(w && editable ? [['Find references', '', references]] : []), ...(renamable ? [['Rename symbol', 'F2', renameBox]] : []),
-      ...(w?.[3] ? [['Explain', '', focusExplain], ['Show expansions', '', () => expansions(w)], ['Trace expansion', '', () => traceCall(`\\${w[2]}`, { file: state.file, line: p.line + 1, col: w[0] + 1 })]] : []),
-      ...found.map((d) => [`Explain rule ${d.code}`, '', () => unfold(diagnostics[uri()].indexOf(d), false)]),
-      ...(editable ? fixes.map((f) => [`Fix: ${f.title}`, f.safety, () => fix(f)]) : []),
-      ...(editable ? rules.map((c) => [`Fix all ${c}`, `${fixAllOf('rule', c, true)?.data.count ?? 0}×`, () => fixAll(c, true)]) : []),
-      ...sliceItems(),
+      ...group('Explain', [
+        ...(w?.[3] ? [['Explain', '', focusExplain], ['Show expansions', '', () => expansions(w)], ['Trace expansion', '', () => traceCall(`\\${w[2]}`, { file: state.file, line: p.line + 1, col: w[0] + 1 })]] : []),
+        ...found.map((d) => [`Explain rule ${d.code}`, '', () => unfold(diagnostics[uri()].indexOf(d), false)]),
+      ]),
+      ...group('Fix', editable ? [...fixes.map((f) => [`Fix: ${f.title}`, f.safety, () => fix(f)]),
+        ...rules.map((c) => [`Fix all ${c}`, `${fixAllOf('rule', c, true)?.data.count ?? 0}×`, () => fixAll(c, true)])] : []),
+      ...group('Refactor', rows.filter((r) => !r[3]).map(run)),
+      ['Slice', '', sliceItems()],
       ['Copy link to this line', '', lineLink],
     ];
     if (!items.length) return false;
     showMenu(items, x, y);
     return true;
   }
-  /** The page's one context menu: [label, hint, action] rows at (x, y). */
+  /** The page's one context menu at (x, y): rows `[label, hint, action]`, a row `[label, hint, rows]` a submenu.
+   * The keys: arrows move, Right or Enter opens a submenu, Left or Escape closes it, Enter runs a row. */
   function showMenu(items, x, y) {
-    ctxMenu.innerHTML = items.map(([label, hint], i) => `<li role="menuitem" tabindex="-1" data-i="${i}">${escape(label)}<span class="muted">${escape(hint)}</span></li>`).join('');
+    const close = () => { ctxMenu.hidden = true; ctxMenu.innerHTML = ''; };
+    const build = (box, rows) => {
+      box.innerHTML = rows.map(([label, hint, act], i) => Array.isArray(act)
+        ? `<li role="menuitem" tabindex="-1" data-i="${i}" aria-haspopup="menu" aria-expanded="false" class="ctx-sub">${escape(label)}<span class="muted">▸</span></li>`
+        : `<li role="menuitem" tabindex="-1" data-i="${i}">${escape(label)}<span class="muted">${escape(hint)}</span></li>`).join('');
+      box.rows = rows;
+    };
+    /** Opens the submenu of `li` beside it, its first row focused when `focus`. */
+    const openSub = (li, focus) => {
+      const box = li.closest('.ctx');
+      for (const o of box.querySelectorAll(':scope > li[aria-expanded=true]')) if (o !== li) shut(o);
+      if (li.getAttribute('aria-expanded') !== 'true') {
+        const sub = Object.assign(document.createElement('ul'), { className: 'ctx ctx-nested' });
+        sub.setAttribute('role', 'menu');
+        build(sub, box.rows[li.dataset.i][2]);
+        li.append(sub);
+        li.setAttribute('aria-expanded', 'true');
+        const r = li.getBoundingClientRect();
+        const left = r.right + sub.offsetWidth + 4 > innerWidth ? r.left - sub.offsetWidth - 2 : r.right + 2;
+        Object.assign(sub.style, { left: `${Math.max(4, left)}px`, top: `${Math.max(4, Math.min(r.top - 4, innerHeight - sub.offsetHeight - 8))}px` });
+      }
+      if (focus) li.querySelector('.ctx > li')?.focus();
+    };
+    const shut = (li) => { li.querySelector(':scope > .ctx')?.remove(); li.setAttribute('aria-expanded', 'false'); };
+    const runRow = (li) => {
+      const act = li.closest('.ctx').rows[li.dataset.i][2];
+      if (Array.isArray(act)) return openSub(li, true);
+      close();
+      act();
+    };
+    build(ctxMenu, items);
     ctxMenu.hidden = false;
     tips.card.hide();
     tips.note.hide();
     Object.assign(ctxMenu.style, { left: `${Math.max(4, Math.min(x, innerWidth - ctxMenu.offsetWidth - 8))}px`, top: `${Math.max(4, Math.min(y, innerHeight - ctxMenu.offsetHeight - 8))}px` });
-    ctxMenu.onclick = (e) => { const li = e.target.closest('li'); if (li) { ctxMenu.hidden = true; items[li.dataset.i][2](); } };
+    ctxMenu.onclick = (e) => { const li = e.target.closest('li'); if (li) { e.stopPropagation(); runRow(li); } };
+    ctxMenu.onmouseover = (e) => {
+      const li = e.target.closest('li');
+      if (!li) return;
+      li.focus({ preventScroll: true });
+      if (li.classList.contains('ctx-sub')) openSub(li, false);
+      else for (const o of li.closest('.ctx').querySelectorAll(':scope > li[aria-expanded=true]')) shut(o);
+    };
+    ctxMenu.onkeydown = (e) => {
+      const li = document.activeElement?.closest?.('#play-ctx li'), box = li?.closest('.ctx') ?? ctxMenu;
+      const rows = [...box.querySelectorAll(':scope > li')], i = rows.indexOf(li), parent = box.parentElement?.closest('li');
+      const go = { ArrowDown: () => rows[(i + 1) % rows.length]?.focus(), ArrowUp: () => rows[(i - 1 + rows.length) % rows.length]?.focus(),
+        Home: () => rows[0]?.focus(), End: () => rows.at(-1)?.focus(),
+        ArrowRight: () => li?.classList.contains('ctx-sub') && openSub(li, true),
+        ArrowLeft: () => parent && (shut(parent), parent.focus()),
+        Escape: () => parent ? (shut(parent), parent.focus()) : close(),
+        Enter: () => li && runRow(li), ' ': () => li && runRow(li), Tab: () => close() }[e.key];
+      if (!go) return;
+      e.preventDefault();
+      e.stopPropagation();
+      go();
+    };
+    ctxMenu.querySelector('li')?.focus();
   }
   addEventListener('mousedown', (e) => { if (!e.target.closest('.ctx')) for (const m of document.querySelectorAll('.ctx')) m.hidden = true; });
   // Escape closes the open menu, else the open dialog, wherever the focus is: the browser's own close
