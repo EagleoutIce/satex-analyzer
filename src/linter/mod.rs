@@ -572,7 +572,15 @@ fn lint_run(analysis: &Analysis, document: bool) -> Vec<Record> {
     let mut raised: crate::fixed::HashSet<usize> = crate::fixed::HashSet::default();
     let rules: Vec<&Rule> =
         all().filter(|rule| !analysis.settings.lint_off.iter().any(|c| c == rule.code || c == rule.number())).collect();
+    // The rules get the run's `limits.seconds` again: those past it are not run, and said so.
+    let seconds = analysis.settings.limits.seconds;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    let mut skipped = Vec::new();
     for (i, &rule) in rules.iter().enumerate() {
+        if seconds > 0 && std::time::Instant::now() > deadline {
+            skipped.push(rule.code);
+            continue;
+        }
         let label = format!("lint {}", rule.code);
         crate::util::progress::bar(&label, i, rules.len(), (0, 0), (0, 0), None, &[]);
         crate::util::progress::tell(crate::util::progress::Status {
@@ -608,6 +616,13 @@ fn lint_run(analysis: &Analysis, document: bool) -> Vec<Record> {
         }
     }
     crate::util::progress::clear();
+    if !skipped.is_empty() {
+        crate::util::progress::note!(
+            "satex: limits.seconds = {seconds} was reached by the lint rules: {} not run ({}). Raise it with --set limits.seconds=<larger>",
+            skipped.len(),
+            skipped.join(", ")
+        );
+    }
     // A raised error another rule explains at the same place is its.  The
     // places a raised error stands at are few, so the line alone sieves the
     // rest out before any place is built.

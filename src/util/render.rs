@@ -1174,7 +1174,16 @@ pub fn timings(analysis: &crate::analysis::machine::Analysis, links: Links) -> S
                 None => detail("no format"),
             },
             crate::util::timing::Phase::Document => detail(&format!("{} files read", analysis.files.len())),
-            crate::util::timing::Phase::Lint => detail(&format!("{} rules", crate::linter::rules().len())),
+            crate::util::timing::Phase::Lint => {
+                let slow: Vec<String> = analysis
+                    .timings
+                    .rules()
+                    .iter()
+                    .take(3)
+                    .map(|(code, t, _)| format!("{code} {:.1} s", t.as_secs_f64()))
+                    .collect();
+                detail(&format!("{} rules, slowest {}", crate::linter::rules().len(), slow.join(", ")))
+            }
             crate::util::timing::Phase::Hooks | crate::util::timing::Phase::Fix => String::new(),
         };
         let _ = writeln!(out, "  {:<10} {:>8.1} ms{note}", phase.as_str(), elapsed.as_secs_f64() * 1000.0);

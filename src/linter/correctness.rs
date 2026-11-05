@@ -480,6 +480,8 @@ fn undefined_control_sequences(report: &mut Report) {
     let mut elsewheres: crate::fixed::HashMap<Sym, Option<String>> = crate::fixed::HashMap::default();
     let mut fixes: crate::fixed::HashMap<Sym, Option<Fix>> = crate::fixed::HashMap::default();
     let mut nearest: crate::fixed::HashMap<Sym, Option<String>> = crate::fixed::HashMap::default();
+    let local: crate::fixed::HashSet<Sym> =
+        report.analysis.facts.defs.iter().filter(|d| !d.global).map(|d| d.name).collect();
     for expansion in &report.analysis.facts.expansions {
         if !matches!(expansion.meaning, MeaningKind::Undefined | MeaningKind::UndefinedApproximated)
             || !report.wanted(expansion.span)
@@ -489,7 +491,7 @@ fn undefined_control_sequences(report: &mut Report) {
         let name = report.cs(expansion.name);
         let raw = report.analysis.interner.name(expansion.name);
         let odd = raw.chars().count() > 1 && raw.chars().any(|c| "\\{}$&#% \t\r".contains(c));
-        let elsewhere = match expansion.cds.is_empty() {
+        let elsewhere = match expansion.cds.is_empty() && local.contains(&expansion.name) {
             true => (elsewheres.entry(expansion.name))
                 .or_insert_with(|| defined_elsewhere(report.analysis, expansion.name))
                 .clone(),
@@ -516,10 +518,12 @@ fn undefined_control_sequences(report: &mut Report) {
         match fix {
             Some(fix) => report.add_fix_as(severity, expansion.span, &name, message, fix),
             None => {
-                let known = known.get_or_insert_with(|| scope_names(report.analysis));
-                let near = (severity == Severity::Error).then(|| {
-                    nearest.entry(expansion.name).or_insert_with(|| closest(raw, known).map(str::to_string)).clone()
-                });
+                // a spelling suggestion only where the document spells the name
+                let near = (severity == Severity::Error && report.index().origin(expansion.span.file) == "document")
+                    .then(|| {
+                        let known = known.get_or_insert_with(|| scope_names(report.analysis));
+                        nearest.entry(expansion.name).or_insert_with(|| closest(raw, known).map(str::to_string)).clone()
+                    });
                 let help = match near.flatten() {
                     _ if elsewhere.is_some() => format!("use `{name}` where it is defined"),
                     Some(other) => format!("did you mean `\\{other}`?"),
@@ -545,7 +549,6 @@ fn load_fix(report: &Report, name: &str) -> Option<Fix> {
 /// Where the run defined a name it reads undefined elsewhere: inside an environment of the document
 /// (`\draw` in a `tikzpicture`), or in a group at a line of it.
 fn defined_elsewhere(analysis: &crate::analysis::machine::Analysis, name: crate::engine::tex::Sym) -> Option<String> {
-    analysis.facts.defs.iter().find(|d| d.name == name && !d.global)?;
     // where a use of it found it defined, else where it was defined
     let defined = |m: &MeaningKind| !matches!(m, MeaningKind::Undefined | MeaningKind::UndefinedApproximated);
     let sites: Vec<crate::engine::tex::Span> = (analysis.facts.expansions.iter())
@@ -572,9 +575,12 @@ fn scope_names(analysis: &crate::analysis::machine::Analysis) -> Vec<String> {
 /// The known name nearest to a misspelled one: a typo, a swapped or missing
 /// letter, or a different case, within a quarter of the name's length.
 fn closest<'a>(name: &str, known: &'a [String]) -> Option<&'a str> {
-    let limit = (name.chars().count() / 4).max(1);
+    let count = name.chars().count();
+    let limit = (count / 4).max(1);
     known
         .iter()
+        // more than `limit` characters apart in length is more than `limit` edits
+        .filter(|k| k.chars().count().abs_diff(count) <= limit)
         .map(|k| (edits(name, k), k))
         .filter(|&(d, _)| d <= limit)
         .min_by_key(|&(d, k)| (d, k.len().abs_diff(name.len()), k.as_str()))
@@ -849,10 +855,12 @@ fn new_redefines(report: &mut Report) {
         .collect();
     calls.sort_by_key(|c| c.0);
     let mut seen = std::collections::BTreeSet::new();
-    // A declaration run again (captured into a cache, then run live) meets
-    // only its own earlier definition: no other meaning is lost.
+    // A declaration run again (captured into a cache, then run live, both
+    // recorded at the same vertex when the replay stands for the live run)
+    // meets only its own earlier definition: no other meaning is lost.
     let rerun = |def: &crate::analysis::facts::Definition| {
-        analysis.facts.defs.iter().any(|d| d.name == def.name && d.node < def.node && d.span == def.span)
+        (analysis.facts.defs.iter())
+            .any(|d| d.name == def.name && d.node <= def.node && d.span == def.span && !std::ptr::eq(d, def))
     };
     for def in analysis.facts.defs.iter().filter(|d| d.redefines && d.spelled && d.certain && !rerun(d)) {
         let Some(&(_, span, call)) = calls.get(calls.partition_point(|c| c.0 <= def.node).wrapping_sub(1)) else {

@@ -185,6 +185,32 @@ fn names(value: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// A name part's first letter as TeX reads it: a brace group or an accent
+/// command with its letter is one, never half a group or a bare escape.
+fn first_letter(s: &str) -> &str {
+    let mut depth = 0;
+    let mut chars = s.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            '\\' => {
+                // the command, then the letter it applies to
+                if chars.next_if(|(_, c)| !c.is_alphabetic()).is_none() {
+                    while chars.next_if(|(_, c)| c.is_alphabetic()).is_some() {}
+                }
+                while chars.next_if(|(_, c)| *c == ' ').is_some() {}
+                continue;
+            }
+            _ => {}
+        }
+        if depth <= 0 {
+            return &s[..i + c.len_utf8()];
+        }
+    }
+    s
+}
+
 /// A TeX-safe field value: the characters TeX reads as syntax escaped.
 fn safe(value: &str) -> String {
     let mut out = String::new();
@@ -280,7 +306,10 @@ fn biber_bbl(entries: &[&Entry], list: &str) -> String {
 \\refsection{0}\n",
     );
     out.push_str(&format!("  \\datalist[entry]{{{list}}}\n"));
-    let initial = |s: &str| s.chars().next().map(|c| format!("{c}\\bibinitperiod")).unwrap_or_default();
+    let initial = |s: &str| match first_letter(s) {
+        "" => String::new(),
+        lead => format!("{lead}\\bibinitperiod"),
+    };
     for e in entries {
         out.push_str(&format!("    \\entry{{{}}}{{{}}}{{}}{{}}\n", e.key, e.kind));
         let mut sortinit = String::new();
@@ -291,6 +320,7 @@ fn biber_bbl(entries: &[&Entry], list: &str) -> String {
             }
             out.push_str(&format!("      \\name{{{role}}}{{{}}}{{}}{{%\n", who.len()));
             for (family, given) in &who {
+                // biber's form: `J\bibinitperiod\bibinitdelim K\bibinitperiod`
                 let given_initials: Vec<String> = given.split_whitespace().map(initial).collect();
                 out.push_str(&format!(
                     "        {{{{hash={}}}{{%\n           family={{{}}},\n           familyi={{{}}},\n           given={{{}}},\n           giveni={{{}}}}}}}%\n",
@@ -298,7 +328,7 @@ fn biber_bbl(entries: &[&Entry], list: &str) -> String {
                     safe(family),
                     initial(family),
                     safe(given),
-                    given_initials.join("")
+                    given_initials.join("\\bibinitdelim ")
                 ));
             }
             out.push_str("      }\n");
@@ -373,5 +403,14 @@ mod tests {
         let bbl = virtual_bbl(&[&e[0]], None, false);
         assert!(bbl.contains("\\newblock The {\\TeX}book.\n"), "{bbl}");
         assert!(bbl.contains("\\newblock A.\n"), "{bbl}");
+    }
+
+    #[test]
+    fn biber_initials_are_whole_letters_kept_apart() {
+        let text = "@book{k, author = {Doe, Ann Bea and {\\\"U}lm, \\'Eva}, title = {T}}\n";
+        let bbl = virtual_bbl(&[&entries(text)[0]], Some("x"), false);
+        assert!(bbl.contains("giveni={A\\bibinitperiod\\bibinitdelim B\\bibinitperiod}"), "{bbl}");
+        assert!(bbl.contains("familyi={{\\\"U}\\bibinitperiod}"), "{bbl}");
+        assert!(bbl.contains("giveni={\\'E\\bibinitperiod}"), "{bbl}");
     }
 }
