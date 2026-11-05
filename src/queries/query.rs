@@ -2202,6 +2202,16 @@ fn files(analysis: &Analysis) -> Vec<Record> {
             record.insert("kind".into(), json!("absent"));
             record
         }))
+        // found by `\openin` and never input: the run's path depends on them all the same
+        .chain(analysis.facts.found.iter().filter(|path| !analysis.files.iter().any(|f| &f.path == *path)).map(
+            |path| {
+                let mut record = Map::new();
+                record.insert("file".into(), json!(path.rsplit('/').next()));
+                record.insert("path".into(), json!(path));
+                record.insert("kind".into(), json!("probed"));
+                record
+            },
+        ))
         .collect()
 }
 

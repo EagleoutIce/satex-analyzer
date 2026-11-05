@@ -11,7 +11,7 @@
  * @param {(status: any) => void} [status]
  */
 function SatexEngine(createSatex, progress = () => {}, store = null, status = () => {}) {
-  const STALL_MS = 30000;
+  const STALL_MS = 30000, RETRIES = 4, BACKOFF_MS = 1000, PARALLEL = 4;
   const files = new Map();
   /** Each file's mtime, kept from boot to boot: a fresh instance's stamps (an index's, a
    * document cache's, the content hashes') must not see an unchanged file as new. */
@@ -62,6 +62,48 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
   async function bytes(url, label = url, total = 0) {
     if (url instanceof Uint8Array) return url;
     return new Uint8Array(await (await fetched(url, label, total)).arrayBuffer());
+  }
+
+  /** A bundle's files as one blob: the store's copy if sound, else downloaded, retried with backoff
+   * and checked, then kept whole (one put, after the check: never a half-written bundle). */
+  async function obtain(base, entry, given) {
+    if (given) return checked(entry, given);
+    const kept = await store?.bundle?.(entry.bundle).catch(() => null);
+    if (kept) {
+      const blob = await checked(entry, kept).catch(() => null);
+      if (blob) { progress(entry.label, blob.length, blob.length); return blob; }
+      store.unbundle?.(entry.bundle).catch(() => {});
+    }
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const data = await slot(() => bytes(base + entry.bundle, entry.label, entry.size)), blob = await checked(entry, data);
+        store?.keepBundle?.(entry.bundle, data).catch(() => {});
+        return blob;
+      } catch (e) {
+        // a 404 is a newer site, not a bad connection: no retry helps
+        if (attempt >= RETRIES || /: 404$/.test(e.message)) throw e;
+        await new Promise((r) => setTimeout(r, BACKOFF_MS * 2 ** (attempt - 1)));
+      }
+    }
+  }
+  /** At most PARALLEL downloads at once: bundles land one after another, so a reload mid-download finds the landed ones kept. */
+  let open_ = 0;
+  const queue = [];
+  async function slot(f) {
+    if (open_ >= PARALLEL) await new Promise((r) => queue.push(r));
+    open_++;
+    try { return await f(); } finally { open_--; queue.shift()?.(); }
+  }
+  /** The blob of `data`, a bundle as fetched; an error unless it is whole and the one its name's digest says. */
+  async function checked(entry, data) {
+    const digest = entry.bundle.match(/-([0-9a-f]{12})\.[\w.]+$/)?.[1];
+    if (digest && data[0] === 0x1f && data[1] === 0x8b && globalThis.crypto?.subtle) {
+      const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', data))].slice(0, 6).map((b) => b.toString(16).padStart(2, '0')).join('');
+      if (hash !== digest) throw new Error(`${entry.label}: damaged download (digest ${hash}, not ${digest})`);
+    }
+    const blob = await gunzip(data), size = entry.files.reduce((n, [, z]) => n + z, 0);
+    if (blob.length !== size) throw new Error(`${entry.label}: damaged download (${blob.length} of ${size} bytes)`);
+    return blob;
   }
 
   async function gunzip(data) {
@@ -175,13 +217,12 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
   /** A bundle, a kernel's or a package's: its files join the tree, a kernel's caches
    * the cache directory. `fetching` is its download, when already under way. */
   async function bundle(base, entry, given, fetching) {
-    const archive = await unpack(base, entry, given, fetching);
+    const archive = await unpack(entry, fetching ?? obtain(base, entry, given));
     return archive ? cacheImport([archive]) : { lines: [], status: 0, ms: 0 };
   }
-  async function unpack(base, entry, given, fetching) {
-    const packed = await (fetching ?? bytes(given ?? base + entry.bundle, entry.label, entry.size));
+  async function unpack(entry, fetching) {
+    const blob = await fetching;
     progress('unpacking', 0, 0);
-    const blob = await gunzip(packed);
     let offset = 0;
     // a bundle's name holds its digest: its files' time, the same on every visit
     let t = 0;
@@ -191,6 +232,7 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
       times.set(path, 1e11 + t); // before any `now()`
       offset += size;
     }
+    live(entry.files.map(([path]) => path));
     // a kernel's caches, imported once: the store keeps them for the next load
     const archive = `/kernels/${entry.id}/satex-cache.bin`;
     if (!files.has(archive)) return null;
@@ -200,7 +242,9 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
   /** The caches of these bundles, imported in one run: each run boots an instance with the whole tree. */
   async function cacheImport(ids) {
     progress('importing', 0, 0);
+    const before = new Map(files);
     const done = await run(['cache', 'import', ...ids.map((id) => `/kernels/${id}`)], {}, '/work');
+    live([...files.keys()].filter((path) => before.get(path) !== files.get(path)));
     for (const id of ids) { files.delete(`/kernels/${id}/satex-cache.bin`); imported.add(id); }
     await store?.put(space, ids.map((id) => [`#imported/${id}`, new Uint8Array()])).catch(() => {});
     return done;
@@ -208,13 +252,31 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
 
   /** Several bundles: all downloads start at once, the files and caches join the tree in order. */
   async function bundles(base, entries, given = []) {
-    const downloads = entries.map((entry, i) => given[i] ?? bytes(base + entry.bundle, entry.label, entry.size));
+    const downloads = entries.map((entry, i) => obtain(base, entry, given[i]));
+    downloads.forEach((d) => d.catch(() => {})); // one failing fails the call, the others are not left unhandled
     const ids = [];
     for (const [i, entry] of entries.entries()) {
-      const id = await unpack(base, entry, null, downloads[i]);
+      const id = await unpack(entry, downloads[i]);
       if (id) ids.push(id);
     }
     return ids.length ? cacheImport(ids) : { lines: [], status: 0, ms: 0 };
+  }
+
+  /** Files a load added, written into a running language server too: it finds them without a restart
+   * (the index lists every bundle's files, a lookup asks whether one is there), and a checkpoint
+   * that probed one for absent is no longer reused. */
+  function live(paths) {
+    if (!server) return;
+    for (const path of paths) {
+      if (!files.has(path)) continue;
+      try {
+        server.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')) || '/');
+        server.FS.writeFile(path, files.get(path));
+        const t = times.get(path);
+        if (t) server.FS.doSetAttr(null, server.FS.lookupPath(path).node, { atime: t, mtime: t, ctime: t });
+        if (cached(path)) server.booted.set(path, stamp(server.FS.stat(path)));
+      } catch {}
+    }
   }
 
   /** Files under `dir`: a new project's replace the last one's, added ones join them,
@@ -265,7 +327,10 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
     }
     // Both downloads at once: the binary compiles while the TeX files arrive.
     const entry = manifest.kernels[0];
-    const fetching = given.bundle ?? bytes(base + entry.bundle, entry.label, entry.size);
+    const fetching = obtain(base, entry, given.bundle);
+    fetching.catch(() => {});
+    // the bundles this site no longer ships leave the store
+    store?.pruneBundles?.(new Set([...manifest.kernels, ...manifest.packages ?? []].map((e) => e.bundle))).catch(() => {});
     wasm = await compile(given.wasm ?? base + manifest.wasm, manifest.wasmSize);
     const kernel = await bundle(base, entry, null, fetching);
     const decoder = new TextDecoder();
@@ -286,17 +351,19 @@ if (typeof module === 'object' && module.exports) {
   const CAP = 150 * 2 ** 20; // bytes kept between visits
   const idb = () => {
     const opened = new Promise((resolve, reject) => {
-      const r = indexedDB.open('satex-playground', 2);
-      r.onupgradeneeded = () => { for (const n of ['cache', 'used']) if (!r.result.objectStoreNames.contains(n)) r.result.createObjectStore(n); };
+      const r = indexedDB.open('satex-playground', 3);
+      r.onupgradeneeded = () => { for (const n of ['cache', 'used', 'bundles']) if (!r.result.objectStoreNames.contains(n)) r.result.createObjectStore(n); };
       // an older tab yields to a newer version; a blocked open means no cache
       r.onsuccess = () => { r.result.onversionchange = () => r.result.close(); resolve(r.result); };
       r.onblocked = () => reject(new Error('the cache store is held by another tab'));
       r.onerror = () => reject(r.error);
     });
-    const tx = async (mode, f) => {
-      const t = (await opened).transaction(['cache', 'used'], mode), out = f(t.objectStore('cache'), t.objectStore('used'));
+    const tx = async (mode, f, names = ['cache', 'used']) => {
+      const t = (await opened).transaction(names, mode), out = f(...names.map((n) => t.objectStore(n)));
       return new Promise((resolve, reject) => { t.oncomplete = () => resolve(out); t.onerror = t.onabort = () => reject(t.error); });
     };
+    /** Bundles by file name (it holds their digest), apart from the cache directory and its cap. */
+    const bundles = (mode, f) => tx(mode, f, ['bundles']);
     return {
       async load(space) {
         const range = IDBKeyRange.bound([space], [space, []]);
@@ -316,6 +383,13 @@ if (typeof module === 'object' && module.exports) {
       },
       put: (space, entries) => tx('readwrite', (s, u) => { for (const [path, data] of entries) { s.put(data, [space, path]); u.put(Date.now(), [space, path]); } }),
       remove: (space, paths) => tx('readwrite', (s, u) => { for (const path of paths) { s.delete([space, path]); u.delete([space, path]); } }),
+      bundle: async (name) => (await bundles('readonly', (b) => b.get(name))).result ?? null,
+      keepBundle: (name, data) => bundles('readwrite', (b) => b.put(data, name)),
+      unbundle: (name) => bundles('readwrite', (b) => b.delete(name)),
+      pruneBundles: async (keep) => {
+        const names = (await bundles('readonly', (b) => b.getAllKeys())).result;
+        if (names.some((n) => !keep.has(n))) await bundles('readwrite', (b) => { for (const n of names) if (!keep.has(n)) b.delete(n); });
+      },
     };
   };
   /** Messages are answered in the order they came (the page pairs each reply with its request by that order):

@@ -778,6 +778,7 @@ struct Before {
 #[derive(Clone)]
 struct FactMaps {
     absent: std::collections::BTreeSet<String>,
+    found: std::collections::BTreeSet<String>,
     written_files: std::collections::BTreeSet<String>,
     types: HashMap<Span, crate::analysis::roles::Ty>,
     slots: HashMap<Span, String>,
@@ -790,6 +791,8 @@ struct FactMaps {
 #[derive(Serialize, Deserialize, Default)]
 struct FactsAdded {
     absent: Vec<String>,
+    #[serde(default)]
+    found: Vec<String>,
     written_files: Vec<String>,
     types: Vec<(Span, Option<crate::analysis::roles::Ty>)>,
     slots: Vec<(Span, Option<String>)>,
@@ -1409,6 +1412,7 @@ impl Machine<'_> {
             carried: self.carried.clone(),
             facts: FactMaps {
                 absent: self.out.facts.absent.clone(),
+                found: self.out.facts.found.clone(),
                 written_files: self.out.facts.written_files.clone(),
                 types: self.out.facts.types.clone(),
                 slots: self.out.facts.slots.clone(),
@@ -1424,6 +1428,7 @@ impl Machine<'_> {
         let fonts = |rows: Vec<u16>| rows.iter().map(|&r| self.out.font_states[usize::from(r)].clone()).collect();
         FactsAdded {
             absent: f.absent.difference(&before.absent).cloned().collect(),
+            found: f.found.difference(&before.found).cloned().collect(),
             written_files: f.written_files.difference(&before.written_files).cloned().collect(),
             types: moved_keys(f.types.delta(&before.types), out),
             slots: moved_keys(f.slots.delta(&before.slots), out),
@@ -1452,6 +1457,7 @@ impl Machine<'_> {
             .collect();
         let f = &mut self.out.facts;
         f.absent.extend(added.absent.iter().cloned());
+        f.found.extend(added.found.iter().cloned());
         f.written_files.extend(added.written_files.iter().cloned());
         f.types.apply(&moved_keys(added.types.clone(), at));
         f.slots.apply(&moved_keys(added.slots.clone(), at));

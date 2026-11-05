@@ -2409,7 +2409,12 @@ impl Machine<'_> {
     pub(crate) fn input_bytes(&mut self, name: &str) -> Option<Option<Vec<u8>>> {
         match (self.written_text(name), self.locate_input(name)) {
             (Some(Some(text)), _) => Some(Some(text.into_bytes())),
-            (_, Some(path)) => Some(crate::project::overlay::read_bytes(&path).ok()),
+            (_, Some(path)) => {
+                if self.out.facts.found.len() < self.cfg.limits.facts {
+                    self.out.facts.found.insert(path.display().to_string());
+                }
+                Some(crate::project::overlay::read_bytes(&path).ok())
+            }
             (Some(None), None) => None,
             (None, None) => {
                 // what an installation that has it would read (`\IfFileExists`)

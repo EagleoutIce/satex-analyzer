@@ -28,7 +28,8 @@ async function precache() {
   await Promise.all(urls.map(async (url) => {
     const keep = HASHED.test(url) ? assets : shell;
     if (keep === assets && have.has(url)) return;
-    const response = await fetch(url, { cache: 'reload' });
+    // a hashed file never changes: the copy the page just fetched does, no second download
+    const response = await fetch(url, { cache: keep === assets ? 'default' : 'reload' });
     if (!response.ok) throw new Error(`${url}: ${response.status}`);
     await keep.put(url, response);
   }));

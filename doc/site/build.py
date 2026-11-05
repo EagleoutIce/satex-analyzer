@@ -147,16 +147,24 @@ def installation_stamp():
     return ";".join(f"{p}:{os.stat(p).st_mtime_ns}" for p in sorted(lsr))
 
 
-def files_read(satex, flags, doc, cwd, env, config=b""):
-    """The paths `satex query files` lists for `doc`, reused while nothing it depends on changed."""
+def files_read(satex, flags, doc, cwd, env, config=b"", absent=False):
+    """The paths `satex query files` lists for `doc` (read, or found by `\\openin`), reused while nothing
+    it depends on changed; with `absent`, the names it looked for and did not find instead."""
     # the paths it lists are absolute: another checkout's listing names another checkout's files
     key = digest(json.dumps([flags, str(doc), str(cwd), doc.read_bytes().decode(errors="replace"), config.decode(errors="replace"),
                              LISTINGS.get("@stamp", "")]).encode())
     if key not in LISTINGS:
         done = subprocess.run([str(satex), *flags, "query", "files", "-f", str(doc), "--format", "json"],
                               cwd=cwd, env=env, capture_output=True, text=True)
-        LISTINGS[key] = [entry["path"] for entry in json.loads(done.stdout or "[]") if "path" in entry]
-    return LISTINGS[key]
+        LISTINGS[key] = [entry.get("path") or f"?{entry['file']}" for entry in json.loads(done.stdout or "[]")
+                         if "path" in entry or entry.get("kind") == "absent"]
+    return [e[1:] for e in LISTINGS[key] if e.startswith("?")] if absent else [e for e in LISTINGS[key] if not e.startswith("?")]
+
+
+def kpsewhich(names, cwd):
+    """Where TeX Live has each of `names`: name -> path, for those it has."""
+    found = subprocess.run(["kpsewhich", *names], cwd=cwd, capture_output=True, text=True).stdout.split() if names else []
+    return {Path(p).name: Path(p).resolve() for p in found}
 
 
 MINIFY, SCRATCH = True, None
@@ -471,6 +479,8 @@ def bundle(satex, work):
     def listed(job):
         flags, doc, cwd = job
         read = {(cwd / e).resolve() for e in files_read(satex, flags, doc, cwd, env) if (cwd / e).resolve().is_relative_to(dist)}
+        # a file it looked for that TeX Live has goes with it too: without it the playground's run takes another path
+        read |= {p for p in kpsewhich(files_read(satex, flags, doc, cwd, env, absent=True), work).values() if p.is_relative_to(dist)}
         # What another option would read instead (`[11pt]`: size11.clo for size10.clo, `\Large\bfseries`:
         # cmbx12.tfm for cmr10.tfm): the files of the same kind beside each one read. Classes, packages
         # and documents load by name.
@@ -544,6 +554,13 @@ def bundle(satex, work):
             shutil.copy2(doc.parent / companion, project / companion)
     (project / "satex.yaml").write_text(config)
     (probes / "satex.yaml").write_text(config)
+    # The check: each example, run over the bundle tree as the playground runs it, looks for no file TeX Live has
+    # and the tree lacks (the playground's Files view calls what it looks for "absent in TeX Live too").
+    looked = parallel("[4/4] examples over the bundle", [d for d in docs if d.suffix == ".tex"],
+                      lambda d: files_read(satex, KERNELS[0][2], project / d.name, project, env, config=config.encode(), absent=True))
+    lacking = sorted({f"{d.name}: {n}" for d, names in zip([d for d in docs if d.suffix == ".tex"], looked) for n in kpsewhich(names, work)})
+    if lacking:
+        sys.exit(f"playground: examples look for TeX Live files the bundle lacks: {', '.join(lacking)}")
 
     # Kernels: the sample's files and the cache entries of running it. A kernel's
     # cache directory stays from the last build: satex rebuilds what this binary cannot use, and

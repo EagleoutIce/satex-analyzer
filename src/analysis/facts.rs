@@ -592,6 +592,10 @@ pub struct Facts {
     /// The files `\openin` or `\pdffilesize` looked for and did not find:
     /// what an installation that has them would read.
     pub absent: std::collections::BTreeSet<String>,
+    /// The paths they found: the run takes another path without them, so a
+    /// copy of the installation (the playground's) must hold them too.
+    #[serde(default)]
+    pub found: std::collections::BTreeSet<String>,
     /// What each command was seen to read, as `{}` for a mandatory argument,
     /// `[]` for an optional one and `*` for a star: observed while it ran,
     /// not declared anywhere.

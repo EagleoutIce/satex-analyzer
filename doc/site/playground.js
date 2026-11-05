@@ -680,6 +680,7 @@
   }
   function analyze() {
     dirty = false;
+    if (!boot?.started) return; // before the first start: it analyzes once up, an instance booted now would be thrown away
     if (running > 0) { analysisQueued = true; markStale(); return; }
     checking();
     lsp('satex/analyze', {}, true);
@@ -3826,7 +3827,7 @@
     sync();
     await followRoot();
     if (stale()) return false;
-    const names = named(Object.entries(state.texts).filter(([n]) => !(n in state.ro)).map(([, t]) => t));
+    const names = named(projectTexts());
     await fetchPackages(wanted_(names));
     // what the project needs and a background load still fetches
     const loading = wanted_(names, state.kernel, true).filter((id) => inFlight.has(id) || background.has(id));
@@ -4209,6 +4210,8 @@
     }
     return [...todo].filter((id) => all || !fetchedPackages.has(id));
   }
+  /** The project's own texts: another example's are no package this one waits for (preload() fetches those later). */
+  const projectTexts = () => state.files.filter((n) => !(n in state.ro) && n in state.texts).map((n) => state.texts[n]);
   /** The packages and classes the project's own files name. */
   const named = (texts) => [...new Set(texts.flatMap((t) => [...String(t).matchAll(NAMED)].flatMap((m) => m[1].split(',').map((x) => x.trim()).filter(Boolean))))];
   const missing = (texts, all = false) => wanted_([...new Set(texts.flatMap((t) => [...String(t).matchAll(MISSING)].map((m) => m[1] ?? m[2])))], state.kernel, all);
@@ -4247,8 +4250,6 @@
       if (!quiet) { loads.clear(); idle(why); status.dataset.done = 'error'; toast(why); }
       return false;
     } finally { ids.forEach((id) => flying.delete(id)); quietLoads -= +quiet; }
-    // the file index cached before this bundle was in the file system does not list its files: drop it, so the next start rebuilds it
-    try { const stale = ((await ask({ type: 'caches' })).entries ?? []).filter((e) => /\/index-/.test(e.path)).map((e) => e.path); if (stale.length) await ask({ type: 'uncache', paths: stale }); } catch {}
     if (!quiet) {
       loads.clear();
       idle();
@@ -4321,8 +4322,10 @@
     const libGroups = Map.groupBy(libs, (l) => LIB_KINDS.find(([k]) => k === l.kind)?.[0] ?? '');
     const libHtml = LIB_KINDS.filter(([k]) => libGroups.has(k)).map(([k, label]) => `<details class="fd-group"${k ? ' open' : ''}><summary>${label} <span class="muted">${plural(libGroups.get(k).length, 'file')}</span></summary><ul class="fd-list">${libGroups.get(k).map(libItem).join('')}</ul></details>`).join('');
     // the files read, one group per kind of file: the project's, the packages', the kernel's …
-    const groups = Map.groupBy(read, (r) => r.kind === 'absent' ? 'looked for, absent' : (String(r.file).match(/\.([A-Za-z0-9]+)$/)?.[1] ?? 'other'));
-    const order = [...groups.keys()].sort((a, b) => Number(a === 'looked for, absent') - Number(b === 'looked for, absent') || groups.get(b).length - groups.get(a).length);
+    // an absent file a bundle holds is not fetched yet; the build bundles every TeX Live file a run looks for (build.py checks it), so the rest TeX Live lacks too
+    const kernelId = manifest.kernels[state.kernel].id, ABSENT = ['looked for, not in the playground', 'looked for, absent in TeX Live too'];
+    const groups = Map.groupBy(read, (r) => r.kind === 'absent' ? ABSENT[+!HOLDER.has(`${kernelId}/${r.file}`)] : (String(r.file).match(/\.([A-Za-z0-9]+)$/)?.[1] ?? 'other'));
+    const order = [...groups.keys()].sort((a, b) => Number(ABSENT.includes(a)) - Number(ABSENT.includes(b)) || groups.get(b).length - groups.get(a).length);
     const item = (r) => r.kind === 'absent' ? `<li><code>${escape(r.file)}</code></li>`
       : `<li><a href="#" class="fd-open" data-path="${escape(r.path ?? r.file)}"${BINARY.test(r.file) ? '' : ` title="${escape(r.path ?? r.file)}"`}>${escape(String(r.file).split('/').pop())}</a> <span class="muted">${escape(r.kind ?? '')}</span></li>`;
     const readHtml = order.map((g) => `<details class="fd-group"${g === 'tex' ? ' open' : ''}><summary><code>${escape(g)}</code> <span class="muted">${plural(groups.get(g).length, 'file')}</span></summary><ul class="fd-list">${groups.get(g).map(item).join('')}</ul></details>`).join('');
@@ -5721,12 +5724,12 @@
   let prefetched = Promise.resolve();
   function prefetch() {
     const k = manualKernel ? state.kernel : wanted();
-    const texts = Object.entries(state.texts).filter(([n]) => !(n in state.ro)).map(([, t]) => t);
+    const texts = projectTexts();
     prefetched = prefetched.then(async () => {
       if (k !== state.kernel) await loadKernel(k);
       const ids = wanted_(named(texts), k).filter((id) => !fetchedPackages.has(id));
-      // the check may have run before the files were there: start over, with the file index rebuilt
-      if (ids.length && await fetchPackages(ids)) { await restart(); if (!plainLint()) await start(); }
+      // the check may have run before the files were there: it runs again, the server sees them at once
+      if (ids.length && await fetchPackages(ids)) await recheck();
     }).catch(() => {});
   }
 
@@ -5799,9 +5802,16 @@
   /** Fetches `ids` (absent files' bundles), then the check starts over. A probe of a file no bundle has stays as it is. */
   async function fetchAbsent(ids) {
     if (!ids.length || !await fetchPackages(ids)) return false;
-    await restart();
-    if (!plainLint()) await start();
+    await recheck();
     return true;
+  }
+  /** A load landed: the worker wrote its files into the running server too, so the check runs again on them,
+   * no restart (that would drop the server's checkpoints and the run's .aux). The probes it made of them
+   * for absent are part of its checkpoints, so none that saw them missing is reused. */
+  async function recheck() {
+    if (following) return; // a start under way analyzes once it is up
+    analyze();
+    if (!plainLint()) await start();
   }
   /** Waits for package loads already under way, counting them down as each lands. */
   async function awaitPackages(ids) {
@@ -5818,8 +5828,7 @@
     if (ids.length && !await fetchPackages(ids)) return false;
     // one the background load fetches now: waited for, not fetched twice
     if (flying.length) await awaitPackages(flying);
-    await restart();
-    if (!plainLint()) await start();
+    await recheck();
     return true;
   }
   // Closed, the selector shows the engine's name; its sizes only while the list is open.
@@ -6203,8 +6212,8 @@
     if (PHASE[label]) { busy(PHASE[label][0], PHASE[label][1]); return; }
     loads.set(label, [loaded, total]);
     const [got, all] = [...loads.values()].reduce(([g, a], [l, t]) => [g + l, a + t], [0, 0]);
-    const names = [...loads.keys()];
-    busy('Fetching', `Fetching ${names.length > 2 ? plural(names.length, 'download') : names.join(' and ')}: ${mib(got)} of ${mib(all)} MiB`, { done: all ? Math.min(got / all, 1) : null, got, all });
+    const names = [...loads.keys()], landed = [...loads.values()].filter(([l, t]) => t && l >= t).length;
+    busy('Fetching', `Fetching ${names.length > 2 ? `${landed} of ${names.length} downloads` : names.join(' and ')}: ${mib(got)} of ${mib(all)} MiB`, { done: all ? Math.min(got / all, 1) : null, got, all });
     status.title = names.join(', ');
   }
 
@@ -6229,8 +6238,8 @@
       busy('Loading', `Loading ${plural(names.split(', ').length, 'package')}…`);
       status.title = names;
       if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok && !outdated(p)) { show(p.uri, p.diagnostics, p.version); typeset(p.uri, p.version); } });
-      // loads another step started (a start since superseded): once in, the server starts again on them, unless a start is under way
-      else Promise.allSettled([...inFlight].map((id) => fetchedPackages.get(id))).then(() => { if (!outdated(p) && p.uri === uri() && !following) restart(); });
+      // loads another step started (a start since superseded): once in, the check runs again on them
+      else Promise.allSettled([...inFlight].map((id) => fetchedPackages.get(id))).then(() => { if (!outdated(p) && p.uri === uri()) recheck(); });
       return;
     }
     // A run that missed files a bundle holds is redone once they are in: its findings
