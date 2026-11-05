@@ -4167,3 +4167,19 @@ fn a_picture_command_outside_its_picture_says_where_it_is_defined() {
         .collect();
     assert_eq!(found, ["`\\draw` is undefined here: the run defines it only inside `tikzpicture` (line 4)"]);
 }
+
+/// LuaLaTeX's kernel leaves `para/end` a set of meanings, which the format
+/// cache keeps: a `\par` ends in vertical mode, so the next one does not
+/// fork on the mode.
+#[test]
+fn a_blank_preamble_line_keeps_the_mode_known() {
+    if !installed() {
+        return;
+    }
+    let source = "% !TeX program = lualatex\n\\def\\probe{}\n\n\\probe\n\n\\probe\n\\documentclass{article}\n\\begin{document}\n\\end{document}\n";
+    let analysis = analyze(source);
+    let probe = analysis.interner.lookup("probe").expect("interned");
+    let modes: Vec<_> = analysis.facts.expansions.iter().filter(|e| e.name == probe).map(|e| e.mode).collect();
+    assert!(!modes.is_empty());
+    assert!(modes.iter().all(|m| *m == satex::engine::mode::Modes::VERTICAL), "{modes:?}");
+}

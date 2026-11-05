@@ -12,7 +12,7 @@ use crate::engine::tex::{Interner, Meaning, Span, Sym};
 use crate::engine::value::Value;
 
 /// Cache version: different encodings get different files.
-const ENCODING_VERSION: u32 = 5;
+const ENCODING_VERSION: u32 = 6;
 /// The encoding of the package caches, versioned apart from the kernel's.
 pub(crate) const PACKAGE_ENCODING_VERSION: u32 = 9;
 
@@ -48,7 +48,7 @@ pub struct Format {
     /// The kernel file, as [`Roots::encode`] writes it.
     source: String,
     names: Vec<String>,
-    bindings: Vec<(u32, Meaning, Value)>,
+    bindings: Vec<(u32, Meaning, Value, Option<Vec<Meaning>>)>,
     catcodes: Vec<(char, u8)>,
     /// The files the kernel was read from, in the order they were read.  The
     /// spans inside the cached macro bodies carry those file numbers, so a
@@ -705,9 +705,10 @@ impl Format {
             .filter_map(|i| {
                 let sym = Sym(i);
                 let binding = env.get(sym)?;
+                let may = binding.may.as_ref().map(|may| may.to_vec());
                 match binding.meaning {
-                    Meaning::Undefined => None,
-                    _ => Some((i, binding.meaning.clone(), binding.value.clone())),
+                    Meaning::Undefined if may.is_none() => None,
+                    _ => Some((i, binding.meaning.clone(), binding.value.clone(), may)),
                 }
             })
             .collect();
@@ -809,9 +810,11 @@ impl Format {
     pub fn install(self, interner: &mut Interner, env: &mut Env) -> Vec<(char, u8)> {
         *interner = Interner::from_names(self.names);
         *env = Env::with_capacity(interner.len());
-        for (index, meaning, value) in self.bindings {
+        for (index, meaning, value, may) in self.bindings {
             let mut binding = Binding::builtin(meaning);
             binding.value = value;
+            binding.certain = may.is_none();
+            binding.may = may.map(Into::into);
             env.set(Sym(index), binding, true);
         }
         env.aliases = self.aliases.iter().map(|&(a, b)| (Sym(a), Sym(b))).collect();
@@ -917,7 +920,7 @@ mod tests {
             bindings: (0..interner.len() as u32)
                 .filter_map(|i| {
                     let binding = env.get(Sym(i))?;
-                    Some((i, binding.meaning.clone(), binding.value.clone()))
+                    Some((i, binding.meaning.clone(), binding.value.clone(), None))
                 })
                 .collect(),
             catcodes: vec![('@', 11)],
@@ -948,6 +951,26 @@ mod tests {
         // The names the kernel may have defined from unknown text.
         assert_eq!(back.wild, sample().wild);
         assert!(!back.wild.is_empty());
+    }
+
+    /// A name a join left maybe undefined stays so: without its set it
+    /// would come back certainly defined.
+    #[test]
+    fn a_meaning_set_survives_the_cache() {
+        use crate::engine::builtins::Primitive;
+        let mut format = sample();
+        let relax = Meaning::Primitive(Primitive::Relax);
+        let set = vec![relax.clone(), Meaning::Undefined];
+        format.names.push("maybe".into());
+        let index = format.names.len() as u32 - 1;
+        format.bindings.push((index, relax, Value::Unknown, Some(set.clone())));
+        let bytes = postcard::to_allocvec(&format).expect("encodes");
+        let back: Format = postcard::from_bytes(&bytes).expect("decodes");
+        let (mut interner, mut env) = (Interner::default(), Env::default());
+        back.install(&mut interner, &mut env);
+        let binding = env.slot(Sym(index)).expect("bound");
+        assert_eq!(binding.may.as_deref(), Some(&set[..]));
+        assert!(!binding.certain);
     }
 
     #[test]
