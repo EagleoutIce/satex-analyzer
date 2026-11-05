@@ -197,6 +197,10 @@ fixtures! {
     /// `\Cref` of a macro that is one of two labels: each `\csname r@..`
     /// is one of their names, never `\relax`, so cleveref's stack pops.
     cleveref_ref_to_one_of_two_labels("cleveref_one_of_labels", "main.tex");
+    /// Three notecolumn notes read back from the `.slnc` file the first
+    /// build run wrote: the read loop takes each line exactly, so no note
+    /// text runs as code inside it.
+    notecolumn_notes_read_back("notecolumn_read_back", "main.tex");
     /// An arrow tip toward a point with an unknown coordinate.
     tikz_arrow_to_an_unknown_point("tikz_arrow_to_unknown_point", "mwe.tex");
     /// An undefined name in a node's formula: the node's size must stay known.

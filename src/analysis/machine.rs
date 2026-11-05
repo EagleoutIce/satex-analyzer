@@ -1421,9 +1421,9 @@ pub(crate) struct Scratch {
     /// The loops this path continues the summary of: never dropped as
     /// their re-entry.
     pub(crate) summary_of: Rc<Vec<LoopId>>,
-    /// Per loop, the bounded text this path's last pass began with
-    /// ([`Machine::input_bound`]).
-    pub(crate) loop_bounds: Rc<Vec<(LoopId, Option<u32>)>>,
+    /// Per loop, what this path's last pass began with
+    /// ([`Machine::pass_bound`]).
+    pub(crate) loop_bounds: Rc<Vec<(LoopId, Option<u64>)>>,
     /// The last loop cut with no path waiting: its head, the source
     /// progress, and how often it was met there since ([`Machine::end_covered`]).
     pub(crate) recut: Option<(Span, u64, u32)>,
@@ -2042,9 +2042,9 @@ struct PathState {
     /// The loops this path continues the summary of: never dropped as
     /// their re-entry.
     pub(crate) summary_of: Rc<Vec<LoopId>>,
-    /// Per loop, the bounded text this path's last pass began with
-    /// ([`Machine::input_bound`]).
-    pub(crate) loop_bounds: Rc<Vec<(LoopId, Option<u32>)>>,
+    /// Per loop, what this path's last pass began with
+    /// ([`Machine::pass_bound`]).
+    pub(crate) loop_bounds: Rc<Vec<(LoopId, Option<u64>)>>,
     edef_depth: usize,
     pdf_string: bool,
     last_file: Option<FileId>,
@@ -4297,7 +4297,15 @@ will look undefined",
     pub fn stream_at_end(&self, stream: i64) -> Option<bool> {
         // What the table holds was learned after the last widening.
         if let Some(texts) = self.streams.get(&stream) {
-            let mut ends = texts.iter().flat_map(|t| t.places().map(|p| p.lo == CLOSED).collect::<Vec<_>>());
+            // Before unknown lines only, the stream may be at its end.
+            let ends = |p: At| match p.lo == CLOSED {
+                true => vec![true],
+                false if p.lines.get(p.lo..).is_some_and(|r| !r.is_empty() && r.iter().all(|l| is_unknown_line(l))) => {
+                    vec![false, true]
+                }
+                false => vec![false],
+            };
+            let mut ends = texts.iter().flat_map(|t| t.places().flat_map(ends).collect::<Vec<_>>());
             let first = ends.next()?;
             return ends.all(|e| e == first).then_some(first);
         }
@@ -4358,6 +4366,13 @@ will look undefined",
         };
         *next += 1;
         *hi = *next;
+        // An unknown line stands for any number of lines, none too: past it
+        // the stream stands on it, after it, or a line further, closed past
+        // the end ([`unknown_line`]).
+        if is_unknown_line(&line) {
+            *next -= 1;
+            *hi = if *next + 2 >= lines.len() { CLOSED } else { *next + 2 };
+        }
         self.carried.stream_read = Some((stream, *next, lines.len(), self.out.steps));
         // A line read from a file is input read, as one the mouth reads is:
         // a loop over a data file (expl3's `\ior_map_variable:NNn` over
@@ -10463,9 +10478,24 @@ will look undefined",
         Self::pending_in(&self.input)
     }
 
+    /// What a loop pass has left to read, ordered: first the lines its
+    /// streams have left (a pass that reads a line of a known file is one
+    /// of finitely many), then [`Machine::input_bound`]. `None` when
+    /// neither is bounded. A pass that begins with less ends by
+    /// construction.
+    pub(crate) fn pass_bound(&self, input: &Input, streams: &Streams) -> Option<u64> {
+        let lines = (!streams.contains_key(&ANY_STREAM)).then(|| {
+            let left = |a: &At| if a.lo == CLOSED { 0 } else { a.lines.len().saturating_sub(a.lo) };
+            streams.values().map(|t| t.iter().map(left).max().unwrap_or(0)).sum::<usize>()
+        });
+        let tokens = self.input_bound(input);
+        let lines = lines.map(|n| u32::try_from(n).unwrap_or(u32::MAX - 1));
+        (lines.is_some() || tokens.is_some())
+            .then(|| u64::from(lines.unwrap_or(u32::MAX)) << 32 | u64::from(tokens.unwrap_or(u32::MAX)))
+    }
+
     /// The most tokens `input`'s token lists may hold, typed text by its
-    /// bound; `None` when none of it is bounded. A pass that begins with
-    /// less than the one before ends by construction.
+    /// bound; `None` when none of it is bounded.
     pub(crate) fn input_bound(&self, input: &Input) -> Option<u32> {
         let lists = input.iter().rev().map_while(|frame| match frame {
             Frame::Tokens { toks, pos, .. } => Some(&toks[*pos..]),
@@ -14364,6 +14394,11 @@ fn unknown_line(file: &mut Option<String>) {
             }
         });
     }
+}
+
+/// A line [`unknown_line`] wrote: any number of lines, none too.
+fn is_unknown_line(line: &str) -> bool {
+    line.trim_end() == crate::engine::tex::UNKNOWN_ANY.to_string()
 }
 
 /// The texts a written file may hold ([`crate::engine::tex::TEXT_OR`]).

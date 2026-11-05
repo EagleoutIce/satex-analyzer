@@ -1,0 +1,16 @@
+\documentclass{scrbook}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage[autoclearnotecolumns]{scrlayer-notecolumn}
+\newcommand\noteDo[1]{\strut\textcolor{gray}{\Cref{#1}}\strut}
+\newcommand\sref[1]{\makenote*{\noteDo{#1}}}
+\begin{document}
+\chapter{A}\label{ch:a}
+One\sref{ch:b}
+Two\sref{ch:c}
+Three\sref{ch:a}
+\chapter{B}\label{ch:b}
+\chapter{C}\label{ch:c}
+\gdef\SatexReachedEnd{}
+\end{document}

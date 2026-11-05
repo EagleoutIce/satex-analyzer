@@ -131,8 +131,8 @@ struct Head {
     progress: u64,
     config: Config,
     passes: u32,
-    /// The bounded text the last pass here began with.
-    bound: Option<u32>,
+    /// What the last pass here began with ([`Machine::pass_bound`]).
+    bound: Option<u64>,
 }
 
 /// Where a loop was entered: its input levels, conditionals and groups
@@ -1097,7 +1097,7 @@ impl Machine<'_> {
             false => widen_after.max(1),
         };
         // What this path's pass began with, carried on by its arms.
-        let bound = self.input_bound(&here.state.input);
+        let bound = self.pass_bound(&here.state.input, &here.state.streams);
         for c in outcomes.iter_mut() {
             let bounds = Rc::make_mut(&mut c.state.loop_bounds);
             bounds.retain(|(l, _)| *l != id);
@@ -1107,8 +1107,9 @@ impl Machine<'_> {
         let forced = match paths.loops.iter().position(|l| l.id == id) {
             Some(l) => {
                 let (joined, _) = self.join_passes(&fork, &paths.loops[l].joined, &here, None, true);
-                // A pass on strictly less bounded text is not counted:
-                // such passes end by construction, each state exact.
+                // A pass on strictly less to read (stream lines, then
+                // bounded text) is not counted: such passes end by
+                // construction, each state exact.
                 let before = here.state.loop_bounds.iter().find(|(l, _)| *l == id).and_then(|(_, b)| *b);
                 let shrinks = matches!((before, bound), (Some(a), Some(b)) if b < a);
                 let l = &mut paths.loops[l];
