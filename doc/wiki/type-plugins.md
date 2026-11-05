@@ -4,7 +4,9 @@
 
 A type plugin adds editor features where text of a type stands. The type comes from the run, as the [type at the cursor](lsp.md#completion) finds it: what TeX read the text as, the kind of name a `\csname` formed from it, else the role of the argument. No plugin looks at a command's name or a text pattern. A new command that takes a color gets the color plugin without any setup.
 
-Each plugin has a block under `type_plugins:` in `satex.yaml`, grouped there by its category: `widget` (dialogs and lenses), `hover`, `completion`, `lint`, `incremental` (whether an edit needs a new run) and `build` (the build file a project is read with, its settings under `l3build:`). `enabled: false` takes all its features away. The list below is what `satex query type-plugins` prints, by category:
+Each plugin has a block under `type_plugins:` in `satex.yaml`, grouped there by its category: `widget` (dialogs and lenses), `hover`, `completion`, `lint`, `incremental` (whether an edit needs a new run) and `build` (the build file a project is read with, its settings under `l3build:`). `enabled: false` takes all its features away. <div class="plugin-tiles" data-plugin-tiles></div>
+
+The tiles above group the plugins by category, each with its section below and, where an example of the playground shows it, a demo. They come from `satex query type-plugins --format json`, whose records add the category's `purpose` and `places`: how many lenses, swatches and inlay hints the plugin has for the document. The list below is what it prints, by category:
 
 ```text
 $ satex query type-plugins -f samples/paper.tex

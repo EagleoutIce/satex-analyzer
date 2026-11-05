@@ -3391,6 +3391,34 @@ fn switched_off_dialog_plugins_offer_nothing() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `satex query type-plugins` counts where each plugin shows on the run's main file (the site's
+/// tiles take a plugin's demo from it), and nothing where no plugin applies.
+#[test]
+fn type_plugins_count_their_places_in_the_main_file() {
+    let dir =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-tp-places-{}", std::process::id())));
+    let table = "\\begin{tabular}{l}\na \\\\\n\\end{tabular}\n";
+    let places = |name: &str, body: &str| {
+        std::fs::write(
+            dir.join("doc.tex"),
+            format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\\end{{document}}\n"),
+        )
+        .unwrap();
+        let out = crate::support::satex()
+            .args(["query", "type-plugins", "--format", "json", "-f", "doc.tex"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        let records: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(records.as_array().unwrap().iter().all(|r| r["purpose"].is_string()), "{records}");
+        let of = |n: &str| records.as_array().unwrap().iter().find(|r| r["name"] == n).map(|r| r["places"].clone());
+        (of(name), of("image"))
+    };
+    assert_eq!(places("table", &format!("{table}{table}")), (Some(json!(2)), Some(json!(0))));
+    assert_eq!(places("table", "text\n"), (Some(json!(0)), Some(json!(0))));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Inside a finding's range the hover shows the finding first, then the hover of the word under
 /// the cursor: the macro's card on `\label`, the label's card on its key.
 #[test]

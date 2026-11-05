@@ -58,7 +58,7 @@ pub(super) trait TypePlugin: Sync {
     fn name(&self) -> &'static str;
     /// One line for `satex query type-plugins` and the wiki.
     fn about(&self) -> &'static str;
-    /// What it is for, one of [`CATEGORIES`]: settings and lists group by it.
+    /// What it is for, a name of [`CATEGORIES`]: settings and lists group by it.
     fn category(&self) -> &'static str;
     /// The types of the lattice it triggers on; none: the run's place triggers it (an
     /// environment the run met), asked with a [`Ty::Bottom`] hit.
@@ -104,8 +104,15 @@ pub(super) trait TypePlugin: Sync {
     }
 }
 
-/// The categories plugins group by, in the order lists show them.
-pub const CATEGORIES: [&str; 6] = ["widget", "hover", "completion", "lint", "incremental", "build"];
+/// The categories plugins group by, in the order lists show them, each with its purpose.
+pub const CATEGORIES: [(&str, &str); 6] = [
+    ("widget", "dialogs, pickers and managers that edit the source"),
+    ("hover", "what text of a type means, shown where it stands"),
+    ("completion", "the names and values a position takes"),
+    ("lint", "findings on text of a type"),
+    ("incremental", "whether an edit needs a new run"),
+    ("build", "how a project is read and compiled"),
+];
 
 /// Every plugin, in the order they answer.
 pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
@@ -350,35 +357,46 @@ pub(super) fn hover_types(analysis: &Analysis, doc: &Text, path: &str, pos: Pos)
 }
 
 /// `satex query type-plugins`: one record per plugin, grouped by category, then the build
-/// plugins (`plugins.l3build`).
-pub fn list(cfg: &crate::project::config::Config) -> Vec<crate::queries::query::Record> {
+/// plugins (`plugins.l3build`). `places` counts the lenses, swatches and inlay hints it has for
+/// the run's main file, switched on or not: where a client shows it.
+pub fn list(analysis: &Analysis) -> Vec<crate::queries::query::Record> {
+    let cfg = &analysis.settings;
+    let path = analysis.file_name(analysis.main_file);
+    let doc = crate::project::overlay::read_to_string(std::path::Path::new(path)).ok().map(Text::new);
+    let record =
+        |name: &str, category: &str, enabled: bool, types: Vec<String>, features: &[&str], about: &str, places| {
+            let mut r = crate::queries::query::Record::new();
+            r.insert("name".into(), json!(name));
+            r.insert("category".into(), json!(category));
+            let purpose = CATEGORIES.iter().find(|(c, _)| *c == category).map(|(_, p)| *p);
+            r.insert("purpose".into(), json!(purpose));
+            r.insert("enabled".into(), json!(enabled));
+            r.insert("types".into(), json!(types));
+            r.insert("features".into(), json!(features));
+            r.insert("about".into(), json!(about));
+            r.insert("places".into(), json!(places));
+            r
+        };
     let mut out: Vec<_> = PLUGINS
         .iter()
         .map(|p| {
-            let mut r = crate::queries::query::Record::new();
-            r.insert("name".into(), json!(p.name()));
-            r.insert("category".into(), json!(p.category()));
-            r.insert("enabled".into(), json!(p.enabled(&cfg.type_plugins)));
             let mut types: Vec<String> = p.types().iter().map(Ty::to_string).collect();
             if types.is_empty() && p.category() != "incremental" {
                 types.push("environment the run met".into());
             }
-            r.insert("types".into(), json!(types));
-            r.insert("features".into(), json!(p.features()));
-            r.insert("about".into(), json!(p.about()));
-            r
+            let places = doc.as_ref().map_or(0, |d| {
+                p.lenses(analysis, d, path).len()
+                    + p.colors(analysis, d, path).len()
+                    + p.inlays(analysis, d, path).len()
+            });
+            let on = p.enabled(&cfg.type_plugins);
+            record(p.name(), p.category(), on, types, p.features(), p.about(), places)
         })
         .collect();
-    let mut l3build = crate::queries::query::Record::new();
-    l3build.insert("name".into(), json!("l3build"));
-    l3build.insert("category".into(), json!("build"));
-    l3build.insert("enabled".into(), json!(cfg.l3build.enabled));
-    l3build.insert("types".into(), json!(Vec::<String>::new()));
-    l3build.insert("features".into(), json!(["build"]));
-    l3build.insert("about".into(), json!("the bundle's build.lua: module, test files and engines"));
-    out.push(l3build);
+    let about = "the bundle's build.lua: module, test files and engines";
+    out.push(record("l3build", "build", cfg.l3build.enabled, Vec::new(), &["build"], about, 0));
     let rank = |r: &crate::queries::query::Record| {
-        CATEGORIES.iter().position(|c| r.get("category").and_then(Json::as_str) == Some(c))
+        CATEGORIES.iter().position(|(c, _)| r.get("category").and_then(Json::as_str) == Some(c))
     };
     out.sort_by_key(rank);
     out

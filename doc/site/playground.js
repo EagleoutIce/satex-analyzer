@@ -2428,7 +2428,12 @@
   const groupOf_ = (k) => (k.key.includes('.') ? k.key.split('.')[0] : 'general');
   /** The plugins (build.py `plugins`) and the keys each one reads: its own section, `plugins.<name>` its switch. */
   const PLUGINS = manifest.plugins ?? [];
-  const pluginOf = (k) => k.plugin ?? PLUGINS.find((p) => k.key === `plugins.${p.name}` || k.key.split('.')[0] === p.name)?.name ?? null;
+  /** The type plugins' tiles (build.py `plugin_tiles`): a type plugin's keys sit under `type_plugins.<name>`. */
+  const TILES = manifest.typePlugins ?? [];
+  const pluginOf = (k) => k.plugin ?? k.key.match(/^type_plugins\.[^.]+/)?.[0] ?? PLUGINS.find((p) => k.key === `plugins.${p.name}` || k.key.split('.')[0] === p.name)?.name ?? null;
+  /** The settings a tile's plugin owns: those under its switch's parent. */
+  const tileBase = (p) => p.key.replace(/\.enabled$/, '');
+  const cfgMoreOpen = new Set();
   let cfgTab = 'core', cfgYaml = false;
   const configLoad = () => (configKeys ??= fetch(`${base}${manifest.schema}`).then((r) => r.json()).then((s) => leaves(s.properties)).catch(() => []));
   const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -2468,13 +2473,28 @@
       : w.startsWith('@group:') ? groupOf_(k) === w.slice(7) : w.startsWith('@affects:') ? k.affects.includes(w.slice(9))
         : k.key.toLowerCase().includes(w) || k.about.toLowerCase().includes(w));
   }
-  /** The plugins tab: those with settings as groups, then the others in one compact list, one line each. */
-  function configPlugins(hits, q, section, closed) {
-    const own = PLUGINS.map((p) => [p, hits.filter((k) => pluginOf(k) === p.name)]);
+  /** The plugins tab: the type plugins' tiles with a switch and the other settings of each, then the other
+   *  plugins with settings as groups, then the others in one compact list, one line each. */
+  function configPlugins(hits, q, section, closed, row, keys) {
+    const tiled = new Set(TILES.flatMap((c) => c.plugins.map(tileBase)));
+    const switches = {
+      control: (p) => {
+        const k = keys.find((x) => x.key === p.key);
+        return k ? `<label class="ts-toggle" title="${escape(p.key)}">${configInput(k, p.key in configSet ? configSet[p.key] : k.def)}</label>` : '';
+      },
+      more: (p) => {
+        const ks = hits.filter((k) => k.key !== p.key && pluginOf(k) === tileBase(p));
+        return ks.length ? `<details class="pt-more" data-more="${escape(tileBase(p))}"${q || cfgMoreOpen.has(tileBase(p)) ? ' open' : ''}><summary>${plural(ks.length, 'more setting')}</summary><ul>${ks.map(row).join('')}</ul></details>` : '';
+      },
+    };
+    const shown = TILES.map((c) => ({ ...c, plugins: c.plugins.filter((p) => !q || hits.some((k) => pluginOf(k) === tileBase(p)) || configMatch({ key: p.name, about: p.about, affects: [] }, q)) }))
+      .filter((c) => c.plugins.length);
+    const tiles = shown.length ? `<li class="cfg-group pt-settings">${self.satexTiles(shown, switches)}</li>` : '';
+    const own = PLUGINS.filter((p) => !tiled.has(p.name)).map((p) => [p, hits.filter((k) => pluginOf(k) === p.name)]);
     const set = own.filter(([, ks]) => ks.length).map(([p, ks]) => section(p.name, p.name, p.about, ks, !!q || !closed.has(p.name)));
     const plain = own.filter(([p, ks]) => !ks.length && !q && p.about)
       .map(([p]) => `<li class="cfg-plain" title="${escape(p.about.replaceAll('`', ''))}"><b>${escape(p.name)}</b><span>${inline(p.about)}</span></li>`);
-    return [...set, ...(plain.length ? [`<li class="cfg-group"><p class="cfg-plain-head">Without settings, always on</p><ul>${plain.join('')}</ul></li>`] : [])];
+    return [tiles, ...set, ...(plain.length ? [`<li class="cfg-group"><p class="cfg-plain-head">Without settings, always on</p><ul>${plain.join('')}</ul></li>`] : [])];
   }
   /** A setting's value an example line spells: `- field: v` items of a list, or `name: v` with the key's own name. */
   function exampleValue(k, line) {
@@ -2618,7 +2638,7 @@
     const lists = ['packages', 'classes', 'both'].map((n) => `<datalist id="cfg-dl-${n}">${NAMES[n].map((x) => `<option value="${escape(x)}">`).join('')}</datalist>`).join('') +
       `<datalist id="cfg-dl-top">${tabKeys.filter((k) => !k.key.startsWith('profiles.') && !k.extra).map((k) => `<option value="${escape(k.key)}">`).join('')}</datalist>`;
     $('cfg-list').innerHTML = (cfgTab === 'plugins'
-      ? configPlugins(hits, q, section, cfgClosed)
+      ? configPlugins(hits, q, section, cfgClosed, row, keys)
       : groups.map((g) => [g, hits.filter((k) => groupOf_(k) === g)]).filter(([, ks]) => ks.length).map(([g, ks]) => section(g, g, '', ks, !!q || changedIn(ks) > 0 || !cfgClosed.has(g)))).join('')
       || '<li class="muted">No setting matches.</li>';
     $('cfg-list').insertAdjacentHTML('beforeend', lists);
@@ -2648,6 +2668,9 @@
   $('cfg-search').oninput = configShow;
   const cfgClosed = new Set();
   $('cfg-list').addEventListener('toggle', (e) => { const g = e.target.dataset?.group; if (g) { if (e.target.open) cfgClosed.delete(g); else cfgClosed.add(g); } }, true);
+  $('cfg-list').addEventListener('toggle', (e) => { const m = e.target.dataset?.more; if (m) { if (e.target.open) cfgMoreOpen.add(m); else cfgMoreOpen.delete(m); } }, true);
+  // a tile's demo opens its example (the hash) behind the closed dialog
+  $('cfg-list').addEventListener('click', (e) => { const d = e.target.closest('.pt-demo'); if (d) { e.preventDefault(); $('play-config').close(); location.hash = new URL(d.href).hash; } });
   $('cfg-tabs').addEventListener('click', (e) => { const t = e.target.closest('[data-tab]'); if (!t) return; cfgYaml = t.dataset.tab === 'yaml'; if (!cfgYaml) cfgTab = t.dataset.tab; configShow(); });
   $('cfg-filters').addEventListener('click', (e) => {
     const f = e.target.closest('[data-filter]')?.dataset.filter, s = $('cfg-search');
@@ -2795,8 +2818,9 @@
     }).filter((v) => v !== '' && !(typeof v === 'object' && !Object.keys(v).length));
     let value = el.dataset.chips ? [...el.querySelectorAll('.cfg-chip')].map((c) => JSON.parse(c.dataset.v)) : el.dataset.list ? listOf(el) : el.type === 'checkbox' ? el.checked : el.value;
     el.setCustomValidity?.('');
-    el.closest('.cfg-row').classList.remove('cfg-bad');
-    const refuse = (why) => { el.setCustomValidity?.(why); el.reportValidity?.(); el.closest('.cfg-row').classList.add('cfg-bad'); el.closest('.cfg-row').querySelector('.cfg-what').dataset.why = why; };
+    const holder = el.closest('.cfg-row, .pt-plugin');
+    holder.classList.remove('cfg-bad');
+    const refuse = (why) => { el.setCustomValidity?.(why); el.reportValidity?.(); holder.classList.add('cfg-bad'); (holder.querySelector('.cfg-what') ?? holder).dataset.why = why; };
     if (['integer', 'number'].includes(k.type)) {
       value = Number(value);
       if (!Number.isFinite(value) || (k.type === 'integer' && !Number.isInteger(value))) return refuse(`a${k.type === 'integer' ? 'n integer' : ' number'}`);

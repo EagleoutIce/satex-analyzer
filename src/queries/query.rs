@@ -1734,7 +1734,7 @@ pub fn run(analysis: &Analysis, query: Query, filter: &Filter) -> Vec<Record> {
         Query::SideEffects => side_effects(analysis),
         Query::Project => project(analysis),
         Query::Plugins => plugins(analysis),
-        Query::TypePlugins => crate::lsp::plugins::list(&analysis.settings),
+        Query::TypePlugins => crate::lsp::plugins::list(analysis),
         // The text to look for arrives with `--text`, which `run` has no
         // room for: `cmd::query` calls `produces` directly.
         Query::Produces => Vec::new(),

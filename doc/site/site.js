@@ -884,6 +884,30 @@
     const rule = await ruleNamed(name);
     if (rule && el.matches(':hover')) tips.card.show(el, ruleCard(rule, ruleLink(rule.code)));
   });
+  // The type plugins' tiles (build.py `plugin_tiles`): one per category, its plugins linking to their
+  // docs section and a demo. `switches` ({control, more}) puts a switch and the other settings by each plugin (the playground).
+  const TILE_ICONS = {
+    widget: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/>',
+    hover: '<path d="M4 4h16v11H9l-5 4z"/><path d="M8 8.5h8M8 11.5h5"/>',
+    completion: '<path d="M4 6h10M4 12h16M4 18h7"/><path d="m16 15 3 3-3 3"/>',
+    lint: '<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h0"/>',
+    incremental: '<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/>',
+    build: '<path d="M14.5 6.5a4 4 0 0 0-5.4 5.4L3 18l3 3 6.1-6.1a4 4 0 0 0 5.4-5.4l-2.4 2.4-2.6-.4-.4-2.6z"/>',
+  };
+  const SITE_ROOT = new URL('.', RULES_URL);
+  const pluginTiles = (data, switches = null) => `<div class="pt-grid">${data.map((c) => `<section class="pt-tile${c.plugins.length > 5 ? ' pt-wide' : ''}" data-category="${esc(c.name)}">` +
+    `<header><svg class="pt-icon" viewBox="0 0 24 24" aria-hidden="true">${TILE_ICONS[c.name] ?? '<circle cx="12" cy="12" r="8"/>'}</svg>` +
+    `<div><h3>${esc(c.name)}</h3><p>${inline(c.about)}</p></div><span class="pt-count" title="${c.plugins.length} plugins">${c.plugins.length}</span></header>` +
+    `<ul>${c.plugins.map((p) => `<li class="pt-plugin" data-plugin="${esc(p.name)}" data-key="${esc(p.key)}"><div class="pt-head"><a class="pt-name" href="${new URL(p.docs, SITE_ROOT).href}" title="its documentation">${esc(p.name)}</a>` +
+      (switches ? switches.control(p) : `<span class="pt-default${p.default ? '' : ' off'}">${p.default ? 'on' : 'off'} by default</span>`) + '</div>' +
+      `<p class="pt-about">${inline(p.about)}</p><p class="pt-meta">${p.features.map((f) => `<span>${esc(f)}</span>`).join('')}` +
+      `${p.demo ? `<a class="pt-demo" href="${new URL(`play/#${encodeURIComponent(p.demo)}`, SITE_ROOT).href}" title="open ${esc(p.demo)} in the playground">demo: ${esc(p.demo)}</a>` : ''}</p>` +
+      `${switches?.more?.(p) ?? ''}</li>`).join('')}</ul></section>`).join('')}</div>`;
+  self.satexTiles = pluginTiles;
+  const tileBoxes = document.querySelectorAll('[data-plugin-tiles]');
+  if (tileBoxes.length) fetch(new URL('type-plugins.json', SITE_ROOT)).then((r) => r.ok ? r.json() : []).catch(() => []).then((data) => {
+    for (const box of tileBoxes) { box.innerHTML = data.length ? pluginTiles(data) : ''; box.hidden = !data.length; }
+  });
   document.addEventListener('mouseout', (e) => {
     // leaving the card's own code, or going onto the card, keeps it
     const el = e.target.closest?.('a[href*="lints.html#"], code');

@@ -1043,6 +1043,28 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .band { margin: 0; padding: 2.4rem clamp(0rem, 3vw, 2rem) 2rem; border-top: 1px solid var(--border); }
 .band.alt { background: color-mix(in srgb, var(--accent) 4%, transparent); border-radius: 18px; border-top-color: transparent; }
 .band h2 { font-size: 1.6rem; margin: 0 0 .3rem; letter-spacing: -.01em; } .band .sub { margin: 0 0 1.2rem; max-width: 52rem; color: var(--muted); } .small { font-size: .8rem; }
+/* type plugin tiles (site.js `satexTiles`): landing, the type plugins page and the playground's settings */
+.pt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap: .9rem; margin: 1rem 0; }
+.pt-tile { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: .9rem 1rem .6rem; box-shadow: var(--shadow); min-width: 0; }
+.pt-tile.pt-wide { grid-column: span 2; } .pt-tile.pt-wide ul { columns: 2 16rem; column-gap: 1.4rem; }
+@media (max-width: 42rem) { .pt-tile.pt-wide { grid-column: auto; } }
+.pt-tile header { display: flex; gap: .7rem; align-items: flex-start; margin-bottom: .5rem; }
+body .pt-grid header h3 { margin: 0; font-size: 1rem; text-transform: capitalize; } body .pt-grid header p { margin: .1rem 0 0; font-size: .82rem; color: var(--muted); line-height: 1.35; }
+.pt-icon { flex: none; width: 2.1rem; height: 2.1rem; padding: .4rem; border-radius: 9px; fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.pt-count { margin-left: auto; font-size: .72rem; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 .5rem; }
+.pt-tile ul { list-style: none; margin: 0; padding: 0; }
+.pt-plugin { break-inside: avoid; padding: .45rem 0; border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); font-size: .85rem; line-height: 1.4; }
+.pt-head { display: flex; align-items: center; gap: .5rem; } .pt-name { font: 600 .85rem/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.pt-head .ts-toggle { margin-left: auto; }
+.pt-default { margin-left: auto; font-size: .7rem; color: var(--safe); white-space: nowrap; } .pt-default.off { color: var(--muted); }
+body .pt-grid .pt-about { margin: .15rem 0 .2rem; color: var(--muted); } .pt-about code { font-size: .78rem; }
+body .pt-grid .pt-meta { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; margin: 0; font-size: .7rem; }
+.pt-meta span { background: var(--sunk); border-radius: 4px; padding: 0 .35rem; color: var(--muted); }
+.pt-demo { margin-left: auto; font-weight: 600; white-space: nowrap; }
+.pt-plugin:has(.pt-head input:not(:checked)) :is(.pt-name, .pt-about) { opacity: .55; }
+.pt-settings .pt-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); margin: .6rem 0 1rem; }
+.pt-more .cfg-row { grid-template-columns: minmax(0, 1fr) minmax(5rem, 9rem) auto; padding: .45rem 0; } .pt-more .cfg-prefix { display: none; }
+.pt-more summary { cursor: pointer; font-size: .72rem; color: var(--muted); margin-top: .2rem; } .pt-more > ul { margin-top: .2rem; }
 .contrast, .install-tabs { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .8rem; }
 .contrast button, .install-tabs button { border-radius: 999px; padding: .3rem .9rem; background: var(--panel); border: 1px solid var(--border); color: var(--fg); font-size: .85rem; }
 .contrast button[aria-selected=true], .install-tabs button[aria-selected=true] { background: var(--accent); border-color: var(--accent); color: var(--bg); }

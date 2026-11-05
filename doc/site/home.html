@@ -15,7 +15,13 @@
   <p class="muted small">Analyzed at build time with SaTeX <span title="{{versiontitle}}">{{version}}</span>.</p>
 </section>
 
-<section class="band alt" id="run">
+<section class="band alt" id="plugins">
+  <h2>Editor plugins</h2>
+  <p class="sub">Each editor feature is a plugin that triggers on a type the run computed, never on a command's name: a color, a length, a table, a figure. Each one can be switched off in <code>satex.yaml</code> or in the playground's settings.</p>
+  <div class="plugin-tiles" data-plugin-tiles hidden></div>
+</section>
+
+<section class="band" id="run">
   <h2>Why interpret the code</h2>
   <p class="sub">TeX decides what a line means while it runs: catcodes change, names are built, definitions come and go. A tool that only reads the text has to guess at these. SaTeX interprets the kernel, the class and every package as TeX would, over every path at once, and joins the paths soundly where it cannot decide.</p>
   <div class="contrast" role="tablist" aria-label="examples of what a run knows">
@@ -46,7 +52,7 @@ a | b \gdef\Maybe{}</code></pre>
   </div>
 </section>
 
-<section class="band" id="compare">
+<section class="band alt" id="compare">
   <h2>Comparison</h2>
   <p class="sub">The other tools are good at what they do. SaTeX interprets the code abstractly, so it can check what the others infer from names and text.</p>
   <div class="table-wrap"><table class="compare">
@@ -71,12 +77,12 @@ a | b \gdef\Maybe{}</code></pre>
   </ol>
 </section>
 
-<section class="band alt" id="about">
+<section class="band" id="about">
   <h2>About</h2>
   {{intro}}
 </section>
 
-<section class="band" id="install">
+<section class="band alt" id="install">
   <h2>Install</h2>
   <div class="install-tabs" role="tablist" aria-label="ways to install">
     <button type="button" role="tab" aria-selected="true" data-way="0">VS Code</button>

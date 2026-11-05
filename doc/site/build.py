@@ -1149,18 +1149,22 @@ def playground(satex, wasm, work, out):
                 return False
         rules = {r["code"]: {**r, **json.loads(run(str(satex), "lint", "--explain", r["code"], "--format", "json"))}
                  for r in json.loads(run(str(satex), "lint", "--rules", "--format", "json"))}
-        return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json")), about
-    queries, filtered, rules, completion, query_about = memo(work, "facts", [BINARY, tree_digest(project)], facts)
+        # each example's type plugins: where a plugin shows on it (`places`) makes it the plugin's demo
+        plugged = {ex: json.loads(run(str(satex), "query", "type-plugins", "--format", "json", "-f", ex, cwd=project, env=env)) for ex in roots(EXAMPLES)}
+        return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json")), about, plugged
+    queries, filtered, rules, completion, query_about, plugged = memo(work, "facts", [BINARY, tree_digest(project), inspect.getsource(facts)], facts)
     table, files = memo(work, "symbols", [BINARY, ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(emoji), inspect.getsource(symbols), inspect.getsource(comprehensive), inspect.getsource(categories), GLYPH],
                         lambda: symbols(satex, project, dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))))
     # every rule's card on any page (site.js), from the same records the playground's findings show
     (out / "rules.json").write_text(json.dumps(rules))
+    tiles = plugin_tiles(plugged)
+    (out / "type-plugins.json").write_text(json.dumps(tiles))
     manifest = {
         "js": emit_local(out, "play/satex.js", (wasm / "satex.js").read_bytes()),
         "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
         "kernels": kernels, "packages": extra, "preload": first_download(), "unavailable": UNAVAILABLE, "queries": queries, "queryAbout": query_about, "filtered": filtered, "rules": rules,
         "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
-        "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(), "plugins": plugins(),
+        "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(), "plugins": plugins(), "typePlugins": tiles,
         "symbols": emit(out, "play/symbols.json", json.dumps({**table, "glyphs": emit(out, "play/glyphs.bin.gz", gzip.compress(table["glyphs"], 9, mtime=0)),
                                                                 "fonts": [emit(out, f"play/fonts/{f.name}", f.read_bytes()) for f in files]}).encode()),
         "schema": emit(out, "play/satex.schema.json", (ROOT / "satex.schema.json").read_bytes()),
@@ -1222,6 +1226,39 @@ def plugins():
             continue
         doc = " ".join(l.removeprefix("//!").strip() for l in source.read_text().splitlines() if l.startswith("//!"))
         out.append({"name": path.stem, "about": re.split(r"(?<=\.)\s", doc, maxsplit=1)[0] if doc else ""})
+    return out
+
+
+def plugin_tiles(plugged):
+    """The type plugins' tiles (site.js `pluginTiles`): `satex query type-plugins` by category, each plugin with
+    its switch and default from the schema, its section of the wiki page and, as its demo, the example whose
+    run gives it the most places."""
+    records = next(iter(plugged.values()), [])
+    text = (ROOT / "doc/wiki/type-plugins.md").read_text()
+    heads = [(m.start(), m[1].strip()) for m in re.finditer(r"^#{2,3} (.+)$", text, re.M)]
+    spans = [(start, end, head) for (start, head), (end, _) in zip(heads, heads[1:] + [(len(text), "")])]
+    slug = lambda h: re.sub(r"\s", "-", re.sub(r"[^\w\s-]", "", h.lower()))
+    def docs(name):
+        head = next((h for _, _, h in spans if h == name), None) or next((h for a, b, h in spans if f"`{name}`" in text[a:b]), None)
+        return "wiki/type-plugins.html" + (f"#{slug(head)}" if head else "")
+    schema = json.loads((ROOT / "satex.schema.json").read_text())["properties"]
+    def switch(name):
+        key = f"type_plugins.{name}" if name in schema["type_plugins"]["properties"] else name
+        node = {"properties": schema}
+        for part in key.split("."):
+            node = node.get("properties", {}).get(part, {})
+        return f"{key}.enabled", node.get("properties", {}).get("enabled", {}).get("default", True)
+    def demo(name):
+        places = {ex: next((r.get("places", 0) for r in rs if r["name"] == name), 0) for ex, rs in plugged.items()}
+        best = max(places, key=places.get, default=None)
+        return best if best and places[best] else None
+    out = []
+    for r in records:
+        if not out or out[-1]["name"] != r["category"]:
+            out.append({"name": r["category"], "about": r.get("purpose") or "", "plugins": []})
+        key, default = switch(r["name"])
+        out[-1]["plugins"].append({"name": r["name"], "about": r["about"], "types": r["types"], "features": r["features"],
+                                   "key": key, "default": default, "docs": docs(r["name"]), "demo": demo(r["name"])})
     return out
 
 

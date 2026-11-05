@@ -854,6 +854,15 @@ async function browser() {
       check('the clock setting changes \\the\\year', year, await js(`return document.getElementById('typeset-body').textContent.slice(0, 120)`));
       await js(`document.getElementById('cfg-open').click(); document.getElementById('cfg-reset').click(); document.getElementById('play-config').close()`);
       });
+      await section('plugin tiles', async () => {
+      // the Plugins tab: a tile per category of type plugins, each plugin with its switch, which reaches the settings
+      await js(`document.getElementById('cfg-open').click(); document.querySelector('#cfg-tabs [data-tab=plugins]').click()`);
+      const tiles = await until(`return document.querySelectorAll('#cfg-list .pt-tile').length > 1 && !!document.querySelector('#cfg-list .pt-tile [data-cfg="type_plugins.image.enabled"]')`, 30000);
+      check('the Plugins tab shows a tile per category with switches', tiles, JSON.stringify(await js(`return [...document.querySelectorAll('#cfg-list .pt-tile h3')].map((h) => h.textContent)`)));
+      await js(`const i = document.querySelector('#cfg-list [data-cfg="type_plugins.image.enabled"]'); i.checked = false; i.dispatchEvent(new Event('change', { bubbles: true }))`);
+      check('a tile switch turns its plugin off', await until(`return JSON.parse(localStorage.getItem('satex-config') ?? '{}')['type_plugins.image.enabled'] === false`, 30000));
+      await js(`document.getElementById('cfg-reset').click(); document.getElementById('play-config').close()`);
+      });
       await section('pdflinks', async () => {
       // the compiled PDF's links (only with the compile server of `cargo playground`): areas over the pages,
       // an internal one scrolls to its target and moves the editor there, Back returns, a URL opens a new tab
