@@ -707,6 +707,41 @@ fn hex_of_two_wide_random_numbers_raises_nothing() {
     assert!(caused.is_empty(), "{caused:?}");
 }
 
+/// `<id>/doc/<main>` with `<id>/lib` searched for packages: library code
+/// outside the project.
+fn analyze_with_library(id: &str, main: &str) -> Option<Analysis> {
+    if !installed() {
+        return None;
+    }
+    let root = dir(id).join("doc");
+    let path = root.join(main);
+    let mut cfg = crate::support::discover(&root);
+    cfg.search_paths = vec![dir(id).join("lib")];
+    cfg.cache.dir = Some(crate::support::scratch_dir(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch").join(format!("documents-{id}")),
+    ));
+    crate::support::seed_kernel(&cfg);
+    Some(Machine::analyze(&std::fs::read_to_string(&path).expect("fixture source"), Some(&path), &cfg))
+}
+
+/// A library `\edef` left open on one arm of a random choice reads to the
+/// end of an `\input` file, as TeX does on that run: the scan's end is
+/// reported, and the text after the `\input` is read on every path.
+#[test]
+fn library_body_past_the_end_of_an_input_is_reported() {
+    let Some(a) = analyze_with_library("library_body_past_input_end", "mwe.tex") else { return };
+    assert!(defined(&a, "SatexReachedEnd") && defined(&a, "AfterInput"));
+    assert!(count(&a, "file-ended") > 0);
+}
+
+/// The document's own call of a library macro that misses its delimiter
+/// runs away on one arm: the document's error, kept and reported.
+#[test]
+fn document_call_past_the_end_of_the_file_stays_an_error() {
+    let Some(a) = analyze_with_library("library_body_past_input_end", "delim.tex") else { return };
+    assert_eq!(count(&a, "runaway-argument"), 1);
+}
+
 /// pgfmath parses a result of unknown width again: no false error.
 #[test]
 fn reparsing_a_pgfmath_result_of_unknown_width_raises_nothing() {

@@ -1,0 +1,7 @@
+\documentclass{article}
+\usepackage{zzlib}
+\begin{document}
+% The document's own call misses its delimiter on one arm: its error.
+\ifodd\pdfuniformdeviate 2 \expandafter\zzdelim\fi
+Text.
+\end{document}

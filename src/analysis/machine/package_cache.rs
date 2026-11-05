@@ -1591,6 +1591,7 @@ impl Machine<'_> {
             scan_fuzzy: _,
             delimiter_met: _,
             arm_assumed: _,
+            read_at: _,
             unknown_chars: _,
             cds,
             conds,

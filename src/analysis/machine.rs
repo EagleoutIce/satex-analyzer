@@ -1677,9 +1677,10 @@ pub struct Machine<'a> {
     /// Where the run last read further into the source than before.
     region: Region,
     guard: LineGuard,
-    /// Rust-level scans in flight: the live input depth each began at, and
-    /// whether a cut since dropped the text it began in.
-    scan_starts: Vec<(usize, bool)>,
+    /// Rust-level scans in flight: the live input depth each began at,
+    /// whether a cut since dropped the text it began in, and the token
+    /// read last as it began ([`Machine::read_at`]).
+    scan_starts: Vec<(usize, bool, Span)>,
     /// A cut dropped the text a scan in flight began in: every reader but
     /// the main loop finds the input ended until it reads the file again.
     scan_cut: bool,
@@ -1705,6 +1706,9 @@ pub struct Machine<'a> {
     /// `\noexpand` marker (`frozen_dont_expand`), which the gullet then treats
     /// as `\relax` with `no_expand_flag`, however it is defined.
     pub(crate) noexpanded: Option<Token>,
+    /// Where the token read last stands: what a scan beginning now was
+    /// opened by ([`Machine::scan_begin`]).
+    read_at: Span,
     /// LuaTeX's `\lastnamedcs`: the name the last `\csname`,
     /// `\begincsname` or `\ifcsname` built.
     pub(crate) last_named_cs: Option<Sym>,
@@ -2089,7 +2093,7 @@ struct PathState {
     job_ended: bool,
     /// The path's own scans in flight ([`Machine::scan_begin`]): a cut on
     /// one path ends no other path's scan.
-    scan_starts: Vec<(usize, bool)>,
+    scan_starts: Vec<(usize, bool, Span)>,
 }
 
 /// Where a path stands in the input, for telling when two paths meet: a
@@ -2548,6 +2552,7 @@ impl<'a> Machine<'a> {
             align_state: 0,
             cell_base: None,
             noexpanded: None,
+            read_at: Span::default(),
             last_named_cs: None,
             name_slot: None,
             font_watch: FontWatch::default(),
@@ -4462,6 +4467,9 @@ will look undefined",
 
     fn read_token(&mut self, across_files: bool) -> Option<Token> {
         let t = self.take_token(across_files);
+        if let Some(t) = t {
+            self.read_at = t.span;
+        }
         if self.out.timings.is_enabled()
             && let Some(t) = t
             && self.last_file.is_some()
@@ -4746,6 +4754,14 @@ will look undefined",
         }
         self.scratch.skip_ended = self.scanner == Scanner::Skipping;
         let span = file.map_or_else(|| self.position_span(), |f| Span::new(f, 0, 0));
+        // A scan library code opened ran to the end of the document's file:
+        // TeX stops with an error there (§ 338), a fault of library code.
+        let opener = self.scan_starts.last().map(|s| s.2);
+        if let Some(opener) = opener.filter(|o| !self.own_file(o.file))
+            && file.is_some_and(|f| self.own_file(f))
+        {
+            self.library_runaway(&format!("File ended while scanning {what}"), opener);
+        }
         self.diagnose(
             Severity::Warning,
             "file-ended",
@@ -7089,13 +7105,7 @@ will look undefined",
     /// read on. Where no path goes on without an error, the dropped ones run
     /// on and TeX's recovery applies ([`Machine::settle`]).
     pub(crate) fn certain_error(&mut self, text: &str, exact: bool, span: Span) {
-        if self.cfg.compiles()
-            && self.probe.is_none()
-            && !self.halted
-            && !self.reading_format()
-            && !self.keep_errors
-            && self.dropping.is_none()
-        {
+        if !self.halted && !self.reading_format() && self.dropping.is_none() && self.may_refute(span) {
             let certain = exact
                 || (self.scratch.approximations == self.scratch.approximations_at_command
                     && !self.approximated
@@ -7106,7 +7116,7 @@ will look undefined",
             // certain: it is the one to report and fix. So is a certain one
             // library code raises while the document is read. Only library
             // code is assumed to compile.
-            if self.own_file(span.file) || (certain && !self.reading_library()) {
+            if certain && !self.reading_library() {
                 return;
             }
             self.dropping_possible = !certain;
@@ -7786,8 +7796,39 @@ will look undefined",
     /// A scan begins: where the input stands, read levels not counted.
     pub(crate) fn scan_begin(&mut self) -> usize {
         let n = self.live_levels();
-        self.scan_starts.push((n, false));
+        self.scan_starts.push((n, false, self.read_at));
         self.scan_starts.len() - 1
+    }
+
+    /// `analysis.assume_compiles` judges a fault opened at `opener`: only
+    /// library code is assumed to compile, never the document's own text.
+    fn may_refute(&mut self, opener: Span) -> bool {
+        self.cfg.compiles() && self.probe.is_none() && !self.keep_errors && !self.own_file(opener.file)
+    }
+
+    /// A fault library code opened at `opener` (a scan that runs away) on
+    /// an arm over unknown text: under `analysis.assume_compiles` the arm is
+    /// refuted, whatever error it raised before. It is dropped while another
+    /// path goes on, kept with TeX's recovery if it is the last, and each drop
+    /// is reported (`assumed-compiles`). Whether so.
+    fn refute_library_fault(&mut self, text: &str, opener: Span) -> bool {
+        let refuted = self.may_refute(opener) && self.took_unknown_arm();
+        if refuted {
+            self.dropping = Some(text.to_string());
+            self.dropping_possible = false;
+            self.dropping_breaks = true;
+        }
+        refuted
+    }
+
+    /// A scan library code opened at `at` ran to the end of the document's
+    /// file: refuted on an arm over unknown text, else a possible library
+    /// error [`Machine::certain_error`] judges.
+    fn library_runaway(&mut self, text: &str, at: Span) {
+        if !self.refute_library_fault(text, at) {
+            self.certain_error(text, false, at);
+            self.dropping_breaks |= self.dropping_possible;
+        }
     }
 
     /// The input levels, read levels not counted.
@@ -9557,9 +9598,9 @@ will look undefined",
                 .collect();
             watch.bound(sym, &arguments, &delimited);
         }
-        // tex.web §§ 395-396: the document compiles, so a runaway after a
-        // scan took unknown text to hold no delimiter refutes that arm; the
-        // other arm ended the argument in that text.
+        // tex.web §§ 395-396: a runaway after a scan took unknown text to hold
+        // no delimiter refutes that arm, satex's own split: the other arm ended
+        // the argument in that text.
         if self.runaway != Runaway::No
             && std::mem::take(&mut self.arm_assumed)
             && self.cfg.compiles()
@@ -9569,18 +9610,9 @@ will look undefined",
             self.no_arm();
             return;
         }
-        // A runaway on an arm over unknown text: under analysis.assume_compiles the
-        // path is dropped while another arm goes on, kept if it is the last.
-        if self.runaway != Runaway::No
-            && self.cfg.compiles()
-            && self.probe.is_none()
-            && !self.keep_errors
-            && self.took_unknown_arm()
-        {
-            // The arm is refuted, whatever error the scan raised on it before.
+        if self.runaway != Runaway::No {
             let text = format!("Paragraph ended before \\{} was complete", self.name(sym));
-            self.dropping = Some(text);
-            self.dropping_possible = false;
+            self.refute_library_fault(&text, span);
         }
         let runaway = std::mem::take(&mut self.runaway);
         if runaway != Runaway::No {

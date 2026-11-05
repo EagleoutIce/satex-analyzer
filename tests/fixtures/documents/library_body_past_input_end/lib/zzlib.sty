@@ -1,0 +1,9 @@
+\ProvidesPackage{zzlib}
+% An \edef whose `{` is left open (the `\iffalse}\fi` trick): its body reads
+% on to the end of the file the call stands in.
+\def\zzopen{\expandafter\edef\expandafter\zzx\expandafter{\iffalse}\fi}
+% Opened on one arm of a random choice: a run TeX may make, so its error
+% is the document's to see, not a refuted path.
+\def\zzlib{\ifodd\pdfuniformdeviate 2 \expandafter\zzopen\fi}
+% A delimited argument: a call without its `\zzend` runs away.
+\long\def\zzdelim#1\zzend{}
