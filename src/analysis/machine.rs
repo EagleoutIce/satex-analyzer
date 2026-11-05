@@ -7100,6 +7100,9 @@ will look undefined",
             return false;
         }
         let command = std::mem::take(&mut self.command_level);
+        if command && (self.package_capture.is_some() || !self.suspended.is_empty()) {
+            self.unpeek_line();
+        }
         if command && self.package_capture.is_some() {
             self.maybe_checkpoint();
         } else if command && !self.suspended.is_empty() {

@@ -991,6 +991,7 @@ A package is cached per **read set**: the meanings, registers, hooks, options an
 - **Rejected** when a file it read changed, a name now resolves to another file, or the state disagrees. `-v` says why. `satex summary` shows `cached`, `stored`, `stale: …`.
 - **Not cached**: loads under a conditional or in a group, or that ran out of budget or left a group open.
 - **Nested loads** have their own entries. The outer one resumes at the next line at rest.
+- **Lookaheads** that read a line ahead (`\@ifnextchar` after `\RequirePackage`, beamer's `\mode`) give it back to the file. That line then starts at rest too.
 - **Steps** stay what reading would take: `--stats-json` gives `served_steps`, the part replayed, beside `steps`.
 - **Size**: a text a segment grew or edited is stored as the change to the text it began with. A replay checks that text by digest first. A site defined again in one segment keeps one fact.
 - **`satex cache build`** prepares the kernel and `cache.index.packages` (or named packages) for `cache.index.engines`, in parallel on `limits.threads`. It reports progress per package and only rebuilds stale ones (`--refresh` forces).

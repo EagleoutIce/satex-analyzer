@@ -1814,6 +1814,53 @@ impl Machine<'_> {
         }
     }
 
+    /// The recorded file under nothing but lists read to their end and
+    /// what a lookahead gave back of its line (`\mode<presentation>` peeks
+    /// at the next one): the lists are dropped as the next read drops them,
+    /// and the tokens given back to the line, when the mouth at its start
+    /// reads them and ends where it stands. The line then starts at rest.
+    /// Neutral: any run reads the same, recording or not.
+    pub(super) fn unpeek_line(&mut self) {
+        let Some(file) = self.package_capture.as_ref().map(|rec| rec.file).or(self.suspended.last().map(|l| l.file))
+        else {
+            return;
+        };
+        let Some(live) = self.input.iter().rposition(|f| super::explore::place(f).is_some()) else { return };
+        let at = |i: usize| self.input.get(i);
+        let keep = match (at(live), live.checked_sub(1).and_then(at)) {
+            (Some(Frame::File { mouth, .. }), _) if mouth.file == file => live + 1,
+            (Some(Frame::Returned(_)), Some(Frame::File { mouth, .. })) if mouth.file == file => live + 1,
+            _ => return,
+        };
+        while self.input.len() > keep {
+            if !self.call_recs.is_empty() {
+                self.end_call_recs();
+                if matches!(self.input.last(), Some(Frame::File { .. } | Frame::Pseudo { .. })) {
+                    self.leak_call_recs();
+                }
+            }
+            self.end_input_frame();
+        }
+        let below = self.input.len().wrapping_sub(2);
+        let (Some(Frame::File { mouth, .. }), Some(Frame::Returned(back))) =
+            (self.input.get(below), self.input.get(below + 1))
+        else {
+            return;
+        };
+        let toks: Vec<Token> = back.iter().rev().copied().collect();
+        // Only tokens a read counts as the file's: read again they are, too.
+        if !toks.iter().all(|t| self.recent_file_spans.contains(&t.span)) {
+            return;
+        }
+        let Some(start) = mouth.unpeeked(&toks, &self.catcodes, &mut self.out.interner, self.end_line) else { return };
+        self.source_progress = self.source_progress.saturating_sub(toks.len() as u64);
+        self.recent_file_spans.retain(|s| toks.iter().all(|t| t.span != *s));
+        self.pop_frame();
+        if let Some(Frame::File { mouth, .. }) = self.input.last_mut() {
+            mouth.rewind(start);
+        }
+    }
+
     /// A suspended load's file at the start of a line, at rest: replay
     /// what follows from its cache, else record it.
     pub(super) fn maybe_resume(&mut self) {

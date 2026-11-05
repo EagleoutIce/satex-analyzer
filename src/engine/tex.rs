@@ -1487,6 +1487,48 @@ impl Mouth {
         self.force_eof = mark.force_eof;
     }
 
+    /// Where a lookahead that gave back `toks` (in reading order) left this
+    /// mouth as if it stood at the start of their line: read from there
+    /// under `cats`, it reads them and stands as it stands now.
+    pub fn unpeeked(
+        &self,
+        toks: &[Token],
+        cats: &CatcodeTable,
+        it: &mut Interner,
+        end: EndLineChar,
+    ) -> Option<LineMark> {
+        let line = toks.first().filter(|t| t.span.file == self.file && self.force_eof.is_none())?.span.line;
+        let back = self.line.checked_sub(line)? as usize;
+        let newlines = self.src[..self.pos.min(self.src.len())].iter().enumerate().rev().filter(|(_, c)| **c == '\n');
+        let pos = match newlines.map(|(i, _)| i + 1).nth(back) {
+            Some(pos) => pos,
+            None if line == 1 => 0,
+            None => return None,
+        };
+        let mark = LineMark { pos, line, col: 1, force_eof: None, ended: false };
+        let mut again = Mouth { directives: Vec::new(), ..self.clone() };
+        again.rewind(mark);
+        for t in toks {
+            let read = again.next_with(cats, it, end)?;
+            if (read.tok, read.span) != (t.tok, t.span) {
+                return None;
+            }
+        }
+        let flags = (again.last_unknown, again.undecided, again.written, again.digit);
+        ((again.pos, again.line, again.col, again.state, again.line_end)
+            == (self.pos, self.line, self.col, self.state, self.line_end)
+            && flags == (None, None, None, None)
+            && again.directives.is_empty())
+        .then_some(mark)
+    }
+
+    /// This mouth standing at `mark` to read its line again: what it read
+    /// of the line so far is read anew.
+    pub fn rewind(&mut self, mark: LineMark) {
+        self.reading = LineRead::default();
+        (self.pos, self.line, self.col, self.force_eof) = (mark.pos, mark.line, mark.col, mark.force_eof);
+    }
+
     /// This mouth reading what `fresh` reads, which begins with what this
     /// one has read so far; else the line where it differs first.
     pub fn retext(&self, fresh: &Mouth) -> Result<Self, u32> {

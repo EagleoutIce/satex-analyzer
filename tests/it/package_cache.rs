@@ -337,18 +337,22 @@ fn tagpdf_replays_whole_and_reports_the_same() {
 }
 
 /// Runs 2 and 3 of `document` on one cache rebuild nothing: every key a
-/// cache entry has is what the next run sees again.
-fn rebuilds_nothing_warm(name: &str, document: &str) {
+/// cache entry has is what the next run sees again. The project and run 3.
+fn rebuilds_nothing_warm(name: &str, document: &str) -> Option<(PathBuf, Analysis)> {
     if !installed() {
-        return;
+        return None;
     }
     let dir = project(name);
     run(&dir, document);
+    let mut last = None;
     for warm in [2, 3] {
-        let report = run(&dir, document).cache_report();
+        let analysis = run(&dir, document);
+        let report = analysis.cache_report();
         let rebuilt: Vec<_> = report.iter().filter(|l| l.contains("rebuilt")).collect();
         assert!(rebuilt.is_empty(), "run {warm}: {rebuilt:?}");
+        last = Some(analysis);
     }
+    Some((dir, last?))
 }
 
 #[test]
@@ -359,14 +363,50 @@ fn document_metadata_rebuilds_nothing_warm() {
     );
 }
 
-/// Red: `\mode<presentation>` reads beamerthemedefault ahead, so no line
-/// of it is at rest and it is never stored.
+/// beamer's `\mode<presentation>` reads its theme files ahead: they are
+/// stored all the same.
 #[test]
 fn beamer_rebuilds_nothing_warm() {
-    rebuilds_nothing_warm(
-        "warm-beamer",
-        "\\documentclass{beamer}\\begin{document}\\begin{frame}x\\end{frame}\\end{document}\n",
+    rebuilds_nothing_warm("warm-beamer", BEAMER);
+}
+
+const BEAMER: &str = "\\documentclass{beamer}\\begin{document}\\begin{frame}x\\end{frame}\\end{document}\n";
+
+/// Red: the replay decides hyperref's `\ifnum\lastnodetype=1` in
+/// `\Hy@SaveLastskip` (1 arm), a read leaves it undecided (2 arms). Not the
+/// theme files: the same before they were stored.
+#[test]
+fn beamer_replays_what_reading_it_reports() {
+    if let Some((dir, replayed)) = rebuilds_nothing_warm("replay-beamer", BEAMER) {
+        assert_eq!(differing_facts(&run_cold(&dir, BEAMER), &replayed), Vec::<String>::new());
+    }
+}
+
+/// Lines a lookahead reads ahead, as beamer's `\mode` does (the last one of
+/// a package it loads too), start at rest once the tokens are given back:
+/// the package is stored, and its replay reports what reading it did.
+#[test]
+fn a_package_read_ahead_by_a_lookahead_is_stored_and_replays_the_same() {
+    if !installed() {
+        return;
+    }
+    let dir = project("lookahead");
+    let mode = "\\def\\peekmode{\\@ifstar\\relax\\peekat}\\def\\peekat<#1>{\\@ifnextchar\\bgroup\\@firstofone\\relax}";
+    let peeky = format!(
+        "\\ProvidesPackage{{peeky}}\n{mode}\n\\peekmode<a>\n\n\\def\\peekx{{x}}\n\\RequirePackage{{peekin}}\n\n\
+         \\def\\peeky{{\\peekx\\peekz}}\n\\peekmode\n<b>\n"
     );
+    std::fs::write(dir.join("peeky.sty"), peeky).expect("peeky.sty");
+    std::fs::write(dir.join("peekin.sty"), "\\ProvidesPackage{peekin}\n\\def\\peekz{z}\n\\peekmode\n<c>\n")
+        .expect("peekin.sty");
+    let document = "\\documentclass{article}\n\\usepackage{peeky}\n\\begin{document}\\peeky\\end{document}\n";
+    let read = run(&dir, document);
+    let replayed = run(&dir, document);
+    let report = replayed.cache_report();
+    assert!(!report.iter().any(|l| l.contains("peek") && l.contains("rebuilt")), "{report:?}");
+    assert_eq!(served(&replayed, "peeky"), Some(true), "{:?}", replayed.package_caches);
+    assert_eq!(differing_facts(&read, &replayed), Vec::<String>::new());
+    same_facts(&read, &replayed);
 }
 
 #[test]
