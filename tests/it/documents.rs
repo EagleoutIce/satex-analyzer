@@ -543,6 +543,15 @@ fn inline_list_in_a_framed_node_stays_known() {
     assert!(a.peak_paths <= 2, "{} paths", a.peak_paths);
 }
 
+/// Two nodes of text width with siunitx quantities and words whose
+/// ligatures the hyphenating pass breaks by their letters (tex.web § 898):
+/// the paragraphs keep their height, no path parts on the anchors.
+#[test]
+fn ligature_words_in_framed_nodes_stay_known() {
+    let Some(a) = check("ligature_words_in_framed_nodes", "main.tex", &[]) else { return };
+    assert!(a.peak_paths <= 2, "{} paths", a.peak_paths);
+}
+
 /// The same with sub- and superscripts, nested and in pairs: the formulas
 /// are rigid, so their paragraphs keep their height (tex.web §§ 756-759).
 #[test]

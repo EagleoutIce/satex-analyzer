@@ -516,7 +516,7 @@ impl Machine<'_> {
                             quantity: crate::engine::value::Quantity::Int,
                             num: crate::engine::value::Num::range(0, 7),
                         },
-                        |lig| Value::Int(if lig { 7 } else { 0 }),
+                        |lig| Value::Int(if lig != 0 { 7 } else { 0 }),
                     )),
                     crate::engine::mode::Last::Glue(..) => int(11),
                     crate::engine::mode::Last::Kern(_) => int(12),

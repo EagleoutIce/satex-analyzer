@@ -1,0 +1,36 @@
+% Two nodes of text width framed by a fit node, their text with siunitx
+% quantities and words with ligatures ("fl", "ff", "ffi") that only the
+% hyphenating pass breaks: the paragraphs break as TeX breaks them, so
+% the anchors and the fit stay known and no paths part on them.
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{tgpagella}
+\usepackage{xfp}
+\usepackage{siunitx}
+\usepackage{tikz}
+\usetikzlibrary{positioning,fit,backgrounds,calc}
+\def\share#1#2{\qty{\fpeval{round(#1*100/#2,2)}}{\percent}}
+\NewDocumentEnvironment{answers}{+m +m +b}{\bigskip\begin{tikzpicture}[node distance=\baselineskip-5pt]
+  \node[inner sep=0pt,text width=\textwidth,align=justify] (B) {#2};
+  \node[inner sep=0pt,above=of B.north west,anchor=south west] (Q) {\emph{#1}};
+  \node[inner sep=0pt,below=of B.south west,yshift=-1cm,anchor=north west,text width=\textwidth,align=justify] (B2) {#3};
+  \coordinate (M1) at ($(B.south west)!0.5!(B2.north west)$);
+  \coordinate (M2) at ($(B.south east)!0.5!(B2.north east)$);
+  \draw[dashed] (M1) -- (M2);
+  \node[rounded corners=1mm,inner sep=3mm,fill=lightgray!20,fit=(Q)(B)(B2),on background layer] (F) {};
+\end{tikzpicture}}{}
+\begin{document}
+\begin{answers}{How do the results differ?}{
+  The typical scores of the first and the second kind lie at \qty{73.48}{\percent} and
+  \qty{44.09}{\percent}, respectively. The typical item has an effective score that is
+  \qty{19.53}{\percent} (mean: \qty{23.43}{\percent}) lower than its first score.}
+  The effect on the user's machine is primarily driven by \emph{flowr}. Computing the
+  sufficient scores took \qty{85.46}{\second} for the typical item and
+  \qty{35.01}{\minute} on average. \qty{33.78}{\minute} (\share{33.78}{35.01}) of the
+  average time were spent only on the different offices. Looking at the typical item,
+  and thus ignoring outliers, the share of the total time shrinks down to
+  \qty{20.48}{\second} (\share{20.48}{85.46}), with the official staff weighting in at
+  the second place with \qty{14.19}{\second} (\share{14.19}{85.46}).
+\end{answers}
+\gdef\SatexReachedEnd{}
+\end{document}

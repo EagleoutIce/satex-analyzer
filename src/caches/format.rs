@@ -12,9 +12,9 @@ use crate::engine::tex::{Interner, Meaning, Span, Sym};
 use crate::engine::value::Value;
 
 /// Cache version: different encodings get different files.
-const ENCODING_VERSION: u32 = 6;
+const ENCODING_VERSION: u32 = 7;
 /// The encoding of the package caches, versioned apart from the kernel's.
-pub(crate) const PACKAGE_ENCODING_VERSION: u32 = 9;
+pub(crate) const PACKAGE_ENCODING_VERSION: u32 = 10;
 
 /// What a cache means, bumped by hand whenever the interpreter would
 /// analyse a cached file differently. Caches are keyed on it, not on the

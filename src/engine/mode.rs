@@ -470,8 +470,9 @@ pub struct Natural {
     /// A horizontal list's space factor (tex.web § 212), where known.
     pub space_factor: Option<i64>,
     /// Whether the character node `tail[0]` is a ligature (tex.web § 143),
-    /// where known: `\lastnodetype` tells the two apart.
-    pub ligature: Option<bool>,
+    /// where known: `\lastnodetype` tells the two apart. A ligature's
+    /// letters, packed as [`crate::engine::linebreak::Kp::Box`]'s `lig`.
+    pub ligature: Option<u32>,
     /// A `\noboundary` came: the word it ends, or the one it starts, meets
     /// no boundary character (tex.web §§ 1030, 1038).
     pub no_boundary: bool,
@@ -1248,7 +1249,7 @@ impl Machine<'_> {
                 h: 0,
                 d: 0,
                 chr: None,
-                lig: false,
+                lig: 0,
             }));
         }
         // tex.web § 1091.
@@ -4154,7 +4155,7 @@ impl Machine<'_> {
                 h: b[1],
                 d: b[2],
                 chr: None,
-                lig: false,
+                lig: 0,
             })),
             // § 668: a running width adds nothing to a vertical list.
             Item::Rule { width, height, depth } => {
@@ -4164,7 +4165,7 @@ impl Machine<'_> {
                     h,
                     d,
                     chr: None,
-                    lig: false,
+                    lig: 0,
                 }))
             }
             _ => Some(None),
@@ -4811,14 +4812,20 @@ impl Machine<'_> {
             Some(crate::engine::tfm::LigKern::Lig { op: 0, char }) if !within && metrics.has_char(char) => {
                 n.pending = Some((font, char));
                 n.pushed(Last::Char(None));
-                n.ligature = Some(true);
+                n.ligature = Some(crate::engine::linebreak::lig_letter(crate::engine::linebreak::LIG_NONE, c));
             }
             // The ligature takes the place of the character before it, so
             // the tail is still the one node.
             Some(crate::engine::tfm::LigKern::Lig { op: 0, char }) if metrics.has_char(char) => {
+                use crate::engine::linebreak::{LIG_NONE, LIG_OPEN, lig_letter};
+                let left = n.pending.map_or(0, |(_, l)| l);
+                let had = match n.ligature {
+                    Some(0) => lig_letter(LIG_NONE, left),
+                    l => l.unwrap_or(LIG_OPEN),
+                };
                 n.pending = Some((font, char));
                 n.tail[0] = Last::Char(None);
-                n.ligature = Some(true);
+                n.ligature = Some(lig_letter(had, c));
             }
             // The other ligature operations keep or repeat characters. The
             // size of what they leave is not followed.
@@ -4841,7 +4848,7 @@ impl Machine<'_> {
                 }
                 n.pending = Some((font, c));
                 n.pushed(Last::Char(None));
-                n.ligature = Some(false);
+                n.ligature = Some(0);
             }
         }
         n.space_factor = self.space_factor_after(c, n.space_factor);
@@ -4911,7 +4918,7 @@ impl Machine<'_> {
         };
         n.character([w, h, d].map(Dim::exact));
         n.pushed(tail);
-        (n.pending, n.ligature, n.space_factor) = (None, Some(false), Some(1000));
+        (n.pending, n.ligature, n.space_factor) = (None, Some(0), Some(1000));
         self.natural = Some(n);
     }
 
@@ -5763,7 +5770,7 @@ impl Machine<'_> {
         match self.font_metrics(font).zip(size).and_then(|(m, z)| m.char_box(c, z)) {
             Some(b) => {
                 n.character([b.width, b.height, b.depth].map(Dim::exact));
-                let lig = n.ligature != Some(false);
+                let lig = n.ligature.unwrap_or(crate::engine::linebreak::LIG_OPEN);
                 self.kp_push(
                     &mut n.para.items,
                     crate::engine::linebreak::Kp::Box {
@@ -5777,7 +5784,7 @@ impl Machine<'_> {
                 // tex.web § 1039: an empty discretionary follows `\hyphenchar`.
                 match self.font_field(font, "hyphenchar") {
                     Value::Int(h) if h == i64::from(c) => {
-                        self.kp_push(&mut n.para.items, crate::engine::linebreak::Kp::Disc(None, 0))
+                        self.kp_push(&mut n.para.items, crate::engine::linebreak::Kp::Disc(None, 0, None))
                     }
                     Value::Int(_) => {}
                     _ => n.para.items = None,

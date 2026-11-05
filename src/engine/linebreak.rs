@@ -13,14 +13,14 @@ use std::rc::Rc;
 /// One item of a paragraph's horizontal list, as `line_break` reads it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Kp {
-    /// A box, rule or character (`chr`: font and code; `lig`: may be a
-    /// ligature).
+    /// A box, rule or character (`chr`: font and code; `lig`: a
+    /// ligature's letters, see [`lig_letter`]).
     Box {
         w: Scaled,
         h: Scaled,
         d: Scaled,
         chr: Option<(u32, u32)>,
-        lig: bool,
+        lig: u32,
     },
     /// Width, stretch and shrink, each with its order.
     Glue {
@@ -37,10 +37,10 @@ pub enum Kp {
     },
     Penalty(i64),
     Whatsit,
-    /// A discretionary with an empty post-break list, this pre-break box
-    /// (none after a `\hyphenchar`, § 1039) and this many items after it
-    /// as its replacement (§ 145 `replace_count`).
-    Disc(Option<Dims>, u8),
+    /// A discretionary with this pre-break box (none after a
+    /// `\hyphenchar`, § 1039), this many items after it as its replacement
+    /// (§ 145 `replace_count`) and this post-break box.
+    Disc(Option<Dims>, u8, Option<Dims>),
     /// A mark of a class, its text by index in [`Arena::texts`] or a
     /// [`VList`]'s texts (§ 141).
     Mark(i64, u32),
@@ -70,9 +70,32 @@ pub(crate) struct Arena {
     pub(crate) texts: Vec<std::rc::Rc<[crate::engine::tex::Token]>>,
 }
 
-/// Longest paragraph segment and largest arena followed.
 /// A box's width, height and depth.
 type Dims = (Scaled, Scaled, Scaled);
+
+/// `Kp::Box`'s `lig` of a character that is no ligature.
+pub(crate) const LIG_NONE: u32 = 0;
+/// A ligature whose letters are not followed.
+pub(crate) const LIG_OPEN: u32 = u32::MAX;
+
+/// Ligature `had` with letter `c` joined on (§ 143 `lig_ptr`): up to three
+/// codes below 256, their count in the top byte.
+pub(crate) fn lig_letter(had: u32, c: u32) -> u32 {
+    let n = had >> 24;
+    if had == LIG_OPEN || n >= 3 || c > 255 {
+        return LIG_OPEN;
+    }
+    (had & 0xff_ffff) | c << (8 * n) | (n + 1) << 24
+}
+
+/// The letters of character `c` with `lig`; `None` where not followed.
+fn letters(c: u32, lig: u32) -> Option<Vec<u32>> {
+    match lig {
+        LIG_NONE => Some(vec![c]),
+        LIG_OPEN => None,
+        l => Some((0..l >> 24).map(|i| l >> (8 * i) & 0xff).collect()),
+    }
+}
 
 pub(crate) const MAX_ITEMS: u32 = 4000;
 const MAX_NODES: usize = 1 << 21;
@@ -231,16 +254,21 @@ impl Machine<'_> {
         (emergency > 0).then(|| third.run(&hyphenated, tol, true)).flatten()
     }
 
-    /// §§ 894-903: the second pass's list, with a discretionary hyphen at
+    /// §§ 894-918: the second pass's list, with a discretionary hyphen at
     /// each hyphenation point of each word after glue. `None` where a word
-    /// is not followed exactly (ligatures, a ligature with the hyphen,
+    /// is not followed exactly (ligatures not followed or with the hyphen,
     /// boundary characters, unknown codes or patterns).
     fn hyphenate(&mut self, items: &[Kp], start: usize, uc: i64) -> Option<Vec<Kp>> {
         let (left, right) = self.hyphen_mins();
         let tables = self.hyph_tables();
         let mut out: Vec<Kp> = items[..start].to_vec();
         let mut points: HashMap<usize, Dims> = HashMap::new();
-        let mut passed: HashMap<usize, (Dims, u8)> = HashMap::new();
+        // Discretionaries before an item: pre-break, replaced items, post-break.
+        let mut passed: HashMap<usize, (Dims, u8, Option<Dims>)> = HashMap::new();
+        let letters_at = |k: Option<&Kp>| match k {
+            Some(&Kp::Box { chr: Some((f, c)), lig, .. }) => Some((f, letters(c, lig))),
+            _ => None,
+        };
         for i in start..items.len() {
             if !matches!(items[i], Kp::Glue { .. }) {
                 continue;
@@ -249,16 +277,14 @@ impl Machine<'_> {
             let mut s = i + 1;
             let (hf, c) = loop {
                 match items.get(s) {
-                    Some(Kp::Box { chr: Some((f, c)), lig, .. }) => {
-                        let lc = self.lc(*c)?;
-                        if lc == 0 && !lig {
+                    k @ Some(Kp::Box { chr: Some(_), .. }) => {
+                        let (f, l) = letters_at(k).expect("a character");
+                        let c = l?[0];
+                        if self.lc(c)? == 0 {
                             s += 1;
                             continue;
                         }
-                        if *lig {
-                            return None;
-                        }
-                        break (*f, *c);
+                        break (f, c);
                     }
                     Some(Kp::Kern { explicit: false, .. } | Kp::Whatsit) => s += 1,
                     _ => break (0, u32::MAX),
@@ -272,22 +298,26 @@ impl Machine<'_> {
                 Value::Int(_) => continue,
                 _ => return None,
             };
-            // § 897: the letters, font kerns between them.
+            // §§ 897-898: the letters, a ligature's all or none, font kerns between them.
             let mut word = Vec::new();
             let mut at = Vec::new();
             let mut e = s;
-            loop {
+            'word: loop {
                 match items.get(e) {
-                    Some(Kp::Box { chr: Some((f, c)), lig, .. }) if *f == hf => {
-                        let lc = self.lc(*c)?;
-                        if lc == 0 || word.len() == 63 {
+                    k @ Some(Kp::Box { chr: Some((f, _)), .. }) if *f == hf => {
+                        let l = letters_at(k).expect("a character").1?;
+                        let mut lcs = Vec::new();
+                        for &c in &l {
+                            match self.lc(c)? {
+                                0 => break 'word,
+                                lc => lcs.push(lc as u32),
+                            }
+                        }
+                        if word.len() + lcs.len() > 63 {
                             break;
                         }
-                        if *lig {
-                            return None;
-                        }
-                        word.push(lc as u32);
-                        at.push(e);
+                        at.extend(std::iter::repeat_n(e, lcs.len()));
+                        word.extend(lcs);
                     }
                     Some(Kp::Kern { explicit: false, .. }) => {}
                     _ => break,
@@ -316,20 +346,44 @@ impl Machine<'_> {
             }
             let b = m.char_box(hyf_char, z)?;
             for j in left..=word.len() - right {
-                if hyf[j] % 2 == 1 {
-                    let k = at[j - 1];
-                    let (
-                        Some(&Kp::Box { w, h, d, chr: Some((_, prev)), .. }),
-                        Some(&Kp::Box { chr: Some((_, next)), .. }),
-                    ) = (items.get(k), items.get(at[j]))
-                    else {
-                        return None;
+                if hyf[j].is_multiple_of(2) {
+                    continue;
+                }
+                let (k, next) = (at[j - 1], at[j]);
+                let Some(&Kp::Box { w, h, d, chr: Some((_, prev)), .. }) = items.get(k) else {
+                    return None;
+                };
+                // § 916: a left boundary program puts its own material
+                // at the start of the post-break text.
+                let first = letters_at(items.get(next)).and_then(|(_, l)| l)?[0];
+                if m.left_boundary(first, z).is_some() {
+                    return None;
+                }
+                let disc = if k == next {
+                    // §§ 913-916, inside ligature `k`: its letters up to the
+                    // point and the hyphen before the break, the rest after
+                    // it, with its kern to the letter that follows.
+                    let l = letters_at(items.get(k)).and_then(|(_, l)| l)?;
+                    let cut = j - at.iter().position(|&x| x == k)?;
+                    let mut pre_letters = l[..cut].to_vec();
+                    pre_letters.push(hyf_char);
+                    let pre = reconstitute(&m, z, &pre_letters)?;
+                    let (kern, follow) = match items.get(k + 1) {
+                        Some(&Kp::Kern { explicit: false, .. }) => (1, items.get(k + 2)),
+                        n => (0, n),
                     };
-                    // § 916: a left boundary program puts its own material
-                    // at the start of the post-break text.
-                    if m.left_boundary(next, z).is_some() {
-                        return None;
+                    let (mut post, last) = reconstitute(&m, z, &l[cut..])?;
+                    match letters_at(follow) {
+                        Some((f, l)) if f == hf => match m.lig_kern(last, l?[0], z) {
+                            None => {}
+                            Some(LigKern::Kern(x)) => post.0 += x,
+                            Some(LigKern::Lig { .. }) => return None,
+                        },
+                        Some(_) => return None,
+                        None => {}
                     }
+                    (pre.0, 1 + kern, Some(post))
+                } else {
                     // § 909: a kern with the hyphen, or one with the next
                     // letter, passes the hyphen at this letter: the
                     // discretionary goes before it and replaces it and its
@@ -341,26 +395,30 @@ impl Machine<'_> {
                         Some(LigKern::Lig { .. }) => return None,
                     };
                     let between = match items.get(k + 1) {
-                        _ if k + 1 == at[j] => None,
-                        Some(&Kp::Kern { w, explicit: false }) if k + 2 == at[j] => Some(w),
+                        _ if k + 1 == next => None,
+                        Some(&Kp::Kern { w, explicit: false }) if k + 2 == next => Some(w),
                         _ => return None,
                     };
                     if with_hyphen.is_none() && between.is_none() {
                         points.insert(k, (b.width, b.height, b.depth));
-                    } else {
-                        let pre = (w + with_hyphen.unwrap_or(0) + b.width, h.max(b.height), d.max(b.depth));
-                        passed.insert(k, (pre, 1 + u8::from(between.is_some())));
+                        continue;
                     }
+                    let pre = (w + with_hyphen.unwrap_or(0) + b.width, h.max(b.height), d.max(b.depth));
+                    (pre, 1 + u8::from(between.is_some()), None)
+                };
+                // Two discretionaries at one item are not followed.
+                if passed.insert(k, disc).is_some() {
+                    return None;
                 }
             }
         }
         for (i, k) in items.iter().enumerate().skip(start) {
-            if let Some(&(pre, r)) = passed.get(&i) {
-                out.push(Kp::Disc(Some(pre), r));
+            if let Some(&(pre, r, post)) = passed.get(&i) {
+                out.push(Kp::Disc(Some(pre), r, post));
             }
             out.push(*k);
             if let Some(&pre) = points.get(&i) {
-                out.push(Kp::Disc(Some(pre), 0));
+                out.push(Kp::Disc(Some(pre), 0, None));
             }
         }
         Some(out)
@@ -369,6 +427,33 @@ impl Machine<'_> {
     fn lc(&mut self, c: u32) -> Option<i64> {
         self.char_code_known(CodeTable::Lower, char::from_u32(c)?)
     }
+}
+
+/// §§ 906-911 `reconstitute`: `letters` set with their ligatures and kerns
+/// (only `=:` ligatures followed), and the last character.
+fn reconstitute(m: &crate::engine::tfm::Metrics, z: Scaled, letters: &[u32]) -> Option<(Dims, u32)> {
+    let mut dims = (0, 0, 0);
+    let mut put = |c: u32, kern: Scaled| {
+        let b = m.char_box(c, z)?;
+        dims = (dims.0 + b.width + kern, dims.1.max(b.height), dims.2.max(b.depth));
+        Some(())
+    };
+    let (&first, rest) = letters.split_first()?;
+    let mut cur = first;
+    for &next in rest {
+        match m.lig_kern(cur, next, z) {
+            None => put(cur, 0)?,
+            Some(LigKern::Kern(x)) => put(cur, x)?,
+            Some(LigKern::Lig { op: 0, char }) => {
+                cur = char;
+                continue;
+            }
+            Some(LigKern::Lig { .. }) => return None,
+        }
+        cur = next;
+    }
+    put(cur, 0)?;
+    Some((dims, cur))
 }
 
 fn add(sums: &mut [i64; 6], k: Kp) {
@@ -382,7 +467,7 @@ fn add(sums: &mut [i64; 6], k: Kp) {
 /// § 869: past a discretionary with a pre-break text, its replacement too.
 fn after_break(items: &[Kp], e: usize) -> usize {
     match items.get(e) {
-        Some(Kp::Disc(Some(_), r)) => e + 1 + usize::from(*r),
+        Some(Kp::Disc(Some(_), r, _)) => e + 1 + usize::from(*r),
         _ => e,
     }
 }
@@ -528,6 +613,8 @@ struct Pass {
 
 struct Active {
     start: usize,
+    /// The post-break text the line starts with (§ 840).
+    post: Option<Dims>,
     fit: u8,
     hyphenated: bool,
     total: i64,
@@ -546,7 +633,8 @@ impl Pass {
         }
         // Break positions: (item, prev passive, pre-break box).
         let mut passive: Vec<(usize, Option<usize>, Option<Dims>)> = Vec::new();
-        let mut active = vec![Active { start: self.start, fit: self.fit0, hyphenated: false, total: 0, passive: None }];
+        let mut active =
+            vec![Active { start: self.start, post: None, fit: self.fit0, hyphenated: false, total: 0, passive: None }];
         let [line_pen, adj, double, fin, hyph, ex] = self.dem;
         for e in self.start..=n {
             let (pi, hyphenated, brk) = match items.get(e) {
@@ -559,7 +647,7 @@ impl Pass {
                     (0, false, None)
                 }
                 Some(Kp::Penalty(p)) if *p < 10000 => ((*p).max(EJECT), false, None),
-                Some(Kp::Disc(b, _)) => (if b.is_some() { hyph } else { ex }, true, *b),
+                Some(Kp::Disc(b, ..)) => (if b.is_some() { hyph } else { ex }, true, *b),
                 _ => continue,
             };
             let mut minimal = [AWFUL; 4];
@@ -575,7 +663,7 @@ impl Pass {
                 for (x, y) in s.iter_mut().zip(self.bg) {
                     *x += y;
                 }
-                s[0] += brk.map_or(0, |b| b.0);
+                s[0] += brk.map_or(0, |b| b.0) + r.post.map_or(0, |p| p.0);
                 let shortfall = self.width - s[0];
                 let (b, fit) = if shortfall > 0 {
                     if s[2] != 0 || s[3] != 0 || s[4] != 0 {
@@ -647,10 +735,16 @@ impl Pass {
             if minimum < AWFUL {
                 let limit = if adj.abs() >= AWFUL - minimum { AWFUL - 1 } else { minimum + adj.abs() };
                 let next = after_break(items, e);
+                // § 840: nothing is discarded after a post-break text.
+                let post = match items.get(e) {
+                    Some(&Kp::Disc(Some(_), _, p)) => p,
+                    _ => None,
+                };
                 for fit in 0..4u8 {
                     if minimal[usize::from(fit)] <= limit {
                         active.push(Active {
-                            start: skip_discardable(items, next),
+                            start: if post.is_some() { next } else { skip_discardable(items, next) },
+                            post,
                             fit,
                             hyphenated,
                             total: minimal[usize::from(fit)],
@@ -685,17 +779,27 @@ impl Pass {
                     q = passive[i].1;
                 }
                 ends.reverse();
-                let mut from = self.start;
+                let (mut from, mut post) = (self.start, None);
                 let lines = ends
                     .into_iter()
                     .map(|(to, brk)| {
-                        let (mut h, mut d) = brk.map_or((0, 0), |b| (b.1.max(0), b.2.max(0)));
+                        let (mut h, mut d) = (0, 0);
+                        for (_, kh, kd) in [brk, post].into_iter().flatten() {
+                            (h, d) = (h.max(kh), d.max(kd));
+                        }
                         for k in &items[from.min(to)..to] {
                             if let Kp::Box { h: kh, d: kd, .. } = k {
                                 (h, d) = (h.max(*kh), d.max(*kd));
                             }
                         }
-                        from = skip_discardable(items, after_break(items, to));
+                        post = match items.get(to) {
+                            Some(&Kp::Disc(Some(_), _, p)) => p,
+                            _ => None,
+                        };
+                        from = after_break(items, to);
+                        if post.is_none() {
+                            from = skip_discardable(items, from);
+                        }
                         (h, d)
                     })
                     .collect();

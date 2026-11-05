@@ -2722,6 +2722,32 @@ fn a_kern_at_a_hyphenation_point_keeps_the_lines_known() {
     }
 }
 
+/// tex.web §§ 898, 903-918: a word's ligatures hyphenate by their letters.
+/// Inside "ff" or "ffi" the discretionary's pre-break text is "f-", its
+/// post-break text the rest, and it replaces the ligature. Values as
+/// `pdflatex` prints; before, "effects" lost its hyphens (a wrong height)
+/// and "flowr" left the paragraph undecided.
+#[test]
+fn a_ligature_in_a_word_hyphenates_by_its_letters() {
+    if !installed() {
+        return;
+    }
+    let src = r"\documentclass{article}
+\begin{document}
+\pretolerance=-1 \tolerance=100 \parfillskip=0pt plus 1fil
+\setbox0\hbox{ef-}\setbox0\vbox{\hsize=\wd0 \parindent0pt \hskip0pt effect\par\xdef\Ma{\the\prevgraf}}
+\setbox0\hbox{suf-}\setbox0\vbox{\hsize=\wd0 \parindent0pt \hskip0pt sufficient\par\xdef\Mb{\the\prevgraf}}
+\setbox0\vbox{\hsize=1pt \tolerance=10000 \hyphenpenalty=0 \parindent0pt \hskip0pt sufficient official\par\xdef\Mc{\the\prevgraf}}
+\setbox0\vbox{\hsize=100pt Different effects of sufficient official offices affect efficient staffing differently.}\xdef\Md{\the\ht0/\the\dp0}
+\setbox0\vbox{\hsize=90pt Some words about finding assertions, driven by \emph{flowr} and the official staff.}\xdef\Me{\the\ht0/\the\dp0}
+\end{document}";
+    let analysis = analyze(src);
+    let want = [("Ma", "2"), ("Mb", "2"), ("Mc", "7"), ("Md", "42.94444pt/1.94444pt"), ("Me", "42.94444pt/0.0pt")];
+    for (name, want) in want {
+        assert_eq!(body(&analysis, name), want, "{name}");
+    }
+}
+
 /// microtype's `\leftprotrusion` after `\item` measures an en dash
 /// ligature first in the item: the margin kern it reads is known, so the
 /// paragraph surely starts there and the characters after it do not each
