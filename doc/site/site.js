@@ -490,6 +490,7 @@
     if (r.syntax) rows.push(['usage', `<code class="usage">${slots(esc(r.syntax))}</code>`]); // a primitive's TeXbook syntax
     else if (r.effective && r.effective !== r.name) rows.push(['usage', `<code class="usage">${usage(r.effective, types).html}</code>`]);
     if (r.types?.length) rows.push(['types', `<span class="chips">${Object.entries(types).map(([n, t]) => `<span class="x-type"><code>#${n.slice(3)}</code> ${tyLink(t)}</span>`).join('')}</span>`]);
+    if (r.tag === 'register' && r.value != null) rows.push(['value', `<code>${esc(r.value)}</code> <span class="muted">when the run ends</span>`]);
     if (r.forms?.length) rows.push(['forms', r.forms.map((f) => `<code>${esc(f)}</code>`).join(' ')]);
     if (primitive) rows.push(['body', 'none: a TeX primitive']);
     else if (r.body != null) rows.push(['body', r.body === '' ? '<span class="muted">empty</span>' : `<pre class="x-body"><code>${tex(r.body, true)}</code></pre>`]);

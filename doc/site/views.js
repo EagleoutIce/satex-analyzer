@@ -1092,6 +1092,12 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
   };
   const known = (v) => (v.interval ? `[${v.interval.join(', ')}]` : v.set ? `{${v.set.join(', ')}}` : v.unknown ? '?' : v.exact ?? v.abstract ?? '');
   const list = (title, items, row) => (items?.length ? `<div class="ds-sec"><b>${title}</b><ul>${items.map((x) => `<li>${row(x)}</li>`).join('')}</ul></div>` : '');
+  /** A `file:line[:col]` as a place that opens (playground.js), with its upstream source as the cards link it (site.js), else as text. */
+  const place = (at) => {
+    const m = /^(.+?):(\d+)(?::\d+)?$/.exec(String(at ?? ''));
+    if (!m) return esc(at);
+    return self.satexCards?.placeLink?.(m[1], +m[2]) ?? `<a class="place" href="#" data-path="${esc(m[1])}" data-line="${m[2]}" title="open ${esc(m[1])} at line ${m[2]}">${esc(at)}</a>`;
+  };
   /** One step's state, each domain a section; `cs` marks up a command name. */
   const stateHtml = (st, cs = esc) => {
     if (!st) return '<p class="muted">No state: the trace ran without dev mode.</p>';
@@ -1101,11 +1107,11 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
       `<td>${b.value ? `<span class="ds-ty">${esc(b.value.type)}</span> ${esc(known(b.value))}` : ''}</td><td>${[b.certain === false && 'uncertain', b.global && 'global'].filter(Boolean).join(', ')}</td></tr>`).join('');
     const cats = Object.entries(st.catcodes ?? {}).map(([c, k]) => `<code class="ds-cat" title="catcode ${k}">${esc(c === ' ' ? '␣' : c)}<sub>${k}</sub></code>`).join('');
     return head +
-      list('choices', st.choices, (c) => `arm ${c.arm + 1} of ${c.arms}: ${cs(c.by)} at ${esc(c.at)}${c.joined ? ' (joined)' : ''}`) +
+      list('choices', st.choices, (c) => `arm ${c.arm + 1} of ${c.arms}: ${cs(c.by)} at ${place(c.at)}${c.joined ? ' (joined)' : ''}`) +
       `<div class="ds-sec"><b>mode</b><span>${esc((st.mode ?? []).join(' | ') || 'unknown')}</span></div>` +
-      list('conditionals', st.conditionals, (c) => `${esc(c.at)} · ${esc(c.limit)}${c.many ? ' · widened' : ''}`) +
-      list('groups', st.groups, (g) => `${esc(g.kind)} at ${esc(g.at)}${g.many ? ' · widened' : ''}`) +
-      list('input', st.input, (f) => (f.file ? `file ${esc(f.file)}` : f.scantokens ? `\\scantokens at ${esc(f.scantokens)}` : f.returned != null ? `${f.returned} tokens given back` : `${f.tokens} tokens${f.expanding ? ` of ${cs(f.expanding)}` : ''}`)) +
+      list('conditionals', st.conditionals, (c) => `${place(c.at)} · ${esc(c.limit)}${c.many ? ' · widened' : ''}`) +
+      list('groups', st.groups, (g) => `${esc(g.kind)} at ${place(g.at)}${g.many ? ' · widened' : ''}`) +
+      list('input', st.input, (f) => (f.file ? `file ${place(f.file)}` : f.scantokens ? `\\scantokens at ${place(f.scantokens)}` : f.returned != null ? `${f.returned} tokens given back` : `${f.tokens} tokens${f.expanding ? ` of ${cs(f.expanding)}` : ''}`)) +
       (rows ? `<div class="ds-sec"><b>bindings</b><table class="ds-bind"><thead><tr><th>name</th><th>meaning</th><th>value</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '') +
       (st.paired?.names?.length ? `<div class="ds-sec"><b>paired by a join</b><span>${st.paired.names.map(cs).join(' ')} · ${st.paired.arms} arms</span></div>` : '') +
       (cats ? `<div class="ds-sec"><b>catcodes ahead</b><span>${cats}</span></div>` : '');

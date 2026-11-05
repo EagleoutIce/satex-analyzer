@@ -6200,6 +6200,15 @@ pub fn explain_at(
             }
         }
         let shown = out.len() - before;
+        // a count register: the value the run ended with (`\c@topnumber` 2), where the run knows it exactly
+        if let Meaning::Register(crate::engine::tex::RegKind::Count, n) = analysis.env.meaning(sym) {
+            let slot = format!("{}count{n}", crate::analysis::machine::REGISTER_PREFIX);
+            if let Some(v) = analysis.interner.lookup(&slot).and_then(|s| analysis.env.slot_value(s)) {
+                for r in &mut out[before..] {
+                    r.insert("value".into(), json!(v));
+                }
+            }
+        }
         if total > shown {
             if let Some(first) = out.get_mut(before) {
                 first.insert("redefined".into(), json!(redefinitions(analysis, sym, total)));

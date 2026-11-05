@@ -1081,22 +1081,18 @@
       widget: '<path d="M3 5h10M3 11h10"/><circle cx="6" cy="5" r="1.5"/><circle cx="10.5" cy="11" r="1.5"/>',
     };
     class WidgetMark extends view.GutterMarker {
-      constructor(items, linted) { super(); this.items = items; this.linted = linted; }
-      eq(o) { return o.linted === this.linted && o.items.length === this.items.length && o.items.every((x, i) => x.key === this.items[i].key); }
+      constructor(items) { super(); this.items = items; }
+      eq(o) { return o.items.length === this.items.length && o.items.every((x, i) => x.key === this.items[i].key); }
       toDOM() {
         const [first] = this.items, more = this.items.length > 1;
         const icon = first.css ? `<span class="cm-wdot" style="background:${first.css}"></span>` : `<svg viewBox="0 0 16 16">${WIDGET_ICON[first.kind] ?? WIDGET_ICON.widget}</svg>`;
-        return Object.assign(document.createElement('span'), { className: 'cm-wmark' + (more ? ' more' : '') + (this.linted ? ' linted' : ''), innerHTML: icon, title: this.items.map((x) => x.title).join('\n') + (more ? '\nclick: choose' : '') });
+        return Object.assign(document.createElement('span'), { className: 'cm-wmark' + (more ? ' more' : ''), innerHTML: icon, title: this.items.map((x) => x.title).join('\n') + (more ? '\nclick: choose' : '') });
       }
     }
     /** The widgets per line: `{kind, title, key, open}` from the lenses and the color swatches. */
-    let widgetMemo = [null, null, null, ''];
+    let widgetMemo = [null, null, null];
     const widgetsOf = (s) => {
-      // the lines with a finding: their widget mark steps aside from the finding's glyph
-      const linted = new Set();
-      lint.forEachDiagnostic(s, (_, from) => linted.add(s.doc.lineAt(from).number));
-      const lintKey = [...linted].join(',');
-      if (widgetMemo[0] === s.field(lensField) && widgetMemo[1] === s.field(swatchField) && widgetMemo[3] === lintKey) return widgetMemo[2];
+      if (widgetMemo[0] === s.field(lensField) && widgetMemo[1] === s.field(swatchField)) return widgetMemo[2];
       const lines = new Map(), add = (pos, item) => { const n = s.doc.lineAt(pos).number; if (!lines.get(n)?.some((x) => x.key === item.key)) lines.set(n, [...lines.get(n) ?? [], item]); };
       s.field(lensField).between(0, s.doc.length, (from, _, d) => {
         const c = d.spec.widget.lens.command, line = d.spec.widget.lens.range.start.line;
@@ -1105,19 +1101,20 @@
         add(from, { kind, title: c.title.replace('…', ''), key: `${kind}:${c.title}`, open: () => c.command === 'satex.openView' ? openViews(c.arguments[1], c.arguments[2]) : openDialog(c.arguments?.[0]?.position ?? { line, character: 0 }) });
       });
       s.field(swatchField).between(0, s.doc.length, (from, _, d) => add(from, { kind: 'color', css: d.spec.widget.css, title: `Pick color ${d.spec.widget.css}`, key: `color:${from}`, open: (v) => openViews(position(v.state.doc, from), 'color') }));
-      const set = st.RangeSet.of([...lines].sort((a, b) => a[0] - b[0]).map(([n, items]) => new WidgetMark(items, linted.has(n)).range(s.doc.line(n).from)));
-      widgetMemo = [s.field(lensField), s.field(swatchField), set, lintKey];
+      const set = st.RangeSet.of([...lines].sort((a, b) => a[0] - b[0]).map(([n, items]) => new WidgetMark(items).range(s.doc.line(n).from)));
+      widgetMemo = [s.field(lensField), s.field(swatchField), set];
       return set;
     };
     const widgetGutter = view.gutter({
       class: 'cm-widgets',
       markers: (v) => widgetsOf(v.state),
-      lineMarkerChange: (u) => u.startState.field(lensField) !== u.state.field(lensField) || u.startState.field(swatchField) !== u.state.field(swatchField) || u.transactions.some((tr) => tr.effects.length),
+      lineMarkerChange: (u) => u.startState.field(lensField) !== u.state.field(lensField) || u.startState.field(swatchField) !== u.state.field(swatchField),
       domEventHandlers: {
         mousedown: (v, line, e) => {
           const items = []; widgetsOf(v.state).between(line.from, line.from, (from, _, m) => { if (from === line.from) items.push(...m.items); });
           if (!items.length || !e.target.closest?.('.cm-wmark')) return false;
-          e.preventDefault();
+          // the window's mousedown closes open menus: the chooser must not see it
+          e.preventDefault(); e.stopPropagation();
           if (items.length === 1) items[0].open(v);
           else showMenu(items.map((x) => [x.title + '…', '', () => x.open(v)]), e.clientX, e.clientY);
           return true;
@@ -1241,7 +1238,7 @@
       text: () => doc().toString(),
       // another file's text starts at its top: the last file's scroll position may lie past its end
       // another file: its text without the last one's undo history (an undo never brings another file's text back)
-      set: (t, readOnly = false) => { ev.dispatch({ effects: [setup.reconfigure([]), lang.reconfigure(/\.bib$/.test(state.file) ? tex.bib : tex.language)] }); ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, selection: { anchor: 0 }, effects: [reset.of(null), lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : [])] }); ev.dispatch({ effects: setup.reconfigure(basicSetup) }); ev.scrollDOM.scrollTop = 0; },
+      set: (t, readOnly = false) => { ev.dispatch({ effects: [setup.reconfigure([]), lang.reconfigure(/\.bib$/.test(state.file) ? tex.bib : tex.language)] }); ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, selection: { anchor: 0 }, effects: [reset.of(null), lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : [])] }); ev.dispatch({ effects: setup.reconfigure(basicSetup) }); ev.scrollDOM.scrollTop = 0; ev.dispatch({ effects: lensSet.of(textLenses(t).map((l) => [doc().line(l.range.start.line + 1).from, l])) }); },
       apply: (edits) => ev.dispatch({ changes: edits.map((e) => { const [from, to] = span(e.range); return { from, to, insert: e.newText }; }) }),
       diagnostics: (ds) => ev.dispatch(lint.setDiagnostics(ev.state, ds.map((d, i) => {
         const [from, to] = span(d.range);
@@ -2232,8 +2229,8 @@
     if (html) explainBody.innerHTML = html;
     else if (!explainBody.querySelector('.hover')) explainBody.innerHTML = `<p class="muted">SaTeX knows no ${escape(name)} here.</p>`;
   }
-  /** Any control-sequence chip (`.cs-ref`, a name chip `a.cs`) shows the name's hover card after a short rest. The records are kept per name. */
-  const CS_CHIP = '.cs-ref, a.cs[data-cs]';
+  /** Any control-sequence chip (`.cs-ref`, a name chip `a.cs`, a hover-only `.cs-tip`) shows the name's hover card after a short rest. The records are kept per name. */
+  const CS_CHIP = '.cs-ref, a.cs[data-cs], .cs-tip[data-cs]';
   let csTimer = 0;
   document.addEventListener('mouseover', (e) => {
     const ref = e.target.closest?.(CS_CHIP);
@@ -3277,6 +3274,8 @@
     box.innerHTML = `<div class="tr-stream-head"><b>input after this step</b><button type="button" class="ghost small tr-legend-btn" aria-expanded="${!!trace.legend}">${trace.legend ? 'fewer catcodes' : 'all catcodes'}</button></div>` +
       `<div class="tr-chips">${put}${toks}<span class="tr-rest">${escape(clip(r.tokens?.length ? fileRest(r) : String(r.ahead ?? '')))}</span></div>` +
       `<div class="tr-legend">${legend}</div>`;
+    // the cards of its names asked at once, in one query: a hover then finds them ready
+    explainMany([...new Set([...box.querySelectorAll('.tr-cs')].map((c) => c.dataset.cs))]);
     if (!cats.size) loadCatNames().then((m) => { if (m.size && !cats.size) { cats = m; if (trace?.cur === i) traceStream(i); } });
   }
   const by = (i, d) => trace.order[Math.max(0, Math.min(trace.order.length - 1, trace.order.indexOf(i) + d))];
@@ -3313,22 +3312,27 @@
     }
     return atStep.get(k);
   }
-  async function tipFor(ref) {
+  /** The card of a name in the trace: what Explain says at once, its meaning at the step once the run stopped there answers. */
+  async function showTip(ref, pin = false) {
     const name = ref.dataset.cs, si = +(ref.closest('[data-step]')?.dataset.step ?? trace?.cur ?? -1), r = trace?.steps[si];
     const label = r ? `at step ${trace.order.includes(si) ? trace.order.indexOf(si) + 1 : `event ${r.index}`}` : '';
-    let head = '', rec = null;
-    if (r?.meanings?.[name] != null) head = `<p class="tr-tip-mean"><b>meaning ${label}</b> <code>${csText(r.meanings[name])}</code></p>`;
-    else if (r) {
-      rec = (await stopped(r, [{ type: 'explain', names: [name] }])).find((x) => x.name === name);
-      head = `<p class="tr-tip-mean"><b>meaning ${label}</b> <code>${rec ? csText(rec.tag === 'macro' && rec.body != null ? `macro:${rec.parameters ?? ''}->${rec.body}` : rec.body ?? rec.effective ?? rec.tag ?? '') : 'undefined'}</code></p>`;
-    }
-    rec ??= (await explainRecords(name)).find((x) => x.name === name);
-    return head + (rec ? cards.explain(rec, true) : '');
-  }
-  async function showTip(ref, pin = false) {
-    const html = await tipFor(ref);
-    if (!pin && (trTip.dataset.pin || !ref.matches(':hover'))) return;
-    tips.card.show(ref, (pin ? '<p class="tr-tip-pin muted">pinned · click outside to close</p>' : '') + (html || `<p class="muted">SaTeX knows no ${escape(ref.dataset.cs)} here.</p>`));
+    const mean = (m) => `<p class="tr-tip-mean"><b>meaning ${label}</b> <code>${m == null ? 'undefined' : csText(m)}</code></p>`;
+    const open = () => pin || (!trTip.dataset.pin && ref.matches(':hover'));
+    const show = (head, rec) => {
+      trTip.ref = ref;
+      tips.card.show(ref, (pin ? '<p class="tr-tip-pin muted">pinned · click outside to close</p>' : '') + (head + (rec ? cards.explain(rec, true) : '') || `<p class="muted">SaTeX knows no ${escape(name)} here.</p>`));
+    };
+    const known = r?.meanings?.[name];
+    const rec = (await explainRecords(name)).find((x) => x.name === name);
+    if (!open()) return;
+    show(known != null ? mean(known) : '', rec);
+    if (known != null || !r) return;
+    // the run stopped at this step: slow, so the card grows when it answers and still points here
+    stopped(r, [{ type: 'explain', names: [name] }]).then((rs) => {
+      const at = rs.find((x) => x.name === name);
+      if (trTip.ref !== ref || trTip.hidden) return;
+      show(mean(at ? (at.tag === 'macro' && at.body != null ? `macro:${at.parameters ?? ''}->${at.body}` : at.body ?? at.effective ?? at.tag ?? '') : null), at ?? rec);
+    });
   }
   traceBox.addEventListener('mouseover', (e) => { const ref = e.target.closest?.('.tr-cs'); if (ref && !trTip.dataset.pin) showTip(ref); });
   traceBox.addEventListener('mouseout', (e) => { if (e.target.closest?.('.tr-cs') && !trTip.dataset.pin) tips.card.hide(150); });
@@ -3509,6 +3513,8 @@
   $('trace-close').onclick = () => traceBox.close();
   traceBox.onclick = (e) => {
     if (e.target === traceBox) return traceBox.close();
+    // a place in the dev state (`latex.ltx:15355`) opens behind the dialog: the document's handler opens it
+    if (e.target.closest('a.place')) return traceBox.close();
     const a = e.target.closest('.tr-at');
     if (!a) return;
     e.preventDefault();
@@ -5735,10 +5741,30 @@
     }).catch(() => {});
   }
 
+  /** The lenses the text shows before a run answers: a seed of the kernel's and common packages' names, each
+   * mark at once on opening a file; the run's lenses (`lensify`) replace them, so a name the run reads
+   * otherwise (a redefined `table`, a float of a package) is right once it lands. */
+  const SEED_LENSES = [[/\\begin\{(?:figure|table)\*?\}/, 'Edit placement…'], [/\\begin\{(?:tabular[*x]?|array|longtable)\}/, 'Edit table…'],
+    [/\\includegraphics\b/, 'Edit image…'], [/\\begin\{tikzpicture\}/, 'Edit drawing…', 'tikz']];
+  function textLenses(text) {
+    if (!/\.tex$/.test(state.file ?? '')) return [];
+    const at = uri(), out = [];
+    String(text).split('\n').forEach((raw, line) => {
+      const code = raw.replace(/(^|[^\\])%.*/, '$1');
+      for (const [re, title, view] of SEED_LENSES) {
+        const m = re.exec(code);
+        if (!m) continue;
+        const position = { line, character: m.index };
+        out.push({ range: { start: position, end: position }, command: { title, command: view ? 'satex.openView' : 'satex.openDialog', arguments: view ? [at, position, view] : [{ uri: at, position }] } });
+      }
+    });
+    return out;
+  }
   /** The code lenses of the open file, one per plugin target: "Edit table…", "Edit image…", "Edit drawing…". */
   async function lensify() {
-    const found = await lsp('textDocument/codeLens', { textDocument: { uri: uri() } }).catch(() => null);
-    editor?.lenses?.(found ?? []);
+    const asked = uri(), found = await lsp('textDocument/codeLens', { textDocument: { uri: asked } }).catch(() => null);
+    // no answer (a newer run cancelled this one) keeps the marks: the next run's lenses replace them
+    if (Array.isArray(found) && asked === uri()) editor?.lenses?.(found);
   }
   /** The compile server's PNG of a PDF's first page, else null: a static host has no renderer. */
   async function pdfPage(data) {
@@ -6257,8 +6283,8 @@
     typeset(p.uri, p.version); // tagged with this run's version: `show` sets the shown one only after its code-action round trip
     outline();
     if (p.uri === uri()) {
-      colorize();
       lensify();
+      colorize();
       const then = afterRun;
       afterRun = null;
       then?.();

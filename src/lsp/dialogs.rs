@@ -147,10 +147,11 @@ pub(super) fn lenses(analysis: &Analysis, doc: &Text, path: &str, kind: Kind) ->
         .collect()
 }
 
-/// The innermost table or figure around `pos`.
+/// The innermost table or figure around `pos`: one ending at `pos` is left, so the tabular right after
+/// `\begin{table}[h]` is the one its lens opens.
 fn target_at(analysis: &Analysis, doc: &Text, path: &str, pos: Position) -> Option<Target> {
     let at = doc.offset(to_pos(doc, pos))?;
-    targets(analysis, doc, path).into_iter().filter(|t| t.start <= at && at <= t.end).min_by_key(|t| t.end - t.start)
+    targets(analysis, doc, path).into_iter().filter(|t| t.start <= at && at < t.end).min_by_key(|t| t.end - t.start)
 }
 
 /// A hover's link to the dialog, on the first line of a table or figure.

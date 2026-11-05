@@ -348,7 +348,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
           const mine = ++seq;
           const r = await host.apply(view.state, op).catch((e) => ({ error: e.message }));
           if (mine !== seq) return done(false);
-          if (r?.error) { notes.textContent = r.error; apply.disabled = !result; return done(false); }
+          // no answer (the server busy with a run): the last result stays
+          if (!r || r.error) { notes.textContent = r?.error ?? ''; apply.disabled = !result; return done(false); }
           result = r;
           if (r.state) { view.state = r.state; render.redraw(); }
           tex.textContent = r.edits?.[0]?.newText ?? '';
@@ -1269,12 +1270,13 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       draw();
       f.refresh();
     };
-    const md = (t) => esc(t).replace(/`([^`]+)`/g, '<code>$1</code>');
+    // a chip names a command, else a counter (`topnumber` is `\c@topnumber`): its card shows when the run knows it
+    const md = (t) => esc(t).replace(/`([^`]+)`/g, (_, c) => `<code class="cs-tip" data-cs="${c[0] === '\\' ? c : `\\c@${c}`}">${c}</code>`);
     function draw() {
       const on = spec();
       main.replaceChildren(
         h('div', { class: 'sd-chips', role: 'group', 'aria-label': 'placement letters' }, letters.map(([c, what]) => h('button', {
-          type: 'button', class: 'sd-letter', 'aria-pressed': String(on.includes(c)), title: what.replace(/`/g, ''), onclick: () => toggle(c),
+          type: 'button', class: 'sd-letter', 'aria-pressed': String(on.includes(c)), onclick: () => toggle(c),
         }, h('b', {}, c), h('span', { html: md(what) })))),
         h('p', { class: 'sd-muted' }, on ? `Written as [${on}]: LaTeX tries the places in its own order (here, top, bottom, float page), not in the order written.`
           : `No placement: LaTeX uses ${ctx.default ? `the default [${ctx.default}]` : 'its default'} for ${view.state.env}.`),

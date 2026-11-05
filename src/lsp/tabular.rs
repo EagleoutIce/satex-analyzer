@@ -129,10 +129,10 @@ fn skip_ws(s: &str, mut i: usize) -> usize {
     i
 }
 
-/// The table environments the run knows: `\begin{name}` reaches `\@array`.
+/// The table environments the run knows: `\begin{name}` runs into `\@array`, not through a saved copy.
 pub(super) fn is_table(analysis: &crate::analysis::machine::Analysis, name: &str) -> bool {
     let array = analysis.interner.lookup("@array");
-    array.is_some_and(|a| super::handlers::body_reach(analysis, name, 400).contains(&a))
+    array.is_some_and(|a| super::handlers::body_reach(analysis, name, 400, false).contains(&a))
 }
 
 /// The `\begin{name}` at or before `at` on its line (else after it), and

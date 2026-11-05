@@ -2446,7 +2446,7 @@ pub(super) fn environments(analysis: &Analysis, pos: Pos) -> Vec<(String, bool)>
         if !user(begin) || !user(end) || later(begin) {
             continue;
         }
-        let items = list.is_some_and(|l| body_reach(analysis, base, 400).contains(&l));
+        let items = list.is_some_and(|l| body_reach(analysis, base, 400, true).contains(&l));
         out.push((base.to_string(), items));
     }
     out.sort();
@@ -2454,8 +2454,15 @@ pub(super) fn environments(analysis: &Analysis, pos: Pos) -> Vec<(String, bool)>
 }
 
 /// The names the bodies of `name`'s code spell (or build with `\csname`), breadth-first through the
-/// meanings the run ended with, up to `limit` macros.
-pub(super) fn body_reach(analysis: &Analysis, name: &str, limit: usize) -> BTreeSet<crate::engine::tex::Sym> {
+/// meanings the run ended with, up to `limit` macros; a name a body assigns is not reached, nor, unless
+/// `copies`, the one a `\let` copies: a saved meaning (`\let\tikz@origmatrix=\matrix`) is not run,
+/// though an alias called later is (`\let\x\list` then `\x`).
+pub(super) fn body_reach(
+    analysis: &Analysis,
+    name: &str,
+    limit: usize,
+    copies: bool,
+) -> BTreeSet<crate::engine::tex::Sym> {
     let mut seen = BTreeSet::new();
     let mut queue: std::collections::VecDeque<_> = analysis.interner.lookup(name).into_iter().collect();
     let csname = analysis.interner.lookup("csname");
@@ -2477,7 +2484,28 @@ pub(super) fn body_reach(analysis: &Analysis, name: &str, limit: usize) -> BTree
                 .collect();
             (!name.is_empty()).then(|| analysis.interner.lookup(&name)).flatten()
         };
-        for (i, cs) in toks.iter().enumerate().filter_map(|(i, t)| Some((i, t.cs()?))) {
+        // the names a `\def` or `\let` assigns are not run
+        let mut assigned = vec![false; toks.len()];
+        for (i, t) in toks.iter().enumerate() {
+            use crate::engine::builtins::Primitive::{Def, Let, RegisterDef};
+            let names = match t.cs().and_then(|c| analysis.env.meaning(c).prim()) {
+                Some(Let { future: false, .. }) if !copies => 2,
+                Some(Def { .. } | Let { .. } | RegisterDef(_)) => 1,
+                _ => continue,
+            };
+            let mut k = i + 1;
+            // `\let\a= \b`: the target, an optional `=` and one space, the source
+            for n in 0..names {
+                while n > 0 && k < toks.len() && matches!(toks[k].tok, crate::engine::tex::Tok::Chr('=' | ' ', _)) {
+                    k += 1;
+                }
+                if k < toks.len() && toks[k].cs().is_some() {
+                    assigned[k] = true;
+                }
+                k += 1;
+            }
+        }
+        for (i, cs) in toks.iter().enumerate().filter_map(|(i, t)| Some((i, t.cs()?))).filter(|&(i, _)| !assigned[i]) {
             let named = (Some(cs) == csname).then(|| built(i)).flatten();
             for cs in std::iter::once(cs).chain(named) {
                 if seen.insert(cs) {
@@ -2493,7 +2521,7 @@ pub(super) fn body_reach(analysis: &Analysis, name: &str, limit: usize) -> BTree
 /// specific first (an alignment preamble, a list, a trivlist, a float); `None`: no kind.
 pub(super) fn material(analysis: &Analysis, name: &str) -> Option<usize> {
     const BUILDERS: [&[&str]; 4] = [&["@mkpream"], &["list"], &["@trivlist"], &["@float", "@dblfloat"]];
-    let reach = body_reach(analysis, name, 400);
+    let reach = body_reach(analysis, name, 400, true);
     BUILDERS
         .iter()
         .position(|names| names.iter().any(|n| analysis.interner.lookup(n).is_some_and(|s| reach.contains(&s))))

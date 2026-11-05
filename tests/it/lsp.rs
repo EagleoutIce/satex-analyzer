@@ -3600,6 +3600,42 @@ fn lenses_of_a_relative_root_run_through_its_input() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Each widget target has its lens: the figure's placement, its image, and a table, an environment whose
+/// code reaches `\@array`: the tabular in a float gets the table lens,
+/// the tikzpicture the drawing's only, though its code saves amsmath's `\matrix` (`\let\tikz@origmatrix=\matrix`).
+#[test]
+fn table_lens_marks_tables_not_drawings() {
+    let text = "\\documentclass{article}\n\\usepackage{listings}\n\\usepackage{tikz}\n\\usepackage{glossaries}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{figure}[h]\n\\includegraphics{example-image}\n\\end{figure}\n\\begin{table}[ht]\\begin{tabular}{lc}\na & b \\\\\n\\end{tabular}\n\\end{table}\n\\begin{tikzpicture}[node distance=2cm, every node/.style={draw}]\n\\node (a) {x};\n\\end{tikzpicture}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("table-vs-tikz", text, &[]);
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].clone();
+    let titles = |line: u64| -> Vec<String> {
+        (lenses.as_array().unwrap().iter())
+            .filter(|l| l["range"]["start"]["line"] == line)
+            .map(|l| l["command"]["title"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let line = |s: &str| text.lines().position(|l| l.contains(s)).unwrap() as u64;
+    assert!(titles(line("\\begin{tabular}")).contains(&"Edit table…".to_string()), "{lenses}");
+    // the float and its tabular share a line: each lens opens its own dialog
+    for lens in lenses.as_array().unwrap().iter().filter(|l| l["command"]["command"] == "satex.openDialog") {
+        let id = server
+            .request("satex/dialog", json!({ "textDocument": { "uri": uri }, "position": lens["range"]["start"] }));
+        let kind = match lens["command"]["title"].as_str() {
+            Some("Edit table…") => "table",
+            Some("Edit image…") => "image",
+            _ => "float",
+        };
+        assert_eq!(server.response(id)["result"]["kind"], kind, "{lens}");
+    }
+    assert_eq!(titles(line("\\begin{figure}")), ["Edit placement…"], "{lenses}");
+    assert_eq!(titles(line("\\includegraphics")), ["Edit image…"], "{lenses}");
+    let tikz = titles(line("\\begin{tikzpicture}"));
+    assert!(!tikz.iter().any(|t| t.contains("table")) && !tikz.is_empty(), "{lenses}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 const TREE: &str = "\\documentclass{article}\n\\usepackage{forest}\n\\begin{document}\n\\begin{forest}\n  for tree={draw}\n  [VP [DP, name=dp] [V]]\n\\end{forest}\n\n\\end{document}\n";
 
 /// "Edit tree…": a lens on the tree, a view with its body and the nodes forest made, in

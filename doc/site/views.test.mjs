@@ -270,6 +270,9 @@ console.log('table model: ok');
   assert.deepEqual(JSON.parse(csv[2].split(',\\y,,')[1].slice(1, -1).replace(/""/g, '"')), state, 'the state cell reads back');
   const html = stateHtml(state);
   for (const part of ['2 live', 'arm 1 of 2', 'maybe undefined', '[0, 9]', 'number', 'why-apart', 'tokens of \\x', '<sub>12</sub>']) assert.ok(html.includes(part), part);
+  // each place opens: `file:line[:col]` a link to its line
+  assert.ok(html.includes('file <a class="place" href="#" data-path="main.tex" data-line="3"'), html);
+  assert.ok(stateHtml({ ...state, groups: [{ kind: 'Simple', at: 'latex.ltx:15355:3' }] }).includes('data-path="latex.ltx" data-line="15355"'));
   assert.ok(stateHtml(null).includes('without dev mode'));
 }
 

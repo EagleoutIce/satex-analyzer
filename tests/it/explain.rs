@@ -1071,3 +1071,10 @@ fn a_name_defined_once_has_no_chain() {
     let analysis = analyze(r"\def\once{x}");
     assert!(explain_one(&analysis, "once").get("chain").is_none());
 }
+
+/// A counter's card carries the value the run ended with: what a float placement's `topnumber` allows.
+#[test]
+fn a_count_register_explains_with_its_value() {
+    let analysis = analyze_kernel(r"\newcounter{shown}\setcounter{shown}{7}");
+    assert_eq!(explain_one(&analysis, "c@shown").get("value"), Some(&json!(7)));
+}
