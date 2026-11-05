@@ -3479,7 +3479,7 @@ fn why_apart(paths: &Paths, at: Span, out: &Analysis) {
     );
     eprintln!("why-apart   alike pair input: {}", sample.unwrap_or_default());
     eprintln!(
-        "why-apart   stacks differ in: conds {conds}, groups {groups}, scans {scans}; e.g. {}",
+        "why-apart   stacks differ in: conds {conds}, groups {groups}, scans {scans}, e.g. {}",
         first.unwrap_or_default()
     );
 }
