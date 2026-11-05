@@ -1198,6 +1198,7 @@ impl Machine<'_> {
         self.material = MATERIAL | BOXED;
         // A paragraph the main vertical list gets the lines of.
         if self.mode.meets(Modes::VERTICAL) {
+            self.main_changes += 1;
             self.main_tail = Last::UNKNOWN;
             self.main_depth = Dim::ANY;
         }
@@ -1774,6 +1775,7 @@ impl Machine<'_> {
         };
         // the main vertical list ends as the paragraph's list does: `\lastskip` reads its last line
         if only && to == Modes::VERTICAL {
+            self.main_changes += 1;
             self.main_tail = tail[0];
         }
         // tex.web § 1096: a null paragraph makes no line; else the last
@@ -2184,6 +2186,11 @@ impl Machine<'_> {
             self.set_list_slot("disc.page", Some(Default::default()));
             let main = self.natural.and_then(|n| n.para.items);
             self.save_discard(main.map(|_| crate::engine::linebreak::Kp::Penalty(10000)));
+            // the page holds it again: its length counts toward the next break
+            if material != 0 {
+                let along = natural.map_or(Dim::ANY, |o| o.along);
+                self.set_page_length(self.page_length().extended_by(along));
+            }
             // § 1026: the page builder resumes where the routine was
             // fired, whichever way its code went: paths parted inside it
             // meet there.
@@ -2842,7 +2849,12 @@ impl Machine<'_> {
                     },
                     _ => Item::Unknown,
                 };
-                crate::analysis::observe::rule(self, self.mode.meets(Modes::ANY_HORIZONTAL), [width, height, depth]);
+                crate::analysis::observe::rule(
+                    self,
+                    self.mode.meets(Modes::ANY_HORIZONTAL),
+                    [width, height, depth],
+                    span,
+                );
                 self.append_item(item);
             }
             Material::Glue => {
@@ -4280,6 +4292,7 @@ impl Machine<'_> {
         if self.mode.meets(Modes::VERTICAL) {
             self.page_so_far_moved(false);
             self.contribute(&item);
+            self.main_changes += 1;
             self.main_tail = match (self.mode == Modes::VERTICAL, &item) {
                 (false, _) | (_, Item::Unknown | Item::Glue(_, None)) => Last::UNKNOWN,
                 (_, Item::Glue(w, spec)) => Last::Glue(*w, *spec, false),
@@ -4778,11 +4791,8 @@ impl Machine<'_> {
             Primitive::Command(Syntax::NonScript) => Item::Unknown,
             Primitive::Command(Syntax::SetLanguage) if self.mode.within(Modes::ANY_HORIZONTAL) => Item::Node(9),
             Primitive::Command(Syntax::SetLanguage) if !self.mode.meets(Modes::ANY_HORIZONTAL) => return,
-            // tex.web § 1375: `\immediate` acts at once and leaves the list as
-            // it was; otherwise a whatsit goes on it (§§ 1350-1352).
-            Primitive::Write | Primitive::Command(Syntax::OpenOut | Syntax::CloseOut) if self.prefixes.immediate => {
-                return;
-            }
+            _ if self.appends_nothing(p) => return,
+            // otherwise a file operation is a whatsit (tex.web §§ 1350-1352)
             Primitive::Write | Primitive::Command(Syntax::OpenOut | Syntax::CloseOut) => Item::Node(9),
             Primitive::Pdf(PdfOp::Object | PdfOp::Resources) => Item::Zero,
             // What a command appends has no size, except for math material
@@ -4804,25 +4814,6 @@ impl Machine<'_> {
                 | Syntax::RuleSpec
                 | Syntax::BoxSpec
                 | Syntax::VSplit => Item::Unknown,
-                // tex.web § 1241: `\setbox` is an assignment and puts
-                // nothing on the current list, so the tail stays as it is.
-                // So are font and code assignments, messages (§ 1293) and
-                // the document-level PDF objects (pdfTeX manual).
-                Syntax::SetBox
-                | Syntax::Interaction(_)
-                | Syntax::Token
-                | Syntax::Internal
-                | Syntax::FamilyFont
-                | Syntax::CopyFont { .. }
-                | Syntax::FontExpand
-                | Syntax::ReadLine
-                | Syntax::Font
-                | Syntax::FontText
-                | Syntax::PdfCatalog
-                | Syntax::PdfOutline
-                | Syntax::TwoTexts
-                | Syntax::UMathCharDef { .. }
-                | Syntax::SetFontId => return,
                 _ => Item::Zero,
             },
             _ => Item::Unknown,
@@ -5878,6 +5869,34 @@ impl Machine<'_> {
     /// list other than through [`Machine::append_item`], or take them away
     /// (`\unskip` there may find the page builder took the item, tex.web
     /// § 1105), its last item is no longer known.
+    /// Commands that put nothing on the current list, so its tail stays: `\setbox` (an
+    /// assignment, tex.web § 1241), font and code assignments, messages (§ 1293), the
+    /// document-level PDF objects (pdfTeX manual) and an `\immediate` file operation (§ 1375).
+    fn appends_nothing(&self, p: crate::engine::builtins::Primitive) -> bool {
+        use crate::engine::builtins::{Primitive as P, Syntax as S};
+        match p {
+            P::Write | P::Command(S::OpenOut | S::CloseOut) => self.prefixes.immediate,
+            P::Command(
+                S::SetBox
+                | S::Interaction(_)
+                | S::Token
+                | S::Internal
+                | S::FamilyFont
+                | S::CopyFont { .. }
+                | S::FontExpand
+                | S::ReadLine
+                | S::Font
+                | S::FontText
+                | S::PdfCatalog
+                | S::PdfOutline
+                | S::TwoTexts
+                | S::UMathCharDef { .. }
+                | S::SetFontId,
+            ) => true,
+            _ => false,
+        }
+    }
+
     pub(crate) fn forget_main_tail(&mut self, p: crate::engine::builtins::Primitive) {
         use crate::engine::builtins::Primitive as P;
         if !self.mode.meets(Modes::VERTICAL) || matches!(self.main_tail, Last::Unknown(_)) {
@@ -5919,7 +5938,8 @@ impl Machine<'_> {
                 | P::Typeset(crate::engine::builtins::Typeset::Number | crate::engine::builtins::Typeset::Dimen)
                 | P::Mode(ModeCmd::Vertical(crate::engine::builtins::Material::Glue | crate::engine::builtins::Material::Fil(_)))
             );
-        if !quiet {
+        if !quiet && !self.appends_nothing(p) {
+            self.main_changes += 1;
             self.main_tail = Last::UNKNOWN;
             self.main_depth = Dim::ANY;
         }

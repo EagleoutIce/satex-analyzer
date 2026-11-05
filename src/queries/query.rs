@@ -490,7 +490,6 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 fn typeset(analysis: &Analysis) -> Vec<Record> {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
-    let mut rules = text.rules.iter().peekable();
     let mut math = math_atoms(text, &analysis.settings.conventions.math_symbols);
     let marks = script_marks(text, &mut math);
     let mut aligns = text.align.iter().zip(&marks).filter(|(_, m)| !m.is_empty()).peekable();
@@ -541,6 +540,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             envs[..begun].iter().rposition(|(f, t, _)| f.file == s.file && s.line <= t.line)
         })
     };
+    // each rule with the environment it was set in: one opening an environment is not the last one's
+    let rule_envs: Vec<Option<usize>> = text.rules.iter().map(|r| env_at(r.2)).collect();
+    let mut rules = text.rules.iter().zip(rule_envs).peekable();
     // the innermost environment's name; the outermost one as `outer`: its name, the line it
     // begins on (one per instance, a frame) and the labels set in it
     let tag_env = |record: &mut Record, k: usize| {
@@ -596,34 +598,56 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let mut began = 0usize;
     // a page `\shipout` sent out, after the paragraph it followed: its number and the user's line then
     let mut pages = text.pages.iter().enumerate().peekable();
-    // pages filled up to the character at `i`, where pages break only where forced: each one more page
-    let filled = |i: u32| text.fills.partition_point(|f| f.0 <= i);
-    let surely = |i: u32| text.fills.iter().filter(|f| f.0 <= i && f.1).count();
-    let shipped = |k: usize, at: Span, last: bool, before: u32| {
-        let (lo, n) = (k + 1 + surely(before), k + 1 + filled(before));
-        let page = if lo == n { format!("page {n}") } else { format!("page {lo}–{n}") };
+    // pages filled before the `k`th shipped, where pages break only where forced: each one more page
+    let filled = |k: usize, sure: bool| text.fills.iter().filter(|f| f.2 as usize <= k && (f.1 || !sure)).count();
+    // a page whose length had no bound before page group `g` ends: any number of pages may have filled
+    let open = |g: usize| text.open_pages.iter().any(|&o| (o as usize) < g);
+    let shipped = |k: usize, at: Span, last: bool| {
+        let (lo, n) = (k + 1 + filled(k, true), k + 1 + filled(k, false));
+        let page = match (open(k + 1), lo == n) {
+            (true, _) => format!("page {lo}–?"),
+            (false, true) => format!("page {n}"),
+            (false, false) => format!("page {lo}–{n}"),
+        };
         let mut record = place(analysis, at);
         record.insert("kind".into(), json!("page"));
         record.insert("page".into(), json!(n));
         record.insert("last".into(), json!(last));
-        let next = if lo == n { format!("{page} → {}", n + 1) } else { format!("{page} → next") };
+        let next = if lo == n && !open(k + 1) { format!("{page} → {}", n + 1) } else { format!("{page} → next") };
         record.insert("detail".into(), json!(if last { page } else { next }));
         record
     };
     // a page the run did not break, though it filled there: pdfTeX breaks it at or before here
     let mut fills = text.fills.iter().enumerate().peekable();
     let fill = |k: usize, sure: bool, at: Span| {
-        let n = k + 1 + text.pages.iter().filter(|p| p.0 < text.fills[k].0).count();
+        let n = k + 1 + text.fills[k].2 as usize;
         let mut record = place(analysis, at);
         record.insert("kind".into(), json!("page"));
         record.insert("page".into(), json!(n));
         record.insert("last".into(), json!(false));
         record.insert("filled".into(), json!(if sure { "surely" } else { "maybe" }));
-        record.insert(
-            "detail".into(),
-            json!(format!("page {n} → {} {}", n + 1, if sure { "by here" } else { "maybe by here" })),
-        );
+        let by = if sure { "by here" } else { "maybe by here" };
+        let detail = match open(text.fills[k].2 as usize) {
+            true => format!("page {n}–? → next {by}"),
+            false => format!("page {n} → {} {by}", n + 1),
+        };
+        record.insert("detail".into(), json!(detail));
         record
+    };
+    // the pages shipped and filled before the character at `i`, in the order they came: a fill
+    // before the page shipped after it
+    let total = text.pages.len();
+    let mut breaks = |out: &mut Vec<Record>, i: usize, site: Span| loop {
+        let page = pages.peek().filter(|(_, p)| p.0 as usize <= i).map(|(k, _)| *k);
+        if let Some((k, &(_, sure, _))) =
+            fills.next_if(|(_, f)| f.0 as usize <= i && page.is_none_or(|p| f.2 as usize <= p))
+        {
+            out.push(fill(k, sure, site));
+        } else if let Some((k, &(_, at))) = pages.next_if(|(_, p)| p.0 as usize <= i) {
+            out.push(shipped(k, at, i == usize::MAX && k + 1 == total));
+        } else {
+            break;
+        }
     };
     let mut frame_ends = {
         let mut v: Vec<&(u32, u32)> = text.frames.iter().collect();
@@ -635,31 +659,35 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         v.sort_unstable();
         v.into_iter().peekable()
     };
-    // closing an environment: an alignment beginning here belongs to the next one
-    let mut flush = |i: usize, line: &mut String, keys: &mut std::collections::VecDeque<_>, closing: bool| {
-        while let Some((_, mark)) =
-            aligns.next_if(|a| a.0.0 as usize <= i && !(closing && a.0.1 == crate::analysis::facts::Align::Begin))
-        {
-            line.push(KEY);
-            keys.push_back((ALIGN, mark.as_str().into()));
-        }
-        // a framed box ends: the rules that drew its frame are the frame
-        let mut framed = None;
-        while let Some(&&(_, end)) = frame_ends.peek().filter(|e| e.1 as usize <= i) {
-            frame_ends.next();
-            line.push(KEY);
-            keys.push_back((ALIGN, "frameend".into()));
-            framed = Some(end);
-        }
-        // so do the rules at its place (a `\toprule`)
-        let begins = aligns.peek().is_some_and(|a| a.0.0 as usize <= i);
-        while let Some(&(at, rule)) = rules.next_if(|r| r.0 as usize <= i && !begins) {
-            if framed == Some(at) && !matches!(rule, Rule::Bar(..)) {
-                continue;
+    // closing an environment for `next`: an alignment beginning here belongs to it, so do its rules
+    let mut flush =
+        |i: usize, line: &mut String, keys: &mut std::collections::VecDeque<_>, next: Option<Option<usize>>| {
+            let closing = next.is_some();
+            while let Some((_, mark)) =
+                aligns.next_if(|a| a.0.0 as usize <= i && !(closing && a.0.1 == crate::analysis::facts::Align::Begin))
+            {
+                line.push(KEY);
+                keys.push_back((ALIGN, mark.as_str().into()));
             }
-            rule_note(line, keys, rule);
-        }
-    };
+            // a framed box ends: the rules that drew its frame are the frame
+            let mut framed = None;
+            while let Some(&&(_, end)) = frame_ends.peek().filter(|e| e.1 as usize <= i) {
+                frame_ends.next();
+                line.push(KEY);
+                keys.push_back((ALIGN, "frameend".into()));
+                framed = Some(end);
+            }
+            // so do the rules at its place (a `\toprule`)
+            let begins = aligns.peek().is_some_and(|a| a.0.0 as usize <= i);
+            while let Some((&(at, rule, _), _)) =
+                rules.next_if(|(r, e)| r.0 as usize <= i && !begins && !(e.is_some() && next == Some(*e)))
+            {
+                if framed == Some(at) && !matches!(rule, Rule::Bar(..)) {
+                    continue;
+                }
+                rule_note(line, keys, rule);
+            }
+        };
     for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
         // a box lost unused (a measurement) never reaches the page
         if lost[i] {
@@ -739,7 +767,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         let here = env_at(site);
         // the rules and marks closing an environment belong to it
         if env.is_some() && here != env {
-            flush(i, &mut line, &mut keys, true);
+            flush(i, &mut line, &mut keys, Some(here));
         }
         if (end.is_some() || here != env) && !line.trim().is_empty() {
             close(&mut line, &mut choice, &mut causes);
@@ -779,12 +807,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             }
             out.push(record);
             push_foot(&mut out, &mut foot, site, &mut keys);
-            while let Some((k, &(before, at))) = pages.next_if(|(_, p)| p.0 as usize <= i) {
-                out.push(shipped(k, at, false, before));
-            }
-            while let Some((k, &(_, sure))) = fills.next_if(|(_, f)| f.0 as usize <= i) {
-                out.push(fill(k, sure, site));
-            }
+            breaks(&mut out, i, site);
             style = "";
             on_line = None;
             last_origin = None;
@@ -794,13 +817,14 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             began = end as usize;
         }
         env = here;
+        let fresh = first.is_none();
         if !piece.trim().is_empty() {
             first.get_or_insert(site);
         }
         if lands {
             seg_from.get_or_insert(i as u32);
         }
-        flush(i, &mut line, &mut keys, false);
+        flush(i, &mut line, &mut keys, None);
         match arm {
             Some((_, on, _)) => {
                 if choice.as_ref().is_some_and(|(n, ..)| *n != on) {
@@ -856,6 +880,10 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                         keys.push_back((ORIGIN, at.unwrap_or_default().into()));
                     }
                     last_origin = own;
+                    // a page that broke before the paragraph's first character stands before it
+                    if fresh {
+                        breaks(&mut out, i, site);
+                    }
                 }
                 // a font set under an undecided conditional shows from the next sure character
                 let now = styles.get(usize::from(spot.font_state)).map_or("", String::as_str);
@@ -895,7 +923,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         line.push(KEY);
         keys.push_back((ALIGN, "frameend".into()));
     }
-    for &(_, rule) in rules {
+    for (&(_, rule, _), _) in rules {
         rule_note(&mut line, &mut keys, rule);
     }
     if !line.trim().is_empty() {
@@ -922,13 +950,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         out.push(record);
     }
     push_foot(&mut out, &mut foot, first.unwrap_or_default(), &mut keys);
-    let total = text.pages.len();
-    for (k, &(_, sure)) in fills {
-        out.push(fill(k, sure, first.unwrap_or_default()));
-    }
-    for (k, &(before, at)) in pages {
-        out.push(shipped(k, at, k + 1 == total, before));
-    }
+    breaks(&mut out, usize::MAX, first.unwrap_or_default());
     // A kernel read only partly leaves the document names the engine's
     // format defines (`\documentclass` set as text), so none of the text is
     // sure; a run that stopped early never set the rest.

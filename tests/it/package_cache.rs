@@ -320,6 +320,25 @@ fn an_own_package_replays_every_fact_reading_it_records() {
     assert_eq!(differing_facts(&read, &replayed), Vec::<String>::new());
 }
 
+/// A replayed load that set nothing on the main vertical list keeps its tail: `\\lastkern`
+/// after it reads the kern before it, served or read.
+#[test]
+fn a_replayed_load_that_appends_nothing_keeps_the_main_list_tail() {
+    if !installed() {
+        return;
+    }
+    let dir = project("main-tail");
+    std::fs::write(dir.join("quiet.sty"), "\\ProvidesPackage{quiet}[2020/01/01 v1]\n\\def\\quietmacro{}\n")
+        .expect("quiet.sty");
+    let document = "\\documentclass{article}\n\\kern3pt\n\\usepackage{quiet}\n\\edef\\R{\\the\\lastkern}\n\\begin{document}x\\end{document}\n";
+    let read = run(&dir, document);
+    let replayed = run(&dir, document);
+    assert_eq!(served(&replayed, "quiet"), Some(true), "{:?}", replayed.package_caches);
+    for analysis in [&read, &replayed] {
+        assert_eq!(crate::support::last_body(analysis, "R").replace(' ', ""), "3.0pt");
+    }
+}
+
 /// A register the package allocates and assigns, then assigns again past a
 /// line the preamble decides: a run that serves the front and records the
 /// rest keys it as it stands, so the next run serves all of it and reports

@@ -239,6 +239,11 @@ pin! {
     p_vfilneg: r#"\setbox0\vbox{\vfilneg\xdef\R{\the\lastskip}}"# => "0.0ptplus-1.0fil";
     /// `\vss` (tex.web § 1058): appends vertical glue stretching and shrinking by one `fil`.
     p_vss: r#"\setbox0\vbox{\vss\xdef\R{\the\lastskip}}"# => "0.0ptplus1.0filminus1.0fil";
+    /// On the main vertical list, a command that appends nothing keeps the tail (`\setbox`,
+    /// tex.web § 1241; `\immediate\write`, § 1375); a `\write` appends a whatsit (§ 1350).
+    p_lastkern_after_setbox: r#"\kern3pt\setbox0\hbox{}\edef\R{\the\lastkern}"# => "3.0pt";
+    p_lastkern_after_immediate_write: r#"\kern3pt\immediate\write-1{x}\edef\R{\the\lastkern}"# => "3.0pt";
+    p_lastkern_after_write: r#"\kern3pt\write-1{x}\edef\R{\the\lastkern}"# => "0.0pt";
     /// `\cleaders` (tex.web § 1078): leader glue keeps its natural skip.
     p_cleaders: r#"\setbox0\hbox{\cleaders\hrule\hskip 5pt plus 1fil\xdef\R{\the\lastskip}}"# => "5.0ptplus1.0fil";
     /// `\xleaders` (tex.web § 1078): leader glue keeps its natural skip.

@@ -355,6 +355,8 @@ struct Scalars {
     recent_file_spans: Vec<Span>,
     /// Whether material may have reached the page (tex.web § 986).
     page_touched: bool,
+    /// The load neither set nor forgot the main vertical list's last item.
+    main_kept: bool,
 }
 
 /// The state a checkpoint leaves that changes now and then: stored only
@@ -778,6 +780,7 @@ struct Before {
     recent_file_spans: Vec<Span>,
     /// Call the load is read on behalf of.
     reader: Option<NodeId>,
+    main_changes: u64,
     carried: Carried,
     facts: FactMaps,
 }
@@ -1411,6 +1414,7 @@ impl Machine<'_> {
             def_owner: std::cell::OnceCell::new(),
             vertices: graph.len(),
             reader: graph.reader,
+            main_changes: self.main_changes,
             loads: self.out.facts.loads.len(),
             counters,
             steps: self.out.steps,
@@ -1595,6 +1599,7 @@ impl Machine<'_> {
             page_grew: _,
             natural: _,
             main_tail: _,
+            main_changes: _,
             main_depth: _,
             docstrip,
             pinned,
@@ -2706,9 +2711,11 @@ impl Machine<'_> {
         }
         self.last_named_cs = s.last_named_cs;
         self.page_touched |= s.page_touched;
-        // What the replayed code put on the main vertical list is not kept.
-        self.main_tail = crate::engine::mode::Last::UNKNOWN;
-        self.main_depth = crate::engine::mode::Dim::ANY;
+        // What the replayed code put on the main vertical list is not kept, unless it put nothing.
+        if !s.main_kept {
+            self.main_tail = crate::engine::mode::Last::UNKNOWN;
+            self.main_depth = crate::engine::mode::Dim::ANY;
+        }
         let mut recent = before.recent_file_spans.clone();
         recent.extend(s.recent_file_spans.iter().map(|span| span_in(*span, site)));
         let excess = recent.len().saturating_sub(RECENT_FILE_SPANS);
@@ -3596,6 +3603,7 @@ impl Machine<'_> {
             finished_call: rec.seg_call_finished,
             last_named_cs: self.last_named_cs,
             page_touched: self.page_touched,
+            main_kept: self.main_changes == rec.before.main_changes,
             recent_file_spans: {
                 let before = &rec.before.recent_file_spans;
                 let kept = (0..=before.len())

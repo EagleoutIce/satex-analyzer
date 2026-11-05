@@ -1983,6 +1983,9 @@ pub struct Machine<'a> {
     /// the last item it moved, and an output routine leaves the items from
     /// the break on, the last one among them, after its own).
     pub(crate) main_tail: crate::engine::mode::Last,
+    /// How often the main vertical list's tail was set or forgotten: a cached load that
+    /// changed it changed what the list ends with.
+    pub(crate) main_changes: u64,
     /// The depth the page would be packed with (tex.web § 669 `vpack`):
     /// the last box's where only penalties and the like follow it, zero
     /// after glue or a kern.
@@ -2659,6 +2662,7 @@ impl<'a> Machine<'a> {
                 n
             }),
             main_tail: crate::engine::mode::Last::UNKNOWN,
+            main_changes: 0,
             main_depth: crate::engine::mode::Dim::ANY,
             wild: Wild::default(),
             trace_full: false,

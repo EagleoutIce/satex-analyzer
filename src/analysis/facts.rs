@@ -398,8 +398,8 @@ pub struct Text {
     /// places them at its foot, not where they were set.
     pub inserts: Vec<(u32, u32)>,
     /// Rules set between characters (tex.web § 463): the number of
-    /// characters set before each, and its kind.
-    pub rules: Vec<(u32, Rule)>,
+    /// characters set before each, its kind and the user's line it was set from.
+    pub rules: Vec<(u32, Rule, Span)>,
     /// An alignment's (`\halign`, a `tabular`'s) parts, an `\hbox to` set
     /// in the line and leaders between characters: the number of characters
     /// set before each.
@@ -418,8 +418,12 @@ pub struct Text {
     pub pages: Vec<(u32, Span)>,
     /// Where the page passed another `\vsize` while pages break only where forced
     /// (`analysis.assume_forced_page_breaks`): pdfTeX breaks a page before it, surely when the
-    /// shortest the page can be has passed it (`true`), else when the page may have.
-    pub fills: Vec<(u32, bool)>,
+    /// shortest the page can be has passed it (`true`), else when the page may have; then the
+    /// number of pages shipped before it.
+    pub fills: Vec<(u32, bool, u32)>,
+    /// The pages, by how many were shipped before, whose length had no upper bound: any
+    /// number of pages may have filled there.
+    pub open_pages: Vec<u32>,
     /// Character ranges of boxes used in a box that has rules on its sides
     /// and no text of its own (`\fbox`): one framed box around them.
     pub frames: Vec<(u32, u32)>,

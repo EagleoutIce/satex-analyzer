@@ -451,6 +451,92 @@ fn a_filled_page_is_marked_where_it_breaks() {
     assert_eq!(pages, ["page 1 → 2 by here", "page 2"]);
 }
 
+/// The sample paper with `\\drafttrue` and `booktabs`, as pdflatex sets it (pdftotext): `\\repeat`
+/// is `\\fi`, so the skipped branch ends early and sets `[1]11` in the preamble, on a page of its
+/// own; `\\maketitle` breaks it. The figure's rule stays in the figure, and the table fills page
+/// 2, so the conclusion opens page 3.
+#[test]
+fn the_sample_paper_breaks_its_pages_where_pdflatex_does() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-sample-pages");
+    std::fs::create_dir_all(&dir).unwrap();
+    let samples = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples");
+    for file in ["preamble.tex", "mypackage.sty", "satex.yaml"] {
+        std::fs::copy(samples.join(file), dir.join(file)).unwrap();
+    }
+    let paper = std::fs::read_to_string(samples.join("paper.tex")).unwrap();
+    let paper = paper.replacen("\\input{preamble.tex}", "\\drafttrue\n\\input{preamble.tex}", 1).replacen(
+        "\\begin{document}",
+        "\\usepackage{booktabs}\n\\begin{document}",
+        1,
+    );
+    std::fs::write(dir.join("paper.tex"), paper).unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "paper.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    // each page record, and each paragraph by its first word
+    let seq: Vec<String> = rows
+        .iter()
+        .filter_map(|r| {
+            let detail = r["detail"].as_str()?.replace('·', "");
+            match r["kind"].as_str()? {
+                "page" => Some(detail),
+                "paragraph" => Some(detail.split_whitespace().next()?.to_string()),
+                _ => None,
+            }
+        })
+        .collect();
+    let expected = [
+        "[1]11",
+        "page 1 → 2",
+        "A",
+        "satex",
+        "November",
+        "1",
+        "This",
+        "2",
+        "We",
+        "ℒ=∑i=1N‖xi−xi‖2(1)",
+        "▬",
+        "Figure",
+        "3",
+        "Equation",
+        "Table",
+        "Method",
+        "page 2 → 3 by here",
+        "4",
+        "satex",
+        "page 3",
+    ];
+    assert_eq!(seq, expected, "{rows:?}");
+}
+
+/// Rules of unknown height may fill any number of pages: the page count after them has an
+/// open upper bound, and the assumption that pages break only where forced is named.
+#[test]
+fn pages_of_unbounded_height_have_an_open_count() {
+    let rule = "\\rule{1pt}{\\pdfuniformdeviate 2000pt}\\par\n";
+    let rows = typeset_rows("open-pages", "", &format!("{}\\clearpage\nB", rule.repeat(4)));
+    let pages: Vec<&str> = rows.iter().filter(|r| r["kind"] == "page").filter_map(|r| r["detail"].as_str()).collect();
+    assert!(pages.iter().any(|p| p.starts_with("page 1–? ")), "{pages:?}");
+    assert_eq!(pages.last(), Some(&"page 2–?"), "{pages:?}");
+    let assumed = rows.iter().filter(|r| r["kind"] == "assumption" && r["detail"] == "forced-page-breaks").count();
+    assert_eq!(assumed, 1, "{rows:?}");
+}
+
+/// A loop of an unknown count of tall rules is the same: pdfTeX makes up to hundreds of pages.
+#[test]
+fn a_loop_of_unknown_length_names_the_forced_breaks_assumption() {
+    let body = "\\newcount\\n \\n=\\pdfuniformdeviate 2000 \\relax\n\\loop \\rule{1pt}{100pt}\\par \\advance\\n by -1 \\ifnum\\n>0 \\repeat\n\\clearpage\nB\n\\clearpage\nC";
+    let rows = typeset_rows("open-loop", "", body);
+    let assumed = rows.iter().any(|r| r["kind"] == "assumption" && r["detail"] == "forced-page-breaks");
+    assert!(assumed, "{rows:?}");
+    let pages: Vec<&str> = rows.iter().filter(|r| r["kind"] == "page").filter_map(|r| r["detail"].as_str()).collect();
+    assert!(!pages.contains(&"page 1 → 2"), "{pages:?}");
+}
+
 /// Math atoms a math code names (`\\mathchardef` constants such as `\\alpha` and `\\sum`,
 /// `\\delimiter`'s small variant) are typeset with their glyph, inline and displayed.
 #[test]

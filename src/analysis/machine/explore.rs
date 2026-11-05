@@ -2889,6 +2889,13 @@ impl Machine<'_> {
             pair => pair,
         };
         x.natural = crate::engine::mode::join_natural(p, q);
+        // a pass that changed the list's length may run any number of times
+        if widen
+            && let (Some(p), Some(q), Some(n)) = (p, q, x.natural.as_mut())
+            && p.along != q.along
+        {
+            n.along = crate::engine::mode::Dim::ANY;
+        }
         x.main_tail = x.main_tail.merge(y.main_tail);
         x.main_depth =
             crate::engine::mode::Dim::range(x.main_depth.lo.min(y.main_depth.lo), x.main_depth.hi.max(y.main_depth.hi));

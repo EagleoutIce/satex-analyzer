@@ -1308,7 +1308,7 @@ pub struct Quantities {
 /// `|` (`\vrule`), `\hline` (`\hrule`) or a `\rule` bar, by its
 /// `scan_rule_spec` sizes (tex.web § 463). A strut, no wider or taller than
 /// nothing, is not drawn. Paths setting it again add none.
-pub fn rule(m: &mut Machine, vertical: bool, [width, height, depth]: [Option<Option<i64>>; 3]) {
+pub fn rule(m: &mut Machine, vertical: bool, [width, height, depth]: [Option<Option<i64>>; 3], span: Span) {
     if m.package().is_some() || m.reading_format() || m.output_active() {
         return;
     }
@@ -1323,10 +1323,11 @@ pub fn rule(m: &mut Machine, vertical: bool, [width, height, depth]: [Option<Opt
         false if zero(height) && (depth.is_none() || zero(depth)) => return,
         false => crate::analysis::facts::Rule::Horizontal,
     };
+    let site = m.call_site(span);
     let text = &mut m.out.facts.text;
     let at = text.at.len() as u32;
-    if text.rules.len() < m.cfg.limits.facts && !text.rules.ends_with(&[(at, kind)]) {
-        text.rules.push((at, kind));
+    if text.rules.len() < m.cfg.limits.facts && !text.rules.ends_with(&[(at, kind, site)]) {
+        text.rules.push((at, kind, site));
     }
 }
 
@@ -1353,17 +1354,39 @@ pub fn page_fill(m: &mut Machine) {
     // TeX breaks once the page is past its goal (tex.web § 1005), not when it is full
     let past = |l: crate::engine::value::Scaled| (l.max(1) - 1) / goal;
     let sure = past(length.lo);
-    // a length with no upper bound may have filled one more page by here
-    let may = match length.is_any() || length.hi >= crate::engine::value::MAX_DIMEN {
-        true => sure + 1,
-        false => past(length.hi),
-    };
+    // a length with no upper bound may have filled one more page by here, or any number
+    let open = length.is_any() || length.hi >= crate::engine::value::MAX_DIMEN;
+    let may = if open { sure + 1 } else { past(length.hi) };
+    // pdfTeX breaks a page that fills: where satex does not, it names the assumption once
+    if may > sure && !m.out.facts.diagnostics.iter().any(|d| d.code == "forced-page-breaks") {
+        let span = m.call_site(Span::default());
+        m.diagnose(
+            crate::analysis::facts::Severity::Assumption,
+            "forced-page-breaks",
+            span,
+            "the page may fill here, and pages are assumed to break only where forced: page numbers from here on may be larger (`analysis.assume_forced_page_breaks`)".into(),
+        );
+    }
     let text = &mut m.out.facts.text;
-    let since = text.pages.last().map_or(0, |p| p.0);
-    let mut have = text.fills.iter().filter(|f| f.0 >= since).count() as i64;
+    let shipped = text.pages.len() as u32;
+    // the length counts all since the last page: once bounded again, it bounds the fills before
+    match (open, text.open_pages.last() == Some(&shipped)) {
+        (true, false) => text.open_pages.push(shipped),
+        (false, true) => drop(text.open_pages.pop()),
+        _ => {}
+    }
+    let mut have = text.fills.iter().filter(|f| f.2 == shipped).count() as i64;
     let at = text.at.len() as u32;
+    // a break that may have come before is sure by here: it moves here, sure
+    let mut sure_have = text.fills.iter().filter(|f| f.2 == shipped && f.1).count() as i64;
+    while sure_have < sure.min(have) {
+        let Some(k) = text.fills.iter().position(|f| f.2 == shipped && !f.1) else { break };
+        text.fills.remove(k);
+        text.fills.push((at, true, shipped));
+        sure_have += 1;
+    }
     while have < may && text.fills.len() < m.cfg.limits.facts {
-        text.fills.push((at, have < sure));
+        text.fills.push((at, have < sure, shipped));
         have += 1;
     }
 }
