@@ -1118,6 +1118,12 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .tr-rest { color: var(--muted); white-space: pre-wrap; opacity: .75; }
 .tr-legend { display: flex; flex-wrap: wrap; gap: .3rem .8rem; margin-top: .4rem; font-size: .74rem; color: var(--muted); } .tr-legend[hidden] { display: none; }
 .tr-state > summary { cursor: pointer; color: var(--muted); font-size: .78rem; }
+.tr-dev { margin-top: .4rem; font-size: .8rem; } .tr-dev > summary { cursor: pointer; font-size: .78rem; }
+.ds-sec { display: flex; flex-wrap: wrap; gap: .2rem .5rem; align-items: baseline; margin: .25rem 0; } .ds-sec > b { min-width: 7rem; color: var(--muted); font-weight: 600; }
+.ds-sec ul { margin: 0; padding-left: 1rem; flex: 1; } .ds-apart { flex-basis: 100%; margin: .2rem 0; font-size: .72rem; white-space: pre-wrap; }
+.ds-bind { border-collapse: collapse; flex-basis: 100%; } .ds-bind td, .ds-bind th { border-top: 1px solid var(--border); padding: .1rem .4rem; text-align: left; vertical-align: top; }
+.ds-bind code { white-space: pre-wrap; word-break: break-all; } .ds-may { color: var(--muted); } .ds-ty { color: var(--accent); } .ds-cat { margin-right: .2rem; }
+.tr-export { margin-left: auto; color: var(--muted); }
 .tr-state .tr-filter { margin: .35rem 0; font: inherit; font-size: .8rem; width: min(100%, 18rem); }
 .tr-means { list-style: none; margin: 0; padding: 0; max-height: 14rem; overflow: auto; font-size: .78rem; } .tr-means li { padding: .1rem 0; } .tr-means li[hidden] { display: none; }
 .tr-mean { color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; background: none; }

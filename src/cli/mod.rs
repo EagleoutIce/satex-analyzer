@@ -231,6 +231,11 @@ pub enum Command {
         /// default only the files of the document itself are shown.
         #[arg(long)]
         include_internal: bool,
+        /// Dev mode: give each step the abstract state it ran in (paths and
+        /// why they stay apart, stacks, mode, bindings). Best with
+        /// `--format json` or `csv`. Same as `--set trace_state=true`.
+        #[arg(long)]
+        state: bool,
     },
     /// The interpreted LaTeX2e kernel and the package caches.  Without a
     /// further command, prints their status.

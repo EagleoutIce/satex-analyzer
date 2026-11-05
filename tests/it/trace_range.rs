@@ -338,3 +338,51 @@ fn the_leap_year_trace_records_values_and_branches() {
         "a group's step names its brace"
     );
 }
+
+/// Dev mode (`trace --state`): each step carries the abstract state it ran
+/// in. An undecided `\ifnum` shows its choice, the conditional stack, two
+/// live paths and an interval; CSV holds the state as one JSON cell, and a
+/// run without `--state` carries none.
+#[test]
+fn a_dev_mode_trace_carries_each_steps_state() {
+    let dir = crate::support::tmp_root().join(format!("satex-trace-state-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "\\count1=\\time\n\\ifnum\\count1>600 \\def\\x{a}\\else\\def\\x{b}\\fi\n\\x\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    let run = |format: &str, state: bool| {
+        let out = crate::support::satex()
+            .args(["--no-config", "--no-classes", "--no-packages", "--set", "clock=unknown", "trace", "-f"])
+            .arg(dir.join("main.tex"))
+            .args(state.then_some("--state"))
+            .args(["--format", format])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&run("json", true)).unwrap();
+    let states: Vec<&serde_json::Value> = rows.iter().map(|r| &r["state"]).collect();
+    assert!(states.iter().all(|s| s.is_object()), "{rows:?}");
+    let line = main.lines().position(|l| l.starts_with("\\ifnum")).unwrap() + 1;
+    let at_if = format!("main.tex:{line}:1");
+    assert!(states.iter().any(|s| s["choices"][0]["by"] == "\\ifnum" && s["choices"][0]["at"] == at_if.as_str()));
+    assert!(states.iter().any(|s| s["conditionals"][0]["at"] == at_if.as_str()));
+    assert!(states.iter().any(|s| s["paths"]["live"].as_u64() > Some(1)), "no step saw both arms");
+    let defined = rows.iter().find(|r| r["step"] == "define" && r["name"] == "\\x").unwrap();
+    assert_eq!(defined["state"]["bindings"][0]["certain"], false, "an arm's definition is not certain");
+    let interval = |s: &&serde_json::Value| {
+        s["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b["value"]["type"] == "number" && b["value"]["interval"].is_array())
+    };
+    assert!(states.iter().any(interval), "\\time gives an interval");
+    let csv = run("csv", true);
+    let header = csv.lines().next().unwrap();
+    assert!(header.ends_with(",state"), "{header}");
+    assert!(csv.contains("\"{\"\"bindings\"\""), "{csv}");
+    let plain: Vec<serde_json::Value> = serde_json::from_str(&run("json", false)).unwrap();
+    assert!(plain.iter().all(|r| r.get("state").is_none()));
+    let _ = std::fs::remove_dir_all(&dir);
+}

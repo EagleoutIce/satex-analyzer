@@ -24,13 +24,13 @@ const PARTITIONS: usize = 2;
 /// this run takes.
 #[derive(Clone, Copy)]
 pub(super) struct Choice {
-    span: Span,
-    by: Sym,
-    arms: usize,
+    pub(super) span: Span,
+    pub(super) by: Sym,
+    pub(super) arms: usize,
     pub(super) arm: usize,
     /// One of the meanings or texts a join left: on this arm the run holds
     /// only where the join's sources agree with the path.
-    joined: bool,
+    pub(super) joined: bool,
 }
 
 /// A path parked between two commands.
@@ -438,8 +438,12 @@ impl Machine<'_> {
                     crate::util::progress::note!("satex: {} paths at {:?}", self.out.peak_paths, self.position_span());
                 }
                 if std::env::var_os("SATEX_WHY_APART").is_some() {
-                    why_apart(&paths, self.position_span(), &self.out);
+                    eprintln!("{}", why_apart(&paths, self.position_span(), &self.out));
                 }
+            }
+            if self.cfg.trace_state && self.apart.as_ref().map(|a| a.0) != Some(paths.parked.len()) {
+                let why = (paths.parked.len() > 1).then(|| why_apart(&paths, self.position_span(), &self.out));
+                self.apart = Some((paths.parked.len(), why.unwrap_or_default().into()));
             }
             self.report_progress();
             self.report_paths(&paths, commands);
@@ -3420,8 +3424,9 @@ fn many_from<T: PartialEq + Copy>(a: &[(T, bool)], b: &[(T, bool)]) -> Option<(u
     Some((if n > 0 && a[n - 1] == (t, true) { n - 1 } else { n }, t))
 }
 
-/// Debug (`SATEX_WHY_APART`): what keeps the waiting paths from joining.
-fn why_apart(paths: &Paths, at: Span, out: &Analysis) {
+/// What keeps the waiting paths from joining: `SATEX_WHY_APART` prints it,
+/// dev mode (`trace_state`) shows it per trace step.
+fn why_apart(paths: &Paths, at: Span, out: &Analysis) -> String {
     let s = |s: Span| format!("{}:{}", out.short_name(s.file), s.line);
     let p = &paths.parked;
     let (mut progress, mut stacks, mut tags, mut ended) = (0, 0, 0, 0);
@@ -3470,16 +3475,15 @@ fn why_apart(paths: &Paths, at: Span, out: &Analysis) {
         }
     }
     let at_progress: std::collections::BTreeSet<u64> = p.iter().map(|c| c.key.progress).collect();
-    eprintln!(
+    format!(
         "why-apart {}: {} waiting, {pairs} pairs: progress {progress} ({} places), stacks {stacks}, tags {tags}, ended {ended}, rest (alike) {}",
         s(at),
         p.len(),
         at_progress.len(),
         pairs - progress - stacks - tags - ended
-    );
-    eprintln!("why-apart   alike pair input: {}", sample.unwrap_or_default());
-    eprintln!(
-        "why-apart   stacks differ in: conds {conds}, groups {groups}, scans {scans}, e.g. {}",
+    ) + &format!(
+        "\nwhy-apart   alike pair input: {}\nwhy-apart   stacks differ in: conds {conds}, groups {groups}, scans {scans}, e.g. {}",
+        sample.unwrap_or_default(),
         first.unwrap_or_default()
-    );
+    )
 }

@@ -964,5 +964,32 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     container.replaceChildren(root);
     return root;
   }
-  self.satexViews = { render, RENDER, SPEC, mix, drawing: { parse, emit, mermaidIn, mermaidOut, layout, importMermaid }, forest: forestFns };
+  // ---- dev mode: a trace step's abstract state (`trace_state`, src/analysis/machine/inspect.rs) and the trace as CSV
+  const cell = (v) => { const t = v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  /** Records as CSV: every key any record has is a column, a nested value one JSON cell. */
+  const traceCsv = (records) => {
+    const cols = [...new Set(records.flatMap((r) => Object.keys(r)))];
+    return [cols.join(','), ...records.map((r) => cols.map((c) => cell(r[c])).join(','))].join('\n') + '\n';
+  };
+  const known = (v) => (v.interval ? `[${v.interval.join(', ')}]` : v.set ? `{${v.set.join(', ')}}` : v.unknown ? '?' : v.exact ?? v.abstract ?? '');
+  const list = (title, items, row) => (items?.length ? `<div class="ds-sec"><b>${title}</b><ul>${items.map((x) => `<li>${row(x)}</li>`).join('')}</ul></div>` : '');
+  /** One step's state, each domain a section; `cs` marks up a command name. */
+  const stateHtml = (st, cs = esc) => {
+    if (!st) return '<p class="muted">No state: the trace ran without dev mode.</p>';
+    const p = st.paths ?? {};
+    const head = `<div class="ds-sec"><b>paths</b><span>${p.live} live · ${p.forks} forks so far · peak ${p.peak}</span>${p.apart ? `<pre class="ds-apart">${esc(p.apart)}</pre>` : ''}</div>`;
+    const rows = (st.bindings ?? []).map((b) => `<tr><td>${cs(b.name)}</td><td><code>${esc(b.meaning)}</code>${b.may ? `<div class="ds-may">may: ${b.may.map((m) => `<code>${esc(m)}</code>`).join(' | ')}${b.maybe_undefined ? ' <i>maybe undefined</i>' : ''}</div>` : ''}</td>` +
+      `<td>${b.value ? `<span class="ds-ty">${esc(b.value.type)}</span> ${esc(known(b.value))}` : ''}</td><td>${[b.certain === false && 'uncertain', b.global && 'global'].filter(Boolean).join(', ')}</td></tr>`).join('');
+    const cats = Object.entries(st.catcodes ?? {}).map(([c, k]) => `<code class="ds-cat" title="catcode ${k}">${esc(c === ' ' ? '␣' : c)}<sub>${k}</sub></code>`).join('');
+    return head +
+      list('choices', st.choices, (c) => `arm ${c.arm + 1} of ${c.arms}: ${cs(c.by)} at ${esc(c.at)}${c.joined ? ' (joined)' : ''}`) +
+      `<div class="ds-sec"><b>mode</b><span>${esc((st.mode ?? []).join(' | ') || 'unknown')}</span></div>` +
+      list('conditionals', st.conditionals, (c) => `${esc(c.at)} · ${esc(c.limit)}${c.many ? ' · widened' : ''}`) +
+      list('groups', st.groups, (g) => `${esc(g.kind)} at ${esc(g.at)}${g.many ? ' · widened' : ''}`) +
+      list('input', st.input, (f) => (f.file ? `file ${esc(f.file)}` : f.scantokens ? `\\scantokens at ${esc(f.scantokens)}` : f.returned != null ? `${f.returned} tokens given back` : `${f.tokens} tokens${f.expanding ? ` of ${cs(f.expanding)}` : ''}`)) +
+      (rows ? `<div class="ds-sec"><b>bindings</b><table class="ds-bind"><thead><tr><th>name</th><th>meaning</th><th>value</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '') +
+      (st.paired?.names?.length ? `<div class="ds-sec"><b>paired by a join</b><span>${st.paired.names.map(cs).join(' ')} · ${st.paired.arms} arms</span></div>` : '') +
+      (cats ? `<div class="ds-sec"><b>catcodes ahead</b><span>${cats}</span></div>` : '');
+  };
+  self.satexViews = { render, RENDER, SPEC, mix, drawing: { parse, emit, mermaidIn, mermaidOut, layout, importMermaid }, forest: forestFns, dev: { traceCsv, stateHtml } };
 })();

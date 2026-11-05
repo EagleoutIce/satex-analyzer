@@ -206,3 +206,21 @@ console.log('table model: ok');
   assert.deepEqual(trimTo([2, 3, 7, 6], 10, 8, [100, 80]), [20, 20, 30, 30]);
   assert.deepEqual(trimTo([2, 3, 7, 6], 10, 8, [100, 80], 25), [0, 0, 5, 5]);
 }
+
+// dev mode: a trace as CSV (nested state one JSON cell) and a step's domains as HTML
+{
+  const { traceCsv, stateHtml } = self.satexViews.dev;
+  const state = { paths: { live: 2, forks: 1, peak: 2, apart: 'why-apart main.tex:3' }, choices: [{ by: '\\ifx', at: 'main.tex:3:1', arm: 0, arms: 2, joined: false }],
+    mode: ['vertical'], conditionals: [{ at: 'main.tex:3:1', limit: 'Else', many: false }], groups: [], input: [{ file: 'main.tex:3:9' }, { tokens: 4, expanding: '\\x' }],
+    bindings: [{ name: '\\x', meaning: 'macro:->a', certain: false, global: false, may: ['macro:->a', 'undefined'], maybe_undefined: true, value: null },
+      { name: '\\count@', meaning: '\\count255', certain: true, global: false, value: { type: 'number', interval: [0, 9] } }],
+    paired: { names: [], arms: 0 }, catcodes: { '{': 1, '@': 12 } };
+  const records = [{ index: 0, name: '\\x', detail: 'a, "b"' }, { index: 1, name: '\\y', state }];
+  const csv = traceCsv(records).trim().split('\n');
+  assert.equal(csv[0], 'index,name,detail,state');
+  assert.equal(csv[1], '0,\\x,"a, ""b""",');
+  assert.deepEqual(JSON.parse(csv[2].split(',\\y,,')[1].slice(1, -1).replace(/""/g, '"')), state, 'the state cell reads back');
+  const html = stateHtml(state);
+  for (const part of ['2 live', 'arm 1 of 2', 'maybe undefined', '[0, 9]', 'number', 'why-apart', 'tokens of \\x', '<sub>12</sub>']) assert.ok(html.includes(part), part);
+  assert.ok(stateHtml(null).includes('without dev mode'));
+}

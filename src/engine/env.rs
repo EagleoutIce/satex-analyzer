@@ -426,6 +426,16 @@ impl Env {
         }
     }
 
+    /// The open groups, outermost first: kind, where opened, and whether it is widened.
+    pub fn group_stack(&self) -> impl DoubleEndedIterator<Item = (GroupKind, crate::engine::tex::Span, bool)> + '_ {
+        self.marks.iter().map(|m| (m.kind, m.opened, m.many))
+    }
+
+    /// The names a join left paired ([`Corr`]), and how many arm rows pair them.
+    pub fn paired(&self) -> (Vec<Sym>, usize) {
+        self.corr.as_ref().map_or((Vec::new(), 0), |c| (c.syms.iter().map(|&s| Sym(s)).collect(), c.arms.len()))
+    }
+
     /// The whole binding: its meaning and its value.
     #[inline]
     pub fn get(&self, sym: Sym) -> Option<&Binding> {

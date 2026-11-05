@@ -64,6 +64,7 @@ mod checkpoint;
 pub(crate) mod directive;
 pub use checkpoint::Checkpoints;
 pub(crate) mod explore;
+mod inspect;
 mod package_cache;
 use package_cache::Delta;
 pub use package_cache::prune as prune_caches;
@@ -145,6 +146,8 @@ pub struct Event {
     /// `\meaning` of the names among them.
     pub queued: Box<[(Box<str>, u8)]>,
     pub meanings: Box<[(Sym, Box<str>)]>,
+    /// Dev mode (`trace_state`): the abstract state at this step ([`Machine::snapshot`]).
+    pub state: Option<Box<serde_json::Value>>,
 }
 
 /// A loaded file: its path and its [`LoadKind`] (input, package, class).
@@ -1559,6 +1562,8 @@ pub struct Machine<'a> {
     undo: Vec<Undo>,
     /// Paths waiting in the innermost drive, for progress reports.
     waiting: usize,
+    /// Dev mode: the waiting paths it was taken at, and why they stay apart.
+    apart: Option<(usize, Rc<str>)>,
     /// A path ended while others went on: what the run does from then on
     /// happens only in some runs.
     parted: bool,
@@ -2445,6 +2450,7 @@ impl<'a> Machine<'a> {
             ended_run: false,
             undo: Vec::new(),
             waiting: 0,
+            apart: None,
             parted: false,
             abs: None,
             abs_exact: None,
@@ -5471,7 +5477,9 @@ will look undefined",
                 names.push(sym);
             }
         }
-        let meanings = names.into_iter().map(|sym| (sym, self.meaning_text(sym).chars().take(240).collect())).collect();
+        let state = self.cfg.trace_state.then(|| Box::new(self.snapshot(&[&[name][..], &names[..]].concat(), &text)));
+        let meanings =
+            names.into_iter().map(|sym| (sym, self.meaning_text(sym).chars().take(inspect::TEXT).collect())).collect();
         let queued = queued
             .iter()
             .map(|t| match t.tok {
@@ -5495,6 +5503,7 @@ will look undefined",
             fork,
             queued,
             meanings,
+            state,
         });
         if self.cfg.trace_stop == Some(index) {
             self.halted = true;

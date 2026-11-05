@@ -1742,6 +1742,11 @@
   const lensesShown = (on) => { document.body.classList.toggle('show-lenses', on); $('cfg-lenses').checked = on; self.satexStore.set('lenses', on || null); };
   lensesShown(self.satexStore.get('lenses') === true);
   $('cfg-lenses').onchange = (e) => lensesShown(e.target.checked);
+  // dev mode: traces carry the abstract state of each step (`trace_state`); off, the runs pay nothing for it
+  let devMode = false;
+  const devShown = (on) => { devMode = on; document.body.classList.toggle('dev-mode', on); $('cfg-dev').checked = on; self.satexStore.set('dev', on || null); };
+  devShown(self.satexStore.get('dev') === true);
+  $('cfg-dev').onchange = (e) => devShown(e.target.checked);
   // every dialog is the widgets' popup: peek, detach, full screen, kept per dialog (dialogs.js)
   for (const d of document.querySelectorAll('dialog.cache-dialog:not(.ask-dialog)')) self.satexDialogs?.enhance(d);
   /** The open file's fixes at once, as the language server merges them (render.rs `fix_all`): per rule, per category or all. */
@@ -1963,6 +1968,7 @@
       ...group('Explain', [
         ...(w?.[3] ? [['Explain', '', focusExplain], ['Show expansions', '', () => expansions(w)], ['Trace expansion', '', () => traceCall(`\\${w[2]}`, { file: state.file, line: p.line + 1, col: w[0] + 1 })]] : []),
         ...found.map((d) => [`Explain rule ${d.code}`, '', () => unfold(diagnostics[uri()].indexOf(d), false)]),
+        ...(devMode ? [['Inspect state here', 'dev', () => traceCall(w?.[3] ? `\\${w[2]}` : `line ${p.line + 1}`, { file: state.file, line: p.line + 1, col: (w?.[3] ? w[0] : p.character) + 1 })]] : []),
       ]),
       ...group('Fix', editable ? [...fixes.map((f) => [`Fix: ${f.title}`, f.safety, () => fix(f)]),
         ...rules.map((c) => [`Fix all ${c}`, `${fixAllOf('rule', c, true)?.data.count ?? 0}×`, () => fixAll(c, true)])] : []),
@@ -3083,8 +3089,18 @@
     return `<details class="tr-state" data-step="${trace.steps.indexOf(r)}"${trace.stateOpen ? ' open' : ''}><summary>State at this step: ${plural(ms.length, 'name')} ahead</summary>` +
       `<input type="search" class="tr-filter" placeholder="filter names" aria-label="filter names" value="${escape(trace.filter ?? '')}">` +
       `<ul class="tr-means">${ms.map(([n, m]) => `<li data-n="${escape(n)}"${n.toLowerCase().includes((trace.filter ?? '').toLowerCase()) ? '' : ' hidden'}>${csCode(n)} <code class="tr-mean">${csText(m)}</code></li>`).join('') || '<li class="muted">The input ahead names no command.</li>'}</ul>` +
-      `<button type="button" class="ghost small tr-allnames">all names at this step</button><ul class="tr-means tr-every"></ul></details>`;
+      `<button type="button" class="ghost small tr-allnames">all names at this step</button><ul class="tr-means tr-every"></ul></details>` +
+      (r.state ? `<details class="tr-dev"${trace.devOpen !== false ? ' open' : ''}><summary>Domains at this step <span class="muted">dev mode</span></summary>${self.satexViews.dev.stateHtml(r.state, (n) => csCode(n))}</details>` : '');
   }
+  /** The trace's records as a file: JSON as the server gave them, or CSV with one column per key. */
+  function traceExport(kind) {
+    const rs = traceFor?.records ?? [];
+    const text = kind === 'csv' ? self.satexViews.dev.traceCsv(rs) : JSON.stringify(rs, null, 1);
+    const url = URL.createObjectURL(new Blob([text], { type: kind === 'csv' ? 'text/csv' : 'application/json' }));
+    Object.assign(document.createElement('a'), { href: url, download: `trace-${String(traceFor?.name ?? 'run').replace(/[^\w@:-]+/g, '')}.${kind}` }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  for (const k of ['json', 'csv']) $(`trace-${k}`).onclick = () => traceExport(k);
   /** Catcode names, read from the wiki's table once. */
   let catNames = null;
   const loadCatNames = () => (catNames ??= fetch(`${base}wiki/domains.html`).then((r) => r.text()).then((t) => {
@@ -3192,6 +3208,7 @@
     const li = e.target.parentElement;
     if (li?.dataset.i && e.target.open) fill(li);
     if (e.target.classList?.contains('tr-state') && trace) trace.stateOpen = e.target.open;
+    if (e.target.classList?.contains('tr-dev') && trace) trace.devOpen = e.target.open;
   }, true);
   traceBody.addEventListener('mouseover', (e) => {
     traceBody.querySelectorAll('.tr-mate').forEach((x) => x.classList.remove('tr-mate'));
@@ -3250,7 +3267,7 @@
     const tick = setInterval(draw, 250);
     traceLive = (d) => { if (d.text || d.phase) last = d; draw(); };
     sync();
-    const config = traceFor.config = { trace: 'true', trace_document_only: 'false', trace_lines: `[${at.line}, ${at.line}]`, trace_col: String(at.col), trace_file: at.file };
+    const config = traceFor.config = { trace: 'true', trace_document_only: 'false', trace_lines: `[${at.line}, ${at.line}]`, trace_col: String(at.col), trace_file: at.file, ...(devMode ? { trace_state: 'true' } : {}) };
     const request = { file: path(state.root ?? state.file), config, queries: [{ type: 'trace' }] };
     const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch((e) => ({ error: String(e?.message ?? e) })))?.[0];
     clearInterval(tick);

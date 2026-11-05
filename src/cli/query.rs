@@ -101,10 +101,13 @@ pub fn trace(
         });
     }
     // A table has no room for a call's definition; `--interactive` and JSON show it.
-    if context.format != crate::plugins::format::Format::Json {
-        for record in &mut records {
-            record.remove("parameters");
-            record.remove("body");
+    // A dev-mode state goes to JSON and CSV (one JSON cell), not to a table.
+    use crate::plugins::format::Format;
+    for record in records.iter_mut().filter(|_| context.format != Format::Json) {
+        record.remove("parameters");
+        record.remove("body");
+        if context.format != Format::Csv {
+            record.remove("state");
         }
     }
     Ok(Output::Records(records))

@@ -1606,6 +1606,7 @@ impl Machine<'_> {
             ended_run: _,
             undo: _,
             waiting: _,
+            apart: _,
             parted: _,
             abs: _,
             abs_exact: _,

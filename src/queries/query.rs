@@ -2020,6 +2020,9 @@ fn trace(analysis: &Analysis) -> Vec<Record> {
             if !named.is_empty() {
                 record.insert("aliases".into(), Json::Object(named));
             }
+            if let Some(state) = &event.state {
+                record.insert("state".into(), (**state).clone());
+            }
             record
         })
         .collect()

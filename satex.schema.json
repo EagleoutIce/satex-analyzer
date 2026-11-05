@@ -2699,6 +2699,17 @@
           ],
           "x-example": "a trace of a long run shows only its start"
         },
+        "trace_state": {
+          "default": 32,
+          "description": "most entries each list of a dev-mode step state holds (bindings, stacks, catcodes)",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "memory",
+            "output"
+          ],
+          "x-example": "8 keeps a long dev-mode trace small"
+        },
         "value_set": {
           "default": 8,
           "description": "how many exact values a number or length keeps after branches merge before only its range is kept",
@@ -3914,6 +3925,17 @@
     },
     "trace_file": {},
     "trace_lines": {},
+    "trace_state": {
+      "default": false,
+      "description": "dev mode: each trace step carries the abstract state it ran in (paths, stacks, bindings)",
+      "type": "boolean",
+      "x-affects": [
+        "speed",
+        "memory",
+        "output"
+      ],
+      "x-example": "on: `satex trace --state --format json` shows why two paths stay apart"
+    },
     "trace_steps": {},
     "trace_stop": {},
     "type_plugins": {

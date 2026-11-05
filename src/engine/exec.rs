@@ -1358,7 +1358,7 @@ impl Machine<'_> {
 
     /// `\meaning` of a macro up to its replacement text:
     /// `⟨prefixes⟩macro:⟨parameter text⟩->` (tex.web §§ 294, 296).
-    fn macro_head(&self, m: &crate::engine::tex::MacroDef, escape: Option<char>) -> String {
+    pub(crate) fn macro_head(&self, m: &crate::engine::tex::MacroDef, escape: Option<char>) -> String {
         let mut prefix = String::new();
         for (set, word) in [(m.protected, "protected"), (m.long, "long"), (m.outer, "outer")] {
             if set {

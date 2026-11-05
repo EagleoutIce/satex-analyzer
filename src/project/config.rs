@@ -154,6 +154,8 @@ pub struct Limits {
     pub vertices: usize,
     pub facts: usize,
     pub trace: usize,
+    /// Dev mode: the most entries each list of a step's state holds.
+    pub trace_state: usize,
     /// Entries on the save stack: one per assignment a group may have to undo
     /// (tex.web § 268).
     pub save_stack: usize,
@@ -214,6 +216,7 @@ impl Limits {
             "vertices" => self.vertices as u64,
             "facts" => self.facts as u64,
             "trace" => self.trace as u64,
+            "trace_state" => self.trace_state as u64,
             "save_stack" => self.save_stack as u64,
             "memory" => self.memory.as_u64(),
             _ => return None,
@@ -294,6 +297,7 @@ impl Default for Limits {
             vertices: 400_000,
             facts: 2_000_000,
             trace: 200_000,
+            trace_state: 32,
             save_stack: 2_000_000,
             // Enough for the kernel and a large document several times over,
             // and small enough that a runaway run dies before the machine
@@ -1688,6 +1692,9 @@ pub struct Config {
     #[serde(default)]
     pub verbose: u8,
     pub trace: bool,
+    /// Dev mode: each trace event carries the abstract state of its step.
+    #[serde(default)]
+    pub trace_state: bool,
     /// Record no events while a package or kernel file is read.
     #[serde(default)]
     pub trace_document_only: bool,
@@ -1775,6 +1782,7 @@ impl Default for Config {
             profiles: Profiles::default(),
             verbose: 0,
             trace: false,
+            trace_state: false,
             trace_document_only: false,
             trace_lines: None,
             trace_col: 0,

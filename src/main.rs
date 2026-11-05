@@ -609,8 +609,9 @@ fn configure(cli: &Cli, source: Option<&str>) -> Result<(Config, Vec<PathBuf>), 
     }
     cfg.verbose = cli.verbose;
     cfg.trace |= cli.command.as_ref().is_some_and(Command::wants_trace);
-    if let Some(Command::Trace { lines, steps, from, to, include_internal, interactive, .. }) = &cli.command {
+    if let Some(Command::Trace { lines, steps, from, to, include_internal, interactive, state, .. }) = &cli.command {
         cfg.trace_document_only = !include_internal && !interactive;
+        cfg.trace_state |= state;
         cfg.trace_file = satex::cli::trace_file(&[from.as_deref(), to.as_deref(), lines.as_deref()])?;
         if let Some(from) = from {
             let (_, from) = satex::cli::split_file(from);
