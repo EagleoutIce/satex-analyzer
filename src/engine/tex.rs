@@ -544,6 +544,11 @@ impl Interner {
         sym
     }
 
+    /// Whether `sym` names a numbered register ([`Interner::register`]).
+    pub fn is_register(&self, sym: Sym) -> bool {
+        self.registers.values().any(|s| *s == sym)
+    }
+
     /// The name of a numbered register: `prefix`, `kind`, then `index`.
     pub fn register(&mut self, prefix: char, kind: &'static str, index: i64) -> Sym {
         let sym = match self.registers.get(&(kind, index)) {

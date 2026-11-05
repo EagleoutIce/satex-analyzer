@@ -3655,8 +3655,11 @@ impl Machine<'_> {
                     let digested = digested_kinds(self.out.interner.name(*sym), *bits);
                     // A name the analysis makes is written where it is made: one
                     // read here and absent at the start would key on this run alone.
+                    // An empty register slot is a register never assigned (zero).
                     debug_assert!(
-                        before_binding.is_some() || !self.out.interner.name(*sym).starts_with('\u{2}'),
+                        before_binding.is_some()
+                            || !self.out.interner.name(*sym).starts_with('\u{2}')
+                            || self.out.interner.is_register(*sym),
                         "key on a name this load made unwritten: {}",
                         self.out.interner.cs(*sym)
                     );
@@ -3911,6 +3914,12 @@ mod tests {
         Hooked
     }
 
+    /// No wall clock: a debug build on a busy machine reads the kernel
+    /// past `limits.seconds`, and a truncated kernel is never cached.
+    fn unclocked() -> crate::project::config::Limits {
+        crate::project::config::Limits { seconds: 0, ..Default::default() }
+    }
+
     fn installed() -> bool {
         crate::project::paths::which("kpsewhich").is_ok()
     }
@@ -3924,6 +3933,7 @@ mod tests {
             std::fs::create_dir_all(&dir).expect("the shared kernel directory");
             let cfg = Config {
                 cache: crate::project::config::Cache { dir: Some(dir.clone()), document: false, ..Default::default() },
+                limits: unclocked(),
                 ..Config::default()
             };
             Machine::analyze("\\relax\n", Some(&dir.join("kernel.tex")), &cfg);
@@ -3959,6 +3969,7 @@ mod tests {
                 document: false,
                 ..Default::default()
             },
+            limits: unclocked(),
             ..Config::default()
         };
         let path = dir.join("doc.tex");

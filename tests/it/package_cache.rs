@@ -320,6 +320,33 @@ fn an_own_package_replays_every_fact_reading_it_records() {
     assert_eq!(differing_facts(&read, &replayed), Vec::<String>::new());
 }
 
+/// A register the package allocates and assigns, then assigns again past a
+/// line the preamble decides: a run that serves the front and records the
+/// rest keys it as it stands, so the next run serves all of it and reports
+/// what reading it does.
+#[test]
+fn a_register_assigned_in_the_served_front_keys_the_recorded_rest_as_it_stands() {
+    if !installed() {
+        return;
+    }
+    let dir = project("served-front");
+    std::fs::write(
+        dir.join("fronty.sty"),
+        "\\ProvidesPackage{fronty}[2020/01/01 v1]\n\\newdimen\\frontydim\n\\frontydim=3pt\n\\relax\n\
+         \\ifdefined\\userflag\\def\\frontyflagged{}\\fi\n\\frontydim=5pt\n\\relax\n",
+    )
+    .expect("fronty.sty");
+    let plain = "\\documentclass{article}\n\\usepackage{fronty}\n\\begin{document}x\\end{document}\n";
+    let flagged = plain.replacen("\\usepackage", "\\def\\userflag{}\n\\usepackage", 1);
+    run(&dir, plain);
+    let resumed = run(&dir, &flagged);
+    assert_eq!(served(&resumed, "fronty"), Some(false), "{:?}", resumed.package_caches);
+    let replayed = run(&dir, &flagged);
+    let state = replayed.package_caches.iter().rfind(|(name, ..)| name == "fronty").map(|(.., s)| s.as_str());
+    assert_eq!(state, Some("cached"), "{:?}", replayed.package_caches);
+    assert_eq!(differing_facts(&run_cold(&dir, &flagged), &replayed), Vec::<String>::new());
+}
+
 /// tagpdf replays whole: the random ids (`\\int_rand:n`) its namespaces
 /// get fork, and their paths leave fewer finished input levels below the
 /// file than it opened on. The replay reports what reading it did.
