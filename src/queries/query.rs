@@ -492,7 +492,8 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let mut arms = text.arms.iter().peekable();
     let mut math = math_atoms(text, &analysis.settings.conventions.math_symbols);
     let marks = script_marks(text, &mut math);
-    let mut aligns = text.align.iter().zip(&marks).filter(|(_, m)| !m.is_empty()).peekable();
+    // each mark with its place in `text.align`: rules set before it go first
+    let mut aligns = text.align.iter().zip(&marks).enumerate().filter(|(_, (_, m))| !m.is_empty()).peekable();
     let mut out = Vec::new();
     let (mut line, mut first, mut choice) = (String::new(), None, None::<Choice>);
     let mut causes: Vec<Cause> = Vec::new();
@@ -663,9 +664,13 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let mut flush =
         |i: usize, line: &mut String, keys: &mut std::collections::VecDeque<_>, next: Option<Option<usize>>| {
             let closing = next.is_some();
-            while let Some((_, mark)) =
-                aligns.next_if(|a| a.0.0 as usize <= i && !(closing && a.0.1 == crate::analysis::facts::Align::Begin))
-            {
+            // marks up to here, but not past a rule set before them
+            let first_rule = rules.peek().filter(|(r, _)| r.0 as usize <= i).map_or(u32::MAX, |(r, _)| r.3);
+            while let Some((_, (_, mark))) = aligns.next_if(|(k, a)| {
+                a.0.0 as usize <= i
+                    && (*k as u32) < first_rule
+                    && !(closing && a.0.1 == crate::analysis::facts::Align::Begin)
+            }) {
                 line.push(KEY);
                 keys.push_back((ALIGN, mark.as_str().into()));
             }
@@ -677,15 +682,30 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                 keys.push_back((ALIGN, "frameend".into()));
                 framed = Some(end);
             }
-            // so do the rules at its place (a `\toprule`)
-            let begins = aligns.peek().is_some_and(|a| a.0.0 as usize <= i);
-            while let Some((&(at, rule, _), _)) =
-                rules.next_if(|(r, e)| r.0 as usize <= i && !begins && !(e.is_some() && next == Some(*e)))
-            {
-                if framed == Some(at) && !matches!(rule, Rule::Bar(..)) {
-                    continue;
+            // the rules at its place (a `\toprule`) and the marks set before them, in the order they were set
+            loop {
+                let before = (line.len(), keys.len());
+                let held = aligns.peek().filter(|(_, a)| a.0.0 as usize <= i).map_or(u32::MAX, |(k, _)| *k as u32);
+                while let Some((&(at, rule, ..), _)) =
+                    rules.next_if(|(r, e)| r.0 as usize <= i && r.3 <= held && !(e.is_some() && next == Some(*e)))
+                {
+                    if framed == Some(at) && !matches!(rule, Rule::Bar(..)) {
+                        continue;
+                    }
+                    rule_note(line, keys, rule);
                 }
-                rule_note(line, keys, rule);
+                // then the marks after those rules
+                while let Some((_, (_, mark))) = aligns.next_if(|(k, a)| {
+                    a.0.0 as usize <= i
+                        && rules.peek().is_none_or(|(r, _)| r.0 as usize > i || r.3 > *k as u32)
+                        && !(closing && a.0.1 == crate::analysis::facts::Align::Begin)
+                }) {
+                    line.push(KEY);
+                    keys.push_back((ALIGN, mark.as_str().into()));
+                }
+                if (line.len(), keys.len()) == before {
+                    break;
+                }
             }
         };
     for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
@@ -915,7 +935,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         line.push_str(&note(&format!("▢ {label}")));
         sketches.push(sketch);
     }
-    for (_, mark) in aligns {
+    for (_, (_, mark)) in aligns {
         line.push(KEY);
         keys.push_back((ALIGN, mark.as_str().into()));
     }
@@ -923,7 +943,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         line.push(KEY);
         keys.push_back((ALIGN, "frameend".into()));
     }
-    for (&(_, rule, _), _) in rules {
+    for (&(_, rule, ..), _) in rules {
         rule_note(&mut line, &mut keys, rule);
     }
     if !line.trim().is_empty() {

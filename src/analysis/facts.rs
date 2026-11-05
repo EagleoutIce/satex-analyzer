@@ -398,8 +398,10 @@ pub struct Text {
     /// places them at its foot, not where they were set.
     pub inserts: Vec<(u32, u32)>,
     /// Rules set between characters (tex.web § 463): the number of
-    /// characters set before each, its kind and the user's line it was set from.
-    pub rules: Vec<(u32, Rule, Span)>,
+    /// characters set before each, its kind, the user's line it was set from
+    /// and the number of [`Text::align`] marks before it, which orders the
+    /// two at one place (a `\bottomrule` before its alignment's end).
+    pub rules: Vec<(u32, Rule, Span, u32)>,
     /// An alignment's (`\halign`, a `tabular`'s) parts, an `\hbox to` set
     /// in the line and leaders between characters: the number of characters
     /// set before each.

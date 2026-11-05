@@ -1325,9 +1325,9 @@ pub fn rule(m: &mut Machine, vertical: bool, [width, height, depth]: [Option<Opt
     };
     let site = m.call_site(span);
     let text = &mut m.out.facts.text;
-    let at = text.at.len() as u32;
-    if text.rules.len() < m.cfg.limits.facts && !text.rules.ends_with(&[(at, kind, site)]) {
-        text.rules.push((at, kind, site));
+    let (at, marks) = (text.at.len() as u32, text.align.len() as u32);
+    if text.rules.len() < m.cfg.limits.facts && !text.rules.ends_with(&[(at, kind, site, marks)]) {
+        text.rules.push((at, kind, site, marks));
     }
 }
 

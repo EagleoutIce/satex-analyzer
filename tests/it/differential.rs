@@ -1452,3 +1452,26 @@ fn may_text_names_its_switch() {
         row["causes"].as_array().into_iter().flatten().find(|c| c["on"].is_string()).expect("a cause with its switch");
     assert_eq!(choice["key"], cause["on"], "{row}");
 }
+
+/// `\bottomrule` is a `\noalign` of its alignment: the rule comes before the
+/// alignment's end, not after the table.
+#[test]
+fn a_bottom_rule_stays_inside_its_table() {
+    let rows = typeset_rows(
+        "bottomrule",
+        "\\usepackage{booktabs}",
+        "\\begin{tabular}{lr}\\toprule A & 1 \\\\ \\midrule B & 2 \\\\ \\bottomrule\\end{tabular}",
+    );
+    let row = paragraph(&rows, "A");
+    let marked = row["marked"].as_str().unwrap_or_default();
+    let (rules, end) = (marked.matches('―').count(), marks(row).iter().filter(|m| *m == "end").count());
+    assert_eq!((rules, end), (3, 1), "{row}");
+    let last_rule =
+        row["align"].as_array().unwrap().iter().filter(|m| m["mark"] == "end").map(|m| m["at"].as_u64()).next();
+    assert!(
+        last_rule
+            .flatten()
+            .is_some_and(|at| at as usize >= marked.chars().filter(|c| *c != '\u{e000}' && *c != '\u{e001}').count()),
+        "{row}"
+    );
+}
