@@ -1,0 +1,235 @@
+{
+ "width": 1200,
+ "shots": [
+  {
+   "name": "table",
+   "file": "paper.tex",
+   "title": "Tables",
+   "caption": "Edit a tabular as a grid. One click sets booktabs rules and adds the package.",
+   "steps": [
+    {
+     "eval": "satexWidget('table', ...__at('\\\\begin{tabular}', 2))"
+    },
+    {
+     "until": "document.querySelector('dialog.sd-dialog[open] .sd-tex')"
+    },
+    {
+     "eval": "[...document.querySelectorAll('dialog.sd-dialog[open] button')].find((b) => b.textContent === 'booktabs').click()",
+     "until": "/toprule/.test(document.querySelector('dialog.sd-dialog[open] .sd-tex')?.textContent)"
+    },
+    {
+     "wait": 1200
+    }
+   ],
+   "crop": "dialog.sd-dialog[open]",
+   "big": true,
+   "viewport": [
+    1000,
+    640
+   ]
+  },
+  {
+   "name": "image",
+   "file": "figure.tex",
+   "title": "Images",
+   "caption": "Crop, rotate, scale and tint a graphic. The dialog writes the includegraphics options.",
+   "steps": [
+    {
+     "eval": "const c = document.createElement('canvas'); c.width = 960; c.height = 600; const g = c.getContext('2d'); let k = g.createLinearGradient(0, 0, 0, 600); k.addColorStop(0, '#1d3b8f'); k.addColorStop(.55, '#f08a5d'); k.addColorStop(1, '#f9d77e'); g.fillStyle = k; g.fillRect(0, 0, 960, 600); g.fillStyle = '#ffe9a8'; g.beginPath(); g.arc(640, 330, 70, 0, 7); g.fill(); for (const [y, col, a] of [[380, '#6b3a6e', 90], [430, '#3f2552', 60], [490, '#22163a', 40]]) { g.fillStyle = col; g.beginPath(); g.moveTo(0, 600); for (let x = 0; x <= 960; x += 20) g.lineTo(x, y - a * Math.abs(Math.sin(x / 140 + y))); g.lineTo(960, 600); g.fill(); } const f = new File([await new Promise((r) => c.toBlob(r, 'image/png'))], 'dusk.png', { type: 'image/png' }); const t = new DataTransfer(); t.items.add(f); const i = document.getElementById('play-files'); i.files = t.files; i.dispatchEvent(new Event('change'));",
+     "wait": 2000
+    },
+    {
+     "eval": "[...document.querySelectorAll('#play-tabs [role=tab]')].find((b) => b.textContent.includes('figure.tex'))?.click(); await new Promise((r) => setTimeout(r, 500)); const v = document.querySelector('.cm-editor').satexView, s = v.state.doc.toString(), i = s.indexOf('{example-image}'); if (i >= 0) v.dispatch({ changes: { from: i + 1, to: i + 14, insert: 'dusk.png' } });",
+     "wait": 1500
+    },
+    {
+     "until": "document.querySelector('.cm-editor').satexView.state.doc.toString().includes('{dusk.png}') && document.getElementById('lsp-status').textContent !== 'checking…'"
+    },
+    {
+     "wait": 2500
+    },
+    {
+     "eval": "satexWidget('image', ...__at('\\\\includegraphics', 2))",
+     "until": "document.querySelector('dialog.sd-dialog[open]')"
+    },
+    {
+     "wait": 1500
+    },
+    {
+     "eval": "const d = document.querySelector('dialog.sd-dialog[open]'), at = (n) => [...d.querySelectorAll('input')].find((i) => (i.closest('label')?.textContent ?? i.previousElementSibling?.textContent ?? '').trim() === n); for (const [n, x] of [['left', 150], ['right', 60], ['top', 40], ['bottom', 30]]) { const i = at(n); if (!i) continue; i.value = x; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); }"
+    },
+    {
+     "wait": 1200
+    }
+   ],
+   "crop": "dialog.sd-dialog[open]",
+   "big": true,
+   "viewport": [
+    960,
+    640
+   ]
+  },
+  {
+   "name": "tikz",
+   "file": "spacing.tex",
+   "title": "Drawings",
+   "caption": "Move the nodes of a TikZ picture on a grid, or import a Mermaid flowchart.",
+   "steps": [
+    {
+     "eval": "satexWidget('tikz', ...__at('\\\\node[draw] (run)', 2))",
+     "until": "document.getElementById('play-view').open"
+    },
+    {
+     "wait": 1000
+    }
+   ],
+   "crop": "#play-view",
+   "text": "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}\n  \\node[draw] (src) at (0,0) {main.tex};\n  \\node[draw] (run) at (3,0) {SaTeX run};\n  \\node[draw] (find) at (6,1) {findings};\n  \\node[draw] (text) at (6,-1) {typeset text};\n  \\draw[->] (src) -- (run);\n  \\draw[->] (run) -- (find);\n  \\draw[->] (run) -- (text);\n\\end{tikzpicture}\n\\end{document}\n"
+  },
+  {
+   "name": "color",
+   "file": "colors.tex",
+   "title": "Colors",
+   "caption": "Every color the run defined, in every model xcolor knows.",
+   "steps": [
+    {
+     "eval": "satexWidget('color', ...__at('\\\\textcolor{brand}', 12))"
+    },
+    {
+     "until": "document.getElementById('play-view').open"
+    },
+    {
+     "wait": 800
+    }
+   ],
+   "crop": "#play-view"
+  },
+  {
+   "name": "typeset",
+   "file": "spacing.tex",
+   "title": "Typeset view",
+   "caption": "The text each paragraph sets, math included, without compiling.",
+   "steps": [
+    {
+     "eval": "document.querySelector('[data-panel=play-typeset]').click()"
+    },
+    {
+     "until": "/Results/.test(document.querySelector('#typeset-body')?.textContent)"
+    },
+    {
+     "wait": 800
+    }
+   ],
+   "crop": [
+    "#play-typeset .ts-switches",
+    "#typeset-body > *"
+   ],
+   "text": "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\section{Results}\nThe loss $\\mathcal{L}(\\theta) = \\sum_i (y_i - z_i)^2$ falls with each run.\nThe office files need three passes, see pages 10-12.\n\\begin{equation}\n  \\sum_{k=1}^{n} k^2 \\leq n^3\n\\end{equation}\n\\end{document}\n",
+   "pad": 6,
+   "settle": 2500
+  },
+  {
+   "name": "findings",
+   "file": "spacing.tex",
+   "title": "Findings",
+   "caption": "Each finding names its rule, explains why it holds and cites its sources.",
+   "steps": [
+    {
+     "eval": "document.querySelector('[data-panel=play-findings]')?.click()"
+    },
+    {
+     "until": "document.querySelector('#lsp-diagnostics li:not(.cat-group)')"
+    },
+    {
+     "click": "document.querySelector('#lsp-diagnostics li:not(.cat-group)')"
+    },
+    {
+     "wait": 1000
+    }
+   ],
+   "crop": "#play-findings",
+   "text": "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\section{Results}\nThe loss $\\mathcal{L}(\\theta) = \\sum_i (y_i - z_i)^2$ falls with each run.\nThe office files need three passes, see pages 10-12.\n\\begin{equation}\n  \\sum_{k=1}^{n} k^2 \\leq n^3\n\\end{equation}\n\\end{document}\n"
+  },
+  {
+   "name": "explain",
+   "file": "colors.tex",
+   "title": "Explanations",
+   "caption": "Where a command comes from, what it takes and what it expands to.",
+   "steps": [
+    {
+     "eval": "document.querySelector('[data-panel=play-explain]').click(); __xy('\\\\textcolor{brand}', 3)",
+     "until": "/textcolor/.test(document.querySelector('#explain-body')?.textContent)"
+    },
+    {
+     "wait": 1000
+    }
+   ],
+   "crop": "#explain-body > *",
+   "pad": 8
+  },
+  {
+   "name": "units",
+   "file": "units.tex",
+   "title": "Lengths",
+   "caption": "Hover a length for its value in every unit and its share of the text width.",
+   "steps": [
+    {
+     "hover": "__xy('\\\\vspace{12pt}', 9)"
+    },
+    {
+     "until": "document.querySelector('.tip-card:not([hidden])')"
+    },
+    {
+     "wait": 800
+    }
+   ],
+   "crop": ".tip-card:not([hidden])",
+   "pad": 0,
+   "keepMouse": true
+  },
+  {
+   "name": "float",
+   "file": "paper.tex",
+   "title": "Float placement",
+   "caption": "One toggle per placement letter, with what LaTeX does for each.",
+   "steps": [
+    {
+     "eval": "satexWidget('float', ...__at('\\\\begin{figure}[ht]', 15))"
+    },
+    {
+     "until": "/figure\\}\\[/.test(document.querySelector('dialog.sd-dialog[open] .sd-tex')?.textContent)"
+    },
+    {
+     "wait": 800
+    }
+   ],
+   "crop": "dialog.sd-dialog[open]",
+   "viewport": [
+    900,
+    520
+   ]
+  },
+  {
+   "name": "glossary",
+   "file": "thesis.tex",
+   "title": "Glossary, index, bibliography",
+   "caption": "Managers list the entries a run defines, their fields and their uses.",
+   "steps": [
+    {
+     "eval": "satexWidget('manager', 'glossary')",
+     "until": "document.getElementById('play-view').open"
+    },
+    {
+     "wait": 800
+    },
+    {
+     "click": "[...document.querySelectorAll('#play-view *')].find((e) => !e.children.length && e.textContent.trim() === 'satex')"
+    },
+    {
+     "wait": 1000
+    }
+   ],
+   "crop": "#play-view"
+  }
+ ]
+}

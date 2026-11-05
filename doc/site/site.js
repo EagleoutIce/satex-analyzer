@@ -1524,6 +1524,31 @@
     });
   }
 
+  // The landing showcase: each figure fades in once it nears the viewport, its picture drifts a few
+  // pixels against the scroll. Transforms only, so nothing shifts. Reduced motion keeps both still.
+  const shots = [...document.querySelectorAll('.shot')];
+  if (shots.length && 'IntersectionObserver' in self && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const near = new Set();
+    const seen = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) { e.target.classList.remove('pending'); near.add(e.target); } else near.delete(e.target);
+      }
+    }, { rootMargin: '0px 0px -8% 0px' });
+    for (const s of shots) {
+      if (s.getBoundingClientRect().top > innerHeight) s.classList.add('pending');
+      seen.observe(s);
+    }
+    let queued = false;
+    const drift = () => {
+      queued = false;
+      for (const s of near) {
+        const r = s.getBoundingClientRect(), mid = (r.top + r.height / 2) / innerHeight - .5;
+        s.style.setProperty('--lift', `${(Math.max(-1, Math.min(1, mid)) * -10).toFixed(1)}px`);
+      }
+    };
+    addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(drift); } }, { passive: true });
+  }
+
   // "category 12" on a documentation page links to that code's row
   const catcodes = document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? '';
   for (const root of document.querySelectorAll('body.doc main')) {

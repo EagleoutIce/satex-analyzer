@@ -206,6 +206,11 @@ check('TeXbook links carry their chapter', books.length > 3 && books.every((u) =
 const landing = await text('index.html');
 check('landing examples are highlighted without JS', /<span class="ln"[^>]*>.*?<span class="tok-cmd[ "]/.test(landing));
 check('landing shows no static command output', !/<pre class="output"|\$ satex explain/.test(landing));
+// the showcase: every image sized (no layout shift) and served, in both themes
+const shotImgs = [...landing.matchAll(/<img src="(showcase\/[^"]+)" width="\d+" height="\d+"/g)].map((m) => m[1]);
+const shotMissing = [];
+for (const src of shotImgs.flatMap((s) => [s, s.replace(/png$/, 'webp'), s.replace(/png$/, 'avif')])) if (!(base.startsWith('file:') ? existsSync(fileURLToPath(base + src)) : (await fetch(base + src).catch(() => ({}))).ok)) shotMissing.push(src);
+check('landing showcase images are sized and served', shotImgs.length >= 4 && shotImgs.length % 2 === 0 && !shotMissing.length, shotMissing.join(' '));
 // every command of every example comes with what satex explain says of it
 const exData = [...landing.matchAll(/<script type="application\/json" class="ex-data">(.*?)<\/script>/gs)].map((m) => JSON.parse(m[1]));
 const exCommands = [...landing.matchAll(/data-cs="([^"]*)"/g)].map((m) => m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"'));

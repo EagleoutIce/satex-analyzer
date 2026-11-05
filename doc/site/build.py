@@ -1628,9 +1628,10 @@ def main():
     if args.docs_only:
         sem.check_links(out, refs.used)
         return
+    parts["showcase"] = showcase(out)
     home = fill((SITE / "home.html").read_text(), {**assets, **parts, "version": release, "versiontitle": release_title, "repository": repo,
                                                        "description": html.escape(cargo["description"])})
-    page("index.html", "satex", home, side=False)
+    page("index.html", "Static Analysis for (La)TeX and Friends", home, side=False)
     page("play/index.html", "Playground", fill((SITE / "play.html").read_text(), {**assets, **parts}), side=False, kind="play")
     # Draw alone, to embed: its own page without the site's chrome
     (out / "draw").mkdir(exist_ok=True)
@@ -1647,6 +1648,31 @@ def main():
     offline(out)
     if args.precompress:
         precompress(out)
+
+
+def showcase(out):
+    """The landing page's showcase: per entry of showcase/shots.json its light and dark images
+    (showcase/capture.mjs takes them from a built playground), sized so the page never shifts."""
+    spec, src = json.loads((SITE / "showcase/shots.json").read_text()), SITE / "showcase/img"
+    (out / "showcase").mkdir()
+    figures = []
+    for s in spec["shots"]:
+        name, alt = s["name"], html.escape(f'{s["title"]}: {s["caption"]}')
+        if not (src / f"{name}-light.png").exists():
+            continue
+        pics = []
+        for scheme in ("light", "dark"):
+            width, height = (int.from_bytes((src / f"{name}-{scheme}.png").read_bytes()[o:o + 4], "big") for o in (16, 20))
+            for ext in ("avif", "webp", "png"):
+                shutil.copy2(src / f"{name}-{scheme}.{ext}", out / "showcase" / f"{name}-{scheme}.{ext}")
+            pics.append(f'<picture class="shot-{scheme}"><source type="image/avif" srcset="showcase/{name}-{scheme}.avif">'
+                        f'<source type="image/webp" srcset="showcase/{name}-{scheme}.webp">'
+                        f'<img src="showcase/{name}-{scheme}.png" width="{width}" height="{height}" alt="{alt if scheme == "light" else ""}" loading="lazy" decoding="async"></picture>')
+        try_it = f'play/index.html#{s["file"]}'
+        figures.append(f'<figure class="shot{" shot-big" if s.get("big") else ""}"><a class="shot-stage" href="{try_it}" tabindex="-1">{"".join(pics)}</a>'
+                       f'<figcaption><h3>{html.escape(s["title"])}</h3><p>{html.escape(s["caption"])}</p>'
+                       f'<a class="shot-try" href="{try_it}">Try it on {html.escape(s["file"])} →</a></figcaption></figure>')
+    return "\n".join(figures)
 
 
 def offline(out):

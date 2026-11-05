@@ -224,6 +224,12 @@ node doc/site/test.mjs http://localhost:8000/   # lints every sample through the
 
 Both builds must use the same profile: a cache is keyed on the build that wrote it.
 
+The landing page's showcase images come from a served playground.
+`doc/site/showcase/shots.json` lists each widget: its example, the steps that open it, the crop and the caption.
+`node doc/site/showcase/capture.mjs http://127.0.0.1:8000/` takes each one in light and dark and writes AVIF, WebP and PNG to `doc/site/showcase/img`.
+It needs Chromium, ImageMagick, `avifenc` and `pngquant`.
+`build.py` copies the images and sizes each one in the page.
+
 ## Regression checks
 
 Two local safeguards keep fixed problems from returning.
