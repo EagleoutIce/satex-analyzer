@@ -372,12 +372,13 @@ pub const MORE_DEFINITIONS: &str = "#### More definitions";
 /// `name` still means the primitive at `at`.
 pub fn placed(analysis: &Analysis, mut markdown: String, name: &str, path: &str, at: Pos) -> String {
     let first = markdown.find("\n\n").map_or(0, |i| i + 2);
-    // What the calls typeset, the one at the cursor first: before the
-    // signature line, else after the first paragraph under the heading.
+    // What the call at the cursor typesets: after the signature line, which
+    // leads, else after the first paragraph under the heading.
     let set = typesets(analysis, name, path, at);
     let usage = markdown.find(&format!("\n`\\{name}")).map(|i| i + 1);
-    let second = markdown[first..].find("\n\n").map_or(markdown.len(), |i| first + i + 2);
-    markdown.insert_str(usage.unwrap_or(second).min(markdown.len()), &set);
+    let after = |from: usize| markdown[from..].find("\n\n").map_or(markdown.len(), |i| from + i + 2);
+    let at_sig = usage.map_or_else(|| after(first), after);
+    markdown.insert_str(at_sig.min(markdown.len()), &set);
     if let Some(syntax) = crate::knowledge::primitives::syntax(analysis, name, path, at.line, at.col) {
         markdown.insert_str(first, &syntax);
     }
@@ -561,11 +562,9 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
     Some(markdown)
 }
 
-/// What the document's calls of `name` typeset: the call at `at` in `path`
-/// first, marked, then at most two others, the rest counted (Explain
-/// lists them all).
+/// What the document's call of `name` at `at` in `path` typesets: other
+/// calls belong to their own hovers (Explain lists them all).
 fn typesets(analysis: &Analysis, name: &str, path: &str, at: Pos) -> String {
-    const OTHERS: usize = 2;
     let Some(sym) = analysis.interner.lookup(name) else { return String::new() };
     let mut calls: Vec<crate::engine::tex::Span> = analysis
         .facts
@@ -593,29 +592,11 @@ fn typesets(analysis: &Analysis, name: &str, path: &str, at: Pos) -> String {
         }
     }
     sets.sort_by_key(|(.., mine)| !mine);
-    let lines = |ls: &[u32]| {
-        let named = ls.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");
-        format!("line{} {named}", if ls.len() > 1 { "s" } else { "" })
-    };
-    let mut out = String::new();
-    let mut rest = sets.iter();
-    // the call at the cursor stands out, the others are muted
-    if let Some((set, _, true)) = sets.first() {
-        rest.next();
-        out.push_str(&format!("**Typesets {set} here**\n\n"));
+    // only the call at the cursor: what other calls set belongs to their own hovers
+    match sets.first() {
+        Some((set, _, true)) => format!("**Typesets {set} here**\n\n"),
+        _ => String::new(),
     }
-    let others: Vec<_> = rest.collect();
-    if others.is_empty() {
-        return out;
-    }
-    let shown: Vec<String> =
-        others.iter().take(OTHERS).map(|(set, ls, _)| format!("*{set} at {}*", lines(ls))).collect();
-    let more = match others.len() > OTHERS {
-        true => format!(" *+{} more*", others.len() - OTHERS),
-        false => String::new(),
-    };
-    let heading = if out.is_empty() { "Typesets" } else { "Elsewhere" };
-    format!("{out}*{heading}:* {}{more}\n\n", shown.join(" · "))
 }
 
 /// The knowledge-base topics a command's hover touches: the types of its

@@ -1305,8 +1305,8 @@ fn hover_and_signature_help_show_argument_types() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A command's hover says what its calls in the document typeset: the
-/// call at the cursor first, then each other text once with its lines.
+/// A command's hover says what the call at the cursor typesets, under the
+/// signature: other calls belong to their own hovers.
 #[test]
 fn hover_shows_what_the_call_typesets() {
     let text = "\\documentclass{article}\n\\newcommand\\hi[1]{Hello #1}\n\\begin{document}\nGar\\c{c}on \\hi{you}.\n\\hi{me} \\hi{you}\n\\end{document}\n";
@@ -1319,8 +1319,8 @@ fn hover_shows_what_the_call_typesets() {
         server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
     };
     let hi = hover(&mut server, 12);
-    assert!(hi.contains("**Typesets `Hello you` here**") && hi.contains("*`Hello me` at line 5*"), "{hi}");
-    assert!(hi.find("here") < hi.find("Hello me"), "the call at the cursor first: {hi}");
+    assert!(hi.contains("**Typesets `Hello you` here**") && !hi.contains("Hello me"), "{hi}");
+    assert!(hi.find("`\\hi") < hi.find("Typesets"), "the signature leads: {hi}");
     let c = hover(&mut server, 4);
     assert!(c.contains("Typesets `") && c.contains(" here**"), "{c}");
     server.shutdown();
