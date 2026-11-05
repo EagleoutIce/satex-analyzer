@@ -55,7 +55,7 @@ plugins: 48 in 11 kinds
   build system        5  latexmk, make, tectonic, arara, l3build
   tools               7  biber, bibtex, makeindex, xindy, makeglossaries, dvips, ps2pdf
   magic comments      3  % !TeX, % !BIB, % arara:
-… 16 more lines omitted
+… 17 more lines omitted
 ```
 
 <details>
@@ -478,7 +478,7 @@ The `controls` command shows the switches and options a package or class defines
 $ satex controls -f samples/paper.tex
 tag     name       count  value                                  governs  file           
 option  article           11pt                                            paper.tex      @ paper.tex:1:1
-switch  \ifdraft          false                                  315      paper.tex      @ paper.tex:3:7
+switch  \ifdraft          false                                  236      paper.tex      @ paper.tex:3:7
 offers  amsmath    15     alignedleftspaceno, alignedleftspace…           amsmath.sty    @ amsmath.sty:45:16
 … 9 more lines omitted
 ```

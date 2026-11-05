@@ -1249,11 +1249,21 @@ type Streams = Rc<HashMap<i64, Rc<Vec<At>>>>;
 /// Names written and what they held then.
 type Written = Rc<[(Sym, Option<Binding>)]>;
 type Outputs = Rc<HashMap<String, Option<String>>>;
-/// The lines a deferred `\write` gave each file: written at the next
-/// shipout (tex.web § 1370), not before.
-/// Per file, the text deferred `\write`s left for the next shipout, as
-/// a file's text: lines, alternatives apart ([`texts_of`]).
-type Pending = Rc<HashMap<String, String>>;
+/// A deferred `\openout`, `\write` or `\closeout` (tex.web §§ 1341, 1350-1356),
+/// run at the next shipout (§ 1374): the stream is read now, a write's text
+/// expanded then (§ 1370). `Lost`: more alternatives than `limits.meaning_set`,
+/// any open file may get any lines, the opens and closes held may happen.
+#[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) enum Whatsit {
+    Open(Option<i64>, String),
+    Write { stream: Option<i64>, text: Rc<[Token]>, span: Span },
+    Close(Option<i64>),
+    Lost(Vec<Whatsit>),
+}
+
+/// The whatsits waiting for the next shipout, one list per alternative the
+/// joined paths left (none: nothing waits).
+type Pending = Rc<Vec<Vec<Whatsit>>>;
 
 /// The stream a number satex could not pin down names.  `i64::MIN` is past
 /// what `scan_int` can give (tex.web § 445), so no source reaches it.
@@ -4105,7 +4115,7 @@ will look undefined",
 
     /// A `\write` of `text` to `stream`: a `deferred` one waits for the
     /// next shipout. An unpinned stream may be any file.
-    pub(crate) fn write_output(&mut self, stream: Option<i64>, text: &str, deferred: bool) {
+    pub(crate) fn write_output(&mut self, stream: Option<i64>, text: &str) {
         // Any stream: each file open may get a line of unknown text.
         let Some(stream) = stream else {
             let open: Vec<String> = self.stream_files.values().map(|n| Self::output_name(n)).collect();
@@ -4119,13 +4129,6 @@ will look undefined",
         };
         let Some(name) = self.stream_files.get(&stream).map(|n| Self::output_name(n)) else { return };
         let open = self.engine_int(&format!("write_open.{stream}"));
-        if deferred {
-            each_text(Rc::make_mut(&mut self.pending).entry(name).or_default(), |t| {
-                t.push_str(text);
-                t.push('\n');
-            });
-            return;
-        }
         if let Some(slot) = Rc::make_mut(&mut self.outputs).get_mut(&name) {
             match (open, slot.as_mut()) {
                 (Some(0), _) => {}
@@ -4138,32 +4141,52 @@ will look undefined",
         }
     }
 
-    /// tex.web § 1374: a shipout writes what deferred `\write`s left to
-    /// the files still open.
+    /// A deferred `\openout`, `\write` or `\closeout`: a whatsit on every
+    /// alternative (tex.web § 1341).
+    pub(crate) fn defer(&mut self, what: Whatsit) {
+        let pending = Rc::make_mut(&mut self.pending);
+        if pending.is_empty() {
+            pending.push(Vec::new());
+        }
+        pending.iter_mut().for_each(|alt| alt.push(what.clone()));
+    }
+
+    /// tex.web § 1374: a shipout runs the whatsits deferred to it, in order,
+    /// in the environment then (§ 1370). Alternatives run apart.
     pub(crate) fn ship_pending(&mut self) {
-        let bound = usize::from(self.cfg.limits.meaning_set);
-        for (name, lines) in std::mem::take(&mut self.pending).iter() {
-            if let Some(Some(file)) = Rc::make_mut(&mut self.outputs).get_mut(name) {
-                let texts = texts_of(file)
-                    .into_iter()
-                    .flat_map(|f| texts_of(lines).into_iter().map(move |l| f.to_string() + l));
-                *file = texts
-                    .fold(None, |x: Option<String>, t| Some(x.map_or(t.clone(), |x| either_text(&x, &t, bound))))
-                    .unwrap_or_default();
+        let alts = std::mem::take(&mut self.pending);
+        let maybe = alts.len() > 1;
+        self.apart(alts.iter(), |m, alt| alt.iter().for_each(|w| m.run_whatsit(w, maybe)));
+    }
+
+    /// One whatsit at shipout; `maybe`: an open or close may not happen.
+    fn run_whatsit(&mut self, what: &Whatsit, maybe: bool) {
+        match what {
+            Whatsit::Write { stream, text, span } => {
+                let text = crate::analysis::observe::shipped(self, text);
+                self.write_text(*stream, text, false, *span);
+            }
+            Whatsit::Open(stream, name) => self.open_or_close(stream.filter(|_| !maybe), Some(name)),
+            Whatsit::Close(stream) => self.open_or_close(stream.filter(|_| !maybe), None),
+            Whatsit::Lost(held) => {
+                held.iter().for_each(|w| self.run_whatsit(w, true));
+                self.write_output(None, "");
             }
         }
     }
 
-    /// An `\immediate\closeout` of the file `name` with lines still to be
-    /// shipped: they reach it only if a shipout comes first, so what it holds
-    /// is not known.
-    pub(crate) fn close_pending(&mut self, name: &str) {
-        let name = Self::output_name(name);
-        if self.pending.get(&name).is_some_and(|l| !l.is_empty()) {
-            Rc::make_mut(&mut self.pending).remove(&name);
-            if let Some(slot) = Rc::make_mut(&mut self.outputs).get_mut(&name) {
-                unknown_line(slot);
-            }
+    /// `f` for each item, each from the same files, which then join.
+    pub(crate) fn apart<T>(&mut self, items: impl IntoIterator<Item = T>, mut f: impl FnMut(&mut Self, T)) {
+        let bound = usize::from(self.cfg.limits.meaning_set);
+        let start = self.outputs.clone();
+        let mut joined: Option<Outputs> = None;
+        for item in items {
+            self.outputs = start.clone();
+            f(self, item);
+            joined = Some(joined.map_or_else(|| self.outputs.clone(), |j| join_outputs(&j, &self.outputs, bound)));
+        }
+        if let Some(joined) = joined {
+            self.outputs = joined;
         }
     }
 
@@ -14351,14 +14374,30 @@ fn join_outputs(a: &Outputs, b: &Outputs, bound: usize) -> Outputs {
     )
 }
 
-/// [`join_outputs`] of what deferred `\write`s left for the next shipout.
+/// The whatsits either path left: their lists, up to `bound`. Past it, one
+/// `Whatsit::Lost` with the files they open and close.
 fn join_pending(a: &Pending, b: &Pending, bound: usize) -> Pending {
     if a == b {
         return a.clone();
     }
-    let text = |m: &Pending, n| m.get(n).cloned().unwrap_or_default();
-    let names: HashSet<&String> = a.keys().chain(b.keys()).collect();
-    Rc::new(names.into_iter().map(|n| (n.clone(), either_text(&text(a, n), &text(b, n), bound))).collect())
+    let none = [Vec::new()];
+    let alts = |p: &Pending| if p.is_empty() { none.to_vec() } else { p.to_vec() };
+    let mut all: Vec<Vec<Whatsit>> = Vec::new();
+    for alt in alts(a).into_iter().chain(alts(b)) {
+        if !all.contains(&alt) {
+            all.push(alt);
+        }
+    }
+    if all.len() > bound.max(1) {
+        let mut held: Vec<Whatsit> = Vec::new();
+        for w in all.into_iter().flatten().flat_map(|w| if let Whatsit::Lost(h) = w { h } else { vec![w] }) {
+            if !matches!(w, Whatsit::Write { .. }) && !held.contains(&w) {
+                held.push(w);
+            }
+        }
+        all = vec![vec![Whatsit::Lost(held)]];
+    }
+    Rc::new(all)
 }
 
 /// A file as either of two paths left it: the lines both begin and end

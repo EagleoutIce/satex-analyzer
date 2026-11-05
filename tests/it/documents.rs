@@ -200,6 +200,9 @@ fixtures! {
     tikz_node_with_an_undefined_name_in_math("tikz_node_undefined_in_math", "mwe.tex");
     /// PNG images scaled to keep their aspect ratio inside beamer columns.
     beamer_raster_images_scaled_to_their_aspect("beamer_raster_images", "mwe.tex");
+    /// A deferred `\protected@write` is expanded at `\shipout` (tex.web
+    /// § 1370): a counter the shipout hook steps is written as it is then.
+    deferred_write_expands_at_shipout("deferred_write_at_shipout", "mwe.tex");
 }
 
 fixtures! {

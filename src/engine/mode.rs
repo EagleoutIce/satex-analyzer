@@ -2342,6 +2342,7 @@ impl Machine<'_> {
             // its text and the boxes used in it reach the page
             let own = self.gather_chars(nest.from, now);
             self.place_chars(own, false);
+            self.ship_pending();
             if kind == BoxState::Unknown {
                 self.natural = None;
             }
@@ -3738,6 +3739,7 @@ impl Machine<'_> {
             BoxContext::Ship => {
                 let ranges = std::mem::take(&mut self.fetched);
                 self.place_chars(ranges, false);
+                self.ship_pending();
             }
             BoxContext::Leaders => {
                 self.fetched.clear();
@@ -3933,7 +3935,6 @@ impl Machine<'_> {
         }
         self.page_touched = false;
         self.pages += 1;
-        self.ship_pending();
         // §§ 1012-1014: the page's marks, those of earlier pages kept apart.
         // A forced break takes the whole list; past any other, it is lost.
         let page = match &mut self.natural {
@@ -4022,16 +4023,21 @@ impl Machine<'_> {
                 self.push_inserted(output, tokens, span);
                 self.open_list(Some(group::OUTPUT), Modes::INTERNAL_VERTICAL, 0, span);
             }
+            // § 1023: no output routine ships the page.
             Some(_) => {
+                self.ship_pending();
                 self.set_box(Some(255), BoxState::Void, true, None);
                 self.set_list_slot("disc.page", None);
             }
-            None => self.diagnose(
-                Severity::Imprecision,
-                "unknown-token-list",
-                span,
-                "\\output is unknown here, and what it holds was not run".into(),
-            ),
+            None => {
+                self.ship_pending();
+                self.diagnose(
+                    Severity::Imprecision,
+                    "unknown-token-list",
+                    span,
+                    "\\output is unknown here, and what it holds was not run".into(),
+                )
+            }
         }
     }
 

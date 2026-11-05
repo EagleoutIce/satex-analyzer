@@ -366,7 +366,7 @@ struct Lists {
     counter_namespace: Option<String>,
     streams: Keyed<i64, Vec<(Vec<String>, usize, usize)>>,
     outputs: Keyed<String, Option<String>>,
-    pending: Keyed<String, String>,
+    pending: Vec<Vec<super::Whatsit>>,
     aliases: Keyed<Sym, Sym>,
     wild: crate::analysis::machine::Wild,
 }
@@ -404,7 +404,6 @@ impl Lists {
         self.verbatim = changed(&from.verbatim, &self.verbatim);
         self.streams = changed(&from.streams, &self.streams);
         self.outputs = changed(&from.outputs, &self.outputs);
-        self.pending = changed(&from.pending, &self.pending);
         self.aliases = changed(&from.aliases, &self.aliases);
         self
     }
@@ -1308,9 +1307,7 @@ impl Machine<'_> {
             let mut outputs: Vec<_> = self.outputs.iter().collect();
             outputs.sort();
             hash.put(&outputs);
-            let mut pending: Vec<_> = self.pending.iter().collect();
-            pending.sort();
-            hash.put(&pending);
+            hash.put(&*self.pending);
             hash.put(&self.docstrip_dir.as_ref().map(|d| roots.canonical(d)));
             parts.push(("section and streams".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             let mut pinned: Vec<Sym> = self.pinned.iter().copied().collect();
@@ -1385,7 +1382,7 @@ impl Machine<'_> {
                 self.streams.iter().map(|(n, t)| (*n, t.iter().map(|a| (a.lines.to_vec(), a.lo, a.hi)).collect())),
             ),
             outputs: keyed(self.outputs.iter().map(|(n, t)| (n.clone(), t.clone()))),
-            pending: keyed(self.pending.iter().map(|(n, l)| (n.clone(), l.clone()))),
+            pending: self.pending.to_vec(),
             aliases: keyed(self.env.aliases.iter().map(|(k, v)| (*k, *v))),
         }
     }
@@ -2651,7 +2648,7 @@ impl Machine<'_> {
             self.streams =
                 Rc::new(streams.iter().map(|(n, texts)| (*n, Rc::new(texts.iter().map(at).collect()))).collect());
             self.outputs = Rc::new(patched(&from.outputs, &lists.outputs).into_iter().collect());
-            self.pending = Rc::new(patched(&from.pending, &lists.pending).into_iter().collect());
+            self.pending = Rc::new(lists.pending.clone());
             self.env.aliases = patched(&from.aliases, &lists.aliases).into_iter().collect();
         }
         // Changes count from the load's start, like the scalars.

@@ -4666,33 +4666,54 @@ impl Machine<'_> {
     }
 
     /// `\write⟨number⟩{…}` (tex.web § 1350): text is expanded when written, at
-    /// once after `\immediate` (tex.web § 1375), else at shipout, which satex
-    /// does not do. Stream 18 is the shell, run only with shell escape.
+    /// once after `\immediate` (tex.web § 1375), else at shipout (§ 1370),
+    /// a whatsit till then. Stream 18 is the shell, run only with shell escape.
     fn write_stream(&mut self, span: Span) {
         let immediate = std::mem::take(&mut self.prefixes.immediate);
-        let number = self.scan_number();
+        let stream = self.scan_number();
         let text = self.read_general_text();
-        // A deferred one is expanded at shipout (tex.web § 1370): here, with
-        // the page number not known, which is all LaTeX's `\protected@write`
-        // leaves to then.
-        let mut text = match immediate {
-            true => self.expand_tokens(Rc::from(text)),
-            false => crate::analysis::observe::shipped(self, &text),
-        };
-        // One of several texts: a path per text, so the file holds it exactly.
-        while let Some((i, texts)) =
+        if !immediate {
+            // What the call records: its text as a shipout now would expand it.
+            let shown = crate::analysis::observe::shipped(self, &text);
+            self.write_facts(stream, &shown, false, span);
+            return self.defer(crate::analysis::machine::Whatsit::Write { stream, text: text.into(), span });
+        }
+        let text = self.expand_tokens(Rc::from(text));
+        self.write_text(stream, text, true, span);
+    }
+
+    /// An expanded `\write` text written now, recorded when `immediate`. One
+    /// of several texts: now, a path per text, so the file holds it exactly;
+    /// at shipout, a write per text, the files joined.
+    pub(crate) fn write_text(&mut self, number: Option<i64>, mut text: Vec<Token>, immediate: bool, span: Span) {
+        if let Some((i, texts)) =
             text.iter().enumerate().find_map(|(i, t)| self.one_of_members(*t).filter(|m| m.len() > 1).map(|m| (i, m)))
         {
-            let mut pick = None;
-            let groups: Vec<Vec<usize>> = (0..texts.len()).map(|i| vec![i]).collect();
-            self.split_one_of_groups(text[i], span, &groups, |_, arm| {
-                pick = Some(arm);
-                true
-            });
-            let Some(arm) = pick else { break };
-            text.splice(i..=i, texts[arm].iter().copied());
+            if !immediate {
+                // Past `limits.meaning_set` squared texts, each is unknown text of its class.
+                let bound = usize::from(self.cfg.limits.meaning_set).pow(2);
+                let n = text
+                    .iter()
+                    .filter_map(|t| self.one_of_members(*t))
+                    .fold(1usize, |n, m| n.saturating_mul(m.len().max(1)));
+                if n <= bound {
+                    let texts: Vec<Vec<Token>> =
+                        texts.iter().map(|m| [&text[..i], &m[..], &text[i + 1..]].concat()).collect();
+                    return self.apart(texts, |m, t| m.write_text(number, t, false, span));
+                }
+            } else {
+                let mut pick = None;
+                let groups: Vec<Vec<usize>> = (0..texts.len()).map(|i| vec![i]).collect();
+                self.split_one_of_groups(text[i], span, &groups, |_, arm| {
+                    pick = Some(arm);
+                    true
+                });
+                if let Some(arm) = pick {
+                    text.splice(i..=i, texts[arm].iter().copied());
+                    return self.write_text(number, text, true, span);
+                }
+            }
         }
-        crate::analysis::observe::write(self, &text, number.unwrap_or(-1));
         // tex.web § 1370: printed to the file, broken at `\newlinechar` (§ 59).
         let newlinechar = self.intern("newlinechar");
         let newline = self.env.value(newlinechar).as_int().and_then(|c| u32::try_from(c).ok()).and_then(char::from_u32);
@@ -4719,11 +4740,19 @@ impl Machine<'_> {
             })
             .collect();
         let line = crate::engine::tex::detokenize_in(&file, &self.out.interner, escape, &self.catcodes, to);
-        self.write_output(number, &line, !immediate);
+        self.write_output(number, &line);
         if number == Some(18) {
             self.run_shell(&line);
         }
-        let text = self.text_of(&text);
+        if immediate {
+            self.write_facts(number, &text, true, span);
+        }
+    }
+
+    /// What a `\write` call records: its line, and the text as an occurrence.
+    fn write_facts(&mut self, number: Option<i64>, text: &[Token], immediate: bool, span: Span) {
+        crate::analysis::observe::write(self, text, number.unwrap_or(-1));
+        let text = self.text_of(text);
         // An unpinned stream may be the shell or a file the run opened, so both
         // are recorded. The log case writes nothing read back.
         let Some(stream) = number else {

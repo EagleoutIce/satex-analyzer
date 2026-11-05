@@ -8,7 +8,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use crate::analysis::machine::{CondLimit, Machine, Unk};
+use crate::analysis::machine::{CondLimit, Machine, Unk, Whatsit};
 use crate::engine::builtins::DefMode;
 use crate::engine::builtins::{CodeTable, Cond, Convert, FontParam, LastItem, Primitive, Special, Syntax};
 use crate::engine::env::GroupKind;
@@ -201,6 +201,29 @@ impl Machine<'_> {
         }
         let any = self.unpinned_sym(family);
         self.env.set_value(any, Value::Unknown, global);
+    }
+
+    /// `\openout` of `name`, else `\closeout`, acting (tex.web § 1374).
+    pub(crate) fn open_or_close(&mut self, stream: Option<i64>, name: Option<&str>) {
+        match (stream, name) {
+            (Some(stream), Some(name)) => {
+                self.set_engine(&format!("write_open.{stream}"), Value::Int(1), true);
+                // The file exists from here on, which `\input` of it
+                // (the `.aux` file at `\end{document}`) finds.
+                self.set_engine(&format!("written.{}", name.trim()), Value::Int(1), true);
+                self.stream_files.insert(stream, name.trim().to_string());
+                self.open_output(name, true);
+            }
+            // Any stream may be the one opened.
+            (None, Some(name)) => {
+                self.set_engine(&format!("written.{}", name.trim()), Value::Int(1), true);
+                self.open_output(name, false);
+                self.weaken_engine("write_open.", true);
+            }
+            (Some(stream), None) => self.set_engine(&format!("write_open.{stream}"), Value::Int(0), true),
+            // Any stream may be the one closed.
+            (None, None) => self.weaken_engine("write_open.", true),
+        }
     }
 
     /// Whether such a write may have reached this family.
@@ -1685,44 +1708,18 @@ impl Machine<'_> {
                 self.scan_keyword("to");
                 self.scan_dimen();
             }
-            // tex.web § 1374: a deferred `\openout` acts at shipout, which
-            // satex never reaches.
-            Syntax::OpenOut => {
+            // tex.web §§ 1351, 1374: now after `\immediate`, else a whatsit run at shipout.
+            Syntax::OpenOut | Syntax::CloseOut => {
                 let immediate = std::mem::take(&mut self.prefixes.immediate);
                 let stream = self.scan_int();
-                self.scan_optional_equals();
-                let name = self.read_file_name();
-                match (immediate, stream) {
-                    (true, Some(stream)) => {
-                        self.set_engine(&format!("write_open.{stream}"), Value::Int(1), true);
-                        // The file exists from here on, which `\input` of it
-                        // (the `.aux` file at `\end{document}`) finds.
-                        self.set_engine(&format!("written.{}", name.trim()), Value::Int(1), true);
-                        self.stream_files.insert(stream, name.trim().to_string());
-                        self.open_output(&name, true);
-                    }
-                    // Any stream may be the one opened.
-                    (true, None) => {
-                        self.set_engine(&format!("written.{}", name.trim()), Value::Int(1), true);
-                        self.open_output(&name, false);
-                        self.weaken_engine("write_open.", true);
-                    }
-                    _ => {}
-                }
-            }
-            Syntax::CloseOut => {
-                let immediate = std::mem::take(&mut self.prefixes.immediate);
-                let stream = self.scan_int();
-                match (immediate, stream) {
-                    (true, Some(stream)) => {
-                        if let Some(name) = self.stream_files.get(&stream).cloned() {
-                            self.close_pending(&name);
-                        }
-                        self.set_engine(&format!("write_open.{stream}"), Value::Int(0), true)
-                    }
-                    // Any stream may be the one closed.
-                    (true, None) => self.weaken_engine("write_open.", true),
-                    _ => {}
+                let name = matches!(syntax, Syntax::OpenOut).then(|| {
+                    self.scan_optional_equals();
+                    self.read_file_name()
+                });
+                match (immediate, name) {
+                    (true, name) => self.open_or_close(stream, name.as_deref()),
+                    (false, Some(name)) => self.defer(Whatsit::Open(stream, name)),
+                    (false, None) => self.defer(Whatsit::Close(stream)),
                 }
             }
             Syntax::FamilyFont => {

@@ -1983,8 +1983,8 @@ inductive WriteCmd (E : Engine) : Bool → State → Token → State → Prop
   | writeNow {s s1 s2 : State} {t : Token} {n : Int} {ts : TokList} :
       cmdOf s t = some .write → ScanInt E s n s1 → ExpandedText E s1 ts s2 →
       WriteCmd E true s t (logOut (if n = 18 then .shell (showToks s2 ts) else .write n (showToks s2 ts)) s2)
-  /-- **[over]** A deferred `\write` is a whatsit; its text is expanded at
-  `\shipout`, which SaTeX never reaches (SEM § 9). -/
+  /-- A deferred `\write` is a whatsit; its text is expanded at `\shipout`
+  (§ 1370). SaTeX keeps it unexpanded till then (`Pending`). -/
   | writeLater {s s1 s2 : State} {t : Token} {n : Int} {ts : TokList} :
       cmdOf s t = some .write → ScanInt E s n s1 → GeneralText E false s1 ts s2 →
       WriteCmd E false s t (appendItem .whatsit s2)
@@ -2064,7 +2064,8 @@ inductive BoxEnd (E : Engine) : BoxContext → BoxVal → State → State → Pr
       XNonRelax E s t s1 → meaningTok s1 t = .prim n (.material h k) →
       Operands E s1 (E.opsOf n) s2 → BoxEnd E .leaders b s (appendItem (.glue {}) s2)
   /-- **[over]** `\shipout`: the box goes; deferred `\write`s it carries
-  run then, which SaTeX does not model: any output may be added. -/
+  run then (§ 1374). The model adds any output; SaTeX expands each in the
+  environment at shipout (`ship_pending`). -/
   | shipout {s : State} {b : BoxVal} {o : List Output} :
       BoxEnd E .shipout b s { s with out := o ++ s.out }
 
