@@ -705,24 +705,28 @@ fn names_one_call_defines_are_defined_together() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("t.tex"),
-        "\\documentclass{article}\n\\usepackage{tcolorbox}\n\\newcounter{steps}\n\\newtcolorbox{note}{}\n\\begin{document}\nx\n\\end{document}\n",
+        "\\documentclass{article}\n\\usepackage{tcolorbox}\n\\newcounter{steps}\n\\newtcolorbox{note}{}\n\\NewDocumentCommand\\pick{m}{#1}\n\\begin{document}\nx\n\\end{document}\n",
     )
     .unwrap();
     let out = crate::support::satex()
         .current_dir(&dir)
-        .args(["explain", "\\c@steps", "\\note", "--format", "json", "-f", "t.tex"])
+        .args(["explain", "\\c@steps", "\\note", "\\pick", "--format", "json", "-f", "t.tex"])
         .output()
         .expect("satex runs");
     let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
-    let together = |name: &str| -> Vec<String> {
+    let field = |name: &str, key: &str| -> Vec<String> {
         rows.iter()
             .filter(|r| r["name"] == name)
-            .flat_map(|r| r["together"].as_array().cloned().unwrap_or_default())
+            .flat_map(|r| r[key].as_array().cloned().unwrap_or_default())
             .filter_map(|v| v.as_str().map(str::to_string))
             .collect()
     };
+    let together = |name: &str| field(name, "together");
     assert!(together("\\c@steps").iter().any(|n| n == "\\thesteps"), "{rows:?}");
     assert!(together("\\note").iter().any(|n| n == "\\endnote"), "{rows:?}");
+    // the code's own partners (`\pick code`) are folded apart, never shown as names to write
+    assert!(together("\\pick").is_empty(), "{rows:?}");
+    assert!(!field("\\pick", "together_internal").is_empty(), "{rows:?}");
 }
 
 /// Paths that part after a conditional or at a name with several meanings

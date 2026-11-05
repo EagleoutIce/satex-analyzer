@@ -2139,8 +2139,8 @@
     const now = at && shown.length > 1 ? (begin >= 0 ? at.line < begin : /\\documentclass/.test(text)) ? 'preamble' : 'document' : null;
     let first = shown.filter((r) => !now || r.when === now), rest = shown.filter((r) => !first.includes(r));
     if (!first.length) [first, rest] = [shown.slice(0, 1), shown.slice(1)];
-    return first.map(cards.explain).join('') +
-      (rest.length ? `<details class="more"><summary>More definitions</summary>${rest.map(cards.explain).join('')}</details>` : '');
+    return first.map((r) => cards.explain(r)).join('') +
+      (rest.length ? `<details class="more"><summary>More definitions</summary>${rest.map((r) => cards.explain(r)).join('')}</details>` : '');
   }
   /** The Explain macro panel shows `name`: its full record, or the hover until that is back. */
   async function explainName(name, at = null, records = null) {
@@ -2172,7 +2172,7 @@
     csTimer = setTimeout(async () => {
       const name = ref.dataset.cs, rs = (await explainRecords(name)).filter((r) => r.name === name);
       if (!rs.length || !ref.matches(':hover')) return;
-      tips.card.show(ref, cards.explain(rs[0]));
+      tips.card.show(ref, cards.explain(rs[0], true));
     }, 150);
   });
   document.addEventListener('mouseout', (e) => { if (e.target.closest?.(CS_CHIP) && !e.target.closest(CS_CHIP).contains(e.relatedTarget)) { clearTimeout(csTimer); if (!tips.card.el.dataset.pin) tips.card.hide(150); } });
@@ -3253,7 +3253,7 @@
       head = `<p class="tr-tip-mean"><b>meaning ${label}</b> <code>${rec ? csText(rec.tag === 'macro' && rec.body != null ? `macro:${rec.parameters ?? ''}->${rec.body}` : rec.body ?? rec.effective ?? rec.tag ?? '') : 'undefined'}</code></p>`;
     }
     rec ??= (await explainRecords(name)).find((x) => x.name === name);
-    return head + (rec ? cards.explain(rec) : '');
+    return head + (rec ? cards.explain(rec, true) : '');
   }
   async function showTip(ref, pin = false) {
     const html = await tipFor(ref);

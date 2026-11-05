@@ -5022,16 +5022,18 @@ fn uses_in(analysis: &Analysis, sym: Sym, window: Window) -> u32 {
 /// together. Package code's definitions stand at the document's call that
 /// ran it, so they share its place; the document's own `\def`s each stand
 /// where they are written.
-fn defined_together(analysis: &Analysis, def: &crate::analysis::facts::Definition) -> Vec<String> {
-    let mut out: Vec<String> = analysis
-        .facts
-        .defs
-        .iter()
-        .filter(|d| d.name != def.name && d.span == def.span)
-        .map(|d| analysis.interner.cs(d.name))
-        .collect();
-    out.sort();
-    out.dedup();
+/// Split as `creates` is: names a document spells, then the code's own.
+fn defined_together(analysis: &Analysis, def: &crate::analysis::facts::Definition) -> [Vec<String>; 2] {
+    let mut out: [Vec<String>; 2] = Default::default();
+    for d in analysis.facts.defs.iter().filter(|d| d.name != def.name && d.span == def.span) {
+        let name = analysis.interner.name(d.name);
+        let spelled = name.chars().count() == 1 || name.chars().all(char::is_alphabetic);
+        out[usize::from(internal_name(analysis, name) || !spelled)].push(analysis.interner.cs(d.name));
+    }
+    for names in &mut out {
+        names.sort();
+        names.dedup();
+    }
     out
 }
 
@@ -5154,9 +5156,10 @@ fn record_for_def(analysis: &Analysis, def: &crate::analysis::facts::Definition,
     record.insert("tag".into(), json!(def.tag));
     record.insert("by".into(), json!(analysis.interner.cs(def.by)));
     insert_comment(&mut record, analysis, def.span);
-    let together = defined_together(analysis, def);
-    if !together.is_empty() {
-        record.insert("together".into(), json!(together));
+    for (key, names) in ["together", "together_internal"].into_iter().zip(defined_together(analysis, def)) {
+        if !names.is_empty() {
+            record.insert(key.into(), json!(names));
+        }
     }
     if analysis.facts.defs.iter().any(|d| d.name == def.name && d.via == Some(def.name) && d.node > def.node) {
         record.insert("once".into(), json!(true));

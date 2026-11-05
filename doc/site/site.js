@@ -473,8 +473,9 @@
     if (alts?.length) return alts.map((a) => `<div>${chainOf(a.chain)}</div>`).join('');
     return r.chain?.length ? chainOf(r.chain) : '';
   }
-  /** One explain record as a card: signature, body, by, defined at, context, uses, expands. */
-  function explain(r) {
+  /** One explain record as a card: signature, body, by, defined at, context, uses, expands.
+   * A hover is `brief`: what a name expands to stays in the Explain tab. */
+  function explain(r, brief = false) {
     const rows = [];
     const primitive = r.kind === 'primitive';
     // what it does and where its documentation is, in one row
@@ -499,7 +500,10 @@
       for (const a of r.one_of) by.set(a.body ?? '', [...(by.get(a.body ?? '') ?? []), a.line]);
       rows.push(['one of, by path', [...by].map(([b, ls]) => `${b ? `<code>${esc(b)}</code>` : '<span class="muted">(empty)</span>'} <span class="muted">(line${ls.length > 1 ? 's' : ''} ${ls.join(', ')})</span>`).join(' / ')]);
     }
-    if (r.together?.length) rows.push(['defined with', chipList(r.together, csChip)]);
+    // the other names the same call made: a document's own ones shown, the code's own folded
+    const along = r.together ?? [], own = r.together_internal ?? [];
+    if (along.length || own.length) rows.push(['made with it', chipList(along, csChip) +
+      (own.length ? `<details class="x-more"><summary>${own.length} internal</summary>${chipList(own, csChip)}</details>` : '')]);
     const owner = r.class ? pkgChip('class', r.class) : r.package ? (r.package === 'kernel' ? pkgChip('kernel', 'the kernel') : pkgChip('package', r.package)) : '';
     if (r.path && r.line) rows.push(['defined at', `${placeLink(r.path, r.line, r.file)}${owner ? ` ${owner}` : ''}`]);
     else if (owner) rows.push(['from', owner]);
@@ -510,7 +514,7 @@
       .replace(/: ([^:]+?)(?=, in |, outside|$)/g, (m, list) => `: ${list.split(', ').map((e) => `<code class="cs-ref env-ref" data-cs="\\${e}" tabindex="0">${e}</code>`).join(' ')}`)
       .replace(/(^|[\s(])(\\[A-Za-z@]+)/g, (m, pre, cs) => `${pre}<code class="cs-ref" data-cs="${cs}" tabindex="0">${cs}</code>`)]);
     if (r.uses != null) rows.push(['uses', r.uses ? `${r.uses} in this run` : 'none in this run']);
-    for (const [key, label] of [['expands', 'always expands'], ['may_expand', 'may expand']]) if (r[key]?.length) rows.push([label, chipList(r[key], csChip)]);
+    if (!brief) for (const [key, label] of [['expands', 'always expands'], ['may_expand', 'may expand']]) if (r[key]?.length) rows.push([label, chipList(r[key], csChip)]);
     // what the document's calls leave defined: the public names, the internal ones folded
     const made = r.creates ?? [], inner = r.creates_internal ?? [];
     if (made.length || inner.length) rows.push(['creates', chipList(made, csChip) +
@@ -965,7 +969,7 @@
       const r = a && (e.currentTarget !== tip || tip.dataset.fig === fig.id) && record(a.dataset.cs, a);
       if (!r) return;
       e.preventDefault();
-      card.show(a, explain(r));
+      card.show(a, explain(r, true));
       tip.dataset.fig = fig.id;
       tip.dataset.pin = '1';
     };
