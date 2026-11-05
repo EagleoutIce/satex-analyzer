@@ -538,7 +538,9 @@
     return read ? reply.then((r) => { if (answered.size > 300) answered.delete(answered.keys().next().value); answered.set(key, r); return r; }) : reply;
   }
   const answered = new Map(); // read-only request -> its last finished answer
-  const at = (doc, p) => Math.min(doc.line(Math.min(p.line + 1, doc.lines)).from + p.character, doc.length);
+  // a 0-based LSP line, clamped: a stale or negative position never throws
+  const lineOf = (doc, n) => doc.line(Math.max(1, Math.min((n | 0) + 1, doc.lines)));
+  const at = (doc, p) => Math.max(0, Math.min(lineOf(doc, p.line).from + (p.character | 0), doc.length));
   const position = (doc, offset) => { const l = doc.lineAt(offset); return { line: l.number - 1, character: offset - l.from }; };
   /** `edits` (LSP TextEdits) applied to a plain text, for files not in the editor. */
   function edited(text, edits) {
@@ -949,7 +951,7 @@
         const b = Object.assign(document.createElement('button'), { type: 'button', className: 'cm-lens', textContent: c.title, title: `${c.title.replace('…', '')}: open the dialog` });
         b.onclick = (e) => { e.preventDefault(); if (c.command === 'satex.openView') openViews(c.arguments[1], c.arguments[2]); else openDialog(c.arguments?.[0]?.position ?? { line, character: 0 }); };
         const div = Object.assign(document.createElement('div'), { className: 'cm-lens-line' });
-        const indent = /^\s*/.exec(ev.state.doc.line(Math.min(line + 1, ev.state.doc.lines)).text)[0];
+        const indent = /^\s*/.exec(lineOf(ev.state.doc, line).text)[0];
         div.append(indent.replace(/\t/g, '    '), b);
         return div;
       }
@@ -1261,7 +1263,7 @@
         hovered = { ...c, hull: was.hull };
         tips.card.show({ left: a.left, top: a.top, right: b.right, bottom: Math.max(a.bottom, b.bottom) }, c.html);
       },
-      lenses: (list) => ev.dispatch({ effects: lensSet.of(list.map((l) => [doc().line(Math.min(l.range.start.line + 1, doc().lines)).from, l]).sort((a, b) => a[0] - b[0])) }),
+      lenses: (list) => ev.dispatch({ effects: lensSet.of(list.map((l) => [lineOf(doc(), l.range.start.line).from, l]).sort((a, b) => a[0] - b[0])) }),
       colors: (list) => ev.dispatch({ effects: swatches.of(list.map(([p, css]) => [at(doc(), p), css]).filter(([a]) => a != null && a <= doc().length)) }),
       heat: (lines) => ev.dispatch({ effects: heatSet.of(lines?.size ? { lines, most: Math.max(...lines.values()) } : null) }),
       cursor: () => [ev.state.selection.main.anchor, ev.state.selection.main.head],
