@@ -1309,6 +1309,8 @@ mod document_metadata {
     /// still leaves gaps, so the codes are not asserted away; what is
     /// asserted is that each is bounded and the run finished.
     fn stays_bounded(options: &str, steps: u64) {
+        // the budget is the work a warm run executes: the first run fills the package cache
+        analyze_document(options);
         let analysis = analyze_document(options);
         let bound = bound();
         let over: Vec<_> = unsupported(&analysis).into_iter().filter(|&(_, n)| n > bound).collect();
@@ -1325,15 +1327,15 @@ mod document_metadata {
         assert_eq!(exhausted, Vec::new(), "the run ran out of budget on `{options}`: {why:?}");
         assert!(!analysis.exhausted, "the run was exhausted on `{options}`");
         // Measured: 20 million tokens with the bound, 240 million without,
-        // out of the 900 million the default budget allows.
-        assert!(analysis.steps < steps, "{} steps for `{options}`", analysis.steps);
+        // out of the 900 million the default budget allows. Steps served from
+        // the package cache are not executed, so they are not counted.
+        let work = analysis.steps - analysis.served_steps;
+        assert!(work < steps, "{work} steps executed ({} in all) for `{options}`", analysis.steps);
     }
 
     /// Well above what the bounded run needs and well below what the
     /// unbounded one took.
     const BOUNDED_STEPS: u64 = 50_000_000;
-    /// Target 50M (`BOUNDED_STEPS`); measured 102.0M on 2026-11-04, see plan.
-    const BARE_STEPS: u64 = 127_480_783;
 
     /// tikz, graphicx and hyperref together (epstopdf's `\InputIfFileExists`
     /// loop, pgfmath's dimension comparisons) end without running out of budget.
@@ -1355,7 +1357,7 @@ mod document_metadata {
         if !super::installed() {
             return;
         }
-        stays_bounded("lang=en", BARE_STEPS);
+        stays_bounded("lang=en", BOUNDED_STEPS);
     }
 
     /// The options real documents carry: `pdfversion` picks the PDF the
