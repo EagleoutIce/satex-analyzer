@@ -1037,6 +1037,17 @@ impl NameAccum {
         self.took = vec![Took::new()];
     }
 
+    /// A token that is one of `texts`: each name goes on with each.
+    pub(crate) fn spell(&mut self, texts: &[String]) {
+        let (names, took) = (std::mem::take(&mut self.names), std::mem::take(&mut self.took));
+        for (i, (prefix, name)) in names.into_iter().enumerate() {
+            for t in texts {
+                self.names.push((prefix.clone(), format!("{name}{t}")));
+                self.took.push(took.get(i).cloned().unwrap_or_default());
+            }
+        }
+    }
+
     /// Only the name at `i`, with what its paths took.
     pub(crate) fn keep(&mut self, i: usize) -> Option<Took> {
         let one = self.names.get(i)?.clone();
@@ -1140,6 +1151,16 @@ impl Accum {
             (None, name) => Ok(name),
             (Some(prefix), name) => Err((prefix, name, n.gap, n.number.filter(|_| TextClass::DIGIT.contains(n.gap)))),
         }
+    }
+
+    /// The names of a name scan that is one of several known names.
+    pub(crate) fn spelled(&self) -> Option<Vec<String>> {
+        let n = self.name.as_deref()?;
+        let mut names: Vec<String> =
+            n.names.iter().map(|(p, name)| p.is_none().then(|| name.clone())).collect::<Option<_>>()?;
+        names.sort_unstable();
+        names.dedup();
+        (names.len() > 1).then_some(names)
     }
 
     /// What a join keeps apart: how deep in braces, and whether it is over.
@@ -6158,6 +6179,13 @@ will look undefined",
             && !self.after_maybe_end()
             && !mac.as_ref().is_some_and(|m| self.has_unknown(&m.replacement_text));
         let environment = (spelled == "@currenvir").then(|| crate::analysis::observe::current_environment(self));
+        // One of several names was defined: each may now mean it.
+        let names: Vec<String> = spelled_names(&spelled).into_iter().flatten().map(str::to_string).collect();
+        for n in names {
+            let sym = self.intern(&n);
+            let b = self.env.slot(sym).cloned().unwrap_or_else(|| Binding::builtin(Meaning::Undefined));
+            self.may_also(sym, b, &meaning, global);
+        }
         let pattern = if name == self.unknown
             || name == self.unknown_digits
             || self.is_more_digits(name)
@@ -12216,6 +12244,21 @@ will look undefined",
         })
     }
 
+    /// The texts a one-of token stands for, where each is characters a
+    /// `\csname` name takes as they are.
+    pub(crate) fn one_of_chars(&self, t: Token) -> Option<Vec<String>> {
+        let texts = self.one_of_members(t)?;
+        let chars = |text: &[Token]| -> Option<String> {
+            text.iter()
+                .map(|x| match x.tok {
+                    Tok::Chr(c, cat) if !matches!(cat, Catcode::Active | Catcode::Begin | Catcode::End) => Some(c),
+                    _ => None,
+                })
+                .collect()
+        };
+        texts.iter().map(|x| chars(x)).collect()
+    }
+
     /// Whether a token for one of several texts may not stand for one
     /// undelimited argument: a text that is not one plain token.
     fn one_of_matters(&self, t: Token) -> bool {
@@ -13235,6 +13278,24 @@ fn read_out(f: &Frame) -> bool {
 pub(crate) const NO_FILE: &str = "<input>";
 pub(crate) const UNKNOWN_NAME: &str = "\u{2}unknown name:";
 pub(crate) const UNKNOWN_NAME_GAP: char = '\u{3}';
+/// A `\csname` that spelled one of several known names: the names, each
+/// after [`NAMES_SEP`].
+pub(crate) const ONE_OF_NAMES: &str = "\u{2}one of names:";
+const NAMES_SEP: char = '\u{0}';
+
+/// The token standing for one of `names` ([`ONE_OF_NAMES`]).
+pub(crate) fn one_of_names_text(names: &[String]) -> String {
+    names.iter().fold(ONE_OF_NAMES.to_string(), |mut s, n| {
+        s.push(NAMES_SEP);
+        s.push_str(n);
+        s
+    })
+}
+
+/// The names a [`ONE_OF_NAMES`] token stands for.
+pub(crate) fn spelled_names(name: &str) -> Option<impl Iterator<Item = &str>> {
+    Some(name.strip_prefix(ONE_OF_NAMES)?.split(NAMES_SEP).skip(1))
+}
 /// [`UNKNOWN_NAME_GAP`] where the unknown part is digits.
 pub(crate) const UNKNOWN_DIGITS_GAP: char = '\u{7}';
 
@@ -13761,18 +13822,25 @@ impl Machine<'_> {
         for i in 0..self.scratch.numbered.len() {
             let sym = self.scratch.numbered[i];
             let Some((p, s)) = self.name_pattern(sym).filter(|_| sym != name) else { continue };
-            let Some(mut b) = self.env.slot(sym).filter(|b| !b.defs.is_empty() && shares(&p, &s)).cloned() else {
+            let Some(b) = self.env.slot(sym).filter(|b| !b.defs.is_empty() && shares(&p, &s)).cloned() else {
                 continue;
             };
-            let mut may: Vec<Meaning> = b.may.as_deref().map_or_else(|| vec![b.meaning.clone()], <[Meaning]>::to_vec);
-            if !may.contains(meaning) {
-                may.push(meaning.clone());
-            }
-            b.meaning = Meaning::Unknown;
-            b.may = (may.len() <= Wild::MEANINGS && !may.contains(&Meaning::Unknown)).then(|| may.into());
             let global = b.global;
-            self.env.set(sym, b, global);
+            self.may_also(sym, b, meaning, global);
         }
+    }
+
+    /// A write that may have reached `sym`, bound as `b`: it may now mean
+    /// `meaning` besides what it meant (a weak update).
+    fn may_also(&mut self, sym: Sym, mut b: Binding, meaning: &Meaning, global: bool) {
+        let mut may: Vec<Meaning> = b.may.as_deref().map_or_else(|| vec![b.meaning.clone()], <[Meaning]>::to_vec);
+        if !may.contains(meaning) {
+            may.push(meaning.clone());
+        }
+        b.meaning = Meaning::Unknown;
+        b.may = (may.len() <= Wild::MEANINGS && !may.contains(&Meaning::Unknown)).then(|| may.into());
+        b.certain = false;
+        self.env.set(sym, b, global);
     }
 
     /// Whether `sym` stands for a name built from partly unknown text.

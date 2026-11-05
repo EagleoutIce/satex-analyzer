@@ -14,6 +14,11 @@ use crate::analysis::machine::{Accum, CondFrame, CondLimit, Machine, Step, Unit,
 use crate::engine::scan::glue_of;
 use crate::engine::tex::TextClass;
 use crate::engine::tex::{Catcode, MacroDef, Meaning, ParameterText, RegKind, Span, Sym, Tok, Token};
+
+/// A `\csname` scan: the name or the text around its unknown part, where
+/// it was written, the files it came from, and the names it is one of.
+type CsnameScan =
+    (Result<String, crate::analysis::machine::Gapped>, Span, Vec<crate::engine::tex::FileId>, Option<Vec<String>>);
 use crate::engine::value::{self, Glue, Num, Quantity, Value};
 
 /// What a test teaches each arm: modes where it holds/fails, the
@@ -1483,7 +1488,12 @@ impl Machine<'_> {
     /// `\csname` reads with `get_x_token`, so it stops at the `\endcsname`
     /// expansion produces (tex.web § 372). This keeps `\expandafter\endcsname`.
     fn build_csname(&mut self, span: Span) {
-        let (name, at, files) = self.scan_csname_at(span);
+        let (name, at, files, spelled) = self.scan_csname_at(span);
+        if let Some(names) = spelled {
+            names.iter().for_each(|name| crate::analysis::observe::csname(self, name, span));
+            let token = self.one_of_spelled(&names, &crate::analysis::machine::one_of_names_text(&names), at);
+            return self.unread(token);
+        }
         // A name built from unknown text is known by the text around it.
         let name = match name {
             Ok(name) => name,
@@ -1577,30 +1587,35 @@ impl Machine<'_> {
             candidates =
                 candidates.iter().flat_map(|p| options.iter().map(move |o| format!("{p}{o}"))).take(10_000).collect();
         }
+        self.one_of_spelled(&candidates, name, at)
+    }
+
+    /// Token `name` for a `\csname` that is one of `candidates`: it holds
+    /// one of their meanings, an undefined one made `\relax`.
+    fn one_of_spelled(&mut self, candidates: &[String], name: &str, at: Span) -> Token {
         let mut meanings: Vec<Meaning> = Vec::new();
-        for candidate in &candidates {
+        let mut add = |m: &Meaning| {
+            if !meanings.contains(m) {
+                meanings.push(m.clone());
+            }
+        };
+        for candidate in candidates {
             let sym = self.intern(candidate);
-            let meaning = match self.env.meaning(sym) {
-                Meaning::Undefined if self.may_be_real(sym) => {
-                    let binding = self.wild_binding(sym);
-                    for m in binding.may.as_deref().unwrap_or(std::slice::from_ref(&binding.meaning)) {
-                        if !meanings.contains(m) {
-                            meanings.push(m.clone());
-                        }
-                    }
-                    continue;
-                }
+            let binding = match self.env.meaning(sym) {
+                Meaning::Undefined if self.may_be_real(sym) => self.wild_binding(sym),
                 Meaning::Undefined => {
-                    let (prefix, suffix) = name
-                        .split_once(|c| crate::engine::tex::unknown_number_chars(c).is_some())
-                        .unwrap_or((name, ""));
-                    self.wild.add(prefix.to_string(), suffix.to_string(), false, None);
-                    Meaning::Primitive(Primitive::Relax)
+                    if let Some((prefix, suffix)) =
+                        name.split_once(|c| crate::engine::tex::unknown_number_chars(c).is_some())
+                    {
+                        self.wild.add(prefix.to_string(), suffix.to_string(), false, None);
+                    }
+                    Binding::builtin(Meaning::Primitive(Primitive::Relax))
                 }
-                m => m,
+                m => self.env.slot(sym).cloned().unwrap_or_else(|| Binding::builtin(m)),
             };
-            if !meanings.contains(&meaning) {
-                meanings.push(meaning);
+            // Undefined on some paths: `\relax` there (tex.web § 372).
+            for m in binding.may.as_deref().unwrap_or(std::slice::from_ref(&binding.meaning)) {
+                add(if *m == Meaning::Undefined { &Meaning::Primitive(Primitive::Relax) } else { m });
             }
         }
         let sym = self.intern(name);
@@ -1625,24 +1640,17 @@ impl Machine<'_> {
         self.scan_csname_at(span).0.ok()
     }
 
-    /// The name, where its first character was written, and the files its
-    /// characters came from. An unknown part leaves only the text around it.
-    #[allow(clippy::type_complexity)]
-    fn scan_csname_at(
-        &mut self,
-        span: Span,
-    ) -> (Result<String, crate::analysis::machine::Gapped>, Span, Vec<crate::engine::tex::FileId>) {
+    /// The name, where its first character was written, the files its
+    /// characters came from, and the names it is one of. An unknown part
+    /// leaves only the text around it.
+    fn scan_csname_at(&mut self, span: Span) -> CsnameScan {
         let depth = crate::engine::commands::enter_csname();
         let found = self.scan_csname_chars(span);
         crate::engine::commands::leave_csname(depth);
         found
     }
 
-    #[allow(clippy::type_complexity)]
-    fn scan_csname_chars(
-        &mut self,
-        span: Span,
-    ) -> (Result<String, crate::analysis::machine::Gapped>, Span, Vec<crate::engine::tex::FileId>) {
+    fn scan_csname_chars(&mut self, span: Span) -> CsnameScan {
         let mut start = Accum::for_name();
         start.name.as_deref_mut().expect("a name scan").site = span;
         let mut acc = match self.cfg.arm_joins {
@@ -1665,8 +1673,11 @@ impl Machine<'_> {
         // so a site that parted `meaning_set` paths since source was read
         // keeps the name whole: the family the names share.
         let names = acc.name.as_deref().map_or(0, |n| n.names.len());
+        let spelled = acc.spelled();
         if names > 1 && self.site_forked(span) >= u32::from(self.limits.meaning_set) {
-            acc.name.as_deref_mut().expect("the name scan").collapse();
+            if spelled.is_none() {
+                acc.name.as_deref_mut().expect("the name scan").collapse();
+            }
         } else if names > 1 {
             let chosen = self.split(self.unknown, span, names, |m, arm| {
                 let n = acc.name.as_deref_mut().expect("the name scan");
@@ -1677,7 +1688,7 @@ impl Machine<'_> {
                 }
                 true
             });
-            if !chosen {
+            if !chosen && spelled.is_none() {
                 acc.name.as_deref_mut().expect("the name scan").collapse();
             }
         }
@@ -1699,7 +1710,7 @@ impl Machine<'_> {
         }
         // the text the calling file wrote into the name, after what the code put before it
         self.name_slot = n.written_from.zip(n.at);
-        (built, n.at.unwrap_or(span), n.files)
+        (built, n.at.unwrap_or(span), n.files, acc.spelled())
     }
 
     /// One token of the name a `\csname` builds, on the scan on top of
@@ -1766,6 +1777,14 @@ impl Machine<'_> {
         };
         if (one || !number && !self.loop_capped(site, sym)) && self.split_one_of_at(t, site) {
             return false;
+        }
+        // Not split: texts of characters keep the name one of their names.
+        if let Some(texts) = self.one_of_chars(t) {
+            let n = self.scans.last_mut().and_then(|a| a.name.as_deref_mut()).expect("the name scan");
+            if n.names.len() * texts.len() <= usize::from(self.limits.meaning_set) {
+                n.spell(&texts);
+                return false;
+            }
         }
         // A path per meaning, each reading the name on with its own: read
         // again, the token would meet the joined meaning once more.

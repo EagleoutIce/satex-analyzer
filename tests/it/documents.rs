@@ -194,6 +194,9 @@ fixtures! {
     tcolorbox_breakable_without_overlay("tcolorbox_breakable_plain", "mwe.tex");
     /// A `\ref` to a label not yet written, inside tikz nodes: `??` is exact text.
     tikz_node_with_a_ref("tikz_node_with_ref", "mwe.tex");
+    /// `\Cref` of a macro that is one of two labels: each `\csname r@..`
+    /// is one of their names, never `\relax`, so cleveref's stack pops.
+    cleveref_ref_to_one_of_two_labels("cleveref_one_of_labels", "main.tex");
     /// An arrow tip toward a point with an unknown coordinate.
     tikz_arrow_to_an_unknown_point("tikz_arrow_to_unknown_point", "mwe.tex");
     /// An undefined name in a node's formula: the node's size must stay known.
