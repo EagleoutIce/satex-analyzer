@@ -426,6 +426,7 @@
   }
   /** `p`, or an error naming `what` once `ms` pass without its answer. */
   const within = (p, ms, what) => Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error(`${what} got no answer in ${Math.round(ms / 1000)} s`)), ms))]);
+  const act = { phase: '', text: '', shown: '', lastSecond: /** @type {number | null} */ (null), since: 0, changed: 0, got: 0, all: 0, started: 0, rest: '', steps: [], run: 0, after: '', version: -1, ended: 0 };
   setInterval(() => {
     // a status that says Analyzing with nothing in flight is stale: findings held back are shown, the bar goes
     if (act.phase === 'Analyzing' && !running && !analysisQueued && !pending.size && performance.now() - act.changed > 10000) { if (heldFindings) publish(heldFindings); phase(); }
@@ -5760,7 +5761,6 @@
 
   /** What the page is doing, in one place: the status bar's text and bar, and a card with the details on hover. */
   const bar = $('play-progress'), loads = new Map(), actBox = $('act-detail');
-  const act = { phase: '', text: '', shown: '', lastSecond: /** @type {number | null} */ (null), since: 0, changed: 0, got: 0, all: 0, started: 0, rest: '', steps: [], run: 0, after: '', version: -1, ended: 0 };
   const PHASE = { unpacking: ['Unpacking', 'Unpacking the TeX files…'], importing: ['Importing', 'Importing the kernel caches…'] };
   /* The start, and an uploaded project, as one card over the page: the logo, the version, the stages in one bar.
    * Each stage holds its share of the bar; a stage's own progress (bytes, lines read) fills its share. */

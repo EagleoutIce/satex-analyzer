@@ -296,7 +296,8 @@ fn dev_source(path: &str, site: &Path, src: &Path) -> Option<(String, Vec<u8>)> 
             .replace("{{root}}", "../")
             .replace("{{playjs}}", "play/playground.js")
             .replace("{{drawjs}}", "draw.js")
-            .replace("{{dialogsjs}}", "dialogs.js");
+            .replace("{{dialogsjs}}", "dialogs.js")
+            .replace("{{viewsjs}}", "views.js");
         return Some(("index.html".into(), format!("{}{page}{}", &built[..lo], &built[hi..]).into_bytes()));
     }
     let name = path.rsplit('/').next()?;
