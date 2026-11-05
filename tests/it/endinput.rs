@@ -22,12 +22,7 @@ fn analyze_files(source: &str, main: &std::path::Path) -> Analysis {
 
 /// Which of `names` are defined, as one string, so a failure names them all.
 fn state(analysis: &Analysis, names: &[&str]) -> String {
-    let mark = |n: &str| match (defined(analysis, n), crate::support::maybe_defined(analysis, n)) {
-        (true, _) => "1",
-        (false, true) => "?",
-        _ => "0",
-    };
-    names.iter().map(|n| format!("{n}={}", mark(n))).collect::<Vec<_>>().join(" ")
+    names.iter().map(|n| format!("{n}={}", crate::support::presence(analysis, n))).collect::<Vec<_>>().join(" ")
 }
 
 /// A scratch directory of its own per test.

@@ -211,6 +211,15 @@ pub fn defined(analysis: &Analysis, name: &str) -> bool {
     analysis.interner.lookup(name).is_some_and(|sym| analysis.env.surely_defined(sym))
 }
 
+/// `1` where `name` is defined on every path, `?` on some, `0` on none.
+pub fn presence(analysis: &Analysis, name: &str) -> &'static str {
+    match (defined(analysis, name), maybe_defined(analysis, name)) {
+        (true, _) => "1",
+        (false, true) => "?",
+        _ => "0",
+    }
+}
+
 /// Whether `name` has a meaning on some path `analysis` ended with.
 pub fn maybe_defined(analysis: &Analysis, name: &str) -> bool {
     !undefined(analysis, name)

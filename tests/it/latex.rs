@@ -1018,7 +1018,8 @@ fn unkern_in_inline_math_widens_its_size() {
 \end{document}",
     );
     assert!(maybe_defined(&analysis, "exact"));
-    assert!(maybe_defined(&analysis, "zero"));
+    // `\nonzero` is undefined on every path, so every path set `\zero`
+    assert!(defined(&analysis, "zero"));
     assert!(undefined(&analysis, "nonzero"));
 }
 

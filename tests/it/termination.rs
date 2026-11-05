@@ -946,15 +946,15 @@ Some text with microtype protrusion and expansion.
         const TEST: &str = "\\expandafter\\ifx\\csname a\\u b\\endcsname\\relax\\def\\Free{}\\else\\def\\Taken{}\\fi";
         let run = |defs: &str| {
             let a = Machine::analyze(&format!("{HEAD}{defs}{TEST}"), None, &super::cfg(1_000_000));
-            (crate::support::maybe_defined(&a, "Free"), crate::support::maybe_defined(&a, "Taken"))
+            (crate::support::presence(&a, "Free"), crate::support::presence(&a, "Taken"))
         };
-        assert_eq!(run(""), (true, false));
+        assert_eq!(run(""), ("1", "0"));
         // Digits never spell letters: only a name with digits between.
-        assert_eq!(run("\\def\\axyb{}"), (true, false));
-        assert_eq!(run("\\expandafter\\def\\csname a42b\\endcsname{}"), (true, true));
+        assert_eq!(run("\\def\\axyb{}"), ("1", "0"));
+        assert_eq!(run("\\expandafter\\def\\csname a42b\\endcsname{}"), ("?", "?"));
         // The same digits spell the same name: the one just defined.
-        assert_eq!(run("\\expandafter\\def\\csname a\\u b\\endcsname{}"), (false, true));
-        assert_eq!(run("\\def\\cxyd{}\\def\\xab{}"), (true, false));
+        assert_eq!(run("\\expandafter\\def\\csname a\\u b\\endcsname{}"), ("0", "1"));
+        assert_eq!(run("\\def\\cxyd{}\\def\\xab{}"), ("1", "0"));
     }
 
     /// A number's digits in a name spell only its values as `\the` prints

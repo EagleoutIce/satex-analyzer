@@ -56,11 +56,15 @@ fn check_within(id: &str, main: &str, also: &[&str], allowed: &[&str], budget: u
     crate::support::seed_kernel(&cfg);
     let analysis = Machine::analyze(&source, Some(&path), &cfg);
     let mut failures = Vec::new();
-    if undefined(&analysis, "SatexReachedEnd") {
-        failures.push("\\SatexReachedEnd is undefined: the end was not reached".to_string());
+    // every path reaches the end: one that ended early leaves the marker only maybe defined
+    if !defined(&analysis, "SatexReachedEnd") {
+        failures.push(format!(
+            "\\SatexReachedEnd is {}: the end was not reached on every path",
+            crate::support::presence(&analysis, "SatexReachedEnd")
+        ));
     }
     for name in afters(&source) {
-        if undefined(&analysis, &name) {
+        if !defined(&analysis, &name) {
             failures.push(format!("\\{name} is undefined: the text after a construct was lost"));
         }
     }
@@ -730,5 +734,5 @@ fn notecolumn_slnc_on_master_thesis_title_page() {
 #[test]
 fn a_map_at_an_unknown_depth_keeps_its_items() {
     let Some(a) = check("expl3_map_unknown_depth", "main.tex", &[]) else { return };
-    assert!(crate::support::maybe_defined(&a, "X"), "the map body never ran");
+    assert!(crate::support::defined(&a, "X"), "the map body ran on every path: {}", crate::support::presence(&a, "X"));
 }

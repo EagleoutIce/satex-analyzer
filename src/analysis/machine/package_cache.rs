@@ -4216,6 +4216,7 @@ mod tests {
                 (run, LOAD_ENDS.take())
             })
             .collect();
+        assert!(!runs[0].1.is_empty(), "the reading run records each load's end");
         for (run, ends) in &runs[1..] {
             for package in ["streamy", "guard"] {
                 assert_eq!(state_of(run, package).as_deref(), Some("cached"), "{:?}", run.package_caches);

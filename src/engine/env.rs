@@ -765,10 +765,13 @@ impl Env {
     }
 
     /// Whether `sym` has a meaning on every path: a join that left it
-    /// undefined on one is only maybe defined.
+    /// undefined on one, or a meaning past every set, is only maybe defined.
     pub fn surely_defined(&self, sym: Sym) -> bool {
         self.is_defined(sym)
-            && self.slot(sym).is_none_or(|b| b.may.as_deref().is_none_or(|m| !m.contains(&Meaning::Undefined)))
+            && self.slot(sym).is_none_or(|b| match b.may.as_deref() {
+                Some(m) => !m.contains(&Meaning::Undefined),
+                None => !matches!(b.meaning, Meaning::Unknown),
+            })
     }
 
     /// Slots that hold a meaning, which is what a format cache stores: a
