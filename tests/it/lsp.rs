@@ -4087,6 +4087,12 @@ fn hover_at(server: &mut Server, uri: &str, text: &str, line: usize, needle: &st
 /// specification `<…>` and the bodies.
 #[test]
 fn beamer_signatures_show_the_overlay_and_bodies() {
+    // the usage lines come from beamer's manual: an installation without documentation has none
+    let dist = std::process::Command::new("kpsewhich").args(["-var-value", "TEXMFDIST"]).output();
+    let manual = dist.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    if !manual.is_some_and(|d| std::path::Path::new(&d).join("doc/latex/beamer").is_dir()) {
+        return;
+    }
     let (mut server, uri, dir) = open_set("bmrsig", SLIDES, &[]);
     for (line, cmd) in [(4, "\\only"), (5, "\\uncover"), (7, "\\alt")] {
         let h = hover_at(&mut server, &uri, SLIDES, line, cmd, 2);
