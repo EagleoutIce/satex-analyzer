@@ -46,7 +46,7 @@ build        l3build
 ## keys
 
 Key lists of pgfkeys, l3keys, kvoptions and xkeyval, and package options. Completion opens at `{`, `[`, `,` and `=` with nothing typed. A family (`/demo`) inserts `/demo/` and opens again on its keys (`family_continue`). Hover shows the key's handler kind, its initial or default value, where it was defined and the comment next to the definition.
-Its view ("Edit keys…") lists the same keys; a choice writes one at the cursor.
+Its view ("Edit keys…") lists the same keys. A choice writes one at the cursor.
 
 ## units
 

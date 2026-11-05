@@ -74,7 +74,7 @@ impl TypePlugin for Keys {
         (!items.is_empty()).then(|| {
             json!({ "title": what, "sections": [
                 { "kind": "choices", "placeholder": "key", "items": items },
-                { "kind": "text", "markdown": "The keys the run defined here; a choice writes it at the cursor, as completion would." },
+                { "kind": "text", "markdown": "The keys the run defined here. A choice writes it at the cursor, as completion would." },
             ] })
         })
     }
