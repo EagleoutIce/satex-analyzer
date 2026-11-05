@@ -1348,13 +1348,14 @@ pub fn page_fill(m: &mut Machine) {
     }
     let Some(goal) = m.dimen_parameter("vsize").known().filter(|&g| g > 0) else { return };
     let length = m.page_length();
-    // an unbounded length says nothing of where the page breaks
-    if length.is_any() || length.hi >= crate::engine::value::MAX_DIMEN {
-        return;
-    }
     // TeX breaks once the page is past its goal (tex.web § 1005), not when it is full
     let past = |l: crate::engine::value::Scaled| (l.max(1) - 1) / goal;
-    let (sure, may) = (past(length.lo), past(length.hi));
+    let sure = past(length.lo);
+    // a length with no upper bound may have filled one more page by here
+    let may = match length.is_any() || length.hi >= crate::engine::value::MAX_DIMEN {
+        true => sure + 1,
+        false => past(length.hi),
+    };
     let text = &mut m.out.facts.text;
     let since = text.pages.last().map_or(0, |p| p.0);
     let mut have = text.fills.iter().filter(|f| f.0 >= since).count() as i64;

@@ -584,13 +584,16 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let mut pages = text.pages.iter().enumerate().peekable();
     // pages filled up to the character at `i`, where pages break only where forced: each one more page
     let filled = |i: u32| text.fills.partition_point(|f| f.0 <= i);
+    let surely = |i: u32| text.fills.iter().filter(|f| f.0 <= i && f.1).count();
     let shipped = |k: usize, at: Span, last: bool, before: u32| {
-        let n = k + 1 + filled(before);
+        let (lo, n) = (k + 1 + surely(before), k + 1 + filled(before));
+        let page = if lo == n { format!("page {n}") } else { format!("page {lo}–{n}") };
         let mut record = place(analysis, at);
         record.insert("kind".into(), json!("page"));
         record.insert("page".into(), json!(n));
         record.insert("last".into(), json!(last));
-        record.insert("detail".into(), json!(if last { format!("page {n}") } else { format!("page {n} → {}", n + 1) }));
+        let next = if lo == n { format!("{page} → {}", n + 1) } else { format!("{page} → next") };
+        record.insert("detail".into(), json!(if last { page } else { next }));
         record
     };
     // a page the run did not break, though it filled there: pdfTeX breaks it at or before here
