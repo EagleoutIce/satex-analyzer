@@ -74,8 +74,9 @@ const EXECUTE_COMMAND: &str = "satex/query";
 const STYLE_COMMAND: &str = "satex/style";
 
 /// The prompt's answers, as `window/showMessageRequest` offers them.
-const STYLE_ANSWERS: [(&str, Option<crate::project::config::StyleChoice>); 3] = [
+const STYLE_ANSWERS: [(&str, Option<crate::project::config::StyleChoice>); 4] = [
     ("Yes, turn it off", Some(crate::project::config::StyleChoice::Off)),
+    (SHOW_FIRST, None),
     ("No", None),
     ("Never ask", Some(crate::project::config::StyleChoice::Keep)),
 ];
@@ -218,7 +219,7 @@ fn main_loop(
 ) -> Result<(), String> {
     // The open documents' text, to find the name under a hover here.
     let mut texts: HashMap<Uri, String> = HashMap::default();
-    let mut prompts: HashMap<lsp_server::RequestId, String> = HashMap::default();
+    let mut prompts: HashMap<lsp_server::RequestId, Json> = HashMap::default();
     let mut findings: Findings = HashMap::default();
     loop {
         select! {
@@ -251,10 +252,22 @@ fn main_loop(
                         }
                     }
                     Ok(Message::Response(answer)) => {
-                        if let Some(code) = prompts.remove(&answer.id)
-                            && let Some(choice) = style_choice(&answer)
-                        {
-                            to_engine(engine_tx, EngineMsg::Style(code, choice, crossbeam_channel::bounded(1).0));
+                        if let Some(candidate) = prompts.remove(&answer.id) {
+                            if answer_title(&answer) == Some(SHOW_FIRST) {
+                                let first = &candidate["first"];
+                                let at = |k: &str| first[k].as_u64().unwrap_or(1).saturating_sub(1) as u32;
+                                let pos = serde_json::json!({ "line": at("line"), "character": at("col") });
+                                let uri = handlers::path_uri(first["path"].as_str().unwrap_or_default());
+                                let params = serde_json::json!({ "uri": uri, "takeFocus": true, "selection": { "start": pos, "end": pos } });
+                                let id = lsp_server::RequestId::from(format!("satex-show-{}", prompts.len()));
+                                let _ = connection.sender.send(Message::Request(Request::new(id, "window/showDocument".into(), params)));
+                                let id = lsp_server::RequestId::from(format!("satex-style-{}-again", answer.id));
+                                let _ = connection.sender.send(Message::Request(style_prompt(id.clone(), &candidate)));
+                                prompts.insert(id, candidate);
+                            } else if let Some(choice) = style_choice(&answer) {
+                                let code = candidate["code"].as_str().unwrap_or_default().to_string();
+                                to_engine(engine_tx, EngineMsg::Style(code, choice, crossbeam_channel::bounded(1).0));
+                            }
                         }
                     }
                     Err(_) => return Ok(()),
@@ -264,7 +277,7 @@ fn main_loop(
                 Ok(note) if note.method == STYLE_NOTIFICATION => {
                     for candidate in note.params["candidates"].as_array().into_iter().flatten() {
                         let id = lsp_server::RequestId::from(format!("satex-style-{}", prompts.len()));
-                        prompts.insert(id.clone(), candidate["code"].as_str().unwrap_or_default().to_string());
+                        prompts.insert(id.clone(), candidate.clone());
                         let _ = connection.sender.send(Message::Request(style_prompt(id, candidate)));
                     }
                 }
@@ -281,6 +294,9 @@ fn main_loop(
     }
 }
 
+/// The answer that opens the rule's first finding and asks again.
+const SHOW_FIRST: &str = "Show first";
+
 /// The engine's notification naming the rules that may be the project's style.
 const STYLE_NOTIFICATION: &str = "satex/styleCandidates";
 
@@ -294,8 +310,13 @@ fn style_prompt(id: lsp_server::RequestId, candidate: &Json) -> Request {
 
 /// What a client's answer to [`style_prompt`] records, `None` for no.
 fn style_choice(answer: &Response) -> Option<crate::project::config::StyleChoice> {
-    let title = answer.response_result.as_ref().ok()?.get("title")?.as_str()?;
+    let title = answer_title(answer)?;
     STYLE_ANSWERS.iter().find(|(t, _)| *t == title)?.1
+}
+
+/// The action a client's answer picked.
+fn answer_title(answer: &Response) -> Option<&str> {
+    answer.response_result.as_ref().ok()?.get("title")?.as_str()
 }
 
 /// Where the hovers of a document whose run read these files are kept

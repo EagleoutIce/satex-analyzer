@@ -2231,6 +2231,25 @@ fn yes_to_the_style_prompt_turns_the_rule_off() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// "Show first" opens the rule's first finding and asks again.
+#[test]
+fn show_first_opens_the_first_finding_and_asks_again() {
+    let (mut server, dir) = open_styled("style-show", &[]);
+    let prompt = server.notification("window/showMessageRequest");
+    let titles: Vec<&str> =
+        prompt["params"]["actions"].as_array().unwrap().iter().filter_map(|a| a["title"].as_str()).collect();
+    assert!(titles.contains(&"Show first"), "{titles:?}");
+    server.write(&json!({ "jsonrpc": "2.0", "id": prompt["id"], "result": { "title": "Show first" } }));
+    let show = server.notification("window/showDocument");
+    assert!(show["params"]["uri"].as_str().unwrap_or_default().ends_with("main.tex"), "{show}");
+    let first = crate::style_prompt::hskips(12).lines().position(|l| l.contains("\\hskip")).unwrap();
+    assert_eq!(show["params"]["selection"]["start"]["line"], json!(first), "{show}");
+    let again = server.notification("window/showMessageRequest");
+    assert_eq!(again["params"]["message"], prompt["params"]["message"]);
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// With `style_prompt.enabled` off, nothing is asked.
 #[test]
 fn no_style_prompt_when_it_is_off() {

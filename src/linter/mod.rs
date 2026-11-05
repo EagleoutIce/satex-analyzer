@@ -744,16 +744,17 @@ pub fn style_candidates(records: &[Record], prompt: &crate::project::config::Sty
         return Vec::new();
     }
     let text = |r: &Record, key: &str| r.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    let mut by_rule: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    let mut by_rule: std::collections::BTreeMap<String, (Vec<String>, serde_json::Value)> = Default::default();
     for r in records.iter().filter(|r| text(r, "origin") == "document") {
         if prompt.categories.contains(&text(r, "category")) && !prompt.keep.contains(&text(r, "code")) {
-            by_rule.entry(text(r, "code")).or_default().push(text(r, "name"));
+            let first = || json!({ "path": r.get("path"), "line": r.get("line"), "col": r.get("col") });
+            by_rule.entry(text(r, "code")).or_insert_with(|| (Vec::new(), first())).0.push(text(r, "name"));
         }
     }
     by_rule
         .into_iter()
-        .filter(|(_, names)| names.len() >= prompt.min_findings)
-        .filter_map(|(code, names)| {
+        .filter(|(_, (names, _))| names.len() >= prompt.min_findings)
+        .filter_map(|(code, (names, first))| {
             let rule = explanation(&code)?;
             let mut record = serde_json::Map::new();
             record.insert("number".into(), json!(rule.number()));
@@ -761,6 +762,7 @@ pub fn style_candidates(records: &[Record], prompt: &crate::project::config::Sty
             record.insert("count".into(), json!(names.len()));
             record.insert("summary".into(), json!(rule.summary));
             record.insert("question".into(), json!(style_question(&label(rule.code), &names)));
+            record.insert("first".into(), first);
             Some(record)
         })
         .collect()
@@ -770,7 +772,8 @@ pub fn style_candidates(records: &[Record], prompt: &crate::project::config::Sty
 /// construct when most findings are about one.
 fn style_question(rule: &str, names: &[String]) -> String {
     let mut counts: std::collections::BTreeMap<&str, usize> = Default::default();
-    for name in names.iter().filter(|n| !n.is_empty()) {
+    // only a control sequence names a construct, other names are a finding's detail
+    for name in names.iter().filter(|n| n.starts_with('\\')) {
         *counts.entry(name).or_default() += 1;
     }
     let top = counts.into_iter().max_by_key(|(_, n)| *n).filter(|(_, n)| 2 * n > names.len());

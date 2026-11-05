@@ -262,10 +262,15 @@
   function askStyle(candidate) {
     if (document.querySelector('.style-ask')) return void styleQueue.push(candidate);
     const ask = Object.assign(document.createElement('div'), { className: 'style-ask', role: 'alertdialog' });
-    ask.innerHTML = `<p>${inline(candidate.question)}</p><button data-a="off">Yes, turn it off</button><button>No</button><button data-a="keep">Never ask</button>`;
+    ask.innerHTML = `<p>${inline(candidate.question)}</p><button data-a="off">Yes, turn it off</button><button data-a="show">Show first</button><button>No</button><button data-a="keep">Never ask</button>`;
     ask.onclick = (e) => {
       const button = e.target.closest('button');
       if (!button) return;
+      if (button.dataset.a === 'show') {
+        // the prompt stays: the first finding opens beside it
+        const f = candidate.first ?? {}, at = { line: Math.max(0, (f.line ?? 1) - 1), character: Math.max(0, (f.col ?? 1) - 1) };
+        return void openPlace(String(f.path ?? ''), at);
+      }
       ask.remove();
       if (styleQueue.length) askStyle(styleQueue.shift());
       if (!button.dataset.a) return;
