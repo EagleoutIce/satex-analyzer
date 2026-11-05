@@ -16,6 +16,8 @@ exclude = ["samples/", ".github/", "scripts/"]
 
 [features]
 doc = []
+# The developer binaries (playground server, VS Code launcher, oracle): `cargo install` leaves them out.
+tools = []
 
 [[bin]]
 name = "satex"
@@ -30,10 +32,17 @@ required-features = ["doc"]
 [[bin]]
 name = "satex-playground"
 path = "src/bin/satex-playground.rs"
+required-features = ["tools"]
+
+[[bin]]
+name = "satex-oracle"
+path = "src/bin/satex-oracle.rs"
+required-features = ["tools"]
 
 [[bin]]
 name = "satex-vscode"
 path = "src/bin/satex-vscode.rs"
+required-features = ["tools"]
 
 [lib]
 name = "satex"
