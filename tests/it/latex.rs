@@ -3080,6 +3080,22 @@ fn a_paragraph_with_inline_math_keeps_its_height() {
     assert_eq!(got, want);
 }
 
+/// Each inline formula of `cases` boxed alone has the width/height/depth it names.
+fn math_sizes(cases: &[(&str, &str)]) {
+    let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
+    for (i, (f, _)) in cases.iter().enumerate() {
+        src.push_str(&format!(
+            "\\setbox0\\hbox{{${f}$}}\\xdef\\S{}{{\\the\\wd0/\\the\\ht0/\\the\\dp0}}\n",
+            (b'a' + i as u8) as char
+        ));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    for (i, (f, want)) in cases.iter().enumerate() {
+        assert_eq!(body(&analysis, &format!("S{}", (b'a' + i as u8) as char)), *want, "{f}");
+    }
+}
+
 /// tex.web §§ 719, 756-758: scripts of any length and depth are set in the
 /// script and scriptscript fonts, shifted by the parameters of the size
 /// they sit in. Widths, heights and depths as `pdflatex` prints.
@@ -3100,18 +3116,31 @@ fn inline_math_with_scripts_has_its_size() {
         (r"x^{\alpha\beta}", "16.30817pt/8.49002pt/0.0pt"),
         (r"A_{i}^{j}", "11.71358pt/9.43745pt/2.78741pt"),
     ];
-    let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
-    for (i, (f, _)) in cases.iter().enumerate() {
-        src.push_str(&format!(
-            "\\setbox0\\hbox{{${f}$}}\\xdef\\S{}{{\\the\\wd0/\\the\\ht0/\\the\\dp0}}\n",
-            (b'a' + i as u8) as char
-        ));
+    math_sizes(&cases);
+}
+
+/// tex.web §§ 743-748, 1151, 1153: a fraction of characters sets its parts one size down,
+/// shifted by the size's parameters; a character of math code "8000 (`'`) is its active
+/// character; an implicit `{` (`\bgroup`) opens a script group. Sizes as `pdflatex` prints.
+#[test]
+fn inline_math_with_fractions_and_primes_has_its_size() {
+    if !installed() {
+        return;
     }
-    src.push_str("\\end{document}");
-    let analysis = analyze(&src);
-    for (i, (f, want)) in cases.iter().enumerate() {
-        assert_eq!(body(&analysis, &format!("S{}", (b'a' + i as u8) as char)), *want, "{f}");
-    }
+    let cases = [
+        (r"\frac{1}{2}", "6.38612pt/8.44843pt/3.44841pt"),
+        (r"{x\atop y}", "6.93472pt/7.45119pt/4.80951pt"),
+        (r"a{12\over x}b", "19.9498pt/8.44843pt/3.44841pt"),
+        (r"\frac{ab}{c}", "10.2543pt/8.79842pt/3.44841pt"),
+        (r"{A\over B}", "8.78299pt/8.72066pt/3.44841pt"),
+        (r"{f\over x}", "7.08408pt/9.32217pt/3.44841pt"),
+        (r"x^{\frac12}", "12.0181pt/9.53845pt/0.0pt"),
+        (r"\frac{1}{2}+\frac{x}{y}", "25.54298pt/8.44843pt/4.80951pt"),
+        (r"V'", "10.86111pt/7.51782pt/0.0pt"),
+        (r"x''", "10.82639pt/7.51782pt/0.0pt"),
+        (r"x^\bgroup\prime\egroup", "8.52083pt/7.51782pt/0.0pt"),
+    ];
+    math_sizes(&cases);
 }
 
 /// `\unhbox` of any hbox adds its list's natural width (tex.web § 1110),

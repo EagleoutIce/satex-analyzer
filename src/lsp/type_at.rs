@@ -120,21 +120,6 @@ pub(super) fn type_at(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> 
             at.hits.push(Hit::of(ty));
         }
     }
-    // a color the run looked up or defined by this text, from a call on this line: the type
-    // holds where the read went through a cached package's code and left no slot
-    if let Some(file) = file {
-        let name = at.item.typed.trim();
-        let here = |n: &str, s: Span| n == name && s.file == file && s.line == pos.line && s.col <= pos.col;
-        let colored = analysis.facts.color_uses.iter().any(|u| here(&u.name, u.span))
-            || analysis
-                .facts
-                .colors
-                .iter()
-                .any(|c| here(&c.name, c.span) || c.spec_span.is_some_and(|s| here(&c.name, Span { col: 1, ..s })));
-        if colored && !name.is_empty() && !at.hits.iter().any(|h| h.ty == Ty::Key(KeyKind::Color)) {
-            at.hits.push(Hit::of(Ty::Key(KeyKind::Color)));
-        }
-    }
     at.hits.extend(super::handlers::node_hits(analysis, doc, pos));
     if dimension(before, after) {
         at.hits.push(Hit::of(Ty::Dimen));

@@ -2107,6 +2107,11 @@ pub fn pack_math_code(code: i64, engine: Engine) -> i64 {
     ((code >> 8) & 0xf) << 24 | (code >> 12) << 21 | (code & 0xff)
 }
 
+/// Whether a stored math code is the active one (tex.web § 1151).
+pub fn math_code_is_active(code: i64, engine: Engine) -> bool {
+    code == pack_math_code(MATH_CLASSIC_ACTIVE, engine)
+}
+
 /// The class, family and character `\meaning` shows for a packed math code;
 /// the two engines split it apart differently. XeTeX takes the three as
 /// bits. LuaTeX divides truncating towards zero, so a negative code loses

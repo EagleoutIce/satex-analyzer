@@ -516,6 +516,12 @@ pub struct Natural {
     /// In inline math: the list may hold a fraction (tex.web § 1181
     /// `incompleat_noad`).
     pub fraction: bool,
+    /// In inline math: the numerator of the fraction in a group, its size in its style, and
+    /// whether a rule parts it (`\over`) or none (`\atop`) (tex.web §§ 743-748).
+    pub numerator: Option<([Scaled; 3], bool, u8)>,
+    /// In inline math: the characters the list holds since it began, replayed in another
+    /// style for a fraction's parts.
+    pub atoms: Atoms,
     /// In inline math: the style the list is set in, twice its size (0 text,
     /// 1 script, 2 scriptscript) plus one where cramped (tex.web § 688).
     pub style: u8,
@@ -532,6 +538,34 @@ pub struct Natural {
     /// A vertical list's `\prevdepth` (tex.web § 219), `None` at
     /// `ignore_depth`; on a paragraph, that of the list it goes onto.
     pub prev_depth: Option<Dim>,
+}
+
+/// The math codes of a list's characters, while it holds at most [`ATOMS`]; `len` past it: more
+/// or not known.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Atoms {
+    codes: [u16; ATOMS],
+    len: u8,
+}
+
+/// Characters an [`Atoms`] keeps.
+const ATOMS: usize = 8;
+
+impl Atoms {
+    fn push(&mut self, class: u8, fam: i64, ch: u32) {
+        let i = usize::from(self.len);
+        match (i < ATOMS, u16::try_from(ch)) {
+            (true, Ok(ch)) if ch < 256 && (0..16).contains(&fam) && class < 8 => {
+                self.codes[i] = u16::from(class) << 12 | (fam as u16) << 8 | ch;
+                self.len += 1;
+            }
+            _ => self.len = u8::MAX,
+        }
+    }
+
+    fn codes(&self) -> Option<&[u16]> {
+        self.codes.get(..usize::from(self.len))
+    }
 }
 
 /// A script placed after its nucleus: the script box, and the list as it
@@ -787,6 +821,8 @@ impl Natural {
             script: if self.script == other.script { self.script } else { None },
             math_box: if self.math_box == other.math_box { self.math_box } else { None },
             fraction: self.fraction || other.fraction,
+            numerator: if self.numerator == other.numerator { self.numerator } else { None },
+            atoms: if self.atoms == other.atoms { self.atoms } else { Atoms { len: u8::MAX, ..self.atoms } },
             style: self.style.max(other.style),
             scripted: if self.scripted == other.scripted { self.scripted } else { None },
             math_breaks: self.math_breaks.max(other.math_breaks),
@@ -1187,6 +1223,8 @@ impl Machine<'_> {
             script: None,
             math_box: None,
             fraction: false,
+            numerator: None,
+            atoms: Atoms::default(),
             style: 0,
             scripted: None,
             math_breaks: 0,
@@ -1983,7 +2021,7 @@ impl Machine<'_> {
             && let Some(n) = &mut self.natural
         {
             (n.math_class, n.math_bin, n.math_prev, n.math_pending) = (None, None, None, None);
-            (n.scripted, n.fraction) = (None, false);
+            (n.scripted, n.fraction, n.numerator, n.atoms) = (None, false, None, Atoms::default());
             if let Some(sup) = script {
                 (n.style, n.script, n.math_box) = (Self::script_style(n.style, sup), None, None);
                 (n.along, n.height, n.depth) = (Dim::exact(0), Dim::exact(0), Dim::exact(0));
@@ -2040,6 +2078,9 @@ impl Machine<'_> {
                     ..o
                 }))
             {
+                if n.fraction {
+                    self.close_fraction(&mut n, nest.natural);
+                }
                 let italic = self.prev_italic(n.math_prev);
                 Self::end_atoms(&mut n);
                 n.along = n.along.extended_by(italic);
@@ -4625,7 +4666,7 @@ impl Machine<'_> {
             // and images and forms placed as boxes (tex.web § 1058, the
             // pdfTeX, XeTeX and LuaTeX manuals).
             Primitive::Command(Syntax::Fraction { .. }) if self.mode.within(Modes::ANY_MATH) => {
-                return self.math_fraction();
+                return self.math_fraction(by);
             }
             // `note_mark` appends a mark once its text is read.
             Primitive::Command(Syntax::NumberText) => return,
@@ -5127,8 +5168,30 @@ impl Machine<'_> {
     /// tex.web § 1181 `math_fraction`: the list so far becomes the
     /// numerator and the list starts afresh, unless it holds a fraction
     /// already ("Ambiguous"). The fraction's size is not followed.
-    fn math_fraction(&mut self) {
+    fn math_fraction(&mut self, by: Sym) {
+        let rule = match self.name(self.env.identity(by)) {
+            "over" => Some(true),
+            "atop" => Some(false),
+            _ => None,
+        };
+        let numerator = self.natural.zip(self.env.nest()).zip(rule).and_then(|((n, nest), rule)| {
+            // The list a group began, of characters only: it again in the numerator's style.
+            let base = nest.natural.filter(|_| nest.code == Some(group::MATH) && nest.part != SCRIPT_GROUP)?;
+            let start = Self::restart(n, base);
+            let codes = n.atoms.codes()?;
+            (!n.fraction && self.replay(start, codes) == Some([n.along, n.height, n.depth]))
+                .then(|| self.atoms_size(codes, Self::script_style(n.style, true)))
+                .flatten()
+                .map(|size| (size, rule, base))
+        });
         let Some(n) = &mut self.natural else { return };
+        if let Some((size, rule, base)) = numerator {
+            // The denominator starts afresh in its style; the group's start comes back at its end.
+            let style = Self::script_style(n.style, false);
+            *n = Natural { numerator: Some((size, rule, n.style)), fraction: true, style, ..Self::restart(*n, base) };
+            n.emptied();
+            return;
+        }
         let (tail, again) = (n.tail, n.fraction);
         n.emptied();
         if again {
@@ -5136,7 +5199,100 @@ impl Machine<'_> {
         }
         (n.along, n.height, n.depth) = (Dim::ANY, Dim::ANY, Dim::ANY);
         (n.math_class, n.math_bin, n.math_prev, n.math_box, n.scripted) = (None, None, None, None, None);
-        n.fraction = true;
+        (n.fraction, n.numerator) = (true, None);
+    }
+
+    /// `n` back at the start of its group's list, which came after `base`.
+    fn restart(n: Natural, base: Natural) -> Natural {
+        Natural { along: base.along, height: base.height, depth: base.depth, ..Self::list_start(n) }
+    }
+
+    /// `base` with no atom before the next.
+    fn list_start(base: Natural) -> Natural {
+        Natural {
+            math_class: None,
+            math_bin: None,
+            math_prev: None,
+            math_pending: None,
+            scripted: None,
+            script: None,
+            math_box: None,
+            fraction: false,
+            numerator: None,
+            atoms: Atoms::default(),
+            ..base
+        }
+    }
+
+    /// The width, height and depth `start` reaches with the characters `codes`.
+    fn replay(&mut self, start: Natural, codes: &[u16]) -> Option<[Dim; 3]> {
+        let saved = self.natural.replace(start);
+        for &c in codes {
+            self.math_atom(i64::from(c >> 12), i64::from(c >> 8 & 0xf), u32::from(c & 0xff));
+        }
+        let n = std::mem::replace(&mut self.natural, saved)?;
+        Some([n.along, n.height, n.depth])
+    }
+
+    /// tex.web § 720 `clean_box`: the characters `codes` boxed alone in `style`, with the
+    /// italic correction of the last (§ 755; `hpack` counts it before the kern is dropped).
+    fn atoms_size(&mut self, codes: &[u16], style: u8) -> Option<[Scaled; 3]> {
+        let start =
+            Natural { style, along: Dim::exact(0), height: Dim::exact(0), depth: Dim::exact(0), ..Natural::default() };
+        let saved = self.natural.replace(Self::list_start(start));
+        for &c in codes {
+            self.math_atom(i64::from(c >> 12), i64::from(c >> 8 & 0xf), u32::from(c & 0xff));
+        }
+        let n = std::mem::replace(&mut self.natural, saved)?;
+        let italic = self.prev_italic(n.math_prev);
+        let mut n = n;
+        Self::end_atoms(&mut n);
+        Some([n.along.extended_by(italic).known()?, n.height.known()?, n.depth.known()?])
+    }
+
+    /// tex.web §§ 743-748 `make_fraction` in a text or smaller style, without delimiters:
+    /// numerator and denominator centred over each other, shifted by the parameters of the
+    /// style's size, and a null delimiter at each side. The group's list becomes it alone.
+    fn close_fraction(&mut self, n: &mut Natural, outer: Option<Natural>) {
+        let size = self.fraction_box(n, outer);
+        let Some(base) = outer.filter(|_| size.is_some()) else {
+            (n.along, n.height, n.depth) = (Dim::ANY, Dim::ANY, Dim::ANY);
+            return;
+        };
+        let [w, h, d] = size.expect("a fraction box");
+        let style = n.numerator.map_or(n.style, |(.., s)| s);
+        *n = Natural { style, ..Self::restart(*n, base) };
+        n.along = base.along.extended_by(Dim::exact(w));
+        n.height = base.height.max(Dim::exact(h));
+        n.depth = base.depth.max(Dim::exact(d));
+    }
+
+    fn fraction_box(&mut self, n: &Natural, outer: Option<Natural>) -> Option<[Scaled; 3]> {
+        let ((x, rule, style), base) = n.numerator.zip(outer)?;
+        let codes = n.atoms.codes()?;
+        (self.replay(Self::restart(*n, base), codes)? == [n.along, n.height, n.depth]).then_some(())?;
+        let z = self.atoms_size(codes, n.style)?;
+        let by = self.size_font(style >> 1);
+        let (sy, ex) = (self.family_font(by, 2)?, self.family_font(by, 3)?);
+        let mut param = |f, k| self.font_dimen(f, k).and_then(|v| v.as_dimen());
+        let (axis, drt) = (param(sy, 22)?, param(ex, 8)?);
+        let thickness = if rule { drt } else { 0 };
+        let (mut up, mut down) = (param(sy, if rule { 9 } else { 10 })?, param(sy, 12)?);
+        let half = |v: Scaled| if v % 2 != 0 { (v + 1).div_euclid(2) } else { v / 2 };
+        if rule {
+            let (clr, delta) = (thickness, half(thickness));
+            up += (clr - ((up - x[2]) - (axis + delta))).max(0);
+            down += (clr - ((axis - delta) - (z[1] - down))).max(0);
+        } else {
+            let delta = half(3 * drt - ((up - x[2]) - (z[1] - down)));
+            if delta > 0 {
+                up += delta;
+                down += delta;
+            }
+        }
+        // a null delimiter is an empty box centred on the axis (§ 706)
+        let null = self.dimen_parameter("nulldelimiterspace").known()?;
+        Some([x[0].max(z[0]) + 2 * null, (x[1] + up).max(axis), (z[2] + down).max(-axis)])
     }
 
     /// One atom of class `class` from family `fam`, while the list holds
@@ -5195,12 +5351,14 @@ impl Machine<'_> {
             n.height = n.height.max(Dim::exact(b.height - shift));
             n.depth = n.depth.max(Dim::exact(b.depth + shift));
             n.math_prev = None;
+            n.atoms.push(t, fam, ch);
             self.natural = Some(n);
             return;
         }
         n.height = n.height.max(Dim::exact(b.height));
         n.depth = n.depth.max(Dim::exact(b.depth));
         n.math_prev = Some(Some((fam, font, ch)));
+        n.atoms.push(t, fam, ch);
         self.natural = Some(n);
     }
 

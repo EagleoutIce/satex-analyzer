@@ -947,7 +947,10 @@ impl Machine<'_> {
                             .collect();
                         return self.unread_all(&tokens);
                     }
-                    Some(text) => text,
+                    Some(text) => {
+                        let tokens = self.spelled(&body, &text, at);
+                        return self.unread_all(&tokens);
+                    }
                     None => return self.unread_unknown(span),
                 }
             }
@@ -1102,6 +1105,16 @@ impl Machine<'_> {
                             let head = self.macro_head(&m, escape);
                             let mut tokens = self.text_tokens(&head, at);
                             tokens.extend(self.detokenize_known_runs(&m.replacement_text));
+                            return self.unread_all(&tokens);
+                        }
+                        // the body's characters stand where the body was written
+                        if let Meaning::Macro(m) = self.env.meaning(sym)
+                            && let Some(body) = self.text_known(&m.replacement_text)
+                        {
+                            let escape = self.escape_char();
+                            let head = self.macro_head(&m, escape);
+                            let mut tokens = self.text_tokens(&head, at);
+                            tokens.extend(self.spelled(&m.replacement_text, &body, at));
                             return self.unread_all(&tokens);
                         }
                         self.meaning_text(sym)
@@ -1286,7 +1299,7 @@ impl Machine<'_> {
             }
             let span = run[0].span;
             match me.text_known(run) {
-                Some(text) => out.extend(me.text_tokens(&text, span)),
+                Some(text) => out.extend(me.spelled(run, &text, span)),
                 None => out.push(me.unknown_text(Unk::Class(TextClass::PRINTED, false, None, &[]), span)),
             }
             run.clear();
@@ -1309,6 +1322,18 @@ impl Machine<'_> {
         }
         flush(self, &mut run, &mut out);
         out
+    }
+
+    /// `text`, the spelling of `body`, as characters: each at the token of the user's own
+    /// files it spells, so a name built from the text stays theirs; else all at `at`.
+    fn spelled(&mut self, body: &[Token], text: &str, at: Span) -> Vec<Token> {
+        if body.iter().any(|t| self.own_file(t.span.file)) {
+            let parts: Option<Vec<String>> = body.iter().map(|t| self.text_known(std::slice::from_ref(t))).collect();
+            if let Some(parts) = parts.filter(|p| p.concat() == text) {
+                return body.iter().zip(parts).flat_map(|(t, p)| self.text_tokens(&p, t.span)).collect();
+            }
+        }
+        self.text_tokens(text, at)
     }
 
     /// `\escapechar` as a character. `Some(None)` names none, `None` is unknown.

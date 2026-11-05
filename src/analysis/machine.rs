@@ -7119,7 +7119,8 @@ will look undefined",
             // character given by name is that character (§ 1151).
             let script = self.natural.is_some_and(|n| n.script.is_some())
                 && match token.tok {
-                    Tok::Cs(sym) => {
+                    // an implicit `{` opens a script group as `{` does (§ 1153)
+                    Tok::Cs(sym) if self.category_of(token) != Some(Catcode::Begin) => {
                         !self.expandable(sym)
                             && self.env.meaning(sym) != Meaning::Primitive(crate::engine::builtins::Primitive::Relax)
                             && !self.script_transparent(sym)
@@ -7257,7 +7258,25 @@ will look undefined",
             // tex.web § 1090: a letter or other character is horizontal
             // material.
             Some(Catcode::Letter | Catcode::Other) => {
-                if !self.horizontal_material(token) {
+                // tex.web § 1151: in math, a character of the active math code
+                // is its active character
+                let c = match token.tok {
+                    Tok::Chr(c, _) => Some(c),
+                    Tok::Cs(sym) => match self.env.meaning(sym) {
+                        Meaning::Char(c, _) => Some(c),
+                        _ => None,
+                    },
+                    Tok::Param(_) => None,
+                };
+                let engine = self.out.plugins.engine;
+                if self.mode.within(crate::engine::mode::Modes::ANY_MATH)
+                    && let Some(c) = c
+                    && self
+                        .char_code_known(crate::engine::builtins::CodeTable::Math, c)
+                        .is_some_and(|code| crate::engine::builtins::math_code_is_active(code, engine))
+                {
+                    self.unread(Token::new(Tok::Chr(c, Catcode::Active), token.span));
+                } else if !self.horizontal_material(token) {
                     if let Some(c) = self.typeset_code(token).and_then(char::from_u32) {
                         self.note_text(c, token.span);
                     }
@@ -8007,9 +8026,12 @@ will look undefined",
             Meaning::Primitive(
                 P::OpenIn | P::CloseIn | P::CaseShift(_) | P::Command(crate::engine::builtins::Syntax::FontExpand),
             ) => true,
-            // A type for the next atom, or limits on the last (tex.web §§ 1156, 1159).
+            // A type for the next atom, or limits on the last (tex.web §§ 1156, 1159), or a
+            // fraction of the list so far, which `math_fraction` follows (§ 1181).
             Meaning::Primitive(P::Command(
-                crate::engine::builtins::Syntax::MathComp(_) | crate::engine::builtins::Syntax::Limits,
+                crate::engine::builtins::Syntax::MathComp(_)
+                | crate::engine::builtins::Syntax::Limits
+                | crate::engine::builtins::Syntax::Fraction { .. },
             )) => true,
             // Glue and kerns, `\mskip` and `\mkern` in math units, are no
             // atoms: `append_item` adds their width (tex.web §§ 732, 761).

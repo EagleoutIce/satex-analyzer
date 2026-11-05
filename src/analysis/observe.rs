@@ -13,9 +13,13 @@ pub fn arg_type(m: &mut Machine, span: Span, ty: Ty) {
     if !m.own_file(span.file) || m.out.facts.types.len() >= m.cfg.limits.facts {
         return;
     }
-    let slot = m.out.facts.types.entry(span).or_insert(crate::analysis::roles::Ty::Bottom);
     // The token a `\csname` formed stands at the name's first character:
-    // what reads that token reads the register, not this text.
+    // what reads that token as a name (`\def`) reads it, not this text.
+    if ty == Ty::Cs && m.out.facts.slots.contains_key(&span) {
+        return;
+    }
+    let slot = m.out.facts.types.entry(span).or_insert(crate::analysis::roles::Ty::Bottom);
+    // ... and what reads a register so formed reads the register.
     // An overlay specification likewise: its decoding reads its parts, not this text.
     if ty == Ty::Overlay {
         *slot = ty;
