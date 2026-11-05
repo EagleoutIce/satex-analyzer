@@ -167,26 +167,32 @@ pub(super) type Decided = (String, Option<u32>, Option<usize>, usize);
 /// writes in: after the read that chose a segment, before the store that
 /// appends to it. Test builds only; release builds have no hook.
 #[cfg(test)]
-pub(super) static BEFORE_STORE: std::sync::Mutex<Option<Rewrite>> = std::sync::Mutex::new(None);
+thread_local! {
+    pub(super) static BEFORE_STORE: std::cell::RefCell<Option<Rewrite>> = const { std::cell::RefCell::new(None) };
+}
 
 #[cfg(test)]
 fn rewrite_before_store(path: &Path) {
-    let hook = BEFORE_STORE.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(hook) = hook.as_ref() {
-        hook(path);
-    }
+    BEFORE_STORE.with_borrow(|hook| {
+        if let Some(hook) = hook.as_ref() {
+            hook(path);
+        }
+    });
 }
 
 #[cfg(not(test))]
 fn rewrite_before_store(_path: &Path) {}
 
-/// Last store's decision, for testing whether the window was exercised.  Test builds only.
+/// Last store's decision, for testing whether the window was exercised.
+/// Test builds only, per thread: parallel tests run apart.
 #[cfg(test)]
-pub(super) static LAST_APPEND: std::sync::Mutex<Vec<Decided>> = std::sync::Mutex::new(Vec::new());
+thread_local! {
+    pub(super) static LAST_APPEND: std::cell::RefCell<Vec<Decided>> = const { std::cell::RefCell::new(Vec::new()) };
+}
 
 #[cfg(test)]
 fn note_append(name: &str, parent: Option<u32>, target: Option<usize>, chain: usize) {
-    LAST_APPEND.lock().unwrap_or_else(|e| e.into_inner()).push((name.to_string(), parent, target, chain));
+    LAST_APPEND.with_borrow_mut(|v| v.push((name.to_string(), parent, target, chain)));
 }
 
 #[cfg(not(test))]
@@ -194,12 +200,14 @@ fn note_append(_name: &str, _parent: Option<u32>, _target: Option<usize>, _chain
 
 /// Per cacheable load's end, its [`Carried`] state, in a fixed order.
 #[cfg(test)]
-pub(super) static LOAD_ENDS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+thread_local! {
+    pub(super) static LOAD_ENDS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
 
 #[cfg(test)]
 pub(super) fn note_load_end(carried: &Carried, guarded_lines: usize) {
     let state = format!("{:?} lines {guarded_lines}", carried.delta(&Carried::default()));
-    LOAD_ENDS.lock().unwrap_or_else(|e| e.into_inner()).push(state);
+    LOAD_ENDS.with_borrow_mut(|v| v.push(state));
 }
 
 /// A vertex the segment refers to: one in its table or before the load (found by name).
@@ -3937,12 +3945,12 @@ mod tests {
 
     impl Drop for Hooked {
         fn drop(&mut self) {
-            *BEFORE_STORE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            BEFORE_STORE.set(None);
         }
     }
 
     fn hook(f: impl Fn(&Path) + Send + 'static) -> Hooked {
-        *BEFORE_STORE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(f));
+        BEFORE_STORE.set(Some(Box::new(f)));
         Hooked
     }
 
@@ -4063,7 +4071,7 @@ mod tests {
         assert_eq!(state_of(&first, "guard").as_deref(), Some("stored"), "{:?}", first.package_caches);
         let target_file = cache_of(&first, "guard").expect("a cache for guard");
         let once = std::sync::atomic::AtomicBool::new(false);
-        LAST_APPEND.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        LAST_APPEND.with_borrow_mut(Vec::clear);
         let _hooked = hook(move |path: &Path| {
             if path.file_name().is_some_and(|n| n.to_string_lossy().starts_with("package-guard-"))
                 && !once.swap(true, std::sync::atomic::Ordering::SeqCst)
@@ -4073,7 +4081,7 @@ mod tests {
         });
         let second = analyze(&dir, FLAGGED);
         drop(_hooked);
-        let seen = LAST_APPEND.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let seen = LAST_APPEND.with_borrow(Clone::clone);
         // The sabotage ran before the first store; a package may store more
         // chains after it (one per stretch between nested loads).
         let (_, parent, target, chain) =
@@ -4191,9 +4199,9 @@ mod tests {
 \\begin{document}\\read\\streamyin to\\x\\section{A}\\relax\\end{document}\n";
         let runs: Vec<(Analysis, Vec<String>)> = (0..3)
             .map(|_| {
-                LOAD_ENDS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                LOAD_ENDS.with_borrow_mut(Vec::clear);
                 let run = analyze(&dir, doc);
-                (run, std::mem::take(&mut *LOAD_ENDS.lock().unwrap_or_else(|e| e.into_inner())))
+                (run, LOAD_ENDS.take())
             })
             .collect();
         for (run, ends) in &runs[1..] {
