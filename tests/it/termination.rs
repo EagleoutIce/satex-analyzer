@@ -946,7 +946,7 @@ Some text with microtype protrusion and expansion.
         const TEST: &str = "\\expandafter\\ifx\\csname a\\u b\\endcsname\\relax\\def\\Free{}\\else\\def\\Taken{}\\fi";
         let run = |defs: &str| {
             let a = Machine::analyze(&format!("{HEAD}{defs}{TEST}"), None, &super::cfg(1_000_000));
-            (crate::support::defined(&a, "Free"), crate::support::defined(&a, "Taken"))
+            (crate::support::maybe_defined(&a, "Free"), crate::support::maybe_defined(&a, "Taken"))
         };
         assert_eq!(run(""), (true, false));
         // Digits never spell letters: only a name with digits between.
@@ -994,7 +994,7 @@ Some text with microtype protrusion and expansion.
         assert!(codes.contains(&"site-forks-widened"), "{codes:?}");
         assert!(!codes.contains(&"line-budget-cut"), "{codes:?}");
         assert!(crate::support::defined(&a, "Next"), "{codes:?}");
-        assert!(crate::support::defined(&a, "Zero") && crate::support::defined(&a, "One"), "{codes:?}");
+        assert!(crate::support::maybe_defined(&a, "Zero") && crate::support::maybe_defined(&a, "One"), "{codes:?}");
         assert!(a.forks <= 64 * 2, "{} forks", a.forks);
     }
 
