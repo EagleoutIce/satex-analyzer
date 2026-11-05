@@ -117,6 +117,7 @@ jobs:
           python3 -m http.server -d site 8000 > /dev/null 2>&1 &
           sleep 2
           node doc/site/views.test.mjs
+          node doc/site/worker.test.mjs
           node doc/site/test.mjs http://localhost:8000/
 
       # Switches, typing and undo storms, a killed worker, failing downloads, two tabs: no hang, no stale view.

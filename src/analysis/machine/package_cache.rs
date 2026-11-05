@@ -1931,16 +1931,35 @@ impl Machine<'_> {
                         children.entry(node.parent).or_default().push(i as u32);
                     }
                     let mut want = resume;
-                    while let Some(kids) = children.get(&at) {
+                    'chain: while let Some(kids) = children.get(&at) {
+                        // The first child that fits and applies: one that fails before it changed
+                        // anything yields to its siblings, a later recording among them.
                         let mut chosen = None;
                         for &k in kids.iter().filter(|&&k| tree.nodes[k as usize].resume == want) {
-                            match self.segment_fits(&tree.nodes[k as usize], &base) {
-                                Ok(clock) => {
+                            let node = &tree.nodes[k as usize];
+                            let clock = match self.segment_fits(node, &base) {
+                                Ok(clock) => clock,
+                                Err(why) => {
+                                    reason.get_or_insert(why);
+                                    continue;
+                                }
+                            };
+                            if self.out.steps + node.steps >= self.cfg.limits.steps {
+                                reason = Some("the run could not afford it within its budgets".into());
+                                break 'chain;
+                            }
+                            match self.apply_segment(node, span, &before, &mut origins, &mut carried) {
+                                Ok(marks) => {
+                                    written.extend(marks);
                                     chosen = Some((k, clock));
                                     break;
                                 }
-                                Err(why) => {
-                                    reason.get_or_insert(why);
+                                Err((why, false)) => {
+                                    reason.get_or_insert(why.into());
+                                }
+                                Err((why, true)) => {
+                                    reason = Some(why.into());
+                                    break 'chain;
                                 }
                             }
                         }
@@ -1952,17 +1971,6 @@ impl Machine<'_> {
                             self.clock_cached.get_or_insert_with(|| name.to_string());
                         }
                         let node = &tree.nodes[k as usize];
-                        if self.out.steps + node.steps >= self.cfg.limits.steps {
-                            reason = Some("the run could not afford it within its budgets".into());
-                            break;
-                        }
-                        match self.apply_segment(node, span, &before, &mut origins, &mut carried) {
-                            Some(marks) => written.extend(marks),
-                            None => {
-                                reason = Some("a segment cannot be decoded".into());
-                                break;
-                            }
-                        }
                         served += node.steps;
                         at = Some(k);
                         parent_id = Some(node_id(node));
@@ -2147,7 +2155,7 @@ impl Machine<'_> {
 
 impl Machine<'_> {
     /// Install one segment: names, files, vertices, edges, bindings, facts, state.
-    /// Returns names written and their parts, or `None` if uncodeably invalid.
+    /// Returns names written and their parts, or why not and whether it changed state first.
     fn apply_segment(
         &mut self,
         node: &Node,
@@ -2155,17 +2163,22 @@ impl Machine<'_> {
         before: &Before,
         origins: &mut Vec<((RegKind, u16), u8)>,
         carried: &mut Vec<Sym>,
-    ) -> Option<Vec<(Sym, u8)>> {
+    ) -> Result<Vec<(Sym, u8)>, (&'static str, bool)> {
         // Read with segment's numbers (for allocations and name order).
         let local: Vec<Sym> = (0..node.names.len() as u32).map(Sym).collect();
         let (provisional, _) = codec::with(Mode::Decode { syms: local, files: self.lookup_files(&node.paths) }, || {
             postcard::from_bytes::<Sections>(&node.effect)
                 .and_then(|s| postcard::take_from_bytes::<EffectHead>(&s.rest).map(|(head, _)| head))
         });
-        let provisional = provisional.ok()?;
+        let provisional = provisional.map_err(|_| ("a segment cannot be decoded", false))?;
         let mut shift: HashMap<u8, i64> = HashMap::default();
         for (counter, from, ..) in &provisional.moved {
-            let now = before.counters.iter().find(|(c, _)| c == counter).and_then(|(_, v)| *v)?;
+            let now = before
+                .counters
+                .iter()
+                .find(|(c, _)| c == counter)
+                .and_then(|(_, v)| *v)
+                .ok_or(("an allocation counter is unknown", false))?;
             shift.insert(*counter, now - from);
         }
         let mut known = origins.clone();
@@ -2202,13 +2215,18 @@ impl Machine<'_> {
         }
         // Segment's files registered above (in order read); unread files stay unread.
         let files = self.lookup_files(&node.paths);
-        let st = decode_effect(&node.effect, &syms, &files)?;
+        let st = decode_effect(&node.effect, &syms, &files).ok_or(("a segment cannot be decoded", false))?;
         // Texts the segment copied, as this run has them at segment start.
         let mut origs: HashMap<Sym, Rc<[Token]>> = HashMap::default();
         let spliced =
             st.bindings.iter().filter(|(_, b, _)| b.as_ref().is_some_and(|b| b.splice.is_some())).map(|(sym, ..)| *sym);
         for sym in spliced.chain(st.definitions.iter().filter(|d| d.splice.is_some()).map(|d| d.name)) {
-            let text = self.env.slot(sym).and_then(|b| crate::engine::env::copied_text(&b.meaning)).cloned()?;
+            let text = self
+                .env
+                .slot(sym)
+                .and_then(|b| crate::engine::env::copied_text(&b.meaning))
+                .cloned()
+                .ok_or(("a copied text differs", false))?;
             origs.insert(sym, text);
         }
         // Edited texts: the text they were edited from must be the one here.
@@ -2216,9 +2234,14 @@ impl Machine<'_> {
         let edits = st.bindings.iter().filter_map(|(sym, b, _)| Some((*sym, b.as_ref()?.edit?)));
         for (sym, (head, tail, digest)) in edits.chain(st.definitions.iter().filter_map(|d| Some((d.name, d.edit?)))) {
             let sym = &sym;
-            let base = self.env.slot(*sym).and_then(|b| b.meaning.as_macro()).map(|m| m.replacement_text.clone())?;
+            let base = self
+                .env
+                .slot(*sym)
+                .and_then(|b| b.meaning.as_macro())
+                .map(|m| m.replacement_text.clone())
+                .ok_or(("an edited text differs", false))?;
             if base.len() < (head + tail) as usize || self.text_digest(&base) != digest {
-                return None;
+                return Err(("an edited text differs", false));
             }
             bases.insert(*sym, base);
         }
@@ -2328,11 +2351,13 @@ impl Machine<'_> {
             written.push((*sym, *bits));
             let Some(b) = binding else { continue };
             let mut meaning = match (b.splice, origs.get(sym), b.edit, bases.get(sym)) {
-                (Some(at), Some(orig), ..) => with_text(&b.meaning, |text| splice_in(text, at as usize, orig))?,
+                (Some(at), Some(orig), ..) => with_text(&b.meaning, |text| splice_in(text, at as usize, orig))
+                    .ok_or(("a copied text differs", true))?,
                 (_, _, Some((head, tail, _)), Some(base)) => with_text(&b.meaning, |text| {
                     let (head, tail) = (head as usize, base.len() - tail as usize);
                     Some(base[..head].iter().chain(text).chain(&base[tail..]).copied().collect())
-                })?,
+                })
+                .ok_or(("an edited text differs", true))?,
                 _ => b.meaning.clone(),
             };
             if b.splice.is_some() {
@@ -2384,11 +2409,13 @@ impl Machine<'_> {
             let mac = match (d.splice, &d.mac, origs.get(&d.name)) {
                 (Some(at), Some(mac), Some(orig)) => {
                     let mut mac = (**mac).clone();
-                    mac.replacement_text = splice_in(&mac.replacement_text, at as usize, orig)?;
+                    mac.replacement_text =
+                        splice_in(&mac.replacement_text, at as usize, orig).ok_or(("a copied text differs", true))?;
                     Some(Rc::new(mac))
                 }
                 (None, Some(mac), _) if d.edit.is_some() => {
-                    let ((head, tail, _), base) = (d.edit?, bases.get(&d.name)?);
+                    let ((head, tail, _), base) =
+                        d.edit.zip(bases.get(&d.name)).ok_or(("an edited text differs", true))?;
                     let mut mac = (**mac).clone();
                     let (head, tail) = (head as usize, base.len() - tail as usize);
                     mac.replacement_text =
@@ -2687,7 +2714,7 @@ impl Machine<'_> {
                 Site { fact, repeats, progress, size: usize::MAX, source: 0, unread: 1, ..Site::fresh(fact) },
             );
         }
-        Some(written)
+        Ok(written)
     }
 
     /// Vertices a reference stands for: table entry (found/made) or pre-load definitions.
@@ -4101,6 +4128,43 @@ mod tests {
             return;
         }
         grafting("truncate", MAX_TREES, false);
+    }
+
+    /// A segment that fits but cannot be applied (here: bytes that do not
+    /// decode) yields to a sibling. Before, every run stopped at it and
+    /// recorded the package again, appending a sibling no run ever reached.
+    #[test]
+    fn a_segment_that_cannot_be_applied_yields_to_its_sibling() {
+        if !installed() {
+            return;
+        }
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = project("unapplied");
+        let first = analyze(&dir, PLAIN);
+        let path = cache_of(&first, "guard").expect("a cache for guard");
+        let bytes = std::fs::read(&path).expect("the cache");
+        let mut file: CacheFile = postcard::from_bytes(&bytes).expect("the cache decodes");
+        // Each first segment moves to the end; a copy that cannot be decoded takes its place.
+        for tree in &mut file.trees {
+            let firsts: Vec<usize> = (0..tree.nodes.len()).filter(|&i| tree.nodes[i].parent.is_none()).collect();
+            for at in firsts {
+                let moved = tree.nodes.len() as u32;
+                for n in &mut tree.nodes {
+                    if n.parent == Some(at as u32) {
+                        n.parent = Some(moved);
+                    }
+                }
+                let good = tree.nodes[at].clone();
+                tree.nodes[at].effect = Cow::Owned(vec![0xff; 3]);
+                tree.nodes.push(good);
+            }
+        }
+        std::fs::write(&path, postcard::to_allocvec(&file).expect("encodes")).expect("written");
+        for _ in 0..2 {
+            let run = analyze(&dir, PLAIN);
+            assert_eq!(state_of(&run, "guard").as_deref(), Some("cached"), "{:?}", run.package_caches);
+            assert_eq!(facts(&run), facts(&first));
+        }
     }
 
     /// A package that leaves an `\openin` stream half read, a counter

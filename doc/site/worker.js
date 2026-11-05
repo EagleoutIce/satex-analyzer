@@ -13,6 +13,12 @@
 function SatexEngine(createSatex, progress = () => {}, store = null, status = () => {}) {
   const STALL_MS = 30000;
   const files = new Map();
+  /** Each file's mtime, kept from boot to boot: a fresh instance's stamps (an index's, a
+   * document cache's, the content hashes') must not see an unchanged file as new. */
+  const times = new Map();
+  /** A time no file had: two versions of one path never share a stamp. */
+  let clock = 0;
+  const now = () => (clock = Math.max(clock + 1, Date.now()));
   let wasm = null;
   /** The cache directory outlives the page in `store` (the worker's is IndexedDB), under the
    * binary's name: what one satex build cached, another does not read. `kept` is what the
@@ -80,7 +86,7 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
       if (name === '.' || name === '..') continue;
       const path = `${dir}/${name}`, st = FS.stat(path);
       if (FS.isDir(st.mode)) walk(FS, path, into, booted);
-      else if (cached(path) && booted.get(path) !== stamp(st)) { into.set(path, FS.readFile(path)); booted.set(path, stamp(st)); }
+      else if (cached(path) && booted.get(path) !== stamp(st)) { into.set(path, FS.readFile(path)); times.set(path, (clock = Math.max(clock, +st.mtime))); booted.set(path, stamp(st)); }
     }
   }
   const stamp = (st) => `${+st.mtime}|${st.size}`;
@@ -102,6 +108,9 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
     for (const [path, data] of [...files, ...Object.entries(edits)]) {
       module.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')) || '/');
       module.FS.writeFile(path, data);
+      // ctime too: satex's stamps read it (src/caches/format.rs `stamp`)
+      const t = path in edits ? now() : times.get(path);
+      if (t) module.FS.doSetAttr(null, module.FS.lookupPath(path).node, { atime: t, mtime: t, ctime: t });
     }
     module.FS.mkdirTree('/cache');
     module.FS.chdir(cwd);
@@ -174,8 +183,12 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
     progress('unpacking', 0, 0);
     const blob = await gunzip(packed);
     let offset = 0;
+    // a bundle's name holds its digest: its files' time, the same on every visit
+    let t = 0;
+    for (const c of entry.bundle) t = (t * 31 + c.charCodeAt(0)) % 1e9;
     for (const [path, size] of entry.files) {
       files.set(path, blob.subarray(offset, offset + size));
+      times.set(path, 1e11 + t); // before any `now()`
       offset += size;
     }
     // a kernel's caches, imported once: the store keeps them for the next load
@@ -213,6 +226,7 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
     for (const [name, data] of Object.entries(given)) {
       const path = `${dir}/${name}`;
       files.set(path, data);
+      times.set(path, now());
       live((fs) => { fs.mkdirTree(path.slice(0, path.lastIndexOf('/'))); fs.writeFile(path, data); });
     }
   }
@@ -247,7 +261,7 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
     if (kept_ === 'late') status({ text: 'the browser cache is busy (another tab?): starting without it' });
     for (const [path, data] of (kept_ === 'late' ? null : kept_) ?? []) {
       if (path.startsWith('#imported/')) imported.add(path.slice('#imported/'.length));
-      else { files.set(path, data); kept.set(path, data); }
+      else { files.set(path, data); kept.set(path, data); times.set(path, now()); }
     }
     // Both downloads at once: the binary compiles while the TeX files arrive.
     const entry = manifest.kernels[0];
