@@ -1594,6 +1594,9 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .ts-view .ts-other > summary > .ts-file { grid-column: 3; grid-row: 1; } .ts-view .ts-other > summary > .muted { grid-column: 3; grid-row: 1; justify-self: end; }
 /* an environment instance of the user's file: one block, its name and line as a chip */
 .ts-view .ts-block { margin: .45rem 0; }
+.ts-view .ts-envmark { display: none; } .typeset.show-envs .ts-view .ts-envmark { display: grid; grid-template-columns: var(--gutter) calc(var(--rails, 0) * var(--step)) minmax(0, 1fr); column-gap: .5rem; align-items: baseline; padding: 0; }
+.ts-view .ts-envmark .ts-at { opacity: .6; } .ts-view .ts-envtag { grid-column: 3; justify-self: start; font: .68rem ui-monospace, Menlo, monospace; color: var(--accent); padding: 0 .4rem; border-radius: 4px; background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.ts-view .ts-env-end .ts-envtag { opacity: .75; }
 .ts-view .ts-block-head { font: 600 .66rem ui-monospace, Menlo, monospace; color: var(--muted); padding: 0; }
 .ts-view .ts-block-chip { grid-column: 3; display: flex; align-items: baseline; flex-wrap: wrap; }
 .ts-view .ts-block-env { color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
@@ -1635,6 +1638,12 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .typeset .ts-frame { display: inline-block; padding: 0 .25em; border: 1px solid currentColor; line-height: 1.2; }
 .typeset .ts-bar[style*="width"] { max-width: 100%; vertical-align: baseline; }
 .typeset .ts-sup, .typeset .ts-sub { font-size: .72em; line-height: 0; } .typeset .ts-sup { vertical-align: .55em; } .typeset .ts-sub { vertical-align: -.3em; }
+/* an operator's limits stacked over and under it (display math, \limits) */
+.typeset .ts-limits { display: inline-grid; grid-template-areas: "over" "op" "under"; justify-items: center; vertical-align: middle; line-height: 1.05; margin: 0 .15em; }
+.typeset .ts-limits > .ts-op { grid-area: op; font-size: 1.45em; line-height: 1; } .typeset .ts-limits > .ts-over { grid-area: over; } .typeset .ts-limits > .ts-under { grid-area: under; }
+.typeset .ts-over, .typeset .ts-under { font-size: .72em; }
+/* an equation's number at the margin */
+.typeset .ts-eqno { float: right; margin-left: 1em; } .typeset .ts-leqno { float: left; margin-right: 1em; }
 @keyframes pdf-breathe { 50% { opacity: .3; transform: scale(.7); } }
 .pdf-bar .pdf-state { flex: 1 1 0; }
 .pdf-menu summary { list-style: none; cursor: pointer; font-size: .72rem; padding: .05rem .45rem; border: 1px solid var(--accent); border-left: 0; border-radius: 0 999px 999px 0; background: var(--accent); color: var(--accent-fg); }
@@ -1875,3 +1884,13 @@ table.prim td { vertical-align: top; } table.long.prim td:nth-child(3) { white-s
 
 /* the lens line above a widget's target: off unless the lenses setting is on (the gutter mark opens it) */
 body:not(.show-lenses) .cm-lens-line { display: none; }
+
+/* text the run may set or not (an undecided conditional's arms) and the switch per conditional */
+.typeset .ts-choice { border-bottom: 1px dashed color-mix(in srgb, var(--c3, #c80) 75%, transparent); background: color-mix(in srgb, var(--c3, #c80) 7%, transparent); }
+.typeset .ts-choice > .ts-arm-false { opacity: .7; } .typeset .ts-choice > .ts-arm-false:not(:empty)::before { content: "|"; margin: 0 .3em; color: var(--muted); font-style: normal; }
+.typeset .ts-choice > .ts-arm:empty::after { content: "∅"; color: var(--muted); font-size: .8em; }
+.typeset .ts-choice > .ts-arm-false:empty::before { content: "|"; margin: 0 .3em; color: var(--muted); }
+.typeset .ts-switch { display: inline-flex; align-items: baseline; gap: .15rem; margin-right: .4rem; padding: 0 .3rem; border-radius: 4px; font: .66rem ui-monospace, Menlo, monospace; color: var(--c3, #c80); background: color-mix(in srgb, var(--c3, #c80) 12%, transparent); vertical-align: .1em; }
+.typeset .ts-switch code { font: inherit; margin-right: .2rem; } .typeset .ts-switch button { font: inherit; padding: 0 .3rem; border: 0; border-radius: 3px; background: none; color: inherit; cursor: pointer; }
+.typeset .ts-switch button[aria-pressed="true"] { background: color-mix(in srgb, var(--c3, #c80) 30%, transparent); color: var(--fg); }
+.typeset:not(.show-maybe) :is(.ts-choice, .ts-switch) { display: none; }

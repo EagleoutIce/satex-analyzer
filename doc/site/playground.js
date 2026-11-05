@@ -1273,9 +1273,11 @@
   const typesetBody = $('typeset-body');
   const notation = self.satexCards.notation;
   // the Typeset panel's switches, kept across visits
-  for (const [id, cls, store] of ['boxes', 'keys', 'ligs', 'findings', 'envs'].map((k) => [`typeset-${k}`, `show-${k}`, `satex-typeset-${k}`])) {
+  for (const [id, cls, store, on] of ['boxes', 'keys', 'ligs', 'findings', 'envs', 'maybe'].map((k) => [`typeset-${k}`, `show-${k}`, `satex-typeset-${k}`, k === 'maybe'])) {
     const box = $(id), apply = () => typesetBody.classList.toggle(cls, box.checked);
-    try { box.checked = localStorage.getItem(store) === '1'; } catch {}
+    // what may be set shows unless switched off
+    box.checked = on;
+    try { box.checked = (localStorage.getItem(store) ?? (on ? '1' : '0')) === '1'; } catch {}
     box.onchange = () => { apply(); try { localStorage.setItem(store, box.checked ? '1' : '0'); } catch {} };
     apply();
   }
@@ -4826,6 +4828,12 @@
       const set = (pdf.wordList ?? []).filter((w) => w[0] === page && Math.abs(w[4] - word[4]) < 3 && !wordInLine(text, w[5])).sort((a, b) => a[1] - b[1]);
       return pdfToTarget(refs[Math.min(Math.max(set.indexOf(word), 0), refs.length - 1)]);
     }
+    // a word set at the line but read elsewhere (`\title`'s argument, set by `\maketitle`): where it was read
+    const from = !span && word ? readAt(hit.file, hit.line, word[5]) : null;
+    if (from) {
+      await openPlace(from.file, { line: from.line - 1, character: from.col - 1 }, { line: from.end[0] - 1, character: from.end[1] });
+      return pdfFollow(true);
+    }
     const start = { line: hit.line - 1, character: span?.[0] ?? 0 };
     await openPlace(hit.file, start, span ? { line: start.line, character: span[1] } : undefined);
     pdfFollow(true);
@@ -5129,6 +5137,37 @@
       [from, to] = [[from[0], w[0] + 1], [from[0], w[1] + 1]];
     }
     return (typesetRows ?? []).map((r) => siteHits(r, file, (p) => !before(p, from) && before(p, to)).text).filter(Boolean).join(' ');
+  }
+  /** Where `word`, set while about line `line` of `file` was read (SyncTeX's line, within a few), was itself read (the
+   * run's `origins`): its file, first line and column, and its last character's place; null when it was read where set. */
+  function readAt(file, line, word) {
+    const bare = word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    let best = null, near = 4;
+    for (const r of bare ? typesetRows ?? [] : []) {
+      if (!r.sites || !r.origins) continue;
+      const chars = [], marked = [...(r.marked ?? r.detail ?? '')];
+      let k = 0, o = -1, i = 0, note = false, math = false;
+      for (let j = 0; j < marked.length; j++) {
+        const c = marked[j];
+        if (c === '\uE000') { note = true; math = marked[j + 1] === '\u0006'; continue; }
+        if (c === '\uE001') { note = math = false; continue; }
+        if (math) continue;
+        while (k + 1 < r.sites.length && r.sites[k + 1].at <= i) k++;
+        while (o + 1 < r.origins.length && r.origins[o + 1].at <= i) o++;
+        const s = r.sites[k], g = r.origins[o];
+        if (!note && s && s.at <= i && String(s.path ?? r.path ?? '').endsWith(file)) {
+          chars.push([c, s.line, g?.line ? { path: g.path ?? r.path, line: g.line, col: g.col + i - g.at } : null]);
+        }
+        i++;
+      }
+      const text = chars.map((c) => c[0]).join('');
+      for (let at = text.indexOf(bare); at >= 0; at = text.indexOf(bare, at + 1)) {
+        const first = chars[at], last = chars[at + bare.length - 1], d = Math.abs(first[1] - line);
+        const name = first[2] && last[2] && Object.keys(state.texts).find((n) => String(first[2].path).endsWith(n));
+        if (name && d < near) { near = d; best = { file: name, line: first[2].line, col: first[2].col, end: [last[2].line, last[2].col] }; }
+      }
+    }
+    return best;
   }
   /** The characters of row `r` whose source site (the run's `sites`: where the user's file was read when it was set)
    * `wanted` takes: their text, and the first and last one's offset in `detail`. */

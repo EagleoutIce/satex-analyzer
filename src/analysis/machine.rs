@@ -1431,6 +1431,9 @@ pub(crate) struct Scratch {
     pub(crate) skip_ended: bool,
 }
 
+/// Character ranges of set text, as a box register holds them.
+pub(crate) type CharRanges = Vec<(u32, u32)>;
+
 /// The interpreter itself: reads [`Token`]s from the input stack, expands
 /// macros, executes primitives, changes [`Env`] and [`CatcodeTable`], and
 /// records what it saw into [`Analysis`].
@@ -1528,7 +1531,13 @@ pub struct Machine<'a> {
     /// last one, so the next breaks the word (tex.web § 1034).
     pub(crate) text_broken: bool,
     /// The character ranges of the text each box register holds.
-    pub(crate) box_chars: crate::fixed::HashMap<i64, Vec<(u32, u32)>>,
+    pub(crate) box_chars: crate::fixed::HashMap<i64, CharRanges>,
+    /// `box_chars` entries a local `\setbox` saved: the group depth, the register and its old ranges
+    /// (tex.web § 283 `unsave` puts them back).
+    pub(crate) box_saves: Vec<(usize, i64, Option<CharRanges>)>,
+    /// How many characters were set when a box register was last used or set while paths
+    /// parted, or through a number not known: text set before may be held where satex cannot see.
+    pub(crate) box_inexact: u32,
     /// The ranges of the box the last fetch took, until it is used.
     pub(crate) fetched: Vec<(u32, u32)>,
     /// Ranges of boxes used inside a box that is not placed yet.
@@ -1809,6 +1818,9 @@ pub struct Machine<'a> {
     /// a macro body of the project's included: where its own text put what
     /// the call `file_call` does.
     project_site: Option<Span>,
+    /// The last character the main loop took straight from a project file: text the
+    /// document itself sets, where an error it raises (`Missing \begin{document}`) stands.
+    typed_at: Option<Span>,
     /// The innermost command of the file call's own text: the last control
     /// sequence run that stands after the call in its file.
     text_site: Option<(Sym, Span)>,
@@ -2256,7 +2268,7 @@ const CUT_IMPRECISE: [&str; 1] = ["argument-ends-in-unknown"];
 /// run goes on exactly as TeX does, and never widens for them. Each is
 /// raised as the error TeX prints (`raised-error`) and counts toward
 /// [`MAX_ERRORS`] (tex.web § 82).
-pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 14] = [
+pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 15] = [
     ("missing-endcsname", Some("Missing \\endcsname inserted")),
     ("missing-sharp", Some("Missing # inserted in alignment preamble")),
     ("extra-sharp", Some("Only one # is allowed per tab")),
@@ -2272,6 +2284,8 @@ pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 14] = [
     // Named after the macro in the message itself.
     ("extra-right-brace", None),
     ("runaway-argument", None),
+    // tex.web § 1045 `report_illegal_case`: the message names the mode
+    ("macro-parameter-character", None),
 ];
 
 /// The files of the tokens a token list still holds, `None` for a file.
@@ -2443,6 +2457,8 @@ impl<'a> Machine<'a> {
             quantity: crate::analysis::observe::Quantities::default(),
             text_broken: true,
             box_chars: Default::default(),
+            box_saves: Vec::new(),
+            box_inexact: 0,
             fetched: Vec::new(),
             carried_chars: Vec::new(),
             aside: Vec::new(),
@@ -2550,6 +2566,7 @@ impl<'a> Machine<'a> {
             recent_file_spans: Vec::new(),
             file_call: None,
             project_site: None,
+            typed_at: None,
             text_site: None,
             built_name: None,
             file_calls: Vec::new(),
@@ -5118,6 +5135,7 @@ will look undefined",
         }
         let before = self.letters_depth.map(|_| self.letters());
         let popped = self.env.pop_group(&mut self.catcodes);
+        self.restore_box_chars();
         if let Some(before) = before {
             let now = self.letters();
             for c in before.iter().filter(|c| !now.contains(c)) {
@@ -7058,15 +7076,14 @@ will look undefined",
     /// document's text that reached it, which may stand inside the argument
     /// of the file call (a frame's body), else that call.
     pub(crate) fn raised_at(&self, span: Span) -> Span {
-        match (self.file_call, self.project_site) {
-            (Some((_, call)), Some(site))
-                if site.file == call.file && (site.line, site.col) > (call.line, call.col) =>
-            {
-                site
-            }
-            (Some((_, call)), _) => call,
-            (None, _) => span,
-        }
+        let Some((_, call)) = self.file_call else { return span };
+        // the latest of the call, the document command it ran, and the document's own text it set
+        [self.project_site, self.typed_at]
+            .into_iter()
+            .flatten()
+            .filter(|s| s.file == call.file && (s.line, s.col) > (call.line, call.col))
+            .max_by_key(|s| (s.line, s.col))
+            .unwrap_or(call)
     }
 
     /// One of the engine's own errors, `text` as TeX prints it: raised
@@ -7199,6 +7216,9 @@ will look undefined",
             && (self.within.is_empty() || input(self, token.span.file))
         {
             self.out.graph.set_reader(None);
+        }
+        if self.last_file == Some(token.span.file) && token.cs().is_none() && self.own_file(token.span.file) {
+            self.typed_at = Some(token.span);
         }
         // Inline math whose size is followed holds only characters: any
         // other command may add atoms of unknown size.
@@ -7338,6 +7358,15 @@ will look undefined",
                 }
             }
             Some(Catcode::Sup | Catcode::Sub) if self.insert_dollar(token) => {}
+            // tex.web § 1045: a `#` is illegal in every mode, and ignored
+            Some(Catcode::Param) if !self.mode.is_empty() => {
+                crate::analysis::observe::text_break(self);
+                self.end_word();
+                let modes = self.mode.names();
+                let mode = if modes.len() == 1 { modes[0] } else { "this" };
+                let msg = format!("You can't use `macro parameter character #' in {mode} mode");
+                self.diagnose(Severity::Warning, "macro-parameter-character", token.span, msg);
+            }
             // tex.web § 785: spaces between rows are skipped.
             Some(Catcode::Space) if self.between_rows() => {}
             // tex.web § 1043: a space in horizontal mode is glue; vertical

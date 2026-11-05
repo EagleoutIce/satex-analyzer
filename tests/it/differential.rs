@@ -913,8 +913,8 @@ fn marks(row: &serde_json::Value) -> Vec<String> {
 }
 
 /// A box set into a register inside a box that is placed stays off the page
-/// (amsmath measures `(` that way in every math size change): its text is
-/// boxed, the placed box's own text is not.
+/// (amsmath measures `(` that way in every math size change): lost with the
+/// group that set it, it is no text at all; the placed box's own text is.
 #[test]
 fn a_box_set_aside_inside_a_placed_box_is_not_placed() {
     if !crate::support::installed() {
@@ -923,10 +923,10 @@ fn a_box_set_aside_inside_a_placed_box_is_not_placed() {
     let rows = typeset_rows("aside", "", "\\mbox{ab\\setbox0=\\hbox{(}cd} ef");
     let row = paragraph(&rows, "ab");
     let marked = row["marked"].as_str().unwrap();
-    assert!(marked.contains("\u{E000}⟦\u{E001}(\u{E000}⟧\u{E001}"), "the measured ( is boxed: {row}");
-    assert!(!marked.contains("⟦\u{E001}a") && !marked.contains("⟦\u{E001}c"), "the placed text is not: {row}");
-    // text set wholly in an unplaced box is kept, marked held (a float the run did not follow)
-    let body = "x\n\n\\begin{center}\n\\setbox3=\\hbox{kept aside}\n\\end{center}\n\ny";
+    assert!(!marked.contains('(') && !marked.contains('⟦'), "the measured ( is lost: {row}");
+    assert!(marked.contains("abcd"), "the placed text is set: {row}");
+    // text set wholly in a box kept unplaced is kept, marked held (a float the run did not follow)
+    let body = "x\n\n\\begin{center}\n\\global\\setbox3=\\hbox{kept aside}\n\\end{center}\n\ny";
     let rows = typeset_rows("held", "", body);
     assert_eq!(paragraph(&rows, "kept aside")["held"], true, "{rows:?}");
 }
@@ -1213,4 +1213,156 @@ fn math_scripts_are_marked() {
     let row = paragraph(&rows, "x");
     let m: Vec<String> = marks(row).into_iter().filter(|k| ["sup", "sub", "scriptend"].contains(&k.as_str())).collect();
     assert_eq!(m, ["sup", "scriptend", "sub", "scriptend"], "{row}");
+}
+
+/// An operator's scripts are limits over and under it in display math or after `\\limits`, at its
+/// side inline or after `\\nolimits` (tex.web §§ 749, 1159); a script of a script is no limit.
+#[test]
+fn display_operators_take_limits() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "Inline $\\sum_{i=1}^{n} a$ and $\\sum\\limits_{j} b$.\n\\[\\sum_{i=1}^{N} x_{\\sum_k} \\quad \\sum\\nolimits_{m} y\\]";
+    let rows = typeset_rows("limits", "", body);
+    let scripts: Vec<String> = marks(paragraph(&rows, "∑"))
+        .into_iter()
+        .filter(|k| ["sup", "sub", "over", "under"].contains(&k.as_str()))
+        .collect();
+    // inline: at the side, but under after `\\limits`; displayed: limits, a script's operator and `\\nolimits` at the side
+    assert_eq!(scripts, ["sub", "sup", "under", "under", "over", "sub", "sub", "sub"]);
+    let row = paragraph(&rows, "∑");
+    let ops = row["marked"].as_str().unwrap_or("").matches("\u{6}L").count();
+    assert_eq!(ops, 2, "the operators with limits are tagged: {row}");
+}
+
+/// `\\eqno` and `\\leqno` mark where an equation's number begins: a view sets it at the margin.
+#[test]
+fn equation_numbers_are_marked() {
+    if !crate::support::installed() {
+        return;
+    }
+    for (option, mark) in [("", "eqno"), ("[leqno]", "leqno")] {
+        let rows = typeset_rows(
+            &format!("eqno{mark}"),
+            &format!("\\usepackage{option}{{amsmath}}"),
+            "\\begin{equation} c \\end{equation}",
+        );
+        let row = paragraph(&rows, "(1)");
+        let at =
+            row["align"].as_array().into_iter().flatten().find(|m| m["mark"] == mark).and_then(|m| m["at"].as_u64());
+        // the number follows the formula
+        assert_eq!(
+            at,
+            row["detail"].as_str().and_then(|d| d.chars().position(|c| c == '(')).map(|k| k as u64),
+            "{mark}: {row}"
+        );
+    }
+}
+
+/// A box set and lost unused (amsmath measuring `(` for its strut, a register put back at a group's
+/// end) never reaches the page: no `⟦…⟧` of it. A box kept in a register stays maybe-used.
+#[test]
+fn boxes_lost_unused_are_not_typeset() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "A{\\setbox0=\\hbox{lost}}B\\setbox2=\\hbox{gone}\\setbox2=\\hbox{kept}C\n\n\\setbox4=\\hbox{used}{\\setbox4=\\hbox{inner}}\\box4\n\n$\\hat{x}$";
+    let rows = typeset_rows("lost-boxes", "\\usepackage{amsmath}", body);
+    let text: String = rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
+    for lost in ["lost", "gone", "inner", "("] {
+        assert!(!text.contains(lost), "{lost} is lost: {text:?}");
+    }
+    assert!(text.contains("⟦kept⟧") && text.contains("used"), "{text:?}");
+    let x = paragraph(&rows, "x");
+    assert_eq!(x["detail"].as_str().map(|d| d.matches('x').count()), Some(1), "{x}");
+}
+
+/// A key read after the paragraph before ended belongs to the next one: `\\ref` opening a paragraph
+/// is not the heading's, a `\\label` after the heading is.
+#[test]
+fn a_key_opening_a_paragraph_is_its_own() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\section{Results}\n\\label{sec:r}\n\n\\ref{sec:r} defines it.\n\nSee\n\\ref{sec:r}.";
+    let rows = typeset_rows("key-par", "", body);
+    let keys = |row: &serde_json::Value| -> Vec<String> {
+        row["keys"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|k| Some(format!("{}:{}", k["kind"].as_str()?, k["key"].as_str()?)))
+            .collect()
+    };
+    assert_eq!(keys(paragraph(&rows, "Results")), ["label:sec:r"]);
+    let opening = paragraph(&rows, "defines");
+    assert_eq!(keys(opening), ["ref:sec:r"]);
+    assert_eq!(opening["keys"][0]["at"], 0, "{opening}");
+    assert_eq!(keys(paragraph(&rows, "See")), ["ref:sec:r"]);
+}
+
+/// A character read in the user's file elsewhere than where it is set (`\\title`'s argument, set by
+/// `\\maketitle`) names where it was read; text read where it is set names nothing.
+#[test]
+fn title_text_knows_where_it_was_read() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\title{Alpha Beta}\n\\author{Carol}\n\\date{Today}\n\\begin{document}\n\\maketitle\nPlain text.\n\\end{document}\n";
+    let rows = typeset_doc("origins", source, &[]);
+    for (text, line, col) in [("Alpha", 2, 8), ("Carol", 3, 9), ("Today", 4, 7)] {
+        let row = paragraph(&rows, text);
+        let at = row["detail"].as_str().and_then(|d| d.find(text)).expect("in detail") as u64;
+        let o =
+            row["origins"].as_array().into_iter().flatten().rfind(|o| o["at"].as_u64() <= Some(at)).expect("an origin");
+        assert_eq!(
+            (o["line"].as_u64(), o["col"].as_u64().map(|c| c + at - o["at"].as_u64().unwrap())),
+            (Some(line), Some(col)),
+            "{text}: {row}"
+        );
+    }
+    assert!(paragraph(&rows, "Plain")["origins"].is_null(), "{rows:?}");
+}
+
+/// A paragraph names every environment of the user's it is set in, outermost first, with the lines
+/// it begins and ends on: a view marks where each begins and ends.
+#[test]
+fn paragraphs_name_their_environments() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\begin{quote}\nOuter.\n\\begin{center}\nInner.\n\\end{center}\n\\end{quote}";
+    let rows = typeset_rows("env-chain", "", body);
+    let chain = |text| -> Vec<(String, u64, u64)> {
+        paragraph(&rows, text)["envs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|e| {
+                (
+                    e["env"].as_str().unwrap_or("").into(),
+                    e["line"].as_u64().unwrap_or(0),
+                    e["end"].as_u64().unwrap_or(0),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(chain("Outer"), [("quote".into(), 4, 9)]);
+    assert_eq!(chain("Inner"), [("quote".into(), 4, 9), ("center".into(), 6, 8)]);
+}
+
+/// Text an undecided conditional may set names its switch: a `choice` key before its `{`, and the
+/// cause with the same node, so a view can show one arm at a time.
+#[test]
+fn may_text_names_its_switch() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\ifnum\\pdfuniformdeviate 2=0 Heads\\else Tails\\fi.";
+    let rows = typeset_rows("switch", "", body);
+    let row = paragraph(&rows, "Heads");
+    let choice = row["keys"].as_array().into_iter().flatten().find(|k| k["kind"] == "choice").expect("a choice key");
+    let cause =
+        row["causes"].as_array().into_iter().flatten().find(|c| c["on"].is_string()).expect("a cause with its switch");
+    assert_eq!(choice["key"], cause["on"], "{row}");
 }

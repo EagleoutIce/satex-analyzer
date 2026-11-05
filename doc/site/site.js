@@ -591,7 +591,13 @@
     let open = 0, font = '', ink = '', table = 0, row = null, lig = null, math = '';
     // a math atom: `i` an italic letter, a class digit (2 binary, 3 relation, 6 punctuation) sets its spacing
     const MATH_CLASS = { i: 'ts-mi', 2: 'ts-mbin', 3: 'ts-mrel', 6: 'ts-mpunct' };
-    const mathSpan = (html) => MATH_CLASS[math] ? `<span class="${MATH_CLASS[math]}">${html}</span>` : html;
+    // `L` an operator whose scripts are limits (`over`, `under`): one column of limit, operator, limit
+    let limits = 0, limitDone = false;
+    const limitAt = [];
+    const mathSpan = (html) => math === 'L' ? (limits++, `<span class="ts-limits"><span class="ts-op">${html}</span>`)
+      : MATH_CLASS[math] ? `<span class="${MATH_CLASS[math]}">${html}</span>` : html;
+    // the column closes at the first thing after its last limit
+    const closeLimits = (mark) => { if (!limitDone || mark === 'over' || mark === 'under') return ''; limitDone = false; limits--; return '</span>'; };
     // a ligature: the characters the font joined, then the glyph it set (`.show-ligs` animates the join)
     const ligature = (from, to) => {
       const code = [...to].length === 1 ? ` (U+${to.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')})` : '';
@@ -612,12 +618,14 @@
     // a box of a set width in the line (a contents line's number, its page) is set that wide; leaders fill the rest
     let boxes = 0;
     // whether the box or cell open now set text yet: a fill before it pushes the text right, one after left
-    let inked = false, hidden = 0, framed = 0, bar = null, scripts = 0;
+    let inked = false, hidden = 0, framed = 0, bar = null, scripts = 0, eqno = 0, choices = 0, pick = null;
     const grid = (mark) => {
       if (mark === 'fill') return `<i class="ts-fill ts-fill-${inked ? 'r' : 'l'}"></i>`;
       // a math script, to its character or its group's end
-      if (mark === 'sup' || mark === 'sub') { scripts++; return `<span class="ts-${mark}">`; }
-      if (mark === 'scriptend') { if (!scripts) return ''; scripts--; return '</span>'; }
+      if (mark === 'sup' || mark === 'sub' || mark === 'over' || mark === 'under') { if (mark === 'over' || mark === 'under') { limitAt.push(scripts); limitDone = false; } scripts++; return `<span class="ts-${mark}">`; }
+      if (mark === 'scriptend') { if (!scripts) return ''; scripts--; if (limitAt.at(-1) === scripts) { limitAt.pop(); limitDone = true; } return '</span>'; }
+      // an equation's number, at the right margin (`\eqno`) or the left (`\leqno`)
+      if (mark === 'eqno' || mark === 'leqno') { eqno++; return `<span class="ts-${mark}" title="the equation's number, set at the ${mark === 'eqno' ? 'right' : 'left'} margin">`; }
       // a box with rules on its sides around boxes used in it (`\fbox`): one framed box
       if (mark === 'frame') { framed++; return '<span class="ts-frame" title="a framed box: its rules drawn around it">'; }
       if (mark === 'frameend') { if (!framed) return ''; framed--; return '</span>'; }
@@ -634,6 +642,7 @@
       if (mark === 'begin') { table++; row = false; return '<span class="ts-table">'; }
       if (!table) return '';
       if (mark === 'cell') return `${opened()}</span><span class="ts-td">`;
+      if (mark !== 'row' && mark !== 'end') return '';
       const shut = row === null ? '</span></span>' : row ? '<span class="ts-tr ts-ruled"></span>' : '';
       if (mark === 'row') { row = false; return shut; }
       table--;
@@ -642,6 +651,10 @@
     };
     const html = marked.split(/(\uE000[^\uE001]*\uE001)/).map((part) => {
       const note = /^\uE000([^\uE001]*)\uE001$/.exec(part)?.[1];
+      if (part === '' || note?.[0] === '\u0006') return note === undefined ? '' : (math = note.slice(1), '');
+      return closeLimits(note?.[0] === '\u0003' ? note.slice(1) : null) + piece(part, note);
+    }).join('').replace(/<span class="ts-boxto" style="[^"]*">(?:<i class="ts-fill[^"]*"><\/i>)*<\/span>\u0000/g, '');
+    function piece(part, note) {
       if (note === undefined) {
         if (row !== null && !part.trim()) return '';
         if (part.trim()) inked = true;
@@ -659,7 +672,15 @@
       const tr = table ? opened() : '';
       if (note === '⟦') { open++; return `${tr}<span class="ts-box" title="set in a box: on the page only if the box is used">`; }
       if (note === '⟧') { if (!open) return tr; open--; return `${tr}</span>`; }
-      if (note[0] === '\u0001') { const [, kind, key] = note.split('\u0001'); return `${tr}<span class="ts-key ts-key-${esc(kind)}" title="${esc(kind)}">${esc(key)}</span>`; }
+      if (note[0] === '\u0001') {
+        const [, kind, key] = note.split('\u0001');
+        if (kind === 'choice') { pick = key; return ''; }
+        return `${tr}<span class="ts-key ts-key-${esc(kind)}" title="${esc(kind)}">${esc(key)}</span>`;
+      }
+      // an undecided conditional's arms: the one taken when it is true, then the other
+      if (note === '{' && pick != null) { choices++; const on = pick; pick = null; return `${tr}<span class="ts-choice" data-on="${esc(on)}"><span class="ts-arm ts-arm-true">`; }
+      if (note === '|' && choices) return '</span><span class="ts-arm ts-arm-false">';
+      if (note === '}' && choices) { choices--; return '</span></span>'; }
       if (note[0] === '▢') { const sk = sketches?.[drawn++]; return sk ? tr + sketchSvg(sk) : `${tr}<span class="ts-note">${esc(note)}</span>`; }
       if (note === '▬' && bar?.[0] > 0) {
         const [w, h] = bar;
@@ -668,25 +689,53 @@
       }
       if (RULES[note]) return `${tr}<span class="${RULES[note][0]}" title="${RULES[note][1]}"></span>`;
       return `${tr}<span class="ts-note">${esc(note)}</span>`;
-    }).join('').replace(/<span class="ts-boxto" style="[^"]*">(?:<i class="ts-fill[^"]*"><\/i>)*<\/span>\u0000/g, '');
+    }
     // set boxes at both ends (a contents line, a label) align the line as a row
     const aligned = html.startsWith('<span class="ts-boxto"') && html.endsWith('\u0000') || html.includes('ts-leaders');
     if (picture) return sketchSvg(picture);
     // infinite glue at both ends of a line (`\hbox to\hsize{\hfil …\hfil}`): the line is centred by it
-    const done = html.replaceAll('\u0000', '') + '</span>'.repeat(open + 2 * table + boxes + hidden + framed + scripts);
+    const done = html.replaceAll('\u0000', '') + '</span>'.repeat(open + 2 * table + boxes + hidden + framed + scripts + limits + eqno + 2 * choices);
     if (/^<i class="ts-fill/.test(done) && /<i class="ts-fill[^"]*"><\/i>$/.test(done)) return `<span class="ts-fillrow">${done}</span>`;
     return (aligned ? '<i class="ts-row" hidden></i>' : '') + done;
   }
   /** One typeset paragraph as a row of the view's grid: the source line in the gutter, one rail per
    * environment it stands in, then its text. `depth` adds the levels of a folded file around it. */
-  const tsRow = (r, depth = 0, k = r.k) => {
+  const tsRow = (r, depth = 0, k = r.k) => envMarks(r.envOpen, 'begin', depth) + tsPara(r, depth, k) + envMarks(r.envClose, 'end', depth);
+  /** Where environments begin (`\begin{…}`, before a row) or end (after one), outermost first; shown with `.show-envs`. */
+  const envMarks = (list = [], edge, depth) => (edge === 'end' ? [...list].reverse() : list).map((e) =>
+    `<div class="ts-envmark ts-env-${edge}" style="--depth: ${e.depth + depth}" data-line="${edge === 'end' ? e.end : e.line}"><span class="ts-at">${edge === 'end' ? e.end : e.line}</span><span class="ts-rails" aria-hidden="true"></span>` +
+    `<span class="ts-envtag" title="the environment ${esc(e.env)} ${edge === 'end' ? 'ends' : 'begins'} on line ${edge === 'end' ? e.end : e.line}">\\${edge}{${esc(e.env)}}</span></div>`).join('');
+  /** A chip per undecided conditional the paragraph's text depends on: its test and a switch showing both arms,
+   * the true one or the false one (`typesetWire` flips every choice of that conditional). */
+  const switches = (r) => (r.causes ?? []).filter((c) => c.on != null).map((c) => {
+    const name = c.test || c.parted || c.mark;
+    return `<span class="ts-switch" data-on="${esc(c.on)}" title="may be set: the run could not decide ${esc(name)} (line ${c.line})"><code>${esc(name)}</code>` +
+      ['both', 'true', 'false'].map((a) => `<button type="button" data-arm="${a}" aria-pressed="${a === 'both'}">${a}</button>`).join('') + '</span>';
+  }).join('');
+  /** Each paragraph's environments opened since the last paragraph (`envOpen`) and closed after it (`envClose`). */
+  function envEdges(rows) {
+    const id = (e) => `${e.env}@${e.line}`;
+    let last = null, before = [];
+    for (const r of rows) {
+      if (r.kind !== 'paragraph') continue;
+      const chain = (r.envs ?? []).map((e, i) => ({ ...e, depth: i + 1 }));
+      let same = 0;
+      while (same < chain.length && same < before.length && id(chain[same]) === id(before[same])) same++;
+      if (last) last.envClose = before.slice(same);
+      r.envOpen = chain.slice(same);
+      last = r;
+      before = chain;
+    }
+    if (last) last.envClose = before;
+  }
+  const tsPara = (r, depth = 0, k = r.k) => {
     const d = (r.depth ?? 0) + depth;
     const last = Math.max(r.line ?? 0, ...[...(r.marked ?? '').matchAll(/\u0007(\d+)/g)].map((m) => +m[1]));
     return `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}${r.footnote ? ' ts-foot' : ''}${r.held ? ' ts-held' : ''}"${r.env ? ` data-env="${esc(r.env)}" title="set in ${esc(r.env)}"` : ''}${r.just && r.just !== 'justified' ? ` data-just="${esc(r.just)}"` : ''}` +
       `${k != null ? ` data-k="${k}"` : ''} data-path="${esc(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${esc(r.detail ?? '')}"${r.lines?.length ? ` data-lines="${esc(JSON.stringify(r.lines))}"` : ''}` +
       ` style="--depth: ${d}${typeof r.skip === 'number' && !r.heading ? `; --skip: ${Math.max(r.skip, 0)}pt` : ''}">` +
       `<span class="ts-at"${last > r.line ? ` title="lines ${r.line}–${last}"` : ''}>${r.line ?? ''}</span><span class="ts-rails" aria-hidden="true"></span>` +
-      `<span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`;
+      `<span class="ts-text">${switches(r)}${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`;
   };
   /** A page `\shipout` sent out, as a labelled line where the next one begins; a page the run did not
    * break though it filled (`filled`) as a dashed one: pdfTeX breaks it by there. */
@@ -702,6 +751,7 @@
   function typesetView(rows, { file = null, closed = new Set(), plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`, lineOf = null } = {}) {
     // each row knows its place in `rows`: a view finds the record (its sites) behind a paragraph
     const shown = rows.map((r, k) => ({ ...r, k })).filter((r) => r.kind === 'paragraph' || r.kind === 'page');
+    envEdges(shown);
     const mine = (r) => !file || (r.path ?? '').endsWith(file);
     const keyOf = (r) => r.kind === 'paragraph' && mine(r) && r.outer ? `${r.outer.env}@${r.outer.line}` : null;
     const html = [];
@@ -783,6 +833,19 @@
     const merged = out.join(' ').replace(/<\/ins> <ins>/g, ' ').replace(/<\/del> <del>/g, ' ');
     return `<p class="ts ts-diff"><span class="ts-at"></span><span class="ts-rails" aria-hidden="true"></span><span class="ts-text">${merged || '<span class="muted">no text</span>'}</span></p>`;
   }
+  /** The arm shown per undecided conditional (`both` unless picked), one style sheet for every view, so it
+   * outlives a view drawn again after the next check. */
+  const armsPicked = new Map();
+  function pickArm(on, arm) {
+    if (arm === 'both') armsPicked.delete(on); else armsPicked.set(on, arm);
+    let sheet = document.getElementById('ts-arms');
+    if (!sheet) { sheet = document.createElement('style'); sheet.id = 'ts-arms'; document.head.append(sheet); }
+    const q = (s) => JSON.stringify(String(s));
+    sheet.textContent = [...armsPicked].map(([id, a]) => `.ts-choice[data-on=${q(id)}] > .ts-arm-${a === 'true' ? 'false' : 'true'} { display: none; } ` +
+      `.ts-choice[data-on=${q(id)}] > .ts-arm::before { content: none; } .ts-switch[data-on=${q(id)}] button[data-arm=${q(a)}] { background: var(--accent); color: var(--bg); } ` +
+      `.ts-switch[data-on=${q(id)}] button[data-arm="both"] { background: none; color: inherit; }`).join('\n');
+    document.querySelectorAll(`.ts-switch[data-on=${q(on)}] button`).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.arm === arm)));
+  }
   /** The view's cards answer their steppers and diff switches; once per container. */
   function typesetWire(root) {
     if (root.dataset.wired) return;
@@ -797,6 +860,8 @@
       if (diff) box.innerHTML = stepDiff(k > 1 ? stepWords(steps[k - 2]) : [], stepWords(steps[k - 1]));
     };
     root.addEventListener('click', (e) => {
+      const arm = e.target.closest?.('.ts-switch button');
+      if (arm) { e.stopPropagation(); pickArm(arm.closest('.ts-switch').dataset.on, arm.dataset.arm); return; }
       const b = e.target.closest?.('.ts-stepper button');
       if (!b) return;
       e.stopPropagation();

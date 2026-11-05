@@ -4256,3 +4256,30 @@ fn a_lualatex_register_allocation_stays_known() {
     let source = "% !TeX program = lualatex\n\\documentclass{article}\n\\newcount\\probecount\n\\probecount=7\n\\edef\\probe{\\the\\probecount}\n\\begin{document}\n\\end{document}\n";
     assert_eq!(body(&analyze(source), "probe"), "7");
 }
+
+/// Text the preamble sets is the document's error where it stands: `\everypar`'s `\@nodocument`
+/// raises `Missing \begin{document}` at the text, and a `#` in any mode is "You can't use `macro
+/// parameter character #'" (tex.web § 1045), as pdflatex reports both.
+#[test]
+fn text_in_the_preamble_is_an_error_where_it_stands() {
+    if !installed() {
+        return;
+    }
+    let lines = |analysis: &Analysis| -> Vec<(u32, String)> {
+        satex::linter::lint(analysis)
+            .iter()
+            .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("raised-error"))
+            .filter_map(|f| Some((f.get("line")?.as_u64()? as u32, f.get("message")?.as_str()?.to_string())))
+            .collect()
+    };
+    let text =
+        analyze("\\documentclass{article}\n\\usepackage{amsmath}\nhello\n\\begin{document}\nx\n\\end{document}\n");
+    let found = lines(&text);
+    assert!(found.iter().any(|(l, m)| *l == 3 && m.contains("Missing \\begin{document}")), "{found:?}");
+    let param = analyze("\\documentclass{article}\n\\begin{document}\n#x\n\\end{document}\n");
+    let found = lines(&param);
+    assert!(
+        found.iter().any(|(l, m)| *l == 3 && m.contains("macro parameter character #' in vertical mode")),
+        "{found:?}"
+    );
+}

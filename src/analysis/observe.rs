@@ -1555,6 +1555,14 @@ fn set(m: &mut Machine, c: char, code: Option<i64>, span: Span) {
     } else {
         None
     };
+    // a variable code takes its family from `\fam` where that names one (tex.web § 1151): `\mathcal`
+    let code = code.map(|v| {
+        let fam = m.intern("fam");
+        match m.env.value(fam) {
+            crate::engine::value::Value::Int(f) if v >> 12 == 7 && (0..16).contains(&f) => (v & !0xf00) | (f << 8),
+            _ => v,
+        }
+    });
     let starts = {
         let text = &m.out.facts.text;
         let at = text.at.len() as u32;

@@ -1177,6 +1177,19 @@ impl Machine<'_> {
     /// tex.web § 1091 `new_graf`.
     fn new_graf(&mut self, span: Span, indented: bool) {
         let on_page = self.mode == Modes::VERTICAL;
+        if on_page {
+            // the letter that began it, else the call read from the user's file that set it
+            let call = self.file_call.map(|c| c.1).filter(|c| self.own_file(c.file));
+            let start = if self.own_file(span.file) { Some(span) } else { call };
+            let text = &mut self.out.facts.text;
+            let at = text.at.len() as u32;
+            if let Some(start) = start
+                && text.par_starts.last().is_none_or(|s| s.0 < at)
+                && text.par_starts.len() < self.cfg.limits.facts
+            {
+                text.par_starts.push((at, start));
+            }
+        }
         self.mode = self.mode.map(|m| if m.meets(Modes::ANY_VERTICAL) { Modes::HORIZONTAL } else { m });
         // A new horizontal list follows only its tail and space factor; the
         // vertical list it goes onto parks its fields for `end_graf`.
@@ -1653,11 +1666,11 @@ impl Machine<'_> {
             .take_while(|n| n.target.is_none())
             .any(|n| n.mode.meets(Modes::HORIZONTAL));
         let exact = self.exact();
-        let text = &mut self.out.facts.text;
-        let at = text.at.len() as u32;
         if inner {
             return;
         }
+        let text = &mut self.out.facts.text;
+        let at = text.at.len() as u32;
         if text.pars.last() != Some(&at) {
             text.pars.push(at);
             if !exact {
@@ -1716,6 +1729,10 @@ impl Machine<'_> {
             (_, true) => Last::Other.merge(n.para.below),
             _ => Last::Other,
         };
+        // the main vertical list ends as the paragraph's list does: `\lastskip` reads its last line
+        if only && to == Modes::VERTICAL {
+            self.main_tail = tail[0];
+        }
         // tex.web § 1096: a null paragraph makes no line; else the last
         // line is set (§ 816) and the lines go onto the vertical list (§ 890).
         let before = n;
@@ -2197,7 +2214,7 @@ impl Machine<'_> {
         if let Some((register, global, within)) = nest.target {
             let ranges = self.gather_chars(nest.from, now);
             self.set_aside(nest.from, now);
-            self.set_box_chars(register, ranges);
+            self.set_box_chars(register, ranges, global);
             self.set_box(register, kind, global, within);
             if kind != BoxState::Unknown {
                 self.set_box_dims(register, dims);
@@ -2609,6 +2626,8 @@ impl Machine<'_> {
                 if self.mode == Modes::DISPLAY_MATH
                     && matches!(self.env.group_kind(), Some(GroupKind::Math { display: true }))
                 {
+                    let left = self.name(self.env.identity(by)) == "leqno";
+                    crate::analysis::observe::align(self, crate::analysis::facts::Align::EqNo(left));
                     self.open_group(GroupKind::Math { display: false }, span);
                     self.env.set_nest(Nest {
                         natural: None,
@@ -2632,8 +2651,17 @@ impl Machine<'_> {
                 if closes && matches!(kind, Some(GroupKind::Simple | GroupKind::SemiSimple)) {
                     return self.close_group(GroupKind::MathLeft, token);
                 }
-                self.skip_spaces();
-                self.next_token();
+                // an opening, closing or (`\middle`) ordinary atom of the delimiter's small variant
+                let class = match (opens, closes) {
+                    (true, false) => 4,
+                    (false, true) => 5,
+                    _ => 0,
+                };
+                if let Some(small) = self.scan_delimiter().filter(|&s| s > 0)
+                    && self.mode.within(Modes::ANY_MATH)
+                {
+                    self.note_math(class << 12 | small, span);
+                }
                 match kind {
                     Some(GroupKind::MathLeft) if closes => self.close_group(GroupKind::MathLeft, token),
                     _ if closes => return,
@@ -3729,7 +3757,7 @@ impl Machine<'_> {
         match context {
             BoxContext::Set { register, global, within } => {
                 let ranges = std::mem::take(&mut self.fetched);
-                self.set_box_chars(register, ranges);
+                self.set_box_chars(register, ranges, global);
                 self.set_box(register, state, global, within);
                 if state != BoxState::Unknown {
                     self.set_box_dims(register, dims);
@@ -5813,10 +5841,11 @@ impl Machine<'_> {
             return;
         }
         use crate::engine::tex::RegKind as K;
-        // Assignments, groups and messages put nothing on a list.
-        let quiet = matches!(
-            p,
-            P::Mode(ModeCmd::Par)
+        // Assignments, groups, messages and what expands put nothing on a list.
+        let quiet = crate::engine::builtins::expandable(p)
+            || matches!(
+                p,
+                P::Mode(ModeCmd::Par)
                 | P::Def { .. }
                 | P::Let { .. }
                 | P::Prefix(_)
@@ -5840,10 +5869,13 @@ impl Machine<'_> {
                 | P::FontParam(_)
                 | P::FontIdent(_)
                 | P::IgnoreSpaces
-                // `\penalty` appends its own item, which sets the tail
-                // and needs the one before it (§ 1017).
-                | P::Typeset(crate::engine::builtins::Typeset::Number)
-        );
+                // `\uppercase` gives tokens back
+                | P::CaseShift(_)
+                // `\penalty`, `\kern` and `\vskip` append their own item, which sets the tail,
+                // and may read the one before it (`\vskip-\lastskip`, § 1017)
+                | P::Typeset(crate::engine::builtins::Typeset::Number | crate::engine::builtins::Typeset::Dimen)
+                | P::Mode(ModeCmd::Vertical(crate::engine::builtins::Material::Glue | crate::engine::builtins::Material::Fil(_)))
+            );
         if !quiet {
             self.main_tail = Last::UNKNOWN;
             self.main_depth = Dim::ANY;
@@ -6094,6 +6126,7 @@ impl Machine<'_> {
             }
             return BoxState::Unknown;
         };
+        self.note_box_use(Some(n));
         let state = self.box_state(n);
         self.fetched = if take {
             self.box_chars.remove(&n).unwrap_or_default()
@@ -6107,9 +6140,67 @@ impl Machine<'_> {
     }
 
     /// Box register `register` now holds text set in these character ranges.
-    fn set_box_chars(&mut self, register: Option<i64>, ranges: Vec<(u32, u32)>) {
-        if let Some(n) = register {
-            self.box_chars.insert(n, ranges);
+    fn set_box_chars(&mut self, register: Option<i64>, ranges: Vec<(u32, u32)>, global: bool) {
+        self.note_box_use(register);
+        let Some(n) = register else { return };
+        let depth = self.env.depth();
+        if global {
+            // a global value outlives every group: nothing is put back (tex.web § 283)
+            self.box_saves.retain(|s| s.1 != n);
+        } else if depth > 0 && !self.box_saves.iter().any(|s| s.0 == depth && s.1 == n) {
+            // the outer value is saved, not lost
+            let old = self.box_chars.insert(n, ranges);
+            self.box_saves.push((depth, n, old));
+            return;
+        }
+        if let Some(old) = self.box_chars.insert(n, ranges) {
+            self.drop_chars(old);
+        }
+    }
+
+    /// tex.web § 283 `unsave` for the box registers set locally in the group that ended:
+    /// their text the group set is lost.
+    pub(crate) fn restore_box_chars(&mut self) {
+        let depth = self.env.depth();
+        while let Some((_, n, old)) = self.box_saves.pop_if(|s| s.0 > depth) {
+            let lost = match old {
+                Some(old) => self.box_chars.insert(n, old),
+                None => self.box_chars.remove(&n),
+            };
+            if let Some(lost) = lost {
+                self.drop_chars(lost);
+            }
+        }
+    }
+
+    /// A box register used or set: where paths parted or its number is not known, what was set
+    /// so far may be held where this path cannot see it.
+    fn note_box_use(&mut self, register: Option<i64>) {
+        if register.is_none() || !self.exact() {
+            self.box_inexact = self.out.facts.text.at.len() as u32;
+        }
+    }
+
+    /// Text no register or open list holds any more: it never reaches the page. Only text set
+    /// since every box use was certain, so no other path holds it.
+    fn drop_chars(&mut self, ranges: Vec<(u32, u32)>) {
+        let held = |r: &(u32, u32), all: &[(u32, u32)]| all.iter().any(|h| h.0 < r.1 && r.0 < h.1);
+        if !self.exact() {
+            return;
+        }
+        for r in ranges {
+            if r.0 >= r.1
+                || r.0 < self.box_inexact
+                || held(&r, &self.carried_chars)
+                || held(&r, &self.fetched)
+                || self.box_chars.values().any(|v| held(&r, v))
+            {
+                continue;
+            }
+            let text = &mut self.out.facts.text;
+            if text.dropped.len() < self.cfg.limits.facts {
+                text.dropped.push(r);
+            }
         }
     }
 

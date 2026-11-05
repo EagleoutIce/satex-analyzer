@@ -364,6 +364,9 @@ pub struct Text {
     /// Where `\par` ended a paragraph, as the number of characters set
     /// before it, ascending.
     pub pars: Vec<u32>,
+    /// Where a paragraph began (tex.web § 1091): the number of characters set before it, and
+    /// the command of the user's files that began it. A key read from there on is the paragraph's.
+    pub par_starts: Vec<(u32, Span)>,
     /// The ends in `pars` a `\penalty` of at least 10000 follows before any
     /// further text: no page break may part the paragraph from what comes
     /// next, as after a heading (LaTeX's `\@xsect`, plain's `\beginsection`).
@@ -388,6 +391,9 @@ pub struct Text {
     /// Character ranges (start, end) of boxes placed on a list or shipped,
     /// so their text reaches the page.
     pub placed: Vec<(u32, u32)>,
+    /// Character ranges of boxes lost unused: a register overwritten or put back at a group's
+    /// end (tex.web § 283) while nothing else held them. Never on the page unless also `placed`.
+    pub dropped: Vec<(u32, u32)>,
     /// Character ranges (start, end) set in an `\insert` (a footnote's text): the page
     /// places them at its foot, not where they were set.
     pub inserts: Vec<(u32, u32)>,
@@ -463,6 +469,10 @@ pub enum Align {
     /// A math script begins (`^`: true, `_`: false), and ends.
     Script(bool),
     ScriptEnd,
+    /// `\eqno` (`false`) or `\leqno` (`true`): the equation's number follows, set at the margin.
+    EqNo(bool),
+    /// `\limits` (`true`) or `\nolimits` (`false`) after an operator (tex.web § 1159).
+    Limits(bool),
 }
 
 impl Align {
@@ -479,6 +489,8 @@ impl Align {
             Align::Fill => "fill".into(),
             Align::Script(sup) => (if sup { "sup" } else { "sub" }).into(),
             Align::ScriptEnd => "scriptend".into(),
+            Align::EqNo(left) => (if left { "leqno" } else { "eqno" }).into(),
+            Align::Limits(on) => (if on { "limits" } else { "nolimits" }).into(),
         }
     }
 }

@@ -3442,9 +3442,13 @@ impl Machine<'_> {
                 Some(true) if modes == Modes::ANY_HORIZONTAL => {
                     self.natural.and_then(|n| n.space_factor).map(Value::Int)
                 }
-                // `\prevdepth` is held under the parameter's own name, which
-                // `ignore_depth` makes fresh for each vertical list.
-                Some(true) => Some(self.env.value(named)),
+                // `\prevdepth`: the list's own, as its last box set it (tex.web § 679), else as
+                // held under the parameter's own name, which `ignore_depth` makes fresh per list
+                Some(true) => match self.natural.map(|n| n.prev_depth) {
+                    Some(Some(d)) => Some(d.value()),
+                    Some(None) => Some(Value::Dimen(crate::engine::builtins::IGNORE_DEPTH)),
+                    None => Some(self.env.value(named)),
+                },
                 None => None,
             },
             // tex.web § 986: while the page is empty the page builder has

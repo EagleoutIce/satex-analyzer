@@ -1264,6 +1264,8 @@ impl Default for Conventions {
                 (0x361, '∐'),
             ]
             .into_iter()
+            // OMS's capitals are calligraphic (`\mathcal`)
+            .chain(('A'..='Z').zip("𝒜ℬ𝒞𝒟ℰℱ𝒢ℋℐ𝒥𝒦ℒℳ𝒩𝒪𝒫𝒬ℛ𝒮𝒯𝒰𝒱𝒲𝒳𝒴𝒵".chars()).map(|(l, c)| (0x200 + l as u32, c)))
             .collect(),
             signatures: signatures.into_iter().map(|(k, v)| (k.into(), v.into())).collect(),
             ties: Ties::default(),

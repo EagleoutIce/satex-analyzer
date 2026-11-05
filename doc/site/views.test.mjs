@@ -245,3 +245,40 @@ console.log('table model: ok');
   for (const part of ['2 live', 'arm 1 of 2', 'maybe undefined', '[0, 9]', 'number', 'why-apart', 'tokens of \\x', '<sub>12</sub>']) assert.ok(html.includes(part), part);
   assert.ok(stateHtml(null).includes('without dev mode'));
 }
+
+// The typeset view's notation (site.js, loaded on a page with nothing on it: every lookup finds nothing)
+{
+  const inert = new Proxy(function () {}, { get: (t, k) => (k === Symbol.iterator ? [][Symbol.iterator] : k === 'length' ? 0 : inert), apply: () => inert });
+  globalThis.document ??= { documentElement: { dataset: {} }, getElementById: () => null, querySelector: () => ({ dataset: {} }), querySelectorAll: () => [], addEventListener() {}, createElement: () => inert, head: inert, body: inert };
+  globalThis.matchMedia ??= () => ({ matches: false, addEventListener() {} });
+  globalThis.location ??= { href: 'http://localhost/' };
+  // the page's own wiring fails without a page; the cards are set before it
+  try { createRequire(import.meta.url)('./site.js'); } catch {}
+  const { notation, typesetView } = self.satexCards;
+  const N = (s) => `${s}`, M = (m) => N(`\u0003${m}`);
+  // display limits: one column of over, operator, under; a sub after them is a script again
+  const sum = notation(`${N('\u0006L')}∑${N('\u0006')}${M('under')}i=1${M('scriptend')}${M('over')}N${M('scriptend')}x${M('sub')}i${M('scriptend')}`);
+  assert.equal(sum, '<span class="ts-limits"><span class="ts-op">∑</span><span class="ts-under">i=1</span><span class="ts-over">N</span></span>x<span class="ts-sub">i</span>');
+  // text style keeps them at the side
+  assert.equal(notation(`∑${M('sub')}i${M('scriptend')}${M('sup')}n${M('scriptend')}`), '∑<span class="ts-sub">i</span><span class="ts-sup">n</span>');
+  // an equation's number at the margin, closed at the end
+  assert.match(notation(`a${M('eqno')}(1)`), /^a<span class="ts-eqno"[^>]*>\(1\)<\/span>$/);
+  assert.match(notation(`b${M('leqno')}(2)`), /<span class="ts-leqno"/);
+  // an undecided conditional's arms, its switch named; marks the view does not know draw nothing, in a table too
+  assert.equal(notation(`${N('\u0001choice\u00017')}${N('{')}Heads${N('|')}${N('}')}.`), '<span class="ts-choice" data-on="7"><span class="ts-arm ts-arm-true">Heads</span><span class="ts-arm ts-arm-false"></span></span>.');
+  assert.ok(!notation(`${M('begin')}a${M('limits')}${M('cell')}b${M('end')}`).includes('ts-limits'));
+  assert.equal(notation(`${M('begin')}a${M('mystery')}${M('cell')}b${M('end')}`).match(/<span/g).length, notation(`${M('begin')}a${M('cell')}b${M('end')}`).match(/<span/g).length);
+  // environments: a begin mark before the first row in one, an end mark after its last, nested outermost first
+  const quote = { env: 'quote', line: 2, end: 9 }, center = { env: 'center', line: 4, end: 6 };
+  const rows = [
+    { kind: 'paragraph', line: 1, detail: 'Before.' },
+    { kind: 'paragraph', line: 3, detail: 'Outer.', envs: [quote], depth: 1 },
+    { kind: 'paragraph', line: 5, detail: 'Inner.', envs: [quote, center], depth: 2 },
+    { kind: 'paragraph', line: 10, detail: 'After.' },
+  ];
+  const marks = [...typesetView(rows).matchAll(/ts-env-(begin|end)[^]*?\\(?:begin|end)\{(\w+)\}|<p [^]*?<span class="ts-text">(\w+)/g)].map((m) => m[3] ?? `${m[1]} ${m[2]}`);
+  assert.deepEqual(marks, ['Before', 'begin quote', 'Outer', 'begin center', 'Inner', 'end center', 'end quote', 'After']);
+  // a paragraph that may be set carries a switch per conditional
+  const may = typesetView([{ kind: 'paragraph', line: 3, detail: 'x', marked: 'x', causes: [{ on: '7', test: '\\ifdraft', line: 3, mark: '{x|}' }] }]);
+  assert.match(may, /<span class="ts-switch" data-on="7"[^>]*><code>\\ifdraft<\/code><button type="button" data-arm="both" aria-pressed="true">both/);
+}

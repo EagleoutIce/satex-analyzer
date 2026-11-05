@@ -481,12 +481,19 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 /// `keys` lists the labels, references and citations of the user's files
 /// with the place in `detail` where each stands. `fonts` lists where the
 /// font changes, as [`font_styles`] names it.
+/// A `choice` key before a `{…|…}` names the conditional's node, as its
+/// cause's `on` does. `align` marks a limit `over` or `under` its operator
+/// (tagged `L`) and `eqno`/`leqno` before an equation's number. `envs` names
+/// every environment of the user's a paragraph stands in, `origins` where
+/// its characters were read when elsewhere than where they were set (a
+/// `\title`'s argument). Boxes lost unused (a measurement) set nothing.
 fn typeset(analysis: &Analysis) -> Vec<Record> {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
     let mut rules = text.rules.iter().peekable();
-    let marks: Vec<String> = text.align.iter().map(|(_, mark)| mark.name()).collect();
-    let mut aligns = text.align.iter().zip(&marks).peekable();
+    let mut math = math_atoms(text, &analysis.settings.conventions.math_symbols);
+    let marks = script_marks(text, &mut math);
+    let mut aligns = text.align.iter().zip(&marks).filter(|(_, m)| !m.is_empty()).peekable();
     let mut out = Vec::new();
     let (mut line, mut first, mut choice) = (String::new(), None, None::<Choice>);
     let mut causes: Vec<Cause> = Vec::new();
@@ -501,11 +508,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             causes.push(Cause::Choice(on, site, format!("{{{}|{}}}", unmarked(&yes), unmarked(&no))));
         }
     };
-    let mut on_page = vec![false; text.at.len()];
-    for &(from, to) in &text.placed {
-        let end = on_page.len();
-        on_page[(from as usize).min(end)..(to as usize).min(end)].fill(true);
-    }
+    let (on_page, lost) = reach(text);
     // The labels, references and citations of the user's files, each set
     // as a `KEY` mark before the first character read past it.
     let mut named: Vec<(Span, &'static str, &str)> = analysis
@@ -522,7 +525,6 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let mut keys: Keys<'_> = Default::default();
     let mut next_key: std::collections::HashMap<FileId, usize> = Default::default();
     let (glyphs, joined) = glyphs(analysis);
-    let math = math_atoms(text, &analysis.settings.conventions.math_symbols);
     let (empty, set): (Vec<Drawn>, Vec<Drawn>) = drawn_boxes(analysis).into_iter().partition(|d| d.4);
     let mut boxes = empty.into_iter().map(|(at, label, sketch, ..)| (at, label, sketch)).peekable();
     let pictures: Vec<(Span, Span, Json)> =
@@ -553,6 +555,13 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         let labels: Vec<&str> =
             named.iter().filter(|(s, kind, _)| *kind == "label" && within(s, outer)).map(|n| n.2).collect();
         record.insert("outer".into(), json!({"env": outer.2, "line": outer.0.line, "labels": labels}));
+        // every environment it stands in, outermost first, with the lines it begins and ends on
+        let chain: Vec<Json> = envs
+            .iter()
+            .filter(|e| within(from, e))
+            .map(|(f, t, name)| json!({"env": name, "line": f.line, "end": t.line}))
+            .collect();
+        record.insert("envs".into(), json!(chain));
     };
     let mut env: Option<usize> = None;
     // text set while the drawing stands off the page (beamer's covered text, \pgfsys@begininvisible
@@ -578,6 +587,11 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let mut on_line: Option<(FileId, u32)> = None;
     // the source site of the last character set: the next one marks its own unless it follows
     let mut last_site: Option<Span> = None;
+    // the same for where each character was read, and which files the user wrote (no `.aux`)
+    let mut last_origin: Option<Span> = None;
+    let mut documents: HashMap<FileId, bool> = HashMap::default();
+    // a paragraph's end at a character lost unused, carried to the next one kept
+    let mut ended: Option<u32> = None;
     // where the paragraph being set began: its `\parskip` is the one in force there
     let mut began = 0usize;
     // a page `\shipout` sent out, after the paragraph it followed: its number and the user's line then
@@ -647,6 +661,16 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         }
     };
     for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
+        // a box lost unused (a measurement) never reaches the page
+        if lost[i] {
+            // a paragraph's end there ends it before the next character kept
+            if text.pars.binary_search(&(i as u32)).is_ok() {
+                ended.get_or_insert(i as u32);
+            }
+            continue;
+        }
+        // where the paragraph ended: here, or at a character lost on the way
+        let end = text.pars.binary_search(&(i as u32)).is_ok().then_some(i as u32).or(ended.take());
         let site = Span {
             file: text.site.get(i).map_or(spot.span.file, |s| s.file),
             ..text.site.get(i).copied().unwrap_or(spot.span)
@@ -657,13 +681,13 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                 .iter()
                 .take_while(|(s, ..)| s.file == site.file && (s.line, s.col) < (site.line, site.col))
                 .count();
-        for &(_, kind, key) in &named[from..upto] {
-            keys.push_back((kind, key.into()));
-            match choice.as_mut() {
-                Some((_, _, arms)) => arms[0].push(KEY),
-                None => line.push(KEY),
-            }
-        }
+        // a key read from where a paragraph begins on (`\ref` opening it) is that paragraph's
+        let starts =
+            text.par_starts.binary_search_by_key(&end.unwrap_or(i as u32), |s| s.0).ok().map(|k| text.par_starts[k].1);
+        let cut = starts
+            .filter(|e| e.file == site.file)
+            .map_or(upto, |e| from + named[from..upto].partition_point(|(s, ..)| (s.line, s.col) < (e.line, e.col)));
+        put_keys(&named[from..cut], &mut line, &mut choice, &mut keys);
         next_key.insert(site.file, upto);
         // A picture or graphic the document set before this character.
         while let Some((_, label, sketch)) =
@@ -717,7 +741,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         if env.is_some() && here != env {
             flush(i, &mut line, &mut keys, true);
         }
-        if (text.pars.binary_search(&(i as u32)).is_ok() || here != env) && !line.trim().is_empty() {
+        if (end.is_some() || here != env) && !line.trim().is_empty() {
             close(&mut line, &mut choice, &mut causes);
             let shown = held(&line);
             let mut record = paragraph(
@@ -735,10 +759,11 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             if let Some(k) = seg_from.take().and_then(rank) {
                 record.insert("placed".into(), json!(k));
             }
-            if text.kept.binary_search(&(i as u32)).is_ok() {
+            let end = end.unwrap_or(i as u32);
+            if text.kept.binary_search(&end).is_ok() {
                 record.insert("kept".into(), json!(true));
             }
-            if text.open.binary_search(&(i as u32)).is_ok() {
+            if text.open.binary_search(&end).is_ok() {
                 record.insert("open".into(), json!(true));
             }
             if let Ok(k) = text.just.binary_search_by_key(&(began as u32), |s| s.0) {
@@ -762,9 +787,11 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             }
             style = "";
             on_line = None;
+            last_origin = None;
         }
-        if text.pars.binary_search(&(i as u32)).is_ok() {
-            began = i;
+        put_keys(&named[cut..upto], &mut line, &mut choice, &mut keys);
+        if let Some(end) = end {
+            began = end as usize;
         }
         env = here;
         if !piece.trim().is_empty() {
@@ -778,6 +805,11 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             Some((_, on, _)) => {
                 if choice.as_ref().is_some_and(|(n, ..)| *n != on) {
                     close(&mut line, &mut choice, &mut causes);
+                }
+                // which switch the choice is, before its `{`: a view shows one arm at a time
+                if choice.is_none() {
+                    line.push(KEY);
+                    keys.push_back((CHOICE, on.to_string().into()));
                 }
                 let arms = &mut choice.get_or_insert_with(|| (on, site, Default::default())).2;
                 for taken in taken_by {
@@ -807,6 +839,23 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                         keys.push_back((SITE, format!("{file}\u{1}{}:{col}{step}", site.line).into()));
                     }
                     last_site = single.then_some(site);
+                    // a character read in the user's files elsewhere than where it was set (`\title`'s argument,
+                    // set by `\maketitle`): where it was read, as long as the next ones follow on
+                    let own = single
+                        .then_some(spot.span)
+                        .filter(|o| (o.file, o.line) != (site.file, site.line))
+                        .filter(|o| *documents.entry(o.file).or_insert_with(|| analysis.project_file(o.file)));
+                    let follows = match (own, last_origin) {
+                        (Some(o), Some(l)) => (l.file, l.line, l.col + 1) == (o.file, o.line, o.col),
+                        (None, None) => true,
+                        _ => false,
+                    };
+                    if !follows {
+                        line.push(KEY);
+                        let at = own.map(|o| format!("{}\u{1}{}:{}", analysis.file_name(o.file), o.line, o.col));
+                        keys.push_back((ORIGIN, at.unwrap_or_default().into()));
+                    }
+                    last_origin = own;
                 }
                 // a font set under an undecided conditional shows from the next sure character
                 let now = styles.get(usize::from(spot.font_state)).map_or("", String::as_str);
@@ -916,6 +965,22 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     out
 }
 
+/// Keys marked where the text stands: in the first arm of a choice being set, else in the line.
+fn put_keys<'a>(
+    named: &[(Span, &'a str, &'a str)],
+    line: &mut String,
+    choice: &mut Option<Choice>,
+    keys: &mut Keys<'a>,
+) {
+    for &(_, kind, key) in named {
+        keys.push_back((kind, key.into()));
+        match choice.as_mut() {
+            Some((_, _, arms)) => arms[0].push(KEY),
+            None => line.push(KEY),
+        }
+    }
+}
+
 /// A rule between characters as its note; a bar with its size first, as an
 /// alignment mark `bar W H` (pt), so a view draws it that large.
 fn rule_note(line: &mut String, keys: &mut Keys<'_>, rule: Rule) {
@@ -955,6 +1020,22 @@ pub(crate) fn invisible(literals: &[crate::analysis::facts::Literal]) -> Vec<std
     out
 }
 
+/// Per character: whether a placed box carried it to the page, and whether it was set only in
+/// boxes lost unused.
+fn reach(text: &crate::analysis::facts::Text) -> (Vec<bool>, Vec<bool>) {
+    let mark = |ranges: &[(u32, u32)]| {
+        let mut out = vec![false; text.at.len()];
+        for &(from, to) in ranges {
+            let end = out.len();
+            out[(from as usize).min(end)..(to as usize).min(end)].fill(true);
+        }
+        out
+    };
+    let on_page = mark(&text.placed);
+    let lost = mark(&text.dropped).into_iter().zip(&on_page).map(|(d, p)| d && !p).collect();
+    (on_page, lost)
+}
+
 /// How many characters of what a call typesets a hover shows.
 const PREVIEW: usize = 100;
 
@@ -973,11 +1054,7 @@ pub fn typeset_by(analysis: &Analysis, at: Span) -> Option<String> {
         .filter(|e| e.within.is_none() && e.span.file == at.file && pos(&e.span) > pos(&at))
         .map(|e| pos(&e.span))
         .min();
-    let mut on_page = vec![false; text.at.len()];
-    for &(from, to) in &text.placed {
-        let end = on_page.len();
-        on_page[(from as usize).min(end)..(to as usize).min(end)].fill(true);
-    }
+    let (on_page, _) = reach(text);
     // a box measured and never placed (`\settowidth`) is not what the reader sees
     let boxed = |i: usize| {
         !on_page[i]
@@ -1307,6 +1384,9 @@ const NOTE_CLOSE: char = '\u{E001}';
 /// Where a key [`typeset`] lists stands in the text, removed by [`paragraph`].
 const KEY: char = '\u{E002}';
 
+/// The kind of a [`KEY`] before an undecided conditional's `{`: the node where its paths parted.
+const CHOICE: &str = "choice";
+
 /// The kind of a [`KEY`] that marks a font change, not a key.
 const FONT: &str = "font";
 
@@ -1317,6 +1397,10 @@ const LINE: &str = "line";
 /// its file, `\u{1}`, line and column. The characters after it count on from that column,
 /// or with `:0` after the column (a piece of several characters) all stand there.
 const SITE: &str = "site";
+
+/// The kind of a [`KEY`] before a character read elsewhere in the user's files than where it was
+/// set: file, `\u{1}`, line and column; empty where the characters are read where they are set again.
+const ORIGIN: &str = "origin";
 
 /// The marks waiting for their [`KEY`] in a paragraph's text: kind and value.
 type Keys<'a> = std::collections::VecDeque<(&'a str, std::borrow::Cow<'a, str>)>;
@@ -1447,6 +1531,54 @@ fn math_atoms(
     out
 }
 
+/// The name of each alignment mark, a script set as a limit above (`over`) or below (`under`) its
+/// operator: an operator atom in display math or after `\limits`, not after `\nolimits`, and not
+/// itself in a script (tex.web §§ 749, 1159). Its nucleus is tagged `L`. `\limits` marks are empty.
+fn script_marks(text: &crate::analysis::facts::Text, math: &mut HashMap<usize, (char, Option<char>)>) -> Vec<String> {
+    use crate::analysis::facts::Align;
+    let chars: Vec<char> = text.chars.chars().collect();
+    let mut switch = None::<(u32, bool)>;
+    // the nucleus of each script open now; the last closed one's end and nucleus
+    let mut open: Vec<Option<usize>> = Vec::new();
+    let mut last: Option<(u32, Option<usize>)> = None;
+    let mut out = Vec::new();
+    for &(at, mark) in &text.align {
+        out.push(match mark {
+            Align::Limits(on) => {
+                switch = Some((at, on));
+                String::new()
+            }
+            Align::Script(sup) => {
+                // a script right after another one's end shares its nucleus (`_{i=1}^{N}`)
+                let nucleus = match last.take() {
+                    Some((end, j)) if end == at => j,
+                    _ => (0..at as usize).rev().find(|&j| chars[j] != ' '),
+                };
+                let op = nucleus.filter(|j| math.get(j).is_some_and(|m| matches!(m.0, '1' | 'L')));
+                let limit = op.is_some_and(|j| match switch.filter(|s| s.0 as usize > j) {
+                    Some((_, on)) => on,
+                    None => open.is_empty() && text.at[j].modes.within(crate::engine::mode::Modes::DISPLAY_MATH),
+                });
+                if let Some(j) = op.filter(|_| limit) {
+                    math.entry(j).and_modify(|m| m.0 = 'L');
+                }
+                open.push(nucleus);
+                match (limit, sup) {
+                    (true, true) => "over".into(),
+                    (true, false) => "under".into(),
+                    _ => mark.name(),
+                }
+            }
+            Align::ScriptEnd => {
+                last = open.pop().map(|j| (at, j));
+                mark.name()
+            }
+            _ => mark.name(),
+        });
+    }
+    out
+}
+
 /// `s` as satex's own notation, not a typeset character.
 fn note(s: &str) -> String {
     format!("{}{s}{}", NOTE.0, NOTE.1)
@@ -1492,6 +1624,7 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
     let marked = tidy(&format!("{}{core}{}", KEY.to_string().repeat(head), KEY.to_string().repeat(tail)));
     let (mut placed, mut fonts, mut aligned, mut ligatures, mut lines, mut sites, mut offset) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0);
+    let mut origins = Vec::new();
     let at_file = at.file;
     for c in unmarked(&marked).chars() {
         if c != KEY {
@@ -1516,6 +1649,17 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
                     site["path"] = json!(file);
                 }
                 sites.push(site);
+            } else if kind == ORIGIN {
+                let mut origin = json!({ "at": offset });
+                if let Some((file, at)) = key.split_once('\u{1}') {
+                    let (line, col) = at.split_once(':').unwrap_or_default();
+                    origin["line"] = json!(line.parse::<u32>().unwrap_or(0));
+                    origin["col"] = json!(col.parse::<u32>().unwrap_or(0));
+                    if file != analysis.file_name(at_file) {
+                        origin["path"] = json!(file);
+                    }
+                }
+                origins.push(origin);
             } else if kind == LINE {
                 lines.push(json!({ "line": key.parse::<u32>().unwrap_or(0), "at": offset }));
             } else if kind == ALIGN {
@@ -1539,6 +1683,9 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
     if !sites.is_empty() {
         record.insert("sites".into(), json!(sites));
     }
+    if !origins.is_empty() {
+        record.insert("origins".into(), json!(origins));
+    }
     if fonts.iter().any(|f| f["style"] != "" || f.get("color").is_some()) {
         record.insert("fonts".into(), json!(fonts));
     }
@@ -1554,8 +1701,10 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
     let mut seen: Vec<(String, u32)> = Vec::new();
     let mut why = Vec::new();
     for cause in causes {
+        let mut switch = None;
         let (mark, line, test, reads, parted) = match cause {
             Cause::Choice(on, set, mark) => {
+                switch = Some(on);
                 let vertex = analysis.graph.vertices.get(on as usize);
                 let site = vertex.map(|v| v.span).unwrap_or_default();
                 let (test, reads) = test_text(analysis, site);
@@ -1580,6 +1729,9 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
             let mut cause = json!({"mark": clip(&strip_private(&mark)), "line": line, "test": clip(&strip_private(&test)), "reads": reads});
             if !parted.is_empty() {
                 cause["parted"] = json!(strip_private(&parted));
+            }
+            if let Some(on) = switch {
+                cause["on"] = json!(on.to_string());
             }
             why.push(cause);
         }
