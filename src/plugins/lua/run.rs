@@ -189,6 +189,7 @@ const OPS: &[(&str, Op)] = &[
     ("os.date", os_date),
     ("status.luatex_engine", luatex_engine),
     ("status.ini_version", ini_version),
+    ("status.shell_escape", shell_escape),
     ("lfs.attributes", attributes),
 ];
 
@@ -1221,6 +1222,11 @@ fn enable_primitives<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: Mult
 fn ini_version<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, _: MultiValue) -> R<MultiValue> {
     let run = run.borrow();
     ret(lua, run.m.out.format.is_none() || run.m.in_format())
+}
+
+/// `status.shell_escape`: what `\shellescape` gives (LuaTeX manual, "status").
+fn shell_escape<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, _: MultiValue) -> R<MultiValue> {
+    ret(lua, run.borrow().m.out.plugins.shell_escape.level())
 }
 
 /// `status.luatex_engine`: the engine `fmtutil.cnf` builds the `lualatex`

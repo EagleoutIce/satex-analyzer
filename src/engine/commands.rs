@@ -625,11 +625,7 @@ impl Machine<'_> {
                 let n = self.scan_int()?;
                 self.par_shape_item(item, n).map(Value::Dimen)
             }
-            L::ShellEscape => int(match self.out.plugins.shell_escape {
-                crate::project::config::ShellEscape::None => 0,
-                crate::project::config::ShellEscape::Full => 1,
-                crate::project::config::ShellEscape::Restricted => 2,
-            }),
+            L::ShellEscape => int(self.out.plugins.shell_escape.level()),
             // pdfTeX's clock: scaled seconds since the run began, stopping
             // at 2^31-1, so never negative. Its interval is left to the
             // test or assignment that reads it, as a register's is.

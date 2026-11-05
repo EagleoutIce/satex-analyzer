@@ -1021,3 +1021,19 @@ fn a_word_that_may_ligature_is_not_settled() {
     let names = names(&analysis);
     assert!(names.contains(&"Ligature".to_string()) && names.contains(&"Wide".to_string()), "{names:?}");
 }
+
+/// A name read back from a family a name of unknown text was given a
+/// conditional (xkeyval's state saved under `\romannumeral` of its depth):
+/// one of the family's meanings or `\relax`, so it may open the conditional
+/// its `\fi` closes, never runs as unknown code.
+#[test]
+fn a_name_read_from_a_family_keeps_the_meanings_it_was_given() {
+    let analysis = analyze(
+        r"\count255=\pdfuniformdeviate 100000 \relax
+          \expandafter\let\csname probe@\romannumeral\count255\endcsname\iftrue
+          \expandafter\let\expandafter\probeif\csname probe@\romannumeral\count255\endcsname
+          \probeif \def\inarm{}\fi",
+    );
+    assert!(with_code(&analysis, "unknown-text-run").is_empty(), "{:?}", with_code(&analysis, "unknown-text-run"));
+    assert!(names(&analysis).contains(&"inarm".to_string()));
+}

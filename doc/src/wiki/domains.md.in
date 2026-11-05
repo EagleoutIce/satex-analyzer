@@ -250,6 +250,7 @@ A loop pass whose pending input strictly shrinks is not counted against `limits.
 `Wild` ([`src/analysis/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs)) holds the families of names a definition of a partly unknown name may have made (tex.web § 372): the known text around the unknown part, as in `\csname MT@inh@\x\endcsname`.
 
 - A name of such a family may be undefined, `\relax` (a `\csname` may have made it), or one of up to 8 meanings the family's writes gave. Families join by union. Past 1024 they widen to what they share.
+- A name read from partly unknown text is `\relax` or one of the meanings its family's writes and its defined names of that shape hold, up to `limits.meaning_set`. More are any meaning. Run, it parts a path per meaning, so a conditional saved under `\romannumeral` of an unknown depth (xkeyval) still opens the level its `\fi` closes.
 - A name around one number's typed digits is that number's own name: `\tl_map_inline:nn` defines and calls the same `__tl_map_⟨n⟩:w` exactly. Another definition that may hit the same name joins into it (a weak update).
 - A name of wholly unknown text adds no family. It is assumed fresh (`unknown-name-defines-fresh`, an imprecision): it redefines no existing name. Otherwise one such definition would make every `\ifcsname` undecided.
 

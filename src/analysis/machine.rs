@@ -13090,16 +13090,19 @@ impl Wild {
         Some(all)
     }
 
-    /// Whether some name of `prefix`, any text and `suffix` may have a
-    /// meaning besides `\relax`: the unknown parts may be any length, so
-    /// two patterns share a name when their prefixes and their suffixes
+    /// The meanings besides `\relax` some name of `prefix`, any text and
+    /// `suffix` may have; `None`: any. The unknown parts may be any length,
+    /// so two patterns share a name when their prefixes and their suffixes
     /// agree as far as both go.
-    pub(crate) fn overlaps_real(&self, prefix: &str, suffix: &str) -> bool {
-        self.0.iter().any(|p| {
-            p.real
-                && (p.prefix.starts_with(prefix) || prefix.starts_with(p.prefix.as_str()))
+    pub(crate) fn overlap_meanings(&self, prefix: &str, suffix: &str) -> Option<Vec<Meaning>> {
+        let mut all: Vec<Meaning> = Vec::new();
+        for p in self.0.iter().filter(|p| {
+            (p.prefix.starts_with(prefix) || prefix.starts_with(p.prefix.as_str()))
                 && (p.suffix.ends_with(suffix) || suffix.ends_with(p.suffix.as_str()))
-        })
+        }) {
+            all = join_may(Some(&all), p.may())?.to_vec();
+        }
+        Some(all)
     }
 }
 
@@ -13718,40 +13721,60 @@ impl Machine<'_> {
         if !(prefix.is_empty() && suffix.is_empty()) {
             self.wild.add(prefix.to_string(), suffix.to_string(), digits, None);
         }
-        // A name that can spell no defined name is undefined, so `\csname`
-        // makes it `\relax`, locally as TeX does.
+        // tex.web § 372: `\relax` where the name is undefined, else a meaning
+        // a name it may spell holds; a family too wide to list is any.
         let num = number.and_then(|n| self.typed_digits_of(n));
-        let meaning = match self.spells_defined(prefix, suffix, class, num) {
-            false => Meaning::Primitive(Primitive::Relax),
-            true => Meaning::Unknown,
+        let relax = Meaning::Primitive(Primitive::Relax);
+        let binding = match self.spelled_meanings(prefix, suffix, class, num) {
+            Some(ms) if ms.is_empty() => Binding::builtin(relax),
+            Some(mut ms) if ms.len() < usize::from(self.limits.meaning_set) => {
+                ms.insert(0, relax);
+                let mut b = Binding::builtin(Meaning::Unknown);
+                b.may = Some(ms.into());
+                b
+            }
+            _ => Binding::builtin(Meaning::Unknown),
         };
-        if self.env.slot(sym).is_none_or(|b| b.meaning != meaning || b.may.is_some()) {
-            self.env.set(sym, Binding::builtin(meaning), false);
+        if self.env.slot(sym).is_none_or(|b| b.meaning != binding.meaning || b.may != binding.may) {
+            self.env.set(sym, binding, false);
         }
         Token::new(Tok::Cs(sym), span)
     }
 
-    /// Whether a name of `prefix`, unknown text and `suffix` may be one
-    /// with a meaning besides `\relax`: a defined name of that shape (digits
-    /// in the middle where the unknown part is digits), or
-    /// one a name built from unknown text may have defined.
-    fn spells_defined(
+    /// The meanings besides `\relax` a name of `prefix`, unknown text and
+    /// `suffix` may have: those of the defined names of that shape (digits
+    /// in the middle where the unknown part is digits) and those a name built
+    /// from unknown text may have been given. `None`: any.
+    fn spelled_meanings(
         &self,
         prefix: &str,
         suffix: &str,
         class: TextClass,
         num: Option<crate::engine::value::Num>,
-    ) -> bool {
-        self.wild.overlaps_real(prefix, suffix)
-            || self.env.bound().into_iter().any(|s| {
-                let name = self.out.interner.name(s);
-                name.len() >= prefix.len() + suffix.len()
-                    && name.starts_with(prefix)
-                    && name.ends_with(suffix)
-                    && gap_fits(&name[prefix.len()..name.len() - suffix.len()], class, num)
-                    && !self.is_unknown_name(s)
-                    && !matches!(self.env.meaning(s), Meaning::Undefined | Meaning::Primitive(Primitive::Relax))
-            })
+    ) -> Option<Vec<Meaning>> {
+        let mut all = self.wild.overlap_meanings(prefix, suffix)?;
+        for s in self.env.bound() {
+            let name = self.out.interner.name(s);
+            if name.len() < prefix.len() + suffix.len()
+                || !name.starts_with(prefix)
+                || !name.ends_with(suffix)
+                || !gap_fits(&name[prefix.len()..name.len() - suffix.len()], class, num)
+                || self.is_unknown_name(s)
+            {
+                continue;
+            }
+            let slot = self.env.slot(s)?;
+            let may = slot.may.as_deref().unwrap_or(std::slice::from_ref(&slot.meaning));
+            for m in may {
+                match m {
+                    Meaning::Unknown => return None,
+                    Meaning::Undefined | Meaning::Primitive(Primitive::Relax) => {}
+                    m if !all.contains(m) => all.push(m.clone()),
+                    _ => {}
+                }
+            }
+        }
+        Some(all)
     }
 
     /// Unknown text that may hold code runs: what that code may do is done,

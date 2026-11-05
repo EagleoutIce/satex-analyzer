@@ -170,8 +170,8 @@ fn a_chunk_runs_loops_tables_and_string_format() {
 
 #[test]
 fn a_test_of_an_unknown_value_is_unknown() {
-    // `status.shell_escape` is not known: neither branch is taken for sure.
-    let analysis = primitives("\\directlua{if status.shell_escape then tex.print('a') else tex.print('b') end}");
+    // `status.cs_count` is not known: neither branch is taken for sure.
+    let analysis = primitives("\\directlua{if status.cs_count then tex.print('a') else tex.print('b') end}");
     assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
     let analysis = primitives("\\directlua{local t = type(os.name) if t then tex.sprint(t) end}\\edef\\out{x}");
     assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));

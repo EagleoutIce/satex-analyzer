@@ -4183,3 +4183,15 @@ fn a_blank_preamble_line_keeps_the_mode_known() {
     assert!(!modes.is_empty());
     assert!(modes.iter().all(|m| *m == satex::engine::mode::Modes::VERTICAL), "{modes:?}");
 }
+
+/// LuaLaTeX's `\everyjob` sets `\c_sys_shell_escape_int` from Lua's
+/// `status.shell_escape`: known, it is a `\chardef` on every path, so the
+/// allocation counter and the registers allocated after it stay known.
+#[test]
+fn a_lualatex_register_allocation_stays_known() {
+    if !installed() {
+        return;
+    }
+    let source = "% !TeX program = lualatex\n\\documentclass{article}\n\\newcount\\probecount\n\\probecount=7\n\\edef\\probe{\\the\\probecount}\n\\begin{document}\n\\end{document}\n";
+    assert_eq!(body(&analyze(source), "probe"), "7");
+}

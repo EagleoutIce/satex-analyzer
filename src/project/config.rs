@@ -791,6 +791,17 @@ named_enum! {
     }
 }
 
+impl ShellEscape {
+    /// pdfTeX's `\shellescape` and LuaTeX's `status.shell_escape`.
+    pub fn level(self) -> i64 {
+        match self {
+            ShellEscape::None => 0,
+            ShellEscape::Full => 1,
+            ShellEscape::Restricted => 2,
+        }
+    }
+}
+
 named_enum! {
     /// The engine's `-interaction` option (tex.web § 73): `\batchmode` = 0 …
     /// `\errorstopmode` = 3.  Builds run unattended, so nothing is typed at the
