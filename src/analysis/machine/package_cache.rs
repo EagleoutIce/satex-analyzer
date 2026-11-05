@@ -1350,6 +1350,10 @@ impl Machine<'_> {
             // Counter namespace known: decides whether package's first counter probes.
             hash.put(&self.counter_namespace);
             parts.push(("the counter namespace".into(), std::mem::replace(&mut hash, Fnv::new()).0));
+            // A replay restores both whole, and an undefined name a pattern
+            // matches may be defined: the recording must have seen the same.
+            hash.put(&(&self.wild, &self.class_options));
+            parts.push(("the wild names and class options".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             parts
         });
         digest

@@ -1771,3 +1771,26 @@ fn a_package_loaded_on_the_last_line_is_read_cold_and_warm() {
         assert!(undefined.is_empty(), "{run}: {undefined:?}");
     }
 }
+
+/// A name partly built from unknown text may be any name of its shape, so a
+/// package that asks whether such a name is defined must not be served the
+/// answer a run without that name gave.
+#[test]
+fn a_package_read_after_a_name_of_unknown_spelling_is_not_served_the_plain_answer() {
+    if !installed() {
+        return;
+    }
+    let package = "\\ProvidesPackage{wp}\n\\ifdefined\\wpx\\def\\wpseen{}\\fi\n\\relax\n";
+    let (dir, fresh) = (project("wild"), project("wild-fresh"));
+    for d in [&dir, &fresh] {
+        std::fs::write(d.join("wp.sty"), package).expect("wp.sty");
+    }
+    let plain = "\\documentclass{article}\\usepackage{wp}\\begin{document}x\\end{document}\n";
+    let wild = "\\documentclass{article}\\expandafter\\def\\csname wp\\romannumeral\\pdfuniformdeviate 30\\endcsname{}\n\
+                \\usepackage{wp}\\begin{document}x\\end{document}\n";
+    let _ = run(&dir, plain);
+    let warm = run(&dir, wild);
+    let cold = run(&fresh, wild);
+    assert!(!defined(&cold, "wpseen") && !undefined(&cold, "wpseen"), "a fresh read leaves it open");
+    assert!(!defined(&warm, "wpseen") && !undefined(&warm, "wpseen"), "{:?}", warm.package_caches);
+}
