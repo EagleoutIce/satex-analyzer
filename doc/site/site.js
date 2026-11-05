@@ -695,23 +695,29 @@
     if (picture) return sketchSvg(picture);
     // infinite glue at both ends of a line (`\hbox to\hsize{\hfil …\hfil}`): the line is centred by it
     const done = html.replaceAll('\u0000', '') + '</span>'.repeat(open + 2 * table + boxes + hidden + framed + scripts + limits + eqno + 2 * choices);
-    if (/^<i class="ts-fill/.test(done) && /<i class="ts-fill[^"]*"><\/i>$/.test(done)) return `<span class="ts-fillrow">${done}</span>`;
+    // a box the run did not show (a list's ▢) before the last fill: that fill ends the list, it centres nothing
+    if (/^<i class="ts-fill/.test(done) && /<i class="ts-fill[^"]*"><\/i>$/.test(done) && !done.includes('class="ts-note"')) return `<span class="ts-fillrow">${done}</span>`;
     return (aligned ? '<i class="ts-row" hidden></i>' : '') + done;
   }
   /** One typeset paragraph as a row of the view's grid: the source line in the gutter, one rail per
    * environment it stands in, then its text. `depth` adds the levels of a folded file around it. */
-  const tsRow = (r, depth = 0, k = r.k) => envMarks(r.envOpen, 'begin', depth) + tsPara(r, depth, k) + envMarks(r.envClose, 'end', depth);
-  /** Where environments begin (`\begin{…}`, before a row) or end (after one), outermost first; shown with `.show-envs`. */
-  const envMarks = (list = [], edge, depth) => (edge === 'end' ? [...list].reverse() : list).map((e) =>
-    `<div class="ts-envmark ts-env-${edge}" style="--depth: ${e.depth + depth}" data-line="${edge === 'end' ? e.end : e.line}"><span class="ts-at">${edge === 'end' ? e.end : e.line}</span><span class="ts-rails" aria-hidden="true"></span>` +
-    `<span class="ts-envtag" title="the environment ${esc(e.env)} ${edge === 'end' ? 'ends' : 'begins'} on line ${edge === 'end' ? e.end : e.line}">\\${edge}{${esc(e.env)}}</span></div>`).join('');
+  const tsRow = (r, depth = 0, k = r.k, extra = null) => envMarks(r.envOpen, 'begin', depth, extra) + tsPara(r, depth, k) + envMarks(r.envClose, 'end', depth);
+  /** Where environments begin (`\begin{…}`, before a row) or end (after one), outermost first; shown with `.show-envs`.
+   * `extra` (`{key, html}`) adds a block's placement and labels to its own begin mark: with envs on, that mark is its header. */
+  const envMarks = (list = [], edge, depth, extra = null) => (edge === 'end' ? [...list].reverse() : list).map((e) => {
+    const line = edge === 'end' ? e.end : e.line;
+    return `<div class="ts-envmark ts-env-${edge}" data-env="${esc(e.env)}" style="--depth: ${e.depth + depth}" data-line="${line}"><span class="ts-at">${line}</span><span class="ts-rails" aria-hidden="true"></span>` +
+      `<span class="ts-envline"><span class="ts-envtag" title="the environment ${esc(e.env)} ${edge === 'end' ? 'ends' : 'begins'} on line ${line}: click to go there">\\${edge}{${esc(e.env)}}</span>${edge === 'begin' && extra?.key === `${e.env}@${e.line}` ? extra.html : ''}</span></div>`;
+  }).join('');
   /** A chip per undecided conditional the paragraph's text depends on: its test and a switch showing both arms,
    * the true one or the false one (`typesetWire` flips every choice of that conditional). */
   const switches = (r) => (r.causes ?? []).filter((c) => c.on != null).map((c) => {
     const name = c.test || c.parted || c.mark;
-    return `<span class="ts-switch" data-on="${esc(c.on)}" title="may be set: the run could not decide ${esc(name)} (line ${c.line})"><code>${esc(name)}</code>` +
-      ['both', 'true', 'false'].map((a) => `<button type="button" data-arm="${a}" aria-pressed="${a === 'both'}">${a}</button>`).join('') + '</span>';
+    const arm = { both: 'show the text of both cases', true: `show the text when ${name} is true`, false: `show the text when ${name} is false` };
+    return `<span class="ts-switch" data-on="${esc(c.on)}" title="${esc(maybeTip(c))}. Pick a case to see its text"><span class="ts-switch-q">maybe</span><code>${esc(name)}</code>` +
+      ['both', 'true', 'false'].map((a) => `<button type="button" data-arm="${a}" aria-pressed="${a === 'both'}" title="${esc(arm[a])}">${a}</button>`).join('') + '</span>';
   }).join('');
+  const maybeTip = (c) => `may be typeset: depends on ${c.test || c.parted || c.mark} (line ${c.line}), which the run could not decide`;
   /** Each paragraph's environments opened since the last paragraph (`envOpen`) and closed after it (`envClose`). */
   function envEdges(rows) {
     const id = (e) => `${e.env}@${e.line}`;
@@ -732,10 +738,11 @@
     const d = (r.depth ?? 0) + depth;
     const last = Math.max(r.line ?? 0, ...[...(r.marked ?? '').matchAll(/\u0007(\d+)/g)].map((m) => +m[1]));
     return `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}${r.footnote ? ' ts-foot' : ''}${r.held ? ' ts-held' : ''}"${r.env ? ` data-env="${esc(r.env)}" title="set in ${esc(r.env)}"` : ''}${r.just && r.just !== 'justified' ? ` data-just="${esc(r.just)}"` : ''}` +
-      `${k != null ? ` data-k="${k}"` : ''} data-path="${esc(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${esc(r.detail ?? '')}"${r.lines?.length ? ` data-lines="${esc(JSON.stringify(r.lines))}"` : ''}` +
+      `${k != null ? ` data-k="${k}"` : ''} data-path="${esc(r.path ?? '')}" data-line="${r.line}"${last > r.line ? ` data-last="${last}"` : ''} data-col="${r.col}" data-plain="${esc(r.detail ?? '')}"${r.lines?.length ? ` data-lines="${esc(JSON.stringify(r.lines))}"` : ''}` +
       ` style="--depth: ${d}${typeof r.skip === 'number' && !r.heading ? `; --skip: ${Math.max(r.skip, 0)}pt` : ''}">` +
       `<span class="ts-at"${last > r.line ? ` title="lines ${r.line}–${last}"` : ''}>${r.line ?? ''}</span><span class="ts-rails" aria-hidden="true"></span>` +
-      `<span class="ts-text">${switches(r)}${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`;
+      `<span class="ts-text">${switches(r)}${(r.causes ?? []).filter((c) => c.on != null).reduce((h, c) => h.replaceAll(`<span class="ts-choice" data-on="${esc(c.on)}">`, `<span class="ts-choice" data-on="${esc(c.on)}" title="${esc(maybeTip(c))}">`),
+        notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch))}</span></p>`;
   };
   /** A page `\shipout` sent out, as a labelled line where the next one begins; a page the run did not
    * break though it filled (`filled`) as a dashed one: pdfTeX breaks it by there. */
@@ -755,8 +762,16 @@
     const mine = (r) => !file || (r.path ?? '').endsWith(file);
     const keyOf = (r) => r.kind === 'paragraph' && mine(r) && r.outer ? `${r.outer.env}@${r.outer.line}` : null;
     const html = [];
+    // `document` is no environment the query lists: its marks come from the open file's lines
+    const docAt = (re) => { for (let n = 1, l; lineOf && (l = lineOf(n)) != null; n++) if (re.test(l.replace(/(?<!\\)%.*/, ''))) return n; return null; };
+    const docBegin = docAt(/\\begin\s*\{document\}/), docEnd = docAt(/\\end\s*\{document\}/);
+    const docMark = (edge, line) => envMarks([{ env: 'document', line, end: line, depth: 0 }], edge, 0);
+    // it begins after the last paragraph of the open file set before its line (the preamble's), else first
+    const pre = docBegin ? shown.findLastIndex((r) => r.kind === 'paragraph' && mine(r) && r.line < docBegin) : -1;
+    let docOpen = false;
     for (let i = 0; i < shown.length;) {
       const r = shown[i];
+      if (docBegin && !docOpen && i > pre && r.kind === 'paragraph') { html.push(docMark('begin', docBegin)); docOpen = true; }
       if (r.kind === 'page') { html.push(tsPage(r)); i++; continue; }
       if (!mine(r)) {
         let j = i;
@@ -777,6 +792,7 @@
       html.push(tsBlock(shown.slice(i, j), r.outer, place));
       i = j;
     }
+    if (docOpen) html.push(docMark('end', docEnd ?? docBegin));
     const rails = Math.max(0, ...shown.map((r) => (r.depth ?? 0) + (mine(r) ? 0 : 1)));
     return html.length ? `<div class="ts-view" style="--rails: ${rails}">${html.join('')}</div>` : '';
   }
@@ -800,7 +816,8 @@
     const stepped = steps.length > 1 && steps.every((rs) => body(rs).length && first(rs) === first(steps[0]));
     const chip = `<span class="ts-block-env">${esc(o.env)}</span>${place ? `<code class="ts-block-place" title="placement: where LaTeX may put it">[${esc(place)}]</code>` : ''}<span class="ts-block-line">line ${o.line}</span>${(o.labels ?? []).map((l) => `<code class="ts-block-label" title="label">${esc(l)}</code>`).join('')}`;
     const head = (more = '', lead = '') => `<div class="ts-block-head"><span class="ts-at"></span><span class="ts-rails" aria-hidden="true"></span><span class="ts-block-chip">${lead}${chip}${more}</span></div>`;
-    if (!stepped) return `<div class="ts-block" data-env="${esc(o.env)}" data-line="${o.line}">${head()}${items.map((x) => x.kind === 'page' ? tsPage(x) : tsRow(x)).join('')}</div>`;
+    const extra = { key: `${o.env}@${o.line}`, html: chip.replace(/<span class="ts-block-env">[^<]*<\/span>|<span class="ts-block-line">[^<]*<\/span>/g, '') };
+    if (!stepped) return `<div class="ts-block" data-env="${esc(o.env)}" data-line="${o.line}">${head()}${items.map((x) => x.kind === 'page' ? tsPage(x) : tsRow(x, 0, x.k, extra)).join('')}</div>`;
     // the page's own text with letters in it, the first step's: the card's title
     const title = heads[0].filter((x) => /[\p{L}\p{N}]/u.test(x.detail ?? '')).map((x) => x.detail.trim()).join(' · ');
     const n = steps.length;

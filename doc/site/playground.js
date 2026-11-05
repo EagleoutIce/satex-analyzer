@@ -815,9 +815,9 @@
       // a command's name, or a key or value in a list (`/demo/mode=fa`)
       const word = ctx.matchBefore(/[A-Za-z@*_:]*/), key = ctx.matchBefore(/[\w@*:./-]*/);
       const before = ctx.state.sliceDoc(word.from - 1, word.from), line = ctx.state.doc.lineAt(ctx.pos);
-      // inside a {…} or […] the cursor's list item starts after `{`, `[`, `,` or `=`
+      // inside a {…} or […] the cursor's list item starts after `{`, `[`, `,`, `=` or a placement's `!`
       const open = [...line.text.slice(0, key.from - line.from)].reduce((d, c) => d + +'{['.includes(c) - +'}]'.includes(c), 0) > 0;
-      const item = open && /[{[,=]\s*$/.test(line.text.slice(0, key.from - line.from));
+      const item = open && /[{[,=!]\s*$/.test(line.text.slice(0, key.from - line.from));
       // `(` opens a node name or coordinate (`\\draw (a) -- (`)
       if (!ctx.explicit && before !== '\\' && before !== '{' && before !== '(' && !item) return null;
       push();
@@ -834,10 +834,10 @@
       return {
         from, to: edit ? Math.max(at(ctx.state.doc, edit.range.end), ctx.pos) : ctx.pos, filter: false,
         options: rank(items, typed).slice(0, 200).map((i) => ({
-          label: i.label, usage: colorOf(i) ? null : i.labelDetails?.detail ? `${i.labelDetails.detail}${i.labelDetails.description ? ` (${i.labelDetails.description})` : ''}` : i.detail,
+          label: i.label, detail: i.documentation ? i.detail : undefined, usage: colorOf(i) || i.documentation ? null : i.labelDetails?.detail ? `${i.labelDetails.detail}${i.labelDetails.description ? ` (${i.labelDetails.description})` : ''}` : i.detail,
           hex: colorOf(i), preview: i.data?.preview, color: colorOf(i), type: KIND[i.kind] ?? 'text',
           // the side panel: a command's card, the one hover and Explain show; else the server's documentation
-          info: before === '\\' ? () => itemInfo(i) : undefined,
+          info: before === '\\' ? () => itemInfo(i) : i.documentation ? () => Object.assign(document.createElement('div'), { className: 'hover cm-item-card', innerHTML: card(i.documentation.value ?? i.documentation) }) : undefined,
           apply: again(i, i.insertTextFormat === 2 ? ac.snippet((i.insertText ?? i.textEdit?.newText ?? i.label).replace(/\$\{?(\d+)\}?/g, '#{$1}')) : i.textEdit?.newText ?? i.insertText ?? i.label),
         })),
       };
@@ -958,6 +958,46 @@
     const lensField = st.StateField.define({
       create: () => view.Decoration.none,
       update: (deco, tr) => tr.effects.reduce((d, e) => e.is(lensSet) ? view.Decoration.set(e.value.map(([at, l]) => view.Decoration.widget({ widget: new Lens(l), side: -1, block: true }).range(at)), true) : d, deco.map(tr.changes)),
+      provide: (f) => view.EditorView.decorations.from(f),
+    });
+    // A float's placement letters as toggle chips after its `[…]` (the float lens's `letters`): a click rewrites the brackets.
+    class Placement extends view.WidgetType {
+      constructor(spec, letters, order, from, to) { super(); Object.assign(this, { spec, letters, order, from, to }); }
+      eq(o) { return o.spec === this.spec && o.from === this.from && o.to === this.to && o.letters.length === this.letters.length; }
+      toDOM(v) {
+        const box = Object.assign(document.createElement('span'), { className: 'cm-place', title: `Placement: click a letter to toggle it. ${this.order.replace(/`/g, '')}` });
+        for (const [c, what] of this.letters) {
+          const b = Object.assign(document.createElement('button'), { type: 'button', textContent: c, title: `${c}: ${what.replace(/`/g, '')}\n${this.order.replace(/`/g, '')}` });
+          b.setAttribute('aria-pressed', String(this.spec.includes(c)));
+          b.onmousedown = (e) => {
+            e.preventDefault();
+            const on = this.spec.includes(c);
+            // `H` stands alone (float.sty)
+            const spec = on ? this.spec.replace(c, '') : c === 'H' ? 'H' : this.spec.replace('H', '') + c;
+            v.dispatch({ changes: { from: this.from, to: this.to, insert: spec ? `[${spec}]` : '' }, userEvent: 'input.placement' });
+          };
+          box.append(b);
+        }
+        return box;
+      }
+    }
+    const placements = (s) => {
+      const out = [];
+      s.field(lensField).between(0, s.doc.length, (from, _, d) => {
+        const l = d.spec.widget.lens, arg = l.command?.arguments?.[0];
+        if (!arg?.letters) return;
+        const line = s.doc.lineAt(from), col = Math.min(l.range.start.character, line.length);
+        // a `[` not closed yet: its letters so far
+        const m = /^\\begin\{[^}]*\}(\s*\[([^\]\n]*)\]|\s*\[([A-Za-z!]*))?/.exec(line.text.slice(col));
+        if (!m) return;
+        const head = line.from + col + m[0].length - (m[1]?.length ?? 0), end = line.from + col + m[0].length;
+        out.push(view.Decoration.widget({ widget: new Placement(m[2] ?? m[3] ?? '', arg.letters, arg.order ?? '', head, end), side: 1 }).range(end));
+      });
+      return view.Decoration.set(out, true);
+    };
+    const placeField = st.StateField.define({
+      create: placements,
+      update: (deco, tr) => tr.docChanged || tr.startState.field(lensField) !== tr.state.field(lensField) ? placements(tr.state) : deco,
       provide: (f) => view.EditorView.decorations.from(f),
     });
     // A `\begin` name and its `\end` name, from the server's linked editing:
@@ -1099,7 +1139,7 @@
         if (c.preview) span.prepend(Object.assign(document.createElement('img'), { className: 'cm-preview', src: `data:image/svg+xml;utf8,${encodeURIComponent(c.preview)}`, alt: '' }));
         return span;
       } }] }),
-        linkField, markField, flashField, swatchField, lensField, linkedField, heatField, heatGutter, widgetGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
+        linkField, markField, flashField, swatchField, lensField, placeField, linkedField, heatField, heatGutter, widgetGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
         EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([])],
     });
     ev.dom.satexView = ev; // doc/site/showcase.mjs reads the text and the places through it
@@ -1274,7 +1314,8 @@
   const notation = self.satexCards.notation;
   // the Typeset panel's switches, kept across visits
   for (const [id, cls, store, on] of ['boxes', 'keys', 'ligs', 'findings', 'envs', 'maybe'].map((k) => [`typeset-${k}`, `show-${k}`, `satex-typeset-${k}`, k === 'maybe'])) {
-    const box = $(id), apply = () => typesetBody.classList.toggle(cls, box.checked);
+    // the preamble's findings sit on the document's begin mark only while the marks show
+    const box = $(id), apply = () => { typesetBody.classList.toggle(cls, box.checked); if (cls === 'show-envs') typesetFindings(); };
     // what may be set shows unless switched off
     box.checked = on;
     try { box.checked = (localStorage.getItem(store) ?? (on ? '1' : '0')) === '1'; } catch {}
@@ -1522,16 +1563,31 @@
   for (const b of document.querySelectorAll('.ts-scope button')) b.onclick = () => tsScope(b.dataset.scope === 'here');
   tsScope(self.satexStore.get('typeset-scope') === 'here');
   /** The open file's findings on the paragraphs they stand in: a mark in the margin, the worst first, shown with the findings switch. */
+  /** Each finding on the paragraph set from its line: the one whose lines hold it, else (an error) the last one before it, else the document's begin, else the first;
+   * a mark's click goes to its first finding. */
+  var tsMarked = []; // var: the envs switch runs typesetFindings before this line
   function typesetFindings() {
     typesetBody.querySelectorAll('.ts-finding').forEach((m) => m.remove());
-    const own = tsOwn(), ds = diagnostics[uri()] ?? [];
-    own.forEach((p, i) => {
-      const [from, to] = [+p.dataset.line, own[i + 1] ? +own[i + 1].dataset.line : Infinity];
-      const fs = ds.filter((d) => d.range.start.line + 1 >= from && d.range.start.line + 1 < to);
-      if (!fs.length) return;
+    tsMarked = [];
+    const rows = [...typesetBody.querySelectorAll('p.ts[data-line]:not(.ts-excerpt)')];
+    const uriOf = (p) => { const o = p.closest('.ts-other'); return o ? Object.keys(diagnostics).find((u) => p.dataset.path && (p.dataset.path.endsWith(u.split('/').pop()))) : uri(); };
+    const by = new Map();
+    for (const p of rows) { const u = uriOf(p); if (u) by.set(u, [...by.get(u) ?? [], p]); }
+    const on = new Map();
+    for (const [u, ps] of by) for (const d of diagnostics[u] ?? []) {
+      const n = d.range.start.line + 1, line = (p) => +p.dataset.line;
+      const holds = ps.filter((p) => line(p) <= n && n <= +(p.dataset.last ?? p.dataset.line));
+      const before = ps.filter((p) => line(p) <= n);
+      // a finding outside every paragraph's lines: an error only, on the paragraph set before it
+      // one before every paragraph (the preamble's) on the document's begin mark when the view has one
+      const p = holds.sort((a, b) => line(b) - line(a))[0] ?? (sev(d) === 'error' ? before.sort((a, b) => line(b) - line(a))[0] ?? (u === uri() && typesetBody.classList.contains('show-envs') && typesetBody.querySelector('.ts-envmark.ts-env-begin[data-env="document"]')) ?? ps[0] : null);
+      if (p) on.set(p, [...on.get(p) ?? [], { ...d, target: u }]);
+    }
+    for (const [p, fs] of on) {
       const worst = ['error', 'warning', 'info', 'hint'].find((v) => fs.some((d) => sev(d) === v));
-      p.querySelector('.ts-at')?.insertAdjacentHTML('afterbegin', `<span class="ts-finding f-${worst}" title="${escape(fs.map((d) => `${d.range.start.line + 1}: ${d.code}: ${d.message}`).join('\n'))}">${fs.length}</span>`);
-    });
+      tsMarked.push(fs);
+      p.querySelector('.ts-at')?.insertAdjacentHTML('afterbegin', `<span class="ts-finding f-${worst}" data-f="${tsMarked.length - 1}" title="${escape(fs.map((d) => `${d.range.start.line + 1}: ${d.code}: ${d.message}`).join('\n'))}\nclick: go to it">${fs.length}</span>`);
+    }
   }
   const withKeys = cards.withKeys;
   /** The paragraphs of the last typeset, with the source site of their characters: the PDF's findings mark only theirs. */
@@ -1555,9 +1611,18 @@
   }
   cards.typesetWire(typesetBody);
   typesetBody.addEventListener('click', (e) => {
-    const p = e.target.closest('.ts');
+    const mark = e.target.closest('.ts-finding');
+    if (mark) {
+      const [d] = tsMarked[+mark.dataset.f] ?? [];
+      if (!d) return;
+      e.stopPropagation();
+      const name = d.target === uri() ? null : Object.keys(state.texts).find((n) => d.target.endsWith(`/${n}`));
+      if (name) openPlace(name, d.range.start, d.range.end); else editor.focus({ start: d.range.start, end: d.range.end });
+      return;
+    }
+    const p = e.target.closest('.ts, .ts-envmark');
     if (!p) return;
-    const at = { line: +p.dataset.line - 1, character: Math.max(+p.dataset.col - 1, 0) };
+    const at = { line: +p.dataset.line - 1, character: Math.max(+(p.dataset.col ?? 1) - 1, 0) };
     if (p.dataset.path && !p.dataset.path.endsWith(state.file)) {
       const name = Object.keys(state.texts).find((n) => !(n in state.ro) && p.dataset.path.endsWith(n));
       openPlace(name ?? p.dataset.path, at);
@@ -4821,7 +4886,8 @@
   async function pdfGo(page, x, y, word, follow = true) {
     const hit = pdfSource(page, x, y, word);
     if (!hit) return;
-    const text = state.texts[hit.file]?.split('\n')[hit.line - 1] ?? '', span = word && wordInLine(text, word[5]);
+    const text = state.texts[hit.file]?.split('\n')[hit.line - 1] ?? '';
+    let span = word && wordInLine(text, word[5]);
     // a word the line does not spell (a reference's number, a citation's label) is a reference set there: followed
     const refs = follow && !span && word ? occurrences.filter((o) => ['ref', 'cite'].includes(o.kind) && occFile(o) === hit.file && o.line === hit.line).sort((a, b) => (a.col ?? 0) - (b.col ?? 0)) : [];
     if (refs.length) {
@@ -4834,7 +4900,17 @@
       await openPlace(from.file, { line: from.line - 1, character: from.col - 1 }, { line: from.end[0] - 1, character: from.end[1] });
       return pdfFollow(true);
     }
-    const start = { line: hit.line - 1, character: span?.[0] ?? 0 };
+    let start = { line: hit.line - 1, character: span?.[0] ?? 0 };
+    // a word none of the user's files spells: the code run there set it (`\maketitle`'s date, `\today`, from the class)
+    if (word && !span && /[\p{L}\p{N}]/u.test(word[5])) {
+      const bare = word[5].replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''), lines = state.texts[hit.file]?.split('\n') ?? [];
+      // SyncTeX names the line where \maketitle's paragraph ended: it stands a few lines up
+      const title = lines.slice(Math.max(0, hit.line - 4), hit.line).findLastIndex((l) => /^[^%]*\\maketitle\b/.test(l));
+      const dated = title >= 0 && !Object.values(state.texts).some((t) => /^[^%\n]*\\date\s*\{/m.test(t) || t.includes(bare)) && /^(\p{L}+|\d{1,2}|\d{4})$/u.test(bare);
+      if (dated) { start = { line: Math.max(0, hit.line - 4) + title, character: lines[Math.max(0, hit.line - 4) + title].indexOf('\\maketitle') }; span = [start.character, start.character + '\\maketitle'.length]; }
+      toast(dated ? 'The date comes from the class: \\maketitle sets \\today, as no \\date{…} is given. Showing the \\maketitle line'
+        : `“${bare}” is not written in your files: the code run at line ${hit.line} set it`);
+    }
     await openPlace(hit.file, start, span ? { line: start.line, character: span[1] } : undefined);
     pdfFollow(true);
   }

@@ -3309,8 +3309,16 @@ fn a_float_placement_hovers_completes_and_writes() {
         .unwrap_or_default()
         .to_string();
     assert!(md.contains("default `tbp`") && md.contains("- `p`"), "the class's \\fps@table: {md}");
+    assert!(md.contains("does not matter"), "the order is lost: {md}");
     let items = complete(&mut server, &uri, fig, 16);
     assert_eq!(labels(&items), ["b", "p", "!", "H"], "the letters not written, H from float.sty");
+    assert_eq!(items[0]["textEdit"]["range"]["start"]["character"], 16, "inserted at the cursor: {}", items[0]);
+    assert!(items[0]["documentation"]["value"].as_str().is_some_and(|d| d.contains("does not matter")));
+    assert!(!labels(&complete(&mut server, &uri, fig, 18)).contains(&"H"), "no letters after the `]`");
+    let lenses = ask(&mut server, "textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let float = lenses.as_array().unwrap().iter().find(|l| l["command"]["title"] == "Edit placement…").unwrap();
+    let letters = &float["command"]["arguments"][0]["letters"];
+    assert_eq!(letters.as_array().map(|l| l.len()), Some(6), "h t b p ! H for the inline chips: {float}");
     let view = ask(&mut server, "satex/dialog", at(fig, 2));
     assert_eq!((view["kind"].as_str(), view["state"]["spec"].as_str()), (Some("float"), Some("ht")), "{view}");
     let mut apply = |spec: &str| {

@@ -280,5 +280,11 @@ console.log('table model: ok');
   assert.deepEqual(marks, ['Before', 'begin quote', 'Outer', 'begin center', 'Inner', 'end center', 'end quote', 'After']);
   // a paragraph that may be set carries a switch per conditional
   const may = typesetView([{ kind: 'paragraph', line: 3, detail: 'x', marked: 'x', causes: [{ on: '7', test: '\\ifdraft', line: 3, mark: '{x|}' }] }]);
-  assert.match(may, /<span class="ts-switch" data-on="7"[^>]*><code>\\ifdraft<\/code><button type="button" data-arm="both" aria-pressed="true">both/);
+  assert.match(may, /<span class="ts-switch" data-on="7" title="may be typeset: depends on \\ifdraft \(line 3\)[^>]*><span class="ts-switch-q">maybe<\/span><code>\\ifdraft<\/code><button type="button" data-arm="both" aria-pressed="true"/);
+  // the document's marks from the open file's lines; a block's header joins its begin mark
+  const doc = ['\\documentclass{article}', '\\begin{document}', 'x', '\\begin{figure}[ht]', 'y\\label{f}', '\\end{figure}', '\\end{document}'];
+  const fig = { env: 'figure', line: 4, end: 6 };
+  const view = typesetView([{ kind: 'paragraph', line: 3, detail: 'x' }, { kind: 'paragraph', line: 5, detail: 'y', envs: [fig], depth: 1, outer: { env: 'figure', line: 4, labels: ['f'] } }], { lineOf: (n) => doc[n - 1] });
+  assert.deepEqual([...view.matchAll(/\\(begin|end)\{(\w+)\}/g)].map((m) => m[0]), ['\\begin{document}', '\\begin{figure}', '\\end{figure}', '\\end{document}']);
+  assert.match(view, /\\begin\{figure\}<\/span><code class="ts-block-place"[^>]*>\[ht\]<\/code><code class="ts-block-label"[^>]*>f<\/code>/);
 }

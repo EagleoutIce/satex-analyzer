@@ -134,7 +134,15 @@ pub(super) fn lenses(analysis: &Analysis, doc: &Text, path: &str, kind: Kind) ->
         .filter(|t| t.kind == kind)
         .map(|t| {
             let range = lsp_range(doc, t.start, t.start);
-            CodeLens { range, command: Some(open_command(t.kind, uri, range.start)), data: None }
+            let mut command = open_command(t.kind, uri, range.start);
+            // the editor's inline letter chips: every letter the run knows, with what it does
+            if t.kind == Kind::Float
+                && let Some(Json::Object(arg)) = command.arguments.as_mut().and_then(|a| a.first_mut())
+            {
+                arg.insert("letters".into(), letters_json(analysis));
+                arg.insert("order".into(), json!(ORDER));
+            }
+            CodeLens { range, command: Some(command), data: None }
         })
         .collect()
 }
@@ -194,6 +202,13 @@ fn letters(analysis: &Analysis) -> Vec<(char, &'static str)> {
     out
 }
 
+/// Why the letters' order is lost: `\@xfloat` (latex.ltx) adds one bit per letter to the float's count.
+const ORDER: &str = "The order of the letters does not matter: `\\@xfloat` (latex.ltx, source2e) turns each into a bit, and LaTeX always tries here, top, bottom, then a float page.";
+
+fn letters_json(analysis: &Analysis) -> Json {
+    json!(letters(analysis).iter().map(|(c, what)| json!([c.to_string(), what])).collect::<Vec<_>>())
+}
+
 /// What `\begin{env}[spec]` lets LaTeX do with the float, letter by letter.
 fn float_hover(analysis: &Analysis, text: &str, env: Option<&str>) -> String {
     let env = env.unwrap_or("float");
@@ -217,10 +232,11 @@ fn float_hover(analysis: &Analysis, text: &str, env: Option<&str>) -> String {
     };
     let shown = spec.filter(|s| !s.trim().is_empty() && s.trim() != "!").or(default).unwrap_or_default();
     let all: String = known.iter().map(|(c, _)| *c).collect();
-    format!("{head}\n\n{}\n\nLetters: `{all}`, in any order.", lines(&shown).join("\n"))
+    format!("{head}\n\n{}\n\nLetters: `{all}`. {ORDER}", lines(&shown).join("\n"))
 }
 
-/// The placement letters to complete inside a float's `[…]`: those not yet written.
+/// The placement letters to complete inside a float's `[…]`, its `]` typed or not: those not yet written,
+/// inserted at the cursor.
 pub fn float_completion(
     analysis: &Analysis,
     doc: &Text,
@@ -228,15 +244,18 @@ pub fn float_completion(
     pos: Pos,
 ) -> Option<Vec<lsp_types::CompletionItem>> {
     let at = doc.offset(pos)?;
-    let t = targets(analysis, doc, path).into_iter().find(|t| t.kind == Kind::Float && t.start <= at && at <= t.end)?;
-    let text = &doc.body()[t.start..t.end];
-    let open = t.start + text.find('[')? + 1;
-    if at < open || at >= t.end {
+    let body = doc.body();
+    let t = targets(analysis, doc, path).into_iter().rev().find(|t| t.kind == Kind::Float && t.start <= at)?;
+    let head = t.start + format!("\\begin{{{}}}", t.detail.as_deref()?).len();
+    let open = head + body[head..].find('[').filter(|&k| body[head..head + k].trim().is_empty())? + 1;
+    let known = letters(analysis);
+    let written = body[open..].split(|c: char| !known.iter().any(|(k, _)| *k == c)).next().unwrap_or_default();
+    if at < open || at > open + written.len() {
         return None;
     }
-    let written = &doc.body()[open..t.end - 1];
+    let range = lsp_range(doc, at, at);
     Some(
-        letters(analysis)
+        known
             .into_iter()
             .filter(|(c, _)| !written.contains(*c))
             .enumerate()
@@ -244,7 +263,12 @@ pub fn float_completion(
                 label: c.to_string(),
                 kind: Some(lsp_types::CompletionItemKind::ENUM_MEMBER),
                 detail: Some(what.replace('`', "")),
+                documentation: Some(lsp_types::Documentation::MarkupContent(lsp_types::MarkupContent {
+                    kind: lsp_types::MarkupKind::Markdown,
+                    value: format!("`{c}`: {what}\n\n{ORDER}"),
+                })),
                 sort_text: Some(format!("{k}")),
+                text_edit: Some(lsp_types::CompletionTextEdit::Edit(lsp_types::TextEdit::new(range, c.to_string()))),
                 ..Default::default()
             })
             .collect(),
@@ -314,8 +338,8 @@ pub fn dialog(analysis: &Analysis, doc: &Text, path: &str, pos: Position) -> Opt
     }
     if t.kind == Kind::Float {
         let env = t.detail.as_deref().unwrap_or_default();
-        ctx["letters"] =
-            json!(letters(analysis).iter().map(|(c, what)| json!([c.to_string(), what])).collect::<Vec<_>>());
+        ctx["letters"] = letters_json(analysis);
+        ctx["order"] = json!(ORDER);
         ctx["default"] = json!(crate::linter::shared::macro_text(analysis, &format!("fps@{env}")));
     }
     Some(json!({ "kind": t.kind.name(), "range": lsp_range(doc, t.start, t.end), "state": state, "context": ctx }))
