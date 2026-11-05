@@ -189,7 +189,7 @@ fn letters(analysis: &Analysis) -> Vec<(char, &'static str)> {
         .lookup("@float@HH")
         .is_some_and(|s| !matches!(analysis.env.meaning(s), crate::engine::tex::Meaning::Undefined))
     {
-        out.push(('H', "exactly here, never floating (float package); no other letter with it"));
+        out.push(('H', "exactly here, never floating (float package). No other letter with it"));
     }
     out
 }
