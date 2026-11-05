@@ -29,7 +29,7 @@ Line numbers are of HEAD 26ef7ce (2026-11-04, branch `getting-sound`). New findi
 | `AVal.ints` | `Value::Int`, `Dimen`, `Num`, `OneOf` of numbers, value.rs:127-158 | same. Quantity (count vs dimen) is not modelled: Rust joins mixed quantities to `Unknown` (value.rs:726), coarser |
 | `AVal.glues` | `Value::Glue`, `MuGlue`, `GlueNum` | same |
 | `AVal.toks` | `Value::Toks`, `OneOf` of lists, `typed_toks_join`, env.rs:2847 | Rust finer past the bound: common head and tail around one typed token (`typed_join`, env.rs:2777); the model takes one hole |
-| `AVal.box` | box registers' `Dim`s, src/engine/mode.rs | same in shape; box material and recorded lists (`Value::List`) not modelled |
+| `AVal.box` | box registers' `Dim`s, src/engine/mode.rs | same in shape; box material, recorded lists (`Value::List`) and the forced breaks of `\vadjust` material (`Natural::forced`, kept in order) not modelled |
 | `AVal.meanings`, `AMeaning` | `Binding.meaning` + `Binding.may`, env.rs:24-35 | same. `may = None` with `Meaning::Unknown` is `top`; `(m, {Undefined, m})` (`maybe_undefined`) is `meanings [m, undefined]` |
 | `AMeaning.text` | a macro whose body holds typed tokens, `macro_hull`, env.rs:2195 | same |
 | `AVal.join` | `Value::join`, value.rs:777; `env::join`, env.rs:2675 | numbers and glue same. Rust merges touching intervals (`Value::union`, value.rs:750), finer and sound. Meanings: Rust past the bound takes `typed_join` (finer). A join with the top is the top on either side (fixed 2026-11-04, D1) |

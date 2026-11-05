@@ -14,3 +14,4 @@ budgets::document_metadata_warm
 budgets::tagpdf_warm
 documents::notecolumn_slnc_at_cleardoublepage_koma
 package_cache::beamer_replays_what_reading_it_reports
+documents::floats_of_unknown_height_around_a_pagebreak_keep_few_paths

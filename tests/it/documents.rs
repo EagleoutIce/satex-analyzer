@@ -396,6 +396,13 @@ peak_fixtures! {
     pgfmath_of_unknown_integer_stays_a_number("pgfmath_unknown_seed", "main.tex");
 }
 
+peak_fixtures! {
+    /// A float and a `\pagebreak` in one line: all three forced breaks reach the page.
+    float_and_pagebreak_in_one_line_place_the_float("float_pagebreak", "known.tex");
+    /// Floats of unknown height around a forced break join where they are placed.
+    floats_of_unknown_height_around_a_pagebreak_keep_few_paths("float_pagebreak", "unknown.tex");
+}
+
 #[test]
 fn repeated_undecided_ifx_stays_within_the_path_limit() {
     let Some(a) = check("crowd_ifx_unknown", "main.tex", &[]) else { return };

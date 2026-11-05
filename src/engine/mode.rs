@@ -489,10 +489,12 @@ pub struct Natural {
     /// pdfTeX put at its start (`None`: not known).
     pub line: Option<Line>,
     /// The forced breaks (penalties of -10000 or less) its `\vadjust`
-    /// material carries to the page, first and last: they follow the
-    /// paragraph's lines onto the main vertical list (tex.web § 889) and
-    /// fire the output routine there (§ 1005). A LaTeX float brings two.
-    pub forced: [Option<i32>; 2],
+    /// material carries to the page, in order, each with whether a box
+    /// or other node came before it there: they follow the paragraph's
+    /// lines onto the main vertical list (tex.web § 889) and fire the
+    /// output routine there (§ 1005). A LaTeX float brings two, a
+    /// `\pagebreak` in the same line one more.
+    pub forced: [Option<(i32, bool)>; FORCED],
     /// In inline math: the last math character (family, font, char), whose
     /// italic correction and kern wait for the next (tex.web §§ 752, 755).
     /// `Some(None)`: not known.
@@ -582,14 +584,12 @@ pub struct Scripted {
 
 impl Natural {
     /// A forced break `\vadjust` material carries ([`Natural::forced`]).
-    /// A later one counts after a box or other node only: the first emptied the page,
-    /// and a penalty on an empty page is discarded (tex.web § 1000).
+    /// Every one is kept: whether it finds the page empty (tex.web § 1000)
+    /// is the page builder's to decide, after the routine the one before
+    /// fired. Past [`FORCED`] the last slot stands for the rest.
     fn force(&mut self, penalty: i32, after_box: bool) {
-        match self.forced[0] {
-            None => self.forced[0] = Some(penalty),
-            Some(_) if after_box => self.forced[1] = Some(penalty),
-            Some(_) => {}
-        }
+        let i = self.forced.iter().position(Option::is_none).unwrap_or(FORCED - 1);
+        self.forced[i] = Some((penalty, after_box || self.forced[i].is_some_and(|f| f.1)));
     }
 
     /// A list whose size satex lost but whose tail it still follows is not
@@ -828,7 +828,7 @@ impl Natural {
             math_breaks: self.math_breaks.max(other.math_breaks),
             solid: self.solid.max(other.solid),
             line: if self.line == other.line { self.line } else { None },
-            forced: [self.forced[0].or(other.forced[0]), self.forced[1].or(other.forced[1])],
+            forced: std::array::from_fn(|i| self.forced[i].or(other.forced[i])),
             para: self.para.join(other.para),
             prev_depth: join_prev(self.prev_depth, other.prev_depth),
             undo: if self.undo == other.undo { self.undo } else { None },
@@ -1044,6 +1044,10 @@ pub fn join_natural(a: Option<Natural>, b: Option<Natural>) -> Option<Natural> {
     }
 }
 
+/// The forced breaks one paragraph's `\vadjust` material keeps apart
+/// ([`Natural::forced`]): three floats and a `\pagebreak`.
+const FORCED: usize = 7;
+
 /// tex.web § 463 `default_rule`: 0.4pt.
 const DEFAULT_RULE: Scaled = 26214;
 
@@ -1215,7 +1219,7 @@ impl Machine<'_> {
             no_boundary: false,
             solid: 0,
             line: None,
-            forced: [None; 2],
+            forced: [None; FORCED],
             math_prev: None,
             math_class: None,
             math_pending: None,
@@ -1841,7 +1845,7 @@ impl Machine<'_> {
 
     /// `\penalty⟨first⟩`, then `\vbox{}\penalty⟨second⟩`, through names of
     /// their own that no document redefines.
-    fn replay_forced(&mut self, forced: [Option<i32>; 2]) {
+    fn replay_forced(&mut self, forced: [Option<(i32, bool)>; FORCED]) {
         use crate::engine::builtins::{BoxCmd, ModeCmd, Typeset};
         let span = self.position_span();
         let own = |m: &mut Self, name: &str, p: Primitive| {
@@ -1853,9 +1857,8 @@ impl Machine<'_> {
         let vbox = own(self, "\u{2}adjust vbox", Primitive::Mode(ModeCmd::Box(BoxCmd::VBox)));
         let chr = |c: char, cat: Catcode| Token::new(Tok::Chr(c, cat), span);
         let mut text = Vec::new();
-        for (k, p) in forced.into_iter().enumerate() {
-            let Some(p) = p else { continue };
-            if k > 0 {
+        for (p, boxed) in forced.into_iter().flatten() {
+            if boxed {
                 text.extend([vbox, chr('{', Catcode::Begin), chr('}', Catcode::End)]);
             }
             text.push(penalty);
@@ -2282,8 +2285,8 @@ impl Machine<'_> {
                             let size = m.along.extended_by(m.depth.at_least_zero());
                             n.para.along = n.para.along.extended_by(size);
                             n.para.depth = n.para.depth.join(m.depth.at_least_zero());
-                            for p in m.forced.into_iter().flatten() {
-                                n.force(p, true);
+                            for (p, boxed) in m.forced.into_iter().flatten() {
+                                n.force(p, boxed);
                             }
                         }
                         None => n.para.lost = true,
