@@ -259,6 +259,8 @@ pub(super) fn pairs<'a>(analysis: &'a Analysis, path: &str, name: &str) -> Vec<(
 /// options when it takes them) and `\end{env}`.
 pub(super) struct Body {
     pub lines: (u32, u32),
+    /// The run's ids of `\begin` and `\end`: what the run made in between, in its order.
+    pub ids: (u32, u32),
     pub range: Range,
 }
 
@@ -291,8 +293,11 @@ pub(super) fn body(analysis: &Analysis, doc: &Text, path: &str, line: u32, env: 
     let to = doc.offset(Pos::new(e.span.line, 1))?;
     let end = to + text[to..].find(&format!("\\end{{{env}}}"))?;
     let lsp = |o: usize| super::handlers::to_lsp(doc, doc.pos(o));
-    (start <= end)
-        .then(|| Body { lines: (b.span.line, e.span.line), range: Range { start: lsp(start), end: lsp(end) } })
+    (start <= end).then(|| Body {
+        lines: (b.span.line, e.span.line),
+        ids: (b.node, e.node),
+        range: Range { start: lsp(start), end: lsp(end) },
+    })
 }
 
 /// The text of `r`.

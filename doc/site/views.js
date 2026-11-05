@@ -311,15 +311,65 @@
     },
   };
 
-  // drawings (tikz plugin): a picture's text as statements; nodes `\node[…] (n) at (x,y) {…};`
-  // and arrows `\draw[->] (a) -- (b);` are edited, any other statement is kept as code
+  // drawings (tikz plugin): a picture's text as statements; nodes `\node[…] (n) at (x,y) {…};`,
+  // or placed relative to another (`right of=a`, `right=of a`), and arrows `\draw[->] (a) -- (b);`
+  // are edited, any other statement is kept as code
   const NUM = String.raw`(-?\d*\.?\d+)\s*(?:cm)?`;
-  const NODE = new RegExp(String.raw`^\\(node|coordinate)\s*(?:\[([^\]]*)\])?\s*\(([\w -]+)\)\s*at\s*\(\s*${NUM}\s*,\s*${NUM}\s*\)\s*(?:\{([^{}]*)\})?\s*;$`);
+  const POINT = new RegExp(String.raw`^\s*${NUM}\s*,\s*${NUM}\s*$`);
   const EDGE = /^\\draw\s*(?:\[([^\]]*)\])?\s*\(([\w -]+)\)\s*--\s*(?:node\s*(?:\[([^\]]*)\])?\s*\{([^{}]*)\}\s*)?\(([\w -]+)\)\s*;$/;
   const PATH = /^\\draw\s*(?:\[[^\]]*\])?\s*(\([^()]*\)(?:\s*--\s*\([^()]*\))+)\s*;$/;
   const ARROWS = ['->', '<->', '<-', '-'];
-  const opts = (s) => (s ?? '').split(',').map((o) => o.trim()).filter(Boolean);
+  /** An option list split at its top-level commas. */
+  const opts = (s = '') => {
+    const out = [];
+    let depth = 0, from = 0;
+    for (let i = 0; i <= s.length; i++) {
+      if (s[i] === '{') depth++;
+      else if (s[i] === '}') depth--;
+      else if (i === s.length || (s[i] === ',' && !depth)) { out.push(s.slice(from, i).trim()); from = i + 1; }
+    }
+    return out.filter(Boolean);
+  };
   const fmt = (v) => String(+(+v).toFixed(3));
+  // TeX's units in cm (TeXbook p. 57); a bare number is pt, as pgf reads a length
+  const UNITS = { cm: 1, mm: 0.1, in: 2.54, pt: 2.54 / 72.27, bp: 2.54 / 72 };
+  const cm = (s) => { const m = s?.trim().match(/^(-?\d*\.?\d+)\s*(cm|mm|in|pt|bp)?$/); return m ? +m[1] * UNITS[m[2] ?? 'pt'] : null; };
+  const SIDES = { right: [1, 0], left: [-1, 0], above: [0, 1], below: [0, -1] };
+  /** `right of=a` (centers apart, tikz) or `above right=1cm of a` (borders apart, positioning). */
+  function placement(o) {
+    const m = o.match(/^((?:above|below)?\s*(?:left|right)?)\s*(?:of\s*=\s*(.+)|=\s*(?:(.+?)\s+)?of\s+(.+))$/);
+    if (!m || !m[1].trim()) return null;
+    const dir = m[1].trim().split(/\s+/).reduce((v, w) => [v[0] + SIDES[w][0], v[1] + SIDES[w][1]], [0, 0]);
+    return m[2] != null ? { dir, of: m[2].trim(), centers: true } : { dir, of: m[4].trim(), dist: m[3] };
+  }
+  /** `\node`/`\coordinate`: options, name, `at` and options in any order, then `{label};`. */
+  function nodeOf(code) {
+    const head = code.match(/^\\(node|coordinate)\b/);
+    if (!head) return null;
+    let i = head[0].length;
+    const n = { coordinate: head[1] === 'coordinate', opts: [], name: null, at: null, label: '' };
+    const group = (open, close) => {
+      for (let j = i, depth = 0; j < code.length; j++) {
+        if (code[j] === '\\') j++;
+        else if (code[j] === open) depth++;
+        else if (code[j] === close && --depth === 0) { const s = code.slice(i + 1, j); i = j + 1; return s; }
+      }
+      return null;
+    };
+    for (;;) {
+      i += code.slice(i).match(/^\s*/)[0].length;
+      if (code[i] === '[') { const o = group('[', ']'); if (o == null) return null; n.opts.push(...opts(o)); }
+      else if (code[i] === '(' && n.name == null) n.name = group('(', ')');
+      else if (/^at\s*\(/.test(code.slice(i)) && !n.at) { i = code.indexOf('(', i); n.at = group('(', ')')?.match(POINT); if (!n.at) return null; }
+      else break;
+    }
+    if (!n.coordinate) { if (code[i] !== '{') return null; n.label = group('{', '}'); }
+    if (n.label == null || !/^\s*;$/.test(code.slice(i)) || !/^[\w -]+$/.test(n.name ?? '')) return null;
+    const p = n.opts.map(placement), k = p.findIndex(Boolean);
+    // two placements, or one with `at`: the last wins in TikZ, kept as code here
+    if (p.filter(Boolean).length > (n.at ? 0 : 1)) return null;
+    return { ...n, name: n.name.trim(), x: n.at ? +n.at[1] : 0, y: n.at ? +n.at[2] : 0, at: !!n.at, place: k < 0 ? null : { ...p[k], opt: n.opts[k] } };
+  }
   /** A picture's body as statements `{text, lead, code, type…}` and the text after the last. */
   function parse(body) {
     const items = [];
@@ -327,8 +377,8 @@
     const cut = (i, semi) => {
       const text = body.slice(from, i), code = text.replace(/^(\s|%[^\n]*\n?)*/, '');
       const it = { text, lead: text.slice(0, text.length - code.length), code, type: 'code' };
-      const n = !glued && code.match(NODE), e = !glued && code.match(EDGE);
-      if (n) Object.assign(it, { type: 'node', coordinate: n[1] === 'coordinate', opts: opts(n[2]), name: n[3].trim(), x: +n[4], y: +n[5], label: n[6] ?? '' });
+      const n = !glued && nodeOf(code), e = !glued && code.match(EDGE);
+      if (n) Object.assign(it, { type: 'node' }, n);
       else if (e) {
         const o = opts(e[1]);
         Object.assign(it, { type: 'edge', arrow: o.find((x) => ARROWS.includes(x)) ?? '-', opts: o.filter((x) => !ARROWS.includes(x)), from: e[2].trim(), at: e[3] ?? '', label: e[4] ?? '', to: e[5].trim() });
@@ -351,8 +401,11 @@
     }
     return { items, tail: body.slice(from) };
   }
-  const nodeText = (n) => n.coordinate ? `\\coordinate (${n.name}) at (${fmt(n.x)},${fmt(n.y)});`
-    : `\\node${n.opts.length ? `[${n.opts.join(', ')}]` : ''} (${n.name}) at (${fmt(n.x)},${fmt(n.y)}) {${n.label}};`;
+  // `at` only where the text had one or a drag put one: a relative node stays relative
+  const nodeText = (n) => {
+    const at = n.at ? ` at (${fmt(n.x)},${fmt(n.y)})` : '';
+    return n.coordinate ? `\\coordinate (${n.name})${at};` : `\\node${n.opts.length ? `[${n.opts.join(', ')}]` : ''} (${n.name})${at} {${n.label}};`;
+  };
   const edgeText = (e) => {
     const o = [...(e.arrow === '-' ? [] : [e.arrow]), ...e.opts];
     return `\\draw${o.length ? `[${o.join(', ')}]` : ''} (${e.from}) -- ${e.label ? `node[${e.at || 'above'}] {${e.label}} ` : ''}(${e.to});`;
@@ -439,7 +492,7 @@
     const g = mermaidIn(src), have = new Set(state.items.filter((i) => i.type === 'node' && !i.deleted).map((i) => i.name));
     const ys = state.items.filter((i) => i.type === 'node' && !i.deleted).map((i) => i.y);
     const below = ys.length ? Math.min(...ys) - spacing : 0;
-    for (const n of layout(g, spacing)) if (!have.has(n.name)) state.items.push({ type: 'node', dirty: true, lead: '', name: n.name, label: n.label, opts: SHAPE_OPTS[n.shape], x: n.x, y: n.y + below });
+    for (const n of layout(g, spacing)) if (!have.has(n.name)) state.items.push({ type: 'node', dirty: true, lead: '', name: n.name, label: n.label, opts: SHAPE_OPTS[n.shape], at: true, x: n.x, y: n.y + below });
     for (const e of g.edges) state.items.push({ type: 'edge', dirty: true, lead: '', from: e.from, to: e.to, arrow: e.arrow, opts: [], label: e.label, at: '' });
     return g;
   }
@@ -447,17 +500,73 @@
   // the dialog: an SVG canvas in cm (y up), a tool bar, the selection's label, code kept, Mermaid
   const NS = 'http://www.w3.org/2000/svg';
   const svgEl = (tag, attrs = {}) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
+  // a label as TeX sets it, near enough to read: the logos, `$…$` in italics, other commands and
+  // braces dropped for their text; `[text, dx, dy, size]` runs (em)
+  const LOGO = { TeX: [['T'], ['E', -0.17, 0.22], ['X', -0.12, -0.22]] };
+  LOGO.LaTeX = [['L'], ['A', -0.36, -0.2, 0.7], ['T', -0.15, 0.2], ...LOGO.TeX.slice(1)];
+  const runs = (label) => {
+    const out = [];
+    let italic = false;
+    for (const [m, cs, sym] of (label ?? '').matchAll(/\\([A-Za-z]+)\s*(?:\{\})?|\\(.)|[^\\${}~]+|./g)) {
+      if (cs) out.push(...(LOGO[cs] ?? []).map(([t, dx = 0, dy = 0, size = 1]) => [t, dx, dy, size, italic]));
+      else if (m === '$') italic = !italic;
+      else if (m === '~' || sym === '\\' || sym === ',') out.push([' ']);
+      else if (sym) out.push([sym, 0, 0, 1, italic]);
+      else if (!'{}'.includes(m)) out.push([m, 0, 0, 1, italic]);
+    }
+    return out;
+  };
+  const plain = (label) => runs(label).map((r) => r[0]).join('');
+  function setLabel(t, label) {
+    for (const [text, dx, dy, size, italic] of runs(label)) {
+      const span = Object.assign(svgEl('tspan'), { textContent: text });
+      if (dx) span.setAttribute('dx', `${dx}em`);
+      if (dy) span.setAttribute('dy', `${dy}em`);
+      if (size && size !== 1) span.setAttribute('font-size', `${size}em`);
+      if (italic) span.setAttribute('font-style', 'italic');
+      t.append(span);
+    }
+    return t;
+  }
   function drawing(s, view, ctx) {
     const state = parse(s.body), grid = s.grid || 0.5, run = new Map((s.nodes ?? []).map((n) => [n.name, n]));
-    // a node the run put elsewhere than its text says (a scope, a loop) is not plain: code
-    for (const it of state.items) { const r = run.get(it.name); if (it.type === 'node' && r?.x != null && Math.hypot(r.x - it.x, r.y - it.y) > 0.05) it.type = 'code'; }
+    // the picture's options: the style every node takes, the distance between relative ones
+    const pic = new Map(opts(s.options).map((o) => { const i = o.indexOf('='); return i < 0 ? [o, ''] : [o.slice(0, i).trim(), o.slice(i + 1).trim().replace(/^\{([^]*)\}$/, '$1')]; }));
+    const style = ['every node/.style', 'every node/.append style', 'nodes'].flatMap((k) => opts(pic.get(k)));
+    const apart = (d) => { const [v, h = v] = (d ?? '1cm').split(/\s+and\s+/).map(cm); return [h, v]; };
+    const distance = apart(pic.get('node distance'));
     let tool = 'select', arrow = '->', sel = null, pending = null, box = null;
     const live = () => state.items.filter((i) => !i.deleted);
     const own = () => live().filter((i) => i.type === 'node');
+    const said = new Map(state.items.filter((i) => i.name).map((i) => [i.name, i.label]));
     // the nodes the run made that no statement here edits: read-only where the run placed them
     const fixed = () => [...run.values()].filter((n) => n.x != null && !own().some((o) => o.name === n.name));
-    const nodes = () => [...own(), ...fixed().map((n) => ({ ...n, fixed: true, label: n.name }))];
-    const size = (n) => { const r = run.get(n.name); return r?.w != null && !n.dirty ? [r.w, r.h] : n.coordinate ? [0.15, 0.15] : [Math.max(0.6, 0.19 * (n.label || ' ').length + 0.3), 0.6]; };
+    const nodes = () => [...own(), ...fixed().map((n) => ({ ...n, fixed: true, label: said.get(n.name) ?? n.name }))];
+    // the run's size while the label is the text's, else one from the label's length
+    const size = (n) => { const r = run.get(n.name); return r?.w != null && (n.label === undefined || n.label === said.get(n.name)) ? [r.w, r.h] : n.coordinate ? [0.15, 0.15] : [Math.max(0.6, 0.19 * plain(n.label || ' ').length + 0.3), 0.6]; };
+    /** Relative nodes where TikZ puts them, from where their reference is now: they follow a drag. */
+    const settle = () => {
+      const by = new Map([...run].filter(([, r]) => r.x != null));
+      for (const n of own()) {
+        const p = n.place, r = p && by.get(p.of);
+        if (p) {
+          const [dx, dy] = p.dir, [h, v] = p.dist ? apart(p.dist) : distance, [rw, rh] = r ? size(r) : [], [w, ht] = size(n);
+          n.lost = !r || h == null || v == null;
+          if (!n.lost) {
+            const onGrid = p.centers || pic.has('on grid'), len = p.centers ? Math.hypot(dx, dy) : 1;
+            n.x = r.x + dx * (p.centers ? distance[1] / len : h + (onGrid ? 0 : (rw + w) / 2));
+            n.y = r.y + dy * (p.centers ? distance[1] / len : v + (onGrid ? 0 : (rh + ht) / 2));
+          }
+        }
+        by.set(n.name, n);
+      }
+    };
+    settle();
+    // a node TikZ puts elsewhere than the canvas would (a scope, a loop, a key it does not read) is code
+    for (const it of own()) {
+      const r = run.get(it.name);
+      if (r?.x != null ? Math.hypot(r.x - it.x, r.y - it.y) > 0.05 : it.lost) it.type = 'code';
+    }
     const snap = (v) => Math.round(v / grid) * grid;
     const root = el('div', 'tv-draw');
     const bar = el('div', 'tv-tools');
@@ -503,7 +612,7 @@
       if (e.target !== svg && !e.target.classList.contains('tv-grid')) return;
       if (tool !== 'rectangle' && tool !== 'circle') { sel = null; pending = null; return draw(); }
       const [x, y] = at(e).map(snap);
-      add({ type: 'node', name: fresh('n'), label: 'Node', opts: SHAPE_OPTS[tool], x, y });
+      add({ type: 'node', name: fresh('n'), label: 'Node', opts: SHAPE_OPTS[tool], at: true, x, y });
       sel = state.items[state.items.length - 1];
       tool = 'select';
       draw(true);
@@ -515,11 +624,20 @@
       sel = n;
       const [x0, y0] = at(e), [nx, ny] = [n.x, n.y];
       try { svg.setPointerCapture(e.pointerId); } catch { /* a synthetic pointer */ }
-      svg.onpointermove = (ev) => { const [x, y] = at(ev); n.x = snap(nx + x - x0); n.y = snap(ny + y - y0); n.dirty ||= n.x !== nx || n.y !== ny; draw(); };
+      svg.onpointermove = (ev) => {
+        const [x, y] = at(ev);
+        n.x = snap(nx + x - x0); n.y = snap(ny + y - y0);
+        if (n.x === nx && n.y === ny) return;
+        // moved: placed where it was dropped, no longer relative to another
+        if (n.place) { n.opts = n.opts.filter((o) => o !== n.place.opt); n.place = null; }
+        n.at = n.dirty = true;
+        draw();
+      };
       svg.onpointerup = () => { svg.onpointermove = svg.onpointerup = null; draw(true); };
       draw();
     };
     function draw(refit = false) {
+      settle();
       for (const b of bar.querySelectorAll('[data-tool]')) b.classList.toggle('on', b.dataset.tool === tool);
       const all = nodes(), by = new Map(all.map((n) => [n.name, n]));
       if (refit || !box) {
@@ -556,12 +674,13 @@
         out.push(g);
       }
       for (const n of all) {
-        const [w, h] = size(n), shape = shapeOf(n);
-        const g = svgEl('g', { class: `tv-node${n.fixed ? ' fixed' : ''}${n.opts?.includes('draw') || n.fixed ? '' : ' bare'}${sel === n ? ' on' : ''}${pending === n.name ? ' pending' : ''}` });
+        const look = [...style, ...n.opts ?? []], [w, h] = size(n), shape = shapeOf({ opts: look, shape: run.get(n.name)?.shape });
+        const drawn = look.some((o) => /^draw\b/.test(o)) || n.fixed;
+        const g = svgEl('g', { class: `tv-node${n.fixed ? ' fixed' : ''}${drawn ? '' : ' bare'}${sel === n ? ' on' : ''}${pending === n.name ? ' pending' : ''}` });
         g.append(shape === 'circle' ? svgEl('circle', { cx: n.x, cy: -n.y, r: Math.max(w, h) / 2 })
           : svgEl('rect', { x: n.x - w / 2, y: -n.y - h / 2, width: w, height: h, rx: shape === 'rounded' ? 0.15 : 0 }));
-        g.append(Object.assign(svgEl('text', { x: n.x, y: -n.y }), { textContent: n.coordinate ? '' : n.label }));
-        if (n.fixed) g.append(Object.assign(svgEl('title'), { textContent: `${n.name}: made by code (line ${n.line + 1}), kept as it is` }));
+        g.append(setLabel(svgEl('text', { x: n.x, y: -n.y }), n.coordinate ? '' : n.label));
+        if (n.fixed) g.append(Object.assign(svgEl('title'), { textContent: `${n.name}: made by code, kept as it is` }));
         drag(g, n);
         out.push(g);
       }
@@ -938,7 +1057,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-canvas { width: 100%; max-height: 55vh; background: var(--tv-sunk); border: 1px solid var(--tv-border); border-radius: 8px; touch-action: none; color: var(--tv-fg); font-family: ui-sans-serif, system-ui, sans-serif; }
 .tv-grid { stroke: var(--tv-border); stroke-width: .01; fill: none; }
 .tv-canvas text { font-size: .32px; text-anchor: middle; dominant-baseline: central; fill: currentColor; pointer-events: none; }
-.tv-node { cursor: grab; } .tv-node rect, .tv-node circle { fill: var(--tv-bg); stroke: currentColor; stroke-width: .03; }
+.tv-node { cursor: grab; } .tv-node text { font: .32px var(--serif, Georgia, serif); } .tv-node rect, .tv-node circle { fill: var(--tv-bg); stroke: currentColor; stroke-width: .03; }
 .tv-node.bare rect, .tv-node.bare circle { stroke-dasharray: .04 .06; stroke-width: .015; }
 .tv-node.fixed { cursor: not-allowed; color: var(--tv-muted); } .tv-node.fixed rect, .tv-node.fixed circle { stroke-dasharray: .1 .07; }
 .tv-node.on rect, .tv-node.on circle, .tv-node.pending rect, .tv-node.pending circle { stroke: var(--tv-accent); stroke-width: .06; }

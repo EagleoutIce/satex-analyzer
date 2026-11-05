@@ -54,7 +54,7 @@ impl TypePlugin for Tikz {
         let (title, drawing) = match super::body(cx.analysis, cx.doc, cx.path, cx.pos.line, ENV, true) {
             Some(p) => (
                 "Edit drawing",
-                json!({ "range": p.range, "body": super::slice(cx.doc, p.range), "nodes": nodes(cx, &p) }),
+                json!({ "range": p.range, "body": super::slice(cx.doc, p.range), "options": options(cx.doc, &p), "nodes": nodes(cx, &p) }),
             ),
             None => {
                 let new = super::blank(cx, ENV, "tikz")?;
@@ -82,14 +82,22 @@ fn wrap(body: &str) -> String {
     format!("\\begin{{{ENV}}}\n  {body}\\end{{{ENV}}}")
 }
 
+/// The picture's options (`every node/.style`, `node distance`), which the canvas applies.
+fn options(doc: &Text, p: &super::Body) -> String {
+    let start = lsp_types::Position::new(p.lines.0.saturating_sub(1), 0);
+    let head = super::slice(doc, lsp_types::Range { start, end: p.range.start });
+    let head = head.rsplit_once(&format!("\\begin{{{ENV}}}")).map_or("", |(_, o)| o.trim());
+    head.strip_prefix('[').and_then(|o| o.strip_suffix(']')).unwrap_or_default().trim().to_string()
+}
+
 /// The nodes the run made in the picture: name, shape, and where pgf put each (cm) when the
 /// run computed it, last definition winning.
 fn nodes(cx: &Cx, p: &super::Body) -> Vec<Json> {
     let a = cx.analysis;
-    let Some(file) = super::super::type_at::file_of(a, cx.path) else { return Vec::new() };
-    let mut out: Vec<(String, [String; 3], u32)> = Vec::new();
+    let mut out: Vec<(String, [String; 3])> = Vec::new();
     for d in &a.facts.defs {
-        if d.span.file != file || d.span.line < p.lines.0 || d.span.line > p.lines.1 {
+        // pgf defines them in its own code: the run's order ties them to the picture
+        if d.node <= p.ids.0 || d.node >= p.ids.1 {
             continue;
         }
         let name = a.interner.name(d.name);
@@ -102,19 +110,18 @@ fn nodes(cx: &Cx, p: &super::Body) -> Vec<Json> {
         };
         let body = d.mac.as_ref().map(|m| crate::engine::tex::detokenize(&m.replacement_text, &a.interner));
         let at = out.iter().position(|(n, ..)| *n == node).unwrap_or_else(|| {
-            out.push((node, Default::default(), d.span.line));
+            out.push((node, Default::default()));
             out.len() - 1
         });
         out[at].1[kind] = body.unwrap_or_default();
-        out[at].2 = d.span.line;
     }
     out.into_iter()
-        .filter(|(n, [shape, ..], _)| !n.is_empty() && !shape.is_empty())
-        .map(|(name, [shape, np, nt], line)| {
+        .filter(|(n, [shape, ..])| !n.is_empty() && !shape.is_empty())
+        .map(|(name, [shape, np, nt])| {
             let place = place(&np, &nt);
             let cm = |v: f64| (v / PT_PER_CM * 1000.0).round() / 1000.0;
             let [x, y, w, h] = place.map_or([None; 4], |v| v.map(|v| Some(cm(v))));
-            json!({ "name": name, "shape": shape, "x": x, "y": y, "w": w, "h": h, "line": line - 1 })
+            json!({ "name": name, "shape": shape, "x": x, "y": y, "w": w, "h": h })
         })
         .collect()
 }

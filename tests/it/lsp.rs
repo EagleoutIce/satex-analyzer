@@ -3688,6 +3688,28 @@ fn tikz_plugin_shows_the_runs_nodes() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Nodes placed relative to others (`right of=`, `right=of`): the run's centers and sizes for
+/// each, the picture's options for the canvas (`every node/.style`, `node distance`).
+#[test]
+fn tikz_plugin_places_relative_nodes() {
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\usetikzlibrary{positioning}\n\\begin{document}\n\\begin{tikzpicture}[node distance=2.4cm, every node/.style={draw, rounded corners}]\n  \\node (tex) {\\TeX{} file};\n  \\node (satex) [right of=tex] {SaTeX};\n  \\node (out) [right=of satex] {findings};\n  \\draw[->] (tex) -- (satex);\n\\end{tikzpicture}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("tikz-rel", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 5, 3);
+    let views = at(&mut server, &uri, "satex/view", 6, 3);
+    let draw = &views.as_array().unwrap().iter().find(|v| v["plugin"] == "tikz").expect("a drawing")["sections"][0];
+    assert_eq!(draw["options"], "node distance=2.4cm, every node/.style={draw, rounded corners}", "{draw}");
+    let node = |name: &str| draw["nodes"].as_array().unwrap().iter().find(|n| n["name"] == name).cloned();
+    let get = |name: &str| node(name).unwrap_or_else(|| panic!("{name}: {draw}"));
+    let (tex, satex, out) = (get("tex"), get("satex"), get("out"));
+    let x = |n: &Value| n["x"].as_f64().unwrap();
+    let w = |n: &Value| n["w"].as_f64().unwrap();
+    // `right of`: centers a node distance apart; `right=of`: borders a node distance apart
+    assert!(x(&tex).abs() < 0.01 && (x(&satex) - 2.4).abs() < 0.01, "{draw}");
+    assert!((x(&out) - w(&out) / 2.0 - x(&satex) - w(&satex) / 2.0 - 2.4).abs() < 0.01, "{draw}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// Without tikz the new picture loads it; `enabled: false` takes lens, view and action away.
 #[test]
 fn tikz_plugin_new_drawing_and_off() {

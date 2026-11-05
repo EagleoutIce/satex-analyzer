@@ -44,6 +44,33 @@ del.items[0].deleted = true;
 del.items[2].deleted = true;
 assert.ok(!emit(del).includes('(a)') && emit(del).includes('\\foreach'));
 
+// nodes placed relative to others: the text's order of name and options, no `at`, a label in braces
+const rel = `
+  \\node (tex) {\\TeX{} file};
+  \\node (satex) [right of=tex] {SaTeX};
+  \\node (out) [above right=5mm and 1cm of satex, fill=red] {findings};
+  \\node[right=of a, left=of b] (two) {x};
+  \\node (dup) at (1,2) [below of=tex] {y};
+`;
+const r = parse(rel);
+assert.equal(emit(r), rel);
+assert.deepEqual(r.items.map((i) => i.type), ['node', 'node', 'node', 'code', 'code'], 'two placements, or one with `at`: code');
+const [tex, sat, outn] = r.items;
+assert.deepEqual([tex.label, tex.at, tex.place, tex.x, tex.y], ['\\TeX{} file', false, null, 0, 0]);
+assert.deepEqual([sat.place.dir, sat.place.of, sat.place.centers], [[1, 0], 'tex', true]);
+assert.deepEqual([outn.place.dir, outn.place.of, outn.place.dist, outn.opts], [[1, 1], 'satex', '5mm and 1cm', ['above right=5mm and 1cm of satex', 'fill=red']]);
+// a relabeled relative node stays relative; a moved one is placed where it was dropped
+Object.assign(sat, { label: 'Tool', dirty: true });
+Object.assign(outn, { x: 3, y: 1, at: true, place: null, opts: ['fill=red'], dirty: true });
+assert.equal(emit(r), `
+  \\node (tex) {\\TeX{} file};
+  \\node[right of=tex] (satex) {Tool};
+  \\node[fill=red] (out) at (3,1) {findings};
+  \\node[right=of a, left=of b] (two) {x};
+  \\node (dup) at (1,2) [below of=tex] {y};
+`);
+assert.deepEqual(parse(emit(r)).items.map((i) => i.type), ['node', 'node', 'node', 'code', 'code']);
+
 // Mermaid: a 4-node flowchart, top-down, by rank
 const flow = `graph TD
   A[Start] --> B{Check}
