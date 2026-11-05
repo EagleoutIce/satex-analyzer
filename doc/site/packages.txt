@@ -8,6 +8,7 @@
 tikz listings minted scrartcl.cls scrreprt.cls scrbook.cls scrlayer-scrpage
 amsmath amssymb amsthm graphicx hyperref geometry xcolor babel fontenc inputenc
 booktabs float caption subcaption natbib multirow siunitx fancyhdr
+glossaries makeidx imakeidx cleveref enumitem biblatex
 
 # slides
 beamer.cls
