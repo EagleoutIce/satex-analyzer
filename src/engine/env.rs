@@ -2239,9 +2239,12 @@ fn hull_meaning(b: &Binding, typed: &Typed, reach: Reach) -> Hulled {
     hull_by(b, &|t| Some(text_hull(t, typed, reach))).unwrap_or((Meaning::Unknown, None))
 }
 
+/// How texts are hulled into one: `None` where they are refused.
+type TextHull<'a> = dyn Fn(&[&[Token]]) -> Option<Vec<Token>> + 'a;
+
 /// [`hull_meaning`] with the texts' hull `hull`: `None` where `b` is no
 /// such macro or `hull` refuses its texts.
-fn hull_by(b: &Binding, hull: &dyn Fn(&[&[Token]]) -> Option<Vec<Token>>) -> Option<Hulled> {
+fn hull_by(b: &Binding, hull: &TextHull<'_>) -> Option<Hulled> {
     let m = macro_hull(b, hull)?;
     Some(match b.may.as_deref().is_some_and(|m| m.contains(&Meaning::Undefined)) {
         true => (Meaning::Unknown, Some(vec![Meaning::Undefined, m].into())),
@@ -2254,7 +2257,7 @@ fn hull_by(b: &Binding, hull: &dyn Fn(&[&[Token]]) -> Option<Vec<Token>>) -> Opt
 /// with the same prefixes: widened, it stays one, which `\ifx` can still
 /// tell from other kinds. Its length is bounded only where all texts have
 /// one length: a widened write that repeats changes it.
-fn macro_hull(b: &Binding, hull: &dyn Fn(&[&[Token]]) -> Option<Vec<Token>>) -> Option<Meaning> {
+fn macro_hull(b: &Binding, hull: &TextHull<'_>) -> Option<Meaning> {
     let members = b.may.as_deref().unwrap_or(std::slice::from_ref(&b.meaning));
     let members: Vec<&Meaning> = members.iter().filter(|m| **m != Meaning::Undefined).collect();
     let mut first: Option<&crate::engine::tex::MacroDef> = None;
@@ -3123,7 +3126,7 @@ mod tests {
                 // Only a negative member brings the sign, then for both.
                 let (neg, int) =
                     (a.starts_with('-') || b.starts_with('-'), |s: &str| s.split('.').next().map(str::to_owned));
-                let other = |s: &str| if s.starts_with('-') { s[1..].to_owned() } else { format!("-{s}") };
+                let other = |s: &str| s.strip_prefix('-').map_or_else(|| format!("-{s}"), str::to_owned);
                 assert_eq!(p.is_match(&other(b)), neg && int(a) != int(b), "{a} | {b}: {p}");
             }
         }

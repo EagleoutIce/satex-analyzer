@@ -909,7 +909,7 @@ fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Opt
         return None;
     }
     let (what, ext, topic) = if bibtex { ("BibTeX", "bst", "bst") } else { ("biblatex", "bbx", "biblatex style") };
-    let mut md = heading(&format!("{what} style"), &word);
+    let mut md = heading(&format!("{what} style"), word);
     let file = format!("{word}.{ext}");
     let shipped =
         load.and_then(|l| l.path.as_deref()).and_then(|p| Path::new(p).parent()).map(|d| d.join("bbx").join(&file));

@@ -290,7 +290,7 @@ fn bar(cx: &Cx, num: Num) -> Option<String> {
     })?;
     let eighths = ((num.lo as f64 / whole as f64) * (BAR * 8) as f64).round().max(1.0) as usize;
     let mut bar = "█".repeat(eighths / 8);
-    if eighths % 8 > 0 {
+    if !eighths.is_multiple_of(8) {
         bar.push(['▏', '▎', '▍', '▌', '▋', '▊', '▉'][eighths % 8 - 1]);
     }
     let pad = BAR.saturating_sub(bar.chars().count());

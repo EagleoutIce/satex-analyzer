@@ -10964,7 +10964,7 @@ will look undefined",
             };
             return Some((rest, Some(t)));
         };
-        let (mut rests, mut others): (Vec<Rc<[Token]>>, Vec<Rc<[Token]>>) = (Vec::new(), Vec::new());
+        let (mut rests, mut others) = (Vec::<Rc<[Token]>>::new(), Vec::<Rc<[Token]>>::new());
         for text in texts {
             let known = text.iter().all(|x| self.hole(*x).is_none());
             let tail = text.len().checked_sub(k).filter(|&at| !exact || at == 0);

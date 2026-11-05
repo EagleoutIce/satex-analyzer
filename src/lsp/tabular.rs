@@ -223,11 +223,11 @@ pub fn parse_spec(spec: &str) -> (Vec<Col>, Vec<String>) {
                 i += c.len_utf8();
                 let mut col = Col { align: c.to_string(), pre: std::mem::take(&mut pre), ..Default::default() };
                 let (open, wants) = (s[i..].chars().next(), matches!(c, 'p' | 'm' | 'b' | 'w' | 'W'));
-                if (wants && open == Some('{')) || (c == 'S' && open == Some('[')) {
-                    if let Some((a, e)) = arg(i) {
-                        col.arg = a;
-                        i = e;
-                    }
+                if ((wants && open == Some('{')) || (c == 'S' && open == Some('[')))
+                    && let Some((a, e)) = arg(i)
+                {
+                    col.arg = a;
+                    i = e;
                 }
                 cols.push(col);
                 seps.push(String::new());
@@ -470,12 +470,13 @@ fn aligned(rows: &[Row]) -> bool {
 
 /// The row's text: its own while its cells are as it has them.
 fn row_text(r: &Row, widths: &[usize], style: &Style) -> String {
-    if !r.raw.is_empty() {
-        if let Some(old) = parse_row(&r.raw) {
-            if old.cells == r.cells && old.end == r.end && old.comment == r.comment {
-                return r.raw.clone();
-            }
-        }
+    if !r.raw.is_empty()
+        && let Some(old) = parse_row(&r.raw)
+        && old.cells == r.cells
+        && old.end == r.end
+        && old.comment == r.comment
+    {
+        return r.raw.clone();
     }
     let amp = if style.spaced { " & " } else { "&" };
     let mut out = String::new();

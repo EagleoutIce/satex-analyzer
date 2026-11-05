@@ -1440,9 +1440,7 @@ impl Mouth {
         }
         let mut next = self.clone();
         next.pos = at;
-        if next.peek_at(0).is_none() {
-            return None;
-        }
+        next.peek_at(0)?;
         next.end_line();
         (next.col == 1).then(|| next.line_mark()).flatten()
     }
