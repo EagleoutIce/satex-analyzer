@@ -714,7 +714,9 @@ fn onward(m: &mut Machine, tokens: &[Token], span: Span, list: &str) {
     let Some((level, end)) = group_span(tokens, at) else { return };
     let Some((title, _)) = group_span(tokens, end) else { return };
     let level = characters(&level).trim().to_string();
-    let heads = m.out.interner.lookup(&format!("{level}mark")).is_some_and(|s| m.env.is_defined(s));
+    // an empty level would ask for the primitive `\mark`: an index or glossary line is no heading
+    let heads =
+        !level.is_empty() && m.out.interner.lookup(&format!("{level}mark")).is_some_and(|s| m.env.is_defined(s));
     if !heads && list != "toc" {
         return;
     }

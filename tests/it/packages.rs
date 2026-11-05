@@ -527,3 +527,22 @@ fn soul_spaces_a_text_with_a_command_in_it() {
         "\\documentclass{article}\\usepackage{soul}\\begin{document}\\so{\\textbackslash ab}\\end{document}",
     );
 }
+
+/// Only a heading is a section: an index or glossary line written onward,
+/// which has no level of its own, is none (`\mark` is a primitive, so an
+/// empty level would always find its running head).
+#[test]
+fn index_and_glossary_lines_are_no_sections() {
+    let analysis = crate::support::analyze_latex(
+        "\\documentclass{article}\n\\usepackage{makeidx}\\makeindex\n\\usepackage{glossaries}\\makenoidxglossaries\n\\newglossaryentry{tex}{name={TeX},description={a system}}\n\\begin{document}\n\\section{Terms}\n\\gls{tex} and \\index{macro}a macro.\n\\printnoidxglossaries\n\\end{document}\n",
+    );
+    let sections: Vec<&str> = analysis
+        .facts
+        .occurrences
+        .iter()
+        .filter(|o| o.kind == satex::engine::builtins::OccKind::Section)
+        .map(|o| o.key.as_str())
+        .collect();
+    assert!(sections.contains(&"Terms"), "{sections:?}");
+    assert!(!sections.contains(&"page"), "{sections:?}");
+}
