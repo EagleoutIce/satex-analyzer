@@ -54,7 +54,7 @@ case $tier in
     quick|fast|measure) set_=$(comm -23 <(echo "$all") <(echo "$skip")) ;;&
     measure) set_=$(printf '%s\n' "$set_" "${slow[@]}" | sort -u) ;;
     slow) set_=$(printf '%s\n' "${slow[@]}") ;;
-    quick) timed=$(join -a1 -1 1 -2 2 -o 0,2.1 -e - <(echo "$set_") <(sort -k2 tests/times.txt 2>/dev/null))
+    quick) timed=$(join -a1 -1 1 -2 2 -o 0,2.1 -e - <(echo "$set_" | sort) <(sort -k2,2 tests/times.txt 2>/dev/null))
         set_=$({ awk -v q="${QUICK_SECONDS:-1}" '$2 == "-" || $2 < q { print $1 }' <<<"$timed"
                  awk '$2 != "-" { m = $1; sub(/::.*/, "", m); print m, $2, $1 }' <<<"$timed" |
                      sort -k1,1 -k2,2g | awk -v k="${QUICK_MIN:-1}" 'n[$1]++ < k { print $3 }'; } | sort -u) ;;
@@ -68,7 +68,7 @@ shards=${SHARDS:-$([ "$tier" = quick ] && echo 2 || echo 4)}
 threads=${THREADS:-3}
 mkdir -p "${CARGO_TARGET_DIR:-target}"; out=$(mktemp -d -p "${CARGO_TARGET_DIR:-target}" tier.XXXXXX)
 # Longest first onto the least loaded shard; unmeasured tests count a second.
-join -a1 -1 1 -2 2 -o 0,2.1 -e 1 <(echo "$set_") <(sort -k2 tests/times.txt 2>/dev/null) | sort -k2 -rn |
+join -a1 -1 1 -2 2 -o 0,2.1 -e 1 <(echo "$set_" | sort) <(sort -k2,2 tests/times.txt 2>/dev/null) | sort -k2 -rn |
     awk -v n="$shards" -v d="$out" '{ b = 1; for (i = 2; i <= n; i++) if (s[i] < s[b]) b = i; s[b] += $2; print $1 > (d "/" b ".list") }'
 # Runs the listed tests; reruns the unfinished ones of a killed process,
 # first with the same threads, then one at a time.
@@ -107,7 +107,7 @@ fi
 if [ "$tier" = measure ]; then
     # This run's seconds, then the old ones of tests it did not run.
     sed -nE 's/^test (\S+) \.\.\. \S+ <([0-9.]+)s>$/\2 \1/p' "$out/results" >"$out/new"
-    { cat "$out/new"; join -v2 -1 2 -2 2 -o 2.1,2.2 <(sort -k2 "$out/new") <(sort -k2 tests/times.txt 2>/dev/null); } | sort -k2 >tests/times.txt
+    { cat "$out/new"; join -v2 -1 2 -2 2 -o 2.1,2.2 <(sort -k2 "$out/new") <(sort -k2,2 tests/times.txt 2>/dev/null); } | sort -k2 >tests/times.txt
     awk -v s="${SLOW_SECONDS:-20}" '$1 >= s {print $2}' tests/times.txt | sort >tests/slow.txt
     echo "tests/times.txt: $(wc -l <tests/times.txt) tests, tests/slow.txt: $(wc -l <tests/slow.txt)"
 fi
