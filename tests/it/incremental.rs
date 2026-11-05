@@ -1,11 +1,11 @@
 //! A run resumed from a checkpoint after an edit says exactly what a full
-//! run of the edited document says ([`satex::machine::Checkpoints`]).
+//! run of the edited document says ([`satex::analysis::machine::Checkpoints`]).
 
 use crate::support::installed;
-use satex::machine::{Analysis, Checkpoints, Machine};
+use satex::analysis::machine::{Analysis, Checkpoints, Machine};
 use std::path::Path;
 
-fn at(analysis: &Analysis, span: satex::tex::Span) -> String {
+fn at(analysis: &Analysis, span: satex::engine::tex::Span) -> String {
     format!("{}:{}:{}", analysis.file_name(span.file), span.line, span.col)
 }
 
@@ -137,4 +137,127 @@ fn a_resumed_run_says_what_a_full_run_says() {
         assert_eq!(differs, None, "after replacing {from} by {to} in {file}, resumed at {at:?}");
     }
     assert!(resumed >= 5, "only {resumed} runs resumed from a checkpoint");
+}
+
+/// A build's rerun, after the `.aux` changed, resumes on the line that
+/// opens the document: the preamble before it read nothing that changed.
+#[test]
+fn a_rerun_resumes_where_the_document_begins() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-rerun");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let text = "\\documentclass{article}\n\\usepackage{xcolor}\n\\begin{document}\n\\tableofcontents\n\\section{One}\\label{one}\nSee \\ref{one}.\n\\end{document}\n";
+    std::fs::write(&main, text).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    let analysis = Machine::build(&mut checkpoints, text, &main, &cfg, false);
+    assert!(analysis.build_runs > 1, "the build ran once");
+    let opens = 1 + text.lines().position(|l| l.starts_with("\\begin{document}")).unwrap() as u32;
+    assert_eq!(checkpoints.resumed.map(|(_, line)| line), Some(opens), "{} runs", analysis.build_runs);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A known document is one path however often the editor builds it: the
+/// second build reads the files the first left, which hold what it writes.
+#[test]
+fn a_known_document_built_again_typesets_one_path() {
+    if !installed() {
+        return;
+    }
+    let main = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/paper.tex");
+    let text = std::fs::read_to_string(&main).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    for build in 1..=2 {
+        let analysis = Machine::build(&mut checkpoints, &text, &main, &cfg, true);
+        let rows = satex::queries::query::run(
+            &analysis,
+            satex::queries::query::Query::Typeset,
+            &satex::queries::query::Filter::Always,
+        );
+        // A choice is `{a|b}` in the notation's private-use brackets.
+        let optional: Vec<&str> = rows
+            .iter()
+            .filter(|r| r["kind"] == "paragraph")
+            .filter_map(|r| r["marked"].as_str())
+            .filter(|m| m.contains("\u{E000}{\u{E001}"))
+            .collect();
+        assert!(optional.is_empty(), "build {build}: {optional:?}");
+    }
+}
+
+/// An edit inside a body read as one argument (a beamer frame) resumes, the
+/// next time, inside the document before that body: the run on the way to
+/// the edited line keeps a checkpoint shortly before it, and says what a
+/// full run says.
+#[test]
+fn an_edit_in_a_collected_body_resumes_before_it() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-frame");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let lines = [
+        "\\documentclass{article}",
+        "\\long\\def\\slide#1\\endslide{#1\\par}",
+        "\\begin{document}",
+        "\\slide",
+        "First slide, line one.",
+        "\\endslide",
+        "Between the slides.",
+        "",
+        "\\slide",
+        "Second slide, line one.",
+        "Second slide, line two.",
+        "\\endslide",
+        "\\end{document}",
+    ];
+    let body = 1 + lines.iter().position(|l| l.starts_with("\\begin{document}")).unwrap() as u32;
+    let edited = 1 + lines.iter().position(|l| l.starts_with("Second slide, line one")).unwrap();
+    let mut text = lines.join("\n") + "\n";
+    std::fs::write(&main, &text).unwrap();
+    let cfg = crate::support::config();
+    // as the editor builds it: the build's `.aux` decides what `\begin{document}` reads
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    Machine::build(&mut checkpoints, &text, &main, &cfg, true);
+    for edit in 1..=2 {
+        let mut now = lines.to_vec();
+        let line = format!("Second slide, line one {edit}.");
+        now[edited - 1] = &line;
+        text = now.join("\n") + "\n";
+        std::fs::write(&main, &text).unwrap();
+        let incremental = Machine::build(&mut checkpoints, &text, &main, &cfg, true);
+        let at = checkpoints.resumed.clone();
+        let full = Machine::build(&mut Checkpoints::new(&cfg), &text, &main, &cfg, true);
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "edit {edit}, resumed at {at:?}");
+    }
+    let at = checkpoints.resumed.map(|(_, line)| line);
+    assert!(at.is_some_and(|l| l > body && l < edited as u32), "resumed at {at:?}, the body opens on line {body}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A package's look-ahead (`\usepackage`'s `\@ifnextchar[`) that holds the
+/// `\begin` of the next line still leaves a restart point before the line
+/// that opens the document: the build's rerun does not load the package again.
+#[test]
+fn a_rerun_after_a_package_with_look_ahead_resumes_where_the_document_begins() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-rerun-graphicx");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let text = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\section{One}\\label{one}\nSee \\ref{one}.\n\\end{document}\n";
+    std::fs::write(&main, text).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    let analysis = Machine::build(&mut checkpoints, text, &main, &cfg, false);
+    assert!(analysis.build_runs > 1, "the build ran once");
+    let opens = 1 + text.lines().position(|l| l.starts_with("\\begin{document}")).unwrap() as u32;
+    assert_eq!(checkpoints.resumed.map(|(_, line)| line), Some(opens), "{} runs", analysis.build_runs);
+    let _ = std::fs::remove_dir_all(&dir);
 }

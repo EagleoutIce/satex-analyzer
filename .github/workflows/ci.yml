@@ -82,7 +82,7 @@ jobs:
     timeout-minutes: 45
     # The TeX Live image already holds a full installation, which the
     # engine-dependent tests need; installing one with apt takes minutes.
-    container: texlive/texlive:latest
+    container: texlive/texlive:TL2025-historic
     strategy:
       fail-fast: false
       matrix:
@@ -90,7 +90,7 @@ jobs:
     steps:
       # Lua and LPeg are compiled from C; the TeX Live image has no compiler.
       - name: Install a C toolchain
-        run: apt-get update && apt-get install -y --no-install-recommends build-essential
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential poppler-utils
 
       - uses: actions/checkout@v5
 
@@ -120,6 +120,14 @@ jobs:
           SATEX_REQUIRE_TEX: '1'
         run: bash scripts/ci-test.sh lib
 
+      # The wiki, README and schema are generated from doc/src and the code:
+      # a change that leaves a generated page behind fails here, never later.
+      - name: Generated docs are up to date
+        if: matrix.shard == 'compliance'
+        run: |
+          cargo build --locked --profile ci --features doc --bin satex --bin satex-doc
+          target/ci/satex-doc --check
+
       # The known-divergence ledger: fails on purpose while any of its ~61
       # entries is open.  Reported here as its own shard, non-blocking, so
       # the count is visible on every run without turning the job red.
@@ -129,6 +137,31 @@ jobs:
         env:
           SATEX_REQUIRE_TEX: '1'
         run: bash scripts/ci-test.sh compliance
+
+  # The newest TeX Live, reported but not blocking: the main jobs pin
+  # TL2025-historic, and this shows how far satex is from the current kernel.
+  newest-texlive:
+    name: Test newest TeX Live (non-blocking)
+    needs: changes
+    if: (github.event_name == 'push' || github.event_name == 'pull_request') && needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    container: texlive/texlive:latest
+    steps:
+      - name: Install a C toolchain
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential poppler-utils
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: quick-linux
+          save-if: false
+          cache-on-failure: true
+      - name: Test
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: "bash scripts/ci-test.sh quick latex:: documents:: termination::"
 
   quick-other:
     name: Test ${{ matrix.os }}
@@ -200,7 +233,7 @@ jobs:
           SATEX_REQUIRE_TEX: '1'
         run: |
           cargo test --locked --profile ci --no-fail-fast --lib
-          cargo test --locked --profile ci --no-fail-fast --test it -- \
+          bash scripts/ci-test.sh quick \
             distribution_guard:: \
             engine:: \
             engine_truth:: \
@@ -257,7 +290,7 @@ jobs:
         tl: [current, TL2022, TL2019]
         include:
           - tl: current
-            container: texlive/texlive:latest
+            container: texlive/texlive:TL2025-historic
           - tl: TL2022
             container: texlive/texlive:TL2022-historic
           - tl: TL2019
@@ -265,7 +298,7 @@ jobs:
         shard: ['1/8', '2/8', '3/8', '4/8', '5/8', '6/8', '7/8', '8/8', compliance]
     steps:
       - name: Install a C toolchain
-        run: apt-get update && apt-get install -y --no-install-recommends build-essential
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential poppler-utils
 
       - uses: actions/checkout@v5
 
@@ -355,7 +388,7 @@ jobs:
           SATEX_REQUIRE_TEX: '1'
         run: |
           cargo test --locked --profile ci --no-fail-fast --lib
-          cargo test --locked --profile ci --no-fail-fast --test it -- \
+          bash scripts/ci-test.sh quick \
             distribution_guard:: \
             engine:: \
             engine_truth:: \
@@ -426,6 +459,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Links that answered stay checked for a day, so a slow host costs one run.
+      - name: Link cache
+        uses: actions/cache@v4
+        with:
+          path: .lycheecache
+          key: lychee-${{ github.sha }}
+          restore-keys: lychee-
+
       - name: Lychee
         uses: lycheeverse/lychee-action@v2
         env:
@@ -438,6 +479,7 @@ jobs:
           # (see lychee.toml).
           args: >-
             --config lychee.toml
+            --cache --max-cache-age 1d
             --no-progress
             --remap 'https://github\.com/EagleoutIce/satex-analyzer/blob/main/([^#]*)(#.*)? file://${{ github.workspace }}/$1'
             --remap '^https://mirrors\.ctan\.org/(.*)$ https://ctan.net/$1'

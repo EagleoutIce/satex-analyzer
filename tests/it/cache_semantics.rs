@@ -5,8 +5,8 @@
 
 use std::fmt::Write;
 
-use satex::format::SEMANTIC_VERSION;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::caches::format::SEMANTIC_VERSION;
 
 /// The semantic version and the digest it was checked in with.
 const GOLDEN: (u32, u64) = (1, 0xd758_66b5_2306_f2ec);
@@ -20,7 +20,7 @@ fn digest(analysis: &Analysis) -> u64 {
             "def {} {:?} {:?}",
             name(d.name),
             d.span,
-            d.mac.as_ref().map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+            d.mac.as_ref().map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         );
     }
     for d in &analysis.facts.diagnostics {

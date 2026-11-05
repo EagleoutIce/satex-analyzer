@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 
 use crate::support::analyze_latex as analyze;
 use crate::support::installed;
-use satex::builtins::OccKind;
-use satex::config::Config;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::engine::builtins::OccKind;
+use satex::project::config::Config;
 
 /// A document written to a directory of its own, beside the files it names;
 /// the lints read those files too, so the directory outlives the analysis.
@@ -50,7 +50,7 @@ fn places(analysis: &Analysis, kind: OccKind) -> Vec<(String, u32, u32)> {
 }
 
 fn findings(analysis: &Analysis, code: &str) -> Vec<(String, Option<String>)> {
-    satex::lint::lint(analysis)
+    satex::linter::lint(analysis)
         .into_iter()
         .filter(|record| record["code"] == code)
         .map(|record| {
@@ -125,6 +125,30 @@ fn citations_are_checked_against_the_bibitems_and_the_database() {
     cleanup("cite");
 }
 
+/// The unknown keys of one `\\cite` are one finding at that `\\cite`
+/// naming each of them: none hides another, and none is put at a name
+/// `\\cite` built from a key.
+#[test]
+fn every_unknown_key_of_one_cite_is_named() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_in(
+        "cites",
+        r"\documentclass{article}
+\begin{document}
+\cite{a,zz,b} \cite{qq,zz} \cite{zz}
+\bibliography{refs}
+\end{document}",
+        &[("refs.bib", "@book{a, title={A}}\n@book{b, title={B}}\n")],
+    );
+    let undefined: Vec<String> = findings(&analysis, "undefined-citation").into_iter().map(|(m, _)| m).collect();
+    assert_eq!(undefined.len(), 3, "{undefined:?}");
+    assert!(undefined.iter().all(|m| !m.contains("via")), "{undefined:?}");
+    assert!(undefined.iter().any(|m| m.contains("`qq`, `zz`")), "{undefined:?}");
+    cleanup("cites");
+}
+
 #[test]
 fn an_unreadable_database_keeps_citations_unjudged() {
     if !installed() {
@@ -163,7 +187,7 @@ fn csname_is_matched_to_the_interface_for_what_it_was_formed_for() {
 \csname foo\endcsname
 \end{document}";
     let fixes = |analysis: &Analysis| -> Vec<Option<String>> {
-        satex::lint::lint(analysis)
+        satex::linter::lint(analysis)
             .into_iter()
             .filter(|r| r["code"] == "primitive-tex-command" && r["name"] == "\\csname")
             .filter(|r| r["origin"] == "document")
@@ -292,7 +316,7 @@ fn microtype_is_recommended_only_for_justified_text_where_the_engine_supports_it
     ] {
         assert!(findings(&analyze(&quiet), "microtype-available").is_empty(), "{quiet}");
     }
-    let xetex = Config { engine: Some(satex::config::Engine::XeTeX), ..crate::support::config() };
+    let xetex = Config { engine: Some(satex::project::config::Engine::XeTeX), ..crate::support::config() };
     assert!(findings(&Machine::analyze(&source, None, &xetex), "microtype-available").is_empty());
 }
 
@@ -504,7 +528,7 @@ fn the_special_form_is_named_in_its_own_finding() {
 
 /// The interpreter can record the same content-stream operator twice under
 /// the same graph node (once directly, once by way of an `expanded` site):
-/// [`payloads`] in `src/lint/pdf.rs` keeps only the first.  Reverting that
+/// [`payloads`] in `src/linter/pdf.rs` keeps only the first.  Reverting that
 /// dedup makes this test fail with two findings instead of one.
 #[test]
 fn a_literal_recorded_twice_under_the_same_node_is_reported_once() {
@@ -525,7 +549,7 @@ fn a_literal_recorded_twice_under_the_same_node_is_reported_once() {
         .cloned()
         .expect("the run recorded the \\pdfliteral");
     let mut duplicate = duplicate;
-    duplicate.expanded = Some(satex::tex::Span::default());
+    duplicate.expanded = Some(satex::engine::tex::Span::default());
     analysis.facts.occurrences.push(duplicate);
     let unbalanced = findings(&analysis, "unbalanced-pdf-content");
     assert_eq!(unbalanced.len(), 1, "{unbalanced:?}");
@@ -533,7 +557,7 @@ fn a_literal_recorded_twice_under_the_same_node_is_reported_once() {
 
 #[test]
 fn content_stream_operators_skip_strings_and_dictionaries() {
-    use satex::plugin::pdf::{Operator, operators};
+    use satex::plugins::pdf::{Operator, operators};
     let ops = operators("q (a Q in a string) Tj /Span << /ActualText (EMC) >> BDC /OC /l1 BDC EMC EMC Q % Q\n");
     let names: Vec<&str> = ops.iter().map(Operator::name).collect();
     assert_eq!(names, ["q", "BDC", "BDC", "EMC", "EMC", "Q"]);
@@ -542,7 +566,7 @@ fn content_stream_operators_skip_strings_and_dictionaries() {
 
 #[test]
 fn bib_entries_skip_strings_and_comments() {
-    let entries = satex::plugin::bib::entries(
+    let entries = satex::plugins::bib::entries(
         "@comment{x}\n@String{a = b}\n@Article{one,\n title={@ not an entry}}\n@book ( two , )\n",
     );
     let keys: Vec<(&str, u32)> = entries.iter().map(|e| (e.key.as_str(), e.line)).collect();
@@ -660,8 +684,8 @@ fn a_bbl_file_has_no_findings_of_its_own() {
             ),
         ],
     );
-    let all = satex::lint::lint(&analysis);
-    let place = |r: &satex::query::Record| r["file"].as_str().unwrap_or_default().to_string();
+    let all = satex::linter::lint(&analysis);
+    let place = |r: &satex::queries::query::Record| r["file"].as_str().unwrap_or_default().to_string();
     assert!(!all.iter().any(|r| place(r).ends_with(".bbl")), "{all:?}");
     assert!(all.iter().any(|r| place(r).ends_with("bbl.tex")), "{all:?}");
     cleanup("bbl");

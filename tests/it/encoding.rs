@@ -5,13 +5,13 @@
 //! and `luatex -ini` print for the same input.
 
 use crate::support::{installed, last_body as body};
-use satex::cmd::{Command, Context, Format, Output};
-use satex::config::{Config, Encoding, Engine, Load, Texmf};
-use satex::machine::{Analysis, Machine};
-use satex::plugin::Kernel;
-use satex::render::Links;
-use satex::source;
-use satex::tex::Catcode;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::cli::{Command, Context, Format, Output};
+use satex::engine::source;
+use satex::engine::tex::Catcode;
+use satex::plugins::Kernel;
+use satex::project::config::{Config, Encoding, Engine, Load, Texmf};
+use satex::util::render::Links;
 
 /// U+03A4 GREEK CAPITAL LETTER TAU, the bytes `CE A4`.
 const TAU: &str = "\u{3a4}";
@@ -37,12 +37,12 @@ fn run(source: &str, engine: Engine) -> Analysis {
 /// Byte `n` of `text` as the engine prints the character it reads: a byte
 /// outside `' '`..`'~'` shows as `^^xx` (tex.web §§ 47-49).
 fn byte(text: &str, n: usize) -> String {
-    satex::tex::printable(char::from(text.as_bytes()[n]))
+    satex::engine::tex::printable(char::from(text.as_bytes()[n]))
 }
 
 /// Every byte of `text` as printed by the engine
 fn bytes_of(text: &str) -> String {
-    text.bytes().map(|b| satex::tex::printable(char::from(b))).collect()
+    text.bytes().map(|b| satex::engine::tex::printable(char::from(b))).collect()
 }
 
 /// What `satex tokens` prints for `text` under `engine`: every character

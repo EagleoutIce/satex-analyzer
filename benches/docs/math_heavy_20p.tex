@@ -1,0 +1,20 @@
+% Exercises: ~20 pages of generated math: theorems, aligned equations, labels, cross references, sums.
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb,amsthm,mathtools,hyperref,pgffor}
+\newtheorem{theorem}{Theorem}[section]\newtheorem{lemma}[theorem]{Lemma}\newtheorem{corollary}[theorem]{Corollary}
+\def\genblock#1{%
+ \begin{lemma}\label{lem:#1}For $n=#1$: $\sum_{i=1}^{n}i^{2}=\frac{n(n+1)(2n+1)}{6}$.\end{lemma}
+ \begin{proof}Induction on $n$; see Lemma~\ref{lem:#1} and equation~\eqref{eq:#1}.\end{proof}
+ \begin{align}a_{#1}&=\sum_{j=0}^{#1}\binom{#1}{j}x^{j}y^{#1-j}\label{eq:#1}\\
+  b_{#1}&=\prod_{j=1}^{#1}\left(1+\frac{1}{j^{2}}\right)\le e^{\pi^{2}/6}\nonumber\end{align}
+ \begin{theorem}\label{thm:#1}$\displaystyle\int_0^{#1}x\,dx=\frac{#1^2}{2}$ and $\nabla\cdot\mathbf F=0$.\end{theorem}
+ For $k\ge 2$, $\lim_{n\to\infty}\left(1+\frac{#1}{n}\right)^{n}=e^{#1}$, see Theorem~\ref{thm:#1}.\par}
+\begin{document}
+\title{Math Heavy}\author{}\date{}\maketitle\tableofcontents
+\foreach \s in {1,...,16}{%
+ \section{Part \s}\label{sec:\s}
+ \foreach \k in {1,...,14}{\pgfmathtruncatemacro\n{\s*10+\k}\expandafter\genblock\expandafter{\n}}
+ \pgfmathtruncatemacro\m{\s*10+1}
+ \begin{corollary}By Theorem~\ref{thm:\m}, Part~\ref{sec:\s} holds.\end{corollary}
+}
+\end{document}

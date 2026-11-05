@@ -6,9 +6,9 @@
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use satex::config::{Config, Engine};
-use satex::machine::Machine;
-use satex::plugin::Kernel;
+use satex::analysis::machine::Machine;
+use satex::plugins::Kernel;
+use satex::project::config::{Config, Engine};
 
 /// Each input, with a budget small enough that a run reading tokens at any
 /// sane rate reaches it in well under the bound.
@@ -99,10 +99,10 @@ fn cfg(steps: u64) -> Config {
 /// and widened, because a path that fails at a site fails there again on
 /// every round.
 mod repeated_failures {
-    use satex::config::{Config, Engine};
-    use satex::facts::Severity;
-    use satex::machine::{Analysis, Machine};
-    use satex::plugin::Kernel;
+    use satex::analysis::facts::Severity;
+    use satex::analysis::machine::{Analysis, Machine};
+    use satex::plugins::Kernel;
+    use satex::project::config::{Config, Engine};
 
     /// How often the input below reaches the one failing site.
     const USES: usize = 40;
@@ -190,10 +190,10 @@ mod repeated_failures {
 /// `limits.recursion_depth` rounds instead, the same cheap way a repeated gap
 /// is (`repeated-failure`).
 mod self_referential_macros {
-    use satex::config::{Config, Engine};
-    use satex::facts::Severity;
-    use satex::machine::{Analysis, Machine};
-    use satex::plugin::Kernel;
+    use satex::analysis::facts::Severity;
+    use satex::analysis::machine::{Analysis, Machine};
+    use satex::plugins::Kernel;
+    use satex::project::config::{Config, Engine};
 
     fn cfg() -> Config {
         let mut cfg = Config { engine: Some(Engine::PdfTeX), kernel: Some(Kernel::None), ..crate::support::config() };
@@ -295,7 +295,7 @@ fn unknown_marker_through_expandafter_terminates_with_one_gap() {
     cfg.limits.seconds = 0;
     // The creation date stands for text satex cannot know only when the
     // clock is not assumed.
-    cfg.clock = satex::config::Clock::Unknown;
+    cfg.clock = satex::project::config::Clock::Unknown;
     let analysis = Machine::analyze(
         "\\catcode`\\{=1 \\catcode`\\}=2 \
          \\edef\\b{\\expandafter\\relax\\pdfcreationdate}\\ifnum\\b=0 \\fi",
@@ -570,8 +570,8 @@ fn a_join_never_folds_code_into_data() {
 \begin{document}x\end{document}";
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/termination/join-code");
     let cfg = Config {
-        cache: satex::config::Cache { dir: Some(crate::support::scratch_dir(dir)), ..Default::default() },
-        load: satex::config::Load { packages: true, classes: true, ..Default::default() },
+        cache: satex::project::config::Cache { dir: Some(crate::support::scratch_dir(dir)), ..Default::default() },
+        load: satex::project::config::Load { packages: true, classes: true, ..Default::default() },
         ..crate::support::config()
     };
     crate::support::seed_kernel(&cfg);
@@ -640,8 +640,8 @@ fn a_summarized_loop_leaves_the_rest_of_the_document_read() {
         crate::support::tex_path(&dir)
     );
     let cfg = Config {
-        cache: satex::config::Cache { dir: Some(dir.join("cache")), ..Default::default() },
-        load: satex::config::Load { packages: true, classes: true, ..Default::default() },
+        cache: satex::project::config::Cache { dir: Some(dir.join("cache")), ..Default::default() },
+        load: satex::project::config::Load { packages: true, classes: true, ..Default::default() },
         ..crate::support::config()
     };
     crate::support::seed_kernel(&cfg);
@@ -673,8 +673,8 @@ Plain text after the loop.
 \end{document}";
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/termination/no-gobble");
     let cfg = Config {
-        cache: satex::config::Cache { dir: Some(crate::support::scratch_dir(dir)), ..Default::default() },
-        load: satex::config::Load { packages: true, classes: true, ..Default::default() },
+        cache: satex::project::config::Cache { dir: Some(crate::support::scratch_dir(dir)), ..Default::default() },
+        load: satex::project::config::Load { packages: true, classes: true, ..Default::default() },
         ..crate::support::config()
     };
     crate::support::seed_kernel(&cfg);
@@ -697,7 +697,7 @@ Plain text after the loop.
 /// the line skips its rest, and the next line is read. The run takes at
 /// most 3 times the budget per line read.
 mod line_guard {
-    use satex::machine::{Analysis, Machine};
+    use satex::analysis::machine::{Analysis, Machine};
 
     const LINE: u64 = 100_000;
     const HEAD: &str =
@@ -706,7 +706,7 @@ mod line_guard {
     fn run(defs: &str, call: &str, alone: bool) -> Analysis {
         let mut cfg = super::cfg(1_000_000_000);
         cfg.limits.line_steps = LINE;
-        cfg.limits.seconds = 60;
+        cfg.limits.seconds = 600; // a backstop: the step bound below is what the test checks
         if alone {
             let l = &mut cfg.limits;
             (l.widen_after, l.cycle_after, l.recursion_depth, l.expansion_depth) =
@@ -761,8 +761,8 @@ mod line_guard {
 /// can spell no defined name) or by the per-site fork budget, never by
 /// running out of steps.
 mod convergence {
-    use satex::config::Config;
-    use satex::machine::{Analysis, Machine};
+    use satex::analysis::machine::{Analysis, Machine};
+    use satex::project::config::Config;
 
     fn latex(name: &str, source: &str, tune: impl Fn(&mut Config)) -> Option<Analysis> {
         if !crate::support::installed() {
@@ -792,7 +792,7 @@ mod convergence {
                 d.code == "budget-exhausted"
                     || d.code == "line-budget-cut"
                     || (d.code == "limit-reached" && budgets.iter().any(|b| d.message.contains(b)))
-                    || (d.code == "analysis-ended-early" && d.severity != satex::facts::Severity::Imprecision)
+                    || (d.code == "analysis-ended-early" && d.severity != satex::analysis::facts::Severity::Imprecision)
             })
             .map(|d| format!("{} {}", d.code, d.message))
             .collect();
@@ -833,7 +833,30 @@ mod convergence {
 \ExplSyntaxOff";
         let Some(a) = latex("expl3-maps", &document(preamble, "Text."), |_| {}) else { return };
         converged(&a, 0);
-        assert!(crate::support::diagnosed(&a, "site-forks-cut").is_empty());
+        assert!(crate::support::diagnosed(&a, "site-forks-widened").is_empty());
+    }
+
+    /// (2) Thirty TikZ nodes whose text width depends on a random number,
+    /// with pgfmath, `\colorlet` and positioning on them.
+    #[test]
+    fn tikz_nodes_of_unknown_width() {
+        let preamble = "\\usepackage{tikz}\n\\usetikzlibrary{positioning}";
+        let body = r"\begin{tikzpicture}
+\foreach \i [count=\n from 0] in {1,...,30} {
+  \pgfmathsetmacro{\w}{1+\pdfuniformdeviate 5}
+  \pgfmathparse{\w*2+\i}
+  \colorlet{c\i}{blue!\pgfmathresult!red}
+  \ifnum\i=1
+    \node[draw, text width=\w cm, fill=c\i] (n\i) {Node \i};
+  \else
+    \node[draw, text width=\w cm, fill=c\i, right=of n\n] (n\i) {Node \i};
+  \fi
+}
+\end{tikzpicture}";
+        let Some(a) = latex("tikz-nodes", &document(preamble, body), |_| {}) else { return };
+        // A library scan that runs to the file's end gives the document's
+        // text back instead of swallowing it, so the rest is read too.
+        converged(&a, 32_000);
     }
 
     /// An environment whose name is one of two: `\end` looks its hooks up
@@ -858,7 +881,10 @@ mod convergence {
 \pdfstringdef\x{\thepage}
 {\let\@number\@firstofone\Hy@unicodefalse\pdfstringdef\x{\thepage}}";
         let Some(a) = latex("pdfstring-page", &document(r"\usepackage{hyperref}", body), |_| {}) else { return };
-        converged(&a, 20_000);
+        // hyperref's Unicode conversion (`\HyPsd@DoConvert`, a test per
+        // character) runs here since group ends restore exact meanings;
+        // a leaked unknown meaning skipped it before (18k forks).
+        converged(&a, 32_000);
     }
 
     /// (3) An expl3 loop whose bound is `\pdfelapsedtime`.
@@ -923,11 +949,29 @@ Some text with microtype protrusion and expansion.
         assert_eq!(run("\\def\\cxyd{}\\def\\xab{}"), (true, false));
     }
 
-    /// One place that keeps parting the paths is cut once it passed
-    /// `limits.site_forks` while one line is read: the expansion it is in
-    /// is widened and the run reads on, instead of spending the budget.
+    /// A number's digits in a name spell only its values as `\the` prints
+    /// them: 10..89 never spells `0`, so pgfmath's `0x` base prefix stays
+    /// undefined for it, also once the digits went through a macro.
     #[test]
-    fn a_site_past_its_fork_budget_cuts_its_expansion() {
+    fn a_number_in_a_name_spells_only_its_values() {
+        let source = "\\catcode`\\{=1 \\catcode`\\}=2
+\\expandafter\\def\\csname base@0x\\endcsname{16}
+\\edef\\r{\\the\\numexpr10+\\pdfuniformdeviate 80}
+\\expandafter\\ifx\\csname base@\\r x\\endcsname\\relax\\def\\NotBase{}\\else\\def\\IsBase{}\\fi
+\\def\\n{}\\expandafter\\def\\expandafter\\n\\expandafter{\\r}
+\\expandafter\\ifx\\csname base@\\n x\\endcsname\\relax\\def\\NotBaseB{}\\else\\def\\IsBaseB{}\\fi
+";
+        let a = Machine::analyze(source, None, &super::cfg(1_000_000));
+        for (name, defined) in [("NotBase", true), ("IsBase", false), ("NotBaseB", true), ("IsBaseB", false)] {
+            assert_eq!(crate::support::defined(&a, name), defined, "{name}");
+        }
+    }
+
+    /// One place that keeps parting the paths parts no more once it passed
+    /// `limits.site_forks` while one line is read: its conditional is
+    /// widened and the run reads on, instead of spending the budget.
+    #[test]
+    fn a_site_past_its_fork_budget_widens_its_conditional() {
         let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\count1=\\pdfelapsedtime \\count3=0
 \\def\\x{\\advance\\count2 1 \\ifnum\\count1>\\count2 \\count3=1 \\expandafter\\x\\else\\expandafter\\x\\fi}\\x
 \\ifnum\\count3=0 \\def\\Zero{}\\else\\def\\One{}\\fi
@@ -939,11 +983,212 @@ Some text with microtype protrusion and expansion.
         (l.call_summary_after, l.site_expansions, l.site_forks) = (0, u32::MAX, 64);
         let a = Machine::analyze(source, None, &cfg);
         let codes: Vec<&str> = a.facts.diagnostics.iter().map(|d| d.code).collect();
-        assert!(codes.contains(&"site-forks-cut"), "{codes:?}");
+        assert!(codes.contains(&"site-forks-widened"), "{codes:?}");
         assert!(!codes.contains(&"line-budget-cut"), "{codes:?}");
         assert!(crate::support::defined(&a, "Next"), "{codes:?}");
         assert!(crate::support::defined(&a, "Zero") && crate::support::defined(&a, "One"), "{codes:?}");
         assert!(a.forks <= 64 * 2, "{} forks", a.forks);
+    }
+
+    /// A widened conditional runs what its arms may do, but a separator
+    /// that is `\let` (expl3's `\__int_sep:`) after `\expandafter` defines
+    /// nothing: the name past it expands first. An alias of `\number` there
+    /// keeps its meaning.
+    #[test]
+    fn a_widened_conditional_keeps_an_alias_after_an_expandafter_separator() {
+        let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\count1=\\pdfelapsedtime
+\\let\\sep\\let \\let\\value\\number
+\\def\\x{\\advance\\count2 1 \\ifnum\\count1>\\count2 \\expandafter\\sep\\value 0 \\expandafter\\x\\else\\expandafter\\x\\fi}\\x
+\\edef\\Check{\\value 12}
+";
+        let mut cfg = super::cfg(1_000_000_000);
+        let l = &mut cfg.limits;
+        (l.widen_after, l.cycle_after, l.recursion_depth) = (u16::MAX, u16::MAX, u16::MAX);
+        (l.call_summary_after, l.site_expansions, l.site_forks) = (0, u32::MAX, 4);
+        let a = Machine::analyze(source, None, &cfg);
+        let codes: Vec<&str> = a.facts.diagnostics.iter().map(|d| d.code).collect();
+        assert!(codes.contains(&"site-forks-widened"), "{codes:?}");
+        assert_eq!(crate::support::body(&a, "Check"), "12", "{codes:?}");
+    }
+
+    /// A separator that is `\let`, read as a delimiter by a macro called
+    /// before it (expl3's `\__int_mod:ww ... \__int_sep: \__int_eval_end:`),
+    /// defines nothing: the alias after it keeps its meaning.
+    #[test]
+    fn a_widened_conditional_keeps_an_alias_after_a_delimiting_separator() {
+        let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\count1=\\pdfelapsedtime
+\\let\\sep\\let \\let\\stop\\relax \\def\\m#1\\sep#2\\sep{#1}
+\\def\\x{\\advance\\count2 1 \\ifnum\\count1>\\count2 \\m 1\\sep 2\\sep\\stop \\expandafter\\x\\else\\expandafter\\x\\fi}\\x
+\\edef\\Check{\\ifx\\stop\\relax y\\else n\\fi}
+";
+        let mut cfg = super::cfg(1_000_000_000);
+        let l = &mut cfg.limits;
+        (l.widen_after, l.cycle_after, l.recursion_depth) = (u16::MAX, u16::MAX, u16::MAX);
+        (l.call_summary_after, l.site_expansions, l.site_forks) = (0, u32::MAX, 4);
+        let a = Machine::analyze(source, None, &cfg);
+        let codes: Vec<&str> = a.facts.diagnostics.iter().map(|d| d.code).collect();
+        assert!(codes.contains(&"site-forks-widened"), "{codes:?}");
+        assert_eq!(crate::support::body(&a, "Check"), "y", "{codes:?}");
+    }
+
+    /// A test of `\numexpr x-10` narrows `x` on each arm, `\ifcase` and
+    /// `\ifnum` alike, so `\int_to_Hex:n`'s base recursion ends by intervals.
+    #[test]
+    fn a_test_of_a_register_plus_a_constant_narrows_the_register() {
+        let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\count1=\\pdfuniformdeviate 16\\relax
+\\ifcase\\numexpr\\count1-10\\relax \\def\\C{y}\\or\\def\\C{y}\\or\\def\\C{y}\\or\\def\\C{y}\\or\\def\\C{y}\\or\\def\\C{y}\\else\\edef\\C{\\ifnum\\count1<10 y\\else n\\fi}\\fi
+\\ifnum\\numexpr\\count1-10\\relax<0 \\edef\\D{\\ifnum\\count1<10 y\\else n\\fi}\\else\\edef\\D{\\ifnum\\count1>9 y\\else n\\fi}\\fi
+";
+        let a = Machine::analyze(source, None, &super::cfg(1_000_000_000));
+        assert_eq!(crate::support::body(&a, "D"), "y");
+        assert_eq!(crate::support::body(&a, "C"), "y");
+    }
+
+    /// Steps a document whose message text is one of a few known texts may
+    /// take: the bare article document takes about half of it.
+    const WRAP_STEPS: u64 = 2_000_000;
+    /// Undecided choices it may make: a few per text it may be.
+    const WRAP_FORKS: u64 = 200;
+
+    /// A document that sets `\l_my_tl` to `value` and then runs `call`.
+    fn wrapped(name: &str, value: &str, call: &str) -> Option<Analysis> {
+        let preamble = format!(
+            r"\ExplSyntaxOn
+\msg_new:nnn {{ my }} {{ x }} {{ The~value~'#1'~is~not~one~I~know~of,~so~I~wrap~it~over~lines~here~and~'#2'. }}
+\tl_set:Ne \l_my_tl {{ {value} }}
+{call}
+\ExplSyntaxOff"
+        );
+        latex(name, &document(&preamble, "Text."), |_| {})
+    }
+
+    fn wrap_document(name: &str, value: &str, call: &str) {
+        let Some(a) = wrapped(name, value, call) else { return };
+        converged(&a, WRAP_FORKS);
+        assert!(a.steps <= WRAP_STEPS, "{} steps, at most {WRAP_STEPS} expected", a.steps);
+        let unsupported: Vec<&str> = a
+            .facts
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported)
+            .map(|d| d.code)
+            .collect();
+        assert_eq!(unsupported, Vec::<&str>::new());
+    }
+
+    /// expl3's `\iow_wrap` (every message) cuts its text into chunks of
+    /// eight tokens. Over text that is one of several, its loop converges
+    /// in a few paths per text, never a fork per chunk.
+    #[test]
+    fn a_message_wrapped_over_one_of_several_texts_converges() {
+        wrap_document(
+            "iow-wrap-one-of",
+            r"\int_case:nnF { \pdfuniformdeviate 4 } { {0}{a~b} {1}{d} {2}{ccccccccccccccccccc} } { \c_space_tl }",
+            r"\msg_warning:nnee { my } { x } { \l_my_tl } { \l_my_tl \l_my_tl }",
+        );
+    }
+
+    /// A scan that gave up gives the document text it read back to the
+    /// file: no path of the message reads the document ahead of the
+    /// others, so none runs off its end or ends in the message's group.
+    #[test]
+    fn a_message_wrapped_over_one_of_several_texts_ends_on_its_line() {
+        let Some(a) = wrapped(
+            "iow-wrap-one-of-line",
+            r"\int_case:nnF { \pdfuniformdeviate 4 } { {0}{a~b} {1}{d} {2}{ccccccccccccccccccc} } { \c_space_tl }",
+            r"\msg_warning:nnee { my } { x } { \l_my_tl } { \l_my_tl \l_my_tl }",
+        ) else {
+            return;
+        };
+        let read_on = ["runaway-argument", "file-ended", "unbalanced-file", "unbalanced-conditional", "missing-end"];
+        let found: Vec<&str> = a.facts.diagnostics.iter().map(|d| d.code).filter(|c| read_on.contains(c)).collect();
+        assert_eq!(found, Vec::<&str>::new());
+        assert!(crate::support::defined(&a, "SatexReachedEnd"));
+    }
+
+    /// The same over several unknown chunks, a word longer than a line and
+    /// runs of spaces.
+    #[test]
+    fn a_message_wrapped_over_unknown_chunks_long_words_and_spaces_converges() {
+        wrap_document(
+            "iow-wrap-edge",
+            r"\int_if_odd:nTF { \pdfuniformdeviate 4 } { a~b } { \int_if_odd:nTF { \pdfuniformdeviate 4 } { d~~~e } { ccccccccccccccccccc } }",
+            r"\msg_warning:nnee { my } { x } { \l_my_tl ~ \int_eval:n { \pdfuniformdeviate 99 } ~ \l_my_tl }
+  { averyveryverylongwordwithoutanyspaceinitthatrunsfarpastthelinewidthofseventynineletters ~~ \l_my_tl }",
+        );
+    }
+
+    /// `analysis.assume_messages_output_only`: a wrap over unknown text is
+    /// one step that leaves unknown string text, said as an assumption;
+    /// the code the wrap runs before it (#3, the text's expansion) still
+    /// runs, and a wrap over known text runs for real.
+    fn wrap_call(name: &str, text: &str, assume: bool) -> Option<Analysis> {
+        let preamble = format!(
+            r"\ExplSyntaxOn
+\int_new:N \g_my_int
+\tl_set:Ne \l_my_tl {{ \int_eval:n {{ \pdfuniformdeviate 99 }} }}
+\iow_wrap:nnnN {{ {text} }} {{ }} {{ \int_gset:Nn \g_my_int {{ 5 }} }} \iow_term:n
+\cs_gset:Npe \After {{ \int_use:N \g_my_int }}
+\ExplSyntaxOff"
+        );
+        latex(name, &document(&preamble, "Text."), |cfg| cfg.analysis.assume_messages_output_only = assume)
+    }
+
+    fn assumed(a: &Analysis) -> usize {
+        a.facts.diagnostics.iter().filter(|d| d.code == "message-output-only").count()
+    }
+
+    #[test]
+    fn a_wrap_over_unknown_text_is_assumed_output_only() {
+        let Some(a) = wrap_call(
+            "iow-assume-unknown",
+            r"value~\l_my_tl~and~more~words~than~fit~on~one~line~of~the~terminal~here",
+            true,
+        ) else {
+            return;
+        };
+        converged(&a, WRAP_FORKS);
+        assert_eq!(assumed(&a), 1);
+        assert_eq!(crate::support::body(&a, "After"), "5");
+        assert!(crate::support::defined(&a, "SatexReachedEnd"));
+    }
+
+    #[test]
+    fn a_wrap_over_known_text_runs_for_real() {
+        let Some(a) =
+            wrap_call("iow-assume-known", r"value~and~more~words~than~fit~on~one~line~of~the~terminal~here", true)
+        else {
+            return;
+        };
+        assert_eq!(assumed(&a), 0);
+        assert_eq!(crate::support::body(&a, "After"), "5");
+    }
+
+    #[test]
+    fn a_wrap_without_the_assumption_runs_for_real() {
+        let Some(a) = wrap_call("iow-assume-off", r"value~\l_my_tl", false) else { return };
+        assert_eq!(assumed(&a), 0);
+        assert_eq!(crate::support::body(&a, "After"), "5");
+        assert!(crate::support::defined(&a, "SatexReachedEnd"));
+    }
+
+    /// A loop whose flag a macro in a widened conditional clears
+    /// (scrlayer-notecolumn's `\ifeof\slnc@file\@tempswafalse\fi` over a
+    /// joined stream): the flag may be false after it, so the loop may end.
+    #[test]
+    fn a_widened_conditional_may_clear_a_loop_flag() {
+        let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6
+\\def\\stop{\\let\\ifgo\\iffalse}\\let\\ifgo\\iftrue
+\\def\\x{\\ifgo\\ifnum\\pdfuniformdeviate2=0 \\stop\\fi\\expandafter\\x\\fi}\\x
+\\def\\Next{}
+";
+        let mut cfg = super::cfg(20_000_000);
+        cfg.limits.site_forks = 1;
+        let a = Machine::analyze(source, None, &cfg);
+        let codes: Vec<&str> = a.facts.diagnostics.iter().map(|d| d.code).collect();
+        assert!(codes.contains(&"undecided-condition"), "{codes:?}");
+        assert!(!codes.contains(&"line-budget-cut"), "{codes:?}");
+        assert!(crate::support::defined(&a, "Next"), "{codes:?}");
     }
 }
 
@@ -954,7 +1199,7 @@ Some text with microtype protrusion and expansion.
 #[test]
 fn cut_after_a_look_ahead_keeps_earlier_definitions() {
     let mut cfg = Config {
-        load: satex::config::Load { packages: false, classes: false, ..Default::default() },
+        load: satex::project::config::Load { packages: false, classes: false, ..Default::default() },
         ..crate::support::config()
     };
     cfg.limits.line_steps = 300;
@@ -968,8 +1213,70 @@ fn cut_after_a_look_ahead_keeps_earlier_definitions() {
         .facts
         .expansions
         .iter()
-        .filter(|e| e.meaning == satex::facts::MeaningKind::Undefined)
+        .filter(|e| e.meaning == satex::analysis::facts::MeaningKind::Undefined)
         .map(|e| analysis.interner.name(e.name).to_string())
         .collect();
     assert!(never.is_empty(), "undefined on an exact path: {never:?}");
+}
+
+/// Lint probes share the run's clock: past `limits.seconds` they stop at
+/// once instead of each starting afresh, and what they found is not kept
+/// for a later hover.
+#[test]
+fn lint_probes_stop_at_the_run_deadline() {
+    let mut cfg = crate::support::config();
+    cfg.limits.seconds = 60;
+    let a = satex::analysis::machine::Machine::analyze("\\def\\foo#1#2{#1}\n\\foo ab\n", None, &cfg);
+    let foo = a.interner.lookup("foo").expect("defined");
+    let past = Instant::now() - Duration::from_secs(cfg.limits.seconds + 1);
+    let cut = satex::analysis::probe::within_run(Some(past), || {
+        satex::analysis::probe::probe(&a, foo, satex::analysis::probe::State::End)
+    });
+    assert!(cut.as_ref().is_none_or(|p| !p.complete), "{cut:?}");
+    assert!(satex::analysis::probe::probe(&a, foo, satex::analysis::probe::State::End).is_some_and(|p| p.complete));
+}
+
+/// A line cut on the look-ahead after a number leaves the `\fi` of a
+/// conditional opened before the output routine next, in library code: the
+/// cut refuses its read and the output routine may not close it. Reading
+/// the pending `\fi`s must stop there, at every phase of the budget check.
+#[test]
+fn a_cut_before_a_pending_fi_in_the_output_routine_ends() {
+    // `limits.line_steps`, and the steps between two budget checks: every
+    // phase of the check against the look-ahead is tried.
+    const LINE: u64 = 2_000;
+    const PHASES: u64 = 512;
+    let root = crate::support::tmp_root().join("satex-termination").join("pending-fi");
+    let (doc, lib) = (root.join("doc"), root.join("lib"));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&doc).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    let main = doc.join("main.tex");
+    let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\count1=\\pdfelapsedtime \\input ../lib/p\n\
+                  \\ifnum\\count1>0 \\def\\m{}\\else\\let\\m\\relax\\fi\n\
+                  \\output={\\b\\setbox0\\box255 \\deadcycles0 }\n\
+                  \\hsize100pt \\vsize100pt \\ifnum1=1 \\hbox{}\\penalty-10000\n\\def\\Next{}\n";
+    std::fs::write(&main, source).unwrap();
+    let mut cfg = Config {
+        engine: Some(Engine::PdfTeX),
+        kernel: Some(Kernel::None),
+        load: satex::project::config::Load { inputs: true, ..Default::default() },
+        ..crate::support::config()
+    };
+    let l = &mut cfg.limits;
+    l.line_steps = LINE;
+    (l.widen_after, l.cycle_after, l.recursion_depth, l.expansion_depth) = (u16::MAX, u16::MAX, u16::MAX, u16::MAX);
+    (l.call_summary_after, l.site_expansions, l.repeat_failures, l.site_forks) = (0, u32::MAX, u32::MAX, 0);
+    let bound = Duration::from_secs(30);
+    for pad in LINE - PHASES..LINE {
+        let body = "\\relax".repeat(pad as usize);
+        std::fs::write(lib.join("p.tex"), format!("\\def\\b{{{body}\\count2=1\\m\\fi}}\n")).unwrap();
+        let (done, ended) = mpsc::channel();
+        let (cfg, main, source) = (cfg.clone(), main.clone(), source.to_string());
+        std::thread::spawn(move || {
+            let _ = done.send(Machine::analyze(&source, Some(&main), &cfg).steps);
+        });
+        assert!(ended.recv_timeout(bound).is_ok(), "{pad} steps of padding: no end within {bound:?}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
 }

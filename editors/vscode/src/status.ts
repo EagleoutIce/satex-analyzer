@@ -2,8 +2,11 @@ import * as vscode from 'vscode';
 
 /** satex's own findings: what the server and `satex: Compile` report. */
 export function isOurs(d: vscode.Diagnostic): boolean {
-    return d.source === 'satex' || d.source === 'satex build';
+    return d.source?.startsWith('satex') ?? false;
 }
+
+/** The source a finding carries while a newer analysis runs: the Problems view says it may change. */
+export const STALE = 'satex · analyzing…';
 
 /** What the server does now (`satex/status`): `text` empty when idle. */
 export interface Work {
@@ -28,7 +31,7 @@ function explain(work: Work): vscode.MarkdownString {
     const n = (v?: number) => (v ?? 0).toLocaleString();
     const rows: [string, string | undefined][] = [
         ['Phase', work.phase],
-        ['Probing', work.probe && `\`${work.probe}\``],
+        ['Trying out', work.probe && `\`${work.probe}\` on typed arguments, for its hover`],
         ['Why', work.why],
         ['Reading', work.file && `\`${work.file}${work.line ? `:${work.line}` : ''}\``],
         ['Read', work.lines ? `${n(work.lines)} lines in ${n(work.files)} files` : undefined],
@@ -38,13 +41,14 @@ function explain(work: Work): vscode.MarkdownString {
     ];
     const md = new vscode.MarkdownString(`**satex: ${work.text}**\n\n| | |\n|---|---|\n`);
     md.appendMarkdown(rows.filter(([, v]) => v).map(([k, v]) => `| ${k} | ${v} |`).join('\n'));
-    md.appendMarkdown('\n\nKernels and packages are cached once, then reused.');
+    md.appendMarkdown('\n\nKernels and packages are cached once, then reused. Click for the cache report.');
     return md;
 }
 
 /**
  * The status bar entry: what the server does now (`caching pdftex kernel`),
- * else how many errors and warnings it found. A click opens the satex view;
+ * else how many errors and warnings it found. A click shows the caches while it
+ * works, else satex's findings in the Problems view;
  * `satex.statusBar.enabled` or the status bar's own menu hides it.
  */
 export class Status implements vscode.Disposable {
@@ -91,16 +95,19 @@ export class Status implements vscode.Disposable {
         }
         if (this.stopped) {
             this.item.text = '$(error) satex';
-            this.item.tooltip = 'The satex server stopped: see the output "satex". Click to open the satex view.';
+            this.item.tooltip = 'The satex server stopped: see the output "satex". Click to show the findings.';
+            this.item.command = 'satex.focus';
         } else if (this.busy.text) {
             const { reached, total } = this.busy;
             const done = total ? ` ${Math.min(100, Math.floor((reached ?? 0) * 100 / total))}%` : '';
             this.item.text = `$(sync~spin) satex: ${this.busy.text}${done}`;
             this.item.tooltip = explain(this.busy);
+            this.item.command = 'satex.caches';
         } else {
             const counts = errors + warnings > 0 ? ` $(error) ${errors} $(warning) ${warnings}` : ' $(check)';
             this.item.text = `satex${counts}`;
-            this.item.tooltip = `satex: ${errors} errors, ${warnings} warnings. Click to open the satex view.`;
+            this.item.tooltip = `satex: ${errors} errors, ${warnings} warnings. Click to show them in the Problems view.`;
+            this.item.command = 'satex.focus';
         }
         this.item.show();
     }

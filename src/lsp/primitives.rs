@@ -1,8 +1,8 @@
 //! TeXbook-style syntax of common primitives for hover (The TeXbook, ch. 24;
 //! e-TeX manual), shown only where the name still means the primitive.
 
-use crate::machine::Analysis;
-use crate::tex::Meaning;
+use crate::analysis::machine::Analysis;
+use crate::engine::tex::Meaning;
 
 const D: &str = "⟨control sequence⟩⟨parameter text⟩{⟨replacement text⟩}";
 const IF: &str = "⟨token₁⟩⟨token₂⟩";
@@ -81,9 +81,10 @@ pub fn usage(name: &str) -> Option<&'static str> {
 
 pub fn syntax(analysis: &Analysis, name: &str, path: &str, line: u32, col: u32) -> Option<String> {
     let (_, rest, etex) = SYNTAX.iter().find(|(n, ..)| *n == name)?;
-    let want = *crate::builtins::primitive_names(analysis.plugins.engine).get(name)?;
+    let want = *crate::engine::builtins::primitive_names(analysis.plugins.engine).get(name)?;
     let sym = analysis.interner.lookup(name)?;
-    let file = (0..analysis.file_names().len() as crate::tex::FileId).find(|&f| analysis.file_name(f) == path)?;
+    let file =
+        (0..analysis.file_names().len() as crate::engine::tex::FileId).find(|&f| analysis.file_name(f) == path)?;
     let defs: Vec<_> = analysis.facts.defs.iter().filter(|d| d.name == sym).collect();
     let primitive = if defs.is_empty() {
         analysis.env.meaning(sym) == Meaning::Primitive(want)

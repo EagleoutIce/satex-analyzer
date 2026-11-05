@@ -1,14 +1,14 @@
 //! `satex completions install` and the `--version` hint, in a scratch HOME.
 
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
 /// Runs satex with `home/bin` as the whole `PATH`: the shells installed are
 /// the ones a test puts there.
 fn run(home: &Path, shell: &str, args: &[&str]) -> Output {
     let bin = home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    Command::new(env!("CARGO_BIN_EXE_satex"))
+    crate::support::satex()
         .args(args)
         .env("PATH", &bin)
         .env("HOME", home)

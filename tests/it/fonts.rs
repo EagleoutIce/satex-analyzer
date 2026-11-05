@@ -2,8 +2,8 @@
 //! `pdftex -ini`, `xetex -ini` answered for the same input (TeX Live 2026).
 
 use crate::support::installed;
-use satex::config::{Config, Engine, Load, Texmf};
-use satex::machine::Machine;
+use satex::analysis::machine::Machine;
+use satex::project::config::{Config, Engine, Load, Texmf};
 
 fn out_in(engine: Engine, source: &str) -> String {
     let cfg = Config {
@@ -22,7 +22,7 @@ fn out_in(engine: Engine, source: &str) -> String {
         .rev()
         .find(|d| analysis.interner.name(d.name) == "out")
         .and_then(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         .unwrap_or_default()
 }
 
@@ -79,7 +79,7 @@ fn xetex_queries_of_a_tfm_font_read_no_further() {
 fn xetex_string_utilities_and_characters() {
     // xetex: `-1ABY0.999997` (TeX Live 2025): the version is the installed
     // engine's, 0.999998 where there is none.
-    let release = satex::distribution::engine_release("xetex").unwrap_or_else(|| "0.999998".into());
+    let release = satex::caches::distribution::engine_release("xetex").unwrap_or_else(|| "0.999998".into());
     assert_eq!(
         out_in(
             Engine::XeTeX,

@@ -1,0 +1,9 @@
+% Exercises: varioref (\vref, \vpageref), hyperref+varioref+cleveref interplay, labels across pages.
+\documentclass{article}
+\usepackage{varioref}\usepackage{hyperref}\usepackage{cleveref}
+\begin{document}
+\section{A}\label{s:a}Text. \vref{s:b}, \vpageref{s:b}, \vref[see]{f:x}.
+\begin{figure}\centering\rule{3cm}{3cm}\caption{F}\label{f:x}\end{figure}
+\newpage\section{B}\label{s:b}\vref{s:a}. \vpageref[above]{s:a}{below}. \Vref{f:x}
+\newpage\section{C}\vref{s:a} and \vref{s:b}.
+\end{document}

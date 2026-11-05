@@ -1,11 +1,11 @@
-//! `satex::rename`: a rename has to move every name one declaration made
+//! `satex::queries::rename`: a rename has to move every name one declaration made
 //! from one key, and every site that spells it, or refuse.
 
 use crate::support::installed;
-use satex::config::{Config, Load, Texmf};
-use satex::lint::fix::{Pos, Sources};
-use satex::machine::{Analysis, Machine};
-use satex::rename;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::linter::fix::{Pos, Sources};
+use satex::project::config::{Config, Load, Texmf};
+use satex::queries::rename;
 
 // Without a format the catcodes are INITEX's (tex.web § 232).
 const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7\n";
@@ -115,5 +115,24 @@ fn a_counter_moves_with_the_names_it_allocates() {
     for (line, col, name, is_command) in [(2, 13, "step", false), (4, 15, "step", false), (4, 23, "thestep", true)] {
         let sites = rename(&fixture, line, col, name, is_command, "phase").expect("a rename");
         assert_eq!(sites, ["2:13=phase", "4:14=phase", "4:23=phase"], "from {line}:{col}");
+    }
+}
+
+/// An environment the kernel defines is no key of the project: a rename would change only its
+/// uses, so it is refused, saying who defines it.
+#[test]
+fn a_kernel_environment_is_refused() {
+    if !installed() {
+        return;
+    }
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let fixture = write(
+        "kernel-env",
+        "\\documentclass{article}\n\\begin{document}\n\\begin{center}x\\end{center}\n\\begin{itemize}\\item y\\end{itemize}\n\\end{document}\n",
+        cfg,
+    );
+    for (line, name) in [(3, "center"), (4, "itemize")] {
+        let refused = rename(&fixture, line, 8, name, false, "other").expect_err("refused");
+        assert!(refused.contains("renaming it here would only change its uses"), "{refused}");
     }
 }

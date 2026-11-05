@@ -1,0 +1,14 @@
+% Exercises: acmart (sigconf), front matter commands, CCS, keywords, bibliography via bibtex.
+\documentclass[sigconf,nonacm]{acmart}
+\begin{document}
+\title{An ACM Style Paper}
+\author{Ann Author}\affiliation{\institution{Example University}\city{Town}\country{Country}}\email{a@example.org}
+\begin{abstract}We show a thing.\end{abstract}
+\keywords{examples, benchmarks}
+\maketitle
+\section{Introduction}Abstract interpretation~\cite{cousot77} is old. TeX~\cite{knuth86} too.
+\section{Method}\begin{table}\caption{Results}\begin{tabular}{lr}\toprule A&B\\\midrule 1&2\\\bottomrule\end{tabular}\end{table}
+\begin{theorem}A theorem.\end{theorem}
+\section{Conclusion}Done.
+\bibliographystyle{ACM-Reference-Format}\bibliography{refs}
+\end{document}

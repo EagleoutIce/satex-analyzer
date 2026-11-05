@@ -9,9 +9,9 @@
 
 use crate::support::{PRELUDE, analyze_plain as analyze, diagnosed};
 use crate::support::{defined, installed, last_body as body, last_definition as definition};
-use satex::config::{Cache, Config, Engine, Load, Texmf};
-use satex::machine::{Analysis, Machine};
-use satex::plugin::Kernel;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::plugins::Kernel;
+use satex::project::config::{Cache, Config, Engine, Load, Texmf};
 
 /// A document on disk, so that `\input` reads real files.
 fn analyze_files(source: &str, main: &std::path::Path) -> Analysis {
@@ -276,7 +276,7 @@ fn endinput_past_the_choice_limit_is_reported() {
     let cfg = Config {
         load: Load { packages: false, classes: false, inputs: false, format: false, ..Default::default() },
         texmf: Texmf { kpsewhich: false, ..Default::default() },
-        limits: satex::config::Limits { choices: 0, ..crate::support::config().limits },
+        limits: satex::project::config::Limits { choices: 0, ..crate::support::config().limits },
         ..crate::support::config()
     };
     let source = "\\ifnum\\pdfuniformdeviate2=0 \\endinput\\fi\\def\\after{a}\n\\def\\two{2}\n";
@@ -343,13 +343,13 @@ fn a_dtx_stops_at_an_endinput_line_and_keeps_one_mid_line() {
     // `\endinput` with code after it is ordinary source: it stays in the
     // view and the interpreter applies tex.web § 362 to it.
     let alone = "%    \\begin{macrocode}\n\\def\\a{1}\n\\endinput\n\\def\\b{2}\n%    \\end{macrocode}\n";
-    let view = satex::literate::code_view(alone, &satex::literate::Guards::AllButDriver);
+    let view = satex::project::literate::code_view(alone, &satex::project::literate::Guards::AllButDriver);
     assert!(view.contains("\\def\\a{1}"), "{view:?}");
     assert!(!view.contains("\\endinput"), "the line is not copied: {view:?}");
     assert!(!view.contains("\\def\\b{2}"), "nothing after it is copied: {view:?}");
 
     let inline = "%    \\begin{macrocode}\n\\def\\a{1}\\endinput\\def\\b{2}\n\\def\\c{3}\n%    \\end{macrocode}\n";
-    let view = satex::literate::code_view(inline, &satex::literate::Guards::AllButDriver);
+    let view = satex::project::literate::code_view(inline, &satex::project::literate::Guards::AllButDriver);
     assert!(view.contains("\\def\\a{1}\\endinput\\def\\b{2}"), "{view:?}");
     assert!(view.contains("\\def\\c{3}"), "the view keeps it, the interpreter ends the file: {view:?}");
 }

@@ -5,8 +5,9 @@
   const dark = () => (root.dataset.theme ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark';
   self.siteDark = dark; // playground.js themes its editor by it
   const button = document.getElementById('theme');
-  const label = () => button.setAttribute('aria-pressed', dark());
-  button.onclick = () => {
+  // /draw has its own theme button
+  const label = () => button?.setAttribute('aria-pressed', String(dark()));
+  if (button) button.onclick = () => {
     root.dataset.theme = dark() ? 'light' : 'dark';
     try { localStorage.setItem('satex-theme', root.dataset.theme); } catch {}
     label();
@@ -19,61 +20,136 @@
       const tab = e.target.closest('[role=tab]');
       if (!tab) return;
       for (const t of list.children) {
-        t.setAttribute('aria-selected', t === tab);
+        t.setAttribute('aria-selected', String(t === tab));
         document.getElementById(t.getAttribute('aria-controls')).hidden = t !== tab;
       }
     };
   }
   // The TeX tokenizer of the playground's editor, CodeMirror's stex mode. The landing
   // page's examples come colored from build.py.
+  // CodeMirror, vendored (codemirror.js): the page names its hashed file, a dev server the plain one beside site.js
+  const cmAt = document.querySelector('meta[name=satex-cm]'), cmUrl = new URL(cmAt?.content ?? 'codemirror.js', cmAt ? location.href : document.currentScript.src).href;
+  self.siteCM = () => (self.siteCM.loaded ??= import(cmUrl));
   self.siteTex = () => (self.siteTex.loaded ??= (async () => {
-    const [{ StreamLanguage }, { stex }, hl] = await Promise.all(['@codemirror/language@6', '@codemirror/legacy-modes@6/mode/stex',
-      '@lezer/highlight@1'].map((m) => import('https://esm.sh/' + m)));
+    const { language: { StreamLanguage }, stex: { stex }, highlight: hl } = await self.siteCM();
     const t = hl.tags;
     const highlighter = hl.tagHighlighter([[t.tagName, 'cmd'], [t.bracket, 'br'], [t.keyword, 'kw'], [t.comment, 'com'], [t.atom, 'atom'],
-      [t.number, 'num'], [t.string, 'str'], [t.special(t.variableName), 'arg'], [t.variableName, 'arg']].map(([tag, c]) => ({ tag, class: `tok-${c}` })));
-    // BibTeX: @type, key, field names, braces and values, in the TeX mode's classes
+      [t.number, 'num'], [t.string, 'str'], [t.definition(t.variableName), 'def'], [t.special(t.variableName), 'arg'], [t.variableName, 'arg'], [t.operator, 'br'], [t.meta, 'magic'], [t.attributeValue, 'magicv'], [t.processingInstruction, 'dir']].map(([tag, c]) => ({ tag, class: `tok-${c}` })));
+    // BibTeX (btxdoc § 2): `@type{key, field = value # value}`; `@string`, `@preamble` and `@comment`
+    // are commands, not entries. A braced value is TeX: commands, braces and math in the TeX mode's classes.
+    const COMMANDS = /^@(string|preamble|comment)\b/i;
     const bib = StreamLanguage.define({
-      startState: () => ({ depth: 0, key: false }),
+      startState: () => ({ depth: 0, key: false, command: '', field: true }),
       token(s, st) {
         if (st.depth === 0) {
-          if (s.match(/@[A-Za-z]+/)) { st.key = true; return 'tag'; }
-          if (st.key && s.match(/[{(]/)) { st.depth = 1; return 'bracket'; }
+          const command = s.match(COMMANDS);
+          if (command) { st.command = command[1].toLowerCase(); st.key = false; return 'keyword'; }
+          if (s.match(/@[A-Za-z]+/)) { st.command = ''; st.key = true; return 'tag'; }
+          if ((st.key || st.command) && s.match(/[{(]/)) { st.depth = 1; st.field = true; return 'bracket'; }
           if (s.eatSpace()) return null;
           s.skipTo('@') || s.skipToEnd(); return 'comment';
         }
-        if (st.depth > 1) { // inside a braced value
+        if (st.command === 'comment') {
+          if (s.match(/[{(]/)) { st.depth++; return 'comment'; }
+          if (s.match(/[})]/)) { if (--st.depth === 0) st.command = ''; return 'comment'; }
+          s.match(/[^{}()]+/) || s.next(); return 'comment';
+        }
+        if (st.depth > 1) { // inside a braced value: TeX
+          if (s.match(/\\(?:[A-Za-z@]+|.)/)) return 'tagName';
+          if (s.match(/\$/)) return 'atom';
           if (s.match(/[{]/)) { st.depth++; return 'bracket'; }
           if (s.match(/[}]/)) { st.depth--; return 'bracket'; }
-          s.match(/[^{}]+/); return 'string';
+          s.match(/[^{}\\$]+/) || s.next(); return 'string';
         }
         if (s.eatSpace()) return null;
         if (st.key) { st.key = false; if (s.match(/[^,\s{}]+/)) return 'atom'; }
         if (s.match(/[{]/)) { st.depth = 2; return 'bracket'; }
-        if (s.match(/[})]/)) { st.depth = 0; st.key = false; return 'bracket'; }
-        if (s.match(/"[^"]*"?/)) return 'string';
+        if (s.match(/[})]/)) { st.depth = 0; st.key = false; st.command = ''; return 'bracket'; }
+        if (s.match(/"(?:[^"\\]|\\.)*"?/)) return 'string';
         if (s.match(/\d+/)) return 'number';
-        if (s.match(/[A-Za-z_-][\w:.-]*(?=\s*=)/)) return 'keyword';
-        if (s.match(/[=#,]/)) return 'punctuation';
-        s.next(); return 'variableName';
+        if (s.match(/#/)) return 'operator';
+        if (s.match(/,/)) { st.field = true; return 'punctuation'; }
+        if (s.match(/=/)) { st.field = false; return 'punctuation'; }
+        // before `=`: a field name, or the name a @string defines; after it: a @string name used
+        if (s.match(/[A-Za-z_][\w:.+/-]*/)) return st.field ? (st.command === 'string' ? 'variableName.definition' : 'keyword') : 'variableName.special';
+        s.next(); return null;
       },
     });
-    return { language: StreamLanguage.define(stex), bib, highlighter };
+    // a control symbol (`\ `, `\-`, `\'`) is one token, as for TeX; stex leaves some of them split
+    // a `%\satex@assert{…}` directive (configure, assume, assert) is a comment satex reads: its own class, TeX after it
+    // a magic comment's key (`% !TeX program =`, `% arara:`) and its value, apart from a plain comment
+    const MAGIC = /^%\s*(?:!T[eE]X\s+(?:TS-)?[\w-]+\s*=?|arara:)/;
+    // a verbatim body (lstlisting, minted, verbatim) is code in the language it names, not TeX:
+    // its comments, strings and numbers by that language's comment marker, TeX by TeX's own rules
+    const VERBATIM = /\\begin\{(lstlisting|verbatim\*?|Verbatim|BVerbatim|minted|comment)\}(?:\[([^\]]*)\])?(?:\{([^}]*)\})?/;
+    const COMMENT = [[/^(python|ruby|r|perl|bash|sh|make|yaml|julia)$/i, '#'], [/^(tex|latex|matlab|octave|erlang|prolog)$/i, '%'], [/^(lua|sql|haskell|ada)$/i, '--'], [/./, '//']];
+    const code = (s, lang) => {
+      const mark = lang ? COMMENT.find(([re]) => re.test(lang))[1] : null;
+      if (mark && s.match(mark)) { s.skipToEnd(); return 'comment'; }
+      if (s.match(/^"(?:[^"\\]|\\.)*"?/) || s.match(/^'(?:[^'\\]|\\.)*'?/)) return 'string';
+      if (s.match(/^\d[\d._]*(?:e[+-]?\d+)?/i)) return 'number';
+      if (s.match(/^[A-Za-z_]\w*(?=\s*\()/)) return 'variableName.function';
+      if (s.match(/^[A-Za-z_]\w*/)) return lang ? 'variableName' : null;
+      s.next();
+      return null;
+    };
+    const tex = {
+      ...stex,
+      startState: () => ({ ...stex.startState(), magic: false, verb: null, opening: null }),
+      copyState: (st) => ({ ...stex.copyState(st), magic: st.magic, verb: st.verb, opening: st.opening }),
+      token: (s, st) => {
+        if (s.sol()) { st.magic = false; if (st.opening) [st.verb, st.opening] = [st.opening, null]; }
+        if (st.verb) {
+          if (s.sol() && s.match(new RegExp(`^\\s*\\\\end\\{${st.verb.env.replace('*', '\\*')}\\}`), false)) st.verb = null;
+          else if (!/^(tex|latex)$/i.test(st.verb.lang ?? '')) return code(s, st.verb.lang);
+        }
+        if (!st.verb && s.sol()) {
+          const open = s.string.match(VERBATIM);
+          if (open) st.opening = { env: open[1], lang: open[1] === 'minted' ? open[3] : open[2]?.match(/language\s*=\s*(?:\[[^\]]*\])?\s*(\w+)/)?.[1] ?? null };
+        }
+        if (st.magic) { s.skipToEnd(); return 'attributeValue'; }
+        if (s.sol() && s.match(MAGIC)) { st.magic = true; return 'meta'; }
+        if (s.match(/^%\s*\\satex@[A-Za-z]+/)) return 'processingInstruction';
+        return s.match(/^\\[^A-Za-z@\xc0-\uffff]/) ? 'tag' : stex.token(s, st);
+      },
+    };
+    return { language: StreamLanguage.define(tex), bib, highlighter };
   })());
 
-  // ------------------------------------------------------------ explain cards
   // One renderer for `satex explain --format json`: the landing page's cards, the
   // playground's Explain panel, its run output and its hover cards.
+  /** A duration for reading: ms under a second, else seconds. */
+  const duration = (ms) => ms < 1000 ? `${Math.round(ms)} ms` : ms < 60e3 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60e3)} min ${Math.round(ms % 60e3 / 1000)} s`;
+  /** How many chips a card's list shows before its "+N", which unfolds the rest. */
+  const CHIPS_SHOWN = 10;
+  /** A card's list of names as chips (`chip` renders one): the first `shown`, the rest behind "+N", folding back on a second click. */
+  const chipList = (names, chip, shown = CHIPS_SHOWN) => `<span class="chips">${names.slice(0, shown).map(chip).join('')}${names.length > shown
+    ? `<details class="chip-more"><summary title="show the other ${names.length - shown}">+${names.length - shown}</summary><span class="chips">${names.slice(shown).map(chip).join('')}</span></details>` : ''}</span>`;
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   /** TeX source colored like the editor: commands, braces, parameters, comments. */
   const tex = (text, link = false) => esc(text).replace(/(%[^\n]*)|(\\(?:[A-Za-z@_:]+|.))|([{}[\]])|(#+\d)/g, (m, com, cmd, br) =>
-    `<span class="tok-${com ? 'com' : cmd ? 'cmd' : br ? 'br' : 'arg'}">${link && cmd && /^\\[A-Za-z@_:]+$/.test(m) ? `<a class="cs bl" href="#" data-cs="${m}" title="explain ${m}">${m}</a>` : m}</span>`);
+    `<span class="tok-${com ? 'com' : cmd ? 'cmd' : br ? 'br' : 'arg'}">${link && cmd && /^\\[A-Za-z@_:]+$/.test(m) ? `<a class="cs bl" href="#" data-cs="${m}">${m}</a>` : m}</span>`);
   /** `code`, links and bold of satex's Markdown; a `file:line` is a place. */
-  const inline = (t) => esc(t).split(/(`[^`]+`)/).map((p, i) => {
-    if (!(i % 2)) return p.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
-    const code = p.slice(1, -1), at = code.match(/^([\w./-]+\.\w+):(\d+)$/);
-    return at ? placeLink(at[1], +at[2]) : `<code>${code}</code>`;
-  }).join('');
+  // a code span between double backticks may hold one (`` `* ``)
+  const inline = (t) => {
+    // code spans stand aside as placeholders, so bold or italic may hold one (`**Typesets `ab` here**`)
+    const codes = [];
+    const text = esc(t).replace(/``.+?``|`[^`]+`/g, (p) => {
+      const code = p.startsWith('``') ? p.slice(2, -2).trim() : p.slice(1, -1), at = code.match(/^([\w./-]+\.\w+):(\d+)$/);
+      const bar = code.match(/^([\u2588-\u258F]+)(░*)$/);
+      codes.push(at ? placeLink(at[1], +at[2]) : bar ? `<code class="bar"><b>${bar[1]}</b><i>${bar[2]}</i></code>` : `<code>${code}</code>`);
+      return `\u0000${codes.length - 1}\u0000`;
+    });
+    return text.replace(/\[([^\]]+)\]\(command:satex\.applyEdit\?([^)\s]+)\)/g, (_, shown, args) => {
+      // `[uri, range, text, exact]`: the value is the action
+      let to = '', exact = false;
+      try { [, , to, exact] = JSON.parse(decodeURIComponent(args)); } catch {}
+      return `<a href="#" role="button" class="cmd-edit${exact ? ' exact' : ''}" data-args="${args}" title="write as ${esc(to)}${exact ? ' (exact)' : ' (rounded)'}">${shown}</a>`;
+    })
+      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/\*\(([^*]+)\)\*/g, '<span class="x-from">($1)</span>').replace(/\*([^*\s][^*]*)\*/g, '<em>$1</em>')
+      .replace(/\u0000(\d+)\u0000/g, (_, i) => codes[+i]);
+  };
 
   // xparse's argument types (xparse manual, "Argument specifications"): a color
   // class, the shape a use writes, how the argument is read.
@@ -106,15 +182,178 @@
     number: 'an integer: digits, a count register, \\numexpr …', dimen: 'a length: 3pt, \\parindent, \\dimexpr …', glue: 'a length that may stretch: 3pt plus 1fil',
     muglue: 'math glue: 3mu plus 1fill', 'file name': 'a file name, up to a space', equals: 'an optional =', 'optional spaces': 'spaces, skipped',
     filler: 'spaces and \\relax, skipped', token: 'one token', box: 'a box: \\hbox{…}, \\vbox{…}, \\box0 …', rule: 'a rule: \\hrule or \\vrule with its sizes',
+    by: 'the keyword by, may be left out', 'optional by': 'the keyword by, may be left out', relation: 'a relation: <, = or >',
+    'numeric variable': 'a numeric variable: a count, dimen, skip or muskip register or parameter',
     'math field': 'a math character or a {…} group', 'math character': 'a character in math', delim: 'a delimiter: (, \\langle …', font: 'a font identifier like \\tenrm',
   };
   const slot = (name, kind, ty) => {
     const tip = SLOT[name.toLowerCase()] ?? (/^arg\d+$/.test(name) ? `the ${name.slice(3)}. argument${kind ? `, ${KIND[kind]}` : ''}${ty ? `, read as ${ty}` : ''}` : `${name}, read by the command`);
     // the brackets as entities: a chip is never wrapped again
-    return `<span class="arg arg-${kind ?? 'slot'}" title="${esc(tip)}">&#x27E8;${esc(name)}${ty ? `<small>: ${tyLink(ty)}</small>` : ''}&#x27E9;</span>`;
+    const named = TY.has(name) ? tyLink(name) : esc(name);
+    return `<span class="arg arg-${kind ?? 'slot'}" data-tip="${esc(tip)}">&#x27E8;${named}${ty ? `<small>: ${tyLink(ty)}</small>` : ''}&#x27E9;</span>`;
   };
-  /** A type's name linking to the wiki's Ty lattice. */
-  const tyLink = (t) => `<a class="ty" target="_blank" rel="noopener" href="${document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? ''}wiki/domains.html#argument-types-the-ty-lattice" title="the type ${esc(t)} in the Ty lattice">${esc(t)}</a>`;
+  /** The placeholders of primitive syntax that are types of the Ty lattice. */
+  const TY = new Set(['number', 'dimen', 'glue', 'muglue', 'control sequence']);
+  /** A type's name linking to the wiki's Ty lattice; hovered, it shows its card ([`tyCard`]). */
+  // a type with a card of its own is underlined as more to see; one the lattice lacks has only a note
+  const tyLink = (t) => `<a class="ty${TYPES().has(t) ? '' : ' ty-plain'}" target="_blank" rel="noopener" href="${document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? ''}wiki/domains.html#argument-types-the-ty-lattice" data-ty="${esc(t)}" data-fam="${esc(TYPES().get(t)?.family ?? '')}"${TYPES().has(t) ? '' : ` title="the type ${esc(t)} in the Ty lattice"`}>${esc(t)}</a>`;
+  /** The lattice by name (`satex completions json`'s `types`), when the page has it. */
+  const TYPES = () => (window.satexTypes ??= new Map((window.satexTypeList ?? []).map((t) => [t.name, t])));
+  /** A type's card: its chain up to `any`, what it is, the types right below it. */
+  function tyCard(name) {
+    const types = TYPES(), t = types.get(name);
+    if (!t) return '';
+    const up = [];
+    // `any` tops every chain: left implied
+    for (let x = t; x && x.name !== 'any' && !up.includes(x.name); x = types.get(x.parent)) up.unshift(x.name);
+    const below = [...types.values()].filter((x) => x.parent === name && x.name !== name).map((x) => x.name);
+    // each related type a chip that opens its own card; a long list shows its first few
+    const chips = (names) => chipList(names, (n) => `<a class="ty ty-chip" href="#" data-ty="${esc(n)}">${esc(n)}</a>`);
+    const badge = t.family === 'expl3' ? ' <span class="ty-badge">expl3</span>' : '';
+    return `<div class="ty-chain"><b>${esc(name)}</b>${badge}</div><p>${esc(t.about).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` +
+      (up.length > 1 ? `<div class="ty-below"><span>more general:</span> ${chips(up.slice(0, -1).reverse())}</div>` : '') +
+      (below.length ? `<div class="ty-below"><span>more specific:</span> ${chips(below)}</div>` : '') +
+      '<div class="ty-foot">click: the lattice in the wiki</div>';
+  }
+  // Every tooltip of the site is one of two floating cards made here: `satexTip.card` for a
+  // command's card, a finding or a name in a trace, `satexTip.note` for short text (a `title`,
+  // a type, an argument chip), which may stand beside a card.
+  const clamp = (x, lo, hi) => Math.min(Math.max(x, lo), hi);
+  /** Whether a menu, a completion list or a modal dialog the user opened lies over `at` (an element, or a
+   * rect of the editor): what is under it shows no card or note. */
+  const covered = (at) => {
+    const inside = (o) => at.closest && o.contains(at);
+    // a modal dialog covers the whole page around it; a menu or completion list what lies under it
+    const dialog = document.querySelector('dialog[open]');
+    if (dialog && !inside(dialog)) return true;
+    const r = at.getBoundingClientRect?.() ?? at;
+    return [...document.querySelectorAll('.ctx:not([hidden]), .cm-tooltip-autocomplete')].some((o) => {
+      if (inside(o)) return false;
+      const b = o.getBoundingClientRect();
+      return r.left < b.right && b.left < r.right && r.top < b.bottom && b.top < r.bottom;
+    });
+  };
+  function floating(cls) {
+    const el = Object.assign(document.createElement('div'), { className: `tip ${cls}`, hidden: true, role: 'tooltip' });
+    let timer = 0;
+    const later = (f, ms) => { clearTimeout(timer); timer = setTimeout(f, ms); };
+    const hide = (ms = 0) => later(() => { el.hidden = true; delete el.dataset.pin; }, ms);
+    el.addEventListener('mouseenter', () => clearTimeout(timer));
+    el.addEventListener('mouseleave', () => { if (!el.dataset.pin) hide(120); });
+    /** Below `at` (an element or a rect), else above it; beside `host` when that is a card it would cover. */
+    const show = (at, html, host = null) => {
+      clearTimeout(timer);
+      if (covered(at)) return hide();
+      // a modal dialog's top layer hides anything outside it
+      const layer = at.closest?.('dialog[open]') ?? document.querySelector('dialog[open]') ?? document.body;
+      if (el.parentElement !== layer) layer.append(el);
+      el.innerHTML = html;
+      el.hidden = false;
+      const a = at.getBoundingClientRect?.() ?? at, h = host?.getBoundingClientRect() ?? a, w = el.offsetWidth, ht = el.offsetHeight;
+      let left = clamp(a.left, 8, innerWidth - w - 8), top = h.bottom + 6 + ht <= innerHeight ? h.bottom + 6 : h.top - ht - 6;
+      if (top < 8) { top = clamp(a.top, 8, innerHeight - ht - 8); left = h.right + 6 + w <= innerWidth ? h.right + 6 : Math.max(8, h.left - w - 6); }
+      Object.assign(el.style, { left: `${left}px`, top: `${top}px` });
+    };
+    return { el, show, hide, later };
+  }
+  /** An "Use as a widget" line folds into a small button after a moment; a click opens it again. */
+  self.satexEmbedFold = (line) => {
+    if (!line || line.dataset.fold) return;
+    line.dataset.fold = '1';
+    const open = Object.assign(document.createElement('button'), { type: 'button', className: 'ghost small embed-open', textContent: '</> Embed', title: 'Show the snippet that embeds this as a widget' });
+    open.onclick = () => { line.classList.remove('folded'); open.hidden = true; clearTimeout(line._t); line._t = setTimeout(fold, 6000); };
+    const fold = () => { if (!line.matches(':hover, :focus-within')) { line.classList.add('folded'); open.hidden = false; } else line._t = setTimeout(fold, 1500); };
+    open.hidden = true;
+    line.after(open);
+    line._t = setTimeout(fold, 1500);
+  };
+  const tips = self.satexTip = { card: floating('tip-card'), note: floating('tip-note') };
+  // One progress bar for the site: a share when the work has a total (and the time left once it is
+  // known), a moving shimmer when it has none. `satexProgress.html(done)` writes one, `.set(el, done)`
+  // moves one, both with the role and values a screen reader reads.
+  self.satexProgress = {
+    html: (done = null, label = 'progress') => `<span class="sx-progress${done == null ? ' sx-busy' : ''}" role="progressbar" aria-label="${esc(label)}" aria-valuemin="0" aria-valuemax="100"${done == null ? '' : ` aria-valuenow="${Math.round(done * 100)}"`} style="--done: ${done ?? 0}"><span class="sx-fill"></span></span>`,
+    set(el, done = null) {
+      el.hidden = false;
+      el.classList.toggle('sx-busy', done == null);
+      el.style.setProperty('--done', String(done ?? 0));
+      if (done == null) el.removeAttribute('aria-valuenow'); else el.setAttribute('aria-valuenow', String(Math.round(done * 100)));
+    },
+    /** The time left for a share `done` reached `ms` after the start, once enough of it is done to tell. */
+    left: (done, ms) => (done > 0.05 && done < 1 ? Math.max(1, Math.round((ms * (1 - done)) / done / 1000)) : null),
+  };
+  {
+    const { note } = tips;
+    // a native `title` would bring the browser's own tooltip: lent to the note while hovered
+    let titled = null;
+    const untitle = () => { if (titled) { titled.title = titled.dataset.title; delete titled.dataset.title; titled = null; } };
+    document.addEventListener('mouseover', (e) => {
+      // inside an open note (a card with links): leave it as it is, so its links can be clicked
+      if (e.target.closest?.('.tip-note') && !note.el.hidden) return;
+      const a = e.target.closest?.('a.ty[data-ty]'), chip = e.target.closest?.('.arg[data-tip]');
+      const ty = a?.dataset.ty ?? chip?.querySelector('a.ty[data-ty]')?.dataset.ty;
+      // one heading and one description: the type's card when there is one, else the chip's own note
+      const card = ty ? tyCard(ty) : '', html = card || (chip ? `<div class="ty-what">${esc(chip.dataset.tip)}</div>` : '');
+      const t = !html && (e.target.closest?.('[title]') ?? (titled?.contains(e.target) ? titled : null));
+      if (t) {
+        if (t === titled) return;
+        untitle();
+        if (!t.title.trim()) return;
+        titled = t;
+        t.dataset.title = t.title;
+        t.removeAttribute('title');
+        note.later(() => { if (titled === t) note.show(t, esc(t.dataset.title), t.closest('.tip')); }, 450);
+        return;
+      }
+      untitle();
+      // a short grace period: the pointer crosses the gap between a name and its card
+      if (!html) { if (!e.target.closest?.('.tip-note')) note.hide(250); return; }
+      note.show(chip ?? a, html, (chip ?? a).closest('.tip, .cm-tooltip'));
+    });
+    // a related type in a type card opens its own card in place
+    document.addEventListener('click', (e) => {
+      const chip = e.target.closest?.('.tip-note a.ty-chip');
+      if (!chip) return;
+      e.preventDefault();
+      note.el.innerHTML = tyCard(chip.dataset.ty);
+    });
+    // a press inside an open note or card (its links, its chips) keeps it: hiding it first would swallow the click
+    document.addEventListener('pointerdown', (e) => { if (e.target.closest?.('.tip-note, .tip-card')) return; untitle(); note.hide(); if (!e.target.closest?.('.tip-card')) tips.card.hide(); }, true);
+  }
+  // A code span naming a control sequence (`code.cs`) shows its card from the build's one JSON index
+  // (loaded on the first hover, from the file next to the site, so it works offline). A name of the Lean
+  // model (`[data-lean]`) shows its type and doc comment from the page's own `#lean-decls`.
+  {
+    const meta = document.querySelector('meta[name=satex-cards]'), base = meta ? new URL('.', new URL(meta.content, location.href)).href : '';
+    let cards = null;
+    const load = () => (cards ??= meta ? fetch(meta.content).then((r) => r.json()).catch(() => ({})) : Promise.resolve({}));
+    const lean = (() => { try { return JSON.parse(document.getElementById('lean-decls')?.textContent ?? '{}'); } catch { return {}; } })();
+    const go = (href) => esc(new URL(href, base).href);
+    const csCard = (name, c) => {
+      const chip = (t, cls = '') => `<span class="cs-chip ${cls}">${esc(t)}</span>`;
+      const sem = c.sem;
+      return `<div class="cs-card"><div class="cs-head"><b>${esc(name)}</b>${c.k ? chip(c.k, 'cs-k') : ''}${c.pkg ? chip(`from ${c.pkg}`) : ''}${c.re ? chip(`redefined by ${c.re}`) : ''}${c.e ? chip(c.e) : ''}</div>` +
+        (c.pv ? `<div class="cs-pv">${c.pv}</div>` : '') +
+        (c.sig ? `<div class="cs-sig"><code>${esc(c.sig)}</code></div>` : '') +
+        (c.doc ? `<p>${esc(c.doc).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` : '') +
+        (sem ? `<div class="cs-sem"><a href="${go(sem.row)}">${esc(sem.kind)}</a>` +
+          (sem.rules?.length ? ` · rule ${sem.rules.map(([n, h]) => `<a href="${go(h)}">${esc(n)}</a>`).join(', ')}` : '') +
+          (sem.rust ? ` · <a href="${esc(sem.rust[1])}">${esc(sem.rust[0])}</a>` : '') + (sem.src ? `<div class="cs-src">${esc(sem.src)}</div>` : '') + '</div>' : '') +
+        (c.at ? `<div class="cs-src">defined at ${esc(c.at)}</div>` : '') + '</div>';
+    };
+    const leanCard = (name, d) => `<div class="cs-card"><div class="cs-head"><b>${esc(name.replace(/^Satex\./, ''))}</b><span class="cs-chip cs-k">${esc(d.k)}</span></div>` +
+      (d.t ? `<div class="cs-sig"><code>${esc(d.t)}</code></div>` : '') +
+      (d.d ? `<p>${esc(d.d).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` : '') + `<div class="cs-src">${esc(d.f)}.lean:${d.l}</div></div>`;
+    document.addEventListener('mouseover', async (e) => {
+      const cs = e.target.closest?.('code.cs[data-cs] span[data-cs], code.cs[data-cs]'), ln = e.target.closest?.('[data-lean]');
+      const el = cs ?? ln;
+      if (!el) return;
+      let html = '';
+      if (cs) { const c = (await load())[cs.dataset.cs]; html = c ? csCard(cs.dataset.cs, c) : ''; }
+      else if (lean[ln.dataset.lean]) html = leanCard(ln.dataset.lean, lean[ln.dataset.lean]);
+      if (html && el.matches(':hover')) tips.note.show(el, html, el.closest('.tip, .cm-tooltip'));
+    });
+  }
   /** explain's `types` (`#1 skip register`) by argument name: `{ arg1: 'skip register' }`. */
   const typesOf = (r) => Object.fromEntries((r.types ?? []).map((t) => t.match(/^#(\d+) (.+)$/)).filter(Boolean).map(([, n, t]) => [`arg${n}`, t]));
   const KIND = { mand: 'mandatory', opt: 'optional', emb: 'an embellishment' };
@@ -159,6 +398,8 @@
       const c = spec[i];
       if (/\s/.test(c)) { i++; continue; }
       if (c === '⟨') { const j = spec.indexOf('⟩', i); out.push({ key: spec.slice(i, j + 1), html: slot(spec.slice(i + 1, j)) }); i = j + 1; continue; }
+      // required text, as written (`‹key:›`)
+      if (c === '‹') { const j = spec.indexOf('›', i); const lit = spec.slice(i + 1, j < 0 ? spec.length : j); out.push({ key: lit, html: `<span class="arg arg-lit" title="text the command requires here">${esc(lit)}</span>` }); i = j < 0 ? spec.length : j + 1; continue; }
       if (c === '…') { out.push({ html: '<span class="arg arg-more" title="satex saw no more: the command may read further arguments">…</span>' }); i++; continue; }
       if (c === '+' || c === '!') { prefix += c; i++; continue; }
       if (c === '>') { i++; group(); prefix += '>'; continue; }
@@ -203,11 +444,35 @@
     return `<a class="place" href="${esc(href)}" data-path="${esc(path)}" data-line="${line}" title="open ${esc(path)} at line ${line}">${esc(file)}:${line}</a>` +
       (up ? ` <a class="upstream" href="${esc(up[0])}" target="_blank" rel="noopener" title="the sources of ${esc(file)} in ${esc(up[1])}">source ↗</a>` : '');
   }
-  const csChip = (name) => `<a class="cs" href="#" data-cs="${esc(name)}" title="explain ${esc(name)}">${esc(name)}</a>`;
+  /** A command's name as shown: a control space `\ ` keeps its space visible, as one token. */
+  const csName = (name) => esc(String(name ?? '').replace(/^\\ $/, '\\␣'));
+  const csChip = (name) => `<a class="cs" href="#" data-cs="${esc(name)}">${csName(name)}</a>`;
   /** The one marker of a package, class or the kernel, as the cache dialog badges them. */
   const pkgChip = (kind, name) => `<span class="cache-kind k-${kind}" title="${kind === 'kernel' ? 'defined by the kernel' : `from the ${kind} ${esc(name)}`}">${esc(name)}</span>`;
   /** The playground's button that traces a call of the command. */
-  const traceButton = (r) => document.body.classList.contains('play') && /^\\/.test(r.name) ? ` <button type="button" class="small ghost x-trace" data-trace="${esc(r.name)}" title="step through how a call of ${esc(r.name)} expands">Trace</button>` : '';
+  /** Trace where the project calls the name (the playground's `satexCalled`), else Try a sample call in a scratch run. */
+  const traceButton = (r) => !document.body.classList.contains('play') || !/^\\/.test(r.name) ? ''
+    : r.uses !== 0 && (self.satexCalled?.(r.name) ?? true) ? ` <button type="button" class="small ghost x-trace" data-trace="${esc(r.name)}" title="step through how a call of ${csName(r.name)} expands">Trace</button>`
+      : ` <button type="button" class="small ghost x-trace" data-try="${esc(r.effective ?? r.name)}" title="the project never calls ${csName(r.name)}: try a call in a scratch run, its arguments yours to fill in">Try</button>`;
+  /** The meanings a name held, oldest first, each step a link to its source line: `latex.ltx:1 (kernel) → hyperref.sty:2 (redefined)
+   * → nameref.sty:3 (in force here)`, with what a `\let` saved of the old meaning. Long chains show the last two, `+N earlier` opens the rest. */
+  function chainOf(chain, keep = 2) {
+    const step = (c) => {
+      const what = c.role === 'kernel' ? 'kernel' : c.package ? `${c.from ?? 'package'} ${esc(c.package)}` : 'document';
+      const saves = c.saved?.length ? ` <span class="muted">saves the old meaning as ${c.saved.map(csChip).join(' ')}</span>` : '';
+      const role = c.role === 'kernel' ? '' : c.role === 'in force' ? ' in force here' : ' redefined';
+      return `<span class="x-step"><a class="place" href="#" data-path="${esc(c.path)}" data-line="${c.line}" title="open ${esc(c.path)} at line ${c.line}">${esc(c.file)}:${c.line}</a> <span class="muted">(${what}${role})</span>${saves}</span>`;
+    };
+    const hidden = chain.length > keep ? chain.slice(0, -keep) : [];
+    const early = hidden.length ? `<details class="x-more"><summary>+${hidden.length} earlier</summary>${hidden.map(step).join(' → ')} →</details> ` : '';
+    return early + chain.slice(hidden.length).map(step).join(' → ');
+  }
+  /** The `redefined by` row: one chain, or one per meaning a use may hold. */
+  function chainRow(r) {
+    const alts = r.one_of?.filter((a) => a.chain?.length);
+    if (alts?.length) return alts.map((a) => `<div>${chainOf(a.chain)}</div>`).join('');
+    return r.chain?.length ? chainOf(r.chain) : '';
+  }
   /** One explain record as a card: signature, body, by, defined at, context, uses, expands. */
   function explain(r) {
     const rows = [];
@@ -221,28 +486,43 @@
       rows.push(['signature', signature(r.signature) + (more ? ` <span class="muted">reads ${argumentCount(r.takes)} with what it calls</span>` : '')]);
     } else if (r.takes) rows.push(['arguments', argumentCount(r.takes)]);
     const types = typesOf(r);
-    if (r.syntax) rows.push(['usage', `<code class="usage">${esc(r.syntax)}</code>`]); // a primitive's TeXbook syntax
+    if (r.syntax) rows.push(['usage', `<code class="usage">${slots(esc(r.syntax))}</code>`]); // a primitive's TeXbook syntax
     else if (r.effective && r.effective !== r.name) rows.push(['usage', `<code class="usage">${usage(r.effective, types).html}</code>`]);
     if (r.types?.length) rows.push(['types', `<span class="chips">${Object.entries(types).map(([n, t]) => `<span class="x-type"><code>#${n.slice(3)}</code> ${tyLink(t)}</span>`).join('')}</span>`]);
     if (r.forms?.length) rows.push(['forms', r.forms.map((f) => `<code>${esc(f)}</code>`).join(' ')]);
     if (primitive) rows.push(['body', 'none: a TeX primitive']);
     else if (r.body != null) rows.push(['body', r.body === '' ? '<span class="muted">empty</span>' : `<pre class="x-body"><code>${tex(r.body, true)}</code></pre>`]);
     if (r.by) rows.push(['by', csChip(r.by)]);
+    // at a use paths reach with different definitions: each text it may hold, with the lines that define it
+    if (r.one_of?.length) {
+      const by = new Map();
+      for (const a of r.one_of) by.set(a.body ?? '', [...(by.get(a.body ?? '') ?? []), a.line]);
+      rows.push(['one of, by path', [...by].map(([b, ls]) => `${b ? `<code>${esc(b)}</code>` : '<span class="muted">(empty)</span>'} <span class="muted">(line${ls.length > 1 ? 's' : ''} ${ls.join(', ')})</span>`).join(' / ')]);
+    }
+    if (r.together?.length) rows.push(['defined with', chipList(r.together, csChip)]);
     const owner = r.class ? pkgChip('class', r.class) : r.package ? (r.package === 'kernel' ? pkgChip('kernel', 'the kernel') : pkgChip('package', r.package)) : '';
     if (r.path && r.line) rows.push(['defined at', `${placeLink(r.path, r.line, r.file)}${owner ? ` ${owner}` : ''}`]);
     else if (owner) rows.push(['from', owner]);
-    if (r.context) rows.push(['context', esc(r.context)]);
+    const redefined = chainRow(r);
+    if (redefined) rows.push(['redefined by', redefined]);
+    // `in environments via \tikz@installcommands: tikzpicture, scope`: each name a link to its explanation
+    if (r.context) rows.push(['context', esc(r.context)
+      .replace(/: ([^:]+?)(?=, in |, outside|$)/g, (m, list) => `: ${list.split(', ').map((e) => `<code class="cs-ref env-ref" data-cs="\\${e}" tabindex="0">${e}</code>`).join(' ')}`)
+      .replace(/(^|[\s(])(\\[A-Za-z@]+)/g, (m, pre, cs) => `${pre}<code class="cs-ref" data-cs="${cs}" tabindex="0">${cs}</code>`)]);
     if (r.uses != null) rows.push(['uses', r.uses ? `${r.uses} in this run` : 'none in this run']);
-    for (const [key, label] of [['expands', 'always expands'], ['may_expand', 'may expand']]) if (r[key]?.length) rows.push([label, `<span class="chips">${r[key].map(csChip).join('')}</span>`]);
+    for (const [key, label] of [['expands', 'always expands'], ['may_expand', 'may expand']]) if (r[key]?.length) rows.push([label, chipList(r[key], csChip)]);
     // what the document's calls leave defined: the public names, the internal ones folded
     const made = r.creates ?? [], inner = r.creates_internal ?? [];
-    if (made.length || inner.length) rows.push(['creates', `<span class="chips">${made.map(csChip).join('')}</span>` +
-      (inner.length ? `<details class="x-more"><summary>${inner.length} internal</summary><span class="chips">${inner.map(csChip).join('')}</span></details>` : '')]);
+    if (made.length || inner.length) rows.push(['creates', chipList(made, csChip) +
+      (inner.length ? `<details class="x-more"><summary>${inner.length} internal</summary>${chipList(inner, csChip)}</details>` : '')]);
     if (r.error) rows.push(['error', `<span class="x-err">${esc(r.error)}</span>`]);
     const tags = [primitive ? 'primitive' : r.tag, r.when && `in the ${r.when}`, r.certain === false && 'uncertain'].filter(Boolean);
-    return `<div class="xcard"><div class="x-head"><code class="x-name">${esc(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}${traceButton(r)}</div>` +
+    return `<div class="xcard"><div class="x-head"><code class="x-name">${csName(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}${traceButton(r)}</div>` +
       `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`;
   }
+  /** A record's usage line, as its cards show it: the arguments as typed chips. */
+  const useOf = (r) => (r.effective && r.effective !== r.name ? `<code class="usage">${usage(r.effective, typesOf(r)).html}</code>`
+    : r.signature ? signature(r.signature) : r.syntax ? `<code class="usage">${slots(esc(r.syntax))}</code>` : '');
   /** The same record as a hover card: its name and kind, where it is
    * defined, how it is used, the error it raises and its documentation. */
   function brief(r) {
@@ -252,29 +532,382 @@
       : r.takes ? argumentCount(r.takes) : '';
     const where = r.path && r.line ? placeLink(r.path, r.line, r.file) : '';
     const docs = r.reference ? `<a href="${esc(r.reference)}" target="_blank" rel="noopener">${esc(r.documentation ?? 'docs')} ↗</a>` : '';
-    return `<div class="xcard brief"><div class="x-head"><code class="x-name">${esc(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}` +
+    return `<div class="xcard brief"><div class="x-head"><code class="x-name">${csName(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}` +
       `${where ? ` <span class="x-where">${where}</span>` : ''}${traceButton(r)}</div>` +
-      (r.does ? `<div class="x-does">${esc(r.does)}</div>` : '') + (use ? `<div class="x-use">${use}</div>` : '') + (r.error ? `<div class="x-err">${esc(r.error)}</div>` : '') +
+      (r.does ? `<div class="x-does">${esc(r.does)}</div>` : '') + (use ? `<div class="x-use">${use}</div>` : '') +
+      (chainRow(r) ? `<div class="x-chain"><span class="muted">redefined by</span> ${chainRow(r)}</div>` : '') + (r.together?.length ? `<div class="x-with muted">defined together with ${chipList(r.together, csChip)}</div>` : '') + (r.error ? `<div class="x-err">${esc(r.error)}</div>` : '') +
       (docs ? `<div class="x-docs">${docs}</div>` : '') + '</div>';
   }
   /** Any other record value for a table cell: lists as chips, never raw JSON. */
   const value = (v) => v == null ? '' : Array.isArray(v) ? v.map((x) => typeof x === 'object' ? value(x) : /^\\/.test(String(x)) ? csChip(String(x)) : `<code>${esc(x)}</code>`).join(' ')
     : typeof v === 'object' ? ('min' in v && 'max' in v ? argumentCount(v) : Object.entries(v).map(([k, x]) => `${esc(k)} ${value(x)}`).join(', '))
       : /^\\/.test(String(v)) ? csChip(String(v)) : /^[{}#]/.test(String(v)) ? `<code>${esc(v)}</code>` : esc(v);
-  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, placeLink, upstream, csChip, value, esc };
+  /** satex's notation in typeset text (`\uE000…\uE001`): `⟦…⟧` is text set in a box, on the page
+   * only if the box is used; `·` a place the line breaker may hyphenate, not shown; `│`, `―`, `▬`
+   * a table's `|`, an `\hline` and a `\rule`, drawn. An alignment's parts (`\u0003begin`, `cell`, `row`,
+   * `end`) make a grid: a row opens at its first character, so an `\hline` before it rules its top. */
+  const RULES = { '│': ['ts-vrule', 'a \\vrule: a table\'s |'], '―': ['ts-hrule', 'an \\hrule: \\hline'], '▬': ['ts-bar', 'a \\rule'] };
+  /** `marked` with each key and font change as a note of its own, where it stands. `at` counts every
+   * character but the note brackets and a math note's, a note's own (a hyphen's `·`) too, and a key never parts a note. */
+  function withKeys(marked, keys = [], fonts = [], align = [], ligatures = [], lines = []) {
+    const at = [...(keys ?? []).filter((k) => k?.key != null), ...(fonts ?? []), ...(align ?? []), ...(ligatures ?? []), ...(lines ?? [])].sort((a, b) => a.at - b.at);
+    if (!at.length) return marked;
+    // a math note (`\u0006` and its class) is no text the query counts
+    let out = '', seen = 0, i = 0, note = false, math = false, first = false;
+    const mark = (k) => k.style != null ? `\u0002${k.style}\u0001${k.color ?? ''}` : k.line != null ? `\u0007${k.line}` : k.mark != null ? `\u0003${k.mark}` : k.from != null ? `\u0005${k.from}\u0001${k.to}` : `\u0001${k.kind ?? 'key'}\u0001${k.key}`;
+    const put = (n) => { while (i < at.length && at[i].at <= n) out += `\uE000${mark(at[i++])}\uE001`; };
+    for (const c of marked) {
+      if (c === '\uE000') { put(seen); note = first = true; } else if (c === '\uE001') note = math = false;
+      else {
+        if (first && c === '\u0006') math = true;
+        first = false;
+        if (!note) put(seen);
+        if (!math) seen++;
+      }
+      out += c;
+    }
+    put(Infinity);
+    return out;
+  }
+  /** A picture as the run drew it (`satex typeset` records it in `sketches`): the paths pgf's driver wrote, in pt, and the node texts where the run set them. */
+  const PICTURE_SCALE = 1.4, PICTURE_MAX = 560, PICTURE_PAD = 6;
+  function sketchSvg(pic) {
+    const [x, y, w, h] = pic.box;
+    const scale = Math.min(PICTURE_SCALE, (PICTURE_MAX - 2 * PICTURE_PAD) / Math.max(w, 1));
+    const width = (w * scale + 2 * PICTURE_PAD).toFixed(0), height = (h * scale + 2 * PICTURE_PAD).toFixed(0);
+    const paths = pic.paths.map((p) => `<path d="${esc(p.d)}" fill="${p.fill ? 'currentColor' : 'none'}" stroke="${p.stroke ? 'currentColor' : 'none'}" stroke-width="${Math.max(p.width, 0.6)}"/>`).join('');
+    const texts = pic.texts.map((t) => `<text x="${t.x}" y="${t.y}" font-size="9" text-anchor="middle" dominant-baseline="central">${esc(t.text)}</text>`).join('');
+    const label = pic.approximate ? 'TikZ picture as the run drew it, approximate where it did not know a number' : 'TikZ picture as the run drew it';
+    return `<svg class="ts-sketch${pic.approximate ? ' approximate' : ''}" role="img" aria-label="${label}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
+      `<g transform="translate(${PICTURE_PAD} ${PICTURE_PAD}) scale(${scale}) translate(${-x} ${-y})">${paths}${texts}</g></svg>`;
+  }
+  function notation(marked, sketches = [], picture = null) {
+    let drawn = 0;
+    // row: false while a row waits for its first character, true if an \hline rules it, null when one is open
+    let open = 0, font = '', ink = '', table = 0, row = null, lig = null, math = '';
+    // a math atom: `i` an italic letter, a class digit (2 binary, 3 relation, 6 punctuation) sets its spacing
+    const MATH_CLASS = { i: 'ts-mi', 2: 'ts-mbin', 3: 'ts-mrel', 6: 'ts-mpunct' };
+    const mathSpan = (html) => MATH_CLASS[math] ? `<span class="${MATH_CLASS[math]}">${html}</span>` : html;
+    // a ligature: the characters the font joined, then the glyph it set (`.show-ligs` animates the join)
+    const ligature = (from, to) => {
+      const code = [...to].length === 1 ? ` (U+${to.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')})` : '';
+      return `Ligature: the font sets ${[...from].join(' + ')} as one glyph, ${to}${code}, as its ligature table says`;
+    };
+    const joined = (part) => {
+      if (!lig) return esc(part);
+      const [from, to] = lig, n = [...to].length, glyph = [...part].slice(0, n).join('');
+      lig = null;
+      return `<span class="ts-lig" data-from="${esc(from)}" title="${esc(ligature(from, to))}"><span class="ts-lig-to">${esc(glyph)}</span></span>${esc([...part].slice(n).join(''))}`;
+    };
+    const opened = () => {
+      if (row === null) return '';
+      const tr = `<span class="ts-tr${row ? ' ts-ruled' : ''}"><span class="ts-td">`;
+      row = null;
+      return tr;
+    };
+    // a box of a set width in the line (a contents line's number, its page) is set that wide; leaders fill the rest
+    let boxes = 0;
+    // whether the box or cell open now set text yet: a fill before it pushes the text right, one after left
+    let inked = false, hidden = 0, framed = 0, bar = null, scripts = 0;
+    const grid = (mark) => {
+      if (mark === 'fill') return `<i class="ts-fill ts-fill-${inked ? 'r' : 'l'}"></i>`;
+      // a math script, to its character or its group's end
+      if (mark === 'sup' || mark === 'sub') { scripts++; return `<span class="ts-${mark}">`; }
+      if (mark === 'scriptend') { if (!scripts) return ''; scripts--; return '</span>'; }
+      // a box with rules on its sides around boxes used in it (`\fbox`): one framed box
+      if (mark === 'frame') { framed++; return '<span class="ts-frame" title="a framed box: its rules drawn around it">'; }
+      if (mark === 'frameend') { if (!framed) return ''; framed--; return '</span>'; }
+      // the next bar's size, in pt
+      if (mark.startsWith('bar ')) { bar = mark.slice(4).split(' ').map(parseFloat); return ''; }
+      // text set while the drawing stood off the page: it keeps its space, not its ink (beamer's covered text)
+      if (mark === 'hide') { hidden++; return '<span class="ts-hidden" title="covered on this slide: set and its space kept, but not visible">'; }
+      if (mark === 'show') { if (!hidden) return ''; hidden--; return '</span>'; }
+      if (mark !== 'boxend') inked = false;
+      if (mark.startsWith('box ')) { boxes++; return `<span class="ts-boxto" style="min-width: ${parseFloat(mark.slice(4))}pt">`; }
+      if (mark === 'boxend') { if (!boxes) return ''; boxes--; return '</span>\u0000'; }
+      if (mark === 'leaders') return '<span class="ts-leaders" aria-hidden="true"></span>';
+      if (mark === 'break') return '<br>';
+      if (mark === 'begin') { table++; row = false; return '<span class="ts-table">'; }
+      if (!table) return '';
+      if (mark === 'cell') return `${opened()}</span><span class="ts-td">`;
+      const shut = row === null ? '</span></span>' : row ? '<span class="ts-tr ts-ruled"></span>' : '';
+      if (mark === 'row') { row = false; return shut; }
+      table--;
+      row = null;
+      return `${shut}</span>`;
+    };
+    const html = marked.split(/(\uE000[^\uE001]*\uE001)/).map((part) => {
+      const note = /^\uE000([^\uE001]*)\uE001$/.exec(part)?.[1];
+      if (note === undefined) {
+        if (row !== null && !part.trim()) return '';
+        if (part.trim()) inked = true;
+        const tr = table ? opened() : '';
+        return tr + mathSpan((font || ink) && part ? `<span${font ? ` class="${font}"` : ''}${ink ? ` style="color: ${esc(ink)}"` : ''}>${joined(part)}</span>` : joined(part));
+      }
+      if (note[0] === '\u0006') { math = note.slice(1); return ''; }
+      if (note[0] === '\u0003') return grid(note.slice(1));
+      if (note[0] === '\u0005') { lig = note.slice(1).split('\u0001'); return ''; }
+      if (note === '―' && table && row !== null) { row = true; return ''; }
+      if (note[0] === '\u0002') { const [style, color = ''] = note.slice(1).split('\u0001'); font = style.split(' ').filter(Boolean).map((x) => `ts-${x}`).join(' '); ink = color; return ''; }
+      // a source line beginning mid-paragraph: the row's gutter names the range, the text stays clean
+      if (note[0] === '\u0007') return '';
+      if (note === '·') return '';
+      const tr = table ? opened() : '';
+      if (note === '⟦') { open++; return `${tr}<span class="ts-box" title="set in a box: on the page only if the box is used">`; }
+      if (note === '⟧') { if (!open) return tr; open--; return `${tr}</span>`; }
+      if (note[0] === '\u0001') { const [, kind, key] = note.split('\u0001'); return `${tr}<span class="ts-key ts-key-${esc(kind)}" title="${esc(kind)}">${esc(key)}</span>`; }
+      if (note[0] === '▢') { const sk = sketches?.[drawn++]; return sk ? tr + sketchSvg(sk) : `${tr}<span class="ts-note">${esc(note)}</span>`; }
+      if (note === '▬' && bar?.[0] > 0) {
+        const [w, h] = bar;
+        bar = null;
+        return `${tr}<span class="ts-bar" style="width: ${w}pt; height: ${Math.max(h, 0.4)}pt" title="a \\rule ${w}pt wide, ${h}pt high"></span>`;
+      }
+      if (RULES[note]) return `${tr}<span class="${RULES[note][0]}" title="${RULES[note][1]}"></span>`;
+      return `${tr}<span class="ts-note">${esc(note)}</span>`;
+    }).join('').replace(/<span class="ts-boxto" style="[^"]*">(?:<i class="ts-fill[^"]*"><\/i>)*<\/span>\u0000/g, '');
+    // set boxes at both ends (a contents line, a label) align the line as a row
+    const aligned = html.startsWith('<span class="ts-boxto"') && html.endsWith('\u0000') || html.includes('ts-leaders');
+    if (picture) return sketchSvg(picture);
+    // infinite glue at both ends of a line (`\hbox to\hsize{\hfil …\hfil}`): the line is centred by it
+    const done = html.replaceAll('\u0000', '') + '</span>'.repeat(open + 2 * table + boxes + hidden + framed + scripts);
+    if (/^<i class="ts-fill/.test(done) && /<i class="ts-fill[^"]*"><\/i>$/.test(done)) return `<span class="ts-fillrow">${done}</span>`;
+    return (aligned ? '<i class="ts-row" hidden></i>' : '') + done;
+  }
+  /** One typeset paragraph as a row of the view's grid: the source line in the gutter, one rail per
+   * environment it stands in, then its text. `depth` adds the levels of a folded file around it. */
+  const tsRow = (r, depth = 0, k = r.k) => {
+    const d = (r.depth ?? 0) + depth;
+    const last = Math.max(r.line ?? 0, ...[...(r.marked ?? '').matchAll(/\u0007(\d+)/g)].map((m) => +m[1]));
+    return `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}${r.footnote ? ' ts-foot' : ''}${r.held ? ' ts-held' : ''}"${r.env ? ` data-env="${esc(r.env)}" title="set in ${esc(r.env)}"` : ''}${r.just && r.just !== 'justified' ? ` data-just="${esc(r.just)}"` : ''}` +
+      `${k != null ? ` data-k="${k}"` : ''} data-path="${esc(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}" data-plain="${esc(r.detail ?? '')}"${r.lines?.length ? ` data-lines="${esc(JSON.stringify(r.lines))}"` : ''}` +
+      ` style="--depth: ${d}${typeof r.skip === 'number' && !r.heading ? `; --skip: ${Math.max(r.skip, 0)}pt` : ''}">` +
+      `<span class="ts-at"${last > r.line ? ` title="lines ${r.line}–${last}"` : ''}>${r.line ?? ''}</span><span class="ts-rails" aria-hidden="true"></span>` +
+      `<span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`;
+  };
+  /** A page `\shipout` sent out, as a labelled line where the next one begins; a page the run did not
+   * break though it filled (`filled`) as a dashed one: pdfTeX breaks it by there. */
+  const tsPage = (r) => `<div class="ts-page${r.filled ? ` ts-page-fill ts-${esc(r.filled)}` : ''}" role="separator" data-line="${r.line}" title="${r.filled
+    ? `the page passed \\vsize ${r.filled === 'surely' ? '' : 'maybe '}by line ${r.line}: pdfTeX breaks it there or before (the run breaks pages only where forced)`
+    : `the run shipped page ${r.page} out while reading line ${r.line}`}">` +
+    `<span class="ts-at"></span><span class="ts-rails" aria-hidden="true"></span><span class="ts-page-label">${esc(r.detail)}</span></div>`;
+  /** The typeset view of a `typeset` query's rows: paragraphs in a grid of one gutter and rails, page breaks as
+   * lines, an environment instance of the user's file as one block with its name, a run from another file folded
+   * (`closed` the ones folded by hand). `file` names the open file, else every paragraph is its own. A block the run
+   * set again page after page from the same lines (a beamer frame's overlays) is a card: the page's own text (its
+   * title, what the output routine set) as its header, one step per page, a stepper and a diff between steps. */
+  function typesetView(rows, { file = null, closed = new Set(), plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`, lineOf = null } = {}) {
+    // each row knows its place in `rows`: a view finds the record (its sites) behind a paragraph
+    const shown = rows.map((r, k) => ({ ...r, k })).filter((r) => r.kind === 'paragraph' || r.kind === 'page');
+    const mine = (r) => !file || (r.path ?? '').endsWith(file);
+    const keyOf = (r) => r.kind === 'paragraph' && mine(r) && r.outer ? `${r.outer.env}@${r.outer.line}` : null;
+    const html = [];
+    for (let i = 0; i < shown.length;) {
+      const r = shown[i];
+      if (r.kind === 'page') { html.push(tsPage(r)); i++; continue; }
+      if (!mine(r)) {
+        let j = i;
+        while (j < shown.length && shown[j].kind === 'paragraph' && shown[j].path === r.path) j++;
+        const run = shown.slice(i, j), name = (r.path ?? '').split('/').pop(), id = `${r.path}|${r.line}`;
+        html.push(`<details class="ts-other" data-id="${esc(id)}"${closed.has(id) ? '' : ' open'}><summary><span class="ts-at"></span><span class="ts-rails" aria-hidden="true"></span><span class="ts-file">${esc(name)}</span> <span class="muted">${plural(run.length, 'paragraph')}</span></summary>${run.map((x) => tsRow(x, 1)).join('')}</details>`);
+        i = j;
+        continue;
+      }
+      const key = keyOf(r);
+      if (!key) { html.push(tsRow(r)); i++; continue; }
+      // the instance's rows and the pages between them, and the page that ends it
+      let j = i;
+      while (j < shown.length && (keyOf(shown[j]) === key || shown[j].kind === 'page' && keyOf(shown[j + 1] ?? {}) === key)) j++;
+      if (shown[j]?.kind === 'page') j++;
+      // the placement the environment was given where it begins (`[ht]`), as the source has it
+      const place = lineOf?.(r.outer.line)?.match(new RegExp(`\\\\begin\\{${r.outer.env.replace(/[*]/g, '\\*')}\\}\\s*\\[([^\\]]*)\\]`))?.[1];
+      html.push(tsBlock(shown.slice(i, j), r.outer, place));
+      i = j;
+    }
+    const rails = Math.max(0, ...shown.map((r) => (r.depth ?? 0) + (mine(r) ? 0 : 1)));
+    return html.length ? `<div class="ts-view" style="--rails: ${rails}">${html.join('')}</div>` : '';
+  }
+  /** One environment instance: its chip, then its rows; a card with steps when its pages repeat its lines. */
+  function tsBlock(items, o, place) {
+    const steps = [[]];
+    for (const x of items) if (x.kind === 'page') steps.push([]); else steps.at(-1).push(x);
+    while (steps.length > 1 && !steps.at(-1).length) steps.pop();
+    // a page's rows in the order its boxes went onto the page (`placed`), not the order they were set:
+    // rows placed above text set before them are its head (a frame's title)
+    const heads = steps.map((rs) => {
+      const order = rs.map((x, k) => [x, k]).sort((a, b) => (a[0].placed ?? Infinity) - (b[0].placed ?? Infinity) || a[1] - b[1]);
+      rs.splice(0, rs.length, ...order.map(([x]) => x));
+      let n = 0;
+      while (n < order.length - 1 && order.slice(n + 1).some(([, k]) => k < order[n][1])) n++;
+      return rs.splice(0, n);
+    });
+    const body = (rs) => rs;
+    const first = (rs) => body(rs)[0]?.line;
+    // each page set the same lines again: the overlays of one frame
+    const stepped = steps.length > 1 && steps.every((rs) => body(rs).length && first(rs) === first(steps[0]));
+    const chip = `<span class="ts-block-env">${esc(o.env)}</span>${place ? `<code class="ts-block-place" title="placement: where LaTeX may put it">[${esc(place)}]</code>` : ''}<span class="ts-block-line">line ${o.line}</span>${(o.labels ?? []).map((l) => `<code class="ts-block-label" title="label">${esc(l)}</code>`).join('')}`;
+    const head = (more = '', lead = '') => `<div class="ts-block-head"><span class="ts-at"></span><span class="ts-rails" aria-hidden="true"></span><span class="ts-block-chip">${lead}${chip}${more}</span></div>`;
+    if (!stepped) return `<div class="ts-block" data-env="${esc(o.env)}" data-line="${o.line}">${head()}${items.map((x) => x.kind === 'page' ? tsPage(x) : tsRow(x)).join('')}</div>`;
+    // the page's own text with letters in it, the first step's: the card's title
+    const title = heads[0].filter((x) => /[\p{L}\p{N}]/u.test(x.detail ?? '')).map((x) => x.detail.trim()).join(' · ');
+    const n = steps.length;
+    const stepper = `<span class="ts-stepper" role="group" aria-label="overlay step">${steps.map((_, k) => `<button type="button" data-step="${k + 1}" aria-pressed="${k === 0}" title="step ${k + 1} of ${n}: the page the run shipped ${k + 1}${k ? '' : 'st'} for this ${esc(o.env)}">${k + 1}</button>`).join('')}</span>` +
+      `<label class="ts-diff-toggle" title="what this step adds to the one before (green) and takes away (red)"><input type="checkbox"> diff</label>`;
+    return `<div class="ts-block ts-card" data-env="${esc(o.env)}" data-line="${o.line}" data-step="1">` +
+      head(stepper, title ? `<span class="ts-card-title">${esc(title)}</span>` : '').replace('ts-block-head', 'ts-block-head ts-card-head') +
+      steps.map((rs, k) => `<div class="ts-step" data-step="${k + 1}"${k ? ' hidden' : ''}>${body(rs).map((x) => tsRow(x)).join('')}</div>`).join('') +
+      '<div class="ts-step-diff" hidden></div></div>';
+  }
+  /** A step's words as the page shows them: covered text, boxes, keys and line marks left out. */
+  const stepWords = (step) => {
+    const c = step.cloneNode(true);
+    c.querySelectorAll('.ts-hidden, .ts-box, .ts-key, .ts-at, .ts-env, .ts-finding').forEach((x) => x.remove());
+    return [...c.querySelectorAll('.ts-text')].map((t) => t.textContent.trim().split(/\s+/).filter(Boolean));
+  };
+  /** Word diff of two steps, row by row as the later one has them: an LCS of all words. */
+  function stepDiff(before, after) {
+    const a = before.flat(), b = after.flat();
+    const L = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+    for (let x = a.length - 1; x >= 0; x--) for (let y = b.length - 1; y >= 0; y--) L[x][y] = a[x] === b[y] ? L[x + 1][y + 1] + 1 : Math.max(L[x + 1][y], L[x][y + 1]);
+    const out = [];
+    let x = 0, y = 0;
+    while (x < a.length || y < b.length) {
+      if (x < a.length && y < b.length && a[x] === b[y]) { out.push(esc(b[y])); x++; y++; }
+      else if (y < b.length && (x >= a.length || L[x][y + 1] >= L[x + 1][y])) { out.push(`<ins>${esc(b[y++])}</ins>`); }
+      else out.push(`<del>${esc(a[x++])}</del>`);
+    }
+    // a run of added or removed words is one mark
+    const merged = out.join(' ').replace(/<\/ins> <ins>/g, ' ').replace(/<\/del> <del>/g, ' ');
+    return `<p class="ts ts-diff"><span class="ts-at"></span><span class="ts-rails" aria-hidden="true"></span><span class="ts-text">${merged || '<span class="muted">no text</span>'}</span></p>`;
+  }
+  /** The view's cards answer their steppers and diff switches; once per container. */
+  function typesetWire(root) {
+    if (root.dataset.wired) return;
+    root.dataset.wired = '1';
+    const show = (card) => {
+      const k = +card.dataset.step, diff = card.querySelector('.ts-diff-toggle input')?.checked;
+      const steps = [...card.querySelectorAll(':scope > .ts-step')];
+      steps.forEach((s, i) => { s.hidden = diff || i + 1 !== k; });
+      card.querySelectorAll('.ts-stepper button').forEach((b) => b.setAttribute('aria-pressed', String(+b.dataset.step === k)));
+      const box = card.querySelector(':scope > .ts-step-diff');
+      box.hidden = !diff;
+      if (diff) box.innerHTML = stepDiff(k > 1 ? stepWords(steps[k - 2]) : [], stepWords(steps[k - 1]));
+    };
+    root.addEventListener('click', (e) => {
+      const b = e.target.closest?.('.ts-stepper button');
+      if (!b) return;
+      e.stopPropagation();
+      const card = b.closest('.ts-card');
+      card.dataset.step = b.dataset.step;
+      show(card);
+    });
+    root.addEventListener('change', (e) => { const card = e.target.closest?.('.ts-diff-toggle') && e.target.closest('.ts-card'); if (card) show(card); });
+    root.addEventListener('keydown', (e) => {
+      const card = e.target.closest?.('.ts-card');
+      if (!card || !['ArrowLeft', 'ArrowRight'].includes(e.key) || !e.target.closest('.ts-stepper')) return;
+      const n = card.querySelectorAll(':scope > .ts-step').length;
+      card.dataset.step = Math.min(n, Math.max(1, +card.dataset.step + (e.key === 'ArrowRight' ? 1 : -1)));
+      show(card);
+      card.querySelector(`.ts-stepper button[data-step="${card.dataset.step}"]`)?.focus();
+    });
+  }
+  /** The Markdown satex writes, for hovers and rule explanations: headings, paragraphs, lists,
+   * fenced or indented code, links, emphasis. */
+  const indented = (b) => b.split('\n').every((l) => !l.trim() || /^ {4}/.test(l));
+  const table = (b) => {
+    const rows = b.trim().split('\n').map((l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim()));
+    // `--:` aligns a column right
+    const right = rows[1].map((c) => /:$/.test(c) ? ' class="r"' : '');
+    return `<table class="md-table"><thead><tr>${rows[0].map((c, i) => `<th${right[i]}>${inline(c)}</th>`).join('')}</tr></thead><tbody>${rows.slice(2).map((r) => `<tr>${r.map((c, i) => `<td${right[i]}>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  };
+  const isTable = (b) => /^\s*\|.*\|\s*\n\s*\|?\s*:?-{3,}/.test(b);
+  const markdown = (text) => text.split(/^```\w*\n([\s\S]*?)^```\s*$/m).map((part, i) => i % 2 ? `<pre><code>${esc(part)}</code></pre>`
+    : part.split(/\n{2,}/).filter((b) => b.trim()).map((b) => indented(b) ? `<pre><code>${esc(b.replace(/^ {4}/gm, ''))}</code></pre>`
+      : isTable(b) ? table(b)
+      : /^#+ /.test(b.trim()) ? `<h4>${inline(b.trim().replace(/^#+ /, ''))}</h4>`
+        : /^[-*] /.test(b.trim()) ? `<ul>${b.trim().split(/\n(?=[-*] )/).map((li) => `<li>${inline(li.slice(2))}</li>`).join('')}</ul>`
+          : `<p>${inline(b.trim())}</p>`).join('')).join('');
+  /** A lint rule's card, the parts and markup of its section on the rules page: name, number,
+   * severity, category, engines, fixes, summary, text and references. */
+  const ruleCard = (r, href = '', own = false) => {
+    const refs = (r.references ?? []).map((x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.cite)}</a>`).join(', ');
+    const engines = (r.engines ?? []).join(', ');
+    const badges = [`<code class="num" title="rule number">${esc(r.number ?? '')}</code>`,
+      // a finding's own card shows its severity once, its own, not the rule's default
+      ...(own ? [] : [`<span class="sev sev-${esc(r.severity)}" title="default: ${esc(r.severity)}">default: ${esc(r.severity)}</span>`]),
+      `<span class="cat cat-${esc(r.category)}">${esc(r.category)}</span>`,
+      ...(engines ? [`<span class="eng" title="only under ${esc(engines)}">${esc(engines)}</span>`] : []),
+      ...(r.fixes ?? []).map((f) => `<span class="fix fix-${esc(f)}" title="${f === 'safe' ? 'safe: keeps the meaning, --fix applies it' : 'unsafe: may change the meaning, only --unsafe-fixes applies it'}">${f === 'safe' ? 'S' : 'U'}</span>`)];
+    const name = href ? `<a href="${esc(href)}">${esc(r.code)}</a>` : esc(r.code);
+    return `<section class="rule rule-tip"><h4>${name}</h4><p class="badges">${badges.join(' ')}</p>` +
+      `<p><b>${inline(r.summary ?? r.message ?? '')}</b></p>${markdown(r.explanation ?? '')}${refs ? `<p>See ${refs}.</p>` : ''}</section>`;
+  };
+  /** A hover's Markdown; its last paragraph, the places and links, is a muted footer. */
+  const unescape = (s) => s.replace(/&(lt|gt|quot|amp);/g, (m, e) => ({ lt: '<', gt: '>', quot: '"', amp: '&' })[e]);
+  /** A hover's Markdown: its usage lines colored, each ⟨argN⟩ elsewhere in the kind its usage gave it. */
+  const hoverCard = (value) => {
+    // each definition is its own section: its types belong to its own usage line
+    const section = (md) => {
+      const kinds = {};
+      // the argument types the section lists (`- `⟨arg1⟩` glue`, roles::Ty), shown in the usage line too
+      const types = Object.fromEntries([...md.matchAll(/^- `⟨(arg\d+)⟩` ([^\n`]+)$/gm)].map((m) => [m[1], m[2]]));
+      const html = markdown(md).replace(/<code>([^<]*⟨arg\d+⟩[^<]*)<\/code>/g, (m, code) => {
+        if (/^⟨arg\d+⟩$/.test(code)) return m;
+        const u = usage(unescape(code), types);
+        Object.assign(kinds, u.kinds);
+        return `<code class="usage">${u.html}</code>`;
+      });
+      return slots(html, kinds).replace(/<p>((?:\s|·|<a [^>]*>[^<]*<\/a>)+)<\/p>/g, '<p class="foot">$1</p>');
+    };
+    const sections = (md) => md.split(/^(?=### )/m).map(section).join('');
+    // the definitions that do not hold at the cursor fold away (lsp::handlers::MORE_DEFINITIONS)
+    const [main, more] = value.split(/^#### More definitions\n+/m);
+    return sections(main) + (more ? `<details class="more"><summary>More definitions</summary>${sections(more)}</details>` : '');
+  };
 
-  // ------------------------------------------------------------ the landing page's examples
-  // A command explains itself on hover, an underline shows its finding: a floating card,
-  // so nothing on the page moves. The panel beside keeps the last command explained.
-  const tip = Object.assign(document.createElement('div'), { className: 'tip', hidden: true });
-  let tipTimer = 0;
-  const hideTip = () => { clearTimeout(tipTimer); tipTimer = setTimeout(() => { tip.hidden = true; }, 250); };
-  tip.onmouseenter = () => clearTimeout(tipTimer);
-  tip.onmouseleave = hideTip;
-  for (const fig of document.querySelectorAll('.example')) {
-    if (!tip.isConnected) document.body.append(tip);
+  self.satexCards = { chipList, explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation, withKeys, typesetView, typesetWire, hover: hoverCard, useOf, duration };
+  // A rule named anywhere on the site, as a link into the rules page or its code or number in a
+  // code span, shows its card. The cards' data is the rules the build wrote, fetched once.
+  const RULES_URL = new URL('rules.json', document.currentScript?.src ?? location.href);
+  let ruleData = null;
+  const ruleNamed = async (name) => {
+    const all = await (ruleData ??= fetch(RULES_URL).then((r) => r.ok ? r.json() : {}).catch(() => ({})));
+    return all[name] ?? Object.values(all).find((r) => r.number === name);
+  };
+  const ruleLink = (code) => new URL(`wiki/lints.html#${encodeURIComponent(code)}`, RULES_URL).href;
+  self.satexRule = { named: ruleNamed, link: ruleLink };
+  const RULE_NAME = /^(?:[a-z0-9]+(?:-[a-z0-9]+)+|[CXSPA]\d{3})$/;
+  document.addEventListener('mouseover', async (e) => {
+    const el = e.target.closest?.('a[href*="lints.html#"], code');
+    if (!el || el.closest('.tip, section.rule, .cm-editor')) return;
+    const name = el.localName === 'a' ? decodeURIComponent(el.hash.slice(1)) : el.textContent.trim();
+    if (!RULE_NAME.test(name)) return;
+    const rule = await ruleNamed(name);
+    if (rule && el.matches(':hover')) tips.card.show(el, ruleCard(rule, ruleLink(rule.code)));
+  });
+  document.addEventListener('mouseout', (e) => {
+    // leaving the card's own code, or going onto the card, keeps it
+    const el = e.target.closest?.('a[href*="lints.html#"], code');
+    if (el && !el.closest('.tip') && !e.relatedTarget?.closest?.('.tip') && tips.card.el.querySelector('.rule-tip')) tips.card.hide(200);
+  });
+
+  // Each example: its source, findings underlined with a marker at the line's end, and what it
+  // typesets beside it. A command explains itself on hover, a finding shows its rule: one floating
+  // card, so nothing on the page moves; a click on a command pins its full card.
+  const { card } = tips, tip = card.el;
+  /** Typeset paragraphs as the playground's Typeset panel draws them. */
+  const paragraphs = (rows) => rows.map((r) => `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}${r.footnote ? ' ts-foot' : ''}"${typeof r.skip === 'number' && !r.heading ? ` style="--skip: ${Math.max(r.skip, 0)}pt"` : ''}${r.env ? ` data-env="${esc(r.env)}"` : ''}><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`).join('')
+    || '<p class="muted">It sets no paragraph.</p>';
+  const lintCard = (d) => {
+    const diff = d.typo ? (d.edits ?? []).map((e) => ` <span class="diff"><del>${esc(e.from) || '␣'}</del>→<ins>${esc(e.to) || '∅'}</ins></span>`).join('') : '';
+    return `<div class="tip-lint f-${d.severity}"><p><span class="sev sev-${d.severity}">${d.severity}</span> <code>${esc(d.code)}</code> ${inline(d.message)}</p>` +
+      (d.fix ? `<p class="tip-fix"><span class="fix fix-${d.applicability}">fix</span> ${inline(d.fix)}${diff}</p>` : '') + '</div>';
+  };
+  /** The findings' cards, then their rules' cards. */
+  const findingCards = async (ds) => ds.map(lintCard).join('') + (await Promise.all([...new Set(ds.map((d) => d.code))].map(ruleNamed)))
+    .filter(Boolean).map((r) => ruleCard(r, ruleLink(r.code))).join('');
+  for (const fig of document.querySelectorAll('.example:not(.live)')) {
     const data = JSON.parse(fig.querySelector('.ex-data').textContent);
-    const pane = fig.querySelector('.ex-explain');
+    fig.querySelector('.ex-side').innerHTML = paragraphs(data.ts ?? []);
     // A command before `\begin{document}` means what it means in the preamble.
     const src = fig.querySelector('pre.src');
     const lines = [...src.querySelectorAll('.ln')];
@@ -284,103 +917,334 @@
       const all = data.cs[name] ?? [];
       return all.find((r) => r.when && r.when === when(el)) ?? all.find((r) => !r.error) ?? all[0];
     };
-    const show = (name, el) => {
-      const r = record(name, el);
-      if (!r) return false;
-      pane.querySelector('.xname').textContent = name;
-      pane.querySelector('.xbody').innerHTML = explain(r);
-      return true;
-    };
-    const lintCard = (k) => {
-      const d = data.lints[k];
-      const diff = d.typo ? d.edits.map((e) => ` <span class="diff"><del>${esc(e.from) || '␣'}</del>→<ins>${esc(e.to) || '∅'}</ins></span>`).join('') : '';
-      return `<div class="tip-lint f-${d.severity}"><p><span class="sev sev-${d.severity}">${d.severity}</span> <code>${esc(d.code)}</code> ${inline(d.message)}</p>` +
-        (d.fix ? `<p class="tip-fix"><span class="fix fix-${d.applicability}">fix</span> ${inline(d.fix)}${diff}</p>` : '') + '</div>';
-    };
     const lit = (ks, on) => { for (const k of ks) for (const x of fig.querySelectorAll(`[data-lint~="${k}"]`)) x.classList.toggle('lit', on); };
-    const put = (el) => {
-      const b = el.getBoundingClientRect();
-      tip.hidden = false;
-      const w = tip.offsetWidth, h = tip.offsetHeight;
-      const top = b.bottom + 6 + h > innerHeight && b.top - 6 - h > 0 ? b.top - 6 - h : b.bottom + 6;
-      Object.assign(tip.style, { left: `${Math.max(8, Math.min(b.left, innerWidth - w - 16))}px`, top: `${top}px` });
-    };
-    src.addEventListener('mouseover', (e) => {
+    src.addEventListener('mouseover', async (e) => {
       const el = e.target.closest('[data-cs], [data-lint]');
-      if (!el) return;
-      clearTimeout(tipTimer);
+      if (!el || tip.dataset.pin) return;
       const ks = el.dataset.lint ? el.dataset.lint.split(' ') : [];
       const cs = el.dataset.cs ? record(el.dataset.cs, el) : null;
-      if (!ks.length && !cs) return hideTip();
-      tip.innerHTML = ks.map(lintCard).join('') + (cs ? brief(cs) : '');
-      tip.dataset.fig = fig.id;
-      if (cs) show(el.dataset.cs, el);
+      if (!ks.length && !cs) return card.hide(250);
       lit(ks, true);
-      put(el);
+      const html = (ks.length ? await findingCards(ks.map((k) => data.lints[k])) : '') + (cs ? brief(cs) : '');
+      if (!el.matches(':hover')) return;
+      card.show(el, html);
+      tip.dataset.fig = fig.id;
     });
     src.addEventListener('mouseout', (e) => {
       const el = e.target.closest('[data-lint]');
       if (el) lit(el.dataset.lint.split(' '), false);
-      hideTip();
+      if (!tip.dataset.pin) card.hide(250);
     });
-    const list = fig.querySelector('.ex-findings');
-    list?.addEventListener('mouseover', (e) => { const li = e.target.closest('li[data-k]'); if (li) lit([li.dataset.k], true); });
-    list?.addEventListener('mouseout', (e) => { const li = e.target.closest('li[data-k]'); if (li) lit([li.dataset.k], false); });
-    const pick = (e) => { const a = e.target.closest('a.cs'); if (a && (e.currentTarget !== tip || tip.dataset.fig === fig.id) && show(a.dataset.cs)) e.preventDefault(); };
-    fig.addEventListener('click', pick);
-    tip.addEventListener('click', pick);
-    show(data.initial);
+    // a click on a command, here or in its card, pins its full card
+    const pin = (e) => {
+      const a = e.target.closest('[data-cs]');
+      const r = a && (e.currentTarget !== tip || tip.dataset.fig === fig.id) && record(a.dataset.cs, a);
+      if (!r) return;
+      e.preventDefault();
+      card.show(a, explain(r));
+      tip.dataset.fig = fig.id;
+      tip.dataset.pin = '1';
+    };
+    src.addEventListener('click', pin);
+    tip.addEventListener('click', pin);
   }
 
-  // Long tables: a header click sorts; a text box and one select per badge kind filter.
+  // Every example is editable: a click into its source puts the playground's editor in its place
+  // (tokenizer, completion and hover from the in-page engine), and each edit, debounced, shows
+  // what it typesets and its findings; "reset" brings the build's result back. The last tab, "your
+  // own", starts in the editor. The engine (worker and manifest from play/index.html) loads on the
+  // first edit or when that tab opens, and runs each file on the kernel its magic comment names.
+  const MiB = (n) => (n / 2 ** 20).toFixed(1), SEV = ['', 'error', 'warning', 'info', 'info'];
+  const NAMED = /\\(?:documentclass|usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
+  const PLAIN = /^%\s*!T[eE]X\s+(?:TS-)?program\s*=\s*tex\b/m;
+  let engine = null, say = () => {};
+  const found = new Map(); // uri -> its last diagnostics
+  async function boot() {
+    say('Loading SaTeX…');
+    const at = new URL('play/index.html', location.href);
+    const manifest = JSON.parse((await (await fetch(at)).text()).match(/<script id="satex-play" type="application\/json">(.*?)<\/script>/s)[1]);
+    const worker = new Worker(URL.createObjectURL(new Blob([manifest.worker], { type: 'text/javascript' })));
+    let line = Promise.resolve(), waiting = null, id = 0;
+    worker.onmessage = ({ data }) => {
+      if (data.type === 'progress') return say(`${self.satexProgress.html(data.total ? data.loaded / data.total : null, 'loading SaTeX')} Loading SaTeX: ${MiB(data.loaded)} of ${MiB(data.total)} MiB`);
+      if (data.type === 'status') return;
+      if (data.type === 'lsp') for (const m of data.out) if (m.method === 'textDocument/publishDiagnostics') found.set(m.params.uri, m.params.diagnostics);
+      const w = waiting;
+      waiting = null;
+      if (data.type === 'error') w?.reject(new Error(data.message.split('\n')[0])); else w?.resolve(data);
+    };
+    // one message at a time, each answered before the next goes; `project` and `reset` have no answer
+    /** @type {(msg: object) => Promise<any>} */
+    const ask = (msg) => (line = line.then(() => new Promise((resolve, reject) => {
+      if (msg.type === 'project' || msg.type === 'reset') resolve(); else waiting = { resolve, reject };
+      worker.postMessage(msg);
+    })));
+    const lsp = async (method, params, note = false) => {
+      const n = ++id, r = await ask({ type: 'lsp', message: { jsonrpc: '2.0', method, params, ...(note ? {} : { id: n }) } });
+      return r.out.find((m) => m.id === n)?.result;
+    };
+    const base = new URL(manifest.root, at).href;
+    await ask({ type: 'init', base, manifest });
+    return { manifest, base, ask, lsp, have: new Set([manifest.kernels[0].id]), kernel: null, open: new Set() };
+  }
+  const start = () => (engine ??= boot().catch((e) => { say(`SaTeX did not load: ${esc(e.message)}`, true); engine = null; throw e; }));
+  /** The bundles the text names (a class or package) and those they need, not loaded yet. */
+  function wanted(e, kernel, text) {
+    const byId = new Map((e.manifest.packages ?? []).map((p) => [p.id, p])), picked = new Map();
+    const pick = (id) => { const p = byId.get(id); if (p && !picked.has(id) && !e.have.has(id)) { picked.set(id, p); p.needs.forEach((n) => pick(`${kernel.id}/${n}`)); } };
+    for (const m of text.matchAll(NAMED)) for (const n of m[1].split(',').map((x) => x.trim())) { pick(`${kernel.id}/${n}`); pick(`${kernel.id}/${n}.cls`); }
+    return [...picked.values()];
+  }
+  /** The server on `kernel`, started anew when another kernel ran last: its documents open again. */
+  async function onKernel(e, kernel, name) {
+    if (e.kernel === kernel.id) return;
+    if (!e.have.has(kernel.id)) { say(`Loading the ${esc(kernel.label)} kernel…`); await e.ask({ type: 'bundle', base: e.base, entry: kernel }); e.have.add(kernel.id); }
+    e.ask({ type: 'reset', args: [...kernel.args, '-f', name], cwd: '/work' });
+    await e.lsp('initialize', { processId: null, rootUri: 'file:///work', capabilities: {} });
+    await e.lsp('initialized', {}, true);
+    e.kernel = kernel.id;
+    e.open.clear();
+  }
+  /** An editor in `host` for file `name` of `fig`, starting from `first`. */
+  async function liveEditor(fig, host, name, first) {
+    const out = fig.querySelector('.live-ts'), status = fig.querySelector('.live-status'), uri = `file:///work/${name}`;
+    let version = 0, timer = 0, view = null, underline = () => {};
+    const tell = (html, bad = false) => { status.innerHTML = html; status.classList.toggle('live-bad', bad); };
+    async function analyze() {
+      say = tell;
+      const mine = ++version, e = await start(), now = view.state.doc.toString(), t0 = performance.now();
+      const kernel = PLAIN.test(now) ? e.manifest.kernels.find((k) => k.id === 'plain') : e.manifest.kernels[0];
+      const more = wanted(e, kernel, now);
+      if (more.length) { tell(`Loading ${esc(more.map((p) => p.label).join(', '))}…`); await e.ask({ type: 'bundles', base: e.base, entries: more }); more.forEach((p) => e.have.add(p.id)); }
+      if (mine !== version) return;
+      tell('Analyzing…');
+      fig.classList.add('busy');
+      e.ask({ type: 'project', dir: '/work', files: { [name]: new TextEncoder().encode(now) } });
+      await onKernel(e, kernel, name);
+      if (!e.open.has(uri)) {
+        e.open.add(uri);
+        await e.lsp('textDocument/didOpen', { textDocument: { uri, languageId: 'latex', version: mine, text: now } }, true);
+      } else {
+        await e.lsp('textDocument/didChange', { textDocument: { uri, version: mine }, contentChanges: [{ text: now }] }, true);
+      }
+      await e.lsp('satex/analyze', {}, true);
+      if (mine !== version) return; // a newer text is on its way
+      const rows = (await e.lsp('satex/typeset', { textDocument: { uri } })) ?? [];
+      if (mine !== version) return;
+      fig.classList.remove('busy');
+      out.innerHTML = paragraphs(rows.filter((r) => r.kind === 'paragraph' && !String(r.path ?? '').startsWith('/texmf')));
+      underline(found.get(uri) ?? []);
+      tell(`Analyzed in ${duration(performance.now() - t0)}. <a href="play/index.html">The playground</a> has traces, the library and more.`);
+    }
+    const [{ codemirror: { EditorView, basicSetup }, autocomplete: ac, lint, language, oneDark: { oneDark }, state: st }, tex] = await Promise.all([self.siteCM(), self.siteTex()]);
+    const pos = (doc, p) => { const l = doc.lineAt(p); return { line: l.number - 1, character: p - l.from }; };
+    const off = (doc, p) => Math.min(doc.line(Math.min(p.line + 1, doc.lines)).from + p.character, doc.length);
+    async function complete(ctx) {
+      const word = ctx.matchBefore(/\\[A-Za-z@]*/);
+      if (!word || !engine) return null;
+      const e = await engine, r = await e.lsp('textDocument/completion', { textDocument: { uri }, position: pos(ctx.state.doc, ctx.pos) });
+      const items = (Array.isArray(r) ? r : r?.items) ?? [];
+      return { from: word.from + 1, options: items.slice(0, 200).map((i) => ({ label: i.label.replace(/^\\/, ''), detail: i.detail, apply: i.insertText?.replace(/^\\/, '') ?? i.label.replace(/^\\/, '') })) };
+    }
+    const theme = new st.Compartment();
+    view = new EditorView({
+      parent: host, doc: first,
+      extensions: [basicSetup, EditorView.lineWrapping, language.syntaxHighlighting(tex.highlighter), tex.language, lint.linter(null), lint.lintGutter(), ac.autocompletion({ override: [complete] }), theme.of(dark() ? oneDark : []),
+        EditorView.updateListener.of((u) => { if (u.docChanged) { clearTimeout(timer); timer = setTimeout(analyze, 350); } })],
+    });
+    new MutationObserver(() => view.dispatch({ effects: theme.reconfigure(dark() ? oneDark : []) })).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    underline = (ds) => view.dispatch(lint.setDiagnostics(view.state, ds.map((d) => {
+      const from = off(view.state.doc, d.range.start), to = off(view.state.doc, d.range.end);
+      return { from, to: Math.min(Math.max(to, from + 1), view.state.doc.length), severity: SEV[d.severity] || 'info', message: d.message, source: d.data?.rule ?? d.code };
+    })));
+    // hover: the language server's card, as in the playground
+    let shown = null;
+    host.addEventListener('mousemove', (ev) => {
+      const p = view.posAtCoords({ x: ev.clientX, y: ev.clientY });
+      if (p == null || !engine) return;
+      clearTimeout(shown);
+      shown = setTimeout(async () => {
+        const e = await engine, r = await e.lsp('textDocument/hover', { textDocument: { uri }, position: pos(view.state.doc, p) }).catch(() => null);
+        const c = r?.contents, value = typeof c === 'string' ? c : c?.value ?? '';
+        const at = view.coordsAtPos(p);
+        if (value && at && host.matches(':hover')) card.show({ left: at.left, top: at.top, right: at.right, bottom: at.bottom }, `<div class="hover">${hoverCard(value)}</div>`);
+      }, 300);
+    });
+    host.addEventListener('mouseleave', () => { clearTimeout(shown); card.hide(350); });
+    return { view, analyze, destroy: () => { clearTimeout(timer); version++; view.destroy(); } };
+  }
+  // an example: its source becomes an editor on a click that is no command's, "reset" brings the build's result back
+  for (const fig of document.querySelectorAll('.example:not(.live)')) {
+    const data = JSON.parse(fig.querySelector('.ex-data').textContent), pre = fig.querySelector('pre.src'), reset = fig.querySelector('.ex-reset');
+    if (!reset) continue;
+    const note = fig.querySelector('.live-status').innerHTML, side = fig.querySelector('.ex-side');
+    let live = null;
+    /** The line and column of the static source a click landed on: past a line's text, its end. */
+    const placeOf = (e) => {
+      const caret = document.caretPositionFromPoint?.(e.clientX, e.clientY) ?? (() => { const r = document.caretRangeFromPoint?.(e.clientX, e.clientY); return r && { offsetNode: r.startContainer, offset: r.startOffset }; })();
+      const lines = [...pre.querySelectorAll('.ln')];
+      const ln = caret?.offsetNode?.parentElement?.closest('.ln') ?? lines.find((l) => { const r = l.getBoundingClientRect(); return r.top <= e.clientY && e.clientY < r.bottom; });
+      if (!ln) return null;
+      const line = +ln.dataset.l - 1, length = data.source.split('\n')[line]?.length ?? 0;
+      if (!ln.contains(caret?.offsetNode)) return { line, col: length };
+      const span = document.createRange();
+      span.setStart(ln, 0);
+      span.setEnd(caret.offsetNode, caret.offset);
+      return { line, col: Math.min(span.toString().length, length) };
+    };
+    const slide = (ms) => new Promise((done) => setTimeout(done, ms));
+    pre.addEventListener('click', async (e) => {
+      if (live || e.target.closest('[data-cs], [data-lint]') || !data.source) return;
+      const place = placeOf(e);
+      // the editor builds beside the source, unseen, at its size; the source then makes room for the gutter and the editor fades in
+      const host = Object.assign(document.createElement('div'), { className: 'src live-src' });
+      Object.assign(host.style, { position: 'absolute', visibility: 'hidden', left: `${pre.offsetLeft}px`, top: `${pre.offsetTop}px`, width: `${pre.offsetWidth}px`, minHeight: `${pre.offsetHeight}px` });
+      pre.after(host);
+      card.hide();
+      live = await liveEditor(fig, host, data.name, data.source);
+      const gutter = host.querySelector('.cm-gutters')?.offsetWidth ?? 0;
+      pre.style.transition = 'padding-left .15s var(--ease)';
+      pre.style.paddingLeft = `calc(${getComputedStyle(pre).paddingLeft} + ${gutter}px)`;
+      await slide(160);
+      host.removeAttribute('style');
+      host.style.minHeight = `${pre.offsetHeight}px`;
+      pre.replaceWith(host);
+      host.animate([{ opacity: 0 }, { opacity: 1 }], 140);
+      reset.hidden = false;
+      const doc = live.view.state.doc;
+      if (place) live.view.dispatch({ selection: { anchor: doc.line(Math.min(place.line + 1, doc.lines)).from + place.col } });
+      live.view.focus();
+    });
+    // an edited example opens in the playground as it stands: its text travels in a share link, the playground's own format
+    fig.querySelector('.ex-acts a').addEventListener('click', async (e) => {
+      const text = live?.view.state.doc.toString();
+      if (text == null || text === data.source) return;
+      e.preventDefault();
+      const base = e.currentTarget.href.split('#')[0];
+      const packed = new Uint8Array(await new Response(new Blob([new TextEncoder().encode(JSON.stringify({ x: data.name, f: data.name, p: { [data.name]: text } }))]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer());
+      const bits = [...packed].map((b) => String.fromCharCode(b)).join('');
+      location.href = `${base}#s=${btoa(bits).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
+    });
+    reset.addEventListener('click', () => {
+      if (!live) return;
+      const host = fig.querySelector('.live-src');
+      live.destroy();
+      live = null;
+      host.replaceWith(pre);
+      pre.style.paddingLeft = '';
+      side.innerHTML = paragraphs(data.ts ?? []);
+      fig.querySelector('.live-status').innerHTML = note;
+      reset.hidden = true;
+    });
+  }
+  const own = document.querySelector('.example.live');
+  if (own) {
+    const FIRST = '\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, \\emph{#1}!}\n\\begin{document}\n\\section{Welcome}\n\\greet{world} Pages 10-12 come next.\nSee Section~\\ref{sec:none}.\n\\end{document}\n';
+    let live = null;
+    const open = async () => { if (!live) { live = liveEditor(own, own.querySelector('.live-src'), 'try.tex', FIRST); (await live).analyze(); } };
+    document.getElementById(own.getAttribute('aria-labelledby'))?.addEventListener('click', open);
+  }
+
+  // Long tables: a header click sorts, a text box and one select per badge kind filter, pages
+  // of a chosen size, and a columns menu on the header that hides any column.
   const RANK = { error: 0, warning: 1, info: 2, hint: 3 };
-  const FACETS = { sev: 'severity', cat: 'category', fix: 'quick fix', from: 'origin' };
-  const facet = (row, k) => [...row.querySelectorAll('.' + k)].map((e) => k === 'sev' ? e.title.split(' ').pop() : e.textContent.split(' ')[0]);
+  const FACETS = { sev: 'severity', cat: 'category', eng: 'engine', fix: 'quick fix', from: 'origin' };
+  const facet = (row, k) => [...row.querySelectorAll('.' + k)].flatMap((e) => k === 'sev' ? [e.title.split(' ').pop()]
+    : k === 'eng' ? e.textContent.split(', ') : k === 'fix' ? [e.className.replace(/.*fix-/, '')] : [e.textContent.split(' ')[0]]);
   const key = (cell) => { const sev = cell?.querySelector('.sev'); return (sev ? RANK[sev.title.split(' ').pop()] ?? 9 : '') + (cell?.textContent.trim() ?? ''); };
+  const SIZES = [25, 50, 100, 0];
+  const remember = (name, fallback) => { try { return JSON.parse(localStorage.getItem(name) ?? 'null') ?? fallback; } catch { return fallback; } };
+  const keep = (name, value) => { try { localStorage.setItem(name, JSON.stringify(value)); } catch {} };
   for (const table of document.querySelectorAll('main table')) {
     const body = table.tBodies[0];
     const rows = [...(body?.rows ?? [])];
     if (rows.length < 20) continue;
-    const bar = document.createElement('div');
-    bar.className = 'filters';
+    const heads = [...table.tHead.rows[0].cells];
+    const names = heads.map((h) => h.textContent.trim());
+    // the summary takes the width the other columns leave, cut to one line
+    const grow = Math.max(names.indexOf('summary'), 0) || heads.length - 1;
+    for (const row of [table.tHead.rows[0], ...rows]) row.cells[grow]?.classList.add('fill');
+    for (const row of rows) if (row.cells[grow]) row.cells[grow].title = row.cells[grow].textContent.trim();
+    const bar = Object.assign(document.createElement('div'), { className: 'filters' });
     const text = Object.assign(document.createElement('input'), { type: 'search', placeholder: `filter ${rows.length} rows…` });
     const selects = Object.entries(FACETS).flatMap(([k, label]) => {
       const values = [...new Set(rows.flatMap((r) => facet(r, k)))].sort();
       if (!values.length) return [];
       const select = document.createElement('select');
-      select.innerHTML = `<option value="">${label}: all</option>` + (k === 'sev' || k === 'cat' ? '' : '<option value="—">none</option>') +
+      select.innerHTML = `<option value="">${label}</option>` + (k === 'sev' || k === 'cat' ? '' : '<option value="—">none</option>') +
         values.map((v) => `<option>${v}</option>`).join('');
       select.dataset.k = k;
       return [select];
     });
-    const count = document.createElement('span');
-    count.className = 'muted';
-    bar.append(text, ...selects, count);
-    table.before(bar);
+    const stored = `satex-table:${location.pathname}:${names.join('|')}`;
+    const saved = remember(stored, {});
+    const menu = Object.assign(document.createElement('details'), { className: 'cols',
+      innerHTML: '<summary title="columns" aria-label="columns"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M2 3h3v10H2zM6.5 3h3v10h-3zM11 3h3v10h-3z" fill="currentColor"/></svg></summary><div></div>' });
+    const toggle = (name, on, set) => {
+      const box = Object.assign(document.createElement('input'), { type: 'checkbox', checked: on });
+      box.onchange = () => { set(box.checked); saved[name] = box.checked; keep(stored, saved); };
+      const label = document.createElement('label');
+      label.append(box, ` ${name}`);
+      menu.lastChild.append(label);
+      set(on);
+    };
+    // the engine and origin columns start hidden: the summary gets their room
+    names.forEach((name, i) => toggle(name, saved[name] ?? !['engine', 'origin'].includes(name), (on) => { for (const row of table.rows) if (row.cells[i]) row.cells[i].hidden = !on; }));
+    toggle('wrap text', saved['wrap text'] ?? false, (on) => table.classList.toggle('wrap', on));
+    menu.onclick = menu.onkeydown = (e) => e.stopPropagation();
+    document.addEventListener('click', (e) => { if (!menu.contains(e.target)) menu.open = false; });
+    bar.append(menu);
+    table.classList.add('long');
+    const scroll = Object.assign(document.createElement('div'), { className: 'table-scroll' });
+    table.before(scroll);
+    scroll.append(table);
+    const pager = Object.assign(document.createElement('div'), { className: 'pager' });
+    const size = Object.assign(document.createElement('select'), { title: 'rows per page',
+      innerHTML: SIZES.map((n) => `<option value="${n}">${n ? `${n} per page` : 'all rows'}</option>`).join('') });
+    size.value = String(saved['page size'] ?? SIZES[0]);
+    const [prev, next] = ['‹', '›'].map((t) => Object.assign(document.createElement('button'), { type: 'button', textContent: t }));
+    const where = Object.assign(document.createElement('span'), { className: 'muted' });
+    pager.append(prev, where, next, size);
+    scroll.after(pager);
+    bar.append(text, ...selects);
+    scroll.before(bar);
+    let page = 0;
     const apply = () => {
       const q = text.value.toLowerCase();
-      let shown = 0;
-      for (const row of rows) {
-        const ok = row.textContent.toLowerCase().includes(q) && selects.every((s) => !s.value ||
-          (s.value === '—' ? !facet(row, s.dataset.k).length : facet(row, s.dataset.k).includes(s.value)));
-        row.hidden = !ok;
-        shown += ok;
-      }
-      count.textContent = shown === rows.length ? '' : `${shown} of ${rows.length}`;
+      const ok = rows.filter((row) => row.textContent.toLowerCase().includes(q) && selects.every((s) => !s.value ||
+        (s.value === '—' ? !facet(row, s.dataset.k).length : facet(row, s.dataset.k).includes(s.value))));
+      const per = +size.value || ok.length || 1, pages = Math.max(1, Math.ceil(ok.length / per));
+      page = Math.min(page, pages - 1);
+      const shown = new Set(ok.slice(page * per, (page + 1) * per));
+      for (const row of rows) row.hidden = !shown.has(row);
+      where.textContent = `${ok.length ? page * per + 1 : 0}–${Math.min((page + 1) * per, ok.length)} of ${ok.length}${ok.length < rows.length ? ` (${rows.length} in all)` : ''}`;
+      prev.disabled = page === 0;
+      next.disabled = page >= pages - 1;
     };
-    bar.oninput = apply;
-    for (const [i, th] of [...table.tHead.rows[0].cells].entries()) {
+    bar.oninput = () => { page = 0; apply(); };
+    size.onchange = () => { saved['page size'] = +size.value; keep(stored, saved); page = 0; apply(); };
+    prev.onclick = () => { page -= 1; apply(); };
+    next.onclick = () => { page += 1; apply(); };
+    table.satexFilter = (k, value) => {
+      const select = selects.find((s) => s.dataset.k === k);
+      if (select) select.value = value;
+      page = 0;
+      apply();
+    };
+    for (const [i, th] of heads.entries()) {
       th.classList.add('sortable');
       th.tabIndex = 0;
       th.onclick = th.onkeydown = (e) => {
         if (e.key && e.key !== 'Enter') return;
         const dir = th.getAttribute('aria-sort') === 'ascending' ? -1 : 1;
-        for (const h of th.parentNode.cells) h.removeAttribute('aria-sort');
+        for (const h of heads) h.removeAttribute('aria-sort');
         th.setAttribute('aria-sort', dir > 0 ? 'ascending' : 'descending');
         rows.sort((a, b) => dir * key(a.cells[i]).localeCompare(key(b.cells[i]), undefined, { numeric: true }));
         body.append(...rows);
+        apply();
       };
     }
+    apply();
   }
 
   // A lint rule's section (a heading with badges under it) is one card; every heading
@@ -401,21 +1265,200 @@
   // A link into a folded section unfolds it.
   const unfold = () => { const t = location.hash ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null; t?.closest('details')?.setAttribute('open', ''); t?.scrollIntoView(); };
   addEventListener('hashchange', unfold);
+  document.addEventListener('click', (e) => {
+    const d = e.target.closest('main details[id^=category-] > summary')?.parentElement;
+    if (d) setTimeout(() => { if (d.open) { history.replaceState(null, '', '#' + d.id); d.scrollIntoView({ behavior: 'smooth' }); } });
+  });
   unfold();
+
+  // The landing page: the claim turns through what a run knows; tab rows show one case at a time.
+  const knows = [...document.querySelectorAll('[data-knows]')];
+  const dots = document.querySelector('.claim-dots');
+  if (knows.length > 1 && dots) {
+    // typed out and erased like an editor; once a claim stands it shows what the run computes for it: its
+    // `<template>` as a sketch under it, or its `data-effect` on its own words (completion, category codes, ligatures)
+    const mocks = knows.map((k) => k.querySelector('template')?.innerHTML ?? null), effects = knows.map((k) => k.dataset.effect ?? '');
+    const parts = knows.map((k) => [...k.childNodes].filter((n) => n.nodeName !== 'TEMPLATE')
+      .map((n) => ({ text: n.textContent, code: n.nodeName === 'CODE', lint: n.nodeName === 'U', fix: n.dataset?.fix ?? null, href: n.nodeName === 'A' ? n.getAttribute('href') : null })));
+    // TikZ is set as its logo is, with an italic k
+    const tikz = (html) => html.replace(/Tik(?=Z|$)/g, 'Ti<i class="tk">k</i>');
+    const typed = (i, n) => {
+      let left = n;
+      // a `<u>` is a spot a linter would mark: with `data-fix` it holds the wrong text and the right one, the first turning into the second
+      return parts[i].map(({ text, code, lint, fix, href }) => {
+        const shown = text.slice(0, Math.max(0, left));
+        left -= text.length;
+        if (!shown) return '';
+        if (lint) return `<u class="claim-fix"><span>${esc(shown)}</span><span>${esc(shown === text ? fix ?? '' : '')}</span></u>`;
+        return code ? `<code>${tikz(esc(shown))}</code>` : href ? `<a href="${esc(href)}">${tikz(esc(shown))}</a>` : tikz(esc(shown));
+      }).join('');
+    };
+    const length = (i) => parts[i].reduce((sum, p) => sum + p.text.length, 0);
+    const line = knows[0];
+    knows.slice(1).forEach((k) => k.remove());
+    line.classList.add('typing');
+    let shown = 0, paused = false, timer = 0;
+    dots.innerHTML = knows.map((k, i) => `<button type="button" role="tab" aria-selected="${!i}" aria-label="${parts[i].map((p) => p.text).join('')}"></button>`).join('');
+    // a typist's rhythm: quick within a word, a beat after a space or a comma
+    const text = (i) => parts[i].map((p) => p.text).join('');
+    const run = (i, n, then) => {
+      line.innerHTML = typed(i, n);
+      if (n >= length(i)) return then();
+      const c = text(i)[n - 1] ?? '';
+      timer = setTimeout(() => run(i, n + 1, then), 18 + Math.random() * 28 + (c === ' ' ? 45 : c === ',' ? 160 : 0));
+    };
+    const erase = (then) => { line.innerHTML = ''; then(); };
+    // a typed `\command` opens a sketch of the editor's completion: the examples' own commands, as their cards write them
+    const own = [...document.querySelectorAll('.ex-data')].flatMap((s) => { try { const d = JSON.parse(s.textContent); return Object.values(d.cs).flat().filter((r) => r.path === d.name && r.effective && r.effective !== r.name); } catch { return []; } });
+    const offered = [...new Map(own.map((r) => [r.name, r])).values()].slice(0, 3);
+    // TeX's category codes of what a name is spelled with once `@` is a letter
+    const CODES = { '\\': 0, '{': 1, '}': 2, '$': 3, '&': 4, '#': 6, '^': 7, '_': 8, ' ': 10, '%': 14 };
+    const catcode = (c) => CODES[c] ?? (/[A-Za-z@]/.test(c) ? 11 : 12);
+    /** Every character of the line's TeX code with its category code under it; the odd codes stand out. */
+    const annotate = () => {
+      const mark = (c) => `<span class="cc${[11, 12].includes(catcode(c)) ? '' : ' cc-hot'}" title="category ${catcode(c)}">${esc(c)}<sub>${catcode(c)}</sub></span>`;
+      const word = (w) => `<span class="cc-w">${[...w].map(mark).join('')}</span>`;
+      const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+      const texts = [];
+      while (walker.nextNode()) texts.push(walker.currentNode);
+      for (const t of texts.filter((t) => t.parentElement.tagName === 'CODE')) {
+        t.replaceWith(Object.assign(document.createElement('span'), { innerHTML: word(t.data) }));
+      }
+      let n = 0;
+      for (const c of line.querySelectorAll('.cc')) c.style.setProperty('--i', String(n++));
+    };
+    // each claim acts out its words in a few classes: the pip is the shared mark for "noticed", the rest is CSS
+    const tag = (cls, mark) => (w) => `<span class="claim-tag ${cls}" data-tag="${mark}">${w}</span>`;
+    const arm = (cls) => `<span class="claim-arm ${cls}" aria-hidden="true">branches</span>`;
+    const peek = '<span class="claim-peek" aria-hidden="true"><code>Ti<i class="tk">k</i>Zpingus</code><span>written by the author of SaTeX</span></span>';
+    const WRAPS = {
+      peek: [[/(<a [^>]*>Ti<i class="tk">k<\/i>Zpingus<\/a>)/, `<span class="claim-host">$1${peek}</span>`]],
+      branch: [[/branches/, `<span class="claim-fork">${arm('up')}<span class="claim-base">branches</span>${arm('down')}</span>`]],
+      // the word gives way to an option a package reads, in brackets; the sketch under it says what it changes
+      options: [[/options/, '<span class="claim-opt claim-anchor"><span>options</span><code>colorlinks</code></span>']],
+      // the word a hover card opens on: where a command comes from, what changed it, the line that loads that
+      origin: [[/command/, '<span class="claim-hov claim-anchor">command</span>']],
+      runs: [[/runs/, tag('claim-count', '')]],
+      diff: [[/yesterday/, tag('claim-ok', '✓')], [/today/, tag('claim-bad', '✗')]],
+      ligatures: [[/fi(?=ne)/, '<span class="claim-lig" title="f and i set as one glyph, ﬁ"><span class="lig-f">f</span><span class="lig-i">i</span><span class="lig-fi">ﬁ</span></span>']],
+    };
+    // `satex trace` of `\def\twice#1{#1#1}\twice{ab}`: expand \twice, then its replacement `#1#1` with #1 = ab, then the tokens it hands on
+    const STEPS = [['expand', ['\\twice', '{ab}']], ['replace', ['#1', '#1']], ['read', ['a', 'b', 'a', 'b']]];
+    const stepper = () => {
+      let at = 0;
+      const rows = STEPS.map(([step, tokens]) => `<li style="--r:${at}"><span class="st-step">${step}</span>${tokens.map((t) => `<code class="st-tk" style="--i:${at++}">${esc(t)}</code>`).join('')}</li>`).join('');
+      return `<ol class="claim-steps" aria-hidden="true"><li class="st-head"><span>satex trace</span><span>#1 = ab</span></li>${rows}</ol>`;
+    };
+    // the drawing pad's answer: a stroke draws itself, then the symbol it matches and its command; the card links to /draw
+    const sketchPad = () => '<a class="claim-draw" href="draw/index.html" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 24 24"><path pathLength="1" d="M8 22V9C8 3 20 3 20 10c0 6-9 6-12 2"/></svg><span class="dr-sym">ρ</span><code class="dr-cmd">\\rho</code></a>';
+    const effect = () => {
+      if (effects[shown] === 'draw') { line.insertAdjacentHTML('beforeend', sketchPad()); return true; }
+      if (effects[shown] === 'stepper') { line.insertAdjacentHTML('beforeend', stepper()); return true; }
+      if (effects[shown] === 'catcodes') { annotate(); return true; }
+      const wrapped = !!WRAPS[effects[shown]];
+      for (const [re, wrap] of WRAPS[effects[shown]] ?? []) line.innerHTML = line.innerHTML.replace(re, wrap);
+      // the sketch hangs under the word its effect marked, else under the first code
+      const chip = /** @type {HTMLElement | null} */ (line.querySelector('.claim-anchor') ?? line.querySelector('code'));
+      const mock = effects[shown] === 'complete' && offered.length
+        ? offered.map((r) => `<li><code class="usage">${usage(r.effective, typesOf(r)).html}</code><span>${esc(r.file ?? r.path ?? '')}</span></li>`).join('') : mocks[shown];
+      if (!mock || !chip) return wrapped;
+      line.insertAdjacentHTML('beforeend', `<ul class="claim-complete${chip.matches('.claim-hov') ? ' claim-card' : ''}" aria-hidden="true">${mock}</ul>`);
+      // under its chip, as far as the line leaves room
+      const box = line.lastElementChild;
+      box.style.marginLeft = `${Math.max(0, Math.min(chip.offsetLeft, line.clientWidth - box.offsetWidth))}px`;
+      return true;
+    };
+    // appear (typed), act (SHOWS_AFTER), settle (the hold): the same beat for every claim
+    const SHOWS_AFTER = 700, HOLD = 3400;
+    const fits = () => { for (const u of line.querySelectorAll('.claim-fix')) { const [from, to] = [...u.children].map((s) => s.getBoundingClientRect().width); u.style.setProperty('--from', `${from}px`); u.style.setProperty('--to', `${to}px`); } };
+    const settle = () => {
+      timer = setTimeout(() => {
+        fits();
+        if (effect() || line.querySelector('.claim-fix')) requestAnimationFrame(() => line.classList.add('shows'));
+        timer = setTimeout(() => paused || show((shown + 1) % knows.length), HOLD);
+      }, SHOWS_AFTER);
+    };
+    const show = (i) => {
+      clearTimeout(timer);
+      line.classList.remove('shows');
+      [...dots.children].forEach((d, j) => d.setAttribute('aria-selected', String(j === i)));
+      erase(() => { shown = i; run(i, 0, settle); });
+    };
+    dots.onclick = (e) => { const b = e.target.closest('button'); if (b) show([...dots.children].indexOf(b)); };
+    const claim = line.closest('.claim');
+    for (const el of [claim, dots]) { el.onmouseenter = () => (paused = true); el.onmouseleave = () => { paused = false; if (line.classList.contains('shows')) { clearTimeout(timer); timer = setTimeout(() => paused || show((shown + 1) % knows.length), 1500); } }; }
+    // the claims differ in height (a sketch, a trace): the tallest sets the room, so the page below never moves
+    const rot = line.parentElement;
+    const reserve = () => {
+      const [was, html] = [shown, line.innerHTML];
+      rot.style.minHeight = '';
+      let most = 0;
+      for (let i = 0; i < knows.length; i++) { shown = i; line.innerHTML = typed(i, length(i)); effect(); most = Math.max(most, line.offsetHeight); }
+      [shown, line.innerHTML] = [was, html];
+      rot.style.minHeight = `${Math.ceil(most)}px`;
+    };
+    reserve();
+    document.fonts?.ready.then(reserve);
+    let resized = 0;
+    addEventListener('resize', () => { clearTimeout(resized); resized = setTimeout(reserve, 150); });
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { line.innerHTML = typed(0, length(0)); line.classList.add('shows'); }
+    else { line.innerHTML = ''; run(0, 0, settle); }
+  }
+  for (const [tabs, key] of [['.contrast', 'case'], ['.install-tabs', 'way']]) {
+    const row = document.querySelector(tabs);
+    row?.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      for (const t of row.querySelectorAll('button')) t.setAttribute('aria-selected', String(t === b));
+      for (const c of row.parentElement.querySelectorAll(`[data-${key}]:not(button)`)) c.hidden = c.dataset[key] !== b.dataset[key];
+    });
+  }
+
+  // "category 12" on a documentation page links to that code's row
+  const catcodes = document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? '';
+  for (const root of document.querySelectorAll('body.doc main')) {
+    const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.parentElement.closest('a, pre, code, h1, h2, h3') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+    const found = [];
+    while (walk.nextNode()) if (/\bcategor(?:y|ies) \d/.test(walk.currentNode.data)) found.push(walk.currentNode);
+    for (const n of found) {
+      const span = document.createElement('span');
+      span.innerHTML = esc(n.data).replace(/\b(categor(?:y|ies) )(1[0-5]|\d)\b/g, (m, w, k) => `${w}<a class="catcode" href="${catcodes}wiki/domains.html#catcode-${k}">${k}</a>`);
+      n.replaceWith(...span.childNodes);
+    }
+  }
 
   // The headings of a documentation page, the one in view marked; a heading
   // in a folded group (the lint rules' categories) comes under the group's name.
   const toc = document.getElementById('toc');
   const heads = [...document.querySelectorAll('body.doc main :is(h2, h3)[id]')];
   if (!toc || heads.length < 2) return toc?.remove();
+  // A folded group (the lint rules' categories) is a link that filters the rule table to it,
+  // and unfolds to list its headings.
   let group = null;
-  toc.innerHTML = '<b>On this page</b>' + heads.map((h) => {
+  const blocks = heads.map((h) => {
     const g = h.closest('details')?.querySelector('summary')?.textContent ?? null;
-    const label = g && g !== group ? `<span class="grp">${esc(g.split(/\s+[—-]\s+/)[0])}</span>` : '';
+    const name = g?.split(/\s+[(—-]/)[0] ?? '';
+    const open = g && g !== group ? `<div class="grp-block"><span class="grp-row"><a class="grp" href="#category-${esc(name.toLowerCase())}" data-cat="${esc(name)}">${esc(g)}</a><button type="button" class="grp-more" aria-expanded="false" title="list its rules">▸</button></span><div class="grp-items" hidden>` : '';
+    const close = group && g !== group ? '</div></div>' : '';
     group = g;
-    return `${label}<a class="${h.localName}" href="#${h.id}">${esc(h.firstChild?.textContent ?? h.textContent)}</a>`;
-  }).join('');
-  const links = new Map([...toc.querySelectorAll('a')].map((a, i) => [heads[i], a]));
+    // the heading's name, not its gloss: "Meaning sets: what … may mean" lists as "Meaning sets"
+    const text = [...h.childNodes].filter((n) => !n.classList?.contains('self')).map((n) => n.textContent).join('').trim(), short = text.split(': ')[0];
+    return `${close}${open}<a class="${h.localName}" href="#${h.id}" title="${esc(text)}">${esc(short)}</a>`;
+  });
+  toc.innerHTML = '<b>On this page</b>' + blocks.join('') + (group ? '</div></div>' : '');
+  toc.addEventListener('click', (e) => {
+    const more = e.target.closest('.grp-more');
+    if (more) {
+      const items = more.closest('.grp-block').querySelector('.grp-items');
+      items.hidden = !items.hidden;
+      more.setAttribute('aria-expanded', String(!items.hidden));
+      more.textContent = items.hidden ? '▸' : '▾';
+      return;
+    }
+    const grp = e.target.closest('a.grp');
+    document.querySelector('main table.long')?.satexFilter?.('cat', grp?.dataset.cat ?? '');
+  });
+  const links = new Map([...toc.querySelectorAll('a.h2, a.h3')].map((a, i) => [heads[i], a]));
   const seen = new Set();
   const observer = new IntersectionObserver((entries) => {
     for (const e of entries) e.isIntersecting ? seen.add(e.target) : seen.delete(e.target);
@@ -423,6 +1466,12 @@
     if (!first) return;
     for (const a of links.values()) a.classList.remove('on');
     links.get(first).classList.add('on');
+    const top = first.localName === 'h2' ? first : heads.slice(0, heads.indexOf(first)).findLast((h) => h.localName === 'h2');
+    let open = false;
+    for (const h of heads) {
+      if (h.localName === 'h2') open = h === top;
+      else links.get(h).classList.toggle('open', open);
+    }
   }, { rootMargin: '0px 0px -70% 0px' });
   heads.forEach((h) => observer.observe(h));
 })();

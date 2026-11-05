@@ -45,48 +45,55 @@ fn main() {
     // two builds of one version (a release and a later `cargo install` of a
     // working tree) may differ in what a cache holds, and must not read or
     // overwrite each other's.
-    let guard = format!("d{:016x}", source_digest());
+    let guard = format!("d{:016x}", source_digest(REPORTING, code_only));
     println!("cargo:rustc-env=SATEX_CACHE_GUARD={guard}");
+    // Every byte of src: two binaries with one id come from the same source
+    // (satex-doc refuses a `satex` built from other source).
+    println!("cargo:rustc-env=SATEX_SOURCE_ID={:016x}", source_digest(&[], |text| text.to_vec()));
     println!("cargo:rerun-if-changed=src");
 }
 
 /// Code that only reports on an analysis — lints, subcommands, rendering —
 /// does not change what a cache holds, so editing it keeps the caches.
 const REPORTING: &[&str] = &[
-    "src/lint",
-    "src/cmd",
+    "src/linter",
+    "src/cli",
     "src/bin",
     "src/lsp",
-    "src/render.rs",
     "src/main.rs",
-    "src/progress.rs",
-    "src/query.rs",
-    "src/rename.rs",
-    "src/timing.rs",
+    "src/util/render.rs",
+    "src/util/progress.rs",
+    "src/util/timing.rs",
+    "src/queries/query.rs",
+    "src/queries/rename.rs",
+    "src/data/describe.tsv",
+    "src/data/lint-numbers.txt",
+    "src/data/knowledge.md",
 ];
 
-/// FNV-1a over the interpreter's source files, in path order: the binary and
-/// every test binary built from the same source share one cache.
-fn source_digest() -> u64 {
-    fn walk(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+/// FNV-1a over the source files outside `skip`, in path order, each mapped
+/// by `keep`: with `REPORTING` and `code_only`, the binary and every test
+/// binary built from the same interpreter share one cache.
+fn source_digest(skip: &[&str], keep: fn(&[u8]) -> Vec<u8>) -> u64 {
+    fn walk(dir: &std::path::Path, skip: &[&str], files: &mut Vec<std::path::PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else { return };
         for entry in entries.flatten() {
             let path = entry.path();
-            if REPORTING.iter().any(|skip| path.starts_with(skip)) {
+            if skip.iter().any(|skip| path.starts_with(skip)) {
                 continue;
             }
             if path.is_dir() {
-                walk(&path, files);
+                walk(&path, skip, files);
             } else {
                 files.push(path);
             }
         }
     }
     let mut files = Vec::new();
-    walk(std::path::Path::new("src"), &mut files);
+    walk(std::path::Path::new("src"), skip, &mut files);
     files.sort();
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in files.iter().filter_map(|f| std::fs::read(f).ok()).flat_map(|text| code_only(&text)) {
+    for byte in files.iter().filter_map(|f| std::fs::read(f).ok()).flat_map(|text| keep(&text)) {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }

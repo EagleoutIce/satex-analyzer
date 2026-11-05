@@ -1,6 +1,6 @@
 # Primitive facts: what the engines register, measured
 
-Ground truth for turning satex's primitive registration (`src/builtins.rs`: `initial_meanings`, `docstrip_meanings`, the per-engine `if` blocks, the `Primitive` enum) into one static data table per engine. Everything below was measured on real engines, not read off a manual; satex's side was dumped by calling `builtins::initial_meanings` for each `Engine`.
+Ground truth for turning satex's primitive registration (`src/engine/builtins.rs`: `initial_meanings`, `docstrip_meanings`, the per-engine `if` blocks, the `Primitive` enum) into one static data table per engine. Everything below was measured on real engines, not read off a manual; satex's side was dumped by calling `builtins::initial_meanings` for each `Engine`.
 
 ## Summary of mismatches
 

@@ -75,6 +75,14 @@ Type "satex slice --at 45-48 -f paper.tex"
 Enter
 Sleep 5.5s
 
+Type "clear"
+Enter
+Type "# See the switches and options in effect, and what they govern"
+Enter
+Type "satex controls -f paper.tex | head -9"
+Enter
+Sleep 4.5s
+
 Type "# List all user-defined macros"
 Enter
 Type "satex query definitions -f paper.tex --filter 'origin=document' | head -12"
@@ -128,6 +136,11 @@ Type "SuperWeird"
 Sleep 1.5s
 Enter
 Sleep 3s
+Type "gg"
+Type "O"
+Type `\highl`
+Sleep 3s
+Escape
 Type ":qa!"
 Enter
 Type "# Thank you for watching!"

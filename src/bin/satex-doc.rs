@@ -23,6 +23,11 @@
 //!       Inlines the file, then shows side by side the text pdflatex
 //!       typesets (one run, random seed 7) and what `satex lint` reports.
 //!
+//!   {{still-wrong}}
+//!       A list of the examples above it whose table has a row marked ✗,
+//!       linked by the heading they stand under, so the page never claims a
+//!       fixed example is wrong or a wrong one is right.
+//!
 //!   {{rules}}
 //!       A Markdown table of the lint rules (code, category, severity,
 //!       summary), from `satex lint --rules --format json`.
@@ -33,11 +38,14 @@
 //!   {{version}}
 //!       The crate version, from `satex --version`.
 //!
+//!   {{type-table}}
+//!       The table of the types, from `Ty::all` and `Ty::about`.
+//!
 //!   {{primitives}}
-//!       Every TeX82/eTeX/pdfTeX/XeTeX/LuaTeX primitive `src/builtins.rs`
+//!       Every TeX82/eTeX/pdfTeX/XeTeX/LuaTeX primitive `src/engine/builtins.rs`
 //!       registers, sectioned by the engine that adds it, with the verdict
-//!       `src/builtins.rs::verdict` gives from what `src/exec.rs`,
-//!       `src/mode.rs` and `src/commands.rs` do with it. Each row links
+//!       `src/engine/builtins.rs::verdict` gives from what `src/engine/exec.rs`,
+//!       `src/engine/mode.rs` and `src/engine/commands.rs` do with it. Each row links
 //!       to the deciding arm, from the `file!()`/`line!()` that arm
 //!       records in `builtins::Site`.
 //!
@@ -62,7 +70,7 @@
 //! upstream file (the `trunk`/`main` branch, fetched fresh each run) to
 //! build a commit-pinned permalink. `--refresh-citations` writes the
 //! result (`doc/src/tex-web-sections.tsv`/`tex-web-sha.txt`, the build-time
-//! cache `src/lint/mod.rs` embeds, and the `[tw-N]:`/`[ech-<name>]:`
+//! cache `src/linter/mod.rs` embeds, and the `[tw-N]:`/`[ech-<name>]:`
 //! definitions in SEMANTICS.md); `--check-citations` (CI) only reports
 //! drift and fails if a citation no longer resolves, or resolves to a
 //! different line than what is checked in. See [`refresh_citations`].
@@ -77,10 +85,10 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use regex::Regex;
-use satex::builtins::{self, Primitive, Site, Verdict};
-use satex::config::{Engine, Limits};
-use satex::lint::cite::linkify_citations;
-use satex::tex::{Interner, Meaning};
+use satex::engine::builtins::{self, Primitive, Site, Verdict};
+use satex::engine::tex::{Interner, Meaning};
+use satex::linter::cite::linkify_citations;
+use satex::project::config::{Engine, Limits};
 
 const TEMPLATES: &[(&str, &str)] = &[
     ("doc/src/README.md.in", "README.md"),
@@ -88,6 +96,10 @@ const TEMPLATES: &[(&str, &str)] = &[
     ("doc/src/wiki/queries.md.in", "doc/wiki/queries.md"),
     ("doc/src/wiki/configuration.md.in", "doc/wiki/configuration.md"),
     ("doc/src/wiki/lsp.md.in", "doc/wiki/lsp.md"),
+    ("doc/src/wiki/type-plugins.md.in", "doc/wiki/type-plugins.md"),
+    ("doc/src/wiki/writing-type-plugins.md.in", "doc/wiki/writing-type-plugins.md"),
+    ("doc/src/wiki/intellij.md.in", "doc/wiki/intellij.md"),
+    ("doc/src/wiki/vscode.md.in", "doc/wiki/vscode.md"),
     ("doc/src/wiki/domains.md.in", "doc/wiki/domains.md"),
     ("doc/src/wiki/challenges.md.in", "doc/wiki/challenges.md"),
     ("doc/src/chktex-coverage.md.in", "doc/chktex-coverage.md"),
@@ -110,7 +122,8 @@ fn main() {
 }
 
 /// The built binary to run: `SATEX_DOC_BIN`, or the `satex` cargo built
-/// beside this one (`cargo run --release --features doc --bin satex-doc` builds both).
+/// beside this one. `cargo run --bin satex-doc` builds only satex-doc, so
+/// [`current`] checks that binary against this one's source.
 fn bin() -> String {
     if let Ok(bin) = std::env::var("SATEX_DOC_BIN") {
         return bin;
@@ -122,8 +135,49 @@ fn bin() -> String {
         .map_or_else(|| "satex".to_string(), |bin| bin.display().to_string())
 }
 
+/// `satex --version --format json`'s source id.
+fn source_id(bin: &str) -> Option<String> {
+    let out = Command::new(bin).args(["--version", "--format", "json"]).output().ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    Some(json["source"].as_str()?.to_string())
+}
+
+/// Ok when `bin` was built from this binary's source. Run by cargo
+/// (`CARGO` set) on its sibling `satex`, rebuilds that in the same profile
+/// and target directory; otherwise refuses, so no page comes from a stale build.
+fn current(bin: &str) -> Result<(), String> {
+    const ID: &str = env!("SATEX_SOURCE_ID");
+    if source_id(bin).as_deref() == Some(ID) {
+        return Ok(());
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let dir = exe.parent().ok_or("no directory of satex-doc")?;
+    let (Ok(cargo), None) = (std::env::var("CARGO"), std::env::var_os("SATEX_DOC_BIN")) else {
+        return Err(format!(
+            "{bin} is built from other source than satex-doc. Rebuild both: `cargo build --features doc --bin satex --bin satex-doc`"
+        ));
+    };
+    let profile = match dir.file_name().and_then(|n| n.to_str()) {
+        Some("debug") => "dev",
+        Some(name) => name,
+        None => return Err("no profile directory".into()),
+    };
+    eprintln!("satex-doc: {bin} is stale, building it ({profile})");
+    let target = dir.parent().ok_or("no target directory")?;
+    let built = Command::new(cargo)
+        .args(["build", "--profile", profile, "--bin", "satex"])
+        .env("CARGO_TARGET_DIR", target)
+        .status()
+        .map_err(|e| format!("cargo build: {e}"))?;
+    match built.success() && source_id(bin).as_deref() == Some(ID) {
+        true => Ok(()),
+        false => Err(format!("{bin} is still not built from this source")),
+    }
+}
+
 /// The file recording which installation the checked-in output was generated
 /// from.
+const SCHEMA: &str = "satex.schema.json";
 const STAMP: &str = "doc/src/.installation";
 
 /// What the samples' output depends on besides satex itself: the kernel and
@@ -149,115 +203,87 @@ fn installation(bin: &str) -> Result<String, String> {
     Ok(format!("{kernel}, files {hash:016x}\n"))
 }
 
-/// The picture of the type lattice the domains page shows.
-const TYPES_SVG: &str = "doc/wiki/img/types.svg";
+/// The table of the types from [`Ty::about`], rows with the same text merged.
+fn type_table() -> String {
+    use satex::analysis::roles::Ty;
+    let mut rows: Vec<(Vec<String>, Ty)> = Vec::new();
+    for t in Ty::all() {
+        match rows.iter_mut().find(|(_, r)| r.about() == t.about() && r.parent() == t.parent()) {
+            Some((labels, _)) => labels.push(t.to_string()),
+            None => rows.push((vec![t.to_string()], t)),
+        }
+    }
+    let mut out = String::from("| Label | Meaning | Example |\n|---|---|---|\n");
+    for (labels, t) in rows {
+        let (meaning, example) = t.about();
+        let below = if matches!(t, Ty::Top | Ty::Bottom) || t.parent() == Ty::Top {
+            String::new()
+        } else {
+            format!(", below `{}`", t.parent())
+        };
+        let labels = labels.iter().map(|l| format!("`{l}`")).collect::<Vec<_>>().join(", ");
+        let _ = writeln!(out, "| {labels} | {meaning}{below} | {example} |");
+    }
+    out
+}
 
-/// The type lattice drawn from [`Ty::parent`]: a tree from `any` down, a
-/// node whose children are all leaves listing them below it, each family
-/// in its own colour, `nothing` below everything.
-fn types_svg() -> String {
-    use satex::roles::Ty;
-    const ROW: f64 = 64.0;
-    const ITEM: f64 = 34.0;
-    const GAP: f64 = 14.0;
-    const HEIGHT: f64 = 26.0;
-    let all = Ty::all();
-    let label = |t: Ty| if t == Ty::Top { "any".to_string() } else { t.to_string() };
-    let width = |t: Ty| label(t).chars().count() as f64 * 7.4 + 22.0;
-    let children =
-        |t: Ty| -> Vec<Ty> { all.iter().copied().filter(|c| *c != t && *c != Ty::Bottom && c.parent() == t).collect() };
-    let listed = |t: Ty| {
-        let c = children(t);
-        c.len() >= 3 && c.iter().all(|c| children(*c).is_empty())
-    };
-    // The class each node is coloured by.
-    let family = |t: Ty| match t {
-        Ty::Top | Ty::Bottom => "top",
-        Ty::Number | Ty::Dimen | Ty::Glue | Ty::MuGlue | Ty::Quantity | Ty::Box => "quantity",
-        Ty::Reg(_) | Ty::Register | Ty::Named(_) => "register",
-        Ty::Key(_) => "key",
-        Ty::File(_) => "file",
-        Ty::Cs | Ty::Switch => "cs",
-        Ty::Options => "key",
-        _ => "text",
-    };
-    fn span(t: Ty, children: &dyn Fn(Ty) -> Vec<Ty>, listed: &dyn Fn(Ty) -> bool, width: &dyn Fn(Ty) -> f64) -> f64 {
-        let c = children(t);
-        if c.is_empty() {
-            return width(t);
-        }
-        if listed(t) {
-            return c.iter().map(|c| width(*c) + 18.0).fold(width(t), f64::max);
-        }
-        let below: f64 = c.iter().map(|c| span(*c, children, listed, width)).sum::<f64>() + GAP * (c.len() - 1) as f64;
-        below.max(width(t))
+/// The type lattice as a Mermaid flowchart from [`Ty::parent`], coloured by
+/// [`Ty::family`], one node per type. Three or more leaves of one parent and
+/// family stand in a stacked cluster that one edge reaches. `nothing` is left out.
+fn types_chart() -> String {
+    use satex::analysis::roles::Ty;
+    let all: Vec<Ty> = Ty::all().into_iter().filter(|t| *t != Ty::Bottom).collect();
+    let id = |t: Ty| all.iter().position(|x| *x == t).unwrap_or(0);
+    let leaf = |t: Ty| t != Ty::Top && !all.iter().any(|c| *c != Ty::Top && c.parent() == t);
+    let mut out = String::from("```mermaid\nflowchart LR\n");
+    for &t in &all {
+        let name = if t == Ty::Top { "any".to_string() } else { t.to_string() };
+        let _ = writeln!(out, "  t{}[\"{}\"]:::{}", id(t), name.replace('"', "#quot;"), t.family()); // not prose
     }
-    let (mut boxes, mut lines) = (Vec::new(), Vec::new());
-    let mut bottom = 0.0f64;
-    let mut stack = vec![(Ty::Top, 10.0, 10.0)];
-    while let Some((t, left, top)) = stack.pop() {
-        let total = span(t, &children, &listed, &width);
-        let (w, c) = (width(t), children(t));
-        let x = if listed(t) { left } else { left + (total - w) / 2.0 };
-        boxes.push((t, x, top, w));
-        bottom = bottom.max(top + HEIGHT);
-        if listed(t) {
-            for (i, child) in c.iter().enumerate() {
-                let y = top + HEIGHT + 8.0 + ITEM * i as f64;
-                lines.push(format!("M{:.0} {:.0} V{:.0} H{:.0}", x + 9.0, top + HEIGHT, y + HEIGHT / 2.0, x + 18.0));
-                stack.push((*child, x + 18.0, y));
+    let mut clustered: Vec<Ty> = Vec::new();
+    for &parent in &all {
+        let mut families: Vec<(&str, Vec<Ty>)> = Vec::new();
+        for &c in all.iter().filter(|c| **c != Ty::Top && c.parent() == parent && leaf(**c)) {
+            match families.iter_mut().find(|(f, _)| *f == c.family()) {
+                Some((_, leaves)) => leaves.push(c),
+                None => families.push((c.family(), vec![c])),
             }
-            continue;
         }
-        let mut at = left
-            + (total
-                - (c.iter().map(|c| span(*c, &children, &listed, &width)).sum::<f64>()
-                    + GAP * c.len().saturating_sub(1) as f64))
-                / 2.0;
-        for child in c {
-            let s = span(child, &children, &listed, &width);
-            let cx = if listed(child) { at + width(child) / 2.0 } else { at + s / 2.0 };
-            let mid = top + HEIGHT + (ROW - HEIGHT) / 2.0;
-            lines.push(format!("M{:.0} {:.0} V{mid:.0} H{cx:.0} V{:.0}", x + w / 2.0, top + HEIGHT, top + ROW));
-            stack.push((child, at, top + ROW));
-            at += s + GAP;
+        for (family, leaves) in families.into_iter().filter(|(_, leaves)| leaves.len() >= 3) {
+            // In an LR chart a cluster laid out LR stacks its unlinked nodes.
+            let _ = writeln!(out, "  subgraph g{}_{family}[\" \"]\n    direction LR", id(parent)); // not prose
+            for c in &leaves {
+                let _ = writeln!(out, "    t{}", id(*c));
+            }
+            let _ = writeln!(out, "  end\n  t{} --> g{}_{family}", id(parent), id(parent));
+            clustered.extend(leaves);
         }
     }
-    let full = span(Ty::Top, &children, &listed, &width) + 20.0;
-    let nothing = width(Ty::Bottom);
-    boxes.push((Ty::Bottom, (full - nothing) / 2.0, bottom + 30.0, nothing));
-    let height = bottom + 30.0 + HEIGHT + 10.0;
-    let mut out = format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {full:.0} {height:.0}\" width=\"{full:.0}\" height=\"{height:.0}\" font-family=\"system-ui,Segoe UI,Helvetica,Arial,sans-serif\" font-size=\"13\">\n\
-<title>The Ty lattice</title><desc>Argument types of satex from any down to nothing, drawn from Ty::parent in src/roles.rs by satex-doc.</desc>\n\
-<style>path{{fill:none;stroke:#8a8f98;stroke-width:1.4}}text{{fill:#1f2328;text-anchor:middle;dominant-baseline:central}}\
-.top rect{{fill:#eef0f2;stroke:#8a8f98}}.quantity rect{{fill:#dbeafe;stroke:#3b82f6}}.register rect{{fill:#ffedd5;stroke:#f97316}}\
-.key rect{{fill:#ede9fe;stroke:#8b5cf6}}.file rect{{fill:#ccfbf1;stroke:#14b8a6}}.cs rect{{fill:#fee2e2;stroke:#ef4444}}.text rect{{fill:#dcfce7;stroke:#22c55e}}\
-@media (prefers-color-scheme: dark){{text{{fill:#e6edf3}}.top rect{{fill:#2d333b}}.quantity rect{{fill:#1e3a5f}}.register rect{{fill:#4a2d12}}\
-.key rect{{fill:#3b2a63}}.file rect{{fill:#134e48}}.cs rect{{fill:#5c1d1d}}.text rect{{fill:#1d4a2c}}}}</style>\n"
-    );
-    for d in &lines {
-        let _ = writeln!(out, "<path d=\"{d}\"/>");
+    for &t in all.iter().filter(|t| **t != Ty::Top && !clustered.contains(t)) {
+        let _ = writeln!(out, "  t{} --> t{}", id(t.parent()), id(t));
     }
-    for (t, x, y, w) in boxes {
-        let _ = writeln!(
-            out,
-            "<g class=\"{}\"><rect x=\"{x:.0}\" y=\"{y:.0}\" width=\"{w:.0}\" height=\"{HEIGHT:.0}\" rx=\"6\" stroke-width=\"1.2\"/><text x=\"{:.0}\" y=\"{:.0}\">{}</text></g>",
-            family(t),
-            x + w / 2.0,
-            y + HEIGHT / 2.0,
-            label(t).replace('&', "&amp;").replace('<', "&lt;")
-        );
+    for (class, fill, stroke) in [
+        ("top", "#eef0f2", "#8a8f98"),
+        ("quantity", "#dbeafe", "#3b82f6"),
+        ("register", "#ffedd5", "#f97316"),
+        ("key", "#ede9fe", "#8b5cf6"),
+        ("file", "#ccfbf1", "#14b8a6"),
+        ("cs", "#fee2e2", "#ef4444"),
+        ("expl3", "#fef9c3", "#ca8a04"),
+        ("text", "#dcfce7", "#22c55e"),
+    ] {
+        let _ = writeln!(out, "  classDef {class} fill:{fill},stroke:{stroke},color:#1f2328");
     }
-    out.push_str("</svg>\n");
+    out.push_str("```\n");
     out
 }
 
 fn run(check: bool) -> Result<(), String> {
     let bin = bin();
     if !Path::new(&bin).exists() {
-        return Err(format!("{bin} not found; run `cargo build --release` first"));
+        return Err(format!("{bin} not found. Run `cargo build --release` first"));
     }
+    current(&bin)?;
     // The first run against a cold cache reports the kernel as interpreted
     // rather than cached, so the generated text would differ from the next
     // run's.  One warm-up run settles it.
@@ -292,13 +318,17 @@ fn run(check: bool) -> Result<(), String> {
         fs::write(dst, &generated).map_err(|e| format!("{dst}: {e}"))?;
         written.push(*dst);
     }
-    let lattice = types_svg();
-    if fs::read_to_string(TYPES_SVG).unwrap_or_default() != lattice {
-        if check {
-            stale.push(TYPES_SVG);
-        } else {
-            fs::write(TYPES_SVG, &lattice).map_err(|e| format!("{TYPES_SVG}: {e}"))?;
-            written.push(TYPES_SVG);
+    // The schema the `# yaml-language-server: $schema=` line of a satex.yaml names.
+    let documented = fs::read_to_string("satex.yaml").map_err(|e| format!("satex.yaml: {e}"))?;
+    let schema =
+        serde_json::to_string_pretty(&satex::project::config::schema(&documented)).map_err(|e| e.to_string())? + "\n";
+    if fs::read_to_string(SCHEMA).unwrap_or_default() != schema {
+        match check {
+            true => stale.push(SCHEMA),
+            false => {
+                fs::write(SCHEMA, &schema).map_err(|e| format!("{SCHEMA}: {e}"))?;
+                written.push(SCHEMA);
+            }
         }
     }
     if check {
@@ -321,13 +351,8 @@ fn run(check: bool) -> Result<(), String> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------
-// Citation resolution: `tex.web § N` / `etex.ch \`identifier\`` and the
-// LaTeX2e/expl3 kernel links resolve the *name* (a module number or an
-// identifier, the source of truth kept in prose) against the current
-// upstream commit, rather than a line number hand-typed once and left to
-// rot. See the module doc comment for `--refresh-citations`/`--check-citations`.
-// ---------------------------------------------------------------------
+// Citations (`tex.web § N`, `etex.ch \`identifier\``, kernel links) resolve
+// by name against the upstream commit, never by a hand-typed line number.
 
 /// One upstream source these docs cite by module number (`tex.web`) or by
 /// identifier (`etex.ch`), or without either (`expl3-code`/`latex.ltx`,
@@ -559,7 +584,7 @@ fn resolve_file_citations(path: &str, resolver: &mut CitationResolver, write: bo
     Ok(changed)
 }
 
-/// The tex.web module -> line table `src/lint/mod.rs` and this binary
+/// The tex.web module -> line table `src/linter/mod.rs` and this binary
 /// embed with `include_str!`, so a normal `satex` build and a normal
 /// `satex-doc` run need no network access: only `--refresh-citations`
 /// (writing it) and `--check-citations` (verifying it is not stale) fetch
@@ -585,7 +610,7 @@ fn refresh_citations(check_only: bool) -> Result<(), String> {
     const RERUN: &str = "run `cargo run --features doc --bin satex-doc -- --refresh-citations`";
     if check_only && stale {
         return Err(format!(
-            "{TEX_WEB_SECTIONS_TSV}/{TEX_WEB_SHA_TXT} are stale against the current upstream commit ({sha}); {RERUN}"
+            "{TEX_WEB_SECTIONS_TSV}/{TEX_WEB_SHA_TXT} are stale against the current upstream commit ({sha}). {RERUN}"
         ));
     } else if stale {
         fs::write(TEX_WEB_SECTIONS_TSV, &tsv).map_err(|e| format!("{TEX_WEB_SECTIONS_TSV}: {e}"))?;
@@ -598,7 +623,7 @@ fn refresh_citations(check_only: bool) -> Result<(), String> {
         let changed = resolve_file_citations(path, &mut resolver, !check_only)?;
         any_changed |= changed;
         if check_only && changed {
-            return Err(format!("{path}: citations resolve differently against the current upstream commit; {RERUN}"));
+            return Err(format!("{path}: citations resolve differently against the current upstream commit. {RERUN}"));
         }
         if !check_only && changed {
             println!("updated {path}");
@@ -659,24 +684,56 @@ fn expand_all(mut todo: Vec<&str>) -> HashMap<&str, Result<String, String>> {
     out
 }
 
+/// Marks an example whose table has a row satex computes wrong.
+const WRONG: &str = "<!-- satex: wrong -->\n";
+
 fn render(template: &str, expanded: &HashMap<&str, Result<String, String>>) -> Result<String, String> {
     let mut out = String::new();
     let mut rest = template;
+    // The wrong examples, by the heading they stand under, for `{{still-wrong}}`.
+    let mut wrong: Vec<String> = Vec::new();
     while let Some(start) = rest.find("{{") {
         out.push_str(&rest[..start]);
         let after = &rest[start + 2..];
         let end = after.find("}}").ok_or("unterminated `{{` directive")?;
+        let directive = after[..end].trim();
         // Expansions are built line by line and so end with a trailing
         // newline; trim it so the template's own surrounding blank lines
         // control spacing, rather than adding to it.
-        out.push_str(expanded[after[..end].trim()].clone()?.trim_end_matches('\n'));
+        let text = if directive == "still-wrong" { still_wrong(&wrong) } else { expanded[directive].clone()? };
+        if text.starts_with(WRONG) {
+            let heading = out.lines().rev().find_map(|l| l.strip_prefix("### ")).unwrap_or("this page");
+            wrong.push(format!("- [{heading}](#{})", anchor(heading)));
+        }
+        out.push_str(text.trim_end_matches('\n'));
         rest = &after[end + 2..];
     }
     out.push_str(rest);
     Ok(out)
 }
 
+fn still_wrong(wrong: &[String]) -> String {
+    if wrong.is_empty() {
+        "None: every example above is computed exactly or covered soundly.\n".into()
+    } else {
+        wrong.join("\n") + "\n"
+    }
+}
+
+/// The anchor a wiki gives a heading: lower case, punctuation dropped, spaces as `-`.
+fn anchor(heading: &str) -> String {
+    heading
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-')
+        .map(|c| if c == ' ' { '-' } else { c })
+        .collect()
+}
+
 fn expand(directive: &str) -> Result<String, String> {
+    if directive == "still-wrong" {
+        return Ok(String::new());
+    }
     if directive == "rules" {
         return rules_table();
     }
@@ -696,16 +753,22 @@ fn expand(directive: &str) -> Result<String, String> {
         return enum_list(&Engine::ALL.iter().map(|e| e.as_str()).collect::<Vec<_>>());
     }
     if directive == "kernels" {
-        return enum_list(&satex::plugin::Kernel::ALL.iter().map(|k| k.as_str()).collect::<Vec<_>>());
+        return enum_list(&satex::plugins::Kernel::ALL.iter().map(|k| k.as_str()).collect::<Vec<_>>());
     }
     if directive == "outputs" {
-        return enum_list(&satex::plugin::output::Output::ALL.iter().map(|o| o.as_str()).collect::<Vec<_>>());
+        return enum_list(&satex::plugins::output::Output::ALL.iter().map(|o| o.as_str()).collect::<Vec<_>>());
     }
     if directive == "build-systems" {
-        return enum_list(&satex::plugin::build::BuildSystem::ALL.iter().map(|b| b.as_str()).collect::<Vec<_>>());
+        return enum_list(&satex::plugins::build::BuildSystem::ALL.iter().map(|b| b.as_str()).collect::<Vec<_>>());
     }
     if directive == "version" {
         return version();
+    }
+    if directive == "types" {
+        return Ok(types_chart());
+    }
+    if directive == "type-table" {
+        return Ok(type_table());
     }
     if directive == "primitives" {
         return primitives_table();
@@ -757,7 +820,7 @@ fn redact_paths(line: &str) -> String {
     }
     // Anything still under `$HOME` (a personal texmf tree, a per-user
     // texlive var directory) is this machine's alone.
-    if let Some(home) = satex::paths::home_dir() {
+    if let Some(home) = satex::project::paths::home_dir() {
         let home = home.display().to_string();
         if !home.is_empty() {
             out = out.replace(&home, "~");
@@ -898,28 +961,22 @@ fn example(path: &str) -> Result<String, String> {
             .unwrap_or_default()
     };
     let rows = json(&["query", "typeset"]);
-    let of = |kind: &str| -> Vec<String> {
-        rows.iter().filter(|r| r["kind"] == kind).filter_map(|r| r["detail"].as_str().map(String::from)).collect()
-    };
-    let computed = of("paragraph");
     let paragraphs: Vec<&serde_json::Value> = rows.iter().filter(|r| r["kind"] == "paragraph").collect();
-    let record = |c: &str| paragraphs.iter().find(|r| r["detail"] == c).copied();
+    let detail = |r: &serde_json::Value| r["detail"].as_str().unwrap_or("").to_string();
+    let computed: Vec<(String, bool)> =
+        paragraphs.iter().map(|r| (detail(r), r["open"].as_bool().unwrap_or(false))).collect();
     let mark = |v: &str| match v {
         "equal" => "✓",
         "covers" => "⊇",
         _ => "✗",
     };
-    // Pair paragraphs in order. A computed one that may be empty and does
-    // not match the next shipped one stands alone.
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    let mut engine = shipped.iter().peekable();
-    for c in &computed {
-        let alone = satex::query::typeset_verdict(c, "") != "DIFFERS"
-            && engine.peek().is_none_or(|e| satex::query::typeset_verdict(c, e) == "DIFFERS");
-        let e = if alone { String::new() } else { engine.next().cloned().unwrap_or_default() };
-        pairs.push((e, c.clone()));
-    }
-    pairs.extend(engine.map(|e| (e.clone(), String::new())));
+    // Each shipped paragraph beside the computed ones it pairs with: an open
+    // one (on some path it goes on) with those it may go on into.
+    let mut pairs: Vec<(String, &[&serde_json::Value])> = satex::queries::query::pair_paragraphs(&computed, &shipped)
+        .into_iter()
+        .map(|(e, range)| (e, &paragraphs[range]))
+        .collect();
+    let joined = |c: &[&serde_json::Value]| c.iter().map(|r| detail(r)).collect::<Vec<_>>().join(" ");
     // An assumption the document's own code made, not one a package made
     // while loading (the clock, for example).
     let assumed: Vec<String> = rows
@@ -927,20 +984,23 @@ fn example(path: &str) -> Result<String, String> {
         .filter(|r| r["kind"] == "assumption" && r["file"] == file.as_str())
         .filter_map(|r| r["detail"].as_str().map(String::from))
         .collect();
-    if !assumed.is_empty() {
-        pairs.push((String::new(), format!("assumes {}", assumed.join(", "))));
-    }
     let escape = |l: &str| l.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-    // satex's notation (choice, repeat, box, unknown) is bold, text is plain.
-    let styled = |c: &str| {
-        let marked = record(c).and_then(|r| r["marked"].as_str()).unwrap_or(c);
+    // satex's notation (choice, repeat, box, unknown) is bold, text is plain;
+    // `¶` where an open paragraph went on into the next.
+    let styled = |c: &[&serde_json::Value]| {
         let mut html = String::new();
-        for (i, part) in marked.split('\u{E000}').enumerate() {
-            match part.split_once('\u{E001}') {
-                Some((notation, text)) if i > 0 => {
-                    let _ = write!(html, "<b>{}</b>{}", escape(notation), escape(text));
+        for (k, r) in c.iter().enumerate() {
+            if k > 0 {
+                html.push_str(" <b>¶</b> ");
+            }
+            let marked = r["marked"].as_str().unwrap_or("");
+            for (i, part) in marked.split('\u{E000}').enumerate() {
+                match part.split_once('\u{E001}') {
+                    Some((notation, text)) if i > 0 => {
+                        let _ = write!(html, "<b>{}</b>{}", escape(notation), escape(text));
+                    }
+                    _ => html.push_str(&escape(part)),
                 }
-                _ => html.push_str(&escape(part)),
             }
         }
         html
@@ -948,17 +1008,18 @@ fn example(path: &str) -> Result<String, String> {
     // A box that is never shipped is not on the page.
     let boxes = Regex::new("⟦[^⟧]*⟧").expect("boxes regex");
     let boxed_only = |c: &str| c.contains('⟦') && boxes.replace_all(c, "").trim().is_empty();
-    pairs.retain(|(e, c)| (!e.is_empty() || !c.is_empty()) && !(e.is_empty() && boxed_only(c)));
+    pairs.retain(|(e, c)| (!e.is_empty() || !joined(c).is_empty()) && !(e.is_empty() && boxed_only(&joined(c))));
     let mut table = String::from("<table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>\n");
     let mut wrong = None;
     let mut why: Vec<String> = Vec::new();
     for (e, c) in &pairs {
-        let m = if c.starts_with("assumes ") { "" } else { mark(satex::query::typeset_verdict(c, e)) };
+        let text = joined(c);
+        let m = mark(satex::queries::query::typeset_verdict(&text, e));
         if m == "✗" && wrong.is_none() {
-            wrong = Some((e.clone(), c.clone()));
+            wrong = Some((e.clone(), text.clone()));
         }
-        if !m.is_empty() && m != "✓" {
-            for cause in record(c).and_then(|r| r["causes"].as_array()).into_iter().flatten() {
+        if m != "✓" {
+            for cause in c.iter().flat_map(|r| r["causes"].as_array()).flatten() {
                 let (mark, line) = (cause["mark"].as_str().unwrap_or(""), &cause["line"]);
                 let test = cause["test"].as_str().unwrap_or("");
                 let reads: Vec<String> = cause["reads"]
@@ -968,7 +1029,9 @@ fn example(path: &str) -> Result<String, String> {
                     .filter_map(|r| r.as_str())
                     .map(|r| format!("`{r}`"))
                     .collect();
+                let parted = cause["parted"].as_str().unwrap_or("");
                 why.push(match (test.is_empty(), reads.is_empty()) {
+                    _ if !parted.is_empty() => format!("- `{mark}`: l.{line} is set on paths parted at {parted}."),
                     (true, _) => format!("- `{mark}`: l.{line} sets a character the run could not compute."),
                     (false, true) => format!("- `{mark}`: l.{line} `{test}` is undecided."),
                     (false, false) => {
@@ -984,9 +1047,19 @@ fn example(path: &str) -> Result<String, String> {
             styled(c)
         );
     }
+    if !assumed.is_empty() {
+        let _ = writeln!(
+            table,
+            "<tr><td><code></code></td><td><code>assumes {}</code></td><td></td></tr>",
+            escape(&assumed.join(", "))
+        );
+    }
     table.push_str("</table>\n");
     why.truncate(5);
     let mut out = format!("{source}\n{table}\n");
+    if wrong.is_some() {
+        out.insert_str(0, WRONG);
+    }
     if let Some((e, c)) = wrong {
         let _ = writeln!(out, "Differs: pdflatex ships `{e}` where satex computes `{c}`.\n");
     }
@@ -1135,14 +1208,16 @@ fn badges(
     rule: &serde_json::Value,
     chktex: &std::collections::BTreeMap<String, Vec<String>>,
     wide: bool,
-) -> [String; 3] {
+) -> [String; 4] {
     let [code, category, severity] = ["code", "category", "severity"].map(|k| rule[k].as_str().unwrap_or(""));
     let shape = match severity {
         "error" => "◆",
         "warning" => "▲",
         _ => "●",
     };
-    let label = if wide { format!("{shape} default: {severity}") } else { shape.to_string() };
+    // The site draws the shape itself (`.sev::before`), so a wide badge
+    // spells the severity only. A table cell keeps its shape for the wiki.
+    let label = if wide { format!("default: {severity}") } else { shape.to_string() };
     let origin = chktex.get(code).map_or("—".into(), |n| {
         format!(
             "<a class=\"from\" href=\"Chktex-Coverage\" title=\"follows chktex warning {}\">chktex {}</a>",
@@ -1150,10 +1225,16 @@ fn badges(
             n.join(", ")
         )
     });
+    let engines: Vec<&str> = rule["engines"].as_array().into_iter().flatten().filter_map(|e| e.as_str()).collect();
+    let engine = match engines.is_empty() {
+        true => "—".to_string(),
+        false => format!("<span class=\"eng\" title=\"only under {0}\">{0}</span>", engines.join(", ")),
+    };
     [
         format!(
-            "<span class=\"sev sev-{severity}\" title=\"default: {severity}\">{label}</span> <span class=\"cat\">{category}</span>"
+            "<span class=\"sev sev-{severity}\" title=\"default: {severity}\">{label}</span> <span class=\"cat cat-{category}\">{category}</span>"
         ),
+        engine,
         fix_kinds(rule).unwrap_or_else(|| "—".into()),
         origin,
     ]
@@ -1163,11 +1244,14 @@ fn badges(
 /// Severity reads as a shape (and its title), not only as a color.
 fn rules_table() -> Result<String, String> {
     let chktex = chktex_origins()?;
-    let mut out = String::from("| code | kind | quick fix | origin | summary |\n| --- | --- | --- | --- | --- |\n");
+    let mut out = String::from(
+        "| no. | code | kind | engine | quick fix | summary | origin |\n| --- | --- | --- | --- | --- | --- | --- |\n",
+    );
     for rule in lint_json(&["--rules", "--format", "json"])? {
-        let [code, summary] = ["code", "message"].map(|k| rule[k].as_str().unwrap_or(""));
-        let [kind, fixes, origin] = badges(&rule, &chktex, false);
-        let _ = writeln!(out, "| [`{code}`](#{code}) | {kind} | {fixes} | {origin} | {summary} |");
+        let [number, code, summary] = ["number", "code", "message"].map(|k| rule[k].as_str().unwrap_or(""));
+        let [kind, engine, fixes, origin] = badges(&rule, &chktex, false);
+        let _ =
+            writeln!(out, "| {number} | [`{code}`](#{code}) | {kind} | {engine} | {fixes} | {summary} | {origin} |");
     }
     Ok(out)
 }
@@ -1178,21 +1262,30 @@ fn fix_kinds(rule: &serde_json::Value) -> Option<String> {
         .as_array()?
         .iter()
         .filter_map(|k| k.as_str())
-        .map(|k| format!("<span class=\"fix fix-{k}\">{k}</span>"))
+        .map(|k| {
+            let (short, about) = match k {
+                "safe" => ("S", "safe: the fix keeps the document's meaning, --fix applies it"),
+                _ => ("U", "unsafe: the fix changes the meaning, only --unsafe-fixes applies it"),
+            };
+            format!("<span class=\"fix fix-{k}\" title=\"{about}\">{short}</span>")
+        })
         .collect();
     (!kinds.is_empty()).then(|| kinds.join(" "))
 }
 
 /// The rules whose findings carry a quick fix, with its kinds.
 fn fixes_list() -> Result<String, String> {
-    let mut out = String::new();
+    let mut items = String::new();
+    let mut count = 0;
     for rule in lint_json(&["--rules", "--format", "json"])? {
         if let Some(kinds) = fix_kinds(&rule) {
-            let code = rule["code"].as_str().unwrap_or("");
-            let _ = writeln!(out, "* [`{code}`](#{code}) {kinds} — {}", rule["message"].as_str().unwrap_or(""));
+            let (code, number) = (rule["code"].as_str().unwrap_or(""), rule["number"].as_str().unwrap_or(""));
+            let _ =
+                writeln!(items, "* {number} [`{code}`](#{code}) {kinds} {}", rule["message"].as_str().unwrap_or(""));
+            count += 1;
         }
     }
-    Ok(out)
+    Ok(format!("<details><summary>{count} rules with quick fixes</summary>\n\n{items}\n</details>\n"))
 }
 
 /// The JSON `satex lint ARGS` prints.
@@ -1243,10 +1336,10 @@ fn explanations() -> Result<String, String> {
             }
             let count = rules.iter().filter(|r| r["category"].as_str() == Some(category)).count();
             let plural = if count == 1 { "rule" } else { "rules" };
-            let _ = writeln!(out, "<details>");
+            let _ = writeln!(out, "<details id=\"category-{category}\">");
             // GitHub renders markdown inside `<details>` only when a blank
             // line follows the `<summary>`, so the headings below need it.
-            let _ = writeln!(out, "<summary><b>{category}</b> — {count} {plural}</summary>\n");
+            let _ = writeln!(out, "<summary><b>{category}</b> ({count} {plural})</summary>\n");
             open = Some(category.to_string());
         }
         out.push_str(&explain_section(rule, &chktex)?);
@@ -1270,7 +1363,10 @@ fn explain_section(
     let summary = rule["summary"].as_str().unwrap_or("");
     let mut out = String::new();
     let _ = writeln!(out, "### {code}\n");
-    let shown: Vec<String> = badges(listed, chktex, true).into_iter().filter(|b| b != "—").collect();
+    let number =
+        format!("<code class=\"num\" title=\"rule number\">{}</code>", listed["number"].as_str().unwrap_or(""));
+    let badges = badges(listed, chktex, true).into_iter().filter(|b| b != "—");
+    let shown: Vec<String> = std::iter::once(number).chain(badges).collect();
     let _ = writeln!(out, "<p class=\"badges\">{}</p>\n", shown.join(" "));
     let _ = writeln!(out, "**{summary}**\n");
     out.push_str(&explanation_markdown(rule["explanation"].as_str().unwrap_or("")));
@@ -1367,11 +1463,11 @@ struct RuleDefault {
 
 /// One [`RuleDefault`] per rule code, computed from `Config::default()`
 /// merged with `satex.yaml` and every `profiles.*` overlay applied on top
-/// of it in turn ([`satex::config::Config::apply_profile`]) — the same
+/// of it in turn ([`satex::project::config::Config::apply_profile`]) — the same
 /// merge a real run does — so a rule's on/off state can never drift from
 /// what `satex lint` actually does with it.
 fn rule_defaults() -> Result<std::collections::HashMap<&'static str, RuleDefault>, String> {
-    use satex::config::Profile;
+    use satex::project::config::Profile;
     let mut base = satex::Config::default();
     base.merge(Path::new("satex.yaml")).map_err(|e| format!("satex.yaml: {e}"))?;
     let mut off_by_profile: Vec<(Profile, Vec<String>)> = Vec::new();
@@ -1387,7 +1483,7 @@ fn rule_defaults() -> Result<std::collections::HashMap<&'static str, RuleDefault
         .unwrap_or_default();
 
     let mut result = std::collections::HashMap::new();
-    for rule in satex::lint::all() {
+    for rule in satex::linter::all() {
         let off_by_default = document_off.contains(rule.code);
         let mut disagreeing_profiles = Vec::new();
         for (profile, off) in &off_by_profile {
@@ -1444,7 +1540,7 @@ fn chktex_table() -> Result<String, String> {
                         .iter()
                         .map(|c| format!("`{c}`: {}", defaults.get(c).map_or("?".to_string(), satex_default_cell)))
                         .collect::<Vec<_>>()
-                        .join("; "),
+                        .join(", "),
                 };
                 (covered, satex_default)
             }
@@ -1456,7 +1552,7 @@ fn chktex_table() -> Result<String, String> {
 
 fn queries_list() -> Result<String, String> {
     let output = Command::new(bin())
-        .args(["query", "--list"])
+        .args(["query", "--list", "--format", "json"])
         .output()
         .map_err(|e| format!("running `satex query --list`: {e}"))?;
     if !output.status.success() {
@@ -1466,12 +1562,11 @@ fn queries_list() -> Result<String, String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
     let mut out = String::new();
-    for name in String::from_utf8_lossy(&output.stdout).lines().map(str::trim) {
-        // The listing's header row is not a query.
-        if !name.is_empty() && name != "name" {
-            let _ = writeln!(out, "- [{name}](#{name})");
-        }
+    for row in rows {
+        let (name, about) = (row["name"].as_str().unwrap_or(""), row["about"].as_str().unwrap_or(""));
+        let _ = writeln!(out, "- [{name}](#{name}): {about}");
     }
     Ok(out)
 }
@@ -1497,7 +1592,7 @@ fn display_primitive(name: &str) -> String {
     }
 }
 
-/// Every primitive `src/builtins.rs` registers, sectioned by the engine
+/// Every primitive `src/engine/builtins.rs` registers, sectioned by the engine
 /// block that adds it, with `builtins::verdict`'s judgment on each. Runs
 /// `initial_meanings` in-process, so a renamed or added primitive cannot
 /// leave this page stale.
@@ -1509,7 +1604,7 @@ fn primitives_table() -> Result<String, String> {
     let luatex_table = builtins::initial_meanings(&mut it, Engine::LuaTeX);
 
     let prim_map =
-        |table: &satex::fixed::HashMap<satex::tex::Sym, Meaning>| -> std::collections::BTreeMap<String, Primitive> {
+        |table: &satex::fixed::HashMap<satex::engine::tex::Sym, Meaning>| -> std::collections::BTreeMap<String, Primitive> {
             table.iter().filter_map(|(s, m)| m.prim().map(|p| (it.name(*s).to_string(), p))).collect()
         };
     let pdftex_all = prim_map(&pdftex_table);
@@ -1559,20 +1654,20 @@ fn primitives_table() -> Result<String, String> {
         ("LuaTeX extensions", "the LuaTeX manual", &luatex_extra),
     ];
     for (heading, source, map) in sections {
-        let _ = writeln!(out, "### {heading}\n");
-        let _ = writeln!(out, "Source: {source}.\n");
-        let _ = writeln!(out, "| primitive | modeled as | verdict | how |");
-        let _ = writeln!(out, "| --- | --- | --- | --- |");
+        let mut rows = String::new();
+        let (mut sound, mut exact) = (0usize, 0usize);
         for (name, p) in map {
             total += 1;
             let display = display_primitive(name);
             if let Some(reason) = bugs.get(name.as_str()) {
                 bug_notes.push((name.clone(), (*reason).to_string()));
-                let _ = writeln!(out, "| {display} | `{p:?}` | known bug | not modeled soundly, see below |");
+                let _ = writeln!(rows, "| {display} | `{p:?}` | known bug | Not modeled soundly, see below |");
                 continue;
             }
             modeled += 1;
+            sound += 1;
             let (verdict, detail, site) = builtins::verdict(*p);
+            exact += usize::from(verdict == Verdict::Exact);
             let verdict = match verdict {
                 Verdict::Exact => "exact",
                 Verdict::Approximated => "approximated",
@@ -1580,8 +1675,21 @@ fn primitives_table() -> Result<String, String> {
             };
             let label = source_ref(&site);
             sites.insert(label.clone(), source_url(&site));
-            let _ = writeln!(out, "| {display} | [`{p:?}`][{label}] | {verdict} | {} |", detail.replace('|', "\\|"));
+            let _ = writeln!(
+                rows,
+                "| {display} | [`{p:?}`][{label}] | {verdict} | {} |",
+                sentence(detail).replace('|', "\\|")
+            );
         }
+        let status = match sound == map.len() {
+            true => format!("**Fully modeled**: all {} primitives, {exact} of them exactly.", map.len()),
+            false => format!("{sound} of {} primitives modeled soundly, {exact} of them exactly.", map.len()),
+        };
+        let _ = writeln!(out, "## {heading}{}\n", if sound == map.len() { " ✓" } else { "" });
+        let _ = writeln!(out, "{status} Source: {source}.\n");
+        let _ = writeln!(out, "| primitive | modeled as | fidelity | how |");
+        let _ = writeln!(out, "| --- | --- | --- | --- |");
+        out.push_str(&rows);
         out.push('\n');
     }
 
@@ -1597,6 +1705,13 @@ fn primitives_table() -> Result<String, String> {
         let _ = writeln!(out, "[{label}]: {url}");
     }
     Ok(out)
+}
+
+/// A table cell as a sentence: no leading article, a capital first letter.
+fn sentence(text: &str) -> String {
+    let rest = ["a ", "an ", "the "].iter().find_map(|a| text.strip_prefix(a)).unwrap_or(text);
+    let mut chars = rest.chars();
+    chars.next().map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
 }
 
 /// The reference-link label for a [`Site`]: the file's stem and the line.
@@ -1623,6 +1738,7 @@ fn source_url(site: &Site) -> String {
 const PRECISION_LIMITS: &[&str] = &[
     "choices",
     "site_forks",
+    "digit_lengths",
     "paths",
     "meaning_splits",
     "widen_after",
@@ -1637,7 +1753,7 @@ const PRECISION_LIMITS: &[&str] = &[
 /// comment. `limits.*` is described in full on the configuration page; every
 /// row links there, so this table only has to give the number.
 fn limits_table() -> Result<String, String> {
-    let source = fs::read_to_string("src/config.rs").map_err(|e| format!("src/config.rs: {e}"))?;
+    let source = fs::read_to_string("src/project/config.rs").map_err(|e| format!("src/project/config.rs: {e}"))?;
     let fields = struct_doc_fields(&source, "Limits")?;
     let limits = Limits::default();
     let defaults = serde_json::to_value(&limits).map_err(|e| format!("serializing Limits::default(): {e}"))?;
@@ -1659,7 +1775,7 @@ fn limits_table() -> Result<String, String> {
         };
         let _ = writeln!(
             out,
-            "| [`limits.{name}`](Configuration#what-a-run-may-use) | {value} | {} |",
+            "| [`limits.{name}`](Configuration#configurable-limits-for-the-analysis) | {value} | {} |",
             doc.replace('|', "\\|")
         );
     }
@@ -1691,9 +1807,9 @@ fn fields_text(name: &str, key: &str) -> Result<String, String> {
             other => other.to_string(),
         }
     }
-    let source = fs::read_to_string("src/config.rs").map_err(|e| format!("src/config.rs: {e}"))?;
-    let mut defaults =
-        serde_json::to_value(satex::config::Config::default()).map_err(|e| format!("Config::default(): {e}"))?;
+    let source = fs::read_to_string("src/project/config.rs").map_err(|e| format!("src/project/config.rs: {e}"))?;
+    let mut defaults = serde_json::to_value(satex::project::config::Config::default())
+        .map_err(|e| format!("Config::default(): {e}"))?;
     strip_nulls(&mut defaults);
     let block = key
         .split('.')
@@ -1775,14 +1891,17 @@ $ satex lint -f samples/paper.tex
 warning: see tex.web § 211 for the rule
 ```
 ";
-        let expected = "\
+        let sha = include_str!("../../doc/src/tex-web-sha.txt").trim();
+        let expected = format!(
+            "\
 Some prose.
 
 ```text
 $ satex lint -f samples/paper.tex
-warning: see [tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4220) for the rule
+warning: see [tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/{sha}/texk/web2c/tex.web#L4220) for the rule
 ```
-";
+"
+        );
         assert_eq!(linkify_citations(markdown), expected);
     }
 

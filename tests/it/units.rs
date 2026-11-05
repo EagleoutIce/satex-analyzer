@@ -4,8 +4,8 @@
 use std::path::PathBuf;
 
 use crate::support::installed;
-use satex::config::{Config, Load};
-use satex::machine::Machine;
+use satex::analysis::machine::Machine;
+use satex::project::config::{Config, Load};
 
 const CODE: &str = "hand-set-quantity";
 
@@ -29,7 +29,7 @@ fn findings_with(name: &str, preamble: &str, body: &str) -> Vec<String> {
     std::fs::write(&main, &document).unwrap();
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     let analysis = Machine::analyze(&document, Some(&main), &cfg);
-    let out = satex::lint::lint(&analysis)
+    let out = satex::linter::lint(&analysis)
         .into_iter()
         .filter(|record| record["code"] == CODE)
         .map(|record| record["message"].as_str().unwrap_or_default().split(' ').next().unwrap_or_default().to_string())

@@ -9,8 +9,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use satex::config::{Config, Load};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Load};
 
 fn texmf() -> Option<PathBuf> {
     let output = Command::new("kpsewhich").arg("-var-value=TEXMFDIST").output().ok()?;
@@ -39,7 +39,7 @@ fn analyze(path: &Path) -> Option<Analysis> {
     let source = std::fs::read_to_string(path).ok()?;
     let cfg = Config {
         load: Load { packages: false, classes: false, inputs: false, ..Default::default() },
-        limits: satex::config::Limits { steps: 2_000_000, ..crate::support::config().limits },
+        limits: satex::project::config::Limits { steps: 2_000_000, ..crate::support::config().limits },
         ..crate::support::config()
     };
     Some(Machine::analyze(&source, Some(path), &cfg))
@@ -52,11 +52,9 @@ fn check(paths: &[PathBuf]) {
         // carries an imprecision, never silence.
         if analysis.exhausted {
             assert!(
-                analysis
-                    .facts
-                    .diagnostics
-                    .iter()
-                    .any(|d| d.severity == satex::facts::Severity::Imprecision || d.code == "budget-exhausted"),
+                analysis.facts.diagnostics.iter().any(
+                    |d| d.severity == satex::analysis::facts::Severity::Imprecision || d.code == "budget-exhausted"
+                ),
                 "{}: the run stopped early without saying so",
                 path.display()
             );

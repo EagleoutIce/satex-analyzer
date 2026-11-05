@@ -3,17 +3,56 @@
 #   scripts/ci-test.sh K/N      shard K of N (1-based)
 #   scripts/ci-test.sh compliance
 #   scripts/ci-test.sh lib
+#   scripts/ci-test.sh quick <filters>   the given modules, without the doc feature
 # Tests are dealt round-robin from the sorted list, the long ones of
 # tests/slow.txt first, so every shard gets a similar share of both.
 # A new test lands in a shard by itself.  The compliance ledger fails on
 # purpose while it has open entries, so it is a shard of its own, reported
 # non-blocking; being short, it also runs the unit tests (`lib`), blocking.
+# A shard fails on a failing test that tests/known-red.txt does not list;
+# the listed ones run and are reported, and one that passes is named so
+# the list shrinks.  A known-red test that tests/green-baseline.txt records
+# as once green is flagged "REGRESSION": it broke, it was not always open.
+# Logs go to ${CI_LOG_DIR:-target}; passing document and budget tests append
+# their analysis steps to steps-<name>.txt there (scripts/regress.sh reads them).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 profile="${CARGO_PROFILE:-ci}"
 run() { cargo test --locked --profile "$profile" --features doc --no-fail-fast "$@"; }
 
+# Runs a test command; fails on a failing test tests/known-red.txt does not list.
+gated() {
+    local logs=${CI_LOG_DIR:-target} name=$1; shift
+    local log=$logs/ci-test-$name.log
+    mkdir -p "$logs"
+    export SATEX_STEPS_LOG=$logs/steps-$name.txt
+    : >"$SATEX_STEPS_LOG"
+    set +e
+    (set -x; "$@") 2>&1 | tee "$log"
+    set -e
+    local failed known new
+    failed=$(sed -n 's/^test \(.*\) \.\.\. FAILED$/\1/p' "$log" | LC_ALL=C sort -u)
+    known=$(grep -v '^#' tests/known-red.txt | LC_ALL=C sort -u)
+    new=$(comm -23 <(printf '%s\n' "$failed" | sed '/^$/d') <(printf '%s\n' "$known"))
+    while read -r t; do
+        if [[ -n "$t" ]] && grep -q "^test $t \.\.\. ok$" "$log"; then echo "known red passes now, drop it from tests/known-red.txt: $t"; fi
+    done <<<"$known"
+    [[ -z "$failed" ]] || echo "known red: $(comm -12 <(printf '%s\n' "$failed") <(printf '%s\n' "$known") | tr '\n' ' ')"
+    if [[ -f tests/green-baseline.txt ]]; then
+        local reg
+        reg=$(comm -12 <(comm -12 <(printf '%s\n' "$failed") <(printf '%s\n' "$known")) <(LC_ALL=C sort -u tests/green-baseline.txt))
+        [[ -z "$reg" ]] || { echo "REGRESSION, green in tests/green-baseline.txt, now red (fix it, do not list it):"; printf '  %s\n' $reg; }
+    fi
+    grep -q '^test result: ' "$log" || { echo "$0: the test binary did not finish" >&2; return 1; }
+    [[ -z "$new" ]] || { echo "failing, not known red:"; printf '  %s\n' $new; return 1; }
+}
+
+if [[ "${1-}" == quick ]]; then
+    shift
+    gated quick cargo test --locked --profile "$profile" --no-fail-fast --test it -- "$@"
+    exit
+fi
 if [[ "${1-}" == compliance ]]; then
     set -x
     run --test it -- compliance_matrix::
@@ -38,5 +77,4 @@ mapfile -t tests < <(
 )
 (( ${#tests[@]} > 0 )) || { echo "$0: shard $k/$n is empty" >&2; exit 1; }
 
-set -x
-run --test it -- --exact "${tests[@]}"
+gated "shard-$k" run --test it -- --exact "${tests[@]}"

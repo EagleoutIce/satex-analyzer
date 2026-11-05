@@ -1,0 +1,23 @@
+% Exercises: listings (lstset, lstlisting, \lstinline, \lstinputlisting-free, captions, language styles, escapes).
+\documentclass{article}
+\usepackage{listings,xcolor}
+\lstset{basicstyle=\ttfamily\small,keywordstyle=\color{blue},commentstyle=\color{gray},numbers=left,frame=single,breaklines=true}
+\lstdefinelanguage{mini}{morekeywords={let,in,fun},sensitive=true,morecomment=[l]{//}}
+\begin{document}
+\lstlistingname{Code}\lstlistoflistings
+\begin{lstlisting}[language=C,caption={A C program},label=lst:c]
+#include <stdio.h>
+int main(void) { /* comment */
+  for (int i = 0; i < 10; i++) printf("%d\n", i);
+  return 0;
+}
+\end{lstlisting}
+\begin{lstlisting}[language=Python,caption=Python]
+def f(x):
+    return x ** 2  # square
+\end{lstlisting}
+\begin{lstlisting}[language=mini]
+let x = 1 in fun y -> x // add
+\end{lstlisting}
+Listing~\ref{lst:c} and \lstinline[language=C]|int x = 3;| inline.
+\end{document}

@@ -3,10 +3,10 @@
 //! dependencies, and catcode tables switch the regime.
 
 use crate::support::{analyze_latex, defined};
-use satex::builtins::{LoadKind, OccKind};
-use satex::config::{Config, Engine};
-use satex::machine::{Analysis, Machine};
-use satex::plugin::Kernel;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::engine::builtins::{LoadKind, OccKind};
+use satex::plugins::Kernel;
+use satex::project::config::{Config, Engine};
 
 /// The LuaTeX primitives and nothing else.
 fn primitives(source: &str) -> Analysis {
@@ -95,7 +95,7 @@ fn luaescapestring_escapes_for_a_lua_string() {
 
 #[test]
 fn luacode_environments_keep_the_stream_in_step() {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let source = "% !TeX program = lualatex\n\\documentclass{article}\n\\usepackage{luacode}\n\
@@ -125,7 +125,7 @@ fn scantextokens_has_no_end_of_line_or_file() {
         "\\everyeof{E}\\endlinechar`X \\newlinechar`| \\edef\\a{\\scantextokens{ab|cd}}\\edef\\b{\\scantokens{ab|cd}}\\endlinechar13 \\edef\\out{\\a|\\b}",
     );
     let out = analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == "out").unwrap();
-    let text = satex::tex::detokenize(&out.mac.as_ref().unwrap().replacement_text, &analysis.interner);
+    let text = satex::engine::tex::detokenize(&out.mac.as_ref().unwrap().replacement_text, &analysis.interner);
     assert_eq!(text, "abXcd|abXcdXE");
 }
 
@@ -143,14 +143,17 @@ fn the_token_library_defines_what_lua_runs() {
          \\edef\\out{\\texfilesize{a}b}",
     );
     let meaning = |name: &str| analysis.env.meaning(analysis.interner.lookup(name).expect("interned"));
-    assert!(matches!(meaning("direct"), satex::tex::Meaning::Macro(_)));
+    assert!(matches!(meaning("direct"), satex::engine::tex::Meaning::Macro(_)));
     assert!(matches!(
         meaning("texfilesize"),
-        satex::tex::Meaning::Primitive(satex::builtins::Primitive::LuaCall { id: 1, .. })
+        satex::engine::tex::Meaning::Primitive(satex::engine::builtins::Primitive::LuaCall { id: 1, .. })
     ));
-    assert!(!matches!(meaning("relax"), satex::tex::Meaning::Primitive(satex::builtins::Primitive::LuaCall { .. })));
+    assert!(!matches!(
+        meaning("relax"),
+        satex::engine::tex::Meaning::Primitive(satex::engine::builtins::Primitive::LuaCall { .. })
+    ));
     let out = analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == "out").unwrap();
-    let text = satex::tex::detokenize(&out.mac.as_ref().unwrap().replacement_text, &analysis.interner);
+    let text = satex::engine::tex::detokenize(&out.mac.as_ref().unwrap().replacement_text, &analysis.interner);
     assert_eq!(text, "b");
 }
 
@@ -161,7 +164,7 @@ fn a_chunk_runs_loops_tables_and_string_format() {
          tex.sprint('\\string\\\\def\\string\\\\squares{' .. table.concat(t, ',') .. '}')}",
     );
     let out = analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == "squares").expect("defined");
-    let text = satex::tex::detokenize(&out.mac.as_ref().unwrap().replacement_text, &analysis.interner);
+    let text = satex::engine::tex::detokenize(&out.mac.as_ref().unwrap().replacement_text, &analysis.interner);
     assert_eq!(text, "1,4,9");
 }
 
@@ -243,4 +246,16 @@ fn a_case_code_past_255_is_valid_under_luatex() {
     assert!(defined(&analysis, "still"));
     let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
     assert!(!codes.contains(&"invalid-code"), "{codes:?}");
+}
+
+/// `lua.run: false`: no chunk runs, so what it prints is unknown.
+#[test]
+fn lua_run_off_leaves_the_output_unknown() {
+    let source = "\\directlua{tex.print('\\string\\\\gdef\\string\\\\a{}')}";
+    assert!(defined(&primitives(source), "a"));
+    let mut cfg = Config { engine: Some(Engine::LuaTeX), kernel: Some(Kernel::None), ..crate::support::config() };
+    cfg.lua.run = false;
+    let analysis = Machine::analyze(&format!("\\catcode`\\{{=1 \\catcode`\\}}=2 {source}"), None, &cfg);
+    assert!(!defined(&analysis, "a"));
+    assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
 }

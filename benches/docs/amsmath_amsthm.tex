@@ -1,0 +1,18 @@
+% Exercises: amsmath environments (align, gather, cases, matrices, split), amsthm styles, proofs, \qedhere.
+\documentclass{article}
+\usepackage{amsmath,amssymb,amsthm}
+\theoremstyle{plain}\newtheorem{theorem}{Theorem}[section]\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{definition}\newtheorem{definition}{Definition}\theoremstyle{remark}\newtheorem*{remark}{Remark}
+\numberwithin{equation}{section}
+\begin{document}
+\section{Math}
+\begin{definition}A \emph{group} is a set.\end{definition}
+\begin{theorem}\label{t:main}For all $n\in\mathbb N$,
+\begin{align}\sum_{k=1}^n k&=\frac{n(n+1)}2\label{eq:s}\\ \sum_{k=1}^n k^2&=\frac{n(n+1)(2n+1)}6\end{align}\end{theorem}
+\begin{proof}By induction.\begin{equation*}f(x)=\begin{cases}1&x>0\\0&\text{else}\end{cases}\qedhere\end{equation*}\end{proof}
+\begin{lemma}$\begin{pmatrix}a&b\\c&d\end{pmatrix}^{-1}$ exists.\end{lemma}
+\begin{gather}a=b\\c=d\end{gather}
+\begin{equation}\begin{split}(a+b)^2&=a^2+2ab+b^2\\&\ge 0\end{split}\end{equation}
+\begin{multline}a+b+c+d+e+f+g+h+i+j+k+l+m+n+o+p+q+r+s+t+u+v\\+w+x+y+z\end{multline}
+\begin{remark}See \eqref{eq:s} and Theorem~\ref{t:main}. \[\int_0^\infty e^{-x^2}dx=\tfrac{\sqrt\pi}{2}\]\end{remark}
+\end{document}

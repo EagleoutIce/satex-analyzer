@@ -1,7 +1,7 @@
-# Why LaTeX is hard to analyze
+# Why TeX is hard to analyze
 
-satex analyzes LaTeX by running it on abstract values.
-This page lists what makes that harder than for other languages. Under each problem: how satex answers it, and the research behind that.
+satex analyzes TeX, and LaTeX on top of it, by running it on abstract values.
+This page lists what makes that harder than for other languages. Under each problem: what SaTeX does about it, and the research behind that. The problems come first, [what TeX does](Semantics) is the next chapter.
 Every example is a complete document. Below each one, a table puts the text one pdflatex run ships (read from the boxes `\tracingoutput` logs, random seed 7) next to the text satex computes (`satex query typeset`), paragraph by paragraph. If a row is not equal, a short list says why: which conditional stayed undecided. Two collapsed blocks show the commands that ran, with the computed text and with a trace of what each call inserted, what each primitive set and how each conditional went.
 
 How to read a table. In the satex column the notation is **bold**, so a literal `{`, `|` or `…` in the text stays plain:
@@ -9,10 +9,11 @@ How to read a table. In the satex column the notation is **bold**, so a literal 
 | Notation | Meaning |
 |---|---|
 | `⟦x⟧` | text in a box satex cannot place: never shipped, or placed only on some paths. A box that is placed (`\box`, `\copy`, `\unhbox`, `\raise` and relatives) reads as plain text in order. A box that is never shipped does not count against equality, its row keeps the mark ⊇ |
-| `{a\|b}` | a choice: an undecided conditional, one arm each |
+| `{a\|b}` | a choice: an undecided conditional or another place paths part, one arm each |
 | `⟨?⟩` | an unknown character |
 | `c…` | `c` repeated one or more times by a summarized loop |
 | `de·pen` | `·` is a hyphenation point where the line breaker may set a hyphen |
+| `a ¶ b` | a paragraph end some paths make and others do not: `a` may go on into `b` |
 | ✓ | equal |
 | ⊇ | covers: pdflatex's text is one of satex's choices, so the result is sound but less precise |
 | ✗ | differs: unsound, a bug |
@@ -72,6 +73,7 @@ $foo
 ```sh
 $ satex query typeset -f 01-catcode.tex --set limits.seconds=60
 5:5  paragraph  bar
+6:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -111,6 +113,7 @@ Macros take token lists, build names with `\csname`, mutate (`\g@addto@macro`), 
 ```sh
 $ satex query typeset -f 02-code-is-data.tex --set limits.seconds=60
 7:6  paragraph  AB, first, AB, macro:->AB
+8:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -130,7 +133,7 @@ l.7 \meaning\hook ⇒ macro:->AB
 
 </details>
 
-**How satex answers it.** Code is data in satex too: a definition is a store update, and the program continues from the new store. This follows [Dalla Preda, Giacobazzi and Debray](https://www2.cs.arizona.edu/~debray/Publications/metamorphism.html), who track the versions of self-modifying code as abstract values (phase semantics).
+**What SaTeX does.** Code is data in satex too: a definition is a store update, and the program continues from the new store. This follows [Dalla Preda, Giacobazzi and Debray](https://www2.cs.arizona.edu/~debray/Publications/metamorphism.html), who track the versions of self-modifying code as abstract values (phase semantics).
 
 
 ```tex
@@ -152,6 +155,7 @@ l.7 \meaning\hook ⇒ macro:->AB
 ```sh
 $ satex query typeset -f r4-self-modifying.tex --set limits.seconds=60
 6:25  paragraph  [a][b][c]
+7:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -195,6 +199,7 @@ Many macros also push their own end markers into the stream, or use `\aftergroup
 ```sh
 $ satex query typeset -f 03-arguments.tex --set limits.seconds=60
 8:8  paragraph  (a) (none)b [everything up to the dot] after
+9:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -215,7 +220,7 @@ l.8 \upto ⇒ [everything up to the dot]
 
 </details>
 
-**How satex answers it.** An unknown token list is abstracted as a regular language over token classes, as [Christensen, Møller and Schwartzbach](https://www.brics.dk/JSA/) do for strings and [Unevalizer](https://www.cs.au.dk/~amoeller/papers/unevalizer/) for JavaScript's `eval`. So `\ifx` and argument reading still decide what they can, and a catcode write to an unknown character never touches a structural one.
+**What SaTeX does.** An unknown token list is abstracted as a regular language over token classes, as [Christensen, Møller and Schwartzbach](https://www.brics.dk/JSA/) do for strings and [Unevalizer](https://www.cs.au.dk/~amoeller/papers/unevalizer/) for JavaScript's `eval`. So `\ifx` and argument reading still decide what they can, and a catcode write to an unknown character never touches a structural one.
 
 
 ```tex
@@ -239,6 +244,7 @@ Why:
 ```sh
 $ satex query typeset -f r5-token-domain.tex --set limits.seconds=60
 4:15  paragraph  {empty|nonempty}
+5:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -283,6 +289,7 @@ Why:
 ```sh
 $ satex query typeset -f 04-typesetting.tex --set limits.seconds=60
 3:25  paragraph  ⟦f⟧wide, {empty page|page started}
+6:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -299,7 +306,7 @@ l.5 \ifdim\pagegoal=\maxdimen ⇒ undecided
 
 </details>
 
-**How satex answers it.** Typesetting is modelled only as far as a decision reads it. Relations between values matter here: [octagons](https://doi.org/10.1007/s10990-006-8609-1) and zonotopes keep that a dimension minus itself is zero, where intervals forget it, so impossible branches survive and paths multiply, as in pgf's math.
+**What SaTeX does.** Typesetting is modelled only as far as a decision reads it. Relations between values matter here: [octagons](https://doi.org/10.1007/s10990-006-8609-1) and zonotopes keep that a dimension minus itself is zero, where intervals forget it, so impossible branches survive and paths multiply, as in pgf's math.
 
 
 ```tex
@@ -325,6 +332,7 @@ Why:
 ```sh
 $ satex query typeset -f r6-relational.tex --set limits.seconds=60
 6:20  paragraph  {always|never}
+7:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -340,14 +348,55 @@ l.6 \ifdim\dimen2=0pt ⇒ undecided
 </details>
 
 **Where the model stands.**
-The line breaker is [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web)'s ([§§ 813](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L17438)) for a paragraph whose items, metrics and parameters are known.
+The line breaker is [tex.web](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web)'s ([§§ 813](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L17438)) for a paragraph whose items, metrics and parameters are known.
 Anything else keeps an interval of lines.
-A forced break mid-paragraph keeps one active node per fitness class ([§ 836](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16474)), so with `\adjdemerits` the lines after it may choose the lines before it.
+A forced break mid-paragraph keeps one active node per fitness class ([§ 836](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L16474)), so with `\adjdemerits` the lines after it may choose the lines before it.
 satex breaks such a segment only when one class ends it, as after `\\`, and keeps the interval otherwise.
 The page builder fires `\output` at forced breaks (`analysis.assume_forced_page_breaks`, an assumption, on by default).
 With the assumption off, a page that may have filled parts the run: one path fires `\output`, the other reads on.
-TeX's choice of the best break ([§§ 1005](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L19552)–[1010](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L19654)) is not modelled yet, so floats that TeX places on the next pages wait for `\clearpage` under the assumption.
+TeX's choice of the best break ([§§ 1005](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L19552)–[1010](https://github.com/TeX-Live/texlive-source/blob/73900753804455f80d9e04cbed39eea2b415968e/texk/web2c/tex.web#L19654)) is not modelled yet, so floats that TeX places on the next pages wait for `\clearpage` under the assumption.
 The float loops of LaTeX's output routine then run at the end, where unknown box sizes make them converge only by widening.
+
+**A rounded node around a paragraph that breaks.**
+
+The height of a node with `text width` depends on the line breaker, and pgf's rounded corners read it. satex marks each possible hyphen (`·`) but does not choose the breaks, so the height stays unknown, and pgf's math leaves a long tail of unknown boxes.
+
+```tex
+\documentclass{article}
+\usepackage{tikz}
+\begin{document}
+\begin{tikzpicture}
+\node[rounded corners=10pt,draw,text width=3cm,align=center] {files, dependencies, more};
+\end{tikzpicture}
+\end{document}
+```
+
+<table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
+<tr><td><code>files, de-pen-den-cies, more</code></td><td><code>files, de<b>·</b>pen<b>·</b>den<b>·</b>cies, more</code></td><td>⊇</td></tr>
+</table>
+
+<details><summary>Computed text</summary>
+
+```sh
+$ satex query typeset -f s2-rounded-paragraph.tex --set limits.seconds=60
+5:64  paragraph  files, de·pen·den·cies, more
+7:1  paragraph  
+0:0  paragraph  
+7:15  page  page 1
+assumption  clock-assumed
+```
+
+</details>
+
+<details><summary>Trace</summary>
+
+```sh
+$ satex trace --format compact -f s2-rounded-paragraph.tex --set limits.seconds=60
+l.4 \tikzpicture ⇒ \begingroup \tikz@startup@env \tikz@coll… (defines ; : | … 327 more)
+l.5 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 587 more)
+```
+
+</details>
 
 ### 5. Packages are interpreters
 
@@ -372,6 +421,7 @@ A small document executes hundreds of thousands of lines of library code.
 ```sh
 $ satex query typeset -f 05-packages.tex --set limits.seconds=60
 4:41  paragraph  4.99994
+6:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -434,6 +484,7 @@ $ satex query typeset -f 06-unknown.tex --set limits.seconds=60
 8:5  paragraph  bazx
 14:80  paragraph  X1XHehe
 16:16  paragraph  1 Later
+17:15  page  page 1
 assumption  clock-assumed
 recognized gaps
   unbalanced-conditional 1× first at 06-unknown.tex:0
@@ -457,7 +508,7 @@ l.14 \ifcsname ⇒ true
 
 </details>
 
-**How satex answers it.** Unknown conditions stay as choices, as in [TypeChef](https://doi.org/10.1145/2048066.2048128), [SuperC](https://doi.org/10.1145/2254064.2254103) and variational execution, which keep presence conditions and values as choices. One token stream with a choice node replaces two forked paths, and the rest is shared. After a bounded number of forks at one conditional, the arms are skipped to `\fi` and their effects over-approximated on one path.
+**What SaTeX does.** Unknown conditions stay as choices, as in [TypeChef](https://doi.org/10.1145/2048066.2048128), [SuperC](https://doi.org/10.1145/2254064.2254103) and variational execution, which keep presence conditions and values as choices. One token stream with a choice node replaces two forked paths, and the rest is shared. After a bounded number of forks at one conditional, the arms are skipped to `\fi` and their effects over-approximated on one path.
 
 
 ```tex
@@ -476,6 +527,7 @@ l.14 \ifcsname ⇒ true
 ```sh
 $ satex query typeset -f r3-choice.tex --set limits.seconds=60
 3:33  paragraph  12X
+4:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -496,6 +548,58 @@ Fed one unknown value, each such walk forks per step, and its loops meet limits 
 satex keeps unknowns small instead: digits typed with an interval, a value that is one of a few texts, a mark that is one of the texts given to its class.
 A small interval is split into its values where a name is spelled from it, so each path builds the name TeX builds.
 Where a walk still forks per step, that is a bug to fix, not a price to pay.
+
+**A reference in math inside positioned nodes.**
+
+A `\ref` to an unknown label in math in a tikz node, with the nodes placed by `positioning`, is sound but far too imprecise: the text of each node becomes a large choice of unknown characters.
+
+```tex
+\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{positioning}
+\usepackage{hyperref}
+\begin{document}
+\begin{tikzpicture}
+  \node (a) {$B_{\ref{cell:B-a}}$};
+  \node[below=of a] (c) {$B_{\ref{cell:B-c}}$};
+  \node[below right=of a] (d) {$B_{\ref{cell:B-d}}$};
+  \node[below left=of a] (b) {$B_{\ref{cell:B-b}}$};
+  \draw[->] (a) -- (b);
+\end{tikzpicture}
+\end{document}
+```
+
+<table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
+<tr><td><code>B?? B?? B?? B??</code></td><td><code><b>i</b>B<b></b>??<b>i</b>B<b></b>??<b>i</b>B<b></b>??<b>i</b>B<b></b>??</code></td><td>✓</td></tr>
+</table>
+
+<details><summary>Computed text</summary>
+
+```sh
+$ satex query typeset -f s1-tikz-ref.tex --set limits.seconds=60
+7:16  paragraph  B??B??B??B??
+0:0  paragraph  
+13:15  page  page 1
+assumption  clock-assumed
+```
+
+</details>
+
+<details><summary>Trace</summary>
+
+```sh
+$ satex trace --format compact -f s1-tikz-ref.tex --set limits.seconds=60
+l.3 \usetikzlibrary ⇒ \pgfutil@ifnextchar [{\use@tikzlibrary }… (defines \pgfutil@reserved@d \pgfutil@reserved@a \pgfutil@reserved@b … 16 more)
+l.6 \tikzpicture ⇒ \begingroup \tikz@startup@env \tikz@coll… (defines ; : | … 327 more)
+l.7 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 487 more)
+l.7 \ref ⇒ \__cmd_start:nNNnnn {s}\ref  \ref code {… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 71 more)
+l.8 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 474 more)
+l.8 \ref ⇒ \__cmd_start:nNNnnn {s}\ref  \ref code {… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 51 more)
+l.9 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 474 more)
+… 2 more
+```
+
+</details>
 
 ### 7. Termination is not structural
 
@@ -526,6 +630,7 @@ Why:
 ```sh
 $ satex query typeset -f 07-termination.tex --set limits.seconds=60
 6:6  paragraph  {.…|}
+7:15  page  page 1
 7:15  assumption  assumed-compiles
 assumption  clock-assumed
 ```
@@ -543,7 +648,7 @@ l.4 \down ⇒ \ifnum \n >0 .\advance \n -1 \expandafte…
 
 </details>
 
-**How satex answers it.** [Van Horn and Might](https://doi.org/10.1145/1863543.1863553) derive an analysis from the concrete machine and keep the continuation in the store under finitely many addresses, so the analysis ends by construction. Pushdown variants ([PDCFA](https://arxiv.org/abs/1007.4268)) keep calls and returns matched. For TeX the pending input of a recursion grows with its depth, so satex bounds it. How many passes a loop on an unknown gets before a summary replaces it is a cost question, as in state merging by [Kuznetsov et al.](https://doi.org/10.1145/2254064.2254088), who merge when an estimate says it pays.
+**What SaTeX does.** [Van Horn and Might](https://doi.org/10.1145/1863543.1863553) derive an analysis from the concrete machine and keep the continuation in the store under finitely many addresses, so the analysis ends by construction. Pushdown variants ([PDCFA](https://arxiv.org/abs/1007.4268)) keep calls and returns matched. For TeX the pending input of a recursion grows with its depth, so satex bounds it. How many passes a loop on an unknown gets before a summary replaces it is a cost question, as in state merging by [Kuznetsov et al.](https://doi.org/10.1145/2254064.2254088), who merge when an estimate says it pays.
 
 
 ```tex
@@ -568,6 +673,7 @@ Why:
 ```sh
 $ satex query typeset -f r1-input-stack.tex --set limits.seconds=60
 4:9  paragraph  ((())) {(…)…|}
+6:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -594,14 +700,19 @@ l.5 \nest ⇒ \ifnum \pdfuniformdeviate 4>0 (\nest {\n…
 ```
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>done</code></td><td><code>done</code></td><td>✓</td></tr>
+<tr><td><code>done</code></td><td><code><b>{</b>d<b>|</b><b>}</b>one</code></td><td>⊇</td></tr>
 </table>
+
+Why:
+
+- `{d|}`: l.3 `\ifnum\n>0` is undecided, it reads `\n`.
 
 <details><summary>Computed text</summary>
 
 ```sh
 $ satex query typeset -f r7-merge-cost.tex --set limits.seconds=60
-6:16  paragraph  done
+6:16  paragraph  {d|}one
+7:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -644,6 +755,7 @@ Paragraph and page state change only when the output routine runs.
 ```sh
 $ satex query typeset -f 08-global-state.tex --set limits.seconds=60
 5:42  paragraph  inside after the group italic upright
+7:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -683,6 +795,7 @@ Macros call each other in a cycle and define the macros that continue it. Names 
 ```sh
 $ satex query typeset -f 09-progressive.tex --set limits.seconds=60
 5:6  paragraph  end3
+6:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -697,7 +810,7 @@ l.5 \a ⇒ \ifnum 0<3 \expandafter \def \csname b0\… (defines \b0 \a1 \b1 … 
 
 </details>
 
-**How satex answers it.** Supercompilers ([Sørensen and Glück](https://arxiv.org/abs/1005.5278), [Leuschel](https://doi.org/10.1007/3-540-36377-7_17)) stop when a new configuration embeds an earlier one (homeomorphic embedding) and replace both by their most specific generalization (anti-unification). This catches a loop whose key grows every pass, which an equality test misses. Together with the self-modifying view of problem 2, each new definition is a new version of the program, not a new program.
+**What SaTeX does.** Supercompilers ([Sørensen and Glück](https://arxiv.org/abs/1005.5278), [Leuschel](https://doi.org/10.1007/3-540-36377-7_17)) stop when a new configuration embeds an earlier one (homeomorphic embedding) and replace both by their most specific generalization (anti-unification). This catches a loop whose key grows every pass, which an equality test misses. Together with the self-modifying view of problem 2, each new definition is a new version of the program, not a new program.
 
 
 ```tex
@@ -717,6 +830,7 @@ l.5 \a ⇒ \ifnum 0<3 \expandafter \def \csname b0\… (defines \b0 \a1 \b1 … 
 ```sh
 $ satex query typeset -f r2-growing-key.tex --set limits.seconds=60
 4:9  paragraph  .....
+5:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -751,6 +865,7 @@ pdfTeX, XeTeX and LuaTeX differ in fonts, line breaking and Lua callbacks.
 ```sh
 $ satex query typeset -f 10-engine.tex --set limits.seconds=60
 3:69  paragraph  pdfTeX
+4:15  page  page 1
 assumption  clock-assumed
 ```
 
@@ -770,7 +885,7 @@ l.3 \ifdefined\XeTeXversion ⇒ false
 
 One run is not the program. A build runs pdflatex, bibtex or biber, makeindex, and pdflatex again, until the auxiliary files stop changing. latexmk compares the files after each run and stops at the fixpoint or after a fixed number of runs.
 Each run reads what the last one wrote: labels and page numbers from the `.aux`, the table of contents, the bibliography, longtable's column widths, tikz's `remember picture` positions.
-What a run writes depends on what it read. A `\ref` that turns `??` into `12` changes a line's width, which moves a page break, which changes a `\pageref`.
+A run writes from what it read. A `\ref` that turns `??` into `12` changes a line's width, which moves a page break, which changes a `\pageref`.
 The cycle need not converge. A `\pageref` whose own text pushes its target onto the next page oscillates between two values, and varioref reports such a loop.
 Inside one run the output routine is a cycle of its own: it fires when a page fills, and what it puts back decides the next break.
 
@@ -787,25 +902,28 @@ The label was on page \pageref{x}.
 ```
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>The label was on page 1.</code></td><td><code>The la<b>·</b>bel was on page <b>⟨?⟩</b>. </code></td><td>⊇</td></tr>
+<tr><td><code>The label was on page 1.</code></td><td><code>The label was on page <b>{</b><b>⟨?⟩</b><b>|</b>2<b>}</b>.</code></td><td>⊇</td></tr>
 <tr><td><code>Here.</code></td><td><code>Here.</code></td><td>✓</td></tr>
-<tr><td><code></code></td><td><code>Here.</code></td><td>✗</td></tr>
+<tr><td><code></code></td><td><code><b>{</b>Here. <b>|</b><b>}</b></code></td><td>⊇</td></tr>
 <tr><td><code></code></td><td><code>assumes assumed-compiles</code></td><td></td></tr>
 </table>
-
-Differs: pdflatex ships `` where satex computes `Here.`.
 
 Why:
 
 - `⟨?⟩`: l.4 sets a character the run could not compute.
+- `{⟨?⟩|2}`: l.4 is set on paths parted at 11-fixpoint.tex:4.
+- `{Here. |}`: l.5 `\ifnum\getpagerefnumber{x}=1` is undecided, it reads `\getpagerefnumber`.
 
 <details><summary>Computed text</summary>
 
 ```sh
 $ satex query typeset -f 11-fixpoint.tex --set limits.seconds=60
-4:2  paragraph  The la·bel was on page ⟨?⟩. 
+4:2  paragraph  The label was on page {⟨?⟩|2}.
+5:38  page  page 1 → 2
 6:11  paragraph  Here.
-6:11  paragraph  Here.
+7:15  page  page 2 → 3
+6:11  paragraph  {Here. |}
+7:15  page  page 3
 7:15  assumption  assumed-compiles
 assumption  clock-assumed
 ```
@@ -818,107 +936,16 @@ assumption  clock-assumed
 $ satex trace --format compact -f 11-fixpoint.tex --set limits.seconds=60
 l.4 \pageref ⇒ \__cmd_start:nNNnnn {s}\pageref  \pagere… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 18 more)
 l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex…
-l.5 \ifnum\getpagerefnumber{x}=1 ⇒ undecided
-l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex…
-l.5 \ifnum\getpagerefnumber{x}=1 ⇒ undecided
-l.5 \newpage ⇒ \if@noskipsec \ifx \@nodocument \relax \… (defines \par \@outputbox@reinsertbskip \@elt … 147 more)
-l.6 \label ⇒ \@bsphack \begingroup \UseHookWithArgume… (defines \thepage \protect \reserved@a)
+l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex… (defines \par \@outputbox@reinsertbskip \@elt … 544 more)
 ```
 
 </details>
 
-**How satex answers it.** satex runs the build itself, as latexmk does, and never needs a file an engine wrote. The files a run writes live in a virtual file system, and the first run starts without any. When a run ends, a file it read back sends it round again only where a changed line names a key the run read (a reference, a citation, a key it used) or a macro it expanded or defined (`\@abspage@last` at each shipout, a note column's `\slnc@note`), up to `limits.build_runs` rounds. A line nobody refers to, or one that only changes what a table of contents sets, needs no other round: what such a round would refine is typesetting alone. A round resumes from the last checkpoint before the first read of a changed file, so the part of the document before it is not analyzed again. Past the last round, what still changes is unknown text: a [widening](https://doi.org/10.1145/512950.512973) of the [Kleene iteration](https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem) the build is. The files an earlier engine run left on disk are read only with `load.build_files`.
+**What SaTeX does.** satex runs the build itself, as latexmk does, and never needs a file an engine wrote. The files a run writes live in a virtual file system, and the first run starts without any. When a run ends, a file it read back sends it round again only where a changed line names a key the run read (a reference, a citation, a key it used) or a macro it expanded or defined (`\@abspage@last` at each shipout, a note column's `\slnc@note`), up to `limits.build_runs` rounds. A line nobody refers to, or one that only changes what a table of contents sets, needs no other round: what such a round would refine is typesetting alone. A round resumes from the last checkpoint before the first read of a changed file, so the part of the document before it is not analyzed again. A file in which a round changed a line already there (a label's page, a counter written back) is from then on the join of what the rounds wrote, so its text only grows and the build settles. Lines only added, as `\bibcite` after the bibliography's first round, stay exact. Past the last round, what still changes is joined the same way: a [widening](https://doi.org/10.1145/512950.512973) of the [Kleene iteration](https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem) the build is. The files an earlier engine run left on disk are read only with `load.build_files`.
 
 ## Where satex is still wrong or stuck
 
-These examples are red tests today.
-Each runs under a 60 second limit.
-If satex hits a limit, the table shows what it computes at that point and the limit's name.
+Each example runs under a 60 second limit.
+This list is computed when the page is built: every example above whose table has a row marked ✗.
 
-### A reference in math inside positioned nodes
-
-A `\ref` to an unknown label in math in a tikz node, with the nodes placed by `positioning`, is sound but far too imprecise: the text of each node becomes a large choice of unknown characters.
-
-```tex
-\documentclass{article}
-\usepackage{tikz}
-\usetikzlibrary{positioning}
-\usepackage{hyperref}
-\begin{document}
-\begin{tikzpicture}
-  \node (a) {$B_{\ref{cell:B-a}}$};
-  \node[below=of a] (c) {$B_{\ref{cell:B-c}}$};
-  \node[below right=of a] (d) {$B_{\ref{cell:B-d}}$};
-  \node[below left=of a] (b) {$B_{\ref{cell:B-b}}$};
-  \draw[->] (a) -- (b);
-\end{tikzpicture}
-\end{document}
-```
-
-<table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>B?? B?? B?? B??</code></td><td><code>B??B??B??B??</code></td><td>✓</td></tr>
-</table>
-
-<details><summary>Computed text</summary>
-
-```sh
-$ satex query typeset -f s1-tikz-ref.tex --set limits.seconds=60
-7:16  paragraph  B??B??B??B??
-assumption  clock-assumed
-```
-
-</details>
-
-<details><summary>Trace</summary>
-
-```sh
-$ satex trace --format compact -f s1-tikz-ref.tex --set limits.seconds=60
-l.3 \usetikzlibrary ⇒ \pgfutil@ifnextchar [{\use@tikzlibrary }… (defines \pgfutil@reserved@d \pgfutil@reserved@a \pgfutil@reserved@b … 16 more)
-l.6 \tikzpicture ⇒ \begingroup \tikz@startup@env \tikz@coll… (defines ; : | … 327 more)
-l.7 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 487 more)
-l.7 \ref ⇒ \__cmd_start:nNNnnn {s}\ref  \ref code {… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 71 more)
-l.8 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 474 more)
-l.8 \ref ⇒ \__cmd_start:nNNnnn {s}\ref  \ref code {… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 51 more)
-l.9 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 474 more)
-… 3 more
-```
-
-</details>
-
-### A rounded node around a paragraph that breaks
-
-The height of a node with `text width` depends on the line breaker, and pgf's rounded corners read it. satex marks each possible hyphen (`·`) but does not choose the breaks, so the height stays unknown, and pgf's math leaves a long tail of unknown boxes.
-
-```tex
-\documentclass{article}
-\usepackage{tikz}
-\begin{document}
-\begin{tikzpicture}
-\node[rounded corners=10pt,draw,text width=3cm,align=center] {files, dependencies, more};
-\end{tikzpicture}
-\end{document}
-```
-
-<table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>files, de-pen-den-cies, more</code></td><td><code>files, de<b>·</b>pen<b>·</b>den<b>·</b>cies, more</code></td><td>⊇</td></tr>
-</table>
-
-<details><summary>Computed text</summary>
-
-```sh
-$ satex query typeset -f s2-rounded-paragraph.tex --set limits.seconds=60
-5:64  paragraph  files, de·pen·den·cies, more
-assumption  clock-assumed
-```
-
-</details>
-
-<details><summary>Trace</summary>
-
-```sh
-$ satex trace --format compact -f s2-rounded-paragraph.tex --set limits.seconds=60
-l.4 \tikzpicture ⇒ \begingroup \tikz@startup@env \tikz@coll… (defines ; : | … 327 more)
-l.5 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 587 more)
-```
-
-</details>
+None: every example above is computed exactly or covered soundly.

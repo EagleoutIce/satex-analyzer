@@ -1,0 +1,23 @@
+% Exercises: beamer, themes, overlays (\pause, <+->, \only, \uncover), blocks, columns, frame breaks, \alert.
+\documentclass{beamer}
+\usetheme{Madrid}\usecolortheme{default}
+\title{Slides}\author{S. Peaker}\date{}
+\begin{document}
+\begin{frame}\titlepage\end{frame}
+\begin{frame}{Outline}\tableofcontents\end{frame}
+\section{Overlays}
+\begin{frame}{Items}
+\begin{itemize}[<+->]\item first \item second \item \alert{third}\end{itemize}
+\pause Then more.
+\only<2>{Only on two.}\uncover<3->{Uncovered from three.}
+\end{frame}
+\begin{frame}[fragile]{Blocks}
+\begin{block}{Block}Text\end{block}\begin{alertblock}{Alert}Text\end{alertblock}\begin{exampleblock}{Ex}Text\end{exampleblock}
+\begin{columns}\column{.5\textwidth}Left\column{.5\textwidth}Right\end{columns}
+\end{frame}
+\section{Math}
+\begin{frame}{Theorem}\begin{theorem}$a^2+b^2=c^2$\end{theorem}\begin{proof}Trivial.\end{proof}
+\[\int_0^1 x\,dx=\tfrac12\]
+\end{frame}
+\begin{frame}<1-2>[label=back]{Dynamic}\temporal<1>{Before}{Now}{After}\end{frame}
+\end{document}

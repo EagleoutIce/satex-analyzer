@@ -1,0 +1,36 @@
+<idea-plugin>
+    <id>dev.satex.intellij</id>
+    <name>SaTeX</name>
+    <vendor url="https://github.com/EagleoutIce/satex-analyzer">SaTeX</vendor>
+    <description><![CDATA[
+        TeX and LaTeX static analysis through the SaTeX language server (<code>satex lsp</code>).
+        Findings, hover, completion, go to definition, quick fixes and document colors.
+        Needs the <code>satex</code> binary and the LSP4IJ plugin.
+    ]]></description>
+
+    <change-notes><![CDATA[Initial release: diagnostics, hover, completion, definitions, quick fixes, document colors and satex.yaml schema.]]></change-notes>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.redhat.devtools.lsp4ij</depends>
+    <depends>org.jetbrains.plugins.yaml</depends>
+    <depends>com.intellij.modules.json</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+
+        <applicationConfigurable parentId="tools" instance="dev.satex.intellij.SatexConfigurable"
+                                 id="dev.satex.intellij.settings" displayName="SaTeX"/>
+        <applicationService serviceImplementation="dev.satex.intellij.SatexSettings"/>
+
+        <!-- satex.yaml is validated against the bundled satex.schema.json -->
+        <JavaScript.JsonSchema.ProviderFactory implementation="dev.satex.intellij.SatexSchemaFactory"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
+        <server id="satex" name="SaTeX"
+                factoryClass="dev.satex.intellij.SatexServerFactory">
+            <description><![CDATA[SaTeX language server: <code>satex lsp</code> over stdio.]]></description>
+        </server>
+        <fileNamePatternMapping patterns="*.tex;*.sty;*.cls;*.dtx;*.ins;*.ltx" serverId="satex" languageId="latex"/>
+        <fileNamePatternMapping patterns="*.bib" serverId="satex" languageId="bibtex"/>
+    </extensions>
+</idea-plugin>

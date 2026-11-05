@@ -38,6 +38,31 @@ cargo test --profile fast --test it -- semantics::    # one module
 cargo test --profile fast --test it -- latex::cloud   # tests whose name contains "cloud"
 ```
 
+### Tiers
+
+`scripts/test-tier.sh` builds once and runs the suite in tiers chosen by measured seconds:
+
+| tier | runs | use it |
+| --- | --- | --- |
+| `quick` | tests under 1 s, the cheapest test of every module, tests not measured yet | after every edit |
+| `fast` | all but `tests/slow.txt` and `tests/known-red.txt`, plus the unit tests | before a commit |
+| `slow` | `tests/slow.txt` | before a push |
+| `reds` | each known red alone, says which turned green | after a root fix |
+| `measure` | fast and slow with timings, rewrites `tests/times.txt` and `tests/slow.txt` | when tests were added or got slower |
+
+```sh
+scripts/test-tier.sh quick                # the edit loop
+scripts/test-tier.sh fast latex:: join::  # only tests whose name contains a filter
+scripts/test-tier.sh fast -- --nocapture  # libtest arguments after --
+```
+
+The tests run in parallel shards, `SHARDS` processes of `THREADS` threads, balanced by `tests/times.txt`.
+Each shard gets its own `target/scratch/lock2.sh` slot when that script exists.
+Run the tier script itself outside a slot, or it runs all shards in its own.
+All shards share the suite's caches in `target/scratch/test-cache`, so the kernel and every package are built once.
+A shard killed by the OOM killer reruns its unfinished tests, then one at a time, and names what still does not finish.
+`scripts/precommit.sh` runs `fast` and then `slow`.
+
 Integration tests live in `tests/it/<area>.rs`, one module per area, collected by `tests/it/main.rs` into a single `it` binary.
 `cargo test` links one test binary and libtest schedules every test across all cores instead of running 49 small binaries sequentially.
 CI splits the run into shards by module (`scripts/ci-test.sh`) to keep any one job under its time limit.
@@ -51,6 +76,25 @@ Every bug gets a minimal example (MWE) as a test in the module that covers its a
 Use `tests/it/latex.rs` for documents loading packages, `tests/it/semantics.rs` for primitives, `tests/it/counterexamples.rs` for soundness.
 Keep examples anonymous: generic text, the `article` class, no names or paths from the original document.
 `broken_gaps` and `document_gaps` in `tests/it/latex.rs` collect gaps a test can assert are absent.
+
+### One command for CI
+
+`scripts/regress.sh` runs what CI runs: the 8 shards, `lib`, the quick modules and compliance, each through the known-red gate of `scripts/ci-test.sh`. It uses `target/scratch/lock2.sh` when that exists.
+
+```sh
+scripts/regress.sh                      # full, the source of truth
+scripts/regress.sh --changed            # only the modules tests/changed-map.txt maps the changed files to
+scripts/regress.sh budgets:: latex::x   # just these test filters
+scripts/regress.sh --record             # full, then rewrite the two baselines
+# options: --profile P (default ci)  --target-dir D  --jobs J  --shards N  --base REF
+```
+
+It prints the passed count, the known red tests, NEW failures, known reds that pass now, and exits 1 on a new failure. Two baselines catch what the known-red list hides:
+
+- `tests/green-baseline.txt` lists tests that passed in the last recorded full run. A known-red test in it is reported as a REGRESSION, and so is a listing of one in `tests/known-red.txt`. Fix such a test, do not list it.
+- `tests/steps-baseline.txt` holds the analysis steps of the document and budget tests (`documents::<id>/<main>`, `budgets::<name>`). A test whose steps grew over 20% is flagged as a warning. Tests append their count to `$SATEX_STEPS_LOG` through `support::record_steps`.
+
+Record the baselines from a green full run when a change lowers steps or fixes tests on purpose. A path in `src/` that `tests/changed-map.txt` has no rule for runs the full mode.
 
 ### Memory
 
@@ -109,6 +153,10 @@ cargo run --profile fast --features doc --bin satex-doc              # regenerat
 cargo run --profile fast --features doc --bin satex-doc -- --check   # CI: is everything current?
 ```
 
+`satex-doc` runs the `satex` binary beside it.
+`cargo run` builds only `satex-doc`, so `satex-doc` compares the source id both were built from and rebuilds a stale `satex` first.
+Run outside cargo, or with `SATEX_DOC_BIN`, it refuses a stale binary instead.
+
 Citations of TeX's sources name a section, as in `tex.web § 366`. Links point to a fixed upstream commit and line so they keep working when upstream changes.
 
 ```sh
@@ -152,7 +200,7 @@ In the browser, `doc/site/worker.js` fetches the wasm and the bundle and imports
 Every run is a fresh instance over an in-memory file system, as a process would be.
 The language server is one more instance that stays alive. Under Emscripten `satex lsp` has no threads and no stdio.
 It sets up the engine and returns, and `src/lsp/wasm.rs` exports `satex_lsp`, which takes one JSON-RPC message and returns the replies.
-`doc/site/playground.js` sends the edits, debounced, and asks for completion, hover, code actions and rename. The editor is CodeMirror 6 from esm.sh.
+`doc/site/playground.js` sends the edits, debounced, and asks for completion, hover, code actions and rename. The editor is CodeMirror 6, vendored as `doc/site/codemirror.js`.
 The command line is the one way to act. `lint`, `explain`, `query` and the rest are runs. `rename` and `fix` are language server edits applied in the editor.
 Plain `lint` runs only on Enter: the findings panel already shows the language server's.
 F2, the context menu and Ctrl+click rename, explain and go to a definition. A definition in a bundle file opens read-only.

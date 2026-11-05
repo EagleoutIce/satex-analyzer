@@ -9,11 +9,11 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use crate::builtins::LoadKind;
-use crate::lint::fix::{Group, Lexeme, Pos, Scan, Text};
-use crate::loader::Resolver;
-use crate::machine::Analysis;
-use crate::tex::{Catcode, CatcodeTable, Tok};
+use crate::analysis::machine::Analysis;
+use crate::engine::builtins::LoadKind;
+use crate::engine::loader::Resolver;
+use crate::engine::tex::{Catcode, CatcodeTable, Tok};
+use crate::linter::fix::{Group, Lexeme, Pos, Scan, Text};
 
 /// Bounds on the scan: files read and load depth.
 const MAX_FILES: usize = 200;
@@ -143,7 +143,7 @@ pub fn sites(analysis: &Analysis, current: &str, name: &str) -> Vec<Site> {
             if seen.len() >= MAX_FILES || !seen.insert(path.clone()) {
                 continue;
             }
-            let Ok(body) = crate::overlay::read_to_string(&path) else { continue };
+            let Ok(body) = crate::project::overlay::read_to_string(&path) else { continue };
             let cats = catcodes(&body);
             let text = Rc::new(Text::new(body));
             let Some(mut scan) = Scan::at(&text, Pos::new(1, 1), cats) else { continue };

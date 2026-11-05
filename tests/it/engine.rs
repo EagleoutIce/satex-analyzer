@@ -1,12 +1,12 @@
 //! Small, single-rule tests for the TeX and e-TeX semantics the interpreter
-//! (`src/exec.rs`, `src/machine.rs`) models. Each test pins one rule by
+//! (`src/engine/exec.rs`, `src/analysis/machine.rs`) models. Each test pins one rule by
 //! defining a macro on one branch and a different one on the other, then
 //! reading the body back.
 
 use crate::support::{PRELUDE, analyze_plain as analyze, depth_of};
 use crate::support::{body, definition};
-use satex::config::{Config, Engine, Load, Texmf};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Engine, Load, Texmf};
 
 fn defined(analysis: &Analysis, name: &str) -> bool {
     definition(analysis, name).is_some()
@@ -353,11 +353,8 @@ fn noexpand_keeps_an_undefined_control_sequence_from_being_reported() {
     let analysis = analyze(r"\edef\a{\noexpand\nosuch}");
     assert_eq!(body(&analysis, "a"), r"\nosuch ");
     assert!(
-        !analysis
-            .facts
-            .expansions
-            .iter()
-            .any(|e| e.meaning == satex::facts::MeaningKind::Undefined && analysis.interner.name(e.name) == "nosuch"),
+        !analysis.facts.expansions.iter().any(|e| e.meaning == satex::analysis::facts::MeaningKind::Undefined
+            && analysis.interner.name(e.name) == "nosuch"),
         "\\noexpand keeps the token from being obeyed, so it is never looked up"
     );
 }
@@ -431,7 +428,7 @@ fn aftergroup_reinserts_a_token_when_the_group_ends() {
 #[test]
 fn an_active_character_can_be_defined_like_a_macro() {
     let analysis = analyze(r"\catcode`\~=13 \def~{tilde}");
-    assert_eq!(body(&analysis, &format!("{}~", satex::tex::ACTIVE)), "tilde");
+    assert_eq!(body(&analysis, &format!("{}~", satex::engine::tex::ACTIVE)), "tilde");
 }
 
 #[test]
@@ -477,7 +474,7 @@ fn directlua_consumes_its_body_instead_of_reading_it_as_tex() {
         .facts
         .occurrences
         .iter()
-        .filter(|o| o.kind == satex::builtins::OccKind::Lua)
+        .filter(|o| o.kind == satex::engine::builtins::OccKind::Lua)
         .map(|o| o.key.as_str())
         .collect();
     assert_eq!(lua.len(), 1, "the Lua body was not recorded: {lua:?}");
@@ -501,9 +498,9 @@ fn catcodetable_consumes_its_number() {
 #[test]
 fn a_context_document_is_not_reported_as_latex() {
     let analysis = analyze(CONTEXT_SAMPLE);
-    let identity = satex::query::identity(&analysis);
+    let identity = satex::queries::query::identity(&analysis);
     assert_eq!(identity.kind, "ConTeXt document (experimental)");
-    assert_eq!(analysis.plugins.kernel, satex::plugin::Kernel::Context);
+    assert_eq!(analysis.plugins.kernel, satex::plugins::Kernel::Context);
 }
 
 #[test]
@@ -511,7 +508,7 @@ fn a_context_document_does_not_report_its_own_commands_as_undefined() {
     // satex knows the engine primitives and nothing ConTeXt defines, so it
     // must not claim every ConTeXt command is missing.
     let analysis = analyze(CONTEXT_SAMPLE);
-    let undefined: Vec<String> = satex::lint::lint(&analysis)
+    let undefined: Vec<String> = satex::linter::lint(&analysis)
         .into_iter()
         .filter(|record| record["code"] == "undefined-control-sequence")
         .map(|record| record["name"].to_string())
@@ -540,9 +537,9 @@ fn engine_binary(name: &str) -> Option<std::path::PathBuf> {
 /// The names satex registers for `engine` and for no plain-TeX run: its
 /// engine-specific catalog.
 fn engine_only_names(engine: Engine) -> Vec<String> {
-    let mut it = satex::tex::Interner::default();
-    let base = satex::builtins::initial_meanings(&mut it, Engine::Tex);
-    let table = satex::builtins::initial_meanings(&mut it, engine);
+    let mut it = satex::engine::tex::Interner::default();
+    let base = satex::engine::builtins::initial_meanings(&mut it, Engine::Tex);
+    let table = satex::engine::builtins::initial_meanings(&mut it, engine);
     let mut names: Vec<String> = table
         .keys()
         .filter(|sym| !base.contains_key(*sym))
@@ -643,8 +640,8 @@ fn every_evaluated_conditional_is_a_fact() {
 /// kernel into the missing-file loop. Skipped without `lualatex`.
 #[test]
 fn the_lualatex_kernel_builds_without_broken_gaps() {
-    use satex::facts::Severity;
-    if !crate::support::installed() || satex::paths::which("lualatex").is_err() {
+    use satex::analysis::facts::Severity;
+    if !crate::support::installed() || satex::project::paths::which("lualatex").is_err() {
         eprintln!("no lualatex found; skipping the LuaLaTeX kernel build");
         return;
     }
@@ -654,7 +651,7 @@ fn the_lualatex_kernel_builds_without_broken_gaps() {
     let source = "% !TeX program = lualatex\n\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n";
     let path = dir.join("main.tex");
     std::fs::write(&path, source).unwrap();
-    let cache = satex::config::Cache { dir: Some(dir.join("cache")), ..Default::default() };
+    let cache = satex::project::config::Cache { dir: Some(dir.join("cache")), ..Default::default() };
     let cfg = Config { cache, ..crate::support::config() };
     let analysis = Machine::analyze(source, Some(&path), &cfg);
     let broken: Vec<String> = analysis
@@ -673,7 +670,7 @@ fn the_lualatex_kernel_builds_without_broken_gaps() {
 /// `\str_if_eq:nnTF`. Skipped without `lualatex`.
 #[test]
 fn the_lualatex_kernel_is_cached_and_expl3_works() {
-    if !crate::support::installed() || satex::paths::which("lualatex").is_err() {
+    if !crate::support::installed() || satex::project::paths::which("lualatex").is_err() {
         eprintln!("no lualatex found; skipping the LuaLaTeX kernel cache");
         return;
     }
@@ -685,7 +682,7 @@ fn the_lualatex_kernel_is_cached_and_expl3_works() {
 \\begin{document}\nText.\n\\end{document}\n";
     let path = dir.join("main.tex");
     std::fs::write(&path, source).unwrap();
-    let cache = satex::config::Cache { dir: Some(dir.join("cache")), ..Default::default() };
+    let cache = satex::project::config::Cache { dir: Some(dir.join("cache")), ..Default::default() };
     let cfg = Config { cache, ..crate::support::config() };
     let cold = Machine::analyze(source, Some(&path), &cfg);
     let warm = Machine::analyze(source, Some(&path), &cfg);
@@ -709,7 +706,7 @@ fn the_lualatex_kernel_is_cached_and_expl3_works() {
 #[test]
 fn case_codes_past_255_are_valid_only_under_unicode_engines() {
     let run = |engine: Engine| {
-        let cfg = Config { engine: Some(engine), kernel: Some(satex::plugin::Kernel::None), ..crate::support::bare() };
+        let cfg = Config { engine: Some(engine), kernel: Some(satex::plugins::Kernel::None), ..crate::support::bare() };
         let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\lccode65=1114111 \\ifnum\\lccode65=1114111 \\def\\ok{}\\fi";
         Machine::analyze(source, None, &cfg)
     };
@@ -718,4 +715,16 @@ fn case_codes_past_255_are_valid_only_under_unicode_engines() {
     assert!(!xetex.facts.diagnostics.iter().any(|d| d.code == "invalid-code"));
     let pdftex = run(Engine::PdfTeX);
     assert!(pdftex.facts.diagnostics.iter().any(|d| d.code == "invalid-code"));
+}
+
+/// A Texinfo manual reads `\input texinfo` first and runs on plain TeX:
+/// no LaTeX kernel under it.
+#[test]
+fn a_texinfo_manual_runs_on_plain_tex() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\input texinfo\n@setfilename hello.info\n@settitle Hello\n@node Top\n@top Hello\nText.\n@bye\n";
+    let analysis = satex::analysis::machine::Machine::analyze(source, None, &crate::support::config());
+    assert_eq!(analysis.plugins.kernel, satex::plugins::Kernel::Plain);
 }

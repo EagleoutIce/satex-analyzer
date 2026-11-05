@@ -1,0 +1,14 @@
+% Exercises: glossaries (entries, acronyms, \gls, \glspl, \printglossaries), needs makeglossaries-free first pass.
+\documentclass{article}
+\usepackage[acronym,toc]{glossaries}
+\makeglossaries
+\newglossaryentry{latex}{name={LaTeX},description={A document preparation system}}
+\newglossaryentry{tex}{name={TeX},description={A typesetting engine},plural={TeXes}}
+\newacronym{pdf}{PDF}{Portable Document Format}
+\newacronym{abs}{AI}{Abstract Interpretation}
+\begin{document}
+\section{Terms}
+\Gls{latex} builds on \gls{tex}. The \gls{pdf} format; again \gls{pdf}, \glspl{tex}, \gls{abs}, \acrshort{abs}, \acrlong{abs}.
+\glsadd{latex}
+\printglossary[type=main]\printglossary[type=\acronymtype]
+\end{document}

@@ -6,101 +6,28 @@
 
 `satex query NAME -f FILE` runs a query and prints its records. `satex query --list` names them all. Every query takes `--filter EXPR` (e.g. `'tag=macro and arity>0'`) and `--format json`/`csv`. The examples analyze `samples/paper.tex`.
 
-- [definitions](#definitions)
-- [expansions](#expansions)
-- [dependencies](#dependencies)
-- [occurrences](#occurrences)
-- [recursion](#recursion)
-- [calls](#calls)
-- [dependency-graph](#dependency-graph)
-- [trace](#trace)
-- [files](#files)
-- [diagnostics](#diagnostics)
-- [distribution](#distribution)
-- [catcodes](#catcodes)
-- [side-effects](#side-effects)
-- [project](#project)
-- [plugins](#plugins)
-- [produces](#produces)
-- [gaps](#gaps)
-- [pgfkeys](#pgfkeys)
-- [options](#options)
-- [typeset](#typeset)
-
-## definitions
-
-Every name the document or its packages define. `origin` is `document` for files in the main file's directory tree, `library` otherwise. `package` names the package or class.
-
-```text
-$ satex query definitions -f samples/paper.tex --filter 'tag=macro and arity>0'
-tag    name                             paramet…  body      file                  
-macro  \__sys_tmp:w                     #1        \str_if…  expl3-code.tex        @ expl3-code.tex:1539:17
-macro  \sys_gset_rand_seed:n            #1        \tex_se…  expl3-code.tex        @ expl3-code.tex:1531:34
-macro  \reserved@c                      #1.sty\…  \def \r…  latex.ltx             @ latex.ltx:18742:20
-macro  \reserved@a                      #10#2#{   \expand…  latex.ltx             @ latex.ltx:1277:3
-macro  \reserved@a                      #1\@nil   \@for \…  latex.ltx             @ latex.ltx:18611:3
-… 2591 more lines omitted
-```
-
-## expansions
-
-Every macro call, with how many times it was expanded.
-
-```text
-$ satex query expansions -f samples/paper.tex --filter 'name=\newcommand'
-name         count  package         file                
-\newcommand  1      article         article.cls         @ article.cls:48:1
-\newcommand  1      article         article.cls         @ article.cls:203:3
-\newcommand  1      article         article.cls         @ article.cls:268:1
-\newcommand  1      article         article.cls         @ article.cls:302:1
-\newcommand  1      article         article.cls         @ article.cls:306:1
-… 163 more lines omitted
-```
-
-## dependencies
-
-The files, packages and classes the document reads, and what loaded each. Lua modules loaded by `\directlua` chunks appear with kind `lua`. `texlive` names each file's TeX Live package (see [configuration](configuration.md#tex-live-packages-depp)).
-
-```text
-$ satex query dependencies -f samples/paper.tex --filter 'kind=package'
-kind     status          name            by              file                
-package  read            amsmath                         paper.tex           @ paper.tex:4:1
-package  read            amstext         amsmath         amsmath.sty         @ amsmath.sty:126:1
-package  read            amsgen          amstext         amstext.sty         @ amstext.sty:27:1
-package  read            amsbsy          amsmath         amsmath.sty         @ amsmath.sty:127:1
-package  already-loaded  amsgen          amsbsy          amsbsy.sty          @ amsbsy.sty:27:1
-… 49 more lines omitted
-```
-
-## occurrences
-
-Package and class identification banners, passed options, and other one-off events.
-
-```text
-$ satex query occurrences -f samples/paper.tex --filter 'kind=identification'
-kind            key                   detail                  file                  
-identification  article               2025/01/22 v1.4n Stan…  article.cls           @ article.cls:45:1
-identification  size11.clo            2025/01/22 v1.4n Stan…  size11.clo            @ size11.clo:44:1
-identification  amsmath               2025/07/09 v2.17z AMS…  amsmath.sty           @ amsmath.sty:29:1
-identification  amstext               2024/11/17 v2.01 AMS …  amstext.sty           @ amstext.sty:26:1
-identification  amsgen                1999/11/30 v2.0 gener…  amsgen.sty            @ amsgen.sty:26:1
-… 38 more lines omitted
-```
-
-## recursion
-
-Macros that call themselves, directly or through another macro.
-
-```text
-$ satex query recursion -f samples/paper.tex
-kind    name                          file            
-direct  \KV@do                        keyval.sty      @ keyval.sty:31:6
-direct  \do                           amsgen.sty      @ amsgen.sty:115:5
-direct  \XC@if@                       xcolor.sty      @ xcolor.sty:128:8
-direct  \XC@cl@@n                     xcolor.sty      @ xcolor.sty:359:3
-direct  \@@mptopdf@@stripnewabove     supp-pdf.mkii   @ supp-pdf.mkii:127:5
-… 2 more lines omitted
-```
+- [calls](#calls): which control sequences each macro's body invokes
+- [catcodes](#catcodes): explicit \catcode assignments the document makes
+- [definitions](#definitions): every macro, environment and register the document or its packages define
+- [dependencies](#dependencies): files, packages and classes read, and what loaded each
+- [dependency-graph](#dependency-graph): the dependency graph between files and packages as records
+- [diagnostics](#diagnostics): what satex noticed while interpreting, apart from lint rules
+- [distribution](#distribution): the detected TeX installation, version and searched trees
+- [expansions](#expansions): how often each macro was expanded during the run
+- [files](#files): every file read, in the order it was opened
+- [gaps](#gaps): constructs the run could not interpret, grouped by cause
+- [occurrences](#occurrences): package banners, passed options and other one-off events
+- [options](#options): the keys an environment or command's optional argument accepts
+- [pgfkeys](#pgfkeys): pgfkeys defined at the end of the run and what each does
+- [plugins](#plugins): what each plugin chose for this run, and why
+- [previews](#previews): arrow tips and patterns the run declared, drawn by TeX
+- [produces](#produces): where a given text can come from, expanded or not
+- [project](#project): document class, engine and build settings detected or assumed
+- [recursion](#recursion): macros that call themselves, directly or through others
+- [side-effects](#side-effects): definitions and assignments a macro makes when called
+- [trace](#trace): every step: macro expansions, primitives run, changes made
+- [type-plugins](#type-plugins): the editor's type plugins: the types each triggers on and its features
+- [typeset](#typeset): the text the document typesets, one row per paragraph
 
 ## calls
 
@@ -117,58 +44,59 @@ name        callee
 … 6 more lines omitted
 ```
 
+## catcodes
+
+Explicit category code assignments (`\catcode`) the document makes. `doc/src/wiki/queries/demo.tex` makes `!` active:
+
+```text
+$ satex query catcodes -f doc/src/wiki/queries/demo.tex
+code  kind    key  detail     
+13    Active  !    was Other  
+```
+
+## definitions
+
+Every name the document or its packages define. `origin` is `document` for files in the main file's directory tree, `library` otherwise. `package` names the package or class.
+
+```text
+$ satex query definitions -f samples/paper.tex --filter 'tag=macro and arity>0'
+tag    name      paramet…  comment   arguments    body      file                  
+macro  \__sys_…  #1                               \str_if…  expl3-code.tex        @ expl3-code.tex:1539:17
+macro  \sys_gs…  #1                               \tex_se…  expl3-code.tex        @ expl3-code.tex:1531:34
+macro  \reserv…  #1.sty\…                         \def \r…  latex.ltx             @ latex.ltx:18742:20
+macro  \reserv…  #10#2#{                          \expand…  latex.ltx             @ latex.ltx:1277:3
+macro  \reserv…  #1\@nil                          \@for \…  latex.ltx             @ latex.ltx:18611:3
+… 2591 more lines omitted
+```
+
+## dependencies
+
+The files, packages and classes the document reads, and what loaded each. Lua modules loaded by `\directlua` chunks appear with kind `lua`. `texlive` names each file's TeX Live package (see [configuration](configuration.md#plugins)).
+
+```text
+$ satex query dependencies -f samples/paper.tex --filter 'kind=package'
+kind     status          name            by              file                
+package  read            amsmath                         paper.tex           @ paper.tex:4:1
+package  read            amstext         amsmath         amsmath.sty         @ amsmath.sty:126:1
+package  read            amsgen          amstext         amstext.sty         @ amstext.sty:27:1
+package  read            amsbsy          amsmath         amsmath.sty         @ amsmath.sty:127:1
+package  already-loaded  amsgen          amsbsy          amsbsy.sty          @ amsbsy.sty:27:1
+… 49 more lines omitted
+```
+
 ## dependency-graph
 
 The dependency graph as records. `satex dependencies` renders it as DOT or JSON.
 
 ```text
-$ satex query dependency-graph -f samples/paper.tex
-tag                  name      file                           
-macro-call           \show@r…  latex.ltx                      @ latex.ltx:731:7
-macro-call           \fmtname  latex.ltx                      @ latex.ltx:731:26
-macro-call           \space    latex.ltx                      @ latex.ltx:731:34
-macro-call           \fmtver…  latex.ltx                      @ latex.ltx:731:42
-use                  LaTeX2e…  latex.ltx                      @ latex.ltx:129:24
-… 40113 more lines omitted
-```
-
-## trace
-
-Every step: which macro expanded, which primitive ran, what changed. Use `satex trace`. `satex query trace` is empty unless `trace: true` is set.
-
-```text
-$ satex trace -f samples/paper.tex
-index   step         name                        detail                    file           
-678     expand       \documentclass                                        paper.tex      @ paper.tex:1:1
-8412    open-file    \article                    /usr/local/texlive/YYYY…  paper.tex      @ paper.tex:1:1
-10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
-10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
-10272   define       \ifdraft                                              paper.tex      @ paper.tex:3:7
-… 181 more lines omitted
-```
-
-`--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile; `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown; `--include-internal` adds packages, classes and the kernel. `--format compact` prints at most 8 text lines instead: what each top-level call of the main file expands to, and each conditional's outcome. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
-
-```text
-$ satex trace -f samples/paper.tex --lines 10:11
-index  step    name         file       
-0      expand  \newcommand  paper.tex  @ paper.tex:11:1
-105    define  \highlight   paper.tex  @ paper.tex:11:13
-```
-
-## files
-
-Every file read while analyzing the document, in the order it was opened.
-
-```text
-$ satex query files -f samples/paper.tex
-id   kind     file                                      
-0    input    paper.tex                                 
-1    input    latex.ltx                                 
-2    input    texsys.cfg                                
-3    input    texsys.aux                                
-4    input    expl3.ltx                                 
-… 289 more lines omitted
+$ satex query dependency-graph -f samples/paper.tex --filter 'file=paper.tex'
+tag                  name                                                          file       
+macro-call           \documentclass                                                paper.tex  @ paper.tex:1:1
+variable-definition  \pkgcls@targetdate                                            paper.tex  @ paper.tex:1:1
+use                  @                                                             paper.tex  @ paper.tex:1:1
+use                  11pt                                                          paper.tex  @ paper.tex:1:1
+macro-call           \value                                                        paper.tex  @ paper.tex:0:0
+… 542 more lines omitted
 ```
 
 ## diagnostics
@@ -177,13 +105,13 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 
 ```text
 $ satex query diagnostics -f samples/paper.tex
-severity     code                        count  message                file            
-imprecision  argument-ends-in-unknown    1      a delimited argument…  latex.ltx       @ latex.ltx:20534:3
-imprecision  unknown-name                7      a name built from un…  latex.ltx       @ latex.ltx:20322:31
-imprecision  unknown-name                7      a name built from un…  latex.ltx       @ latex.ltx:20322:41
-imprecision  mismatched-group            2      extra }, or forgotte…  latex.ltx       @ latex.ltx:20534:3
-imprecision  paths-joined-at             1      2 paths arrived at a…  paper.tex       @ paper.tex:82:15
-… 15 more lines omitted
+severity     code                          count  message              file            
+imprecision  call-summarized               1      a call with unknow…  latex.ltx       @ latex.ltx:1824:12
+imprecision  call-summarized               1      a call with unknow…  hyperref.sty    @ hyperref.sty:2143:24
+imprecision  argument-ends-in-unknown      1      a delimited argume…  latex.ltx       @ latex.ltx:20534:3
+imprecision  unknown-name                  5      a name built from …  latex.ltx       @ latex.ltx:20322:31
+imprecision  unknown-name                  5      a name built from …  latex.ltx       @ latex.ltx:20322:41
+… 22 more lines omitted
 ```
 
 ## distribution
@@ -201,57 +129,73 @@ texmf-tree                                                                      
 … 5384 more lines omitted
 ```
 
-## catcodes
+## expansions
 
-Explicit category code assignments (`\catcode`) the document makes. `samples/paper.tex` does not change any, so this query returns nothing for it:
+Every macro call, with how many times it was expanded.
 
 ```text
-$ satex query catcodes -f samples/paper.tex
+$ satex query expansions -f samples/paper.tex --filter 'name=\newcommand'
+name         count  package         file                
+\newcommand  1      article         article.cls         @ article.cls:48:1
+\newcommand  1      article         article.cls         @ article.cls:203:3
+\newcommand  1      article         article.cls         @ article.cls:268:1
+\newcommand  1      article         article.cls         @ article.cls:302:1
+\newcommand  1      article         article.cls         @ article.cls:306:1
+… 163 more lines omitted
 ```
 
-## side-effects
+## files
 
-Definitions and assignments a macro makes as a side effect of being called, rather than through `\def` or `\newcommand` directly at that point.
+Every file read while analyzing the document, in the order it was opened.
 
 ```text
-$ satex query side-effects -f samples/paper.tex
-tag                  name      detail    file                 
-variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:2104:42
-variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
-variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
-variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
-variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
-… 1833 more lines omitted
+$ satex query files -f samples/paper.tex
+id   kind     file                                      
+0    input    paper.tex                                 
+1    input    latex.ltx                                 
+2    input    texsys.cfg                                
+3    input    texsys.aux                                
+4    input    expl3.ltx                                 
+… 290 more lines omitted
 ```
 
-## project
+## gaps
 
-The document class, engine, and build configuration SaTeX detected or was told to assume.
+Lists the places the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `gaps.log` use the same list.
 
 ```text
-$ satex query project -f samples/paper.tex
-kind       name                                                      count  detail    message                           
-document   article [2025/01/22 v1.4n Standard LaTeX document class]         LaTeX2e…  engine pdflatex (build configur…  
-latexmk    samples/latexmkrc                                                pdf_mod…                                    
-documents                                                            3      samples…                                    
-inputs                                                               1      samples…                                    
-packages                                                             1      samples…                                    
-… 1 more line omitted
+$ satex query gaps -f doc/src/wiki/challenges/06-unknown.tex
+severity     code                    count  message                        file            
+unsupported  unbalanced-conditional  1      end of 06-unknown.tex occurr…  06-unknown.tex  @ 06-unknown.tex:0:0
 ```
 
-## plugins
+## occurrences
 
-The provider, platform, engine, output target, and build system plugins chose for this run, and why.
+Package and class identification banners, passed options, and other one-off events.
 
 ```text
-$ satex query plugins -f samples/paper.tex
-kind              name                                                                               detail             
-provider          texlive (TeX 3.141592653 (TeX Live 2026))                                          detected           
-platform          linux                                                                              this machine       
-engine            pdflatex (pdftex primitives)                                                       build configurat…  
-kernel            latex2e                                                                            default            
-output            pdf                                                                                build configurat…  
-… 4 more lines omitted
+$ satex query occurrences -f samples/paper.tex --filter 'kind=identification'
+kind            key                   detail                  file                  
+identification  article               2025/01/22 v1.4n Stan…  article.cls           @ article.cls:45:1
+identification  size11.clo            2025/01/22 v1.4n Stan…  size11.clo            @ size11.clo:44:1
+identification  amsmath               2025/07/09 v2.17z AMS…  amsmath.sty           @ amsmath.sty:29:1
+identification  amstext               2024/11/17 v2.01 AMS …  amstext.sty           @ amstext.sty:26:1
+identification  amsgen                1999/11/30 v2.0 gener…  amsgen.sty            @ amsgen.sty:26:1
+… 38 more lines omitted
+```
+
+## options
+
+`--for NAME` lists the keys an environment's or command's optional argument accepts. SaTeX follows what the command's code calls until it reaches a key-setting call (keyval, xkeyval, pgfkeys, l3keys, or a package's own copy such as enumitem's) and lists the keys of the family it used. An optional argument that takes no keys (enumerate's label template) is reported as `positional`.
+
+This needs call arguments recorded (`record_arguments`). `query options` and `--for` in a [request](#json-requests) turn that on.
+
+`mybanner` in `samples/mypackage.sty` takes an optional argument but reads it directly (`[plain]`, no keys), so it comes back `positional`:
+
+```text
+$ satex query options --for mybanner -f samples/mypackage.sty
+kind        name       detail                                                                                  
+positional  \mybanner  takes an optional argument (\mybanner[plain]) not read through a recognized key family  
 ```
 
 ## pgfkeys
@@ -269,41 +213,34 @@ code args  /demo/label                                          \def \demol…  
 … 90 more lines omitted
 ```
 
-## gaps
+## plugins
 
-What the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `gaps.log` use the same list.
+The provider, platform, engine, output target, and build system plugins chose for this run, and why.
 
 ```text
-$ satex query gaps -f samples/mypackage.sty
+$ satex query plugins -f samples/paper.tex
+kind              name                                                                               detail             
+provider          texlive (TeX 3.141592653 (TeX Live 2026))                                          detected           
+platform          linux                                                                              this machine       
+engine            pdflatex (pdftex primitives)                                                       build configurat…  
+kernel            latex2e                                                                            default            
+output            pdf                                                                                build configurat…  
+… 4 more lines omitted
 ```
 
-## options
+## previews
 
-`--for NAME` lists the keys an environment's or command's optional argument accepts. SaTeX follows what the command's code calls until it reaches a key-setting call (keyval, xkeyval, pgfkeys, l3keys, or a package's own copy such as enumitem's) and lists the keys of the family it used. An optional argument that takes no keys (enumerate's label template) is reported as `positional`.
-
-This needs call arguments recorded (`record_arguments`). `query options` and `--for` in a [request](#json-requests) turn that on.
-
-`mybanner` in `samples/mypackage.sty` takes an optional argument but reads it directly (`[plain]`, no keys), so it comes back `positional`:
+The arrow tips and fill patterns the run declared, each drawn by TeX (`latex` and `dvisvgm`) as SVG. The names are `arrow:SPEC` and `pattern:NAME`. The pictures are kept in `previews.json` in the cache directory, where completion reads them. `doc/src/wiki/queries/demo.tex` loads the `arrows.meta` and `patterns` libraries:
 
 ```text
-$ satex query options --for mybanner -f samples/mypackage.sty
-kind  key                 file           
-code  xcolor/natural      mypackage.sty  @ mypackage.sty:4:1
-code  xcolor/rgb          mypackage.sty  @ mypackage.sty:4:1
-code  xcolor/cmy          mypackage.sty  @ mypackage.sty:4:1
-code  xcolor/cmyk         mypackage.sty  @ mypackage.sty:4:1
-code  xcolor/hsb          mypackage.sty  @ mypackage.sty:4:1
-… 52 more lines omitted
-```
-
-## typeset
-
-The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. The [challenges](Challenges) compare it with what pdflatex sets.
-
-```text
-$ satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex
-3:25  paragraph  ⟦f⟧wide, {empty page|page started}
-assumption  clock-assumed
+$ satex query previews -f doc/src/wiki/queries/demo.tex
+name                                      
+arrow:-.                                  
+arrow:-<                                  
+arrow:->                                  
+arrow:->|                                 
+arrow:-Bar                                
+… 100 more lines omitted
 ```
 
 ## produces
@@ -353,6 +290,87 @@ $ satex explain '\itshape'
 … 2 more lines omitted
 ```
 
+## project
+
+The document class, engine, and build configuration SaTeX detected or was told to assume.
+
+The rows below list what the project walk found, without what `.gitignore` excludes.
+`unreachable` lists the inputs, packages, classes and bibliographies no root reads.
+Without `-f`, each root document is analyzed on its own.
+
+```text
+$ satex query project -f samples/paper.tex
+kind       name                                                      count  detail    message                           
+document   article [2025/01/22 v1.4n Standard LaTeX document class]         LaTeX2e…  engine pdflatex (build configur…  
+latexmk    samples/latexmkrc                                                pdf_mod…                                    
+documents                                                            3      samples…                                    
+inputs                                                               1      samples…                                    
+packages                                                             1      samples…                                    
+… 1 more line omitted
+```
+
+## recursion
+
+Macros that call themselves, directly or through another macro.
+
+`doc/src/wiki/queries/demo.tex` defines `\countdown`, which calls itself:
+
+```text
+$ satex query recursion -f doc/src/wiki/queries/demo.tex --filter 'name=\countdown'
+kind    name        file      
+direct  \countdown  demo.tex  @ demo.tex:8:12
+```
+
+## side-effects
+
+Definitions and assignments a macro makes as a side effect of being called, rather than through `\def` or `\newcommand` directly at that point.
+
+```text
+$ satex query side-effects -f samples/paper.tex --filter 'file=paper.tex'
+tag                  name                       detail                       file       
+macro-call           \documentclass             while expanding at 731:7     paper.tex  @ paper.tex:1:1
+variable-definition  \ifdraft                   while expanding at 3:1       paper.tex  @ paper.tex:3:7
+variable-definition  \drafttrue                 while expanding at 3:1       paper.tex  @ paper.tex:3:7
+variable-definition  \draftfalse                while expanding at 3:1       paper.tex  @ paper.tex:3:7
+macro-call           \usepackage                while expanding at 1:1       paper.tex  @ paper.tex:4:1
+… 116 more lines omitted
+```
+
+## trace
+
+Every step: which macro expanded, which primitive ran, what changed. Use `satex trace`. `satex query trace` is empty unless `trace: true` is set.
+
+```text
+$ satex trace -f samples/paper.tex
+index   step         name                        detail                    file           
+678     expand       \documentclass                                        paper.tex      @ paper.tex:1:1
+8412    open-file    \article                    /usr/local/texlive/YYYY…  paper.tex      @ paper.tex:1:1
+10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
+10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
+10272   define       \ifdraft                    iffalse                   paper.tex      @ paper.tex:3:7
+… 207 more lines omitted
+```
+
+`--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile, and `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown. `--include-internal` adds packages, classes and the kernel. `--format compact` prints at most 8 text lines instead: what each top-level call of the main file expands to, and each conditional's outcome. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
+
+```text
+$ satex trace -f samples/paper.tex --lines 10:11
+index  step    name         detail                        file       
+0      expand  \newcommand                                paper.tex  @ paper.tex:11:1
+105    define  \highlight   \long macro:#1->\textbf {#1}  paper.tex  @ paper.tex:11:13
+```
+
+## typeset
+
+The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.
+
+```text
+$ satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex
+3:25  paragraph  ⟦f⟧wide, {empty page|page started}
+6:15  page  page 1
+assumption  clock-assumed
+```
+
 ## Several definitions
 
 If the preamble meaning differs from the one at the end of the run, both are shown. `--all` lists every definition with its place.
@@ -390,11 +408,11 @@ SaTeX finds a signature by running the command on probe input and watching what 
 
 `--at WHERE` asks for the meaning at one place instead of the default preamble/document view (a suffix on the name would be ambiguous, since `@` is a letter in LaTeX's internal names):
 
-* `--at preamble` — the meaning right before `\begin{document}`.
-* `--at document` — the meaning at the end of the run.
-* `--at 302` — the meaning at line 302 of the main file.
-* `--at somefile.tex:302` — the meaning at line 302 of `somefile.tex`, a file the run read.
-* `--at after:enumitem` — the meaning right after the `enumitem` package finished contributing what it defines.
+* `--at preamble`: the meaning right before `\begin{document}`.
+* `--at document`: the meaning at the end of the run.
+* `--at 302`: the meaning at line 302 of the main file.
+* `--at somefile.tex:302`: the meaning at line 302 of `somefile.tex`, a file the run read.
+* `--at after:enumitem`: the meaning right after the `enumitem` package finished contributing what it defines.
 
 In a [request](#json-requests), an `explain` entry takes the same place as `"at"`.
 
@@ -419,24 +437,24 @@ The criterion is a name, `--at [FILE:]LINE:COL[-LINE[:COL]]` (a range, to the en
 
 ```text
 $ satex slice -f samples/paper.tex '\ifdraft'
-\documentclass[11pt]{article}
-\newif\ifdraft
-\usepackage{amsmath}
-\usepackage{graphicx}
-\usepackage{hyperref}
-\usepackage{mypackage}
-… 16 more lines omitted
+\begin{filecontents*}[overwrite]{mypackage.sty}
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{mypackage}[2024/01/01 v1.0 Sample package for satex]
+
+\RequirePackage{xcolor}
+
+… 58 more lines omitted
 ```
 
 ```text
 $ satex slice -f samples/paper.tex --where 'kind=begin-environment and key=figure'
-\documentclass[11pt]{article}
-\newif\ifdraft
-\usepackage{amsmath}
-\usepackage{graphicx}
-\usepackage{hyperref}
-\usepackage{mypackage}
-… 16 more lines omitted
+\begin{filecontents*}[overwrite]{mypackage.sty}
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{mypackage}[2024/01/01 v1.0 Sample package for satex]
+
+\RequirePackage{xcolor}
+
+… 89 more lines omitted
 ```
 
 `--out DIR` writes the slice as a standalone project: the main file plus the local packages, classes, graphics and bibliographies it needs, paths preserved.
@@ -447,21 +465,28 @@ $ satex slice -f samples/paper.tex --where 'kind=begin-environment and key=figur
 
 ```text
 $ satex controls my@draft my@wide -f samples/mypackage.sty
+tag    name         for       means                              detail    file           
+use    \newcommand  my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:29:3
+macro  \mymode      my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:29:15
+use    \newcommand  my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:31:3
+macro  \mymode      my@draft  \ifmy@draft, the switch `\newif`…  \ifmy@d…  mypackage.sty  @ mypackage.sty:31:15
 ```
 
 # JSON requests
 
 `satex query --request FILE` (`-` for stdin) runs several queries on one analysis and prints one JSON answer per query. The request is a JSON object:
 
-* `file` — the document to analyze. Falls back to `-f` when omitted.
-* `config` — optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load.packages": false}`.
-* `queries` — an array of query objects, each with a `type`: any name from the query list above (`definitions`, `pgfkeys`, `gaps`, …, with `text`/`prefix`/`name`/`filter` as that query takes them), or `explain`, `controls`, `slice`, or `options`, with their own arguments:
+* `file`: the document to analyze. Falls back to `-f` when omitted.
+* `config`: optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load.packages": false}`.
+* `queries`: an array of query objects, each with a `type`: any name from the query list above (`definitions`, `pgfkeys`, `gaps`, …, with `text`/`prefix`/`name`/`filter` as that query takes them), or `explain`, `controls`, `slice`, `options`, `providers`, or `docs`, with their own arguments:
   * `explain`: `names` (array), `all` (bool).
   * `controls`: `names` (array), `all` (bool).
   * `slice`: `names` (array), `at` (`"[FILE:]LINE:COL"`), `forward` (bool).
   * `options`: `name`.
+  * `providers`: `names` (array). For each name, the installed package or class that defines it while loading the fewest files.
+  * `docs`: no arguments. What the manuals of the packages and classes the run read say about their commands, one record per command with the directory it was mined from.
 
-Each answer is `{"type": …, "records": […]}`, or `{"type": …, "error": …}` for a query that named something wrong — one bad query in the batch does not stop the rest of it.
+Each answer is `{"type": …, "records": […]}`, or `{"type": …, "error": …}` for a query that named something wrong. One bad query in the batch does not stop the rest of it.
 
 ```json
 {
@@ -481,20 +506,20 @@ $ satex query --request doc/src/wiki/request-example.json
     "hints": [],
     "records": [
       {
+        "arguments": [
+          "⟨arg1⟩ the text to box"
+        ],
         "arity": 1,
         "body": "\\fbox {#1}",
         "by": "\\newcommand",
         "certain": true,
         "col": 13,
+        "comment": "Draws a frame around its argument.",
         "context": "outside environments",
         "effective": "\\mybox{1}",
         "file": "mypackage.sty",
-        "line": 19,
+        "line": 21,
         "name": "\\mybox",
         "package": null,
-        "path": "samples/mypackage.sty",
-        "signature": "m",
-        "tag": "macro",
-        "takes": {
-… 23 more lines omitted
+… 28 more lines omitted
 ```

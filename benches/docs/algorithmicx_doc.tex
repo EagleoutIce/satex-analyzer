@@ -1,0 +1,13 @@
+% Exercises: algorithmicx/algpseudocode and classic algorithm float, \State, \If, \For, \Procedure, \Require.
+\documentclass{article}
+\usepackage{amssymb}\usepackage{algorithm}\usepackage{algpseudocode}
+\begin{document}
+\begin{algorithm}\caption{Binary search}\label{alg:b}
+\begin{algorithmic}[1]\Require sorted $A$, key $k$
+\Procedure{Search}{$A,k$}\State $l\gets 1$, $h\gets n$
+\While{$l\le h$}\State $m\gets\lfloor(l+h)/2\rfloor$
+\If{$A[m]=k$}\State \Return $m$\ElsIf{$A[m]<k$}\State $l\gets m+1$\Else\State $h\gets m-1$\EndIf
+\EndWhile\State \Return $-1$\EndProcedure\For{$i=1$ \textbf{to} $n$}\State work\EndFor\Repeat\State x\Until{done}
+\end{algorithmic}\end{algorithm}
+See Algorithm~\ref{alg:b}.
+\end{document}

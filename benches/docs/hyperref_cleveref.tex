@@ -1,0 +1,15 @@
+% Exercises: hyperref (colorlinks, bookmarks, \hyperref, \url) and cleveref (\cref, \Cref, ranges, labelcref).
+\documentclass{article}
+\usepackage{amsmath,amsthm}
+\usepackage[colorlinks=true,linkcolor=blue,bookmarks]{hyperref}
+\usepackage[capitalise,noabbrev]{cleveref}
+\newtheorem{thm}{Theorem}
+\begin{document}
+\section{One}\label{s:one}\begin{equation}a=b\label{e:a}\end{equation}\begin{equation}b=c\label{e:b}\end{equation}
+\begin{thm}\label{t:x}Statement.\end{thm}
+\begin{figure}\centering\rule{2cm}{1cm}\caption{F}\label{f:1}\end{figure}
+\section{Two}\label{s:two}
+\cref{s:one,s:two}, \Cref{e:a,e:b}, \cref{t:x}, \cref{f:1}, \crefrange{e:a}{e:b}.
+\hyperref[s:one]{go to one}, \url{https://example.org}, \href{https://example.org}{link}, \autoref{f:1}.
+\hypertarget{t1}{target} \hyperlink{t1}{back}.
+\end{document}

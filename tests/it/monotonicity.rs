@@ -11,9 +11,9 @@ use crate::support::PRELUDE;
 use std::collections::BTreeSet;
 
 use crate::support::installed;
-use satex::config::{Config, Limits, Load, Texmf};
-use satex::facts::Severity;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::facts::Severity;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Limits, Load, Texmf};
 
 // INITEX catcodes, as tests/it/semantics.rs's `analyze` uses them: no
 // format, no packages, so these MWEs run in milliseconds.
@@ -68,7 +68,7 @@ fn fact_keys(analysis: &Analysis) -> BTreeSet<(String, String, u16, u32)> {
     // A write is a fact by its place: what it writes is a value, which a
     // higher limit may make more precise (a page count of 1, not 1 or 2).
     for o in &analysis.facts.occurrences {
-        let key = if o.kind == satex::builtins::OccKind::Write { String::new() } else { o.key.clone() };
+        let key = if o.kind == satex::engine::builtins::OccKind::Write { String::new() } else { o.key.clone() };
         set.insert((format!("{:?}", o.kind), key, o.span.file, o.span.line));
     }
     for d in &analysis.facts.defs {

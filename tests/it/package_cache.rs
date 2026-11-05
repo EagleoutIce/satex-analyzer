@@ -4,9 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::support::{defined, installed};
-use satex::config::{Cache, Config};
-use satex::facts::LoadStatus;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::facts::LoadStatus;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Cache, Config};
 
 fn project(name: &str) -> PathBuf {
     let dir = crate::support::tmp_root().join(format!("satex-package-cache-{name}-{}", std::process::id()));
@@ -67,7 +67,7 @@ fn preamble(lines: &str) -> String {
 fn served(analysis: &Analysis, package: &str) -> Option<bool> {
     analysis.package_caches.iter().rev().find(|(name, ..)| name == package).and_then(|(.., state)| {
         match state.as_str() {
-            state if satex::machine::cache_served(state) => Some(true),
+            state if satex::analysis::machine::cache_served(state) => Some(true),
             state if state.ends_with("stored") => Some(false),
             _ => None,
         }
@@ -87,7 +87,7 @@ fn facts(analysis: &Analysis) -> Vec<String> {
             .map(|e| format!("{} {:?} {} {}", analysis.interner.name(e.name), e.span, e.meaning.as_str(), e.count)),
     );
     out.push(format!("{} vertices, {} edges", analysis.graph.len(), analysis.graph.edge_count()));
-    out.push(serde_json::to_string(&satex::lint::lint(analysis)).unwrap_or_default());
+    out.push(serde_json::to_string(&satex::linter::lint(analysis)).unwrap_or_default());
     out
 }
 
@@ -144,7 +144,7 @@ fn same_facts(a: &Analysis, b: &Analysis) {
             eprintln!("warm only {e}");
         }
         let lints = |a: &Analysis| -> std::collections::BTreeSet<String> {
-            satex::lint::lint(a)
+            satex::linter::lint(a)
                 .iter()
                 .map(|r| format!("{} {} {} {}", r["code"], r["file"], r["line"], r["message"]))
                 .collect()
@@ -184,6 +184,64 @@ fn same_facts(a: &Analysis, b: &Analysis) {
     }
 }
 
+/// tagpdf replays whole: the random ids (`\\int_rand:n`) its namespaces
+/// get fork, and their paths leave fewer finished input levels below the
+/// file than it opened on. The replay reports what reading it did.
+#[test]
+fn tagpdf_replays_whole_and_reports_the_same() {
+    if !installed() {
+        return;
+    }
+    let dir = project("tagpdf");
+    let document = "\\documentclass{article}\n\\usepackage{tagpdf}\n\\begin{document}\nx\n\\end{document}\n";
+    let first = run(&dir, document);
+    let second = run(&dir, document);
+    assert_eq!(served(&second, "tagpdf"), Some(true), "{:?}", second.package_caches);
+    assert!(second.served_steps * 10 > second.load_steps * 9, "{} of {}", second.served_steps, second.load_steps);
+    assert_eq!(first.steps, second.steps);
+    same_facts(&first, &second);
+}
+
+/// expl3's `\seq_map_inline:Nn` gsets `\__seq_map_<level>:w`, whose
+/// `\csname` asks whether the name exists only to make it `\relax`. A package
+/// recorded where earlier maps left those functions is served where none
+/// did, and the replay reports what reading it does.
+#[test]
+fn a_map_function_some_earlier_package_left_does_not_key_the_cache() {
+    if !installed() {
+        return;
+    }
+    let nested = |name: &str| {
+        format!(
+            "\\ProvidesExplPackage{{{name}}}{{2020/01/01}}{{1}}{{t}}\n\\seq_new:N \\g_{name}_seq\n\
+             \\seq_gput_right:Nn \\g_{name}_seq {{a}}\n\
+             \\seq_map_inline:Nn \\g_{name}_seq {{ \\seq_map_inline:Nn \\g_{name}_seq {{\n\
+             \\seq_map_inline:Nn \\g_{name}_seq {{ \\cs_gset:cpn {{{name}_##1####1########1}} {{}} }} }} }}\n\
+             \\cs_new:Npn \\{name}done {{}}\n"
+        )
+    };
+    let dir = project("mapped");
+    std::fs::write(dir.join("mapper.sty"), nested("mapper")).expect("mapper.sty");
+    // What an earlier map leaves: the map functions of its levels.
+    let made: String =
+        (1..=3).map(|level| format!("\\expandafter\\gdef\\csname __seq_map_{level}:w\\endcsname#1{{}}\n")).collect();
+    let both =
+        format!("\\documentclass{{article}}\n{made}\\usepackage{{mapper}}\n\\begin{{document}}x\\end{{document}}\n");
+    let alone = "\\documentclass{article}\n\\usepackage{mapper}\n\\begin{document}x\\end{document}\n";
+    run(&dir, &both);
+    let replayed = run(&dir, alone);
+    assert_eq!(served(&replayed, "mapper"), Some(true), "{:?}", replayed.package_caches);
+    assert!(defined(&replayed, "mapperdone"));
+    for entry in std::fs::read_dir(dir.join("cache")).expect("cache directory").flatten() {
+        if entry.file_name().to_string_lossy().starts_with("package-mapper-") {
+            std::fs::remove_file(entry.path()).expect("mapper's cache");
+        }
+    }
+    let read = run(&dir, alone);
+    assert_ne!(served(&read, "mapper"), Some(true), "{:?}", read.package_caches);
+    same_facts(&read, &replayed);
+}
+
 #[test]
 fn a_second_run_replays_the_package_and_reports_the_same() {
     let dir = project("replay");
@@ -202,7 +260,7 @@ fn a_second_run_replays_the_package_and_reports_the_same() {
     // TeX's "Undefined control sequence" in the package is its expansion.
     let undefined = |a: &Analysis| {
         a.facts.expansions.iter().any(|e| {
-            e.meaning == satex::facts::MeaningKind::Undefined
+            e.meaning == satex::analysis::facts::MeaningKind::Undefined
                 && a.file_name(e.span.file).ends_with("outer.sty")
                 && e.span.line == 7
         })
@@ -232,13 +290,13 @@ fn a_replayed_package_reports_the_tokens_and_time_it_stands_for() {
     let _first = analyze(&dir, DOCUMENT, &timed(&dir));
     let second = analyze(&dir, DOCUMENT, &timed(&dir));
     assert_eq!(served(&second, "outer"), Some(true), "the second run replays outer.sty from its cache");
-    let root = satex::query::summary(&second);
+    let root = satex::queries::query::summary(&second);
     let outer = root.children.iter().find(|n| n.name == "outer.sty").expect("outer.sty in the tree");
     assert!(outer.cached, "the replayed file is marked cached");
     assert!(outer.tokens > 0, "outer.sty reports the tokens its cache stands for, got {}", outer.tokens);
     // `inner.sty` has a cache entry of its own, replayed between outer's segments.
     assert_eq!(served(&second, "inner"), Some(true), "{:?}", second.package_caches);
-    let text = satex::render::timings(&second, satex::render::Links(false));
+    let text = satex::util::render::timings(&second, satex::util::render::Links(false));
     assert!(text.contains("inner"), "inner.sty is named:\n{text}");
 }
 
@@ -295,7 +353,7 @@ fn a_name_the_package_no_longer_defines_is_undefined() {
         let named = |r: &serde_json::Map<String, serde_json::Value>| {
             r["message"].as_str().is_some_and(|m| m.contains("`\\innermacro`"))
         };
-        satex::lint::lint(a).iter().any(|r| r["code"] == "undefined-control-sequence" && named(r))
+        satex::linter::lint(a).iter().any(|r| r["code"] == "undefined-control-sequence" && named(r))
     };
     let warm = run(&dir, source);
     assert!(!undefined(&warm));
@@ -317,6 +375,25 @@ fn the_same_package_after_a_different_preamble_is_served_and_reports_what_readin
     let cold = run_cold(&dir, &other);
     assert_eq!(facts(&cold).len(), facts(&warm).len());
     same_facts(&cold, &warm);
+}
+
+#[test]
+fn a_replay_keeps_the_primitive_copies_made_before_the_load() {
+    // Recorded where `\mydraft` is no copy of `\pdfdraftmode`: replayed
+    // where it is one, the copy stays and the test on it stays decided.
+    let dir = project("aliases");
+    std::fs::write(dir.join("few.sty"), "\\ProvidesPackage{few}\n\\def\\fewmacro{x}\n").expect("few.sty");
+    let document = |preamble: &str, body: &str| {
+        format!(
+            "\\documentclass{{article}}\n{preamble}\\usepackage{{few}}\n\\begin{{document}}{body}\\end{{document}}\n"
+        )
+    };
+    run(&dir, &document("", ""));
+    let warm = run(&dir, &document("\\let\\mydraft\\pdfdraftmode\n", "\\ifnum\\mydraft=0 \\else\\notdefined\\fi"));
+    assert_eq!(served(&warm, "few"), Some(true), "{:?}", warm.package_caches);
+    // Lost, it forks: two paths join that "differed in \mydraft".
+    let wrong: Vec<_> = warm.facts.diagnostics.iter().filter(|d| d.message.contains("draft")).collect();
+    assert!(wrong.is_empty(), "{wrong:?}");
 }
 
 #[test]
@@ -424,7 +501,7 @@ fn cache_build_builds_what_is_missing_and_refresh_rebuilds() {
     let states = |refresh| -> Vec<String> {
         let mut lines = Vec::new();
         let prepared =
-            satex::cmd::cache::build::prepare(&cfg, refresh, &[], &[], None, &mut |line| lines.push(line.to_string()))
+            satex::cli::cache::build::prepare(&cfg, refresh, &[], &[], None, &mut |line| lines.push(line.to_string()))
                 .expect("prepared");
         assert!(lines[0].starts_with("plan:"), "the plan comes first: {lines:?}");
         assert!(lines.iter().any(|l| l.starts_with("[2/2] outer")), "then each item: {lines:?}");
@@ -459,7 +536,7 @@ fn run_latex(dir: &Path, source: &str, auto: bool) -> Analysis {
 fn register_of(analysis: &Analysis, name: &str) -> Option<u16> {
     let sym = analysis.interner.lookup(name)?;
     match analysis.env.meaning(sym) {
-        satex::tex::Meaning::Register(_, index) => Some(index),
+        satex::engine::tex::Meaning::Register(_, index) => Some(index),
         _ => None,
     }
 }
@@ -603,7 +680,7 @@ fn text_of(analysis: &Analysis, name: &str) -> Option<String> {
     Some(
         text.iter()
             .filter_map(|t| match t.tok {
-                satex::tex::Tok::Chr(c, _) => Some(c),
+                satex::engine::tex::Tok::Chr(c, _) => Some(c),
                 _ => None,
             })
             .collect(),
@@ -699,7 +776,7 @@ fn a_case_mismatched_load_reports_the_disk_name_in_the_lint() {
     };
     assert_eq!(analysis.interner.name(on_disk), "Mismatch.sty");
 
-    let findings = satex::lint::lint(&analysis);
+    let findings = satex::linter::lint(&analysis);
     let finding = findings
         .iter()
         .find(|r| r.get("code").and_then(|c| c.as_str()) == Some("unresolved-file"))
@@ -754,8 +831,9 @@ fn a_case_mismatch_survives_a_package_cache_round_trip() {
 }
 
 /// A cache is keyed by what changes the interpretation only: a run that
-/// reports, lints or traces differently, has other resource limits, or
-/// names the engine it would pick anyway reads the same cache.
+/// reports, lints or traces differently, keeps call arguments (the
+/// language server does), has other resource limits, or names the engine
+/// it would pick anyway reads the same cache.
 #[test]
 fn settings_that_do_not_change_the_interpretation_share_a_cache() {
     let dir = project("key");
@@ -764,10 +842,11 @@ fn settings_that_do_not_change_the_interpretation_share_a_cache() {
     let mut other = latex(&dir);
     other.verbose = 2;
     other.lint_off = vec!["unused-label".into()];
-    other.profile = Some(satex::config::Profile::Document);
+    other.profile = Some(satex::project::config::Profile::Document);
     other.engine = Some(first.plugins.engine);
     other.limits.memory = bytesize::ByteSize::gib(3);
     other.limits.degrade_at_percent = 90;
+    other.record_arguments = true;
     let second = analyze(&dir, DOCUMENT, &other);
     assert_eq!(served(&second, "outer"), Some(true), "{:?}", second.package_caches);
 }
@@ -1050,12 +1129,12 @@ impl Portable {
 
     fn export(&self, cfg: &Config) {
         let mut out = Vec::new();
-        satex::cmd::cache::export(cfg, &self.archive, (&[], &[]), false, &mut out).expect("export");
+        satex::cli::cache::export(cfg, &self.archive, (&[], &[]), false, &mut out).expect("export");
     }
 
     fn import(&self, cfg: &Config) -> String {
         let mut out = Vec::new();
-        satex::cmd::cache::import(cfg, &self.archive, false, &mut out).expect("import");
+        satex::cli::cache::import(cfg, &self.archive, false, &mut out).expect("import");
         String::from_utf8_lossy(&out).into_owned()
     }
 }
@@ -1166,10 +1245,10 @@ fn a_kernel_is_named_by_its_release_not_its_path() {
     );
     let kernel = dir.join("latex.ltx");
     std::fs::write(&kernel, "\\edef\\fmtversion{2031-06-01}\n").expect("kernel");
-    assert_eq!(satex::format::release_name(&kernel), "2031");
+    assert_eq!(satex::caches::format::release_name(&kernel), "2031");
     let bare = dir.join("other.ltx");
     std::fs::write(&bare, "\\relax\n").expect("kernel");
-    assert_eq!(satex::format::release_name(&bare), satex::format::tree_name(&bare));
+    assert_eq!(satex::caches::format::release_name(&bare), satex::caches::format::tree_name(&bare));
 }
 
 /// No state from an interrupted run: every package cache entry of `a`.
@@ -1295,7 +1374,7 @@ fn an_export_can_be_limited_to_a_package() {
         let (only, without): (Vec<String>, Vec<String>) =
             (only.iter().map(|s| s.to_string()).collect(), without.iter().map(|s| s.to_string()).collect());
         let mut out = Vec::new();
-        satex::cmd::cache::export(&cfg, &p.archive, (&only, &without), true, &mut out).expect("export");
+        satex::cli::cache::export(&cfg, &p.archive, (&only, &without), true, &mut out).expect("export");
         let said: serde_json::Value = serde_json::from_slice(&out).expect("json");
         (said["entries"].as_u64().unwrap(), said["holds"].as_object().unwrap().keys().cloned().collect::<Vec<_>>())
     };
@@ -1320,7 +1399,7 @@ fn a_package_loaded_on_the_last_line_is_read_cold_and_warm() {
     run_latex(&dir, "\\relax\n", true);
     for run in ["cold", "warm"] {
         let analysis = run_latex(&dir, WITH_CLASS, true);
-        let undefined: Vec<_> = satex::lint::lint(&analysis)
+        let undefined: Vec<_> = satex::linter::lint(&analysis)
             .into_iter()
             .filter(|r| r["code"] == "undefined-control-sequence")
             .map(|r| r["message"].to_string())

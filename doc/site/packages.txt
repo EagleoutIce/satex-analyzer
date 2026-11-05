@@ -4,9 +4,13 @@
 # satex.yaml's cache.index.common joins them. A name is a package; `name.cls`
 # is a class. The first download stays the samples' files.
 
-# the most used LaTeX packages
+# with the first download: fetched while the editor loads, the most used LaTeX packages among them
+tikz listings minted scrartcl.cls scrreprt.cls scrbook.cls scrlayer-scrpage
 amsmath amssymb amsthm graphicx hyperref geometry xcolor babel fontenc inputenc
-booktabs tikz float caption subcaption natbib listings multirow siunitx fancyhdr
+booktabs float caption subcaption natbib multirow siunitx fancyhdr
+
+# slides
+beamer.cls
 
 # often next to them
 biblatex csquotes mathtools bm tabularx longtable makecell array url xspace
@@ -14,7 +18,7 @@ setspace lipsum todonotes algorithm2e algpseudocode wrapfig titlesec parskip
 etoolbox pgfplots lmodern fontspec unicode-math polyglossia acronym pdflscape
 
 # asked for by name
-minted tikzducks microtype forest accsupp tcolorbox enumitem cleveref
+tikzducks microtype forest accsupp tcolorbox enumitem cleveref mwe
 tikz-cd mhchem chemfig physics braket cancel ulem textcomp amsfonts
 threeparttable dcolumn colortbl hhline nicematrix tocloft appendix
 framed mdframed upquote footmisc placeins afterpage qrcode

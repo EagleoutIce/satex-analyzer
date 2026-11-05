@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::support::{definition, installed};
-use satex::config::{Config, Load};
-use satex::literate::{Guards, code_view};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Load};
+use satex::project::literate::{Guards, code_view};
 
 fn scratch(name: &str) -> PathBuf {
     let directory = crate::support::tmp_root().join("satex-literate-test").join(name);
@@ -23,8 +23,12 @@ fn analyze(directory: &Path, name: &str, source: &str) -> Analysis {
     Machine::analyze(source, Some(&file), &cfg)
 }
 
-fn occurrences(analysis: &Analysis) -> Vec<satex::query::Record> {
-    satex::query::run(analysis, satex::query::Query::Occurrences, &satex::query::Filter::Always)
+fn occurrences(analysis: &Analysis) -> Vec<satex::queries::query::Record> {
+    satex::queries::query::run(
+        analysis,
+        satex::queries::query::Query::Occurrences,
+        &satex::queries::query::Filter::Always,
+    )
 }
 
 const TWO_GUARDS: &str = r"% \iffalse meta-comment
@@ -55,7 +59,10 @@ fn guarded_code_is_read_and_the_driver_is_not() {
         !analysis.facts.loads.iter().any(|load| load.name == "ltxdoc"),
         "the driver is guarded `driver`, so its \\documentclass is not code"
     );
-    assert_eq!(satex::query::identity(&analysis).kind, "documented source (.dtx), read as docstrip extracts it");
+    assert_eq!(
+        satex::queries::query::identity(&analysis).kind,
+        "documented source (.dtx), read as docstrip extracts it"
+    );
 }
 
 #[test]
@@ -102,7 +109,7 @@ fn a_percent_inside_the_code_stays_in_the_code() {
     let body = def
         .mac
         .as_ref()
-        .map(|mac| satex::tex::detokenize(&mac.replacement_text, &analysis.interner))
+        .map(|mac| satex::engine::tex::detokenize(&mac.replacement_text, &analysis.interner))
         .unwrap_or_default();
     assert!(body.contains("\\%"), "the escaped percent is part of the body: {body}");
     assert!(definition(&analysis, "after").is_some(), "the comment ends with its line");
@@ -151,7 +158,7 @@ This file was generated from demo.dtx; \endinput is not read here.
     assert_eq!(generated[0]["detail"], "from demo.dtx (package) into tex/latex/demo");
     assert_eq!(generated[1]["key"], "demo-extra.sty");
     assert!(generated[1]["detail"].as_str().is_some_and(|d| d.contains("(extra,!package)")));
-    assert_eq!(satex::query::identity(&analysis).kind, "docstrip installation script (.ins)");
+    assert_eq!(satex::queries::query::identity(&analysis).kind, "docstrip installation script (.ins)");
 }
 
 /// What docstrip itself writes, for the comparison below.
@@ -173,7 +180,7 @@ fn unpacked(directory: &Path, dtx: &Path, options: &str) -> Option<String> {
 
 #[test]
 fn the_code_view_is_what_docstrip_writes() {
-    if !installed() || satex::paths::which("tex").is_err() {
+    if !installed() || satex::project::paths::which("tex").is_err() {
         return;
     }
     let Ok(found) = Command::new("kpsewhich").arg("array.dtx").output() else { return };
@@ -198,7 +205,7 @@ fn the_code_view_is_what_docstrip_writes() {
 
 #[test]
 fn a_documented_source_defines_what_the_package_does() {
-    if !installed() || satex::paths::which("tex").is_err() {
+    if !installed() || satex::project::paths::which("tex").is_err() {
         return;
     }
     let Ok(found) = Command::new("kpsewhich").arg("array.dtx").output() else { return };

@@ -10,12 +10,11 @@ use std::ffi::{CStr, CString, c_char};
 
 use lsp_server::{Message, Notification, Response};
 
-use super::{Engine, handle_notification, respond, server_capabilities};
-use lsp_types::PublishDiagnosticsParams;
+use super::{Engine, notification, respond, server_capabilities};
 
 struct Local {
     engine: Engine,
-    diagnostics: crossbeam_channel::Receiver<PublishDiagnosticsParams>,
+    outbox: crossbeam_channel::Receiver<Notification>,
     reply: CString,
 }
 
@@ -24,17 +23,23 @@ thread_local! { static LOCAL: RefCell<Option<Local>> = const { RefCell::new(None
 unsafe extern "C" {
     fn emscripten_exit_with_live_runtime() -> !;
     fn satex_status(json: *const c_char);
+    fn satex_cancelled() -> i32;
 }
 
-pub fn serve(cfg: crate::config::Config, root: std::path::PathBuf, main: Option<std::path::PathBuf>) -> ! {
-    let (tx, diagnostics) = crossbeam_channel::unbounded();
+/// Whether the page asked to stop the run under way (src/lsp/wasm-status.js).
+pub(super) fn cancelled() -> bool {
+    unsafe { satex_cancelled() != 0 }
+}
+
+pub fn serve(cfg: crate::project::config::Config, root: std::path::PathBuf, main: Option<std::path::PathBuf>) -> ! {
+    let (tx, outbox) = crossbeam_channel::unbounded();
     let engine = Engine::new(cfg, root, main, tx);
-    crate::progress::listen(Some(Box::new(|now: &crate::progress::Status| {
+    crate::util::progress::listen(Some(Box::new(|now: &crate::util::progress::Status| {
         if let Some(json) = serde_json::to_string(now).ok().and_then(|j| CString::new(j).ok()) {
             unsafe { satex_status(json.as_ptr()) }
         }
     })));
-    LOCAL.set(Some(Local { engine, diagnostics, reply: CString::default() }));
+    LOCAL.set(Some(Local { engine, outbox, reply: CString::default() }));
     unsafe { emscripten_exit_with_live_runtime() }
 }
 
@@ -64,28 +69,17 @@ impl Local {
                 engine.flush();
                 vec![]
             }
+            // An opened document waits for `satex/analyze` too: the page
+            // opens a project's files together and asks for one run.
             Ok(Message::Notification(not)) => {
-                let opened = not.method == "textDocument/didOpen";
-                handle_notification(
-                    &mut |m| {
-                        engine.step(m);
-                        true
-                    },
-                    not,
-                );
-                // A document just opened has no analysis to answer from yet.
-                if opened {
-                    engine.flush();
+                if let Some(m) = notification(not, |uri| engine.docs.get(uri).map(|d| d.text.as_str())) {
+                    engine.step(m);
                 }
                 vec![]
             }
             _ => vec![],
         };
-        out.extend(
-            self.diagnostics
-                .try_iter()
-                .map(|p| Message::Notification(Notification::new("textDocument/publishDiagnostics".into(), p))),
-        );
+        out.extend(self.outbox.try_iter().map(Message::Notification));
         out
     }
 }

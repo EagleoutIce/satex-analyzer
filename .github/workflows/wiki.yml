@@ -39,7 +39,14 @@ jobs:
       - name: Sync the pages
         run: |
           find wiki -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-          cp README.md wiki/Home.md
+          # The README's images and links point into the repository: on the
+          # wiki the demo GIF loads from it, and doc pages are wiki pages.
+          sed -E \
+            -e "s#src=\"(doc/[^\"]+)\"#src=\"https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/\\1\"#g" \
+            -e 's#\(doc/wiki/([a-z])([a-z-]*)\.md#(\u\1\2#g' \
+            -e 's#\(SEMANTICS\.md#(Semantics#g' \
+            -e 's#\(doc/chktex-coverage\.md#(Chktex-Coverage#g' \
+            README.md > wiki/Home.md
           cp SEMANTICS.md wiki/Semantics.md
           cp doc/chktex-coverage.md wiki/Chktex-Coverage.md
           for f in doc/wiki/*.md; do

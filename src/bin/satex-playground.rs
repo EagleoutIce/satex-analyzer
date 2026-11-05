@@ -11,6 +11,9 @@
 //! Without `--dev`, a last build in `--out` serves at once while the new one
 //! builds beside it (`--out` with `.next`); the new one replaces it when done.
 //!
+//! The playground's Compile button posts to this server, which builds the
+//! project with the machine's TeX (`satex-playground/compile.rs`).
+//!
 //! It needs what the site's workflow has: Python 3, pandoc and pdftocairo,
 //! git, and `rustup`. The Rust target `wasm32-unknown-emscripten` is added
 //! when missing, and the Emscripten SDK the workflow pins is installed under
@@ -19,11 +22,14 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+#[path = "satex-playground/compile.rs"]
+mod compile;
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            eprintln!("satex-playground: {message}");
+            eprintln!("playground: {message}");
             ExitCode::FAILURE
         }
     }
@@ -42,43 +48,46 @@ fn run() -> Result<(), String> {
             "--dev" => dev = true,
             _ => {
                 return Err(format!(
-                    "unknown argument `{arg}`; usage: cargo playground [--port N] [--out DIR] [--release] [--dev]"
+                    "unknown argument `{arg}`. Usage: cargo playground [--port N] [--out DIR] [--release] [--dev]"
                 ));
             }
         }
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let dev = dev.then(|| root.join("doc/site"));
+    take_over(&port);
     if dev.is_some() && root.join(&out).join("play/index.html").is_file() {
         let port = free_port(&port)?;
-        println!(
-            "satex-playground: dev mode on the existing build in {}; http://127.0.0.1:{port}/play/",
-            out.display()
-        );
+        compile::warm(&root.join(&out), &root.join("doc/site/examples"));
+        println!("playground: dev mode on the existing build in {} at http://127.0.0.1:{port}/play/", out.display());
         return serve(&root.join(&out), port.parse().map_err(|_| "no port".to_string())?, dev);
     }
     let site = root.join(&out);
     let port = free_port(&port)?;
-    let url = format!("http://127.0.0.1:{port}/play/ (the site at http://127.0.0.1:{port}/)");
+    let url = format!("http://127.0.0.1:{port}/play/");
     let port = port.parse().map_err(|_| "no port".to_string())?;
     // A last build serves at once; this one replaces it when done.
     if site.join("play/index.html").is_file() {
-        println!("satex-playground: serving the last build at {url} while this one builds; Ctrl+C stops");
+        println!("playground: serving the last build at {url} while rebuilding. Ctrl+C stops");
         let next = site.clone();
         std::thread::spawn(move || match build(root, &next, profile) {
-            Ok(()) => say("built; reload the page to load this build"),
-            Err(message) => eprintln!("satex-playground: {message}; the last build stays"),
+            Ok(()) => {
+                compile::warm(&next, &root.join("doc/site/examples"));
+                say("built. Reload the page to load this build");
+            }
+            Err(message) => eprintln!("playground: {message}. The last build stays"),
         });
         return serve(&site, port, dev);
     }
     build(root, &site, profile)?;
-    println!("satex-playground: serving {url}; Ctrl+C stops");
+    compile::warm(&site, &root.join("doc/site/examples"));
+    println!("playground: serving {url}. Ctrl+C stops");
     serve(&site, port, dev)
 }
 
 /// Builds the site into `site.next`, then swaps it in for `site`.
 fn build(root: &Path, site: &Path, profile: &str) -> Result<(), String> {
-    say("1/4 the toolchain: Rust's wasm32-unknown-emscripten and the Emscripten SDK");
+    say("[1/4] toolchain: wasm32-unknown-emscripten, Emscripten SDK");
     let wasm = wasm_cargo()?;
     let cargo = || {
         let mut c = Command::new(wasm.get_program());
@@ -92,12 +101,12 @@ fn build(root: &Path, site: &Path, profile: &str) -> Result<(), String> {
     std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
     let lock = std::fs::File::create(target.join("playground.lock")).map_err(|e| e.to_string())?;
     if lock.try_lock().is_err() {
-        say("another playground build is running; waiting for it to finish");
+        say("another playground build is running. Waiting for it to finish");
         lock.lock().map_err(|e| e.to_string())?;
     }
     // Both builds from one source and profile: a cache is keyed on the source digest. The native
     // one by the `cargo` running this, whose library build it reuses (rustup's `rustc` would redo it).
-    say("2/4 satex for this machine");
+    say("[2/4] satex, native");
     step(
         Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
             .args(["build", "--profile", profile, "--bin", "satex"])
@@ -105,7 +114,7 @@ fn build(root: &Path, site: &Path, profile: &str) -> Result<(), String> {
     )?;
     // The site's runs need only the native build; it reads the wasm last,
     // once `ready` names it built, so the two overlap.
-    say("3/4 satex for the browser, beside 4/4 the site: the pages, the TeX files and caches the playground loads");
+    say("[3/4] satex, wasm, while [4/4] builds the site: pages, TeX files, caches");
     let wasm_dir = target.join("wasm32-unknown-emscripten").join(profile);
     let ready = target.join("playground-wasm.ready");
     let _ = std::fs::remove_file(&ready);
@@ -132,7 +141,7 @@ fn build(root: &Path, site: &Path, profile: &str) -> Result<(), String> {
             .env("PATH", &path),
     );
     let _ = std::fs::write(&ready, if built.is_ok() { "ok" } else { "failed" });
-    eprintln!("satex-playground: 3/4 satex for the browser: {}", if built.is_ok() { "built" } else { "failed" });
+    eprintln!("\r\x1b[Kplayground: [3/4] satex, wasm: {}", if built.is_ok() { "built" } else { "failed" });
     let status = python.wait().map_err(|e| e.to_string())?;
     built?;
     status.success().then_some(()).ok_or_else(|| format!("doc/site/build.py failed ({status})"))?;
@@ -167,7 +176,7 @@ fn respond(mut stream: std::net::TcpStream, site: &Path, dev: Option<&Path>) -> 
     let mut reader = std::io::BufReader::new(stream.try_clone()?);
     let mut request = String::new();
     reader.read_line(&mut request)?;
-    let mut gzip = false;
+    let (mut gzip, mut length) = (false, 0);
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line)? <= 2 {
@@ -175,11 +184,25 @@ fn respond(mut stream: std::net::TcpStream, site: &Path, dev: Option<&Path>) -> 
         }
         let line = line.to_ascii_lowercase();
         gzip |= line.starts_with("accept-encoding:") && line.contains("gzip");
+        length = line.strip_prefix("content-length:").and_then(|n| n.trim().parse().ok()).unwrap_or(length);
     }
     let mut words = request.split_whitespace();
     let (method, target) = (words.next().unwrap_or_default(), words.next().unwrap_or("/"));
     let path = target.split(['?', '#']).next().unwrap_or("/");
     let path = percent_encoding::percent_decode_str(path).decode_utf8_lossy().into_owned();
+    // a newer server asks for the port ([`take_over`])
+    if method == "POST" && path == "/__satex/quit" {
+        stream.write_all(
+            b"HTTP/1.1 200 OK\r\nx-satex-playground: quit\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        )?;
+        let _ = stream.flush();
+        std::process::exit(0);
+    }
+    if let Some(rest) = path.strip_prefix("/__satex/compile") {
+        let mut body = vec![0; length];
+        std::io::Read::read_exact(&mut reader, &mut body)?;
+        return compile::respond(&mut stream, method, rest, &body, site);
+    }
     if let Some(src) = dev {
         if path == "/__dev/events" {
             return watch(stream, src);
@@ -211,7 +234,7 @@ fn respond(mut stream: std::net::TcpStream, site: &Path, dev: Option<&Path>) -> 
     send(&mut stream, method, &name, cache_control(&name), encoded, body)
 }
 
-fn send(
+pub(crate) fn send(
     stream: &mut std::net::TcpStream,
     method: &str,
     name: &str,
@@ -228,7 +251,9 @@ fn send(
     if encoded {
         head.push_str("Content-Encoding: gzip\r\n");
     }
-    head.push_str("\r\n");
+    // Cross-origin isolated from the first load, as doc/site/sw.js makes it later: the page shares
+    // a SharedArrayBuffer with its worker, which a run polls to stop for a newer text.
+    head.push_str("Cross-Origin-Opener-Policy: same-origin\r\nCross-Origin-Embedder-Policy: credentialless\r\n\r\n");
     stream.write_all(head.as_bytes())?;
     if method != "HEAD" {
         stream.write_all(&body)?;
@@ -245,12 +270,16 @@ fn dev_inject(name: &str, body: Vec<u8>) -> Vec<u8> {
 }
 
 /// Dev mode: what `path` is when read from `doc/site` instead of the build:
-/// the reload client, a hashed asset (`style-0123456789ab.css`) whose source
+/// the reload client, the service worker (version `dev`: it asks the network first), a hashed asset (`style-0123456789ab.css`) whose source
 /// is `doc/site/style.css`, or the playground page filled from `play.html`
 /// into the built page, with the built manifest and the current `worker.js`.
 fn dev_source(path: &str, site: &Path, src: &Path) -> Option<(String, Vec<u8>)> {
     if path == "/__dev.js" {
         return Some(("dev.js".into(), include_bytes!("../../doc/site/dev.js").to_vec()));
+    }
+    if path == "/play/sw.js" {
+        let worker = std::fs::read_to_string(src.join("sw.js")).ok()?.replace("__VERSION__", "dev");
+        return Some(("sw.js".into(), worker.into_bytes()));
     }
     if path == "/play/" || path == "/play/index.html" {
         let built = std::fs::read_to_string(site.join("play/index.html")).ok()?;
@@ -262,8 +291,13 @@ fn dev_source(path: &str, site: &Path, src: &Path) -> Option<(String, Vec<u8>)> 
         manifest["worker"] = std::fs::read_to_string(src.join("worker.js")).ok()?.into();
         let json = manifest.to_string().replace("</", "<\\/");
         let page = std::fs::read_to_string(src.join("play.html")).ok()?;
-        let page =
-            page.replace("{{manifest}}", &json).replace("{{root}}", "../").replace("{{playjs}}", "play/playground.js");
+        let page = page
+            .replace("{{manifest}}", &json)
+            .replace("{{root}}", "../")
+            .replace("{{playjs}}", "play/playground.js")
+            .replace("{{drawjs}}", "draw.js")
+            .replace("{{dialogsjs}}", "dialogs.js")
+            .replace("{{viewsjs}}", "views.js");
         return Some(("index.html".into(), format!("{}{page}{}", &built[..lo], &built[hi..]).into_bytes()));
     }
     let name = path.rsplit('/').next()?;
@@ -323,25 +357,47 @@ fn cache_control(name: &str) -> &'static str {
 }
 
 fn say(what: &str) {
-    println!("satex-playground: {what}");
+    println!("playground: {what}");
 }
 
 /// The media type a static host gives a file by its extension.
-fn content_type(name: &str) -> &'static str {
+pub(crate) fn content_type(name: &str) -> &'static str {
     match name.rsplit('.').next().unwrap_or_default() {
-        "html" => "text/html; charset=utf-8",
-        "js" | "mjs" => "text/javascript; charset=utf-8",
-        "css" => "text/css; charset=utf-8",
+        "html" => "text/html; charset=utf-8",             // not prose
+        "js" | "mjs" => "text/javascript; charset=utf-8", // not prose
+        "css" => "text/css; charset=utf-8",               // not prose
         "json" => "application/json",
         "svg" => "image/svg+xml",
         "png" => "image/png",
         "ico" => "image/x-icon",
         "wasm" => "application/wasm",
         "gz" => "application/gzip",
+        "zip" => "application/zip",
         "woff2" => "font/woff2",
         "pdf" => "application/pdf",
-        "txt" | "tex" | "md" => "text/plain; charset=utf-8",
+        "txt" | "tex" | "md" => "text/plain; charset=utf-8", // not prose
         _ => "application/octet-stream",
+    }
+}
+
+/// Asks an older playground server on `port` to quit, so this one serves there.
+fn take_over(port: &str) {
+    use std::io::{Read, Write};
+    let Ok(port) = port.parse::<u16>() else { return };
+    let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", port)) else { return };
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+    let _ = stream.write_all(b"POST /__satex/quit HTTP/1.0\r\n\r\n");
+    let mut reply = String::new();
+    let _ = stream.read_to_string(&mut reply);
+    if !reply.contains("x-satex-playground: quit") {
+        return;
+    }
+    for _ in 0..40 {
+        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            say(&format!("stopped the playground server that held port {port}"));
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }
 
@@ -392,7 +448,7 @@ fn wasm_cargo() -> Result<Command, String> {
 /// under `target/emsdk` the first time.
 fn emscripten_path(root: &Path) -> Result<String, String> {
     let path = std::env::var("PATH").unwrap_or_default();
-    if satex::paths::which("emcc").is_ok() {
+    if satex::project::paths::which("emcc").is_ok() {
         return Ok(path);
     }
     let emsdk = match std::env::var("EMSDK") {
@@ -418,7 +474,7 @@ fn install_emsdk(root: &Path) -> Result<PathBuf, String> {
         .to_string();
     let emsdk = root.join("target/emsdk");
     if !emsdk.join("emsdk").exists() {
-        println!("satex-playground: installing the Emscripten SDK {version} into {}", emsdk.display());
+        println!("playground: installing the Emscripten SDK {version} into {}", emsdk.display());
         step(
             Command::new("git")
                 .args(["clone", "--depth", "1", "https://github.com/emscripten-core/emsdk.git"])

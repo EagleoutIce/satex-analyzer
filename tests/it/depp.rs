@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use crate::support::installed;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
 
 fn project(name: &str, depends: &str) -> (PathBuf, Analysis) {
     let dir = crate::support::tmp_root().join(format!("satex-depp-{name}-{}", std::process::id()));
@@ -19,7 +19,7 @@ fn project(name: &str, depends: &str) -> (PathBuf, Analysis) {
 }
 
 fn codes(analysis: &Analysis, code: &str) -> Vec<String> {
-    satex::lint::lint(analysis)
+    satex::linter::lint(analysis)
         .into_iter()
         .filter(|record| record["code"] == code)
         .map(|record| record["name"].as_str().unwrap_or_default().to_string())
@@ -48,11 +48,15 @@ fn the_dependencies_query_names_the_texlive_package() {
         return;
     }
     let (dir, analysis) = project("query", "latex graphics\n");
-    let records = satex::query::run(&analysis, satex::query::Query::Dependencies, &satex::query::Filter::Always);
+    let records = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Dependencies,
+        &satex::queries::query::Filter::Always,
+    );
     let graphicx = records.iter().find(|r| r["name"] == "graphicx").expect("graphicx is a dependency");
     assert_eq!(graphicx["texlive"], "graphics");
     assert!(!codes(&analysis, "missing-dependency").contains(&"graphics".to_string()));
-    let row = analysis.plugins.rows().into_iter().find(|(kind, _, _)| *kind == satex::plugin::Kind::Depp);
+    let row = analysis.plugins.rows().into_iter().find(|(kind, _, _)| *kind == satex::plugins::Kind::Depp);
     assert!(row.is_some_and(|(_, text, _)| text.contains("DEPENDS.txt lists 2")));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -67,7 +71,11 @@ fn a_load_under_an_undecided_conditional_is_not_certain() {
     let source = "\\input a\n\\ifnum\\pdfuniformdeviate2=0 \\input b \\fi\n\\bye\n";
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
-    let records = satex::query::run(&analysis, satex::query::Query::Dependencies, &satex::query::Filter::Always);
+    let records = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Dependencies,
+        &satex::queries::query::Filter::Always,
+    );
     let certain = |name: &str| records.iter().find(|r| r["name"] == name).map(|r| r["certain"].clone());
     assert_eq!(certain("a"), Some(true.into()), "{records:?}");
     assert_eq!(certain("b"), Some(false.into()), "{records:?}");
@@ -80,7 +88,11 @@ fn the_distribution_query_lists_the_indexed_directories() {
         return;
     }
     let (dir, analysis) = project("dirs", "");
-    let records = satex::query::run(&analysis, satex::query::Query::Distribution, &satex::query::Filter::Always);
+    let records = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Distribution,
+        &satex::queries::query::Filter::Always,
+    );
     let graphics =
         records.iter().find(|r| r.get("kind").is_some_and(|k| k == "directory") && r["name"] == "tex/latex/graphics");
     // graphics.sty and graphicx.sty at least

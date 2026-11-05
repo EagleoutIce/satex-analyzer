@@ -16,17 +16,24 @@
 \newlength{\my@indent}
 \setlength{\my@indent}{1.5em}
 
+% Draws a frame around its argument.
+% #1: the text to box
 \newcommand{\mybox}[1]{\fbox{#1}}
+
+% Sets a term in italics, then its explanation.
+% #1: the term
+% #2: the explanation
 \newcommand{\myemph}[2]{\textit{#1}:\space#2}
 
 \ifmy@draft
-  \newcommand{\mymode}{draft}
+  \newcommand{\mymode}{draft}% The mode the package runs in.
 \else
-  \newcommand{\mymode}{final}
+  \newcommand{\mymode}{final}% The mode the package runs in.
 \fi
 
-% Mutually recursive pair.
+% Hands its argument to \mypong: a mutually recursive pair.
+% #1: the ball
 \newcommand{\myping}[1]{\mypong{#1}}
-\newcommand{\mypong}[1]{\myping{#1}}
+\newcommand{\mypong}[1]{\myping{#1}}% Hands it back to \myping.
 
 \newenvironment{mybanner}[1][plain]{\begin{center}\textbf{#1}}{\end{center}}

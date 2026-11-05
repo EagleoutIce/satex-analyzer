@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::support::analyze_latex;
-use satex::config::Config;
-use satex::machine::Machine;
+use satex::analysis::machine::Machine;
+use satex::project::config::Config;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Verdict {
@@ -68,7 +68,7 @@ fn satex_verdict(source: &str, name: &str) -> Result<Verdict, String> {
         let hits: Vec<String> = analysis.limits.iter().map(|h| format!("limits.{} x{}", h.key, h.count)).collect();
         return Err(hits.join(", "));
     }
-    Ok(satex::lint::lint(&analysis)
+    Ok(satex::linter::lint(&analysis)
         .into_iter()
         .filter(|record| record["origin"] == "document")
         .filter_map(|record| {
@@ -324,12 +324,12 @@ fn engine_dimensions(binary: &Path) -> Vec<String> {
 
 fn satex_dimension(case: &str) -> String {
     let source = format!("{PRELUDE}{case}\n");
-    let cfg = Config { kernel: Some(satex::plugin::Kernel::None), ..crate::support::config() };
+    let cfg = Config { kernel: Some(satex::plugins::Kernel::None), ..crate::support::config() };
     let analysis = Machine::analyze(&source, None, &cfg);
     let sym = analysis.interner.lookup("r");
     let def = sym.and_then(|sym| analysis.facts.defs.iter().rev().find(|d| d.name == sym));
     match def.and_then(|d| d.mac.as_ref()) {
-        Some(mac) => satex::tex::detokenize(&mac.replacement_text, &analysis.interner),
+        Some(mac) => satex::engine::tex::detokenize(&mac.replacement_text, &analysis.interner),
         None => "<none>".into(),
     }
 }
@@ -381,7 +381,7 @@ fn typeset_covers(stem: &str) {
     // One at a time: racing cold runs on one kernel cache lose the kernel.
     static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _one = ONE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let out = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let out = crate::support::satex()
         .current_dir(&dir)
         // No wall clock: a busy runner must not cut the kernel build short
         // and turn the comparison into `⟨?⟩`.
@@ -393,10 +393,18 @@ fn typeset_covers(stem: &str) {
     // would let a challenge pass without being followed.
     let cut: Vec<&serde_json::Value> = rows.iter().filter(|r| r.get("cut").is_some()).collect();
     assert!(cut.is_empty(), "{stem}: the run was cut short: {cut:?}");
-    let computed: Vec<&str> =
-        rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
-    let verdict = satex::query::typeset_verdict(&computed.join(" "), &engine.join(" "));
-    assert_ne!(verdict, "DIFFERS", "{stem}: pdflatex sets {engine:?}, satex computes {computed:?}");
+    // Paragraph by paragraph, as the challenges page compares them.
+    let computed: Vec<(String, bool)> = rows
+        .iter()
+        .filter(|r| r["kind"] == "paragraph")
+        .map(|r| (r["detail"].as_str().unwrap_or("").to_string(), r["open"].as_bool().unwrap_or(false)))
+        .collect();
+    let engine: Vec<String> = engine.into_iter().map(String::from).collect();
+    for (e, range) in satex::queries::query::pair_paragraphs(&computed, &engine) {
+        let c = computed[range].iter().map(|c| c.0.as_str()).collect::<Vec<_>>().join(" ");
+        let verdict = satex::queries::query::typeset_verdict(&c, &e);
+        assert_ne!(verdict, "DIFFERS", "{stem}: pdflatex sets {e:?}, satex computes {c:?} (all: {computed:?})");
+    }
 }
 
 /// A kernel read only partly sets nothing sure: without `\documentclass`
@@ -404,7 +412,7 @@ fn typeset_covers(stem: &str) {
 #[test]
 fn a_kernel_cut_short_typesets_unknown_text() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/src/wiki/challenges");
-    let out = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let out = crate::support::satex()
         .current_dir(&dir)
         .args(["query", "typeset", "-f", "05-packages.tex", "--format", "json"])
         .args(["--set", "limits.seconds=0", "--set", "limits.format_steps=20000", "--set", "cache.enabled=false"])
@@ -416,6 +424,90 @@ fn a_kernel_cut_short_typesets_unknown_text() {
     assert_eq!(text, ["⟨?⟩"]);
     let cut: Vec<&str> = rows.iter().filter_map(|r| r["cut"].as_str()).collect();
     assert_eq!(cut, ["kernel"]);
+}
+
+/// A page that fills past `\\vsize` breaks there in pdfTeX even where satex assumes pages break
+/// only where forced: the rows mark the break and count the pages pdflatex makes.
+#[test]
+fn a_filled_page_is_marked_where_it_breaks() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-page-fill");
+    std::fs::create_dir_all(&dir).unwrap();
+    let sentence = "Some text that fills the page with words and more words. ";
+    let paragraphs: Vec<String> = (0..15).map(|_| sentence.repeat(4)).collect();
+    let body = paragraphs.join("\n\n");
+    std::fs::write(
+        dir.join("p.tex"),
+        format!("\\documentclass{{article}}\n\\begin{{document}}\n\\section{{A}}\n{body}\n\\end{{document}}\n"),
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "p.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let pages: Vec<&str> = rows.iter().filter(|r| r["kind"] == "page").filter_map(|r| r["detail"].as_str()).collect();
+    // pdflatex sets these 15 three-line paragraphs on two pages
+    assert_eq!(pages, ["page 1 → 2 by here", "page 2"]);
+}
+
+/// Math atoms a math code names (`\\mathchardef` constants such as `\\alpha` and `\\sum`,
+/// `\\delimiter`'s small variant) are typeset with their glyph, inline and displayed.
+#[test]
+fn math_symbols_are_typeset() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-math-symbols");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("m.tex"),
+        "\\documentclass{article}\n\\begin{document}\nSee $\\alpha\\leq\\langle x\\rangle$.\n\\[\\sum\\limits_{i=1}^{n} \\Gamma\\]\n\\end{document}\n",
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "m.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let text: String = rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
+    for glyph in ['α', '≤', '⟨', '⟩', '∑', 'Γ'] {
+        assert!(text.contains(glyph), "{glyph} missing in {text:?}");
+    }
+}
+
+/// Capability: typesetting feedback. A table's `|` and `\\hline` and a
+/// `\\rule` bar are drawn between the text (tex.web § 463). Struts, rules
+/// of no width (`\\strut`, array's `\\@arstrut`), are not. Its cells
+/// and rows are marked, so a view can draw the grid.
+#[test]
+fn rules_are_typeset_between_the_text() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-rules");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("r.tex"),
+        "\\documentclass{article}\n\\begin{document}\nA\\strut B\n\n\\begin{tabular}{|l|c|}\\hline a & b \\\\ \\hline\\end{tabular}\n\nRule \\rule{1cm}{2pt} here.\n\\end{document}\n",
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "r.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let text: Vec<String> = rows
+        .iter()
+        .filter(|r| r["kind"] == "paragraph")
+        .filter_map(|r| r["detail"].as_str())
+        .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    assert_eq!(text, ["AB", "―│ a │ b │―", "Rule ▬ here."]);
+    // the table's grid: where it begins, parts its cell and row, and ends
+    let marks: Vec<&str> = rows
+        .iter()
+        .flat_map(|r| r["align"].as_array().into_iter().flatten())
+        .filter_map(|m| m["mark"].as_str())
+        .filter(|m| matches!(*m, "begin" | "cell" | "row" | "end"))
+        .collect();
+    assert_eq!(marks, ["begin", "cell", "row", "end"]);
 }
 
 /// Capability: typesetting feedback. The hyphenation points satex marks
@@ -431,7 +523,7 @@ fn hyphenation_points_match_showhyphens() {
         format!("\\documentclass{{article}}\n\\begin{{document}}\n\\hsize=1cm\n{words}\n\\end{{document}}\n"),
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let out = crate::support::satex()
         .current_dir(&dir)
         .args(["query", "typeset", "-f", "h.tex", "--format", "json", "--set", "limits.seconds=0"])
         .output()
@@ -464,13 +556,41 @@ fn paragraph_lines_match_pdflatex() {
         let sym = analysis.interner.lookup(name);
         let def = sym.and_then(|sym| analysis.facts.defs.iter().rev().find(|d| d.name == sym));
         def.and_then(|d| d.mac.as_ref())
-            .map_or("<none>".into(), |m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+            .map_or("<none>".into(), |m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
     };
     // pdflatex 2025: \showbox gives 4, 4 and 2 lines.
     assert_eq!(
         ["rA", "rB", "rC"].map(value),
         ["42.94444pt,1.94444pt,4", "42.83331pt,1.94444pt,4", "18.94444pt,0.0pt,2"]
     );
+}
+
+/// A paragraph end only some paths make leaves the paragraph open: a run
+/// that did not break there is covered by it taken with the next one.
+#[test]
+fn an_open_paragraph_pairs_with_what_it_may_go_on_into() {
+    use satex::queries::query::{pair_paragraphs, typeset_verdict};
+    let paragraphs = |page: &str| -> Vec<(String, bool)> {
+        [(format!("The label was on page {page}."), true), ("Here.".into(), true), ("{Here. |}".into(), false)].into()
+    };
+    let covered = |computed: &[(String, bool)], set: &[&str]| {
+        let set: Vec<String> = set.iter().map(|s| s.to_string()).collect();
+        pair_paragraphs(computed, &set).into_iter().all(|(e, range)| {
+            let c = computed[range].iter().map(|c| c.0.as_str()).collect::<Vec<_>>().join(" ");
+            typeset_verdict(&c, &e) != "DIFFERS"
+        })
+    };
+    // `⟨?⟩` may stand for more than one character, so it may swallow a run on.
+    for computed in [paragraphs("{1|2}"), paragraphs("{⟨?⟩|2}")] {
+        assert!(covered(&computed, &["The label was on page 1.", "Here."]), "{computed:?}");
+        assert!(covered(&computed, &["The label was on page 2. Here."]), "{computed:?}");
+    }
+    let computed = paragraphs("{1|2}");
+    // A closed end stays one: nothing goes on past it.
+    let closed: Vec<(String, bool)> = computed.iter().map(|(t, _)| (t.clone(), false)).collect();
+    let set = vec!["The label was on page 2. Here.".to_string()];
+    let pairs = pair_paragraphs(&closed, &set);
+    assert!(pairs.iter().all(|(_, r)| r.len() <= 1), "{pairs:?}");
 }
 
 /// One test per challenge, named by its capability.
@@ -502,6 +622,7 @@ challenges! {
     typeset_unknown_inputs_relational: "r6-relational",
     typeset_termination_merge_cost: "r7-merge-cost",
     typeset_typesetting_feedback_hyphenation: "s2-rounded-paragraph",
+    typeset_fixpoint: "11-fixpoint",
 }
 
 /// `\quad` after a section number is space on the page: the computed text
@@ -513,7 +634,579 @@ fn a_section_number_and_its_title_are_apart() {
     }
     let source = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nText.\n\\end{document}\n";
     let analysis = analyze_latex(source);
-    let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
     let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
     assert!(texts.contains(&"1 Intro"), "{texts:?}");
+}
+
+/// A slot reads as the character its font's encoding puts there: `\{`
+/// sets slot 102 of an OMS font, a brace, while `\char102` in OT1 is `f`.
+#[test]
+fn a_symbol_reads_as_its_encoding_says() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source =
+        "\\documentclass{article}\n\\begin{document}\na\\{b\\}c \\char102 \\texttt{\\char92}\n\\end{document}\n";
+    let analysis = analyze_latex(source);
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
+    let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
+    assert!(texts.contains(&"a{b}c f\\"), "{texts:?}");
+}
+
+/// The typeset text says where its font changes, by the kernel's defaults:
+/// `\textbf` is `\bfdefault`, `\itshape` `\itdefault`, and so on.
+#[test]
+fn the_typeset_text_knows_its_fonts() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\nA \\textbf{B} {\\itshape C} \\texttt{D} \\textsf{\\textsc{E}} F\n\\end{document}\n";
+    let analysis = analyze_latex(source);
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
+    let row = rows.iter().find(|r| r.get("kind").and_then(|k| k.as_str()) == Some("paragraph")).expect("a paragraph");
+    let detail: Vec<char> = row["detail"].as_str().unwrap().chars().collect();
+    let fonts = row["fonts"].as_array().expect("fonts");
+    let style = |at: usize| {
+        fonts
+            .iter()
+            .take_while(|f| f["at"].as_u64().unwrap() as usize <= at)
+            .last()
+            .map_or("", |f| f["style"].as_str().unwrap())
+    };
+    let styled: Vec<(char, &str)> =
+        detail.iter().enumerate().filter(|(_, c)| c.is_alphabetic()).map(|(i, &c)| (c, style(i))).collect();
+    assert_eq!(styled, [('A', ""), ('B', "bf"), ('C', "it"), ('D', "tt"), ('E', "sf sc"), ('F', "")], "{row:?}");
+}
+
+/// Capability: explain. The names one call of the document defines are
+/// linked: `\newcounter{steps}` makes `\c@steps` with `\thesteps`, and
+/// `\newtcolorbox{note}` makes the environment's `\note` with `\endnote`.
+#[test]
+fn names_one_call_defines_are_defined_together() {
+    // the quick jobs' TeX Live has no tcolorbox
+    let found = std::process::Command::new("kpsewhich").arg("tcolorbox.sty").output();
+    if !found.is_ok_and(|o| !o.stdout.is_empty()) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("defined-together");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("t.tex"),
+        "\\documentclass{article}\n\\usepackage{tcolorbox}\n\\newcounter{steps}\n\\newtcolorbox{note}{}\n\\begin{document}\nx\n\\end{document}\n",
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["explain", "\\c@steps", "\\note", "--format", "json", "-f", "t.tex"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let together = |name: &str| -> Vec<String> {
+        rows.iter()
+            .filter(|r| r["name"] == name)
+            .flat_map(|r| r["together"].as_array().cloned().unwrap_or_default())
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect()
+    };
+    assert!(together("\\c@steps").iter().any(|n| n == "\\thesteps"), "{rows:?}");
+    assert!(together("\\note").iter().any(|n| n == "\\endnote"), "{rows:?}");
+}
+
+/// Paths that part after a conditional or at a name with several meanings
+/// each set their own text: the typeset text holds the alternatives side by
+/// side instead of the characters of both interleaved.
+#[test]
+fn text_of_parted_paths_stays_alternatives() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-parted");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("j.tex"),
+        "\\catcode`\\{=1 \\catcode`\\}=2\n\\def\\t{Ax}\\ifodd\\year \\def\\t{By}\\fi\nZ\\t Q\\par\n\\end\n",
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "j.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .args(["--set", "engine=tex", "--set", "kernel=plain", "--set", "clock=unknown"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let text: Vec<&str> =
+        rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
+    assert!(matches!(text[..], ["Z{By|Ax}Q"] | ["Z{Ax|By}Q"]), "{text:?}");
+}
+
+/// A character both arms of an undecided conditional set is no choice:
+/// `{Z|}` would say a path may lack it.
+#[test]
+fn text_both_arms_set_is_no_choice() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-both-arms");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("j.tex"),
+        "\\catcode`\\{=1 \\catcode`\\}=2\n\\def\\z{Z}\\ifodd\\year \\z\\else\\z\\fi Q\\par\n\\end\n",
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "j.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .args(["--set", "engine=tex", "--set", "kernel=plain", "--set", "clock=unknown"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let text: Vec<&str> =
+        rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
+    assert_eq!(text, ["ZQ"]);
+}
+
+/// Capability: typesetting feedback. The ligatures the font's program
+/// sets (tex.web § 1035) are marked where they stand: what it joined and
+/// the glyph, so a view can show the join.
+#[test]
+fn ligatures_are_marked_where_they_stand() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-ligatures");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("l.tex"), "\\documentclass{article}\n\\begin{document}\nA fine 10--12.\n\\end{document}\n")
+        .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "l.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let ligatures: Vec<(String, String)> = rows
+        .iter()
+        .flat_map(|r| r["ligatures"].as_array().cloned().unwrap_or_default())
+        .map(|l| (l["from"].as_str().unwrap_or_default().to_string(), l["to"].as_str().unwrap_or_default().to_string()))
+        .collect();
+    assert!(ligatures.contains(&("fi".into(), "fi".into())), "{ligatures:?}");
+    assert!(ligatures.contains(&("--".into(), "–".into())), "{ligatures:?}");
+}
+
+/// At a use, a name paths defined differently holds one of their texts:
+/// `explain --at` lists each definition the use read.
+#[test]
+fn a_use_after_a_join_names_every_definition_it_read() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("explain-one-of");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("j.tex"),
+        "\\catcode`\\{=1 \\catcode`\\}=2\n\\def\\t{Ax}\\ifodd\\year \\def\\t{By}\\fi\nZ\\t Q\\par\n\\end\n",
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["explain", "\\t", "--at", "3", "--format", "json", "-f", "j.tex", "--set", "limits.seconds=0"])
+        .args(["--set", "engine=tex", "--set", "kernel=plain", "--set", "clock=unknown"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let mut bodies: Vec<&str> =
+        rows[0]["one_of"].as_array().into_iter().flatten().filter_map(|a| a["body"].as_str()).collect();
+    bodies.sort_unstable();
+    assert_eq!(bodies, ["Ax", "By"], "{rows:?}");
+}
+
+/// Capability: typesetting feedback. A table of contents line is its
+/// number in a box of the width `\numberline` gives it, the title, leaders
+/// and the page number in a box of its own: the marks a view sets it by.
+#[test]
+fn a_contents_line_keeps_its_boxes_and_leaders() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-contents");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("c.tex"),
+        "\\documentclass{article}\n\\begin{document}\n\\makeatletter\n\\@dottedtocline{1}{1.5em}{2.3em}{\\numberline{1}Intro}{1}\n\\makeatother\n\\end{document}\n",
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "c.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let marks: Vec<&str> = rows
+        .iter()
+        .flat_map(|r| r["align"].as_array().into_iter().flatten())
+        .filter_map(|m| m["mark"].as_str())
+        .collect();
+    assert!(
+        marks.iter().any(|m| m.starts_with("box ")) && marks.contains(&"boxend") && marks.contains(&"leaders"),
+        "{marks:?}"
+    );
+}
+
+/// A forced line break (`\\`) stands in the paragraph where it is set: the
+/// record marks it between the two lines' characters.
+#[test]
+fn a_forced_line_break_is_marked_in_its_paragraph() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-break");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("b.tex"), "\\documentclass{article}\n\\begin{document}\nOne\\\\\nTwo\n\\end{document}\n")
+        .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "b.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let row = rows.iter().find(|r| r["detail"].as_str().is_some_and(|d| d.contains("One"))).expect("the paragraph");
+    let breaks: Vec<u64> = row["align"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|m| m["mark"] == "break")
+        .filter_map(|m| m["at"].as_u64())
+        .collect();
+    assert_eq!(breaks, [3], "{row}");
+}
+
+/// The typeset record of a document body, run in a scratch directory.
+fn typeset_rows(tag: &str, preamble: &str, body: &str) -> Vec<serde_json::Value> {
+    typeset_doc(
+        tag,
+        &format!("\\documentclass{{article}}\n{preamble}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"),
+        &[],
+    )
+}
+
+/// The typeset record of a whole document, with extra `--set` settings.
+fn typeset_doc(tag: &str, source: &str, sets: &[&str]) -> Vec<serde_json::Value> {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("typeset-{tag}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t.tex"), source).unwrap();
+    let mut args = vec!["query", "typeset", "-f", "t.tex", "--format", "json", "--set", "limits.seconds=0"];
+    for set in sets {
+        args.extend(["--set", set]);
+    }
+    let out = crate::support::satex().current_dir(&dir).args(args).output().expect("satex runs");
+    serde_json::from_slice(&out.stdout).expect("json")
+}
+
+/// The paragraphs of typeset rows, by their text.
+fn paragraph<'a>(rows: &'a [serde_json::Value], text: &str) -> &'a serde_json::Value {
+    rows.iter()
+        .find(|r| r["kind"] == "paragraph" && r["detail"].as_str().is_some_and(|d| d.contains(text)))
+        .unwrap_or_else(|| panic!("a paragraph with {text}: {rows:?}"))
+}
+
+/// The marks of a row's alignment channel, in order.
+fn marks(row: &serde_json::Value) -> Vec<String> {
+    row["align"].as_array().into_iter().flatten().filter_map(|m| m["mark"].as_str().map(String::from)).collect()
+}
+
+/// A box set into a register inside a box that is placed stays off the page
+/// (amsmath measures `(` that way in every math size change): its text is
+/// boxed, the placed box's own text is not.
+#[test]
+fn a_box_set_aside_inside_a_placed_box_is_not_placed() {
+    if !crate::support::installed() {
+        return;
+    }
+    let rows = typeset_rows("aside", "", "\\mbox{ab\\setbox0=\\hbox{(}cd} ef");
+    let row = paragraph(&rows, "ab");
+    let marked = row["marked"].as_str().unwrap();
+    assert!(marked.contains("\u{E000}⟦\u{E001}(\u{E000}⟧\u{E001}"), "the measured ( is boxed: {row}");
+    assert!(!marked.contains("⟦\u{E001}a") && !marked.contains("⟦\u{E001}c"), "the placed text is not: {row}");
+    // text set wholly in an unplaced box is kept, marked held (a float the run did not follow)
+    let body = "x\n\n\\begin{center}\n\\setbox3=\\hbox{kept aside}\n\\end{center}\n\ny";
+    let rows = typeset_rows("held", "", body);
+    assert_eq!(paragraph(&rows, "kept aside")["held"], true, "{rows:?}");
+}
+
+/// An alignment beginning right where an environment begins belongs to it,
+/// with its rules, and each cell says where its infinite glue stood: a `c`
+/// column fills on both sides of its text, an `l` column after it.
+#[test]
+fn a_tabular_keeps_its_begin_and_its_column_fills() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\begin{table}\\caption{C}\n\\begin{tabular}{lc}A&B\\\\\\hline x&y\\end{tabular}\\end{table}";
+    let rows = typeset_rows("tabular", "", body);
+    let table = paragraph(&rows, "A");
+    let m = marks(table);
+    assert_eq!(m.first().map(String::as_str), Some("begin"), "{table}");
+    assert!(table["marked"].as_str().unwrap().contains("―"), "the \\hline rules a row: {table}");
+    // the first row: `l` (text, then fill), the cell break, `c` (fill, text, fill)
+    let row: Vec<&str> = m.iter().map(String::as_str).skip(1).take_while(|&k| k != "row").collect();
+    assert_eq!(row, ["fill", "cell", "fill", "fill"], "{table}");
+    assert!(!marks(paragraph(&rows, "Table 1")).contains(&"begin".to_string()));
+}
+
+/// A page `\clearpage` ships out stands between the paragraphs it parts, numbered.
+#[test]
+fn a_shipped_page_is_a_record_between_paragraphs() {
+    if !crate::support::installed() {
+        return;
+    }
+    let rows = typeset_rows("pages", "", "One.\\clearpage\nTwo.");
+    let kinds: Vec<String> = rows
+        .iter()
+        .filter(|r| r["kind"] != "assumption")
+        .map(|r| format!("{} {}", r["kind"].as_str().unwrap(), r["detail"].as_str().unwrap_or("")))
+        .collect();
+    assert_eq!(kinds, ["paragraph One.", "page page 1 → 2", "paragraph Two.", "page page 2"]);
+}
+
+/// Text set while the driver's literals moved the drawing far off the page
+/// (pgf's `\pgfsys@begininvisible`, beamer's covered text) is marked
+/// `hide` … `show`: it keeps its place, not its ink.
+#[test]
+fn text_set_off_the_page_is_hidden() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "a \\pdfliteral{1 0 0 1 2000 2000 cm}bc\\pdfliteral{1 0 0 1 -2000 -2000 cm} d";
+    let rows = typeset_rows("invisible", "", body);
+    let row = paragraph(&rows, "bc");
+    let at = |k: &str| row["align"].as_array().unwrap().iter().find(|m| m["mark"] == k).and_then(|m| m["at"].as_u64());
+    let text = row["detail"].as_str().unwrap();
+    assert_eq!(
+        (at("hide"), at("show")),
+        (text.find("bc").map(|b| b as u64), text.find(" d").map(|b| b as u64)),
+        "{row}"
+    );
+}
+
+/// The rows of a page keep the order their boxes went onto it: a box made
+/// after another but placed above it ranks first (a frame's title).
+#[test]
+fn rows_rank_by_where_their_boxes_were_placed() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\setbox1=\\vbox{body text\\par}\\setbox2=\\vbox{the title\\par}\\box2 \\box1";
+    let rows = typeset_rows("placed", "", body);
+    let rank = |t: &str| paragraph(&rows, t)["placed"].as_u64().expect("placed");
+    assert!(rank("the title") < rank("body text"), "{rows:?}");
+}
+
+/// beamer's `\pause`: one page per step, the text after a pause covered
+/// (set, hidden) on the steps before it: "One", "One two", "One two three".
+#[test]
+fn beamer_pause_covers_text_per_step() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{Pause}\n  One \\pause two \\pause three\n\\end{frame}\n\\end{document}\n";
+    let rows = typeset_doc("pause", source, &["limits.steps=400000000"]);
+    let pages = rows.iter().filter(|r| r["kind"] == "page").count();
+    assert_eq!(pages, 3, "{rows:?}");
+    // each step's visible words: the text outside `hide` … `show`
+    let shown: Vec<String> = rows
+        .iter()
+        .filter(|r| r["kind"] == "paragraph" && r["detail"].as_str().is_some_and(|d| d.contains("One")))
+        .map(|r| {
+            let text: Vec<char> = r["detail"].as_str().unwrap().chars().collect();
+            let mut out = String::new();
+            let mut hidden = false;
+            let ms = r["align"].as_array().cloned().unwrap_or_default();
+            for (k, c) in text.iter().enumerate() {
+                for m in ms.iter().filter(|m| m["at"].as_u64() == Some(k as u64)) {
+                    hidden = m["mark"] == "hide" || (hidden && m["mark"] != "show");
+                }
+                if !hidden {
+                    out.push(*c);
+                }
+            }
+            out.split_whitespace().collect::<Vec<_>>().join(" ")
+        })
+        .collect();
+    assert_eq!(shown, ["One", "One two", "One two three"]);
+}
+
+/// Each typeset character finds its source: a run of source text counts on
+/// from its site, a macro's text stands at its call. The PDF marks a
+/// finding on only the characters of its range by these.
+#[test]
+fn a_paragraph_records_the_source_site_of_its_characters() {
+    let rows = typeset_rows("sites", "\\def\\name{Knuth}", "Hello \\name{} and you");
+    let row = rows.iter().find(|r| r["detail"].as_str().is_some_and(|d| d.contains("Hello"))).expect("paragraph");
+    let body = row["line"].as_u64().unwrap();
+    let text: Vec<char> = row["detail"].as_str().unwrap().chars().collect();
+    let sites = row["sites"].as_array().expect("sites");
+    // the site of the character at offset `at`: its entry's column, plus the characters since
+    let site = |at: usize| {
+        let s = sites.iter().rev().find(|s| s["at"].as_u64().unwrap() as usize <= at).expect("an entry");
+        let step = if s["same"] == true { 0 } else { at - s["at"].as_u64().unwrap() as usize };
+        (s["line"].as_u64().unwrap(), s["col"].as_u64().unwrap() + step as u64)
+    };
+    let find = |w: &str| text.iter().collect::<String>().find(w).map(|b| text_offset(&text, b)).unwrap();
+    assert_eq!(site(find("Hello")), (body, 1), "{row}");
+    // inside the call: the last letter of its name
+    let call = "Hello \\name".len() as u64;
+    assert!((0..5).all(|k| site(find("Knuth") + k) == (body, call)), "the macro's text stands at its call: {row}");
+    let and = "Hello \\name{} and".find("and").unwrap() as u64 + 1;
+    assert_eq!(site(find("and")), (body, and), "{row}");
+}
+
+/// A picture is drawn from what the run wrote for it: its two node frames,
+/// the line between them and the arrow tip pgf drew as a curve, with each
+/// node's text in its frame and with `yshift` where TikZ put the node.
+#[test]
+fn a_picture_is_drawn_from_the_literals_the_run_wrote() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\begin{tikzpicture}\n\\node[draw] (a) {A};\n\\node[draw] (b) at (2,0) [yshift=5mm] {B};\n\\draw[->] (a) -- (b);\n\\end{tikzpicture}";
+    let rows = typeset_rows("picture", "\\usepackage{tikz}", body);
+    // A picture with text is a paragraph's `sketch`, one without a note's in `sketches`.
+    let drawn = |r: &serde_json::Value| {
+        r["sketches"].as_array().cloned().unwrap_or_default().into_iter().chain([r["sketch"].clone()])
+    };
+    let picture = rows.iter().flat_map(drawn).find(|p| p.is_object());
+    let picture = picture.unwrap_or_else(|| panic!("a drawn picture: {rows:?}"));
+    let paths = picture["paths"].as_array().unwrap();
+    assert!(paths.len() >= 4, "two frames, a line and a tip: {picture}");
+    assert!(paths.iter().any(|p| p["d"].as_str().unwrap().contains('C')), "the tip is pgf's curve: {picture}");
+    let at = |name: &str| {
+        let t = picture["texts"].as_array().unwrap().iter().find(|t| t["text"] == name).expect("a text");
+        (t["x"].as_f64().unwrap(), t["y"].as_f64().unwrap())
+    };
+    let ((ax, ay), (bx, by)) = (at("A"), at("B"));
+    // 2cm is 56.9pt to the right, 5mm is 14.2pt up, which SVG's y has negative
+    assert!((bx - ax - 56.9).abs() < 0.5 && (ay - by - 14.2).abs() < 0.5, "{picture}");
+    assert_eq!(picture["approximate"], false);
+}
+
+/// The char offset of byte offset `b` in `text`.
+fn text_offset(text: &[char], b: usize) -> usize {
+    let mut bytes = 0;
+    text.iter()
+        .take_while(|c| {
+            bytes += c.len_utf8();
+            bytes <= b
+        })
+        .count()
+}
+
+/// A paragraph over several source lines says where each line's text starts,
+/// and the color the run had selected there is recorded, whatever command
+/// selected it.
+#[test]
+fn a_paragraph_records_its_source_lines_and_the_colors_the_run_set() {
+    let rows = typeset_rows(
+        "lines",
+        "\\usepackage{xcolor}\n\\def\\twice#1{#1#1}",
+        "\\twice{ab}\n\\textcolor{green}{Hey} {\\color[rgb]{1,0,0}red} plain",
+    );
+    let row = rows.iter().find(|r| r["detail"].as_str().is_some_and(|d| d.starts_with("abab"))).expect("paragraph");
+    let first = row["line"].as_u64().unwrap();
+    let (hey, red) = {
+        let text = row["detail"].as_str().unwrap();
+        (text.find("Hey").unwrap() as u64, text.find("red").unwrap() as u64)
+    };
+    let lines = row["lines"].as_array().expect("a line change");
+    assert_eq!(lines.len(), 1, "{row}");
+    assert_eq!((lines[0]["line"].as_u64().unwrap(), lines[0]["at"].as_u64().unwrap()), (first + 1, hey), "{row}");
+    let colors: Vec<(&str, u64)> = row["fonts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|f| Some((f["color"].as_str()?, f["at"].as_u64()?)))
+        .collect();
+    assert_eq!(colors, [("#00ff00", hey), ("#ff0000", red)], "{row}");
+}
+
+/// Bold comes from the font series the run selected, not from the name of
+/// the command that selected it: an alias of `\bfseries` and a macro that
+/// sets the series itself both make bold text.
+#[test]
+fn bold_text_is_the_series_the_run_selected_whatever_selected_it() {
+    let rows = typeset_rows(
+        "bold",
+        "\\let\\strong\\bfseries\n\\def\\loud{\\fontseries{b}\\selectfont}",
+        "{\\strong aa} {\\loud bb} cc",
+    );
+    let row = rows.iter().find(|r| r["detail"].as_str().is_some_and(|d| d.starts_with("aa"))).expect("paragraph");
+    let bold: Vec<u64> = row["fonts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["style"].as_str().is_some_and(|s| s.split(' ').any(|x| x == "bf")))
+        .filter_map(|f| f["at"].as_u64())
+        .collect();
+    assert_eq!(bold, [0, 3], "{row}");
+}
+
+/// A footnote's text is set in an insert: it follows its paragraph as a record of its own, not
+/// inside the paragraph's text.
+#[test]
+fn a_footnote_follows_its_paragraph() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-footnote");
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = "\\documentclass{article}\n\\begin{document}\nMain\\footnote{Aside} text.\n\\end{document}\n";
+    std::fs::write(dir.join("f.tex"), source).unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "f.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let detail = |r: &serde_json::Value| r["detail"].as_str().unwrap_or_default().to_string();
+    let main = rows.iter().find(|r| detail(r).contains("Main")).expect("the paragraph");
+    assert!(!detail(main).contains("Aside"), "{main}");
+    let foot = rows.iter().find(|r| r["footnote"] == true).expect("the footnote");
+    assert!(detail(foot).contains("Aside"), "{foot}");
+}
+
+/// A label whose page flips every run (challenge 11): the build widens its
+/// `.aux`, and a run that writes one line fewer keeps that text apart
+/// instead of reading one line of unknown text. The text before the
+/// flip is still typeset.
+#[test]
+fn a_page_that_flips_every_run_keeps_the_text_before_it() {
+    let rows = typeset_rows(
+        "flip",
+        "\\usepackage{refcount}",
+        "The label was on page \\pageref{x}.\n\\ifnum\\getpagerefnumber{x}=1 \\newpage\\fi\n\\label{x}Here.",
+    );
+    let texts: Vec<&str> = rows.iter().filter_map(|r| r["detail"].as_str()).collect();
+    assert!(texts.iter().any(|t| t.contains("The label was on page")), "{texts:?}");
+}
+
+/// `\fbox` draws its rules around a box made before: the text is one framed
+/// box, its rules no longer notes of their own; `\rule` keeps its size.
+#[test]
+fn a_framed_box_and_a_rule_keep_their_layout() {
+    if !crate::support::installed() {
+        return;
+    }
+    let rows = typeset_rows("frame", "", "See \\fbox{boxed words} and \\rule{2cm}{4pt} here.");
+    let row = paragraph(&rows, "boxed");
+    let m = marks(row);
+    let at = |k: &str| row["align"].as_array().unwrap().iter().find(|x| x["mark"] == k).and_then(|x| x["at"].as_u64());
+    let text = row["detail"].as_str().unwrap();
+    assert_eq!(at("frame"), text.find("boxed").map(|b| b as u64), "{row}");
+    assert_eq!(at("frameend"), text.find(" and").map(|b| b as u64), "{row}");
+    assert!(!text.contains('―') && !text.contains('│'), "the frame's rules are the frame: {row}");
+    // 2cm and 4pt as TeX scales them, to the hundredth of a point
+    let bar = m.iter().find(|k| k.starts_with("bar ")).expect("a bar's size");
+    assert_eq!(bar, "bar 56.91 4.00", "{row}");
+}
+
+/// A math script is marked from `^`/`_` to the end of its character or group.
+#[test]
+fn math_scripts_are_marked() {
+    if !crate::support::installed() {
+        return;
+    }
+    let rows = typeset_rows("scripts", "", "$x^2 + y_{ab}$");
+    let row = paragraph(&rows, "x");
+    let m: Vec<String> = marks(row).into_iter().filter(|k| ["sup", "sub", "scriptend"].contains(&k.as_str())).collect();
+    assert_eq!(m, ["sup", "scriptend", "sub", "scriptend"], "{row}");
 }

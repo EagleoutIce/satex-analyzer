@@ -1,0 +1,10 @@
+% Exercises: makeidx index entries (subitems, see, ranges, formatting), \printindex.
+\documentclass{article}
+\usepackage{makeidx}\makeindex
+\begin{document}
+\section{Topics}
+Apples\index{apple}, pears\index{pear!green}\index{pear!yellow}, \index{fruit|see{apple}}\index{zebra@\textbf{zebra}}.
+\index{range|(}Long range text.\index{range|)}\index{bold|textbf}\index{apple!red}
+\newpage Again apples\index{apple}.
+\printindex
+\end{document}

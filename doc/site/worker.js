@@ -4,7 +4,14 @@
 // the same code in node.
 
 /* exported SatexEngine */
+/**
+ * @param {any} createSatex
+ * @param {(label: string, loaded: number, total: number) => void} [progress]
+ * @param {any} [store]
+ * @param {(status: any) => void} [status]
+ */
 function SatexEngine(createSatex, progress = () => {}, store = null, status = () => {}) {
+  const STALL_MS = 30000;
   const files = new Map();
   let wasm = null;
   /** The cache directory outlives the page in `store` (the worker's is IndexedDB), under the
@@ -12,26 +19,36 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
    * store holds of `files`, `imported` the bundles whose caches it holds. */
   let space = '';
   const kept = new Map(), imported = new Set();
+  let saving = Promise.resolve();
   const cached = (path) => path.startsWith('/cache/') && !path.endsWith('.lock');
   async function keep() {
     if (!store) return;
     const fresh = [...files].filter(([path, data]) => cached(path) && kept.get(path) !== data);
     for (const [path, data] of fresh) kept.set(path, data);
-    if (fresh.length) await store.put(space, fresh).catch(() => {});
+    // in the background: a reply never waits on IndexedDB
+    if (fresh.length) saving = saving.then(() => store.put(space, fresh)).catch(() => {});
   }
 
   /** `url`'s response, its body counted into `progress(label, loaded, total)` as it
    * arrives: `total` from the manifest, since a compressed transfer's length is not
    * the length the body has once the browser decoded it. */
   async function fetched(url, label, total) {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`${url}: ${response.status}`);
-    if (!response.body) return response;
+    // a download that stalls (no byte for STALL_MS) fails, saying so, instead of waiting for good
+    const stop = new AbortController();
+    let stall = 0;
+    const watch = () => { clearTimeout(stall); stall = setTimeout(() => stop.abort(new Error(`${label}: no data for ${STALL_MS / 1000} s`)), STALL_MS); };
+    watch();
+    // the server gone: what the service worker (or an earlier visit) kept
+    const response = await fetch(url, { signal: stop.signal }).catch((e) => globalThis.caches?.match(url).then((kept) => kept ?? Promise.reject(e)))
+      .catch((e) => { clearTimeout(stall); throw e; });
+    if (!response.ok) { clearTimeout(stall); throw new Error(`${url}: ${response.status}`); }
+    if (!response.body) { clearTimeout(stall); return response; }
     const size = total || Number(response.headers.get('Content-Length')) || 0;
     let loaded = 0;
     progress(label, 0, size);
     const counted = response.body.pipeThrough(new TransformStream({
-      transform(chunk, out) { loaded += chunk.byteLength; progress(label, loaded, size); out.enqueue(chunk); },
+      transform(chunk, out) { watch(); loaded += chunk.byteLength; progress(label, loaded, size); out.enqueue(chunk); },
+      flush() { clearTimeout(stall); },
     }));
     return new Response(counted, { headers: response.headers });
   }
@@ -49,11 +66,11 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
 
   /** The binary, compiled while it downloads. */
   async function compile(url, total) {
-    if (url instanceof Uint8Array) return WebAssembly.compile(url);
+    if (url instanceof Uint8Array) return WebAssembly.compile(/** @type {BufferSource} */ (url));
     try {
       return await WebAssembly.compileStreaming(fetched(url, 'satex', total));
     } catch {
-      return WebAssembly.compile(await bytes(url, 'satex', total)); // served without application/wasm
+      return WebAssembly.compile(/** @type {BufferSource} */ (await bytes(url, 'satex', total))); // served without application/wasm
     }
   }
 
@@ -72,6 +89,7 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
   async function boot(lines, edits = {}, cwd = '/work', onStatus = undefined) {
     const module = await createSatex({
       onStatus,
+      cancelled: () => stale(),
       instantiateWasm(imports, done) {
         WebAssembly.instantiate(wasm, imports).then((instance) => done(instance, wasm));
         return {};
@@ -112,8 +130,10 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
   /** `satex lsp` in an instance that stays alive: each JSON-RPC message in, the replies out.
    * `reset` drops it: the next message starts one with these flags, in this directory. */
   let server = null, serverArgs = [], serverCwd = '/work', serverLines = [];
+  /** Whether the page no longer wants the run under way: src/lsp/wasm.rs asks while it runs. */
+  let stale = () => false;
   function reset(args = [], cwd = '/work') { server = null; serverArgs = args; serverCwd = cwd; }
-  async function lsp(message) {
+  async function lsp(message, cancelled = () => false) {
     if (!server) {
       // What the engine is doing while a message runs (src/lsp/wasm.rs).
       const onStatus = (json) => status(JSON.parse(json));
@@ -123,6 +143,7 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
     }
     const running = server, text = running.stringToNewUTF8(JSON.stringify(message));
     let out;
+    stale = cancelled;
     try {
       out = JSON.parse(running.UTF8ToString(running._satex_lsp(text)));
     } catch (e) {
@@ -131,6 +152,7 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
       server = null;
       throw e;
     } finally {
+      stale = () => false;
       try { running._free(text); } catch {} // an aborted module takes no more calls
     }
     // an analysis may have cached a class or package
@@ -144,6 +166,10 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
   /** A bundle, a kernel's or a package's: its files join the tree, a kernel's caches
    * the cache directory. `fetching` is its download, when already under way. */
   async function bundle(base, entry, given, fetching) {
+    const archive = await unpack(base, entry, given, fetching);
+    return archive ? cacheImport([archive]) : { lines: [], status: 0, ms: 0 };
+  }
+  async function unpack(base, entry, given, fetching) {
     const packed = await (fetching ?? bytes(given ?? base + entry.bundle, entry.label, entry.size));
     progress('unpacking', 0, 0);
     const blob = await gunzip(packed);
@@ -154,26 +180,28 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
     }
     // a kernel's caches, imported once: the store keeps them for the next load
     const archive = `/kernels/${entry.id}/satex-cache.bin`;
-    if (!files.has(archive)) return { lines: [], status: 0, ms: 0 };
-    if (imported.has(entry.id)) { files.delete(archive); return { lines: [], status: 0, ms: 0 }; }
+    if (!files.has(archive)) return null;
+    if (imported.has(entry.id)) { files.delete(archive); return null; }
+    return entry.id;
+  }
+  /** The caches of these bundles, imported in one run: each run boots an instance with the whole tree. */
+  async function cacheImport(ids) {
     progress('importing', 0, 0);
-    const done = await run(['cache', 'import', `/kernels/${entry.id}`], {}, '/work');
-    files.delete(archive);
-    imported.add(entry.id);
-    await store?.put(space, [[`#imported/${entry.id}`, new Uint8Array()]]).catch(() => {});
+    const done = await run(['cache', 'import', ...ids.map((id) => `/kernels/${id}`)], {}, '/work');
+    for (const id of ids) { files.delete(`/kernels/${id}/satex-cache.bin`); imported.add(id); }
+    await store?.put(space, ids.map((id) => [`#imported/${id}`, new Uint8Array()])).catch(() => {});
     return done;
   }
 
   /** Several bundles: all downloads start at once, the files and caches join the tree in order. */
   async function bundles(base, entries, given = []) {
     const downloads = entries.map((entry, i) => given[i] ?? bytes(base + entry.bundle, entry.label, entry.size));
-    const done = { lines: [], status: 0, ms: 0 };
+    const ids = [];
     for (const [i, entry] of entries.entries()) {
-      const one = await bundle(base, entry, null, downloads[i]);
-      done.lines.push(...one.lines);
-      done.ms += one.ms;
+      const id = await unpack(base, entry, null, downloads[i]);
+      if (id) ids.push(id);
     }
-    return done;
+    return ids.length ? cacheImport(ids) : { lines: [], status: 0, ms: 0 };
   }
 
   /** Files under `dir`: a new project's replace the last one's, added ones join them,
@@ -207,13 +235,17 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
     }
     const markers = [...imported].map((id) => `#imported/${id}`);
     imported.clear();
-    await store?.remove(space, [...paths, ...markers]).catch(() => {});
+    saving = saving.then(() => store?.remove(space, [...paths, ...markers])).catch(() => {});
   }
 
   /** Fetches the binary and the default kernel, unless `given` has them. */
   async function init(base, manifest, given = {}) {
     space = manifest.wasm;
-    for (const [path, data] of (await store?.load(space).catch(() => null)) ?? []) {
+    // the kept caches are a head start, never a wait
+    const loading = store?.load(space).catch(() => null);
+    const kept_ = await Promise.race([loading, new Promise((r) => setTimeout(() => r('late'), 3000))]);
+    if (kept_ === 'late') status({ text: 'the browser cache is busy (another tab?): starting without it' });
+    for (const [path, data] of (kept_ === 'late' ? null : kept_) ?? []) {
       if (path.startsWith('#imported/')) imported.add(path.slice('#imported/'.length));
       else { files.set(path, data); kept.set(path, data); }
     }
@@ -237,35 +269,56 @@ if (typeof module === 'object' && module.exports) {
   let engine = null;
   /** The cache directory in IndexedDB: one record per file, keyed [binary, path]; a load drops
    * what other binaries left. Without IndexedDB (a private window) nothing is kept. */
+  const CAP = 150 * 2 ** 20; // bytes kept between visits
   const idb = () => {
     const opened = new Promise((resolve, reject) => {
-      const r = indexedDB.open('satex-playground', 1);
-      r.onupgradeneeded = () => r.result.createObjectStore('cache');
-      r.onsuccess = () => resolve(r.result);
+      const r = indexedDB.open('satex-playground', 2);
+      r.onupgradeneeded = () => { for (const n of ['cache', 'used']) if (!r.result.objectStoreNames.contains(n)) r.result.createObjectStore(n); };
+      // an older tab yields to a newer version; a blocked open means no cache
+      r.onsuccess = () => { r.result.onversionchange = () => r.result.close(); resolve(r.result); };
+      r.onblocked = () => reject(new Error('the cache store is held by another tab'));
       r.onerror = () => reject(r.error);
     });
     const tx = async (mode, f) => {
-      const t = (await opened).transaction('cache', mode), out = f(t.objectStore('cache'));
+      const t = (await opened).transaction(['cache', 'used'], mode), out = f(t.objectStore('cache'), t.objectStore('used'));
       return new Promise((resolve, reject) => { t.oncomplete = () => resolve(out); t.onerror = t.onabort = () => reject(t.error); });
     };
     return {
       async load(space) {
-        const found = [];
-        await tx('readwrite', (s) => s.openCursor().onsuccess = ({ target: { result: c } }) => {
-          if (!c) return;
-          if (c.key[0] === space) found.push([c.key[1], c.value]); else c.delete();
-          c.continue();
-        });
-        return found;
+        const range = IDBKeyRange.bound([space], [space, []]);
+        const [keys, values, used] = await tx('readonly', (st, u) => [st.getAllKeys(range), st.getAll(range), u.getAll(range)]);
+        const found = keys.result.map((k, i) => [k[1], values.result[i], used.result[i] ?? 0]);
+        // background: drop other binaries' records, then evict past CAP
+        let total = found.reduce((n, [, d]) => n + (d?.byteLength ?? 0), 0);
+        const evict = [...found].sort((a, b) => a[2] - b[2]).filter(([, d]) => total > CAP && (total -= d?.byteLength ?? 0) >= 0).map(([p]) => p);
+        tx('readwrite', (st, u) => {
+          for (const store of [st, u]) {
+            store.delete(IDBKeyRange.upperBound([space], true));
+            store.delete(IDBKeyRange.lowerBound([space, []], true));
+            for (const p of evict) store.delete([space, p]);
+          }
+        }).catch(() => {});
+        return found.filter(([p]) => !evict.includes(p)).map(([p, d]) => [p, d]);
       },
-      put: (space, entries) => tx('readwrite', (s) => { for (const [path, data] of entries) s.put(data, [space, path]); }),
-      remove: (space, paths) => tx('readwrite', (s) => { for (const path of paths) s.delete([space, path]); }),
+      put: (space, entries) => tx('readwrite', (s, u) => { for (const [path, data] of entries) { s.put(data, [space, path]); u.put(Date.now(), [space, path]); } }),
+      remove: (space, paths) => tx('readwrite', (s, u) => { for (const path of paths) { s.delete([space, path]); u.delete([space, path]); } }),
     };
   };
-  self.onmessage = async ({ data }) => {
+  /** Messages are answered in the order they came (the page pairs each reply with its request by that order):
+   * one at a time, except downloads, which the page sends one at a time itself. Two `lsp` messages after a
+   * `reset` would otherwise each start a server of their own. */
+  let serial = Promise.resolve();
+  /** The page's count of texts sent (an Int32Array on a SharedArrayBuffer), when the page is cross-origin isolated. */
+  let cancelFlag = null;
+  self.onmessage = ({ data }) => {
+    if (['init', 'bundle', 'bundles'].includes(data.type)) handle(data);
+    else serial = serial.then(() => handle(data));
+  };
+  const handle = async (data) => {
     try {
       if (data.type === 'init') {
         const given = data.given ?? {};
+        cancelFlag = data.cancel ?? null;
         importScripts(given.js ? URL.createObjectURL(new Blob([given.js], { type: 'text/javascript' })) : data.base + data.manifest.js);
         // At most every 100 ms, and every phase change.
         let last = 0, phase = '';
@@ -296,10 +349,12 @@ if (typeof module === 'object' && module.exports) {
         await engine.uncache(data.paths);
         self.postMessage({ type: 'caches', entries: engine.caches() });
       } else if (data.type === 'lsp') {
-        self.postMessage({ type: 'lsp', out: await engine.lsp(data.message) });
+        // the page's shared counter of texts sent: a run of fewer stops once a newer one came
+        const flag = cancelFlag, sent = data.sent;
+        self.postMessage({ type: 'lsp', out: await engine.lsp(data.message, flag && sent != null ? () => Atomics.load(flag, 0) > sent : undefined) });
       }
     } catch (e) {
-      self.postMessage({ type: 'error', of: data.type, message: String(e && e.stack || e) });
+      self.postMessage({ type: 'error', of: data.type, message: e instanceof Error ? `${e.message}\n${e.stack}` : String(e) });
     }
   };
 }

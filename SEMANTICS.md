@@ -3,11 +3,12 @@
 # The semantics SaTeX assumes
 
 This document states what `satex` believes TeX, ε-TeX and LaTeX2e do. Every
-claim here is a claim about the engines, not about `satex`; where `satex`
+claim here is a claim about the engines, not about `satex`. Where `satex`
 deliberately departs from them, the departure is marked **[abstraction]** and
 justified.
+After [why TeX is hard](Challenges), this chapter says what TeX does. The [abstract domains](Domains) come next.
 
-Sources: [*TeXbook*][texbook] (Knuth, *The TeXbook*, cited by chapter — it has no
+Sources: [*TeXbook*][texbook] (Knuth, *The TeXbook*, cited by chapter, since it has no
 numbered sections), [*tex.web*][tex.web] (Knuth, *TeX: The Program*, cited by module
 number), [*TeX by Topic*][tex-by-topic] (Eijkhout), [*etex_man*][etex_man] (the ε-TeX manual), [*clsguide*][clsguide]
 and [*usrguide*][usrguide] (LaTeX Project), [*expl3*][expl3] (the interface documentation),
@@ -19,7 +20,7 @@ and [*usrguide*][usrguide] (LaTeX Project), [*expl3*][expl3] (the interface docu
 
 TeX reads in three stages. The **mouth** turns characters into tokens, the
 **gullet** expands expandable tokens, and the **stomach** executes everything
-else. ([*TeXbook*][texbook] ch. 7; [*TeX by Topic*][tex-by-topic] ch. 1–2.)
+else. ([*TeXbook*][texbook] ch. 7, [*TeX by Topic*][tex-by-topic] ch. 1–2.)
 
 `satex` implements the same three stages. It does not implement the fourth,
 typesetting: no boxes, glue setting or page builder. Everything that only
@@ -28,7 +29,7 @@ affects typeset output is a no-operation.
 A run starts in the interaction mode `interaction:` in `satex.yaml` names,
 as the engine's `-interaction` would set it (`nonstopmode` by default, as
 unattended builds run). In `\batchmode` and `\nonstopmode` a `\read` from
-the terminal is a fatal error that ends the job ([tex.web § 484][tw-484]); LaTeX's
+the terminal is a fatal error that ends the job ([tex.web § 484][tw-484]). LaTeX's
 prompt for a missing file (`\@missingfileerror`) is such a read.
 
 The engine's own errors are recovered as tex.web recovers them, never by
@@ -45,7 +46,7 @@ paragraph's end clears the count (§ 1096).
 ## 2. Category codes
 
 Every character carries one of 16 category codes, and the code is fixed at the
-moment the character is tokenized, not when the token is used. ([*TeXbook*][texbook] ch. 7;
+moment the character is tokenized, not when the token is used. ([*TeXbook*][texbook] ch. 7,
 [tex.web § 232][tw-232].)
 
 * A run without a format starts from INITEX's table: letters 11, `\` 0,
@@ -55,7 +56,7 @@ moment the character is tokenized, not when the token is used. ([*TeXbook*][texb
 * `\catcode` is a **local** assignment: it is undone by the closing brace of
   the group it was made in. ([*TeXbook*][texbook] ch. 20.)
 * `^^X`, where `X` has a code below 128, denotes the character whose code
-  differs from `X`'s in bit 6; `^^XY` with two lower-case hex digits denotes
+  differs from `X`'s in bit 6. `^^XY` with two lower-case hex digits denotes
   that code directly. Above 127 no substitution happens. ([tex.web § 352][tw-352].)
 * `\catcode` through a character number `satex` cannot pin down leaves each
   character it may name at its old category or the new one, structural
@@ -67,7 +68,7 @@ moment the character is tokenized, not when the token is used. ([*TeXbook*][texb
 * `\ExplSyntaxOn` sets tab and space to ignored (9), `"` and `|` to other
   (12), `:` and `_` to letter (11), `^` to superscript (7), `~` to space (10),
   and `\endlinechar` to 32. Because 32 is ignored, an end of line contributes
-  nothing while expl3 syntax is in force — a blank line makes no `\par`.
+  nothing while expl3 syntax is in force, a blank line makes no `\par`.
   ([`expl3-code.tex`][expl3-code].)
 
 ## 3. The line reader
@@ -86,30 +87,30 @@ invalid utf-8 sequence". **[abstraction]** `satex` reads XeTeX's replacement
 character under both and records an `invalid-utf8` gap for `luatex`.
 
 TeX strips trailing spaces from each input line and appends the character
-`\endlinechar` (13 by default, category 5); if `\endlinechar` is outside
+`\endlinechar` (13 by default, category 5). If `\endlinechar` is outside
 0–255 nothing is appended and the line yields no end-of-line token at all.
 The last line of a file is a line even without a final newline, and gets the
 `\endlinechar` like any other ([tex.web § 31][tw-31]).
 
-Reading then runs a three-state machine — new line `N`, skipping blanks `S`,
+Reading then runs a three-state machine, new line `N`, skipping blanks `S`,
 middle of line `M`. With the appended character in category 5, state `N`
 yields `\par`, `M` a space, `S` nothing. In any other category it is read
 like any character of that category: in category 10 (after
 `\catcode13=10`, as `\ProvidesFile` does) it is a space token of character
 code 32 in state `M` and nothing in `N` or `S`. A comment character discards the rest
 of the line and moves to state `N`. State `S` is entered after any control
-word — including a one-letter one — and after the control space `\ `, but
-after no other control symbol. ([*TeXbook*][texbook] ch. 8; [tex.web §§ 303][tw-303]–[306][tw-306], [§ 240][tw-240].)
+word, including a one-letter one, and after the control space `\ `, but
+after no other control symbol. ([*TeXbook*][texbook] ch. 8, [tex.web §§ 303][tw-303]–[306][tw-306], [§ 240][tw-240].)
 
 A CRLF pair is one line ending, not two. **[abstraction]** TeX proper reads a
-file line by line and never sees the line terminator; `satex` reads a
+file line by line and never sees the line terminator. `satex` reads a
 character stream and collapses CRLF so that files written on Windows tokenize
 as they would on any other platform.
 
 ## 4. Tokens and their equality
 
 A token is either a control sequence or a (character, category code) pair.
-Two character tokens are equal when both components agree; two control
+Two character tokens are equal when both components agree. Two control
 sequence tokens when their names agree. Source position is not part of a
 token. ([*TeXbook*][texbook] ch. 7.)
 
@@ -141,11 +142,11 @@ and `\c` in the input. ([*TeXbook*][texbook] ch. 20.)
   character in the input: `\def\every#1#{\csname every#1\endcsname}`.
   The `{` is a delimiter like any other, so with no parameter before it
   (`\def\m#{\detokenize}`) a call must be followed by `{`, which the call
-  consumes and the replacement text puts back. ([*TeXbook*][texbook] ch. 20;
+  consumes and the replacement text puts back. ([*TeXbook*][texbook] ch. 20,
   [tex.web § 476][tw-476].)
 * In the replacement text, `#n` is replaced by the *n*th argument and `##`
   stands for a single `#`. ([*TeXbook*][texbook] ch. 20.)
-* `\gdef` and `\xdef` are global; `\edef` and `\xdef` expand the replacement
+* `\gdef` and `\xdef` are global. `\edef` and `\xdef` expand the replacement
   text at definition time. ([*TeXbook*][texbook] ch. 20.) What `\the` and `\unexpanded`
   contribute to it is stored as it stands: a `#` among those tokens is a
   character, not a parameter. ([tex.web § 478][tw-478].) The replacement text is
@@ -159,18 +160,24 @@ and `\c` in the input. ([*TeXbook*][texbook] ch. 20.)
   so it may still find that definition. A name with a known prefix or
   suffix stays one of its family (`Wild`): those names may be defined.
 * `\long`, `\outer` and `\protected` are prefixes that apply to the next
-  definition. ([*TeXbook*][texbook] ch. 20; [*etex_man*][etex_man] for `\protected`.)
+  definition. ([*TeXbook*][texbook] ch. 20, [*etex_man*][etex_man] for `\protected`.)
 
 ## 7. Argument matching
+
+A macro's parameter text is a pattern, and reading the arguments matches it
+against the input with no expansion. A delimited argument is a cut of the
+input: what lies before the delimiter at brace level 0. Over unknown text
+`satex` lists every cut that may begin the delimiter (`scanDelim` in the
+[formal model](doc/wiki/formal-semantics.md)).
 
 * An **undelimited** argument is the next token, or, if that token begins a
   group, the whole group with one level of braces removed. Leading spaces are
   skipped. ([*TeXbook*][texbook] ch. 20.)
 * A **delimited** argument does *not* skip leading spaces.
 * Without `\long`, a `\par` token in any argument is a runaway-argument
-  error; `\long` permits it. ([*TeXbook*][texbook] ch. 20.)
+  error. `\long` permits it. ([*TeXbook*][texbook] ch. 20.)
 * A **delimited** argument runs to the next occurrence of its delimiter at
-  brace level 0; if the collected text is wholly enclosed in one pair of
+  brace level 0. If the collected text is wholly enclosed in one pair of
   braces, that pair is removed. ([*TeXbook*][texbook] ch. 20.)
 
 ## 8. The gullet
@@ -178,36 +185,36 @@ and `\c` in the input. ([*TeXbook*][texbook] ch. 20.)
 Expandable: macros, conditionals, `\csname`, `\expandafter`, `\noexpand`,
 `\the`, `\number`, `\romannumeral`, `\string`, `\meaning`, `\jobname`,
 `\fontname`, `\input`, `\endinput`, and the mark primitives `\topmark`,
-`\firstmark`, `\botmark`, `\splitfirstmark`, `\splitbotmark`; ε-TeX adds
+`\firstmark`, `\botmark`, `\splitfirstmark`, `\splitbotmark`. ε-TeX adds
 `\detokenize`, `\unexpanded`, `\scantokens`, `\unless` and `\eTeXrevision`,
 and pdfTeX adds `\expanded`. Everything else is executed by the stomach.
-([*TeX by Topic*][tex-by-topic], "Ordinary expansion"; [*etex_man*][etex_man] § 3.)
+([*TeX by Topic*][tex-by-topic], "Ordinary expansion", [*etex_man*][etex_man] § 3.)
 
 * `\expandafter⟨t1⟩⟨t2⟩` expands `⟨t2⟩` once and then puts `⟨t1⟩` back in
   front of the result.
-* `\noexpand⟨t⟩`, when expanded, puts `⟨t⟩` back behind a marker; the next
+* `\noexpand⟨t⟩`, when expanded, puts `⟨t⟩` back behind a marker. The next
   read of it treats an expandable `⟨t⟩` as `\relax` (the stomach does nothing
   with it) and `\ifx` gives it a meaning equal to no other token's, so
   `\expandafter\ifx\noexpand\a\a` is false for any macro `\a`, protected or
   not. ([tex.web § 358][tw-358], [§ 367][tw-367].)
 * `\read⟨n⟩to⟨cs⟩` appends the current `\endlinechar` to each line it
-  reads and reads further lines until the braces balance; a read at the end
+  reads and reads further lines until the braces balance. A read at the end
   of the file gives `\par` and closes the stream, and only then is `\ifeof`
   true. ([tex.web §§ 482][tw-482]–[486][tw-486].)
 * `\detokenize` and `\meaning` write a control sequence as the escape
   character and its name, followed by a space when the name has more than one
-  character or its one character has category letter *now* — `\_ ` under
+  character or its one character has category letter *now*, `\_ ` under
   expl3's catcodes, `\_` outside them. ([tex.web § 262][tw-262].)
 * `\csname⟨tokens⟩\endcsname` builds a control sequence from the expansion of
-  `⟨tokens⟩`, which must be character tokens; their category codes are
+  `⟨tokens⟩`, which must be character tokens. Their category codes are
   irrelevant, only the character codes count. If the name was undefined it
-  becomes `\relax`, **locally**, and is thereafter defined — which changes
-  later `\ifdefined` and `\@ifundefined` results. ([*TeXbook*][texbook] ch. 7;
+  becomes `\relax`, **locally**, and is thereafter defined, which changes
+  later `\ifdefined` and `\@ifundefined` results. ([*TeXbook*][texbook] ch. 7,
   [tex.web § 372][tw-372].) A name built from unknown text is, on a path
   each, a name of its family it may spell or `\relax`. Executing it or
   taking its `\meaning` fixes that meaning for the rest of its path.
 * LuaTeX's `\begincsname` builds a name the same way but leaves an undefined
-  one undefined and expands to nothing then; `\lastnamedcs` is the name the
+  one undefined and expands to nothing then. `\lastnamedcs` is the name the
   last `\csname`, `\begincsname` or `\ifcsname` built. (*LuaTeX manual*.)
 * `\scantokens` writes its text to a pseudo file, a line wherever
   `\newlinechar` stands, and reads it back as a file is read: character by
@@ -223,26 +230,26 @@ and pdfTeX adds `\expanded`. Everything else is executed by the stomach.
   recorded as loads), and the function a `token.set_lua` command calls
   (function `id` of `lua.get_functions_table()`, passed `id`). What the chunk
   or function prints with `tex.print`/`sprint`/`tprint`/`cprint`/`write` is
-  read after it returns; `token.put_next` puts tokens back at once.
+  read after it returns. `token.put_next` puts tokens back at once.
   (*LuaTeX manual*, "Lua general", "The token library", "The tex library".)
   * `string`, `table`, `math`, `utf8` and `coroutine` are Lua's own. The
     engine's libraries are Rust effects on the machine: the token library's
     scanners, `get_next`, `put_next`, `new`, `create`, `is_defined`,
     `get_macro`, `set_macro`, `set_char`, `set_lua` (local unless
-    `"global"`, unexpandable if `"protected"`) and token fields; `tex.count`
+    `"global"`, unexpandable if `"protected"`) and token fields, `tex.count`
     and `tex.dimen` (get, set, `getcount`, `setcount`, …), catcodes,
-    `inputlineno`, `luatexversion`, `enableprimitives`, `runtoks(f)`;
-    `kpse.find_file`, `lfs.attributes`; `texio.write` is a no-op;
-    `callback.register` of a callback whose effect SaTeX does not read;
-    `os.date("%z")`; `node.id`/`node.subtype` numbers; `sio`'s readers;
-    `lua.newtable`; LPeg itself (vendored C, `vendor/lpeg`); a read-only
+    `inputlineno`, `luatexversion`, `enableprimitives`, `runtoks(f)`,
+    `kpse.find_file`, `lfs.attributes`, `texio.write` (a no-op),
+    `callback.register` of a callback whose effect SaTeX does not read,
+    `os.date("%z")`, `node.id`/`node.subtype` numbers, `sio`'s readers,
+    `lua.newtable`, LPeg itself (vendored C, `vendor/lpeg`) and a read-only
     `io.open`/`io.lines` of files the resolver finds (an absolute path only
     when the resolver finds its file name there). There is no writing, no
     other `os` (the clock is unknown), no `debug`, no binary chunk. Command
-    numbers are LuaTeX's (`token.commands()`); the `mode` of a register
+    numbers are LuaTeX's (`token.commands()`). The `mode` of a register
     command is its number.
-  * Every global and library field LuaTeX has (`src/plugin/luatex_fields.txt`,
-    listed by LuaHBTeX; `luaharfbuzz` only when the engine is known to be
+  * Every global and library field LuaTeX has (`src/data/luatex-fields.txt`,
+    listed by LuaHBTeX, with `luaharfbuzz` only when the engine is known to be
     LuaHBTeX) exists: one SaTeX does not implement is, if a function, a
     function that stops the run when called, and otherwise the unknown
     value. A field LuaTeX does not have is nil. A value SaTeX does not know (a token field, the clock, a
@@ -276,7 +283,7 @@ and pdfTeX adds `\expanded`. Everything else is executed by the stomach.
 ## 9. Conditionals
 
 `\if…⟨test⟩⟨true text⟩\else⟨false text⟩\fi`. Conditionals are expanded in the
-gullet; the branch that is not taken is skipped without expansion, so a `\def`
+gullet. The branch that is not taken is skipped without expansion, so a `\def`
 inside it does not happen. `\ifcase⟨number⟩` selects among `\or`-separated
 cases and falls back to `\else`. ([*TeXbook*][texbook] ch. 20.)
 
@@ -288,11 +295,11 @@ skipping: grouping and conditional nesting are independent.
 skipping ends the skip with an inserted `\fi` ("Incomplete \if…").
 ([tex.web § 336][tw-336].)
 
-`\if` and `\ifcat` expand until two unexpandable tokens remain; an
+`\if` and `\ifcat` expand until two unexpandable tokens remain. An
 unexpandable control sequence counts as character code 256 for `\if` and
 category 16 for `\ifcat`, so all control sequences compare equal to each
 other. ([*TeX by Topic*][tex-by-topic].) A token behind `\noexpand` is not expanded, and
-an active character there counts as itself; any other active character is
+an active character there counts as itself. Any other active character is
 taken by its meaning, as a control sequence is ([tex.web § 506][tw-506]).
 
 A conditional is on the condition stack while its test is read. A conditional
@@ -309,18 +316,18 @@ so the `\fi` the skip meets first is theirs and not the `\ifcase`'s, and an
 Decidable when the operands are known: `\iftrue`, `\iffalse`, `\ifx`,
 `\ifdefined`, `\ifcsname`, `\if`, `\ifcat`, `\ifnum`, `\ifdim`, `\ifodd`.
 Mode-dependent: `\ifvmode`, `\ifhmode`, `\ifmmode`, `\ifinner` follow
-the mode ([tex.web §§ 211][tw-211], [1045][tw-1045]–[1200][tw-1200]). A run starts in vertical mode;
+the mode ([tex.web §§ 211][tw-211], [1045][tw-1045]–[1200][tw-1200]). A run starts in vertical mode.
 horizontal material (a letter or other character, `\char`, a `\chardef`
 character, `\indent`, `\noindent`, `\unhbox`, `\vrule`, `\hskip` and the
 `\hfil` family, `\accent`, `\discretionary`, `\-`, control space,
 `\valign`, `$`) starts a paragraph in a vertical mode, inserting `\everypar`
-and reading the token again; `\par` ends it; vertical material (`\vskip`,
+and reading the token again. `\par` ends it. Vertical material (`\vskip`,
 `\hrule`, `\unvbox`, `\halign`) in horizontal mode first reads a `\par`
 token. `\hbox`, `\vbox`, `\vtop`, `\vcenter`, `\insert`, `\vadjust`,
 `\noalign`, the parts of `\discretionary` and `\mathchoice`, `$`, `$$`,
 `\eqno` and a `{` in math begin a list of their own in the mode that list
 has (with `\everyhbox`, `\everyvbox`, `\everymath`, `\everydisplay`), and
-its end restores the modes around it; `\currentgrouptype` reports the group
+its end restores the modes around it. `\currentgrouptype` reports the group
 code. **[abstraction]** The run keeps the *set* of modes it may be in: paths
 that disagree join to their union, a command of unknown meaning may start or
 end a paragraph, and a test is decided only when every mode in the set
@@ -330,15 +337,15 @@ the run splits into one path per mode. Alignment cells and rows share one
 mode set (restricted horizontal or internal vertical), `\left` may make a
 display inner, and the output routine never runs. Box registers are tracked by kind ([tex.web §§ 1077][tw-1077]–[1110][tw-1110]): a register is
 void until `\setbox` fills it when its box ends (so the box's own text still
-sees the old contents), locally or with `\global` globally; `\box` and
+sees the old contents), locally or with `\global` globally. `\box` and
 `\unhbox`/`\unvbox` empty it in place without a save-stack entry, `\copy`
-and the `copy` forms do not; `\lastbox` and `\vsplit` give an unknown box.
+and the `copy` forms do not. `\lastbox` and `\vsplit` give an unknown box.
 `\ifvoid`, `\ifhbox`, `\ifvbox` are decided when the kind is known.
 `\wd`, `\ht`, `\dp` are 0 for a void box, the `to` size (or 0 across it)
 for a box that received nothing, what `\wd⟨n⟩=` set on a non-void box, and
 unknown otherwise (a box with material is typesetting). `\ifeof` follows the
 streams.
-`\currentiftype` and `\currentifbranch` follow the condition stack;
+`\currentiftype` and `\currentifbranch` follow the condition stack.
 `\lastnodetype` is -1 until anything may have been put on a list.
 ([*etex_man*][etex_man] for `\ifdefined`, `\ifcsname`, `\unless`.)
 
@@ -349,15 +356,23 @@ makes `satex controls` able to say what a package option governs.
 
 ## 10. Grouping and the save stack
 
+A group makes assignments temporary: the first local write to a name in a
+group saves the old entry, and the group's end puts it back. Two numbers
+decide a save: the level the entry was set at and the current level. Where
+`satex` knows neither exactly (a loop left groups open, a loop was
+summarized), it records that the name may have been saved, and the name is
+unknown at the group's end (`touched` in the
+[formal model](doc/wiki/formal-semantics.md)).
+
 A group is opened by a begin-group *character* (`{`, catcode 1) and closed by
-an end-group character (`}`, catcode 2) — including a control sequence whose
+an end-group character (`}`, catcode 2), including a control sequence whose
 meaning is such a character, as `\bgroup` and `\egroup` are in plain TeX
-(`\let\bgroup={`) — by `\begingroup`…`\endgroup`, by a math shift (`$`…`$`
+(`\let\bgroup={`), by `\begingroup`…`\endgroup`, by a math shift (`$`…`$`
 and `$$`…`$$`), by `\left`…`\right`, by a box constructor (`\hbox`, `\vbox`,
 `\vtop`, `\vcenter`), by an alignment entry, and by the output routine and
 inserts. Each records its kind on the save stack, and a closer of the wrong
 kind is an error: `}` ends only a simple group, `\endgroup` only a semi-simple
-one. ([tex.web § 269][tw-269] (`saved_group_code`), [§ 1063][tw-1063], [§ 1145][tw-1145]; *The TeXbook*,
+one. ([tex.web § 269][tw-269] (`saved_group_code`), [§ 1063][tw-1063], [§ 1145][tw-1145], *The TeXbook*,
 ch. 24.)
 
 Every non-global assignment is undone when the group closes.
@@ -367,10 +382,10 @@ ends, in the order the `\aftergroup`s were given. ([tex.web § 326][tw-326].)
 for what the command it copied waits for and not for what its own name says.
 expl3 reaches `\aftergroup` only through copies, as `\tex_aftergroup:D` and
 `\group_insert_after:N`. ([tex.web § 265][tw-265].) `\global` sets the
-value at the outermost level; the save-stack entries already pushed for that
+value at the outermost level. The save-stack entries already pushed for that
 name are not removed, they are discarded instead of restored when the group
-ends — which is why alternating local and global assignments to one name make
-the save stack grow. ([tex.web § 279][tw-279], [§ 283][tw-283]; [*TeX by Topic*][tex-by-topic], "Save size".)
+ends, which is why alternating local and global assignments to one name make
+the save stack grow. ([tex.web § 279][tw-279], [§ 283][tw-283], [*TeX by Topic*][tex-by-topic], "Save size".)
 
 Some assignments ignore grouping entirely: `\globaldefs` forces every
 assignment global when positive and makes `\global` a no-op when negative, and
@@ -385,7 +400,7 @@ category code change, which LaTeX undoes explicitly. ([*clsguide*][clsguide] § 
 ## 11. Base types
 
 TeX's internal quantities are ⟨number⟩, ⟨dimen⟩, ⟨glue⟩, ⟨muglue⟩ and
-⟨token list⟩. ([*TeXbook*][texbook] ch. 10; [tex.web § 449][tw-449].)
+⟨token list⟩. ([*TeXbook*][texbook] ch. 10, [tex.web § 449][tw-449].)
 
 * A dimension is a signed integer of scaled points, `1pt = 65536sp`, with
   magnitude at most 2³⁰ − 1. ([*TeXbook*][texbook] ch. 10.)
@@ -406,35 +421,35 @@ TeX's internal quantities are ⟨number⟩, ⟨dimen⟩, ⟨glue⟩, ⟨muglue�
   terminator are looked for in the next non-blank token after expansion, so
   `\def\a{(4-1)}\numexpr 2*\a\relax` is 6. Registers nothing has assigned
   hold zero. One `\relax` may terminate the
-  expression and is absorbed; otherwise it ends at the first token that cannot
+  expression and is absorbed. Otherwise it ends at the first token that cannot
   continue it, and that token is not absorbed. An overflow anywhere
   (beyond 2^31-1, or `\maxdimen` for dimensions and glue) makes the whole
   expression 0 with "Arithmetic overflow". ([*etex_man*][etex_man] § 3.5, [etex.ch `scan_expr`][ech-scan_expr].)
   Precisely ([etex.ch `scan_expr`][ech-scan_expr]): an operand beyond its level's bound (2³¹−1 for
   numbers and for the factor of `*` or `/`, `\maxdimen` for dimensions
-  and each glue component) is an error; `+`/`-` is `add_or_sub`, `*`
+  and each glue component) is an error. `+`/`-` is `add_or_sub`, `*`
   `mult_integers` or `nx_plus_y`, `/` `quotient` and `*`…`/` `fract`
   (`x·n/d` rounded, ties away from zero, checked only against the final
   bound, so `\numexpr 65536*32768/2` is 2³⁰). Adding glues of different
   orders keeps the higher one *unnegated*, even for `-`
-  (`\glueexpr 1pt plus 2fil - 3pt plus 1fill` is `-2pt plus 1fill`); an
+  (`\glueexpr 1pt plus 2fil - 3pt plus 1fill` is `-2pt plus 1fill`). An
   expression of one glue is not normalized, so `\gluestretchorder` of
   `\glueexpr 0pt plus 0fil` is 1.
 * Register arithmetic ([tex.web §§ 105][tw-105]–[106][tw-106], [1236][tw-1236]–[1240][tw-1240]) is on 32-bit
   integers. `\advance` of a count or a dimension has **no** overflow
-  check and wraps (`2147483647+1` is −2³¹; a dimension may pass
-  `\maxdimen`, up to 2³¹−1sp); glue widths and amounts wrap alike, and
+  check and wraps (`2147483647+1` is −2³¹, a dimension may pass
+  `\maxdimen`, up to 2³¹−1sp). Glue widths and amounts wrap alike, and
   of different orders the higher replaces the lower. `\multiply` is
   `mult_integers` (bound 2³¹−1) for a count and `nx_plus_y` (bound
-  `\maxdimen`) for a dimension and each glue amount, orders kept;
+  `\maxdimen`) for a dimension and each glue amount, orders kept.
   `\divide` is `x_over_n`, truncating toward zero (−2³¹ ÷ −1 is −2³¹).
   "Arithmetic overflow" (a bound passed, a zero divisor) leaves the
   register unchanged. A glue assigned with all three amounts zero becomes
   the zero glue of order normal (`trap_zero_glue`, [tex.web § 1229][tw-1229]).
 * `scan_dimen` ([tex.web §§ 448][tw-448]–[461][tw-461]): the fraction is `round_decimals` of at most 17
-  digits; an integer part of 2¹⁴pt or more, or a result of 2³⁰sp or more,
+  digits. An integer part of 2¹⁴pt or more, or a result of 2³⁰sp or more,
   is "Dimension too large" and `\maxdimen` (with its sign). `true` first
-  divides by `\mag` (`xn_over_d`; a `\mag` outside 1..32768 counts as
+  divides by `\mag` (`xn_over_d`, a `\mag` outside 1..32768 counts as
   1000). An internal unit, `em`, `ex` or `px` scales by
   `nx_plus_y(n, v, xn_over_d(v, f, 2¹⁶))`, whose overflow is `\maxdimen`
   *before* the sign: `20000` times a unit of −1pt is `+\maxdimen`. `sp`
@@ -443,7 +458,7 @@ TeX's internal quantities are ⟨number⟩, ⟨dimen⟩, ⟨glue⟩, ⟨muglue�
 * `em` and `ex` are `\fontdimen6` and `\fontdimen5` of the current font
   ([tex.web § 455][tw-455]), known when its metrics are.
 * A number with no digits is 0 ("Missing number, treated as zero",
-  [tex.web § 446][tw-446]); a token of unknown meaning where a number is expected
+  [tex.web § 446][tw-446]). A token of unknown meaning where a number is expected
   makes it unknown.
 
 ### Fonts
@@ -466,11 +481,11 @@ TeX's internal quantities are ⟨number⟩, ⟨dimen⟩, ⟨glue⟩, ⟨muglue�
   when pdfTeX has only a METAFONT source (mktextfm may build the TFM), and
   when LuaTeX has no TFM (luaotfload's Lua callback may find the font).
 * XeTeX (`load_native_font`): a `"quoted"` name is tried first as an
-  installed font, then as a TFM file; an unquoted name is tried as a TFM
+  installed font, then as a TFM file. An unquoted name is tried as a TFM
   file first. An installed font is `[file]` under the trees' `fonts/opentype`
   or `fonts/truetype`, or a family, full name or PostScript name that
   `fc-list` lists, which asks fontconfig as XeTeX does. Of a single `[file]`
-  font satex reads the OpenType tables (`src/otf.rs`): the character map
+  font satex reads the OpenType tables (`src/engine/otf.rs`): the character map
   (`\iffontchar`, `\XeTeXcharglyph`, `\XeTeX{first,last}fontchar`,
   `\XeTeXcountglyphs`), advances (`\fontcharwd`, `.notdef`'s for a missing
   character), `\XeTeXfonttype` 2 unless it has Graphite tables, and the
@@ -479,7 +494,7 @@ TeX's internal quantities are ⟨number⟩, ⟨dimen⟩, ⟨glue⟩, ⟨muglue�
   precision and rounded as XeTeX's `D2Fix`. Its design size (so its size
   without `at`, and the `at` clause of `\fontname` and `\meaning`), glyph
   heights, depths, names and layout tables are not read: unknown, as is
-  everything about a font fontconfig finds by name; their operands are
+  everything about a font fontconfig finds by name. Their operands are
   still read. For a TFM font those queries answer at
   once and read nothing past the font (`not_native_font_error`).
 * LuaTeX's `\fontid` is the font's number, with `\nullfont` as 0 and the
@@ -500,7 +515,7 @@ about it is stubbed: `\newcommand`,
 `\newenvironment`, `\NewDocumentCommand`, `\newcounter`, `\newlength`,
 `\newif`, `\DeclareOption`, `\ProcessOptions`, `\define@key` and the rest run
 for real, the way the engine would run them. Every one of them ends in an
-ordinary primitive — `\def`, `\let`, a register allocation — which `satex`
+ordinary primitive, `\def`, `\let`, a register allocation, which `satex`
 records as one kind of `Definition` fact (`by` names whichever command the
 file actually called, a user's own wrapper included) rather than a separate
 record type per LaTeX concept.
@@ -508,7 +523,7 @@ record type per LaTeX concept.
 A definition's semantic tag is read off what running it left behind, never
 off the defining command's spelling:
 
-* **counter** / **length**: a count or skip register was allocated; the
+* **counter** / **length**: a count or skip register was allocated. The
   counter's storage prefix (`\c@` in a stock kernel) is learned by probing
   `\value` with a made-up name once, rather than assumed.
 * **switch**: the name starts `if` and now means `\iftrue` or `\iffalse`,
@@ -516,13 +531,13 @@ off the defining command's spelling:
 * **environment**: `\⟨x⟩` and `\end⟨x⟩` were defined at the same source
   position, `\newenvironment`'s own effect.
 * **option**: a macro was stored as `\ds@⟨option⟩`, the kernel's own
-  bookkeeping for a declared option ([*clsguide*][clsguide] § 4.4–4.5); `\ProcessOptions`
+  bookkeeping for a declared option ([*clsguide*][clsguide] § 4.4–4.5). `\ProcessOptions`
   runs the declared options in declaration order against what the package
   and the class were given, `\ProcessOptions*` in the given order instead.
 * **key**: a macro was stored under a key-store convention `\define@key`,
-  keyval's `\setkeys`, or pgfkeys/l3keys use — `\KV@⟨family⟩@⟨key⟩` (or a
+  keyval's `\setkeys`, or pgfkeys/l3keys use, `\KV@⟨family⟩@⟨key⟩` (or a
   package's own renamed copy of the same prefix, as enumitem's `enitkv@`
-  is) or `\pgfk@⟨path⟩` and its `.@cmd`/`.@def` companions — recognized by
+  is) or `\pgfk@⟨path⟩` and its `.@cmd`/`.@def` companions, recognized by
   the convention, not by package name.
 * Otherwise, the primitive that made it: `\def` is `macro`, `\let` is
   `alias`, a register allocation is `register`.
@@ -535,13 +550,13 @@ outside.
 
 Labels, citations and the other keys a document declares through its
 auxiliary files are observed the same way. Every line a `\write` hands an
-opened file — expanded as `\immediate` expands it, or as shipout does with
-`\protect` acting as `\noexpand` — is run in a copy of the kernel state at
+opened file, expanded as `\immediate` expands it, or as shipout does with
+`\protect` acting as `\noexpand`, is run in a copy of the kernel state at
 `\begin{document}`, `@` a letter, where the next run reads the `.aux` back.
 A key is text the document gave the writing call: characters whose tokens
 stand in the document's own file, never text found by searching the source.
 A name the line defines that is made of such a key is a key the writing
-call declares (`\newlabel{k}` defines `\r@k`, `\bibcite{k}` `\b@k`); a key
+call declares (`\newlabel{k}` defines `\r@k`, `\bibcite{k}` `\b@k`). A key
 the same call declares as another's extension (cleveref's `k@cref`) is that
 key with the extension as suffix. A name of that shape a body call reads is
 a use of the key, declared or not. A line that defines nothing but whose
@@ -549,8 +564,8 @@ argument its own call reads in such a name (`\cite{k}` writes `\citation{k}`
 and tests `\b@k`) names the key for the program that reads the file: a
 citation, and the declarations of that shape are bibliography entries. A
 line written in another line's argument (`\@writefile{toc}{\contentsline…}`)
-goes onward to a list file; an entry whose level has a running head
-(`\⟨level⟩mark`) is a sectioning unit. What else is written names files; a
+goes onward to a list file. An entry whose level has a running head
+(`\⟨level⟩mark`) is a sectioning unit. What else is written names files. A
 name that resolves to a `.bib` database, or ends in `.bib` (a `.bcf`
 datasource), is a bibliography. Keys that never pass through a read-back file are declared the same way
 during the run: a name a call in the document's own files defines whose
@@ -558,7 +573,7 @@ spelling embeds the content of one of the call's braced arguments
 (`\newglossaryentry{k}` defines `\glo@k@name`, `\DeclareAcronym{k}` its
 properties) declares key `k`, unless the call loaded a file of that name or
 read the key itself as a name. The first call to define names of a key
-declares it; a later one, and a read of a name of its shape by a call given
+declares it. A later one, and a read of a name of its shape by a call given
 that key, uses it. The keys a line carries for another program
 (`\indexentry`, `\glossaryentry`) are entries. No table of `.aux` commands
 is consulted.
@@ -573,7 +588,7 @@ lthooks setters) is copied, not run, by an `\edef` body, `\expanded`,
 ## 13. expl3
 
 An expl3 *function* is `\⟨module⟩_⟨description⟩:⟨signature⟩`, or
-`\__⟨module⟩_…` when private; a *variable* is
+`\__⟨module⟩_…` when private. A *variable* is
 `\⟨scope⟩_⟨module⟩_⟨description⟩_⟨type⟩` and has no colon. The signature gives
 the number of arguments: one per letter of `N n c V v o x e f T F`, and an
 empty signature means none. A signature containing `p` (a parameter text),
@@ -582,7 +597,7 @@ empty signature means none. A signature containing `p` (a parameter text),
 `satex` uses this rule to step over any expl3 function correctly, including
 ones it does not model.
 
-### What a command takes
+### Command signatures
 
 The signature `explain` reports is not read off the names of the kernel's
 dispatchers or off a spec table (§ 12): every command, `\NewDocumentCommand`
@@ -591,22 +606,22 @@ end of the run, or at `\begin{document}` for the preamble, reads the command
 followed by probe input and stops when the main loop takes a probe character
 itself, which the command then did not consume. Nothing it does is recorded.
 The probe input is `⟨p⟩`, what is known to be taken so far, followed by
-`{X}{X}…`; `n` is how much of that the command consumes. The run also notes:
+`{X}{X}…`. `n` is how much of that the command consumes. The run also notes:
 
 - where a parameter text was not matched ([tex.web § 398][tw-398], "doesn't match its
   definition"): required text such as the `x` of `\def\a x#1`, or a delimited
   argument that ran out of input before its delimiter ([§ 392][tw-392]), or the `{` of
-  `#{`. This is learned wherever it happens — in the command's own parameter
+  `#{`. This is learned wherever it happens, in the command's own parameter
   text, in a macro it calls in any position, behind `\@ifnextchar` or
   `\futurelet`. Consumption stops there: the argument was not read.
 - which characters a probe character, taken by `\let` or `\futurelet`, is
-  compared with by `\ifx` (what the command looks for there);
+  compared with by `\ifx` (what the command looks for there).
 - which keywords and quantities TeX's scanners read at a probe character
-  ([The TeXbook][texbook], chapter 24): `to`, `plus`, `=`; ⟨number⟩, ⟨dimen⟩, ⟨glue⟩.
+  ([The TeXbook][texbook], chapter 24): `to`, `plus`, `=`. ⟨number⟩, ⟨dimen⟩, ⟨glue⟩.
 
 At `⟨p⟩`, in order: a star is taken when `⟨p⟩*…` consumes exactly `n + 1`
 and is wanted to the same effect after it (or, where nothing was wanted, the
-starred form then wants a delimited argument: `\@ifstar\a\b`); a character
+starred form then wants a delimited argument: `\@ifstar\a\b`). A character
 `c` looked for is an optional argument (`[P]`, `n + 3`), a flag (`c`, as ltcmd's
 `t`), an embellishment (`c{X}`, `e`) or the opening of a delimited argument
 (`cP` followed by the closing the run then wants, `d`/`r`: required when the
@@ -614,12 +629,12 @@ call without it raises an error). None of these is taken when it is the very
 text the plain call was refused for (`\def\a[#1]`), or when a macro took it as
 text of a delimited argument (`\def\a#1#{…}`). Then a keyword tried before
 any quantity began there, with the quantity it takes, keywords taking the
-same being alternatives (`to|spread`); then a quantity; then required text or
-a delimited argument wanted right here; and a mandatory argument when `n > 0`.
+same being alternatives (`to|spread`). Then a quantity. Then required text or
+a delimited argument wanted right here, and a mandatory argument when `n > 0`.
 The default of an optional argument is shown when the macro argument that
 held `P` holds text of its own when the bracket is left out, and text no call
 can write (ltcmd's `-NoValue-`) is none. The probe is bounded in tokens and
-time; past what it could decide the signature is unknown (`…`); where it
+time. Past what it could decide the signature is unknown (`…`). Where it
 cannot say at all, a delimited parameter text is what the command reads.
 
 The signature is written in one notation, xparse's where it has a letter:
@@ -634,16 +649,16 @@ A name can mean different things at different places in a run beyond the
 preamble/document split (§ "Several definitions" in the wiki): `\item`
 outside any list is the kernel's own error, inside `enumerate` or `itemize`
 (both built on `\trivlist`) it typesets one. Every recorded definition
-carries the environment stack in force where it was made — `\@currenvir`
+carries the environment stack in force where it was made, `\@currenvir`
 generalized to however deeply the run had nested, tracked the same way as
-`\begin{document}`'s own boundary (§ 9's `document_depth`) — read from the
+`\begin{document}`'s own boundary (§ 9's `document_depth`), read from the
 run's own `\begin`/`\end` occurrences, never from a table of environment
 names. `explain` groups a name's definitions by that context: two made in
 different places with the same replacement text are one meaning, shown
-under every context that holds it; two with different text are two. A name
+under every context that holds it. Two with different text are two. A name
 never redefined can still differ by context when what it calls does: the
 error a real use in the run raised there (found the same way `raised-error`
-finds one, § lint) stands in for the meaning; without a real use in that
+finds one, § lint) stands in for the meaning. Without a real use in that
 context, the meaning falls back to what probing the command turns up
 instead.
 
@@ -654,11 +669,11 @@ known, `satex` **over-approximates**: it takes every outcome that the engine
 could take, so that nothing real is missed. It never picks one outcome to move
 on, and it never invents a meaning.
 
-* **Undecided conditionals.** Every choice `satex` cannot decide — an
+* **Undecided conditionals.** Every choice `satex` cannot decide, an
   undecided conditional (`\ifcase` over a selector interval included), a
   name a join left with one of several meanings, a set of modes, unknown
   digits at `\futurelet`, an unknown character that may be active, or a
-  conditional crossing a file end — is made by one primitive: it takes
+  conditional crossing a file end, is made by one primitive: it takes
   every arm the choice allows, each on a path of its own. With `arm_joins`
   on (off by default while its cost on the kernel and on
   `\DocumentMetadata` is bounded), inside a body read while expanding
@@ -687,13 +702,13 @@ on, and it never invents a meaning.
   read from the source since is a pass of a loop whose exit is undecided
   (`\loop … \ifhbox … \repeat`, pgfmath's `\let\next\pgfmathdivide@@ …
   \next`). Its state is joined into the head's (the join of the bindings
-  below; the modes united), and it goes on only when that grew the head's
-  state, from the join, which covers every earlier round; nothing grown is
+  below, the modes united), and it goes on only when that grew the head's
+  state, from the join, which covers every earlier round. Nothing grown is
   the fixpoint, and the last round's paths are the loop's result, for every
   number of passes. After `widen_after` rounds (3) every binding that still
   grows is **widened**: a meaning set to an unknown meaning (a switch to an
   undecided switch), a moving bound of an interval to the end of TeX's
-  range, other values to unknown; so every loop ends within `widen_after +
+  range, other values to unknown. So every loop ends within `widen_after +
   2` rounds. A head met deeper in its input each time is a recursion: after
   `widen_after` deeper levels, deeper ones are not analyzed and the run
   says so (Unsupported `undecided-loop`, limit `widen_after`).
@@ -701,7 +716,7 @@ on, and it never invents a meaning.
   value is not known is still a number of its kind, in an interval
   `[lo, hi]` within TeX's 32-bit range and, when there are at most
   `value_set` (5) of them, one of a set of values. A box dimension or a
-  node size starts from ±`\maxdimen`; a register of unknown value, and
+  node size starts from ±`\maxdimen`. A register of unknown value, and
   widening, from the whole 32-bit range, which `\advance` can reach.
   `\advance`, `\multiply`, `\divide` and every step of `\numexpr` and
   `\dimexpr` are TeX's exact operation (§ 11) on every combination of
@@ -711,11 +726,11 @@ on, and it never invents a meaning.
   constant, truncation and rounding included). A corner past the bound
   is an error: the in-range results lie in the clipped hull, joined with
   the unchanged register (`\multiply`, `\divide`) or with 0 (an
-  expression, whose error makes the whole result 0); a zero divisor in
+  expression, whose error makes the whole result 0). A zero divisor in
   the interval is likewise an error. A wrapping `\advance` (or −2³¹ ÷ −1)
   whose corner may leave 32 bits is any 32-bit number. An expression
   every member of which errs is 0. `\ifnum`, `\ifdim` and `\ifodd` are
-  decided whenever the intervals (or every pair of members) decide them;
+  decided whenever the intervals (or every pair of members) decide them.
   `\ifcase` is decided when the selector's interval lies in one case (all
   negative is the `\else` text), and otherwise splits only into the arms
   from its lowest to its highest value, and the `\else` text when it may
@@ -739,8 +754,8 @@ on, and it never invents a meaning.
   A brace met by `\csname` after an unknown part of its name ends the
   name, which is unknown, and leaves what follows the brace where it is.
 * **Paths join by program point.** Paths wait on a worklist and join where
-  they stand at the same place — the same input, the same conditionals, the
-  same groups and the same source progress — so a dispatch that passes its
+  they stand at the same place, the same input, the same conditionals, the
+  same groups and the same source progress, so a dispatch that passes its
   continuation along, as pgfmath's parser does, does not multiply the
   paths. Paths at one place that differ in what a join loses (mode,
   category codes, `\endlinechar`, a waiting `\afterassignment` token,
@@ -762,17 +777,17 @@ on, and it never invents a meaning.
 * **Typesetting is not modeled.** Box dimensions, the last item of a list
   and page breaks are unknown, so a conditional on them is undecided and goes
   through the rule above. The mode is tracked (§ 9).
-* **Unknown text.** What the engine yields and `satex` cannot know — a
+* **Unknown text.** What the engine yields and `satex` cannot know, a
   random number, an unknown register or parameter under `\the`, `\number`
   or `\string` with an unknown `\escapechar`, a line read from the terminal
   in `\scrollmode` or `\errorstopmode`
   (a stream that is not open), the text of an undecided conditional inside
-  an `\edef` — is a token of unknown meaning. A number scanned from it is
+  an `\edef`, is a token of unknown meaning. A number scanned from it is
   unknown, text built from it (`\detokenize`, `\pdfmdfivesum`) is unknown,
   a replacement text holding it is not certain, and `\ifx` of such a macro
   with another macro is undecided. `\csname` with it inside builds one
   control sequence of unknown meaning known by the characters before and
-  after the unknown part; defining it may define any name with that prefix
+  after the unknown part. Defining it may define any name with that prefix
   and suffix, so from then on such a name is not known to be undefined
   (`\MT@inh@…` never makes `\@nil` so). While no defined name has that
   prefix and suffix and no such definition was made, the name it builds
@@ -781,7 +796,7 @@ on, and it never invents a meaning.
   free instead of parting into its error path. Defining unknown text as a name
   leaves no name known to be undefined. Unknown text may hold a delimiter: a delimited argument that
   meets it at brace level 0 ends in it, and required text before an
-  argument is taken to begin it; the rest of that text is read next as
+  argument is taken to begin it. The rest of that text is read next as
   unknown text of the same class, shorter by the delimiter. Only the text
   before the first delimiter is free of it (tex.web § 392), so the rest
   may hold it, or the next one (`macro:#2->#3` of a `\meaning`). The
@@ -797,17 +812,17 @@ on, and it never invents a meaning.
   error whose cause is exact whatever was approximated, a name certainly
   undefined expanded or run (§ 370): named assumption "the document
   compiles". A loop
-  taking bounded text apart ends as the text shrinks; one over unbounded
+  taking bounded text apart ends as the text shrinks. One over unbounded
   text ends at its loop head. Unknown digits taken as one token (an
   undelimited argument, the token `\futurelet` looks at) are one digit,
-  0 to 9, followed by unknown digits that may be none; where `\futurelet`
+  0 to 9, followed by unknown digits that may be none. Where `\futurelet`
   looks at those, the run splits into a path on which it sees one more
   digit and one on which it sees what follows. `\csname` of a name with
   one unknown digit in it is one of the ten names, holding one of their
   meanings (an undefined one `\relax`), and `\ifx` of names that hold one
   of several meanings is decided when every pair of meanings decides it
-  alike; `\let` copies such a set with the meaning. `\expandafter` of a
-  name of unknown meaning, and `\edef` expanding it, give unknown text;
+  alike. `\let` copies such a set with the meaning. `\expandafter` of a
+  name of unknown meaning, and `\edef` expanding it, give unknown text.
   of one a join left one of several macros without parameters, a token
   that stands for one of their texts. Signs that come from such a name
   whose every text is signs make the number unknown and are read past.
@@ -827,7 +842,7 @@ on, and it never invents a meaning.
   scan and to `\csname`, but a character of category 12 to `\ifx`, `\if`,
   `\ifcat`, `\let` and `\futurelet`: `\ifx` against a macro or a
   primitive is false, against a character of another category false, and
-  against one of category 12 undecided; `\if` is undecided unless the other
+  against one of category 12 undecided. `\if` is undecided unless the other
   token is a control sequence.
 * **A skip that leaves its file.** When skipping for a conditional whose
   `\if…` came from one file (a package's macro, say) reaches another file's
@@ -839,9 +854,9 @@ on, and it never invents a meaning.
   path is taken.
 * **Joins.** A register or code assigned on one path only is unknown after
   the join. **[abstraction]** A name the paths gave different meanings has
-  *one of* those meanings after the join (up to `meaning_set`, 8; more
+  *one of* those meanings after the join (up to `meaning_set`, 8, more
   widen it to an unknown meaning), and everything that does not look at
-  that set sees an unknown meaning; `\ifdefined` and `\if` are decided when
+  that set sees an unknown meaning. `\ifdefined` and `\if` are decided when
   every member decides them alike. A register the paths left with
   different numbers holds their join (above). The main loop executing such
   a name, or `\ifx` comparing it, splits the run into a path per meaning,
@@ -849,11 +864,11 @@ on, and it never invents a meaning.
   each on its own path and `\ifx\next\relax` is false on both. A token
   that stands for one of several texts (a join left it in a body or an
   input) is, as an operand of `\ifx`, that text on a path per text, so
-  the first token of each is what is compared; the paths
+  the first token of each is what is compared. The paths
   join like the arms of an undecided conditional, and a dispatch that comes
   round again is a loop head as above. `meaning_splits` (4) counts such
   choices the command has already made on its path, not how deep paths
-  nest; past it, or past `limits.choices` choices in all, or inside an
+  nest. Past it, or past `limits.choices` choices in all, or inside an
   `\edef` or a scan, the name is one of unknown meaning. The default is
   deliberately shallow: on a TikZ document deeper splits run pgfmath's
   parser over more unknown text and report more that a real run does not.
@@ -864,7 +879,7 @@ on, and it never invents a meaning.
 * **File end inside a scan** ([tex.web §§ 336][tw-336]–[339][tw-339]): a file or `\scantokens`
   pseudo file that ends while a definition or text is scanned ends it (the
   inserted `}`), while conditional text is skipped ends the skip (`\fi`),
-  and while macro arguments are matched abandons the call; each is a
+  and while macro arguments are matched abandons the call. Each is a
   `file-ended` warning. Only a scan ends there. A read outside one goes on
   in the file that opened this one, which is what lets the `\futurelet` of
   `\@ifnextchar` see past the end of an `\input` file, so a `\usepackage`
@@ -901,13 +916,13 @@ finding that depends on such a point says so.
   an observed recursion only when the run could not see it end.
 * **Recursion** is widened: a macro that re-enters itself more than
   `max_expansions` times, or is expanded more than `max_site_expansions` times
-  at one call site — the shape of every TeX loop — stops being unfolded, and
+  at one call site, the shape of every TeX loop, stops being unfolded, and
   its result becomes unknown.
 * **Budgets** bound tokens, graph size, fact counts, held tokens, the save
   stack, and the material one conditional may span. Reaching one stops the
   analysis with a `budget-exhausted` diagnostic. As in TeX, running out of
-  capacity — expansion nested 300 deep inside scans, a token list longer than
-  the held-token bound, more than 15 open (pseudo) files — stops the run.
+  capacity, expansion nested 300 deep inside scans, a token list longer than
+  the held-token bound, more than 15 open (pseudo) files, stops the run.
 
 **Termination** does not rest on any of these. One guard sees every step:
 each token read, each pass of the path driver, each replay. It charges the
@@ -946,7 +961,7 @@ what the run that wrote it did.
 * The **kernel cache** holds the meanings and catcodes [`latex.ltx`][latex.ltx] leaves. It
   is keyed on the installation, the engine, the preloaded format and the
   semantic version, and rejected when a file it was read from changed.
-* Every cache is keyed on `SEMANTIC_VERSION` (`src/format.rs`), bumped by
+* Every cache is keyed on `SEMANTIC_VERSION` (`src/caches/format.rs`), bumped by
   hand when cache semantics change. A golden test fails when the analysis
   changes without a bump. Builds outside the `release` profile add their
   source digest, so local edits never replay a stale cache.
@@ -976,8 +991,8 @@ what the run that wrote it did.
   `\opt@⟨file⟩`, `\ver@⟨file⟩`) and enter the read set like any other name.
   The class options are one of them: the kernel's `\ProcessOptions` looks
   for each declared option in `\@classoptionslist` (`\in@` over an `\edef`
-  copy), so a package that declares options — or maps the list itself, as
-  xcolor does — is read again when they change, and only one that declares
+  copy), so a package that declares options, or maps the list itself, as
+  xcolor does, is read again when they change, and only one that declares
   none stays served.
   A read records only the part it looked at: whether a name is defined, what
   skipping a conditional sees of it, and for `\ifx` of a macro with a
@@ -987,12 +1002,12 @@ what the run that wrote it did.
   unexamined (the kernel's `\@filelist`). The segment records the new text
   with the old one's place in it, and a replay puts whatever text `\l`
   holds there, so a different list before the load still hits and ends as
-  reading the file would. Any other use of the old text — a conditional,
+  reading the file would. Any other use of the old text, a conditional,
   `\meaning`, a match against a delimited parameter, a copy under another
   name, a second copy, a local definition, the text growing past a limit
-  it met — is an ordinary read of it.
+  it met, is an ordinary read of it.
   The file is cut into *segments* at line starts where the interpreter is at
-  rest (no open group, argument or expansion beyond the load's own); each
+  rest (no open group, argument or expansion beyond the load's own). Each
   segment stores its read set and its effect, and the segments form a tree.
   A run replays the longest prefix of segments whose read sets it agrees on
   and reads the rest of the file, storing that tail as a new branch. A
@@ -1009,22 +1024,23 @@ what the run that wrote it did.
 
 ## 16. Stubs
 
-Stubs are a temporary exception. The goal is none: satex should run every
-macro it meets. Until it can, `stubs:` in `satex.yaml` replaces the
-expansion of a named macro by an effect summary. Its arguments are read and
-recorded, then a result is left (a box of unknown size, unknown digits,
-unknown text or nothing) and the names in `sets` become unknown. The result is
-typed: an element of the
+SaTeX needs no stubs. It runs the real macros of the kernel and the
+packages. A stub is still available for a macro you want to model on
+purpose. `stubs:` in `satex.yaml` replaces the expansion of a named macro by
+an effect summary. Its arguments are read and recorded. Then a result is left
+(a box of unknown size, unknown digits, unknown text or nothing) and the names
+in `sets` become unknown. The result is typed: an element of the
 [lattice of unknown text](doc/wiki/domains.md#unknown-text-the-textclass-lattice),
-the narrowest one that is sound for the macro. A stub is
-sound exactly when its summary is: `sets` must list every name the macro
-assigns, and `result` must cover what it leaves. There are no stubs by
-default, and each use is reported as an `assumption` (`stubbed`), once per
-name and run. A stub applies only to the package's own definition: a
-document that redefines the name gets its own meaning back.
+the narrowest one that is sound for the macro.
+
+A stub is sound exactly when its summary is. `sets` must list every name the
+macro assigns, and `result` must cover what it leaves. There are no stubs by
+default. Each use is reported as an `assumption` (`stubbed`), once per name
+and run. A stub applies only to the package's own definition. A document that
+redefines the name gets its own meaning back.
 
 [texbook]: https://ctan.org/pkg/texbook
-[tex.web]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web
+[tex.web]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web
 [tex-by-topic]: https://ctan.org/pkg/texbytopic
 [etex_man]: https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf
 [clsguide]: https://ctan.org/pkg/clsguide
@@ -1034,80 +1050,80 @@ document that redefines the name gets its own meaning back.
 [expl3-code]: https://github.com/latex3/latex3/tree/0838953eace80b804cd47e8a5ee7ff37f8b8b6e0/l3kernel
 [plain]: https://ctan.org/pkg/plain
 [etex.ch]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/etexdir/etex.ch
-[latex.ltx]: https://github.com/latex3/latex2e/tree/ac5f3d56666db2b895ca8f70959cfdccd6445419/base
+[latex.ltx]: https://github.com/latex3/latex2e/tree/db6df6380f8660758d26b9666d0e70600a3d7be9/base
 
 <!-- tex.web modules. Re-pin with `python3 scripts/tex-web-links.py --update SEMANTICS.md`;
      `--check` (run in CI) fails if these have drifted from the current upstream commit. -->
-[tw-31]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L908
-[tw-82]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L1875
-[tw-105]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L2254
-[tw-106]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L2272
-[tw-211]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4220
-[tw-232]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4811
-[tw-240]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L5228
-[tw-262]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L5588
-[tw-265]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L5652
-[tw-268]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L5813
-[tw-269]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L5859
-[tw-279]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L6010
-[tw-283]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L6070
-[tw-303]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L6475
-[tw-306]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L6608
-[tw-326]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7035
-[tw-336]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7144
-[tw-339]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7202
-[tw-347]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7326
-[tw-352]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7371
-[tw-358]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7503
-[tw-362]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7563
-[tw-367]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7681
-[tw-372]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7745
-[tw-373]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7759
-[tw-392]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8022
-[tw-398]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8133
-[tw-424]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8517
-[tw-446]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8802
-[tw-448]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8829
-[tw-449]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8875
-[tw-455]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8965
-[tw-461]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9064
-[tw-473]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9292
-[tw-476]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9357
-[tw-477]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9381
-[tw-478]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9395
-[tw-482]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9444
-[tw-484]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9485
-[tw-486]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9507
-[tw-498]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9711
-[tw-500]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9742
-[tw-506]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9814
-[tw-507]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9840
-[tw-526]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L10201
-[tw-571]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11108
-[tw-580]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284
-[tw-649]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L12910
-[tw-668]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L13152
-[tw-1034]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20114
-[tw-1040]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20271
-[tw-1041]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20321
-[tw-1044]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20372
-[tw-1045]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20377
-[tw-1063]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20637
-[tw-1077]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20915
-[tw-1105]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21264
-[tw-1110]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21332
-[tw-1145]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21755
-[tw-1200]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22526
+[tw-31]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L908
+[tw-82]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L1875
+[tw-105]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L2254
+[tw-106]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L2272
+[tw-211]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L4220
+[tw-232]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L4811
+[tw-240]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L5228
+[tw-262]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L5588
+[tw-265]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L5652
+[tw-268]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L5813
+[tw-269]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L5859
+[tw-279]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L6010
+[tw-283]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L6070
+[tw-303]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L6475
+[tw-306]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L6608
+[tw-326]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L7035
+[tw-336]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L7144
+[tw-339]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L7202
+[tw-347]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L7326
+[tw-352]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L7371
+[tw-358]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L7503
+[tw-362]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L7563
+[tw-367]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L7681
+[tw-372]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L7745
+[tw-373]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L7759
+[tw-392]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L8022
+[tw-398]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L8133
+[tw-424]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L8517
+[tw-446]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L8802
+[tw-448]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L8829
+[tw-449]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L8875
+[tw-455]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L8965
+[tw-461]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L9064
+[tw-473]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L9292
+[tw-476]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L9357
+[tw-477]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L9381
+[tw-478]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L9395
+[tw-482]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L9444
+[tw-484]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L9485
+[tw-486]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L9507
+[tw-498]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L9711
+[tw-500]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L9742
+[tw-506]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L9814
+[tw-507]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L9840
+[tw-526]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L10201
+[tw-571]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L11108
+[tw-580]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L11284
+[tw-649]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L12910
+[tw-668]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L13152
+[tw-1034]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L20114
+[tw-1040]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L20271
+[tw-1041]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L20321
+[tw-1044]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L20372
+[tw-1045]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L20377
+[tw-1063]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L20637
+[tw-1077]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L20915
+[tw-1105]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L21264
+[tw-1110]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L21332
+[tw-1145]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L21755
+[tw-1200]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L22526
 [tw-1211]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22720
 [tw-1217]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22811
-[tw-1221]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22838
-[tw-1229]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22996
-[tw-1236]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L23078
-[tw-1240]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L23160
-[tw-1257]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L23346
-[tw-1260]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L23404
+[tw-1221]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L22838
+[tw-1229]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L22996
+[tw-1236]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L23078
+[tw-1240]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L23160
+[tw-1257]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L23346
+[tw-1260]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L23404
 
 <!-- etex.ch identifiers -->
-[ech-pseudo_input]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/etexdir/etex.ch#L4654
-[ech-scan_expr]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/etexdir/etex.ch#L5006
-[ech-every_eof_loc]: https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/etexdir/etex.ch#L442
+[ech-pseudo_input]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/etexdir/etex.ch#L4654
+[ech-scan_expr]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/etexdir/etex.ch#L5006
+[ech-every_eof_loc]: https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/etexdir/etex.ch#L442

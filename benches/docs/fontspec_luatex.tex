@@ -1,0 +1,8 @@
+% Exercises: fontspec + unicode-math under lualatex, lua callbacks via \directlua, math fonts.
+\documentclass{article}
+\usepackage{fontspec}\usepackage{unicode-math}
+\setmainfont{Latin Modern Roman}\setmathfont{Latin Modern Math}
+\begin{document}
+\section{Lua}Value: \directlua{tex.sprint(math.floor(7*6))}. $\sum_{i=1}^{n} \alpha_i \leq \int_0^\infty f(x)\,dx$
+\directlua{for i=1,5 do tex.sprint("["..i.."]") end}
+\end{document}

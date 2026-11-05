@@ -6,9 +6,9 @@
 
 use crate::support::PRELUDE;
 use crate::support::defined;
-use satex::config::{Config, Engine};
-use satex::machine::{Analysis, Machine};
-use satex::plugin::Kernel;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::plugins::Kernel;
+use satex::project::config::{Config, Engine};
 
 fn run(source: &str, path: Option<&std::path::Path>, engine: Option<Engine>) -> Analysis {
     let cfg = Config { engine, kernel: Some(Kernel::None), ..crate::support::config() };
@@ -21,7 +21,7 @@ fn run(source: &str, path: Option<&std::path::Path>, engine: Option<Engine>) -> 
 
 fn body(analysis: &Analysis, name: &str) -> String {
     let def = analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == name).unwrap();
-    satex::tex::detokenize(&def.mac.as_ref().unwrap().replacement_text, &analysis.interner)
+    satex::engine::tex::detokenize(&def.mac.as_ref().unwrap().replacement_text, &analysis.interner)
 }
 
 #[test]
@@ -124,7 +124,7 @@ luacmd('size', function()\n  local size = filesize(scan_string())\n  if size the
 #[test]
 fn an_installed_font_answers_its_opentype_scripts() {
     // xetex: `3:1145457748:0` (`DFLT` first; past the list, 0).
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let source = format!(

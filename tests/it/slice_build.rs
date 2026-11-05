@@ -13,9 +13,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use satex::config::Config;
-use satex::machine::Machine;
-use satex::query::{self, At, Direction};
+use satex::analysis::machine::Machine;
+use satex::project::config::Config;
+use satex::queries::query::{self, At, Direction};
 
 /// Where the installed engines live; `None` skips the case.
 fn engine(name: &str) -> Option<PathBuf> {
@@ -80,7 +80,7 @@ fn compile(binary: &Path, directory: &Path, file: &str, passes: usize) -> Run {
     }
     let log = std::fs::read_to_string(directory.join(format!("{stem}.log"))).unwrap_or_default();
     let pdf = directory.join(format!("{stem}.pdf"));
-    let text = (pdf.is_file() && satex::paths::which("pdftotext").is_ok())
+    let text = (pdf.is_file() && satex::project::paths::which("pdftotext").is_ok())
         .then(|| {
             let out = Command::new("pdftotext").arg(&pdf).arg("-").output().ok()?;
             Some(String::from_utf8_lossy(&out.stdout).to_string())
@@ -171,9 +171,14 @@ fn check(case: &Case) -> Option<String> {
     std::fs::create_dir_all(&slice).unwrap();
     for (name, text) in case.files {
         std::fs::write(original.join(name), text).unwrap();
-        std::fs::write(slice.join(name), text).unwrap();
     }
     let text = sliced(case, &original);
+    // A LaTeX document's slice is standalone: it compiles in an empty directory.
+    if !text.contains("\\documentclass") {
+        for (name, text) in case.files {
+            std::fs::write(slice.join(name), text).unwrap();
+        }
+    }
     std::fs::write(slice.join(case.file), &text).unwrap();
     let run_file = match case.driver {
         Some(driver) => {
@@ -217,7 +222,7 @@ fn check(case: &Case) -> Option<String> {
 }
 
 fn run_all(cases: &[Case]) {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let failures: Vec<String> = cases.iter().filter_map(check).collect();
@@ -567,4 +572,185 @@ fn package_and_class_slices_load_like_the_original() {
             ..Case::new("class", "pdflatex", CLASS, 0)
         },
     ]);
+}
+
+fn line_of(source: &str, needle: &str) -> u32 {
+    source.lines().position(|l| l.contains(needle)).expect("the needle") as u32 + 1
+}
+
+// --- standalone -----------------------------------------------------------
+
+/// A one-page PDF `width` by `height` bp, its cross-reference table counted.
+fn tiny_pdf(width: u32, height: u32) -> String {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] >>"),
+    ];
+    let mut pdf = String::from("%PDF-1.4\n");
+    let mut offsets = Vec::new();
+    for (i, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.push_str(&format!("{} 0 obj\n{object}\nendobj\n", i + 1));
+    }
+    let xref = pdf.len();
+    pdf.push_str(&format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1));
+    for offset in offsets {
+        pdf.push_str(&format!("{offset:010} 00000 n \n"));
+    }
+    pdf.push_str(&format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1));
+    pdf
+}
+
+/// A graphic the slice does not ship: its stand-in takes the same room.
+const LATEX_GRAPHIC: &str = r"\documentclass{article}
+\usepackage{graphicx}
+\begin{document}
+\sbox0{\includegraphics[width=3cm]{pic}}
+\typeout{SATEX<a|\the\wd0 x \the\ht0|SATEX}
+\end{document}
+";
+
+#[test]
+fn a_standalone_slice_compiles_in_an_empty_directory() {
+    let pic: &'static str = Box::leak(tiny_pdf(200, 50).into_boxed_str());
+    let files: &'static [(&str, &str)] = Box::leak(Box::new([("pic.pdf", pic)]));
+    let graphic =
+        Case { files, ..Case::new("standalone-graphic", "pdflatex", LATEX_GRAPHIC, line_of(LATEX_GRAPHIC, OPEN)) };
+    let directory = scratch("standalone-graphic-text");
+    std::fs::write(directory.join("pic.pdf"), pic).unwrap();
+    let text = sliced(&graphic, &directory);
+    assert!(text.contains("example-image"), "the graphic stays:\n{text}");
+    let input = Case {
+        files: &[("part.tex", PART), ("mypkg.sty", MYPKG)],
+        ..Case::new("standalone-input", "pdflatex", LATEX_INPUT, line_of(LATEX_INPUT, OPEN))
+    };
+    run_all(&[graphic, input]);
+}
+
+/// `slice --out` that slices nothing fails and says why: the playground's
+/// Slice shows that reason, not a bare "failed".
+#[test]
+fn an_empty_slice_with_out_fails_with_its_reason() {
+    let directory = scratch("empty-out");
+    std::fs::write(directory.join("doc.tex"), "\\relax\n").unwrap();
+    let output = crate::support::satex()
+        // a line past the end: nothing the run reached
+        .args([
+            "slice",
+            "--at",
+            "40:1",
+            "--out",
+            "slice",
+            "-f",
+            "doc.tex",
+            "--set",
+            "engine=tex",
+            "--set",
+            "kernel=plain",
+        ])
+        .current_dir(&directory)
+        .output()
+        .expect("satex runs");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "an empty slice succeeded: {stderr}");
+    assert!(stderr.contains("names nothing the run reached"), "no reason given: {stderr}");
+    assert!(!directory.join("slice").exists(), "an empty slice wrote a directory");
+}
+
+/// A token stored on its line and run later (a key's value, run by the
+/// environment that reads the key) slices from where it runs: the
+/// playground's Slice on it gave an empty slice before.
+#[test]
+fn a_stored_token_slices_from_where_it_runs() {
+    let directory = scratch("stored-token");
+    let source = "\\documentclass{article}\n\\usepackage{listings}\n\\lstset{basicstyle=\\ttfamily\\small}\n\
+                  \\begin{document}\n\\begin{lstlisting}\nx\n\\end{lstlisting}\n\\end{document}\n";
+    std::fs::write(directory.join("doc.tex"), source).unwrap();
+    let col = source.lines().nth(2).and_then(|l| l.find("\\small")).expect("the stored token") + 1;
+    let output = crate::support::satex()
+        .args(["slice", "--at", &format!("3:{col}"), "--out", "slice", "-f", "doc.tex"])
+        .current_dir(&directory)
+        .output()
+        .expect("satex runs");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "no slice: {stderr}");
+    let sliced = std::fs::read_to_string(directory.join("slice/doc.tex")).expect("the sliced file");
+    assert!(sliced.contains("\\lstset") && sliced.contains("lstlisting"), "the slice misses its run:\n{sliced}");
+}
+
+/// A line of plain text holds no construct: Slice on it keeps the line, read
+/// after the construct before it, instead of an empty slice.
+#[test]
+fn a_plain_text_line_slices_to_itself() {
+    let directory = scratch("plain-line");
+    let source = "\\documentclass{article}\n\\begin{document}\n\\textbf{bold and\nplain words here}\n\\end{document}\n";
+    std::fs::write(directory.join("doc.tex"), source).unwrap();
+    let output = crate::support::satex()
+        .args(["slice", "--at", "4:7", "--out", "slice", "-f", "doc.tex"])
+        .current_dir(&directory)
+        .output()
+        .expect("satex runs");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "no slice: {stderr}");
+    let sliced = std::fs::read_to_string(directory.join("slice/doc.tex")).expect("the sliced file");
+    assert!(
+        sliced.contains("plain words here") && sliced.contains("\\textbf{bold"),
+        "the line or its reader is missing:\n{sliced}"
+    );
+}
+
+/// A line of a macro body runs only at the calls: Slice on it slices the
+/// definition. The magic comment that picks the engine stays, so the slice
+/// builds with the same one (a plain TeX file is no LaTeX file).
+#[test]
+fn a_macro_body_line_slices_its_definition_with_the_magic_comment() {
+    let directory = scratch("body-line");
+    let source = "% !TeX program = tex\n\\def\\twice#1{%\n  #1#1%\n}\n\\twice{ab}\n\\bye\n";
+    std::fs::write(directory.join("doc.tex"), source).unwrap();
+    let output = crate::support::satex()
+        .args(["slice", "--at", "3:3", "--out", "slice", "-f", "doc.tex"])
+        .current_dir(&directory)
+        .output()
+        .expect("satex runs");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "no slice: {stderr}");
+    let sliced = std::fs::read_to_string(directory.join("slice/doc.tex")).expect("the sliced file");
+    assert!(sliced.starts_with("% !TeX program = tex"), "the magic comment is lost:\n{sliced}");
+    assert!(sliced.contains("\\def\\twice") && sliced.contains("#1#1"), "the definition is missing:\n{sliced}");
+}
+
+// --- the oracle -----------------------------------------------------------
+
+/// The playground's examples, sliced at a few lines each: every slice has
+/// to typeset its line exactly as the original, pixel for pixel.
+#[test]
+fn playground_slices_typeset_their_line_like_the_original() {
+    if satex::project::paths::which("synctex").is_err() || engine("pdflatex").is_none() {
+        return;
+    }
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/site/examples");
+    let picks: [(&str, &str, &[&str]); 3] = [
+        (
+            "thesis.tex",
+            "chapter.tex",
+            &["Figure~\\ref{fig:flow} draws", "\\node (satex)", "Literate programming", "\\caption{"],
+        ),
+        ("slides.tex", "slides.tex", &["\\item<2->", "One \\pause"]),
+        ("rerun.tex", "rerun.tex", &["See Section"]),
+    ];
+    let mut failures = Vec::new();
+    for (main, file, needles) in picks {
+        let work = scratch(&format!("oracle-{main}"));
+        let doc = satex::oracle::slice::Document::prepare(&examples, main, &work).expect("the example builds");
+        let source = std::fs::read_to_string(examples.join(file)).unwrap();
+        let criteria: Vec<(String, u32)> = needles.iter().map(|n| (file.to_string(), line_of(&source, n))).collect();
+        let slices = doc.slice_all(&criteria, true);
+        for ((file, line, dir), verdict) in slices.iter().zip(satex::oracle::slice::check_all(&doc, &slices, 4)) {
+            if matches!(verdict, satex::oracle::slice::Verdict::Mismatch(_) | satex::oracle::slice::Verdict::Fail(_)) {
+                failures.push(format!("{file}:{line}: {verdict:?} ({})", dir.display()));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "slices typeset differently:\n{}", failures.join("\n"));
 }

@@ -1,10 +1,10 @@
 use crate::support::{PRELUDE, analyze_kernel, analyze_plain as analyze, depth_of, diagnosed, last_body, names};
 use crate::support::{body, definition};
-use satex::builtins::OccKind;
-use satex::config::{Config, Load, Texmf};
-use satex::facts::MeaningKind;
-use satex::machine::{Analysis, Machine};
-use satex::query::{self, Filter, Query};
+use satex::analysis::facts::MeaningKind;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::engine::builtins::OccKind;
+use satex::project::config::{Config, Load, Texmf};
+use satex::queries::query::{self, Filter, Query};
 
 #[test]
 fn def_records_parameter_text_and_body() {
@@ -29,6 +29,11 @@ const BODIES: &[crate::support::BodyRow] = &[
     (
         "ifx_of_a_name_with_itself_is_true_whatever_it_means",
         r"\expandafter\let\expandafter\s\csname x\the\pdfelapsedtime\endcsname\def\w#1{\ifx#1\s\def\r{yes}\else\def\r{no}\fi}\w\s",
+        &[("r", "yes")],
+    ),
+    (
+        "a_name_around_number_text_spells_no_name_with_a_letter_there",
+        r"\expandafter\def\csname b0x\endcsname{}\expandafter\ifx\csname b\the\pdfelapsedtime.\the\pdfelapsedtime\endcsname\relax\def\r{yes}\else\def\r{no}\fi",
         &[("r", "yes")],
     ),
     (
@@ -147,7 +152,7 @@ fn a_walk_past_an_undefined_stop_reads_on_as_tex_does() {
     );
     let bodies: Vec<String> = (analysis.facts.defs.iter())
         .filter(|d| analysis.interner.name(d.name) == "rev")
-        .filter_map(|d| d.mac.as_ref().map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner)))
+        .filter_map(|d| d.mac.as_ref().map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner)))
         .collect();
     assert!(bodies.iter().all(|b| ["", "1", "12", "\\def "].contains(&b.as_str())), "{bodies:?}");
 }
@@ -203,7 +208,7 @@ fn labels_and_references_are_recorded() {
     let labels: Vec<&str> =
         analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Label).map(|o| o.key.as_str()).collect();
     assert_eq!(labels, ["sec:one"]);
-    let lints = satex::lint::lint(&analysis);
+    let lints = satex::linter::lint(&analysis);
     assert!(lints.iter().any(|l| l["code"] == "undefined-reference"));
 }
 
@@ -292,7 +297,7 @@ fn filter_errors_are_reported() {
 
 #[test]
 fn a_global_definition_is_a_side_effect_of_the_expansion() {
-    use satex::graph::EdgeKind;
+    use satex::analysis::graph::EdgeKind;
     let analysis = analyze(r"\def\setup{\gdef\later{x}}\setup");
     let effects = analysis
         .graph
@@ -309,7 +314,7 @@ fn a_global_definition_is_a_side_effect_of_the_expansion() {
 
 #[test]
 fn dependency_graph_links_a_call_to_its_definition() {
-    use satex::graph::{EdgeKind, VertexTag};
+    use satex::analysis::graph::{EdgeKind, VertexTag};
     let analysis = analyze_kernel(r"\newcommand{\greet}{hi}\greet");
     let call = analysis
         .graph
@@ -336,7 +341,7 @@ fn scope_respects_position() {
 fn scope_orders_the_kernels_own_definitions_by_the_run() {
     let analysis = analyze_kernel("\\documentclass{article}\n\\usepa\n\\begin{document}\nx\n\\end{document}\n");
     let rows = |at| query::scope(&analysis, at, false);
-    let usepackage = |rows: Vec<satex::query::Record>| rows.into_iter().find(|r| r["name"] == "\\usepackage");
+    let usepackage = |rows: Vec<satex::queries::query::Record>| rows.into_iter().find(|r| r["name"] == "\\usepackage");
     let preamble = usepackage(rows(Some((analysis.main_file, 2, 6)))).expect("\\usepackage in the preamble");
     assert_ne!(usepackage(rows(None)).map(|r| r["line"].clone()), Some(preamble["line"].clone()));
 }
@@ -388,7 +393,7 @@ fn scope_hides_internal_names_unless_all() {
 
 #[test]
 fn expl3_functions_carry_their_arity_in_the_signature() {
-    use satex::tex::expl3_arity;
+    use satex::engine::tex::expl3_arity;
     assert_eq!(expl3_arity("tl_set:Nn"), Some(2));
     assert_eq!(expl3_arity("seq_map_inline:Nn"), Some(2));
     assert_eq!(expl3_arity("cs_new:Npn"), None, "a parameter text has no fixed shape");
@@ -432,7 +437,7 @@ fn plain_tex_primitives_are_known() {
 
 #[test]
 fn dimensions_use_scaled_points() {
-    use satex::value::{UNIT, parse_dimen};
+    use satex::engine::value::{UNIT, parse_dimen};
     assert_eq!(parse_dimen("1pt"), Some(UNIT));
     assert_eq!(parse_dimen("1in"), Some(4_736_286));
     assert_eq!(parse_dimen("1bp"), Some(65_781));
@@ -448,7 +453,7 @@ fn a_file_that_ends_mid_construct_does_not_eat_its_parent() {
 
 #[test]
 fn a_decimal_dimension_is_rounded_before_the_unit_is_applied() {
-    use satex::value::parse_dimen;
+    use satex::engine::value::parse_dimen;
     assert_eq!(parse_dimen("0.1pt"), Some(6554), "6553.6sp rounds away from zero");
     assert_eq!(parse_dimen("1in"), Some(4_736_286), "4736286.72sp truncates");
 }
@@ -464,7 +469,7 @@ fn expl_syntax_suppresses_the_end_of_line() {
 
 #[test]
 fn etex_expressions_respect_precedence() {
-    use satex::value::eval_expr;
+    use satex::engine::value::eval_expr;
     assert_eq!(eval_expr("1+2*3", false), Some(7));
     assert_eq!(eval_expr("(1+2)*3", false), Some(9));
     assert_eq!(eval_expr("-5", false), Some(-5));
@@ -482,7 +487,8 @@ fn document_commands_take_the_full_argument_specification() {
 
 fn sliced(analysis: &Analysis, names: &[&str], forward: bool) -> Vec<String> {
     let criteria: Vec<String> = names.iter().map(|n| n.to_string()).collect();
-    let direction = if forward { satex::query::Direction::Forward } else { satex::query::Direction::Backward };
+    let direction =
+        if forward { satex::queries::query::Direction::Forward } else { satex::queries::query::Direction::Backward };
     query::slice(analysis, &criteria, None, direction)
         .into_iter()
         .map(|record| record["name"].as_str().unwrap_or_default().to_string())
@@ -773,17 +779,58 @@ fn a_switch_asked_about_governs_both_arms() {
     assert_eq!(macros.len(), 2, "both arms are recorded: {governed:?}");
 }
 
+/// A switch is asked about by its stem (`draft` for `\\ifdraft`) or by
+/// the option that sets it, whose handler `\\ProcessOptions` has let to
+/// `\\relax` by then: each answers what `\\ifmy@draft` governs.
+#[test]
+fn a_switch_is_asked_about_by_its_stem_or_its_option() {
+    let source = r"\catcode`\@=11 \newif\ifmy@draft \def\ds@draft{\my@drafttrue}\let\ds@draft\relax
+\ifmy@draft\def\a{}\else\def\b{}\fi";
+    for asked in ["my@draft", "draft"] {
+        let cfg = Config {
+            load: Load { packages: false, classes: false, inputs: false, ..Default::default() },
+            opaque_conditionals: vec![asked.into()],
+            ..crate::support::config()
+        };
+        let analysis = Machine::analyze(source, None, &cfg);
+        let governed = query::controls(&analysis, asked);
+        let macros: Vec<_> = governed.iter().filter(|r| r["tag"] == "macro").collect();
+        assert_eq!(macros.len(), 2, "`{asked}` governs both arms: {governed:?}");
+    }
+}
+
+#[test]
+fn a_switch_is_found_by_its_meaning_not_its_name() {
+    // `satex controls` lists what means `\iftrue` or `\iffalse`, whatever it is called
+    // and however it was made: `\newif`, `\let`, or a toggle macro.
+    let cfg = Config {
+        load: Load { packages: false, classes: false, inputs: false, ..Default::default() },
+        ..crate::support::config()
+    };
+    let analysis = Machine::analyze(
+        r"\catcode`\@=11 \newif\my@ifdraft \let\ifmine\iffalse \let\mybool\iftrue \def\tgl{\iffalse}\def\plain{x}",
+        None,
+        &cfg,
+    );
+    let found: Vec<_> =
+        query::switches(&analysis, false).iter().map(|r| r["name"].as_str().unwrap().to_string()).collect();
+    for name in ["\\my@ifdraft", "\\ifmine", "\\mybool", "\\tgl"] {
+        assert!(found.iter().any(|n| n == name), "{name} in {found:?}");
+    }
+    assert!(!found.iter().any(|n| n == "\\plain"), "{found:?}");
+}
+
 #[test]
 fn every_switch_means_the_documents_own() {
     // `satex controls` without a name leaves the document's switches
     // undecided, and only those: the kernel's `\if@tempswa` and the like
     // keep deciding the code they drive.
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let cfg = Config {
         load: Load { classes: true, ..Default::default() },
-        opaque_conditionals: vec![satex::config::EVERY_SWITCH.into()],
+        opaque_conditionals: vec![satex::project::config::EVERY_SWITCH.into()],
         ..crate::support::config()
     };
     let analysis = Machine::analyze(
@@ -813,7 +860,7 @@ fn out(source: &str) -> String {
         .rev()
         .find(|d| analysis.interner.name(d.name) == "out")
         .and_then(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         .unwrap_or_default()
 }
 
@@ -996,7 +1043,7 @@ fn out_agrees_with_tex() {
 
 /// Which gaps make an expansion give up on the text it assembled, and which
 /// leave it standing.  The two sides are not the same kind of thing, and
-/// `WIDEN_ON` in src/machine.rs is the list that tells them apart.
+/// `WIDEN_ON` in src/analysis/machine.rs is the list that tells them apart.
 ///
 /// A gap satex invented: the scan for `\stop` meets a `}` after text it
 /// could not follow, so where the argument ended is satex's guess and the
@@ -1049,7 +1096,7 @@ fn the_rest_of_split_unknown_text_may_hold_the_next_delimiter() {
         .iter()
         .filter(|d| analysis.interner.name(d.name) == "out")
         .filter_map(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         .collect();
     // `E` alone (an empty replacement text for sure) or no `\out` at all
     // (a runaway) drops the paths the engine may take.
@@ -1072,7 +1119,7 @@ fn a_delimiter_may_begin_before_unknown_text_and_end_in_it() {
         .iter()
         .filter(|d| analysis.interner.name(d.name) == "out")
         .filter_map(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         .collect();
     assert!(outs.iter().any(|o| o == "[]"), "{outs:?}");
 }
@@ -1101,7 +1148,7 @@ fn undecided_arms_meet_after_the_arguments_they_take() {
         .iter()
         .filter(|d| analysis.interner.name(d.name) == "r")
         .filter_map(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         .collect();
     assert!(bodies.contains(&"A".to_string()) && bodies.contains(&"B".to_string()), "{bodies:?}");
     assert_eq!(analysis.facts.defs.iter().filter(|d| analysis.interner.name(d.name) == "after").count(), 1);
@@ -1162,12 +1209,12 @@ fn a_let_dispatch_after_an_undecided_test_runs_every_meaning() {
     assert_eq!(analysis.facts.defs.iter().filter(|d| analysis.interner.name(d.name) == "after").count(), 1);
 }
 
-/// Without splitting the joined `\next` has an unknown meaning, and
-/// running it defines neither.
+/// Without splitting the joined `\next` has an unknown meaning: running
+/// it does what either macro may (`may_run`), so both may be defined.
 #[test]
-fn a_let_dispatch_without_splitting_is_unknown() {
+fn a_let_dispatch_without_splitting_may_define_both() {
     let names = names(&analyze_with_splits(&format!(r"{DISPATCH}\dispatch"), 0));
-    assert!(!names.contains(&"resA".to_string()) && !names.contains(&"resB".to_string()), "{names:?}");
+    assert!(names.contains(&"resA".to_string()) && names.contains(&"resB".to_string()), "{names:?}");
 }
 
 /// `\ifx` of a name a join left with several meanings is decided for each
@@ -1364,7 +1411,12 @@ fn summary_defines_line_counts_document_concepts_separately() {
 \\begin{myenv}\n\\end{myenv}\n",
     );
     let root = query::summary(&analysis);
-    let text = satex::render::summary(&analysis, &root, satex::render::Detail::brief(), satex::render::Links(false));
+    let text = satex::util::render::summary(
+        &analysis,
+        &root,
+        satex::util::render::Detail::brief(),
+        satex::util::render::Links(false),
+    );
     assert!(text.contains("defines"), "{text}");
     assert!(text.contains("1 command"), "{text}");
     assert!(text.contains("1 environment"), "{text}");
@@ -1433,6 +1485,19 @@ fn a_loop_over_unknown_text_ends() {
     );
     assert!(diagnosed(&analysis, "unbalanced-argument").is_empty());
     assert!(definition(&analysis, "R").is_some());
+}
+
+/// Token lists a join left a register stay exact through `\the` in an
+/// `\edef` and through `\meaning`: a delimited scan splits them where
+/// TeX would, and finds no unknown text.
+#[test]
+fn a_joined_token_register_stays_exact_through_the_and_meaning() {
+    let analysis = analyze(
+        r"\ifnum\pdfuniformdeviate2=0 \toks0{a b}\else\toks0{c d e}\fi
+\edef\u{\the\toks0}\def\x#1 #2\stop{}\expandafter\x\u\stop
+\def\strip#1>{}\def\y#1 #2\stop{}\expandafter\expandafter\expandafter\y\expandafter\strip\meaning\u\stop",
+    );
+    assert!(diagnosed(&analysis, "argument-ends-in-unknown").is_empty());
 }
 
 /// A loop whose exit is undecided and whose counter is unknown: the loop
@@ -1813,7 +1878,7 @@ fn a_catcode_of_a_character_in_a_narrow_interval_widens_only_that_interval() {
           \ifnum\catcode250=12 \def\stillother{1}\else\def\changed{1}\fi",
     );
     let said = diagnosed(&analysis, "unknown-catcode");
-    assert!(said.iter().any(|m| m.contains("each category it may name")), "{said:?}");
+    assert!(said.iter().any(|m| m.contains("Each category it may name")), "{said:?}");
     assert!(!said.iter().any(|m| m.contains("no category is known")), "{said:?}");
     assert_eq!(body(&analysis, "letter"), "11", "a is still a letter");
     // The real state past the `\fi`, not just what the run said about it:
@@ -2075,9 +2140,10 @@ fn digit_reversal_over_unknown_digits_converges() {
 /// The errors, warnings and precision notes, as (code, severity, line,
 /// column, message).
 fn problems(analysis: &Analysis) -> Vec<(String, String, u64, u64, String)> {
-    let s = |f: &satex::query::Record, k: &str| f.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    let n = |f: &satex::query::Record, k: &str| f.get(k).and_then(|v| v.as_u64()).unwrap_or_default();
-    satex::lint::lint(analysis)
+    let s =
+        |f: &satex::queries::query::Record, k: &str| f.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let n = |f: &satex::queries::query::Record, k: &str| f.get(k).and_then(|v| v.as_u64()).unwrap_or_default();
+    satex::linter::lint(analysis)
         .iter()
         .filter(|f| s(f, "severity") != "info" || s(f, "code") == "analysis-imprecision")
         .map(|f| (s(f, "code"), s(f, "severity"), n(f, "line"), n(f, "col"), s(f, "message")))
@@ -2253,6 +2319,29 @@ fn a_link_ends_in_a_whatsit() {
     assert_eq!(out, "9/7.50002pt");
 }
 
+/// A font one path loaded is that font or `\relax` after the join: neither
+/// expands, so `\selectfont`'s `\xdef\font@name{\csname…\endcsname}` keeps
+/// the name and the parbox's paragraph stays horizontal. pdflatex: H.
+#[test]
+fn a_font_loaded_on_one_path_keeps_its_name() {
+    let out = article_sizes(
+        r"\ifnum\pdfuniformdeviate2=0 \textsc{a}\fi
+          \setbox0\hbox{\parbox{3cm}{\textsc{One}\ifvmode\xdef\out{V}\else\xdef\out{H}\fi}}",
+    );
+    assert_eq!(out, "H");
+}
+
+/// `\ifx` of a macro of printed digits that may be none against one of
+/// `\relax`: never equal, empty or not (tex.web § 507). pdflatex: F.
+#[test]
+fn digits_that_may_be_none_never_equal_a_command() {
+    let out = article_sizes(
+        r"\setbox0\hbox{\the\pdfrandomseed}\edef\w{\the\wd0}\def\a#1#2.#3\end{\def\r{#2}}\expandafter\a\w\end
+          \def\e{\relax}\ifx\r\e\xdef\out{T}\else\xdef\out{F}\fi",
+    );
+    assert_eq!(out, "F");
+}
+
 /// Expanding `\ifdim\lastkern` inside a word does not end it: `A` and `V`
 /// still kern (tex.web §§ 1034-1036), as csquotes relies on. A `\write`
 /// is a whatsit, nothing after `\immediate` (§§ 1348, 1375); a font
@@ -2307,7 +2396,7 @@ fn a_paragraph_of_uncertain_breaks_has_a_bounded_height() {
 fn digit_reversal_past_the_choices_limit_is_not_empty() {
     for choices in [4, 8] {
         let cfg = Config {
-            limits: satex::config::Limits { choices, ..crate::support::bare().limits },
+            limits: satex::project::config::Limits { choices, ..crate::support::bare().limits },
             ..crate::support::bare()
         };
         let analysis = Machine::analyze(
@@ -2423,7 +2512,7 @@ fn immediate_covers_only_the_next_command() {
 #[test]
 fn if_tells_a_control_sequence_from_char_256() {
     // tex.web § 506; XeTeX's `too_big_usv` is past every character (probed with xetex).
-    let cfg = Config { engine: Some(satex::config::Engine::XeTeX), ..crate::support::bare() };
+    let cfg = Config { engine: Some(satex::project::config::Engine::XeTeX), ..crate::support::bare() };
     let analysis =
         Machine::analyze(&format!("{PRELUDE}\\if \u{100}\\relax\\def\\r{{T}}\\else\\def\\r{{F}}\\fi"), None, &cfg);
     assert_eq!(body(&analysis, "r"), "F");
@@ -2461,7 +2550,7 @@ fn an_halign_of_two_rows_has_its_exact_height() {
 /// so the text is one of those two, never unknown text.
 #[test]
 fn meaning_of_a_built_name_is_a_family_member_or_relax() {
-    let source = r"\def\zq1#1#2{}
+    let source = r"\expandafter\def\csname zq1\endcsname#1#2{}
         \edef\h{\number\pdfuniformdeviate 20}
         \edef\out{\expandafter\meaning\csname zq\h\endcsname}";
     let text = out(source);
@@ -2569,4 +2658,478 @@ fn a_summarized_loop_keeps_the_bounds_no_pass_moved() {
     );
     let defined = names(&analysis);
     assert!(!defined.contains(&"neg".to_string()), "{defined:?}");
+}
+
+/// Typed text that cannot hold a whole delimiter (other characters, and
+/// `|\End` names a control sequence) meets it only where it ends in its
+/// start: the argument never ends inside the text, so `\End` is not left
+/// behind to run (hyperref's `\HyPsd@RemoveMask` on an unknown page label).
+#[test]
+fn a_delimiter_only_straddles_text_that_cannot_hold_it() {
+    let analysis = analyze(
+        "\\catcode`\\|=12 \\count1=\\pdfuniformdeviate 100 \
+         \\def\\s{}\\def\\l{\\edef\\s{\\s|}\\advance\\count1 -1 \\ifnum\\count1>0 \\expandafter\\l\\fi}\\l \
+         \\def\\rm|#1|\\End#2{\\def#2{#1}}\\expandafter\\rm\\expandafter|\\s\\End\\r",
+    );
+    assert!(crate::support::defined(&analysis, "r"), "the argument ends where `|` ends the text");
+    assert!(!crate::support::defined(&analysis, "End"), "`\\End` is never an argument");
+}
+
+/// `\s` holds `fill` an unknown number of times (at least once), then
+/// `\rm` reads it up to `delimiter` and defines the token after it.
+fn delimited_over_unknown_repeats(fill: &str, delimiter: &str) -> Analysis {
+    analyze(&format!(
+        "\\catcode`\\|=12 \\catcode`\\!=12 \\count1=\\pdfuniformdeviate 100 \
+         \\def\\s{{}}\\def\\l{{\\edef\\s{{\\s {fill}}}\\advance\\count1 -1 \\ifnum\\count1>0 \\expandafter\\l\\fi}}\\l \
+         \\def\\rm!#1{delimiter}#2{{\\def#2{{#1}}}}\\expandafter\\rm\\expandafter!\\s {delimiter}\\r"
+    ))
+}
+
+/// Edge cases: a delimiter of several tokens, a control sequence alone,
+/// text whose class holds none of it: the argument is all the text.
+#[test]
+fn a_delimiter_the_text_cannot_hold_is_met_after_it() {
+    for (fill, delimiter) in [("a", "\\End"), ("|", "\\End"), ("a", "|\\End"), ("|", "||\\End"), ("a|", "|\\End")] {
+        let analysis = delimited_over_unknown_repeats(fill, delimiter);
+        let case = format!("{fill} then {delimiter}");
+        assert!(crate::support::defined(&analysis, "r"), "{case}: the argument ends at the delimiter after the text");
+        assert!(!crate::support::defined(&analysis, "End"), "{case}: `\\End` is never an argument");
+    }
+}
+
+/// A delimiter inside braces never matches (tex.web § 392): text whose
+/// texts hold it only in a group is read on to the real one.
+#[test]
+fn a_delimiter_in_braces_of_unknown_text_is_no_end() {
+    let analysis = delimited_over_unknown_repeats("{|}", "|\\End");
+    assert!(crate::support::defined(&analysis, "r"), "the argument ends after the braced texts");
+}
+
+/// A recursion that cuts the rest its own call put back, level after
+/// level, reads that rest on instead of parting again: it ends, and
+/// what follows runs (hyperref's `\HyPsd@GlyphProcess` over unknown text).
+#[test]
+fn a_recursion_over_its_own_rest_ends() {
+    let analysis = analyze(
+        "\\catcode`\\!=12 \\catcode`\\>=12 \\count1=\\pdfuniformdeviate 100 \
+         \\def\\s{}\\def\\l{\\edef\\s{\\s!}\\advance\\count1 -1 \\ifnum\\count1>0 \\expandafter\\l\\fi}\\l \
+         \\def\\p#1>#2\\end{\\ifx\\relax#2\\relax\\else\\p#2\\end\\fi}\\expandafter\\p\\s>\\end \\def\\done{}",
+    );
+    assert!(crate::support::defined(&analysis, "done"), "the recursion ends");
+}
+
+/// Mutation over delimiter and text: wherever TeX ends the argument at
+/// the delimiter after the text for every count, so does satex, and
+/// text that may hold the delimiter still may end it (a path that does).
+#[test]
+fn delimiters_over_unknown_text_agree_with_tex() {
+    let fills = ["a", "|", "||", "a|", "|a", "!"];
+    let delimiters = ["\\End", "|\\End", "||\\End", "a\\End", "|a\\End", "!\\End"];
+    for fill in fills {
+        for delimiter in delimiters {
+            let analysis = delimited_over_unknown_repeats(fill, delimiter);
+            let case = format!("{fill} then {delimiter}");
+            // Without `\End` in the text TeX finds the delimiter only at
+            // its end, whatever the count: `#2` is `\r`.
+            assert!(crate::support::defined(&analysis, "r"), "{case}: TeX defines \\r");
+            assert!(!crate::support::defined(&analysis, "End"), "{case}: TeX never defines \\End");
+        }
+    }
+}
+
+/// Places the model (semantics/mapping.md, D1-D11) found less sound than
+/// it: each run here must keep the outcome the model keeps.
+mod model_deviations {
+    use super::PRELUDE;
+    use crate::support::diagnosed;
+    use satex::analysis::machine::{Analysis, Machine};
+    use satex::project::config::{Config, Limits, Load, Texmf};
+
+    /// Plain TeX with `limits` changed: no format, no inputs.
+    fn run(source: &str, limits: impl Fn(&mut Limits)) -> Analysis {
+        let mut cfg = Config {
+            load: Load { packages: false, classes: false, inputs: false, format: false, ..Default::default() },
+            texmf: Texmf { kpsewhich: false, ..Default::default() },
+            ..crate::support::config()
+        };
+        limits(&mut cfg.limits);
+        Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg)
+    }
+
+    /// The bodies of every definition of `\R`.
+    fn bodies(analysis: &Analysis) -> Vec<String> {
+        analysis
+            .facts
+            .defs
+            .iter()
+            .filter(|d| analysis.interner.name(d.name) == "R")
+            .filter_map(|d| d.mac.as_ref())
+            .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner).trim().to_string())
+            .collect()
+    }
+
+    /// D6, D9: past the choices, a conditional's arms run as `may_run`.
+    /// What they may assign is no longer the value before.
+    #[test]
+    fn widened_arms_may_assign_every_kind() {
+        let rows = [
+            ("skip", r"\skip1=0pt \ifnum\pdfuniformdeviate2=0 \skip1=5pt\fi\edef\R{\the\skip1}", "0.0pt"),
+            ("toks", r"\toks1={a}\ifnum\pdfuniformdeviate2=0 \toks1={b}\fi\edef\R{\the\toks1}", "a"),
+            ("catcode", r"\ifnum\pdfuniformdeviate2=0 \catcode`\A=12 \fi\edef\R{\the\catcode`\A}", "11"),
+            (
+                "parameter",
+                r"\escapechar=92 \ifnum\pdfuniformdeviate2=0 \escapechar=-1 \fi\edef\R{\the\escapechar}",
+                "92",
+            ),
+            ("gdef in a group", r"\def\x{a}\ifnum\pdfuniformdeviate2=0 {\gdef\x{b}}\fi\edef\R{\x}", "a"),
+            ("xdef in a group", r"\def\x{a}\ifnum\pdfuniformdeviate2=0 {\xdef\x{b}}\fi\edef\R{\x}", "a"),
+            (
+                "csname",
+                r"\def\x{a}\ifnum\pdfuniformdeviate2=0 \expandafter\def\csname x\endcsname{b}\fi\edef\R{\x}",
+                "a",
+            ),
+            (
+                "register by name",
+                r"\def\n{1}\count1=0 \ifnum\pdfuniformdeviate2=0 \count\n=5 \fi\edef\R{\the\count1}",
+                "0",
+            ),
+        ];
+        let wrong: Vec<String> = rows
+            .iter()
+            .filter_map(|(what, source, before)| {
+                let got = bodies(&run(source, |l| l.choices = 0));
+                got.iter().all(|b| b == before).then(|| format!("{what}: {got:?}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "kept the value before: {wrong:?}");
+    }
+
+    /// D6 (c): macros past `limits.may_run_depth` are reported, and
+    /// followed when the limit allows.
+    #[test]
+    fn may_run_follows_macros_to_its_depth_and_says_so_past_it() {
+        let source = r"\def\a{\b}\def\b{\c}\def\c{\d}\def\d{\count1=5 }\count1=0
+            \ifnum\pdfuniformdeviate2=0 \a\fi\edef\R{\the\count1}";
+        let shallow = run(source, |l| l.choices = 0);
+        let said = diagnosed(&shallow, "joined-code-may-define");
+        assert!(said.iter().any(|m| m.contains("may_run_depth")), "{said:?}");
+        let deep = run(source, |l| {
+            l.choices = 0;
+            l.may_run_depth = 4;
+        });
+        assert!(bodies(&deep).iter().any(|b| b != "0"), "{:?}", bodies(&deep));
+    }
+
+    /// D11: a name a join left one of several macros, run where it may not
+    /// split, does what any of them may do.
+    #[test]
+    fn a_joined_name_run_unsplit_does_what_its_macros_may() {
+        let analysis = run(
+            r"\def\a{\count1=5 }\def\b{\relax}\count1=0
+              \ifnum\pdfuniformdeviate2=0 \let\n\a\else\let\n\b\fi\n\edef\R{\the\count1}",
+            |l| l.meaning_splits = 0,
+        );
+        assert!(bodies(&analysis).iter().any(|b| b != "0"), "{:?}", bodies(&analysis));
+    }
+
+    /// D8: where no path may part, required text that may begin inside an
+    /// unknown character (a digit or `-`, never empty) begins there.
+    #[test]
+    fn an_unforked_literal_begins_inside_unknown_text() {
+        let analysis = run(
+            r"\dimen1=\pdfuniformdeviate 5pt \advance\dimen1 -2pt \def\a-#1{\def\R{#1}}\expandafter\a\the\dimen1\relax",
+            |l| l.choices = 0,
+        );
+        assert!(bodies(&analysis).iter().all(|b| !b.is_empty()), "{:?}", bodies(&analysis));
+        assert!(!diagnosed(&analysis, "unforked-argument-end").is_empty());
+    }
+
+    /// D2: a loop summary joins a name one pass defined with "undefined"
+    /// on the path that never did, so both answers of `\ifdefined` stay.
+    #[test]
+    fn a_loop_summary_keeps_a_name_only_some_passes_define() {
+        let analysis = run(
+            r"\count1=\pdfuniformdeviate 100 \def\lp{\ifnum\count1>0 \advance\count1 -1 \ifnum\count1=50 \def\hit{x}\fi
+              \expandafter\lp\fi}\lp\ifdefined\hit\def\R{yes}\else\def\R{no}\fi",
+            |_| {},
+        );
+        let got = bodies(&analysis);
+        assert!(got.contains(&"yes".to_string()) && got.contains(&"no".to_string()), "{got:?}");
+    }
+
+    /// P1, P5 (semantics/PROOF-STATUS.md): a local write in a group whose
+    /// depth a loop left open, or after a summarized loop in the same
+    /// group, is put back by the group's end. The value TeX gives, or
+    /// unknown digits, never another value.
+    #[test]
+    fn group_ends_restore_after_open_groups_and_summaries() {
+        let rows = [
+            (
+                "groups a loop opened",
+                r"\count0=7 \count1=\pdfuniformdeviate 5 \def\lp{\ifnum\count1>0 \advance\count1 -1 \begingroup\count0=2 \expandafter\lp\fi}
+                  \begingroup\lp\count0=1 \endgroup\edef\R{\the\count0}",
+                &["7", "2"][..],
+            ),
+            (
+                "a global write among them",
+                r"\count0=7 \count1=\pdfuniformdeviate 5 \def\lp{\ifnum\count1>0 \advance\count1 -1 \begingroup\count0=2 \expandafter\lp\fi}
+                  \begingroup\lp\global\count0=1 \count0=3 \endgroup\edef\R{\the\count0}",
+                &["1"][..],
+            ),
+            (
+                "a summarized loop",
+                r"\count0=7 {\count1=\pdfuniformdeviate 100 \def\lp{\ifnum\count1>0 \advance\count1 -1 \count0=3 \expandafter\lp\fi}\lp\count0=5}
+                  \edef\R{\the\count0}",
+                &["7"][..],
+            ),
+        ];
+        let wrong: Vec<String> = rows
+            .iter()
+            .filter_map(|(what, source, tex)| {
+                let got = bodies(&run(source, |_| {}));
+                let ok = got.iter().all(|b| tex.contains(&b.as_str()) || b.contains("unknown"));
+                (!ok || got.is_empty()).then(|| format!("{what}: {got:?}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:?}");
+    }
+
+    /// P6: a cut region's category changes are the old category or the
+    /// new one afterwards, not the old one alone.
+    #[test]
+    fn a_cut_keeps_the_categories_the_region_set() {
+        let analysis = run(
+            r"\count1=60 \def\r{\ifnum\count1>0 \advance\count1 -1 \catcode`\A=12 \r\relax\fi}\r\edef\R{\the\catcode`\A}",
+            |l| l.expansion_stack = 20,
+        );
+        let got = bodies(&analysis);
+        assert!(!got.is_empty() && got.iter().all(|b| b != "11"), "{got:?}");
+    }
+
+    /// P6: groups a cut region opened may be any number afterwards: the
+    /// skipped rest may open more (here TeX opens 60 and the cut sees 20).
+    #[test]
+    fn a_cut_keeps_the_groups_the_region_opened_open() {
+        let closers = r"\endgroup".repeat(30);
+        let analysis = run(
+            &format!(
+                r"\count0=7 \count1=60 \def\r{{\ifnum\count1>0 \begingroup\count0=\count1 \advance\count1 -1 \r\relax\fi}}\r{closers}\edef\R{{\the\count0}}"
+            ),
+            |l| l.expansion_stack = 20,
+        );
+        let got = bodies(&analysis);
+        assert!(!got.is_empty() && got.iter().all(|b| b == "31" || b.contains("unknown")), "{got:?}");
+    }
+
+    /// D1: a join with a name of any meaning is any meaning, whichever side
+    /// it is on.
+    #[test]
+    fn a_join_with_any_meaning_is_any_meaning_both_ways() {
+        use satex::engine::env::{Binding, SetLimits, join_slot};
+        use satex::engine::tex::Meaning;
+        let mut some = Binding::builtin(Meaning::Unknown);
+        some.may = Some(std::rc::Rc::from(vec![
+            Meaning::Undefined,
+            Meaning::Primitive(satex::engine::builtins::Primitive::Relax),
+        ]));
+        let top = Binding::builtin(Meaning::Unknown);
+        let sets = SetLimits::default();
+        let ab = join_slot(Some(some.clone()), Some(top.clone()), sets).expect("bound");
+        let ba = join_slot(Some(top), Some(some), sets).expect("bound");
+        assert_eq!((ab.meaning.clone(), ab.may.clone()), (Meaning::Unknown, None));
+        assert_eq!((ba.meaning, ba.may), (ab.meaning, ab.may));
+    }
+
+    /// Plain TeX in a directory of its own, `files` beside it and `library`
+    /// files in a texmf tree outside it, with `limits` changed.
+    fn run_in(name: &str, source: &str, library: &[(&str, &str)], limits: impl Fn(&mut Limits)) -> Analysis {
+        let dir = crate::support::scratch_dir(crate::support::tmp_root().join(name));
+        let (tree, doc) = (dir.join("tree"), dir.join("doc"));
+        for d in [&tree, &doc] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        for (file, text) in library {
+            std::fs::create_dir_all(tree.join("tex/plain/lib")).unwrap();
+            std::fs::write(tree.join("tex/plain/lib").join(file), text).unwrap();
+        }
+        let main = doc.join("main.tex");
+        let source = format!("{PRELUDE}{source}");
+        std::fs::write(&main, &source).unwrap();
+        let mut cfg = Config {
+            load: Load { packages: false, classes: false, format: false, ..Default::default() },
+            texmf: Texmf { roots: vec![tree], kpsewhich: false, ..Default::default() },
+            ..crate::support::config()
+        };
+        limits(&mut cfg.limits);
+        Machine::analyze(&source, Some(&main), &cfg)
+    }
+
+    /// R2-1: a library scan that read the document to its end after a
+    /// refused fork where the argument may end sooner is no refuted run:
+    /// the text is given back and the document is read on.
+    #[test]
+    fn a_library_scan_past_a_refused_end_reads_the_document_on() {
+        let lib = [("lib.tex", "\\long\\def\\grab#1x1{}\\def\\go{\\expandafter\\grab\\expandafter x\\the\\count1}\n")];
+        let analysis = run_in(
+            "rv2-library-scan",
+            "\\input lib \\count1=\\pdfuniformdeviate 300 \\advance\\count1 by 1 \\go\n\\def\\R{after}\n",
+            &lib,
+            |l| l.choices = 0,
+        );
+        assert!(bodies(&analysis).contains(&"after".to_string()), "{:?}", bodies(&analysis));
+    }
+
+    /// R2-2: a path that meets a state it was in before hangs in TeX: it
+    /// ends, but its warning stays, as does the other arm of its fork.
+    #[test]
+    fn a_cycle_on_one_arm_is_reported() {
+        let analysis = run(r"\def\r{\r}\ifodd\pdfuniformdeviate 2 \else\r\fi\def\R{done}", |_| {});
+        assert!(!diagnosed(&analysis, "endless-loop").is_empty());
+        assert!(bodies(&analysis).contains(&"done".to_string()), "{:?}", bodies(&analysis));
+    }
+
+    /// R2-3: an unknown digit written to a file is read back under the
+    /// categories in force at the read, not as category 12 always.
+    #[test]
+    fn a_written_unknown_digit_reads_with_the_categories_of_the_read() {
+        let analysis = run_in(
+            "rv2-written-digit",
+            "\\immediate\\openout1=t.tex \\ifodd\\pdfuniformdeviate 2 \\immediate\\write1{\\string\\x{a}{1}}%\n\
+             \\else\\immediate\\write1{\\string\\x{a}{2}}\\fi\\immediate\\closeout1\n\
+             \\def\\x#1#2{#2}\\catcode`\\1=13 \\def1{\\def\\R{one}}\\input t \n",
+            &[],
+            |_| {},
+        );
+        assert!(bodies(&analysis).contains(&"one".to_string()), "{:?}", bodies(&analysis));
+    }
+
+    /// R2-4: `\ifx` against a one-of token with an empty member compares
+    /// first tokens (the next token for the empty one), never macros.
+    #[test]
+    fn ifx_of_a_one_of_with_an_empty_member_compares_first_tokens() {
+        let analysis = run(
+            "\\ifodd\\pdfuniformdeviate 2 \\toks0={ab}\\else\\toks0={}\\fi
+             %\\satex@configure{limits.choices=0}
+             \\expandafter\\ifx\\expandafter a\\the\\toks0 \\def\\R{T}\\else\\def\\R{F}\\fi",
+            |_| {},
+        );
+        // Decided false on the `ab` path before: never only `F`.
+        let got = bodies(&analysis);
+        let open = !diagnosed(&analysis, "undecided-condition").is_empty();
+        assert!(open || got.iter().any(|b| b == "T"), "{got:?}");
+    }
+
+    /// R2-5: a box may be wider than `\maxdimen` (hpack does not check,
+    /// tex.web § 656), and a count takes its width as it is (§ 461
+    /// checks dimensions only): the sum is no top.
+    #[test]
+    fn a_box_wider_than_maxdimen_stays_wider() {
+        let analysis = run(
+            r"\dimen0=16383.99999pt \setbox0\hbox{\kern\dimen0\kern\dimen0}%
+              \count1=\wd0 \ifnum\count1>\dimen0 \def\R{big}\else\def\R{small}\fi",
+            |_| {},
+        );
+        // TeX: 2147483646.
+        assert_eq!(bodies(&analysis), ["big"]);
+    }
+
+    /// R2-6: a delimiter may run from the end of a one-of member into
+    /// unknown text after it: `za` then digits from `1`, delimiter `a1`.
+    #[test]
+    fn a_delimiter_from_a_one_of_end_into_unknown_text_ends_there() {
+        let analysis = run(
+            "\\count1=\\pdfuniformdeviate 10 \\advance\\count1 by 10
+             \\ifodd\\pdfuniformdeviate 2 \\toks0={za}\\else\\toks0={q}\\fi\\edef\\x{\\the\\toks0 \\the\\count1}
+             %\\satex@configure{limits.choices=0}
+             \\def\\grab#1a1{\\def\\R{#1}}\\expandafter\\grab\\x a1",
+            |_| {},
+        );
+        // TeX: `z`, or `q` and the digits. Never `za` and the digits.
+        let got = bodies(&analysis);
+        assert!(!got.is_empty() && !got.iter().any(|b| b.contains("one of") && b.contains("digits")), "{got:?}");
+    }
+}
+
+/// Each card's text is a sentence that documents the name, and its usage
+/// names every argument, never by a bare number: a kernel internal the
+/// documented source has no prose for says so instead of quoting a change
+/// note (`\@writefile`: "in the THEN case").
+#[test]
+fn scope_cards_say_what_a_name_does_and_name_its_arguments() {
+    let analysis = crate::support::analyze_latex("\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n");
+    let rows = query::scope(&analysis, None, true);
+    let row = |name: &str| rows.iter().find(|r| r["name"] == name).unwrap_or_else(|| panic!("{name} in scope")).clone();
+    for name in ["\\@writefile", "\\DeclareOption", "\\newcommand", "\\section", "\\relax", "\\tl_set:Nn"] {
+        let r = row(name);
+        let usage = r["usage"].as_str().expect("a usage");
+        assert!(usage.starts_with(name), "{name}: {usage}");
+        // every argument named: no `{1}`, `[2]`
+        let args: String =
+            usage[name.len()..].split('⟨').map(|p| p.split_once('⟩').map_or(p, |(_, after)| after)).collect();
+        assert!(!args.chars().any(|c| c.is_ascii_digit()), "{name}: {usage}");
+        if let Some(does) = r.get("does").and_then(|d| d.as_str()) {
+            assert!(
+                does.starts_with(|c: char| c.is_uppercase() || c == '`') && does.ends_with('.'),
+                "{name}: {does:?}"
+            );
+        }
+    }
+    // its first argument is the name of a file the run checks with `\@ifundefined{tf@#1}`
+    assert_eq!(row("\\@writefile")["usage"], "\\@writefile{⟨name⟩}{⟨arg2⟩}");
+    assert_eq!(row("\\@writefile").get("does"), None, "no prose documents it");
+    // l3doc's syntax line names the arguments, where the installation has the documented sources
+    if row("\\tl_set:Nn").get("does").is_some() {
+        assert_eq!(row("\\tl_set:Nn")["usage"], "\\tl_set:Nn{⟨tl var⟩}{⟨tokens⟩}");
+    }
+    for name in ["\\DeclareOption", "\\newcommand", "\\section", "\\relax"] {
+        assert!(row(name).get("does").is_some(), "{name} is documented");
+    }
+}
+
+/// A signature names optional arguments by role, a default only as a
+/// hint, never its value or number as the label; a project's package is
+/// named, not "document", and its comment documents its macros.
+#[test]
+fn signatures_name_optional_arguments_and_project_packages() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/scratch/sig-names");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("mine.sty"), "\\ProvidesPackage{mine}\n% Frames the text.\n% #1: the text to frame\n\\newcommand{\\myframe}[1]{\\fbox{#1}}\n").unwrap();
+    let main = dir.join("main.tex");
+    std::fs::write(&main, "\\documentclass{article}\n\\usepackage{mine}\n\\begin{document}\nx\n\\end{document}\n")
+        .unwrap();
+    let source = std::fs::read_to_string(&main).unwrap();
+    let analysis = satex::analysis::machine::Machine::analyze(&source, Some(main.as_path()), &crate::support::config());
+    let (records, _) =
+        query::explain(&analysis, &["newcommand".into(), "includegraphics".into(), "section".into()], false).unwrap();
+    for r in &records {
+        let usage = r["usage"].as_str().unwrap();
+        // outside the names, a digit is only a default's hint
+        let args: String = usage[r["name"].as_str().unwrap().len()..]
+            .split('⟨')
+            .map(|p| p.split_once('⟩').map_or(p, |(_, after)| after))
+            .collect();
+        assert!(!args.replace(" = 0", "").chars().any(|c| c.is_ascii_digit()), "{usage}");
+    }
+    let newcommand =
+        records.iter().find(|r| r["name"] == "\\newcommand").unwrap()["usage"].as_str().unwrap().to_string();
+    assert!(newcommand.contains("{⟨command⟩}") && newcommand.contains(" = 0]"), "{newcommand}");
+    let rows = query::scope(&analysis, None, true);
+    let frame = rows.iter().find(|r| r["name"] == "\\myframe").expect("\\myframe in scope");
+    assert_eq!(frame["package"], "mine");
+    assert_eq!(frame["usage"], "\\myframe{⟨the text to frame⟩}");
+    assert_eq!(frame["does"], "Frames the text.");
+}
+
+/// A definition local to a group a package's code opened ends with it:
+/// `ifthen`'s `\let\ref…` while `\ifthenelse` runs never provides `\ref`.
+#[test]
+fn a_group_local_copy_never_provides_a_name() {
+    let analysis = crate::support::analyze_latex(
+        "\\documentclass{article}\n\\usepackage{ifthen}\n\\ifthenelse{\\equal{a}{a}}{}{}\n\\begin{document}\n\\ref{x}\n\\end{document}\n",
+    );
+    let rows = query::scope(&analysis, None, true);
+    let r = rows.iter().find(|r| r["name"] == "\\ref").expect("\\ref in scope");
+    assert_ne!(r.get("file").and_then(|f| f.as_str()), Some("ifthen.sty"), "{r:?}");
+    let (records, _) = query::explain(&analysis, &["ref".into()], false).unwrap();
+    assert!(records.iter().all(|r| r.get("file").and_then(|f| f.as_str()) != Some("ifthen.sty")), "{records:?}");
 }

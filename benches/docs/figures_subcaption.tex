@@ -1,0 +1,16 @@
+% Exercises: graphicx, figure/subfigure via subcaption, \captionof, float placement, \listoffigures.
+\documentclass{article}
+\usepackage{graphicx,subcaption,float}
+\begin{document}
+\listoffigures
+\section{Figures}
+\begin{figure}[htbp]\centering
+\begin{subfigure}[b]{.45\textwidth}\centering\rule{3cm}{2cm}\caption{Left}\label{sf:l}\end{subfigure}\hfill
+\begin{subfigure}[b]{.45\textwidth}\centering\rule{3cm}{2cm}\caption{Right}\label{sf:r}\end{subfigure}
+\caption{Two sub figures}\label{f:two}\end{figure}
+Figure~\ref{f:two}, \ref{sf:l} and \ref{sf:r}.
+\begin{figure}[H]\centering\fbox{\parbox{4cm}{boxed}}\caption{Here}\end{figure}
+\begin{minipage}{.5\textwidth}\captionof{figure}{Caption of}\end{minipage}
+\clearpage
+\begin{figure}[p]\centering\scalebox{.5}{\rule{4cm}{4cm}}\caption{Page float}\end{figure}
+\end{document}

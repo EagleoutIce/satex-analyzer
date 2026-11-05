@@ -2,10 +2,10 @@
 //! range are recorded, a line range keeps what the calls on its lines do,
 //! and a malformed range is an error.
 
-use std::process::{Command, Output};
+use std::process::Output;
 
 fn trace(dir: &std::path::Path, range: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_satex"))
+    crate::support::satex()
         .args(["--no-config", "--no-classes", "--no-packages", "--set", "limits.seconds=0", "trace", "-f"])
         .arg(dir.join("main.tex"))
         .args(range)
@@ -86,7 +86,7 @@ fn stepped(dir: &std::path::Path, input: &str) -> Vec<(u64, String)> {
 
 fn stepped_with(dir: &std::path::Path, args: &[&str], input: &str) -> Vec<(u64, String)> {
     use std::io::Write;
-    let mut child = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let mut child = crate::support::satex()
         .args(["--no-config", "--no-classes", "--no-packages", "--set", "limits.seconds=0", "trace", "-i", "-f"])
         .arg(dir.join("main.tex"))
         .args(args)
@@ -184,7 +184,7 @@ fn interactive_reports_skipped_internal_steps_and_the_output_of_a_range() {
     std::fs::write(dir.join("main.tex"), "\\documentclass{article}\n\\def\\a{world}\nhello \\a\n").unwrap();
     let text = |args: &[&str]| -> String {
         use std::io::Write;
-        let mut child = Command::new(env!("CARGO_BIN_EXE_satex"))
+        let mut child = crate::support::satex()
             .args(["--no-config", "--no-classes", "--no-packages", "--set", "limits.seconds=0", "trace", "-i", "-f"])
             .arg(dir.join("main.tex"))
             .args(args)
@@ -225,4 +225,116 @@ fn an_injected_text_is_traced_where_it_is_put() {
     assert!(has(&named, "\\b", "main.tex", 3), "{named:?}");
     // A line past the end is an error, not an empty trace.
     assert!(!trace(&dir, &["--inject", "\\b", "--at", "40"]).status.success());
+}
+
+fn request(dir: &std::path::Path, body: serde_json::Value) -> serde_json::Value {
+    use std::io::Write;
+    let mut child = crate::support::satex()
+        .args(["--no-config", "--no-classes", "--no-packages", "--set", "limits.seconds=0", "query", "--request", "-"])
+        .current_dir(dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(body.to_string().as_bytes()).unwrap();
+    serde_json::from_slice(&child.wait_with_output().unwrap().stdout).unwrap()
+}
+
+/// A trace step says how a call got its text: the definition's parameters
+/// and body, the arguments, and what that inserts; and `trace_stop` ends the
+/// run at a step, so a query in the same request sees the state there.
+#[test]
+fn a_trace_step_shows_its_call_and_a_stop_shows_the_state_there() {
+    let dir = crate::support::tmp_root().join(format!("satex-trace-stop-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "\\def\\v{old}\n\\def\\twice#1{#1#1\\def\\v{new}}\n\\twice{ab}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    let line = main.lines().position(|l| l.starts_with("\\twice")).unwrap() + 1;
+    let config = |stop: Option<u32>| {
+        let mut c = serde_json::json!({ "trace": "true", "trace_lines": format!("[{line}, {line}]") });
+        if let Some(stop) = stop {
+            c["trace_stop"] = serde_json::json!(stop.to_string());
+        }
+        c
+    };
+    let ask = |stop| {
+        let body = serde_json::json!({ "file": dir.join("main.tex"), "config": config(stop),
+            "queries": [{ "type": "trace" }, { "type": "explain", "names": ["\\v"] }] });
+        request(&dir, body)
+    };
+    let full = ask(None);
+    let call = full[0]["records"].as_array().unwrap().iter().find(|r| r["name"] == "\\twice").cloned().unwrap();
+    assert_eq!(call["parameters"], "#1", "{call}");
+    assert_eq!(call["arguments"], serde_json::json!(["ab"]), "{call}");
+    assert!(call["body"].as_str().unwrap().starts_with("#1#1"), "{call}");
+    assert!(call["inserts"].as_str().unwrap().starts_with("abab"), "{call}");
+    assert!(full[1].to_string().contains("new"), "{full}");
+    let index = call["index"].as_u64().unwrap() as u32;
+    let stopped = ask(Some(index));
+    assert!(stopped[1].to_string().contains("old") && !stopped[1].to_string().contains("new"), "{stopped}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A register a trace step names by number carries the names the run
+/// allocated to it: `\newcount` gave `\@tempcnta` its count.
+#[test]
+fn a_register_in_the_trace_carries_its_allocated_name() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source =
+        "\\documentclass{article}\n\\begin{document}\n\\makeatletter\\@tempcnta=5 \\makeatother\n\\end{document}\n";
+    let cfg = satex::project::config::Config { trace: true, ..crate::support::config() };
+    let analysis = satex::analysis::machine::Machine::analyze(source, None, &cfg);
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Trace,
+        &satex::queries::query::Filter::Always,
+    );
+    let named = rows.iter().filter_map(|r| r.get("aliases")?.as_object()).flatten().any(|(register, names)| {
+        register.starts_with("\\count") && names.as_array().is_some_and(|n| n.iter().any(|n| n == "\\@tempcnta"))
+    });
+    assert!(named, "no step names \\@tempcnta's count");
+}
+
+/// The playground's plain-TeX leap-year example, traced: each assignment
+/// carries the register's value (an `\advance`-style one the value before
+/// it too), each `\ifnum` the branch TeX takes. 1900 is no leap year (4
+/// and 100 divide it, 400 does not), 1990 none, 1996 and 2000 are.
+#[test]
+fn the_leap_year_trace_records_values_and_branches() {
+    let source = include_str!("../../doc/site/examples/leapyear.tex");
+    let cfg = satex::project::config::Config {
+        engine: Some(satex::project::config::Engine::Tex),
+        kernel: Some(satex::plugins::Kernel::Plain),
+        trace: true,
+        ..crate::support::config()
+    };
+    let analysis = satex::analysis::machine::Machine::analyze(source, None, &cfg);
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Trace,
+        &satex::queries::query::Filter::Always,
+    );
+    let of = |step: &str, name: &str| -> Vec<String> {
+        rows.iter()
+            .filter(|r| r["step"] == step && r["name"] == name)
+            .filter_map(|r| r["detail"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let years = ["1900", "1990", "1996", "2000", "2004"];
+    assert_eq!(of("assign", "\\count10")[..years.len()], years, "{rows:?}");
+    // \divide\count1 by 4 after \count1=1900
+    assert_eq!(of("assign", "\\count1").get(1).map(String::as_str), Some("1900 → 475"));
+    let compared = of("branch", "\\ifnum");
+    // \ifnum\count1=\count10 for 1900: 1900 is 4 · 475
+    assert_eq!(compared.first().map(String::as_str), Some("1900 = 1900: true"), "{compared:?}");
+    let branches: Vec<&str> = compared.iter().filter_map(|d| d.rsplit(": ").next()).collect();
+    let expected = ["true", "true", "false", "false", "true", "false", "true", "true", "true"];
+    assert_eq!(branches[..expected.len()], expected, "{branches:?}");
+    assert_eq!(of("define", "\\tleapy").first().map(String::as_str), Some("macro:->not "));
+    assert!(
+        rows.iter().filter(|r| r["step"] == "open-group").all(|r| r["name"] == "{"),
+        "a group's step names its brace"
+    );
 }

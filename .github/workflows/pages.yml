@@ -79,6 +79,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Type-check the site's scripts
+        run: |
+          npx --yes -p typescript@5.9.3 tsc -p doc/site/jsconfig.json
+          npx --yes -p typescript@5.9.3 tsc -p doc/site/jsconfig.worker.json
 
       # build.py keys its memo by the analysis, so stale entries are ignored.
       - uses: actions/cache@v4
@@ -112,7 +116,14 @@ jobs:
         run: |
           python3 -m http.server -d site 8000 > /dev/null 2>&1 &
           sleep 2
+          node doc/site/views.test.mjs
           node doc/site/test.mjs http://localhost:8000/
+
+      # Switches, typing and undo storms, a killed worker, failing downloads, two tabs: no hang, no stale view.
+      - name: Stress the playground
+        timeout-minutes: 30
+        continue-on-error: true
+        run: node doc/site/chaos.mjs http://localhost:8000/
 
       - uses: actions/upload-pages-artifact@v3
         with:

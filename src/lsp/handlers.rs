@@ -1,6 +1,6 @@
 //! Feature handlers: each turns an [`Analysis`] satex already built into the
 //! `lsp_types` response for one request.  No analysis of its own happens
-//! here — everything comes from [`crate::query`] and [`crate::lint`], the
+//! here — everything comes from [`crate::queries::query`] and [`crate::linter`], the
 //! same calls `satex query`/`satex lint` make; this module only converts
 //! between LSP's positions (0-based, UTF-16 columns) and satex's
 //! ([`Pos`]: 1-based, character columns) and shapes the JSON as `lsp_types`
@@ -18,9 +18,10 @@ use lsp_types::{
 use regex::Regex;
 use serde_json::Value as Json;
 
-use crate::lint::fix::{Pos, Sources, Text};
-use crate::machine::Analysis;
-use crate::query::{self, Filter, Query, Record};
+use crate::analysis::machine::Analysis;
+use crate::linter::fix::{Pos, Sources, Text};
+use crate::queries::preview::Stroke;
+use crate::queries::query::{self, Filter, Query, Record};
 
 /// LSP position (0-based line, UTF-16 column) to satex's (1-based line,
 /// column as the engine counts one), against the line as it stands in `doc`.
@@ -32,16 +33,17 @@ pub fn to_pos(doc: &Text, position: Position) -> Pos {
 /// The reverse of [`to_pos`], through [`Text::utf16`]; falls back to a
 /// 0-based, byte-counted guess when `pos` is out of range (a stale position
 /// from a definition site an edit has since moved).
-fn to_lsp(doc: &Text, pos: Pos) -> Position {
+pub(super) fn to_lsp(doc: &Text, pos: Pos) -> Position {
     match doc.utf16(pos) {
         Some((line, character)) => Position { line, character },
         None => Position { line: pos.line.saturating_sub(1), character: pos.col.saturating_sub(1) },
     }
 }
 
+/// An expl3 function name (`\tl_set:Nn`) is one word: its `:` tells it from `\foo_x`.
 fn word_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\\[A-Za-z@]+|\\.|[A-Za-z0-9_:.+*-]+").unwrap())
+    RE.get_or_init(|| Regex::new(r"\\[A-Za-z@_]+:[A-Za-z]*|\\[A-Za-z@]+|\\.|[A-Za-z0-9_:.+*-]+").unwrap())
 }
 
 /// The control sequence or key under the cursor: its name (without a
@@ -53,24 +55,28 @@ pub fn word_at(line: &str, col: u32) -> Option<(String, bool)> {
 
 /// The same, with the 1-based column the match starts at.
 pub fn word_span(line: &str, col: u32) -> Option<(String, bool, u32)> {
-    let target = crate::source::byte_of_col(line, col);
+    let target = crate::engine::source::byte_of_col(line, col);
     word_re().find_iter(line).find(|m| m.start() <= target && target <= m.end()).map(|m| {
         let text = m.as_str();
-        (text.trim_start_matches('\\').to_string(), text.starts_with('\\'), crate::source::col_of_byte(line, m.start()))
+        (
+            crate::engine::tex::bare_name(text).to_string(),
+            text.starts_with('\\'),
+            crate::engine::source::col_of_byte(line, m.start()),
+        )
     })
 }
 
 /// The path a run recorded a file under, resolved to a `file://` URI.
 /// `lsp_types::Uri` (since 0.95) is a thin wrapper over a generic RFC 3986
 /// URI, not a `url::Url`, so there is no `from_file_path`/`to_file_path`
-/// left to reuse: [`crate::paths::file_url`] and [`uri_to_path`] are
+/// left to reuse: [`crate::project::paths::file_url`] and [`uri_to_path`] are
 /// satex's own, covering exactly the case the server needs.
 pub fn path_uri(path: &str) -> Uri {
-    // The same rooting [`crate::render::file_url`] does, so a diagnostic and the file it
+    // The same rooting [`crate::util::render::file_url`] does, so a diagnostic and the file it
     // belongs to reach the client under one URI.
     let absolute = std::path::absolute(path).unwrap_or_else(|_| PathBuf::from(path));
     let absolute = VIEW.with_borrow(|view| view.named(&absolute));
-    crate::paths::file_url(&absolute).parse().unwrap_or_else(|_| "file:///".parse().unwrap())
+    crate::project::paths::file_url(&absolute).parse().unwrap_or_else(|_| "file:///".parse().unwrap())
 }
 
 thread_local! {
@@ -110,12 +116,12 @@ impl ClientView {
 /// The reverse of [`path_uri`]: the local path a `file://` URI names, or
 /// `None` for any other scheme.
 pub fn uri_to_path(uri: &Uri) -> Option<std::path::PathBuf> {
-    crate::paths::from_file_url(uri.as_str())
+    crate::project::paths::from_file_url(uri.as_str())
 }
 
 /// A `place`d record (`path`/`line`/`col`, as every query answer carries) as
 /// an LSP [`Location`]: a zero-width range at the position, the same way
-/// [`crate::render::lsp`] points a diagnostic at one place rather than a span.
+/// [`crate::util::render::lsp`] points a diagnostic at one place rather than a span.
 fn record_location(record: &Record, sources: &Sources) -> Option<Location> {
     let path = record.get("path").and_then(Json::as_str)?;
     let line = record.get("line").and_then(Json::as_u64)? as u32;
@@ -133,32 +139,203 @@ fn record_location(record: &Record, sources: &Sources) -> Option<Location> {
 /// meanings when preamble and document differ, and where it comes from.
 pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Option<Hover> {
     let pos = to_pos(doc, position);
-    if let Some(markdown) = cite_hover(analysis, doc.line(pos.line), pos.col) {
+    if let Some(markdown) = super::directive::hover(doc.line(pos.line), pos.col) {
         return Some(markdown_hover(markdown));
     }
-    let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
-    let markdown = if is_command {
-        placed(analysis, command_hover(analysis, &name, active_at(analysis, &name, path, pos))?, &name, path, pos)
-    } else {
-        load_hover(analysis, path, pos, &name).or_else(|| bib_style_hover(analysis, path, pos, &name))?
+    if let Some(markdown) = directive_hover(analysis, path, pos) {
+        return Some(markdown_hover(markdown));
+    }
+    if let Some(markdown) = magic_hover(analysis, doc, pos) {
+        return Some(markdown_hover(markdown));
+    }
+    let word = word_at(doc.line(pos.line), pos.col);
+    let markdown = match word {
+        Some((name, true)) => {
+            placed(analysis, command_hover(analysis, &name, active_at(analysis, &name, path, pos))?, &name, path, pos)
+        }
+        _ => super::argument_hover::typed_hover(analysis, doc, path, pos).or_else(|| {
+            let (name, _) = word?;
+            load_hover(analysis, path, pos, &name).or_else(|| bib_style_hover(analysis, path, pos, &name))
+        })?,
     };
     Some(markdown_hover(markdown))
 }
 
-/// The database entry of the key under column `col` of `line`, in an
-/// argument [`crate::roles`] says cites: what it names and every field.
-fn cite_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
-    let (before, after) = line.split_at(crate::source::byte_of_col(line, col).min(line.len()));
-    let arg = argument_at(before).filter(|a| a.open == '{')?;
-    let at = crate::roles::braced_groups(arg.groups).len();
-    let cite = crate::roles::RoleKind::Occ(crate::builtins::OccKind::Cite);
-    crate::roles::roles(analysis, arg.cmd).iter().find(|r| r.arg == at && r.kind == cite)?;
-    let start = before.rfind([',', '{']).map_or(0, |i| i + 1);
-    let key = format!("{}{}", &before[start..], &after[..after.find([',', '}']).unwrap_or(after.len())]);
+/// The key under column `col` in the option list of a command (`\\captionsetup{aboveskip=}`):
+/// the family and package that define it, its type, default and choices as the run stored them
+/// ([`query::options`]), and what the mined manual says of it.
+pub(super) fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
+    let at = crate::engine::source::byte_of_col(line, col).min(line.len());
+    // the group the cursor stands in, still open there: a `[…]` closed before it holds no key here
+    let open = argument_at(&line[..at])?;
+    let from = at - open.inside.len();
+    let start = from + open.inside.rfind([',', '{']).map_or(0, |i| i + 1);
+    let end = at + line[at..].find(['=', ',', ']', '}']).unwrap_or(line.len() - at);
+    // a value, not a key: the `=` stands before the cursor
+    if line[start..at].contains('=') {
+        return None;
+    }
+    let key = line[start..end].trim();
+    if key.is_empty() || key.contains('\\') {
+        return None;
+    }
+    // the text up to and with the bracket or comma before the key: the first key has no comma
+    let arg = argument_at(&line[..start])?;
+    let target = key_list_owner(&arg)?;
+    // a relative key after the list changed its directory (`/demo/.cd`, a family's name)
+    let switched = arg.inside.split(',').rev().map(|i| i.split('=').next().unwrap_or_default().trim()).find_map(|k| {
+        let dir = k.strip_suffix("/.cd").unwrap_or(k);
+        let family = query::stored_keys(analysis, Some(dir)).iter().any(|r| {
+            r.get("key").and_then(Json::as_str) == Some(dir)
+                && r.get("kind").and_then(Json::as_str) == Some("is family")
+        });
+        (dir.starts_with('/') && (k.ends_with("/.cd") || family)).then(|| format!("{dir}/{key}"))
+    });
+    let record = (switched.filter(|_| !key.starts_with('/')))
+        .and_then(|full| query::resolve_key(analysis, &target, &full))
+        .or_else(|| query::resolve_key(analysis, &target, key))?;
+    let text = |r: &Record, f: &str| r.get(f).and_then(Json::as_str).filter(|v| !v.is_empty()).map(str::to_string);
+    let mut markdown = format!("### Key `{key}` of `\\{}`\n\n", target.trim_start_matches('\\'));
+    // where the run defined the key (the package's file), not the call that loaded it
+    let defined = record.get("defined");
+    let site = |f: &str| defined.and_then(|d| d.get(f));
+    let defined_path = site("path").and_then(Json::as_str).map(str::to_string).or_else(|| text(&record, "path"));
+    let family = text(&record, "family");
+    if record.contains_key("unknown") {
+        // What the handler takes it for, by what the run defined under that name.
+        let color = analysis.facts.colors.iter().rev().find(|c| c.name == key);
+        match color {
+            Some(c) => markdown.push_str(&format!(
+                "The color `{key}`{}: no key of `{}` by this name, so its `.unknown` handler takes it as the color to draw and fill with.\n\n",
+                c.value.as_ref().and_then(rgba).map(|v| format!(" (rgb {:.2} {:.2} {:.2})", v.red, v.green, v.blue)).unwrap_or_default(),
+                family.as_deref().unwrap_or_default()
+            )),
+            None => markdown.push_str(&format!(
+                "No key of `{}` by this name: its `.unknown` handler reads it (a color, an arrow tip, a shape).\n\n",
+                family.as_deref().unwrap_or_default()
+            )),
+        }
+    }
+    let mined = defined_path.clone().filter(|_| analysis.settings.plugins.docs).and_then(|p| {
+        // pgf's manual names a key by its path (`/tikz/yshift`), other manuals by its name
+        let index = crate::plugins::docs::index(&analysis.settings.docs);
+        let path = std::path::Path::new(&p);
+        let full = family.as_deref().map(|f| format!("{}/{key}", f.trim_end_matches('/')));
+        full.and_then(|f| index.lookup(path, &f)).or_else(|| index.lookup(path, key))
+    });
+    if let Some((m, does)) = mined.as_ref().and_then(|m| Some((m, m.text.as_deref()?))) {
+        markdown.push_str(&format!("{does} {}\n\n", extracted_from_manual(m)));
+    }
+    if let Some(usage) = mined.as_ref().and_then(|m| m.usage.as_deref()) {
+        markdown.push_str(&format!("`{usage}`\n\n"));
+    }
+    if let Some(comment) = text(&record, "comment") {
+        markdown.push_str(&format!("{comment} {}\n\n", extracted("from the source comment")));
+    }
+    let default = text(&record, "default").map(|d| match d.contains("pgfkeysvaluerequired") {
+        true => "needs a value".to_string(),
+        false => format!("default `{d}`"),
+    });
+    let kind = text(&record, "kind").filter(|k| k != "code" && k != "initial");
+    let initial = (text(&record, "kind").as_deref() == Some("initial"))
+        .then(|| text(&record, "value").map(|v| format!("initial `{v}`")))
+        .flatten();
+    let from = text(&record, "package")
+        .or_else(|| defined_path.as_ref().map(|p| p.rsplit('/').next().unwrap_or(p).to_string()));
+    let facts: Vec<String> = [
+        text(&record, "type").map(|t| format!("*{t}* `{}`", text(&record, "key").unwrap_or_default())),
+        kind,
+        initial,
+        default,
+        family.map(|f| format!("family `{f}`")),
+        from.map(|p| format!("defined in `{p}`")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    markdown.push_str(&format!("{}\n\n", facts.join(" · ")));
+    if let Some(full) = text(&record, "key").filter(|_| !record.contains_key("unknown")) {
+        let choices: Vec<String> = query::stored_keys(analysis, Some(&format!("{full}/")))
+            .iter()
+            .filter_map(|r| text(r, "key")?.strip_prefix(&format!("{full}/")).map(str::to_string))
+            .filter(|c| !c.starts_with('.') && !c.contains('/'))
+            .chain(query::key_values(analysis, &target, key))
+            .collect();
+        if !choices.is_empty() {
+            markdown.push_str(&format!(
+                "Values: {}\n\n",
+                choices.iter().map(|c| format!("`{c}`")).collect::<Vec<_>>().join(", ")
+            ));
+        }
+    }
+    let line = site("line").or_else(|| record.get("line")).and_then(Json::as_u64);
+    if let (Some(path), Some(n)) = (defined_path, line) {
+        markdown.push_str(&format!("`{path}:{n}`\n\n"));
+    }
+    if let Some((doc, url)) = mined.and_then(|m| m.link) {
+        markdown.push_str(&format!("[{doc}]({url})\n\n"));
+    }
+    Some(markdown)
+}
+
+/// The command or environment whose key list `arg` is: `\draw[…]`, `\tikzset{…}`, `\begin{x}[…]`.
+fn key_list_owner(arg: &Arg) -> Option<String> {
+    Some(match arg.cmd {
+        "begin" => arg.groups.trim().trim_start_matches('{').split('}').next()?.to_string(),
+        cmd => cmd.to_string(),
+    })
+}
+
+/// What satex did with the magic comment (`% !TeX program = …`, `% arara: …`)
+/// on the cursor's line: the engine it ran, the root it read the file through.
+fn magic_hover(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<String> {
+    let magic = crate::plugins::magic::scan_with(doc.line(pos.line), &analysis.settings.magic).into_iter().next()?;
+    let what = match magic.key.to_ascii_lowercase().as_str() {
+        "tex program" => format!(
+            "satex ran this document with the {:?} engine{}.",
+            analysis.plugins.engine,
+            if analysis.plugins.program.is_empty() {
+                String::new()
+            } else {
+                format!(" (`{}`)", analysis.plugins.program)
+            }
+        ),
+        "tex root" => format!("satex reads this file through its root, `{}`.", magic.value),
+        "arara" => "satex's build reads this arara directive as one of the build's steps.".into(),
+        _ => "satex reads it and does not act on it.".into(),
+    };
+    Some(format!("**Magic comment** `{}` = `{}`\n\n{what}", magic.key, magic.value))
+}
+
+/// The outcome of the `%\satex@` directive the cursor is on, from its
+/// `\satex@` to the end of its line.
+fn directive_hover(analysis: &Analysis, path: &str, pos: Pos) -> Option<String> {
+    let found: Vec<String> = crate::linter::assertions::verdicts(analysis)
+        .into_iter()
+        .filter(|(span, ..)| span.line == pos.line && span.col <= pos.col && analysis.file_name(span.file) == path)
+        .map(|(_, code, message)| format!("**{}** {message}", crate::linter::label(code)))
+        .collect();
+    (!found.is_empty()).then(|| found.join("\n\n"))
+}
+
+/// A key's card heading: its kind first, the key as code (`### Label `sec:x``).
+pub(super) fn heading(kind: &str, key: &str) -> String {
+    let mut chars = kind.chars();
+    let kind: String = chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default();
+    format!("### {kind} `{key}`\n\n")
+}
+
+/// A count and its noun, plural unless one: `0 references`, `1 reference`.
+pub(super) fn counted(n: usize, noun: &str) -> String {
+    format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
+}
+
+/// The database entry of the citation key `key`: what it names and every field.
+pub(super) fn cite_hover(analysis: &Analysis, key: &str) -> Option<String> {
     let e = bib_entries(analysis).iter().find(|e| e.key == key.trim())?;
     let field = |names: &[&str]| e.fields.iter().find(|(n, _)| names.contains(&n.as_str())).map(|(_, v)| v.as_str());
     let venue = field(&["journal", "journaltitle", "booktitle", "publisher", "school", "institution", "howpublished"]);
-    let mut markdown = format!("### `{}` — {}\n\n", e.key, e.kind);
+    let mut markdown = format!("{}{}\n\n", heading("citation", &e.key), e.kind);
     if !e.title.is_empty() {
         markdown.push_str(&format!("**{}**\n\n", e.title));
     }
@@ -194,6 +371,12 @@ pub const MORE_DEFINITIONS: &str = "#### More definitions";
 /// `name` still means the primitive at `at`.
 pub fn placed(analysis: &Analysis, mut markdown: String, name: &str, path: &str, at: Pos) -> String {
     let first = markdown.find("\n\n").map_or(0, |i| i + 2);
+    // What the calls typeset, the one at the cursor first: before the
+    // signature line, else after the first paragraph under the heading.
+    let set = typesets(analysis, name, path, at);
+    let usage = markdown.find(&format!("\n`\\{name}")).map(|i| i + 1);
+    let second = markdown[first..].find("\n\n").map_or(markdown.len(), |i| first + i + 2);
+    markdown.insert_str(usage.unwrap_or(second).min(markdown.len()), &set);
     if let Some(syntax) = super::primitives::syntax(analysis, name, path, at.line, at.col) {
         markdown.insert_str(first, &syntax);
     }
@@ -208,7 +391,39 @@ pub fn markdown_hover(markdown: String) -> Hover {
     }
 }
 
-fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Option<String> {
+/// A redefinition chain as one line: `latex.ltx:12 (kernel) → hyperref.sty:3 (redefined) → …`, its
+/// first steps folded into `+N earlier` past the last two.
+fn chain_line(chain: &Json) -> String {
+    let steps = chain.as_array().map_or(&[][..], Vec::as_slice);
+    let text = |s: &Json, k: &str| s.get(k).and_then(Json::as_str).unwrap_or_default().to_string();
+    let one = |s: &Json| {
+        let what = match text(s, "role").as_str() {
+            "kernel" => "kernel".to_string(),
+            role => {
+                let who =
+                    if s.get("package").is_some_and(Json::is_string) { text(s, "package") } else { "document".into() };
+                format!("{who}, {}", if role == "in force" { "in force here" } else { "redefined" })
+            }
+        };
+        let saves = match s.get("saved").and_then(Json::as_array) {
+            Some(names) if !names.is_empty() => {
+                let names: Vec<&str> = names.iter().filter_map(Json::as_str).collect();
+                format!(", saves the old meaning as `{}`", names.join("`, `"))
+            }
+            _ => String::new(),
+        };
+        format!("`{}:{}` ({what}{saves})", text(s, "file"), s.get("line").and_then(Json::as_u64).unwrap_or_default())
+    };
+    let keep = steps.len().saturating_sub(2);
+    let mut parts: Vec<String> = Vec::new();
+    if keep > 0 {
+        parts.push(format!("+{keep} earlier"));
+    }
+    parts.extend(steps[keep..].iter().map(one));
+    parts.join(" → ")
+}
+
+pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Option<String> {
     let (mut records, _) = query::explain(analysis, &[name.to_string()], false).ok()?;
     // The definition in force at the cursor first, the others after it.
     let place = |r: &Record| (r.get("path").cloned(), r.get("line").cloned());
@@ -225,10 +440,11 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
         if sites.is_empty() {
             return None;
         }
-        markdown.push_str(&format!("### `\\{name}` — not reached by the analysis\n\n"));
+        markdown.push_str(&format!("### `\\{name}`: not reached by the analysis\n\n"));
         for site in &sites {
             markdown.push_str(&format!("`{}:{}` (source scan)\n\n", site.path, site.pos.line));
         }
+        markdown.push_str(&super::knowledge::about(&topics(analysis, name, &records)));
     }
     for (n, record) in records.iter().enumerate() {
         if n == 1 {
@@ -236,44 +452,100 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
             markdown.push_str(&format!("{MORE_DEFINITIONS}\n\n"));
         }
         let text = |key: &str| record.get(key).and_then(Json::as_str);
+        let mined = text("path")
+            .filter(|_| analysis.settings.plugins.docs)
+            .and_then(|p| crate::plugins::docs::index(&analysis.settings.docs).lookup(std::path::Path::new(p), name));
+        let mined = mined.as_ref();
         match text("when") {
-            Some(w) => markdown.push_str(&format!("### `\\{name}` — {w}\n\n")),
+            Some(w) => markdown.push_str(&format!("### `\\{name}`: {w}\n\n")),
             None => markdown.push_str(&format!("### `\\{name}`\n\n")),
         }
         if let Some(does) = text("does") {
             markdown.push_str(&format!("{does}\n\n"));
+        } else if let Some((m, does)) = mined.and_then(|m| Some((m, m.text.as_deref()?))) {
+            markdown.push_str(&format!("{does} {}\n\n", extracted_from_manual(m)));
         }
-        if n == 0
-            && let Some((at, set)) = typesets(analysis, name)
-        {
-            markdown.push_str(&format!("Typesets `{set}` at line {}\n\n", at.line));
-        }
-        if let Some(sig) = text("signature").filter(|s| !s.is_empty()) {
+        // The manual's usage line, else the run's, its arguments named by role.
+        if let Some(usage) = mined.and_then(|m| m.usage.as_deref()) {
+            markdown.push_str(&format!("`{usage}`\n\n"));
+        } else if let Some(usage) = text("usage").filter(|u| u.contains('⟨')) {
+            markdown.push_str(&format!("`{usage}`\n\n"));
+        } else if let Some(sig) = text("signature").filter(|s| !s.is_empty()) {
             markdown.push_str(&format!("`\\{name}{}`\n\n", usage(sig)));
         }
-        let types = arg_types(record);
-        for (arg, ty) in &types {
-            markdown.push_str(&format!("- `{arg}` {ty}\n"));
-        }
-        if !types.is_empty() {
+        if let Some(one_of) = record.get("one_of").and_then(Json::as_array) {
+            markdown.push_str("Here it holds one of, by path:\n");
+            for alt in one_of {
+                let body = alt.get("body").and_then(Json::as_str).unwrap_or_default();
+                let line = alt.get("line").and_then(Json::as_u64).unwrap_or_default();
+                let shown = if body.is_empty() { "(empty)".to_string() } else { format!("`{body}`") };
+                markdown.push_str(&format!("- {shown} (line {line})\n"));
+            }
             markdown.push('\n');
         }
-        if let Some(doc) = documented(record) {
+        let chains: Vec<&Json> = match record.get("one_of").and_then(Json::as_array) {
+            Some(alts) => alts.iter().filter_map(|a| a.get("chain")).filter(|c| c.is_array()).collect(),
+            None => record.get("chain").into_iter().collect(),
+        };
+        for chain in chains {
+            markdown.push_str(&format!("Redefined by: {}\n\n", chain_line(chain)));
+        }
+        // Each argument once: its type and what the comment above the definition says of it.
+        let doc = documented(record);
+        let said = |n: &str| doc.as_ref()?.params.iter().find(|(k, _)| format!("⟨arg{k}⟩") == n).map(|(_, t)| t);
+        let types = arg_types(record);
+        for (arg, ty) in &types {
+            match said(arg) {
+                Some(text) => markdown.push_str(&format!("- `{arg}` {ty}: {text}\n")),
+                None => markdown.push_str(&format!("- `{arg}` {ty}\n")),
+            }
+        }
+        let untyped: Vec<_> = doc
+            .iter()
+            .flat_map(|d| &d.params)
+            .filter(|(n, _)| !types.iter().any(|(a, _)| *a == format!("⟨arg{n}⟩")))
+            .collect();
+        for (n, text) in &untyped {
+            markdown.push_str(&format!("- `⟨arg{n}⟩` {text}\n"));
+        }
+        if let Some(ty) = text("yields") {
+            markdown.push_str(&format!("- yields {ty}\n"));
+        }
+        if !types.is_empty() || !untyped.is_empty() || text("yields").is_some() {
+            markdown.push('\n');
+        }
+        if let Some(doc) = &doc {
+            // the comment stands above the definition, whose place the card's foot gives
             if !doc.text.is_empty() {
-                markdown.push_str(&format!("{}\n\n", doc.text));
+                markdown.push_str(&format!("{} {}\n\n", doc.text, extracted("from the source comment")));
             }
-            for (n, text) in &doc.params {
-                markdown.push_str(&format!("- `⟨arg{n}⟩` {text}\n"));
+            if !doc.example.is_empty() {
+                markdown.push_str(&format!("```tex\n{}\n```\n\n", doc.example.join("\n")));
             }
-            if !doc.params.is_empty() {
-                markdown.push('\n');
-            }
+        } else if let Some(body) = text("body").filter(|b| {
+            // a primitive, or a name standing for itself, expands to nothing worth a line
+            text("signature").is_none_or(str::is_empty)
+                && text("tag") != Some("primitive")
+                && *b != format!("\\{name}")
+                && !b.is_empty()
+                && b.chars().count() <= analysis.settings.conventions.completion.body
+        }) {
+            // No comment and no arguments: what it stands for says most (`\draw` is `\path [draw]`).
+            markdown.push_str(&format!("Expands to `{body}`\n\n"));
+        }
+        let said = text("does").is_some()
+            || mined.is_some_and(|m| m.text.is_some())
+            || doc.as_ref().is_some_and(|d| !d.text.is_empty());
+        if let (false, Some(file), Some(line)) = (said, text("file"), record.get("line").and_then(Json::as_u64)) {
+            markdown.push_str(&format!("No documentation found. Defined at `{file}:{line}`.\n\n"));
         }
         let mut foot = Vec::new();
         if let (Some(file), Some(line)) = (text("file"), record.get("line").and_then(Json::as_u64)) {
             foot.push(format!("`{file}:{line}`"));
         }
-        if let (Some(doc), Some(url)) = (text("documentation"), text("reference")) {
+        if let Some((doc, url)) = mined.and_then(|m| m.link.as_ref()) {
+            foot.push(format!("[{doc}]({url})"));
+        } else if let (Some(doc), Some(url)) = (text("documentation"), text("reference")) {
             foot.push(format!("[{doc}]({url})"));
         } else if let Some(doc) = text("documentation") {
             markdown.push_str(&format!("{doc}\n\n"));
@@ -288,11 +560,13 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
     Some(markdown)
 }
 
-/// What the document's first call of `name` that sets text typesets, and
-/// where that call stands.
-fn typesets(analysis: &Analysis, name: &str) -> Option<(crate::tex::Span, String)> {
-    let sym = analysis.interner.lookup(name)?;
-    let mut calls: Vec<crate::tex::Span> = analysis
+/// What the document's calls of `name` typeset: the call at `at` in `path`
+/// first, marked, then at most two others, the rest counted (Explain
+/// lists them all).
+fn typesets(analysis: &Analysis, name: &str, path: &str, at: Pos) -> String {
+    const OTHERS: usize = 2;
+    let Some(sym) = analysis.interner.lookup(name) else { return String::new() };
+    let mut calls: Vec<crate::engine::tex::Span> = analysis
         .facts
         .expansions
         .iter()
@@ -300,27 +574,71 @@ fn typesets(analysis: &Analysis, name: &str) -> Option<(crate::tex::Span, String
         .map(|e| e.span)
         .collect();
     calls.sort_by_key(|s| (s.file, s.line, s.col));
-    calls.into_iter().take(16).find_map(|at| Some((at, query::typeset_by(analysis, at)?)))
+    calls.dedup();
+    let here = calls
+        .iter()
+        .rposition(|s| analysis.file_name(s.file) == path && (s.line, s.col) <= (at.line, at.col) && s.line == at.line);
+    // each call that sets text, with the lines that set the same text together
+    let mut sets: Vec<(String, Vec<u32>, bool)> = Vec::new();
+    for (i, call) in calls.iter().enumerate() {
+        let Some(set) = query::typeset_by(analysis, *call) else { continue };
+        let mine = here == Some(i);
+        match sets.iter_mut().find(|(s, ..)| *s == set) {
+            Some((_, lines, m)) => {
+                lines.push(call.line);
+                *m |= mine;
+            }
+            None => sets.push((set, vec![call.line], mine)),
+        }
+    }
+    sets.sort_by_key(|(.., mine)| !mine);
+    let lines = |ls: &[u32]| {
+        let named = ls.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");
+        format!("line{} {named}", if ls.len() > 1 { "s" } else { "" })
+    };
+    let mut out = String::new();
+    let mut rest = sets.iter();
+    // the call at the cursor stands out, the others are muted
+    if let Some((set, _, true)) = sets.first() {
+        rest.next();
+        out.push_str(&format!("**Typesets {set} here**\n\n"));
+    }
+    let others: Vec<_> = rest.collect();
+    if others.is_empty() {
+        return out;
+    }
+    let shown: Vec<String> =
+        others.iter().take(OTHERS).map(|(set, ls, _)| format!("*{set} at {}*", lines(ls))).collect();
+    let more = match others.len() > OTHERS {
+        true => format!(" *+{} more*", others.len() - OTHERS),
+        false => String::new(),
+    };
+    let heading = if out.is_empty() { "Typesets" } else { "Elsewhere" };
+    format!("{out}*{heading}:* {}{more}\n\n", shown.join(" · "))
 }
 
 /// The knowledge-base topics a command's hover touches: the types of its
 /// arguments, and the kind of quantity a register or parameter holds.
 fn topics(analysis: &Analysis, name: &str, records: &[Record]) -> Vec<String> {
-    let mut out: Vec<String> = records
-        .iter()
-        .flat_map(|r| r.get("types").and_then(Json::as_array).into_iter().flatten().filter_map(Json::as_str))
-        .filter_map(|t| Some(t.split_once(' ')?.1.to_string()))
+    // The command itself first (`\\`: a line break), then what it reads.
+    let mut out: Vec<String> = std::iter::once(format!("\\{name}"))
+        .chain(
+            records
+                .iter()
+                .flat_map(|r| r.get("types").and_then(Json::as_array).into_iter().flatten().filter_map(Json::as_str))
+                .filter_map(|t| Some(t.split_once(' ')?.1.to_string())),
+        )
         .collect();
     if let Some(meaning) = analysis.interner.lookup(name).map(|s| analysis.env.meaning(s)) {
-        out.extend(crate::roles::Ty::of_meaning(&meaning).map(|t| t.to_string()));
-        if let Some(crate::builtins::Primitive::Register(k)) = meaning.prim() {
+        out.extend(crate::analysis::roles::Ty::of_meaning(&meaning).map(|t| t.to_string()));
+        if let Some(crate::engine::builtins::Primitive::Register(k)) = meaning.prim() {
             out.push(k.as_str().to_string());
         }
     }
     out
 }
 
-/// The types a record gives its arguments ([`crate::roles::Ty`]), each by
+/// The types a record gives its arguments ([`crate::analysis::roles::Ty`]), each by
 /// its `⟨argN⟩` in the usage line.
 fn arg_types(record: &Record) -> Vec<(String, String)> {
     let types = record.get("types").and_then(Json::as_array).into_iter().flatten().filter_map(Json::as_str);
@@ -330,11 +648,72 @@ fn arg_types(record: &Record) -> Vec<(String, String)> {
         .collect()
 }
 
+/// After `#` in a definition's body: the parameters of the macro the line
+/// defines, each with its type and what the comment above it says of it.
+fn parameter_items(analysis: &Analysis, doc: &Text, before: &str, pos: Pos) -> Option<Vec<CompletionItem>> {
+    let typed =
+        before.strip_suffix('#').or_else(|| before.trim_end_matches(|c: char| c.is_ascii_digit()).strip_suffix('#'))?;
+    // `##` is a parameter of a definition inside this one
+    if typed.ends_with('#') {
+        return None;
+    }
+    let path = analysis.file_name(analysis.main_file);
+    let def = (analysis.facts.defs.iter())
+        .filter(|d| d.span.line <= pos.line && analysis.file_name(d.span.file) == path && d.mac.is_some())
+        .max_by_key(|d| (d.span.line, d.span.col))?;
+    let arity = def.mac.as_ref()?.parameter_text.arity;
+    let name = analysis.interner.name(def.name).to_string();
+    let record = query::explain(analysis, std::slice::from_ref(&name), false).ok()?.0.into_iter().next();
+    let types = record.as_ref().map(arg_types).unwrap_or_default();
+    let comment = record.as_ref().and_then(documented);
+    let start = to_lsp(doc, Pos::new(pos.line, pos.col - (before.len() - typed.len()) as u32));
+    let range = Range { start, end: to_lsp(doc, pos) };
+    let items = (1..=arity).map(|n| {
+        let ty = types.iter().find(|(a, _)| *a == format!("⟨arg{n}⟩")).map(|(_, t)| t.clone());
+        let about = comment.as_ref().and_then(|d| d.params.iter().find(|(k, _)| *k == n)).map(|(_, t)| t.clone());
+        let label = format!("#{n}");
+        CompletionItem {
+            text_edit: Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text: label.clone() })),
+            detail: Some(
+                [ty.clone(), Some(format!("parameter {n} of \\{name}"))]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join("  "),
+            ),
+            documentation: about.map(lsp_types::Documentation::String),
+            kind: Some(CompletionItemKind::VARIABLE),
+            sort_text: Some(format!("{n:02}")),
+            label,
+            ..Default::default()
+        }
+    });
+    Some(items.collect())
+}
+
+/// The label that sets text satex extracted apart from what it authored.
+fn extracted(origin: &str) -> String {
+    format!("*({origin})*")
+}
+
+/// The same for a mined manual: linked to where it can be read, with the
+/// section and the source line that document it.
+fn extracted_from_manual(m: &crate::plugins::docs::Entry) -> String {
+    let manual = m.link.as_ref().and_then(|(l, _)| l.strip_prefix("texdoc ")).unwrap_or(&m.from);
+    let section = m.at.as_ref().and_then(|p| p.section.as_ref()).map(|s| format!(", § {s}")).unwrap_or_default();
+    let origin = match &m.link {
+        Some((_, url)) => format!("from the [{manual} manual]({url}){section}"),
+        None => format!("from the {manual} manual{section}"),
+    };
+    let place = m.at.as_ref().map(|p| format!(" `{}:{}`", p.path, p.line)).unwrap_or_default();
+    format!("{}{place}", extracted(&origin))
+}
+
 /// The comment block above the definition a record names.
 fn documented(record: &Record) -> Option<super::doccomment::DocComment> {
     let path = record.get("path").and_then(Json::as_str)?;
     let line = record.get("line").and_then(Json::as_u64)? as usize;
-    super::doccomment::above(&crate::overlay::read_to_string(std::path::Path::new(path)).ok()?, line)
+    super::doccomment::above(&crate::project::overlay::read_to_string(std::path::Path::new(path)).ok()?, line)
 }
 
 /// The command whose argument the cursor is in, on its line: its name and
@@ -458,6 +837,12 @@ pub fn usage(sig: &str) -> String {
         let c = chars[i];
         i += 1;
         match c {
+            // Required text, as written.
+            '‹' => {
+                let end = chars[i..].iter().position(|c| *c == '›').map_or(chars.len(), |k| i + k);
+                out.extend(&chars[i..end]);
+                i = end + 1;
+            }
             's' => out.push('*'),
             'm' | 'v' => out.push_str(&arg("{", "}")),
             'o' => out.push_str(&arg("[", "]")),
@@ -507,7 +892,7 @@ pub fn usage(sig: &str) -> String {
 /// gives: its `.bst` or `.bbx` file when one is found, the databases it
 /// formats and what it does.
 fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<String> {
-    use crate::builtins::OccKind;
+    use crate::engine::builtins::OccKind;
     let here = |line: u32, file| line == pos.line && analysis.file_name(file) == path;
     let bibtex = analysis
         .facts
@@ -524,20 +909,11 @@ fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Opt
         return None;
     }
     let (what, ext, topic) = if bibtex { ("BibTeX", "bst", "bst") } else { ("biblatex", "bbx", "biblatex style") };
-    let mut md = format!("### `{word}` — {what} style\n\n");
+    let mut md = heading(&format!("{what} style"), word);
     let file = format!("{word}.{ext}");
-    let dirs = crate::paths::effective(
-        "BSTINPUTS",
-        &analysis.project,
-        &analysis.settings.paths.bstinputs,
-        &analysis.project.root,
-    );
-    let beside = Path::new(path).parent().map(|d| d.join(&file));
     let shipped =
         load.and_then(|l| l.path.as_deref()).and_then(|p| Path::new(p).parent()).map(|d| d.join("bbx").join(&file));
-    if let Some(found) =
-        beside.into_iter().chain(shipped).chain(dirs.dirs.iter().map(|d| d.join(&file))).find(|p| p.is_file())
-    {
+    if let Some(found) = style_file(analysis, path, &file, shipped) {
         md.push_str(&format!("`{}`\n\n", found.display()));
     }
     let databases: Vec<&str> = analysis
@@ -559,17 +935,34 @@ fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Opt
     Some(md)
 }
 
+/// The style file `file`: beside the document `path`, in `shipped`, on BSTINPUTS, else in the installation's styles.
+pub(super) fn style_file(analysis: &Analysis, path: &str, file: &str, shipped: Option<PathBuf>) -> Option<PathBuf> {
+    let dirs = crate::project::paths::effective(
+        "BSTINPUTS",
+        &analysis.project,
+        &analysis.settings.paths.bstinputs,
+        &analysis.project.root,
+    );
+    let beside = Path::new(path).parent().map(|d| d.join(file));
+    let found = beside.into_iter().chain(shipped).chain(dirs.dirs.iter().map(|d| d.join(file))).find(|p| p.is_file());
+    found.or_else(|| crate::caches::distribution::file_under(&analysis.distribution.roots, "bibtex/bst", file))
+}
+
 /// A package or class name in `\usepackage`, `\RequirePackage` or
 /// `\documentclass`: its file and `\Provides…` line, the options it offers
 /// and the ones passed, what it defines, what it loads, and the run's
 /// diagnostics inside it.
-fn load_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<String> {
+pub(super) fn load_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<String> {
     let load = analysis
         .facts
         .loads
         .iter()
         .find(|l| l.name == word && l.span.line == pos.line && analysis.file_name(l.span.file) == path)?;
-    let mut md = format!("### `{}` — {}\n\n", load.name, load.kind.as_str());
+    let mut md = heading(load.kind.as_str(), &load.name);
+    let path_of = load.path.as_deref().map(std::path::Path::new);
+    if let Some(about) = path_of.and_then(|p| crate::plugins::docs::about(&analysis.settings.docs, p)) {
+        md.push_str(&format!("{about}\n\n"));
+    }
     if let Some(provided) = &load.provided {
         md.push_str(&format!("{provided}\n\n"));
     }
@@ -646,17 +1039,20 @@ fn load_target(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<
     Some(GotoDefinitionResponse::Array(vec![Location { uri, range: Range { start: zero, end: zero } }]))
 }
 
-/// The file an argument typed [`crate::roles::Ty::File`] names under the
+/// The file an argument typed [`crate::analysis::roles::Ty::File`] names under the
 /// cursor, found beside the document or the project, through kpathsea for
 /// databases, with the extensions of its kind.
 fn file_target(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<GotoDefinitionResponse> {
     let line = doc.line(pos.line);
-    let (before, after) = line.split_at(crate::source::byte_of_col(line, pos.col).min(line.len()));
+    let (before, after) = line.split_at(crate::engine::source::byte_of_col(line, pos.col).min(line.len()));
     let arg = argument_at(before).filter(|a| a.open == '{')?;
-    let at = crate::roles::braced_groups(arg.groups).len();
-    let roles = crate::roles::roles(analysis, arg.cmd);
-    let ty =
-        roles.iter().filter(|r| r.arg == at).map(|r| r.kind.ty()).find(|t| matches!(t, crate::roles::Ty::File(_)))?;
+    let at = crate::analysis::roles::braced_groups(arg.groups).len();
+    let roles = crate::analysis::roles::roles(analysis, arg.cmd);
+    let ty = roles
+        .iter()
+        .filter(|r| r.arg == at)
+        .map(|r| r.kind.ty())
+        .find(|t| matches!(t, crate::analysis::roles::Ty::File(_)))?;
     let name = format!(
         "{}{}",
         arg.inside.rsplit(',').next().unwrap_or_default().trim_start(),
@@ -666,14 +1062,14 @@ fn file_target(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<GotoDefiniti
     let main = analysis
         .files
         .get(usize::from(analysis.main_file))
-        .map(|f| crate::paths::dir_of(std::path::Path::new(&f.path)));
+        .map(|f| crate::project::paths::dir_of(std::path::Path::new(&f.path)));
     let dirs = [Some(analysis.project.root.clone()), main];
     let beside = dirs.into_iter().flatten().flat_map(|d| {
         let names = std::iter::once(name.clone()).chain(exts.iter().map(|e| format!("{name}.{e}"))).collect::<Vec<_>>();
         names.into_iter().map(move |n| d.join(n))
     });
     let found = beside
-        .chain(crate::plugin::bib::resolve(analysis, &name).filter(|_| exts.iter().any(|e| e == "bib")))
+        .chain(crate::plugins::bib::resolve(analysis, &name).filter(|_| exts.iter().any(|e| e == "bib")))
         .find(|p| p.is_file())?;
     let zero = Position { line: 0, character: 0 };
     Some(GotoDefinitionResponse::Array(vec![Location {
@@ -693,6 +1089,27 @@ pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Positio
         return Some(target);
     }
     let sources = Sources::default();
+    // a key in an option list (`\draw[above]`, `\tikzset{x/.style=…}`): where its code is defined
+    let line = doc.line(pos.line);
+    let before = &line[..crate::engine::source::byte_of_col(line, pos.col).min(line.len())];
+    if !is_command && let Some(arg) = argument_at(before) {
+        let item = arg.inside.rsplit(',').next().unwrap_or_default().trim_start();
+        let rest: String = line[before.len()..].chars().take_while(|c| !matches!(c, ',' | '=' | ']' | '}')).collect();
+        let key = format!("{item}{rest}").trim().to_string();
+        let resolved = key_list_owner(&arg).and_then(|owner| query::resolve_key(analysis, &owner, &key));
+        let found = resolved.or_else(|| {
+            query::pgfkeys(analysis, None).into_iter().find(|r| {
+                r.get("key").and_then(Json::as_str).is_some_and(|k| {
+                    k.rsplit_once('/').is_some_and(|(_, last)| last == key) || k.ends_with(&format!("/{key}"))
+                })
+            })
+        });
+        if let Some(at) =
+            found.as_ref().and_then(|r| r.get("defined")?.as_object()).and_then(|d| record_location(d, &sources))
+        {
+            return Some(GotoDefinitionResponse::Array(vec![at]));
+        }
+    }
     let mut records = if is_command {
         query::explain(analysis, std::slice::from_ref(&name), true).ok()?.0
     } else {
@@ -713,7 +1130,15 @@ pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Positio
     let expanded: Vec<Record> =
         records.iter().filter_map(|r| r.get("expanded").and_then(Json::as_object).cloned()).collect();
     records.extend(expanded);
-    let mut locations: Vec<Location> = records.iter().filter_map(|r| record_location(r, &sources)).collect();
+    // The kernel's own definition of a name the run redefines.
+    let kernel = analysis.interner.lookup(&name).and_then(|s| analysis.kernel_sites.get(&s));
+    records.extend(kernel.map(|span| query::place(analysis, *span)));
+    let mut locations: Vec<Location> = Vec::new();
+    for at in records.iter().filter_map(|r| record_location(r, &sources)) {
+        if !locations.contains(&at) {
+            locations.push(at);
+        }
+    }
     // The run may stop before a later file defines the name: scan the source.
     if locations.is_empty() && is_command {
         for site in super::unreached::sites(analysis, path, &name) {
@@ -721,6 +1146,15 @@ pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Positio
             let position = to_lsp(&site.text, site.pos);
             locations.push(Location { uri: path_uri(&site.path), range: Range { start: position, end: position } });
         }
+    }
+    // A primitive has no line: its documentation answers, else the format's source.
+    if locations.is_empty() {
+        let at = |r: &Record| {
+            let reference = r.get("reference").and_then(Json::as_str).and_then(|u| u.parse().ok());
+            let uri = reference.or_else(|| r.get("path").and_then(Json::as_str).map(path_uri))?;
+            Some(Location { uri, range: Range::default() })
+        };
+        locations.extend(records.iter().filter_map(at));
     }
     (!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations))
 }
@@ -805,7 +1239,7 @@ fn site_range(record: &Record, sources: &Sources, name: &str, is_command: bool) 
     let col = record.get("col").and_then(Json::as_u64).unwrap_or(1) as u32;
     let text = sources.get(path)?;
     let text_line = text.line(line);
-    let from = crate::source::byte_of_col(text_line, col);
+    let from = crate::engine::source::byte_of_col(text_line, col);
     let needle = if is_command { format!("\\{name}") } else { name.to_string() };
     let mut search = from;
     if !is_command {
@@ -817,8 +1251,8 @@ fn site_range(record: &Record, sources: &Sources, name: &str, is_command: bool) 
             && name.chars().all(|c| c.is_ascii_alphabetic() || c == '@')
             && after.is_some_and(|c| c.is_ascii_alphabetic() || c == '@'))
     })?;
-    let first = crate::source::col_of_byte(text_line, found) + u32::from(is_command);
-    let width = crate::source::columns(name) as u32;
+    let first = crate::engine::source::col_of_byte(text_line, found) + u32::from(is_command);
+    let width = crate::engine::source::columns(name) as u32;
     let range =
         Range { start: to_lsp(&text, Pos::new(line, first)), end: to_lsp(&text, Pos::new(line, first + width)) };
     Some((path.to_string(), range))
@@ -841,10 +1275,15 @@ pub fn highlights(analysis: &Analysis, doc: &Text, path: &str, position: Positio
 
 /// The rename the name under the cursor asks for, against the files as
 /// they stand.
-fn rename_plan(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Result<crate::rename::Plan, String> {
+fn rename_plan(
+    analysis: &Analysis,
+    doc: &Text,
+    path: &str,
+    position: Position,
+) -> Result<crate::queries::rename::Plan, String> {
     let pos = to_pos(doc, position);
     let (name, is_command, col) = word_span(doc.line(pos.line), pos.col).ok_or("nothing renamable here")?;
-    crate::rename::plan(analysis, &Sources::default(), path, Pos::new(pos.line, col), &name, is_command)
+    crate::queries::rename::plan(analysis, &Sources::default(), path, Pos::new(pos.line, col), &name, is_command)
 }
 
 /// `textDocument/prepareRename`: the span under the cursor and its name.
@@ -872,7 +1311,7 @@ pub fn rename(
     let plan = rename_plan(analysis, doc, path, position)?;
     let sources = Sources::default();
     let mut changes: std::collections::HashMap<Uri, Vec<TextEdit>> = std::collections::HashMap::new();
-    for edit in crate::rename::edits(&plan, analysis, new_name)? {
+    for edit in crate::queries::rename::edits(&plan, analysis, new_name)? {
         let text = sources.get(&edit.path).ok_or_else(|| format!("{} cannot be read", edit.path))?;
         let range = Range { start: to_lsp(&text, edit.start), end: to_lsp(&text, edit.end) };
         changes.entry(path_uri(&edit.path)).or_default().push(TextEdit { range, new_text: edit.replacement });
@@ -928,16 +1367,48 @@ pub fn workspace_symbols(analysis: &Analysis, query_text: &str) -> Vec<SymbolInf
 /// inputs), the keys its occurrences carry (environments, labels,
 /// citations, graphics), or the key family its optional argument feeds.
 /// Elsewhere, the commands in scope, ranked for a document author.
-pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> CompletionResponse {
+pub fn completion(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> CompletionResponse {
+    completion_at(analysis, doc, path, position)
+}
+
+fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> CompletionResponse {
     let pos = to_pos(doc, position);
     let line = doc.line(pos.line);
-    let (before, after) = line.split_at(crate::source::byte_of_col(line, pos.col).min(line.len()));
-    match argument_at(before) {
-        Some(arg) if !cs_re().is_match(before) => {
-            let mut items = argument_items(analysis, doc, &arg, after, pos);
+    let (before, after) = line.split_at(crate::engine::source::byte_of_col(line, pos.col).min(line.len()));
+    if let Some(items) = super::directive::completion(before) {
+        return CompletionResponse::Array(items);
+    }
+    match super::directive::in_comment(before) {
+        Some(super::directive::InComment::Names(mut items)) => {
+            // the items replace the name typed from its backslash on
+            let typed = before.rsplit('\\').next().unwrap_or_default().chars().count() as u32 + 1;
+            let range = Range { start: to_lsp(doc, Pos::new(pos.line, pos.col.saturating_sub(typed))), end: position };
+            for it in &mut items {
+                let new_text = it.insert_text.take().unwrap_or_default();
+                it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
+            }
+            return CompletionResponse::Array(items);
+        }
+        Some(super::directive::InComment::Nothing) => return CompletionResponse::Array(Vec::new()),
+        Some(super::directive::InComment::Code) | None => {}
+    }
+    if let Some(items) = super::directive::relations(before) {
+        return CompletionResponse::Array(items);
+    }
+    if let Some(items) = parameter_items(analysis, doc, before, pos) {
+        return CompletionResponse::Array(items);
+    }
+    // What the text at the cursor is ([`super::type_at`]): the names of that type.
+    let at = super::type_at::type_at(analysis, doc, path, pos);
+    let items = typed_items(analysis, doc, path, &at, after, pos);
+    match at.place.as_ref() {
+        Some(place) if !cs_re().is_match(before) => {
+            let arg = place.arg();
+            let mut items = items;
             // A braced name replaces the word typed and the rest of it, and closes the brace.
             let typed = arg.inside.rsplit(',').next().unwrap_or_default().trim_start();
             if arg.open == '{' && !typed.contains('=') {
+                let typed = &at.item.typed;
                 let rest = after.chars().take_while(|c| c.is_alphanumeric() || ":-_./*".contains(*c)).count();
                 let close = if after[after.char_indices().nth(rest).map_or(after.len(), |(i, _)| i)..].starts_with('}')
                 {
@@ -954,18 +1425,44 @@ pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> Comple
                     it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
                 }
             }
+            // An option replaces what is typed of it, `-` and `>` too (`-Ki` for `-Kite`):
+            // an editor's word would stop at them and filter the item out.
+            if arg.open == '[' {
+                let typed = typed.rsplit('=').next().unwrap_or_default().trim_start();
+                let start = to_lsp(doc, Pos::new(pos.line, pos.col - typed.chars().count() as u32));
+                let range = Range { start, end: position };
+                for it in items.iter_mut().filter(|i| i.text_edit.is_none()) {
+                    let new_text = it.insert_text.take().unwrap_or_else(|| it.label.clone());
+                    it.filter_text.get_or_insert_with(|| it.label.clone());
+                    it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
+                }
+            }
             CompletionResponse::Array(items)
         }
+        // a name of a known kind outside an argument (`\draw (`, `2.5c`): no `\` typed
+        _ if !items.is_empty() => CompletionResponse::Array(items),
         _ => {
-            let typed = cs_re().find(before).map_or("", |m| &m.as_str()[1..]);
+            // the name typed, with the letters of that place (`_` and `:` under `\ExplSyntaxOn`)
+            let letters = analysis.facts.letters_at(analysis.main_file, pos.line, pos.col);
+            // a command completes only where one is being typed: its `\` right before the letters
+            let word = before.chars().rev().take_while(|c| c.is_alphabetic() || letters.contains(c)).count();
+            if before.chars().rev().nth(word) != Some('\\') {
+                return CompletionResponse::Array(Vec::new());
+            }
+            let typed = before
+                .rfind('\\')
+                .map(|i| &before[i + 1..])
+                .filter(|t| t.chars().all(|c| c.is_alphabetic() || letters.contains(&c)))
+                .unwrap_or("");
             let (mut items, more) = command_items(analysis, pos, typed);
             // In an argument TeX reads as a quantity, the names holding one
             // that fits come first.
             if let Some(want) = argument_at(before).and_then(|arg| quantity_wanted(analysis, &arg)) {
                 for item in &mut items {
                     let sym = analysis.interner.lookup(&item.label);
-                    let ty = sym.and_then(|s| crate::roles::Ty::of_meaning(&analysis.env.meaning(s)));
-                    let register = want == crate::roles::Ty::Register && matches!(ty, Some(crate::roles::Ty::Reg(_)));
+                    let ty = sym.and_then(|s| crate::analysis::roles::Ty::of_meaning(&analysis.env.meaning(s)));
+                    let register = want == crate::analysis::roles::Ty::Register
+                        && matches!(ty, Some(crate::analysis::roles::Ty::Reg(_)));
                     if register || ty.is_some_and(|t| t.leq(want)) {
                         item.sort_text = item.sort_text.take().map(|s| format!("!{s}"));
                     }
@@ -976,40 +1473,38 @@ pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> Comple
     }
 }
 
-/// The quantity the braced argument `arg` is read as ([`crate::roles::Ty`]),
+/// The quantity the braced argument `arg` is read as ([`crate::analysis::roles::Ty`]),
 /// a register's for a register name, or any register's.
-fn quantity_wanted(analysis: &Analysis, arg: &Arg) -> Option<crate::roles::Ty> {
-    use crate::roles::Ty;
-    let at = crate::roles::braced_groups(arg.groups).len();
-    let roles = crate::roles::roles(analysis, arg.cmd);
-    let (_, ty) = crate::roles::arg_types(&roles).into_iter().find(|(a, _)| arg.open == '{' && *a == at)?;
+fn quantity_wanted(analysis: &Analysis, arg: &Arg) -> Option<crate::analysis::roles::Ty> {
+    use crate::analysis::roles::Ty;
+    let at = crate::analysis::roles::braced_groups(arg.groups).len();
+    let roles = crate::analysis::roles::roles(analysis, arg.cmd);
+    let (_, ty) = crate::analysis::roles::arg_types(&roles).into_iter().find(|(a, _)| arg.open == '{' && *a == at)?;
     let ty = if matches!(ty, Ty::Reg(_)) { ty.parent() } else { ty };
     (ty.leq(Ty::Quantity) || ty == Ty::Register).then_some(ty)
 }
 
-/// How many commands one completion answer lists; the client asks again as
-/// more of the name is typed.
-const COMMANDS_SHOWN: usize = 300;
-
-fn cs_re() -> &'static Regex {
+/// A control sequence being typed at the end of the text.
+pub(super) fn cs_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"\\[A-Za-z@]*$").unwrap())
 }
 
 /// The argument the cursor is in: the command it belongs to, its opening
 /// delimiter, the complete groups between them and the column of the `\`.
-struct Arg<'a> {
-    cmd: &'a str,
-    open: char,
-    groups: &'a str,
-    col: u32,
+pub(super) struct Arg<'a> {
+    pub(super) cmd: &'a str,
+    pub(super) open: char,
+    pub(super) groups: &'a str,
+    pub(super) col: u32,
     /// The argument's text up to the cursor.
-    inside: &'a str,
+    pub(super) inside: &'a str,
 }
 
-fn argument_at(before: &str) -> Option<Arg<'_>> {
+pub(super) fn argument_at(before: &str) -> Option<Arg<'_>> {
     static HEAD: OnceLock<Regex> = OnceLock::new();
-    let head = HEAD.get_or_init(|| Regex::new(r"\\([A-Za-z@]+)\*?((?:\s*(?:\[[^\[\]]*\]|\{[^{}]*\}))*)\s*$").unwrap());
+    let head = HEAD
+        .get_or_init(|| Regex::new(r"\\([A-Za-z@]+)\*?((?:\s*(?:\[[^\[\]]*\]|\{[^{}]*\}|\([^()]*\)))*)\s*$").unwrap());
     let mut depth = 0u32;
     for (i, c) in before.char_indices().rev() {
         match c {
@@ -1022,7 +1517,7 @@ fn argument_at(before: &str) -> Option<Arg<'_>> {
                     cmd: caps.get(1)?.as_str(),
                     open: c,
                     groups: caps.get(2)?.as_str(),
-                    col: crate::source::col_of_byte(before, start),
+                    col: crate::engine::source::col_of_byte(before, start),
                     inside: &before[i + 1..],
                 });
             }
@@ -1035,27 +1530,27 @@ fn argument_at(before: &str) -> Option<Arg<'_>> {
 /// How many name characters precede the cursor on its line.
 fn before_word(doc: &Text, pos: Pos) -> u32 {
     let line = doc.line(pos.line);
-    let before = &line[..crate::source::byte_of_col(line, pos.col).min(line.len())];
+    let before = &line[..crate::engine::source::byte_of_col(line, pos.col).min(line.len())];
     before.chars().rev().take_while(|c| c.is_alphanumeric() || *c == '*').count() as u32
 }
 
 /// The entries of every database the document names, once per analysis.
-fn bib_entries(analysis: &Analysis) -> &[crate::plugin::bib::Entry] {
+fn bib_entries(analysis: &Analysis) -> &[crate::plugins::bib::Entry] {
     analysis.bib.get_or_init(|| {
         let mut seen = BTreeSet::new();
         analysis
             .facts
             .occurrences
             .iter()
-            .filter(|o| o.kind == crate::builtins::OccKind::Bibliography)
-            .filter_map(|o| crate::plugin::bib::resolve(analysis, &o.key))
+            .filter(|o| o.kind == crate::engine::builtins::OccKind::Bibliography)
+            .filter_map(|o| crate::plugins::bib::resolve(analysis, &o.key))
             .filter(|path| seen.insert(path.clone()))
-            .filter_map(|path| Some((crate::overlay::read_to_string(&path).ok()?, path)))
+            .filter_map(|path| Some((crate::project::overlay::read_to_string(&path).ok()?, path)))
             .flat_map(|(text, path)| {
                 let file = path.to_string_lossy().into_owned();
-                crate::plugin::bib::entries(&text)
+                crate::plugins::bib::entries(&text)
                     .into_iter()
-                    .map(move |e| crate::plugin::bib::Entry { file: file.clone(), ..e })
+                    .map(move |e| crate::plugins::bib::Entry { file: file.clone(), ..e })
             })
             .collect()
     })
@@ -1071,139 +1566,196 @@ fn item(label: String, kind: CompletionItemKind, detail: Option<String>, rank: u
     }
 }
 
-fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: Pos) -> Vec<CompletionItem> {
-    use crate::builtins::{LoadKind, OccKind};
-    use crate::roles::RoleKind as R;
-    // What the argument at the cursor is ([`crate::roles`]): a braced one
-    // by its place, a bracketed one by every role of the command.
-    let at = crate::roles::braced_groups(arg.groups).len();
-    let roles: Vec<crate::roles::Role> =
-        crate::roles::roles(analysis, arg.cmd).into_iter().filter(|r| arg.open != '{' || r.arg == at).collect();
-    let mut occs: Vec<OccKind> =
-        roles.iter().filter_map(|r| if let R::Occ(k) = r.kind { Some(k) } else { None }).collect();
-    // A wrapper that adds a prefix (`\ref{sec:#1}`) is given what follows it.
-    let prefix = roles.iter().find(|r| r.kind == R::Occ(OccKind::Ref)).map_or("", |r| r.prefix.as_str());
-    occs.sort_by_key(|k| *k as u8);
-    occs.dedup();
-    let first_group = || {
-        static G: OnceLock<Regex> = OnceLock::new();
-        let g = G.get_or_init(|| Regex::new(r"\{([^{}]*)\}").unwrap());
-        g.captures(arg.groups).map(|c| c[1].trim().to_string())
-    };
-    if arg.open == '[' {
-        if roles.iter().any(|r| matches!(r.kind, R::Load(LoadKind::Class | LoadKind::Package))) {
-            // `\usepackage[…]{name}`: the name follows the cursor.
-            static NAME: OnceLock<Regex> = OnceLock::new();
-            let name = NAME.get_or_init(|| Regex::new(r"^[^\]]*\]\s*\{([^{},]*)").unwrap());
-            let Some(package) = name.captures(after).map(|c| c[1].trim().to_string()) else { return Vec::new() };
-            // `key=…` whose value the run loaded as a file (biblatex's `style=` a `.bbx`).
-            if let Some((key, typed)) = arg.inside.rsplit(',').next().and_then(|o| o.split_once('=')) {
-                return files(analysis, option_files(analysis, &package, key.trim()).into_iter(), typed.trim());
+/// The names that fit each type [`super::type_at::type_at`] found at the cursor, the most precise
+/// type's first.
+fn typed_items(
+    analysis: &Analysis,
+    doc: &Text,
+    path: &str,
+    at: &super::type_at::At,
+    after: &str,
+    pos: Pos,
+) -> Vec<CompletionItem> {
+    use crate::analysis::roles::{KeyKind, Ty};
+    use crate::engine::builtins::OccKind;
+    let mut out: Vec<CompletionItem> = Vec::new();
+    // a name being defined is not one of those defined
+    for hit in at.hits.iter().filter(|h| !h.defines) {
+        let typed = hit.typed.as_deref().unwrap_or(&at.item.typed);
+        let arg = at.place.as_ref().map(super::type_at::Place::arg);
+        // a type plugin's items first ([`super::plugins`])
+        if let Some(items) = super::plugins::complete(analysis, doc, path, pos, at, hit) {
+            // after `key=` only values: nothing else fits a known key's value
+            let keyed = matches!(hit.ty, Ty::Key(KeyKind::Option | KeyKind::Pgf | KeyKind::Declared));
+            let valued = arg.as_ref().is_some_and(|a| {
+                a.open != '['
+                    && a.inside.rsplit(',').next().is_some_and(|k| k.contains('='))
+                    && !query::options(analysis, a.cmd).is_empty()
+            });
+            if keyed && valued {
+                return items;
             }
-            let detail = |d: Option<String>| d.map_or(package.clone(), |d| format!("default: {d}  ({package})"));
-            let options = query::package_options(analysis, &package).into_iter();
-            return options.map(|(key, d)| item(key, CompletionItemKind::PROPERTY, Some(detail(d)), 0)).collect();
+            out.extend(items.into_iter().filter(|i| !out.iter().any(|o| o.label == i.label)).collect::<Vec<_>>());
+            continue;
         }
-        let target = match occs.contains(&OccKind::BeginEnvironment) {
-            true => first_group().unwrap_or_default(),
-            false => arg.cmd.to_string(),
+        let items = match (hit.ty, &arg) {
+            (Ty::Key(KeyKind::Label), _) => {
+                let labels = analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Label);
+                let labels: BTreeSet<&str> = labels.filter_map(|o| o.key.strip_prefix(hit.prefix.as_str())).collect();
+                let labels = labels.into_iter().filter(|k| !k.is_empty() && k.starts_with(typed));
+                labels.map(|k| item(k.to_string(), CompletionItemKind::REFERENCE, None, 0)).collect()
+            }
+            (Ty::Key(KeyKind::Cite), _) => cite_items(analysis),
+            (Ty::Key(KeyKind::Environment), Some(arg)) => environment_items(analysis, doc, arg, after, pos),
+            (Ty::File(kind), _) if hit.file && !(hit.prefix.is_empty() && hit.suffix.is_empty()) => {
+                let ext = match kind {
+                    crate::analysis::roles::FileKind::Sty
+                    | crate::analysis::roles::FileKind::Cls
+                    | crate::analysis::roles::FileKind::Theme => kind.ext(),
+                    _ => None,
+                };
+                library_items(analysis, &hit.prefix, &hit.suffix, ext.map(|e| format!(".{e}")).as_deref(), typed)
+            }
+            (ty @ Ty::File(_), _) => files(analysis, file_exts(analysis, ty).into_iter(), typed.trim()),
+            _ if !hit.prefix.is_empty() => {
+                let what = format!("named `{}…`", hit.prefix);
+                (defined_with(analysis, &hit.prefix, typed).into_iter())
+                    .map(|n| item(n, CompletionItemKind::REFERENCE, Some(what.clone()), 0))
+                    .collect()
+            }
+            _ => Vec::new(),
         };
-        return option_items(analysis, &target);
+        out.extend(items.into_iter().filter(|i| !out.iter().any(|o| o.label == i.label)).collect::<Vec<_>>());
     }
-    // A key list in braces (`\pgfkeys{…}`, `\tikzset{…}`, a macro that
-    // hands its argument to one).
-    if arg.open == '{'
-        && !roles.iter().any(|r| matches!(r.kind, R::Load(_)))
-        && occs.iter().all(|k| matches!(k, OccKind::Key | OccKind::KeyUse))
-    {
-        let keys = key_items(analysis, doc, arg, pos);
-        if !keys.is_empty() {
-            return keys;
-        }
-    }
-    // A file argument: the files of the extension its role reads.
-    let typed = arg.inside.rsplit(',').next().unwrap_or_default().trim();
-    // A library's name: the files between the fixed prefix and suffix the
-    // run's loads put around it.
-    let affixed: Vec<_> = roles
-        .iter()
-        .filter(|r| matches!(r.kind, R::Load(_)) && !(r.prefix.is_empty() && r.suffix.is_empty()))
-        .collect();
-    if !affixed.is_empty() {
-        return library_items(analysis, &affixed, typed);
-    }
-    let mut out = files(analysis, roles.iter().filter_map(|r| file_exts(analysis, r.kind.ty())), typed);
-    let keys = |kinds: &[OccKind]| -> BTreeSet<String> {
-        let occ = analysis.facts.occurrences.iter().filter(|o| kinds.contains(&o.kind) && !o.key.is_empty());
-        occ.map(|o| o.key.clone()).collect()
+    out
+}
+
+/// `\usepackage[…]{name}`: the options of the package named after the cursor, after `key=` the
+/// values the run saw and the files of the kind it loaded by that value (biblatex's `style=` a `.bbx`).
+pub(super) fn package_options(analysis: &Analysis, arg: &Arg, after: &str) -> Vec<CompletionItem> {
+    let close = after.find(']').map_or(after.len(), |i| i + 1);
+    let named = crate::analysis::roles::braced_groups(&after[close..]);
+    let Some(package) =
+        named.first().map(|g| g.trim_matches(['{', '}']).split(',').next().unwrap_or_default().trim().to_string())
+    else {
+        return Vec::new();
     };
-    for kind in &occs {
-        match kind {
-            OccKind::BeginEnvironment | OccKind::EndEnvironment => {
-                let open = open_environments(analysis, (pos.line, arg.col));
-                let snippet = *kind == OccKind::BeginEnvironment;
-                let close = after.starts_with('}');
-                // A name already written after the cursor stays as it is.
-                let fresh = close || after.trim().is_empty();
-                let here = open.iter().rev().enumerate().filter(|_| !snippet);
-                out.extend(here.map(|(i, e)| item(e.clone(), CompletionItemKind::MODULE, Some("open here".into()), i)));
-                for (env, items) in environments(analysis, pos) {
-                    if !snippet && open.contains(&env) {
-                        continue;
-                    }
-                    let mut it = item(env.clone(), CompletionItemKind::MODULE, None, 100);
-                    if snippet && fresh {
-                        let body = if items { "\t\\item $0" } else { "\t$0" };
-                        // From the name typed so far through a `}` the
-                        // editor already closed.
-                        let typed = before_word(doc, pos);
-                        let range = Range {
-                            start: to_lsp(doc, Pos::new(pos.line, pos.col - typed)),
-                            end: to_lsp(doc, Pos::new(pos.line, pos.col + close as u32)),
-                        };
-                        let args: String =
-                            (1..=environment_arguments(analysis, &env)).map(|i| format!("{{${i}}}")).collect();
-                        let new_text = format!("{env}}}{args}\n{body}\n\\end{{{env}}}");
-                        it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
-                        it.insert_text_format = Some(InsertTextFormat::SNIPPET);
-                    }
-                    out.push(it);
-                }
+    if let Some((key, typed)) = arg.inside.rsplit(',').next().and_then(|o| o.split_once('=')) {
+        let mut items: Vec<CompletionItem> = query::option_values(analysis, &package, key.trim())
+            .into_iter()
+            .filter(|v| v.starts_with(typed.trim()))
+            .map(|v| item(v, CompletionItemKind::VALUE, Some(format!("{} of {package}", key.trim())), 0))
+            .collect();
+        items.extend(files(analysis, option_files(analysis, &package, key.trim()).into_iter(), typed.trim()));
+        return items;
+    }
+    let detail = |d: Option<String>| d.map_or(package.clone(), |d| format!("default: {d}  ({package})"));
+    let options = query::package_options(analysis, &package).into_iter();
+    options.map(|(key, d)| item(key, CompletionItemKind::PROPERTY, Some(detail(d)), 0)).collect()
+}
+
+/// A `[…]` key list of a command or environment: after `key=` the tips, patterns, colors or nodes
+/// the key hands pgf; else the keys, or the default of an optional argument.
+pub(super) fn bracket_keys(analysis: &Analysis, doc: &Text, arg: &Arg) -> Vec<CompletionItem> {
+    let _ = doc;
+    let target = key_list_owner(arg).unwrap_or_else(|| arg.cmd.to_string());
+    if let Some((key, _)) = arg.inside.rsplit(',').next().and_then(|o| o.split_once('=')) {
+        let options = query::options(analysis, &target);
+        let family = options.iter().find_map(|r| r.get("family")?.as_str().filter(|f| f.starts_with('/')));
+        if let Some(family) = family {
+            let path = format!("{}/{}", family.trim_end_matches('/'), key.trim());
+            let drawn = drawn_items(
+                analysis,
+                &path,
+                &[Stroke::Arrows, Stroke::Pattern, Stroke::Color, Stroke::Node, Stroke::NodeOf],
+            );
+            if !drawn.is_empty() {
+                return drawn;
             }
-            OccKind::Ref => {
-                let labels =
-                    keys(&[OccKind::Label]).into_iter().filter_map(|k| Some(k.strip_prefix(prefix)?.to_string()));
-                out.extend(labels.map(|k| item(k, CompletionItemKind::REFERENCE, None, 0)));
-            }
-            OccKind::Cite => {
-                // The databases' entries, found by key, title, author or
-                // year; then keys a `\bibitem` or another citation gave.
-                let entries = bib_entries(analysis);
-                out.extend(entries.iter().map(|e| {
-                    let who = e.author.split(" and ").next().unwrap_or_default();
-                    let surname = who.split(',').next().unwrap_or(who).split_whitespace().last().unwrap_or_default();
-                    let detail = match (surname, e.year.as_str()) {
-                        ("", "") => e.kind.clone(),
-                        (s, "") => s.to_string(),
-                        ("", y) => y.to_string(),
-                        (s, y) => format!("{s} ({y})"),
-                    };
-                    CompletionItem {
-                        filter_text: Some(format!("{} {} {} {}", e.key, e.title, e.author, e.year)),
-                        documentation: (!e.title.is_empty())
-                            .then(|| lsp_types::Documentation::String(format!("{}\n{} {}", e.title, e.author, e.year))),
-                        ..item(e.key.clone(), CompletionItemKind::REFERENCE, Some(detail), 0)
-                    }
-                }));
-                let known: BTreeSet<&str> = entries.iter().map(|e| e.key.as_str()).collect();
-                let other =
-                    keys(&[OccKind::BibItem, OccKind::Cite]).into_iter().filter(|k| !known.contains(k.as_str()));
-                out.extend(other.map(|k| item(k, CompletionItemKind::REFERENCE, None, 1)));
-            }
-            _ => {}
         }
     }
-    out.dedup_by(|a, b| a.label == b.label);
+    let mut items = option_items(analysis, &target);
+    // An optional argument with a default offers it; a numeric default
+    // makes it a count (`\newcommand`'s `[0]`): the counts follow.
+    if items.is_empty()
+        && let Some(default) = optional_default(analysis, &target, arg.groups.matches('[').count())
+    {
+        items.push(item(default.clone(), CompletionItemKind::VALUE, Some("default".into()), 0));
+        if default.trim().parse::<u8>().is_ok() {
+            items.extend(
+                (0..=9u8)
+                    .map(|n| n.to_string())
+                    .filter(|n| *n != default)
+                    .map(|n| item(n, CompletionItemKind::VALUE, None, 1)),
+            );
+        }
+    }
+    items
+}
+
+/// The databases' entries, found by key, title, author or year; then keys a `\bibitem` or
+/// another citation gave.
+fn cite_items(analysis: &Analysis) -> Vec<CompletionItem> {
+    use crate::engine::builtins::OccKind;
+    let entries = bib_entries(analysis);
+    let mut out: Vec<CompletionItem> = entries
+        .iter()
+        .map(|e| {
+            let who = e.author.split(" and ").next().unwrap_or_default();
+            let surname = who.split(',').next().unwrap_or(who).split_whitespace().last().unwrap_or_default();
+            let detail = match (surname, e.year.as_str()) {
+                ("", "") => e.kind.clone(),
+                (s, "") => s.to_string(),
+                ("", y) => y.to_string(),
+                (s, y) => format!("{s} ({y})"),
+            };
+            CompletionItem {
+                filter_text: Some(format!("{} {} {} {}", e.key, e.title, e.author, e.year)),
+                documentation: (!e.title.is_empty())
+                    .then(|| lsp_types::Documentation::String(format!("{}\n{} {}", e.title, e.author, e.year))),
+                ..item(e.key.clone(), CompletionItemKind::REFERENCE, Some(detail), 0)
+            }
+        })
+        .collect();
+    let known: BTreeSet<&str> = entries.iter().map(|e| e.key.as_str()).collect();
+    let occ = analysis.facts.occurrences.iter().filter(|o| matches!(o.kind, OccKind::BibItem | OccKind::Cite));
+    let other: BTreeSet<&str> = occ.map(|o| o.key.as_str()).filter(|k| !k.is_empty() && !known.contains(k)).collect();
+    out.extend(other.into_iter().map(|k| item(k.to_string(), CompletionItemKind::REFERENCE, None, 1)));
+    out
+}
+
+/// The environments open at the `\begin`/`\end`, then every one defined at the cursor; after
+/// `\begin{` as a snippet with its arguments and `\end`.
+fn environment_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: Pos) -> Vec<CompletionItem> {
+    let mut out = Vec::new();
+    let open = open_environments(analysis, (pos.line, arg.col));
+    let snippet = arg.cmd == "begin";
+    let close = after.starts_with('}');
+    // A name already written after the cursor stays as it is. Text that only follows
+    // it (a comment, a word after a space) is not part of the name.
+    let fresh = close || !after.starts_with(|c: char| c.is_alphanumeric() || ":-_./*@".contains(c));
+    let here = open.iter().rev().enumerate().filter(|_| !snippet);
+    out.extend(here.map(|(i, e)| item(e.clone(), CompletionItemKind::MODULE, Some("open here".into()), i)));
+    for (env, items) in environments(analysis, pos) {
+        if !snippet && open.contains(&env) {
+            continue;
+        }
+        let mut it = item(env.clone(), CompletionItemKind::MODULE, None, 100);
+        if snippet && fresh {
+            let body = if items { "\t\\item $0" } else { "\t$0" };
+            // From the name typed so far through a `}` the editor already closed.
+            let typed = before_word(doc, pos);
+            let range = Range {
+                start: to_lsp(doc, Pos::new(pos.line, pos.col - typed)),
+                end: to_lsp(doc, Pos::new(pos.line, pos.col + close as u32)),
+            };
+            let args: String = (1..=environment_arguments(analysis, &env)).map(|i| format!("{{${i}}}")).collect();
+            let new_text = format!("{env}}}{args}\n{body}\n\\end{{{env}}}");
+            it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
+            it.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        }
+        out.push(it);
+    }
     out
 }
 
@@ -1220,7 +1772,10 @@ fn takes_value(r: &Record) -> bool {
 }
 
 /// A key's completion: the key, then `=` with the cursor after it where it takes a value.
-fn key_item(mut it: CompletionItem, key: &str, r: &Record) -> CompletionItem {
+fn key_item(analysis: &Analysis, mut it: CompletionItem, key: &str, r: &Record) -> CompletionItem {
+    if let Some(path) = r.get("key").and_then(Json::as_str) {
+        it = with_preview(it, crate::queries::preview::of_key(analysis, path, None));
+    }
     if takes_value(r) {
         it.insert_text = Some(format!("{}=$1", key.replace('$', "\\$")));
         it.insert_text_format = Some(InsertTextFormat::SNIPPET);
@@ -1228,12 +1783,151 @@ fn key_item(mut it: CompletionItem, key: &str, r: &Record) -> CompletionItem {
     it
 }
 
+/// `it` with its picture ([`crate::queries::preview`]): as documentation for an
+/// editor, as `data.preview` for the playground.
+fn with_preview(mut it: CompletionItem, preview: Option<crate::queries::preview::Preview>) -> CompletionItem {
+    if let Some(p) = preview {
+        it.documentation = Some(lsp_types::Documentation::MarkupContent(lsp_types::MarkupContent {
+            kind: lsp_types::MarkupKind::Markdown,
+            value: p.markdown(),
+        }));
+        it.data = Some(serde_json::json!({ "preview": p.svg }));
+    }
+    it
+}
+
+/// What `path`'s code hands a setter of `kinds` that TeX draws: the arrow
+/// specs or pattern names the run declared, each with its picture.
+fn drawn_items(analysis: &Analysis, path: &str, kinds: &[Stroke]) -> Vec<CompletionItem> {
+    let sets = crate::queries::preview::sets(analysis, path);
+    let mut out = Vec::new();
+    for &kind in kinds.iter().filter(|k| sets.contains(k)) {
+        if matches!(kind, Stroke::Node | Stroke::NodeOf) {
+            let of = if kind == Stroke::NodeOf { "of " } else { "" };
+            let nodes = node_names(analysis, "").into_iter().map(|n| format!("{of}{n}"));
+            out.extend(nodes.map(|n| item(n, CompletionItemKind::REFERENCE, Some("node".into()), 0)));
+            continue;
+        }
+        // after the keys, like the tips
+        if kind == Stroke::Color {
+            out.extend(
+                super::plugins::color_items(analysis)
+                    .into_iter()
+                    .map(|it| CompletionItem { sort_text: Some(format!("{:05}{}", 50_000, it.label)), ..it }),
+            );
+            continue;
+        }
+        let (names, what) = match kind {
+            Stroke::Arrows => (crate::queries::preview::arrow_specs(analysis), "arrow tips"),
+            _ => (crate::queries::preview::pattern_names(analysis), "pattern"),
+        };
+        out.extend(names.into_iter().map(|n| {
+            let it = item(n.clone(), CompletionItemKind::ENUM_MEMBER, Some(what.into()), 50_000);
+            with_preview(it, crate::queries::preview::drawn(analysis, kind, &n))
+        }));
+        // the tips a library of the installation declares, not loaded yet: picking one loads it
+        if kind == Stroke::Arrows {
+            let have: BTreeSet<String> = out.iter().map(|i| i.label.clone()).collect();
+            let start =
+                crate::linter::shared::document_start(analysis).map(|s| Position::new(s.line.saturating_sub(1), 0));
+            for (tip, load) in crate::linter::shared::library_declared(analysis, "arrow") {
+                let label = if tip.contains(char::is_whitespace) { format!("-{{{tip}}}") } else { format!("-{tip}") };
+                if have.contains(&label) {
+                    continue;
+                }
+                let mut it = item(label, CompletionItemKind::ENUM_MEMBER, Some(format!("arrow tip of {load}")), 60_000);
+                it.additional_text_edits = start
+                    .map(|at| vec![TextEdit { range: Range { start: at, end: at }, new_text: format!("{load}\n") }]);
+                out.push(it);
+            }
+        }
+    }
+    out
+}
+
+/// Inside `(` (`\\draw (a) -- (`): the kinds of names that `(…)` groups in
+/// statements of the same command formed elsewhere in the document
+/// ([`crate::analysis::facts::Facts::slots`]). After `name.` the anchors of a node's shape, as pgf
+/// keeps them (`pgf@sh@ns@⟨node⟩` holds the shape, `pgf@anchor@⟨shape⟩@⟨anchor⟩` each anchor).
+pub(super) fn node_hits(analysis: &Analysis, doc: &Text, pos: Pos) -> Vec<super::type_at::Hit> {
+    let hit =
+        |prefix: String| super::type_at::Hit { prefix, ..super::type_at::Hit::of(crate::analysis::roles::Ty::Name) };
+    let Some(before) = doc.slice(Pos::new(pos.line.saturating_sub(super::type_at::LINES).max(1), 1), pos) else {
+        return Vec::new();
+    };
+    let before: Vec<char> = before.chars().collect();
+    let Some(open) = before.iter().rposition(|c| !(c.is_alphanumeric() || " _-.:".contains(*c))) else {
+        return Vec::new();
+    };
+    let Some(command) = (before[open] == '(').then(|| statement_command(&before[..open])).flatten() else {
+        return Vec::new();
+    };
+    let typed: String = before[open + 1..].iter().collect();
+    if let Some((node, anchor)) = typed.split_once('.') {
+        let shape = analysis.interner.lookup(&format!("pgf@sh@ns@{}", node.trim()));
+        let shape = shape.and_then(|s| {
+            let m = analysis.env.meaning(s);
+            m.as_macro().map(|m| crate::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
+        });
+        let anchor =
+            |shape| super::type_at::Hit { typed: Some(anchor.to_string()), ..hit(format!("pgf@anchor@{shape}@")) };
+        return shape.map(anchor).into_iter().collect();
+    }
+    // the prefixes `(…)` of this command's statements formed in the run
+    let mut kinds = BTreeSet::new();
+    for (span, prefix) in &analysis.facts.slots {
+        let Some(at) = doc.offset(Pos::new(span.line, span.col)) else { continue };
+        // a statement is a few lines: what stands within a window before the slot
+        let body = &doc.body()[..at];
+        let from = body.char_indices().rev().nth(WINDOW).map_or(0, |(i, _)| i);
+        let text: Vec<char> = body[from..].chars().collect();
+        if text.last() == Some(&'(') && statement_command(&text[..text.len() - 1]).as_deref() == Some(command.as_str())
+        {
+            kinds.insert(prefix.clone());
+        }
+    }
+    kinds.into_iter().map(hit).collect()
+}
+
+/// How many characters before a slot its statement may start.
+const WINDOW: usize = 2000;
+
+/// The command a statement starts with: the first control word after the
+/// `;` that ends the statement before (TikZ's statements end there).
+fn statement_command(before: &[char]) -> Option<String> {
+    let start = before.iter().rposition(|c| *c == ';').map_or(0, |i| i + 1);
+    let at = before[start..].iter().position(|c| *c == '\\')? + start + 1;
+    let name: String = before[at..].iter().take_while(|c| c.is_ascii_alphabetic()).collect();
+    (!name.is_empty()).then_some(name)
+}
+
+/// The defined names that start with `prefix`, without it, those that go on with `typed`.
+fn defined_with(analysis: &Analysis, prefix: &str, typed: &str) -> BTreeSet<String> {
+    (0..analysis.interner.len() as u32)
+        .map(crate::engine::tex::Sym)
+        .filter(|s| analysis.env.is_defined(*s))
+        .filter_map(|s| analysis.interner.name(s).strip_prefix(prefix).map(str::to_string))
+        .filter(|n| !n.is_empty() && n.starts_with(typed) && !analysis.settings.conventions.is_internal(n))
+        .collect()
+}
+
+/// The names of the nodes the document made that start with `typed`, as pgf
+/// keeps them (`\pgf@sh@ns@⟨name⟩`). pgf's own (`current subpath start`) are
+/// defined by its library code.
+fn node_names<'a>(analysis: &'a Analysis, typed: &str) -> BTreeSet<&'a str> {
+    (analysis.facts.defs.iter())
+        .filter(|d| crate::queries::query::origin(analysis, d.span.file) == "document")
+        .filter_map(|d| analysis.interner.name(d.name).strip_prefix("pgf@sh@ns@"))
+        .filter(|n| n.starts_with(typed) && !n.is_empty() && !analysis.settings.conventions.is_internal(n))
+        .collect()
+}
+
 /// The items of a key list at the cursor, from the keys the run stored
 /// ([`query::stored_keys`]): after `key=`, the choices of that key; a
 /// `/path` typed so far, the keys under its directory, replacing it; after
 /// a `/path/.cd` or a family's name, the keys under it; else the keys of
 /// the family the command sets ([`option_items`]).
-fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<CompletionItem> {
+pub(super) fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<CompletionItem> {
     let mut items = Vec::new();
     let mut depth = 0u32;
     let mut from = 0;
@@ -1300,25 +1994,71 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
             out.extend(
                 children(&dir).into_iter().map(|(n, _)| item(n, CompletionItemKind::ENUM_MEMBER, Some(path.into()), 0)),
             );
+            out.extend(drawn_items(
+                analysis,
+                path,
+                &[Stroke::Arrows, Stroke::Pattern, Stroke::Color, Stroke::Node, Stroke::NodeOf],
+            ));
         }
+        let values = query::key_values(analysis, arg.cmd, key.trim());
+        out.extend(values.into_iter().map(|v| item(v, CompletionItemKind::ENUM_MEMBER, Some(key.trim().into()), 0)));
         return out;
     }
     if typed.starts_with('/') {
         let dir = &typed[..typed.rfind('/').map_or(0, |i| i + 1)];
         let start = to_lsp(doc, Pos::new(pos.line, pos.col - typed.chars().count() as u32));
         let range = Range { start, end: to_lsp(doc, pos) };
-        return below(dir, KEY_DEPTH)
+        return below(dir, analysis.settings.conventions.completion.key_depth)
             .into_iter()
             .map(|(name, r)| {
                 let key = format!("{dir}{name}");
                 let rank = name.matches('/').count();
-                let mut it =
-                    key_item(item(key.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank), &key, &r);
+                let mut it = key_item(
+                    analysis,
+                    item(key.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank),
+                    &key,
+                    &r,
+                );
                 let new_text = it.insert_text.take().unwrap_or(key);
                 it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
                 it
             })
             .collect();
+    }
+    // A key no family stores goes to its `.unknown` handler: tips where that sets arrows (`-Kite`).
+    if typed.contains('-') {
+        let unknown = |d: &String| format!("{}/.unknown", d.trim_end_matches('/'));
+        let tips: Vec<_> = dirs.iter().flat_map(|d| drawn_items(analysis, &unknown(d), &[Stroke::Arrows])).collect();
+        if !tips.is_empty() {
+            return tips;
+        }
+    }
+    // nothing typed in a list the command reads no family of: the keys beside the paths written
+    // before (`/demo/mode=fast, ` offers `/demo/…`)
+    if typed.is_empty() && switched.is_none() && dirs.iter().all(String::is_empty) {
+        let mut used: Vec<String> = (items.iter())
+            .filter_map(|i| i.split('=').next().map(str::trim).filter(|k| k.starts_with('/')))
+            .filter_map(|k| Some(k[..k.rfind('/')? + 1].to_string()))
+            .collect();
+        used.dedup();
+        let absolute = |dir: &str, depth| -> Vec<CompletionItem> {
+            (below(dir, depth).into_iter())
+                .map(|(name, r)| {
+                    let key = format!("{dir}{name}");
+                    let rank = name.matches('/').count();
+                    key_item(
+                        analysis,
+                        item(key.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank),
+                        &key,
+                        &r,
+                    )
+                })
+                .collect()
+        };
+        if !used.is_empty() {
+            let depth = analysis.settings.conventions.completion.key_depth;
+            return used.iter().flat_map(|d| absolute(d, depth)).collect();
+        }
     }
     if switched.is_none() {
         let mut keys = option_items(analysis, arg.cmd);
@@ -1327,29 +2067,53 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
         }
         // The subkeys of a pgfkeys family, after its own keys.
         let deeper = dirs.iter().filter(|d| d.starts_with('/')).flat_map(|d| {
-            below(&format!("{}/", d.trim_end_matches('/')), KEY_DEPTH).into_iter().filter(|(n, _)| n.contains('/'))
+            below(&format!("{}/", d.trim_end_matches('/')), analysis.settings.conventions.completion.key_depth)
+                .into_iter()
+                .filter(|(n, _)| n.contains('/'))
         });
         keys.extend(deeper.map(|(name, r)| {
-            key_item(item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 99_999), &name, &r)
+            key_item(analysis, item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 99_999), &name, &r)
         }));
         return keys;
     }
     dirs.iter()
-        .flat_map(|d| below(&format!("{}/", d.trim_end_matches('/')), KEY_DEPTH))
+        .flat_map(|d| {
+            below(&format!("{}/", d.trim_end_matches('/')), analysis.settings.conventions.completion.key_depth)
+        })
         .map(|(name, r)| {
             let rank = name.matches('/').count();
-            key_item(item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank), &name, &r)
+            key_item(analysis, item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank), &name, &r)
         })
         .collect()
 }
 
-/// How many levels below a directory key completion lists, so a family's
-/// subkeys are found by typing any part of their path.
-const KEY_DEPTH: usize = 3;
-
 /// The keys `name`'s optional argument feeds, from [`query::options`].
+/// The default of the `nth` optional argument `name` takes, by its
+/// signature ([`query::signature`]).
+fn optional_default(analysis: &Analysis, name: &str, nth: usize) -> Option<String> {
+    let sym = analysis.interner.lookup(crate::engine::tex::bare_name(name))?;
+    let mac = analysis.env.meaning(sym).as_macro()?.clone();
+    let spec = query::signature(analysis, sym, &mac)?;
+    let optional = spec.items.iter().filter_map(|a| match a {
+        crate::engine::tex::ArgType::Optional(d) => Some(d.clone()),
+        crate::engine::tex::ArgType::Delimited { open: '[', default, .. } => Some(default.clone()),
+        _ => None,
+    });
+    optional.into_iter().nth(nth).flatten()
+}
+
 fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
-    query::options(analysis, name)
+    let options = query::options(analysis, name);
+    let families: BTreeSet<&str> = options.iter().filter_map(|r| r.get("family")?.as_str()).collect();
+    // A family whose unknown keys may be arrow specs takes the declared tips.
+    let tips: Vec<CompletionItem> = families
+        .iter()
+        .filter(|f| f.starts_with('/'))
+        .flat_map(|f| {
+            drawn_items(analysis, &format!("{}/.unknown", f.trim_end_matches('/')), &[Stroke::Arrows, Stroke::Color])
+        })
+        .collect();
+    options
         .iter()
         .enumerate()
         .filter_map(|(i, r)| {
@@ -1358,26 +2122,41 @@ fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
             let key = key.strip_prefix(family).map_or(key, |k| k.trim_start_matches('/'));
             let default = r.get("default").and_then(Json::as_str).filter(|d| !d.is_empty());
             let kind = r.get("kind").and_then(Json::as_str).filter(|k| *k != "code");
-            let detail = [kind.map(str::to_string), default.map(|d| format!("default: {d}")), Some(family.to_string())];
+            // pgfkeys' marker for a key that needs a value reads as words
+            let default = default.map(|d| {
+                if d.contains("pgfkeysvaluerequired") { "needs a value".to_string() } else { format!("default {d}") }
+            });
+            let ty = r.get("type").and_then(Json::as_str).map(str::to_string);
+            let detail = [ty, kind.map(str::to_string), default, Some(family.to_string())];
             let detail: Vec<String> = detail.into_iter().flatten().filter(|d| !d.is_empty()).collect();
             let rank = r.get("rank").and_then(Json::as_u64).unwrap_or(0) as usize * 10_000 + i.min(9_999);
-            Some(key_item(item(key.to_string(), CompletionItemKind::PROPERTY, Some(detail.join("  ")), rank), key, r))
+            Some(key_item(
+                analysis,
+                item(key.to_string(), CompletionItemKind::PROPERTY, Some(detail.join("  ")), rank),
+                key,
+                r,
+            ))
         })
+        .chain(tips)
         .collect()
 }
 
 /// Extensions of files, and the installation's tree their program searches.
 type Exts = (Vec<String>, Option<&'static str>);
 
-/// The files an argument of type `ty` names, by [`crate::roles::FileKind`].
-fn file_exts(analysis: &Analysis, ty: crate::roles::Ty) -> Option<Exts> {
-    use crate::roles::{FileKind, Ty};
+/// The files an argument of type `ty` names, by [`crate::analysis::roles::FileKind`].
+fn file_exts(analysis: &Analysis, ty: crate::analysis::roles::Ty) -> Option<Exts> {
+    use crate::analysis::roles::{FileKind, Ty};
     let Ty::File(kind) = ty else { return None };
     match kind {
-        // The extensions the run's own graphics had.
+        // The extensions graphics tries (`\Gin@extensions` at the end of the run) and those the run's own graphics had.
         FileKind::Graphic => {
-            let occ = analysis.facts.occurrences.iter().filter(|o| o.kind == crate::builtins::OccKind::Graphics);
-            let exts: BTreeSet<String> = occ.filter_map(|o| Some(o.key.rsplit_once('.')?.1.to_string())).collect();
+            let occ =
+                analysis.facts.occurrences.iter().filter(|o| o.kind == crate::engine::builtins::OccKind::Graphics);
+            let tried = crate::linter::shared::macro_text(analysis, "Gin@extensions").unwrap_or_default();
+            let tried = tried.split(',').filter_map(|e| Some(e.trim().strip_prefix('.')?.to_string()));
+            let exts: BTreeSet<String> =
+                occ.filter_map(|o| Some(o.key.rsplit_once('.')?.1.to_string())).chain(tried).collect();
             Some((exts.into_iter().collect(), None))
         }
         // `\input` adds `.tex` only to a name without an extension (tex.web § 537): any file goes.
@@ -1390,13 +2169,13 @@ fn file_exts(analysis: &Analysis, ty: crate::roles::Ty) -> Option<Exts> {
 /// by the name `v`, as [`file_exts`] gives them.
 fn option_files(analysis: &Analysis, package: &str, key: &str) -> Option<Exts> {
     let loads = &analysis.facts.loads;
-    let at = loads.iter().position(|l| l.name == package && l.kind == crate::builtins::LoadKind::Package)?;
+    let at = loads.iter().position(|l| l.name == package && l.kind == crate::engine::builtins::LoadKind::Package)?;
     let value = loads[at].options.iter().find_map(|o| o.split_once('=').filter(|(k, _)| k.trim() == key))?.1.trim();
     let nested = loads[at + 1..].iter().take_while(|l| l.depth > loads[at].depth);
     let exts: BTreeSet<String> = nested
         .filter_map(|l| l.name.rsplit_once('.').filter(|(stem, _)| *stem == value).map(|(_, ext)| ext.to_string()))
         .collect();
-    let tree = exts.first().and_then(|e| crate::roles::FileKind::of_ext(e)).and_then(|k| k.tree());
+    let tree = exts.first().and_then(|e| crate::analysis::roles::FileKind::of_ext(e)).and_then(|k| k.tree());
     (!exts.is_empty()).then(|| (exts.into_iter().collect(), tree))
 }
 
@@ -1413,11 +2192,13 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
             let ext = format!(".{ext}");
             match dir {
                 "tex" => names.extend(
-                    crate::distribution::files_with(roots, &ext)
+                    crate::caches::distribution::files_with(roots, &ext)
                         .into_iter()
                         .filter_map(|(n, p)| Some((n.strip_suffix(&ext)?.to_string(), 1, Some(p)))),
                 ),
-                _ => names.extend(crate::distribution::names_with(roots, dir, &ext).into_iter().map(|n| (n, 1, None))),
+                _ => names.extend(
+                    crate::caches::distribution::names_with(roots, dir, &ext).into_iter().map(|n| (n, 1, None)),
+                ),
             }
         }
         let listed: Vec<String> = exts.iter().filter(|e| !e.is_empty()).map(|e| format!(".{e}")).collect();
@@ -1427,7 +2208,7 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
         };
         let names: Vec<_> = names.into_iter().filter(|(n, ..)| n.starts_with(typed)).collect();
         // Reading each file's identification is for a list one can read.
-        let identify = names.len() <= IDENTIFIED;
+        let identify = names.len() <= analysis.settings.conventions.completion.identified;
         out.extend(names.into_iter().map(|(n, rank, path)| {
             let mut detail = detail(&n);
             let mut it = item(n.clone(), CompletionItemKind::FILE, None, rank);
@@ -1442,7 +2223,7 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
                     it.sort_text = Some(format!("{}~", it.sort_text.as_deref().unwrap_or_default()));
                     let names: Vec<&str> = needs
                         .iter()
-                        .map(|e| if *e == crate::config::Engine::LuaTeX { "LuaTeX" } else { "XeTeX" })
+                        .map(|e| if *e == crate::project::config::Engine::LuaTeX { "LuaTeX" } else { "XeTeX" })
                         .collect();
                     format!("needs {}", names.join(" or "))
                 });
@@ -1464,36 +2245,23 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
     out
 }
 
-/// The installation's files a library argument names: for each role, the
-/// part of a file name between its prefix and suffix (and the extension
-/// its load kind adds), starting with `typed`.
-fn library_items(analysis: &Analysis, roles: &[&crate::roles::Role], typed: &str) -> Vec<CompletionItem> {
-    use crate::builtins::LoadKind;
-    let all = crate::distribution::files_with(&analysis.distribution.roots, "");
-    let mut out: Vec<CompletionItem> = Vec::new();
-    for role in roles {
-        let crate::roles::RoleKind::Load(kind) = role.kind else { continue };
-        let ext = match kind {
-            LoadKind::Package => ".sty",
-            LoadKind::Class => ".cls",
-            _ => "",
-        };
-        let detail = format!("{}…{}{ext}", role.prefix, role.suffix);
-        for (name, _) in &all {
-            let Some(middle) = name.strip_prefix(role.prefix.as_str()).and_then(|n| n.strip_suffix(ext)) else {
-                continue;
-            };
-            let Some(middle) = middle.strip_suffix(role.suffix.as_str()) else { continue };
-            if !middle.is_empty() && middle.starts_with(typed) && !out.iter().any(|i| i.label == middle) {
-                out.push(item(middle.to_string(), CompletionItemKind::MODULE, Some(detail.clone()), 0));
-            }
-        }
-    }
-    out
+/// The installation's files a library argument names: the part of a file
+/// name between the `prefix` and `suffix` its load puts around it (and the
+/// extension `ext` a package's or class's load adds), starting with `typed`.
+fn library_items(
+    analysis: &Analysis,
+    prefix: &str,
+    suffix: &str,
+    ext: Option<&str>,
+    typed: &str,
+) -> Vec<CompletionItem> {
+    let ext = ext.unwrap_or_default();
+    let all = crate::caches::distribution::files_with(&analysis.distribution.roots, "");
+    let detail = format!("{prefix}…{suffix}{ext}");
+    let names = all.iter().filter_map(|(name, _)| name.strip_prefix(prefix)?.strip_suffix(ext)?.strip_suffix(suffix));
+    let names: BTreeSet<&str> = names.filter(|m| !m.is_empty() && m.starts_with(typed)).collect();
+    names.into_iter().map(|m| item(m.to_string(), CompletionItemKind::MODULE, Some(detail.clone()), 0)).collect()
 }
-
-/// Up to how many installed files a completion reads the identification of.
-const IDENTIFIED: usize = 400;
 
 /// Whether `root` is a tree of the user's or the site's own rather than of
 /// the distribution: TeX Live's `texmf-dist` and a configured bundle are not.
@@ -1532,8 +2300,8 @@ fn head(path: &std::path::Path) -> Option<String> {
 /// required" (luacode), "Use XeLaTeX or LuaLaTeX instead" (unicode-math); "Don't use XeTeX" is
 /// no such message. A
 /// convention read off its first lines; none found means any engine.
-fn needs(head: &str) -> Vec<crate::config::Engine> {
-    use crate::config::Engine;
+fn needs(head: &str) -> Vec<crate::project::config::Engine> {
+    use crate::project::config::Engine;
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
         let engine = r"(Lua|Xe)(?:La)?TeX";
@@ -1559,10 +2327,10 @@ fn needs(head: &str) -> Vec<crate::config::Engine> {
 /// What a file of extension `ext` is, and the command this run loaded such
 /// files with (`\usepackage{stem}`), if it loaded any.
 fn loader(analysis: &Analysis, ext: &str, stem: &str) -> Option<String> {
-    let kind = crate::roles::FileKind::of_ext(ext)?;
+    let kind = crate::analysis::roles::FileKind::of_ext(ext)?;
     let load = match kind {
-        crate::roles::FileKind::Sty => crate::builtins::LoadKind::Package,
-        crate::roles::FileKind::Cls => crate::builtins::LoadKind::Class,
+        crate::analysis::roles::FileKind::Sty => crate::engine::builtins::LoadKind::Package,
+        crate::analysis::roles::FileKind::Cls => crate::engine::builtins::LoadKind::Class,
         _ => return Some(kind.label().to_string()),
     };
     let by = analysis.facts.loads.iter().filter(|l| l.kind == load && l.depth == 0).find_map(|l| l.by);
@@ -1608,7 +2376,7 @@ fn project_files(analysis: &Analysis, exts: &[&str]) -> Vec<String> {
 
 /// Environments open before `at` in the main file, outermost first.
 fn open_environments(analysis: &Analysis, at: (u32, u32)) -> Vec<String> {
-    use crate::builtins::OccKind;
+    use crate::engine::builtins::OccKind;
     let mut stack: Vec<String> = Vec::new();
     let mut seen: Vec<_> = analysis
         .facts
@@ -1656,7 +2424,7 @@ pub fn linked_environment(text: &str, position: Position) -> Option<lsp_types::L
 }
 
 /// `line` up to its first `%` that starts a comment (not `\%`).
-fn uncommented(line: &str) -> &str {
+pub(super) fn uncommented(line: &str) -> &str {
     let mut escaped = false;
     for (at, c) in line.char_indices() {
         match c {
@@ -1671,7 +2439,7 @@ fn uncommented(line: &str) -> &str {
 /// Environments defined at `pos`: the run's `\X`/`\endX` pairs (what
 /// `\begin` looks up), less the ones the document defines only later, each
 /// with whether its code reaches what `\item` reads (a list).
-fn environments(analysis: &Analysis, pos: Pos) -> Vec<(String, bool)> {
+pub(super) fn environments(analysis: &Analysis, pos: Pos) -> Vec<(String, bool)> {
     let later = |sym| {
         let defs: Vec<_> = analysis.facts.defs.iter().filter(|d| d.name == sym).collect();
         !defs.is_empty() && !defs.iter().any(|d| analysis.visible_in(d.span, analysis.main_file, pos.line, pos.col))
@@ -1680,7 +2448,7 @@ fn environments(analysis: &Analysis, pos: Pos) -> Vec<(String, bool)> {
     let list = analysis.interner.lookup("list");
     let mut out = Vec::new();
     for i in 0..analysis.interner.len() as u32 {
-        let end = crate::tex::Sym(i);
+        let end = crate::engine::tex::Sym(i);
         let Some(base) = analysis.interner.name(end).strip_prefix("end") else { continue };
         if base.is_empty() || base.contains(['@', ':', '\\']) || base.chars().any(char::is_control) {
             continue;
@@ -1697,11 +2465,12 @@ fn environments(analysis: &Analysis, pos: Pos) -> Vec<(String, bool)> {
     out
 }
 
-/// The names the bodies of `name`'s code spell, breadth-first through the
+/// The names the bodies of `name`'s code spell (or build with `\csname`), breadth-first through the
 /// meanings the run ended with, up to `limit` macros.
-fn body_reach(analysis: &Analysis, name: &str, limit: usize) -> BTreeSet<crate::tex::Sym> {
+pub(super) fn body_reach(analysis: &Analysis, name: &str, limit: usize) -> BTreeSet<crate::engine::tex::Sym> {
     let mut seen = BTreeSet::new();
     let mut queue: std::collections::VecDeque<_> = analysis.interner.lookup(name).into_iter().collect();
+    let csname = analysis.interner.lookup("csname");
     let mut expanded = 0;
     while let Some(sym) = queue.pop_front() {
         let Some(mac) = analysis.env.meaning(sym).as_macro().cloned() else { continue };
@@ -1709,136 +2478,266 @@ fn body_reach(analysis: &Analysis, name: &str, limit: usize) -> BTreeSet<crate::
         if expanded > limit {
             break;
         }
-        for cs in mac.replacement_text.iter().filter_map(|t| t.cs()) {
-            if seen.insert(cs) {
-                queue.push_back(cs);
+        let toks = &mac.replacement_text;
+        // a name built of characters, `\csname tabular*\endcsname`, is reached as well
+        let built = |i: usize| {
+            let name: String = (toks[i + 1..].iter())
+                .map_while(|t| match t.tok {
+                    crate::engine::tex::Tok::Chr(c, _) => Some(c),
+                    _ => None,
+                })
+                .collect();
+            (!name.is_empty()).then(|| analysis.interner.lookup(&name)).flatten()
+        };
+        for (i, cs) in toks.iter().enumerate().filter_map(|(i, t)| Some((i, t.cs()?))) {
+            let named = (Some(cs) == csname).then(|| built(i)).flatten();
+            for cs in std::iter::once(cs).chain(named) {
+                if seen.insert(cs) {
+                    queue.push_back(cs);
+                }
             }
         }
     }
     seen
 }
 
-/// Command names in scope at `pos`, ranked for a document author: the
-/// project's own first, then documented names from packages and the
-/// kernel (no `@`, `_` or `:`), more used ones first, internals last.
-/// The fewest arguments each defined name takes, from the definitions
-/// query, once per analysis.
+/// The kind of material an environment makes: the first kernel builder its code reaches, the most
+/// specific first (an alignment preamble, a list, a trivlist, a float); `None`: no kind.
+pub(super) fn material(analysis: &Analysis, name: &str) -> Option<usize> {
+    const BUILDERS: [&[&str]; 4] = [&["@mkpream"], &["list"], &["@trivlist"], &["@float", "@dblfloat"]];
+    let reach = body_reach(analysis, name, 400);
+    BUILDERS
+        .iter()
+        .position(|names| names.iter().any(|n| analysis.interner.lookup(n).is_some_and(|s| reach.contains(&s))))
+}
+
+/// Builds what completion reads of `analysis` once, ahead of the first request.
+pub fn warm(analysis: &Analysis) {
+    takes(analysis);
+    crate::util::progress::pause_now();
+    crate::analysis::roles::roles(analysis, "documentclass");
+    crate::util::progress::pause_now();
+    query::scope_named(analysis, None, false, |_| false);
+}
+
+/// The fewest arguments each defined name takes, once per analysis.
 fn takes(analysis: &Analysis) -> &crate::fixed::HashMap<String, u8> {
-    analysis.takes.get_or_init(|| {
-        query::run(analysis, Query::Definitions, &Filter::Always)
-            .into_iter()
-            .filter_map(|r| {
-                let name = r.get("name")?.as_str()?.to_string();
-                let min = r.get("takes")?.get("min")?.as_u64()? as u8;
-                Some((name, min))
-            })
-            .collect()
+    crate::util::progress::built(&analysis.takes, || {
+        let defs = analysis.facts.defs.iter();
+        defs.filter_map(|d| Some((analysis.interner.cs(d.name), query::takes_min(analysis, d)?))).collect()
     })
 }
 
-/// Environments whose begin command reads its mandatory arguments through
-/// an internal macro (`\tabular` hands them to `\@tabular`), so its own
-/// definition takes none: how many they are.
-const ENVIRONMENT_ARGUMENTS: &[(&str, u8)] = &[
-    ("array", 1),
-    ("minipage", 1),
-    ("multicols", 1),
-    ("tabular", 1),
-    ("tabular*", 2),
-    ("tabularx", 2),
-    ("thebibliography", 1),
-    ("wrapfigure", 2),
-];
-
 /// How many mandatory arguments `\begin{env}` takes.
-fn environment_arguments(analysis: &Analysis, env: &str) -> u8 {
-    ENVIRONMENT_ARGUMENTS
-        .iter()
-        .find(|(name, _)| *name == env)
-        .map(|(_, n)| *n)
+pub(super) fn environment_arguments(analysis: &Analysis, env: &str) -> u8 {
+    analysis
+        .settings
+        .conventions
+        .completion
+        .environment_arguments
+        .get(env)
+        .copied()
         .unwrap_or_else(|| takes(analysis).get(&format!("\\{env}")).copied().unwrap_or(0))
+}
+
+/// A name a file the build wrote defines (`\@abspage@last` from the
+/// `.aux`): it holds from the second run on, which the label says.
+fn written_by(analysis: &Analysis, record: &crate::queries::query::Record) -> Option<String> {
+    let path = record.get("path").and_then(Json::as_str)?;
+    let file = analysis.written.iter().find(|(name, _)| path.ends_with(name.as_str()))?;
+    let name = std::path::Path::new(&file.0).file_name()?.to_string_lossy().into_owned();
+    Some(format!("from {name}, from the second run on"))
 }
 
 /// Each carries a snippet for its mandatory arguments.
 /// The commands in scope at `pos` whose name holds `typed` (case aside),
-/// the best [`COMMANDS_SHOWN`] of them, and whether there were more.
+/// the best `conventions.completion.shown` of them, and whether there were more.
+/// The project's own first, then documented names from packages and the
+/// kernel (no `@`, `_` or `:`), more used ones first, internals last.
 fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionItem>, bool) {
     let takes = takes(analysis);
+    let signature = signature_items(analysis, typed);
     let typed = typed.to_lowercase();
-    let mut used: crate::fixed::HashMap<crate::tex::Sym, u32> = crate::fixed::HashMap::default();
+    let mut used: crate::fixed::HashMap<crate::engine::tex::Sym, u32> = crate::fixed::HashMap::default();
+    let mut document: crate::fixed::HashMap<crate::engine::tex::FileId, bool> = crate::fixed::HashMap::default();
     for e in &analysis.facts.expansions {
-        if query::origin(analysis, e.span.file) == "document" && e.within.is_none() {
+        let own = *document.entry(e.span.file).or_insert_with(|| query::origin(analysis, e.span.file) == "document");
+        if own && e.within.is_none() {
             *used.entry(e.name).or_default() += 1;
         }
     }
-    let mut items: Vec<CompletionItem> = query::scope(analysis, Some((analysis.main_file, pos.line, pos.col)), true)
-        .into_iter()
-        .filter_map(|record| {
-            let name = record.get("name")?.as_str()?.to_string();
-            let label = name.trim_start_matches('\\').to_string();
-            if !label.to_lowercase().contains(&typed) {
-                return None;
-            }
-            let tag = record.get("tag").and_then(Json::as_str).unwrap_or("");
-            let internal = analysis.settings.conventions.is_internal(label.trim_start_matches('\\'));
-            if label.is_empty() || (internal && !matches!(tag, "macro" | "primitive" | "environment" | "alias")) {
-                return None;
-            }
-            let effective = record.get("effective").and_then(Json::as_str).unwrap_or("");
-            let package = record.get("package").and_then(Json::as_str).unwrap_or("");
-            let tier = match (package, internal) {
-                ("document", _) => 0,
-                (_, true) => 3,
-                _ if tag == "primitive" || !label.chars().any(char::is_alphabetic) => 2,
-                _ => 1,
-            };
-            let count = analysis.interner.lookup(&label).and_then(|s| used.get(&s)).copied().unwrap_or(0);
-            // The argument is a name to pick: the editor asks again inside
-            // the braces, and an environment brings its `\end`.
-            let pick =
-                matches!(label.as_str(), "begin" | "end" | "usepackage" | "documentclass" | "ref" | "cref" | "cite");
-            let (insert_text, format) = match takes.get(&name).copied().unwrap_or(0) {
-                _ if pick => (format!("{label}{{$1}}"), InsertTextFormat::SNIPPET),
-                0 => (label.clone(), InsertTextFormat::PLAIN_TEXT),
-                min => {
-                    let args: String = (1..=min).map(|i| format!("{{${i}}}")).collect();
-                    (format!("{label}{args}"), InsertTextFormat::SNIPPET)
-                }
-            };
-            Some(CompletionItem {
-                sort_text: Some(format!("{tier}{:06}{label}", 999_999u32.saturating_sub(count))),
-                label,
-                kind: Some(if tag == "primitive" { CompletionItemKind::KEYWORD } else { CompletionItemKind::FUNCTION }),
-                detail: Some(format!("{effective}  ({package})")),
-                insert_text: Some(insert_text),
-                insert_text_format: Some(format),
-                command: pick.then(|| lsp_types::Command {
-                    title: "pick".into(),
-                    command: "editor.action.triggerSuggest".into(),
-                    arguments: None,
-                }),
-                ..Default::default()
-            })
-        })
-        .collect();
-    // A name that starts with what is typed before one that only holds it.
-    items.sort_by_cached_key(|i| (!i.label.to_lowercase().starts_with(&typed), i.sort_text.clone()));
-    let more = items.len() > COMMANDS_SHOWN;
-    items.truncate(COMMANDS_SHOWN);
-    let all = {
-        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        crate::roles::roles_many(analysis, &names)
-    };
-    for (item, roles) in items.iter_mut().zip(all) {
-        item.detail = item.detail.take().map(|d| typed_usage(&d, &roles));
+    // a name with `@` only where `@` is a letter (`\makeatletter`, a package)
+    let letters = analysis.facts.letters_at(analysis.main_file, pos.line, pos.col);
+    let tiers = &analysis.settings.conventions.completion.tiers;
+    let typeable =
+        |label: &str| label.chars().count() < 2 || label.chars().all(|c| c.is_alphabetic() || letters.contains(&c));
+    let mut items: Vec<(CompletionItem, String)> = {
+        let named = |name: &str| crate::engine::tex::bare_name(name).to_lowercase().contains(&typed);
+        query::scope_named(analysis, Some((analysis.main_file, pos.line, pos.col)), true, named)
     }
+    .into_iter()
+    .filter_map(|record| {
+        let name = record.get("name")?.as_str()?.to_string();
+        let label = crate::engine::tex::bare_name(&name).to_string();
+        if !label.to_lowercase().contains(&typed) || !typeable(&label) {
+            return None;
+        }
+        let tag = record.get("tag").and_then(Json::as_str).unwrap_or("");
+        let internal = analysis.settings.conventions.is_internal(crate::engine::tex::bare_name(&label));
+        if label.is_empty() || (internal && !matches!(tag, "macro" | "primitive" | "environment" | "alias")) {
+            return None;
+        }
+        // the usage line, its arguments named, else the bare shape
+        let effective = record.get("usage").or_else(|| record.get("effective")).and_then(Json::as_str).unwrap_or("");
+        let package = record.get("package").and_then(Json::as_str).unwrap_or("");
+        let tier = match (package, internal) {
+            ("document", _) => tiers.document,
+            (_, true) => tiers.internal,
+            _ if tag == "primitive" || !label.chars().any(char::is_alphabetic) => tiers.primitive,
+            _ => tiers.package,
+        };
+        let count = analysis.interner.lookup(&label).and_then(|s| used.get(&s)).copied().unwrap_or(0);
+        // The argument is a name to pick: the editor asks again inside
+        // the braces, and an environment brings its `\end`.
+        let pick = analysis.settings.conventions.completion.pick.contains(&label);
+        let (insert_text, format) = match takes.get(&name).copied().unwrap_or(0) {
+            _ if pick => (format!("{label}{{$1}}"), InsertTextFormat::SNIPPET),
+            0 => (label.clone(), InsertTextFormat::PLAIN_TEXT),
+            min => {
+                let args: String = (1..=min).map(|i| format!("{{${i}}}")).collect();
+                (format!("{label}{args}"), InsertTextFormat::SNIPPET)
+            }
+        };
+        let it = CompletionItem {
+            sort_text: Some(format!("{tier}{:06}{label}", 999_999u32.saturating_sub(count))),
+            label: label.clone(),
+            kind: Some(if tag == "primitive" { CompletionItemKind::KEYWORD } else { CompletionItemKind::FUNCTION }),
+            detail: Some(format!("{effective}  ({})", written_by(analysis, &record).unwrap_or(package.to_string()))),
+            insert_text: Some(insert_text),
+            insert_text_format: Some(format),
+            command: pick.then(|| lsp_types::Command {
+                title: "pick".into(),
+                command: "editor.action.triggerSuggest".into(),
+                arguments: None,
+            }),
+            ..Default::default()
+        };
+        // the arguments a call reads: the effective usage after the name
+        let args = effective.strip_prefix('\\').unwrap_or(effective).strip_prefix(label.as_str()).unwrap_or("");
+        Some((it, args.to_string()))
+    })
+    .collect();
+    // A name that starts with what is typed before one that only holds it.
+    items.sort_by_cached_key(|(i, _)| (!i.label.to_lowercase().starts_with(&typed), i.sort_text.clone()));
+    let shown = analysis.settings.conventions.completion.shown;
+    let more = items.len() > shown;
+    items.truncate(shown);
+    let all = {
+        let names: Vec<&str> = items.iter().map(|(i, _)| i.label.as_str()).collect();
+        crate::analysis::roles::roles_many(analysis, &names)
+    };
+    let probes = analysis.settings.conventions.completion.signatures;
+    for (i, ((item, effective), roles)) in items.iter_mut().zip(all).enumerate() {
+        // a listing gives a definition's own text: what a call reads comes from the probe
+        if i < probes
+            && !effective.contains(['{', '['])
+            && let Some(sym) = analysis.interner.lookup(&item.label)
+        {
+            let probed = query::effective_probed(analysis, sym);
+            *effective = probed
+                .strip_prefix('\\')
+                .unwrap_or(&probed)
+                .strip_prefix(item.label.as_str())
+                .unwrap_or("")
+                .to_string();
+        }
+        item.detail = item.detail.take().map(|d| typed_usage(&d, &roles));
+        // the signature beside the label, a tab stop per argument named by its type
+        if let Some((signature, snippet)) = signature_snippet(&item.label, effective, &roles) {
+            item.label_details = Some(lsp_types::CompletionItemLabelDetails {
+                detail: Some(signature),
+                description: item
+                    .detail
+                    .as_deref()
+                    .and_then(|d| d.rsplit_once("  ("))
+                    .map(|(_, by)| by.trim_end_matches(')').to_string()),
+            });
+            if item.command.is_none() {
+                item.insert_text = Some(snippet);
+                item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+                // the first argument's help opens once the name is in
+                item.command = Some(lsp_types::Command {
+                    title: "signature".into(),
+                    command: "editor.action.triggerParameterHints".into(),
+                    arguments: None,
+                });
+            }
+        }
+    }
+    let mut items: Vec<CompletionItem> = items.into_iter().map(|(i, _)| i).collect();
+    items.extend(signature.into_iter().filter(|s| !items.iter().any(|i| i.label == s.label)).collect::<Vec<_>>());
     (items, more)
+}
+
+/// An expl3 name typed up to its signature (`tl_set:N`): each letter that may come next, with what
+/// it says of the argument, as the `conventions.signatures` setting has them.
+fn signature_items(analysis: &Analysis, typed: &str) -> Vec<CompletionItem> {
+    let Some((_, sig)) = typed.split_once(':') else { return Vec::new() };
+    if !sig.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Vec::new();
+    }
+    let signatures = &analysis.settings.conventions.signatures;
+    signatures
+        .iter()
+        .enumerate()
+        .map(|(i, (letter, about))| {
+            let mut it =
+                item(format!("{typed}{letter}"), CompletionItemKind::TYPE_PARAMETER, Some(about.clone()), 90_000 + i);
+            it.filter_text = Some(format!("{typed}{letter}"));
+            it
+        })
+        .collect()
+}
+
+/// A command's signature from its effective usage (`\\usepackage[1]{2}[3]`) and the argument
+/// types its roles give: `[⟨options⟩]{⟨sty file⟩}[⟨date⟩]`, and the snippet with a tab stop per
+/// argument, an optional one with its brackets so that one key removes it. `None` for a usage
+/// with delimited arguments or none.
+fn signature_snippet(label: &str, args: &str, roles: &[crate::analysis::roles::Role]) -> Option<(String, String)> {
+    let types = crate::analysis::roles::arg_types(roles);
+    let mut rest = args.trim_start_matches('*');
+    let (mut signature, mut snippet, mut braced, mut stop) = (String::new(), label.to_string(), 0, 0);
+    while let Some(open) = rest.chars().next() {
+        let close = match open {
+            '{' => '}',
+            '[' => ']',
+            _ => return None,
+        };
+        let end = rest.find(close)?;
+        let name = match open {
+            '{' => {
+                let ty = types.iter().find(|(a, _)| *a == braced).map(|(_, t)| t.to_string());
+                braced += 1;
+                ty.unwrap_or_else(|| "arg".into())
+            }
+            _ => "options".into(),
+        };
+        let name = name.replace(['$', '}', '\\'], "");
+        stop += 1;
+        signature.push_str(&format!("{open}⟨{name}⟩{close}"));
+        snippet.push_str(&match open {
+            '{' => format!("{{${{{stop}:{name}}}}}"),
+            _ => format!("${{{stop}:[{name}]}}"),
+        });
+        rest = &rest[end + 1..];
+    }
+    (stop > 0).then(|| (signature, snippet + "$0"))
 }
 
 /// A usage line with each braced argument's type after its number
 /// (`{1}` is `{1: skip register}`), as far as the roles know it.
-fn typed_usage(usage: &str, roles: &[crate::roles::Role]) -> String {
-    let types = crate::roles::arg_types(roles);
+fn typed_usage(usage: &str, roles: &[crate::analysis::roles::Role]) -> String {
+    let types = crate::analysis::roles::arg_types(roles);
     let mut out = String::new();
     let (mut rest, mut braced) = (usage, 0);
     while let Some(open) = rest.find('{') {
@@ -1903,47 +2802,120 @@ pub fn document_symbols(analysis: &Analysis, path: &str, doc: &Text) -> Option<V
         container_name: None,
     };
     let mut out = Vec::new();
-    for record in query::run(analysis, Query::Occurrences, &Filter::Always) {
-        if record.get("path").and_then(Json::as_str) != Some(path) {
-            continue;
-        }
-        let kind = record.get("kind").and_then(Json::as_str).unwrap_or("");
-        let symbol_kind = match kind {
+    // the facts of this file only: no record is built for the rest of the run
+    let here = |f| analysis.file_name(f) == path;
+    for occ in analysis.facts.occurrences.iter().filter(|o| here(o.span.file)) {
+        let symbol_kind = match occ.kind.as_str() {
             "section" => SymbolKind::NAMESPACE,
             "label" => SymbolKind::CONSTANT,
             "begin-environment" => SymbolKind::MODULE,
             _ => continue,
         };
-        let Some(name) = record.get("key").and_then(Json::as_str).filter(|n| !n.is_empty()) else { continue };
-        let line = record.get("line").and_then(Json::as_u64).unwrap_or(1) as u32;
-        let col = record.get("col").and_then(Json::as_u64).unwrap_or(1) as u32;
-        out.push(symbol(name.to_string(), symbol_kind, line, col));
-    }
-    for record in query::run(analysis, Query::Definitions, &Filter::Always) {
-        if record.get("origin").and_then(Json::as_str) != Some("document")
-            || record.get("path").and_then(Json::as_str) != Some(path)
-        {
-            continue;
+        if !occ.key.is_empty() {
+            out.push(symbol(occ.key.clone(), symbol_kind, occ.span.line, occ.span.col));
         }
-        let Some(name) = record.get("name").and_then(Json::as_str) else { continue };
-        let line = record.get("line").and_then(Json::as_u64).unwrap_or(1) as u32;
-        let col = record.get("col").and_then(Json::as_u64).unwrap_or(1) as u32;
-        out.push(symbol(name.to_string(), SymbolKind::FUNCTION, line, col));
+    }
+    for def in analysis.facts.defs.iter().filter(|d| here(d.span.file)) {
+        if query::origin(analysis, def.span.file) == "document" {
+            out.push(symbol(analysis.interner.cs(def.name), SymbolKind::FUNCTION, def.span.line, def.span.col));
+        }
     }
     (!out.is_empty()).then_some(out)
 }
 
-/// `lint`'s findings, in `render::lsp`'s shape: `[{uri, diagnostics,
-/// codeActions}, …]`, one entry per file the findings touch. Precision
-/// notes are the analysis's, not the document's: an editor hides them.
-pub fn diagnostics_json(analysis: &Analysis) -> Vec<Json> {
-    let records: Vec<Record> = crate::lint::lint(analysis)
+/// `lint`'s findings in the document's own files. Precision notes are the
+/// analysis's, not the document's: an editor hides them.
+pub fn findings(analysis: &Analysis) -> Vec<Record> {
+    crate::linter::lint_document(analysis)
         .into_iter()
         .filter(|r| r.get("origin").and_then(Json::as_str) == Some("document"))
         .filter(|r| r.get("category").and_then(Json::as_str) != Some("precision"))
-        .collect();
-    let text = crate::render::lsp_with(&records, |path| path_uri(path).to_string());
+        .collect()
+}
+
+/// `records` in `render::lsp`'s shape: `[{uri, diagnostics, codeActions}, …]`,
+/// one entry per file they touch.
+pub fn diagnostics_json(records: &[Record]) -> Vec<Json> {
+    let text = crate::util::render::lsp_with(records, |path| path_uri(path).to_string());
     serde_json::from_str(&text).unwrap_or_default()
+}
+
+/// `textDocument/documentLink`: each name a load of this file resolved (`\usepackage{hyperref}`,
+/// `\input{intro}`) links to the file the run read for it, its implementation.
+pub fn document_links(analysis: &Analysis, doc: &Text, path: &str) -> Vec<lsp_types::DocumentLink> {
+    let mut out: Vec<lsp_types::DocumentLink> = Vec::new();
+    for load in analysis.facts.loads.iter().filter(|l| analysis.file_name(l.span.file) == path) {
+        let Some(file) = load.path.as_deref() else { continue };
+        let text = doc.line(load.span.line);
+        let from = (load.span.col as usize).min(text.len());
+        let name = load.name.as_str();
+        let Some(at) = word_before(text, from, name).or_else(|| word_after(text, from, name)) else { continue };
+        let line = load.span.line.saturating_sub(1);
+        let range = Range::new(Position::new(line, at as u32), Position::new(line, (at + name.len()) as u32));
+        if out.iter().any(|l| l.range == range) {
+            continue;
+        }
+        out.push(lsp_types::DocumentLink {
+            range,
+            target: Some(path_uri(file)),
+            tooltip: Some(format!("open {}", analysis.short_name(load.file.unwrap_or(analysis.main_file)))),
+            data: None,
+        });
+    }
+    out
+}
+
+/// Where `name` stands in `text` as a whole word: not inside a longer name or a key (`x` in `satex`).
+fn words<'a>(text: &'a str, name: &'a str) -> impl Iterator<Item = usize> + 'a {
+    let word = |c: char| c.is_alphanumeric() || matches!(c, '.' | '_' | '@' | '/');
+    text.match_indices(name).map(|(i, _)| i).filter(move |&i| {
+        !text[..i].chars().next_back().is_some_and(word) && !text[i + name.len()..].chars().next().is_some_and(word)
+    })
+}
+
+/// Whether `name` at `at` stands as an argument's value (`{red}`, `[x=red]`,
+/// `red!50`), not as prose: a package's own `\color{.}` names no full stop.
+pub(super) fn argument_value(text: &str, at: usize, name: &str) -> bool {
+    let before = text[..at].trim_end().chars().next_back();
+    let after = text[at + name.len()..].trim_start().chars().next();
+    matches!(before, Some('{' | '[' | '=' | ',' | '!')) && matches!(after, Some('}' | ']' | ',' | '!' | ';'))
+}
+
+pub(super) fn word_before(text: &str, from: usize, name: &str) -> Option<usize> {
+    words(text, name).filter(|&i| i < from).last()
+}
+
+pub(super) fn word_after(text: &str, from: usize, name: &str) -> Option<usize> {
+    words(text, name).find(|&i| i >= from)
+}
+
+/// A color xcolor holds exactly, as red, green and blue (xcolor § 6.3's
+/// conversions from its core models).
+pub(super) fn rgba(colors: &crate::engine::value::Colors) -> Option<lsp_types::Color> {
+    use crate::engine::value::Model;
+    let color = &colors.hull;
+    let c: Vec<f32> = color.exact()?.iter().map(|&v| v as f32 / crate::engine::value::UNIT as f32).collect();
+    let (r, g, b) = match (color.model.core(), &c[..]) {
+        (Model::Rgb, [r, g, b]) => (*r, *g, *b),
+        (Model::Cmy, [cy, m, y]) => (1.0 - cy, 1.0 - m, 1.0 - y),
+        (Model::Cmyk, [cy, m, y, k]) => ((1.0 - cy) * (1.0 - k), (1.0 - m) * (1.0 - k), (1.0 - y) * (1.0 - k)),
+        (Model::Gray, [g]) => (*g, *g, *g),
+        (Model::Hsb, [h, s, v]) => {
+            let i = (h * 6.0).floor();
+            let f = h * 6.0 - i;
+            let (p, q, t) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
+            match i as i32 % 6 {
+                0 => (*v, t, p),
+                1 => (q, *v, p),
+                2 => (p, *v, t),
+                3 => (p, q, *v),
+                4 => (t, p, *v),
+                _ => (*v, p, q),
+            }
+        }
+        _ => return None,
+    };
+    Some(lsp_types::Color { red: r, green: g, blue: b, alpha: 1.0 })
 }
 
 #[cfg(test)]

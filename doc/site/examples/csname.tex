@@ -1,0 +1,7 @@
+\documentclass{article}
+% pdflatex stops at line 6:
+% "Undefined control sequence" (\noteiii)
+\expandafter\def\csname note\romannumeral 2\endcsname{second}
+\begin{document}
+\noteii{} and \noteiii.
+\end{document}

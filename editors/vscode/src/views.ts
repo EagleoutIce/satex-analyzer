@@ -1,0 +1,75 @@
+import * as vscode from 'vscode';
+import { LanguageClient } from 'vscode-languageclient/node';
+
+/** A type plugin's view as `satex/view` returns it (src/lsp/plugins); `media/views.js` renders it. */
+interface View { plugin: string; title: string; sections: unknown[] }
+interface Edit { range: { start: { line: number; character: number }; end: { line: number; character: number } }; newText: string }
+
+const VERB: Record<string, string> = { color: 'Pick', units: 'Convert', environment: '', tikz: '', forest: '' };
+
+/** The views at a position, from the server. */
+async function views(client: LanguageClient, doc: vscode.TextDocument, at?: vscode.Position, plugin?: string): Promise<View[]> {
+    // without a position, the plugin's manager
+    const params = at ? { textDocument: { uri: doc.uri.toString() }, position: { line: at.line, character: at.character } } : { textDocument: { uri: doc.uri.toString() }, plugin };
+    return (await client.sendRequest<View[]>('satex/view', params).catch(() => [])) ?? [];
+}
+
+/** A light-bulb entry per view at the cursor: VS Code's way into the dialogs. */
+export class ViewActions implements vscode.CodeActionProvider {
+    constructor(private readonly client: () => LanguageClient | undefined) {}
+    async provideCodeActions(doc: vscode.TextDocument, range: vscode.Range): Promise<vscode.CodeAction[]> {
+        const client = this.client();
+        if (!client) { return []; }
+        return (await views(client, doc, range.start)).map(view => {
+            const a = new vscode.CodeAction(`${VERB[view.plugin] ?? 'Open'} ${view.title}…`.trim(), vscode.CodeActionKind.RefactorRewrite);
+            a.command = { title: a.title, command: 'satex.openView', arguments: [doc.uri, range.start, view.plugin] };
+            return a;
+        });
+    }
+}
+
+/** Opens the view of `plugin` (else the first) at `at` in a webview beside the editor. */
+export async function openView(context: vscode.ExtensionContext, client: LanguageClient | undefined, uri?: vscode.Uri | string, at?: vscode.Position | { line: number; character: number }, plugin?: string, manage = false): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    // a code lens from the server passes its arguments as JSON
+    const doc = uri ? await vscode.workspace.openTextDocument(typeof uri === 'string' ? vscode.Uri.parse(uri) : uri) : editor?.document;
+    const pos = manage ? undefined : at ? new vscode.Position(at.line, at.character) : editor?.selection.active;
+    if (!client || !doc || (!pos && !manage)) { return; }
+    const all = await views(client, doc, pos, plugin);
+    const view = all.find(v => v.plugin === plugin) ?? all[0];
+    if (!view) { void vscode.window.showInformationMessage('satex: no view here'); return; }
+    const media = vscode.Uri.joinPath(context.extensionUri, 'media');
+    const panel = vscode.window.createWebviewPanel('satex.view', view.title, { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
+        { enableScripts: true, localResourceRoots: [media] });
+    const script = panel.webview.asWebviewUri(vscode.Uri.joinPath(media, 'views.js'));
+    const nonce = Math.random().toString(36).slice(2);
+    panel.webview.html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'nonce-${nonce}' ${panel.webview.cspSource};">
+<style>body { padding: 1rem; font-family: var(--vscode-font-family); } h3 { margin: 0 0 .8rem; }</style></head>
+<body><h3></h3><div id="view"></div>
+<script nonce="${nonce}" src="${script}"></script>
+<script nonce="${nonce}">
+const vscode = acquireVsCodeApi();
+const view = ${JSON.stringify(view).replace(/</g, '\\u003c')};
+document.querySelector('h3').textContent = view.title;
+satexViews.render(view, document.getElementById('view'), { apply: (edits) => vscode.postMessage({ edits }) });
+</script></body></html>`;
+    // a view applies TextEdits on its document or a WorkspaceEdit `{changes: {uri: edits}}`
+    panel.webview.onDidReceiveMessage(async (m: { edits: Edit[] | { changes: Record<string, Edit[]> } }) => {
+        const edit = new vscode.WorkspaceEdit();
+        const changes = Array.isArray(m.edits) ? { [doc.uri.toString()]: m.edits } : m.edits.changes;
+        for (const [uri, edits] of Object.entries(changes)) {
+            for (const e of edits) {
+                edit.replace(vscode.Uri.parse(uri), new vscode.Range(e.range.start.line, e.range.start.character, e.range.end.line, e.range.end.character), e.newText);
+            }
+        }
+        await vscode.workspace.applyEdit(edit);
+        panel.dispose();
+    });
+}
+
+/** The managers (`satex/view` without a position): glossary, bibliography, index, theorems. */
+export async function manage(context: vscode.ExtensionContext, client: LanguageClient | undefined): Promise<void> {
+    const pick = await vscode.window.showQuickPick(['glossary', 'bibliography', 'index', 'theorem'], { placeHolder: 'Manage' });
+    if (pick) { await openView(context, client, undefined, undefined, pick, true); }
+}

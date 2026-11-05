@@ -1,0 +1,11 @@
+\documentclass{article}
+\usepackage{pgfmath}
+\begin{document}
+\count255=0
+\loop
+  \pgfmathparse{sin(\the\count255*7)*cos(\the\count255)+sqrt(\the\count255+1)}
+  \advance\count255 by 1
+\ifnum\count255<300 \repeat
+\pgfmathparse{\pdfuniformdeviate 100+1}
+\pgfmathresult
+\end{document}
