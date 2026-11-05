@@ -3121,6 +3121,10 @@ fn units_plugin_converts_lengths() {
     assert!(md.starts_with("### `12pt` ≈ [0.42 cm](command:satex.applyEdit?"), "{md}");
     assert!(md.contains("% of `\\textwidth`") && md.contains("| pc |") && md.contains("[786432]("), "{md}");
     assert!(!md.contains("TeX stores"), "{md}");
+    // a grid row never makes the card scroll sideways
+    assert!(md.lines().filter(|l| l.contains("---:")).all(|l| l.matches("---:").count() <= 5), "{md}");
+    // a share of the widths the document sizes by, as links that write it
+    assert!(md.contains("0.035`\\linewidth`](command:satex.applyEdit?") && md.contains("`\\columnwidth`"), "{md}");
     // each value is the action: no separate convert buttons
     let actions = at(&mut server, &uri, "textDocument/codeAction", 2, c);
     let titles: Vec<&str> = actions.as_array().unwrap().iter().filter_map(|a| a["title"].as_str()).collect();

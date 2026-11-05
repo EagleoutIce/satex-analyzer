@@ -239,14 +239,43 @@ fn card(cx: &Cx, head: &str, num: Num, lit: Option<&Literal>) -> String {
             cells.push((*u, link(u, &t, &t, ok)));
         }
     }
-    let row = |f: &dyn Fn(&(&str, String)) -> String| cells.iter().map(f).collect::<Vec<_>>().join(" | ");
-    md.push_str(&format!(
-        "| {} |\n|{}\n| {} |\n",
-        row(&|c| c.0.to_string()),
-        "---:|".repeat(cells.len()),
-        row(&|c| c.1.clone())
-    ));
+    // rows of a few units each: a card never scrolls sideways
+    for chunk in cells.chunks(GRID) {
+        let row = |f: &dyn Fn(&(&str, String)) -> String| chunk.iter().map(f).collect::<Vec<_>>().join(" | ");
+        md.push_str(&format!(
+            "| {} |\n|{}\n| {} |\n\n",
+            row(&|c| c.0.to_string()),
+            "---:|".repeat(chunk.len()),
+            row(&|c| c.1.clone())
+        ));
+    }
+    if let Some(line) = relative(cx, num, lit) {
+        md.push_str(&format!("{line}\n"));
+    }
     md
+}
+
+/// Units per row of the grid.
+const GRID: usize = 5;
+
+/// The length as a share of the widths a document sizes by (`0.4\linewidth`), each a link
+/// that writes it: those the run knows one value of, at most as wide as the length.
+fn relative(cx: &Cx, num: Num, lit: Option<&Literal>) -> Option<String> {
+    if num.lo != num.hi || num.lo <= 0 {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for name in ["linewidth", "textwidth", "columnwidth"] {
+        let Some(w) = register_value(cx.analysis, name).filter(|w| w.lo == w.hi && w.lo >= num.lo) else { continue };
+        let share = trimmed(num.lo as f64 / w.lo as f64, 3);
+        let text = format!("{share}\\{name}");
+        let shown = format!("{share}`\\{name}`");
+        parts.push(match lit {
+            Some(l) => apply_link(cx, range(cx.doc, l.line, l.from, l.to), &shown, &text, false),
+            None => shown,
+        });
+    }
+    (!parts.is_empty()).then(|| format!("≈ {} (widths as the run ended)", parts.join(" · ")))
 }
 
 /// `= 1.2 em ≈ 2.79 ex in cmr10 at 10pt`: the length in the `em` and `ex` of the font in force
