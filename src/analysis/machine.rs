@@ -253,6 +253,10 @@ pub struct Hot {
     pub heads: HashMap<(FileId, u32), u64>,
     /// Untyped unknown text made, per place in satex's source that made it.
     pub untyped: HashMap<(&'static str, u32), u64>,
+    /// Steps of the run's commands by how many paths were live (index 7: more).
+    pub by_paths: [u64; 8],
+    /// Steps of top-level command runs that replay an earlier run's prefix.
+    pub replayed: u64,
 }
 
 impl Analysis {
@@ -271,11 +275,15 @@ impl Analysis {
             crate::engine::env::RESUMES.load(std::sync::atomic::Ordering::Relaxed),
             crate::engine::env::RESUME_SLOTS.load(std::sync::atomic::Ordering::Relaxed),
         );
+        let by: Vec<String> =
+            hot.by_paths.iter().enumerate().map(|(i, n)| format!("{}:{}", i + 1, compact_count(*n))).collect();
         let switches = format!(
-            "  paths: {} forks, {} resumes carrying {} slots",
+            "  paths: {} forks, {} resumes carrying {} slots\n  steps by live paths {}, replayed {}",
             compact_count(forks),
             compact_count(r),
-            compact_count(slots)
+            compact_count(slots),
+            by.join(" "),
+            compact_count(hot.replayed)
         );
         let tables = [("steps", &hot.steps), ("forks", &hot.forks), ("joins", &hot.joins), ("heads", &hot.heads)];
         tables
@@ -1452,6 +1460,18 @@ pub(crate) struct Scratch {
     pub(crate) skip_ended: bool,
 }
 
+/// The interned names sorted by their text and by their reversed text: a
+/// family of names (`prefix…suffix`) is found without a sweep over all.
+/// Names are only appended, so it catches up with the new ones; a rebuilt
+/// interner (other text at its last indexed place) is indexed afresh.
+#[derive(Default)]
+pub(crate) struct NameIndex {
+    last: Option<Rc<str>>,
+    covered: usize,
+    forward: std::collections::BTreeSet<(Rc<str>, u32)>,
+    backward: std::collections::BTreeSet<(Box<[u8]>, u32)>,
+}
+
 /// Character ranges of set text, as a box register holds them.
 pub(crate) type CharRanges = Vec<(u32, u32)>;
 
@@ -1483,6 +1503,8 @@ pub struct Machine<'a> {
     pub(crate) pressure: u8,
     /// The last language's patterns [`crate::engine::hyph`] parsed, by their text.
     pub(crate) hyph_cache: Option<(Rc<[Token]>, Rc<crate::engine::hyph::Patterns>)>,
+    /// The interned names sorted forwards and backwards ([`Machine::bound_shaped`]).
+    pub(crate) name_index: Rc<std::cell::RefCell<NameIndex>>,
     /// The paragraphs' recorded item lists, for the line breaker.
     pub(crate) kp: crate::engine::linebreak::Arena,
     pub out: Analysis,
@@ -2392,6 +2414,7 @@ impl<'a> Machine<'a> {
             limits: cfg.limits.clone(),
             pressure: 0,
             hyph_cache: None,
+            name_index: Default::default(),
             kp: Default::default(),
             degraded_at: None,
             out: Analysis {
@@ -12196,14 +12219,9 @@ will look undefined",
         let num = self.name_number(sym);
         let limit = usize::from(self.limits.meaning_set);
         let mut members: Vec<(Sym, Meaning)> = Vec::new();
-        for s in self.env.bound() {
+        for s in self.bound_shaped(&prefix, &suffix) {
             let name = self.out.interner.name(s);
-            if self.is_unknown_name(s)
-                || name.len() < prefix.len() + suffix.len()
-                || !name.starts_with(prefix.as_str())
-                || !name.ends_with(suffix.as_str())
-                || !gap_fits(&name[prefix.len()..name.len() - suffix.len()], gap, num)
-            {
+            if self.is_unknown_name(s) || !gap_fits(&name[prefix.len()..name.len() - suffix.len()], gap, num) {
                 continue;
             }
             let meaning = self.env.meaning(s);
@@ -13918,6 +13936,51 @@ impl Machine<'_> {
             && !(name.contains(NAME_NUMBER) && self.env.slot(sym).is_some_and(|b| !b.defs.is_empty()))
     }
 
+    /// The bound names that begin with `prefix` and end with `suffix`, apart,
+    /// in the order of their symbols. The index side whose range ends first
+    /// gives the candidates, so the cost is the narrower family, not every name.
+    pub(crate) fn bound_shaped(&self, prefix: &str, suffix: &str) -> Vec<Sym> {
+        use std::ops::Bound::{Included, Unbounded};
+        let names = self.out.interner.names();
+        let mut index = self.name_index.borrow_mut();
+        let ix = &mut *index;
+        if ix.covered > names.len() || ix.last.as_ref().is_some_and(|l| !Rc::ptr_eq(l, &names[ix.covered - 1])) {
+            *ix = NameIndex::default();
+        }
+        for (i, name) in names.iter().enumerate().skip(ix.covered) {
+            ix.forward.insert((name.clone(), i as u32));
+            ix.backward.insert((name.bytes().rev().collect(), i as u32));
+        }
+        (ix.covered, ix.last) = (names.len(), names.last().cloned());
+        let rev: Box<[u8]> = suffix.bytes().rev().collect();
+        let mut ahead = (ix.forward.range((Included((Rc::<str>::from(prefix), 0)), Unbounded)))
+            .take_while(|(n, _)| n.starts_with(prefix))
+            .map(|e| e.1);
+        let mut behind = (ix.backward.range((Included((rev.clone(), 0)), Unbounded)))
+            .take_while(|(n, _)| n.starts_with(&rev))
+            .map(|e| e.1);
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        let mut found = loop {
+            match ahead.next() {
+                Some(s) => a.push(s),
+                None => break a,
+            }
+            match behind.next() {
+                Some(s) => b.push(s),
+                None => break b,
+            }
+        };
+        found.retain(|&s| {
+            let name = &*names[s as usize];
+            name.len() >= prefix.len() + suffix.len()
+                && name.starts_with(prefix)
+                && name.ends_with(suffix)
+                && self.env.slot(Sym(s)).is_some()
+        });
+        found.sort_unstable();
+        found.into_iter().map(Sym).collect()
+    }
+
     /// The one control sequence `\csname` builds from partly unknown text.
     /// Around one number's digits it is that number's own name: what was
     /// defined under it stays, until a name it may also be is defined.
@@ -13978,14 +14041,9 @@ impl Machine<'_> {
         num: Option<crate::engine::value::Num>,
     ) -> Option<Vec<Meaning>> {
         let mut all = self.wild.overlap_meanings(prefix, suffix)?;
-        for s in self.env.bound() {
+        for s in self.bound_shaped(prefix, suffix) {
             let name = self.out.interner.name(s);
-            if name.len() < prefix.len() + suffix.len()
-                || !name.starts_with(prefix)
-                || !name.ends_with(suffix)
-                || !gap_fits(&name[prefix.len()..name.len() - suffix.len()], class, num)
-                || self.is_unknown_name(s)
-            {
+            if !gap_fits(&name[prefix.len()..name.len() - suffix.len()], class, num) || self.is_unknown_name(s) {
                 continue;
             }
             let slot = self.env.slot(s)?;

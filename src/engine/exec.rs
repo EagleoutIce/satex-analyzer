@@ -3833,7 +3833,7 @@ impl Machine<'_> {
             let name = self.name(zero).to_string();
             name[..name.len() - 1].to_string()
         };
-        for sym in self.env.bound() {
+        for sym in self.bound_shaped(&prefix, "") {
             let at = self.name(sym).strip_prefix(&prefix).and_then(|n| n.parse::<i64>().ok());
             if sym != all && at.is_some_and(|n| index.is_none_or(|r| r.lo <= n && n <= r.hi)) {
                 weaken(self, sym, zero_of(kind));

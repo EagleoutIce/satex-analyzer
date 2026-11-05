@@ -2557,6 +2557,20 @@ fn meaning_of_a_built_name_is_a_family_member_or_relax() {
     assert!(!text.contains("text of") && text.contains("one of"), "{text}");
 }
 
+/// A family member defined after the family was looked up once is one of
+/// its meanings at the next lookup: the name index catches up.
+#[test]
+fn a_family_member_defined_later_is_found_at_the_next_build() {
+    let source = r"\expandafter\def\csname zq1\endcsname#1#2{}
+        \edef\h{\number\pdfuniformdeviate 20}
+        \edef\before{\expandafter\meaning\csname zq\h\endcsname}
+        \expandafter\def\csname zq2\endcsname{later}
+        \edef\out{\expandafter\meaning\csname zq\h\endcsname}";
+    let analysis = analyze(source);
+    let members = |name: &str| last_body(&analysis, name).matches(", ").count() + 1;
+    assert_eq!(members("out"), members("before") + 1, "{}", last_body(&analysis, "out"));
+}
+
 /// tex.web § 294: `\meaning` prints unknown text in a body as characters
 /// of its class, never as the name that stands for it, so a delimited
 /// split of the meaning sees only the real delimiters (xcolor's sanitize).

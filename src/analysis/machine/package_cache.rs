@@ -1499,6 +1499,7 @@ impl Machine<'_> {
             load_start: _,
             pressure: _,
             hyph_cache: _,
+            name_index: _,
             kp: _,
             degraded_at: _,
             base: _,

@@ -6146,10 +6146,7 @@ impl Machine<'_> {
     fn weaken_boxes_within(&mut self, within: [(i64, i64); 2], global: bool) {
         let range = within.map(|(lo, hi)| crate::engine::value::Num::range(lo, hi));
         self.weaken_registers(crate::engine::tex::RegKind::Box, Some(&range), Value::Unknown, global);
-        let targets: Vec<Sym> = self
-            .env
-            .bound()
-            .into_iter()
+        let targets: Vec<Sym> = (self.bound_shaped("\u{4}box.", "").into_iter())
             .filter(|&s| {
                 let name = self.name(s);
                 name.strip_prefix("\u{4}box.")
@@ -6171,8 +6168,7 @@ impl Machine<'_> {
             Some(which) => format!("\u{4}box.{which}."),
             None => "\u{4}box.".to_string(),
         };
-        let targets: Vec<Sym> = self.env.bound().into_iter().filter(|&s| self.name(s).starts_with(&prefix)).collect();
-        for sym in targets {
+        for sym in self.bound_shaped(&prefix, "") {
             self.env.set_value(sym, Value::Unknown, global);
         }
     }

@@ -195,8 +195,7 @@ impl Machine<'_> {
     /// family may hold it, and an unwritten one is no longer at its default.
     fn weaken_engine(&mut self, family: &str, global: bool) {
         let prefix = format!("{ENGINE}{family}");
-        let targets: Vec<Sym> = self.env.bound().into_iter().filter(|&s| self.name(s).starts_with(&prefix)).collect();
-        for sym in targets {
+        for sym in self.bound_shaped(&prefix, "") {
             self.env.set_value(sym, Value::Unknown, global);
         }
         let any = self.unpinned_sym(family);

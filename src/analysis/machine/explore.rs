@@ -426,7 +426,13 @@ impl Machine<'_> {
             if self.lone && paths.top {
                 self.approximated = false;
             }
+            let (live_before, steps_before) = (paths.parked.len(), self.out.steps);
             let next = if finished { None } else { Some(self.explore(&mut paths, true)) };
+            if paths.top
+                && let Some(hot) = &mut self.out.hot
+            {
+                hot.by_paths[live_before.min(7)] += self.out.steps - steps_before;
+            }
             self.waiting = paths.parked.len() + paths.done.len();
             let peak = match self.output_active() {
                 true => &mut self.out.peak_output_paths,
@@ -814,10 +820,17 @@ impl Machine<'_> {
                 false => start.dropping.clone(),
             };
             let rows_from = self.raised_mark();
+            let run_from = self.out.steps;
             let going = match self.unit {
                 Unit::Command => self.command(),
                 unit => self.scan_step(unit),
             };
+            if self.runs > 0
+                && paths.top
+                && let Some(hot) = &mut self.out.hot
+            {
+                hot.replayed += self.out.steps - run_from;
+            }
             self.runs += 1;
             first = first.or(self.choices.first().copied());
             // A run that was cut ends the region it is in: other sequences
