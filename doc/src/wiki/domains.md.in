@@ -380,7 +380,7 @@ Every domain joins the same way: **hull plus bounded union**. Keep the exact mem
 
 A join that is not widened keeps its arms paired (`Corr`, [`src/engine/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/env.rs)): per arm, the bindings of the names that differ. pgfmath's operation stack and its top differ together. Joined apart, a later split pairs `neg` with a stack that never held it (a false missing number).
 
-- Learning one paired name narrows the others to the arms that allow it.
+- Learning one paired name narrows the others to the arms that allow it. An undecided test of a joined switch teaches each arm the switch's value (`\iftrue` where it holds), so the names paired with it follow.
 - A name written after the join leaves the pairing. Past `limits.join_arms` arms, the name with the most bindings leaves first.
 - Arms only remove combinations no arm had, so the join stays sound.
 

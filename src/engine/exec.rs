@@ -16,10 +16,14 @@ use crate::engine::tex::TextClass;
 use crate::engine::tex::{Catcode, MacroDef, Meaning, ParameterText, RegKind, Span, Sym, Tok, Token};
 use crate::engine::value::{self, Glue, Num, Quantity, Value};
 
-/// What a test teaches each arm: modes where it holds/fails, and the
-/// register interval it read on either side.
-type Learn =
-    (Option<(crate::engine::mode::Modes, crate::engine::mode::Modes)>, Option<(Sym, Option<Value>, Option<Value>)>);
+/// What a test teaches each arm: modes where it holds/fails, the
+/// register interval it read on either side, and for a switch a join left
+/// undecided whether the test is negated (each arm learns which it is).
+type Learn = (
+    Option<(crate::engine::mode::Modes, crate::engine::mode::Modes)>,
+    Option<(Sym, Option<Value>, Option<Value>)>,
+    Option<bool>,
+);
 
 /// The operands of `\if` or `\ifcat` a token may stand for, one list of
 /// (character, category) pairs per text, and the rest of a one-of text to
@@ -1913,7 +1917,10 @@ impl Machine<'_> {
         let narrow = narrowing.map(|n| self.narrowed(n, negate));
         match taken {
             Some(holds) => self.enter_arm(holds, by, span, base, kind, None),
-            None => self.undecided(by, span, base, kind, Some((refine, narrow))),
+            None => {
+                let switch = (cond == Cond::Opaque && !opaque).then_some(negate);
+                self.undecided(by, span, base, kind, Some((refine, narrow, switch)))
+            }
         }
     }
 
@@ -2336,7 +2343,13 @@ impl Machine<'_> {
             return self.widen_conditional(by, span, base);
         };
         let holds = arm == 0;
-        if let Some((modes, narrow)) = learn {
+        if let Some((modes, narrow, switch)) = learn {
+            // The switch is `\iftrue` where the test holds: names a join
+            // paired with it follow ([`crate::engine::env::Corr`]).
+            if let Some(negate) = switch {
+                let cond = if holds != negate { Cond::True } else { Cond::False };
+                self.refine_to(by, &[Meaning::Primitive(Primitive::If(cond))]);
+            }
             if let Some((yes, no)) = modes {
                 self.mode = if holds { yes } else { no };
             }
