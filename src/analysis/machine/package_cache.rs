@@ -163,11 +163,11 @@ pub(super) type Rewrite = Box<dyn Fn(&Path) + Send>;
 #[cfg(test)]
 pub(super) type Decided = (String, Option<u32>, Option<usize>, usize);
 
-/// A test's chance to rewrite the cache file in the window a second process
-/// writes in: after the read that chose a segment, before the store that
-/// appends to it. Test builds only; release builds have no hook.
 #[cfg(test)]
 thread_local! {
+    /// A test's chance to rewrite the cache file in the window a second process
+    /// writes in: after the read that chose a segment, before the store that
+    /// appends to it. Test builds only; release builds have no hook.
     pub(super) static BEFORE_STORE: std::cell::RefCell<Option<Rewrite>> = const { std::cell::RefCell::new(None) };
 }
 
@@ -183,10 +183,10 @@ fn rewrite_before_store(path: &Path) {
 #[cfg(not(test))]
 fn rewrite_before_store(_path: &Path) {}
 
-/// Last store's decision, for testing whether the window was exercised.
-/// Test builds only, per thread: parallel tests run apart.
 #[cfg(test)]
 thread_local! {
+    /// Last store's decision, for testing whether the window was exercised.
+    /// Test builds only, per thread: parallel tests run apart.
     pub(super) static LAST_APPEND: std::cell::RefCell<Vec<Decided>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -198,9 +198,9 @@ fn note_append(name: &str, parent: Option<u32>, target: Option<usize>, chain: us
 #[cfg(not(test))]
 fn note_append(_name: &str, _parent: Option<u32>, _target: Option<usize>, _chain: usize) {}
 
-/// Per cacheable load's end, its [`Carried`] state, in a fixed order.
 #[cfg(test)]
 thread_local! {
+    /// Per cacheable load's end, its [`Carried`] state, in a fixed order.
     pub(super) static LOAD_ENDS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
