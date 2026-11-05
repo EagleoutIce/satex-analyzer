@@ -1032,18 +1032,22 @@
       widget: '<path d="M3 5h10M3 11h10"/><circle cx="6" cy="5" r="1.5"/><circle cx="10.5" cy="11" r="1.5"/>',
     };
     class WidgetMark extends view.GutterMarker {
-      constructor(items) { super(); this.items = items; }
-      eq(o) { return o.items.length === this.items.length && o.items.every((x, i) => x.key === this.items[i].key); }
+      constructor(items, linted) { super(); this.items = items; this.linted = linted; }
+      eq(o) { return o.linted === this.linted && o.items.length === this.items.length && o.items.every((x, i) => x.key === this.items[i].key); }
       toDOM() {
         const [first] = this.items, more = this.items.length > 1;
         const icon = first.css ? `<span class="cm-wdot" style="background:${first.css}"></span>` : `<svg viewBox="0 0 16 16">${WIDGET_ICON[first.kind] ?? WIDGET_ICON.widget}</svg>`;
-        return Object.assign(document.createElement('span'), { className: 'cm-wmark' + (more ? ' more' : ''), innerHTML: icon, title: this.items.map((x) => x.title).join('\n') + (more ? '\nclick: choose' : '') });
+        return Object.assign(document.createElement('span'), { className: 'cm-wmark' + (more ? ' more' : '') + (this.linted ? ' linted' : ''), innerHTML: icon, title: this.items.map((x) => x.title).join('\n') + (more ? '\nclick: choose' : '') });
       }
     }
     /** The widgets per line: `{kind, title, key, open}` from the lenses and the color swatches. */
-    let widgetMemo = [null, null, null];
+    let widgetMemo = [null, null, null, ''];
     const widgetsOf = (s) => {
-      if (widgetMemo[0] === s.field(lensField) && widgetMemo[1] === s.field(swatchField)) return widgetMemo[2];
+      // the lines with a finding: their widget mark steps aside from the finding's glyph
+      const linted = new Set();
+      lint.forEachDiagnostic(s, (_, from) => linted.add(s.doc.lineAt(from).number));
+      const lintKey = [...linted].join(',');
+      if (widgetMemo[0] === s.field(lensField) && widgetMemo[1] === s.field(swatchField) && widgetMemo[3] === lintKey) return widgetMemo[2];
       const lines = new Map(), add = (pos, item) => { const n = s.doc.lineAt(pos).number; if (!lines.get(n)?.some((x) => x.key === item.key)) lines.set(n, [...lines.get(n) ?? [], item]); };
       s.field(lensField).between(0, s.doc.length, (from, _, d) => {
         const c = d.spec.widget.lens.command, line = d.spec.widget.lens.range.start.line;
@@ -1052,14 +1056,14 @@
         add(from, { kind, title: c.title.replace('…', ''), key: `${kind}:${c.title}`, open: () => c.command === 'satex.openView' ? openViews(c.arguments[1], c.arguments[2]) : openDialog(c.arguments?.[0]?.position ?? { line, character: 0 }) });
       });
       s.field(swatchField).between(0, s.doc.length, (from, _, d) => add(from, { kind: 'color', css: d.spec.widget.css, title: `Pick color ${d.spec.widget.css}`, key: `color:${from}`, open: (v) => openViews(position(v.state.doc, from), 'color') }));
-      const set = st.RangeSet.of([...lines].sort((a, b) => a[0] - b[0]).map(([n, items]) => new WidgetMark(items).range(s.doc.line(n).from)));
-      widgetMemo = [s.field(lensField), s.field(swatchField), set];
+      const set = st.RangeSet.of([...lines].sort((a, b) => a[0] - b[0]).map(([n, items]) => new WidgetMark(items, linted.has(n)).range(s.doc.line(n).from)));
+      widgetMemo = [s.field(lensField), s.field(swatchField), set, lintKey];
       return set;
     };
     const widgetGutter = view.gutter({
       class: 'cm-widgets',
       markers: (v) => widgetsOf(v.state),
-      lineMarkerChange: (u) => u.startState.field(lensField) !== u.state.field(lensField) || u.startState.field(swatchField) !== u.state.field(swatchField),
+      lineMarkerChange: (u) => u.startState.field(lensField) !== u.state.field(lensField) || u.startState.field(swatchField) !== u.state.field(swatchField) || u.transactions.some((tr) => tr.effects.length),
       domEventHandlers: {
         mousedown: (v, line, e) => {
           const items = []; widgetsOf(v.state).between(line.from, line.from, (from, _, m) => { if (from === line.from) items.push(...m.items); });

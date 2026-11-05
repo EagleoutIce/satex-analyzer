@@ -499,6 +499,13 @@ main td .badges, main td .cat { white-space: nowrap; }
 .cm-heat { width: 4px; } .cm-heat .cm-gutterElement { padding: 0; }
 .cm-heat-mark { display: block; width: 4px; height: 100%; background: color-mix(in srgb, var(--warning) calc(var(--heat) * 100%), transparent); }
 .cm-widgets .cm-gutterElement { padding: 0 1px; display: flex; align-items: center; justify-content: center; }
+/* no column of their own: the mark sits in the finding column (stepping into the fold column beside a finding) */
+.cm-gutter.cm-widgets { width: 0; min-width: 0 !important; overflow: visible; }
+.cm-widgets .cm-gutterElement { padding: 0; overflow: visible; justify-content: flex-start; }
+.cm-editor .cm-gutter-lint { width: 16px !important; }
+.cm-gutter-lint .cm-gutterElement { padding: 0; }
+.cm-widgets .cm-wmark { left: -20px; }
+.cm-widgets .cm-wmark.linted { left: -32px; }
 .cm-wmark { display: inline-grid; place-items: center; position: relative; width: 16px; height: 16px; border-radius: 4px; color: var(--muted); opacity: .7; cursor: pointer; transition: opacity .12s, color .12s, background .12s; }
 .cm-wmark:hover { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .cm-wmark svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
