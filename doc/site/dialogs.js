@@ -929,6 +929,31 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
 
 
   const fmt = (x) => String(Math.round(x * 100) / 100);
+  /** The content's box `[x0, y0, x1, y1]` (pixels, x1/y1 exclusive) of RGBA `data` (w × h): the pixels
+   * neither transparent nor within `tol` of the background, read from the corners. Null when blank. */
+  function contentBox(data, w, hh, tol = 24) {
+    const px = (i) => [data[i], data[i + 1], data[i + 2], data[i + 3]];
+    const corners = [0, w - 1, (hh - 1) * w, hh * w - 1].map((k) => px(k * 4));
+    const key = (c) => c[3] < 16 ? 'clear' : c.slice(0, 3).join();
+    const votes = new Map();
+    for (const c of corners) votes.set(key(c), [...votes.get(key(c)) ?? [], c]);
+    const bg = [...votes.values()].sort((a, b) => b.length - a.length)[0][0];
+    const blank = (i) => data[i + 3] < 16 || (bg[3] >= 16 && Math.abs(data[i] - bg[0]) <= tol && Math.abs(data[i + 1] - bg[1]) <= tol && Math.abs(data[i + 2] - bg[2]) <= tol);
+    let x0 = w, y0 = hh, x1 = 0, y1 = 0;
+    for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
+      if (blank((y * w + x) * 4)) continue;
+      if (x < x0) x0 = x;
+      if (x >= x1) x1 = x + 1;
+      if (y < y0) y0 = y;
+      if (y >= y1) y1 = y + 1;
+    }
+    return x1 > x0 ? [x0, y0, x1, y1] : null;
+  }
+  /** `\includegraphics`' trim `[l, b, r, t]` in bp keeping `box` (pixels of a w × h raster of `nat` bp) and `pad` bp around it. */
+  const trimTo = ([x0, y0, x1, y1], w, hh, nat, pad = 0) => {
+    const kx = nat[0] / w, ky = nat[1] / hh, r = (v) => Math.max(0, Math.round(v * 100) / 100);
+    return [r(x0 * kx - pad), r((hh - y1) * ky - pad), r((w - x1) * kx - pad), r(y0 * ky - pad)];
+  };
   function image(view, host) {
     const s = () => view.state;
     const ctx = view.context ?? {};
@@ -959,11 +984,25 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const order = h('select', { 'aria-label': 'what the size applies to', onchange: (e) => { s().size_first = e.target.value === 'upright'; sync(); } },
       h('option', { value: 'rotated' }, 'the rotated figure (angle, then width)'), h('option', { value: 'upright' }, 'the upright figure (width, then angle)'));
     const unread = h('p', { class: 'sd-note' });
+    const pad = h('input', { type: 'number', step: '1', min: '0', value: '0', class: 'sd-num', 'aria-label': 'padding in bp' });
+    // crop to content: the box of the pixels that differ from the background, read from the rendered figure
+    const fit = h('button', { type: 'button', title: 'Trim the empty margins of the rendered figure', onclick: () => {
+      if (picture?.tagName !== 'IMG' || !nat) return;
+      const n = Math.min(1, 1600 / Math.max(picture.naturalWidth, picture.naturalHeight)), w = Math.max(1, Math.round(picture.naturalWidth * n)), hh = Math.max(1, Math.round(picture.naturalHeight * n));
+      const c = Object.assign(document.createElement('canvas'), { width: w, height: hh }), g = c.getContext('2d', { willReadFrequently: true });
+      g.drawImage(picture, 0, 0, w, hh);
+      const box = contentBox(g.getImageData(0, 0, w, hh).data, w, hh);
+      if (!box) { unread.textContent = 'The figure looks empty: nothing to crop to.'; return; }
+      s().trim = trimTo(box, w, hh, nat, +pad.value || 0);
+      s().clip = true;
+      sync();
+    } }, 'Crop to content');
     side.append(
       h('h4', {}, 'Crop (trim, bp)'),
       h('div', { class: 'sd-row' }, num('trim', 0, 'left'), num('trim', 2, 'right')),
       h('div', { class: 'sd-row' }, num('trim', 3, 'top'), num('trim', 1, 'bottom')),
-      h('div', { class: 'sd-row' }, h('label', {}, clip, 'clip'), h('button', { type: 'button', onclick: () => { s().trim = null; s().clip = false; sync(); } }, 'Reset crop')),
+      h('div', { class: 'sd-row' }, fit, h('label', { title: 'space kept around the content, in bp' }, 'padding', pad, 'bp')),
+      h('div', { class: 'sd-row' }, h('label', {}, clip, 'clip'), h('button', { type: 'button', class: 'sd-ghost', onclick: () => { s().trim = null; s().clip = false; sync(); } }, 'Reset crop')),
       h('h4', {}, 'Rotate (angle, counterclockwise)'),
       h('div', { class: 'sd-row' }, h('button', { type: 'button', title: 'Rotate 90° counterclockwise', onclick: () => setAngle((s().angle ?? 0) + 90) }, '⟲ 90°'), h('button', { type: 'button', title: 'Rotate 90° clockwise', onclick: () => setAngle((s().angle ?? 0) - 90) }, '⟳ 90°'), angleNum),
       h('div', { class: 'sd-row' }, angle),
@@ -986,6 +1025,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         const k = Math.min(480 / w, 320 / hh);
         picture = h('div', { class: 'sd-ph', style: `width:${w * k}px;height:${hh * k}px` }, h('div', {}, h('b', {}, s().file), h('br'), got?.kind === 'pdf' ? 'PDF: no renderer here, the crop works on its box' : 'no preview', h('br'), nat ? `${fmt(nat[0])} × ${fmt(nat[1])} bp` : ''));
       }
+      fit.disabled = picture.tagName !== 'IMG';
+      if (fit.disabled) fit.title = 'Needs the rendered figure';
       stage.replaceChildren(picture, crop);
       sync();
     })();
@@ -1062,7 +1103,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       if (view?.kind === 'image') return image(view, host);
       return null;
     },
-    popup, enhance, store, table: T,
+    popup, enhance, store, table: T, image: { contentBox, trimTo },
   };
   self.satexDialogs = api;
   self.satexStore = store;

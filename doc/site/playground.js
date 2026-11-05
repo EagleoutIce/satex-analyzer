@@ -1023,6 +1023,54 @@
       lineMarker: (v, line) => { const h = v.state.field(heatField), n = h?.lines.get(v.state.doc.lineAt(line.from).number); return n ? new HeatMark(Math.max(0.12, Math.log1p(n) / Math.log1p(h.most)).toFixed(2), n) : null; },
       lineMarkerChange: (u) => u.startState.field(heatField) !== u.state.field(heatField),
     });
+    // A marker in the gutter on each line a widget applies to: the lenses' targets and the colors.
+    const WIDGET_ICON = {
+      table: '<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M2.5 6.5h11M2.5 9.8h11M6.2 3v10"/>',
+      image: '<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1.1"/><path d="M2.8 12l3.7-3.6 2.4 2.3 1.7-1.6 2.6 2.6"/>',
+      tikz: '<circle cx="4" cy="11.5" r="1.6"/><circle cx="12" cy="4.5" r="1.6"/><path d="M5.3 10.4l5.4-4.8"/>',
+      forest: '<circle cx="8" cy="3.8" r="1.5"/><circle cx="4" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><path d="M7.2 5.1L4.8 10.6M8.8 5.1l2.4 5.5"/>',
+      widget: '<path d="M3 5h10M3 11h10"/><circle cx="6" cy="5" r="1.5"/><circle cx="10.5" cy="11" r="1.5"/>',
+    };
+    class WidgetMark extends view.GutterMarker {
+      constructor(items) { super(); this.items = items; }
+      eq(o) { return o.items.length === this.items.length && o.items.every((x, i) => x.key === this.items[i].key); }
+      toDOM() {
+        const [first] = this.items, more = this.items.length > 1;
+        const icon = first.css ? `<span class="cm-wdot" style="background:${first.css}"></span>` : `<svg viewBox="0 0 16 16">${WIDGET_ICON[first.kind] ?? WIDGET_ICON.widget}</svg>`;
+        return Object.assign(document.createElement('span'), { className: 'cm-wmark' + (more ? ' more' : ''), innerHTML: icon, title: this.items.map((x) => x.title).join('\n') + (more ? '\nclick: choose' : '') });
+      }
+    }
+    /** The widgets per line: `{kind, title, key, open}` from the lenses and the color swatches. */
+    let widgetMemo = [null, null, null];
+    const widgetsOf = (s) => {
+      if (widgetMemo[0] === s.field(lensField) && widgetMemo[1] === s.field(swatchField)) return widgetMemo[2];
+      const lines = new Map(), add = (pos, item) => { const n = s.doc.lineAt(pos).number; if (!lines.get(n)?.some((x) => x.key === item.key)) lines.set(n, [...lines.get(n) ?? [], item]); };
+      s.field(lensField).between(0, s.doc.length, (from, _, d) => {
+        const c = d.spec.widget.lens.command, line = d.spec.widget.lens.range.start.line;
+        if (!/^satex\.open(Dialog|View)$/.test(c.command)) return;
+        const kind = c.command === 'satex.openView' ? c.arguments[2] : /table/i.test(c.title) ? 'table' : 'image';
+        add(from, { kind, title: c.title.replace('…', ''), key: `${kind}:${c.title}`, open: () => c.command === 'satex.openView' ? openViews(c.arguments[1], c.arguments[2]) : openDialog(c.arguments?.[0]?.position ?? { line, character: 0 }) });
+      });
+      s.field(swatchField).between(0, s.doc.length, (from, _, d) => add(from, { kind: 'color', css: d.spec.widget.css, title: `Pick color ${d.spec.widget.css}`, key: `color:${from}`, open: (v) => openViews(position(v.state.doc, from), 'color') }));
+      const set = st.RangeSet.of([...lines].sort((a, b) => a[0] - b[0]).map(([n, items]) => new WidgetMark(items).range(s.doc.line(n).from)));
+      widgetMemo = [s.field(lensField), s.field(swatchField), set];
+      return set;
+    };
+    const widgetGutter = view.gutter({
+      class: 'cm-widgets',
+      markers: (v) => widgetsOf(v.state),
+      lineMarkerChange: (u) => u.startState.field(lensField) !== u.state.field(lensField) || u.startState.field(swatchField) !== u.state.field(swatchField),
+      domEventHandlers: {
+        mousedown: (v, line, e) => {
+          const items = []; widgetsOf(v.state).between(line.from, line.from, (from, _, m) => { if (from === line.from) items.push(...m.items); });
+          if (!items.length || !e.target.closest?.('.cm-wmark')) return false;
+          e.preventDefault();
+          if (items.length === 1) items[0].open(v);
+          else showMenu(items.map((x) => [x.title + '…', '', () => x.open(v)]), e.clientX, e.clientY);
+          return true;
+        },
+      },
+    });
     const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment(), setup = new st.Compartment();
     const ev = new EditorView({
       parent, doc: text,
@@ -1041,7 +1089,7 @@
         if (c.preview) span.prepend(Object.assign(document.createElement('img'), { className: 'cm-preview', src: `data:image/svg+xml;utf8,${encodeURIComponent(c.preview)}`, alt: '' }));
         return span;
       } }] }),
-        linkField, markField, flashField, swatchField, lensField, linkedField, heatField, heatGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
+        linkField, markField, flashField, swatchField, lensField, linkedField, heatField, heatGutter, widgetGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
         EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([])],
     });
     ev.dom.satexView = ev; // doc/site/showcase.mjs reads the text and the places through it
