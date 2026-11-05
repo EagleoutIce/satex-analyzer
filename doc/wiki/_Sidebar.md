@@ -34,7 +34,7 @@
   - [Unknown text](Domains#unknown-text-the-textclass-lattice)
   - [Files written in the run](Domains#files-written-in-the-run)
   - [The join, in general](Domains#the-join-in-general)
-  - [`limits`](Domains#limits-where-the-domains-stop-being-precise)
+  - [Precision limits](Domains#precision-limits-where-the-domains-stop-being-precise)
 - [Formal: the Lean model](Formal-semantics)
   - [The four files](Formal-semantics#the-four-files)
   - [Lean and Rust](Formal-semantics#lean-and-rust)

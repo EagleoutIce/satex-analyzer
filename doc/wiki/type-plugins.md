@@ -90,13 +90,13 @@ A figure is a file `\includegraphics` read. Its code lens and hover link open a 
 - graphicx reads the keys in order: `angle=90,width=3cm` makes the rotated figure 3cm wide, `width=3cm,angle=90` makes it 3cm high. The dialog's *size applies to* chooses the order.
 - `decodearray` for a tint, an inversion, or an array of its own. A PDF image maps each sample of a raster channel from [0, 1] to [Dmin, Dmax] (PDF reference § 8.9.5.2). pdftex.def, luatex.def, xetex.def and dvipdfmx.def write it for PNG and JPEG files, and drop it for PDF and EPS figures, which are drawn, not sampled. The dialog offers it only where it applies: the run's driver defines `\Gin@decode`, and the file is a gray or RGB raster (a palette PNG would remap its indices). Grayscale cannot be written: each channel maps on its own. The preview applies the same map.
 
-*Crop to content* trims the margins of the rendered figure that look like its corners' background. Its padding may be negative, cutting into the content, as long as some is left. *Replace…* puts a new PNG, JPEG, PDF or EPS next to the figure (next to the document when the figure is the installation's) and writes its name; *Download* saves the figure's file.
+*Crop to content* trims the margins of the rendered figure that look like its corners' background. Its padding may be negative, cutting into the content, as long as some is left. *Replace…* puts a new PNG, JPEG, PDF or EPS next to the figure (next to the document when the figure is the installation's) and writes its name. *Download* saves the figure's file.
 
 A key the dialog does not edit (`page`, `draft`) stays where it was, and so do a crop it cannot read and the units of an unchanged crop. A client without dialogs gets two code actions: rotate by 90° and fit to `\linewidth`.
 
 ## float
 
-A float is an environment whose code reaches `\@float`: `figure`, `table` and those defined on them. On its `[placement]` the hover says what each letter lets LaTeX do, or what the class's default (`\fps@⟨env⟩`) does when none is written. Completion offers the letters not written yet, `H` too when the run loaded float.sty (`\@float@HH`). The dialog "Edit placement…" toggles each letter, keeps their order, and drops the brackets when none is left; `H` stands alone. An unknown letter is refused. The letters' meanings are a seed table: they are prose, not run data.
+A float is an environment whose code reaches `\@float`: `figure`, `table` and those defined on them. On its `[placement]` the hover says what each letter lets LaTeX do, or what the class's default (`\fps@⟨env⟩`) does when none is written. Completion offers the letters not written yet, `H` too when the run loaded float.sty (`\@float@HH`). The dialog "Edit placement…" toggles each letter, keeps their order, and drops the brackets when none is left. `H` stands alone. An unknown letter is refused. The letters' meanings are a seed table: they are prose, not run data.
 
 ## tikz
 

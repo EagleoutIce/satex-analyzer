@@ -481,10 +481,11 @@ Why:
 ```sh
 $ satex query typeset -f 06-unknown.tex --set limits.seconds=60
 3:12  paragraph  1 ⟨?⟩
+8:5  page  page 1 → 2 maybe by here
 8:5  paragraph  bazx
 14:80  paragraph  X1XHehe
 16:16  paragraph  1 Later
-17:15  page  page 1
+17:15  page  page 1–2
 assumption  clock-assumed
 recognized gaps
   unbalanced-conditional 1× first at 06-unknown.tex:0

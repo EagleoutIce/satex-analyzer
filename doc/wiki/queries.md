@@ -360,6 +360,23 @@ index  step    name         detail                        file
 105    define  \highlight   \long macro:#1->\textbf {#1}  paper.tex  @ paper.tex:11:13
 ```
 
+### Dev mode: the state at each step
+
+`--state` (or `trace_state: true`) gives each step the abstract state it ran in, to track down where a result lost precision. It costs nothing while off. With `--format json` each record has a `state` object. With `--format csv` it is one JSON cell in the `state` column. A text table leaves it out.
+
+| Key | What it holds |
+| --- | --- |
+| `paths` | `live` paths, `forks` made so far, the `peak`, and `apart`: why the waiting paths do not join (progress, stacks, tags), as `SATEX_WHY_APART` prints it |
+| `choices` | the undecided choices this path took: the command, its place, `arm` of `arms`, and `joined` when the choice splits a joined meaning set |
+| `mode` | the modes the path may be in |
+| `conditionals`, `groups` | the conditional and group stacks, innermost first. `many` marks a widened entry |
+| `input` | the input stack, top first: a file and position, a token list and the macro it expands, a `\scantokens` text |
+| `bindings` | the step's own name and the names ahead, then the paired ones: `meaning`, the meaning set `may` a join left (`maybe_undefined` when one member is undefined), `certain`, `global`, and a register's `value` |
+| `paired` | the names a join kept paired across its arms, and how many arms |
+| `catcodes` | the catcode of each non-alphanumeric character in the file text ahead |
+
+A `value` names its type in the [`Ty` lattice](Domains#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what the domain knows: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
+
 ## typeset
 
 The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.

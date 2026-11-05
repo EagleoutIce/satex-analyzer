@@ -829,6 +829,9 @@ docs:  # where a package's documentation is looked for and which conventions of 
 trace: false  # record every step of the run, for satex trace
   #! affects: speed, memory
   #! example: on: `satex trace` can step through the run
+trace_state: false  # dev mode: each trace step carries the abstract state it ran in (paths, stacks, bindings)
+  #! affects: speed, memory, output
+  #! example: on: `satex trace --state --format json` shows why two paths stay apart
 timings: false  # measure where the time goes
   #! affects: output
   #! example: on: the run reports how long each phase took
@@ -971,6 +974,9 @@ limits:
   trace: 200000  # most events satex trace records
     #! affects: memory, output
     #! example: a trace of a long run shows only its start
+  trace_state: 32  # most entries each list of a dev-mode step state holds (bindings, stacks, catcodes)
+    #! affects: memory, output
+    #! example: 8 keeps a long dev-mode trace small
 ```
 
 ## Plugins

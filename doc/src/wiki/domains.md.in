@@ -16,7 +16,7 @@ One invariant holds everywhere: a construct is followed **exactly**, or its resu
 - [Character codes](#character-codes-as-sets), [colors](#colors-color-and-colors), [meaning sets](#meaning-sets-what-a-control-sequence-may-mean)
 - [Modes and boxes](#modes-and-box-dimensions), [unknown text](#unknown-text-the-textclass-lattice), [category sets](#category-sets-as-a-lattice-element), [argument types](#argument-types-the-ty-lattice)
 - [Files written in the run](#files-written-in-the-run), [names from unknown text](#names-from-unknown-text), [call summaries](#call-summaries-what-a-call-did-twice)
-- [The join](#the-join-in-general), [`limits`](#limits-where-the-domains-stop-being-precise), [known limits](#known-limits), [the soundness invariant](#soundness-invariant)
+- [The join](#the-join-in-general), [precision limits](#precision-limits-where-the-domains-stop-being-precise), [known limits](#known-limits), [the soundness invariant](#soundness-invariant)
 
 ## `Value`: what a control sequence or register holds
 
@@ -168,7 +168,7 @@ A paragraph in a vertical box is broken as `line_break` does it (tex.web §§ 81
 
 - Line width is `\hsize`. With `\parshape` or `\hangindent` it is unknown (§§ 847-848).
 - At `\par`: final glue dropped, `\parfillskip` added (§ 816). Interline glue from `\baselineskip` or `\lineskip` (§ 679), both joined when either may apply. `\prevdepth` (§ 219), `\parskip` (§ 1091).
-- **Hyphenation** (§§ 919-965) uses the format's own `\patterns` and `\hyphenation` (`src/engine/hyph.rs`). Each found gap is a may-hyphen (`·` in the typeset view). A one-line paragraph gets none (§ 902). An unknown language or `\lccode` marks every gap. A ligature hyphenates by its letters (§ 898); inside it the discretionary breaks to its first letters and the hyphen, then the rest (§§ 913-916).
+- **Hyphenation** (§§ 919-965) uses the format's own `\patterns` and `\hyphenation` (`src/engine/hyph.rs`). Each found gap is a may-hyphen (`·` in the typeset view). A one-line paragraph gets none (§ 902). An unknown language or `\lccode` marks every gap. A ligature hyphenates by its letters (§ 898). Inside it the discretionary breaks to its first letters and the hyphen, then the rest (§§ 913-916).
 - Line parameters are read at `\par`. If they changed after a line was set, the sizes widen.
 
 ## Unknown text: the `TextClass` lattice
@@ -426,9 +426,9 @@ Joining pending code into unknown text keeps what it may do (`may_run`): undefin
 - A path raising an error with an exact cause (a certainly undefined name) is dropped: the document is assumed to compile. Library code that redefines `\fi` drops its path too.
 - A cut keeps the lists holding the document's own text, and one in an output routine ends only the routine (tex.web § 1100).
 
-## `limits`: where the domains stop being precise
+## Precision limits: where the domains stop being precise
 
-The knobs that trade precision for a bounded search ([`src/project/config.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/project/config.rs), details in [Configuration](Configuration#configurable-limits-for-the-analysis)). Past each, the value moves up the lattice and a diagnostic says so. Time, memory and thread limits never coarsen a result: they only stop a run.
+The `limits:` settings in `satex.yaml` trade precision for a bounded search ([`src/project/config.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/project/config.rs), details in [Configuration](Configuration#configurable-limits-for-the-analysis)). Past each, the value moves up the lattice and a diagnostic says so. Time, memory and thread limits never coarsen a result: they only stop a run.
 
 {{limits}}
 
