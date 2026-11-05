@@ -9,7 +9,7 @@ files` says the samples and the offered packages read, and its caches from `sate
     build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site-out
 """
 
-import argparse, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, threading, time, tomllib
+import argparse, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, tempfile, threading, time, tomllib
 from pathlib import Path
 
 import semantics as sem
@@ -159,10 +159,79 @@ def files_read(satex, flags, doc, cwd, env, config=b""):
     return LISTINGS[key]
 
 
+MINIFY, SCRATCH = True, None
+ESBUILD = None
+
+
+def esbuild():
+    """The esbuild binary already installed (ESBUILD, PATH or the VS Code extension's node_modules), or None."""
+    global ESBUILD
+    if ESBUILD is None:
+        found = os.environ.get("ESBUILD") or shutil.which("esbuild")
+        local = ROOT / "editors/vscode/node_modules/.bin/esbuild"
+        ESBUILD = found or (str(local) if local.is_file() else "")
+        if not ESBUILD:
+            print("minify: no esbuild found, scripts and styles stay as written", file=sys.stderr)
+    return ESBUILD or None
+
+
+def minify_js(code, name):
+    """(minified code, source map) of a script, or (code, None) without esbuild. The map embeds the source."""
+    tool = esbuild()
+    if not tool:
+        return code, None
+    with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+        src, dst = Path(tmp) / name, Path(tmp) / "o.js"
+        src.write_bytes(code)
+        subprocess.run([tool, "--minify", "--sourcemap=external", "--legal-comments=none", "--log-level=error", f"--outfile={dst}", str(src)],
+                       capture_output=True, check=True)
+        out = dst.read_bytes()
+        out = re.sub(rb"\n?//# sourceMappingURL=[^\n]*\n?$", b"", out)
+        return out, (Path(str(dst) + ".map")).read_bytes()
+
+
+def minify_css(code):
+    tool = esbuild()
+    if not tool:
+        return code
+    return subprocess.run([tool, "--minify", "--loader=css", "--log-level=error"], input=code, capture_output=True, check=True).stdout
+
+
+HTML_TOKEN = re.compile(r"(<(pre|textarea|script|style|code)\b.*?</\2\s*>|<!--.*?-->|<[a-zA-Z/!](?:\"[^\"]*\"|'[^']*'|[^>\"'])*>)", re.S | re.I)
+
+
+def minify_html(text):
+    """Whitespace runs between tags become one space, comments go. Attributes, <pre>, <code>, <textarea>, <script> and <style> stay as written."""
+    if not MINIFY:
+        return text
+    parts = HTML_TOKEN.split(text)
+    out = []
+    for i in range(0, len(parts), 3):
+        out.append(re.sub(r"\s+", " ", parts[i]))
+        if i + 1 < len(parts):
+            out.append("" if parts[i + 1].startswith("<!--") else parts[i + 1])
+    return "".join(out)
+
+
+def minify_script(code):
+    """A script embedded in a manifest: minified, no map."""
+    return minify_js(code.encode(), "worker.js")[0].decode() if MINIFY else code
+
+
 def emit(out, name, data):
-    """Writes `data` under a content-addressed name, so it can be cached forever."""
+    """Writes `data` under a content-addressed name, so it can be cached forever.
+    Scripts and styles are minified first, the hash is of the shipped bytes, a script gets a source map beside it."""
     stem, ext = name.split(".", 1)
+    smap = None
+    if MINIFY and ext == "js":
+        data, smap = minify_js(data, Path(name).name)
+    elif MINIFY and ext == "css":
+        data = minify_css(data)
     path = f"{stem}-{digest(data)}.{ext}"
+    if smap:
+        data += f"\n//# sourceMappingURL={Path(path).name}.map\n".encode()
+        (out / path).parent.mkdir(parents=True, exist_ok=True)
+        (out / f"{path}.map").write_bytes(smap)
     (out / path).parent.mkdir(parents=True, exist_ok=True)
     (out / path).write_bytes(data)
     return path
@@ -1370,6 +1439,7 @@ def main():
     ap.add_argument("--work", type=Path, help="scratch directory (default: OUT/../site-work)")
     ap.add_argument("--precompress", action="store_true",
                     help="write a .gz beside each compressible file, for a server that serves those as GitHub Pages compresses")
+    ap.add_argument("--no-minify", action="store_true", help="ship scripts, styles and pages as written (no source maps), for debugging")
     ap.add_argument("--docs-only", action="store_true", help="only the documentation pages (the wiki, the semantics and the hover cards): no playground, home, draw or bench pages")
     ap.add_argument("--fresh", action="store_true", help="redo every satex run instead of reusing WORK/listings.json and WORK/memo")
     ap.add_argument("--keep-listings", action="store_true",
@@ -1380,14 +1450,15 @@ def main():
     # start more of them, so the process ends at once instead of unwinding the main thread only.
     for stop in (signal.SIGINT, signal.SIGTERM):
         signal.signal(stop, lambda number, _: os._exit(128 + number))
-    global BINARY, KEY, FRESH, SATEX, SITE, EXAMPLES, LISTINGS_FILE
-    SATEX = args.satex.resolve()
+    global MINIFY, SCRATCH, BINARY, KEY, FRESH, SATEX, SITE, EXAMPLES, LISTINGS_FILE
+    SATEX, MINIFY = args.satex.resolve(), not args.no_minify
     BINARY, FRESH = digest(args.satex.resolve().read_bytes()), args.fresh
     KEY = BINARY if args.docs_only else json.loads(subprocess.run([str(args.satex), "cache", "--format", "json"], capture_output=True, text=True).stdout or "{}").get("key") or BINARY
     out, work = args.out.resolve(), (args.work or args.out.resolve().parent / "site-work").resolve()
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
     work.mkdir(parents=True, exist_ok=True)
+    SCRATCH = work
     # One state of the site's sources for the whole build: an edit made while it runs reaches the next one,
     # never half of this one (a page from after the edit with a script from before it).
     snapshot = work / "site-src"
@@ -1444,7 +1515,7 @@ def main():
                   "class": kind or ("doc" if side else "home"), "date": built, "crate": cargo["name"], **assets}
         text = fill(template, values)
         (out / dst).parent.mkdir(parents=True, exist_ok=True)
-        (out / dst).write_text(text)
+        (out / dst).write_text(minify_html(text))
 
     def docs():
         done = []
@@ -1474,7 +1545,7 @@ def main():
         manifest, shown = ({"symbols": ""}, "") if args.docs_only else playground(args.satex.resolve(), args.wasm.resolve(), work, out)
         written = pages_done.result()
     save_listings()
-    manifest["worker"] = (SITE / "worker.js").read_text()
+    manifest["worker"] = minify_script((SITE / "worker.js").read_text())
     readme = (ROOT / "README.md").read_text()
     md = lambda text: rewrite(markdown(text), "README.md", table, homepage, repo, out, "")
     parts = {"intro": md(intro(readme)), "install": md(install(readme)), "examples": shown,
@@ -1509,7 +1580,7 @@ def main():
     page("play/index.html", "Playground", fill((SITE / "play.html").read_text(), {**assets, **parts}), side=False, kind="play")
     # Draw alone, to embed: its own page without the site's chrome
     (out / "draw").mkdir(exist_ok=True)
-    (out / "draw/index.html").write_text(fill((SITE / "draw.html").read_text(), {**assets, "root": "../", "symbols": manifest["symbols"]}))
+    (out / "draw/index.html").write_text(minify_html(fill((SITE / "draw.html").read_text(), {**assets, "root": "../", "symbols": manifest["symbols"]})))
     data = SITE / "bench/data.json"
     (out / "bench").mkdir(exist_ok=True)
     if data.exists():
@@ -1538,7 +1609,7 @@ def offline(out):
     listing = {"core": core, "more": more}
     version = digest(json.dumps(listing).encode() + page.encode() + (SITE / "sw.js").read_bytes())
     (out / "play/offline.json").write_text(json.dumps({"version": version, **listing}))
-    (out / "play/sw.js").write_text((SITE / "sw.js").read_text().replace("__VERSION__", version))
+    (out / "play/sw.js").write_text(minify_script((SITE / "sw.js").read_text().replace("__VERSION__", version)))
     print(f"playground: offline {len(core)} files to start, {len(more)} bundles, {sum(m[1] for m in more) / 2**20:.0f} MiB gz more", file=sys.stderr)
 
 
