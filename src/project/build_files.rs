@@ -16,9 +16,10 @@ pub const BUILD_FILES: [(&str, &str); 7] = [
 
 /// One build-configuration file found beside the document (a `latexmkrc`, a
 /// `Makefile`), with the settings [`Project::discover`] could read from it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct BuildFile {
-    pub tool: &'static str,
+    #[serde(with = "crate::fixed::leaked")]
+    pub tool: crate::fixed::Str,
     pub path: PathBuf,
     pub settings: Vec<(String, String)>,
     /// kpathsea path variables this file sets (`latexmkrc`'s `ensure_path`
@@ -30,7 +31,7 @@ pub struct BuildFile {
 /// The build files found around the document ([`BuildFile`]s), which is where
 /// satex learns the engine and output format a `latexmk`-driven build would
 /// actually use.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Project {
     pub root: PathBuf,
     pub files: Vec<BuildFile>,

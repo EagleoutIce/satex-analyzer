@@ -1,7 +1,7 @@
 /// An auxiliary tool recognized by satex: biber, bibtex, makeindex and the
 /// rest that a build runs beside the engine. Collected into
 /// [`crate::plugins::Plugins::tools`].
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Tool {
     Biber,
     Bibtex,

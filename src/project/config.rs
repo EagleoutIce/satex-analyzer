@@ -1435,11 +1435,14 @@ pub struct Cache {
     /// in `\ignorespaces`), and the line it began on is then the end a
     /// replay can resume from.
     pub tail: usize,
+    /// Keep each document's whole analysis: a rerun of a document whose
+    /// text, settings and every file it read are unchanged executes nothing.
+    pub document: bool,
 }
 
 impl Default for Cache {
     fn default() -> Cache {
-        Cache { enabled: true, dir: None, rebuild: false, index: CacheIndex::default(), tail: 256 }
+        Cache { enabled: true, dir: None, rebuild: false, index: CacheIndex::default(), tail: 256, document: true }
     }
 }
 

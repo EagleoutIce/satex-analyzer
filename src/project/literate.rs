@@ -18,7 +18,7 @@ use crate::engine::builtins::{DocstripOp, OccKind};
 use crate::engine::tex::Span;
 
 named_enum! {
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
     pub enum Literate {
         /// A documented source: documentation and code in one file.
         Dtx => "documented source (.dtx), read as docstrip extracts it",

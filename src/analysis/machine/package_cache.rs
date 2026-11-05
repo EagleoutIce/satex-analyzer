@@ -3926,7 +3926,7 @@ mod tests {
             let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/scratch/test-kernel");
             std::fs::create_dir_all(&dir).expect("the shared kernel directory");
             let cfg = Config {
-                cache: crate::project::config::Cache { dir: Some(dir.clone()), ..Default::default() },
+                cache: crate::project::config::Cache { dir: Some(dir.clone()), document: false, ..Default::default() },
                 ..Config::default()
             };
             Machine::analyze("\\relax\n", Some(&dir.join("kernel.tex")), &cfg);
@@ -3957,7 +3957,11 @@ mod tests {
 
     fn analyze(dir: &Path, source: &str) -> Analysis {
         let cfg = Config {
-            cache: crate::project::config::Cache { dir: Some(dir.join("cache")), ..Default::default() },
+            cache: crate::project::config::Cache {
+                dir: Some(dir.join("cache")),
+                document: false,
+                ..Default::default()
+            },
             ..Config::default()
         };
         let path = dir.join("doc.tex");

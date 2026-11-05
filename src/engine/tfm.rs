@@ -249,6 +249,7 @@ pub fn locate(base: &Path, roots: &[PathBuf], name: &str, ext: &str) -> Option<P
     let file =
         if ext.is_empty() || name.ends_with(&format!(".{ext}")) { name.to_string() } else { format!("{name}.{ext}") };
     let beside = base.join(&file);
+    crate::project::overlay::probed(&beside);
     if beside.is_file() {
         return Some(beside);
     }

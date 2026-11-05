@@ -49,8 +49,10 @@ fn analyze(dir: &Path, source: &str, cfg: &Config) -> Analysis {
 /// directory starts from one shared kernel cache, and keeps its own package
 /// caches.
 fn latex(dir: &Path) -> Config {
-    let cfg =
-        Config { cache: Cache { dir: Some(dir.join("cache")), ..Default::default() }, ..crate::support::config() };
+    let cfg = Config {
+        cache: Cache { dir: Some(dir.join("cache")), document: false, ..Default::default() },
+        ..crate::support::config()
+    };
     crate::support::seed_kernel(&cfg);
     cfg
 }

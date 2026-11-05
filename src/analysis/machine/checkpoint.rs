@@ -431,7 +431,7 @@ fn first_changed_line(was: &str, now: &str) -> Option<u32> {
 /// What a run reads before the document's first line, besides the
 /// configuration: the project around it, and what the whole source says
 /// at once (magic comments, the kernel it asks for, a `%&` format line).
-fn setup_key(cfg: &Config, source: &str, path: &Path) -> u64 {
+pub(crate) fn setup_key(cfg: &Config, source: &str, path: &Path) -> u64 {
     let base = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())

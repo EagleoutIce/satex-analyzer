@@ -29,6 +29,7 @@ mod distribution_guard;
 // `satex-doc`, this module's target, is only built with the `doc` feature.
 #[cfg(feature = "doc")]
 mod docs;
+mod document_cache;
 mod documents;
 mod dropped_runs;
 mod encoding;

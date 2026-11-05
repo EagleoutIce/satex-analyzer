@@ -503,6 +503,19 @@ pub struct Interner {
     registers: std::collections::HashMap<(&'static str, i64), Sym, NameHash>,
 }
 
+/// Written as its names: the rest is rebuilt from them.
+impl Serialize for Interner {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.names.serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Interner {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Vec::<String>::deserialize(d).map(Interner::from_names)
+    }
+}
+
 impl Interner {
     /// Rebuild an interner from a stored name list, so that symbols recorded
     /// against it stay valid.
@@ -648,8 +661,9 @@ impl Catcode {
 /// The characters past 255 are shared between copies: a path through an
 /// undecided conditional copies the table and compares it at every join,
 /// and unicode-math gives thousands of them a category.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct CatcodeTable {
+    #[serde(with = "crate::fixed::array")]
     ascii: [Catcode; 256],
     wide: Rc<HashMap<char, Catcode>>,
     /// A character past 255 not in `wide`: 12 in INITEX, 11 once a format
@@ -2236,7 +2250,7 @@ impl PartialEq for MacroDef {
 pub enum Meaning {
     Undefined,
     Primitive(Primitive),
-    Macro(Rc<MacroDef>),
+    Macro(#[serde(with = "crate::fixed::shared")] Rc<MacroDef>),
     /// `\chardef`, `\mathchardef`, and `\let\x=a`.
     Char(char, Catcode),
     /// `\countdef\foo=12` and friends — a named register.

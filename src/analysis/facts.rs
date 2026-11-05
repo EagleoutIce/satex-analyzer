@@ -20,11 +20,12 @@ pub struct VarUse {
 
 /// One `\def`-family definition or assignment the run observed: what name,
 /// by which command, with what meaning. Part of [`Facts::defs`].
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Definition {
     pub name: Sym,
     pub by: Sym,
-    pub tag: &'static str,
+    #[serde(with = "crate::fixed::leaked")]
+    pub tag: crate::fixed::Str,
     pub subject: Option<Sym>,
     pub mode: DefMode,
     pub span: Span,
@@ -64,7 +65,7 @@ impl Definition {
 /// beside a probed error for a meaning that only misbehaves in some
 /// contexts (`\item` outside a list, say), found by running the document,
 /// not guessed from a table of names.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct RaisedError {
     pub name: Sym,
     pub text: String,
@@ -77,7 +78,7 @@ pub struct RaisedError {
 /// The kind of meaning an [`Expansion`] found at its control sequence:
 /// primitive, macro, register, character, undefined, or merely known to
 /// exist ([`crate::engine::tex::Meaning::Unknown`]).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum MeaningKind {
     Primitive,
     Macro(NodeId),
@@ -107,7 +108,7 @@ impl MeaningKind {
 /// One control sequence expanded or executed: its [`MeaningKind`], the
 /// arguments it took, and how many times the site fired. Part of
 /// [`Facts::expansions`].
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Expansion {
     pub name: Sym,
     pub span: Span,
@@ -126,7 +127,7 @@ pub struct Expansion {
 
 /// How a `\usepackage`-family [`Load`] turned out: read, skipped by
 /// configuration, already loaded, or never found.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum LoadStatus {
     Read,
     NotFollowed,
@@ -155,7 +156,7 @@ impl LoadStatus {
 
 /// `\usepackage`, `\documentclass`, `\input`, `\include`, `\RequirePackage`.
 /// [`Facts::loads`] holds one per site, with its [`LoadStatus`].
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Load {
     pub name: String,
     pub kind: LoadKind,
@@ -181,7 +182,7 @@ pub struct Load {
 /// Anything named that is not itself a control sequence: labels, citations,
 /// environment delimiters, hook names, identification banners, messages.
 /// Tagged by [`OccKind`]. Part of [`Facts::occurrences`].
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Occurrence {
     pub kind: OccKind,
     pub key: String,
@@ -209,7 +210,7 @@ pub struct Occurrence {
 
 /// A number and the letters set right after it, as the run typeset them
 /// (tex.web § 1034: both are characters of one word).
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Quantity {
     pub number: String,
     pub unit: String,
@@ -231,7 +232,7 @@ pub struct Quantity {
 /// stores it in (xcolor § 2.5): `\definecolor`, `\providecolor`,
 /// `\colorlet` and `\definecolorset` all end in one of these, so the fact
 /// is what the interpreter did and not a list of names.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ColorDef {
     pub name: String,
     /// The color as xcolor stored it, always in one of its core models
@@ -255,7 +256,7 @@ pub struct ColorDef {
 /// A color named by a `\csname\color@⟨name⟩\endcsname` the run formed:
 /// xcolor reaches every color by that one control sequence, so a use, a
 /// test and a `\colorlet` source all arrive here (xcolor § 2.5).
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ColorUse {
     pub name: String,
     /// What the name was formed for ([`CsnameRole::Use`] for `\color`).
@@ -271,7 +272,7 @@ pub struct ColorUse {
 
 named_enum! {
     /// What a `\pdfcolorstack` does to its stack (pdfTeX manual, § 8.9.8).
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
     pub enum StackOp {
         Push => "push",
         Pop => "pop",
@@ -283,7 +284,7 @@ named_enum! {
 /// One `\pdfcolorstack` the run executed: which stack, what it did to it,
 /// and where.  [`crate::linter::pdf`] balances the pushes against the pops
 /// the way it balances `q` against `Q`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct ColorStack {
     /// The stack number, `None` when the run could not decide it.
     pub stack: Option<i64>,
@@ -327,7 +328,7 @@ impl FontState {
 /// token that made it stood and the modes it was set in (tex.web § 211).
 /// Recorded before TeX's ligature program runs, so `--` is still two
 /// characters here.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Spot {
     pub span: Span,
     /// The font it was set in, as an index into
@@ -351,7 +352,7 @@ pub struct Spot {
 /// Every character the run typeset outside package code, in order: the
 /// document as the reader sees it, with each character's source position.
 /// [`Facts::text`] holds it, and the typographic lints read it.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Text {
     pub chars: String,
     /// One per character of `chars`, in the same order.
@@ -419,7 +420,7 @@ pub struct Text {
 }
 
 /// How a paragraph's lines sit between the margins.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Just {
     Justified,
     Left,
@@ -444,7 +445,7 @@ impl Just {
 /// Where an alignment begins, ends a cell (`&`) or a row (`\cr`), and
 /// ends; where a box of a set width begins in the line and ends (a table of
 /// contents' `\numberline`, its page number), and where leaders fill it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Align {
     Begin,
     Cell,
@@ -483,7 +484,7 @@ impl Align {
 }
 
 /// A rule [`Text::rules`] keeps.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Rule {
     /// A thin `\vrule`: a table's `|`.
     Vertical,
@@ -518,7 +519,7 @@ impl Text {
 /// How sure the interpreter is about what it saw. [`Diagnostic::severity`]
 /// carries it, from a plain note up to an imprecision the analysis had to
 /// make.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Severity {
     Info,
     Warning,
@@ -551,10 +552,11 @@ impl Severity {
 /// One thing the analysis wants the user to know: a message, a [`Severity`],
 /// and the [`Span`] it concerns. [`Facts::diagnostics`] is what `satex
 /// lint`'s correctness rules and `query diagnostics` read.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Diagnostic {
     pub severity: Severity,
-    pub code: &'static str,
+    #[serde(with = "crate::fixed::leaked")]
+    pub code: crate::fixed::Str,
     pub message: String,
     pub span: Span,
     /// How many times the run raised it: identical diagnostics at one place
@@ -570,7 +572,7 @@ pub struct Diagnostic {
 
 /// What a run observed: [`Definition`]s, [`Expansion`]s, [`Occurrence`]s and
 /// [`Load`]s, which every query and lint reads.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Facts {
     pub defs: Vec<Definition>,
     /// The files `\write` handed lines to, as `\openout` named them.
@@ -644,7 +646,7 @@ pub struct Facts {
 
 /// A conditional the run evaluated (tex.web §§ 487-510), merged over every
 /// time it ran.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Conditional {
     pub name: Sym,
     /// The `\if…`.
@@ -663,7 +665,7 @@ pub struct Conditional {
 
 /// What a `\csname…\endcsname` was formed for, read off the command an
 /// `\expandafter` held back while the name was formed (tex.web § 368).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum CsnameRole {
     /// On its own: the control sequence is expanded or executed.
     Use,
@@ -740,7 +742,7 @@ pub fn switches_named(
 /// PDF content operators, where the document's call stands, and how many
 /// characters were typeset before it, so text set between two literals is
 /// placed where the drawing stands then.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Literal {
     pub at: Span,
     pub text: String,

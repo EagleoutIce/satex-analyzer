@@ -119,7 +119,7 @@ type BoxTarget = (Option<i64>, bool, Option<[(i64, i64); 2]>);
 type Undo = (Dim, Dim, Option<Dim>);
 
 /// What a group saved of the semantic nest.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Nest {
     /// The modes, and the modes of the enclosing list, before the group.
     pub mode: Modes,
@@ -154,7 +154,7 @@ pub struct Nest {
 
 /// What an `\halign` keeps while its rows go onto the enclosing list
 /// (tex.web §§ 770, 799).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Align {
     /// The `\tabskip` glue before the first column and after the last (§ 778).
     pub tabskip: Dim,
@@ -215,7 +215,7 @@ impl Nest {
 /// A length satex knows only within an interval. `hpack` (tex.web § 649) and
 /// `vpack` (§ 668) add the list's items up. An item satex cannot follow
 /// widens the interval rather than being left out, to avoid under-approximating.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Dim {
     pub lo: Scaled,
     pub hi: Scaled,
@@ -318,7 +318,7 @@ impl Interline {
 /// The lines a paragraph made at its forced breaks so far (tex.web
 /// §§ 813-890), as the vertical list `post_line_break` builds of them, and
 /// the line being set since.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Para {
     /// How many lines, at least and at most.
     pub(crate) lines: (u32, u32),
@@ -407,7 +407,7 @@ impl Dim {
 
 /// tex.web § 644: a box is packed to its list's natural size, `to` a
 /// given size, or `spread` past the natural one.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Packing {
     Natural,
     To(Dim),
@@ -428,7 +428,7 @@ impl Packing {
 /// The natural size of the list being built, as `hpack` (tex.web § 649)
 /// and `vpack` (§ 668) find it, and the tail `\lastskip` and `\unskip`
 /// reach (§ 424, § 1105).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Natural {
     /// The sum along the list: the width of a horizontal list, the height
     /// of a vertical one (tex.web § 668 `x`).
@@ -544,7 +544,7 @@ pub struct Natural {
 
 /// The math codes of a list's characters, while it holds at most [`ATOMS`]; `len` past it: more
 /// or not known.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Atoms {
     codes: [u16; ATOMS],
     len: u8,
@@ -572,7 +572,7 @@ impl Atoms {
 
 /// A script placed after its nucleus: the script box, and the list as it
 /// was before and after.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Scripted {
     sup: bool,
     size: [Scaled; 3],
@@ -874,7 +874,7 @@ const RULE: i8 = 3;
 
 /// The last item of a list, as far as `\lastskip`, `\lastkern` and
 /// `\lastpenalty` tell items apart.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub enum Last {
     /// None, or one that is neither glue, a kern, a penalty nor a
     /// character.
@@ -907,7 +907,7 @@ pub enum Last {
 /// What `\lastskip`, `\lastkern` and `\lastpenalty` may read off a tail
 /// of several possible items (tex.web § 424): an interval each, `None`
 /// for any.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Reads {
     pub skip: Option<GlueHull>,
     /// `skip` is in mu.

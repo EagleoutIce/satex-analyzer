@@ -31,7 +31,8 @@ fn run(name: &str, source: &str) -> Analysis {
 
 fn run_at(name: &str, source: &str, path: Option<&std::path::Path>) -> Analysis {
     let cfg = satex::project::config::Config {
-        cache: Cache { dir: Some(fresh(name)), ..Default::default() },
+        // package caches only: a stored whole run would serve the work these budgets measure
+        cache: Cache { dir: Some(fresh(name)), document: false, ..Default::default() },
         load: Load { packages: true, classes: true, ..Default::default() },
         ..crate::support::config()
     };
@@ -195,7 +196,8 @@ fn warm_steps(name: &str, source: &str) -> Option<u64> {
         return None;
     }
     let cfg = satex::project::config::Config {
-        cache: Cache { dir: Some(fresh(name)), ..Default::default() },
+        // package caches only: a stored whole run would serve the work these budgets measure
+        cache: Cache { dir: Some(fresh(name)), document: false, ..Default::default() },
         load: Load { packages: true, classes: true, ..Default::default() },
         ..crate::support::config()
     };

@@ -38,7 +38,7 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 /// not latex.ltx again (as `tests/it/package_cache.rs` does).
 fn latex(dir: &std::path::Path) -> Config {
     let cfg = Config {
-        cache: Cache { dir: Some(dir.join("cache")), ..Default::default() },
+        cache: Cache { dir: Some(dir.join("cache")), document: false, ..Default::default() },
         load: Load { classes: true, ..Default::default() },
         ..crate::support::config()
     };

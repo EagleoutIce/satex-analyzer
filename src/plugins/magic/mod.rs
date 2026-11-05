@@ -1,6 +1,6 @@
 /// A single magic comment found in a source file, such as `% !TeX program =
 /// lualatex`. Collected into [`crate::plugins::Plugins::magic`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Magic {
     pub key: String,
     pub value: String,

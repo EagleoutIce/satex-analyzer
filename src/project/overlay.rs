@@ -11,6 +11,8 @@ thread_local! {
     static FILES: RefCell<HashMap<PathBuf, String>> = RefCell::new(HashMap::default());
     /// The files read or looked for while [`log`] is on.
     static LOG: RefCell<Option<Vec<Read>>> = const { RefCell::new(None) };
+    /// What [`record`] logs: the reads of files the run did not write itself.
+    static OUTSIDE: RefCell<Option<Vec<Read>>> = const { RefCell::new(None) };
     /// Each file's [`fingerprint`] by its size and time.
     static PRINTS: RefCell<HashMap<PathBuf, (Stamp, u64)>> = RefCell::new(HashMap::default());
 }
@@ -19,7 +21,7 @@ thread_local! {
 type Stamp = (u64, std::time::SystemTime);
 
 /// A file a run read, or only looked for: its path, and what it found.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Read {
     pub path: PathBuf,
     /// Whether it was only looked for.
@@ -48,10 +50,30 @@ pub fn log(on: bool) -> Vec<Read> {
     LOG.with_borrow_mut(|log| std::mem::replace(log, on.then(Vec::new))).unwrap_or_default()
 }
 
+/// Starts logging the reads of files outside the overlay on this thread,
+/// unless it is on already: whether it started.
+pub fn record() -> bool {
+    OUTSIDE.with_borrow_mut(|log| log.is_none() && log.replace(Vec::new()).is_none())
+}
+
+/// Stops [`record`]: what it logged.
+pub fn recorded() -> Vec<Read> {
+    OUTSIDE.with_borrow_mut(Option::take).unwrap_or_default()
+}
+
 fn push(path: &Path, probe: bool, own: bool, print: impl FnOnce() -> u64) {
-    LOG.with_borrow_mut(|log| {
-        log.as_mut().map(|l| l.push(Read { path: path.to_path_buf(), probe, own, print: print() }))
-    });
+    let print = std::cell::LazyCell::new(print);
+    let read = || Read { path: path.to_path_buf(), probe, own, print: *print };
+    LOG.with_borrow_mut(|log| log.as_mut().map(|l| l.push(read())));
+    // A build file, or one the run wrote, is the run's own output.
+    if !own && OUTSIDE.with_borrow(Option::is_some) && !holds(path) {
+        OUTSIDE.with_borrow_mut(|log| log.as_mut().map(|l| l.push(read())));
+    }
+}
+
+/// Whether the overlay holds no file.
+pub fn is_empty() -> bool {
+    FILES.with_borrow(|files| files.is_empty())
 }
 
 /// Notes that a run looked for `path`, a file of the build: only the

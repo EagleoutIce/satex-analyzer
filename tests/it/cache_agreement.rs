@@ -27,7 +27,10 @@ fn seeded(name: &str) -> PathBuf {
 }
 
 fn config(dir: &Path) -> Config {
-    Config { cache: Cache { dir: Some(dir.join("cache")), ..Default::default() }, ..crate::support::config() }
+    Config {
+        cache: Cache { dir: Some(dir.join("cache")), document: false, ..Default::default() },
+        ..crate::support::config()
+    }
 }
 
 fn analyze(dir: &Path, source: &str, cfg: &Config) -> Analysis {

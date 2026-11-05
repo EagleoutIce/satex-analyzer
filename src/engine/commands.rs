@@ -991,6 +991,7 @@ impl Machine<'_> {
         let name = self.font_name(font)?;
         let file = name.strip_prefix('[')?.split(']').next()?.to_string();
         let base = self.base().to_path_buf();
+        crate::project::overlay::probed(&base.join(&file));
         let path = if base.join(&file).is_file() {
             base.join(&file)
         } else {
@@ -1234,6 +1235,7 @@ impl Machine<'_> {
         if let Some(file) = name.strip_prefix('[') {
             let file = file.split(']').next().unwrap_or(file);
             let base = self.base().to_path_buf();
+            crate::project::overlay::probed(&base.join(file));
             if base.join(file).is_file() {
                 return Some(true);
             }

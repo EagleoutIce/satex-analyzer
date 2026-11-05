@@ -651,7 +651,7 @@ fn the_lualatex_kernel_builds_without_broken_gaps() {
     let source = "% !TeX program = lualatex\n\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n";
     let path = dir.join("main.tex");
     std::fs::write(&path, source).unwrap();
-    let cache = satex::project::config::Cache { dir: Some(dir.join("cache")), ..Default::default() };
+    let cache = satex::project::config::Cache { dir: Some(dir.join("cache")), document: false, ..Default::default() };
     let cfg = Config { cache, ..crate::support::config() };
     let analysis = Machine::analyze(source, Some(&path), &cfg);
     let broken: Vec<String> = analysis
@@ -682,7 +682,7 @@ fn the_lualatex_kernel_is_cached_and_expl3_works() {
 \\begin{document}\nText.\n\\end{document}\n";
     let path = dir.join("main.tex");
     std::fs::write(&path, source).unwrap();
-    let cache = satex::project::config::Cache { dir: Some(dir.join("cache")), ..Default::default() };
+    let cache = satex::project::config::Cache { dir: Some(dir.join("cache")), document: false, ..Default::default() };
     let cfg = Config { cache, ..crate::support::config() };
     let cold = Machine::analyze(source, Some(&path), &cfg);
     let warm = Machine::analyze(source, Some(&path), &cfg);

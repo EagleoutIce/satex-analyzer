@@ -31,7 +31,7 @@ use crate::project::config::{Config, Engine};
 named_enum! {
     /// The kind of thing a plugin describes, for reporting: which field of
     /// [`Plugins`] it names and how [`Plugins::source`] was decided.
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
     pub enum Kind {
         Provider => "provider",
         Platform => "platform",
@@ -106,7 +106,7 @@ impl Kernel {
 /// read: [`Provider`], [`Platform`], the [`Engine`], the [`Kernel`], the
 /// [`Output`] target, and what magic comments and build files said about
 /// them.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Plugins {
     pub provider: Option<Provider>,
     pub provider_version: Option<String>,
@@ -133,7 +133,8 @@ pub struct Plugins {
     /// found it.
     pub discovery: Discovery,
     /// How each was decided: configured, detected, or the default.
-    pub sources: Vec<(Kind, &'static str)>,
+    #[serde(with = "crate::fixed::leaked_pairs")]
+    pub sources: Vec<(Kind, crate::fixed::Str)>,
     /// What `\write18` may do: configured, else what the build asks for.
     pub shell_escape: crate::project::config::ShellEscape,
 }

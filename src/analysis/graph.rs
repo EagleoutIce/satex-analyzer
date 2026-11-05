@@ -10,7 +10,7 @@ use crate::engine::tex::{Interner, Span, Sym};
 named_enum! {
     /// What kind of program point a [`Vertex`] stands for: a value, a use, a
     /// macro call, or the definition of a variable or macro.
-    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize)]
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, serde::Deserialize)]
     #[serde(rename_all = "kebab-case")]
     pub enum VertexTag {
         Value => "value",
@@ -24,7 +24,7 @@ named_enum! {
 /// How one [`Vertex`] depends on another, as a bit set so that parallel edges
 /// between the same two vertices collapse into one. [`DependencyGraph::slice_until`]
 /// filters a walk by which kinds it follows.
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug, Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug, Serialize, serde::Deserialize)]
 pub struct EdgeKind(pub u16);
 
 impl EdgeKind {
@@ -78,7 +78,7 @@ impl std::ops::BitOrAssign for EdgeKind {
 /// One branch a [`Vertex`] depends on: the vertex `on` that decided it, and
 /// whether this path was the one `taken`. Recorded when a conditional is
 /// undecided and every arm is analyzed in turn.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, serde::Deserialize)]
 pub struct ControlDep {
     pub on: NodeId,
     pub taken: bool,
@@ -86,7 +86,7 @@ pub struct ControlDep {
 
 /// One node of the [`DependencyGraph`]: a control sequence or key, tagged with
 /// a [`VertexTag`], at the [`Span`] it was seen.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Vertex {
     pub tag: VertexTag,
     pub name: Sym,
@@ -101,7 +101,7 @@ pub struct Vertex {
 /// The program's dependency graph: [`Vertex`]es for definitions, calls and
 /// uses, connected by [`EdgeKind`] edges. [`DependencyGraph::slice_until`] is what
 /// `satex slice` walks.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DependencyGraph {
     pub vertices: Vec<Vertex>,
     /// `limits.vertices` (0: none): past it a new site shares one overflow vertex, so
@@ -150,7 +150,7 @@ pub struct DependencyGraph {
     log: Option<GraphLog>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct GraphLog {
     pub edges: Vec<(NodeId, NodeId, EdgeKind, Option<NodeId>)>,
     /// Reads linked to whatever defines a name, not to particular vertices:
@@ -636,7 +636,7 @@ impl DependencyGraph {
 /// definitions rather than from the [`DependencyGraph`], so that macros that
 /// are never invoked are still covered. [`crate::analysis::machine::Analysis::calls`]
 /// holds the one for a run.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CallGraph {
     pub nodes: Vec<Sym>,
     index: LookupMap<Sym, usize>,

@@ -442,6 +442,9 @@ cache:
   tail: 256  # characters before a package's end where a run may resume from a saved state
     #! affects: speed, memory
     #! example: higher: more resume points, a larger cache
+  document: true  # keep each document's whole analysis: an unchanged rerun executes nothing
+    #! affects: speed
+    #! example: off: every run reads the document again, its packages from their caches
   index:  # packages `satex cache build` prepares, or, when
                             # empty, whatever ordinary runs already found
                             # expensive to interpret (measured, not a hand-picked list)
@@ -997,6 +1000,13 @@ A package is cached per **read set**: the meanings, registers, hooks, options an
 - **`satex cache build`** prepares the kernel and `cache.index.packages` (or named packages) for `cache.index.engines`, in parallel on `limits.threads`. It reports progress per package and only rebuilds stale ones (`--refresh` forces).
 - **Pruning** keeps this build's kernel and four recent ones, then trims by `limits.cache_size` (2 GiB) least-recently used. `satex cache prune` does only that.
 
+A **document cache** keeps a run's whole analysis, one file per document and settings (`cache.document`, on by default).
+
+- **Served** when the document's text, the settings, the installation's trees (their `ls-R` stamps) and every file the run read or looked for are unchanged. Files the run wrote itself (`.aux`, `.toc`) are its output, not its input. A served run executes nothing: `served_steps` equals `steps`, and `satex summary` shows `cached` for `document`.
+- **Exact**: the stored run is served as the bytes it was stored as, so a later run's facts are the first run's, byte for byte. A run a time or memory limit stopped is not stored.
+- **Not used** with `--trace`, under `--stats`, or while another run's files stand in for the disk (`lint --fix`, the language server's unsaved buffers). `-v` says why a stored one was not served.
+- Under `clock: now` a served run keeps the date of the run that stored it, and `clock-assumed` says so.
+
 ```yaml
 cache:
   index:
@@ -1073,7 +1083,7 @@ A rule's own settings live under `lints.⟨code⟩`.
 | `2026-09-29`, `2026-09-29T14:30+02:00` | a pinned date |
 | `unknown` | every digit unknown: date-dependent code is analyzed for every outcome |
 
-Package caches that read the clock are kept per setting.
+Package caches that read the clock are kept per setting. So are document caches.
 
 ## Where paths join
 

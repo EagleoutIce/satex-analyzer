@@ -131,6 +131,15 @@
           ],
           "x-example": "`dir: /fast-disk/satex`"
         },
+        "document": {
+          "default": true,
+          "description": "keep each document's whole analysis: an unchanged rerun executes nothing",
+          "type": "boolean",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "off: every run reads the document again, its packages from their caches"
+        },
         "enabled": {
           "default": true,
           "description": "keep the interpreted kernel and packages between runs. Off, every run starts from scratch",

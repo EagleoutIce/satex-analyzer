@@ -67,7 +67,7 @@ fn package_of(path: &str, rules: &[regex::Regex], renames: &BTreeMap<String, Str
 
 /// A package the run needs: where it is first loaded, and which of its
 /// files it reads.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Needed {
     pub package: String,
     pub span: Span,
@@ -76,7 +76,7 @@ pub struct Needed {
 
 /// One line of the dependency file (TeX Live's `DEPENDS.txt`: an optional
 /// `hard` or `soft` directive, package names, `#` comments).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Declared {
     pub package: String,
     pub directive: Option<String>,
@@ -84,7 +84,7 @@ pub struct Declared {
 }
 
 /// What depp would write, and what the project's dependency file says.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Depp {
     /// Where depp is loaded, with its options, when it is.
     pub loaded: Option<(Span, Vec<String>)>,

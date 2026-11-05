@@ -8,10 +8,11 @@ use std::path::{Path, PathBuf};
 /// `%&⟨format⟩` line (web2c manual, "Format files"), an `-fmt=` in the build
 /// configuration, or `preload:` in the configuration.  `source` is the
 /// preamble that was dumped, which satex interprets in place of the `.fmt`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Preload {
     pub name: String,
-    pub how: &'static str,
+    #[serde(with = "crate::fixed::leaked")]
+    pub how: crate::fixed::Str,
     pub source: Option<PathBuf>,
 }
 

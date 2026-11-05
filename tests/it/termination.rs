@@ -570,7 +570,11 @@ fn a_join_never_folds_code_into_data() {
 \begin{document}x\end{document}";
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/termination/join-code");
     let cfg = Config {
-        cache: satex::project::config::Cache { dir: Some(crate::support::scratch_dir(dir)), ..Default::default() },
+        cache: satex::project::config::Cache {
+            dir: Some(crate::support::scratch_dir(dir)),
+            document: false,
+            ..Default::default()
+        },
         load: satex::project::config::Load { packages: true, classes: true, ..Default::default() },
         ..crate::support::config()
     };
@@ -640,7 +644,7 @@ fn a_summarized_loop_leaves_the_rest_of_the_document_read() {
         crate::support::tex_path(&dir)
     );
     let cfg = Config {
-        cache: satex::project::config::Cache { dir: Some(dir.join("cache")), ..Default::default() },
+        cache: satex::project::config::Cache { dir: Some(dir.join("cache")), document: false, ..Default::default() },
         load: satex::project::config::Load { packages: true, classes: true, ..Default::default() },
         ..crate::support::config()
     };
@@ -673,7 +677,11 @@ Plain text after the loop.
 \end{document}";
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/termination/no-gobble");
     let cfg = Config {
-        cache: satex::project::config::Cache { dir: Some(crate::support::scratch_dir(dir)), ..Default::default() },
+        cache: satex::project::config::Cache {
+            dir: Some(crate::support::scratch_dir(dir)),
+            document: false,
+            ..Default::default()
+        },
         load: satex::project::config::Load { packages: true, classes: true, ..Default::default() },
         ..crate::support::config()
     };

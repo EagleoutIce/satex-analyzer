@@ -8,7 +8,7 @@ named_enum! {
     /// One stage of a run: discovering the TeX installation, reading the format,
     /// reading the document, running end-of-document hooks. [`Timings::phases`]
     /// records how long each took.
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
     pub enum Phase {
         Discovery => "discovery",
         Format => "format",

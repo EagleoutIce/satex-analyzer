@@ -63,6 +63,7 @@ mod calls;
 mod checkpoint;
 pub(crate) mod directive;
 pub use checkpoint::Checkpoints;
+pub(crate) use checkpoint::setup_key;
 pub(crate) mod explore;
 mod inspect;
 mod package_cache;
@@ -72,7 +73,7 @@ pub use package_cache::served as cache_served;
 
 /// One kind of thing the interpreter did, recorded as an [`Event`] in the
 /// trace.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Step {
     Expand,
     Execute,
@@ -129,7 +130,7 @@ impl Step {
 
 /// One entry of the execution trace: what [`Step`] happened, to which name,
 /// at which [`Span`]. Held by [`Analysis::trace`], the sequence `satex trace` prints.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Event {
     pub index: u32,
     pub depth: u16,
@@ -152,7 +153,7 @@ pub struct Event {
 
 /// A loaded file: its path and its [`LoadKind`] (input, package, class).
 /// [`Analysis::files`] is indexed by [`FileId`].
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct FileInfo {
     pub path: String,
     pub kind: LoadKind,
@@ -163,9 +164,10 @@ pub struct FileInfo {
 }
 
 /// A limit (`limits.<key>` in the configuration) that cut the run.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct LimitHit {
-    pub key: &'static str,
+    #[serde(with = "crate::fixed::leaked")]
+    pub key: crate::fixed::Str,
     pub value: u64,
     pub at: Span,
     pub count: u32,
@@ -174,7 +176,7 @@ pub struct LimitHit {
 /// Where the LaTeX2e kernel came from for this run: the `latex.ltx` path,
 /// whether it was read from a [`Format`] cache, and how far interpretation of
 /// it got.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct FormatInfo {
     pub source: String,
     pub definitions: usize,
@@ -202,10 +204,11 @@ impl FormatInfo {
 /// One of the document's properties as hyperref writes it into the PDF.
 /// `text` is what `\pdfstringdef` makes of the value, `source` the token
 /// list it was made from, which the rendering drops parts of.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Metadata {
     /// `title`, `author` or `date`.
-    pub field: &'static str,
+    #[serde(with = "crate::fixed::leaked")]
+    pub field: crate::fixed::Str,
     pub text: String,
     pub source: String,
 }
@@ -232,7 +235,7 @@ pub(crate) struct FontWatch {
 
 /// A font `\font` loaded: the TFM name it was given and the size it was
 /// loaded at (tex.web § 1257), which together locate its metrics.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FontUse {
     pub name: String,
     pub size: crate::engine::value::Scaled,
@@ -314,7 +317,7 @@ fn compact_count(n: u64) -> String {
 /// Everything a run produced: the ending [`Env`] and [`CatcodeTable`], the
 /// recorded [`Facts`] and [`DependencyGraph`], and the bookkeeping every
 /// `satex` command reads instead of the live [`Machine`].
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Analysis {
     pub interner: Interner,
     pub graph: DependencyGraph,
@@ -349,6 +352,7 @@ pub struct Analysis {
     pub format: Option<FormatInfo>,
     /// The `satex.yaml` in force, when one was read, and the settings it made.
     pub config: Option<PathBuf>,
+    #[serde(with = "crate::fixed::json")]
     pub settings: Config,
     /// `\title`, `\author` and `\date` as PDF document properties, each
     /// with the token list it was made from.
@@ -366,6 +370,7 @@ pub struct Analysis {
     pub env: Env,
     /// The category codes in force at the end of the run.
     pub catcodes: CatcodeTable,
+    #[serde(skip)]
     pub timings: Timings,
     pub facts: Facts,
     pub trace: Vec<Event>,
@@ -382,6 +387,7 @@ pub struct Analysis {
     pub lines: u64,
     pub exhausted: bool,
     /// When the run's time budget began (`limits.seconds`).
+    #[serde(skip)]
     pub started: Option<std::time::Instant>,
     /// Final sizes of the interpreter's working sets.
     pub journal_size: usize,
@@ -400,6 +406,7 @@ pub struct Analysis {
     pub forks: u64,
     pub output_forks: u64,
     /// Where the run spent itself, counted only under `--stats`.
+    #[serde(skip)]
     pub hot: Option<Box<Hot>>,
     /// Slots the joins of paths compared: their work, which `steps` leaves out.
     pub joined_slots: u64,
@@ -430,23 +437,30 @@ pub struct Analysis {
     /// means where the document uses it before anything redefines it.
     pub kernel: Option<Box<Env>>,
     /// What [`crate::analysis::probe`] found per name and view, computed on demand.
+    #[serde(skip)]
     pub probes:
         crate::fixed::Mutex<HashMap<(Sym, crate::analysis::probe::State), Option<crate::analysis::probe::Probed>>>,
     /// Environments worth probing a name inside, and what that found: cache
     /// for [`crate::analysis::probe::probe_contexts`].
+    #[serde(skip)]
     pub context_probes: crate::fixed::Mutex<ContextProbes>,
     /// The fewest arguments each defined name takes, for completion: built
     /// once, from the definitions query.
+    #[serde(skip)]
     pub takes: std::sync::OnceLock<crate::fixed::HashMap<String, u8>>,
     /// What [`crate::analysis::roles`] reads of the sources: read once.
+    #[serde(skip)]
     pub role_sources: std::sync::OnceLock<crate::analysis::roles::Sources>,
     /// The roles a probe call found for commands the run never called, by name:
     /// cache for [`crate::analysis::probe::argument_roles`].
+    #[serde(skip)]
     pub probed_roles: crate::fixed::Mutex<crate::fixed::HashMap<String, Vec<crate::analysis::roles::Role>>>,
     /// The entries of the bibliography databases the document names, for
     /// completion: read once.
+    #[serde(skip)]
     pub bib: std::sync::OnceLock<Vec<crate::plugins::bib::Entry>>,
     /// What [`crate::queries::query::scope`] shows of each name: built once.
+    #[serde(skip)]
     pub scope_rows: std::sync::OnceLock<crate::queries::query::ScopeRows>,
 }
 
@@ -2632,11 +2646,26 @@ impl<'a> Machine<'a> {
         );
     }
 
+    /// [`Machine::analyze_expecting`], or what the document cache
+    /// ([`crate::caches::document`]) holds of it.
+    pub fn analyze(source: &str, path: Option<&Path>, cfg: &'a Config) -> Analysis {
+        use crate::caches::document::{Lookup, lookup};
+        match lookup(source, path, cfg) {
+            Lookup::Served(analysis) => *analysis,
+            Lookup::Record(recording) => {
+                let mut analysis = Machine::analyze_expecting(source, path, cfg);
+                recording.store(&mut analysis);
+                analysis
+            }
+            Lookup::Off => Machine::analyze_expecting(source, path, cfg),
+        }
+    }
+
     /// [`Machine::analyze_once`], and for a package or class that uses
     /// names it never defines, once more after what the packages on disk
     /// say it expects loaded (`load.expect_detect`), kept when that run
     /// defines more of them.
-    pub fn analyze(source: &str, path: Option<&Path>, cfg: &'a Config) -> Analysis {
+    fn analyze_expecting(source: &str, path: Option<&Path>, cfg: &'a Config) -> Analysis {
         let first = Machine::analyze_build(source, path, cfg);
         let own = matches!(
             crate::project::config::Profile::of_name(path, source),
@@ -2757,6 +2786,12 @@ impl<'a> Machine<'a> {
             }
             let took = elapsed(checkpoints) - before;
             if cfg.limits.seconds > 0 && elapsed(checkpoints) + took > budget {
+                analysis.limits.push(LimitHit {
+                    key: "seconds",
+                    value: cfg.limits.seconds,
+                    at: Span::default(),
+                    count: 1,
+                });
                 break analysis;
             }
             // What this run read that a build file defines: the keys it

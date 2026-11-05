@@ -31,6 +31,8 @@ fn bounded(mut cfg: Config) -> Config {
     if cfg.cache.dir.is_none() {
         cfg.cache.dir = Some(test_cache());
     }
+    // A whole run's analysis is kept only where a test asks for it.
+    cfg.cache.document = false;
     // One fixed clock: runs a second apart, cached or not, agree.
     cfg.clock =
         satex::project::config::Clock::At(time::OffsetDateTime::from_unix_timestamp(1_767_268_800).expect("a date"));
@@ -393,7 +395,7 @@ const MINI_PACKAGE: &str = "\\ProvidesPackage{demo}\n\
 pub fn mini_config(tree: &Path, cache: &Path) -> Config {
     Config {
         texmf: Texmf { roots: vec![tree.to_path_buf()], bundle: None, kpsewhich: false, fallback: false },
-        cache: satex::project::config::Cache { dir: Some(cache.to_path_buf()), ..Default::default() },
+        cache: satex::project::config::Cache { dir: Some(cache.to_path_buf()), document: false, ..Default::default() },
         ..config()
     }
 }

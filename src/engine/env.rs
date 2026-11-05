@@ -20,7 +20,7 @@ pub type NodeId = u32;
 
 /// What a control sequence is bound to: its [`Meaning`], [`Value`], and the
 /// [`NodeId`]s that defined it. [`Env`] stores one per active [`Sym`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Binding {
     pub meaning: Meaning,
     pub value: Value,
@@ -43,7 +43,7 @@ impl Binding {
 }
 
 /// Save-stack entry (catcodes too: `\catcode` is local like other assignments).
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 enum Entry {
     Meaning {
         sym: u32,
@@ -66,7 +66,7 @@ enum Entry {
 /// Kind of group (tex.web § 269): `{`/`}`, `\begingroup`/`\endgroup`, or `$...$`.
 /// A closer closes only its opener's kind ([`GroupKind::closes`], enforced by
 /// [`Env::pop_group`]).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum GroupKind {
     Simple,
     SemiSimple,
@@ -92,7 +92,7 @@ impl GroupKind {
 /// The save stack.  A path through an undecided conditional copies it, so
 /// what lies below the last copy is frozen in shared chunks: a copy costs
 /// what was pushed since, not the whole stack.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct Journal {
     /// The first `n` entries of a chunk, and below them its parent's.
     frozen: Option<(std::rc::Rc<Chunk>, usize)>,
@@ -100,6 +100,7 @@ struct Journal {
     top: Vec<Entry>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Chunk {
     entries: Vec<Entry>,
     parent: Option<(std::rc::Rc<Chunk>, usize)>,
@@ -152,7 +153,7 @@ impl Journal {
 }
 
 /// Open group: journal start, opener kind, saved `\aftergroup` tokens.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Mark {
     journal: usize,
     kind: GroupKind,
@@ -169,7 +170,7 @@ struct Mark {
 
 /// The meaning table and the save stack: [`Binding`]s are pushed and undone
 /// per group, which is what `\begingroup` and `}` do.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Env {
     slots: crate::fixed::Chunked<Option<Binding>>,
     /// The group level each slot's binding was made at, 0 for level one
@@ -287,7 +288,7 @@ impl ReadKind {
 /// load has since overwritten, so a later read of them owes nothing to
 /// before. A group end restores what the parts held, and whether that was
 /// pre-load.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct Reads {
     read: LookupMap<u32, u8>,
     written: LookupMap<u32, u8>,
@@ -2124,6 +2125,7 @@ pub const MAY_MEANINGS: usize = 5;
 /// names they differ in. A path that learns one name's binding learns
 /// the others' from the arms that allow it (`\pgfmath`'s operation stack
 /// and its top stay paired).
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Corr {
     syms: Vec<u32>,
     arms: Vec<Vec<Option<Binding>>>,
@@ -2137,7 +2139,7 @@ impl Corr {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SetLimits {
     pub meanings: usize,
     pub arms: usize,

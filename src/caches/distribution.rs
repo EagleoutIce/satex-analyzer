@@ -16,7 +16,7 @@ named_enum! {
     /// How the TeX installation's roots were found: configured in `satex.yaml`,
     /// reported by `kpsewhich`, guessed at a well-known path, or not found at
     /// all. Part of [`Distribution`].
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
     pub enum Discovery {
         /// Roots named in `satex.yaml`.
         Configured => "configured",
@@ -32,7 +32,7 @@ named_enum! {
 /// The TeX installation a run resolved files against: its roots, the year
 /// and LaTeX2e format version it reports, and how many files [`discover`]
 /// indexed. [`crate::engine::loader::Resolver`] uses it to find packages and classes.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Distribution {
     pub roots: Vec<PathBuf>,
     pub discovery: Discovery,

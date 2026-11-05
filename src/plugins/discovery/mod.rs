@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 /// The files a project offers a run: documents that could be the root, the
 /// classes and packages it writes itself, its build configurations and its
 /// bibliographies.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Discovery {
     pub root: PathBuf,
     pub documents: Vec<PathBuf>,

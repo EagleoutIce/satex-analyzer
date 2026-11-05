@@ -425,6 +425,9 @@ cache:
   tail: 256  # characters before a package's end where a run may resume from a saved state
     #! affects: speed, memory
     #! example: higher: more resume points, a larger cache
+  document: true  # keep each document's whole analysis: an unchanged rerun executes nothing
+    #! affects: speed
+    #! example: off: every run reads the document again, its packages from their caches
   index:  # packages `satex cache build` prepares, or, when
                             # empty, whatever ordinary runs already found
                             # expensive to interpret (measured, not a hand-picked list)

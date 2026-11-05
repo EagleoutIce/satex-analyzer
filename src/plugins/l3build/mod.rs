@@ -13,19 +13,20 @@ use crate::project::config::Engine;
 pub const FILE: &str = "build.lua";
 
 /// A variable of the configuration: l3build's are strings or lists of them.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Var {
     Str(String),
     List(Vec<String>),
 }
 
 /// What a `build.lua` configures, and how satex learned it.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct L3build {
     pub path: PathBuf,
     pub root: PathBuf,
     /// `texlua`, `texlua, then read` when the run stopped early, or `read`.
-    pub how: &'static str,
+    #[serde(with = "crate::fixed::leaked")]
+    pub how: crate::fixed::Str,
     pub vars: BTreeMap<String, Var>,
     /// Why `texlua` stopped, when it did.
     pub error: Option<String>,
