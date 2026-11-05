@@ -859,6 +859,30 @@ mod convergence {
         converged(&a, 32_000);
     }
 
+    /// pgfmath reads a typed number token by token. Past `limits.site_forks`
+    /// the split of its rest, perhaps none, is refused. Bound as one
+    /// argument it would be text that may be none, which TeX never binds:
+    /// pgfmath's `\ifcat` would take its control-sequence arm and leave
+    /// `\pgfmath@dimen@`'s `\afterassignment` pending to gobble the rest,
+    /// conditionals open. The expansion is cut there instead.
+    #[test]
+    fn a_refused_split_of_a_number_rest_leaves_no_conditional_open() {
+        let preamble = "\\usepackage{pgfmath}\n\\newlength\\W\\setlength\\W{1.62pt}";
+        let body = r"\pgfmathsetmacro{\w}{1+\pdfuniformdeviate 5}
+\pgfmathparse{\w*2+.5\W}
+\ifnum\currentiflevel>0 \errmessage{a conditional is left open}\fi
+\ifnum\currentgrouplevel>0 \errmessage{a group is left open}\fi";
+        let Some(a) = latex("number-rest-refused", &document(preamble, body), |c| c.limits.site_forks = 2) else {
+            return;
+        };
+        converged(&a, 200);
+        let wrong: Vec<String> = ["missing-number", "raised-error", "runaway-argument"]
+            .iter()
+            .flat_map(|c| crate::support::diagnosed(&a, c))
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:?}");
+    }
+
     /// An environment whose name is one of two: `\end` looks its hooks up
     /// by a name holding the one-of token, many `\cs:w` at one site. Past
     /// the fresh entries of that point the token is an unknown part of the

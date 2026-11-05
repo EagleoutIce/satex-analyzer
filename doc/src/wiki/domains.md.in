@@ -380,8 +380,8 @@ Every domain joins the same way: **hull plus bounded union**. Keep the exact mem
 
 A join that is not widened keeps its arms paired (`Corr`, [`src/engine/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/env.rs)): per arm, the bindings of the names that differ. pgfmath's operation stack and its top differ together. Joined apart, a later split pairs `neg` with a stack that never held it (a false missing number).
 
-- Learning one paired name narrows the others to the arms that allow it.
-- A name written after the join leaves the pairing. Past `limits.join_arms` arms, the name with the most bindings leaves first.
+- Learning one paired name narrows the others to the arms that allow it. An undecided test of a joined switch teaches each arm the switch's value (`\iftrue` where it holds), so the names paired with it follow.
+- A name written after the join leaves the pairing. Past `limits.join_arms` arms, the name whose loss merges the most arms leaves first: arms apart in that name alone. A name the others determine (the stack's top) merges none and stays. Ties go to the name with the most bindings.
 - Arms only remove combinations no arm had, so the join stays sound.
 
 ### Stacks as intervals
@@ -407,8 +407,8 @@ Arms of an undecided conditional that reach its `\fi` go on as one path (`fi_mar
 | --- | --- |
 | `limits.choices` per command | the conditional is widened: both arms skipped, one unknown token in their place (`undecided-condition`) |
 | `limits.alike` waiting paths at one place | paths whose input differs only in text join |
-| `limits.paths` | the two furthest back are cut to their shared input levels and joined |
-| fork backstop at a hot site | no new arm, except for paths a look-ahead parted that cannot be joined (other input): they get their arms, since following one would be unsound. Under a cut one is followed and the cut summarizes the region |
+| `limits.paths` paths alive, over all nested scans | a new undecided conditional whose arms run as the document's commands (not in an `\edef`-like expansion, a value scan or the output routine) is not split: it is widened as past `limits.choices` (`paths-budget`). Splits of scanned text are not refused: refused, their callers read on less precisely. Waiting paths alike but for their text join (`paths-widened`) |
+| fork backstop at a hot site | no new arm, except for paths a look-ahead parted that cannot be joined (other input): they get their arms, since following one would be unsound, and further splits of bounded text a path already reads apart: its first split counts at its site, the ones after it end within the bound (refused midway, its `0` or `-` path meets the other digits decorrelated. Exempt from the first split on, a loop over many texts never meets the backstop). Under a cut one is followed and the cut summarizes the region. Text that may be none, refused where library code reads it as an undelimited argument, cuts the expansion (`region-skipped`): TeX binds one token, never none, and bound whole it leads code into arms no run takes |
 
 Paths join between two commands where they stand alike: same input, conditionals, groups and scans (`absorb`). Measured on a TikZ node with unknown height, `limits.alike` 8 takes 2.8k forks, 16 takes 5.1k.
 

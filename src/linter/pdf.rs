@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use crate::analysis::machine::Analysis;
 use crate::engine::builtins::OccKind;
 use crate::engine::tex::Span;
+use crate::linter::shared::skipped_between;
 use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 use crate::plugins::pdf::{Operator, Payload, classify, names, operators};
 use crate::project::config::Engine;
@@ -132,7 +133,17 @@ fn unbalanced_pdf_content(report: &mut Report) {
                 open.push((operator, span, emitter, index));
                 continue;
             }
-            match open.iter().rposition(|(o, _, _, _)| o.closer() == operator.closer()) {
+            let at = open.iter().rposition(|(o, _, _, _)| o.closer() == operator.closer());
+            // Code the run skipped since the last opener may have opened or
+            // closed any: the balance is unknown, nothing is said.
+            let since = open.last().map_or(0, |o| o.3);
+            if at != Some(open.len().wrapping_sub(1)) && skipped_between(analysis, since, index) {
+                if let Some(at) = at {
+                    open.truncate(at);
+                }
+                continue;
+            }
+            match at {
                 Some(at) if at == open.len() - 1 => {
                     open.pop();
                 }
@@ -177,6 +188,9 @@ fn unbalanced_pdf_content(report: &mut Report) {
     }
     // What the run lost after an opener may hold its closer.
     for (operator, span, emitter, index) in open {
+        if skipped_between(analysis, index, usize::MAX) {
+            continue;
+        }
         findings.push((
             crate::linter::shared::gap_between(analysis, index, usize::MAX),
             span,

@@ -1,7 +1,5 @@
 # Failing tests with an open root (see ~/satex-plan.md): CI runs and reports them, a new failure fails it.
-budgets::pgfmath_parse_of_typed_numbers
 documents::notecolumn_loop_over_slnc_file
-documents::reparsing_a_pgfmath_result_of_unknown_width_raises_nothing
 documents::rounded_node_of_unknown_width_ends
 documents::rounding_an_unknown_dimension_ends_bounded
 documents::tcolorbox_of_unknown_height_keeps_its_anchors_local
@@ -9,7 +7,6 @@ documents::tikz_arrow_to_an_unknown_point
 documents::tikz_bend_to_a_point_of_unknown_width_closes_the_picture
 documents::tikz_loop_of_unknown_height_nodes_converges
 latex::document_metadata::the_common_options_stay_bounded
-documents::nested_tcolorbox_of_unknown_height_keeps_its_anchors_local
 documents::pictures_around_a_tcolorbox_keep_their_anchors_local
 budgets::document_metadata_warm
 budgets::tagpdf_warm

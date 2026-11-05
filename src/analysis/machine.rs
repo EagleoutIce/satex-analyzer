@@ -388,6 +388,8 @@ pub struct Analysis {
     /// The most paths one drive held at once, the running one included,
     /// while the document's own text ran.
     pub peak_paths: usize,
+    /// The most paths alive at once over all drives (`limits.paths`).
+    pub peak_live: usize,
     /// The same while the output routine ran (tex.web § 1025), which
     /// LaTeX's page code makes on a page satex does not know.
     pub peak_output_paths: usize,
@@ -1357,6 +1359,10 @@ pub(crate) struct Scratch {
     /// The typed numbers a read split into digit arms, with how many
     /// ([`Machine::digit_arms`]): paths apart on one join late.
     pub(crate) split_digits: HashMap<Sym, usize>,
+    /// Typed rests of text a path already reads apart: their splits end
+    /// after the text's bound, so the site backstop does not refuse them
+    /// ([`Machine::split_rest`]).
+    pub(crate) apart: HashSet<Sym>,
     /// The typed digits `\the` gave per count register, last write and
     /// interval ([`Machine::register_digits`]).
     pub(crate) read_digits: HashMap<(Sym, u64, i64, i64), Sym>,
@@ -1526,6 +1532,9 @@ pub struct Machine<'a> {
     undo: Vec<Undo>,
     /// Paths waiting in the innermost drive, for progress reports.
     waiting: usize,
+    /// Paths alive in every drive but the running path's command:
+    /// enclosing drives' at entry, then this one's.
+    live: (usize, usize),
     /// A path ended while others went on: what the run does from then on
     /// happens only in some runs.
     parted: bool,
@@ -2341,6 +2350,7 @@ impl<'a> Machine<'a> {
                 held_tokens_left: 0,
                 loop_heads: 0,
                 peak_paths: 0,
+                peak_live: 0,
                 peak_output_paths: 0,
                 forks: 0,
                 output_forks: 0,
@@ -2412,6 +2422,7 @@ impl<'a> Machine<'a> {
             ended_run: false,
             undo: Vec::new(),
             waiting: 0,
+            live: (0, 0),
             parted: false,
             abs: None,
             abs_exact: None,
@@ -7864,6 +7875,23 @@ will look undefined",
         self.cut();
     }
 
+    /// Text that may be none, read as an undelimited argument where no
+    /// more paths may part: the expansion is cut there ([`Machine::cut`]),
+    /// what it assigned is unknown and what it opened is closed.
+    fn cut_unparted(&mut self) {
+        if !self.guard_seen.cut {
+            let at = self.region.span;
+            let file = self.out.short_name(at.file).to_string();
+            self.diagnose(
+                Severity::Imprecision,
+                "region-skipped",
+                at,
+                format!("analysis skipped the rest of the expansion after {file}:{}: an argument of text that may be none could part no more paths; what it assigned is unknown", at.line),
+            );
+        }
+        self.cut();
+    }
+
     /// Unwind to the main loop, which reads on after an unknown token
     /// ([`Machine::resync`]). Met again before that, the unwinding is cut there.
     fn cut(&mut self) {
@@ -10097,6 +10125,12 @@ will look undefined",
             Some(t) if let Some((class, false)) = self.typed_text_of(t) => {
                 // Read whole, the token is gone: progress, not a scan given up.
                 if !self.split_rest(t, class) {
+                    // TeX binds one token, never none (tex.web § 392): bound
+                    // whole, library code takes arms no run takes.
+                    if self.call_in_library {
+                        self.cut_unparted();
+                        return Vec::new();
+                    }
                     return vec![self.unknown_text(Unk::Of(&[&[t]]), t.span)];
                 }
                 self.read_undelimited()
@@ -10155,6 +10189,11 @@ will look undefined",
         // One token read, the rest holds one fewer: none at a bound of 1.
         let len = self.text_len(t).map(|n| n - 1);
         let rest = (len != Some(0)).then(|| self.unknown_text(Unk::Class(class, false, len, &[]), t.span));
+        if let (Some(rest), Some(sym)) = (rest.and_then(|r| r.cs()), t.cs())
+            && self.scratch.apart.contains(&sym)
+        {
+            self.scratch.apart.insert(rest);
+        }
         let spaces = skip && class.meets(TextClass::SPACE);
         if let Some(c) = class.one_char() {
             if let Some(rest) = rest {
@@ -10192,13 +10231,16 @@ will look undefined",
         let mut first = None;
         // The rest is made on the path that takes it: made before, it would
         // spend a rest serial ([`REST_SERIALS`]) where no path parts.
-        let parted = self.split(t.cs()?, span, 2 + usize::from(sign), |m, arm| {
+        let parted = self.split_bounded(t.cs()?, span, 2 + usize::from(sign), |m, arm| {
             let rest = match arm {
                 0 => None,
                 1 => (n > 1).then(|| m.unknown_text(Unk::Class(TextClass::DIGIT, false, Some(n - 1), &[]), span)),
                 _ => Some(m.lead_digits(true, n, span)),
             };
             first = Some(other(['0', crate::engine::tex::UNKNOWN_NONZERO, '-'][arm]));
+            if let Some(sym) = rest.and_then(|r| r.cs()) {
+                m.scratch.apart.insert(sym);
+            }
             if let Some(rest) = rest {
                 m.unread(rest);
             }
@@ -11873,7 +11915,32 @@ will look undefined",
     /// at the start of arm `i`. Returns `false`, having done nothing, when no
     /// arm is entered or no more choices may be made here.
     pub fn split(&mut self, by: Sym, span: Span, arms: usize, enter: impl FnOnce(&mut Self, usize) -> bool) -> bool {
-        let Some(arm) = self.branch(by, arms, span) else { return false };
+        self.split_at(by, span, arms, explore::Need::Any, enter)
+    }
+
+    /// [`Machine::split`] of bounded text a path already reads apart
+    /// (`Scratch::apart`): it ends within the bound, so the hot-site
+    /// backstop does not refuse it (refused midway, the arms of a printed
+    /// number's shape meet decorrelated). A text's first split counts.
+    pub(crate) fn split_bounded(
+        &mut self,
+        by: Sym,
+        span: Span,
+        arms: usize,
+        enter: impl FnOnce(&mut Self, usize) -> bool,
+    ) -> bool {
+        self.split_at(by, span, arms, explore::Need::Bounded, enter)
+    }
+
+    fn split_at(
+        &mut self,
+        by: Sym,
+        span: Span,
+        arms: usize,
+        need: explore::Need,
+        enter: impl FnOnce(&mut Self, usize) -> bool,
+    ) -> bool {
+        let Some(arm) = self.branch_at(by, arms, span, need) else { return false };
         if self.parted_by.is_none() {
             let on = self.force_reference(by, span);
             self.parted_by = Some(ControlDep { on, taken: arm == 0 });

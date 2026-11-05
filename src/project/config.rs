@@ -61,9 +61,9 @@ pub struct Limits {
     /// compares or prints the count, and forks more for wide ranges
     /// (`\int_rand:n {16777215}`).
     pub digit_lengths: u8,
-    /// How many alternative paths satex keeps at once. Past them the two
-    /// oldest at one place are merged into one. Higher is more precise,
-    /// slower and takes more memory.
+    /// How many paths may be alive at once, over all nested scans. Past
+    /// them an undecided conditional is not split: its arms are joined on
+    /// one path. 0 = no bound. Higher is more precise, slower and takes more memory.
     pub paths: u16,
     /// Paths one drive keeps waiting before it joins those that stand
     /// alike (one source position, the same conditionals, groups and
@@ -266,7 +266,7 @@ impl Default for Limits {
             // when merged); a 24-bit random number into eight would fork
             // past `site_forks`.
             digit_lengths: 3,
-            paths: 16,
+            paths: 10,
             alike: 8,
             heads_apart: 32,
             meaning_splits: 4,

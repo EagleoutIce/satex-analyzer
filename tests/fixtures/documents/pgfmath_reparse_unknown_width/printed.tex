@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{pgfmath}
+% A width of unknown sign and digits, printed: pgfmath reads it apart,
+% its `0` (octal) and `-` (neg) shapes each on a path of their own.
+\setbox2\hbox{\the\pdfrandomseed}
+\begin{document}
+\pgfmathparse{\the\wd2}
+\gdef\SatexReachedEnd{}
+\end{document}
