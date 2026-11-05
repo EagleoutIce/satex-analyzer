@@ -1032,6 +1032,7 @@
     const WIDGET_ICON = {
       table: '<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M2.5 6.5h11M2.5 9.8h11M6.2 3v10"/>',
       image: '<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1.1"/><path d="M2.8 12l3.7-3.6 2.4 2.3 1.7-1.6 2.6 2.6"/>',
+      float: '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><rect x="5" y="5" width="6" height="3.2" rx=".6"/><path d="M5 10.8h6"/>',
       tikz: '<circle cx="4" cy="11.5" r="1.6"/><circle cx="12" cy="4.5" r="1.6"/><path d="M5.3 10.4l5.4-4.8"/>',
       forest: '<circle cx="8" cy="3.8" r="1.5"/><circle cx="4" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><path d="M7.2 5.1L4.8 10.6M8.8 5.1l2.4 5.5"/>',
       widget: '<path d="M3 5h10M3 11h10"/><circle cx="6" cy="5" r="1.5"/><circle cx="10.5" cy="11" r="1.5"/>',
@@ -1057,7 +1058,7 @@
       s.field(lensField).between(0, s.doc.length, (from, _, d) => {
         const c = d.spec.widget.lens.command, line = d.spec.widget.lens.range.start.line;
         if (!/^satex\.open(Dialog|View)$/.test(c.command)) return;
-        const kind = c.command === 'satex.openView' ? c.arguments[2] : /table/i.test(c.title) ? 'table' : 'image';
+        const kind = c.command === 'satex.openView' ? c.arguments[2] : /table/i.test(c.title) ? 'table' : /placement/i.test(c.title) ? 'float' : 'image';
         add(from, { kind, title: c.title.replace('…', ''), key: `${kind}:${c.title}`, open: () => c.command === 'satex.openView' ? openViews(c.arguments[1], c.arguments[2]) : openDialog(c.arguments?.[0]?.position ?? { line, character: 0 }) });
       });
       s.field(swatchField).between(0, s.doc.length, (from, _, d) => add(from, { kind: 'color', css: d.spec.widget.css, title: `Pick color ${d.spec.widget.css}`, key: `color:${from}`, open: (v) => openViews(position(v.state.doc, from), 'color') }));
@@ -1209,6 +1210,16 @@
         };
       }))),
       complete: () => ac.startCompletion(ev),
+      /** The open hover card asked again where it stands: after one of its links rewrote the text. */
+      rehover: async () => {
+        const was = hovered;
+        if (!was) return;
+        const c = await hoverCard(ev, was.from);
+        const a = c && ev.coordsAtPos(c.from), b = c && (ev.coordsAtPos(c.to) ?? a);
+        if (!a || hovered !== was) return;
+        hovered = { ...c, hull: was.hull };
+        tips.card.show({ left: a.left, top: a.top, right: b.right, bottom: Math.max(a.bottom, b.bottom) }, c.html);
+      },
       lenses: (list) => ev.dispatch({ effects: lensSet.of(list.map((l) => [doc().line(Math.min(l.range.start.line + 1, doc().lines)).from, l]).sort((a, b) => a[0] - b[0])) }),
       colors: (list) => ev.dispatch({ effects: swatches.of(list.map(([p, css]) => [at(doc(), p), css]).filter(([a]) => a != null && a <= doc().length)) }),
       heat: (lines) => ev.dispatch({ effects: heatSet.of(lines?.size ? { lines, most: Math.max(...lines.values()) } : null) }),
@@ -1743,14 +1754,25 @@
     e.preventDefault();
     const [target, range, newText] = JSON.parse(decodeURIComponent(a.dataset.args));
     fix({ title: `Convert to ${newText}`, edit: { changes: { [target]: [{ range, newText }] } } });
+    // the card shows the new length: every value again, the written unit left out
+    editor?.rehover?.();
+  });
+  // a float's `[ht]` chip in the Typeset view: the server's hover of the placement, letter by letter
+  document.addEventListener('mouseover', async (e) => {
+    const chip = e.target.closest?.('.ts-block-place');
+    if (!chip || chip.dataset.asked) return;
+    chip.dataset.asked = '1';
+    const line = +chip.closest('.ts-block')?.dataset.line - 1, text = editor?.text().split('\n')[line] ?? '';
+    const at = text.indexOf('[', text.indexOf('\\begin{'));
+    if (at < 0) return;
+    const r = await lsp('textDocument/hover', { textDocument: { uri: uri() }, position: { line, character: at + 1 } }).catch(() => null);
+    const v = r?.contents?.value ?? '';
+    const plain = v.replace(/\[[^\]]*\]\(command:[^)]*\)\s*/g, '').replace(/\*\*|`/g, '').trim();
+    if (plain) chip.title = plain;
   });
   document.addEventListener('click', (e) => { const b = e.target.closest('[data-tool]'); if (b) { e.preventDefault(); runTool(+b.dataset.tool); } });
   $('view-close').onclick = () => $('play-view').close();
   $('cfg-reset-view').onclick = () => resetView();
-  // widgets open from their gutter mark; the lens line above them only when asked for
-  const lensesShown = (on) => { document.body.classList.toggle('show-lenses', on); $('cfg-lenses').checked = on; self.satexStore.set('lenses', on || null); };
-  lensesShown(self.satexStore.get('lenses') === true);
-  $('cfg-lenses').onchange = (e) => lensesShown(e.target.checked);
   // dev mode: traces carry the abstract state of each step (`trace_state`); off, the runs pay nothing for it
   let devMode = false;
   const devShown = (on) => { devMode = on; document.body.classList.toggle('dev-mode', on); $('cfg-dev').checked = on; self.satexStore.set('dev', on || null); };
@@ -2412,7 +2434,10 @@
   // reaches every run and the language server as `--set key=value`.
   let configSet = {};
   try { configSet = JSON.parse(localStorage.getItem('satex-config')) ?? {}; } catch {}
-  const configKeep = (set) => { configSet = set; try { localStorage.setItem('satex-config', JSON.stringify(set)); } catch {} };
+  // widgets open from their gutter mark; the lens line above them with `playground.lenses`
+  const lensesShown = () => document.body.classList.toggle('show-lenses', configSet['playground.lenses'] === true);
+  const configKeep = (set) => { configSet = set; lensesShown(); try { localStorage.setItem('satex-config', JSON.stringify(set)); } catch {} };
+  lensesShown();
   const yamlValue = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
   function configFlags(set = configSet) { return Object.entries(set).flatMap(([k, v]) => ['--set', `${k}=${yamlValue(v)}`]); }
   /** Whether satex takes the settings `set`: null, else its reason, from a run that only reads them. */
@@ -5615,10 +5640,25 @@
         const url = data && await pdfPage(data);
         return url ? { url, kind: 'img' } : { url: null, kind: 'pdf' };
       },
+      download: binaryOf,
+      // an upload lands next to the figure, in place of a file of its name; next to the document when the figure is the installation's
+      upload: async (old, name, bytes) => {
+        const beside = !!old?.startsWith(`${state.dir}/`), file = beside ? old : path(state.file);
+        const at = `${file.slice(0, file.lastIndexOf('/'))}/${name}`;
+        if (!at.startsWith(`${state.dir}/`)) throw new Error('the document is outside the project');
+        const rel = at.slice(state.dir.length + 1);
+        state.bins[rel] = bytes;
+        binaries.delete(at);
+        post({ type: 'project', dir: state.dir, files: { [rel]: bytes } });
+        return { beside };
+      },
+      reopen: () => { afterRun = () => openDialog(v.range.start); analyze(); },
     });
   }
+  /** Called once with the next run's results of the open file. */
+  let afterRun = null;
   /** Opens a widget at a place (0-based) of the open file, a manager by its kind ('manager', 'glossary'): media.mjs and the tests drive the page through it. */
-  self.satexWidget = (plugin, line = 0, character = 0) => ['table', 'image'].includes(plugin) ? openDialog({ line, character })
+  self.satexWidget = (plugin, line = 0, character = 0) => ['table', 'image', 'float'].includes(plugin) ? openDialog({ line, character })
     : plugin === 'manager' ? manage(line || 'glossary') : openViews({ line, character }, plugin);
   // a hover's "Edit table…" link opens the dialog
   document.addEventListener('click', (e) => {
@@ -6085,6 +6125,9 @@
     if (p.uri === uri()) {
       colorize();
       lensify();
+      const then = afterRun;
+      afterRun = null;
+      then?.();
       // a failed download leaves the findings as they are: final
       if (absent.length) fetchAbsent(absent).then((ok) => { if (!ok && seq === published.get(p.uri)) { provisional = ''; render(); } });
     }

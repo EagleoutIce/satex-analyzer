@@ -458,6 +458,7 @@ pub struct TypePlugins {
     pub environment: Switch,
     pub table: Switch,
     pub image: Switch,
+    pub float: Switch,
     pub tikz: TikzPlugin,
     pub forest: Switch,
     pub glossary: Switch,
@@ -617,6 +618,14 @@ impl Default for SliceConfig {
     fn default() -> Self {
         Self { trim: true, standalone: true }
     }
+}
+
+/// `playground:` in `satex.yaml`: what only the web playground reads.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PlaygroundConfig {
+    /// A button line above each widget's target besides its gutter mark.
+    pub lenses: bool,
 }
 
 /// `docs:` in `satex.yaml`: where the documentation of a package is looked for,
@@ -1743,6 +1752,8 @@ pub struct Config {
     /// What `satex slice` leaves out.
     #[serde(default)]
     pub slice: SliceConfig,
+    #[serde(default)]
+    pub playground: PlaygroundConfig,
     /// The editor features each type plugin adds.
     #[serde(default)]
     pub type_plugins: TypePlugins,
@@ -1805,6 +1816,7 @@ impl Default for Config {
             docs: DocsConfig::default(),
             style_prompt: StylePrompt::default(),
             slice: SliceConfig::default(),
+            playground: PlaygroundConfig::default(),
             type_plugins: TypePlugins::default(),
             l3build: L3buildConfig::default(),
         }

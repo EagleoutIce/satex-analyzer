@@ -3287,6 +3287,45 @@ fn ranged(text: &str, range: &Value) -> String {
     text[at(&range["start"])..at(&range["end"])].to_string()
 }
 
+/// A float's placement: the hover says what each letter lets LaTeX do (the class's default when
+/// none is written), completion offers the letters not written yet, float.sty adds `H`, and the
+/// dialog writes the brackets back, dropped when empty, an unknown letter refused.
+#[test]
+fn a_float_placement_hovers_completes_and_writes() {
+    let text = "\\documentclass{article}\n\\usepackage{float}\n\\begin{document}\n\\begin{figure}[ht]\nx\n\\end{figure}\n\\begin{table}\ny\n\\end{table}\n\\end{document}\n";
+    let (mut server, uri, _, _) = open_loaded("float", text);
+    let (fig, tab) = (3, 6);
+    let ask = |server: &mut Server, method: &str, params: Value| {
+        let id = server.request(method, params);
+        server.response(id)["result"].clone()
+    };
+    let at = |line: u32, character: u32| json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": character } });
+    let hover = ask(&mut server, "textDocument/hover", at(fig, 15));
+    let md = hover["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(md.contains("Placement `[ht]`") && md.contains("- `h`: here") && md.contains("- `t`: at the top"), "{md}");
+    assert!(!md.contains("- `b`"), "only the letters written: {md}");
+    let md = ask(&mut server, "textDocument/hover", at(tab, 3))["contents"]["value"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(md.contains("default `tbp`") && md.contains("- `p`"), "the class's \\fps@table: {md}");
+    let items = complete(&mut server, &uri, fig, 16);
+    assert_eq!(labels(&items), ["b", "p", "!", "H"], "the letters not written, H from float.sty");
+    let view = ask(&mut server, "satex/dialog", at(fig, 2));
+    assert_eq!((view["kind"].as_str(), view["state"]["spec"].as_str()), (Some("float"), Some("ht")), "{view}");
+    let mut apply = |spec: &str| {
+        let state = json!({ "env": "figure", "spec": spec });
+        ask(
+            &mut server,
+            "satex/dialogApply",
+            json!({ "textDocument": { "uri": uri }, "kind": "float", "range": view["range"], "state": state }),
+        )
+    };
+    assert_eq!(apply("tb!")["edits"][0]["newText"], "\\begin{figure}[tb!]");
+    assert_eq!(apply("")["edits"][0]["newText"], "\\begin{figure}");
+    assert!(apply("x").is_null(), "an unknown letter is refused");
+}
+
 /// A table and each figure get a code lens and a hover link to their
 /// dialog; the dialog's state, unchanged, writes the text it came from; the
 /// code actions rewrite the table for booktabs and siunitx, adding the
@@ -3332,6 +3371,9 @@ fn tables_and_figures_open_dialogs_that_write_them_back() {
         assert_eq!(applied["edits"][0]["newText"].as_str().unwrap(), ranged(text, &view["range"]), "{view}");
         if view["kind"] == "image" {
             assert!(view["state"]["natural"].is_array(), "the engine's size of the file: {view}");
+            // the run's graphics driver, and that it reads `decodearray` (pdftex.def sets `\Gin@decode`)
+            let ctx = &view["context"];
+            assert_eq!((ctx["driver"].as_str(), ctx["decode"].as_bool()), (Some("pdftex.def"), Some(true)), "{view}");
         }
         if line == figure + 1 {
             assert_eq!(view["state"]["viewport"], true, "{view}");

@@ -20,6 +20,7 @@ pub const OPEN: &str = "satex.openDialog";
 pub enum Kind {
     Table,
     Image,
+    Float,
 }
 
 impl Kind {
@@ -27,6 +28,7 @@ impl Kind {
         match self {
             Kind::Table => "table",
             Kind::Image => "image",
+            Kind::Float => "float",
         }
     }
 }
@@ -49,7 +51,24 @@ fn targets(analysis: &Analysis, doc: &Text, path: &str) -> Vec<Target> {
     let mut out: Vec<Target> = Vec::new();
     let mut tables: Vec<String> = Vec::new();
     for (begin, _, name) in crate::queries::query::environments(analysis) {
-        if !cfg.table.enabled || !mine(begin.file) {
+        if !mine(begin.file) {
+            continue;
+        }
+        // a float: the `\begin{…}[placement]` of an environment whose code reaches `\@float`
+        if cfg.float.enabled && super::handlers::material(analysis, &name) == Some(FLOAT) {
+            if let Some(start) = at(begin.line, begin.col).and_then(|o| tabular::extent(text, o, &name)).map(|(s, _)| s)
+            {
+                let head = start + format!("\\begin{{{name}}}").len();
+                out.push(Target {
+                    kind: Kind::Float,
+                    start,
+                    end: head + placement(&text[head..]).map_or(0, |(_, n)| n),
+                    detail: Some(name),
+                });
+            }
+            continue;
+        }
+        if !cfg.table.enabled {
             continue;
         }
         let table = match tables.contains(&name) {
@@ -101,6 +120,7 @@ fn open_command(kind: Kind, uri: &str, at: Position) -> Command {
     let title = match kind {
         Kind::Table => "Edit table…",
         Kind::Image => "Edit image…",
+        Kind::Float => "Edit placement…",
     };
     Command { title: title.into(), command: OPEN.into(), arguments: Some(vec![json!({ "uri": uri, "position": at })]) }
 }
@@ -133,8 +153,102 @@ pub fn hover_link(analysis: &Analysis, doc: &Text, path: &str, uri: &str, pos: P
         let c = open_command(t.kind, uri, to_lsp(doc, doc.pos(t.start)));
         let args = c.arguments.unwrap_or_default();
         let q = percent(&serde_json::to_string(&args).unwrap_or_default());
-        format!("[{}](command:{OPEN}?{q} \"Open the {} dialog\")", c.title, t.kind.name())
+        let link = format!("[{}](command:{OPEN}?{q} \"Open the {} dialog\")", c.title, t.kind.name());
+        match t.kind {
+            Kind::Float => {
+                format!("{link}\n\n{}", float_hover(analysis, &doc.body()[t.start..t.end], t.detail.as_deref()))
+            }
+            _ => link,
+        }
     })
+}
+
+/// [`super::handlers::material`]'s index of a float.
+const FLOAT: usize = 3;
+
+/// The placement `[…]` at the start of `s` (spaces before it allowed) and the bytes up to its `]`.
+fn placement(s: &str) -> Option<(String, usize)> {
+    let lead = s.len() - s.trim_start().len();
+    let rest = s[lead..].strip_prefix('[')?;
+    let close = rest.find(']')?;
+    Some((rest[..close].to_string(), lead + close + 2))
+}
+
+/// The placement letters `\@xfloat` tests (latex.ltx), with what each lets LaTeX do; `H` when the
+/// run defined float.sty's `\@float@HH`. A seed table: the letters' meaning is prose, not run data.
+fn letters(analysis: &Analysis) -> Vec<(char, &'static str)> {
+    let mut out = vec![
+        ('h', "here, where it stands, if it fits there (a lone `h` becomes `ht`)"),
+        ('t', "at the top of a page, at most `topnumber` floats taking at most `\\topfraction` of it"),
+        ('b', "at the bottom of a page, at most `bottomnumber` floats taking at most `\\bottomfraction`"),
+        ('p', "on a page of floats only, which they fill to at least `\\floatpagefraction`"),
+        ('!', "ignore the limits above for this float, once"),
+    ];
+    if analysis
+        .interner
+        .lookup("@float@HH")
+        .is_some_and(|s| !matches!(analysis.env.meaning(s), crate::engine::tex::Meaning::Undefined))
+    {
+        out.push(('H', "exactly here, never floating (float package); no other letter with it"));
+    }
+    out
+}
+
+/// What `\begin{env}[spec]` lets LaTeX do with the float, letter by letter.
+fn float_hover(analysis: &Analysis, text: &str, env: Option<&str>) -> String {
+    let env = env.unwrap_or("float");
+    let spec = text.find('[').and_then(|k| placement(&text[k..])).map(|(p, _)| p);
+    let default = crate::linter::shared::macro_text(analysis, &format!("fps@{env}"));
+    let known = letters(analysis);
+    let lines = |spec: &str| -> Vec<String> {
+        spec.chars()
+            .map(|c| match known.iter().find(|(k, _)| *k == c) {
+                Some((_, what)) => format!("- `{c}`: {what}"),
+                None => format!("- `{c}`: unknown: LaTeX reports an error and uses `p`"),
+            })
+            .collect()
+    };
+    let head = match (&spec, &default) {
+        (Some(s), _) if !s.trim().is_empty() && s.trim() != "!" => {
+            format!("**Placement `[{s}]`**: LaTeX may put this {env}")
+        }
+        (_, Some(d)) => format!("**Placement**: this {env} takes the default `{d}` (`\\fps@{env}`): LaTeX may put it"),
+        _ => format!("**Placement**: LaTeX may put this {env}"),
+    };
+    let shown = spec.filter(|s| !s.trim().is_empty() && s.trim() != "!").or(default).unwrap_or_default();
+    let all: String = known.iter().map(|(c, _)| *c).collect();
+    format!("{head}\n\n{}\n\nLetters: `{all}`, in any order.", lines(&shown).join("\n"))
+}
+
+/// The placement letters to complete inside a float's `[…]`: those not yet written.
+pub fn float_completion(
+    analysis: &Analysis,
+    doc: &Text,
+    path: &str,
+    pos: Pos,
+) -> Option<Vec<lsp_types::CompletionItem>> {
+    let at = doc.offset(pos)?;
+    let t = targets(analysis, doc, path).into_iter().find(|t| t.kind == Kind::Float && t.start <= at && at <= t.end)?;
+    let text = &doc.body()[t.start..t.end];
+    let open = t.start + text.find('[')? + 1;
+    if at < open || at >= t.end {
+        return None;
+    }
+    let written = &doc.body()[open..t.end - 1];
+    Some(
+        letters(analysis)
+            .into_iter()
+            .filter(|(c, _)| !written.contains(*c))
+            .enumerate()
+            .map(|(k, (c, what))| lsp_types::CompletionItem {
+                label: c.to_string(),
+                kind: Some(lsp_types::CompletionItemKind::ENUM_MEMBER),
+                detail: Some(what.replace('`', "")),
+                sort_text: Some(format!("{k}")),
+                ..Default::default()
+            })
+            .collect(),
+    )
 }
 
 fn percent(s: &str) -> String {
@@ -185,10 +299,24 @@ pub fn dialog(analysis: &Analysis, doc: &Text, path: &str, pos: Position) -> Opt
             let natural = natural(t.detail.as_deref(), page(&img));
             serde_json::to_value(graphic::parse(text, natural)?.0).ok()?
         }
+        Kind::Float => {
+            let env = t.detail.clone()?;
+            let head = format!("\\begin{{{env}}}").len();
+            json!({ "env": env, "spec": placement(&text[head..]).map(|(p, _)| p) })
+        }
     };
     let mut ctx = context(analysis, doc);
     if t.kind == Kind::Image {
         ctx["path"] = json!(t.detail);
+        // the graphics driver the run loaded, and whether it reads `decodearray` (it sets `\Gin@decode`)
+        ctx["driver"] = json!(crate::linter::shared::macro_text(analysis, "Gin@driver"));
+        ctx["decode"] = json!(crate::linter::shared::macro_text(analysis, "Gin@decode").is_some());
+    }
+    if t.kind == Kind::Float {
+        let env = t.detail.as_deref().unwrap_or_default();
+        ctx["letters"] =
+            json!(letters(analysis).iter().map(|(c, what)| json!([c.to_string(), what])).collect::<Vec<_>>());
+        ctx["default"] = json!(crate::linter::shared::macro_text(analysis, &format!("fps@{env}")));
     }
     Some(json!({ "kind": t.kind.name(), "range": lsp_range(doc, t.start, t.end), "state": state, "context": ctx }))
 }
@@ -253,6 +381,15 @@ pub fn apply(
             let img: graphic::Image = serde_json::from_value(state.clone()).map_err(|e| e.to_string())?;
             (graphic::emit_like(&img, written), None)
         }
+        "float" => {
+            let env = state["env"].as_str().ok_or("no environment")?;
+            let spec = state["spec"].as_str().unwrap_or_default().trim();
+            let known: Vec<char> = letters(analysis).iter().map(|(c, _)| *c).collect();
+            if let Some(c) = spec.chars().find(|c| !known.contains(c)) {
+                return Err(format!("`{c}` is no placement here: {}", known.iter().collect::<String>()));
+            }
+            (if spec.is_empty() { format!("\\begin{{{env}}}") } else { format!("\\begin{{{env}}}[{spec}]") }, None)
+        }
         k => return Err(format!("no dialog `{k}`")),
     };
     let mut edits = vec![json!({ "range": range, "newText": text })];
@@ -314,6 +451,7 @@ pub fn actions(analysis: &Analysis, doc: &Text, path: &str, uri: &str, range: Ra
                     edit("Align numbers with siunitx S columns", serde_json::to_value(&s).unwrap_or_default(), "table");
                 }
             }
+            Kind::Float => {}
             Kind::Image => {
                 let Some((img, _)) = graphic::parse(text, None) else { continue };
                 let mut r = img.clone();

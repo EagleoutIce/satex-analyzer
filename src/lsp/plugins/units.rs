@@ -233,7 +233,8 @@ fn card(cx: &Cx, head: &str, num: Num, lit: Option<&Literal>) -> String {
         md.push_str(&format!("{line}\n\n"));
     }
     let mut cells = Vec::new();
-    for (u, ..) in UNITS.iter().filter(|(u, ..)| *u != "mu" && !EVERYDAY.contains(u) && Some(*u) != own) {
+    // every unit but the literal's own, the headline's included
+    for (u, ..) in UNITS.iter().filter(|(u, ..)| *u != "mu" && Some(*u) != own) {
         if let Some((t, ok)) = value(u, 3) {
             cells.push((*u, link(u, &t, &t, ok)));
         }

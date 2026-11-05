@@ -32,6 +32,9 @@ pub struct Image {
     pub scale: Option<f64>,
     #[serde(default)]
     pub keepaspectratio: bool,
+    /// `decodearray`: `[Dmin Dmax]` per colour channel of a raster (PDF reference § 8.9.5.2).
+    #[serde(default)]
+    pub decode: Option<Vec<f64>>,
     /// Whether the size keys come before `angle`, so they size the upright figure.
     #[serde(default)]
     pub size_first: bool,
@@ -162,6 +165,10 @@ fn read(img: &mut Image) {
                 Err(_) => img.unread.push(key.clone()),
             },
             "keepaspectratio" => img.keepaspectratio = v.is_empty() || v == "true",
+            "decodearray" => match v.split_whitespace().map(str::parse).collect::<Result<Vec<f64>, _>>() {
+                Ok(d) if !d.is_empty() && d.len() % 2 == 0 => img.decode = Some(d),
+                _ => img.unread.push(key.clone()),
+            },
             _ => {}
         }
         if SIZE.contains(&key.as_str()) {
@@ -203,6 +210,12 @@ pub fn options(img: &Image) -> Vec<(String, String)> {
             "scale" if img.unread.iter().any(|u| u == "scale") => return None,
             "scale" => img.scale.filter(|s| *s != 1.0).map(num),
             "keepaspectratio" => flag(img.keepaspectratio && img.width.is_some() && img.height.is_some()),
+            "decodearray" if img.unread.iter().any(|u| u == "decodearray") => return None,
+            "decodearray" => img
+                .decode
+                .as_ref()
+                .filter(|d| !d.is_empty())
+                .map(|d| d.iter().map(|x| num(*x)).collect::<Vec<_>>().join(" ")),
             _ => return None,
         })
     };
@@ -223,7 +236,7 @@ pub fn options(img: &Image) -> Vec<(String, String)> {
             Some(None) => done.push(k.clone()),
         }
     }
-    let order = ["trim", "viewport", "clip", "angle", "width", "height", "scale", "keepaspectratio"];
+    let order = ["trim", "viewport", "clip", "angle", "width", "height", "scale", "keepaspectratio", "decodearray"];
     for key in order {
         if done.iter().any(|d| d == key) {
             continue;
@@ -329,6 +342,25 @@ mod tests {
         img.trim = Some([1.0, 2.0, 3.0, 4.0]);
         img.clip = true;
         assert_eq!(emit(&img), "\\includegraphics[trim=1 2 3 4, clip, width=3cm]{a}");
+    }
+
+    #[test]
+    fn a_decode_array_reads_writes_and_drops() {
+        let mut img = round("\\includegraphics[width=3cm, decodearray={1 0 1 0 1 0}]{a.png}", None);
+        assert_eq!(img.decode, Some(vec![1.0, 0.0, 1.0, 0.0, 1.0, 0.0]));
+        img.decode = Some(vec![0.0, 0.5]);
+        assert_eq!(emit(&img), "\\includegraphics[width=3cm, decodearray=0 0.5]{a.png}");
+        img.decode = None;
+        assert_eq!(emit(&img), "\\includegraphics[width=3cm]{a.png}");
+        let (img, _) = parse("\\includegraphics[decodearray=\\mine]{a.png}", None).unwrap();
+        assert_eq!(
+            (img.unread.as_slice(), emit(&img).as_str()),
+            (["decodearray".to_string()].as_slice(), "\\includegraphics[decodearray=\\mine]{a.png}")
+        );
+        assert!(img.decode.is_none());
+        let mut fresh = parse("\\includegraphics{a.png}", None).unwrap().0;
+        fresh.decode = Some(vec![0.2, 1.0, 0.0, 0.8, 0.0, 1.0]);
+        assert_eq!(emit(&fresh), "\\includegraphics[decodearray=0.2 1 0 0.8 0 1]{a.png}");
     }
 
     #[test]

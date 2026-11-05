@@ -1398,6 +1398,9 @@ fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position
     if let Some(items) = parameter_items(analysis, doc, before, pos) {
         return CompletionResponse::Array(items);
     }
+    if let Some(items) = super::dialogs::float_completion(analysis, doc, path, pos) {
+        return CompletionResponse::Array(items);
+    }
     // What the text at the cursor is ([`super::type_at`]): the names of that type.
     let at = super::type_at::type_at(analysis, doc, path, pos);
     let items = typed_items(analysis, doc, path, &at, after, pos);

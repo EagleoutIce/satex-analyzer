@@ -667,6 +667,11 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
     enabled: true  # a code lens and hover link to the crop, rotate and size dialog, rotate and fit actions
       #! affects: output
       #! example: `enabled: false`: no image lens, dialog or actions
+  float:  # floats: environments whose code reaches \@float (figure, table and the ones defined on them)
+    #! category: widget
+    enabled: true  # what each placement letter lets LaTeX do, their completion, a dialog of toggles
+      #! affects: output
+      #! example: `enabled: false`: no placement hover, completion or dialog
   tikz:  # a tikzpicture the run met, a blank line of the document body
     #! category: widget
     enabled: true  # "Edit drawing…": nodes and arrows on a canvas, Mermaid import and export
@@ -745,6 +750,11 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
     #! category: build
     enabled: true  # "Compile only this frame": \includeonlyframes with the frame's label, one added when it has none
       #! affects: output
+
+playground:  # what only the web playground reads
+  lenses: false  # a button line above each table, figure and drawing besides the mark in the gutter
+    #! affects: output
+    #! example: `lenses: true`: "Edit image…" stands above each \includegraphics
 
 slice:  # what satex slice leaves out
   trim: true  # leave out the packages, libraries, labels and headings the criterion uses nothing of. Off also keeps what \begin{document} reads

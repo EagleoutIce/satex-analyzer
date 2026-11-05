@@ -205,6 +205,27 @@ console.log('table model: ok');
   // 10 × 8 px of 100 × 80 bp: trim l, b, r, t; padding grows the box and never goes below 0
   assert.deepEqual(trimTo([2, 3, 7, 6], 10, 8, [100, 80]), [20, 20, 30, 30]);
   assert.deepEqual(trimTo([2, 3, 7, 6], 10, 8, [100, 80], 25), [0, 0, 5, 5]);
+  assert.deepEqual(trimTo([2, 3, 7, 6], 10, 8, [100, 80], -5), [25, 25, 35, 35], 'negative padding cuts into the content');
+}
+
+// tint: the channels decodearray maps (PNG colour type, JPEG components) and its presets
+{
+  const { colorModel, DECODE } = self.satexDialogs.image;
+  const png = (type) => { const b = new Uint8Array(33); b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); b[25] = type; return b; };
+  assert.deepEqual([0, 2, 3, 4, 6, 5].map((t) => colorModel(png(t))), ['gray', 'rgb', 'indexed', 'gray', 'rgb', null]);
+  // SOI, an APP0 of 4 bytes, then SOF0 whose 10th byte counts the components
+  const jpeg = (n) => Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xc0, 0, 11, 8, 0, 1, 0, 1, n, 1, 0x11, 0]);
+  assert.deepEqual([1, 3, 4].map((n) => colorModel(jpeg(n))), ['gray', 'rgb', 'cmyk']);
+  assert.equal(colorModel(Uint8Array.from([0x25, 0x50, 0x44, 0x46])), null, 'a PDF has no raster channels');
+  assert.equal(colorModel(new Uint8Array(0)), null);
+  assert.deepEqual(DECODE.invert(6), [1, 0, 1, 0, 1, 0]);
+  assert.deepEqual(DECODE.tint(6, [1, 0, 0.5], 1), [0, 1, 0, 0, 0, 0.5], 'full strength: white becomes the colour');
+  assert.deepEqual(DECODE.tint(6, [1, 0, 0.5], 0), [0, 1, 0, 1, 0, 1], 'no strength: as in the file');
+  assert.deepEqual(DECODE.tint(2, [1, 1, 1], 1), [0, 1], 'gray: the luminance of white');
+  assert.deepEqual(DECODE.of(null), ['none']);
+  assert.deepEqual(DECODE.of([1, 0]), ['invert']);
+  assert.deepEqual(DECODE.of([0, 1, 0, 0, 0, 0.5]), ['tint', [1, 0, 0.5]]);
+  assert.deepEqual(DECODE.of([0.2, 1, 0, 1, 0, 1]), ['custom']);
 }
 
 // dev mode: a trace as CSV (nested state one JSON cell) and a step's domains as HTML

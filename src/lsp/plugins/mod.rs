@@ -9,6 +9,7 @@
 mod bibliography;
 mod color;
 mod environment;
+mod float;
 mod forest;
 mod frame;
 mod glossary;
@@ -122,6 +123,7 @@ pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
     &environment::Environment,
     &table::Table,
     &image::Image,
+    &float::Float,
     &tikz::Tikz,
     &forest::Forest,
     &savebox::Savebox,

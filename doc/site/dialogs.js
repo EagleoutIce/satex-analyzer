@@ -73,13 +73,13 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-inline { height: 100%; }
 .sd kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--c-border); border-bottom-width: 2px; border-radius: 4px; padding: 0 .25rem; }
 /* table grid: a spreadsheet of TeX cells */
-.sd-wrap { position: relative; overflow: auto; padding: 2.9rem .2rem 2.6rem; }
+.sd-wrap { position: relative; overflow: auto; padding: .4rem .2rem 1rem; }
 .sd-grid { border-collapse: separate; border-spacing: 0; outline: none; }
 .sd-grid td, .sd-grid th { padding: 0; background: none; border: 0; }
-.sd-grid th.sd-colh { padding: 0 .2rem .35rem; vertical-align: bottom; font-weight: normal; position: relative; }
+.sd-grid th.sd-colh { padding: 0 .15rem .3rem; vertical-align: bottom; font-weight: normal; position: relative; }
 .sd-grid th.sd-colh select { width: 100%; min-width: 5.5rem; }
 .sd-grid th.sd-colh input { width: 100%; margin-top: .2rem; box-sizing: border-box; }
-.sd-grid td.sd-cell { vertical-align: middle; position: relative; border: 1px solid var(--c-border); background: var(--c-bg); min-width: 5rem; height: 2.1rem; padding: 0 .55rem !important; white-space: nowrap; cursor: cell; transition: background .1s; outline: none; font: 13px/1.3 ui-monospace, monospace; }
+.sd-grid td.sd-cell { vertical-align: middle; position: relative; border: 1px solid var(--c-border); background: var(--c-bg); min-width: 5rem; height: 1.8rem; box-sizing: border-box; padding: 0 .5rem !important; white-space: nowrap; cursor: cell; transition: background .1s; outline: none; font: 13px/1.3 ui-monospace, monospace; }
 .sd-grid td.sd-cell + td.sd-cell { border-left-width: 0; }
 .sd-grid tr.sd-data + tr.sd-rule + tr.sd-data .sd-cell { border-top-width: 0; }
 .sd-grid td.sd-cell[data-align=c], .sd-grid td.sd-cell[data-align=S] { text-align: center; }
@@ -90,33 +90,31 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-cell.merged::after { content: ''; position: absolute; right: 3px; top: 3px; width: 5px; height: 5px; border-radius: 50%; background: var(--c-accent); opacity: .55; }
 .sd-cell input { position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box; border: 0; border-radius: 0; box-shadow: inset 0 0 0 2px var(--c-accent); background: var(--c-bg); font: inherit; padding: 0 .5rem; text-align: inherit; z-index: 2; }
 .sd-cell .sd-ph { color: var(--c-muted); opacity: .5; }
-.sd-grid .sd-rh { border: 0; padding: 0 .45rem 0 0 !important; text-align: right; color: var(--c-muted); font-size: .78em; white-space: nowrap; position: relative; min-width: 2.2rem; }
-.sd-grid .sd-rh .sd-n { display: inline-block; min-width: 1.2em; }
-.sd-grid tr.sd-rule td { height: .7rem; border: 0; }
-.sd-grid tr.sd-rule td.sd-rh { height: auto; }
+/* the row gutter: the rule above the row, its number; the − on hover */
+.sd-grid .sd-rh { border: 0; padding: 0 .35rem 0 0 !important; color: var(--c-muted); font-size: .78em; white-space: nowrap; position: relative; }
+.sd-gut { display: grid; grid-template-columns: 4.1rem 1.6em 1rem; gap: .3rem; align-items: center; line-height: 1; }
+.sd-grid .sd-rh .sd-n { text-align: right; font-variant-numeric: tabular-nums; }
+.sd .sd-rsel { width: 100%; font-size: .92em; height: 1.3rem; padding: 0 .15rem; border-radius: 5px; border-color: transparent; background: var(--c-sunk); color: var(--c-fg); cursor: pointer; }
+.sd .sd-rsel.none { background: none; color: var(--c-muted); opacity: .45; }
+.sd-grid tr:hover .sd-rsel.none, .sd .sd-rsel:focus { opacity: 1; border-color: var(--c-border); }
+.sd-grid tr.sd-rule td { height: 3px; border: 0; }
 .sd-grid tr.sd-rule td.sd-ruled { background: linear-gradient(var(--c-fg), var(--c-fg)) 0 50% / 100% var(--w, 1px) no-repeat; }
-.sd-grid tr.sd-rule select { font-size: .72em; padding: 0 .1rem; border-color: transparent; background: none; color: var(--c-muted); transition: opacity .12s; }
-.sd-grid tr.sd-rule select.none { opacity: 0; }
-.sd-grid tr.sd-rule:hover select.none, .sd-grid tr.sd-rule select.none:focus { opacity: 1; }
-.sd-grid tr.sd-rule:hover select, .sd-grid tr.sd-rule select:focus { border-color: var(--c-border); color: var(--c-fg); }
+.sd-grid tr.sd-end td { height: 1.5rem; vertical-align: middle; }
 .sd-grid .sd-chips { white-space: nowrap; padding-left: .4rem !important; }
-.sd-grid td.sd-vcol, .sd-grid th.sd-vcol { width: .55rem; min-width: .55rem; cursor: pointer; border: 0; }
+.sd-grid td.sd-vcol, .sd-grid th.sd-vcol { width: .55rem; min-width: .55rem; cursor: pointer; border: 0; position: relative; }
 .sd-grid th.sd-vcol.on, .sd-grid td.sd-vcol.on { background: linear-gradient(var(--c-fg), var(--c-fg)) 50% 0 / 1px 100% no-repeat; }
 .sd-grid th.sd-vcol:hover { background: linear-gradient(var(--c-accent), var(--c-accent)) 50% 0 / 2px 100% no-repeat; }
-/* ghost rows and columns: dashed, a + on hover */
-.sd-ghost { border: 1.5px dashed var(--c-border) !important; border-radius: 8px; color: transparent; text-align: center; cursor: pointer; transition: color .12s, border-color .12s, background .12s; user-select: none; }
-.sd-ghost:hover, .sd-ghost:focus-visible { color: var(--c-accent); border-color: var(--c-accent) !important; background: var(--c-hover); outline: none; }
-.sd-grid td.sd-gr { height: 1.6rem; font-weight: 600; }
-.sd-grid .sd-gc { width: 1.6rem; min-width: 1.6rem; font-weight: 600; border-radius: 0; border-top-style: none !important; border-bottom-style: none !important; }
-.sd-grid th.sd-gc { border-top-style: dashed !important; border-radius: 8px 8px 0 0; vertical-align: middle; }
-.sd-grid tr.sd-last .sd-gc { border-bottom-style: dashed !important; border-radius: 0 0 8px 8px; }
-.sd-grid:has(.sd-gcL:hover) .sd-gcL, .sd-grid:has(.sd-gcR:hover) .sd-gcR { color: var(--c-accent); border-color: var(--c-accent) !important; background: var(--c-hover); }
-
-.sd-grid tr.sd-ghost-row td:not(.sd-ghost) { border: 0; }
+/* inserting in place: a slim + on the line between rows (in the gutter) and columns (in the header) */
+.sd .sd-ins { position: absolute; z-index: 3; display: grid; place-items: center; width: .95rem; height: .95rem; padding: 0; border-radius: 50%; font-size: .8rem; font-weight: 700; line-height: 1; border: 1px solid var(--c-accent); background: var(--c-bg); color: var(--c-accent); opacity: 0; transition: opacity .12s, transform .12s; }
+.sd-grid:hover .sd-ins { opacity: .28; }
+.sd .sd-ins:hover, .sd .sd-ins:focus-visible { opacity: 1; transform: scale(1.12); background: var(--c-accent); color: var(--c-accent-fg); }
+.sd-rule .sd-ins { right: .37rem; top: 50%; margin-top: -.475rem; }
+.sd-vcol .sd-ins { left: 50%; top: 50%; margin: -.475rem 0 0 -.475rem; }
+.sd-grid tr.sd-rule:has(.sd-ins:hover) td:not(.sd-rh) { background: linear-gradient(var(--c-accent), var(--c-accent)) 0 50% / 100% 2px no-repeat; }
 /* the − on a hovered row or column */
-.sd-del { position: absolute; display: grid; place-items: center; width: 1.25rem; height: 1.25rem; padding: 0 !important; border-radius: 50% !important; font-size: .85rem; line-height: 1; opacity: 0; transform: scale(.8); transition: opacity .12s, transform .12s; color: var(--error, #b42318); }
+.sd-del { position: absolute; display: grid; place-items: center; width: 1rem; height: 1rem; padding: 0 !important; border-radius: 50% !important; font-size: .85rem; line-height: 1; opacity: 0; transform: scale(.8); transition: opacity .12s, transform .12s; color: var(--error, #b42318); }
 tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opacity: 1; transform: none; }
-.sd-rh .sd-del { left: .1rem; top: 50%; margin-top: -.625rem; }
+.sd-rh .sd-del { position: static; }
 .sd-colh .sd-del { right: -.35rem; top: -.55rem; }
 /* the selection's floating bar */
 .sd-selbar { position: absolute; z-index: 5; display: flex; gap: .15rem; align-items: center; padding: .2rem; background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 10px; box-shadow: 0 8px 24px -8px rgb(0 0 0 / .3); transition: opacity .12s, transform .12s var(--ease); white-space: nowrap; }
@@ -143,6 +141,44 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
 .sd-prev-box { display: grid; place-items: center; min-height: 9rem; background: var(--c-sunk); border-radius: 8px; overflow: hidden; padding: .5rem; }
 .sd-prev-crop { overflow: hidden; position: relative; outline: 1px solid var(--c-border); }
 .sd-prev-crop > * { position: absolute; display: block; max-width: none; max-height: none; }
+.sd-defs { position: absolute; width: 0; height: 0; }
+.sd-unit { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: .3rem; opacity: .85; }
+.sd-quad, .sd-form { display: grid; gap: .35rem .55rem; align-items: center; margin: .25rem 0 .35rem; }
+.sd-quad { grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); }
+.sd-form { grid-template-columns: max-content minmax(0, 1fr); }
+.sd-quad > label, .sd-form > label { color: var(--c-muted); font-size: .85em; text-align: right; }
+.sd-quad .sd-num, .sd-form > input, .sd-form > select { width: 100%; box-sizing: border-box; }
+.sd-inl { display: inline-flex; gap: .4rem; align-items: center; }
+.sd-file { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; font-size: 12px; padding: .15rem .4rem; }
+.sd-out { min-width: 2.6rem; text-align: right; font-variant-numeric: tabular-nums; color: var(--c-muted); font-size: .85em; }
+.sd-why { margin: .3rem 0 0; }
+.sd-why:empty { display: none; }
+.sd input[type=color] { width: 2.4rem; height: 1.7rem; padding: .1rem; cursor: pointer; }
+.sd input[type=color]:disabled { opacity: .45; cursor: default; }
+.sd input[type=checkbox][role=switch] { appearance: none; flex: none; width: 1.9rem; height: 1.05rem; margin: 0; padding: 0; border-radius: 999px; background: var(--c-sunk); border: 1px solid var(--c-border); position: relative; cursor: pointer; transition: background-color .15s, border-color .15s; }
+.sd input[type=checkbox][role=switch]::after { content: ''; position: absolute; top: 50%; left: 2px; width: .7rem; height: .7rem; translate: 0 -50%; border-radius: 50%; background: var(--c-muted); transition: left .15s var(--ease), background-color .15s; }
+.sd input[type=checkbox][role=switch]:checked { background: color-mix(in srgb, var(--c-accent) 25%, var(--c-sunk)); border-color: var(--c-accent); }
+.sd input[type=checkbox][role=switch]:checked::after { left: calc(100% - .7rem - 2px); background: var(--c-accent); }
+/* sliders: a thin track filled up to the value (--p), a round thumb */
+.sd input.sd-range { -webkit-appearance: none; appearance: none; width: 100%; height: 1.3rem; padding: 0; border: 0; background: none; cursor: pointer; --track: linear-gradient(var(--c-accent), var(--c-accent)) 0 / var(--p, 50%) 100% no-repeat, color-mix(in srgb, var(--c-fg) 16%, transparent); }
+.sd input.sd-range::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--track); }
+.sd input.sd-range::-moz-range-track { height: 4px; border-radius: 2px; background: var(--track); }
+.sd input.sd-range::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: var(--c-bg); border: 2px solid var(--c-accent); box-shadow: 0 1px 3px rgb(0 0 0 / .25); transition: transform .12s; }
+.sd input.sd-range::-moz-range-thumb { width: 10px; height: 10px; border-radius: 50%; background: var(--c-bg); border: 2px solid var(--c-accent); box-shadow: 0 1px 3px rgb(0 0 0 / .25); }
+.sd input.sd-range:hover::-webkit-slider-thumb, .sd input.sd-range:active::-webkit-slider-thumb { transform: scale(1.15); }
+.sd input.sd-range:disabled { opacity: .45; cursor: default; }
+.sd input.sd-range:focus-visible { outline-offset: 3px; }
+/* placement letters: one toggle each */
+.sd-place .sd-chips { display: grid; gap: .45rem; }
+.sd .sd-letter { display: grid; grid-template-columns: 2rem 1fr; align-items: center; gap: .6rem; text-align: left; padding: .45rem .7rem; border-radius: 10px; }
+.sd .sd-letter b { display: grid; place-items: center; width: 1.8rem; height: 1.8rem; border-radius: 7px; background: var(--c-bg); border: 1px solid var(--c-border); font: 600 15px ui-monospace, monospace; }
+.sd .sd-letter code { font: .85em ui-monospace, monospace; background: var(--c-sunk); border-radius: 4px; padding: 0 .25rem; }
+.sd .sd-letter[aria-pressed=true] { background: var(--c-sel); border-color: var(--c-accent); color: var(--c-fg); }
+.sd .sd-letter[aria-pressed=true] b { background: var(--c-accent); color: var(--c-accent-fg); border-color: var(--c-accent); }
+/* the file picker: a button and a drop zone naming the file */
+.sd-drop { display: flex; align-items: center; gap: .55rem; padding: .4rem .5rem; margin: .25rem 0; border: 1.5px dashed var(--c-border); border-radius: 8px; transition: border-color .12s, background .12s; min-width: 0; }
+.sd-drop.over { border-color: var(--c-accent); background: var(--c-hover); }
+.sd-drop-name { color: var(--c-muted); font-size: .82em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 `;
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   const h = (tag, attrs = {}, ...kids) => {
@@ -322,7 +358,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         }, op ? 0 : 120);
       });
     };
-    return { refresh, root: p.root, close: p.close };
+    return { refresh, root: p.root, close: p.close, apply: () => apply.click() };
   }
 
   // ------------------------------------------------------------ table model (no DOM: views.test.mjs)
@@ -655,7 +691,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     // the side: typeset preview, the data in and out
     const prev = h('div', { class: 'sd-prev', 'aria-label': 'the table as typeset' });
     const importBox = h('textarea', { placeholder: 'Paste CSV, TSV (from a spreadsheet) or the JSON exported here', 'aria-label': 'data to import', spellcheck: 'false' });
-    const file = h('input', { type: 'file', accept: '.csv,.tsv,.txt,.json,text/csv,application/json', 'aria-label': 'import a file', style: 'max-width:12rem' });
+    const file = picker({ accept: '.csv,.tsv,.txt,.json,text/csv,application/json', label: 'Choose file…', title: 'Import a CSV, TSV or JSON file', onfile: async (fl) => doImport(await fl.text()) });
     const download = (name, text, type) => { const a = h('a', { href: URL.createObjectURL(new Blob([text], { type })), download: name }); document.body.append(a); a.click(); a.remove(); };
     const copy = (text, what) => navigator.clipboard?.writeText(text).then(() => note(`${what} copied`), () => note('the clipboard refused'));
     const doImport = (text) => {
@@ -667,7 +703,6 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       if (ctx.siunitx && nums && /^[\s\d.,+\-]*$/.test(text) === false && !text.trim().startsWith('{')) f.refresh('siunitx');
       note(`${s.rows.length} rows, ${s.cols.length} columns imported`);
     };
-    file.onchange = async () => { const fl = file.files?.[0]; if (fl) doImport(await fl.text()); file.value = ''; };
     side.append(
       h('h4', {}, 'Preview'), prev,
       h('h4', {}, 'Data'),
@@ -676,39 +711,41 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         h('button', { type: 'button', title: 'Download the cells as CSV', onclick: () => download('table.csv', T.toCSV(t()), 'text/csv') }, 'CSV ↓'),
         h('button', { type: 'button', title: 'Download as JSON: each cell\'s text and TeX, the header rows marked', onclick: () => download('table.json', JSON.stringify(T.toJSON(t()), null, 2), 'application/json') }, 'JSON ↓')),
       h('details', { class: 'sd-import' }, h('summary', {}, 'Import CSV / JSON…'),
-        h('div', { class: 'sd-import' }, importBox, h('div', { class: 'sd-row' }, file, h('button', { type: 'button', onclick: () => doImport(importBox.value) }, 'Import'))),
+        h('div', { class: 'sd-import' }, importBox, file, h('div', { class: 'sd-row' }, h('button', { type: 'button', onclick: () => doImport(importBox.value) }, 'Import the text'))),
         h('p', { class: 'sd-muted' }, `Text is escaped for TeX (& % $ # _ { } ~ ^ \\). ${ctx.siunitx ? 'Numeric columns become siunitx S columns.' : ''} Rules stay where they stood.`)),
     );
 
-    /** A rule gap: the rules before row `k` (or after the last, `k === rows.length`). */
-    function ruleRow(k, taken) {
+    /** The rule before row `k` (after the last, `k === rows.length`): a compact select for the row's gutter. */
+    function ruleSel(k) {
       const s = t(), items = k < s.rows.length ? s.rows[k].before : s.after;
       const main = items.find((x) => RULES.includes(x)) ?? '';
       const choices = ['', '\\hline', ...(ctx.booktabs || items.some((x) => /rule/.test(x)) ? ['\\toprule', '\\midrule', '\\bottomrule'] : [])];
-      const sel = h('select', { class: main ? '' : 'none', 'aria-label': `rule ${k === s.rows.length ? 'after the last row' : `before row ${k + 1}`}`, title: 'the rule here', onchange: () => change(() => {
+      const where = k === s.rows.length ? 'below the last row' : `above row ${k + 1}`;
+      const sel = h('select', { class: 'sd-rsel' + (main ? '' : ' none'), 'aria-label': `rule ${where}`, title: `the rule ${where}: ${main || 'none'}`, onchange: () => change(() => {
         const i = items.findIndex((x) => RULES.includes(x));
         if (i >= 0) { if (sel.value) items[i] = sel.value; else items.splice(i, 1); } else if (sel.value) items.unshift(sel.value);
-      }) }, choices.map((c) => h('option', { value: c, selected: c === main }, c || '—')));
-      const others = items.filter((x) => !RULES.includes(x)).map((x) => h('span', { class: 'sd-chip', title: x }, x.length > 24 ? x.slice(0, 22) + '…' : x));
+      }) }, choices.map((c) => h('option', { value: c, selected: c === main }, c ? c.replace(/^\\|rule$/g, '') : '—')));
+      return sel;
+    }
+    /** The line between rows `k - 1` and `k`: its rule drawn, a `+` that inserts a row here. */
+    function ruleRow(k, taken) {
+      const s = t(), items = k < s.rows.length ? s.rows[k].before : s.after;
+      const main = items.find((x) => RULES.includes(x)) ?? '';
       const w = main === '\\toprule' || main === '\\bottomrule' ? '--w:2px' : main === '\\midrule' ? '--w:1.2px' : '';
       const tds = [];
       for (let g = 0; g < 2 * s.cols.length + 1; g++) if (!taken.has(g)) tds.push(h('td', { class: main ? 'sd-ruled' : '', style: w }));
-      const edge = (side) => k > 0 && k < s.rows.length ? h('td', { class: `sd-ghost sd-gc sd-gc${side}`, 'aria-hidden': 'true' }) : h('td');
-      return h('tr', { class: 'sd-rule' }, h('td', { class: 'sd-rh' }, sel), edge('L'), tds, edge('R'), h('td', { class: 'sd-chips' }, others));
+      const label = k === 0 ? 'Insert a row at the top' : k === s.rows.length ? 'Insert a row at the bottom' : `Insert a row between ${k} and ${k + 1}`;
+      return h('tr', { class: 'sd-rule' }, h('td', { class: 'sd-rh' }, h('button', { type: 'button', class: 'sd-ins', title: label, 'aria-label': label, onclick: () => { change((s) => T.insertRow(s, k)); select([k, focus[1]]); } }, '+')), tds);
     }
-    const ghostRow = (at, label) => {
-      const s = t();
-      return h('tr', { class: 'sd-ghost-row' }, h('td', { class: 'sd-rh' }), h('td'),
-        h('td', { class: 'sd-ghost sd-gr', colspan: 2 * s.cols.length + 1, tabindex: 0, role: 'button', title: label, 'aria-label': label, onclick: () => { change((s) => T.insertRow(s, at)); select([at, focus[1]]); }, onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.target.click(); } } }, '+'),
-        h('td'));
-    };
     function draw() {
       const s = t(), map = T.layout(s), n = s.cols.length;
       for (const b of styleSeg.children) b.setAttribute('aria-pressed', String(b.dataset.style === T.styleOf(s)));
-      const vbar = (k, tag = 'th') => h(tag, { class: 'sd-vcol' + (s.seps[k]?.includes('|') ? ' on' : ''), title: 'vertical rule (click)', onclick: () => change((s) => { s.seps[k] = s.seps[k].includes('|') ? s.seps[k].replace(/\|/g, '') : s.seps[k] + '|'; }) });
-      const ghostCol = (at, label, tag = 'th') => h(tag, { class: `sd-ghost sd-gc sd-gc${at ? 'R' : 'L'}`, tabindex: tag === 'th' ? 0 : -1, role: 'button', title: label, 'aria-label': label,
-        onclick: () => { change((s) => T.insertCol(s, at)); select([focus[0], at]); }, onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.target.click(); } } }, tag === 'th' ? '+' : '');
-      const head = h('tr', {}, h('th', { class: 'sd-rh' }), ghostCol(0, 'Add a column at the start'), s.cols.flatMap((c, k) => {
+      const vbar = (k, tag = 'th') => {
+        const label = k === 0 ? 'Insert a column at the start' : k === n ? 'Insert a column at the end' : `Insert a column between ${k} and ${k + 1}`;
+        const ins = tag === 'th' ? h('button', { type: 'button', class: 'sd-ins', title: label, 'aria-label': label, onclick: (e) => { e.stopPropagation(); change((s) => T.insertCol(s, k)); select([focus[0], k]); } }, '+') : null;
+        return h(tag, { class: 'sd-vcol' + (s.seps[k]?.includes('|') ? ' on' : ''), title: 'vertical rule (click)', onclick: () => change((s) => { s.seps[k] = s.seps[k].includes('|') ? s.seps[k].replace(/\|/g, '') : s.seps[k] + '|'; }) }, ins);
+      };
+      const head = h('tr', {}, h('th', { class: 'sd-rh' }), s.cols.flatMap((c, k) => {
         const loaded = COLS.filter(([, , p]) => !p || ctx[p]), more = COLS.filter(([, , p]) => p && !ctx[p]);
         const known = COLS.some(([a]) => a === c.align);
         const sel = h('select', { 'aria-label': `column ${k + 1} type`, title: 'the column type', onchange: () => change(() => {
@@ -722,8 +759,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         const arg = WIDTH.includes(c.align) || c.align === 'S' ? h('input', { value: c.arg, 'aria-label': `column ${k + 1} ${c.align === 'S' ? 'options' : 'width'}`, placeholder: c.align === 'S' ? 'table-format=…' : 'width', onfocus: () => snapshot(), oninput: (e) => { c.arg = e.target.value; f.refresh(); } }) : null;
         const del = n > 1 ? h('button', { type: 'button', class: 'sd-del', title: `Remove column ${k + 1}`, 'aria-label': `remove column ${k + 1}`, onclick: () => { change((s) => T.deleteCols(s, k, k)); select([focus[0], Math.min(k, t().cols.length - 1)]); } }, '−') : null;
         return [vbar(k), h('th', { class: 'sd-colh' }, sel, arg, del)];
-      }), vbar(n), ghostCol(n, 'Add a column at the end'));
-      const rows = [ghostRow(0, 'Add a row at the top')];
+      }), vbar(n));
+      const rows = [];
       // grid columns a clean \multirow takes in the rule rows below its first
       const taken = s.rows.map(() => new Set());
       const clean = (o) => { for (let j = 1; j < o.rows; j++) { const r = s.rows[o.r + j], [i, at] = T.cellAt(r, o.c); if (i < 0 || at !== o.c || Math.max(1, r.cells[i].span) !== o.span || r.cells[i].text.trim()) return false; } return true; };
@@ -756,9 +793,11 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         const short = n - T.width(r);
         if (short > 0) tds.push(h('td', { colspan: 2 * short, class: 'sd-muted' }));
         const del = s.rows.length > 1 ? h('button', { type: 'button', class: 'sd-del', title: `Remove row ${k + 1}`, 'aria-label': `remove row ${k + 1}`, onclick: () => { change((s) => T.deleteRows(s, k, k)); select([Math.min(k, t().rows.length - 1), focus[1]]); } }, '−') : null;
-        rows.push(h('tr', { class: 'sd-data' + (k === s.rows.length - 1 ? ' sd-last' : '') }, h('td', { class: 'sd-rh' }, del, h('span', { class: 'sd-n' }, String(k + 1))), ghostCol(0, 'Add a column at the start', 'td'), tds, vbar(n, 'td'), ghostCol(n, 'Add a column at the end', 'td')));
+        const others = r.before.filter((x) => !RULES.includes(x)).map((x) => h('span', { class: 'sd-chip', title: x }, x.length > 24 ? x.slice(0, 22) + '…' : x));
+        rows.push(h('tr', { class: 'sd-data' }, h('td', { class: 'sd-rh' }, h('span', { class: 'sd-gut' }, ruleSel(k), h('span', { class: 'sd-n' }, String(k + 1)), del ?? h('span'))), tds, vbar(n, 'td'), h('td', { class: 'sd-chips' }, others)));
       });
-      rows.push(ruleRow(s.rows.length, new Set()), ghostRow(s.rows.length, 'Add a row at the bottom'));
+      const after = s.after.filter((x) => !RULES.includes(x)).map((x) => h('span', { class: 'sd-chip', title: x }, x));
+      rows.push(ruleRow(s.rows.length, new Set()), h('tr', { class: 'sd-end' }, h('td', { class: 'sd-rh' }, h('span', { class: 'sd-gut' }, ruleSel(s.rows.length))), h('td', { colspan: 2 * n + 1, class: 'sd-muted sd-endtxt' }, after.length ? after : ''), h('td')));
       grid.replaceChildren(h('thead', {}, head), h('tbody', {}, rows));
       preview();
       placeBar();
@@ -794,9 +833,10 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         b(SVG('<path d="M5 3v10M11 3v10"/><path d="M8 6v4" stroke-width="2"/>'), `Delete ${cols > 1 ? `columns ${c0 + 1}–${c1 + 1}` : `column ${c0 + 1}`}`, () => { change((s) => T.deleteCols(s, c0, c1)) || note('A table keeps one column'); select([r0, Math.min(c0, t().cols.length - 1)]); }, cols === s.cols.length),
         b(SVG('<path d="M4 4l8 8M12 4l-8 8"/>'), 'Clear the cells (Delete)', () => change((s) => T.clear(s, [r0, c0, r1, c1]))),
       );
-      // above the grid, in line with the selection: it never covers a cell
-      const wr = wrap.getBoundingClientRect(), a = first.getBoundingClientRect();
-      bar.style.top = `${grid.offsetTop - bar.offsetHeight - 8}px`;
+      // above the selection; below it where it would cover the column header
+      const wr = wrap.getBoundingClientRect(), a = first.getBoundingClientRect(), z = last.getBoundingClientRect();
+      const y0 = wr.top - wrap.scrollTop, headBottom = grid.tHead.getBoundingClientRect().bottom - y0, above = a.top - y0 - bar.offsetHeight - 6;
+      bar.style.top = `${above >= headBottom ? above : z.bottom - y0 + 6}px`;
       bar.style.left = `${Math.max(0, Math.min(a.left - wr.left + wrap.scrollLeft, wrap.scrollWidth - bar.offsetWidth - 4))}px`;
       bar.hidden = false;
     }
@@ -834,7 +874,6 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       };
       input.onblur = () => { if (editing && !editing.done) finish(true); };
     }
-    grid.addEventListener('click', (e) => { const g = e.target.closest('tr.sd-rule .sd-gc'); if (g) grid.querySelector(`tr.sd-data .sd-gc${g.classList.contains('sd-gcL') ? 'L' : 'R'}`)?.click(); });
     const at = (e) => { const td = e.target.closest?.('td.sd-cell'); return td ? [+td.dataset.r, +td.dataset.c] : null; };
     let dragging = false;
     grid.addEventListener('pointerdown', (e) => {
@@ -949,42 +988,93 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     }
     return x1 > x0 ? [x0, y0, x1, y1] : null;
   }
-  /** `\includegraphics`' trim `[l, b, r, t]` in bp keeping `box` (pixels of a w × h raster of `nat` bp) and `pad` bp around it. */
+  /** `\includegraphics`' trim `[l, b, r, t]` in bp keeping `box` (pixels of a w × h raster of `nat` bp) and `pad` bp around it (negative: into it). */
   const trimTo = ([x0, y0, x1, y1], w, hh, nat, pad = 0) => {
     const kx = nat[0] / w, ky = nat[1] / hh, r = (v) => Math.max(0, Math.round(v * 100) / 100);
     return [r(x0 * kx - pad), r((hh - y1) * ky - pad), r((w - x1) * kx - pad), r(y0 * ky - pad)];
   };
+  /** The colour channels `decodearray` maps of a raster's bytes: `gray`, `rgb`, `indexed`, `cmyk`, else null. */
+  function colorModel(b) {
+    if (b?.[0] === 0x89 && b[1] === 0x50) return { 0: 'gray', 4: 'gray', 2: 'rgb', 6: 'rgb', 3: 'indexed' }[b[25]] ?? null;
+    if (b?.[0] !== 0xff || b[1] !== 0xd8) return null;
+    for (let i = 2; i + 9 < b.length && b[i] === 0xff;) {
+      const m = b[i + 1];
+      if (m >= 0xc0 && m <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(m)) return { 1: 'gray', 3: 'rgb', 4: 'cmyk' }[b[i + 9]] ?? null;
+      i += 2 + (b[i + 2] << 8 | b[i + 3]);
+    }
+    return null;
+  }
+  /** `decodearray` (n values, two per channel) maps channel value v to Dmin + v·(Dmax − Dmin) (PDF reference § 8.9.5.2): `tint` takes
+   * white to `rgb` by `strength`, `invert` swaps each pair; a colour of a gray image is its own luminance. */
+  const DECODE = {
+    invert: (n) => Array(n / 2).fill([1, 0]).flat(),
+    tint: (n, rgb, strength) => (n === 2 ? [0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]] : rgb).flatMap((c) => [0, Math.round((1 - strength * (1 - c)) * 100) / 100]),
+    /** The preset `d` is, with its colour: invert, tint, custom or none. */
+    of: (d) => !d?.length ? ['none'] : d.every((x, i) => x === (i % 2 ? 0 : 1)) ? ['invert'] : d.every((x, i) => i % 2 || x === 0) ? ['tint', d.length === 6 ? [d[1], d[3], d[5]] : [d[1], d[1], d[1]]] : ['custom'],
+  };
+  /** A styled file picker in place of the browser's: a button and a drop zone that name the chosen file. */
+  function picker({ accept, label, title, onfile }) {
+    const input = h('input', { type: 'file', accept, hidden: true, onchange: () => { const fl = input.files?.[0]; input.value = ''; if (fl) pick(fl); } });
+    const name = h('span', { class: 'sd-drop-name' }, 'or drop a file here');
+    const pick = (fl) => { name.textContent = fl.name; onfile(fl); };
+    const zone = h('div', { class: 'sd-drop', title },
+      h('button', { type: 'button', onclick: () => input.click() }, label), name, input);
+    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('over'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+    zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('over'); const fl = e.dataTransfer?.files?.[0]; if (fl) pick(fl); });
+    return zone;
+  }
+  /** A range input whose track fills up to its value. */
+  const slider = (attrs) => {
+    const r = h('input', { type: 'range', class: 'sd-range', ...attrs });
+    const fill = () => r.style.setProperty('--p', `${(r.value - r.min) / (r.max - r.min) * 100}%`);
+    r.addEventListener('input', fill);
+    r.fill = fill;
+    return r;
+  };
+  let filters = 0;
   function image(view, host) {
     const s = () => view.state;
     const ctx = view.context ?? {};
     const main = h('div');
     const side = h('div');
-    const f = frame(view, host, 'Edit image', { main, side, sub: s().file, redraw: () => sync(), foot: 'Crop, rotation and size are written as \\includegraphics options (graphicx).' });
+    const f = frame(view, host, 'Edit image', { main, side, sub: s().file, redraw: () => sync(), foot: 'Crop, rotation, size and tint are written as \\includegraphics options (graphicx).' });
     let nat = s().natural; // [w, h] bp
+    let model = null; // the raster's channels, null for a PDF or an unread file
+    const vector = /\.(pdf|eps|ps|mps)$/i.test(ctx.path ?? s().file);
     const stage = h('div', { class: 'sd-stage' });
     const crop = h('div', { class: 'sd-crop' });
     const handles = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map((d) => h('div', { class: 'sd-h', 'data-d': d, style: `cursor:${d}-resize` }));
     crop.append(...handles);
     const prevBox = h('div', { class: 'sd-prev-box' });
-    main.append(stage, h('h4', {}, 'Result'), prevBox);
+    // the tint's live preview: decodearray's linear map per channel as an SVG filter
+    const fid = `sd-decode-${++filters}`;
+    const funcs = ['R', 'G', 'B'].map((c) => document.createElementNS('http://www.w3.org/2000/svg', `feFunc${c}`));
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'sd-defs');
+    svg.innerHTML = `<filter id="${fid}" color-interpolation-filters="sRGB"><feComponentTransfer/></filter>`;
+    svg.querySelector('feComponentTransfer').append(...funcs);
+    main.append(svg, stage, h('h4', {}, 'Result'), prevBox);
     let picture = null;
-    const num = (key, i, label) => h('label', {}, label, h('input', { type: 'number', step: '1', class: 'sd-num', 'data-k': key, 'data-i': i, oninput: (e) => { const st = s(); st.trim ??= [0, 0, 0, 0]; st.trim[i] = +e.target.value || 0; st.clip = true; sync(); } }));
-    const angle = h('input', { type: 'range', min: -180, max: 180, step: 1, 'aria-label': 'angle', oninput: (e) => setAngle(+e.target.value) });
+    const note = h('p', { class: 'sd-note', role: 'status' });
+    const say = (m) => { note.textContent = m; };
+    const num = (i, label) => [h('label', { for: `sd-trim-${i}-${fid}` }, label), h('input', { id: `sd-trim-${i}-${fid}`, type: 'number', step: '1', class: 'sd-num', 'data-k': 'trim', 'data-i': i, oninput: (e) => { const st = s(); st.trim ??= [0, 0, 0, 0]; st.trim[i] = Number.isFinite(+e.target.value) ? +e.target.value : 0; st.clip = true; sync(); } })];
+    const angle = slider({ min: -180, max: 180, step: 1, 'aria-label': 'angle', oninput: (e) => setAngle(+e.target.value) });
     const angleNum = h('input', { type: 'number', step: 'any', class: 'sd-num', 'aria-label': 'angle in degrees', oninput: (e) => setAngle(+e.target.value) });
     const setAngle = (a) => { s().angle = a ? ((a % 360) + 540) % 360 - 180 : null; sync(); };
     const lenInput = (key, presets) => {
-      const input = h('input', { class: 'sd-len', list: `sd-${key}`, 'aria-label': key, placeholder: 'natural', oninput: (e) => { s()[key] = e.target.value || null; sync(); } });
-      return [input, h('datalist', { id: `sd-${key}` }, presets.map((p) => h('option', { value: p })))];
+      const input = h('input', { class: 'sd-len', id: `sd-${key}-${fid}`, list: `sd-${key}-l-${fid}`, 'aria-label': key, placeholder: 'natural', oninput: (e) => { s()[key] = e.target.value || null; sync(); } });
+      return [input, h('datalist', { id: `sd-${key}-l-${fid}` }, presets.map((p) => h('option', { value: p })))];
     };
     const [wIn, wList] = lenInput('width', ['\\linewidth', '0.8\\linewidth', '0.5\\linewidth', '\\textwidth', '5cm']);
     const [hIn, hList] = lenInput('height', ['\\textheight', '0.3\\textheight', '4cm']);
-    const scale = h('input', { type: 'number', step: '0.05', min: '0', class: 'sd-num', 'aria-label': 'scale', placeholder: '1', oninput: (e) => { s().scale = e.target.value ? +e.target.value : null; sync(); } });
-    const keep = h('input', { type: 'checkbox', onchange: (e) => { s().keepaspectratio = e.target.checked; sync(); } });
-    const clip = h('input', { type: 'checkbox', onchange: (e) => { s().clip = e.target.checked; sync(); } });
-    const order = h('select', { 'aria-label': 'what the size applies to', onchange: (e) => { s().size_first = e.target.value === 'upright'; sync(); } },
+    const scale = h('input', { type: 'number', step: '0.05', min: '0', class: 'sd-num', id: `sd-scale-${fid}`, placeholder: '1', oninput: (e) => { s().scale = e.target.value ? +e.target.value : null; sync(); } });
+    const keep = h('input', { type: 'checkbox', role: 'switch', onchange: (e) => { s().keepaspectratio = e.target.checked; sync(); } });
+    const clip = h('input', { type: 'checkbox', role: 'switch', onchange: (e) => { s().clip = e.target.checked; sync(); } });
+    const order = h('select', { id: `sd-order-${fid}`, onchange: (e) => { s().size_first = e.target.value === 'upright'; sync(); } },
       h('option', { value: 'rotated' }, 'the rotated figure (angle, then width)'), h('option', { value: 'upright' }, 'the upright figure (width, then angle)'));
     const unread = h('p', { class: 'sd-note' });
-    const pad = h('input', { type: 'number', step: '1', min: '0', value: '0', class: 'sd-num', 'aria-label': 'padding in bp' });
+    const pad = h('input', { type: 'number', step: '1', value: '0', class: 'sd-num', 'aria-label': 'padding in bp', title: 'space kept around the content in bp; negative cuts into it' });
     // crop to content: the box of the pixels that differ from the background, read from the rendered figure
     const fit = h('button', { type: 'button', title: 'Trim the empty margins of the rendered figure', onclick: () => {
       if (picture?.tagName !== 'IMG' || !nat) return;
@@ -992,27 +1082,80 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       const c = Object.assign(document.createElement('canvas'), { width: w, height: hh }), g = c.getContext('2d', { willReadFrequently: true });
       g.drawImage(picture, 0, 0, w, hh);
       const box = contentBox(g.getImageData(0, 0, w, hh).data, w, hh);
-      if (!box) { unread.textContent = 'The figure looks empty: nothing to crop to.'; return; }
-      s().trim = trimTo(box, w, hh, nat, +pad.value || 0);
+      if (!box) return say('The figure looks empty: nothing to crop to.');
+      const p = +pad.value || 0, most = Math.min((box[2] - box[0]) * nat[0] / w, (box[3] - box[1]) * nat[1] / hh) / 2;
+      if (-p >= most) return say(`A padding of ${fmt(p)} bp cuts the whole content away: keep it above −${fmt(most)} bp.`);
+      say('');
+      s().trim = trimTo(box, w, hh, nat, p);
       s().clip = true;
       sync();
     } }, 'Crop to content');
+    // tint: decodearray, for a raster the driver reads it of
+    const tintColor = h('input', { type: 'color', value: '#1f6feb', 'aria-label': 'tint colour', oninput: () => setTint('tint') });
+    const strength = slider({ min: 0, max: 100, step: 1, value: 60, 'aria-label': 'tint strength', oninput: () => setTint('tint') });
+    const strengthOut = h('output', { class: 'sd-out' });
+    const tintWhy = h('p', { class: 'sd-muted sd-why' });
+    const preset = (mode, label, title) => h('button', { type: 'button', 'data-tint': mode, title, onclick: () => setTint(mode) }, label);
+    const tintSeg = h('span', { class: 'sd-seg', role: 'group', 'aria-label': 'tint' },
+      preset('none', 'None', 'No decodearray: the colours as in the file'), preset('tint', 'Tint', 'White becomes the colour, black stays'),
+      preset('invert', 'Invert', 'decodearray 1 0 per channel'),
+      h('button', { type: 'button', disabled: true, title: 'decodearray maps each channel on its own: it cannot mix red, green and blue into gray' }, 'Grayscale'));
+    const channels = () => ({ gray: 2, rgb: 6 })[model] ?? 0;
+    /** Why decodearray cannot apply here, or null. */
+    const tintBlocked = () => vector ? 'PDF and EPS figures are drawn, not sampled: the driver drops decodearray for them (pdftex.def, xetex.def, dvipdfmx.def).'
+      : !ctx.decode ? `The graphics driver${ctx.driver ? ` ${ctx.driver}` : ''} of this run does not read decodearray: pdfTeX, LuaTeX, XeTeX and dvipdfmx do, dvips does not.`
+      : model === 'indexed' ? 'A palette PNG: decodearray would remap the palette\'s indices, not its colours.'
+      : model === 'cmyk' ? 'A CMYK JPEG: its four channels are not offered here.'
+      : !model ? 'The file\'s colour channels are not read yet.' : null;
+    const rgbOf = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const hexOf = (rgb) => '#' + rgb.map((c) => Math.round(Math.max(0, Math.min(1, c)) * 255).toString(16).padStart(2, '0')).join('');
+    function setTint(mode) {
+      const n = channels();
+      if (mode !== 'none' && (!n || tintBlocked())) return;
+      s().decode = mode === 'none' ? null : mode === 'invert' ? DECODE.invert(n) : DECODE.tint(n, rgbOf(tintColor.value), strength.value / 100);
+      sync();
+    }
+    // the file: replaced by an upload (written to the project, its path into the text), or downloaded
+    const replace = host.upload && picker({ accept: '.png,.jpg,.jpeg,.pdf,.eps,image/png,image/jpeg,application/pdf', label: 'Replace…', title: 'A new PNG, JPEG, PDF or EPS in place of this figure', onfile: async (fl) => {
+      if (!/\.(png|jpe?g|pdf|eps)$/i.test(fl.name)) return say(`${fl.name}: graphicx reads PNG, JPEG, PDF or EPS here.`);
+      if (fl.size > 50 * 2 ** 20) return say(`${fl.name} is larger than 50 MiB.`);
+      try {
+        const got = await host.upload(ctx.path, fl.name, new Uint8Array(await fl.arrayBuffer()));
+        const st = s(), at = st.file.lastIndexOf('/') + 1, old = st.file.slice(at), stem = fl.name.replace(/\.\w+$/, '');
+        st.file = got?.beside === false ? fl.name : st.file.slice(0, at) + (!/\.\w+$/.test(old) && old === stem ? old : fl.name);
+        Object.assign(st, { trim: null, viewport: false, clip: false, decode: null, natural: null });
+        if (await f.refresh()) { f.apply(); host.reopen?.(); }
+      } catch (e) { say(`Upload: ${e.message}`); }
+    } });
+    const download = h('button', { type: 'button', title: 'Download the figure\'s file', onclick: async () => {
+      const got = host.download ? await host.download(ctx.path) : vector ? null : await host.image(ctx.path);
+      if (!got?.url) return say('The file is not available here.');
+      const a = h('a', { href: got.url, download: got.name ?? (ctx.path ?? s().file).split('/').pop() });
+      document.body.append(a); a.click(); a.remove();
+    } }, 'Download');
+    const row = (...kids) => h('div', { class: 'sd-row' }, ...kids);
+    const field = (label, input, id = input.id) => [h('label', { for: id }, label), input];
     side.append(
-      h('h4', {}, 'Crop (trim, bp)'),
-      h('div', { class: 'sd-row' }, num('trim', 0, 'left'), num('trim', 2, 'right')),
-      h('div', { class: 'sd-row' }, num('trim', 3, 'top'), num('trim', 1, 'bottom')),
-      h('div', { class: 'sd-row' }, fit, h('label', { title: 'space kept around the content, in bp' }, 'padding', pad, 'bp')),
-      h('div', { class: 'sd-row' }, h('label', {}, clip, 'clip'), h('button', { type: 'button', class: 'sd-ghost', onclick: () => { s().trim = null; s().clip = false; sync(); } }, 'Reset crop')),
-      h('h4', {}, 'Rotate (angle, counterclockwise)'),
-      h('div', { class: 'sd-row' }, h('button', { type: 'button', title: 'Rotate 90° counterclockwise', onclick: () => setAngle((s().angle ?? 0) + 90) }, '⟲ 90°'), h('button', { type: 'button', title: 'Rotate 90° clockwise', onclick: () => setAngle((s().angle ?? 0) - 90) }, '⟳ 90°'), angleNum),
-      h('div', { class: 'sd-row' }, angle),
+      h('h4', {}, 'File'),
+      row(h('span', { class: 'sd-chip sd-file', title: ctx.path ?? '' }, s().file), ctx.path ? download : null),
+      replace ?? null,
+      h('h4', {}, 'Crop ', h('span', { class: 'sd-unit' }, 'trim, bp')),
+      h('div', { class: 'sd-quad' }, ...num(0, 'left'), ...num(2, 'right'), ...num(3, 'top'), ...num(1, 'bottom')),
+      row(fit, h('label', { class: 'sd-inl', title: 'space kept around the content in bp; negative cuts into it' }, 'padding', pad)),
+      row(h('label', { class: 'sd-inl' }, clip, 'clip'), h('button', { type: 'button', class: 'sd-ghost', style: 'margin-left:auto', onclick: () => { s().trim = null; s().clip = false; say(''); sync(); } }, 'Reset crop')),
+      h('h4', {}, 'Rotate ', h('span', { class: 'sd-unit' }, 'degrees, counterclockwise')),
+      row(h('button', { type: 'button', title: 'Rotate 90° counterclockwise', onclick: () => setAngle((s().angle ?? 0) + 90) }, '⟲ 90°'), h('button', { type: 'button', title: 'Rotate 90° clockwise', onclick: () => setAngle((s().angle ?? 0) - 90) }, '⟳ 90°'), angleNum),
+      angle,
       h('h4', {}, 'Size'),
-      h('div', { class: 'sd-row' }, h('label', {}, 'width', wIn), wList),
-      h('div', { class: 'sd-row' }, h('label', {}, 'height', hIn), hList),
-      h('div', { class: 'sd-row' }, h('label', {}, 'scale', scale), h('label', { title: 'with both width and height: fit inside, keep the proportions' }, keep, 'keep aspect ratio')),
-      h('div', { class: 'sd-row' }, h('label', {}, 'size applies to', order)),
+      h('div', { class: 'sd-form' }, ...field('width', wIn), ...field('height', hIn), ...field('scale', scale), ...field('applies to', order)),
+      wList, hList,
+      h('label', { class: 'sd-inl', title: 'with both width and height: fit inside, keep the proportions' }, keep, 'keep aspect ratio'),
       h('p', { class: 'sd-muted' }, 'graphicx reads the keys in order: angle=90,width=3cm makes the rotated figure 3cm wide; width=3cm,angle=90 makes it 3cm high.'),
-      unread,
+      h('h4', {}, 'Tint ', h('span', { class: 'sd-unit' }, 'decodearray')),
+      tintSeg,
+      h('div', { class: 'sd-form sd-tint' }, h('label', {}, 'colour'), tintColor, h('label', {}, 'strength'), h('div', { class: 'sd-row', style: 'margin:0;flex-wrap:nowrap' }, strength, strengthOut)),
+      tintWhy,
+      note, unread,
     );
     // the figure: a raster as it is, a PDF's first page as the host renders it
     (async () => {
@@ -1020,6 +1163,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       if (got?.url && got.kind !== null) {
         picture = h('img', { src: got.url, alt: s().file, draggable: 'false' });
         picture.addEventListener('load', () => { nat ??= [picture.naturalWidth, picture.naturalHeight]; sync(); }, { once: true });
+        if (!vector) model = colorModel(new Uint8Array(await fetch(got.url).then((r) => r.arrayBuffer()).catch(() => new ArrayBuffer(0))));
       } else {
         const [w, hh] = nat ?? [400, 300];
         const k = Math.min(480 / w, 320 / hh);
@@ -1037,6 +1181,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       for (const i of side.querySelectorAll('input[data-k=trim]')) if (document.activeElement !== i) i.value = fmt((st.trim ?? [0, 0, 0, 0])[+i.dataset.i]);
       if (document.activeElement !== angleNum) angleNum.value = fmt(st.angle ?? 0);
       angle.value = String(st.angle ?? 0);
+      angle.fill();
       if (document.activeElement !== wIn) wIn.value = st.width ?? '';
       if (document.activeElement !== hIn) hIn.value = st.height ?? '';
       if (document.activeElement !== scale) scale.value = st.scale ?? '';
@@ -1044,22 +1189,35 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       clip.checked = !!st.clip;
       order.value = st.size_first ? 'upright' : 'rotated';
       unread.textContent = st.unread?.length ? `Kept as written, not shown here: ${st.unread.join(', ')}.` : '';
+      // tint: the preset the array is, the reason it cannot apply, the preview's filter
+      const [mode, rgb] = DECODE.of(st.decode), blocked = tintBlocked();
+      const ui = DECODE.tint(channels() || 6, rgbOf(tintColor.value), strength.value / 100);
+      if (mode === 'tint' && ![tintColor, strength].includes(document.activeElement) && ui.join() !== st.decode.join()) { tintColor.value = hexOf(rgb); strength.value = 100; }
+      strength.fill();
+      strengthOut.textContent = `${strength.value}%`;
+      for (const b of tintSeg.querySelectorAll('[data-tint]')) { b.setAttribute('aria-pressed', String(b.dataset.tint === mode)); b.disabled = b.dataset.tint !== 'none' && !!blocked; }
+      tintColor.disabled = strength.disabled = !!blocked;
+      tintWhy.textContent = blocked ?? (mode === 'custom' ? `A decodearray of its own: ${st.decode.join(' ')}.` : model === 'gray' ? 'A gray image has one channel: a tint darkens it by the colour\'s luminance.' : 'decodearray maps each channel from [0, 1] to [Dmin, Dmax]; the preview applies the same map.');
+      const d = st.decode?.length && st.decode.length === channels() ? st.decode : null;
+      funcs.forEach((fn, c) => { const [lo, hi] = d ? (d.length === 2 ? d : d.slice(2 * c, 2 * c + 2)) : [0, 1]; fn.setAttribute('type', 'linear'); fn.setAttribute('slope', String(hi - lo)); fn.setAttribute('intercept', String(lo)); });
+      const look = d && !blocked ? `url(#${fid})` : '';
+      if (picture?.tagName === 'IMG') picture.style.filter = look;
       if (picture && nat) {
         const q = k(), W = nat[0] * q, H = nat[1] * q;
         Object.assign(crop.style, { left: `${l * q}px`, top: `${tp * q}px`, width: `${Math.max(0, W - (l + r) * q)}px`, height: `${Math.max(0, H - (b + tp) * q)}px` });
         const pos = { nw: [0, 0], n: [.5, 0], ne: [1, 0], e: [1, .5], se: [1, 1], s: [.5, 1], sw: [0, 1], w: [0, .5] };
         for (const hd of handles) { const [x, y] = pos[hd.dataset.d]; Object.assign(hd.style, { left: `${x * 100}%`, top: `${y * 100}%` }); }
-        preview(l, b, r, tp);
+        preview(l, b, r, tp, look);
       }
       f.refresh();
     }
-    function preview(l, b, r, tp) {
+    function preview(l, b, r, tp, look) {
       const st = s(), cw = nat[0] - l - r, ch = nat[1] - b - tp;
       if (cw <= 0 || ch <= 0) return prevBox.replaceChildren(h('span', { class: 'sd-note' }, 'The crop leaves nothing.'));
       const a = (st.angle ?? 0) * Math.PI / 180, rw = Math.abs(cw * Math.cos(a)) + Math.abs(ch * Math.sin(a)), rh = Math.abs(cw * Math.sin(a)) + Math.abs(ch * Math.cos(a));
       const q = Math.min(300 / rw, 180 / rh);
       const inner = picture.tagName === 'IMG' ? h('img', { src: picture.src, alt: '' }) : h('div', { class: 'sd-ph' }, st.file);
-      Object.assign(inner.style, { width: `${nat[0] * q}px`, height: `${nat[1] * q}px`, left: `${-l * q}px`, top: `${-tp * q}px` });
+      Object.assign(inner.style, { width: `${nat[0] * q}px`, height: `${nat[1] * q}px`, left: `${-l * q}px`, top: `${-tp * q}px`, filter: look });
       const box = h('div', { class: 'sd-prev-crop', style: `width:${cw * q}px;height:${ch * q}px;transform:rotate(${-(st.angle ?? 0)}deg)` }, inner);
       if (!st.clip && st.trim) box.style.overflow = 'visible';
       const holder = h('div', { style: `width:${rw * q}px;height:${rh * q}px;display:grid;place-items:center` }, box);
@@ -1094,16 +1252,47 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     stage.addEventListener('pointercancel', end);
     sync();
     return f;
-
+  }
+  /** A float's placement: a toggle per letter the run's LaTeX tests, the written order kept. */
+  function placement(view, host) {
+    const ctx = view.context ?? {}, letters = ctx.letters ?? [];
+    const main = h('div', { class: 'sd-place' }), side = h('div');
+    const f = frame(view, host, 'Edit placement', { main, side, sub: `\\begin{${view.state.env}}`, redraw: () => draw(), foot: 'An empty placement drops the brackets: LaTeX then uses the default.' });
+    const spec = () => view.state.spec ?? '';
+    const toggle = (c) => {
+      const now = spec();
+      let next = now.includes(c) ? now.replace(c, '') : now + c;
+      // H stands alone (float.sty): it never floats
+      if (c === 'H' && !now.includes('H')) next = 'H';
+      else if (c !== 'H') next = next.replace('H', '');
+      view.state.spec = next;
+      draw();
+      f.refresh();
+    };
+    const md = (t) => esc(t).replace(/`([^`]+)`/g, '<code>$1</code>');
+    function draw() {
+      const on = spec();
+      main.replaceChildren(
+        h('div', { class: 'sd-chips', role: 'group', 'aria-label': 'placement letters' }, letters.map(([c, what]) => h('button', {
+          type: 'button', class: 'sd-letter', 'aria-pressed': String(on.includes(c)), title: what.replace(/`/g, ''), onclick: () => toggle(c),
+        }, h('b', {}, c), h('span', { html: md(what) })))),
+        h('p', { class: 'sd-muted' }, on ? `Written as [${on}]: LaTeX tries the places in its own order (here, top, bottom, float page), not in the order written.`
+          : `No placement: LaTeX uses ${ctx.default ? `the default [${ctx.default}]` : 'its default'} for ${view.state.env}.`),
+      );
+    }
+    draw();
+    f.refresh();
+    return f;
   }
 
   const api = {
     open(view, host) {
       if (view?.kind === 'table') return table(view, host);
       if (view?.kind === 'image') return image(view, host);
+      if (view?.kind === 'float') return placement(view, host);
       return null;
     },
-    popup, enhance, store, table: T, image: { contentBox, trimTo },
+    popup, enhance, store, picker, table: T, image: { contentBox, trimTo, colorModel, DECODE },
   };
   self.satexDialogs = api;
   self.satexStore = store;

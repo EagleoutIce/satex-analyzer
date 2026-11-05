@@ -15,6 +15,7 @@ widget       color            color name
 widget       environment      environment name                            
 widget       table            environment the run met                     
 widget       image            graphic file                                
+widget       float            environment the run met                     
 widget       tikz             environment the run met                     
 widget       forest           environment the run met                     
 widget       savebox          environment name                            
@@ -42,17 +43,17 @@ build        l3build
 | view | `satex/view` | a dialog, first in the context menu and as hover card buttons | a webview beside the editor (light bulb or `satex: Open Picker, Converter or Drawing Here`) | the actions and the hover instead |
 | lens | `textDocument/codeLens`, one handler over every plugin | a button above the line | a code lens | a code lens |
 | colors | `textDocument/documentColor`, `colorPresentation` | swatches, a click opens the picker | the native color picker | swatches where supported |
-| dialog (table, image) | `satex/dialog`, `satex/dialogApply` | a button above the line, a link in the hover | a code lens and a webview beside the editor (`satex: Edit Table or Image…`) | the code actions with their defaults |
+| dialog (table, image, float) | `satex/dialog`, `satex/dialogApply` | a button above the line, a link in the hover | a code lens and a webview beside the editor (`satex: Edit Table or Image…`) | the code actions with their defaults |
 | manage | `satex/view` with `plugin`, no `position` | the `manage` command | `satex: Manage…` | the view at a name |
 
 ## keys
 
-Key lists of pgfkeys, l3keys, kvoptions and xkeyval, and package options. Completion opens at `{`, `[`, `,` and `=` with nothing typed. A family (`/demo`) inserts `/demo/` and opens again on its keys (`family_continue`). Hover shows the key's handler kind, its initial or default value, where it was defined and the comment next to the definition.
+Key lists of pgfkeys, l3keys, kvoptions and xkeyval, and package options. Completion opens at `{`, `[`, `,` and `=` with nothing typed. A family (`/demo`) inserts `/demo/` and opens again on its keys (`family_continue`). Hover shows the key's handler kind, its initial or default value, where it was defined and the comment next to the definition. A key written twice in one list says which value wins: keyval runs the keys in order, so the later one.
 Its view ("Edit keys…") lists the same keys. A choice writes one at the cursor.
 
 ## units
 
-A length written in the source (`12pt`, `-2.5cm`) or a length register (`\textwidth`, its value when the run ended, a range when the run kept one). Hover shows it in each unit of `units`, in `em` and `ex` of the font of the text set just before when the run loaded that font, and in scaled points. One action per unit rewrites the literal. TeX keeps a length in scaled points (sp), so the action says *exact* when TeX reads the new text as the same sp, else how many sp it is off. It writes the fewest decimals up to `decimals` that are exact, else rounds to `decimals`. The view is a converter: type a value in any unit, click a unit to write it.
+A length written in the source (`12pt`, `-2.5cm`) or a length register (`\textwidth`, its value when the run ended, a range when the run kept one). Hover shows it in each unit of `units`, in `em` and `ex` of the font of the text set just before when the run loaded that font, and in scaled points. The grid lists every unit but the literal's own. One action per unit rewrites the literal, and the open hover shows the new literal at once. TeX keeps a length in scaled points (sp), so the action says *exact* when TeX reads the new text as the same sp, else how many sp it is off. It writes the fewest decimals up to `decimals` that are exact, else rounds to `decimals`. The view is a converter: type a value in any unit, click a unit to write it.
 
 ## color
 
@@ -87,8 +88,15 @@ A figure is a file `\includegraphics` read. Its code lens and hover link open a 
 - `trim=l b r t` in bp with `clip`, or `viewport=llx lly urx ury` where the figure had one
 - `angle` counterclockwise
 - graphicx reads the keys in order: `angle=90,width=3cm` makes the rotated figure 3cm wide, `width=3cm,angle=90` makes it 3cm high. The dialog's *size applies to* chooses the order.
+- `decodearray` for a tint, an inversion, or an array of its own. A PDF image maps each sample of a raster channel from [0, 1] to [Dmin, Dmax] (PDF reference § 8.9.5.2). pdftex.def, luatex.def, xetex.def and dvipdfmx.def write it for PNG and JPEG files, and drop it for PDF and EPS figures, which are drawn, not sampled. The dialog offers it only where it applies: the run's driver defines `\Gin@decode`, and the file is a gray or RGB raster (a palette PNG would remap its indices). Grayscale cannot be written: each channel maps on its own. The preview applies the same map.
+
+*Crop to content* trims the margins of the rendered figure that look like its corners' background. Its padding may be negative, cutting into the content, as long as some is left. *Replace…* puts a new PNG, JPEG, PDF or EPS next to the figure (next to the document when the figure is the installation's) and writes its name; *Download* saves the figure's file.
 
 A key the dialog does not edit (`page`, `draft`) stays where it was, and so do a crop it cannot read and the units of an unchanged crop. A client without dialogs gets two code actions: rotate by 90° and fit to `\linewidth`.
+
+## float
+
+A float is an environment whose code reaches `\@float`: `figure`, `table` and those defined on them. On its `[placement]` the hover says what each letter lets LaTeX do, or what the class's default (`\fps@⟨env⟩`) does when none is written. Completion offers the letters not written yet, `H` too when the run loaded float.sty (`\@float@HH`). The dialog "Edit placement…" toggles each letter, keeps their order, and drops the brackets when none is left; `H` stands alone. An unknown letter is refused. The letters' meanings are a seed table: they are prose, not run data.
 
 ## tikz
 

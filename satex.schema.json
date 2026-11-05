@@ -3385,6 +3385,21 @@
       "x-example": "`platform: windows`\n`\\input{Chapter}` also finds `chapter.tex`, as on a case-insensitive disk",
       "x-plugin": "platform"
     },
+    "playground": {
+      "description": "what only the web playground reads",
+      "properties": {
+        "lenses": {
+          "default": false,
+          "description": "a button line above each table, figure and drawing besides the mark in the gutter",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`lenses: true`: \"Edit image…\" stands above each \\includegraphics"
+        }
+      },
+      "type": "object"
+    },
     "plugins": {
       "properties": {
         "discovery": {
@@ -4023,6 +4038,22 @@
               "x-affects": [
                 "output"
               ]
+            }
+          },
+          "type": "object",
+          "x-category": "widget"
+        },
+        "float": {
+          "description": "floats: environments whose code reaches \\@float (figure, table and the ones defined on them)",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "what each placement letter lets LaTeX do, their completion, a dialog of toggles",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: no placement hover, completion or dialog"
             }
           },
           "type": "object",
