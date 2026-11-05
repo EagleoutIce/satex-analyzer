@@ -55,7 +55,7 @@ plugins: 48 in 11 kinds
   build system        5  latexmk, make, tectonic, arara, l3build
   tools               7  biber, bibtex, makeindex, xindy, makeglossaries, dvips, ps2pdf
   magic comments      3  % !TeX, % !BIB, % arara:
-… 17 more lines omitted
+… 16 more lines omitted
 ```
 
 <details>
@@ -632,7 +632,7 @@ index   step         name                        detail                    file
 8412    open-file    \article                    /usr/local/texlive/YYYY…  paper.tex      @ paper.tex:1:1
 10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
 10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
-… 208 more lines omitted
+… 183 more lines omitted
 ```
 
 </details>
