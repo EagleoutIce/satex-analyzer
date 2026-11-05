@@ -3765,7 +3765,7 @@
     await fetchPackages(wanted_(names));
     // what the project needs and a background load still fetches
     const loading = wanted_(names, state.kernel, true).filter((id) => inFlight.has(id) || background.has(id));
-    if (loading.length) { busy('Fetching', `Fetching ${plural(loading.length, 'package')}…`); await Promise.allSettled(loading.map((id) => fetchedPackages.get(id))); idle(); }
+    if (loading.length) await awaitPackages(loading);
     if (stale()) return false;
     store();
     opened.clear();
@@ -5727,13 +5727,21 @@
     if (!plainLint()) await start();
     return true;
   }
+  /** Waits for package loads already under way, counting them down as each lands. */
+  async function awaitPackages(ids) {
+    let landed = 0;
+    const show = () => busy('Fetching', `Fetching ${plural(ids.length, 'package')}: ${landed} of ${ids.length} in`, { done: landed / ids.length });
+    show();
+    await Promise.allSettled(ids.map((id) => Promise.resolve(fetchedPackages.get(id)).finally(() => { landed++; show(); })));
+    idle();
+  }
   /** After findings or a run name missing packages: fetch them, start over. */
   async function fetchMissing(texts) {
     const ids = missing(texts), flying = missing(texts, true).filter((id) => background.has(id));
     if (!ids.length && !flying.length) return false;
     if (ids.length && !await fetchPackages(ids)) return false;
     // one the background load fetches now: waited for, not fetched twice
-    if (flying.length) { busy('Fetching', `Fetching ${plural(flying.length, 'package')}…`); await Promise.allSettled(flying.map((id) => fetchedPackages.get(id))); idle(); }
+    if (flying.length) await awaitPackages(flying);
     await restart();
     if (!plainLint()) await start();
     return true;
@@ -6115,7 +6123,7 @@
   actHost.addEventListener('mouseenter', () => showAct(true)); actHost.addEventListener('mouseleave', () => showAct(false));
   actHost.addEventListener('focusin', (e) => { if (e.target.matches(':focus-visible')) showAct(true); }); actHost.addEventListener('focusout', () => showAct(false));
   function progressed({ label, loaded, total }) {
-    if (quietLoads) return; // a background load: the status line is the analysis'
+    if (quietLoads && !inFlight.size) return; // only a background load: the status line is the analysis'
     if (PHASE[label]) { busy(PHASE[label][0], PHASE[label][1]); return; }
     loads.set(label, [loaded, total]);
     const [got, all] = [...loads.values()].reduce(([g, a], [l, t]) => [g + l, a + t], [0, 0]);
