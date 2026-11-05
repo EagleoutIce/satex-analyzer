@@ -861,7 +861,7 @@ limits:
   digit_lengths: 3  # how many digit counts a number of unknown digits is read apart into, one path each. Past them the longer counts are one path
     #! affects: precision, speed
     #! example: lower: `\int_rand:n {16777215}` read digit by digit forks less. Higher: pgfmath tells two from three digits
-  paths: 10  # how many paths may be alive at once. Past them an undecided \if is not split, its arms are joined. Higher is more precise and slower
+  paths: 16  # how many alternative paths satex keeps at once before merging the oldest two. Higher is more precise and slower
     #! affects: precision, speed, memory
     #! example: `\ifdraft ... \fi` many times over: more paths keep each combination apart
   alike: 8  # how many paths at the same place may wait before their remaining input is merged into one. Higher is more precise and slower

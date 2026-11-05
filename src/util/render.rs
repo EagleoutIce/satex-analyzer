@@ -1127,7 +1127,6 @@ pub fn stats_json(analysis: &crate::analysis::machine::Analysis, elapsed: std::t
         "expansions": facts.expansions.len(),
         "forks": analysis.forks,
         "peak_paths": analysis.peak_paths,
-        "peak_live": analysis.peak_live,
         "joined_slots": analysis.joined_slots,
         "loop_heads": analysis.loop_heads,
         "vertices": analysis.graph.len(),

@@ -770,11 +770,7 @@ on, and it never invents a meaning.
   in it ([tex.web §§ 268][tw-268]–[283][tw-283]). The path furthest back in the source and in
   its input runs first, so the others wait where it will reach them. No
   path is dropped: paths that do not meet run on apart until they end. A
-  path that reaches `\end` stops. With `limits.paths` (10) paths alive,
-  counted over every nested scan, a new undecided conditional whose arms
-  run as the document's commands (not in an expansion to text, a value
-  scan or the output routine) is not split: it is widened as past
-  `limits.choices` (`paths-budget`). Past `limits.paths` waiting paths, two
+  path that reaches `\end` stops. Past `limits.paths` waiting paths, two
   that stand alike but for the text left in their token lists are joined:
   each list keeps the text both have left at its end, and what comes before
   it becomes one token that stands for either text (`paths-widened`).

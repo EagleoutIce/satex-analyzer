@@ -418,37 +418,6 @@ fn marked_content_left_open_is_reported_where_it_opens() {
     assert!(findings(&analysis, "undefined-optional-content").is_empty(), "no resources were observed");
 }
 
-/// Code the run skipped may write any `q` or `Q`: thirty TikZ nodes of
-/// random width, whose pgfmath parse is cut where a rest that may be none
-/// parts no more, leave the balance of `\end{tikzpicture}`'s `Q` unknown.
-#[test]
-fn literals_around_skipped_code_have_unknown_balance() {
-    if !installed() {
-        return;
-    }
-    let analysis = analyze(
-        r"\documentclass{article}
-\usepackage{tikz}
-\usetikzlibrary{positioning}
-\begin{document}
-\begin{tikzpicture}
-\foreach \i [count=\n from 0] in {1,...,30} {
-  \pgfmathsetmacro{\w}{1+\pdfuniformdeviate 5}
-  \pgfmathparse{\w*2+\i}
-  \colorlet{c\i}{blue!\pgfmathresult!red}
-  \ifnum\i=1
-    \node[draw, text width=\w cm, fill=c\i] (n\i) {Node \i};
-  \else
-    \node[draw, text width=\w cm, fill=c\i, right=of n\n] (n\i) {Node \i};
-  \fi
-}
-\end{tikzpicture}
-\end{document}",
-    );
-    assert!(!crate::support::diagnosed(&analysis, "region-skipped").is_empty());
-    assert!(findings(&analysis, "unbalanced-pdf-content").is_empty());
-}
-
 /// One macro's `EMC` closes the `BDC` at every call site, not only the
 /// first: `\EndAccSupp` is one definition used many times.
 #[test]

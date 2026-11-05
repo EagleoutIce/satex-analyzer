@@ -33,24 +33,6 @@ pub(super) struct Choice {
     joined: bool,
 }
 
-/// Which bounds a choice may pass ([`Machine::branch_at`]).
-#[derive(Clone, Copy, PartialEq)]
-pub(crate) enum Need {
-    /// An undecided conditional: every bound applies (`limits.paths` where
-    /// its arms run as commands). Refused, it is
-    /// widened (`widen_conditional`): its arms are skipped and their
-    /// effects over-approximated on one path.
-    Cond,
-    /// Any other split: refused, its caller reads on less precisely, so
-    /// `limits.paths` does not refuse it.
-    Any,
-    /// Bounded text a path already reads apart: it ends within the
-    /// bound, so the hot-site backstop does not apply either.
-    Bounded,
-    /// Paths that cannot be one: following one would be unsound.
-    Must,
-}
-
 /// A path parked between two commands.
 #[derive(Clone)]
 pub(super) struct Config {
@@ -320,13 +302,13 @@ impl Machine<'_> {
     /// `None` when the command may not make more choices: the caller leaves
     /// this one undecided another way.
     pub(crate) fn branch(&mut self, by: Sym, arms: usize, span: Span) -> Option<usize> {
-        self.branch_at(by, arms, span, Need::Any)
+        self.branch_at(by, arms, span, false)
     }
 
-    /// [`Machine::branch`], with the bounds `need` lifts: the fork
-    /// backstop of a hot site only bounds work, `limits.paths` bounds
-    /// paths alive.
-    pub(crate) fn branch_at(&mut self, by: Sym, arms: usize, span: Span, need: Need) -> Option<usize> {
+    /// [`Machine::branch`]; `needed` when no other way is sound (paths that
+    /// cannot be one): the fork backstop of a hot site, which only bounds
+    /// work, does not refuse it.
+    fn branch_at(&mut self, by: Sym, arms: usize, span: Span, needed: bool) -> Option<usize> {
         if arms < 2 {
             return (arms == 1).then_some(0);
         }
@@ -344,17 +326,9 @@ impl Machine<'_> {
         }
         // Replays count: each is work at the site. Only a new choice is
         // refused, so a replay follows the run it repeats.
-        if matches!(need, Need::Cond | Need::Any) && self.hot_site(span) && !scripted {
+        if !needed && self.hot_site(span) && !scripted {
             return None;
         }
-        // Paths alive with this choice's arms: past `limits.paths` a
-        // conditional that runs its arms is not split, its arms are joined
-        // (widened) on one path.
-        let live = self.live.0 + self.live.1 + self.runs + owed(&self.choices) + arms.min(RUNS);
-        if need == Need::Cond && self.executing() && !scripted && self.over_paths(live, span) {
-            return None;
-        }
-        self.out.peak_live = self.out.peak_live.max(live);
         let arm = self.script.get(i).copied().unwrap_or(0);
         self.out.heat(|h| &mut h.forks, span);
         match self.output_active() {
@@ -363,34 +337,6 @@ impl Machine<'_> {
         }
         self.choices.push(Choice { span, by, arms, arm, joined: false });
         Some(arm)
-    }
-
-    /// Whether a conditional here runs its arms as the document's
-    /// commands: not inside an expansion to text or a value scan, where a
-    /// widened arm would stand as unknown text inside the text or value,
-    /// nor in the output routine, whose page code then typesets unknown text.
-    fn executing(&self) -> bool {
-        self.edef_depth == 0 && self.scanning == 0 && !self.output_active()
-    }
-
-    /// Whether `live` paths pass `limits.paths` (0: no bound), said once
-    /// per site.
-    fn over_paths(&mut self, live: usize, site: Span) -> bool {
-        let limit = usize::from(self.limits.paths);
-        if limit == 0 || live <= limit {
-            return false;
-        }
-        let file = self.out.short_name(site.file).to_string();
-        self.diagnose(
-            Severity::Imprecision,
-            "paths-budget",
-            site,
-            format!(
-                "more than {limit} paths were alive: the choice at {file}:{} was not split, its arms were joined",
-                site.line
-            ),
-        );
-        true
     }
 
     /// The arm [`Machine::branch`] gave does not exist, nor any after it:
@@ -451,8 +397,6 @@ impl Machine<'_> {
                     commands: 0,
                 }
             });
-        let live = self.live;
-        self.live = (live.0 + live.1 + self.runs + owed(&outer.1), 0);
         let mut ended = false;
         while !self.out.exhausted {
             // Between two commands of the run: the language server answers meanwhile.
@@ -482,10 +426,8 @@ impl Machine<'_> {
             if self.lone && paths.top {
                 self.approximated = false;
             }
-            self.live.1 = paths.parked.len() + paths.done.len() + paths.arrived.len();
             let next = if finished { None } else { Some(self.explore(&mut paths, true)) };
             self.waiting = paths.parked.len() + paths.done.len();
-            self.out.peak_live = self.out.peak_live.max(self.live.0 + self.waiting + paths.arrived.len() + 1);
             let peak = match self.output_active() {
                 true => &mut self.out.peak_output_paths,
                 false => &mut self.out.peak_paths,
@@ -622,7 +564,7 @@ impl Machine<'_> {
                     None => {
                         let span = self.position_span();
                         self.swap_choices(&mut outer);
-                        let arm = self.branch_at(self.unknown, configs.len(), span, Need::Must);
+                        let arm = self.branch_at(self.unknown, configs.len(), span, true);
                         self.swap_choices(&mut outer);
                         let forced = match arm {
                             Some(_) => None,
@@ -699,7 +641,6 @@ impl Machine<'_> {
             self.env.unfork(fork);
         }
         self.keep_errors = keep_errors;
-        self.live = live;
         (self.script, self.choices, self.runs, self.replayable) = outer;
         (self.unit, self.lone) = outer_unit;
     }
@@ -3420,11 +3361,6 @@ fn partner(parked: &[Config], config: &Config, apart: &dyn Fn(&Config, &Config) 
         .copied()
         .find(|&i| parked[i].tag == *tag && own(i))
         .or_else(|| here.iter().copied().find(|&i| same_code(&parked[i].tag, tag) && own(i) && (merge || fi(i))))
-}
-
-/// Runs a command's choices still owe: the arms after each one taken.
-fn owed(choices: &[Choice]) -> usize {
-    choices.iter().map(|c| c.arms.min(RUNS) - 1 - c.arm.min(c.arms.min(RUNS) - 1)).sum()
 }
 
 /// The arms the next run of a command takes: the last choice with an arm

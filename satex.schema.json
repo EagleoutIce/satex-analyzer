@@ -2571,8 +2571,8 @@
           "x-example": "`memory: 2GiB` stops a runaway run before it slows the machine"
         },
         "paths": {
-          "default": 10,
-          "description": "how many paths may be alive at once. Past them an undecided \\if is not split, its arms are joined. Higher is more precise and slower",
+          "default": 16,
+          "description": "how many alternative paths satex keeps at once before merging the oldest two. Higher is more precise and slower",
           "minimum": 0,
           "type": "integer",
           "x-affects": [

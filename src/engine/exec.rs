@@ -10,21 +10,16 @@ use crate::engine::env::{Binding, GroupKind};
 use crate::analysis::facts::Severity;
 use crate::analysis::graph::ControlDep;
 use crate::analysis::graph::EdgeKind;
-use crate::analysis::machine::explore::Need;
 use crate::analysis::machine::{Accum, CondFrame, CondLimit, Machine, Step, Unit, Unk};
 use crate::engine::scan::glue_of;
 use crate::engine::tex::TextClass;
 use crate::engine::tex::{Catcode, MacroDef, Meaning, ParameterText, RegKind, Span, Sym, Tok, Token};
 use crate::engine::value::{self, Glue, Num, Quantity, Value};
 
-/// What a test teaches each arm: modes where it holds/fails, the
-/// register interval it read on either side, and for a switch a join left
-/// undecided whether the test is negated (each arm learns which it is).
-type Learn = (
-    Option<(crate::engine::mode::Modes, crate::engine::mode::Modes)>,
-    Option<(Sym, Option<Value>, Option<Value>)>,
-    Option<bool>,
-);
+/// What a test teaches each arm: modes where it holds/fails, and the
+/// register interval it read on either side.
+type Learn =
+    (Option<(crate::engine::mode::Modes, crate::engine::mode::Modes)>, Option<(Sym, Option<Value>, Option<Value>)>);
 
 /// The operands of `\if` or `\ifcat` a token may stand for, one list of
 /// (character, category) pairs per text, and the rest of a one-of text to
@@ -1918,10 +1913,7 @@ impl Machine<'_> {
         let narrow = narrowing.map(|n| self.narrowed(n, negate));
         match taken {
             Some(holds) => self.enter_arm(holds, by, span, base, kind, None),
-            None => {
-                let switch = (cond == Cond::Opaque && !opaque).then_some(negate);
-                self.undecided(by, span, base, kind, Some((refine, narrow, switch)))
-            }
+            None => self.undecided(by, span, base, kind, Some((refine, narrow))),
         }
     }
 
@@ -2258,7 +2250,7 @@ impl Machine<'_> {
             values
         });
         let arms = selectors.as_ref().map_or(usize::MAX, Vec::len);
-        let Some(arm) = self.branch_at(by, arms, span, Need::Cond) else {
+        let Some(arm) = self.branch(by, arms, span) else {
             return self.widen_conditional(by, span, base);
         };
         let n = match &selectors {
@@ -2340,17 +2332,11 @@ impl Machine<'_> {
         self.record_with(Step::Condition, by, span, || Some("undecided"));
         self.note_conditional(by, span, None);
         self.note_test_end(span);
-        let Some(arm) = self.branch_at(by, 2, span, Need::Cond) else {
+        let Some(arm) = self.branch(by, 2, span) else {
             return self.widen_conditional(by, span, base);
         };
         let holds = arm == 0;
-        if let Some((modes, narrow, switch)) = learn {
-            // The switch is `\iftrue` where the test holds: names a join
-            // paired with it follow ([`crate::engine::env::Corr`]).
-            if let Some(negate) = switch {
-                let cond = if holds != negate { Cond::True } else { Cond::False };
-                self.refine_to(by, &[Meaning::Primitive(Primitive::If(cond))]);
-            }
+        if let Some((modes, narrow)) = learn {
             if let Some((yes, no)) = modes {
                 self.mode = if holds { yes } else { no };
             }
@@ -2905,25 +2891,15 @@ impl Machine<'_> {
     /// to be read narrowed alike (condition refinement).
     pub(crate) fn split_rest(&mut self, t: Token, class: crate::engine::tex::TextClass) -> bool {
         let Some(sym) = t.cs() else { return false };
-        let len = self.text_len(t);
-        let full = self.unknown_text(Unk::Class(class, true, len, &[]), t.span);
-        // Its non-empty arm is read apart on: the splits after it end
-        // within the bound. A first split counts at its site.
-        if let (Some(_), Some(f)) = (len, full.cs()) {
-            self.scratch.apart.insert(f);
-        }
-        let enter = |m: &mut Self, arm| {
+        let full = self.unknown_text(Unk::Class(class, true, self.text_len(t), &[]), t.span);
+        self.split(sym, t.span, 2, |m, arm| {
             let to = (arm == 1).then_some(full);
             m.narrow_pending(t, to);
             if let Some(full) = to {
                 m.unread(full);
             }
             true
-        };
-        match self.scratch.apart.contains(&sym) {
-            true => self.split_bounded(sym, t.span, 2, enter),
-            false => self.split(sym, t.span, 2, enter),
-        }
+        })
     }
 
     /// [`Machine::split_empty`] for an `\if` operand read with expansion.

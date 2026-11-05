@@ -24,24 +24,6 @@ pub fn doubt(analysis: &Analysis, index: usize) -> Option<String> {
     gap_between(analysis, 0, index)
 }
 
-/// Diagnostics of code the run did not follow: an undecided conditional
-/// whose arms were skipped, a call or loop summarized, an expansion cut.
-/// What that code wrote out is not known.
-const SKIPS: &[&str] = &[
-    "undecided-condition",
-    "paths-budget",
-    "site-forks-widened",
-    "recursion-widened",
-    "region-skipped",
-    "fault-contained",
-];
-
-/// Whether code the run did not follow ([`SKIPS`]) lies between the
-/// `from`th and the `to`th occurrence: what it wrote there is unknown.
-pub fn skipped_between(analysis: &Analysis, from: usize, to: usize) -> bool {
-    analysis.facts.diagnostics.iter().any(|d| SKIPS.contains(&d.code) && (from..=to).contains(&d.after))
-}
-
 /// [`doubt`] between the `from`th and the `to`th occurrence: what the run
 /// may have lost there (a closer an open operator waits for).
 pub fn gap_between(analysis: &Analysis, from: usize, to: usize) -> Option<String> {

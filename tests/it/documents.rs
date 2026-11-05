@@ -196,10 +196,6 @@ fixtures! {
     tikz_node_with_a_ref("tikz_node_with_ref", "mwe.tex");
     /// An arrow tip toward a point with an unknown coordinate.
     tikz_arrow_to_an_unknown_point("tikz_arrow_to_unknown_point", "mwe.tex");
-    /// The same arrow with no fork backstop: the parser's joins keep the
-    /// operation stack paired with its top and pgfmath's divide switch with
-    /// its result, so no parse meets a stack it never had.
-    tikz_arrow_to_an_unknown_point_without_the_fork_backstop("tikz_arrow_to_unknown_point", "unbounded.tex");
     /// An undefined name in a node's formula: the node's size must stay known.
     tikz_node_with_an_undefined_name_in_math("tikz_node_undefined_in_math", "mwe.tex");
     /// PNG images scaled to keep their aspect ratio inside beamer columns.
@@ -656,15 +652,6 @@ fn hex_of_two_wide_random_numbers_raises_nothing() {
 #[test]
 fn reparsing_a_pgfmath_result_of_unknown_width_raises_nothing() {
     check("pgfmath_reparse_unknown_width", "main.tex", &[]);
-}
-
-/// pgfmath parses a printed width of unknown sign and digits: each split
-/// of the bounded digits is taken (no site backstop decorrelates the
-/// octal `0` path from the digits after it), on few paths.
-#[test]
-fn parsing_a_printed_unknown_width_raises_nothing() {
-    let Some(a) = check("pgfmath_reparse_unknown_width", "printed.tex", &[]) else { return };
-    assert!(a.peak_paths <= 10, "{} paths", a.peak_paths);
 }
 
 /// A float after the thesis title page: the output routine stays bounded.

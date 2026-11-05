@@ -1795,22 +1795,11 @@ impl Env {
                 }
             }
         }
-        // Past the bound, the name forgotten first is the one whose loss
-        // merges the most arms: arms apart in that name alone. A name the
-        // others determine (an operation stacked or not, and the stack's
-        // top) merges none and stays paired. Ties go to the most bindings.
+        // Past the bound, the name with the most distinct bindings is
+        // forgotten first: few-valued pairings (an operation stacked or
+        // not) are what tells the arms apart.
         let mut corr = Corr { syms: apart, arms };
         while corr.arms.len() > self.sets.arms && corr.syms.len() > 2 {
-            let width = corr.syms.len();
-            let mut merges = vec![0usize; width];
-            for (i, x) in corr.arms.iter().enumerate() {
-                for y in &corr.arms[i + 1..] {
-                    let mut apart = (0..width).filter(|&n| !same_slot(&x[n], &y[n]));
-                    if let (Some(n), None) = (apart.next(), apart.next()) {
-                        merges[n] += 1;
-                    }
-                }
-            }
             let distinct = |n: usize| {
                 let mut seen: Vec<&Option<Binding>> = Vec::new();
                 for row in &corr.arms {
@@ -1820,7 +1809,7 @@ impl Env {
                 }
                 seen.len()
             };
-            let drop = (0..width).max_by_key(|&n| (merges[n], distinct(n))).expect("names");
+            let drop = (0..corr.syms.len()).max_by_key(|&n| distinct(n)).expect("names");
             let keep: Vec<usize> = (0..corr.syms.len()).filter(|&n| n != drop).collect();
             corr = corr.project(&keep);
             let mut rows: Vec<Vec<Option<Binding>>> = Vec::new();
