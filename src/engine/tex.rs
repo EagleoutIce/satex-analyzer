@@ -1269,7 +1269,7 @@ pub struct Mouth {
 /// How one read of a line went, as `satex lsp`'s incremental plugins ask:
 /// the column its comment began at and the columns (below 129) whose space
 /// it skipped in state N or S without a token (tex.web §§ 347, 354).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LineRead {
     pub line: u32,
     pub comment: Option<u32>,
@@ -1466,6 +1466,14 @@ impl Mouth {
     fn end_read(&mut self, whole: bool) {
         let read = std::mem::take(&mut self.reading);
         self.lines.push(LineRead { line: self.line, comment: read.comment.filter(|_| whole), ..read });
+    }
+
+    /// The line being read counts as read up to here, without a comment:
+    /// what a resume at a [`Mouth::quiet_line_mark`] keeps of it.
+    pub fn note_partial_line(&mut self) {
+        if self.col > 1 {
+            self.lines.push(LineRead { line: self.line, comment: None, ..self.reading });
+        }
     }
 
     /// This mouth standing at `mark` of its file.

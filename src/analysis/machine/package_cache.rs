@@ -552,6 +552,7 @@ struct Effect {
     colors: Vec<CachedColorDef>,
     color_uses: Vec<CachedColorUse>,
     color_stack: Vec<CachedColorStack>,
+    facts: FactsAdded,
     diagnostics: Vec<CachedDiagnostic>,
     metadata: Vec<(String, String, String)>,
     csnames: Vec<(Span, u8, bool, bool)>,
@@ -738,6 +739,9 @@ pub(super) struct Log {
     pub(super) shapes: Vec<(Sym, String)>,
     pub(super) gaps_seen: Vec<(&'static str, Sym)>,
     pub(super) gaps_new: Vec<(&'static str, Sym, usize)>,
+    /// Rows from before the segment it counted into, each once, with the count then.
+    rows: Vec<(usize, u32)>,
+    rows_seen: HashSet<usize>,
     csnames: Vec<(Span, CsnameRole)>,
     csname_spans: HashSet<Span>,
     origins: Vec<((RegKind, u16), u8)>,
@@ -768,6 +772,33 @@ struct Before {
     /// Call the load is read on behalf of.
     reader: Option<NodeId>,
     carried: Carried,
+    facts: FactMaps,
+}
+
+/// The facts at the load's start that a segment records as changes.
+#[derive(Clone)]
+struct FactMaps {
+    absent: std::collections::BTreeSet<String>,
+    written_files: std::collections::BTreeSet<String>,
+    types: HashMap<Span, crate::analysis::roles::Ty>,
+    slots: HashMap<Span, String>,
+    length_fonts: HashMap<Span, Vec<u16>>,
+    lines: HashMap<(FileId, u32), crate::engine::tex::LineRead>,
+}
+
+/// Facts a segment recorded, most of the user's own files (an own package):
+/// maps and sets as changed since the load's start, lists as added by the segment.
+#[derive(Serialize, Deserialize, Default)]
+struct FactsAdded {
+    absent: Vec<String>,
+    written_files: Vec<String>,
+    types: Vec<(Span, Option<crate::analysis::roles::Ty>)>,
+    slots: Vec<(Span, Option<String>)>,
+    length_fonts: Vec<(Span, Option<Vec<crate::analysis::facts::FontState>>)>,
+    lines: Vec<((FileId, u32), Option<crate::engine::tex::LineRead>)>,
+    vars: Vec<crate::analysis::facts::VarUse>,
+    letters: Vec<(Span, char, bool)>,
+    groups: Vec<(Span, Span)>,
 }
 
 impl Before {
@@ -807,6 +838,9 @@ struct Marks {
     colors: usize,
     color_uses: usize,
     color_stack: usize,
+    vars: usize,
+    letters: usize,
+    groups: usize,
     diagnostics: usize,
     metadata: usize,
     files: usize,
@@ -940,6 +974,10 @@ pub fn prune(dir: &Path, bound: u64) -> crate::caches::format::Pruned {
 
 fn cache_file(dir: &Path, name: &str, key: u64) -> PathBuf {
     dir.join(format!("{}{}-{key:016x}.postcard", family(name), crate::caches::format::cache_key()))
+}
+
+fn moved_keys<V>(change: Vec<(Span, Option<V>)>, at: impl Fn(Span) -> Span) -> Vec<(Span, Option<V>)> {
+    change.into_iter().map(|(k, v)| (at(k), v)).collect()
 }
 
 fn span_out(span: Span, site: Span) -> Span {
@@ -1375,7 +1413,59 @@ impl Machine<'_> {
             assignments: self.env.assignments,
             recent_file_spans: self.recent_file_spans.clone(),
             carried: self.carried.clone(),
+            facts: FactMaps {
+                absent: self.out.facts.absent.clone(),
+                written_files: self.out.facts.written_files.clone(),
+                types: self.out.facts.types.clone(),
+                slots: self.out.facts.slots.clone(),
+                length_fonts: self.out.facts.length_fonts.clone(),
+                lines: self.out.facts.lines.clone(),
+            },
         }
+    }
+
+    fn facts_added(&self, before: &FactMaps, m: &Marks, site: Span) -> FactsAdded {
+        let f = &self.out.facts;
+        let out = |span: Span| span_out(span, site);
+        let fonts = |rows: Vec<u16>| rows.iter().map(|&r| self.out.font_states[usize::from(r)].clone()).collect();
+        FactsAdded {
+            absent: f.absent.difference(&before.absent).cloned().collect(),
+            written_files: f.written_files.difference(&before.written_files).cloned().collect(),
+            types: moved_keys(f.types.delta(&before.types), out),
+            slots: moved_keys(f.slots.delta(&before.slots), out),
+            length_fonts: f
+                .length_fonts
+                .delta(&before.length_fonts)
+                .into_iter()
+                .map(|(k, v)| (out(k), v.map(fonts)))
+                .collect(),
+            lines: f.lines.delta(&before.lines),
+            vars: f.vars[m.vars.min(f.vars.len())..]
+                .iter()
+                .map(|v| crate::analysis::facts::VarUse { span: out(v.span), ..v.clone() })
+                .collect(),
+            letters: f.letters[m.letters.min(f.letters.len())..].iter().map(|&(s, c, l)| (out(s), c, l)).collect(),
+            groups: f.groups[m.groups.min(f.groups.len())..].iter().map(|&(a, b)| (out(a), out(b))).collect(),
+        }
+    }
+
+    fn replay_facts_added(&mut self, added: &FactsAdded, site: Span) {
+        let at = |span: Span| span_in(span, site);
+        let fonts: Vec<_> = added
+            .length_fonts
+            .iter()
+            .map(|(k, v)| (at(*k), v.as_ref().map(|v| v.iter().map(|s| self.font_state_row(s.clone())).collect())))
+            .collect();
+        let f = &mut self.out.facts;
+        f.absent.extend(added.absent.iter().cloned());
+        f.written_files.extend(added.written_files.iter().cloned());
+        f.types.apply(&moved_keys(added.types.clone(), at));
+        f.slots.apply(&moved_keys(added.slots.clone(), at));
+        f.length_fonts.apply(&fonts);
+        f.lines.apply(&added.lines);
+        f.vars.extend(added.vars.iter().map(|v| crate::analysis::facts::VarUse { span: at(v.span), ..v.clone() }));
+        f.letters.extend(added.letters.iter().map(|&(s, c, l)| (at(s), c, l)));
+        f.groups.extend(added.groups.iter().map(|&(a, b)| (at(a), at(b))));
     }
 
     /// Interpreter state that must match for checkpoints. Every machine field is listed with its cache role.
@@ -1456,6 +1546,7 @@ impl Machine<'_> {
             counter_namespace: _,
             name_token: _,
             own_files: _,
+            digits_made: _,
             gaps_raised: _,
             tex_errors: _,
             join_commands: _,
@@ -1583,7 +1674,6 @@ impl Machine<'_> {
             par_inserted: _,
             // Output bookkeeping, not runtime state.
             diag_seen: _,
-            diag_floor: _,
             diag_raised: _,
             diag_live: _,
             quantity: _,
@@ -2438,6 +2528,7 @@ impl Machine<'_> {
                 certain: u.certain && self.exact(),
             });
         }
+        self.replay_facts_added(&st.facts, site);
         for (stack, op, span, certain) in &st.color_stack {
             self.out.facts.color_stack.push(ColorStack {
                 stack: *stack,
@@ -2457,17 +2548,20 @@ impl Machine<'_> {
             let span = span_in(*span, site);
             // Loading stops the origin search: only an own file is one.
             let origin = self.own_file(span.file).then_some(span);
-            self.out.facts.diagnostics.push(Diagnostic {
-                severity: SEVERITIES[*severity as usize],
-                code: leak(code),
-                message: relocate_text(message, &relocate),
-                span,
-                count: *count,
-                origin,
-                after: replayed_from,
-            });
+            let (severity, code, message) =
+                (SEVERITIES[*severity as usize], leak(code), relocate_text(message, &relocate));
+            let key = super::diag_key(code, span, &message, origin);
+            match self.diag_row(key, severity, &message) {
+                Some(i) => {
+                    let d = &mut self.out.facts.diagnostics[i];
+                    d.count = d.count.saturating_add(*count);
+                }
+                None => {
+                    let row = Diagnostic { severity, code, message, span, count: *count, origin, after: replayed_from };
+                    self.push_row(key, row);
+                }
+            }
         }
-        self.diag_floor = self.out.facts.diagnostics.len();
         for (code, sym) in &st.gaps {
             self.gaps.insert((leak(code), *sym));
         }
@@ -2667,10 +2761,10 @@ impl Machine<'_> {
             colors: self.out.facts.colors.len(),
             color_uses: self.out.facts.color_uses.len(),
             color_stack: self.out.facts.color_stack.len(),
-            diagnostics: {
-                self.diag_floor = self.out.facts.diagnostics.len();
-                self.diag_floor
-            },
+            vars: self.out.facts.vars.len(),
+            letters: self.out.facts.letters.len(),
+            groups: self.out.facts.groups.len(),
+            diagnostics: self.out.facts.diagnostics.len(),
             metadata: self.out.metadata.len(),
             files: self.out.files.len(),
             steps: self.out.steps,
@@ -2697,6 +2791,8 @@ impl Machine<'_> {
         rec.seg_call_finished = false;
         rec.log.sites.clear();
         rec.log.sites_seen.clear();
+        rec.log.rows.clear();
+        rec.log.rows_seen.clear();
         rec.log.site_modes.clear();
     }
 
@@ -2837,6 +2933,16 @@ impl Machine<'_> {
         self.out.steps += 1;
     }
 
+    /// A diagnostic counts into row `i`: a row from before the segment is
+    /// noted with its count, so the segment carries what it added.
+    pub(super) fn note_row(&mut self, i: usize) {
+        let count = self.out.facts.diagnostics[i].count;
+        let Some(rec) = self.package_capture.as_mut() else { return };
+        if i < rec.marks.diagnostics && rec.log.rows_seen.insert(i) {
+            rec.log.rows.push((i, count));
+        }
+    }
+
     /// Call site about to expand: note it and call count on first segment reach.
     pub(super) fn note_site(&mut self, span: Span, name: Sym) {
         let mode = self.mode;
@@ -2919,6 +3025,12 @@ impl Machine<'_> {
             }
             return;
         }
+        if matches!(self.input.last(), Some(Frame::File { mouth, .. }) if mouth.position().0 < mark.line)
+            && let Some(Frame::File { mouth, .. }) = self.input.last_mut()
+        {
+            mouth.note_partial_line();
+        }
+        self.note_pending_lines();
         let Some(mut node) = self.encode_segment(mark) else {
             if let Some(rec) = self.package_capture.as_mut() {
                 rec.log.spoiled.get_or_insert("a segment could not be written");
@@ -3331,18 +3443,24 @@ impl Machine<'_> {
             .collect();
         let gap_of: HashMap<usize, (&'static str, Sym)> =
             rec.log.gaps_new[m.gaps_new..].iter().map(|(code, sym, at)| (*at, (*code, *sym))).collect();
-        let diagnostics = self.out.facts.diagnostics[m.diagnostics..]
+        let diagnostics = rec
+            .log
+            .rows
             .iter()
-            .enumerate()
-            .map(|(i, d)| {
-                (
-                    index_of(&SEVERITIES, &d.severity),
-                    d.code.to_string(),
-                    d.message.clone(),
-                    span_out(d.span, site),
-                    gap_of.get(&(m.diagnostics + i)).map(|(code, sym)| (code.to_string(), *sym)),
-                    d.count,
-                )
+            .copied()
+            .chain((m.diagnostics..self.out.facts.diagnostics.len()).map(|i| (i, 0)))
+            .filter_map(|(i, then)| {
+                let d = &self.out.facts.diagnostics[i];
+                (d.count > then).then(|| {
+                    (
+                        index_of(&SEVERITIES, &d.severity),
+                        d.code.to_string(),
+                        d.message.clone(),
+                        span_out(d.span, site),
+                        gap_of.get(&i).map(|(code, sym)| (code.to_string(), *sym)),
+                        d.count - then,
+                    )
+                })
             })
             .collect();
         let loads = self.out.facts.loads[m.loads..]
@@ -3451,6 +3569,7 @@ impl Machine<'_> {
             colors,
             color_uses,
             color_stack,
+            facts: self.facts_added(&before.facts, &m, site),
             diagnostics,
             metadata: self.out.metadata[m.metadata..]
                 .iter()
@@ -3489,6 +3608,13 @@ impl Machine<'_> {
                     let before_binding = seg_binding(*sym);
                     let alias = before.aliases.get(sym).map(|a| self.out.interner.name(*a).to_string());
                     let digested = digested_kinds(self.out.interner.name(*sym), *bits);
+                    // A name the analysis makes is written where it is made: one
+                    // read here and absent at the start would key on this run alone.
+                    debug_assert!(
+                        before_binding.is_some() || !self.out.interner.name(*sym).starts_with('\u{2}'),
+                        "key on a name this load made unwritten: {}",
+                        self.out.interner.cs(*sym)
+                    );
                     (*sym, *bits, binding_digest(before_binding, alias.as_deref(), digested))
                 })
                 .collect::<Vec<(Sym, u8, u64)>>()

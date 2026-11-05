@@ -738,6 +738,35 @@ pub(crate) enum Frame {
 #[derive(Clone, Default)]
 pub(crate) struct Input(Vec<Rc<Frame>>);
 
+/// Notes the lines `mouth` read to their end: of the user's files, as
+/// [`Machine::own_file`] decided at the open (undecided ones are kept).
+fn note_lines(out: &mut Analysis, own_files: &[u8], mouth: &mut Mouth) {
+    if mouth.lines.is_empty() {
+        return;
+    }
+    let lines = std::mem::take(&mut mouth.lines);
+    if own_files.get(usize::from(mouth.file)) != Some(&1) {
+        out.facts.note_reads(mouth.file, lines);
+    }
+}
+
+/// What makes two diagnostics one row: code, place, message, and for an
+/// engine error the place in the user's files it came from, so each cause is shown.
+pub(crate) fn diag_key(
+    code: &'static str,
+    span: Span,
+    message: &str,
+    origin: Option<Span>,
+) -> (&'static str, Span, u64) {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    message.hash(&mut hasher);
+    if TEX_ERRORS.iter().any(|(c, _)| *c == code) {
+        origin.hash(&mut hasher);
+    }
+    (code, span, hasher.finish())
+}
+
 impl Input {
     pub(crate) fn len(&self) -> usize {
         self.0.len()
@@ -765,6 +794,10 @@ impl Input {
 
     pub(crate) fn last_mut(&mut self) -> Option<&mut Frame> {
         self.0.last_mut().map(Rc::make_mut)
+    }
+
+    pub(crate) fn get_mut(&mut self, i: usize) -> Option<&mut Frame> {
+        self.0.get_mut(i).map(Rc::make_mut)
     }
 
     pub(crate) fn push(&mut self, frame: Frame) {
@@ -1564,10 +1597,7 @@ pub struct Machine<'a> {
     pub(crate) narrowing: Option<crate::engine::exec::Narrowing>,
     /// Where each diagnostic was first raised, by code, place and message
     /// hash, so that a repeat is counted and not stored again.
-    diag_seen: crate::fixed::LookupMap<(&'static str, Span, u64), usize>,
-    /// Diagnostics before this index belong to a finished cache segment and
-    /// are not counted into.
-    pub(crate) diag_floor: usize,
+    pub(crate) diag_seen: crate::fixed::LookupMap<(&'static str, Span, u64), usize>,
     /// The row of every raise, in order: a run's raises are a range of it.
     diag_raised: Vec<usize>,
     /// Per row, its raises on paths not refuted ([`Machine::retract`]).
@@ -1808,6 +1838,9 @@ pub struct Machine<'a> {
     name_token: Option<Token>,
     /// [`Machine::project_file`] per file: 0 not asked, 1 no, 2 yes.
     own_files: Vec<u8>,
+    /// The step the last typed digits were made at, and how many then: their
+    /// names, so a name never depends on how many names the run interned.
+    pub(crate) digits_made: (u64, u32),
     /// The group depth and the open conditionals when the run last read from
     /// a file: the state a cut rolls back to.
     /// How many gaps (`Severity::Unsupported`) the run has raised, and the
@@ -2424,7 +2457,6 @@ impl<'a> Machine<'a> {
             ranged: None,
             narrowing: None,
             diag_seen: Default::default(),
-            diag_floor: 0,
             diag_raised: Vec::new(),
             diag_live: Vec::new(),
             conds: Rc::default(),
@@ -2512,6 +2544,7 @@ impl<'a> Machine<'a> {
             reading_command: false,
             name_token: None,
             own_files: Vec::new(),
+            digits_made: (0, 0),
             gaps_raised: 0,
             tex_errors: 0,
             join_commands: Vec::new(),
@@ -4366,7 +4399,7 @@ will look undefined",
                     self.leak_call_recs();
                 }
             }
-            let Self { input, catcodes, end_line, out, .. } = self;
+            let Self { input, catcodes, end_line, out, own_files, .. } = self;
             match input.last_mut() {
                 None => return None,
                 Some(Frame::Boundary) => return None,
@@ -4434,9 +4467,7 @@ will look undefined",
                 Some(Frame::File { mouth, eof_seen, .. }) => {
                     let before = mouth.clone();
                     let next = mouth.next_with(catcodes, &mut out.interner, *end_line);
-                    if !mouth.lines.is_empty() {
-                        out.facts.note_reads(mouth.file, std::mem::take(&mut mouth.lines));
-                    }
+                    note_lines(out, own_files, mouth);
                     if let Some(t) = next {
                         // A character that may be structural: a path for each
                         // category, on which it has that one, reads it again.
@@ -5012,6 +5043,7 @@ will look undefined",
             && let Some((_, opened)) = self.env.open_group_spans().last().copied()
             && opened.file == span.file
             && opened.line < span.line
+            && self.own_file(span.file)
         {
             self.out.facts.groups.push((opened, span));
         }
@@ -5510,12 +5542,11 @@ will look undefined",
             }
             return;
         }
-        if let Some(capture) = &mut self.package_capture {
-            capture.log.gaps_new.push((code, name, self.out.facts.diagnostics.len()));
-            // The gap names this index: the diagnostic must be a new row.
-            self.diag_floor = self.out.facts.diagnostics.len();
-        }
         self.diagnose(severity, code, span, message);
+        let row = self.diag_raised.last().copied().unwrap_or_default();
+        if let Some(capture) = &mut self.package_capture {
+            capture.log.gaps_new.push((code, name, row));
+        }
     }
 
     /// A gap the constructs around it widen for, whether or not it was
@@ -5568,28 +5599,16 @@ will look undefined",
             }
             None => {}
         }
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        message.hash(&mut hasher);
         // A runaway has read its file to where it gave up: the command in
         // the user's files that started it is the place, not that end.
         let origin = match code {
             "runaway-argument" if !self.own_file(span.file) => self.project_site.or_else(|| self.user_origin(span)),
             _ => self.user_origin(span),
         };
-        // An engine error is one row per place in the user's files it came
-        // from, so each cause is shown.
-        if TEX_ERRORS.iter().any(|(c, _)| *c == code) {
-            origin.hash(&mut hasher);
-        }
-        let key = (code, span, hasher.finish());
-        let diagnostics = &mut self.out.facts.diagnostics;
-        if let Some(&i) = self.diag_seen.get(&key)
-            && i >= self.diag_floor
-            && let Some(d) = diagnostics.get_mut(i)
-            && d.severity == severity
-            && d.message == message
-        {
+        let key = diag_key(code, span, &message, origin);
+        if let Some(i) = self.diag_row(key, severity, &message) {
+            self.note_row(i);
+            let d = &mut self.out.facts.diagnostics[i];
             // The same gap at the same place over and over is one path
             // repeating itself, not new information: it is counted up to
             // `limits.repeat_failures`, and then the path is given up.
@@ -5614,14 +5633,26 @@ will look undefined",
             d.count = d.count.saturating_add(1);
             return;
         }
-        self.diag_seen.insert(key, diagnostics.len());
-        self.diag_raised.push(diagnostics.len());
-        // Rows made otherwise (a cached package's) stay.
-        self.diag_live.resize(diagnostics.len() + 1, 1);
-        self.diag_live[diagnostics.len()] = 1;
+        let n = self.out.facts.diagnostics.len();
+        self.diag_raised.push(n);
         let after = self.out.facts.occurrences.len();
-        let diagnostics = &mut self.out.facts.diagnostics;
-        diagnostics.push(Diagnostic { severity, code, message, span, count: 1, origin, after });
+        self.push_row(key, Diagnostic { severity, code, message, span, count: 1, origin, after });
+    }
+
+    /// A new row, counted into from now on. Rows made before without a
+    /// raise (a cached package's) stay.
+    pub(crate) fn push_row(&mut self, key: (&'static str, Span, u64), row: Diagnostic) {
+        let n = self.out.facts.diagnostics.len();
+        self.diag_seen.insert(key, n);
+        self.diag_live.resize(n + 1, 1);
+        self.out.facts.diagnostics.push(row);
+    }
+
+    /// The row a diagnostic with `key` counts into, if there is one.
+    pub(crate) fn diag_row(&self, key: (&'static str, Span, u64), severity: Severity, message: &str) -> Option<usize> {
+        let i = *self.diag_seen.get(&key)?;
+        let d = self.out.facts.diagnostics.get(i)?;
+        (d.severity == severity && d.message == message).then_some(i)
     }
 
     /// The raises `raised` ([`Machine::raised_mark`] on) were made on a
@@ -6741,6 +6772,17 @@ will look undefined",
         // What the run writes is listed in `written` only once it ends.
         let path = self.out.file_path(file);
         self.out.project_file(file) && !path.is_some_and(|p| self.outputs.keys().any(|name| p.ends_with(name)))
+    }
+
+    /// Notes the lines every file being read has read to their end so far.
+    pub(crate) fn note_pending_lines(&mut self) {
+        for i in 0..self.input.len() {
+            if matches!(self.input.get(i), Some(Frame::File { mouth, .. }) if !mouth.lines.is_empty())
+                && let Some(Frame::File { mouth, .. }) = self.input.get_mut(i)
+            {
+                note_lines(&mut self.out, &self.own_files, mouth);
+            }
+        }
     }
 
     /// [`Machine::project_file`], asked once per file.

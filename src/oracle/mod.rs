@@ -240,7 +240,7 @@ fn token_ends(t: Token, a: &Analysis, want: &[char], at: usize, depth: u8) -> BT
             return any();
         };
         // A slice is places `[i, j)` of a `k`-digit spelling.
-        let places: Vec<usize> = tail.split(':').skip(1).filter_map(|x| x.parse().ok()).collect();
+        let places: Vec<usize> = tail.split(':').take(3).filter_map(|x| x.parse().ok()).collect();
         let width = typed.contains('@').then(|| places.get(2).zip(places.get(1)).map(|(j, i)| j - i)).flatten();
         let first = typed.contains('@') && places.get(1) == Some(&0) && places.first().is_some_and(|k| *k > 1);
         return digits(1, width.is_none(), width.is_none())

@@ -1125,21 +1125,25 @@ impl Machine<'_> {
             color: text(&bodies[5]),
             font: self.observed_font(),
         };
+        self.font_watch.bodies = bodies;
+        self.font_watch.at = at;
+        self.font_watch.state = self.font_state_row(state);
+        self.font_watch.state
+    }
+
+    /// The [`crate::analysis::machine::Analysis::font_states`] row of `state`, added when new.
+    pub(crate) fn font_state_row(&mut self, state: crate::analysis::facts::FontState) -> u16 {
         let states = &mut self.out.font_states;
-        let row = match states.iter().position(|kept| *kept == state) {
-            Some(row) => row,
+        match states.iter().position(|kept| *kept == state) {
+            Some(row) => row as u16,
             None if states.len() < usize::from(u16::MAX) => {
                 states.push(state);
-                states.len() - 1
+                (states.len() - 1) as u16
             }
             // Too many states to fit: left at "not known" rather than
             // pointed at the wrong row.
             None => 0,
-        };
-        self.font_watch.bodies = bodies;
-        self.font_watch.at = at;
-        self.font_watch.state = row as u16;
-        self.font_watch.state
+        }
     }
 
     /// The fonts the run loaded, by the number `\the\font` gives them, with

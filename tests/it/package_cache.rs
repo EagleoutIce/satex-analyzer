@@ -87,8 +87,116 @@ fn facts(analysis: &Analysis) -> Vec<String> {
             .map(|e| format!("{} {:?} {} {}", analysis.interner.name(e.name), e.span, e.meaning.as_str(), e.count)),
     );
     out.push(format!("{} vertices, {} edges", analysis.graph.len(), analysis.graph.edge_count()));
+    let text = &analysis.facts.text;
+    out.push(format!("typeset {:?} pars {:?} open {:?}", text.chars, text.pars, text.open));
     out.push(serde_json::to_string(&satex::linter::lint(analysis)).unwrap_or_default());
     out
+}
+
+/// Every [`satex::analysis::facts::Facts`] field, by name, rendered with names for symbols.
+fn every_fact(a: &Analysis) -> Vec<(&'static str, Vec<String>)> {
+    let f = &a.facts;
+    let n = |s: satex::engine::tex::Sym| a.interner.name(s).to_string();
+    let o = |s: Option<satex::engine::tex::Sym>| s.map(n);
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+    let t = &f.text;
+    vec![
+        (
+            "defs",
+            f.defs
+                .iter()
+                .map(|d| {
+                    format!("{} {} {} {:?} {} {} {}", n(d.name), n(d.by), d.tag, d.span, d.global, d.certain, d.depth)
+                })
+                .collect(),
+        ),
+        ("written_files", f.written_files.iter().cloned().collect()),
+        ("absent", f.absent.iter().cloned().collect()),
+        ("shapes", sorted(f.shapes.iter().map(|(k, v)| format!("{} {v}", n(*k))).collect())),
+        ("types", sorted(f.types.iter().map(|(k, v)| format!("{k:?} {v:?}")).collect())),
+        ("length_fonts", sorted(f.length_fonts.iter().map(|(k, v)| format!("{k:?} {v:?}")).collect())),
+        ("vars", f.vars.iter().map(|v| format!("{} {:?} {} {:?}", n(v.name), v.kind, n(v.by), v.span)).collect()),
+        ("letters", f.letters.iter().map(|l| format!("{l:?}")).collect()),
+        (
+            "expansions",
+            f.expansions
+                .iter()
+                .map(|e| format!("{} {:?} {} {} {:?}", n(e.name), e.span, e.meaning.as_str(), e.count, o(e.within)))
+                .collect(),
+        ),
+        (
+            "loads",
+            f.loads.iter().map(|l| format!("{} {} {:?} {:?}", l.name, l.status.as_str(), l.path, l.span)).collect(),
+        ),
+        (
+            "occurrences",
+            f.occurrences
+                .iter()
+                .map(|x| format!("{:?} {} {:?} {:?} {}", x.kind, x.key, x.detail, x.span, x.certain))
+                .collect(),
+        ),
+        ("literals", f.literals.iter().map(|l| format!("{l:?}")).collect()),
+        (
+            "diagnostics",
+            f.diagnostics.iter().map(|d| format!("{} {:?} {} {}", d.code, d.span, d.message, d.count)).collect(),
+        ),
+        ("csnames", sorted(f.csnames.iter().map(|(k, v)| format!("{k:?} {v:?}")).collect())),
+        ("slots", sorted(f.slots.iter().map(|(k, v)| format!("{k:?} {v}")).collect())),
+        ("groups", f.groups.iter().map(|g| format!("{g:?}")).collect()),
+        ("raised", f.raised.iter().map(|r| format!("{} {} {:?} {}", n(r.name), r.text, r.span, r.certain)).collect()),
+        ("spaces", sorted(f.spaces.iter().map(|(k, v)| format!("{k:?} {v:?}")).collect())),
+        ("kept_spaces", sorted(f.kept_spaces.iter().map(|k| format!("{k:?}")).collect())),
+        (
+            "conditionals",
+            f.conditionals
+                .iter()
+                .map(|c| format!("{} {:?} {:?} {:?} {:?} {}", n(c.name), c.at, c.arms, c.fi, c.taken, c.undecided))
+                .collect(),
+        ),
+        (
+            "quantities",
+            f.quantities
+                .iter()
+                .map(|q| format!("{} {} {:?} {:?} {}", q.number, q.unit, q.span, o(q.via), q.certain))
+                .collect(),
+        ),
+        (
+            "colors",
+            f.colors
+                .iter()
+                .map(|c| format!("{} {:?} {:?} {:?} {}", c.name, c.span, o(c.via), o(c.package), c.certain))
+                .collect(),
+        ),
+        (
+            "color_uses",
+            f.color_uses
+                .iter()
+                .map(|c| format!("{} {:?} {} {:?} {}", c.name, c.role, c.defined, c.span, c.certain))
+                .collect(),
+        ),
+        (
+            "color_stack",
+            f.color_stack.iter().map(|c| format!("{:?} {:?} {:?} {}", c.stack, c.op, c.span, c.certain)).collect(),
+        ),
+        ("text", vec![format!("{:?} {:?} {:?} {:?} {:?} {:?}", t.chars, t.at, t.pars, t.open, t.kept, t.closed)]),
+        ("lines", sorted(f.lines.iter().map(|(k, v)| format!("{k:?} {v:?}")).collect())),
+    ]
+}
+
+/// Each field a read and a replayed run disagree on.
+fn differing_facts(read: &Analysis, replayed: &Analysis) -> Vec<String> {
+    every_fact(read)
+        .into_iter()
+        .zip(every_fact(replayed))
+        .filter(|((_, x), (_, y))| x != y)
+        .map(|((name, x), (_, y))| {
+            let at = x.iter().zip(&y).take_while(|(p, q)| p == q).count();
+            format!("{name}: {} / {}: {:?} / {:?}", x.len(), y.len(), x.get(at), y.get(at))
+        })
+        .collect()
 }
 
 fn definitions(analysis: &Analysis) -> Vec<(String, u32)> {
@@ -184,6 +292,32 @@ fn same_facts(a: &Analysis, b: &Analysis) {
     }
 }
 
+/// A package of the user's own directory records what the user's files do
+/// (expl3 variables, letters, argument types, groups): its replay reports
+/// every such fact reading it did.
+#[test]
+fn an_own_package_replays_every_fact_reading_it_records() {
+    if !installed() {
+        return;
+    }
+    let dir = project("own-facts");
+    std::fs::write(
+        dir.join("facty.sty"),
+        "\\ProvidesPackage{facty}[2020/01/01 v1]\n\\makeatletter\n\\newcount\\factycount \\factycount=3\n\
+         \\newdimen\\factydim \\factydim=2em\n\\begingroup\n\\def\\factyx{}\n\\endgroup\n\
+         \\expandafter\\def\\csname r@facty\\endcsname{}\n\\IfFileExists{facty-absent.tex}{}{}\n\
+         \\ExplSyntaxOn\n\\tl_new:N \\g_facty_tl\n\\tl_gset:Nn \\g_facty_tl {a}\n\\ExplSyntaxOff\n\\makeatother\n",
+    )
+    .expect("facty.sty");
+    let document = "\\documentclass{article}\n\\usepackage{facty}\n\\begin{document}x\\end{document}\n";
+    let read = run(&dir, document);
+    let replayed = run(&dir, document);
+    assert_eq!(served(&read, "facty"), Some(false), "{:?}", read.package_caches);
+    assert_eq!(served(&replayed, "facty"), Some(true), "{:?}", replayed.package_caches);
+    assert!(read.facts.vars.iter().any(|v| read.interner.name(v.name).contains("g_facty_tl")));
+    assert_eq!(differing_facts(&read, &replayed), Vec::<String>::new());
+}
+
 /// tagpdf replays whole: the random ids (`\\int_rand:n`) its namespaces
 /// get fork, and their paths leave fewer finished input levels below the
 /// file than it opened on. The replay reports what reading it did.
@@ -200,6 +334,63 @@ fn tagpdf_replays_whole_and_reports_the_same() {
     assert!(second.served_steps * 10 > second.load_steps * 9, "{} of {}", second.served_steps, second.load_steps);
     assert_eq!(first.steps, second.steps);
     same_facts(&first, &second);
+}
+
+/// Runs 2 and 3 of `document` on one cache rebuild nothing: every key a
+/// cache entry has is what the next run sees again.
+fn rebuilds_nothing_warm(name: &str, document: &str) {
+    if !installed() {
+        return;
+    }
+    let dir = project(name);
+    run(&dir, document);
+    for warm in [2, 3] {
+        let report = run(&dir, document).cache_report();
+        let rebuilt: Vec<_> = report.iter().filter(|l| l.contains("rebuilt")).collect();
+        assert!(rebuilt.is_empty(), "run {warm}: {rebuilt:?}");
+    }
+}
+
+#[test]
+fn document_metadata_rebuilds_nothing_warm() {
+    rebuilds_nothing_warm(
+        "warm-metadata",
+        "\\DocumentMetadata{pdfversion=2.0}\\documentclass{article}\\begin{document}x\\end{document}\n",
+    );
+}
+
+/// Red: `\mode<presentation>` reads beamerthemedefault ahead, so no line
+/// of it is at rest and it is never stored.
+#[test]
+fn beamer_rebuilds_nothing_warm() {
+    rebuilds_nothing_warm(
+        "warm-beamer",
+        "\\documentclass{beamer}\\begin{document}\\begin{frame}x\\end{frame}\\end{document}\n",
+    );
+}
+
+#[test]
+fn tikz_rebuilds_nothing_warm() {
+    rebuilds_nothing_warm(
+        "warm-tikz",
+        "\\documentclass{article}\\usepackage{tikz}\\begin{document}\\tikz\\draw(0,0)--(1,1);\\end{document}\n",
+    );
+}
+
+#[test]
+fn hyperref_rebuilds_nothing_warm() {
+    rebuilds_nothing_warm(
+        "warm-hyperref",
+        "\\documentclass{article}\\usepackage{hyperref}\\begin{document}\\section{A}\\label{a}\\ref{a}\\end{document}\n",
+    );
+}
+
+#[test]
+fn biblatex_rebuilds_nothing_warm() {
+    rebuilds_nothing_warm(
+        "warm-biblatex",
+        "\\documentclass{article}\\usepackage{biblatex}\\begin{document}\\cite{a}\\printbibliography\\end{document}\n",
+    );
 }
 
 /// expl3's `\seq_map_inline:Nn` gsets `\__seq_map_<level>:w`, whose
@@ -239,6 +430,7 @@ fn a_map_function_some_earlier_package_left_does_not_key_the_cache() {
     }
     let read = run(&dir, alone);
     assert_ne!(served(&read, "mapper"), Some(true), "{:?}", read.package_caches);
+    assert_eq!(differing_facts(&read, &replayed), Vec::<String>::new());
     same_facts(&read, &replayed);
 }
 
@@ -687,6 +879,52 @@ fn text_of(analysis: &Analysis, name: &str) -> Option<String> {
     )
 }
 
+/// The site's examples report the same, their packages read or replayed.
+#[test]
+fn the_examples_report_the_same_cold_and_warm() {
+    if !installed() {
+        return;
+    }
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/site/examples");
+    for name in ["thesis", "spacing", "option-clash"] {
+        let dir = project(&format!("example-{name}"));
+        for entry in std::fs::read_dir(&examples).expect("examples").flatten() {
+            std::fs::copy(entry.path(), dir.join(entry.file_name())).expect("example file");
+        }
+        let source = std::fs::read_to_string(dir.join(format!("{name}.tex"))).expect("example");
+        let path = dir.join(format!("{name}.tex"));
+        let cfg = latex(&dir);
+        Machine::analyze(&source, Some(&path), &cfg);
+        let warm = Machine::analyze(&source, Some(&path), &cfg);
+        let mut read = cfg.clone();
+        (read.cache.index.auto, read.cache.index.refresh) = (false, true);
+        let cold = Machine::analyze(&source, Some(&path), &read);
+        same_facts(&cold, &warm);
+    }
+}
+
+/// A group that wrote a name locally, then globally, then locally again
+/// leaves the global meaning (tex.web § 283): the replay restores it too.
+#[test]
+fn a_global_definition_between_local_ones_in_a_group_is_replayed() {
+    if !installed() {
+        return;
+    }
+    let dir = project("group-global");
+    std::fs::write(
+        dir.join("grouped.sty"),
+        "\\ProvidesPackage{grouped}\n\\begingroup\n\\let\\groupedname\\relax\n\\gdef\\groupedname{G}\n\
+         \\def\\groupedname{L}\n\\endgroup\n",
+    )
+    .expect("grouped.sty");
+    let doc = "\\documentclass{article}\n\\usepackage{grouped}\n\\begin{document}\\groupedname\\end{document}\n";
+    let cold = run(&dir, doc);
+    let warm = run(&dir, doc);
+    assert_eq!(served(&warm, "grouped"), Some(true), "{:?}", warm.package_caches);
+    assert_eq!(text_of(&warm, "groupedname").as_deref(), Some("G"));
+    same_facts(&cold, &warm);
+}
+
 /// A package that appends to a list with `\xdef\list{\list,…}` copies the
 /// list's old text through without looking at it: after a different list,
 /// it is served, and the list is what reading the package makes of it.
@@ -1039,7 +1277,7 @@ fn a_class_assigning_register_values_is_reused_whole() {
 #[test]
 fn caches_built_against_one_tree_are_reused_from_a_copy_and_an_edit_rebuilds_them() {
     let dir = crate::support::scratch_dir(
-        crate::support::tmp_root().join(format!("satex-package-cache-moved-{}", std::process::id())),
+        crate::support::tmp_root().join(format!("satex-package-cache-tree-copy-{}", std::process::id())),
     );
     let (first, cache, doc) = (dir.join("a"), dir.join("cache"), dir.join("doc"));
     let tree_a = crate::support::mini_texmf(&first);

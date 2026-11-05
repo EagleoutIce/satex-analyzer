@@ -1173,20 +1173,24 @@ impl Env {
         mut catcodes: Option<&mut CatcodeTable>,
         mut restored: Option<&mut Vec<(u32, u64)>>,
     ) {
-        if self.tracking.get() {
-            // What a group puts back is what the parts held before, and it
-            // came from before the load exactly when it did then.
-            let mut reads = self.reads.borrow_mut();
-            while reads.saved.last().is_some_and(|(at, ..)| *at >= to) {
-                let (_, sym, written) = reads.saved.pop().expect("checked");
-                // tex.web § 283: a binding made global since stays.
-                if self.level[sym as usize] != 0 {
-                    reads.written.insert(sym, written);
+        while self.journal.len() > to {
+            let entry = self.journal.pop().expect("journal length checked");
+            if self.tracking.get() {
+                // What a group puts back is what the parts held before, and
+                // it came from before the load exactly when it did then;
+                // entry by entry, as a binding made global since stays.
+                let at = self.journal.len();
+                let mut reads = self.reads.borrow_mut();
+                while let Some(&(saved, sym, written)) = reads.saved.last().filter(|(saved, ..)| *saved >= at) {
+                    reads.saved.pop();
+                    if saved == at
+                        && matches!(entry, Entry::Meaning { sym: s, .. } if s == sym && self.level[s as usize] != 0)
+                    {
+                        reads.written.insert(sym, written);
+                    }
                 }
             }
-        }
-        while self.journal.len() > to {
-            match self.journal.pop().expect("journal length checked") {
+            match entry {
                 // tex.web § 283: a binding made global since is retained.
                 Entry::Meaning { sym, .. } if self.level[sym as usize] == 0 => {}
                 Entry::Meaning { sym, old, level, alias, stamp } => {
@@ -1217,6 +1221,10 @@ impl Env {
                     }
                 }
             }
+        }
+        let mut reads = self.reads.borrow_mut();
+        while reads.saved.last().is_some_and(|(at, ..)| *at >= to) {
+            reads.saved.pop();
         }
     }
 
@@ -1404,6 +1412,21 @@ impl Env {
     pub fn unfork(&mut self, fork: Fork) {
         self.forks -= 1;
         self.paths -= usize::from(fork.parted);
+        // What the paths left differently from the fork is written now: a
+        // later read owes it to the load, and its segment carries it.
+        if fork.parted && self.paths == 0 && self.tracking.get() {
+            for k in fork.trail..self.trail.len() {
+                let sym = self.trail[k].0;
+                let (now, then) = (self.slots[sym as usize].as_ref(), self.at_fork(&fork, sym));
+                if !now
+                    .zip(then.as_ref())
+                    .is_some_and(|(a, b)| a.meaning == b.meaning && same_value(&a.value, &b.value) && a.may == b.may)
+                    && (now.is_some() || then.is_some())
+                {
+                    self.note_write(sym, ReadKind::Meaning.bit() | ReadKind::Value.bit());
+                }
+            }
+        }
         debug_assert_eq!(fork.level + 1, self.floors.len(), "forks end innermost first");
         self.floors.truncate(fork.level);
         self.changed.truncate(fork.level);
@@ -1628,7 +1651,10 @@ impl Env {
         self.unpair(i);
         self.slots[i] = Some(Binding { global: true, ..binding });
         self.level[i] = 0;
+        // Not journaled, so no path rewinds it: written on every path.
+        let paths = std::mem::take(&mut self.paths);
         self.note_write(sym.0, ReadKind::Meaning.bit() | ReadKind::Value.bit());
+        self.paths = paths;
     }
 
     /// Least upper bound of two paths from `fork` that stand in the same
@@ -2448,28 +2474,26 @@ fn printed_hull(texts: &[&[Token]], typed: &Typed) -> Option<Vec<Token>> {
 /// number, in order, as that number: a path that read it apart and one
 /// that did not then hold one text.
 fn unslice(text: &[Token], interner: &Interner) -> Vec<Token> {
-    let slice = |t: &Token| -> Option<[u32; 4]> {
-        let (_, cut) = interner.name(t.cs()?).strip_prefix(crate::engine::scan::TYPED_DIGITS)?.split_once('@')?;
-        let p: Vec<u32> = cut.split(':').map(|x| x.parse().ok()).collect::<Option<_>>()?;
-        p.try_into().ok()
-    };
+    let slice = |t: &Token| crate::engine::scan::slice_of(interner.name(t.cs()?));
     use crate::engine::scan::{complete, continues};
     let mut out = Vec::with_capacity(text.len());
     let mut i = 0;
     while i < text.len() {
         // As a scan reads them back ([`continues`]): each slice goes on
         // where the last stopped, so `n` moves on every step.
-        if let Some([w, mut k, 0, mut j]) = slice(&text[i]) {
+        if let Some((mut k, 0, mut j, w)) = slice(&text[i]) {
             let mut n = i + 1;
             while !complete(k, j)
-                && let Some([v, l, a, e]) = text.get(n).and_then(slice)
+                && let Some((l, a, e, v)) = text.get(n).and_then(slice)
                 && v == w
                 && continues((k, j), (l, a))
             {
                 (k, j, n) = (k.max(l), e, n + 1);
             }
-            if complete(k, j) {
-                out.push(Token::new(Tok::Cs(Sym(w)), text[i].span));
+            if complete(k, j)
+                && let Some(w) = interner.lookup(&format!("{}{w}", crate::engine::scan::TYPED_DIGITS))
+            {
+                out.push(Token::new(Tok::Cs(w), text[i].span));
                 i = n;
                 continue;
             }
@@ -2574,16 +2598,14 @@ pub fn text_len(interner: &Interner, t: &Token) -> Option<u32> {
         return len.parse().ok();
     }
     let typed = name.strip_prefix(crate::engine::scan::TYPED_DIGITS)?;
-    let (range, cut) = typed.split_once(['@', '#'])?;
     // A slice `[i, j)` with its end known; one to the end (`j` 0) is
     // bounded by its interval, as other typed digits are.
-    let places: Vec<u32> = cut.split(':').filter_map(|x| x.parse().ok()).collect();
-    if let [_, _, i, j] = places[..]
+    if let Some((_, i, j, _)) = crate::engine::scan::slice_of(name)
         && j > i
     {
         return Some(j - i);
     }
-    let (lo, hi) = range.split_once("..")?;
+    let (lo, hi) = typed.split(['@', '#']).next()?.split_once("..")?;
     let (lo, hi): (i64, i64) = (lo.parse().ok()?, hi.parse().ok()?);
     let digits = |n: i64| n.unsigned_abs().checked_ilog10().unwrap_or(0) + 1;
     Some(digits(lo).max(digits(hi)) + u32::from(lo < 0))
@@ -3034,7 +3056,8 @@ mod tests {
         let w = interner.intern(&format!("{TYPED_DIGITS}0..214#7"));
         let v = interner.intern(&format!("{TYPED_DIGITS}0..99#8"));
         let mut cut = |n: Sym, k: u32, i: u32, j: u32| {
-            Token::new(Tok::Cs(interner.intern(&format!("{TYPED_DIGITS}0..9@{}:{k}:{i}:{j}", n.0))), Span::default())
+            let whole = interner.name(n).strip_prefix(TYPED_DIGITS).unwrap_or_default().to_string();
+            Token::new(Tok::Cs(interner.intern(&format!("{TYPED_DIGITS}0..9@{k}:{i}:{j}:{whole}"))), Span::default())
         };
         let (o, plus) = (OPEN, Token::new(Tok::Chr('+', Catcode::Other), Span::default()));
         let [a, b, c, d, e, f, g, h] = [

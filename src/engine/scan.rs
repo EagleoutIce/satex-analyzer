@@ -15,6 +15,16 @@ use crate::engine::value::{
 /// ([`Machine::digits_in`]).
 pub(crate) const TYPED_DIGITS: &str = "\u{2}unknown digits:";
 
+/// A slice name `lo..hi@k:i:j:whole`: places `[i, j)` of the `k`-digit
+/// spelling of the typed number named `whole` (after [`TYPED_DIGITS`]).
+pub(crate) fn slice_of(name: &str) -> Option<(u32, u32, u32, &str)> {
+    let (_, cut) = name.strip_prefix(TYPED_DIGITS)?.split_once('@')?;
+    let mut it = cut.splitn(4, ':');
+    let mut place = || it.next()?.parse::<u32>().ok();
+    let (k, i, j) = (place()?, place()?, place()?);
+    Some((k, i, j, it.next()?))
+}
+
 /// The length of a slice cut before the number's length is chosen: its
 /// last slice runs to the end, which [`OPEN`] marks too.
 pub(crate) const OPEN: u32 = 0;
@@ -1000,9 +1010,8 @@ impl Machine<'_> {
     /// A slice of typed digits: the number it is cut from, the length of
     /// that number's spelling, and the places `[i, j)` it holds.
     pub(crate) fn typed_slice(&self, sym: Sym) -> Option<(Sym, u32, u32, u32)> {
-        let (_, cut) = self.name(sym).strip_prefix(TYPED_DIGITS)?.split_once('@')?;
-        let mut it = cut.split(':').map(|x| x.parse::<u32>().ok());
-        Some((Sym(it.next()??), it.next()??, it.next()??, it.next()??))
+        let (k, i, j, whole) = slice_of(self.name(sym))?;
+        Some((self.out.interner.lookup(&format!("{TYPED_DIGITS}{whole}"))?, k, i, j))
     }
 
     /// Places `[i, j)` of the `k`-digit spelling of the number `whole`
@@ -1010,7 +1019,9 @@ impl Machine<'_> {
     /// `whole` when the slices before and after it stand next to it.
     pub(crate) fn slice_token(&mut self, whole: Sym, num: Num, (k, i, j): (u32, u32, u32), span: Span) -> Token {
         let num = places(num, (k, i, j));
-        let sym = self.intern(&format!("{TYPED_DIGITS}{}..{}@{}:{k}:{i}:{j}", num.lo, num.hi, whole.0));
+        // The whole by name, not number: a replayed cache numbers names anew.
+        let whole = self.name(whole).strip_prefix(TYPED_DIGITS).unwrap_or_default().to_string();
+        let sym = self.intern(&format!("{TYPED_DIGITS}{}..{}@{k}:{i}:{j}:{whole}", num.lo, num.hi));
         if self.env.slot(sym).is_none() {
             let mut binding =
                 crate::engine::env::Binding::builtin(Meaning::Char(crate::engine::tex::UNKNOWN_CHAR, Catcode::Other));
@@ -1087,7 +1098,10 @@ impl Machine<'_> {
         }
         // One name per number made: a test that narrows it narrows this
         // number on its path, never another one with the same interval.
-        let sym = self.intern(&format!("{TYPED_DIGITS}{}..{}#{}", num.lo, num.hi, self.out.interner.len()));
+        let steps = self.out.steps;
+        let n = if self.digits_made.0 == steps { self.digits_made.1 + 1 } else { 0 };
+        self.digits_made = (steps, n);
+        let sym = self.intern(&format!("{TYPED_DIGITS}{}..{}#{steps}.{n}", num.lo, num.hi));
         if self.env.slot(sym).is_none() {
             let mut binding =
                 crate::engine::env::Binding::builtin(Meaning::Char(crate::engine::tex::UNKNOWN_CHAR, Catcode::Other));

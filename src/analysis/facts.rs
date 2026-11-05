@@ -9,7 +9,7 @@ use crate::engine::tex::{FileId, MacroDef, Span, Sym, Token};
 
 /// A name an expl3 module function took as its variable, where the user's
 /// file passed it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct VarUse {
     pub name: Sym,
     pub kind: crate::analysis::roles::VarKind,
@@ -296,7 +296,7 @@ pub struct ColorStack {
 /// holds it (fntguide § 2): the five macros `\selectfont` reads, and the
 /// font the engine had actually loaded.  [`Facts`] keeps one row per
 /// distinct state and [`Spot`] points at it.
-#[derive(Clone, Default, PartialEq, Eq, Debug)]
+#[derive(Clone, Default, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FontState {
     /// `\cf@encoding`.
     pub encoding: Rc<str>,
@@ -611,7 +611,7 @@ pub struct Facts {
     /// typed there (`pgf@sh@ns@` a node, `r@` a label). Completion offers
     /// the names defined with the same prefix.
     pub slots: crate::fixed::HashMap<Span, String>,
-    /// `\begingroup … \endgroup` read straight from a file over several
+    /// `\begingroup … \endgroup` read straight from a user's file over several
     /// lines: where each opened and where it closed.
     pub groups: Vec<(Span, Span)>,
     /// Real `\errmessage`s the run reached, attributed to every name on the
@@ -637,7 +637,7 @@ pub struct Facts {
     pub color_stack: Vec<ColorStack>,
     /// Every character set outside package code, in order.
     pub text: Text,
-    /// Each line a file mouth read to its end, merged over every read: the
+    /// Each line of the user's files a mouth read to its end, merged over every read: the
     /// comment column all of them had, the spaces all of them skipped.
     pub lines: crate::fixed::HashMap<(crate::engine::tex::FileId, u32), crate::engine::tex::LineRead>,
 }

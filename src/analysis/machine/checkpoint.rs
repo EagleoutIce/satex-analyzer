@@ -178,6 +178,8 @@ fn reading_file(input: &super::Input) -> Option<(&Mouth, bool)> {
     let mut lookahead = false;
     for frame in input.iter().rev() {
         match frame {
+            Frame::Tokens { toks, pos, .. } if *pos >= toks.len() => {}
+            Frame::Returned(toks) if toks.is_empty() => {}
             Frame::Returned(_) => lookahead = true,
             Frame::File { mouth, .. } => return Some((mouth, lookahead)),
             _ => return None,

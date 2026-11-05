@@ -53,7 +53,7 @@ impl RoleKind {
 /// What a key names. The kind is what conventions and lints match on:
 /// a label's prefix, a citation's database entry, a key list's option.
 /// `Any` is a key of no known kind, the join of two kinds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum KeyKind {
     Label,
     Cite,
@@ -75,7 +75,7 @@ pub enum KeyKind {
 /// set it (`\tl_set:Nn`, `\seq_new:N`; interface3, "Naming functions and
 /// variables"). Register-backed kinds (`int`, `dim`, `skip`, `muskip`,
 /// `box`, `ior`/`iow`) are registers of their kind instead.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum VarKind {
     Tl,
     Str,
@@ -140,7 +140,7 @@ impl VarKind {
 /// What a file argument is read as: the extension its program adds and the
 /// installation tree (kpathsea's `TEXINPUTS`, `BIBINPUTS`, `BSTINPUTS`) it
 /// searches. `Any` is a file of no known kind, the join of two kinds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum FileKind {
     Tex,
     Sty,
@@ -210,7 +210,7 @@ impl std::fmt::Display for RoleKind {
 /// admits, so a join goes up to the nearest common one: a register's name
 /// is text of its value's kind, and a dimension is glue without stretch
 /// (tex.web §§ 440, 448, 461, 1224).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Ty {
     Bottom,
     /// ⟨number⟩ (`scan_int`, § 440).

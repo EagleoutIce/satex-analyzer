@@ -14,3 +14,4 @@ documents::pictures_around_a_tcolorbox_keep_their_anchors_local
 budgets::document_metadata_warm
 budgets::tagpdf_warm
 documents::notecolumn_slnc_at_cleardoublepage_koma
+package_cache::beamer_rebuilds_nothing_warm
