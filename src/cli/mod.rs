@@ -8,6 +8,7 @@ pub mod install;
 mod lint;
 pub mod lsp;
 pub mod query;
+pub mod render;
 mod summary;
 mod tokens;
 
@@ -16,9 +17,9 @@ use std::io::Write;
 use clap::Subcommand;
 
 use crate::analysis::machine::Analysis;
+use crate::cli::render::Links;
 pub use crate::plugins::Format;
 use crate::queries::query::Record;
-use crate::util::render::Links;
 
 /// What a [`Command`] hands back to the CLI driver to print: a finished list
 /// of [`Record`]s, a partial one with a note about what was left out, or

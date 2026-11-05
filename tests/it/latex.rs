@@ -3310,7 +3310,7 @@ fn lint_text_puts_correctness_first_grouped_by_rule() {
         record("astyle", "style", 2),
         record("bug", "correctness", 3),
     ];
-    let text = satex::util::render::lint(&records, satex::util::render::Links::default(), true);
+    let text = satex::cli::render::lint(&records, satex::cli::render::Links::default(), true);
     let at = |s: &str| text.find(s).unwrap_or_else(|| panic!("{s} missing in {text}"));
     assert!(at("bug") < at("astyle") && at("astyle") < at("zstyle"), "{text}");
 }

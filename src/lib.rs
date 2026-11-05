@@ -37,12 +37,14 @@ pub mod analysis;
 pub mod caches;
 pub mod cli;
 pub mod engine;
+pub mod knowledge;
 pub mod linter;
 pub mod lsp;
 pub mod oracle;
 pub mod plugins;
 pub mod project;
 pub mod queries;
+pub mod text;
 
 pub use analysis::machine::{Analysis, Machine};
 pub use project::config::Config;

@@ -4,8 +4,8 @@
 use std::io::Write;
 
 use super::{Context, Format, Output};
+use crate::cli::render;
 use crate::project::config::Config;
-use crate::util::render;
 
 pub mod archive;
 pub mod build;

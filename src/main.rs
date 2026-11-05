@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, ValueEnum};
 
 use satex::analysis::machine::{Analysis, Machine};
+use satex::cli::render::{self, Links};
 use satex::cli::{CacheAction, Command, Context, Format, Output};
 use satex::project::config::{Config, Engine};
 use satex::queries::query;
-use satex::util::render::{self, Links};
 
 #[derive(Parser)]
 #[command(name = "satex", about = "Static analyzer for TeX and LaTeX")]

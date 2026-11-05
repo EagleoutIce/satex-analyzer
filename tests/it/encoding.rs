@@ -6,12 +6,12 @@
 
 use crate::support::{installed, last_body as body};
 use satex::analysis::machine::{Analysis, Machine};
+use satex::cli::render::Links;
 use satex::cli::{Command, Context, Format, Output};
 use satex::engine::source;
 use satex::engine::tex::Catcode;
 use satex::plugins::Kernel;
 use satex::project::config::{Config, Encoding, Engine, Load, Texmf};
-use satex::util::render::Links;
 
 /// U+03A4 GREEK CAPITAL LETTER TAU, the bytes `CE A4`.
 const TAU: &str = "\u{3a4}";

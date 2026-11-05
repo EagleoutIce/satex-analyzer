@@ -7,8 +7,8 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::analysis::machine::Machine;
+use crate::cli::render;
 use crate::project::config::{Config, Engine};
-use crate::util::render;
 
 /// What one item came to: the kernel or a package, for one engine.
 pub struct Prepared {

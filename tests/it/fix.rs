@@ -303,7 +303,7 @@ fn lsp_positions_count_utf16_code_units() {
         "edits": [{ "path": path, "start": { "line": 1, "col": 3 }, "end": { "line": 1, "col": 12 }, "replacement": "" }],
     }))
     .unwrap();
-    let out: serde_json::Value = serde_json::from_str(&satex::util::render::lsp(&[record])).unwrap();
+    let out: serde_json::Value = serde_json::from_str(&satex::cli::render::lsp(&[record])).unwrap();
     let action = &out[0]["codeActions"][0];
     let edit = action["edit"]["changes"].as_object().unwrap().values().next().unwrap()[0].clone();
     // `é` is one UTF-16 unit, `𝄞` two.
@@ -328,7 +328,7 @@ fn lsp_offers_one_action_for_all_fixes_of_a_rule() {
         }))
         .unwrap()
     };
-    let out: serde_json::Value = serde_json::from_str(&satex::util::render::lsp(&[record(1), record(2)])).unwrap();
+    let out: serde_json::Value = serde_json::from_str(&satex::cli::render::lsp(&[record(1), record(2)])).unwrap();
     let actions = out[0]["codeActions"].as_array().unwrap();
     let all = actions.iter().find(|a| a["data"]["scope"] == "rule").expect("a fix-all action");
     let edits = all["edit"]["changes"].as_object().unwrap().values().next().unwrap().as_array().unwrap();

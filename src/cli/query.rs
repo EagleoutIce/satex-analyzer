@@ -127,7 +127,7 @@ fn step_through(
     analysis: &crate::analysis::machine::Analysis,
     file: Option<&str>,
     internal: bool,
-    links: crate::util::render::Links,
+    links: crate::cli::render::Links,
     out: &mut impl Write,
 ) {
     use crate::analysis::facts::MeaningKind;
@@ -193,14 +193,14 @@ fn step_through(
         let name = analysis.interner.cs(event.name);
         flush(&mut hidden, out);
         let file = analysis.short_name(event.span.file);
-        let linked = crate::util::render::hyperlink(
+        let linked = crate::cli::render::hyperlink(
             &name,
-            &crate::util::render::file_url(analysis.file_name(event.span.file)),
+            &crate::cli::render::file_url(analysis.file_name(event.span.file)),
             links,
         );
         let shown = if ansi { format!("{bold}{linked}{bold:#}") } else { name.to_string() };
         let step = event.kind.as_str();
-        let style = crate::util::render::step_style(event.kind);
+        let style = crate::cli::render::step_style(event.kind);
         let step = if ansi { format!("{style}{step}{style:#}") } else { step.to_string() };
         let _ = writeln!(
             out,

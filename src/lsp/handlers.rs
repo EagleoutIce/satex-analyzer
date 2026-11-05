@@ -19,9 +19,10 @@ use regex::Regex;
 use serde_json::Value as Json;
 
 use crate::analysis::machine::Analysis;
-use crate::linter::fix::{Pos, Sources, Text};
+use crate::linter::fix::Sources;
 use crate::queries::preview::Stroke;
 use crate::queries::query::{self, Filter, Query, Record};
+use crate::text::{Pos, Text};
 
 /// LSP position (0-based line, UTF-16 column) to satex's (1-based line,
 /// column as the engine counts one), against the line as it stands in `doc`.
@@ -72,7 +73,7 @@ pub fn word_span(line: &str, col: u32) -> Option<(String, bool, u32)> {
 /// left to reuse: [`crate::project::paths::file_url`] and [`uri_to_path`] are
 /// satex's own, covering exactly the case the server needs.
 pub fn path_uri(path: &str) -> Uri {
-    // The same rooting [`crate::util::render::file_url`] does, so a diagnostic and the file it
+    // The same rooting [`crate::cli::render::file_url`] does, so a diagnostic and the file it
     // belongs to reach the client under one URI.
     let absolute = std::path::absolute(path).unwrap_or_else(|_| PathBuf::from(path));
     let absolute = VIEW.with_borrow(|view| view.named(&absolute));
@@ -121,7 +122,7 @@ pub fn uri_to_path(uri: &Uri) -> Option<std::path::PathBuf> {
 
 /// A `place`d record (`path`/`line`/`col`, as every query answer carries) as
 /// an LSP [`Location`]: a zero-width range at the position, the same way
-/// [`crate::util::render::lsp`] points a diagnostic at one place rather than a span.
+/// [`crate::cli::render::lsp`] points a diagnostic at one place rather than a span.
 fn record_location(record: &Record, sources: &Sources) -> Option<Location> {
     let path = record.get("path").and_then(Json::as_str)?;
     let line = record.get("line").and_then(Json::as_u64)? as u32;
@@ -377,7 +378,7 @@ pub fn placed(analysis: &Analysis, mut markdown: String, name: &str, path: &str,
     let usage = markdown.find(&format!("\n`\\{name}")).map(|i| i + 1);
     let second = markdown[first..].find("\n\n").map_or(markdown.len(), |i| first + i + 2);
     markdown.insert_str(usage.unwrap_or(second).min(markdown.len()), &set);
-    if let Some(syntax) = super::primitives::syntax(analysis, name, path, at.line, at.col) {
+    if let Some(syntax) = crate::knowledge::primitives::syntax(analysis, name, path, at.line, at.col) {
         markdown.insert_str(first, &syntax);
     }
     markdown
@@ -710,10 +711,13 @@ fn extracted_from_manual(m: &crate::plugins::docs::Entry) -> String {
 }
 
 /// The comment block above the definition a record names.
-fn documented(record: &Record) -> Option<super::doccomment::DocComment> {
+fn documented(record: &Record) -> Option<crate::knowledge::doccomment::DocComment> {
     let path = record.get("path").and_then(Json::as_str)?;
     let line = record.get("line").and_then(Json::as_u64)? as usize;
-    super::doccomment::above(&crate::project::overlay::read_to_string(std::path::Path::new(path)).ok()?, line)
+    crate::knowledge::doccomment::above(
+        &crate::project::overlay::read_to_string(std::path::Path::new(path)).ok()?,
+        line,
+    )
 }
 
 /// The command whose argument the cursor is in, on its line: its name and
@@ -2839,7 +2843,7 @@ pub fn findings(analysis: &Analysis) -> Vec<Record> {
 /// `records` in `render::lsp`'s shape: `[{uri, diagnostics, codeActions}, …]`,
 /// one entry per file they touch.
 pub fn diagnostics_json(records: &[Record]) -> Vec<Json> {
-    let text = crate::util::render::lsp_with(records, |path| path_uri(path).to_string());
+    let text = crate::cli::render::lsp_with(records, |path| path_uri(path).to_string());
     serde_json::from_str(&text).unwrap_or_default()
 }
 

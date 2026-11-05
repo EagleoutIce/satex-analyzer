@@ -7,8 +7,8 @@
 use super::{Cx, Hit, TypePlugin, rewrite};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{Ty, braced_groups};
-use crate::linter::fix::Text;
 use crate::project::config::TypePlugins;
+use crate::text::Text;
 use lsp_types::{CodeAction, CodeLens, TextEdit};
 use serde_json::{Value as Json, json};
 

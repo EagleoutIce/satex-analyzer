@@ -13,7 +13,8 @@ use crate::analysis::facts::{Definition, MeaningKind};
 use crate::analysis::machine::Analysis;
 use crate::engine::builtins::{LoadKind, OccKind, Primitive};
 use crate::engine::tex::{Catcode, CatcodeTable, FileId, Span, Sym, Tok};
-use crate::linter::fix::{Edit, Lexeme, Pos, Scan, Sources, Text, editable};
+use crate::linter::fix::{Lexeme, Scan, Sources, editable};
+use crate::text::{Edit, Pos, Text};
 
 /// A stretch of source that spells the key.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]

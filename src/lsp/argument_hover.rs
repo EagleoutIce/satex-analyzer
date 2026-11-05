@@ -7,7 +7,7 @@ use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{FileKind, KeyKind, Ty};
 use crate::engine::builtins::OccKind;
 use crate::engine::tex::RegKind;
-use crate::linter::fix::{Pos, Text};
+use crate::text::{Pos, Text};
 use std::path::Path;
 
 /// What the text under `pos` names, by its types, the most precise first.

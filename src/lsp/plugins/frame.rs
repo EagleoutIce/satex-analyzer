@@ -8,8 +8,8 @@ use super::{Cx, Hit, TypePlugin, closing, edit_of, key_values, put, rewrite};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::Ty;
 use crate::engine::builtins::OccKind;
-use crate::linter::fix::{Pos, Text};
 use crate::project::config::TypePlugins;
+use crate::text::{Pos, Text};
 use lsp_types::{CodeAction, CodeLens, Command, Range, TextEdit};
 use serde_json::{Value as Json, json};
 

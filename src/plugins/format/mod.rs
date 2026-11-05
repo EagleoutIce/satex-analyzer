@@ -3,8 +3,8 @@
 
 use clap::ValueEnum;
 
+use crate::cli::render::{self, Links};
 use crate::queries::query::Record;
-use crate::util::render::{self, Links};
 
 named_enum! {
     /// How `satex` prints a [`Record`]: an aligned table, JSON, CSV, Markdown,

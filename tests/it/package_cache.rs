@@ -557,7 +557,7 @@ fn a_replayed_package_reports_the_tokens_and_time_it_stands_for() {
     assert!(outer.tokens > 0, "outer.sty reports the tokens its cache stands for, got {}", outer.tokens);
     // `inner.sty` has a cache entry of its own, replayed between outer's segments.
     assert_eq!(served(&second, "inner"), Some(true), "{:?}", second.package_caches);
-    let text = satex::util::render::timings(&second, satex::util::render::Links(false));
+    let text = satex::cli::render::timings(&second, satex::cli::render::Links(false));
     assert!(text.contains("inner"), "inner.sty is named:\n{text}");
 }
 

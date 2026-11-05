@@ -1411,11 +1411,11 @@ fn summary_defines_line_counts_document_concepts_separately() {
 \\begin{myenv}\n\\end{myenv}\n",
     );
     let root = query::summary(&analysis);
-    let text = satex::util::render::summary(
+    let text = satex::cli::render::summary(
         &analysis,
         &root,
-        satex::util::render::Detail::brief(),
-        satex::util::render::Links(false),
+        satex::cli::render::Detail::brief(),
+        satex::cli::render::Links(false),
     );
     assert!(text.contains("defines"), "{text}");
     assert!(text.contains("1 command"), "{text}");

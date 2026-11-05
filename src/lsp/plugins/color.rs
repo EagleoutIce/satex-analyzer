@@ -9,8 +9,8 @@ use super::{Cx, Hit, TypePlugin};
 use crate::analysis::facts::ColorDef;
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{KeyKind, Ty};
-use crate::linter::fix::{Pos, Text};
 use crate::project::config::TypePlugins;
+use crate::text::{Pos, Text};
 use lsp_types::{ColorInformation, CompletionItem, CompletionItemKind, Position, Range, TextEdit};
 use serde_json::{Value as Json, json};
 

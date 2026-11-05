@@ -7,8 +7,8 @@ use crate::analysis::facts::Occurrence;
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::Ty;
 use crate::engine::builtins::OccKind;
-use crate::linter::fix::{Pos, Text};
 use crate::project::config::TypePlugins;
+use crate::text::{Pos, Text};
 use lsp_types::{CompletionItem, CompletionItemKind};
 use std::ops::Range;
 

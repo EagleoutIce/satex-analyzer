@@ -9,7 +9,7 @@ use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{self, KeyKind, RoleKind, Ty};
 use crate::engine::builtins::{LoadKind, OccKind};
 use crate::engine::tex::Span;
-use crate::linter::fix::{Pos, Text};
+use crate::text::{Pos, Text};
 
 /// What ends a name typed in an argument: a group, a list's comma, a key's `=`, a space.
 pub(super) const ENDS: &str = "{}[](),=;\\ \t%";

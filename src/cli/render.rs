@@ -1451,10 +1451,10 @@ pub fn sarif(records: &[Record], version: &str) -> String {
 }
 
 /// The edits a finding's fix carries, grouped by file in the order given.
-fn edits_by_file(record: &Record) -> Vec<(String, Vec<crate::linter::fix::Edit>)> {
-    let mut out: Vec<(String, Vec<crate::linter::fix::Edit>)> = Vec::new();
+fn edits_by_file(record: &Record) -> Vec<(String, Vec<crate::text::Edit>)> {
+    let mut out: Vec<(String, Vec<crate::text::Edit>)> = Vec::new();
     let edits = record.get("edits").and_then(Json::as_array).into_iter().flatten();
-    for edit in edits.filter_map(crate::linter::fix::Edit::from_json) {
+    for edit in edits.filter_map(crate::text::Edit::from_json) {
         match out.iter_mut().find(|(path, _)| *path == edit.path) {
             Some((_, list)) => list.push(edit),
             None => out.push((edit.path.clone(), vec![edit])),
@@ -1575,7 +1575,7 @@ fn call_end(line: &str, col: u32) -> u32 {
 pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
     let sources = crate::linter::fix::Sources::default();
     let position = |path: &str, line: u64, col: u64| -> Json {
-        let pos = crate::linter::fix::Pos::new(line.max(1) as u32, col.max(1) as u32);
+        let pos = crate::text::Pos::new(line.max(1) as u32, col.max(1) as u32);
         let (line, character) =
             sources.get(path).and_then(|text| text.utf16(pos)).unwrap_or((pos.line - 1, pos.col - 1));
         serde_json::json!({ "line": line, "character": character })

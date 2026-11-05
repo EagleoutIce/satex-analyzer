@@ -10,8 +10,8 @@
 use std::io::Write;
 
 use super::{Context, Format, Output};
+use crate::cli::render;
 use crate::plugins::packages::{Manager, Provided, shell, tree_writable, unresolved};
-use crate::util::render;
 
 /// What `satex install` was asked to do.
 #[derive(Clone, Copy, Debug)]

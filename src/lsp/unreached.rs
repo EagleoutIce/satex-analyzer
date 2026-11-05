@@ -13,7 +13,8 @@ use crate::analysis::machine::Analysis;
 use crate::engine::builtins::LoadKind;
 use crate::engine::loader::Resolver;
 use crate::engine::tex::{Catcode, CatcodeTable, Tok};
-use crate::linter::fix::{Group, Lexeme, Pos, Scan, Text};
+use crate::linter::fix::{Group, Lexeme, Scan};
+use crate::text::{Pos, Text};
 
 /// Bounds on the scan: files read and load depth.
 const MAX_FILES: usize = 200;

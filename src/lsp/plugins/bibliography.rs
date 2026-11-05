@@ -5,8 +5,8 @@
 use super::{Cx, Hit, TypePlugin, closing, edit_of, key_values, lines_of, put, unbraced};
 use crate::analysis::roles::{KeyKind, Ty};
 use crate::engine::builtins::OccKind;
-use crate::linter::fix::Text;
 use crate::project::config::TypePlugins;
+use crate::text::Text;
 use serde_json::{Value as Json, json};
 
 pub(super) struct Bibliography;
@@ -94,7 +94,7 @@ impl TypePlugin for Bibliography {
 fn record(path: &str, bib: &Text, e: &crate::plugins::bib::Entry, cites: &[u32]) -> Json {
     let text = bib.body();
     // the entry's bytes: from its `@` to the brace closing it
-    let start = bib.offset(crate::linter::fix::Pos::new(e.line, 1)).unwrap_or(0);
+    let start = bib.offset(crate::text::Pos::new(e.line, 1)).unwrap_or(0);
     let at = text[start..].find('@').map(|i| start + i);
     let open = at.and_then(|at| text[at..].find('{').map(|i| at + i));
     let close = open.and_then(|o| closing(text, o, '{'));
@@ -108,7 +108,7 @@ fn record(path: &str, bib: &Text, e: &crate::plugins::bib::Entry, cites: &[u32])
                                 "edit": edit_of(path, vec![put(bib, r.start, r.end, "{${value}}")]) }));
         }
         let (from, to) = lines_of(text, at, close + 1);
-        let reason = (!cites.is_empty()).then(|| format!("cited {}", crate::util::render::plural(cites.len(), "time")));
+        let reason = (!cites.is_empty()).then(|| format!("cited {}", crate::cli::render::plural(cites.len(), "time")));
         actions.push(json!({ "title": format!("Delete {}", e.key), "edit": edit_of(path, vec![put(bib, from, to, "")]), "disabled": reason }));
     }
     let file = std::path::Path::new(path).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();

@@ -1,10 +1,10 @@
 use std::io::Write;
 
 use super::{Context, Format, Output, parse_filter};
+use crate::cli::render;
 use crate::linter as lint;
 use crate::linter::apply::{self, Outcome};
 use crate::queries::query::Record;
-use crate::util::render;
 
 /// What `satex lint` does with the fixes: `--fix` writes them, `--diff`
 /// prints them, `--unsafe-fixes` lets either take the unsafe ones too.

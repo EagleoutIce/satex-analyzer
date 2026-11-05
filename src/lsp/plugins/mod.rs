@@ -28,8 +28,8 @@ use super::type_at::{At, Hit};
 use crate::analysis::facts::Occurrence;
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::Ty;
-use crate::linter::fix::{Pos, Text};
 use crate::project::config::TypePlugins;
+use crate::text::{Pos, Text};
 use lsp_types::{CodeAction, CodeLens, ColorInformation, Command, CompletionItem, InlayHint, Range, TextEdit};
 use serde_json::{Value as Json, json};
 

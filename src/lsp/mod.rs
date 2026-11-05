@@ -29,12 +29,10 @@ mod argument_hover;
 mod bib;
 mod dialogs;
 mod directive;
-pub(crate) mod doccomment;
 mod graphic;
 mod handlers;
 pub mod knowledge;
 pub(crate) mod plugins;
-pub(crate) mod primitives;
 mod tabular;
 mod type_at;
 mod unreached;
@@ -61,8 +59,8 @@ use lsp_types::{
 use serde_json::Value as Json;
 
 use crate::analysis::machine::{Analysis, Machine};
-use crate::linter::fix::Text;
 use crate::project::config::Config;
+use crate::text::Text;
 
 /// The one `workspace/executeCommand` this server answers: its single
 /// argument is a `satex query --request` body (`doc/wiki/queries.md`),
@@ -347,7 +345,7 @@ fn kept_hover(req: &Request, texts: &HashMap<Uri, String>, hovers: &Hovers) -> O
     let (name, true) = handlers::word_at(text.line(pos.line), pos.col)? else { return None };
     // A primitive's name shows its syntax where it still means it: the
     // engine adds that to what it kept.
-    if primitives::positional(&name) {
+    if crate::knowledge::primitives::positional(&name) {
         return None;
     }
     let kept = hovers.lock().ok()?.get(&(uri, name))?.clone();

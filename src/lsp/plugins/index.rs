@@ -77,7 +77,7 @@ impl TypePlugin for Index {
                 };
                 json!({
                     "title": term,
-                    "detail": format!("{}{}", crate::util::render::plural(uses.len(), "use"), if subs > 0 { format!(", {subs} with subentries") } else { String::new() }),
+                    "detail": format!("{}{}", crate::cli::render::plural(uses.len(), "use"), if subs > 0 { format!(", {subs} with subentries") } else { String::new() }),
                     "search": format!("{term} {}", uses.iter().map(|u| u.0.as_str()).collect::<Vec<_>>().join(" ")),
                     "sort": { "term": sort_key(term), "uses": format!("{:06}", uses.len()) },
                     "fields": fields,

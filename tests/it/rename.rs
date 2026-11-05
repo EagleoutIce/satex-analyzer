@@ -3,9 +3,10 @@
 
 use crate::support::installed;
 use satex::analysis::machine::{Analysis, Machine};
-use satex::linter::fix::{Pos, Sources};
+use satex::linter::fix::Sources;
 use satex::project::config::{Config, Load, Texmf};
 use satex::queries::rename;
+use satex::text::Pos;
 
 // Without a format the catcodes are INITEX's (tex.web § 232).
 const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7\n";

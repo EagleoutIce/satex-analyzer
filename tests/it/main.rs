@@ -46,6 +46,7 @@ mod install;
 mod join;
 mod l3build;
 mod latex;
+mod layering;
 mod libraries;
 mod limits;
 mod literate;

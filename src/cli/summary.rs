@@ -1,8 +1,8 @@
 use std::io::Write;
 
 use super::{Context, Format, Output};
+use crate::cli::render;
 use crate::queries::query;
-use crate::util::render;
 
 pub fn run(context: &Context, all: bool, depth: Option<usize>, out: &mut impl Write) -> Result<Output, String> {
     let mut detail = if all { render::Detail::full() } else { render::Detail::brief() };

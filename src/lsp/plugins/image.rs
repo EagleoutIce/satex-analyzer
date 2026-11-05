@@ -5,8 +5,8 @@
 use super::TypePlugin;
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{FileKind, Ty};
-use crate::linter::fix::Text;
 use crate::project::config::TypePlugins;
+use crate::text::Text;
 use lsp_types::CodeLens;
 
 pub(super) struct Image;

@@ -4726,7 +4726,9 @@ fn shape_of(
     // A definer reads a parameter text, which no probe can count: its
     // syntax is The TeXbook's.
     let definer = matches!(primitive, Some(crate::engine::builtins::Primitive::Def { .. }));
-    if let Some(rest) = definer.then(|| crate::lsp::primitives::usage(crate::engine::tex::bare_name(&cs))).flatten() {
+    if let Some(rest) =
+        definer.then(|| crate::knowledge::primitives::usage(crate::engine::tex::bare_name(&cs))).flatten()
+    {
         return format!("{cs}{rest}");
     }
     let found = match primitive {
@@ -4817,14 +4819,14 @@ fn shape_of(
         // no complete probe: The TeXbook's syntax where one is known, not a count of arguments
         // only while the name still means its own primitive (`\let\def\relax` does not)
         (None, None, Some(prim))
-            if crate::lsp::primitives::usage(crate::engine::tex::bare_name(&cs)).is_some()
+            if crate::knowledge::primitives::usage(crate::engine::tex::bare_name(&cs)).is_some()
                 && crate::engine::builtins::primitive_names(analysis.plugins.engine)
                     .get(crate::engine::tex::bare_name(&cs))
                     == Some(&prim) =>
         {
             return format!(
                 "{cs}{}",
-                crate::lsp::primitives::usage(crate::engine::tex::bare_name(&cs)).unwrap_or_default()
+                crate::knowledge::primitives::usage(crate::engine::tex::bare_name(&cs)).unwrap_or_default()
             );
         }
         (None, None, Some(prim)) => {
@@ -5202,13 +5204,13 @@ fn insert_comment(record: &mut Record, analysis: &Analysis, at: Span) {
 
 /// The comment block above a definition in the project's own files, read
 /// from the source.
-fn source_comment(analysis: &Analysis, at: Span) -> Option<crate::lsp::doccomment::DocComment> {
+fn source_comment(analysis: &Analysis, at: Span) -> Option<crate::knowledge::doccomment::DocComment> {
     if !analysis.project_file(at.file) {
         return None;
     }
     let path = analysis.files.get(usize::from(at.file))?.path.clone();
     let text = crate::project::overlay::read_to_string(Path::new(&path)).ok()?;
-    crate::lsp::doccomment::above(&text, at.line as usize)
+    crate::knowledge::doccomment::above(&text, at.line as usize)
 }
 
 /// Every meaning `def`'s name held before it, oldest first, ending at `def`: the kernel's, then each
@@ -5377,8 +5379,8 @@ fn insert_call_shape(
     // A primitive the TeXbook gives a syntax for shows it; one that reads a
     // parameter text (`\def`) has no argument shape a probe could find.
     let name = analysis.interner.name(sym);
-    let syntax =
-        crate::lsp::primitives::usage(name).filter(|_| matches!(analysis.env.meaning(sym), Meaning::Primitive(_)));
+    let syntax = crate::knowledge::primitives::usage(name)
+        .filter(|_| matches!(analysis.env.meaning(sym), Meaning::Primitive(_)));
     if let Some(rest) = syntax {
         record.insert("syntax".into(), json!(format!("\\{name}{rest}")));
     }
@@ -6747,8 +6749,8 @@ pub fn resolve_key(analysis: &Analysis, cmd: &str, key: &str) -> Option<Record> 
             .nth(at.checked_sub(2)?)
             .map(str::trim)
             .is_some_and(|l| l.starts_with('\\') && l.ends_with('{'));
-        crate::lsp::doccomment::above(&text, at)
-            .or_else(|| opener.then(|| crate::lsp::doccomment::above(&text, at - 1)).flatten())
+        crate::knowledge::doccomment::above(&text, at)
+            .or_else(|| opener.then(|| crate::knowledge::doccomment::above(&text, at - 1)).flatten())
     });
     if let Some(doc) = doc.filter(|d| !d.text.is_empty()) {
         record.insert("comment".into(), json!(doc.text));

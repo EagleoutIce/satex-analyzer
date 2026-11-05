@@ -104,7 +104,7 @@ fn plan(cx: &Cx) -> Option<Plan> {
     let a = cx.analysis;
     let text = cx.doc.body();
     let file = super::super::type_at::file_of(a, cx.path)?;
-    let at = |line, col| cx.doc.offset(crate::linter::fix::Pos::new(line, col));
+    let at = |line, col| cx.doc.offset(crate::text::Pos::new(line, col));
     // `\begin{` stands 7 characters before the name, `}` closes `\end{name`
     let from = at(p.begin.0, p.begin.1)?.checked_sub("\\begin{".len())?;
     let to = at(p.end.0, p.end.1)? + p.name.len() + 1;

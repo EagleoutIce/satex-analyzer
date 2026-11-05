@@ -11,7 +11,7 @@ use super::handlers::{to_lsp, to_pos};
 use super::{graphic, tabular};
 use crate::analysis::machine::Analysis;
 use crate::engine::builtins::OccKind;
-use crate::linter::fix::{Pos, Text};
+use crate::text::{Pos, Text};
 
 /// The command a client opens a dialog with: `{uri, position}`.
 pub const OPEN: &str = "satex.openDialog";
