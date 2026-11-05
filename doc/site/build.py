@@ -163,6 +163,8 @@ def files_read(satex, flags, doc, cwd, env, config=b"", absent=False):
 
 def kpsewhich(names, cwd):
     """Where TeX Live has each of `names`: name -> path, for those it has."""
+    # a name spelled from unknown text holds marker characters no file name has
+    names = [n for n in names if n and n.isprintable()]
     found = subprocess.run(["kpsewhich", *names], cwd=cwd, capture_output=True, text=True).stdout.split() if names else []
     return {Path(p).name: Path(p).resolve() for p in found}
 
