@@ -2242,7 +2242,10 @@ pub fn widen_slot(
         // hull is.
         let joins = reach == Reach::Joined;
         let had = numbers(x, sets, typed, joins).map_or(usize::MAX, |t| t.len());
-        let texts = || numbers(&joined, sets, typed, joins).filter(|t| t.len() <= had);
+        // Lists of names (`\@elt\bx@A…`, LaTeX's float queues) move names
+        // between them: their sets stay exact up to the bound, then hull.
+        let names = name_lists(&joined, typed);
+        let texts = || numbers(&joined, sets, typed, joins).filter(|t| names || t.len() <= had);
         // The run structure first: `numbers` would make the `1` of `+1` digits.
         let ops = || joins.then(|| hull_by(&joined, &|t| shaped(t, typed))).flatten();
         (joined.meaning, joined.may) = match (switch, ops()) {
@@ -2267,6 +2270,19 @@ pub fn widen_slot(
         };
     }
     Some(joined)
+}
+
+/// Whether every meaning `b` may have is a parameterless macro whose text
+/// is known control sequences only: a list of names, as a float queue.
+fn name_lists(b: &Binding, typed: &Typed) -> bool {
+    let members = b.may.as_deref().unwrap_or(std::slice::from_ref(&b.meaning));
+    members.iter().all(|m| {
+        m.as_macro().is_some_and(|d| {
+            d.parameter_text.items.is_empty()
+                && !d.parameter_text.brace_end
+                && d.replacement_text.iter().all(|t| t.cs().is_some() && typed.classify(t).is_none())
+        })
+    })
 }
 
 type Hulled = (Meaning, Option<std::rc::Rc<[Meaning]>>);

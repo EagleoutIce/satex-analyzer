@@ -406,6 +406,26 @@ peak_fixtures! {
     floats_of_unknown_height_around_a_pagebreak_keep_few_paths("float_pagebreak", "unknown.tex");
 }
 
+/// The fixture's raised errors: LaTeX's own (`Float(s) lost`) are no diagnostics.
+fn raised(a: &Analysis) -> Vec<&str> {
+    a.facts.raised.iter().map(|r| r.text.as_str()).collect()
+}
+
+/// Seven floats in one paragraph: all fourteen forced breaks reach the page.
+#[test]
+fn floats_in_one_paragraph_all_reach_the_page() {
+    let Some(a) = check("float_queue", "known.tex", &[]) else { return };
+    assert!(raised(&a).is_empty(), "{:?}", raised(&a));
+}
+
+/// Floats of unknown height, a patched `\@xfloat`, wide floats and a
+/// `\clearpage`: every `\@currbox` is a box and no float is lost.
+#[test]
+fn floats_of_unknown_height_keep_their_boxes() {
+    let Some(a) = check("float_queue", "main.tex", &[]) else { return };
+    assert!(raised(&a).is_empty(), "{:?}", raised(&a));
+}
+
 #[test]
 fn repeated_undecided_ifx_stays_within_the_path_limit() {
     let Some(a) = check("crowd_ifx_unknown", "main.tex", &[]) else { return };

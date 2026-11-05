@@ -1037,3 +1037,15 @@ fn a_name_read_from_a_family_keeps_the_meanings_it_was_given() {
     assert!(with_code(&analysis, "unknown-text-run").is_empty(), "{:?}", with_code(&analysis, "unknown-text-run"));
     assert!(names(&analysis).contains(&"inarm".to_string()));
 }
+
+/// Two lists a join left paired, as a float on the top list or deferred
+/// but never both: one `\xdef` of both holds the float once on every arm.
+#[test]
+fn paired_lists_copied_together_keep_their_pairing() {
+    let analysis = analyze(
+        r"\chardef\bA=1 \def\T{}\def\D{\elt\bA}
+          \ifnum\pdfuniformdeviate2=0 \def\T{\elt\bA}\def\D{}\fi
+          \let\elt\relax \xdef\F{\T\D}",
+    );
+    assert_eq!(crate::support::last_body(&analysis, "F"), r"\elt \bA ");
+}
