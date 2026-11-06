@@ -182,6 +182,12 @@ fixtures! {
     /// Floats of unknown height before a forced break: `\@xnext` reads the
     /// first `\@elt` of a list that is one of several, past the fork budget.
     three_floats_before_a_pagebreak_end_cleanly("float_three_pagebreak", "main.tex");
+    /// A random count parsed by pgfmath: each digit place of the printed
+    /// number is read on its own path, and paths at different places never
+    /// join while the read runs (explore.rs `digits_apart`).
+    pgfmath_parses_a_random_count_below_twenty("pgfmath_count_small", "main.tex");
+    pgfmath_parses_a_random_count_of_five_digits("pgfmath_count_wide", "main.tex");
+    pgfmath_parses_a_signed_random_count_and_adds("pgfmath_count_signed", "main.tex");
     tikz_figure_with_math_nodes_t3("tikz_t3", "main.tex");
     tikz_figure_with_fit_node_in_resizebox_b("tikz_fit_b", "main.tex");
     tikz_picture_in_resizebox_v2("tikz_resizebox_v2", "main.tex");

@@ -2006,9 +2006,22 @@ impl Machine<'_> {
     }
 
     /// The most arms a read split a number into whose values two paths
-    /// learned differently, 0 for none ([`partner`]).
+    /// learned differently, 0 for none ([`partner`]). Paths whose macros
+    /// hold different places of a split number (a lookahead `\def`d from
+    /// it) are at different passes of its read: apart until the statement
+    /// is over (`usize::MAX`).
     fn digits_apart(&self, a: &Config, b: &Config) -> usize {
-        let arms = a.env.differing(&b.env).into_iter().filter_map(|sym| self.scratch.split_digits.get(&sym));
+        let differing = a.env.differing(&b.env);
+        let texts = |c: &Config, sym: Sym| {
+            let b = c.env.changed(sym);
+            let may = b.and_then(|b| b.may.as_deref()).unwrap_or_default();
+            let text = b.into_iter().map(|b| &b.meaning).chain(may).filter_map(|m| m.as_macro());
+            self.digits_read(text.flat_map(|m| m.replacement_text.iter()))
+        };
+        if differing.iter().any(|&sym| texts(a, sym) != texts(b, sym)) {
+            return usize::MAX;
+        }
+        let arms = differing.into_iter().filter_map(|sym| self.scratch.split_digits.get(&sym));
         arms.copied().max().unwrap_or(0)
     }
 
@@ -2190,6 +2203,11 @@ impl Machine<'_> {
     /// two passes of one loop, `pass`): they stand at different points.
     fn widen_input(&mut self, a: &Input, b: &Input, span: Span, widen: bool, pass: bool) -> Option<Input> {
         let (a, b) = (live_frames(a), live_frames(b));
+        // Paths at different places of one number's spelling are at
+        // different passes of its read: one only once it is read.
+        if self.digits_read(frames_text(&a)) != self.digits_read(frames_text(&b)) {
+            return None;
+        }
         let now = (self.conds.len(), self.env.group_id(), self.env.assignments);
         let tokens = |text: Vec<Token>, at| Frame::Tokens {
             held: text.len(),
@@ -2217,6 +2235,27 @@ impl Machine<'_> {
         let at = stamp(&a[shared..].iter().chain(&b[shared..]).copied().collect::<Vec<_>>(), now);
         input.push(tokens(self.widen_text(&p, &q, span, widen, pass)?, at));
         Some(input.into_iter().collect())
+    }
+
+    /// The places of numbers split into digit arms ([`Machine::digit_arms`])
+    /// that `text` holds: the number, and the slice of its spelling (the
+    /// whole number as `0, 0, 0`). Paths that differ in them are at
+    /// different passes of the number's read.
+    fn digits_read<'t>(&self, text: impl Iterator<Item = &'t Token>) -> Vec<(Sym, u32, u32, u32)> {
+        let split = &self.scratch.split_digits;
+        if split.is_empty() {
+            return Vec::new();
+        }
+        let mut read: Vec<_> = text
+            .filter_map(|t| t.cs())
+            .filter_map(|s| match self.typed_slice(s) {
+                Some(slice) => split.contains_key(&slice.0).then_some(slice),
+                None => split.contains_key(&s).then_some((s, 0, 0, 0)),
+            })
+            .collect();
+        read.sort_unstable_by_key(|&(s, k, i, j)| (s.0, k, i, j));
+        read.dedup();
+        read
     }
 
     /// Two texts left to read, joined: their common end, after one token
@@ -3243,6 +3282,15 @@ fn stamp(frames: &[&Frame], now: (usize, u64, u64)) -> (usize, u64, u64) {
 /// The input levels that still have something to read.
 fn live_frames(input: &Input) -> Vec<&Frame> {
     input.iter().filter(|frame| place(frame).is_some()).collect()
+}
+
+/// What the token lists of `frames` have still to read.
+fn frames_text<'f>(frames: &'f [&Frame]) -> impl Iterator<Item = &'f Token> {
+    frames.iter().flat_map(|f| match f {
+        Frame::Tokens { toks, pos, .. } => &toks[*pos..],
+        Frame::Returned(tokens) => &tokens[..],
+        _ => &[],
+    })
 }
 
 /// Where one input level stands, `None` once it is read.
