@@ -49,6 +49,10 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-muted { color: var(--c-muted); font-size: .85em; }
 .sd-note { color: var(--warning, var(--vscode-editorWarning-foreground, #8a5a00)); font-size: .85em; }
 .sd-note:empty { display: none; }
+.sd-tex.sd-stale { opacity: .55; }
+.sd-confirm { padding: .45rem 1rem; border-top: 1px solid var(--c-border); background: var(--c-sunk); }
+.sd-err { color: var(--error, #c33); font-size: .8em; margin: .1rem 0 0; }
+.sd-err:empty { display: none; }
 .sd-tex { margin: 0; padding: .6rem .7rem; background: var(--c-sunk); border-radius: 8px; font: 12px/1.45 ui-monospace, monospace; white-space: pre; overflow: auto; max-height: 16rem; }
 .sd-side { display: flex; flex-direction: column; gap: .2rem; }
 .sd-side h4 { margin: .7rem 0 .3rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--c-muted); font-weight: 650; }
@@ -335,7 +339,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
   /** The undo model every widget shares: one stack of state snapshots per session. `settle()` records
    * the state when it changed, `hold(true)` defers that over a gesture (typing a cell), `reset()` goes
    * back to how the widget opened (undoable too). `controls()` gives the header's undo and redo buttons,
-   * `keys(root)` binds Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y outside text fields (those keep their own undo). */
+   * `keys(root)` binds Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y at the root, before a focused child, outside text fields (those keep their own undo). */
   function history(get, set) {
     const json = () => JSON.stringify(get()), first = json(), undo = [], redo = [], subs = [];
     let last = first, held = false;
@@ -348,6 +352,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       redo: () => go(redo, undo),
       reset() { api.settle(); if (last === first) return; undo.push(last); redo.length = 0; last = first; set(JSON.parse(first)); told(); },
       get changed() { return last !== first; },
+      /** Whether the state now (settled or not) differs from how the widget opened. */
+      get dirty() { return json() !== first; },
       controls() {
         const b = (k, title, f) => h('button', { type: 'button', class: 'sd-icon', title, 'aria-label': k, html: ICONS[k], onclick: f });
         const u = b('undo', 'Undo (Ctrl+Z)', api.undo), r = b('redo', 'Redo (Ctrl+Shift+Z)', api.redo);
@@ -357,10 +363,10 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         return [u, r];
       },
       keys(root) {
-        root.addEventListener('keydown', (e) => {
-          if (!(e.ctrlKey || e.metaKey) || e.target.closest?.('input:not([type=range]):not([type=checkbox]), textarea')) return;
-          const k = e.key.toLowerCase();
-          if (k === 'z' && !e.shiftKey) { e.preventDefault(); api.undo(); } else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); api.redo(); }
+        route(root, (e) => {
+          if (!(e.ctrlKey || e.metaKey) || e.target.closest?.('input:not([type=range]):not([type=checkbox]), textarea, [contenteditable=true]')) return;
+          const k = e.key.toLowerCase(), go = k === 'z' && !e.shiftKey ? api.undo : k === 'y' || (k === 'z' && e.shiftKey) ? api.redo : null;
+          if (go) { e.preventDefault(); e.stopPropagation(); go(); }
         });
       },
     };
@@ -369,18 +375,51 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
   /** What every widget's footer says about its keys. */
   const HINT = 'Ctrl+Z undoes, Ctrl+Enter applies, Esc cancels.';
 
+  /** The footer every dialog and view shares: a note and the keys, then Reset, Cancel and Apply (each only when given).
+   * The classes fit both styles (dialogs.js `.sd`, views.js `.tv`). */
+  function footer({ note = '', hint = HINT, extra = [], reset, cancel, apply, label = 'Apply', tag = 'footer', cls = '' }) {
+    const b = (text, kind, title, f) => f ? h('button', { type: 'button', class: `tv-button tv-${kind} sd-${kind}`, title, onclick: () => f() }, text) : null;
+    const ok = b(label, 'primary', 'Write into the document (Ctrl+Enter)', apply);
+    const el = h(tag, { class: cls }, h('span', { class: 'sd-muted tv-muted sd-foot-note', style: 'flex:1;min-width:10rem' }, note, note && hint ? ' ' : '', hint), ...extra,
+      b('Reset', 'ghost', 'Back to how the dialog opened', reset), b('Cancel', 'ghost', 'Close without writing (Esc)', cancel), ok);
+    return { el, apply: ok };
+  }
+  /** Asks in `root` (a dialog's or view's own element) whether to drop the changes: true to discard. One ask at a time; Esc keeps editing. */
+  function discard(root) {
+    style();
+    if (root.satexAsk) return root.satexAsk;
+    const done = (yes) => { bar.remove(); root.satexAsk = null; resolve(yes); };
+    root.satexKeep = () => done(false);
+    let resolve;
+    const keep = h('button', { type: 'button', class: 'tv-button tv-ghost sd-ghost', onclick: () => done(false) }, 'Keep editing');
+    const bar = h('div', { class: 'sd-row sd-confirm sd-discard', role: 'alertdialog', 'aria-label': 'unsaved changes' },
+      h('span', { class: 'sd-muted' }, 'Your changes are not written yet.'),
+      h('button', { type: 'button', class: 'tv-button tv-danger sd-danger', onclick: () => done(true) }, 'Discard'), keep);
+    bar.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } });
+    root.insertBefore(bar, root.querySelector(':scope > footer, :scope > .tv-foot'));
+    keep.focus();
+    return (root.satexAsk = new Promise((r) => { resolve = r; }));
+  }
+
   function popup(opts) {
     style();
     const root = h('div', { class: 'sd' + (opts.parent ? ' sd-inline' : '') });
     let dlg = null;
-    const close = () => { if (dlg) { dlg.close(); dlg.remove(); } opts.onClose?.(); };
+    /** Closes, after asking when `opts.dirty()` says there is something unwritten; `force` skips the ask (after Apply). */
+    const close = async (force = false) => {
+      if (force !== true && opts.dirty?.() && !(await discard(root))) return false;
+      if (dlg) { dlg.close(); dlg.remove(); }
+      opts.onClose?.();
+      return true;
+    };
+    const foot = footer({ note: opts.foot ?? '', extra: opts.extra, reset: opts.reset, cancel: opts.parent ? null : close, apply: opts.apply });
     root.append(
       h('header', {}, h('h3', {}, opts.title), opts.sub ? h('span', { class: 'sd-sub' }, opts.sub) : null,
         opts.tools ? h('span', { class: 'sd-tools' }, opts.tools) : null,
         opts.feedback ? h('button', { type: 'button', class: 'sd-icon sd-feedback', title: 'Send feedback on this widget', 'aria-label': 'feedback on this widget', html: ICONS.feedback, onclick: opts.feedback }) : null,
-        opts.parent ? null : h('button', { type: 'button', class: 'sd-icon', 'aria-label': 'close', title: 'Close (Esc)', html: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>', onclick: close })),
+        opts.parent ? null : h('button', { type: 'button', class: 'sd-icon', 'aria-label': 'close', title: 'Close (Esc)', html: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>', onclick: () => close() })),
       h('div', { class: 'sd-body' }, opts.main, opts.side ? h('div', { class: 'sd-side' }, opts.side) : null),
-      h('footer', {}, h('span', { class: 'sd-muted', style: 'flex:1;min-width:10rem' }, opts.foot ?? '', opts.foot ? ' ' : '', HINT), ...(opts.extra ?? []), opts.parent ? null : h('button', { type: 'button', class: 'sd-ghost', title: 'Close without writing (Esc)', onclick: close }, 'Cancel'), ...(opts.actions ?? [])),
+      foot.el,
     );
     if (opts.parent) opts.parent.replaceChildren(root);
     else {
@@ -389,44 +428,102 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       dlg = h('dialog', { class: 'sd-dialog', 'aria-label': opts.title }, root);
       document.body.append(dlg);
       enhance(dlg, opts.name ?? 'widget');
-      dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+      dlg.addEventListener('cancel', (e) => { e.preventDefault(); if (root.satexAsk) root.satexKeep(); else close(); });
       dlg.showModal();
     }
-    return { root, close, dialog: dlg };
+    return { root, close, dialog: dlg, apply: foot.apply };
   }
 
-  /** The frame of a dialog that writes TeX: Apply sends the server's last edits; `render.main/side` fill it. */
+  /** The Apply lifecycle every widget shares (no DOM: views.test.mjs). `ask(op)` gets the server's
+   * `{edits, notes, state?}` for the state `get()` returns now; `change(op)` asks again after `delay` ms
+   * (an `op` at once), so typing asks once. `apply()` commits the answer to the latest state: at once
+   * when it is in, else when it lands (a pending ask flushed first), so Apply works before the first
+   * answer and never writes an older state. `told()` follows every step: `waiting`, `wanted`, `error`. */
+  function applier({ get, set, ask, commit, delay = 120, told = () => {} }) {
+    const key = () => JSON.stringify(get());
+    let result = null, answered = null, timer = 0, queued = undefined, seq = 0, open = 0;
+    const api = {
+      wanted: false, error: '',
+      get result() { return result; },
+      get waiting() { return !!timer || open > 0 || !result || answered !== key(); },
+      change(op) {
+        clearTimeout(timer);
+        queued = op;
+        return new Promise((done) => { timer = setTimeout(() => run(op).then(done), op ? 0 : delay); });
+      },
+      apply() {
+        api.wanted = true;
+        if (timer) { clearTimeout(timer); run(queued); } else if (!open && api.waiting) run();
+        settle();
+      },
+      cancel() { api.wanted = false; clearTimeout(timer); timer = 0; seq++; told(api); },
+    };
+    const settle = () => {
+      if (api.wanted && !api.waiting) { api.wanted = false; commit(result.edits); } else if (api.wanted && !timer && !open) run();
+      told(api);
+    };
+    async function run(op) {
+      timer = 0;
+      const mine = ++seq, asked = key();
+      open++;
+      told(api);
+      const r = await Promise.resolve().then(() => ask(op)).catch((e) => ({ error: e.message }));
+      open--;
+      if (mine !== seq) { told(api); return false; }
+      // no answer (the server busy with a run): the last result stays, a wanted Apply says why it waits no more
+      if (!r || r.error) { api.error = r?.error ?? 'no answer from the analysis: Apply again'; api.wanted = false; told(api); return false; }
+      api.error = '';
+      result = r;
+      if (r.state) set(r.state);
+      answered = r.state ? key() : asked;
+      settle();
+      return true;
+    }
+    return api;
+  }
+
+  /** The frame of a dialog that writes TeX: Apply writes the server's edits of the latest state; `render.main/side` fill it. */
   function frame(view, host, title, render) {
     const tex = h('pre', { class: 'sd-tex', 'aria-label': 'the TeX written' });
     const notes = h('div', { class: 'sd-note', role: 'status' });
-    let result = null, timer = 0, seq = 0;
-    const apply = h('button', { type: 'button', class: 'sd-primary', title: 'Write into the document (Ctrl+Enter)', onclick: () => { if (result) { host.commit(result.edits); p.close(); } } }, 'Apply');
     const hist = history(() => view.state, (st) => { view.state = st; render.redraw(); refresh(); });
-    const reset = h('button', { type: 'button', class: 'sd-ghost', title: 'Back to how the dialog opened', onclick: () => hist.reset() }, 'Reset');
-    const p = popup({ name: view.kind, title, sub: render.sub, main: render.main, side: [render.side, h('h4', {}, 'Written as'), tex, notes], foot: render.foot, tools: hist.controls(), feedback: host.feedback, extra: [reset], actions: [apply], parent: host.parent, onClose: () => host.closed?.() });
-    hist.keys(p.root);
-    p.root.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); apply.click(); } });
-    /** Asks the server for the text `state` writes; `op` transforms the state first (booktabs, siunitx). */
-    const refresh = (op) => {
-      clearTimeout(timer);
-      return new Promise((done) => {
-        timer = setTimeout(async () => {
-          const mine = ++seq;
-          const r = await host.apply(view.state, op).catch((e) => ({ error: e.message }));
-          if (mine !== seq) return done(false);
-          // no answer (the server busy with a run): the last result stays
-          if (!r || r.error) { notes.textContent = r?.error ?? ''; apply.disabled = !result; hist.settle(); return done(false); }
-          result = r;
-          if (r.state) { view.state = r.state; render.redraw(); }
-          tex.textContent = r.edits?.[0]?.newText ?? '';
-          notes.textContent = (r.notes ?? []).join('; ');
-          apply.disabled = false;
-          hist.settle();
-          done(true);
-        }, op ? 0 : 120);
-      });
+    const life = applier({
+      get: () => view.state,
+      set: (st) => { view.state = st; render.redraw(); },
+      ask: (op) => host.apply(view.state, op),
+      commit: (edits) => { host.commit(edits); p.close(true); },
+      told: (l) => {
+        if (l.result) tex.textContent = l.result.edits?.[0]?.newText ?? '';
+        else if (!tex.textContent) tex.textContent = 'waiting for the analysis…';
+        tex.classList.toggle('sd-stale', l.waiting);
+        notes.textContent = l.error || (l.wanted ? 'waiting for the analysis… Apply writes when it answers' : (l.result?.notes ?? []).join('; '));
+        p?.apply.setAttribute('aria-busy', String(l.wanted));
+        if (!l.waiting) hist.settle();
+      },
+    });
+    const refresh = (op) => life.change(op);
+    const p = popup({
+      name: view.kind, title, sub: render.sub, main: render.main, side: [render.side, h('h4', {}, 'Written as'), tex, notes], foot: render.foot,
+      tools: hist.controls(), feedback: host.feedback, reset: () => hist.reset(), apply: () => life.apply(), parent: host.parent,
+      dirty: () => hist.dirty, onClose: () => { life.cancel(); host.closed?.(); },
+    });
+    keys(p.root, hist, () => life.apply());
+    return { refresh, history: hist, root: p.root, close: p.close, apply: () => life.apply() };
+  }
+  /** The keys every widget routes at its root, before a focused child sees them: Ctrl+Enter applies, Ctrl+Z / Ctrl+Shift+Z undo and redo. */
+  function keys(root, hist, apply) {
+    route(root, (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); apply(); } });
+    hist?.keys(root);
+  }
+  /** `on(keydown)` at `root` before its children, and for keys with no focus (a redrawn control drops it to the body)
+   * while `root` sits in the topmost open dialog; gone with `root`. */
+  function route(root, on) {
+    root.addEventListener('keydown', on, true);
+    const stray = (e) => {
+      if (!root.isConnected) return removeEventListener('keydown', stray, true);
+      if (e.target === document.body && [...document.querySelectorAll('dialog[open]')].pop()?.contains(root)) on(e);
     };
-    return { refresh, history: hist, root: p.root, close: p.close, apply: () => apply.click() };
+    addEventListener('keydown', stray, true);
   }
 
   // ------------------------------------------------------------ table model (no DOM: views.test.mjs)
@@ -1402,7 +1499,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       if (view?.kind === 'float') return placement(view, host);
       return null;
     },
-    popup, enhance, store, picker, table: T, image: { contentBox, trimTo, colorModel, DECODE },
+    popup, enhance, store, picker, footer, discard, applier, keys, table: T, image: { contentBox, trimTo, colorModel, DECODE },
   };
   Object.assign(api, { texTokens, history, HINT });
   self.satexDialogs = api;

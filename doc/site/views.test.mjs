@@ -658,3 +658,42 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   assert.deepEqual(P.headerEdits(none, nm, false).map((e) => e.newText), ['\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n\\fancyhf{}\n\\fancyhead[R]{\\thepage}\n']);
   console.log('page model: ok');
 }
+
+// the Apply lifecycle (dialogs.js `applier`): Apply before the first answer waits for it, a pending change is
+// flushed and its answer written, never an older state's; an answer to a closed widget writes nothing
+{
+  const { applier } = self.satexDialogs;
+  const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
+  let state = { w: 1 }, slow = 20;
+  const written = [], asked = [];
+  const life = applier({
+    get: () => state, set: (s) => { state = s; }, delay: 50, commit: (edits) => written.push(edits[0].newText),
+    ask: async (op) => { const at = JSON.stringify(state); asked.push(at); await tick(slow); return { edits: [{ newText: at + (op ?? '') }] }; },
+  });
+  life.change();
+  life.apply();
+  assert.ok(life.wanted && life.waiting, 'Apply before the first answer waits');
+  await tick(40);
+  assert.deepEqual(written, ['{"w":1}'], 'and writes once it lands');
+  state = { w: 2 };
+  life.change();
+  life.apply();
+  await tick(40);
+  assert.deepEqual(written.at(-1), '{"w":2}', 'an edit just before Apply is flushed, not dropped');
+  assert.equal(asked.length, 2, 'the flush asks once, not after the debounce again');
+  state = { w: 3 }; life.change(); await tick(60);
+  state = { w: 4 };
+  life.apply();
+  await tick(40);
+  assert.deepEqual(written.at(-1), '{"w":4}', 'a state changed after the last answer is asked for before writing');
+  state = { w: 5 }; life.change(); life.apply(); life.cancel(); await tick(80);
+  assert.equal(written.length, 3, 'closed: the late answer writes nothing');
+  const failing = applier({ get: () => state, set() {}, commit: () => written.push('x'), ask: async () => ({ error: 'no table here' }) });
+  failing.apply(); await tick(10);
+  assert.equal(failing.error, 'no table here'); assert.equal(failing.wanted, false, 'an error drops the wanted Apply');
+  // an op's answer brings a new state: written as that state
+  const op = applier({ get: () => state, set: (s) => { state = s; }, commit: (e) => written.push(e[0].newText), ask: async (o) => ({ edits: [{ newText: o }], state: { w: 'S' } }) });
+  op.change('siunitx'); op.apply(); await tick(10);
+  assert.deepEqual([written.at(-1), state], ['siunitx', { w: 'S' }]);
+  console.log('apply lifecycle: ok');
+}

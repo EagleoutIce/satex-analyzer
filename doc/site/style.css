@@ -2053,8 +2053,8 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 :is(.sd button.sd-primary, .tv-button.tv-primary) { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; padding: 0 1rem; }
 :is(.sd button.sd-primary, .tv-button.tv-primary):hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, var(--fg)); }
 /* ghost and icon: tools that stay quiet until hovered */
-:is(.sd button.sd-ghost, .sd .sd-selbar button, .sd .sd-icon, .tv .sd-icon, .pop-tools button) { background: none; border-color: transparent; color: var(--muted); }
-:is(.sd button.sd-ghost, .sd .sd-selbar button, .sd .sd-icon, .tv .sd-icon, .pop-tools button):hover:not(:disabled) { background: var(--sunk); border-color: transparent; color: var(--fg); }
+:is(.sd button.sd-ghost, .tv-button.tv-ghost, .sd .sd-selbar button, .sd .sd-icon, .tv .sd-icon, .pop-tools button) { background: none; border-color: transparent; color: var(--muted); }
+:is(.sd button.sd-ghost, .tv-button.tv-ghost, .sd .sd-selbar button, .sd .sd-icon, .tv .sd-icon, .pop-tools button):hover:not(:disabled) { background: var(--sunk); border-color: transparent; color: var(--fg); }
 :is(.sd .sd-icon, .tv .sd-icon, .pop-tools button) { width: var(--btn-h); padding: 0; }
 :is(.sd-icon, .pop-tools button) svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 /* toggles: pressed reads as selected, in a segmented row too */

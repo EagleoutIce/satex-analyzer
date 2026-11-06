@@ -563,6 +563,9 @@
   const lineOf = (doc, n) => doc.line(Math.max(1, Math.min((n | 0) + 1, doc.lines)));
   const at = (doc, p) => Math.max(0, Math.min(lineOf(doc, p.line).from + (p.character | 0), doc.length));
   const position = (doc, offset) => { const l = doc.lineAt(offset); return { line: l.number - 1, character: offset - l.from }; };
+  /** The text `range` (LSP) spans in `text`. */
+  const offsetIn = (text, p) => { let i = 0; for (let l = 0; l < p.line; l++) { const n = text.indexOf('\n', i); if (n < 0) return text.length; i = n + 1; } return Math.min(i + p.character, text.length); };
+  const textIn = (text, r) => text.slice(offsetIn(text, r.start), offsetIn(text, r.end));
   /** `edits` (LSP TextEdits) applied to a plain text, for files not in the editor. */
   function edited(text, edits) {
     const starts = [0];
@@ -1264,6 +1267,8 @@
       mark: (ranges) => ev.dispatch({ effects: marks.of(ranges.map((r) => span(r)).filter(([f, t]) => t > f)) }),
       line: () => { const l = doc().lineAt(ev.state.selection.main.head); return [l.from, l.to]; },
       // the cursor goes to the start; the range only flashes, or is selected with `select`
+      // back in the editor where its cursor was (a widget closed)
+      refocus: () => ev.focus(),
       focus: (r, flash = false, select = false) => {
         const [from, to] = span(r);
         ev.dispatch({ selection: { anchor: from, ...(select ? { head: to } : {}) }, scrollIntoView: true, effects: flash && to > from ? flashes.of([[from, to]]) : [] });
@@ -1288,7 +1293,7 @@
       apply: (edits) => { area.value = edited(area.value, edits); changed(); },
       cursor: () => [area.selectionStart, area.selectionEnd], select: ([a, h] = [0, 0]) => area.setSelectionRange(Math.min(a, h), Math.max(a, h)),
       mark: () => {}, line: () => { const s = area.value.lastIndexOf('\n', area.selectionStart - 1) + 1, e = area.value.indexOf('\n', area.selectionStart); return [s, e < 0 ? area.value.length : e]; },
-      position: pos, word: () => { const p = pos(); return wordAt(area.value.split('\n')[p.line], p.character); }, focus: () => area.focus(),
+      position: pos, word: () => { const p = pos(); return wordAt(area.value.split('\n')[p.line], p.character); }, focus: () => area.focus(), refocus: () => area.focus(),
       coords: () => { const r = area.getBoundingClientRect(); return { left: r.left + 8, bottom: r.top + 24 }; },
     };
   }
@@ -1767,6 +1772,10 @@
     const changes = { ...action.edit?.changes };
     for (const d of action.edit?.documentChanges ?? []) if (d.edits) changes[d.textDocument.uri] = d.edits;
     const files = Object.keys(changes).map((u) => u.split('/').pop());
+    // an edit of one other file (a manager writing refs.bib): that file opens first and takes it through the
+    // editor, so one Ctrl+Z there undoes it
+    const other = Object.keys(changes).length === 1 && !(uri() in changes) && Object.keys(state.texts).find((n) => uri(n) in changes && !(n in state.ro));
+    if (other) choose(other);
     if (!applyEdit(action.edit)) return toast(files.length ? `Not applied: it edits ${files.join(', ')}` : 'Not applied: the fix has no edit');
     // a fix that edits other files only: said where, and that file opened at the edit
     const elsewhere = Object.keys(changes).filter((u) => u !== uri());
@@ -1801,13 +1810,29 @@
     if (!t?.view) return;
     const dialog = $('play-view');
     viewPlugin = t.view.plugin;
+    viewGuards = [];
+    dialog.querySelector(':scope > .sd-discard')?.remove();
+    dialog.satexAsk = null;
     $('view-title').textContent = t.view.title;
     self.satexViews.render(t.view, $('view-body'), {
       markdown: (md) => card(md),
-      apply: (edits) => { dialog.close(); fix({ title: t.view.title, edit: Array.isArray(edits) ? { changes: { [t.target]: edits } } : edits }); },
+      apply: (edits) => { closeView(true); fix({ title: t.view.title, edit: Array.isArray(edits) ? { changes: { [t.target]: edits } } : edits }); },
+      close: () => closeView(),
+      guard: (dirty) => viewGuards.push(dirty),
     });
     if (!dialog.open) dialog.showModal();
   }
+  /** The views' dialog closes, after asking when a view has unwritten changes (`force`: after Apply); the editor gets the focus back. */
+  let viewGuards = [];
+  async function closeView(force = false) {
+    const dialog = $('play-view');
+    if (!dialog.open) return;
+    if (force !== true && viewGuards.some((dirty) => dirty()) && !(await self.satexDialogs.discard(dialog))) return;
+    viewGuards = [];
+    dialog.close();
+    editor?.refocus?.();
+  }
+  $('play-view').addEventListener('cancel', (e) => { e.preventDefault(); const d = $('play-view'); if (d.satexAsk) d.satexKeep(); else closeView(); });
   /** The views at `p`, the one of `plugin` opened at once. */
   async function openViews(p, plugin) {
     const rows = await typedTools(p);
@@ -1840,7 +1865,7 @@
   document.addEventListener('click', (e) => { const b = e.target.closest('[data-tool]'); if (b) { e.preventDefault(); runTool(+b.dataset.tool); } });
   // a fix offered on a finding's hover card: applied, the card goes
   document.addEventListener('click', (e) => { const b = e.target.closest('.tip [data-fix]'); const f = b && hoverFixes[+b.dataset.fix]; if (f) { e.preventDefault(); tips.card.hide(); fix(f); } });
-  $('view-close').onclick = () => $('play-view').close();
+  $('view-close').onclick = () => closeView();
   $('cfg-reset-view').onclick = () => resetView();
   // dev mode: traces carry the abstract state of each step (`trace_state`); off, the runs pay nothing for it
   let devMode = false;
@@ -2150,7 +2175,8 @@
     const menus = [...document.querySelectorAll('.ctx:not([hidden])')], dialog = [...document.querySelectorAll('dialog[open]')].pop();
     drop.hidden = true;
     if (menus.length) menus.forEach((m) => { m.hidden = true; });
-    else if (dialog) { e.preventDefault(); dialog.close(); }
+    // the dialog's own cancel runs first: a widget with unwritten changes asks instead of closing
+    else if (dialog) { e.preventDefault(); if (dialog.dispatchEvent(new Event('cancel', { cancelable: true }))) dialog.close(); }
   });
 
   // ---------------------------------------------------------------- the Explain panel
@@ -5888,9 +5914,14 @@
     const target = uri();
     const v = await lsp('satex/dialog', { textDocument: { uri: target }, position }).catch(() => null);
     if (!v) return quiet || toast('No table or figure here the analysis met: analyze first');
+    const was = textIn(editor.text(), v.range);
     self.satexDialogs.open(v, {
       apply: (state, op) => lsp('satex/dialogApply', { textDocument: { uri: target }, kind: v.kind, range: v.range, state, op }),
-      commit: (edits) => { if (target === uri()) editor.apply(edits); else toast('The file changed meanwhile: not written'); },
+      // the text the dialog edits is rechecked: a detached dialog leaves the editor free to change it
+      commit: (edits) => target !== uri() ? toast('The file changed meanwhile: not written')
+        : textIn(editor.text(), v.range) !== was ? toast('The text changed meanwhile: not written. Open the widget again')
+        : editor.apply(edits),
+      closed: () => editor.refocus?.(),
       image: async (path) => {
         const b = await binaryOf(path);
         if (b?.kind !== 'pdf') return b;

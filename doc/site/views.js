@@ -9,6 +9,15 @@
   const filled = (edit, vars) => ({ changes: Object.fromEntries(Object.entries(edit?.changes ?? {}).map(([u, es]) => [u, es.map((e) => ({ range: e.range, newText: fill(e.newText, vars) }))])) });
   const merge = (edits) => ({ changes: edits.reduce((all, e) => { for (const [u, es] of Object.entries(e.changes)) (all[u] ??= []).push(...es); return all; }, {}) });
   // braces that close in order, as TeX reads a value (a `\{` is no group)
+  /** The footer every view shares (dialogs.js `footer`): `status`, the undo tools, Reset, Cancel and Apply. Ctrl+Enter
+   * and the undo keys go to the root before a focused child; closing with unwritten changes asks first (`ctx.guard`). */
+  const footer = (root, ctx, { status, apply, label = 'Apply', H, tools = false }) => {
+    const D = self.satexDialogs;
+    ctx.guard?.(() => !!H?.dirty);
+    const f = D.footer({ note: status, tag: 'div', cls: 'tv-actions tv-foot', extra: tools ? H?.controls?.() ?? [] : [], reset: H?.reset && (() => H.reset()), cancel: ctx.close, apply, label });
+    D.keys(root, H, () => f.apply.click());
+    return f;
+  };
   const balanced = (text) => { let d = 0; for (const m of text.replace(/\\./g, '').matchAll(/[{}]/g)) if ((d += m[0] === '{' ? 1 : -1) < 0) return false; return d === 0; };
 
   // colors: rgb in 0..1 to each model's spec, as xcolor writes them (xcolor § 6.3)
@@ -182,7 +191,7 @@
           const lab = el('label', 'tv-field', `<span>${esc(d.name)}</span>`);
           const i = Object.assign(el(d.choices ? 'select' : d.long ? 'textarea' : 'input', 'tv-input'), { spellcheck: false, name: d.name });
           if (d.choices) i.innerHTML = d.choices.map((c) => `<option${c === d.value ? ' selected' : ''}>${esc(c)}</option>`).join('');
-          else i.value = d.value ?? '';
+          else { i.value = d.value ?? ''; i.dataset.was = i.value; }
           if (d.placeholder) i.placeholder = d.placeholder;
           i.oninput = () => i.classList.toggle('tv-bad', !balanced(i.value));
           lab.append(i);
@@ -205,6 +214,8 @@
       input.oninput = draw;
       sort.onchange = draw;
       draw();
+      // closing with a field typed in and not written asks first
+      ctx.guard?.(() => [...box.querySelectorAll('[data-was]')].some((i) => i.value !== i.dataset.was));
       box.append(head, list);
       if (s.add) {
         const more = el('details', 'tv-add', `<summary>${esc(s.add.title)}</summary>`);
@@ -354,7 +365,7 @@
         box.append(el('h4', 'tv-h', 'Defined here'), list);
       }
       const foot = el('div', 'tv-actions');
-      if (hist) { foot.append(...hist.controls(), el('span', 'tv-muted tv-hint', esc(self.satexDialogs.HINT.replace(', Ctrl+Enter applies', '')))); hist.keys(box); }
+      if (hist) { foot.append(...hist.controls(), el('span', 'tv-muted tv-hint', esc(self.satexDialogs.HINT.replace(', Ctrl+Enter applies', '')))); hist.keys(box); ctx.guard?.(() => !!s.apply && hist.dirty); }
       if (s.apply) {
         const write = el('button', 'tv-button tv-primary');
         write.type = 'button';
@@ -1398,11 +1409,7 @@
       loss.textContent = lost.length ? `Not in the flowchart: ${lost.join(', ')}.` : '';
     }
     mer.append(text, loss, mrow);
-    const foot = el('div', 'tv-actions tv-foot');
-    const write = el('button', 'tv-button tv-primary', s.wrap ? 'Insert drawing' : 'Apply');
-    write.type = 'button';
-    write.title = 'Write into the document (Ctrl+Enter)';
-    write.onclick = () => {
+    const writeIt = () => {
       const body = emit(state, k), o = pic.text() ? `[${pic.text()}]` : '';
       // a matrix needs TikZ's matrix library
       const lib = live().some((i) => i.type === 'matrix') && R.load_at && !(R.libraries ?? []).includes('matrix') ? [{ range: { start: R.load_at, end: R.load_at }, newText: '\\usetikzlibrary{matrix}\n' }] : [];
@@ -1411,11 +1418,10 @@
       if (s.wrap) return ctx.apply([{ range: s.range, newText: `\\begin{tikzpicture}${o}${body}\n\\end{tikzpicture}` }, ...pre]);
       ctx.apply([picDirty && s.head ? { range: { start: s.head.start, end: s.range.end }, newText: o + body } : { range: s.range, newText: body }, ...lib]);
     };
-    if (H?.reset) { const b = el('button', 'tv-button tv-ghost', 'Reset'); b.type = 'button'; b.title = 'Back to how the dialog opened'; b.onclick = () => H.reset(); foot.append(status, b, write); } else foot.append(status, write);
+    const { el: foot, apply: write } = footer(root, ctx, { status, apply: writeIt, label: s.wrap ? 'Insert drawing' : 'Apply', H });
     root.append(bar, svg, side, layerRow, settings, mer, kept);
     if (s.note) root.append(el('div', 'tv-text', ctx.markdown(s.note)));
     root.append(foot);
-    H?.keys?.(root);
     draw(true);
     return root;
   }
@@ -1534,6 +1540,7 @@
   // the store's moves: by path into the tree
   const parentOf = (t, x) => { const go = (n) => n.children.includes(x) ? n : n.children.map(go).find(Boolean); return go(t.root); };
   const within = (a, b) => a === b || a.children.some((c) => within(c, b));
+  const size = (n) => 1 + n.children.reduce((k, c) => k + size(c), 0);
   /** Moves `n` before or after `target` (`where` = 'before' | 'after'), or under it ('child'). */
   function move(t, n, target, where) {
     if (within(n, target)) return false;
@@ -1584,19 +1591,30 @@
     if (!t) { if (!root.childElementCount) root.append(el('div', 'tv-text', 'No bracket tree in this environment.')); return root; }
     if (s.wrap) t.root.place = '';
     // what forest computed, in creation order, which is the bracket order
-    const order = []; const pre = (n) => { order.push(n); n.children.forEach(pre); }; pre(t.root);
-    const run = (s.nodes ?? []).length === order.length && s.nodes.every((r, k) => r.content === order[k].content) ? new Map(order.map((n, k) => [n, s.nodes[k]])) : new Map();
-    let sel = t.root, dragging = null, changed = 0;
+    const ran = () => { const order = []; const pre = (n) => { order.push(n); n.children.forEach(pre); }; pre(t.root);
+      return (s.nodes ?? []).length === order.length && s.nodes.every((r, k) => r.content === order[k].content) ? new Map(order.map((n, k) => [n, s.nodes[k]])) : new Map(); };
+    let run = ran();
+    let sel = t.root, dragging = null;
+    // undo: the shared history of the tree's data; a step back selects the root
+    let ftRow = null;
+    const H = self.satexDialogs.history(() => t, (v) => {
+      t = v; sel = t.root; run = ran(); draw();
+      const ft = forTree(t.pre);
+      if (ftRow) ftRow.lastChild.value = ft ? t.pre.slice(...ft) : '';
+    });
+    const changed = () => H.changed;
     const svg = svgEl('svg', { class: 'tv-canvas', role: 'img', 'aria-label': 'tree' });
     const side = el('div', 'tv-forest-side');
     const status = el('span', 'tv-muted');
-    const write = el('button', 'tv-button tv-primary', s.wrap ? 'Insert tree' : 'Write');
-    const touch = () => { changed++; draw(); };
+    const touch = () => { H.settle(); draw(); };
     const button = (row, label, f, title) => { const b = el('button', 'tv-button', esc(label)); b.type = 'button'; b.onclick = f; if (title) b.title = title; row.append(b); return b; };
     const field = (label, value, f) => {
       const row = el('label', 'tv-row');
       const input = Object.assign(el('input', 'tv-input'), { value, spellcheck: false, ariaLabel: label });
-      input.oninput = () => { f(input.value); changed++; drawTree(); status.textContent = `${changed} change${changed > 1 ? 's' : ''} to write`; write.disabled = false; };
+      // typing is one undo step: held while the field has the focus
+      input.onfocus = () => H.hold(true);
+      input.onblur = () => H.hold(false);
+      input.oninput = () => { f(input.value); drawTree(); status.textContent = 'changes to apply'; write.disabled = false; };
       row.append(el('span', 'tv-muted', esc(label)), input);
       return row;
     };
@@ -1608,7 +1626,7 @@
       // positions from the run when it computed every one (forest's x, y in pt; y grows up)
       const known = run.size && [...run.values()].every((r) => r.x != null && r.y != null);
       const scale = 1 / 28.45;
-      for (const p of pos) if (known && !changed) { const r = run.get(p.n); p.x = r.x * scale; p.y = r.y * scale; } else p.y *= 1.1;
+      for (const p of pos) if (known && !changed()) { const r = run.get(p.n); p.x = r.x * scale; p.y = r.y * scale; } else p.y *= 1.1;
       const by = new Map(pos.map((p) => [p.n, p]));
       const xs = pos.map((p) => p.x), ys = pos.map((p) => p.y);
       // at least 8 by 4 units, so a small tree keeps its letters small
@@ -1653,15 +1671,17 @@
         button(row, 'Add sibling', () => { const c = fresh('new'); parent.children.splice(parent.children.indexOf(n) + 1, 0, c); sel = c; touch(); });
         button(row, '←', () => { const k = parent.children.indexOf(n); if (k > 0) { move(t, n, parent.children[k - 1], 'before'); touch(); } }, 'move left');
         button(row, '→', () => { const k = parent.children.indexOf(n); if (k < parent.children.length - 1) { move(t, n, parent.children[k + 1], 'after'); touch(); } }, 'move right');
-        button(row, 'Delete', () => { parent.children.splice(parent.children.indexOf(n), 1); sel = parent; touch(); });
+        // a subtree goes as one undoable step; the status says what went
+        button(row, 'Delete', () => { parent.children.splice(parent.children.indexOf(n), 1); sel = parent; touch(); const k = size(n) - 1; if (k) status.textContent = `deleted ${n.content || 'a node'} and ${k} below it: Ctrl+Z brings them back`; },
+          n.children.length ? `Delete this node and the ${size(n) - 1} below it (Ctrl+Z undoes)` : 'Delete this node');
       }
       side.append(row);
-      status.textContent = changed ? `${changed} change${changed > 1 ? 's' : ''} to write` : 'no changes';
-      write.disabled = !changed && !s.wrap;
+      status.textContent = changed() ? 'changes to apply' : 'no changes';
+      write.disabled = !changed() && !s.wrap;
     }
     const opts = el('div', 'tv-forest-tree');
     const ft = forTree(t.pre);
-    opts.append(el('h4', 'tv-h', 'Every node (for tree)'), field('for tree', ft ? t.pre.slice(...ft) : '', (v) => setForTree(t, v)));
+    opts.append(el('h4', 'tv-h', 'Every node (for tree)'), ftRow = field('for tree', ft ? t.pre.slice(...ft) : '', (v) => setForTree(t, v)));
     const rest = t.pre.trim();
     if (rest && !(ft && rest.replace(/^for\s+tree\s*=\s*\{[\s\S]*\}\s*,?$/, '') === '')) opts.append(el('pre', 'tv-kept', esc(rest)));
     // indented outlines in and out
@@ -1672,14 +1692,12 @@
     button(orow, 'Replace tree', () => { const kids = outlineIn(text.value); if (!kids.length) return; const r = kids.length === 1 ? kids[0] : Object.assign(fresh(''), { children: kids }); r.place = t.root.place; r.lead = t.root.lead; t.root = r; sel = r; touch(); });
     button(orow, 'Export', () => { text.value = outlineOut(t.root); text.select(); });
     out.append(text, orow);
-    write.type = 'button';
-    write.onclick = () => {
+    const writeIt = () => {
       settle(t);
       const body = treeEmit(t);
       ctx.apply([{ range: s.range, newText: s.wrap ? `\\begin{forest}${body}\\end{forest}` : body }, ...(s.extra ? [s.extra] : [])]);
     };
-    const foot = el('div', 'tv-actions tv-foot');
-    foot.append(status, write);
+    const { el: foot, apply: write } = footer(root, ctx, { status, apply: writeIt, label: s.wrap ? 'Insert tree' : 'Apply', H, tools: true });
     root.append(svg, side, opts, out);
     if (s.note) root.append(el('div', 'tv-text', ctx.markdown(s.note)));
     root.append(foot);
@@ -2000,18 +2018,11 @@
       side.replaceChildren(...(tab === 'margins' ? margins() : header()));
       paint();
     }
-    const write = el('button', 'tv-button tv-primary', 'Apply');
-    write.type = 'button';
-    write.title = 'Write into the document (Ctrl+Enter)';
-    write.onclick = () => ctx.apply(edits());
-    const foot = el('div', 'tv-actions tv-foot');
-    if (H?.reset) { const r = el('button', 'tv-button tv-ghost', 'Reset'); r.type = 'button'; r.title = 'Back to how the dialog opened'; r.onclick = () => H.reset(); foot.append(...H.controls(), status, r, write); } else foot.append(status, write);
-    root.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); write.click(); } });
+    const { el: foot, apply: write } = footer(root, ctx, { status, apply: () => ctx.apply(edits()), H, tools: true });
     const notes = el('div', 'tv-text', ctx.markdown(`The run's page${s.class ? ` with ${s.class}` : ''}${two ? ', two-sided' : ''}: the lengths as it ended.${st0.open.length ? ` It left ${st0.open.map((k) => `\\${k}`).join(', ')} open: the middle of each interval is drawn.` : ''}${s.geometry.global.note ? ` Apply ${s.geometry.global.note}.` : ''}`));
     const main = el('div', 'tv-page-main');
     main.append(svg, side);
     root.append(bar, notes, main, foot);
-    H?.keys?.(root);
     draw();
     return root;
   }

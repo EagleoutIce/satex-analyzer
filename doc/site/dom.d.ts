@@ -8,11 +8,12 @@ interface Loose {
   selectionStart: number; selectionEnd: number; setSelectionRange(start: number, end: number): void;
   showModal(): void; close(): void; select(): void; max: number | string; id: string; options: HTMLOptionsCollection;
   matches(selector: string): boolean; getBoundingClientRect(): DOMRect; content: string; cells: HTMLCollectionOf<HTMLTableCellElement>;
+  satexAsk?: Promise<boolean> | null; satexKeep?: () => void; // a widget's open discard question (dialogs.js `discard`)
   onmouseenter: ((e: MouseEvent) => unknown) | null; onmouseleave: ((e: MouseEvent) => unknown) | null; tHead: HTMLTableSectionElement; tBodies: HTMLCollectionOf<HTMLTableSectionElement>;
 }
 interface EventTarget extends Loose {}
 interface Element extends Loose {}
 interface Node { data?: string; replaceWith?(...nodes: (Node | string)[]): void; classList?: DOMTokenList }
 // What the pages share through `window`.
-interface Window { satexTypeList: any; SATEX_FILES: any; satexTypes: any; satexCards: any; siteCM: any; siteTex: any; siteDark: any; satexHealth: any; satexKill: any; satexLayers: any; satexStore: any }
+interface Window { satexTypeList: any; SATEX_FILES: any; satexTypes: any; satexCards: any; siteCM: any; siteTex: any; siteDark: any; satexHealth: any; satexKill: any; satexLayers: any; satexStore: any; satexDialogs: any }
 interface Uint8ArrayConstructor { fromBase64?(text: string): Uint8Array }
