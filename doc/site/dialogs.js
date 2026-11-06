@@ -30,11 +30,10 @@ dialog.pop.pop-peek { opacity: .06; pointer-events: none; transition: opacity .1
 dialog.pop.pop-peek::backdrop { opacity: 0; }
 .pop-tools { display: inline-flex; gap: .15rem; margin-left: auto; }
 .pop-tools + button { margin-left: .15rem; }
-.pop-tools button, .sd .pop-tools button, .sd .sd-icon { display: inline-grid; place-items: center; width: 1.9rem; height: 1.9rem; padding: 0; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--c-muted); cursor: pointer; transition: background .12s, color .12s; }
-.pop-tools button:hover, .pop-tools button[aria-pressed=true], .sd .pop-tools button:hover:not(:disabled), .sd .pop-tools button[aria-pressed=true], .sd .sd-icon:hover:not(:disabled) { background: var(--c-sunk); color: var(--c-fg); }
 .pop-tools svg, .sd-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .sd > header, .sd > footer { max-width: none; width: auto; margin: 0; box-sizing: border-box; display: flex; align-items: center; gap: .5rem; padding: .55rem .6rem .55rem 1rem; flex-wrap: wrap; }
 .sd > header { border-bottom: 1px solid var(--c-border); }
+.sd-tools { display: inline-flex; gap: .1rem; margin-left: auto; } .sd-tools ~ .pop-tools { margin-left: .2rem; }
 .sd > header h3 { margin: 0; font-size: 1rem; font-weight: 650; letter-spacing: -.01em; }
 .sd > header .sd-sub { color: var(--c-muted); font-size: .8rem; }
 .sd > footer { border-top: 1px solid var(--c-border); justify-content: flex-end; padding: .55rem 1rem; }
@@ -43,19 +42,8 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 @media (max-width: 760px) { .sd-body { grid-template-columns: 1fr; padding: .7rem; } .sd > header { padding-left: .8rem; } }
 @media (max-width: 600px) { dialog.sd-dialog { width: 100vw; height: 100dvh; max-height: none; margin: 0; border-radius: 0; border: 0; } .pop-tools .pop-btn:nth-child(2) { display: none; } }
 .sd button, .sd select, .sd input, .sd textarea { font: inherit; color: inherit; max-width: 100%; }
-.sd button { background: var(--c-sunk); border: 1px solid var(--c-border); border-radius: 8px; padding: .25rem .65rem; cursor: pointer; transition: border-color .12s, background .12s; }
-.sd button:hover:not(:disabled) { border-color: var(--c-accent); }
-.sd button:disabled { opacity: .45; cursor: default; }
-.sd button:focus-visible, .sd select:focus-visible, .sd input:focus-visible, .sd textarea:focus-visible, .sd [tabindex]:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
-.sd button.sd-primary { background: var(--c-accent); color: var(--c-accent-fg); border-color: var(--c-accent); font-weight: 600; padding: .3rem 1rem; }
-.sd button.sd-ghost { background: none; border-color: transparent; }
-.sd button.sd-ghost:hover:not(:disabled) { background: var(--c-sunk); border-color: transparent; }
-.sd button[aria-pressed=true] { background: var(--c-bg); border-color: var(--c-accent); color: var(--c-accent); }
+.sd select:focus-visible, .sd input:focus-visible, .sd textarea:focus-visible, .sd [tabindex]:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
 .sd input, .sd select, .sd textarea { background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 6px; padding: .2rem .35rem; min-width: 0; }
-.sd-seg { display: inline-flex; border: 1px solid var(--c-border); border-radius: 8px; overflow: hidden; }
-.sd-seg button { border: 0; border-radius: 0; background: none; padding: .2rem .7rem; }
-.sd-seg button + button { border-left: 1px solid var(--c-border); }
-.sd-seg button[aria-pressed=true] { background: var(--c-sel); color: var(--c-accent); }
 .sd-bar { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin-bottom: .7rem; }
 .sd-bar .sd-sep { width: 1px; align-self: stretch; background: var(--c-border); margin: 0 .25rem; }
 .sd-muted { color: var(--c-muted); font-size: .85em; }
@@ -70,6 +58,17 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-row label { display: inline-flex; gap: .25rem; align-items: center; }
 .sd-num { width: 4.2rem; }
 .sd-len { width: 9rem; }
+.sd-injects { display: grid; grid-template-columns: 1fr 1fr; gap: .15rem; margin-top: .2rem; } .sd-grid th.sd-colh .sd-injects .sd-tex-in { margin-top: 0; } .sd-injects .sd-tex-in { font-size: .8em; }
+.sd-inj { opacity: .45; font-style: italic; }
+/* a TeX length field: the editor's token colours painted by a mirror over the input's transparent text */
+.sd-tex-in { position: relative; display: inline-block; max-width: 100%; overflow: hidden; vertical-align: middle; border-radius: 6px; }
+.sd-grid th.sd-colh .sd-tex-in { display: block; margin-top: .2rem; } .sd-grid th.sd-colh .sd-tex-in input { margin-top: 0; }
+.sd-form > .sd-tex-in, .sd-form > .sd-tex-in > input { width: 100%; box-sizing: border-box; }
+.sd .sd-tex-in > input { color: transparent; caret-color: var(--c-fg); font-family: ui-monospace, monospace; }
+.sd .sd-tex-in > input::placeholder { color: var(--c-muted); }
+.sd-tex-hl { position: absolute; inset: 0; padding: calc(.2rem + 1px) calc(.35rem + 1px); font: inherit; font-family: ui-monospace, monospace; white-space: pre; pointer-events: none; color: var(--c-fg); line-height: normal; display: flex; align-items: center; }
+.sd-tex-hl .tok-cmd { pointer-events: auto; cursor: text; color: var(--c4, var(--vscode-symbolIcon-functionForeground, var(--c-accent))); }
+.sd-tex-hl .tok-num { color: var(--c6, var(--vscode-symbolIcon-numberForeground, var(--c-fg))); }
 .sd-inline { height: 100%; }
 .sd kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--c-border); border-bottom-width: 2px; border-radius: 4px; padding: 0 .25rem; }
 /* table grid: a spreadsheet of TeX cells */
@@ -119,9 +118,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
 /* the selection's floating bar */
 .sd-selbar { position: absolute; z-index: 5; display: flex; gap: .15rem; align-items: center; padding: .2rem; background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 10px; box-shadow: 0 8px 24px -8px rgb(0 0 0 / .3); transition: opacity .12s, transform .12s var(--ease); white-space: nowrap; }
 .sd-selbar[hidden] { display: flex; opacity: 0; transform: translateY(4px); pointer-events: none; }
-.sd .sd-selbar button { border: 0; background: none; padding: .25rem .5rem; border-radius: 6px; display: inline-grid; place-items: center; min-height: 1.75rem; }
 .sd-selbar svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.sd-selbar button:hover:not(:disabled) { background: var(--c-sunk); }
 .sd-selbar .sd-sep { width: 1px; align-self: stretch; background: var(--c-border); margin: .1rem .15rem; }
 /* the typeset preview: as LaTeX sets the table */
 .sd-prev { display: grid; place-items: center; padding: 1rem .6rem; background: var(--c-sunk); border-radius: 8px; overflow: auto; }
@@ -130,6 +127,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
 .sd-prev td.mr { vertical-align: middle; }
 .sd-prev .math { font-style: italic; }
 .sd-import { display: grid; gap: .35rem; }
+.sd-data { flex-wrap: nowrap; } .sd-data-label { width: 3.6rem; color: var(--c-muted); font-size: .85em; }
+.sd-wrap.sd-over { outline: 2px dashed var(--c-accent); outline-offset: -2px; border-radius: 8px; }
 .sd-import textarea { min-height: 5rem; font: 12px/1.4 ui-monospace, monospace; resize: vertical; }
 @media (prefers-reduced-motion: reduce) { dialog.pop[open], .sd *, .sd-selbar { animation: none !important; transition: none !important; } }
 /* image */
@@ -194,6 +193,25 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     return e;
   };
   const clone = (x) => JSON.parse(JSON.stringify(x));
+  /** A TeX length's text as the editor colours it: control sequences (`.tok-cmd`, each a `.cs-tip`
+   * whose hover shows the name's card) and numbers (`.tok-num`). */
+  const texTokens = (text) => esc(text).replace(/(\\(?:[A-Za-z@]+|.))|(-?(?:\d+\.?\d*|\.\d+))/g, (m, cs, n) =>
+    cs ? `<span class="tok-cmd cs-tip" data-cs="${cs}">${cs}</span>` : `<span class="tok-num">${n}</span>`);
+  /** A text input for a TeX length, highlighted like the editor: a mirror over it paints the tokens,
+   * the input's own text is transparent; setting `value` repaints. */
+  const texField = (input) => {
+    const hl = h('span', { class: 'sd-tex-hl', 'aria-hidden': 'true' });
+    const box = h('span', { class: 'sd-tex-in' }, input, hl);
+    const own = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    const paint = () => { hl.innerHTML = texTokens(input.value); hl.style.translate = `${-input.scrollLeft}px 0`; };
+    Object.defineProperty(input, 'value', { get: () => own.get.call(input), set: (v) => { own.set.call(input, v); paint(); } });
+    input.addEventListener('input', paint);
+    input.addEventListener('scroll', paint);
+    // a press on a name in the mirror edits the field at its end
+    hl.addEventListener('mousedown', (e) => { e.preventDefault(); input.focus(); });
+    paint();
+    return box;
+  };
   let styled = false;
   const style = () => { if (!styled && self.document) { document.head.append(h('style', {}, CSS)); styled = true; } };
 
@@ -308,6 +326,48 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
 
   /** The frame every widget shares: header (title, tools, close), body, footer with the primary action.
    * `opts`: {name, title, sub, main, side, foot, actions: [button…], parent, onClose}. */
+  const ICONS = {
+    undo: '<svg viewBox="0 0 16 16"><path d="M5.5 3 2.5 6l3 3"/><path d="M2.5 6h7a4 4 0 0 1 0 8H7"/></svg>',
+    redo: '<svg viewBox="0 0 16 16"><path d="M10.5 3l3 3-3 3"/><path d="M13.5 6h-7a4 4 0 0 0 0 8H9"/></svg>',
+    feedback: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.5h5M5.5 8.5h3"/></svg>',
+  };
+  /** The undo model every widget shares: one stack of state snapshots per session. `settle()` records
+   * the state when it changed, `hold(true)` defers that over a gesture (typing a cell), `reset()` goes
+   * back to how the widget opened (undoable too). `controls()` gives the header's undo and redo buttons,
+   * `keys(root)` binds Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y outside text fields (those keep their own undo). */
+  function history(get, set) {
+    const json = () => JSON.stringify(get()), first = json(), undo = [], redo = [], subs = [];
+    let last = first, held = false;
+    const told = () => subs.forEach((f) => f());
+    const go = (from, to) => { api.settle(); if (!from.length) return false; to.push(last); last = from.pop(); set(JSON.parse(last)); told(); return true; };
+    const api = {
+      settle() { if (held) return; const now = json(); if (now !== last) { undo.push(last); if (undo.length > 200) undo.shift(); redo.length = 0; last = now; told(); } },
+      hold(on) { held = on; if (!on) api.settle(); },
+      undo: () => go(undo, redo),
+      redo: () => go(redo, undo),
+      reset() { api.settle(); if (last === first) return; undo.push(last); redo.length = 0; last = first; set(JSON.parse(first)); told(); },
+      get changed() { return last !== first; },
+      controls() {
+        const b = (k, title, f) => h('button', { type: 'button', class: 'sd-icon', title, 'aria-label': k, html: ICONS[k], onclick: f });
+        const u = b('undo', 'Undo (Ctrl+Z)', api.undo), r = b('redo', 'Redo (Ctrl+Shift+Z)', api.redo);
+        const sync = () => { u.disabled = !undo.length; r.disabled = !redo.length; };
+        subs.push(sync);
+        sync();
+        return [u, r];
+      },
+      keys(root) {
+        root.addEventListener('keydown', (e) => {
+          if (!(e.ctrlKey || e.metaKey) || e.target.closest?.('input:not([type=range]):not([type=checkbox]), textarea')) return;
+          const k = e.key.toLowerCase();
+          if (k === 'z' && !e.shiftKey) { e.preventDefault(); api.undo(); } else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); api.redo(); }
+        });
+      },
+    };
+    return api;
+  }
+  /** What every widget's footer says about its keys. */
+  const HINT = 'Ctrl+Z undoes, Ctrl+Enter applies, Esc cancels.';
+
   function popup(opts) {
     style();
     const root = h('div', { class: 'sd' + (opts.parent ? ' sd-inline' : '') });
@@ -315,9 +375,11 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const close = () => { if (dlg) { dlg.close(); dlg.remove(); } opts.onClose?.(); };
     root.append(
       h('header', {}, h('h3', {}, opts.title), opts.sub ? h('span', { class: 'sd-sub' }, opts.sub) : null,
+        opts.tools ? h('span', { class: 'sd-tools' }, opts.tools) : null,
+        opts.feedback ? h('button', { type: 'button', class: 'sd-icon sd-feedback', title: 'Send feedback on this widget', 'aria-label': 'feedback on this widget', html: ICONS.feedback, onclick: opts.feedback }) : null,
         opts.parent ? null : h('button', { type: 'button', class: 'sd-icon', 'aria-label': 'close', title: 'Close (Esc)', html: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>', onclick: close })),
       h('div', { class: 'sd-body' }, opts.main, opts.side ? h('div', { class: 'sd-side' }, opts.side) : null),
-      h('footer', {}, h('span', { class: 'sd-muted', style: 'flex:1;min-width:10rem' }, opts.foot ?? ''), opts.parent ? null : h('button', { type: 'button', class: 'sd-ghost', onclick: close }, 'Cancel'), ...(opts.actions ?? [])),
+      h('footer', {}, h('span', { class: 'sd-muted', style: 'flex:1;min-width:10rem' }, opts.foot ?? '', opts.foot ? ' ' : '', HINT), ...(opts.extra ?? []), opts.parent ? null : h('button', { type: 'button', class: 'sd-ghost', title: 'Close without writing (Esc)', onclick: close }, 'Cancel'), ...(opts.actions ?? [])),
     );
     if (opts.parent) opts.parent.replaceChildren(root);
     else {
@@ -337,8 +399,11 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const tex = h('pre', { class: 'sd-tex', 'aria-label': 'the TeX written' });
     const notes = h('div', { class: 'sd-note', role: 'status' });
     let result = null, timer = 0, seq = 0;
-    const apply = h('button', { type: 'button', class: 'sd-primary', title: 'Write it (Ctrl+Enter)', onclick: () => { if (result) { host.commit(result.edits); p.close(); } } }, 'Apply');
-    const p = popup({ name: view.kind, title, sub: render.sub, main: render.main, side: [render.side, h('h4', {}, 'Written as'), tex, notes], foot: render.foot, actions: [apply], parent: host.parent, onClose: () => host.closed?.() });
+    const apply = h('button', { type: 'button', class: 'sd-primary', title: 'Write into the document (Ctrl+Enter)', onclick: () => { if (result) { host.commit(result.edits); p.close(); } } }, 'Apply');
+    const hist = history(() => view.state, (st) => { view.state = st; render.redraw(); refresh(); });
+    const reset = h('button', { type: 'button', class: 'sd-ghost', title: 'Back to how the dialog opened', onclick: () => hist.reset() }, 'Reset');
+    const p = popup({ name: view.kind, title, sub: render.sub, main: render.main, side: [render.side, h('h4', {}, 'Written as'), tex, notes], foot: render.foot, tools: hist.controls(), feedback: host.feedback, extra: [reset], actions: [apply], parent: host.parent, onClose: () => host.closed?.() });
+    hist.keys(p.root);
     p.root.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); apply.click(); } });
     /** Asks the server for the text `state` writes; `op` transforms the state first (booktabs, siunitx). */
     const refresh = (op) => {
@@ -349,22 +414,25 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
           const r = await host.apply(view.state, op).catch((e) => ({ error: e.message }));
           if (mine !== seq) return done(false);
           // no answer (the server busy with a run): the last result stays
-          if (!r || r.error) { notes.textContent = r?.error ?? ''; apply.disabled = !result; return done(false); }
+          if (!r || r.error) { notes.textContent = r?.error ?? ''; apply.disabled = !result; hist.settle(); return done(false); }
           result = r;
           if (r.state) { view.state = r.state; render.redraw(); }
           tex.textContent = r.edits?.[0]?.newText ?? '';
           notes.textContent = (r.notes ?? []).join('; ');
           apply.disabled = false;
+          hist.settle();
           done(true);
         }, op ? 0 : 120);
       });
     };
-    return { refresh, root: p.root, close: p.close, apply: () => apply.click() };
+    return { refresh, history: hist, root: p.root, close: p.close, apply: () => apply.click() };
   }
 
   // ------------------------------------------------------------ table model (no DOM: views.test.mjs)
 
   const RULES = ['\\hline', '\\toprule', '\\midrule', '\\bottomrule'];
+  /** The text array's `>{a}>{b}` (or `<{…}`) injects: the groups' insides, joined. */
+  const injected = (spec = '') => [...spec.matchAll(/[<>]\{((?:[^{}]|\{[^{}]*\})*)\}/g)].map((m) => m[1]).join('');
   const blank = () => ({ text: '', span: 1, spec: '' });
   const balanced = (t) => { let d = 0; for (const m of t.replace(/\\./g, '').matchAll(/[{}]/g)) if ((d += m[0] === '{' ? 1 : -1) < 0) return false; return d === 0; };
   const MR = /^\\multirow\s*\{(\d+)\}\s*\{([^{}]*)\}\s*\{([\s\S]*)\}$/;
@@ -431,6 +499,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     return cell;
   }
   const T = {
+    injected,
     multirow, rowsOf, inner, setInner, layout, normalize, cellAt, width, RULES,
     /** Merges the block: a row span is a `\multicolumn`, a column span a `\multirow`, a block both. */
     merge(s, rect) {
@@ -658,15 +727,12 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const main = h('div', { class: 'sd-tab' });
     const side = h('div');
     let anchor = [0, 0], focus = [0, 0], editing = null;
-    const undo = [], redo = [];
     const f = frame(view, host, 'Edit table', {
       main, side, sub: `${t().env} · ${t().rows.length} × ${t().cols.length}`, redraw: () => draw(),
-      foot: h('span', {}, 'Select with drag or ', h('kbd', {}, 'Shift'), '+arrows, type to edit, ', h('kbd', {}, 'Ctrl+Z'), ' undo, ', h('kbd', {}, 'Ctrl+Enter'), ' apply.'),
+      foot: 'Drag or Shift+arrows to select. Type to edit a cell.',
     });
-    const snapshot = () => { undo.push(JSON.stringify(t())); if (undo.length > 200) undo.shift(); redo.length = 0; };
     /** Every edit: undoable, drawn, written. */
-    const change = (fn, op) => { snapshot(); const ok = fn(t()); if (ok === false) undo.pop(); draw(); f.refresh(op); return ok; };
-    const travel = (from, to) => { if (!from.length) return; to.push(JSON.stringify(t())); view.state = JSON.parse(from.pop()); draw(); f.refresh(); };
+    const change = (fn, op) => { const ok = fn(t()); draw(); f.refresh(op); return ok; };
     const rect = () => T.normalize(t(), [anchor[0], anchor[1], focus[0], focus[1]]);
     const note = (m) => { msg.textContent = m; setTimeout(() => { if (msg.textContent === m) msg.textContent = ''; }, 4000); };
     const pkg = (name) => ctx[name] ? '' : ` (adds \\usepackage{${name}})`;
@@ -674,15 +740,13 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     // the toolbar: output style and rewrites; the selection's actions float beside it
     const seg = (mode, label, title) => h('button', { type: 'button', 'data-style': mode, title, onclick: () => change((s) => T.setStyle(s, mode)) }, label);
     const styleSeg = h('span', { class: 'sd-seg', role: 'group', 'aria-label': 'how the rows are written' },
-      seg('format', 'Format', 'One row per line, the & lined up'), seg('compact', 'Compact', 'One row per line, no padding'));
+      seg('format', 'Format', 'Write one row per line with the & lined up'), seg('compact', 'Compact', 'Write one row per line without padding'));
     const msg = h('span', { class: 'sd-note', role: 'status' });
     main.append(h('div', { class: 'sd-bar' },
       styleSeg, h('span', { class: 'sd-sep' }),
-      h('button', { type: 'button', title: `booktabs' rules: \\toprule, \\midrule, \\bottomrule, no vertical rules${pkg('booktabs')}`, onclick: () => { snapshot(); f.refresh('booktabs'); } }, 'booktabs'),
-      h('button', { type: 'button', title: `Numeric columns as siunitx S columns aligned at the decimal mark${pkg('siunitx')}`, onclick: () => { snapshot(); f.refresh('siunitx').then((ok) => { if (!ok) undo.pop(); }); } }, 'Numbers → S'),
+      h('button', { type: 'button', title: `Use booktabs rules (\\toprule, \\midrule, \\bottomrule) and drop vertical rules${pkg('booktabs')}`, onclick: () => f.refresh('booktabs') }, 'booktabs'),
+      h('button', { type: 'button', title: `Align numeric columns at the decimal mark with siunitx S columns${pkg('siunitx')}`, onclick: () => f.refresh('siunitx') }, 'Numbers → S'),
       h('span', { class: 'sd-sep' }),
-      h('button', { type: 'button', class: 'sd-icon', title: 'Undo (Ctrl+Z)', 'aria-label': 'undo', html: SVG('<path d="M5.5 3 2.5 6l3 3"/><path d="M2.5 6h7a4 4 0 0 1 0 8H7"/>'), onclick: () => travel(undo, redo) }),
-      h('button', { type: 'button', class: 'sd-icon', title: 'Redo (Ctrl+Y)', 'aria-label': 'redo', html: SVG('<path d="M10.5 3l3 3-3 3"/><path d="M13.5 6h-7a4 4 0 0 0 0 8H9"/>'), onclick: () => travel(redo, undo) }),
       msg));
     const grid = h('table', { class: 'sd-grid', role: 'grid', 'aria-label': 'the table\'s cells', 'aria-multiselectable': 'true' });
     const bar = h('div', { class: 'sd-selbar', hidden: true, role: 'toolbar', 'aria-label': 'the selection' });
@@ -691,29 +755,51 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
 
     // the side: typeset preview, the data in and out
     const prev = h('div', { class: 'sd-prev', 'aria-label': 'the table as typeset' });
-    const importBox = h('textarea', { placeholder: 'Paste CSV, TSV (from a spreadsheet) or the JSON exported here', 'aria-label': 'data to import', spellcheck: 'false' });
-    const file = picker({ accept: '.csv,.tsv,.txt,.json,text/csv,application/json', label: 'Choose file…', title: 'Import a CSV, TSV or JSON file', onfile: async (fl) => doImport(await fl.text()) });
+    const importBox = h('textarea', { placeholder: 'Paste CSV, TSV from a spreadsheet, or JSON exported here', 'aria-label': 'data to import', spellcheck: 'false' });
     const download = (name, text, type) => { const a = h('a', { href: URL.createObjectURL(new Blob([text], { type })), download: name }); document.body.append(a); a.click(); a.remove(); };
-    const copy = (text, what) => navigator.clipboard?.writeText(text).then(() => note(`${what} copied`), () => note('the clipboard refused'));
+    const copy = (text, what) => navigator.clipboard?.writeText(text).then(() => note(`${what} copied`), () => note('The browser blocked the clipboard'));
     const doImport = (text) => {
       const ok = change((s) => T.importText(s, text));
-      if (!ok) return note('Neither CSV nor this dialog\'s JSON');
+      if (!ok) return note('This is neither CSV nor JSON from this dialog');
       importBox.value = '';
+      pasteBox.hidden = true;
       // numbers become S columns when siunitx is loaded
       const s = t(), nums = s.cols.some((_, c) => s.rows.slice(T.header(s) || 1).every((r) => { const [i, at] = T.cellAt(r, c); return i >= 0 && at === c && (T.numeric(T.plain(r.cells[i].text)) || !r.cells[i].text.trim()); }));
       if (ctx.siunitx && nums && /^[\s\d.,+\-]*$/.test(text) === false && !text.trim().startsWith('{')) f.refresh('siunitx');
-      note(`${s.rows.length} rows, ${s.cols.length} columns imported`);
+      note(`Imported ${s.rows.length} rows and ${s.cols.length} columns`);
     };
+    // an import that replaces cells with text asks first, in place
+    const ask = h('div', { class: 'sd-row sd-confirm', hidden: true });
+    const importing = (text) => {
+      if (!text.trim()) return;
+      const filled = t().rows.some((r) => r.cells.some((c) => c.text.trim()));
+      if (!filled) return doImport(text);
+      ask.replaceChildren(h('span', { class: 'sd-muted' }, `Replace the ${t().rows.length} rows with the imported data?`),
+        h('button', { type: 'button', class: 'sd-primary', onclick: () => { ask.hidden = true; doImport(text); } }, 'Replace'),
+        h('button', { type: 'button', class: 'sd-ghost', onclick: () => { ask.hidden = true; } }, 'Cancel'));
+      ask.hidden = false;
+    };
+    const fileIn = h('input', { type: 'file', accept: '.csv,.tsv,.txt,.json,text/csv,application/json', hidden: true, onchange: async () => { const fl = fileIn.files?.[0]; fileIn.value = ''; if (fl) importing(await fl.text()); } });
+    // the clipboard when the browser allows it, else a box to paste into
+    const pasteBox = h('div', { class: 'sd-import', hidden: true }, importBox, h('div', { class: 'sd-row' }, h('button', { type: 'button', class: 'sd-primary', onclick: () => importing(importBox.value) }, 'Import')));
+    const paste = () => (navigator.clipboard?.readText?.() ?? Promise.reject()).then((text) => text.trim() ? importing(text) : Promise.reject(), () => { pasteBox.hidden = false; importBox.focus(); });
+    // a file dropped on the grid imports too
+    wrap.addEventListener('dragover', (e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); wrap.classList.add('sd-over'); } });
+    wrap.addEventListener('dragleave', () => wrap.classList.remove('sd-over'));
+    wrap.addEventListener('drop', async (e) => { const fl = e.dataTransfer?.files?.[0]; if (!fl) return; e.preventDefault(); wrap.classList.remove('sd-over'); importing(await fl.text()); });
+    const group = (label, ...buttons) => h('div', { class: 'sd-row sd-data' }, h('span', { class: 'sd-data-label' }, label), h('span', { class: 'sd-seg', role: 'group', 'aria-label': label }, ...buttons));
     side.append(
       h('h4', {}, 'Preview'), prev,
       h('h4', {}, 'Data'),
-      h('div', { class: 'sd-row' },
-        h('button', { type: 'button', title: 'Copy the cells as CSV (text, TeX unescaped)', onclick: () => copy(T.toCSV(t()), 'CSV') }, 'Copy CSV'),
+      group('Export',
+        h('button', { type: 'button', title: 'Copy the cells as CSV, TeX unescaped', onclick: () => copy(T.toCSV(t()), 'CSV') }, 'Copy CSV'),
         h('button', { type: 'button', title: 'Download the cells as CSV', onclick: () => download('table.csv', T.toCSV(t()), 'text/csv') }, 'CSV ↓'),
-        h('button', { type: 'button', title: 'Download as JSON: each cell\'s text and TeX, the header rows marked', onclick: () => download('table.json', JSON.stringify(T.toJSON(t()), null, 2), 'application/json') }, 'JSON ↓')),
-      h('details', { class: 'sd-import' }, h('summary', {}, 'Import CSV / JSON…'),
-        h('div', { class: 'sd-import' }, importBox, file, h('div', { class: 'sd-row' }, h('button', { type: 'button', onclick: () => doImport(importBox.value) }, 'Import the text'))),
-        h('p', { class: 'sd-muted' }, `Text is escaped for TeX (& % $ # _ { } ~ ^ \\). ${ctx.siunitx ? 'Numeric columns become siunitx S columns.' : ''} Rules stay where they stood.`)),
+        h('button', { type: 'button', title: 'Download each cell\'s text and TeX as JSON, header rows marked', onclick: () => download('table.json', JSON.stringify(T.toJSON(t()), null, 2), 'application/json') }, 'JSON ↓')),
+      group('Import',
+        h('button', { type: 'button', title: 'Import CSV or TSV from the clipboard', onclick: paste }, 'Paste CSV/TSV'),
+        h('button', { type: 'button', title: 'Import a CSV, TSV or JSON file. You can also drop it on the grid', onclick: () => fileIn.click() }, 'Load file…')),
+      fileIn, ask, pasteBox,
+      h('p', { class: 'sd-muted' }, `Imported text is escaped for TeX (& % $ # _ { } ~ ^ \\). ${ctx.siunitx ? 'Numeric columns become siunitx S columns. ' : ''}Rules stay where they were.`),
     );
 
     /** The rule before row `k` (after the last, `k === rows.length`): a compact select for the row's gutter. */
@@ -744,7 +830,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       const vbar = (k, tag = 'th') => {
         const label = k === 0 ? 'Insert a column at the start' : k === n ? 'Insert a column at the end' : `Insert a column between ${k} and ${k + 1}`;
         const ins = tag === 'th' ? h('button', { type: 'button', class: 'sd-ins', title: label, 'aria-label': label, onclick: (e) => { e.stopPropagation(); change((s) => T.insertCol(s, k)); select([focus[0], k]); } }, '+') : null;
-        return h(tag, { class: 'sd-vcol' + (s.seps[k]?.includes('|') ? ' on' : ''), title: 'vertical rule (click)', onclick: () => change((s) => { s.seps[k] = s.seps[k].includes('|') ? s.seps[k].replace(/\|/g, '') : s.seps[k] + '|'; }) }, ins);
+        return h(tag, { class: 'sd-vcol' + (s.seps[k]?.includes('|') ? ' on' : ''), title: 'Click to add or remove a vertical rule', onclick: () => change((s) => { s.seps[k] = s.seps[k].includes('|') ? s.seps[k].replace(/\|/g, '') : s.seps[k] + '|'; }) }, ins);
       };
       const head = h('tr', {}, h('th', { class: 'sd-rh' }), s.cols.flatMap((c, k) => {
         const loaded = COLS.filter(([, , p]) => !p || ctx[p]), more = COLS.filter(([, , p]) => p && !ctx[p]);
@@ -757,9 +843,13 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         loaded.map(([a, nm]) => h('option', { value: a, selected: a === c.align }, nm)),
         more.length ? h('optgroup', { label: 'adds a package' }, more.map(([a, nm, p]) => h('option', { value: a, selected: a === c.align }, `${nm} · ${p}`))) : null,
         known ? null : h('option', { value: c.align, selected: true }, c.align));
-        const arg = WIDTH.includes(c.align) || c.align === 'S' ? h('input', { value: c.arg, 'aria-label': `column ${k + 1} ${c.align === 'S' ? 'options' : 'width'}`, placeholder: c.align === 'S' ? 'table-format=…' : 'width', onfocus: () => snapshot(), oninput: (e) => { c.arg = e.target.value; f.refresh(); } }) : null;
+        const arg = WIDTH.includes(c.align) || c.align === 'S' ? h('input', { value: c.arg, 'aria-label': `column ${k + 1} ${c.align === 'S' ? 'options' : 'width'}`, placeholder: c.align === 'S' ? 'table-format=…' : 'width', oninput: (e) => { c.arg = e.target.value; f.refresh(); } }) : null;
+        // array's injections: `>{…}` before and `<{…}` after each cell of the column
+        const inject = (key, open, label) => texField(h('input', { value: T.injected(c[key]), class: 'sd-inject', 'aria-label': `column ${k + 1}: ${label.toLowerCase()}`, title: `${label}…${pkg('array')}`, placeholder: label === 'Insert before each cell' ? '>{…}' : '<{…}',
+          oninput: (e) => { c[key] = e.target.value ? `${open}{${e.target.value}}` : ''; draw(); f.refresh(); } }));
         const del = n > 1 ? h('button', { type: 'button', class: 'sd-del', title: `Remove column ${k + 1}`, 'aria-label': `remove column ${k + 1}`, onclick: () => { change((s) => T.deleteCols(s, k, k)); select([focus[0], Math.min(k, t().cols.length - 1)]); } }, '−') : null;
-        return [vbar(k), h('th', { class: 'sd-colh' }, sel, arg, del)];
+        return [vbar(k), h('th', { class: 'sd-colh' }, sel, arg && c.align !== 'S' ? texField(arg) : arg,
+          h('div', { class: 'sd-injects' }, inject('pre', '>', 'Insert before each cell'), inject('post', '<', 'Insert after each cell')), del)];
       }), vbar(n));
       const rows = [];
       // grid columns a clean \multirow takes in the rule rows below its first
@@ -789,7 +879,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
             class: 'sd-cell' + (sel ? ' sel' : '') + (k === focus[0] && at <= focus[1] && focus[1] < at + span ? ' cur' : '') + (merged ? ' merged' : ''),
             colspan: 2 * span, rowspan: n > 1 ? 2 * n - 1 : null, tabindex: -1, role: 'gridcell', 'aria-selected': String(sel),
             'data-r': k, 'data-c': at, 'data-align': align, title: merged ? `merged: ${span > 1 ? `\\multicolumn{${span}}{${c.spec}}` : ''}${T.rowsOf(c) > 1 ? ` \\multirow{${T.rowsOf(c)}}` : ''}` : null,
-          }, text ? text : h('span', { class: 'sd-ph' }, '·')));
+          }, span === 1 && s.cols[at]?.pre ? h('span', { class: 'sd-inj' }, T.injected(s.cols[at].pre)) : null, text ? text : h('span', { class: 'sd-ph' }, '·'),
+          span === 1 && s.cols[at]?.post ? h('span', { class: 'sd-inj' }, T.injected(s.cols[at].post)) : null));
         });
         const short = n - T.width(r);
         if (short > 0) tds.push(h('td', { colspan: 2 * short, class: 'sd-muted' }));
@@ -830,8 +921,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         h('span', { class: 'sd-sep' }),
         ...['l', 'c', 'r'].map((a) => b(AL[a], `Align ${{ l: 'left', c: 'center', r: 'right' }[a]}${r0 === 0 && r1 === s.rows.length - 1 ? ' (the column type)' : ' (\\multicolumn{1})'}`, () => change((s) => T.align(s, [r0, c0, r1, c1], a)))),
         h('span', { class: 'sd-sep' }),
-        b(SVG('<path d="M3 5h10M3 11h10"/><path d="M6 8h4" stroke-width="2"/>'), `Delete ${rows > 1 ? `rows ${r0 + 1}–${r1 + 1}` : `row ${r0 + 1}`}`, () => { change((s) => T.deleteRows(s, r0, r1)) || note('A table keeps one row'); select([Math.min(r0, t().rows.length - 1), c0]); }, rows === s.rows.length),
-        b(SVG('<path d="M5 3v10M11 3v10"/><path d="M8 6v4" stroke-width="2"/>'), `Delete ${cols > 1 ? `columns ${c0 + 1}–${c1 + 1}` : `column ${c0 + 1}`}`, () => { change((s) => T.deleteCols(s, c0, c1)) || note('A table keeps one column'); select([r0, Math.min(c0, t().cols.length - 1)]); }, cols === s.cols.length),
+        b(SVG('<path d="M3 5h10M3 11h10"/><path d="M6 8h4" stroke-width="2"/>'), `Delete ${rows > 1 ? `rows ${r0 + 1}–${r1 + 1}` : `row ${r0 + 1}`}`, () => { change((s) => T.deleteRows(s, r0, r1)) || note('A table needs at least one row'); select([Math.min(r0, t().rows.length - 1), c0]); }, rows === s.rows.length),
+        b(SVG('<path d="M5 3v10M11 3v10"/><path d="M8 6v4" stroke-width="2"/>'), `Delete ${cols > 1 ? `columns ${c0 + 1}–${c1 + 1}` : `column ${c0 + 1}`}`, () => { change((s) => T.deleteCols(s, c0, c1)) || note('A table needs at least one column'); select([r0, Math.min(c0, t().cols.length - 1)]); }, cols === s.cols.length),
         b(SVG('<path d="M4 4l8 8M12 4l-8 8"/>'), 'Clear the cells (Delete)', () => change((s) => T.clear(s, [r0, c0, r1, c1]))),
       );
       // above the selection; below it where it would cover the column header
@@ -849,7 +940,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       const s = t(), o = T.layout(s)[r]?.[c];
       if (!o) return;
       const td = cellEl([o.r, o.c]), cell = s.rows[o.r].cells[o.i], was = T.inner(cell);
-      snapshot();
+      f.history.hold(true);
       const input = h('input', { value: seed ?? was, 'aria-label': `row ${o.r + 1} column ${o.c + 1}`, spellcheck: 'false' });
       editing = { input, done: false };
       bar.hidden = true;
@@ -862,7 +953,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       const finish = (keep, move) => {
         if (editing?.done) return;
         editing.done = true;
-        if (!keep) { T.setInner(cell, was); undo.pop(); f.refresh(); } else if (input.value === was) undo.pop();
+        if (!keep) { T.setInner(cell, was); f.refresh(); }
+        f.history.hold(false);
         editing = null;
         anchor = focus = [o.r, o.c];
         if (move) { const nx = move === 'down' ? [o.r + T.rowsOf(cell), o.c] : move === 'right' ? [o.r, o.c + Math.max(1, cell.span)] : [o.r, o.c - 1]; select(nx); }
@@ -928,12 +1020,6 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       change((s) => T.paste(s, r0, c0, rows));
       anchor = [r0, c0]; focus = [r0 + rows.length - 1, c0 + Math.max(...rows.map((r) => r.length)) - 1];
       draw(); cellEl(focus)?.focus();
-    });
-    f.root.addEventListener('keydown', (e) => {
-      if (editing || e.target.closest('input, textarea, select')) return;
-      const mod = e.ctrlKey || e.metaKey;
-      if (mod && !e.shiftKey && e.key.toLowerCase() === 'z') { e.preventDefault(); travel(undo, redo); }
-      else if (mod && (e.key.toLowerCase() === 'y' || e.shiftKey && e.key.toLowerCase() === 'z')) { e.preventDefault(); travel(redo, undo); }
     });
 
     /** The table as LaTeX sets it: alignment, spans, rules (booktabs' weights), vertical rules. */
@@ -1039,7 +1125,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const ctx = view.context ?? {};
     const main = h('div');
     const side = h('div');
-    const f = frame(view, host, 'Edit image', { main, side, sub: s().file, redraw: () => sync(), foot: 'Crop, rotation, size and tint are written as \\includegraphics options (graphicx).' });
+    const f = frame(view, host, 'Edit image', { main, side, sub: s().file, redraw: () => sync(), foot: 'Your crop, rotation, size and tint go into the \\includegraphics options.' });
     let nat = s().natural; // [w, h] bp
     let model = null; // the raster's channels, null for a PDF or an unread file
     const vector = /\.(pdf|eps|ps|mps)$/i.test(ctx.path ?? s().file);
@@ -1065,17 +1151,17 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const setAngle = (a) => { s().angle = a ? ((a % 360) + 540) % 360 - 180 : null; sync(); };
     const lenInput = (key, presets) => {
       const input = h('input', { class: 'sd-len', id: `sd-${key}-${fid}`, list: `sd-${key}-l-${fid}`, 'aria-label': key, placeholder: 'natural', oninput: (e) => { s()[key] = e.target.value || null; sync(); } });
-      return [input, h('datalist', { id: `sd-${key}-l-${fid}` }, presets.map((p) => h('option', { value: p })))];
+      return [input, h('datalist', { id: `sd-${key}-l-${fid}` }, presets.map((p) => h('option', { value: p }))), texField(input)];
     };
-    const [wIn, wList] = lenInput('width', ['\\linewidth', '0.8\\linewidth', '0.5\\linewidth', '\\textwidth', '5cm']);
-    const [hIn, hList] = lenInput('height', ['\\textheight', '0.3\\textheight', '4cm']);
+    const [wIn, wList, wBox] = lenInput('width', ['\\linewidth', '0.8\\linewidth', '0.5\\linewidth', '\\textwidth', '5cm']);
+    const [hIn, hList, hBox] = lenInput('height', ['\\textheight', '0.3\\textheight', '4cm']);
     const scale = h('input', { type: 'number', step: '0.05', min: '0', class: 'sd-num', id: `sd-scale-${fid}`, placeholder: '1', oninput: (e) => { s().scale = e.target.value ? +e.target.value : null; sync(); } });
     const keep = h('input', { type: 'checkbox', role: 'switch', onchange: (e) => { s().keepaspectratio = e.target.checked; sync(); } });
     const clip = h('input', { type: 'checkbox', role: 'switch', onchange: (e) => { s().clip = e.target.checked; sync(); } });
     const order = h('select', { id: `sd-order-${fid}`, onchange: (e) => { s().size_first = e.target.value === 'upright'; sync(); } },
       h('option', { value: 'rotated' }, 'the rotated figure (angle, then width)'), h('option', { value: 'upright' }, 'the upright figure (width, then angle)'));
     const unread = h('p', { class: 'sd-note' });
-    const pad = h('input', { type: 'number', step: '1', value: '0', class: 'sd-num', 'aria-label': 'padding in bp', title: 'space kept around the content in bp; negative cuts into it' });
+    const pad = h('input', { type: 'number', step: '1', value: '0', class: 'sd-num', 'aria-label': 'padding in bp', title: 'Space to keep around the content, in bp. A negative value cuts into it.' });
     // crop to content: the box of the pixels that differ from the background, read from the rendered figure
     const fit = h('button', { type: 'button', title: 'Trim the empty margins of the rendered figure', onclick: () => {
       if (picture?.tagName !== 'IMG' || !nat) return;
@@ -1083,9 +1169,9 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       const c = Object.assign(document.createElement('canvas'), { width: w, height: hh }), g = c.getContext('2d', { willReadFrequently: true });
       g.drawImage(picture, 0, 0, w, hh);
       const box = contentBox(g.getImageData(0, 0, w, hh).data, w, hh);
-      if (!box) return say('The figure looks empty: nothing to crop to.');
+      if (!box) return say('The figure looks empty, so there is nothing to crop to.');
       const p = +pad.value || 0, most = Math.min((box[2] - box[0]) * nat[0] / w, (box[3] - box[1]) * nat[1] / hh) / 2;
-      if (-p >= most) return say(`A padding of ${fmt(p)} bp cuts the whole content away: keep it above −${fmt(most)} bp.`);
+      if (-p >= most) return say(`A padding of ${fmt(p)} bp cuts away all content. Use more than −${fmt(most)} bp.`);
       say('');
       s().trim = trimTo(box, w, hh, nat, p);
       s().clip = true;
@@ -1098,9 +1184,9 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const tintWhy = h('p', { class: 'sd-muted sd-why' });
     const preset = (mode, label, title) => h('button', { type: 'button', 'data-tint': mode, title, onclick: () => setTint(mode) }, label);
     const tintSeg = h('span', { class: 'sd-seg', role: 'group', 'aria-label': 'tint' },
-      preset('none', 'None', 'No decodearray: the colours as in the file'), preset('tint', 'Tint', 'White becomes the colour, black stays'),
-      preset('invert', 'Invert', 'decodearray 1 0 per channel'),
-      h('button', { type: 'button', disabled: true, title: 'decodearray maps each channel on its own: it cannot mix red, green and blue into gray' }, 'Grayscale'));
+      preset('none', 'None', 'Show the colours as they are in the file'), preset('tint', 'Tint', 'Turn white into the colour and keep black'),
+      preset('invert', 'Invert', 'Invert each channel (decodearray 1 0)'),
+      h('button', { type: 'button', disabled: true, title: 'Not possible: decodearray maps each channel on its own and cannot mix red, green and blue into gray' }, 'Grayscale'));
     const channels = () => ({ gray: 2, rgb: 6 })[model] ?? 0;
     /** Why decodearray cannot apply here, or null. */
     const tintBlocked = () => vector ? 'PDF and EPS figures are drawn, not sampled: the driver drops decodearray for them (pdftex.def, xetex.def, dvipdfmx.def).'
@@ -1142,16 +1228,16 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       replace ?? null,
       h('h4', {}, 'Crop ', h('span', { class: 'sd-unit' }, 'trim, bp')),
       h('div', { class: 'sd-quad' }, ...num(0, 'left'), ...num(2, 'right'), ...num(3, 'top'), ...num(1, 'bottom')),
-      row(fit, h('label', { class: 'sd-inl', title: 'space kept around the content in bp; negative cuts into it' }, 'padding', pad)),
+      row(fit, h('label', { class: 'sd-inl', title: 'Space to keep around the content, in bp. A negative value cuts into it.' }, 'padding', pad)),
       row(h('label', { class: 'sd-inl' }, clip, 'clip'), h('button', { type: 'button', class: 'sd-ghost', style: 'margin-left:auto', onclick: () => { s().trim = null; s().clip = false; say(''); sync(); } }, 'Reset crop')),
       h('h4', {}, 'Rotate ', h('span', { class: 'sd-unit' }, 'degrees, counterclockwise')),
       row(h('button', { type: 'button', title: 'Rotate 90° counterclockwise', onclick: () => setAngle((s().angle ?? 0) + 90) }, '⟲ 90°'), h('button', { type: 'button', title: 'Rotate 90° clockwise', onclick: () => setAngle((s().angle ?? 0) - 90) }, '⟳ 90°'), angleNum),
       angle,
       h('h4', {}, 'Size'),
-      h('div', { class: 'sd-form' }, ...field('width', wIn), ...field('height', hIn), ...field('scale', scale), ...field('applies to', order)),
+      h('div', { class: 'sd-form' }, ...field('width', wBox, wIn.id), ...field('height', hBox, hIn.id), ...field('scale', scale), ...field('applies to', order)),
       wList, hList,
-      h('label', { class: 'sd-inl', title: 'with both width and height: fit inside, keep the proportions' }, keep, 'keep aspect ratio'),
-      h('p', { class: 'sd-muted' }, 'graphicx reads the keys in order: angle=90,width=3cm makes the rotated figure 3cm wide; width=3cm,angle=90 makes it 3cm high.'),
+      h('label', { class: 'sd-inl', title: 'Fit inside both width and height and keep the proportions' }, keep, 'keep aspect ratio'),
+      h('p', { class: 'sd-muted' }, 'Key order matters. angle=90,width=3cm makes the rotated figure 3cm wide. width=3cm,angle=90 makes it 3cm high.'),
       h('h4', {}, 'Tint ', h('span', { class: 'sd-unit' }, 'decodearray')),
       tintSeg,
       h('div', { class: 'sd-form sd-tint' }, h('label', {}, 'colour'), tintColor, h('label', {}, 'strength'), h('div', { class: 'sd-row', style: 'margin:0;flex-wrap:nowrap' }, strength, strengthOut)),
@@ -1258,7 +1344,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
   function placement(view, host) {
     const ctx = view.context ?? {}, letters = ctx.letters ?? [];
     const main = h('div', { class: 'sd-place' }), side = h('div');
-    const f = frame(view, host, 'Edit placement', { main, side, sub: `\\begin{${view.state.env}}`, redraw: () => draw(), foot: 'An empty placement drops the brackets: LaTeX then uses the default.' });
+    const f = frame(view, host, 'Edit placement', { main, side, sub: `\\begin{${view.state.env}}`, redraw: () => draw(), foot: 'Turn every letter off to remove the brackets. LaTeX then uses its default.' });
     const spec = () => view.state.spec ?? '';
     const toggle = (c) => {
       const now = spec();
@@ -1278,8 +1364,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         h('div', { class: 'sd-chips', role: 'group', 'aria-label': 'placement letters' }, letters.map(([c, what]) => h('button', {
           type: 'button', class: 'sd-letter', 'aria-pressed': String(on.includes(c)), onclick: () => toggle(c),
         }, h('b', {}, c), h('span', { html: md(what) })))),
-        h('p', { class: 'sd-muted' }, on ? `Written as [${on}]: LaTeX tries the places in its own order (here, top, bottom, float page), not in the order written.`
-          : `No placement: LaTeX uses ${ctx.default ? `the default [${ctx.default}]` : 'its default'} for ${view.state.env}.`),
+        h('p', { class: 'sd-muted' }, on ? `Writes [${on}]. The order of the letters does not matter. LaTeX always tries here, top, bottom, then a float page.`
+          : `No letters set. LaTeX uses ${ctx.default ? `the default [${ctx.default}]` : 'its default'} for this ${view.state.env}.`),
       );
     }
     draw();
@@ -1296,6 +1382,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     },
     popup, enhance, store, picker, table: T, image: { contentBox, trimTo, colorModel, DECODE },
   };
+  Object.assign(api, { texTokens, history, HINT });
   self.satexDialogs = api;
   self.satexStore = store;
 })();

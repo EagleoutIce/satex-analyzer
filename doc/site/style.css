@@ -1856,10 +1856,6 @@ a.web { border-bottom: 1px dotted var(--muted); }
 table.prim td { vertical-align: top; } table.long.prim td:nth-child(3) { white-space: normal; min-width: 11rem; width: auto; } table.long.prim td:last-child { font-size: .78rem; } table.prim tr:target { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .sem { font-size: .72rem; padding: 0 .4rem; border-radius: 999px; background: var(--sunk); white-space: nowrap; } .sem-exact { color: var(--safe); } .sem-over { color: var(--warning); } .sem-open { color: var(--error); }
 /* a code lens above a table or figure: the button that opens its dialog (dialogs.js) */
-.cm-place { display: inline-flex; gap: 1px; margin-left: .4em; vertical-align: 1px; font: .72em/1.3 ui-monospace, monospace; }
-.cm-place button { font: inherit; padding: 0 .3em; border: 1px solid var(--border); border-radius: 3px; background: none; color: var(--muted); cursor: pointer; opacity: .7; }
-.cm-place button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); opacity: 1; }
-.cm-place button:hover { opacity: 1; border-color: var(--accent); }
 .cm-lens-line { white-space: pre; font: .78em/1.5 system-ui, sans-serif; color: var(--muted); padding-left: 4px; }
 .cm-lens { font: inherit; color: var(--accent); background: none; border: 0; padding: 0 .2rem; cursor: pointer; border-radius: 4px; }
 .cm-lens::before { content: "▦ "; }
@@ -1936,3 +1932,51 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
   .shot-big, .shot-big:nth-child(even of .shot-big) { grid-template-columns: minmax(0, 1fr); }
   .shot-big:nth-child(even of .shot-big) .shot-stage { order: 0; }
 }
+/* Widget buttons: one set for every dialog (dialogs.js) and view (views.js). Kinds: plain (a sunk face),
+   primary (the accent), ghost (no face until hovered), icon (square), danger (destructive, red on hover),
+   and a segmented row of toggles. All share height, radius, font and focus ring. */
+:root { --btn-h: 1.85rem; --btn-h-sm: 1.45rem; --btn-r: 8px; --btn-px: .7rem; --btn-fs: .82rem; --btn-ring: 2px solid var(--accent); --danger: var(--error); }
+:is(.sd button, .tv-button, .tv-tab, .pop-tools button, .tv-chip, .tv .sd-icon) { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: .3rem; min-height: var(--btn-h); padding: 0 var(--btn-px); border-radius: var(--btn-r); font: inherit; font-size: var(--btn-fs); font-weight: 500; line-height: 1.2; cursor: pointer;
+  border: 1px solid var(--border); background: var(--sunk); color: var(--fg); transition: background-color var(--quick), border-color var(--quick), color var(--quick); }
+:is(.sd button, .tv-button, .tv-tab, .pop-tools button, .tv-chip, .tv .sd-icon):hover:not(:disabled) { border-color: var(--accent); transform: none; box-shadow: none; }
+:is(.sd button, .tv-button, .tv-tab, .pop-tools button, .tv-chip, .tv-unit, .tv-choice, .tv-spec-value):focus-visible { outline: var(--btn-ring); outline-offset: 1px; }
+:is(.sd button, .tv-button, .tv-tab, .tv-chip, .tv .sd-icon):disabled { opacity: .45; cursor: default; }
+/* primary: the action the widget is for */
+:is(.sd button.sd-primary, .tv-button.tv-primary) { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; padding: 0 1rem; }
+:is(.sd button.sd-primary, .tv-button.tv-primary):hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, var(--fg)); }
+/* ghost and icon: tools that stay quiet until hovered */
+:is(.sd button.sd-ghost, .sd .sd-selbar button, .sd .sd-icon, .tv .sd-icon, .pop-tools button) { background: none; border-color: transparent; color: var(--muted); }
+:is(.sd button.sd-ghost, .sd .sd-selbar button, .sd .sd-icon, .tv .sd-icon, .pop-tools button):hover:not(:disabled) { background: var(--sunk); border-color: transparent; color: var(--fg); }
+:is(.sd .sd-icon, .tv .sd-icon, .pop-tools button) { width: var(--btn-h); padding: 0; }
+:is(.sd-icon, .pop-tools button) svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+/* toggles: pressed reads as selected, in a segmented row too */
+:is(.sd button[aria-pressed=true], .pop-tools button[aria-pressed=true], .tv-tab.on) { background: color-mix(in srgb, var(--accent) 14%, var(--panel)); border-color: var(--accent); color: var(--accent); }
+:is(.sd-seg, .tv-tabs) { display: inline-flex; flex-wrap: nowrap; }
+:is(.sd-seg, .tv-tabs) { gap: 0; border-radius: var(--btn-r); }
+:is(.sd-seg button, .tv-tabs .tv-tab, .tv-tools .tv-tab) { border-radius: 0; margin-left: -1px; min-height: var(--btn-h-sm); padding: 0 .6rem; }
+:is(.sd-seg button, .tv-tabs .tv-tab, .tv-tools .tv-tab):first-child { border-radius: var(--btn-r) 0 0 var(--btn-r); margin-left: 0; }
+:is(.sd-seg button, .tv-tabs .tv-tab, .tv-tools .tv-tab):last-of-type, .tv-tools .tv-tab:has(+ [data-tool=delete]) { border-radius: 0 var(--btn-r) var(--btn-r) 0; }
+:is(.sd-seg button, .tv-tabs .tv-tab, .tv-tools .tv-tab)[aria-pressed=true], .tv-tab.on { position: relative; z-index: 1; }
+.tv-tools { gap: 0 !important; } .tv-tools > :not(.tv-tab) { margin-left: .5rem; }
+/* danger: Delete and Remove, an icon with the trash can, apart from the tools beside it */
+:is(.sd button.sd-danger, .tv-button.tv-danger, .tv-tools .tv-tab[data-tool=delete], .tv-sel .tv-button) { color: var(--danger); }
+:is(.sd button.sd-danger, .tv-button.tv-danger, .tv-tools .tv-tab[data-tool=delete], .tv-sel .tv-button):hover:not(:disabled) { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--panel)); }
+:is(.tv-tools .tv-tab[data-tool=delete], .tv-sel .tv-button) { width: var(--btn-h); min-height: var(--btn-h); padding: 0; margin-left: .8rem !important; border-radius: var(--btn-r) !important; font-size: 0; }
+:is(.tv-tools .tv-tab[data-tool=delete], .tv-sel .tv-button)::before { content: ''; width: 15px; height: 15px; background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v5M9.2 6.5v5'/%3E%3C/svg%3E") center / contain no-repeat; }
+.tv-tools .tv-tab[data-tool=delete][aria-pressed=true], .tv-tools .tv-tab[data-tool=delete].on { background: color-mix(in srgb, var(--danger) 14%, var(--panel)); border-color: var(--danger); color: var(--danger); }
+.sd .sd-del { color: var(--danger); }
+/* chips: a pill of the same height family */
+.tv-chip { border-radius: 999px; min-height: var(--btn-h-sm); padding: 0 .55rem 0 .3rem; font-size: .78rem; }
+@media (prefers-reduced-motion: reduce) { :is(.sd button, .tv-button, .tv-tab, .pop-tools button, .tv-chip) { transition: none; } }
+:is(.sd .sd-del, .sd .sd-ins) { min-height: 0; }
+/* feedback: an icon in a widget's header, and its short form */
+header .hd-feedback { margin-left: auto; } header .hd-feedback + button, header .hd-request + .hd-feedback { margin-left: .2rem; } header .hd-request { margin-left: auto; }
+.sd-tools + .sd-feedback, .sd > header .sd-feedback { margin-left: .2rem; }
+.feedback-dialog { width: min(32rem, 94vw); } .fb-form { display: grid; gap: .6rem; padding: .2rem 1rem 1rem; }
+.fb-form textarea { font: inherit; padding: .4rem .5rem; border-radius: var(--btn-r); border: 1px solid var(--border); background: var(--panel); color: var(--fg); resize: vertical; }
+.fb-snip { display: flex; gap: .4rem; align-items: center; font-size: .85rem; } .fb-actions { display: flex; justify-content: flex-end; gap: .4rem; }
+.cfg-request { list-style: none; padding: .6rem 0; }
+header .hd-feedback { display: inline-grid; place-items: center; width: var(--btn-h); height: var(--btn-h); padding: 0; border-color: transparent; border-radius: var(--btn-r); background: none; color: var(--muted); }
+header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(--fg); border-color: transparent; transform: none; box-shadow: none; }
+.feedback-dialog { height: auto !important; min-height: 0 !important; }

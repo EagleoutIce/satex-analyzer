@@ -134,15 +134,7 @@ pub(super) fn lenses(analysis: &Analysis, doc: &Text, path: &str, kind: Kind) ->
         .filter(|t| t.kind == kind)
         .map(|t| {
             let range = lsp_range(doc, t.start, t.start);
-            let mut command = open_command(t.kind, uri, range.start);
-            // the editor's inline letter chips: every letter the run knows, with what it does
-            if t.kind == Kind::Float
-                && let Some(Json::Object(arg)) = command.arguments.as_mut().and_then(|a| a.first_mut())
-            {
-                arg.insert("letters".into(), letters_json(analysis));
-                arg.insert("order".into(), json!(ORDER));
-            }
-            CodeLens { range, command: Some(command), data: None }
+            CodeLens { range, command: Some(open_command(t.kind, uri, range.start)), data: None }
         })
         .collect()
 }
@@ -164,9 +156,7 @@ pub fn hover_link(analysis: &Analysis, doc: &Text, path: &str, uri: &str, pos: P
         let q = percent(&serde_json::to_string(&args).unwrap_or_default());
         let link = format!("[{}](command:{OPEN}?{q} \"Open the {} dialog\")", c.title, t.kind.name());
         match t.kind {
-            Kind::Float => {
-                format!("{link}\n\n{}", float_hover(analysis, &doc.body()[t.start..t.end], t.detail.as_deref()))
-            }
+            Kind::Float => format!("{}\n\n{link}", float_card(analysis, doc, uri, &t)),
             _ => link,
         }
     })
@@ -210,30 +200,96 @@ fn letters_json(analysis: &Analysis) -> Json {
     json!(letters(analysis).iter().map(|(c, what)| json!([c.to_string(), what])).collect::<Vec<_>>())
 }
 
-/// What `\begin{env}[spec]` lets LaTeX do with the float, letter by letter.
-fn float_hover(analysis: &Analysis, text: &str, env: Option<&str>) -> String {
-    let env = env.unwrap_or("float");
-    let spec = text.find('[').and_then(|k| placement(&text[k..])).map(|(p, _)| p);
+/// The placement card, laid out like a length's: a toggle per letter, each a link that writes the
+/// brackets with it switched, what each does, and the limits `\@xfloat` weighs as the run ended.
+fn float_card(analysis: &Analysis, doc: &Text, uri: &str, t: &Target) -> String {
+    let env = t.detail.as_deref().unwrap_or("float");
+    let head = t.start + format!("\\begin{{{env}}}").len();
+    let written = placement(&doc.body()[head..t.end]);
+    let spec = written.as_ref().map(|(p, _)| p.trim().to_string()).filter(|s| !s.is_empty() && s != "!");
     let default = crate::linter::shared::macro_text(analysis, &format!("fps@{env}"));
+    let shown = spec.clone().or(default.clone()).unwrap_or_default();
+    // the brackets, or the place they go
+    let rest = &doc.body()[head..];
+    let from = if written.is_some() { head + rest.len() - rest.trim_start().len() } else { t.end };
+    let range = lsp_range(doc, from, t.end);
     let known = letters(analysis);
-    let lines = |spec: &str| -> Vec<String> {
-        spec.chars()
-            .map(|c| match known.iter().find(|(k, _)| *k == c) {
-                Some((_, what)) => format!("- `{c}`: {what}"),
-                None => format!("- `{c}`: unknown: LaTeX reports an error and uses `p`"),
-            })
-            .collect()
+    let mut md = match (&spec, &default) {
+        (Some(s), _) => format!("### Placement `[{s}]`: LaTeX may put this {env}\n\n"),
+        (_, Some(d)) => format!("### Placement: this {env} takes the default `{d}` (`\\fps@{env}`)\n\n"),
+        _ => format!("### Placement: LaTeX may put this {env}\n\n"),
     };
-    let head = match (&spec, &default) {
-        (Some(s), _) if !s.trim().is_empty() && s.trim() != "!" => {
-            format!("**Placement `[{s}]`**: LaTeX may put this {env}")
-        }
-        (_, Some(d)) => format!("**Placement**: this {env} takes the default `{d}` (`\\fps@{env}`): LaTeX may put it"),
-        _ => format!("**Placement**: LaTeX may put this {env}"),
+    let cells: Vec<String> = known
+        .iter()
+        .map(|(c, _)| {
+            let on = shown.contains(*c);
+            let next = toggled(&shown, *c);
+            let text = if next.is_empty() { String::new() } else { format!("[{next}]") };
+            let args = json!([uri, range, text, null]);
+            format!("[{}](command:satex.applyEdit?{})", if on { "✓ on" } else { "off" }, percent(&args.to_string()))
+        })
+        .collect();
+    md.push_str(&format!(
+        "| {} |\n|{}\n| {} |\n\n",
+        known.iter().map(|(c, _)| format!("`{c}`")).collect::<Vec<_>>().join(" | "),
+        ":---:|".repeat(known.len()),
+        cells.join(" | ")
+    ));
+    for (c, what) in &known {
+        let on = if shown.contains(*c) { "**on**" } else { "off" };
+        md.push_str(&format!("- `{c}` {on}: {what}\n"));
+    }
+    for c in shown.chars().filter(|c| !known.iter().any(|(k, _)| k == c)) {
+        md.push_str(&format!("- `{c}`: unknown: LaTeX reports an error and uses `p`\n"));
+    }
+    md.push_str(&format!("\n{ORDER}\n"));
+    if let Some(limits) = limits(analysis) {
+        md.push_str(&format!("\n{limits}"));
+    }
+    md
+}
+
+/// `spec` with `c` switched: `H` stands alone (float.sty).
+fn toggled(spec: &str, c: char) -> String {
+    match (spec.contains(c), c) {
+        (true, _) => spec.replace(c, ""),
+        (false, 'H') => "H".into(),
+        (false, _) => format!("{}{c}", spec.replace('H', "")),
+    }
+}
+
+/// The counters and fractions `\@xfloat` and the output routine weigh, as the run ended (latex.ltx).
+fn limits(analysis: &Analysis) -> Option<String> {
+    let count = |n: &str| {
+        super::plugins::register_value(analysis, &format!("c@{n}")).filter(|v| v.lo == v.hi).map(|v| v.lo.to_string())
     };
-    let shown = spec.filter(|s| !s.trim().is_empty() && s.trim() != "!").or(default).unwrap_or_default();
-    let all: String = known.iter().map(|(c, _)| *c).collect();
-    format!("{head}\n\n{}\n\nLetters: `{all}`. {ORDER}", lines(&shown).join("\n"))
+    let frac = |n: &str| crate::linter::shared::macro_text(analysis, n);
+    let cells: Vec<(String, String)> = [
+        ("topnumber", count("topnumber")),
+        ("\\topfraction", frac("topfraction")),
+        ("bottomnumber", count("bottomnumber")),
+        ("\\bottomfraction", frac("bottomfraction")),
+        ("totalnumber", count("totalnumber")),
+        ("\\textfraction", frac("textfraction")),
+        ("\\floatpagefraction", frac("floatpagefraction")),
+    ]
+    .into_iter()
+    .filter_map(|(n, v)| Some((format!("`{n}`"), v?)))
+    .collect();
+    if cells.is_empty() {
+        return None;
+    }
+    let mut md = String::from("Limits as the run ended:\n\n");
+    for chunk in cells.chunks(4) {
+        let row = |f: &dyn Fn(&(String, String)) -> String| chunk.iter().map(f).collect::<Vec<_>>().join(" | ");
+        md.push_str(&format!(
+            "| {} |\n|{}\n| {} |\n\n",
+            row(&|c| c.0.clone()),
+            "---:|".repeat(chunk.len()),
+            row(&|c| c.1.trim().to_string())
+        ));
+    }
+    Some(md)
 }
 
 /// The placement letters to complete inside a float's `[…]`, its `]` typed or not: those not yet written,
@@ -346,7 +402,7 @@ pub fn dialog(analysis: &Analysis, doc: &Text, path: &str, pos: Position) -> Opt
     Some(json!({ "kind": t.kind.name(), "range": lsp_range(doc, t.start, t.end), "state": state, "context": ctx }))
 }
 
-/// The packages a table's text needs, with the commands and the column letters that tell.
+/// The packages a table's text needs, with the commands and the column letters that tell (array also for injections).
 const NEEDS: [(&str, &[&str], &[&str]); 5] = [
     ("booktabs", &["\\toprule", "\\midrule", "\\bottomrule", "\\cmidrule", "\\addlinespace"], &[]),
     ("siunitx", &[], &["S"]),
@@ -363,9 +419,13 @@ fn packages(
     table: Option<&tabular::Table>,
 ) -> (Vec<String>, Option<usize>) {
     let col = |a: &&str| table.is_some_and(|t| t.cols.iter().any(|c| c.align == *a));
+    // array's `>{…}` and `<{…}`
+    let injects = table.is_some_and(|t| t.cols.iter().any(|c| !c.pre.is_empty() || !c.post.is_empty()));
     let want: Vec<String> = NEEDS
         .iter()
-        .filter(|(_, cmds, cols)| cmds.iter().any(|c| text.contains(c)) || cols.iter().any(col))
+        .filter(|(p, cmds, cols)| {
+            cmds.iter().any(|c| text.contains(c)) || cols.iter().any(col) || (*p == "array" && injects)
+        })
         .map(|(p, ..)| p.to_string())
         .filter(|p| !crate::linter::shared::loaded(analysis, p))
         .collect();

@@ -146,7 +146,8 @@
       // `[uri, range, text, exact]`: the value is the action
       let to = '', exact = false;
       try { [, , to, exact] = JSON.parse(decodeURIComponent(args)); } catch {}
-      return `<a href="#" role="button" class="cmd-edit${exact ? ' exact' : ''}" data-args="${args}" title="write as ${esc(to)}${exact ? ' (exact)' : ' (rounded)'}">${shown}</a>`;
+      // a null `exact`: no number, nothing rounded (a float's placement)
+      return `<a href="#" role="button" class="cmd-edit${exact ? ' exact' : ''}" data-args="${args}" title="write ${exact == null ? '' : 'as '}${esc(to || 'nothing')}${exact == null ? '' : exact ? ' (exact)' : ' (rounded)'}">${shown}</a>`;
     })
       .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
       .replace(/\*\(([^*]+)\)\*/g, '<span class="x-from">($1)</span>').replace(/\*([^*\s][^*]*)\*/g, '<em>$1</em>')

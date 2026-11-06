@@ -963,46 +963,6 @@
       update: (deco, tr) => tr.effects.reduce((d, e) => e.is(lensSet) ? view.Decoration.set(e.value.map(([at, l]) => view.Decoration.widget({ widget: new Lens(l), side: -1, block: true }).range(at)), true) : d, deco.map(tr.changes)),
       provide: (f) => view.EditorView.decorations.from(f),
     });
-    // A float's placement letters as toggle chips after its `[…]` (the float lens's `letters`): a click rewrites the brackets.
-    class Placement extends view.WidgetType {
-      constructor(spec, letters, order, from, to) { super(); Object.assign(this, { spec, letters, order, from, to }); }
-      eq(o) { return o.spec === this.spec && o.from === this.from && o.to === this.to && o.letters.length === this.letters.length; }
-      toDOM(v) {
-        const box = Object.assign(document.createElement('span'), { className: 'cm-place', title: `Placement: click a letter to toggle it. ${this.order.replace(/`/g, '')}` });
-        for (const [c, what] of this.letters) {
-          const b = Object.assign(document.createElement('button'), { type: 'button', textContent: c, title: `${c}: ${what.replace(/`/g, '')}\n${this.order.replace(/`/g, '')}` });
-          b.setAttribute('aria-pressed', String(this.spec.includes(c)));
-          b.onmousedown = (e) => {
-            e.preventDefault();
-            const on = this.spec.includes(c);
-            // `H` stands alone (float.sty)
-            const spec = on ? this.spec.replace(c, '') : c === 'H' ? 'H' : this.spec.replace('H', '') + c;
-            v.dispatch({ changes: { from: this.from, to: this.to, insert: spec ? `[${spec}]` : '' }, userEvent: 'input.placement' });
-          };
-          box.append(b);
-        }
-        return box;
-      }
-    }
-    const placements = (s) => {
-      const out = [];
-      s.field(lensField).between(0, s.doc.length, (from, _, d) => {
-        const l = d.spec.widget.lens, arg = l.command?.arguments?.[0];
-        if (!arg?.letters) return;
-        const line = s.doc.lineAt(from), col = Math.min(l.range.start.character, line.length);
-        // a `[` not closed yet: its letters so far
-        const m = /^\\begin\{[^}]*\}(\s*\[([^\]\n]*)\]|\s*\[([A-Za-z!]*))?/.exec(line.text.slice(col));
-        if (!m) return;
-        const head = line.from + col + m[0].length - (m[1]?.length ?? 0), end = line.from + col + m[0].length;
-        out.push(view.Decoration.widget({ widget: new Placement(m[2] ?? m[3] ?? '', arg.letters, arg.order ?? '', head, end), side: 1 }).range(end));
-      });
-      return view.Decoration.set(out, true);
-    };
-    const placeField = st.StateField.define({
-      create: placements,
-      update: (deco, tr) => tr.docChanged || tr.startState.field(lensField) !== tr.state.field(lensField) ? placements(tr.state) : deco,
-      provide: (f) => view.EditorView.decorations.from(f),
-    });
     // A `\begin` name and its `\end` name, from the server's linked editing:
     // while the cursor is in one, what is typed there is typed in both.
     const linkedSet = st.StateEffect.define();
@@ -1139,7 +1099,7 @@
         if (c.preview) span.prepend(Object.assign(document.createElement('img'), { className: 'cm-preview', src: `data:image/svg+xml;utf8,${encodeURIComponent(c.preview)}`, alt: '' }));
         return span;
       } }] }),
-        linkField, markField, flashField, swatchField, lensField, placeField, linkedField, heatField, heatGutter, widgetGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
+        linkField, markField, flashField, swatchField, lensField, linkedField, heatField, heatGutter, widgetGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
         EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([])],
     });
     ev.dom.satexView = ev; // doc/site/showcase.mjs reads the text and the places through it
@@ -1778,7 +1738,7 @@
   }
   /** What the type plugins offer at `p` (src/lsp/plugins): the widgets (their views, `satex/view`, and
    * the actions that open a dialog) and the rewrites, as [label, hint, index, widget] rows; `runTool(index)` opens or applies one. */
-  let tools = [];
+  let tools = [], viewPlugin = null;
   async function typedTools(p) {
     const doc = { uri: uri() };
     const [views, actions] = await Promise.all([
@@ -1789,7 +1749,8 @@
     // an action that only opens a dialog (`satex.openDialog`, VS Code's `satex.openView`) is a widget here
     const opens = own.filter((a) => !a.edit && /^satex\.open(Dialog|View)$/.test(a.command?.command ?? ''));
     tools = [...(views ?? []).map((view) => ({ view, target: doc.uri })), ...opens.map((open) => ({ open: open.command })), ...own.filter((a) => a.edit).map((action) => ({ action }))];
-    const verb = (v) => VIEW_VERB[v.plugin] ?? 'Edit', title = (v) => verb(v) ? v.title.replace(/^\p{Lu}(?!\p{Lu})/u, (c) => c.toLowerCase()) : v.title;
+    // a title that names its action already (`Edit colour brand`) stands as it is
+    const verb = (v) => /^Edit\b/.test(v.title) ? '' : VIEW_VERB[v.plugin] ?? 'Edit', title = (v) => verb(v) ? v.title.replace(/^\p{Lu}(?!\p{Lu})/u, (c) => c.toLowerCase()) : v.title;
     const label = (t) => t.view ? `${verb(t.view)} ${title(t.view)}…`.trim() : (t.open ?? t.action).title;
     const seen = new Set();
     return tools.map((t, i) => [label(t), t.view ? t.view.plugin : t.open ? 'dialog' : 'rewrite', i, !t.action]).filter(([l, , , w]) => !w || !seen.has(l) && seen.add(l));
@@ -1801,6 +1762,7 @@
     if (t?.open) return t.open.command === 'satex.openView' ? openViews(t.open.arguments[1], t.open.arguments[2]) : openDialog(t.open.arguments?.[0]?.position);
     if (!t?.view) return;
     const dialog = $('play-view');
+    viewPlugin = t.view.plugin;
     $('view-title').textContent = t.view.title;
     self.satexViews.render(t.view, $('view-body'), {
       markdown: (md) => card(md),
@@ -2591,7 +2553,8 @@
     const set = own.filter(([, ks]) => ks.length).map(([p, ks]) => section(p.name, p.name, p.about, ks, !!q || !closed.has(p.name)));
     const plain = own.filter(([p, ks]) => !ks.length && !q && p.about)
       .map(([p]) => `<li class="cfg-plain" title="${escape(p.about.replaceAll('`', ''))}"><b>${escape(p.name)}</b><span>${inline(p.about)}</span></li>`);
-    return [tiles, ...set, ...(plain.length ? [`<li class="cfg-group"><p class="cfg-plain-head">Without settings, always on</p><ul>${plain.join('')}</ul></li>`] : [])];
+    const request = '<li class="cfg-group cfg-request"><button type="button" class="ghost small" data-request-plugin>Request a plugin…</button></li>';
+    return [tiles, ...set, ...(plain.length ? [`<li class="cfg-group"><p class="cfg-plain-head">Without settings, always on</p><ul>${plain.join('')}</ul></li>`] : []), request];
   }
   /** A setting's value an example line spells: `- field: v` items of a list, or `name: v` with the key's own name. */
   function exampleValue(k, line) {
@@ -5818,6 +5781,7 @@
         return { beside };
       },
       reopen: () => { afterRun = () => openDialog(v.range.start); analyze(); },
+      feedback: () => feedback(v.kind, v.range.start.line),
     });
   }
   /** Called once with the next run's results of the open file. */
@@ -6072,11 +6036,39 @@
   };
 
   // A link that opens GitHub's new-issue form, prefilled and short; it posts nothing.
+  const issue = (title, body) => window.open(`${manifest.repository ?? 'https://github.com/EagleoutIce/satex-analyzer'}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`, '_blank', 'noopener');
+  const versionLine = () => `SaTeX ${document.querySelector('a.version')?.textContent.trim() ?? ''}, kernel ${manifest.kernels[state.kernel]?.label ?? ''}`;
   $('play-issue').onclick = () => {
-    const text = (state.texts[state.file] ?? '').slice(0, 1500), version = document.querySelector('a.version')?.textContent.trim() ?? '';
-    const body = `SaTeX ${version}, kernel ${manifest.kernels[state.kernel]?.label ?? ''}\n\nWhat happened:\n\n\n${state.file}:\n\`\`\`latex\n${text}\n\`\`\`\n`;
-    window.open(`${manifest.repository ?? 'https://github.com/EagleoutIce/satex-analyzer'}/issues/new?title=${encodeURIComponent(`[playground] `)}&body=${encodeURIComponent(body)}`, '_blank', 'noopener');
+    const text = (state.texts[state.file] ?? '').slice(0, 1500);
+    issue('[playground] ', `${versionLine()}\n\nWhat happened:\n\n\n${state.file}:\n\`\`\`latex\n${text}\n\`\`\`\n`);
   };
+  /** Feedback on a plugin's widget (`plugin`, at `line`, 0-based), or a plugin request (`plugin` null): a short form, then
+   * GitHub's issue form in a new tab. The document's text goes along only when the user ticks it, and nothing is sent until they submit there. */
+  function feedback(plugin, line = null) {
+    const dlg = $('play-feedback') ?? document.body.appendChild(Object.assign(document.createElement('dialog'), { id: 'play-feedback', className: 'cache-dialog feedback-dialog' }));
+    const where = line == null ? state.file : `${state.file}:${line + 1}`;
+    dlg.innerHTML = `<header><h3>${plugin ? `Feedback on ${escape(plugin)}` : 'Request a plugin'}</h3><button type="button" class="ghost small" data-close aria-label="close">✕</button></header>
+      <form method="dialog" class="fb-form"><p class="muted">${plugin ? `Tell us what to change in this widget. It names the plugin and ${escape(where)}.` : 'Tell us which widget or hover you miss, and for which package or command.'}</p>
+      <textarea name="what" rows="4" placeholder="${plugin ? 'What did you expect?' : 'What should the plugin do?'}" aria-label="your feedback"></textarea>
+      ${plugin && line != null ? '<label class="fb-snip"><input type="checkbox" name="snip"> include my snippet (the lines around the cursor)</label>' : ''}
+      <p class="muted">Opens GitHub's issue form in a new tab. Nothing is sent until you submit it there.</p>
+      <div class="fb-actions"><button type="button" class="ghost" data-close>Cancel</button><button type="submit">Open issue form</button></div></form>`;
+    for (const b of dlg.querySelectorAll('[data-close]')) b.onclick = () => dlg.close();
+    dlg.querySelector('form').onsubmit = (e) => {
+      e.preventDefault();
+      const f = e.target, lines = (state.texts[state.file] ?? '').split('\n');
+      const snip = f.snip?.checked ? `\n\n${where}:\n\`\`\`latex\n${lines.slice(Math.max(0, line - 3), line + 4).join('\n')}\n\`\`\`` : '';
+      issue(plugin ? `[${plugin}] ` : '[plugin request] ', `${versionLine()}${plugin ? `\nPlugin: ${plugin}\nAt: ${where}` : ''}\n\n${f.what.value.trim()}${snip}\n`);
+      dlg.close();
+    };
+    dlg.showModal();
+    dlg.querySelector('textarea').focus();
+  }
+  const cursorLine = () => { const text = editor?.text() ?? '', [c] = editor?.cursor() ?? [0]; return text.slice(0, c).split('\n').length - 1; };
+  $('view-feedback').onclick = () => feedback(viewPlugin, cursorLine());
+  $('lib-feedback').onclick = () => feedback('library');
+  $('cfg-feedback').onclick = () => feedback('settings');
+  document.addEventListener('click', (e) => { if (e.target.closest?.('[data-request-plugin]')) feedback(null); });
 
   // ---------------------------------------------------------------- start
 

@@ -33,6 +33,23 @@
     gray: ([r, g, b]) => num(0.3 * r + 0.59 * g + 0.11 * b),
     hsb: (c) => toHsb(c).map(num).join(','),
   };
+  // OKLCH of an sRGB color (Ottosson's OKLab): [lightness, chroma, hue in degrees]
+  const oklch = (c) => {
+    const [r, g, b] = c.map((v) => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+    const [l, m, s] = [0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b, 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b, 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b].map(Math.cbrt);
+    const [L, A, B] = [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
+    return [L, Math.hypot(A, B), (Math.atan2(B, A) * 180 / Math.PI + 360) % 360];
+  };
+  /** The defined colors as groups by who defined them (the document first, then xcolor, then the rest by name),
+   * each sorted by perception: hue families of 30° by lightness, greys (low chroma) last by lightness. */
+  const colorBand = (defined) => {
+    const key = (d) => { const [l, c, h] = oklch(d.rgb); return c < 0.03 ? [1, 0, l] : [0, Math.floor(((h + 15) % 360) / 30), l]; };
+    const cmp = (a, b) => { const x = key(a), y = key(b); return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]; };
+    const rank = (g) => g === 'document' ? 0 : g === 'xcolor' ? 1 : 2;
+    const groups = new Map();
+    for (const d of defined) (groups.get(d.group ?? '') ?? groups.set(d.group ?? '', []).get(d.group ?? '')).push(d);
+    return [...groups].map(([name, colors]) => ({ name, colors: colors.sort(cmp) })).sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
+  };
   // a spec typed in a model, back to rgb
   const PARSE = {
     HTML: (s) => /^#?[0-9a-f]{6}$/i.test(s.trim()) ? [0, 2, 4].map((i) => parseInt(s.trim().replace('#', '').slice(i, i + 2), 16) / 255) : null,
@@ -57,6 +74,8 @@
     return acc;
   };
 
+  /** Chips a group of defined colors shows before its `+N`. */
+  const BAND = 10;
   const RENDER = {
     text: (s, view, ctx) => el('div', 'tv-text', ctx.markdown(s.markdown)),
     table: (s) => el('table', 'tv-table', `<thead><tr>${s.columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${s.rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody>`),
@@ -102,7 +121,8 @@
       head.append(input);
       if (s.sorts?.length > 1) head.append(sort);
       const list = el('div', 'tv-list');
-      let open = s.items.find((r) => r.title === s.focus) ?? null;
+      // exactly one record is open for editing: the focused one, else the first
+      let open = s.items.find((r) => r.title === s.focus) ?? s.items[0] ?? null;
       const draw = () => {
         const q = input.value.trim().toLowerCase(), by = sort.value;
         const hit = (r) => !q || q.split(/\s+/).every((w) => (r.search ?? r.title).toLowerCase().includes(w));
@@ -110,10 +130,11 @@
         const rows = s.items.filter(hit).sort((a, b) => key(a).localeCompare(key(b), undefined, { numeric: true }));
         list.replaceChildren(...rows.slice(0, 300).map((r) => {
           const item = el('div', 'tv-record' + (open === r ? ' on' : ''));
-          const b = el('button', 'tv-choice', `<b>${esc(r.title)}${r.badge ? ` <em class="tv-badge">${esc(r.badge)}</em>` : ''}</b><span>${esc(r.detail ?? '')}</span>`);
+          const b = el('button', 'tv-choice tv-line', `<b>${esc(r.title)}</b><span>${esc(r.detail ?? '')}</span>${r.badge ? `<em class="tv-badge">${esc(r.badge)}</em>` : ''}`);
           b.type = 'button';
+          b.title = [r.title, r.detail].filter(Boolean).join(': ');
           b.ariaExpanded = String(open === r);
-          b.onclick = () => { open = open === r ? null : r; draw(); };
+          b.onclick = () => { if (open !== r) { open = r; draw(); } };
           item.append(b);
           if (open === r) item.append(record(r));
           return item;
@@ -124,11 +145,12 @@
         const body = el('div', 'tv-body');
         if (r.fields?.length) body.append(form(r.fields, r.save ?? 'Save', (vals, changed) => merge(r.fields.filter((f) => changed.has(f.name)).map((f) => filled(f.edit, { value: vals[f.name] })))));
         for (const f of r.forms ?? []) body.append(form(f.fields, f.title, (vals) => filled(f.edit, vals)));
+        if (r.uses) body.append(el('div', 'tv-text tv-uses', ctx.markdown(r.uses)));
         if (r.table?.rows.length) body.append(RENDER.table(r.table));
         if (r.actions?.length) {
           const acts = el('div', 'tv-actions');
           for (const a of r.actions) {
-            const b = el('button', 'tv-button', esc(a.title));
+            const b = el('button', 'tv-button' + (a.danger ? ' tv-danger' : ''), esc(a.title));
             b.type = 'button';
             b.disabled = !!a.disabled;
             b.title = a.disabled ?? '';
@@ -236,6 +258,10 @@
         node.onpointermove = move;
         node.onpointerup = () => { node.onpointermove = null; };
       };
+      // the shared undo model (dialogs.js) when the page has it: one step per gesture
+      const hist = self.satexDialogs?.history?.(() => hsb, (v) => { hsb = v; draw(); });
+      const settle = () => hist?.settle();
+      for (const n of [square, hue]) n.addEventListener('pointerup', settle);
       drag(square, (x, y) => { hsb = [hsb[0], x, 1 - y]; });
       drag(hue, (x) => { hsb = [Math.min(x, 0.9999), hsb[1], hsb[2]]; });
       pick.append(square, hue);
@@ -251,7 +277,7 @@
         tabs.append(t);
       }
       const spec = Object.assign(el('input', 'tv-input tv-spec'), { spellcheck: false, ariaLabel: 'spec' });
-      spec.onchange = () => { const c = PARSE[model]?.(spec.value); if (c) { hsb = toHsb(c); draw(); } };
+      spec.onchange = () => { const c = PARSE[model]?.(spec.value); if (c) { hsb = toHsb(c); draw(); settle(); } };
       const all = el('div', 'tv-specs');
       side.append(swatch, tabs, spec, all);
       // an xcolor expression, mixed from the colors defined here
@@ -265,18 +291,34 @@
       }
       box.append(pick, side);
       // the colors defined at the position: picking one writes its name
+      // grouped by who defined them, alike colors side by side; a long group shows a few and `+N`
       if (s.defined.length) {
         const list = el('div', 'tv-defined');
-        for (const d of s.defined) {
+        const chip = (d) => {
           const b = el('button', 'tv-chip', `<i style="background:${d.css}"></i>${esc(d.name)}`);
           b.type = 'button';
           b.title = s.pick ? `write ${d.name} here` : d.name;
-          b.onclick = () => s.pick ? ctx.apply([{ range: s.pick, newText: d.name }]) : (hsb = toHsb(d.rgb), draw());
-          list.append(b);
+          b.onclick = () => s.pick ? ctx.apply([{ range: s.pick, newText: d.name }]) : (hsb = toHsb(d.rgb), draw(), settle());
+          return b;
+        };
+        for (const g of colorBand(s.defined)) {
+          const row = el('div', 'tv-band', `<span class="tv-band-name">${esc(g.name === 'document' ? 'this document' : g.name)} <small>${g.colors.length}</small></span>`);
+          const few = g.colors.length > BAND ? BAND - 1 : g.colors.length;
+          row.append(...g.colors.slice(0, few).map(chip));
+          if (few < g.colors.length) {
+            const more = el('button', 'tv-chip tv-more', `+${g.colors.length - few}`);
+            more.type = 'button';
+            more.title = `show all ${g.colors.length} colors of ${g.name}`;
+            more.ariaExpanded = 'false';
+            more.onclick = () => more.replaceWith(...g.colors.slice(few).map(chip));
+            row.append(more);
+          }
+          list.append(row);
         }
         box.append(el('h4', 'tv-h', 'Defined here'), list);
       }
       const foot = el('div', 'tv-actions');
+      if (hist) { foot.append(...hist.controls(), el('span', 'tv-muted tv-hint', esc(self.satexDialogs.HINT.replace(', Ctrl+Enter applies', '')))); hist.keys(box); }
       if (s.apply) {
         const write = el('button', 'tv-button tv-primary');
         write.type = 'button';
@@ -286,8 +328,8 @@
           ctx.apply(s.apply.edits.map((e) => ({ range: e.range, newText: fill(e.newText, vars) })));
         };
         foot.append(write);
-        box.append(foot);
       }
+      if (foot.children.length) box.append(foot);
       function draw(clearExpr = true) {
         if (clearExpr) expr = null;
         const c = rgb();
@@ -1004,8 +1046,6 @@
 .tv-text p { margin: .2rem 0; } .tv-text { color: var(--tv-muted); font-size: .82rem; }
 .tv-table { border-collapse: collapse; } .tv-table td, .tv-table th { padding: .2rem .6rem; border-bottom: 1px solid var(--tv-border); text-align: left; }
 .tv-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
-.tv-button { font: inherit; font-size: .82rem; padding: .35rem .7rem; border-radius: 6px; border: 1px solid var(--tv-border); background: var(--tv-sunk); color: var(--tv-fg); cursor: pointer; }
-.tv-button:hover { border-color: var(--tv-accent); } .tv-primary { background: var(--tv-accent); color: var(--tv-accent-fg); border-color: var(--tv-accent); }
 .tv-input { font: inherit; font-size: .88rem; padding: .3rem .5rem; border-radius: 6px; border: 1px solid var(--tv-border); background: var(--tv-sunk); color: var(--tv-fg); min-width: 0; }
 .tv-input.tv-bad { border-color: var(--error, #c33); }
 .tv-converter { display: grid; gap: .5rem; } .tv-row { display: flex; gap: .4rem; } .tv-row input { flex: 1; font-size: 1.1rem; }
@@ -1031,24 +1071,21 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-side { display: grid; gap: .5rem; align-content: start; min-width: 0; }
 .tv-swatches { display: flex; height: 2.4rem; border-radius: 8px; overflow: hidden; border: 1px solid var(--tv-border); }
 .tv-swatches span { flex: 1; }
-.tv-tabs { display: flex; flex-wrap: wrap; gap: .25rem; }
-.tv-tab { font: inherit; font-size: .75rem; padding: .2rem .5rem; border-radius: 999px; border: 1px solid var(--tv-border); background: none; color: var(--tv-muted); cursor: pointer; }
-.tv-tab.on { background: var(--tv-accent); color: var(--tv-accent-fg); border-color: var(--tv-accent); }
 .tv-spec { font-family: ui-monospace, monospace; }
 .tv-specs { display: grid; gap: .1rem; font-family: ui-monospace, monospace; font-size: .75rem; color: var(--tv-muted); }
 .tv-specs b { display: inline-block; min-width: 3.2rem; color: var(--tv-fg); font-weight: 600; }
 .tv-expr { display: flex; align-items: center; gap: .4rem; font-size: .8rem; color: var(--tv-muted); } .tv-expr input { flex: 1; font-family: ui-monospace, monospace; }
-.tv-defined { display: flex; flex-wrap: wrap; gap: .3rem; max-height: 7.5rem; overflow: auto; }
-.tv-chip { font: inherit; font-size: .78rem; display: inline-flex; align-items: center; gap: .3rem; padding: .15rem .5rem .15rem .25rem; border-radius: 999px; border: 1px solid var(--tv-border); background: var(--tv-sunk); color: var(--tv-fg); cursor: pointer; }
+.tv-defined { display: grid; gap: .45rem; max-height: 16rem; overflow: auto; }
+.tv-band { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; } .tv-band-name { flex: 0 0 100%; font-size: .72rem; color: var(--tv-muted); } .tv-band-name small { opacity: .7; }
+.tv-more { padding-left: .5rem; color: var(--tv-muted); }
 .tv-chip i { width: .9rem; height: .9rem; border-radius: 50%; border: 1px solid #8886; }
-.tv-chip:hover { border-color: var(--tv-accent); }
 .tv-records { display: grid; gap: .5rem; } .tv-records > .tv-list { max-height: 60vh; }
 .tv-record.on { border: 1px solid var(--tv-border); border-radius: 8px; background: var(--tv-sunk); }
-.tv-record > .tv-choice { width: 100%; } .tv-record > .tv-choice b { font-weight: 600; } .tv-badge { font-style: normal; font-weight: 400; font-size: .7rem; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--tv-border); color: var(--tv-muted); }
+.tv-record > .tv-choice { width: 100%; } .tv-line { display: grid; grid-template-columns: minmax(4rem, max-content) minmax(0, 1fr) auto; align-items: baseline; gap: .8rem; }
+.tv-line > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: inherit; font-size: .8rem; } .tv-record.on > .tv-line { cursor: default; } .tv-record > .tv-choice b { font-weight: 600; } .tv-badge { font-style: normal; font-weight: 400; font-size: .7rem; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--tv-border); color: var(--tv-muted); }
 .tv-body { display: grid; gap: .6rem; padding: .3rem .6rem .7rem; min-width: 0; } .tv-body .tv-table { font-size: .8rem; display: block; overflow-x: auto; }
 .tv-form { display: grid; gap: .4rem; } .tv-field { display: grid; grid-template-columns: 7rem 1fr; gap: .5rem; align-items: center; font-size: .8rem; color: var(--tv-muted); }
 .tv-field textarea { min-height: 3.2rem; resize: vertical; } .tv-field .tv-input { font-family: ui-monospace, monospace; font-size: .82rem; }
-.tv-button:disabled { opacity: .5; cursor: not-allowed; }
 .tv-add summary { cursor: pointer; font-size: .85rem; color: var(--tv-accent); } .tv-add[open] { display: grid; gap: .5rem; } .tv-add > select { justify-self: start; }
 @media (max-width: 560px) { .tv-field { grid-template-columns: 1fr; gap: .15rem; } }
 @media (max-width: 560px) { .tv-color { grid-template-columns: 1fr; } .tv-pick { max-width: 16rem; } }
@@ -1068,7 +1105,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-mermaid summary { cursor: pointer; font-size: .82rem; color: var(--tv-muted); } .tv-mermaid textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; margin: .4rem 0; }
 .tv-tree-edge { stroke: currentColor; stroke-width: .02; } .tv-node.dirty rect { stroke: var(--tv-accent); }
 .tv-forest-side, .tv-forest-tree { display: grid; gap: .4rem; } .tv-forest-side .tv-row > span, .tv-forest-tree .tv-row > span { min-width: 4.5rem; align-self: center; }
-.tv-foot { justify-content: flex-end; align-items: center; } .tv-foot .tv-muted { margin-right: auto; }`;
+.tv-hint { margin-right: auto; align-self: center; } .tv-foot { justify-content: flex-end; align-items: center; } .tv-foot .tv-muted { margin-right: auto; }`;
 
   /** Renders `view` into `container`; `ctx.apply(edits)` writes, `ctx.markdown(md)` makes HTML. */
   function render(view, container, ctx) {
@@ -1116,5 +1153,5 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
       (st.paired?.names?.length ? `<div class="ds-sec"><b>paired by a join</b><span>${st.paired.names.map(cs).join(' ')} · ${st.paired.arms} arms</span></div>` : '') +
       (cats ? `<div class="ds-sec"><b>catcodes ahead</b><span>${cats}</span></div>` : '');
   };
-  self.satexViews = { render, RENDER, SPEC, mix, drawing: { parse, emit, mermaidIn, mermaidOut, layout, importMermaid }, forest: forestFns, dev: { traceCsv, stateHtml } };
+  self.satexViews = { render, RENDER, SPEC, mix, colorBand, oklch, drawing: { parse, emit, mermaidIn, mermaidOut, layout, importMermaid }, forest: forestFns, dev: { traceCsv, stateHtml } };
 })();

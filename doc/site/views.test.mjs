@@ -318,3 +318,43 @@ console.log('table model: ok');
   assert.deepEqual([...view.matchAll(/\\(begin|end)\{(\w+)\}/g)].map((m) => m[0]), ['\\begin{document}', '\\begin{figure}', '\\end{figure}', '\\end{document}']);
   assert.match(view, /\\begin\{figure\}<\/span><code class="ts-block-place"[^>]*>\[ht\]<\/code><code class="ts-block-label"[^>]*>f<\/code>/);
 }
+
+// the color band: groups by who defined the color (the document first), alike colors side by side, greys last
+{
+  const { colorBand } = self.satexViews;
+  const c = (name, rgb, group) => ({ name, rgb, group });
+  const band = colorBand([c('gray', [0.5, 0.5, 0.5], 'xcolor'), c('blue', [0, 0, 1], 'xcolor'), c('red', [1, 0, 0], 'xcolor'), c('darkred', [0.5, 0, 0], 'xcolor'),
+    c('Sky', [0.4, 0.7, 1], 'dvipsnam'), c('brand', [0, 0.5, 0.5], 'document'), c('white', [1, 1, 1], 'xcolor')]);
+  assert.deepEqual(band.map((g) => g.name), ['document', 'xcolor', 'dvipsnam']);
+  assert.deepEqual(band[1].colors.map((d) => d.name), ['darkred', 'red', 'blue', 'gray', 'white'], 'a hue family dark to light, greys last');
+}
+
+// a length field's text, coloured as the editor colours it: names (each with its hover card) and numbers
+{
+  const { texTokens } = self.satexDialogs;
+  assert.equal(texTokens('0.8\\linewidth'), '<span class="tok-num">0.8</span><span class="tok-cmd cs-tip" data-cs="\\linewidth">\\linewidth</span>');
+  assert.equal(texTokens('5cm'), '<span class="tok-num">5</span>cm');
+  assert.equal(texTokens('<\\a'), '&lt;<span class="tok-cmd cs-tip" data-cs="\\a">\\a</span>', 'text escaped');
+}
+
+// the widgets' shared undo: one step per settled change, a held gesture as one, reset undoable
+{
+  let state = { a: 1 };
+  const hist = self.satexDialogs.history(() => state, (s) => { state = s; });
+  state = { a: 2 }; hist.settle();
+  hist.hold(true); state = { a: 3 }; hist.settle(); state = { a: 4 }; hist.hold(false);
+  assert.ok(hist.undo()); assert.deepEqual(state, { a: 2 }, 'the held gesture is one step');
+  assert.ok(hist.redo()); assert.deepEqual(state, { a: 4 });
+  hist.reset(); assert.deepEqual(state, { a: 1 });
+  assert.ok(hist.undo()); assert.deepEqual(state, { a: 4 }, 'reset undoes');
+  state = { a: 5 }; hist.settle();
+  assert.equal(hist.redo(), false, 'a new change drops the redo steps');
+}
+
+// array's column injections: the text inside `>{…}` and `<{…}`, several joined
+{
+  const T = self.satexDialogs.table;
+  assert.equal(T.injected('>{\\bfseries}'), '\\bfseries');
+  assert.equal(T.injected('>{$}>{\\mathbf{x}}'), '$\\mathbf{x}');
+  assert.equal(T.injected(''), '');
+}

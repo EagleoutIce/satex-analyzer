@@ -3175,7 +3175,11 @@ fn color_plugin_with_xcolor() {
     assert_eq!(color["kind"], "color", "{views}");
     assert_eq!(color["models"][0], "HTML");
     assert_eq!(color["apply"]["edits"][0]["newText"], "[${model}]{${spec}}");
-    assert!(color["defined"].as_array().unwrap().iter().any(|d| d["name"] == "brand"));
+    let group = |name: &str| {
+        color["defined"].as_array().unwrap().iter().find(|d| d["name"] == name).map(|d| d["group"].clone())
+    };
+    // each color names who defined it: the document's own, else the package file
+    assert_eq!((group("brand"), group("red")), (Some(json!("document")), Some(json!("kernel"))), "{color}");
     let id = server.request(
         "textDocument/colorPresentation",
         json!({ "textDocument": { "uri": uri }, "color": { "red": 1.0, "green": 0.0, "blue": 0.0, "alpha": 1.0 },
@@ -3346,8 +3350,31 @@ fn a_float_placement_hovers_completes_and_writes() {
     let at = |line: u32, character: u32| json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": character } });
     let hover = ask(&mut server, "textDocument/hover", at(fig, 15));
     let md = hover["contents"]["value"].as_str().unwrap_or_default().to_string();
-    assert!(md.contains("Placement `[ht]`") && md.contains("- `h`: here") && md.contains("- `t`: at the top"), "{md}");
-    assert!(!md.contains("- `b`"), "only the letters written: {md}");
+    assert!(
+        md.contains("Placement `[ht]`") && md.contains("- `h` **on**: here") && md.contains("- `t` **on**: at the top"),
+        "{md}"
+    );
+    assert!(md.contains("- `b` off"), "every letter, the written ones on: {md}");
+    // each toggle is a link that writes the brackets with its letter switched
+    let writes: Vec<String> = md
+        .match_indices("command:satex.applyEdit?")
+        .map(|(k, m)| {
+            let arg = &md[k + m.len()..];
+            let arg = &arg[..arg.find(')').unwrap()];
+            let (mut bytes, mut i) = (Vec::new(), 0);
+            while i < arg.len() {
+                let hex = (arg.as_bytes()[i] == b'%').then(|| u8::from_str_radix(&arg[i + 1..i + 3], 16).unwrap());
+                bytes.push(hex.unwrap_or(arg.as_bytes()[i]));
+                i += if hex.is_some() { 3 } else { 1 };
+            }
+            serde_json::from_slice::<Value>(&bytes).unwrap()[2].as_str().unwrap().to_string()
+        })
+        .collect();
+    assert_eq!(writes, ["[t]", "[h]", "[htb]", "[htp]", "[ht!]", "[H]"], "{md}");
+    assert!(
+        md.contains("`topnumber` | `\\topfraction`") && md.contains("| 2 | .7 |"),
+        "the limits as the run ended: {md}"
+    );
     let md = ask(&mut server, "textDocument/hover", at(tab, 3))["contents"]["value"]
         .as_str()
         .unwrap_or_default()
@@ -3361,8 +3388,7 @@ fn a_float_placement_hovers_completes_and_writes() {
     assert!(!labels(&complete(&mut server, &uri, fig, 18)).contains(&"H"), "no letters after the `]`");
     let lenses = ask(&mut server, "textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
     let float = lenses.as_array().unwrap().iter().find(|l| l["command"]["title"] == "Edit placement…").unwrap();
-    let letters = &float["command"]["arguments"][0]["letters"];
-    assert_eq!(letters.as_array().map(|l| l.len()), Some(6), "h t b p ! H for the inline chips: {float}");
+    assert!(float["command"]["arguments"][0]["letters"].is_null(), "no inline chips: the card toggles: {float}");
     let view = ask(&mut server, "satex/dialog", at(fig, 2));
     assert_eq!((view["kind"].as_str(), view["state"]["spec"].as_str()), (Some("float"), Some("ht")), "{view}");
     let mut apply = |spec: &str| {
@@ -3376,6 +3402,31 @@ fn a_float_placement_hovers_completes_and_writes() {
     assert_eq!(apply("tb!")["edits"][0]["newText"], "\\begin{figure}[tb!]");
     assert_eq!(apply("")["edits"][0]["newText"], "\\begin{figure}");
     assert!(apply("x").is_null(), "an unknown letter is refused");
+}
+
+/// array's column injections: a spec's `>{…}` and `<{…}` reach the dialog's state, edited ones are
+/// written back into the spec, and `\usepackage{array}` is added when the run lacks it.
+#[test]
+fn a_table_column_keeps_and_writes_its_injections() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\begin{tabular}{>{\\bfseries}l c}\na & b \\\\\n\\end{tabular}\n\\end{document}\n";
+    let (mut server, uri, _, _) = open_loaded("inject", text);
+    let mut ask = |method: &str, params: Value| {
+        let id = server.request(method, params);
+        server.response(id)["result"].clone()
+    };
+    let view =
+        ask("satex/dialog", json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": 2 } }));
+    assert_eq!(view["state"]["cols"][0]["pre"], ">{\\bfseries}", "{view}");
+    let mut state = view["state"].clone();
+    state["cols"][1]["pre"] = json!(">{$}");
+    state["cols"][1]["post"] = json!("<{$}");
+    let out = ask(
+        "satex/dialogApply",
+        json!({ "textDocument": { "uri": uri }, "kind": "table", "range": view["range"], "state": state }),
+    );
+    let written = out["edits"][0]["newText"].as_str().unwrap_or_default();
+    assert!(written.contains(">{\\bfseries}l") && written.contains(">{$}c<{$}}"), "{out}");
+    assert_eq!(out["edits"][1]["newText"], "\\usepackage{array}\n", "array is added: {out}");
 }
 
 /// A table and each figure get a code lens and a hover link to their
@@ -3902,8 +3953,19 @@ fn glossary_manager_round_trips() {
     let graph = record(&view, "graph");
     assert_eq!(graph["badge"], Value::Null, "{graph}");
     assert_eq!(record(&view, "tree")["badge"], "unused");
-    let rows = graph["table"]["rows"].to_string();
-    assert!(rows.contains("line 7") && rows.contains("graphs"), "{rows}");
+    // one line: name, short description; the uses as places, no stored internals
+    assert_eq!(graph["detail"], "graph · a set of nodes and edges", "{graph}");
+    let uses = graph["uses"].as_str().unwrap_or_default();
+    assert!(
+        uses.contains("main.tex:3`") && uses.contains("Used at `") && uses.matches("main.tex:7`").count() == 1,
+        "one place per line: {uses}"
+    );
+    assert!(graph["table"].is_null() && !graph.to_string().contains("@gls@"), "{graph}");
+    let cfg = &record(&view, "cfg")["detail"];
+    assert!(
+        cfg.as_str().is_some_and(|d| d.starts_with("CFG · control flow graph") && !d.contains("main")),
+        "the default type unsaid: {cfg}"
+    );
     // a field: the description, written back in braces
     let desc = field_of(graph, "description");
     assert_eq!(desc["value"], "a set of nodes and edges");
@@ -3915,7 +3977,7 @@ fn glossary_manager_round_trips() {
     assert!(names.contains(&"short") && names.contains(&"long"), "{names:?}");
     // delete: refused while used, allowed when unused
     let used = &graph["actions"][0];
-    assert!(used["disabled"].as_str().is_some_and(|r| r.contains("used 2 times")), "{used}");
+    assert!(used["disabled"].as_str().is_some_and(|r| r.contains("Used 2 times")), "{used}");
     let tree = record(&view, "tree");
     assert_eq!(tree["actions"][0]["disabled"], Value::Null);
     let out = applied(GLOSSARY, &uri, &tree["actions"][0]["edit"], &[]);

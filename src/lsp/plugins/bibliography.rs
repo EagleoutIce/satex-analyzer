@@ -109,7 +109,7 @@ fn record(path: &str, bib: &Text, e: &crate::plugins::bib::Entry, cites: &[u32])
         }
         let (from, to) = lines_of(text, at, close + 1);
         let reason = (!cites.is_empty()).then(|| format!("cited {}", crate::cli::render::plural(cites.len(), "time")));
-        actions.push(json!({ "title": format!("Delete {}", e.key), "edit": edit_of(path, vec![put(bib, from, to, "")]), "disabled": reason }));
+        actions.push(json!({ "title": format!("Delete {}", e.key), "edit": edit_of(path, vec![put(bib, from, to, "")]), "disabled": reason, "danger": true }));
     }
     let file = std::path::Path::new(path).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
     let rows: Vec<Json> = cites.iter().map(|l| json!(["cited", format!("line {l}")])).collect();

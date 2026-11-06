@@ -85,7 +85,7 @@
       <div id="written-body" class="written grow"><p class="muted">Files the build writes (.aux, .toc …), as satex computes them, and the files the run reads. Unknown parts are marked.</p></div></section>
     </div>
     <dialog id="play-library" class="cache-dialog lib-dialog" aria-labelledby="lib-title">
-      <header><h3 id="lib-title">Library</h3><button type="button" class="ghost small" id="lib-close" aria-label="close">✕</button></header>
+      <header><h3 id="lib-title">Library</h3><button type="button" class="ghost small hd-request" data-request-plugin>Request a plugin…</button><button type="button" class="ghost small icon hd-feedback" id="lib-feedback" title="Send feedback on the library" aria-label="feedback on the library"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.5h5M5.5 8.5h3"/></svg></button><button type="button" class="ghost small" id="lib-close" aria-label="close">✕</button></header>
       <div class="lib grow">
         <div class="lib-bar"><label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
           <input type="search" id="lib-search" placeholder="Search names: \section, tikz, skip…" aria-label="search the names in force"></label>
@@ -105,7 +105,7 @@
         <select id="try-engine" class="dropdown" aria-label="where Try reads the text"><option value="">in this document</option><option value="article">LaTeX article</option><option value="plain">plain TeX</option></select><span id="try-status" class="muted"></span></div>
       <div id="lib-out" class="try-out"></div></dialog>
     <dialog id="play-config" class="cache-dialog" aria-labelledby="cfg-title">
-      <header><h3 id="cfg-title">Settings</h3><button type="button" class="ghost small" id="cfg-close" aria-label="close">✕</button></header>
+      <header><h3 id="cfg-title">Settings</h3><button type="button" class="ghost small icon hd-feedback" id="cfg-feedback" title="Send feedback on the settings" aria-label="feedback on the settings"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.5h5M5.5 8.5h3"/></svg></button><button type="button" class="ghost small" id="cfg-close" aria-label="close">✕</button></header>
       <p class="muted cache-note">Here you configure how SaTeX analyzes the documents in the playground. These are the same settings a <code>satex.yaml</code> holds. A change applies to every run here and travels with the link you share.</p>
       <div class="lib-bar cfg-bar"><span id="cfg-tabs" class="lib-kinds" role="group" aria-label="which settings"><button type="button" class="lib-kind" data-tab="core" aria-pressed="true">Core</button><button type="button" class="lib-kind" data-tab="plugins" aria-pressed="false">Plugins</button><button type="button" class="lib-kind" data-tab="yaml" aria-pressed="false">YAML</button></span>
         <label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
@@ -136,7 +136,7 @@
       <template id="draw-about">Draw a symbol to find it. Inspired by <a href="https://detexify.kirelabs.org" target="_blank" rel="noopener">Detexify</a>.
         See also the <a href="https://ctan.org/pkg/comprehensive" target="_blank" rel="noopener">Comprehensive LaTeX Symbol List</a>.</template></dialog>
     <dialog id="play-view" class="cache-dialog view-dialog" aria-labelledby="view-title">
-      <header><h3 id="view-title"></h3><button type="button" class="ghost small" id="view-close" aria-label="close">✕</button></header>
+      <header><h3 id="view-title"></h3><button type="button" class="ghost small icon hd-feedback" id="view-feedback" title="Send feedback on this widget" aria-label="feedback on this widget"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.5h5M5.5 8.5h3"/></svg></button><button type="button" class="ghost small" id="view-close" aria-label="close">✕</button></header>
       <div id="view-body" class="view-body"></div></dialog>
     <dialog id="play-cache" class="cache-dialog" aria-labelledby="cache-title">
       <header><h3 id="cache-title">Caches</h3><button type="button" class="ghost small" id="cache-close" aria-label="close">✕</button></header>

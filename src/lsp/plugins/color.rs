@@ -81,7 +81,9 @@ impl TypePlugin for Color {
         let x = xcolor(cx.analysis);
         let defined: Vec<Json> = defined_at(cx.analysis, cx.path, cx.pos)
             .into_iter()
-            .filter_map(|c| Some(json!({ "name": c.name, "rgb": value(c)?, "css": hex(value(c)?) })))
+            .filter_map(|c| {
+                Some(json!({ "name": c.name, "rgb": value(c)?, "css": hex(value(c)?), "group": group(cx.analysis, c) }))
+            })
             .collect();
         let models: Vec<&str> =
             if x { vec!["HTML", "rgb", "RGB", "cmyk", "gray", "hsb"] } else { vec!["rgb", "cmyk", "gray"] };
@@ -97,7 +99,7 @@ impl TypePlugin for Color {
             "pick": slot,
             "apply": writes,
         })];
-        Some(json!({ "title": format!("Color {name}"), "sections": sections }))
+        Some(json!({ "title": format!("Edit colour {name}"), "sections": sections }))
     }
 
     fn colors(&self, analysis: &Analysis, doc: &Text, path: &str) -> Vec<ColorInformation> {
@@ -109,6 +111,21 @@ impl TypePlugin for Color {
 }
 
 /// Whether `name` is defined on the cursor's line.
+/// Who defined the color: the document, else the file that did (`xcolor`, `dvipsnam`, `svgnam`).
+fn group(analysis: &Analysis, c: &ColorDef) -> String {
+    if analysis.project_file(c.span.file) {
+        return "document".into();
+    }
+    let short = analysis.files.get(usize::from(c.span.file)).map_or("", |f| f.short.as_str());
+    let base = short.rsplit('/').next().unwrap_or(short);
+    match base.rsplit_once('.') {
+        // a format file (latex.ltx) is the kernel
+        Some((_, "ltx" | "fmt")) => "kernel".into(),
+        Some((stem, _)) => stem.into(),
+        None => base.into(),
+    }
+}
+
 fn defined_here(cx: &Cx, name: &str) -> bool {
     let file = super::super::type_at::file_of(cx.analysis, cx.path);
     let here = |s: crate::engine::tex::Span| s.line == cx.pos.line && Some(s.file) == file;

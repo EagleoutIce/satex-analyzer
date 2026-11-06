@@ -163,7 +163,7 @@ fn register(analysis: &Analysis, hit: &super::Hit) -> Option<(String, Num)> {
 }
 
 /// The value of the length register `\name` when the run ended.
-fn register_value(analysis: &Analysis, name: &str) -> Option<Num> {
+pub(in crate::lsp) fn register_value(analysis: &Analysis, name: &str) -> Option<Num> {
     let sym = analysis.interner.lookup(name)?;
     let Meaning::Register(kind, n) = analysis.env.meaning(sym) else { return None };
     let reg = analysis.interner.lookup(&format!("\u{2}{}{n}", kind.as_str()))?;

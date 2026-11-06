@@ -23,6 +23,7 @@ mod table;
 mod theorem;
 mod tikz;
 mod units;
+pub(super) use units::register_value;
 
 use super::type_at::{At, Hit};
 use crate::analysis::facts::Occurrence;

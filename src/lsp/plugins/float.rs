@@ -1,5 +1,5 @@
 //! Floats: the environments whose code reaches `\\@float`. Their placement `[htbp!]` has a hover
-//! per letter, completion of the letters and a dialog of toggles, in [`crate::lsp::dialogs`].
+//! card of toggles, completion of the letters and a dialog, in [`crate::lsp::dialogs`].
 
 use super::TypePlugin;
 use crate::analysis::machine::Analysis;

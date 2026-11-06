@@ -43,9 +43,9 @@ impl TypePlugin for Glossary {
         let keys: Vec<&str> = all.iter().map(|e| e.key.as_str()).collect();
         let items: Vec<Json> = all.iter().map(|e| record(cx, e, &all, &keys)).collect();
         Some(json!({
-            "title": "Glossary entries",
+            "title": "Edit glossary",
             "sections": [
-                { "kind": "records", "placeholder": "search keys, names, descriptions", "sorts": ["key", "name", "uses", "line"],
+                { "kind": "records", "placeholder": "Search keys, names and descriptions", "sorts": ["key", "name", "uses", "line"],
                   "items": items, "add": add(cx, &all) },
             ],
         }))
@@ -62,7 +62,7 @@ struct Entry {
     /// Where it stands when not in the open file: file and line.
     elsewhere: Option<(String, u32)>,
     span: crate::engine::tex::Span,
-    /// Each use: line, the head, and the bytes of the key in the open file.
+    /// Each use: line, its file, and the bytes of the key in the open file.
     uses: Vec<(u32, String, Option<std::ops::Range<usize>>)>,
 }
 
@@ -89,9 +89,9 @@ fn entries(cx: &Cx) -> Vec<Entry> {
     for o in occ.iter().filter(|o| o.kind == OccKind::KeyUse) {
         let Some(e) = out.iter_mut().find(|e| e.key == o.key) else { continue };
         let range = super::byte_of(cx, o.span).and_then(|at| key_in(text, at, &o.key));
-        let head = o.detail.clone().unwrap_or_default();
-        if !e.uses.iter().any(|u| u.0 == o.span.line && u.2 == range) {
-            e.uses.push((o.span.line, head, range));
+        let file = cx.analysis.files[usize::from(o.span.file)].path.clone();
+        if !e.uses.iter().any(|u| u.0 == o.span.line && u.1 == file && u.2 == range) {
+            e.uses.push((o.span.line, file, range));
         }
     }
     out.sort_by_key(|e| e.span.line);
@@ -161,26 +161,40 @@ fn record(cx: &Cx, e: &Entry, all: &[Entry], keys: &[&str]) -> Json {
     let fs = if e.elsewhere.is_none() { fields(cx, e, all) } else { Vec::new() };
     let value = |name: &str| fs.iter().find(|(f, _)| f == name).map(|(_, r)| unbraced(&text[r.clone()]).to_string());
     let stored = stored(cx, e);
-    let name = value("name").or_else(|| stored.iter().find(|s| s.0 == "name").map(|s| s.1.clone()));
     let search: String = std::iter::once(e.key.clone())
         .chain(fs.iter().map(|(_, r)| text[r.clone()].to_string()))
-        .chain(stored.iter().map(|s| s.1.clone()))
         .collect::<Vec<_>>()
         .join(" ");
     let fields: Vec<Json> =
         fs.iter().map(|(f, r)| field(cx, f, unbraced(&text[r.clone()]), r.start, r.end, "{${value}}")).collect();
-    let mut rows: Vec<Json> =
-        e.uses.iter().map(|(l, h, _)| json!(["use", format!("line {l}"), format!("\\{h}")])).collect();
-    rows.extend(stored.iter().filter(|(_, v)| !v.trim().is_empty()).map(|(f, v)| json!(["stored", f, v])));
-    let place = e.elsewhere.as_ref().map_or(format!("line {}", e.span.line), |(f, l)| format!("{f}:{l}"));
+    // what the call wrote comes first, what the run stored only when the call did not write it
+    let summary = |names: &[&str]| {
+        let stored = |n: &&str| stored.iter().find(|s| s.0 == *n).map(|s| s.1.clone());
+        let v = names.iter().find_map(|n| value(n)).or_else(|| names.iter().find_map(stored));
+        v.map(|v| v.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|v| !v.is_empty())
+    };
+    // what a reader of the document knows it by: name, short description, and a type other than the default
+    let kind = summary(&["type"]).filter(|t| t != "main");
+    let detail: Vec<String> =
+        [summary(&["name", "short"]), summary(&["description", "desc", "long"]), kind].into_iter().flatten().collect();
+    // each use as a place a click opens
+    let uses = match e.uses.is_empty() {
+        true => "Not used.".to_string(),
+        false => {
+            let mut places: Vec<String> = e.uses.iter().map(|(l, f, _)| format!("`{f}:{l}`")).collect();
+            places.dedup();
+            format!("Used at {}", places.join(" · "))
+        }
+    };
     let mut actions = Vec::new();
     let mut forms = Vec::new();
     if e.elsewhere.is_none() {
         let (from, to) = lines_of(text, e.at, e.end);
         let delete = edit_of(cx.path, vec![put(cx.doc, from, to, "")]);
         let reason = (!e.uses.is_empty())
-            .then(|| format!("used {}: replace the uses first", crate::cli::render::plural(e.uses.len(), "time")));
-        actions.push(json!({ "title": format!("Delete {}", e.key), "edit": delete, "disabled": reason }));
+            .then(|| format!("Used {}. Replace its uses first", crate::cli::render::plural(e.uses.len(), "time")));
+        actions
+            .push(json!({ "title": format!("Delete {}", e.key), "edit": delete, "disabled": reason, "danger": true }));
         let others: Vec<&str> = keys.iter().copied().filter(|k| *k != e.key).collect();
         let movable = e.uses.iter().all(|u| u.2.is_some());
         if !e.uses.is_empty() && !others.is_empty() && movable {
@@ -193,13 +207,13 @@ fn record(cx: &Cx, e: &Entry, all: &[Entry], keys: &[&str]) -> Json {
     }
     json!({
         "title": e.key,
-        "detail": format!("{} · \\{} · {place}", name.unwrap_or_default(), e.head),
+        "detail": detail.join(" · "),
         "badge": e.uses.is_empty().then_some("unused"),
-        "search": search,
+        "search": format!("{search} {}", detail.join(" ")),
         "sort": { "key": e.key, "name": value("name").unwrap_or_default(), "uses": format!("{:06}", e.uses.len()), "line": format!("{:06}", e.span.line) },
         "fields": fields,
         "forms": forms,
-        "table": { "columns": ["", "where", "what"], "rows": rows },
+        "uses": format!("Declared at `{}:{}`. {uses}", e.elsewhere.as_ref().map_or(cx.path, |(f, _)| f.as_str()), e.span.line),
         "actions": actions,
     })
 }
