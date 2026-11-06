@@ -122,6 +122,8 @@ const WIDGETS = [
       await shot('tikz-2b-imported');
       await js(`${VIEW}.querySelector('.tv-foot .tv-primary').click()`);
     } },
+  { name: 'page', file: 'units.tex', entry: () => lens('Page layout…'), shown: `${VIEW}.open && ${VIEW}.querySelector('.tv-page')`, want: 'left=3cm',
+    edit: async () => { await type(`${VIEW}.querySelector('input[aria-label=Left]')`, '3'); await js(`${VIEW}.querySelector('.tv-foot .tv-primary').click()`); } },
 ];
 
 try {

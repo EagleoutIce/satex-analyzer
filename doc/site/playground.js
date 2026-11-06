@@ -918,7 +918,7 @@
         const pos = JSON.parse(decodeURIComponent(q))?.[0]?.position;
         opens += `<p class="sd-hover-open"><a href="#" class="sd-open" data-position='${escape(JSON.stringify(pos))}'>${escape(title)}</a></p>`;
         return '';
-      }).trim();
+      }).replace(/(?: · )?\[[^\]]+\]\(command:satex\.openView\?[^)\s]+\)/g, '').trim(); // a widget's link: its button below
       const p = position(v.state.doc, pos), found = findingsAt(p.line, p.character);
       const tools = value && !running ? await typedTools(p) : [];
       // a command: the same card as the Explain panel, the server's Markdown until its records are there

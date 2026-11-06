@@ -1688,6 +1688,335 @@
   }
   RENDER.forest = forest;
 
+  // page layout (page plugin): LaTeX's page model in sp as the run computed it, edited as body
+  // margins; written as geometry's keys, typearea's DIV and BCOR, or `\newgeometry` around a part
+  const ONE_IN = 4736286; // 1in in sp (TeXbook p. 57)
+  /** geometry's keys by what they set: a changed group drops its keys and writes its own. */
+  const GEOMETRY = {
+    paper: ['paper', 'papername', 'paperwidth', 'paperheight', 'papersize', 'landscape', 'portrait'],
+    margins: ['margin', 'hmargin', 'vmargin', 'left', 'right', 'inner', 'outer', 'lmargin', 'rmargin', 'top', 'bottom', 'tmargin', 'bmargin',
+      'textwidth', 'textheight', 'width', 'height', 'hscale', 'vscale', 'scale', 'body', 'total', 'text', 'hmarginratio', 'vmarginratio', 'marginratio', 'ratio',
+      'hcentering', 'vcentering', 'centering', 'lines', 'includehead', 'includefoot', 'includeheadfoot', 'includemp', 'includeall', 'ignorehead', 'ignorefoot', 'ignoreheadfoot', 'ignoremp', 'ignoreall'],
+    head: ['headheight', 'head', 'headsep', 'footskip', 'foot', 'nohead', 'nofoot', 'noheadfoot'],
+    marginpar: ['marginparwidth', 'marginpar', 'marginparsep', 'nomarginpar'],
+  };
+  /** The page as edited, from the view: body margins in sp (an interval's middle), the lengths the run left open. */
+  function pageOf(s) {
+    const st = pageRun(s);
+    st.ran = { div: st.div, bcor: st.bcor };
+    return st;
+  }
+  function pageRun(s) {
+    const mid = (k) => { const v = s.run?.[k]; return v ? Math.round((v[0] + v[1]) / 2) : 0; };
+    const pw = mid('paperwidth'), ph = mid('paperheight'), tw = mid('textwidth'), th = mid('textheight');
+    const left = ONE_IN + mid('hoffset') + mid('oddsidemargin'), top = ONE_IN + mid('voffset') + mid('topmargin') + mid('headheight') + mid('headsep');
+    // a paper within a point of the run's (geometry's sizes in mm, the class's in pt), the one the source names first
+    const fits = (s.papers ?? []).filter((p) => Math.abs(p.w - pw) < 65536 && Math.abs(p.h - ph) < 65536);
+    const written = [s.geometry?.global?.options, s.koma?.options].join(',');
+    const paper = (fits.find((p) => opts(written).some((o) => kv(o)[0] === p.name || kv(o)[1] === p.name)) ?? fits[0])?.name ?? '';
+    const bcor = s.koma?.bcor ?? 0;
+    return {
+      mode: s.koma ? 'koma' : 'geometry', paper, pw, ph, left, right: pw - left - tw, top, bottom: ph - top - th,
+      headheight: mid('headheight'), headsep: mid('headsep'), footskip: mid('footskip'), mpwidth: mid('marginparwidth'), mpsep: mid('marginparsep'),
+      div: s.koma ? s.koma.div ?? Math.round(3 / (1 - tw / (pw - bcor))) : null, bcor, ran: null,
+      scope: 'all', from: s.part?.here ? 'here' : '0', to: 'end', header: headerOf(s.header, s.twoside),
+      open: Object.entries(s.run ?? {}).filter(([, v]) => v[0] !== v[1]).map(([k]) => k),
+    };
+  }
+  /** The body's margins `st` sets: typearea's from DIV and BCOR (inner 1, outer 2 stripes; one-sided both alike), else its own. */
+  function pageBox(st, twoside) {
+    // as the run computed it, until DIV or BCOR change
+    if (st.mode !== 'koma' || (st.div === st.ran?.div && st.bcor === st.ran?.bcor)) return st;
+    const aw = st.pw - st.bcor, tw = aw * (st.div - 3) / st.div, inner = twoside ? aw / st.div : (aw - tw) / 2;
+    return { ...st, left: st.bcor + inner, right: aw - inner - tw, top: st.ph / st.div, bottom: 2 * st.ph / st.div };
+  }
+  /** geometry's keys of each group for `st`, lengths through `len`. */
+  function geometryKeys(st, twoside, len) {
+    const b = pageBox(st, twoside);
+    return {
+      paper: st.paper ? [[st.paper, '']] : [['paperwidth', len(st.pw)], ['paperheight', len(st.ph)]],
+      margins: [[twoside ? 'inner' : 'left', len(b.left)], [twoside ? 'outer' : 'right', len(b.right)], ['top', len(b.top)], ['bottom', len(b.bottom)]],
+      head: [['headheight', len(st.headheight)], ['headsep', len(st.headsep)], ['footskip', len(st.footskip)]],
+      marginpar: [['marginparwidth', len(st.mpwidth)], ['marginparsep', len(st.mpsep)]],
+    };
+  }
+  /** The groups whose lengths differ between two states. */
+  const changedGroups = (a, b) => Object.entries({ paper: ['paper', 'pw', 'ph'], margins: ['left', 'right', 'top', 'bottom', 'div', 'bcor', 'mode'], head: ['headheight', 'headsep', 'footskip'], marginpar: ['mpwidth', 'mpsep'] })
+    .filter(([, ks]) => ks.some((k) => typeof a[k] === 'number' ? Math.abs(a[k] - b[k]) > 1 : a[k] !== b[k])).map(([g]) => g);
+  /** A key list as written, the keys `drop` dropped, `keys` added, in the list's own spacing. */
+  function setKeys(written, drop, keys) {
+    const kept = opts(written).filter((o) => !drop.includes(kv(o)[0]));
+    return [...kept, ...keys.map(([k, v]) => v === '' ? k : `${k}=${v}`)].join(/,[^\S\n]/.test(written) || !written.includes(',') ? ', ' : ',');
+  }
+  /** geometry's keys of `groups` dropped (papers by name too) and written anew. */
+  const regroup = (s, written, groups, keys) => setKeys(written, groups.flatMap((g) => GEOMETRY[g]).concat(groups.includes('paper') ? (s.papers ?? []).map((p) => p.name) : []), groups.flatMap((g) => keys[g]));
+  /** The edits that write `st` over the view's `s` as it opened (`st0`): geometry or typearea for the whole document, `\newgeometry` around a part. */
+  function pageEdits(s, st0, st, len) {
+    const two = !!s.twoside, out = [];
+    const put = (t, options) => out.push({ range: t.range, newText: fill(t.template, { options }) });
+    if (st.scope === 'part') {
+      const at = (k) => k === 'here' ? s.part.here : k === 'end' ? null : s.part.marks[+k]?.at;
+      const keys = geometryKeys(st, two, len), from = at(st.from), to = at(st.to);
+      const list = [...keys.margins, ...keys.head, ...keys.marginpar].map(([k, v]) => `${k}=${v}`).join(', ');
+      if (s.geometry.load) out.push(s.geometry.load);
+      out.push({ range: { start: from, end: from }, newText: `\\newgeometry{${list}}\n` });
+      if (to) out.push({ range: { start: to, end: to }, newText: '\\restoregeometry\n' });
+    } else {
+      let groups = changedGroups(st0, st);
+      const keys = geometryKeys(st, two, len);
+      // typearea's margins are class options; the rest geometry's keys
+      if (st.mode === 'koma' && s.koma && groups.includes('margins')) {
+        put(s.koma, setKeys(s.koma.options, ['DIV', 'BCOR'], [['DIV', String(st.div)], ['BCOR', len(st.bcor)]]));
+        groups = groups.filter((g) => g !== 'margins');
+      }
+      if (groups.length) put(s.geometry.global, regroup(s, s.geometry.global.options, groups, keys));
+    }
+    return out.concat(headerEdits(s.header, st.header, s.twoside));
+  }
+
+  // header and footer: fancyhdr's `\fancyhead[LE,RO]{…}` fields or scrlayer-scrpage's `\ihead{…}`
+  const SPOTS = { fancyhdr: ['L', 'C', 'R'], 'scrlayer-scrpage': ['i', 'c', 'o'] };
+  /** The fields the header's calls set, in order: `{package, head: {OL: text}, foot, rules, …}`. */
+  function headerOf(h, twoside) {
+    const m = { package: h?.package ?? null, head: {}, foot: {}, opt: {}, rules: { head: h?.rules?.head ?? null, foot: h?.rules?.foot ?? null }, ruled: {} };
+    for (const c of h?.calls ?? []) {
+      if (c.name === 'renewcommand') { const k = c.args[0]?.trim().startsWith('\\head') ? 'head' : 'foot'; m.rules[k] = c.args[1]?.trim() ?? m.rules[k]; m.ruled[k] = true; continue; }
+      if (m.package === 'scrlayer-scrpage') { const [spot, part] = [c.name[0], c.name.slice(1)]; m[part][`O${spot}`] = c.args[0] ?? ''; if (c.opt != null) m.opt[`${part}${spot}`] = c.opt; continue; }
+      const parts = c.name === 'fancyhead' ? ['head'] : c.name === 'fancyfoot' ? ['foot'] : null;
+      for (const sel of (c.opt ?? '').split(',').map((x) => x.trim().toUpperCase())) {
+        const pick = (set) => { const got = [...set].filter((x) => sel.includes(x)); return got.length ? got : [...set]; };
+        for (const part of parts ?? pick('HF').map((x) => (x === 'H' ? 'head' : 'foot'))) for (const side of pick('EO')) for (const spot of pick('LCR')) m[part][side + spot] = c.args[0] ?? '';
+      }
+    }
+    if (!twoside && m.package === 'fancyhdr') for (const part of ['head', 'foot']) for (const k of Object.keys(m[part])) if (k[0] === 'E') delete m[part][k];
+    return m;
+  }
+  /** The text of fields `m`: fancyhdr's selectors grouped by text, scrlayer-scrpage's one call per field. */
+  function headerText(m, twoside, clear) {
+    const lines = [];
+    if (m.package === 'scrlayer-scrpage') {
+      for (const part of ['head', 'foot']) for (const spot of SPOTS[m.package]) {
+        const t = m[part][`O${spot}`] ?? '', o = m.opt[`${part}${spot}`];
+        if (t || o != null) lines.push(`\\${spot}${part}${o != null ? `[${o}]` : ''}{${t}}`);
+      }
+      return lines.join('\n');
+    }
+    for (const part of ['head', 'foot']) {
+      const by = new Map();
+      for (const side of twoside ? ['E', 'O'] : ['O']) for (const spot of SPOTS.fancyhdr) {
+        const t = m[part][side + spot] ?? '';
+        if (t) by.set(t, [...(by.get(t) ?? []), twoside ? spot + side : spot]);
+      }
+      for (const [t, sel] of by) lines.push(`\\fancy${part}[${sel.join(',')}]{${t}}`);
+    }
+    if (lines.length || clear) lines.unshift('\\fancyhf{}');
+    return lines.join('\n');
+  }
+  /** The edits from header `h` as written to fields `m`: the first call becomes the new block, the rest go. */
+  function headerEdits(h, m, twoside) {
+    if (!h || !m.package) return [];
+    const first = headerOf(h, twoside), rules = [];
+    for (const k of ['head', 'foot']) if (m.rules[k] && (m.ruled[k] || m.rules[k] !== first.rules[k])) rules.push(`\\renewcommand{\\${k}rulewidth}{${m.rules[k]}}`);
+    if (JSON.stringify({ ...m, ruled: 0 }) === JSON.stringify({ ...first, ruled: 0 })) return [];
+    const calls = h.calls ?? [];
+    const text = [headerText(m, twoside, calls.length), ...(m.package === 'fancyhdr' ? rules : [])].filter(Boolean).join('\n');
+    const block = text ? text + '\n' : '';
+    if (!h.package) return [{ range: { start: h.insert, end: h.insert }, newText: h.load + block }];
+    if (!calls.length) return [{ range: { start: h.insert, end: h.insert }, newText: (h.style ?? '') + block }];
+    return calls.map((c, i) => ({ range: c.range, newText: i ? '' : (h.style ?? '') + block }));
+  }
+
+  function page(s, view, ctx) {
+    const root = el('div', 'tv-page');
+    const st0 = pageOf(s), two = !!s.twoside;
+    let st = structuredClone(st0), tab = 'margins', unit = s.unit ?? 'cm';
+    const per = Object.fromEntries(s.units.map((u) => [u.name, u.sp]));
+    const num = (sp, u = unit) => +(sp / per[u]).toFixed(s.decimals ?? 2);
+    const len = (sp) => `${num(sp)}${unit}`;
+    const H = self.satexDialogs?.history?.(() => st, (v) => { st = v; draw(); });
+    const svg = svgEl('svg', { class: 'tv-canvas tv-sheet', role: 'img', 'aria-label': 'the page to scale' });
+    const side = el('div', 'tv-page-side'), status = el('span', 'tv-muted');
+    const tabs = el('div', 'tv-tabs');
+    for (const [k, label] of [['margins', 'Margins'], ['header', 'Header and footer']]) {
+      const b = el('button', 'tv-tab', esc(label)); b.type = 'button'; b.dataset.tab = k;
+      b.onclick = () => { tab = k; draw(); };
+      tabs.append(b);
+    }
+    const units = el('select', 'tv-input', s.units.filter((u) => u.name !== 'sp').map((u) => `<option${u.name === unit ? ' selected' : ''}>${esc(u.name)}</option>`).join(''));
+    units.ariaLabel = 'unit';
+    units.onchange = () => { unit = units.value; draw(); };
+    const bar = el('div', 'tv-tools');
+    bar.append(tabs, units);
+    const touch = () => { H?.settle?.(); paint(); };
+    /** A length field: shown in the unit, an interval of the run as its range. */
+    const field = (label, key, title, f) => {
+      const row = el('label', 'tv-field');
+      const open = st.open.includes(title) && Math.abs(st[key] - st0[key]) <= 1 && s.run[title];
+      const input = Object.assign(el('input', 'tv-input'), { type: 'number', step: 'any', value: num(st[key]), ariaLabel: label });
+      input.dataset.key = key;
+      if (open) { input.placeholder = `${num(s.run[title][0])} … ${num(s.run[title][1])}`; input.title = `the run left \\${title} open: ${input.placeholder} ${unit}`; }
+      input.oninput = () => { const v = Number(input.value); if (input.value === '' || !Number.isFinite(v)) return; (f ?? ((sp) => { st[key] = sp; }))(Math.round(v * per[unit])); paint(); };
+      input.onchange = touch;
+      row.append(el('span', '', esc(label) + (open ? ' <i title="an interval: the run did not decide it">≈</i>' : '')), input);
+      return row;
+    };
+    const group = (title, ...rows) => { const g = el('div', 'tv-form'); g.append(el('h4', 'tv-h', esc(title)), ...rows); return g; };
+    function margins() {
+      const out = [];
+      if (s.koma) {
+        const modes = el('div', 'tv-tabs');
+        for (const [k, label] of [['koma', 'typearea: DIV and BCOR'], ['geometry', 'geometry: exact margins']]) {
+          const b = el('button', `tv-tab${st.mode === k ? ' on' : ''}`, esc(label)); b.type = 'button';
+          b.onclick = () => { if (k === 'geometry' && st.mode === 'koma') Object.assign(st, pageBox(st, two)); st.mode = k; touch(); draw(); };
+          modes.append(b);
+        }
+        out.push(modes, el('div', 'tv-text', ctx.markdown(st.mode === 'koma'
+          ? `The class loads typearea: DIV cuts the page into stripes, the text keeps ${two ? 'one inside and two outside' : 'the rest, split evenly'}, one above and two below; BCOR is the binding's loss. Written as class options.`
+          : 'geometry sets each margin itself and overrides what typearea computed.')));
+      }
+      if (st.mode === 'koma') {
+        const div = Object.assign(el('input', 'tv-input'), { type: 'number', min: 4, step: 1, value: st.div, ariaLabel: 'DIV' });
+        div.oninput = () => { const v = Math.round(Number(div.value)); if (v >= 4) { st.div = v; paint(); } };
+        div.onchange = touch;
+        const row = el('label', 'tv-field'); row.append(el('span', '', 'DIV'), div);
+        out.push(group('Type area', row, field('BCOR', 'bcor', 'ta@bcor')));
+      } else {
+        const paper = el('select', 'tv-input', `<option value="">custom</option>${(s.papers ?? []).map((p) => `<option value="${esc(p.name)}"${p.name === st.paper ? ' selected' : ''}>${esc(p.name)}${(s.papers.filter((q) => q !== p && q.w === p.w && q.h === p.h).map((q) => ` = ${q.name}`).join(''))}</option>`).join('')}`);
+        paper.ariaLabel = 'paper';
+        paper.onchange = () => { const p = s.papers.find((x) => x.name === paper.value); st.paper = paper.value; if (p) { const [dw, dh] = [p.w - st.pw, p.h - st.ph]; Object.assign(st, { pw: p.w, ph: p.h, right: st.right + dw, bottom: st.bottom + dh }); } touch(); draw(); };
+        const prow = el('label', 'tv-field'); prow.append(el('span', '', 'Paper'), paper);
+        const custom = (k) => (sp) => { st.paper = ''; st[k === 'pw' ? 'right' : 'bottom'] += sp - st[k]; st[k] = sp; };
+        // \newgeometry keeps the paper
+        if (st.scope !== 'part') out.push(group('Paper', prow, field('Width', 'pw', 'paperwidth', custom('pw')), field('Height', 'ph', 'paperheight', custom('ph'))));
+        out.push(group('Margins', field(two ? 'Inner' : 'Left', 'left', 'oddsidemargin'), field(two ? 'Outer' : 'Right', 'right', 'textwidth'),
+          field('Top', 'top', 'topmargin'), field('Bottom', 'bottom', 'textheight'),
+          field('Text width', 'tw', 'textwidth', (sp) => { st.right = st.pw - st.left - sp; }), field('Text height', 'th', 'textheight', (sp) => { st.bottom = st.ph - st.top - sp; })));
+      }
+      out.push(group('Header and footer', field('Head height', 'headheight', 'headheight'), field('Head sep', 'headsep', 'headsep'), field('Foot skip', 'footskip', 'footskip')),
+        group('Margin notes', field('Width', 'mpwidth', 'marginparwidth'), field('Sep', 'mpsep', 'marginparsep')));
+      // the whole document, or from a place to another with \newgeometry … \restoregeometry
+      const scope = el('div', 'tv-tabs');
+      for (const [k, label] of [['all', 'Whole document'], ['part', 'These pages only']]) {
+        const b = el('button', `tv-tab${st.scope === k ? ' on' : ''}`, esc(label)); b.type = 'button';
+        b.disabled = k === 'part' && !(s.part?.here || s.part?.marks?.length);
+        b.onclick = () => { st.scope = k; touch(); draw(); };
+        scope.append(b);
+      }
+      const where = group('Applies to', scope);
+      if (st.scope === 'part') {
+        const places = [...(s.part.here ? [['here', `the cursor (line ${s.part.here.line + 1})`]] : []), ...s.part.marks.map((m, i) => [String(i), `${m.level ?? 'section'} ${m.title} (line ${m.at.line + 1})`])];
+        const line = (k) => (k === 'here' ? s.part.here : k === 'end' ? { line: Infinity } : s.part.marks[+k].at).line;
+        const pick = (label, key, list) => {
+          const sel = el('select', 'tv-input', list.map(([k, t]) => `<option value="${k}"${k === st[key] ? ' selected' : ''}>${esc(t)}</option>`).join(''));
+          sel.ariaLabel = label;
+          sel.onchange = () => { st[key] = sel.value; if (line(st.to) <= line(st.from)) st.to = 'end'; touch(); draw(); };
+          const row = el('label', 'tv-field'); row.append(el('span', '', esc(label)), sel); return row;
+        };
+        where.append(pick('From', 'from', places), pick('Up to', 'to', [...places.filter(([k]) => line(k) > line(st.from)), ['end', 'the end of the document']]),
+          el('div', 'tv-text', ctx.markdown('Writes `\\newgeometry` there and `\\restoregeometry` before the end. Both start a new page. Places are chosen in the source: which page numbers they get, only typesetting tells.' + (s.geometry.load ? ' Adds `\\usepackage[pass]{geometry}`: the layout elsewhere stays.' : ''))));
+      }
+      out.unshift(where);
+      return out;
+    }
+    function header() {
+      const m = st.header, out = [];
+      if (!m.package) {
+        const b = el('button', 'tv-button tv-start', 'Load fancyhdr'); b.type = 'button';
+        b.onclick = () => { m.package = 'fancyhdr'; touch(); draw(); };
+        out.push(el('div', 'tv-text', ctx.markdown('No package for headers is loaded. fancyhdr sets the header and footer in three fields each.')), b);
+        return out;
+      }
+      const spots = SPOTS[m.package], names = { L: 'Left', C: 'Center', R: 'Right', i: 'Inner', c: 'Center', o: 'Outer' };
+      const sides = m.package === 'fancyhdr' && two ? [['O', 'odd pages'], ['E', 'even pages']] : [['O', '']];
+      for (const part of ['head', 'foot']) for (const [side, on] of sides) {
+        const rows = spots.map((spot) => {
+          const row = el('label', 'tv-field');
+          const input = Object.assign(el('input', 'tv-input'), { value: m[part][side + spot] ?? '', spellcheck: false, ariaLabel: `${part} ${names[spot]} ${on}`.trim() });
+          input.oninput = () => { m[part][side + spot] = input.value; paint(); };
+          input.onchange = touch;
+          row.append(el('span', '', names[spot]), input);
+          return row;
+        });
+        out.push(group(`${part === 'head' ? 'Header' : 'Footer'}${on ? `, ${on}` : ''}`, ...rows));
+      }
+      if (m.package === 'fancyhdr') {
+        const rule = (k) => {
+          const row = el('label', 'tv-field');
+          const input = Object.assign(el('input', 'tv-input'), { value: m.rules[k] ?? '', placeholder: 'as the package sets it', spellcheck: false, ariaLabel: `${k} rule width` });
+          input.oninput = () => { m.rules[k] = input.value.trim(); paint(); };
+          input.onchange = touch;
+          row.append(el('span', '', k === 'head' ? 'Header rule' : 'Footer rule'), input);
+          return row;
+        };
+        out.push(group('Rules', rule('head'), rule('foot')));
+      } else out.push(el('div', 'tv-text', ctx.markdown('Rules under the header and over the footer: KOMA\'s `headsepline` and `footsepline` options.')));
+      return out;
+    }
+    /** The page (both, two-sided) to scale, in pt, each margin labelled. */
+    function sheet() {
+      const b = pageBox(st, two), pt = (sp) => sp / 65536, W = pt(st.pw), Hh = pt(st.ph), gap = W / 12, fs = W / (two ? 20 : 28);
+      const tw = st.pw - b.left - b.right, th = st.ph - b.top - b.bottom;
+      const out = [];
+      const label = (x, y, text, cls = '') => Object.assign(svgEl('text', { x, y, class: `tv-page-label ${cls}`, style: `font-size:${fs}px` }), { textContent: text });
+      const pages = two ? [[0, true], [W + gap, false]] : [[0, false]];
+      for (const [x0, even] of pages) {
+        const left = even ? b.right : b.left, x = x0 + pt(left), y = pt(b.top);
+        const rect = (cls, rx, ry, w, h, title) => { const r = svgEl('rect', { class: cls, x: rx, y: ry, width: Math.max(0, w), height: Math.max(0, h) }); r.append(Object.assign(svgEl('title'), { textContent: title })); out.push(r); };
+        rect('tv-page-paper', x0, 0, W, Hh, `paper ${len(st.pw)} × ${len(st.ph)}`);
+        rect('tv-page-head', x, y - pt(st.headsep + st.headheight), pt(tw), pt(st.headheight), `header: \\headheight ${len(st.headheight)}, \\headsep ${len(st.headsep)}`);
+        rect('tv-page-body', x, y, pt(tw), pt(th), `text: \\textwidth ${len(tw)}, \\textheight ${len(th)}`);
+        const base = y + pt(th + st.footskip), fh = Math.min(pt(st.headheight), pt(st.footskip));
+        rect('tv-page-foot', x, base - fh, pt(tw), fh, `footer: \\footskip ${len(st.footskip)} to its baseline`);
+        rect('tv-page-mp', even ? x - pt(st.mpsep + st.mpwidth) : x + pt(tw + st.mpsep), y, pt(st.mpwidth), pt(th), `margin notes: \\marginparwidth ${len(st.mpwidth)}, \\marginparsep ${len(st.mpsep)}`);
+        // the header's and footer's fields as written, at their places
+        const m = st.header, side = two && even && m.package === 'fancyhdr' ? 'E' : 'O';
+        (SPOTS[m.package] ?? []).forEach((spot, i) => {
+          for (const [part, fy] of [['head', y - pt(st.headsep) - fs * 0.4], ['foot', base - fs * 0.4]]) {
+            const t = (m[part][side + spot] ?? '').replace(/\\(\w+)/g, '$1').slice(0, 24);
+            if (t) { const n = label(x + [0, pt(tw) / 2, pt(tw)][i], fy, t, 'tv-page-field'); n.style.textAnchor = ['start', 'middle', 'end'][i]; out.push(n); }
+          }
+        });
+        out.push(label(x + pt(tw) / 2, y + pt(th) / 2 - fs * 0.7, `${num(tw)} × ${num(th)} ${unit}`, 'tv-page-big'), label(x + pt(tw) / 2, y + pt(th) / 2 + fs * 0.7, 'text'));
+        const mid = y + pt(th) * 0.75;
+        out.push(label(x0 + pt(left) / 2, mid, num(left)), label(x + pt(tw) + pt(even ? b.left : b.right) / 2, mid, num(even ? b.left : b.right)),
+          label(x + pt(tw) / 2, pt(b.top) / 2 - pt(st.headheight + st.headsep) / 2, num(b.top)), label(x + pt(tw) / 2, Hh - pt(b.bottom) / 2 + fs * 0.6, num(b.bottom)));
+      }
+      const width = two ? 2 * W + gap : W;
+      svg.setAttribute('viewBox', [-fs, -fs, width + 2 * fs, Hh + 2 * fs].join(' '));
+      svg.replaceChildren(...out);
+    }
+    /** What Apply writes now. */
+    const edits = () => pageEdits(s, st0, st, len);
+    function paint() {
+      st.tw = st.pw - st.left - st.right; st.th = st.ph - st.top - st.bottom;
+      sheet();
+      const e = edits();
+      status.textContent = e.length ? `${e.length} edit${e.length > 1 ? 's' : ''} to write` : 'no changes';
+      write.disabled = !e.length;
+      for (const f of side.querySelectorAll('input[type=number]')) if (f !== document.activeElement && f.dataset.key) f.value = num(st[f.dataset.key]);
+    }
+    function draw() {
+      for (const b of tabs.children) b.classList.toggle('on', b.dataset.tab === tab);
+      side.replaceChildren(...(tab === 'margins' ? margins() : header()));
+      paint();
+    }
+    const write = el('button', 'tv-button tv-primary', 'Apply');
+    write.type = 'button';
+    write.title = 'Write into the document (Ctrl+Enter)';
+    write.onclick = () => ctx.apply(edits());
+    const foot = el('div', 'tv-actions tv-foot');
+    if (H?.reset) { const r = el('button', 'tv-button tv-ghost', 'Reset'); r.type = 'button'; r.title = 'Back to how the dialog opened'; r.onclick = () => H.reset(); foot.append(...H.controls(), status, r, write); } else foot.append(status, write);
+    root.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); write.click(); } });
+    const notes = el('div', 'tv-text', ctx.markdown(`The run's page${s.class ? ` with ${s.class}` : ''}${two ? ', two-sided' : ''}: the lengths as it ended.${st0.open.length ? ` It left ${st0.open.map((k) => `\\${k}`).join(', ')} open: the middle of each interval is drawn.` : ''}${s.geometry.global.note ? ` Apply ${s.geometry.global.note}.` : ''}`));
+    const main = el('div', 'tv-page-main');
+    main.append(svg, side);
+    root.append(bar, notes, main, foot);
+    H?.keys?.(root);
+    draw();
+    return root;
+  }
+  RENDER.page = page;
+
   const STYLE = `
 .tv { --tv-bg: var(--panel, var(--vscode-editor-background, #fff)); --tv-fg: var(--fg, var(--vscode-foreground, #222)); --tv-muted: var(--muted, var(--vscode-descriptionForeground, #666));
   --tv-border: var(--border, var(--vscode-widget-border, #ccc)); --tv-accent: var(--accent, var(--vscode-button-background, #0b3d91)); --tv-accent-fg: var(--accent-fg, var(--vscode-button-foreground, #fff));
@@ -1765,6 +2094,13 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-mermaid summary { cursor: pointer; font-size: .82rem; color: var(--tv-muted); } .tv-mermaid textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; margin: .4rem 0; }
 .tv-tree-edge { stroke: currentColor; stroke-width: .02; } .tv-node.dirty rect { stroke: var(--tv-accent); }
 .tv-forest-side, .tv-forest-tree { display: grid; gap: .4rem; } .tv-forest-side .tv-row > span, .tv-forest-tree .tv-row > span { min-width: 4.5rem; align-self: center; }
+.tv-page { min-width: min(46rem, 100%); } .tv-page-main { display: grid; grid-template-columns: minmax(14rem, 1.2fr) minmax(15rem, 1fr); gap: .9rem; align-items: start; }
+.tv-sheet { max-height: 62vh; } .tv-page-side { display: grid; gap: .6rem; max-height: 62vh; overflow: auto; padding-right: .2rem; } .tv-page-side .tv-field { grid-template-columns: 6.5rem 1fr; }
+.tv-page-paper { fill: var(--tv-bg); stroke: var(--tv-muted); stroke-width: .6; } .tv-page-body { fill: color-mix(in srgb, var(--tv-accent) 16%, transparent); stroke: var(--tv-accent); stroke-width: .8; }
+.tv-page-head, .tv-page-foot { fill: color-mix(in srgb, var(--tv-accent) 10%, transparent); stroke: var(--tv-accent); stroke-width: .8; stroke-dasharray: 3 2; } .tv-start { justify-self: start; }
+.tv-sheet text.tv-page-field { fill: var(--tv-fg); font-style: italic; } .tv-page-mp { fill: none; stroke: var(--tv-muted); stroke-width: .5; stroke-dasharray: 2 2; }
+.tv-sheet text.tv-page-label { fill: var(--tv-muted); font-family: ui-sans-serif, system-ui, sans-serif; } .tv-sheet text.tv-page-big { fill: var(--tv-fg); font-weight: 600; }
+@media (max-width: 640px) { .tv-page-main { grid-template-columns: 1fr; } }
 .tv-hint { margin-right: auto; align-self: center; } .tv-foot { justify-content: flex-end; align-items: center; } .tv-foot .tv-muted { margin-right: auto; }`;
 
   /** Renders `view` into `container`; `ctx.apply(edits)` writes, `ctx.markdown(md)` makes HTML. */
@@ -1813,5 +2149,5 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
       (st.paired?.names?.length ? `<div class="ds-sec"><b>paired by a join</b><span>${st.paired.names.map(cs).join(' ')} · ${st.paired.arms} arms</span></div>` : '') +
       (cats ? `<div class="ds-sec"><b>catcodes ahead</b><span>${cats}</span></div>` : '');
   };
-  self.satexViews = { render, RENDER, SPEC, mix, colorBand, oklch, drawing: { parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker }, forest: forestFns, dev: { traceCsv, stateHtml } };
+  self.satexViews = { render, RENDER, SPEC, mix, colorBand, oklch, drawing: { parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker }, forest: forestFns, page: { pageOf, pageBox, pageEdits, headerOf, headerText, headerEdits, setKeys }, dev: { traceCsv, stateHtml } };
 })();
