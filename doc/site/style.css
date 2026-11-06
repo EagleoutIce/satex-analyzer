@@ -2153,3 +2153,4 @@ header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(-
 /* changelog: entry badges */
 .badge { display: inline-block; min-width: 3.1em; margin-right: .5em; padding: 0 .45em; border-radius: var(--r-tag); text-align: center; font: 600 .72rem/1.6 system-ui, sans-serif; color: var(--b, var(--muted)); background: color-mix(in srgb, var(--b, var(--muted)) 14%, transparent); }
 .b-feat { --b: var(--info); } .b-fix { --b: var(--unsafe); } .b-perf { --b: var(--safe); } .b-docs { --b: var(--c5); } .b-build { --b: var(--muted); }
+.version .ver-local { color: var(--warning); font-weight: 600; }

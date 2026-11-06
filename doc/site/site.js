@@ -302,6 +302,14 @@
       downOut = null;
     });
   }
+  // a playground served from this machine (`cargo playground`, `satex gui`) says so after the version
+  if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) {
+    for (const v of document.querySelectorAll('a.version')) {
+      if (v.querySelector('.ver-local')) continue;
+      v.insertAdjacentHTML('beforeend', '<span class="ver-local"> · local</span>');
+      v.title = `${v.title} · served from this machine`;
+    }
+  }
   const tips = self.satexTip = { card: floating('tip-card'), note: floating('tip-note') };
   // One progress bar for the site: a share when the work has a total (and the time left once it is
   // known), a moving shimmer when it has none. `satexProgress.html(done)` writes one, `.set(el, done)`
