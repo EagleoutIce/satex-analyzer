@@ -4436,9 +4436,6 @@ will look undefined",
         let n = stream.expect("a stream the table holds has a number");
         let pinned = places.len() <= usize::from(self.cfg.limits.value_set)
             && self.split(by, span, places.len(), |m, arm| {
-                // Places a join or an unknown line left: the arm holds only
-                // where the other facts fit this place.
-                m.joined_arm();
                 Rc::make_mut(&mut m.streams).insert(n, Rc::new(vec![places[arm].clone()]));
                 true
             });
@@ -5827,13 +5824,9 @@ will look undefined",
             severity = Severity::Imprecision;
         }
         // The engine's errors satex reports itself, met on a path that
-        // approximated since the paths parted or took an arm a join left
-        // (a flag and a stream place joined apart): the approximation may
-        // be what led there, so they are not TeX's for certain.
-        if severity == Severity::Warning
-            && (self.approximated || self.took_unknown_arm())
-            && ENGINE_WARNINGS.contains(&code)
-        {
+        // approximated since the paths parted: the approximation may be
+        // what led there, so they are not TeX's for certain.
+        if severity == Severity::Warning && self.approximated && ENGINE_WARNINGS.contains(&code) {
             severity = Severity::Imprecision;
         }
         self.raise_gap(severity, code);
