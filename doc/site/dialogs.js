@@ -1217,6 +1217,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     } });
     const download = h('button', { type: 'button', title: 'Download the figure\'s file', onclick: async () => {
       const got = host.download ? await host.download(ctx.path) : vector ? null : await host.image(ctx.path);
+      // an editor's host saves it itself
+      if (got?.saved) return;
       if (!got?.url) return say('The file is not available here.');
       const a = h('a', { href: got.url, download: got.name ?? (ctx.path ?? s().file).split('/').pop() });
       document.body.append(a); a.click(); a.remove();

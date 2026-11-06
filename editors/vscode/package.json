@@ -215,19 +215,40 @@
       },
       {
         "command": "satex.openDialog",
-        "title": "Edit Table or Image…",
+        "title": "Edit Table, Image or Placement…",
         "category": "satex"
+      },
+      {
+        "command": "satex.openWidget",
+        "title": "Open Widget…",
+        "category": "satex"
+      },
+      {
+        "command": "satex.library",
+        "title": "Library: Names in Force",
+        "category": "satex"
+      },
+      {
+        "command": "satex.projectSettings",
+        "title": "Project Settings (satex.yaml)",
+        "category": "satex"
+      }
+    ],
+    "yamlValidation": [
+      {
+        "fileMatch": "satex.yaml",
+        "url": "./media/satex.schema.json"
       }
     ]
   },
   "scripts": {
-    "compile": "node -e \"for (const f of ['views.js', 'dialogs.js']) require('fs').copyFileSync('../../doc/site/' + f, 'media/' + f)\" && tsc --noEmit -p . && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --minify --sourcemap --outfile=out/extension.js",
+    "compile": "node -e \"for (const f of ['doc/site/views.js', 'doc/site/dialogs.js', 'satex.schema.json']) require('fs').copyFileSync('../../' + f, 'media/' + require('path').basename(f))\" && tsc --noEmit -p . && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --minify --sourcemap --outfile=out/extension.js",
     "lint": "eslint src",
     "vscode:prepublish": "npm run compile",
     "package": "vsce package --no-dependencies",
     "package:local": "node scripts/try.mjs",
     "try": "node scripts/try.mjs --install",
-    "test": "esbuild src/test/*.test.ts --bundle --platform=node --format=cjs --outdir=out/test --log-level=warning && node --test out/test/"
+    "test": "esbuild src/test/*.test.ts --bundle --platform=node --format=cjs --alias:vscode=./src/test/vscode-stub.ts --external:vscode-languageclient --outdir=out/test --log-level=warning && node --test out/test/"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

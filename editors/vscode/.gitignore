@@ -4,3 +4,4 @@ out/
 bin/
 media/views.js
 media/dialogs.js
+media/satex.schema.json

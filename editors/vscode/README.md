@@ -10,6 +10,10 @@ Static analysis for LaTeX and TeX documents, powered by [satex](https://github.c
 - Hovers are kept and answered at once, also while an edit is analyzed. The names a document uses most are prepared while satex is idle.
 - With LaTeX Workshop installed, satex offers once to turn its chktex linting off, so a finding is not reported twice.
 - `satex: Trace Expansion Here` (`satex.traceAtCursor`): traces what the selection, or the control sequence at the cursor, expands to at that position and shows the steps beside the editor.
+- The playground's widgets open beside the editor: a code lens above a table, figure, image, drawing or tree, the light bulb at the cursor, or `satex: Open Widget…` (`satex.openWidget`). It lists the widgets at the cursor (table, image, placement, color, length, drawing, tree), then the managers (glossary, bibliography, index, theorems), the Library and the Settings. Edits go through the editor's undo. The widgets follow the color theme.
+- `satex: Library` (`satex.library`): the names in force at the end of the document and what the loaded packages' manuals document. Search them, and a click inserts one at the cursor.
+- `satex: Project Settings` (`satex.projectSettings`): every key of `satex.yaml`, with its description and default. An edit writes the key in place. With the YAML extension, `satex.yaml` also completes and checks against the schema.
+- With another copy of SaTeX installed, it warns once and offers to uninstall the other copy (`code --uninstall-extension <id>`). Two copies start two servers and two status items.
 - `satex: Compile` (`satex.compile`): builds the root document, streams the build output to the "satex build" channel and shows the findings as diagnostics.
 
 ## Requirements

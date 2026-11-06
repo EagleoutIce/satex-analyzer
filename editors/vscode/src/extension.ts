@@ -9,7 +9,10 @@ import { peers, uninstallCommand, yields } from './peers';
 import { Actions } from './sidebar';
 import { STALE, Status, Work } from './status';
 import { Steps, TraceEvent } from './steps';
+import { library } from './library';
+import { settings } from './settings';
 import { manage, openView, ViewActions } from './views';
+import { widgets } from './widgets';
 
 const INSTALL_HINT = 'Install it with `cargo install satex-analyzer`, download a release from https://github.com/EagleoutIce/satex-analyzer/releases, or set `satex.path`.';
 let client: LanguageClient | undefined;
@@ -273,7 +276,10 @@ export function activate(context: vscode.ExtensionContext): void {
         }),
         command('satex.openView', (uri?: vscode.Uri | string, at?: vscode.Position, plugin?: string) => openView(context, client, uri, at, plugin)),
         vscode.languages.registerCodeActionsProvider(['latex', 'tex'].map(language => ({ language })), new ViewActions(() => client)),
-        command('satex.manage', () => manage(context, client)),
+        command('satex.manage', (kind?: string) => manage(context, client, kind)),
+        command('satex.library', () => library(context, client)),
+        command('satex.projectSettings', () => settings(context)),
+        command('satex.openWidget', () => widgets(client)),
         command('satex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
         client.onNotification('satex/status', working),
         client.onDidChangeState(e => bar.down(e.newState === State.Stopped)));

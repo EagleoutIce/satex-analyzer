@@ -3,6 +3,9 @@ import * as vscode from 'vscode';
 interface Action { label: string; command: string; icon: string; tooltip: string }
 
 const ACTIONS: Action[] = [
+    { label: 'Open widget…', command: 'satex.openWidget', icon: 'window', tooltip: 'Table, image, placement, color, length, drawing, tree, managers, library, settings' },
+    { label: 'Library', command: 'satex.library', icon: 'library', tooltip: 'The names in force: search, insert at the cursor' },
+    { label: 'Project settings', command: 'satex.projectSettings', icon: 'settings', tooltip: 'satex.yaml, key by key' },
     { label: 'Show findings', command: 'satex.focus', icon: 'warning', tooltip: 'satex\'s findings in the Problems view' },
     { label: 'Show caches', command: 'satex.caches', icon: 'database', tooltip: 'Which kernel, class and package caches the last analysis reused or rebuilt' },
     { label: 'Compile document', command: 'satex.compile', icon: 'play', tooltip: 'Build with latexmk and explain the log' },
