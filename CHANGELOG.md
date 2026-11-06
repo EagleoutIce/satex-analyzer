@@ -52,6 +52,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` A read loop's flag stays with its stream place: no false certain terminal-read error in KOMA notecolumn. [`0eb1ce6`](https://github.com/EagleoutIce/satex-analyzer/commit/0eb1ce6)
 - `fix` Reading a register in code that may run no longer makes every register unknown (KOMA notecolumn fonts). Lists of names keep their names through loops. [`d08536a`](https://github.com/EagleoutIce/satex-analyzer/commit/d08536a) [`3c99a0b`](https://github.com/EagleoutIce/satex-analyzer/commit/3c99a0b)
 - `fix` Typed digits narrow their register, the nonzero bit and digit places never join. Number scans split by digit count. [`b01d4bd`](https://github.com/EagleoutIce/satex-analyzer/commit/b01d4bd) [`3e67c8a`](https://github.com/EagleoutIce/satex-analyzer/commit/3e67c8a) [`5f1e403`](https://github.com/EagleoutIce/satex-analyzer/commit/5f1e403) [`5352e4f`](https://github.com/EagleoutIce/satex-analyzer/commit/5352e4f)
 - `fix` Loops widen the lists they grow, a library fault has one refutation rule, waiting paths run on. [`462b2e8`](https://github.com/EagleoutIce/satex-analyzer/commit/462b2e8) [`2bb8868`](https://github.com/EagleoutIce/satex-analyzer/commit/2bb8868) [`2062f6a`](https://github.com/EagleoutIce/satex-analyzer/commit/2062f6a)
