@@ -475,7 +475,9 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 /// A page `\shipout` sent out is a `page` record after the paragraph it
 /// followed. A paragraph set wholly in boxes the run never saw placed is
 /// `held`; `placed` ranks it by when its box went onto a shipped list.
-/// `align` also marks `fill` (infinite glue), `sub`/`sup` … `scriptend`,
+/// `align` also marks glue that may stretch or shrink with its spec: `fill`
+/// (infinite in a line), `hskip`, `vskip` (between lines) and `parskip`, as
+/// `fill 0.0pt plus 1.0fill`. It marks `sub`/`sup` … `scriptend`,
 /// `hide` … `show` (text set off the page), `frame` … `frameend` (rules
 /// drawn around boxes) and `bar W H` (a `\rule`'s size in pt).
 /// `keys` lists the labels, references and citations of the user's files

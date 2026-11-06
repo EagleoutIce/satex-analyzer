@@ -253,6 +253,22 @@ pub struct ColorDef {
     pub certain: bool,
 }
 
+/// An `\item` the document wrote that stepped its list's counter: the
+/// `\@currentlabel` its `\refstepcounter` made, which `\ref` prints.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ListItem {
+    /// The `\item` call.
+    pub span: Span,
+    /// The counter `\@listctr` names: `enumi`.
+    pub counter: String,
+    /// Its value after the step: `[lo, hi]`, `None` when not a number.
+    pub value: Option<(i64, i64)>,
+    /// What `\ref` prints: the counter's representation expanded, `2`, `(b)`, `Step~2`.
+    pub label: String,
+    /// Whether every run made it.
+    pub certain: bool,
+}
+
 /// A color named by a `\csname\color@⟨name⟩\endcsname` the run formed:
 /// xcolor reaches every color by that one control sequence, so a use, a
 /// test and a `\colorlet` source all arrive here (xcolor § 2.5).
@@ -469,9 +485,14 @@ pub enum Align {
     Leaders,
     /// A forced line break in a paragraph (`\\`, `\newline`: a penalty of -10000).
     Break,
-    /// Glue that stretches infinitely (`\hfil`, `\hfill`, `\hss`): where
-    /// it stands in a box or cell sets how the rest sits in it.
-    Fill,
+    /// Glue in a line that stretches infinitely (`\hfil`, `\hfill`, `\hss`,
+    /// `\hspace{\fill}`): where it stands in a box or cell sets how the rest sits in it.
+    Fill(crate::engine::value::Glue),
+    /// Other glue that may stretch or shrink: in a line (`false`, an `\hskip`) or
+    /// between lines (`true`, `\vfill`, a `\vskip` with `plus`).
+    Glue(crate::engine::value::Glue, bool),
+    /// `\parskip` before a paragraph, when it may stretch or shrink.
+    ParSkip(crate::engine::value::Glue),
     /// A math script begins (`^`: true, `_`: false), and ends.
     Script(bool),
     ScriptEnd,
@@ -479,6 +500,11 @@ pub enum Align {
     EqNo(bool),
     /// `\limits` (`true`) or `\nolimits` (`false`) after an operator (tex.web § 1159).
     Limits(bool),
+}
+
+/// A glue's spec as TeX shows it: `0.0pt plus 1.0fill`.
+fn spec(g: crate::engine::value::Glue) -> String {
+    crate::engine::value::Value::Glue(g).render()
 }
 
 impl Align {
@@ -492,7 +518,9 @@ impl Align {
             Align::BoxEnd => "boxend".into(),
             Align::Leaders => "leaders".into(),
             Align::Break => "break".into(),
-            Align::Fill => "fill".into(),
+            Align::Fill(g) => format!("fill {}", spec(g)),
+            Align::Glue(g, vertical) => format!("{} {}", if vertical { "vskip" } else { "hskip" }, spec(g)),
+            Align::ParSkip(g) => format!("parskip {}", spec(g)),
             Align::Script(sup) => (if sup { "sup" } else { "sub" }).into(),
             Align::ScriptEnd => "scriptend".into(),
             Align::EqNo(left) => (if left { "leqno" } else { "eqno" }).into(),
@@ -655,6 +683,8 @@ pub struct Facts {
     pub quantities: Vec<Quantity>,
     /// The colors the run defined, in order.
     pub colors: Vec<ColorDef>,
+    /// Every `\item` of the document's files that stepped a list counter, in order.
+    pub items: Vec<ListItem>,
     /// Every `\color@⟨name⟩` the run formed a control sequence for.
     pub color_uses: Vec<ColorUse>,
     /// Every `\pdfcolorstack` the run executed, in order.

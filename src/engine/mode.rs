@@ -2862,6 +2862,9 @@ impl Machine<'_> {
                 if self.mode.meets(Modes::ANY_HORIZONTAL) && glue.width.lo > 0 {
                     self.note_text(' ', span);
                 }
+                if let Some(g) = glue.glue() {
+                    crate::analysis::observe::glue(self, g, self.mode.meets(Modes::ANY_VERTICAL));
+                }
                 self.append_item(Item::Glue(Dim { lo: glue.width.lo, hi: glue.width.hi }, Some(glue)));
             }
             // tex.web § 1060: `fil`, `fill`, `ss` and `fil_neg` glue.
@@ -2874,10 +2877,9 @@ impl Machine<'_> {
                     2 => (unit(1, 1), unit(1, 1)),
                     _ => (unit(-1, 1), unit(0, 0)),
                 };
-                if code <= 2 && self.mode.meets(Modes::ANY_HORIZONTAL) {
-                    crate::analysis::observe::align(self, crate::analysis::facts::Align::Fill);
-                }
-                self.append_item(Item::glue(Some(0), Some(Glue { width: 0, stretch, shrink })))
+                let glue = Glue { width: 0, stretch, shrink };
+                crate::analysis::observe::glue(self, glue, self.mode.meets(Modes::ANY_VERTICAL));
+                self.append_item(Item::glue(Some(0), Some(glue)))
             }
             Material::NoBoundary => {
                 if let Some(n) = &mut self.natural {

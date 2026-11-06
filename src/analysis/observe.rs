@@ -6,7 +6,7 @@ use crate::analysis::facts::CsnameRole;
 use crate::analysis::machine::Machine;
 use crate::analysis::roles::Ty;
 use crate::engine::builtins::{Cond, OccKind, PdfOp, Primitive};
-use crate::engine::tex::{Catcode, RegKind, Span, Tok, Token};
+use crate::engine::tex::{Catcode, Meaning, RegKind, Span, Tok, Token};
 
 /// TeX read the token at `span` as `ty`: a fact of the user's own files.
 pub fn arg_type(m: &mut Machine, span: Span, ty: Ty) {
@@ -66,9 +66,9 @@ pub fn slot(m: &mut Machine, name: &str, from: usize, at: Span) {
         return;
     }
     let prefix: String = name.chars().take(from).collect();
-    // a color's control sequence: the text is a color's name
-    if prefix == COLOR_NAME_PREFIX {
-        arg_type(m, at, crate::analysis::roles::Ty::Key(crate::analysis::roles::KeyKind::Color));
+    // a color's or a listings language's control sequence: the text is such a name
+    if let Some((_, kind)) = NAMED.iter().find(|(p, _)| *p == prefix) {
+        arg_type(m, at, crate::analysis::roles::Ty::Key(*kind));
     }
     m.out.facts.slots.entry(at).or_insert(prefix);
 }
@@ -95,6 +95,16 @@ pub fn csname(m: &mut Machine, name: &str, span: Span) {
 
 /// A color control sequence's name prefix: `\@backslashchar` then `color@`.
 const COLOR_NAME_PREFIX: &str = "\\color@";
+
+/// What listings forms a language's driver under: `\lstlang@⟨language⟩$⟨dialect⟩`, lowercase
+/// (listings.sty, `\lst@DefDriver`).
+pub const LISTINGS_PREFIX: &str = "lstlang@";
+
+/// The prefixes a `\csname` puts before the text of a kind of name.
+const NAMED: [(&str, crate::analysis::roles::KeyKind); 2] = [
+    (COLOR_NAME_PREFIX, crate::analysis::roles::KeyKind::Color),
+    (LISTINGS_PREFIX, crate::analysis::roles::KeyKind::Language),
+];
 
 /// A use, test, or `\colorlet` source of `\color@⟨name⟩`. `full` is the
 /// control sequence's own name text, for looking its meaning up.
@@ -148,6 +158,46 @@ pub fn color_def(m: &mut Machine, name: &str, meaning: &crate::engine::tex::Mean
         package: m.package(),
         certain: m.exact(),
     });
+}
+
+/// `\@currentlabel` was just defined: under a document `\item`, by the
+/// `\refstepcounter` of its list (source2e, ltlists.dtx `\@item`).
+pub fn list_item(m: &mut Machine, name: &str, meaning: &Meaning) {
+    if name != "@currentlabel" || m.out.facts.items.len() >= m.cfg.limits.facts {
+        return;
+    }
+    let Some((call, span)) = m.file_call else { return };
+    if m.name(call) != "item" || !m.own_file(span.file) {
+        return;
+    }
+    let Some(mac) = meaning.as_macro() else { return };
+    let label = crate::engine::tex::text_of(&mac.replacement_text, &m.out.interner);
+    // `\usecounter{\@enumctr}` keeps the name behind a macro: follow
+    // parameterless one-token bodies to the text.
+    let mut counter = m.out.interner.lookup("@listctr");
+    let mut text = None;
+    for _ in 0..4 {
+        let Some(Meaning::Macro(body)) = counter.and_then(|sym| m.env.slot(sym)).map(|b| &b.meaning) else { break };
+        match &body.replacement_text[..] {
+            _ if body.arity() != 0 => break,
+            [Token { tok: Tok::Cs(next), .. }] => counter = Some(*next),
+            toks => {
+                text = Some(crate::engine::tex::text_of(toks, &m.out.interner));
+                break;
+            }
+        }
+    }
+    let Some(counter) = text.filter(|t| !t.is_empty()) else { return };
+    let register = m.out.interner.lookup(&format!("c@{counter}")).and_then(|c| match m.env.slot(c)?.meaning {
+        Meaning::Register(RegKind::Count, index) => Some(index),
+        _ => None,
+    });
+    let value = register.and_then(|index| {
+        let sym = m.register_sym(RegKind::Count, i64::from(index));
+        m.env.slot(sym)?.value.num().map(|(_, n)| (n.lo, n.hi))
+    });
+    let certain = m.exact();
+    m.out.facts.items.push(crate::analysis::facts::ListItem { span, counter, value, label, certain });
 }
 
 /// `\xcolor@{cls}{drv}{model}{spec}`, as `\XC@definec@lor` stores every
@@ -1344,6 +1394,17 @@ pub fn align(m: &mut Machine, mark: crate::analysis::facts::Align) {
     }
 }
 
+/// Glue the user's text sets that may stretch or shrink, as an alignment mark with its spec:
+/// infinite stretch in a line is a [`crate::analysis::facts::Align::Fill`]. Not the output routine's.
+pub fn glue(m: &mut Machine, g: crate::engine::value::Glue, vertical: bool) {
+    use crate::analysis::facts::Align;
+    if g.stretch.amount == 0 && g.shrink.amount == 0 || m.output_active() {
+        return;
+    }
+    let fill = !vertical && g.stretch.order > 0 && g.stretch.amount > 0;
+    align(m, if fill { Align::Fill(g) } else { Align::Glue(g, vertical) });
+}
+
 /// The page passed another `\vsize` since the last page shipped ([`crate::analysis::facts::Text::fills`]).
 pub fn page_fill(m: &mut Machine) {
     if m.package().is_some() || m.reading_format() || m.output_active() {
@@ -1593,7 +1654,11 @@ fn set(m: &mut Machine, c: char, code: Option<i64>, span: Span) {
         let at = text.at.len() as u32;
         (at == 0 || text.pars.last() == Some(&at)) && text.skips.last().is_none_or(|s| s.0 != at)
     };
-    let skip = if starts { m.glue_parameter("parskip").map(|g| g.width) } else { None };
+    let parskip = if starts { m.glue_parameter("parskip") } else { None };
+    if let Some(g) = parskip.filter(|g| g.stretch.amount != 0 || g.shrink.amount != 0) {
+        align(m, crate::analysis::facts::Align::ParSkip(g));
+    }
+    let skip = parskip.map(|g| g.width);
     let just = starts.then(|| {
         use crate::analysis::facts::Just;
         match (m.glue_parameter("leftskip"), m.glue_parameter("rightskip")) {

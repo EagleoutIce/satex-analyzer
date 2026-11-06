@@ -1026,6 +1026,27 @@ fn marks(row: &serde_json::Value) -> Vec<String> {
     row["align"].as_array().into_iter().flatten().filter_map(|m| m["mark"].as_str().map(String::from)).collect()
 }
 
+/// Glue that may stretch or shrink is a mark with its spec where the user's text sets it:
+/// `\hfill` and `\hspace{\fill}` fill the line, an `\hskip … plus` stays glue in it,
+/// `\vfill` stands between lines, and a `\parskip` with `plus` before each paragraph.
+#[test]
+fn glue_is_marked_with_its_spec() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "Left\\hfill Right\n\nA\\hspace{\\fill}B \\hskip 2pt plus 3pt C\n\\vfill\nEnd";
+    let rows = typeset_rows("glue", "\\setlength{\\parskip}{1pt plus 2pt}", body);
+    assert!(marks(paragraph(&rows, "Left")).contains(&"fill 0.0pt plus 1.0fill".to_string()), "{rows:?}");
+    let ab = marks(paragraph(&rows, "AB"));
+    assert!(
+        ab.contains(&"fill 0.0pt plus 1.0fill".to_string()) && ab.contains(&"hskip 2.0pt plus 3.0pt".to_string()),
+        "{ab:?}"
+    );
+    let all: Vec<String> = rows.iter().flat_map(marks).collect();
+    assert!(all.contains(&"vskip 0.0pt plus 1.0fill".to_string()), "{all:?}");
+    assert!(all.contains(&"parskip 1.0pt plus 2.0pt".to_string()), "{all:?}");
+}
+
 /// A box set into a register inside a box that is placed stays off the page
 /// (amsmath measures `(` that way in every math size change): lost with the
 /// group that set it, it is no text at all; the placed box's own text is.
@@ -1061,7 +1082,7 @@ fn a_tabular_keeps_its_begin_and_its_column_fills() {
     assert!(table["marked"].as_str().unwrap().contains("―"), "the \\hline rules a row: {table}");
     // the first row: `l` (text, then fill), the cell break, `c` (fill, text, fill)
     let row: Vec<&str> = m.iter().map(String::as_str).skip(1).take_while(|&k| k != "row").collect();
-    assert_eq!(row, ["fill", "cell", "fill", "fill"], "{table}");
+    assert_eq!(row, ["fill 0.0pt plus 1.0fil", "cell", "fill 0.0pt plus 1.0fil", "fill 0.0pt plus 1.0fil"], "{table}");
     assert!(!marks(paragraph(&rows, "Table 1")).contains(&"begin".to_string()));
 }
 

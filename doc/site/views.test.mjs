@@ -297,6 +297,14 @@ console.log('table model: ok');
   // an undecided conditional's arms, its switch named; marks the view does not know draw nothing, in a table too
   assert.equal(notation(`${N('\u0001choice\u00017')}${N('{')}Heads${N('|')}${N('}')}.`), '<span class="ts-choice" data-on="7"><span class="ts-arm ts-arm-true">Heads</span><span class="ts-arm ts-arm-false"></span></span>.');
   assert.ok(!notation(`${M('begin')}a${M('limits')}${M('cell')}b${M('end')}`).includes('ts-limits'));
+  // glue with its spec: infinite glue in a line still sets where the text sits, glue between lines stands apart
+  const filled = notation(`${M('fill 0.0pt plus 1.0fill')}Right`);
+  assert.match(filled, /^<i class="ts-fill ts-fill-l" title="infinite glue in the line: 0.0pt plus 1.0fill" data-glue="0.0pt plus 1.0fill"><\/i>Right$/);
+  assert.match(notation(`A${M('hskip 2.0pt plus 3.0pt')}B`), /^A<i class="ts-glue ts-glue-hskip" title="glue in the line: 2.0pt plus 3.0pt"[^>]*><\/i>B$/);
+  // a \parskip before a centred line leaves it centred
+  assert.match(notation(`${M('fill 0.0pt plus 1.0fil')}${M('parskip 0.0pt plus 1.0pt')}Mid${M('fill 0.0pt plus 1.0fil')}`), /^<span class="ts-fillrow">/);
+  // glue in a row keeps the cell's fill on its side
+  assert.match(notation(`${M('begin')}a${M('hskip 0.0pt plus 1.0pt')}${M('fill 0.0pt plus 1.0fil')}${M('end')}`), /ts-fill-r/);
   assert.equal(notation(`${M('begin')}a${M('mystery')}${M('cell')}b${M('end')}`).match(/<span/g).length, notation(`${M('begin')}a${M('cell')}b${M('end')}`).match(/<span/g).length);
   // environments: a begin mark before the first row in one, an end mark after its last, nested outermost first
   const quote = { env: 'quote', line: 2, end: 9 }, center = { env: 'center', line: 4, end: 6 };
@@ -358,3 +366,56 @@ console.log('table model: ok');
   assert.equal(T.injected('>{$}>{\\mathbf{x}}'), '$\\mathbf{x}');
   assert.equal(T.injected(''), '');
 }
+
+// the console's hover (cli.js): each word of a command line as the command tree names it
+{
+  createRequire(import.meta.url)('./cli.js');
+  const { at, card } = self.satexCli;
+  const fix = { id: 'fix', long: 'fix', takes_value: false, help: 'Apply the safe fixes' };
+  const format = { id: 'format', long: 'format', takes_value: true, possible_values: ['text', 'json'], defaults: ['text'], help: 'Output format' };
+  const tree = { queries: ['labels'], command: { name: 'satex', args: [format], subcommands: [
+    { name: 'lint', about: 'Lints the document', args: [fix, format], subcommands: [] },
+    { name: 'query', about: 'Asks the run', args: [format], subcommands: [] }] } };
+  const line = '$ satex lint --fix --format json';
+  const on = (word, off = 1) => at(tree, line, line.indexOf(word) + off);
+  assert.equal(on('lint').kind, 'command');
+  assert.match(card(on('lint')), /satex lint.*Lints the document/);
+  assert.equal(on('--fix').arg, fix);
+  assert.match(card(on('--fix')), /--fix.*flag.*Apply the safe fixes/);
+  assert.deepEqual([on('json').kind, on('json').arg], ['value', format]);
+  assert.match(card(on('--format')), /one of <code>text<\/code> <code>json<\/code> · default <code>text<\/code>/);
+  assert.equal(at(tree, 'satex query labels', 13).kind, 'query');
+  assert.equal(at(tree, 'satex lint --nope', 12), null);
+}
+// the layers of both viewers (layers.js): one catalogue, grouped alike, kept per viewer
+createRequire(import.meta.url)('./layers.js');
+const layers = self.satexLayers;
+const TYPESET = ['envs', 'keys', 'boxes', 'glue', 'ligs', 'findings', 'maybe'], PDF = ['envs', 'keys', 'glue', 'geometry', 'figures', 'findings', 'bad'];
+assert.deepEqual(layers.groups(TYPESET), [['structure', 'Structure', ['envs', 'keys']], ['layout', 'Layout', ['boxes', 'glue', 'ligs']], ['analysis', 'Analysis', ['findings', 'maybe']]]);
+// a layer both draw sits in the same group under the same name
+for (const k of TYPESET.filter((k) => PDF.includes(k))) {
+  const where = (ids) => layers.groups(ids).find((g) => g[2].includes(k))[0];
+  assert.equal(where(TYPESET), where(PDF), k);
+}
+assert.deepEqual(layers.groups(['maybe', 'envs']).map((g) => g[0]), ['structure', 'analysis'], 'an empty group is left out');
+// the markup: a labelled group each, one switch per layer named by its viewer, a fold only where asked
+const about = Object.fromEntries(PDF.map((k) => [k, `about ${k}`]));
+const markup = layers.html(about, { glue: true }, { prefix: 'pdf-layer', facets: new Set(['glue']) });
+assert.deepEqual([...markup.matchAll(/class="layer-label">(\w+)</g)].map((m) => m[1]), ['Structure', 'Layout', 'Analysis']);
+assert.deepEqual([...markup.matchAll(/id="pdf-layer-(\w+)"/g)].map((m) => m[1]), ['envs', 'keys', 'glue', 'geometry', 'figures', 'findings', 'bad']);
+assert.match(markup, /id="pdf-layer-glue" data-layer="glue" checked/);
+assert.doesNotMatch(markup, /id="pdf-layer-envs" data-layer="envs" checked/);
+assert.deepEqual([...markup.matchAll(/data-fold="(\w+)"/g)].map((m) => m[1]), ['glue']);
+// the state: defaults, under what an older version kept, under the store's; each viewer its own key
+const kept = new Map(), store = { get: (k) => kept.get(k) ?? null, set: (k, v) => kept.set(k, v) };
+const on = layers.state('typeset', { glue: false, maybe: true, keys: false }, store, { keys: true });
+assert.deepEqual(on, { glue: false, maybe: true, keys: true });
+let applied = null;
+const root = { addEventListener: (_, f) => { root.fire = f; } };
+layers.wire(root, 'typeset', on, store, (k) => { applied = k; });
+root.fire({ target: { dataset: { layer: 'glue' }, checked: true } });
+root.fire({ target: { dataset: { layer: 'nothing' }, checked: true } });
+assert.equal(applied, 'glue');
+assert.deepEqual(kept.get('layers-typeset'), { glue: true, maybe: true, keys: true });
+assert.equal(kept.get('layers-pdf'), undefined);
+assert.deepEqual(layers.state('typeset', { glue: false, maybe: true, keys: false }, store, { keys: false, glue: false }), { glue: true, maybe: true, keys: true }, 'the store wins over older keys');
