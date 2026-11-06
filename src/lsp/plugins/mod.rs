@@ -330,10 +330,55 @@ pub(super) struct New {
     pub preamble: Option<TextEdit>,
 }
 
+/// The edit that loads `name` (with `options`) for code a widget writes: none when the run loaded it or
+/// the text loads it already (an edit the run has not seen), else `\usepackage[options]{name}` on its own
+/// line before `\begin{document}`. `Err` names the package when this file has no `\begin{document}`.
+pub(super) fn ensure_package(
+    analysis: &Analysis,
+    doc: &Text,
+    name: &str,
+    options: &str,
+) -> Result<Option<TextEdit>, String> {
+    let text = doc.body();
+    // each line without its comment, at its offset
+    let lines = text.split_inclusive('\n').scan(0, |at, l| {
+        let start = *at;
+        *at += l.len();
+        Some((start, l.match_indices('%').find(|(i, _)| !l[..*i].ends_with('\\')).map_or(l, |(i, _)| &l[..i])))
+    });
+    let mut begin = None;
+    for (at, code) in lines {
+        if code.contains("\\begin{document}") {
+            begin = Some(at);
+            break;
+        }
+        let loads = ["\\usepackage", "\\RequirePackage"].iter().any(|c| {
+            code.match_indices(c).any(|(i, _)| {
+                let rest = code[i + c.len()..].trim_start();
+                let rest = if rest.starts_with('[') { rest.find(']').map_or("", |j| &rest[j + 1..]) } else { rest }
+                    .trim_start();
+                rest.strip_prefix('{')
+                    .and_then(|r| r.split('}').next())
+                    .is_some_and(|list| list.split(',').any(|p| p.trim() == name))
+            })
+        });
+        if loads {
+            return Ok(None);
+        }
+    }
+    if crate::linter::shared::loaded(analysis, name) {
+        return Ok(None);
+    }
+    let at = begin.ok_or_else(|| format!("needs \\usepackage{{{name}}} in the preamble"))?;
+    let p = super::handlers::to_lsp(doc, doc.pos(at));
+    let options = if options.is_empty() { String::new() } else { format!("[{options}]") };
+    Ok(Some(TextEdit { range: Range { start: p, end: p }, new_text: format!("\\usepackage{options}{{{name}}}\n") }))
+}
+
 pub(super) fn blank(cx: &Cx, env: &str, package: &str) -> Option<New> {
     let line = cx.pos.line;
     let inside = |(b, e): &(&Occurrence, &Occurrence)| b.span.line < line && line < e.span.line;
-    let (document, _) = pairs(cx.analysis, cx.path, "document").into_iter().find(inside)?;
+    pairs(cx.analysis, cx.path, "document").into_iter().find(inside)?;
     if !cx.doc.line(line).trim().is_empty() || pairs(cx.analysis, cx.path, env).iter().any(inside) {
         return None;
     }
@@ -342,8 +387,7 @@ pub(super) fn blank(cx: &Cx, env: &str, package: &str) -> Option<New> {
         Range { start: p, end: p }
     };
     let loaded = cx.analysis.interner.lookup(env).is_some_and(|s| cx.analysis.env.is_defined(s));
-    let preamble = (!loaded)
-        .then(|| TextEdit { range: point(document.span.line), new_text: format!("\\usepackage{{{package}}}\n") });
+    let preamble = if loaded { None } else { ensure_package(cx.analysis, cx.doc, package, "").ok().flatten() };
     let end = super::handlers::to_lsp(cx.doc, Pos::new(line, cx.doc.line(line).chars().count() as u32 + 1));
     Some(New { at: Range { start: point(line).start, end }, preamble })
 }
@@ -620,5 +664,6 @@ pub(super) fn byte_of(cx: &Cx, s: crate::engine::tex::Span) -> Option<usize> {
 
 /// A record's `fields` entry: a name, its value as written and the edit that writes a new one.
 pub(super) fn field(cx: &Cx, name: &str, value: &str, from: usize, to: usize, template: &str) -> Json {
-    json!({ "name": name, "value": value, "long": value.len() > 40, "edit": edit_of(cx.path, vec![put(cx.doc, from, to, template)]) })
+    // the value is TeX in running text: the client refuses what breaks it (doc/site/dialogs.js `check`)
+    json!({ "name": name, "value": value, "long": value.len() > 40, "check": ["tex"], "edit": edit_of(cx.path, vec![put(cx.doc, from, to, template)]) })
 }

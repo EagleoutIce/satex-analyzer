@@ -701,3 +701,27 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   assert.deepEqual([written.at(-1), state], ['siunitx', { w: 'S' }]);
   console.log('apply lifecycle: ok');
 }
+
+// widget fields (dialogs.js): one escaper for plain text, one finder of TeX slips with its fix, one set of checks
+{
+  const { texText, texIssue, texSafe, check } = self.satexDialogs;
+  assert.equal(texText('50% & co #1 a_b ^ ~ {x} \\'), '50\\% \\& co \\#1 a\\_b \\textasciicircum{} \\textasciitilde{} \\{x\\} \\textbackslash{}');
+  assert.equal(texIssue('$\\alpha_1$ and \\% \\& fine'), '', 'math and escaped specials are fine');
+  for (const bad of ['50% off', 'a # b', 'R&D', 'costs $5', 'a_b', 'x^2', 'a } b']) assert.ok(texIssue(bad), bad);
+  for (const [raw, safe] of [['50% off', '50\\% off'], ['R&D #1', 'R\\&D \\#1'], ['a_b $x_1$ x^2', 'a\\_b $x_1$ x\\^{}2'], ['costs $5', 'costs \\$5'], ['\\% kept', '\\% kept']]) {
+    assert.equal(texSafe(raw), safe, raw);
+    assert.equal(texIssue(texSafe(raw)), '', `${raw}: escaped, nothing left`);
+  }
+  assert.equal(check('', ['required', 'bibkey']), 'needed');
+  assert.match(check('a b,c', ['required', 'bibkey']), /BibTeX key/);
+  assert.match(check('knuth84', ['required', 'bibkey', 'unique'], ['knuth84']), /exists already/);
+  assert.equal(check('knuth85', ['required', 'bibkey', 'unique'], ['knuth84']), '');
+  assert.match(check('foo bar', ['key']), /no spaces/);
+  for (const ok of ['2cm', '-.5em', '0.8\\linewidth', '\\textwidth', ' 3 pt ']) assert.equal(check(ok, ['length']), '', ok);
+  for (const bad of ['banana', '-3', 'cm']) assert.ok(check(bad, ['length']), bad);
+  assert.equal(check('-5', ['integer', 'min:0']), 'at least 0');
+  assert.equal(check('3.7', ['integer']), 'a whole number');
+  assert.equal(check('1e99', ['integer']), 'a whole number');
+  assert.match(check('2020-02-30', ['date']), /no day/); assert.equal(check('2020-02-29T10:00', ['date']), ''); assert.equal(check('now', ['date']), '');
+  console.log('field checks: ok');
+}

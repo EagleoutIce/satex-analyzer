@@ -71,6 +71,7 @@ impl TypePlugin for Bibliography {
                 kinds.push((t, fs));
             }
         }
+        let taken: Vec<&str> = items.iter().filter_map(|r| r["title"].as_str()).collect();
         let (path, bib) = first;
         let end = bib.body().len();
         let sep = if bib.body().ends_with('\n') || bib.body().is_empty() { "\n" } else { "\n\n" };
@@ -78,8 +79,9 @@ impl TypePlugin for Bibliography {
             .iter()
             .map(|(t, fs)| {
                 let body: String = fs.iter().map(|f| format!(",\n  {f} = {{${{{f}}}}}")).collect();
-                let mut form = vec![json!({ "name": "citekey", "value": "", "placeholder": "citation key" })];
-                form.extend(fs.iter().map(|f| json!({ "name": f, "value": "", "placeholder": f })));
+                let mut form = vec![json!({ "name": "citekey", "value": "", "placeholder": "citation key",
+                                            "check": ["required", "bibkey", "unique"], "taken": taken })];
+                form.extend(fs.iter().map(|f| json!({ "name": f, "value": "", "placeholder": f, "check": ["balanced"] })));
                 json!({ "name": t, "fields": form, "edit": edit_of(path, vec![put(bib, end, end, format!("{sep}@{t}{{${{citekey}}{body}\n}}\n"))]) })
             })
             .collect();
@@ -104,7 +106,7 @@ fn record(path: &str, bib: &Text, e: &crate::plugins::bib::Entry, cites: &[u32])
         let comma = text[open..close].find(',').map_or(close, |i| open + i);
         for (name, r) in key_values(text, comma + 1..close) {
             let value = unbraced(text[r.clone()].trim_matches('"'));
-            fields.push(json!({ "name": name, "value": value, "long": value.len() > 40,
+            fields.push(json!({ "name": name, "value": value, "long": value.len() > 40, "check": ["balanced"],
                                 "edit": edit_of(path, vec![put(bib, r.start, r.end, "{${value}}")]) }));
         }
         let (from, to) = lines_of(text, at, close + 1);

@@ -52,7 +52,7 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-tex.sd-stale { opacity: .55; }
 .sd-confirm { padding: .45rem 1rem; border-top: 1px solid var(--c-border); background: var(--c-sunk); }
 .sd-err { color: var(--error, #c33); font-size: .8em; margin: .1rem 0 0; }
-.sd-err:empty { display: none; }
+.sd-err:not(.on) { display: none; } .sd-err { display: flex; gap: .4rem; align-items: center; } .sd-err .sd-fix { min-height: 1.3rem; padding: 0 .4rem; }
 .sd-tex { margin: 0; padding: .6rem .7rem; background: var(--c-sunk); border-radius: 8px; font: 12px/1.45 ui-monospace, monospace; white-space: pre; overflow: auto; max-height: 16rem; }
 .sd-side { display: flex; flex-direction: column; gap: .2rem; }
 .sd-side h4 { margin: .7rem 0 .3rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--c-muted); font-weight: 650; }
@@ -380,7 +380,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
   function footer({ note = '', hint = HINT, extra = [], reset, cancel, apply, label = 'Apply', tag = 'footer', cls = '' }) {
     const b = (text, kind, title, f) => f ? h('button', { type: 'button', class: `tv-button tv-${kind} sd-${kind}`, title, onclick: () => f() }, text) : null;
     const ok = b(label, 'primary', 'Write into the document (Ctrl+Enter)', apply);
-    const el = h(tag, { class: cls }, h('span', { class: 'sd-muted tv-muted sd-foot-note', style: 'flex:1;min-width:10rem' }, note, note && hint ? ' ' : '', hint), ...extra,
+    const el = h(tag, { class: cls }, h('span', { class: 'sd-muted tv-muted sd-foot-note', style: 'flex:1;min-width:10rem' }, note, note && hint ? h('span', { 'aria-hidden': 'true' }, ' · ') : null, hint), ...extra,
       b('Reset', 'ghost', 'Back to how the dialog opened', reset), b('Cancel', 'ghost', 'Close without writing (Esc)', cancel), ok);
     return { el, apply: ok };
   }
@@ -496,7 +496,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         if (l.result) tex.textContent = l.result.edits?.[0]?.newText ?? '';
         else if (!tex.textContent) tex.textContent = 'waiting for the analysis…';
         tex.classList.toggle('sd-stale', l.waiting);
-        notes.textContent = l.error || (l.wanted ? 'waiting for the analysis… Apply writes when it answers' : (l.result?.notes ?? []).join('; '));
+        notes.textContent = l.error || (l.wanted ? 'waiting for the analysis… Apply writes when it answers' : [...(l.result?.notes ?? []), ...(render.lint?.() ?? [])].join('; '));
         p?.apply.setAttribute('aria-busy', String(l.wanted));
         if (!l.waiting) hist.settle();
       },
@@ -524,6 +524,77 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       if (e.target === document.body && [...document.querySelectorAll('dialog[open]')].pop()?.contains(root)) on(e);
     };
     addEventListener('keydown', stray, true);
+  }
+
+  // ------------------------------------------------------------ escaping and validation (no DOM: views.test.mjs)
+
+  /** Plain text as TeX: every special escaped (`50% & co` is `50\% \& co`). */
+  const texText = (text) => String(text).replace(/[\\&%$#_{}~^]/g, (c) => ({ '\\': '\\textbackslash{}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}' })[c] ?? `\\${c}`);
+  /** The pieces of `text` outside `$…$` (even) and inside (odd); escaped characters stay where they are. */
+  const mathSplit = (text) => String(text).split(/((?<!\\)\$(?:\\.|[^$\\])*\$)/s);
+  /** The first thing that breaks `text` as TeX in running text (a field the user types TeX in), else ''. */
+  function texIssue(text) {
+    if (!balanced(text)) return 'the braces { } do not match';
+    const bare = String(text).replace(/\\./gs, '');
+    if (bare.includes('%')) return '% starts a comment: the rest of the line is lost';
+    if (bare.includes('#')) return '# is a macro parameter here';
+    if (bare.includes('&')) return '& separates table cells';
+    if ((bare.match(/\$/g) ?? []).length % 2) return 'a $ opens math that never closes';
+    if (/[_^]/.test(mathSplit(text).filter((_, k) => k % 2 === 0).join('').replace(/\\./gs, ''))) return '_ and ^ work in math only';
+    return '';
+  }
+  /** `text` with what `texIssue` finds escaped: % # & _ ^ and a lone $ outside math; math and commands kept. */
+  function texSafe(text) {
+    const parts = mathSplit(text);
+    return parts.map((p, k) => k % 2 ? p : p.replace(/(\\.)|([%#&_$])|\^/gs, (m, cs, c) => cs ?? (c ? `\\${c}` : '\\^{}'))).join('');
+  }
+  /** A length as TeX reads one: a factor and a unit or a length command (`2cm`, `-.5em`, `0.8\linewidth`, `\textwidth`). */
+  const LENGTH = /^\s*[-+]?(?:(?:\d+\.?\d*|\.\d+)\s*(?:pt|pc|in|bp|cm|mm|dd|cc|sp|em|ex|mu|px)|(?:(?:\d+\.?\d*|\.\d+)\s*)?\\[A-Za-z@]+)\s*$/;
+  /** The checks a widget's field names (a server's field `check: [...]`); each says what is wrong, else ''. `taken`: the keys in use. */
+  const CHECKS = {
+    required: (v) => String(v).trim() ? '' : 'needed',
+    balanced: (v) => balanced(v) ? '' : 'the braces { } do not match',
+    tex: texIssue,
+    key: (v) => /^[^\s,{}%#\\]*$/.test(v) ? '' : 'a key has no spaces, commas, braces, %, # or \\',
+    bibkey: (v) => /^[A-Za-z0-9_:.+\-/]*$/.test(v) ? '' : 'a BibTeX key takes letters, digits and _ : . + - / only',
+    unique: (v, taken = []) => taken.includes(String(v).trim()) ? `${String(v).trim()} exists already` : '',
+    length: (v) => !String(v).trim() || LENGTH.test(v) ? '' : 'a length: a number and a unit (2cm, 0.5\\linewidth)',
+    integer: (v) => /^\s*-?\d+\s*$/.test(v) ? '' : 'a whole number',
+    number: (v) => String(v).trim() && Number.isFinite(Number(v)) ? '' : 'a number',
+    // a date (ISO, `2020-02-30` is none): the day it names exists
+    date: (v) => { const d = String(v).match(/^\s*(\d{4}-\d{2}-\d{2})/)?.[1]; const t = d && new Date(`${d}T00:00:00Z`); return !d || t.getTime() === t.getTime() && t.toISOString().startsWith(d) ? '' : `${d} is no day`; },
+  };
+  /** The first message of `rules` (names, `min:N`, `max:N`) on `value`, else ''. */
+  function check(value, rules = [], taken = []) {
+    for (const r of rules) {
+      const [name, arg] = String(r).split(':');
+      const m = name === 'min' ? (Number(value) < Number(arg) ? `at least ${arg}` : '') : name === 'max' ? (Number(value) > Number(arg) ? `at most ${arg}` : '')
+        : CHECKS[name]?.(value ?? '', taken) ?? '';
+      if (m) return m;
+    }
+    return '';
+  }
+  /** Checks `input` as it changes and shows the message under it; for a TeX slip, an Escape button that fixes it.
+   * `ok(all)`: whether it passes, showing also what only a submit shows (`needed`). */
+  function guard(input, rules, taken = []) {
+    style();
+    const say = h('span');
+    const fix = h('button', { type: 'button', class: 'tv-button sd-ghost tv-ghost sd-fix', title: 'Write the specials escaped (\\% \\& \\_ …)', hidden: true,
+      onclick: () => { input.value = texSafe(input.value); input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); } }, 'Escape');
+    const msg = h('div', { class: 'sd-err', role: 'alert' }, say, fix);
+    const show = (all) => {
+      const m = check(input.value, all ? rules : rules.filter((r) => r !== 'required'), taken);
+      say.textContent = m;
+      fix.hidden = !m || !rules.includes('tex') || !!texIssue(texSafe(input.value));
+      msg.classList.toggle('on', !!m);
+      input.classList.toggle('tv-bad', !!m);
+      input.setAttribute('aria-invalid', String(!!m));
+      return !m;
+    };
+    input.addEventListener('input', () => show(false));
+    input.after(msg);
+    show(false);
+    return { msg, ok: (all = true) => show(all) };
   }
 
   // ------------------------------------------------------------ table model (no DOM: views.test.mjs)
@@ -737,9 +808,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       return t.replace(/\\,/g, ' ').replace(/\u0001/g, '\\').replace(/\u0002/g, '~').replace(/\u0003/g, '^').replace(/ /g, ' ').trim();
     },
     /** Text to TeX: the specials escaped. */
-    tex(text) {
-      return String(text).replace(/[\\&%$#_{}~^]/g, (c) => ({ '\\': '\\textbackslash{}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}' })[c] ?? `\\${c}`);
-    },
+    tex: texText,
     /** CSV (or TSV with `sep` '\t') of the cells' text; a merged cell's text in its first column. */
     toCSV(s, sep = ',', rect = null, raw = false) {
       const [r0, c0, r1, c1] = rect ?? [0, 0, s.rows.length - 1, s.cols.length - 1];
@@ -842,6 +911,9 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const f = frame(view, host, 'Edit table', {
       main, side, sub: `${t().env} · ${t().rows.length} × ${t().cols.length}`, redraw: () => draw(),
       foot: 'Drag or Shift+arrows to select. Type to edit a cell.',
+      // a cell's text that breaks the table (`50%`, `R&D`); what a group holds is the cell's own
+      lint: () => t().rows.flatMap((r, i) => r.cells.map((c, j) => [j, texIssue(c.text.replace(/\{(?:[^{}]|\{[^{}]*\})*\}/g, '{}'))]).filter(([, m]) => m)
+        .map(([j, m]) => `cell ${i + 1},${j + 1}: ${m}, write it escaped (\\% \\& \\_)`)).slice(0, 3),
     });
     /** Every edit: undoable, drawn, written. */
     const change = (fn, op) => { const ok = fn(t()); draw(); f.refresh(op); return ok; };
@@ -1499,7 +1571,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       if (view?.kind === 'float') return placement(view, host);
       return null;
     },
-    popup, enhance, store, picker, footer, discard, applier, keys, table: T, image: { contentBox, trimTo, colorModel, DECODE },
+    popup, enhance, store, picker, footer, discard, applier, keys, texText, texIssue, texSafe, check, guard, table: T, image: { contentBox, trimTo, colorModel, DECODE },
   };
   Object.assign(api, { texTokens, history, HINT });
   self.satexDialogs = api;

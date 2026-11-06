@@ -2947,12 +2947,15 @@
     const holder = el.closest('.cfg-row, .pt-plugin');
     holder.classList.remove('cfg-bad');
     const refuse = (why) => { el.setCustomValidity?.(why); el.reportValidity?.(); holder.classList.add('cfg-bad'); (holder.querySelector('.cfg-what') ?? holder).dataset.why = why; };
-    if (['integer', 'number'].includes(k.type)) {
-      value = Number(value);
-      if (!Number.isFinite(value) || (k.type === 'integer' && !Number.isInteger(value))) return refuse(`a${k.type === 'integer' ? 'n integer' : ' number'}`);
-      if (k.min != null && value < k.min) return refuse(`at least ${k.min}`);
-      if (k.max != null && value > k.max) return refuse(`at most ${k.max}`);
-    } else if (k.type === 'object' && !el.dataset.list) { try { value = JSON.parse(value); } catch { return refuse('JSON: {"key": "value"}'); } }
+    // the widgets' checks (dialogs.js `check`): a cleared number is its default again, never 0
+    const num = ['integer', 'number'].includes(k.type), cleared = num && !el.validity?.badInput && String(value).trim() === '';
+    const slip = cleared ? '' : self.satexDialogs.check(value, num ? [k.type, ...(k.min != null ? [`min:${k.min}`] : []), ...(k.max != null ? [`max:${k.max}`] : [])]
+      : typeof value === 'string' ? ['date'] : []);
+    if (num && el.validity?.badInput) return refuse(`a${k.type === 'integer' ? ' whole' : ''} number`);
+    if (slip) return refuse(slip);
+    if (el.validity?.patternMismatch) return refuse(`not a value ${k.key} takes${k.suggest?.length ? ` (${k.suggest.join(', ')}, …)` : ''}: see its description`);
+    if (num) value = cleared ? k.def : Number(value);
+    else if (k.type === 'object' && !el.dataset.list) { try { value = JSON.parse(value); } catch { return refuse('JSON: {"key": "value"}'); } }
     const { [k.key]: _, ...rest } = configSet;
     // unset (detected) and the default drop the key, an override of a profile stays whatever it holds
     const next = el.tagName === 'SELECT' && el.value === '' || (!k.extra && sameValue(value, k.def)) ? rest : { ...rest, [k.key]: value };

@@ -71,7 +71,7 @@ impl TypePlugin for Index {
                 let subs = uses.iter().filter(|u| !u.0.is_empty()).count();
                 let edits: Vec<_> = uses.iter().filter_map(|u| u.2.clone()).map(|r| put(cx.doc, r.start, r.end, "${value}")).collect();
                 let fields = if edits.len() == uses.len() {
-                    vec![json!({ "name": "term", "value": term, "edit": edit_of(cx.path, edits) })]
+                    vec![json!({ "name": "term", "value": term, "check": ["required", "balanced"], "edit": edit_of(cx.path, edits) })]
                 } else {
                     Vec::new()
                 };

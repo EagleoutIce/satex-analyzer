@@ -666,18 +666,24 @@ pub fn siunitx(t: &mut Table) -> bool {
     for (k, format) in &cols {
         t.cols[*k].align = "S".into();
         t.cols[*k].arg = format.clone();
-        for r in &mut t.rows {
-            let mut col = 0;
-            for c in &mut r.cells {
-                let text = c.text.trim();
-                if col == *k && c.span == 1 && !text.is_empty() && number(text).is_none() && !text.starts_with('{') {
-                    c.text = format!("{{{text}}}");
-                }
-                col += c.span.max(1);
+    }
+    protect_s(t);
+    !cols.is_empty()
+}
+
+/// Braces the text cells of the S columns (a header `Score`): siunitx reads every other cell as a number.
+pub fn protect_s(t: &mut Table) {
+    for r in &mut t.rows {
+        let mut col = 0;
+        for c in &mut r.cells {
+            let text = c.text.trim();
+            let s = t.cols.get(col).is_some_and(|k| k.align == "S");
+            if s && c.span == 1 && !text.is_empty() && number(text).is_none() && !text.starts_with('{') {
+                c.text = format!("{{{text}}}");
             }
+            col += c.span.max(1);
         }
     }
-    !cols.is_empty()
 }
 
 #[cfg(test)]

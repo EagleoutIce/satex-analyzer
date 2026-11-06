@@ -193,18 +193,21 @@
           if (d.choices) i.innerHTML = d.choices.map((c) => `<option${c === d.value ? ' selected' : ''}>${esc(c)}</option>`).join('');
           else { i.value = d.value ?? ''; i.dataset.was = i.value; }
           if (d.placeholder) i.placeholder = d.placeholder;
-          i.oninput = () => i.classList.toggle('tv-bad', !balanced(i.value));
           lab.append(i);
           f.append(lab);
-          return [d, i];
+          // the server's checks of the field (dialogs.js `check`), the message under it
+          return [d, i, d.choices ? null : self.satexDialogs.guard(i, d.check ?? ['balanced'], d.taken ?? [])];
         });
         const b = el('button', 'tv-button tv-primary', esc(title));
         b.type = 'submit';
         f.append(el('div', 'tv-actions'));
         f.lastChild.append(b);
+        // a field showing a problem holds the button; a submit shows every problem, `needed` too
+        f.oninput = () => { b.disabled = ins.some(([, i]) => i.getAttribute('aria-invalid') === 'true'); };
         f.onsubmit = (e) => {
           e.preventDefault();
-          if (ins.some(([, i]) => !balanced(i.value))) return;
+          const bad = ins.filter(([, , g]) => g && !g.ok(true));
+          if (bad.length) { b.disabled = true; return bad[0][1].focus(); }
           const vals = Object.fromEntries(ins.map(([d, i]) => [d.name, i.value]));
           const changed = new Set(ins.filter(([d, i]) => i.value !== (d.value ?? '')).map(([d]) => d.name));
           if (changed.size || !fields.some((d) => 'value' in d)) ctx.apply(go(vals, changed));
@@ -1540,6 +1543,7 @@
   // the store's moves: by path into the tree
   const parentOf = (t, x) => { const go = (n) => n.children.includes(x) ? n : n.children.map(go).find(Boolean); return go(t.root); };
   const within = (a, b) => a === b || a.children.some((c) => within(c, b));
+  const texIssue = (text) => self.satexDialogs.texIssue(text.replace(/^\{([^]*)\}$/, '$1'));
   const size = (n) => 1 + n.children.reduce((k, c) => k + size(c), 0);
   /** Moves `n` before or after `target` (`where` = 'before' | 'after'), or under it ('child'). */
   function move(t, n, target, where) {
@@ -1600,7 +1604,7 @@
     const H = self.satexDialogs.history(() => t, (v) => {
       t = v; sel = t.root; run = ran(); draw();
       const ft = forTree(t.pre);
-      if (ftRow) ftRow.lastChild.value = ft ? t.pre.slice(...ft) : '';
+      if (ftRow) ftRow.querySelector('input').value = ft ? t.pre.slice(...ft) : '';
     });
     const changed = () => H.changed;
     const svg = svgEl('svg', { class: 'tv-canvas', role: 'img', 'aria-label': 'tree' });
@@ -1608,7 +1612,7 @@
     const status = el('span', 'tv-muted');
     const touch = () => { H.settle(); draw(); };
     const button = (row, label, f, title) => { const b = el('button', 'tv-button', esc(label)); b.type = 'button'; b.onclick = f; if (title) b.title = title; row.append(b); return b; };
-    const field = (label, value, f) => {
+    const field = (label, value, f, rules = ['balanced']) => {
       const row = el('label', 'tv-row');
       const input = Object.assign(el('input', 'tv-input'), { value, spellcheck: false, ariaLabel: label });
       // typing is one undo step: held while the field has the focus
@@ -1616,6 +1620,7 @@
       input.onblur = () => H.hold(false);
       input.oninput = () => { f(input.value); drawTree(); status.textContent = 'changes to apply'; write.disabled = false; };
       row.append(el('span', 'tv-muted', esc(label)), input);
+      self.satexDialogs.guard(input, rules);
       return row;
     };
     const at = (e) => { const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; return p.matrixTransform(svg.getScreenCTM().inverse()); };
@@ -1662,7 +1667,7 @@
       drawTree();
       side.replaceChildren();
       const n = sel;
-      side.append(field('content', n.content, (v) => { n.content = v; n.dirty = true; }),
+      side.append(field('content', n.content, (v) => { n.content = v; n.dirty = true; }, ['tex']),
         field('options', n.opts.join(', '), (v) => { n.opts = splitTop(v); n.dirty = true; }));
       const row = el('div', 'tv-actions');
       button(row, 'Add child', () => { const c = fresh('new'); n.children.push(c); sel = c; touch(); });
@@ -1693,6 +1698,10 @@
     button(orow, 'Export', () => { text.value = outlineOut(t.root); text.select(); });
     out.append(text, orow);
     const writeIt = () => {
+      // a node whose text breaks the TeX (`50% off`) is shown with its message and the Escape fix, nothing written
+      const slip = (n) => texIssue(n.content) ? n : n.children.map(slip).find(Boolean);
+      const bad = slip(t.root);
+      if (bad) { sel = bad; draw(); status.textContent = `not written: ${bad.content}: ${texIssue(bad.content)}`; return side.querySelector('input')?.focus(); }
       settle(t);
       const body = treeEmit(t);
       ctx.apply([{ range: s.range, newText: s.wrap ? `\\begin{forest}${body}\\end{forest}` : body }, ...(s.extra ? [s.extra] : [])]);
@@ -2038,7 +2047,7 @@
 .tv-table { border-collapse: collapse; } .tv-table td, .tv-table th { padding: .2rem .6rem; border-bottom: 1px solid var(--tv-border); text-align: left; }
 .tv-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
 .tv-input { font: inherit; font-size: .88rem; padding: .3rem .5rem; border-radius: 6px; border: 1px solid var(--tv-border); background: var(--tv-sunk); color: var(--tv-fg); min-width: 0; }
-.tv-input.tv-bad { border-color: var(--error, #c33); }
+.tv-input.tv-bad { border-color: var(--error, #c33); } .tv-row:has(> .sd-err.on) { flex-wrap: wrap; } .tv-row > .sd-err { flex-basis: 100%; } .tv-field > .sd-err { grid-column: 2; }
 .tv-converter { display: grid; gap: .5rem; } .tv-row { display: flex; gap: .4rem; } .tv-row input { flex: 1; font-size: 1.1rem; }
 .tv-units { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr)); gap: .4rem; }
 .tv-unit { font: inherit; display: flex; flex-direction: column; align-items: flex-start; gap: .1rem; padding: .45rem .6rem; border-radius: 8px; border: 1px solid var(--tv-border); background: var(--tv-sunk); color: var(--tv-fg); cursor: pointer; text-align: left; }
@@ -2078,7 +2087,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-form { display: grid; gap: .4rem; } .tv-field { display: grid; grid-template-columns: 7rem 1fr; gap: .5rem; align-items: center; font-size: .8rem; color: var(--tv-muted); }
 .tv-field textarea { min-height: 3.2rem; resize: vertical; } .tv-field .tv-input { font-family: ui-monospace, monospace; font-size: .82rem; }
 .tv-add summary { cursor: pointer; font-size: .85rem; color: var(--tv-accent); } .tv-add[open] { display: grid; gap: .5rem; } .tv-add > select { justify-self: start; }
-@media (max-width: 560px) { .tv-field { grid-template-columns: 1fr; gap: .15rem; } }
+@media (max-width: 560px) { .tv-field { grid-template-columns: 1fr; gap: .15rem; } .tv-field > .sd-err { grid-column: auto; } }
 @media (max-width: 560px) { .tv-color { grid-template-columns: 1fr; } .tv-pick { max-width: 16rem; } }
 .tv-draw { display: grid; gap: .5rem; min-width: min(40rem, 100%); } .tv-tools { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
 .tv-muted { color: var(--tv-muted); font-size: .78rem; } .tv-sel { align-items: center; min-height: 2rem; } .tv-sel input { flex: 1; font-size: .88rem; }

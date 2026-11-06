@@ -246,8 +246,13 @@ fn add(cx: &Cx, all: &[Entry]) -> Option<Json> {
             at = r.end;
         }
         out.push_str(&text[at..e.end]);
-        let mut form = vec![json!({ "name": "key", "value": "", "placeholder": "key" })];
-        form.extend(fs.iter().map(|(f, _)| json!({ "name": slot(f), "value": "", "placeholder": f })));
+        let taken: Vec<&str> = all.iter().map(|e| e.key.as_str()).collect();
+        let mut form = vec![
+            json!({ "name": "key", "value": "", "placeholder": "key", "check": ["required", "key", "unique"], "taken": taken }),
+        ];
+        form.extend(
+            fs.iter().map(|(f, _)| json!({ "name": slot(f), "value": "", "placeholder": f, "check": ["tex"] })),
+        );
         let line = if text[..last].ends_with('\n') { format!("{out}\n") } else { format!("\n{out}") };
         kinds.push(json!({ "name": format!("\\{}", e.head), "fields": form, "edit": edit_of(cx.path, vec![put(cx.doc, last, last, line)]) }));
     }

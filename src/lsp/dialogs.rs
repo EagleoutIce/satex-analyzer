@@ -394,25 +394,18 @@ const NEEDS: [(&str, &[&str], &[&str]); 5] = [
     ("multirow", &["\\multirow"], &[]),
 ];
 
-/// The `\usepackage` lines `text` needs, and the place before `\begin{document}`.
-fn packages(
-    analysis: &Analysis,
-    doc: &Text,
-    text: &str,
-    table: Option<&tabular::Table>,
-) -> (Vec<String>, Option<usize>) {
+/// The packages `text` needs.
+fn packages(text: &str, table: Option<&tabular::Table>) -> Vec<&'static str> {
     let col = |a: &&str| table.is_some_and(|t| t.cols.iter().any(|c| c.align == *a));
     // array's `>{…}` and `<{…}`
     let injects = table.is_some_and(|t| t.cols.iter().any(|c| !c.pre.is_empty() || !c.post.is_empty()));
-    let want: Vec<String> = NEEDS
+    NEEDS
         .iter()
         .filter(|(p, cmds, cols)| {
             cmds.iter().any(|c| text.contains(c)) || cols.iter().any(col) || (*p == "array" && injects)
         })
-        .map(|(p, ..)| p.to_string())
-        .filter(|p| !crate::linter::shared::loaded(analysis, p))
-        .collect();
-    (want, doc.body().find("\\begin{document}"))
+        .map(|(p, ..)| *p)
+        .collect()
 }
 
 /// The edit a dialog's `state` makes of the text in `range`: `{edits, notes}`;
@@ -439,6 +432,8 @@ pub fn apply(
                 Some("siunitx") if !tabular::siunitx(&mut t) => return Err("no column holds only numbers".into()),
                 _ => {}
             }
+            // an S column's text cells braced, however the column became S
+            tabular::protect_s(&mut t);
             switched = tabular::to_tabularx(&mut t);
             if switched {
                 notes.push("X columns: written as tabularx, \\linewidth wide".to_string());
@@ -461,15 +456,14 @@ pub fn apply(
         k => return Err(format!("no dialog `{k}`")),
     };
     let mut edits = vec![json!({ "range": range, "newText": text })];
-    let (want, at) = packages(analysis, doc, &text, table.as_ref());
-    for p in want {
-        match at {
-            Some(at) => {
-                let p0 = to_lsp(doc, doc.pos(at));
-                edits.push(json!({ "range": Range::new(p0, p0), "newText": format!("\\usepackage{{{p}}}\n") }));
+    for p in packages(&text, table.as_ref()) {
+        match super::plugins::ensure_package(analysis, doc, p, "") {
+            Ok(Some(e)) => {
+                edits.push(json!(e));
                 notes.push(format!("adds \\usepackage{{{p}}} to the preamble"));
             }
-            None => notes.push(format!("needs \\usepackage{{{p}}} in the preamble")),
+            Ok(None) => {}
+            Err(why) => notes.push(why),
         }
     }
     let state = table.filter(|_| op.is_some() || switched).map(|t| serde_json::to_value(t).unwrap_or_default());

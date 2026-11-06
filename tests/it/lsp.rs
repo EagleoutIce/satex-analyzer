@@ -3578,6 +3578,32 @@ fn a_table_column_keeps_and_writes_its_injections() {
     assert_eq!(out["edits"][1]["newText"], "\\usepackage{array}\n", "array is added: {out}");
 }
 
+/// A column made S however (the type menu, not the Numbers → S rewrite) braces its text cells, which
+/// siunitx would read as numbers, and loads siunitx once, on its own line before `\begin{document}`.
+#[test]
+fn an_s_column_braces_its_text_and_loads_siunitx() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\begin{tabular}{lc}\nMethod & Score \\\\\nOurs & 0.92 \\\\\n\\end{tabular}\n\\end{document}\n";
+    let (mut server, uri, _, _) = open_loaded("scolumn", text);
+    let mut ask = |method: &str, params: Value| {
+        let id = server.request(method, params);
+        server.response(id)["result"].clone()
+    };
+    let view =
+        ask("satex/dialog", json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": 2 } }));
+    let mut state = view["state"].clone();
+    state["cols"][1]["align"] = json!("S");
+    let out = ask(
+        "satex/dialogApply",
+        json!({ "textDocument": { "uri": uri }, "kind": "table", "range": view["range"], "state": state }),
+    );
+    let written = out["edits"][0]["newText"].as_str().unwrap_or_default();
+    assert!(written.contains("{lS}") && written.contains("{Score}") && written.contains("& 0.92"), "{out}");
+    let loads: Vec<&Value> = out["edits"].as_array().unwrap()[1..].iter().collect();
+    assert_eq!(loads.len(), 1, "{out}");
+    assert_eq!(loads[0]["newText"], "\\usepackage{siunitx}\n", "{out}");
+    assert_eq!(loads[0]["range"]["start"], json!({ "line": 1, "character": 0 }), "before \\begin{{document}}: {out}");
+}
+
 /// A table and each figure get a code lens and a hover link to their
 /// dialog; the dialog's state, unchanged, writes the text it came from; the
 /// code actions rewrite the table for booktabs and siunitx, adding the
