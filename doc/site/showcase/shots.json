@@ -764,8 +764,7 @@
     {
      "eval": "document.querySelector('#cfg-tabs [data-tab=core]').click()",
      "until": "document.querySelector('#cfg-tabs [data-tab=core]').getAttribute('aria-pressed') === 'true'",
-     "wait": 1500,
-     "snap": "back"
+     "wait": 1500
     },
     {
      "eval": "document.querySelector('#cfg-tabs [data-tab=plugins]').click()",
@@ -778,7 +777,6 @@
     640,
     760
    ],
-   "stack": true,
    "wide": true
   }
  ],
