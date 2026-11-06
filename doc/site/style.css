@@ -2173,3 +2173,9 @@ header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(-
 .cards:not(.at-start):not(.at-end) { -webkit-mask-image: linear-gradient(to right, transparent, #000 4rem, #000 calc(100% - 4rem), transparent); mask-image: linear-gradient(to right, transparent, #000 4rem, #000 calc(100% - 4rem), transparent); }
 /* the trace's step list scrolls on its own: stepping keeps the result and the input stream in place (no jump) */
 .tr-all[open] > .tr-tree { max-height: 32vh; overflow: auto; overscroll-behavior: contain; }
+/* changelog badges: the kind of change, then the entry; commit links stay quiet */
+.badge { display: inline-block; min-width: 2.6rem; margin-right: .35rem; padding: 0 .35rem; border-radius: 5px; font: 600 .72rem/1.45 var(--mono, monospace); text-align: center; vertical-align: .08em; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.badge.b-fix { color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); }
+.badge.b-perf { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, transparent); }
+.badge.b-docs, .badge.b-build { color: var(--info); background: color-mix(in srgb, var(--info) 10%, transparent); }
+main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/compare/"] code { font-size: .72rem; opacity: .7; }

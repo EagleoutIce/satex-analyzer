@@ -1635,6 +1635,29 @@ def main():
         (out / dst).parent.mkdir(parents=True, exist_ok=True)
         (out / dst).write_text(minify_html(text))
 
+    def commit_ranges(body):
+        """An entry's commit links, those next to each other in the history merged into one range link."""
+        order = subprocess.run(["git", "rev-list", "--reverse", "--abbrev-commit", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.split()
+        place = {h[:7]: i for i, h in enumerate(order)}
+        link = re.compile(r'<a href="([^"]*/commit/)([0-9a-f]{7,})"><code>[0-9a-f]+</code></a>')
+        def merge(m):
+            found = link.findall(m[0])
+            base = found[0][0]
+            hashes = sorted({h[:7] for _, h in found}, key=lambda h: place.get(h, -1))
+            runs = []
+            for h in hashes:
+                if runs and h in place and runs[-1][-1] in place and place[h] == place[runs[-1][-1]] + 1:
+                    runs[-1].append(h)
+                else:
+                    runs.append([h])
+            def chip(run):
+                if len(run) == 1:
+                    return f'<a href="{base}{run[0]}"><code>{run[0]}</code></a>'
+                compare = base.replace("/commit/", f"/compare/{run[0]}~1...{run[-1]}")
+                return f'<a href="{compare}" title="{len(run)} commits"><code>{run[0]}…{run[-1]}</code></a>'
+            return " ".join(chip(r) for r in runs)
+        return re.sub(r'(?:<a href="[^"]*/commit/[0-9a-f]{7,}"><code>[0-9a-f]+</code></a>\s*)+', merge, body)
+
     def docs():
         done = []
         for src, dst in table.items():
@@ -1642,6 +1665,7 @@ def main():
             body = rewrite(markdown(text), src, table | lean_table, homepage, repo, out, "../" * dst.count("/"))
             if dst == "changelog.html":
                 body = re.sub(r"<li>(?:<p>)?<code>(feat|fix|perf|docs|build)</code>", lambda m: f'<li><span class="badge b-{m[1]}">{m[1]}</span>', body)
+                body = commit_ranges(body)
             if dst == "wiki/formal-semantics.html":
                 body = formal(body)
             nav_html = chapter_nav(dst, order)
