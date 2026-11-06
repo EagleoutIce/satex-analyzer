@@ -231,6 +231,7 @@ A one-of token stands for one of a few texts (a joined `\@currenvir`, `v` plus `
 - A `\csname` whose paths join inside the name keeps per name what each path took, and narrows again when it parts per name.
 - A `\csname` that may not part again keeps a one-of token of characters as one of the names it spells. That name holds one of their meanings, an undefined one `\relax`. A definition of it may give each of those names its meaning.
 - At a join, a copy narrowed to one text is that text, so arms that took different texts join as texts.
+- A literal of a library macro's parameter text met at a one-of token where no path may part (`literal_rests`) takes the texts after it as one one-of. Texts that cannot begin with it, and an empty text when the next token is another, would raise "doesn't match its definition" in library code, so they are dropped (`assume_compiles`). Unknown text before such a literal begins with it the same way, without a fork.
 - Only a token made once is narrowed. Made again, or once passes of a loop were joined since, its copies may stand for different choices.
 
 ### Length bounds on typed text

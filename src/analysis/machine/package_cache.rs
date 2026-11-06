@@ -1599,6 +1599,7 @@ impl Machine<'_> {
             delimiter_met: _,
             arm_assumed: _,
             read_at: _,
+            reading: _,
             unknown_chars: _,
             cds,
             conds,

@@ -1,0 +1,11 @@
+% Three floats of unknown height in one line before a forced break: the
+% output routine's \@trylist is one of several lists, and \@xnext reads
+% its first \@elt with no path left to part.
+\documentclass{article}
+\newcommand\fig{\begin{figure}[htbp]\centering
+  \rule{1cm}{\pdfuniformdeviate 500pt}\caption{A float}\end{figure}}
+\begin{document}
+Text before \fig\fig\fig more text.\hfill\pagebreak
+Text after.
+\gdef\SatexReachedEnd{}
+\end{document}
