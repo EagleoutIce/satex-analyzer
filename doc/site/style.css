@@ -2038,10 +2038,10 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
   .shot-stage:hover .shot-win { --hover: -2px; }
   .shot-win { transform: translate3d(0, calc(var(--lift, 0px) + var(--hover, 0px)), 0); transition: transform .4s var(--ease), box-shadow .5s var(--ease); }
 }
-@media (max-width: 52rem) {
+@media (max-width: 64rem) {
   .shots { grid-template-columns: minmax(0, 1fr); gap: var(--s48); }
   .shot-big, .shot-big:nth-child(even of .shot-big) { grid-template-columns: minmax(0, 1fr); margin: 0; }
-  .shot-big:nth-child(even of .shot-big) .shot-stage { order: 0; }
+  .shot-big:nth-child(even of .shot-big) .shot-stage { order: 0; } .shot-big .shot-stage, .shot-big:nth-child(even of .shot-big) .shot-stage { justify-self: center; }
   .shot-big figcaption { padding-top: 0; }
 }
 @media (max-width: 34rem) { .shot-pair { grid-template-columns: minmax(0, 1fr); } }

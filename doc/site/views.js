@@ -2343,8 +2343,8 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-node.bare rect, .tv-node.bare circle { stroke-dasharray: .04 .06; stroke-width: .015; }
 .tv-node.fixed { cursor: not-allowed; color: var(--tv-muted); } .tv-node.fixed rect, .tv-node.fixed circle { stroke-dasharray: .1 .07; }
 .tv-node.on rect, .tv-node.on circle, .tv-node.pending rect, .tv-node.pending circle { stroke: var(--tv-accent); stroke-width: .06; }
-.tv-edge line { stroke: currentColor; stroke-width: .03; } .tv-edge line.tv-hit { stroke: transparent; stroke-width: .3; cursor: pointer; }
-.tv-edge.on line:not(.tv-hit) { stroke: var(--tv-accent); stroke-width: .05; } .tv-edge text { font-size: .26px; }
+.tv-edge :is(line, path) { stroke: currentColor; stroke-width: .03; fill: none; } .tv-edge :is(line, path).tv-hit { stroke: transparent; stroke-width: .3; cursor: pointer; }
+.tv-edge.on :is(line, path):not(.tv-hit) { stroke: var(--tv-accent); stroke-width: .05; } .tv-edge text { font-size: .26px; }
 .tv-node ellipse, .tv-node polygon { fill: var(--tv-bg); stroke: currentColor; stroke-width: .03; } .tv-node.on ellipse, .tv-node.on polygon { stroke: var(--tv-accent); stroke-width: .06; }
 .tv-handle { fill: var(--tv-bg); stroke: var(--tv-accent); stroke-width: .03; cursor: crosshair; } .tv-anchor { fill: var(--tv-accent); opacity: .75; pointer-events: none; }
 .tv-hint { font-size: .26px; fill: var(--tv-accent) !important; }
