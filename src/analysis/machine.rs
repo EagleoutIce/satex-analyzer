@@ -12523,8 +12523,13 @@ will look undefined",
     }
 
     pub fn register_file(&mut self, path: String, kind: LoadKind) -> FileId {
-        // One spelling per file, however its path was joined (Windows takes `/`).
+        // One spelling per file, however its path was joined (Windows takes `/`,
+        // and `dir//file` is `dir/file`): cold and replayed runs name it alike.
         let path = if cfg!(windows) { path.replace('\\', "/") } else { path };
+        let path = match path.contains("//") {
+            true => std::path::Path::new(&path).components().collect::<PathBuf>().to_string_lossy().into_owned(),
+            false => path,
+        };
         if let Some(i) = self.file_index(&path) {
             return i as FileId;
         }

@@ -82,10 +82,18 @@ impl Machine<'_> {
             && !crate::engine::builtins::assignment(p)
             || matches!(p, Primitive::Mode(cmd) if cmd != crate::engine::builtins::ModeCmd::Par)
         {
-            // A `\write` is a whatsit, which the page builder does not count.
+            use crate::engine::builtins::PdfOp;
             self.material |= match p {
+                // `\pdfobj` makes an object, `\pdfrefobj` its node (pdfTeX manual); settings add none.
+                Primitive::Pdf(PdfOp::Object | PdfOp::Resources | PdfOp::Variable) => 0,
+                // Glue, kerns and penalties are no box (§ 1000): appending
+                // the item says what it is ([`Machine::append_item`]). A
+                // `\write` or `\special` is a whatsit, which the page
+                // builder does not count either.
+                Primitive::Typeset(_)
+                | Primitive::Write
+                | Primitive::Pdf(PdfOp::Literal | PdfOp::Special)
                 // What a box brings along it says itself.
-                Primitive::Write
                 | Primitive::Mode(
                     crate::engine::builtins::ModeCmd::Vertical(crate::engine::builtins::Material::Unpackage { .. })
                     | crate::engine::builtins::ModeCmd::Horizontal(crate::engine::builtins::Material::Unpackage {
