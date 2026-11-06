@@ -6040,7 +6040,7 @@
   }
   /** `satex gui`: the project is the folder it serves, its texts read from there (src/cli/gui/mod.rs). */
   async function openLocal({ dir, name, root, files }) {
-    $('play-exsect').hidden = $('play-local-note').hidden = true;
+    $('play-exsect').hidden = true;
     const texts = {};
     for (const [n, bytes] of files) if (TEXT.test(n) && bytes <= LIMIT) texts[n] = (await ask({ type: 'read', path: `${dir}/${n}` })).data ?? new Uint8Array();
     await project(texts, name, root, dir);

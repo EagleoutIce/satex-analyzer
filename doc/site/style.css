@@ -879,7 +879,6 @@ a.ty { color: inherit; border-bottom: 1px dotted var(--muted); } a.ty:hover { co
 .tree .tree-sect { margin: .6rem 0 0; padding: .45rem 0 0; border-top: 1px solid var(--border); }
 .tree .tree-sect > summary { padding: .1rem .3rem .25rem .75rem; font-size: .7rem; letter-spacing: .07em; }
 .tree .tree-sect > :not(summary) { margin-top: 0; }
-.tree .tree-note { margin: .6rem 0 0; padding: .45rem .3rem 0 .75rem; border-top: 1px solid var(--border); font-size: .75rem; }
 .tree .outline { padding: 0 .5rem 0 .75rem; }
 .tree .o-sk { display: none; } .tree .o-kind { min-width: 0; } .tree .o-labels, .tree .o-cites { padding-left: .2rem; } .tree .o-num { min-width: 1.8rem; }
 .tree .o-go { overflow-wrap: anywhere; } .tree .outline > p { margin: 0; font-size: .78rem; }
