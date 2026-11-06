@@ -35,11 +35,13 @@ A comment can state a property for satex to check. TeX skips the comment. satex 
 %\satex@configure{limits.site_forks=8, opaque_conditionals=[ifdraft]}
 ```
 
+{{satex-directives}}
+
 * `\satex@assert{cond}` checks `cond`. It is `assertion-proved` when it holds on every path that reads it. It is `assertion-refuted`, an error, when it fails on a path that approximated nothing. The message names what the operands are there. Otherwise it is `assertion-unknown`, with the reason: a value the run does not know, a path that approximated, or no path that reads it.
 * `\satex@assume{cond}` drops the paths where `cond` fails. On the others it narrows the registers a conjunction of comparisons reads, as an `\ifnum` arm does. It is listed as `assumption-made`.
 * `\satex@configure{key=value, …}` changes settings of `satex.yaml` until the current TeX group ends. Keys are dotted, or written with `/`. A setting the run reads only at its start keeps its value.
 
-A condition compares two TeX numbers with `<`, `<=`, `=`, `!=`, `>=` or `>`. `\value{page}`, `\c@page`, `\numexpr…` and box dimensions all work. When one side has a unit, as in `\wd0 < 3cm`, both are dimensions. A condition may also be a TeX conditional such as `\ifdefined\x` or `\ifx\a\b`. `and`, `or` and `not` combine tests, `and` binding tighter. `\the<counter>` stands for the counter's value. So `\thepage < 5` compares the page number whether `\pagenumbering` prints it in arabic or roman numerals. Only the document's own files are read for directives. A package's comments and text a conditional skips are not. A directive that cannot be read is `invalid-directive`.
+`\thepage < 5` compares the page number whether `\pagenumbering` prints it in arabic or roman numerals. Only the document's own files are read for directives. A package's comments and text a conditional skips are not. A directive that cannot be read is `invalid-directive`.
 
 ## Rules
 
@@ -64,6 +66,6 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 
 ## Explanations
 
-One group per category. Open a group to read its rules.
+One group per category, each with its first rules. A group's button shows the rest.
 
 {{explanations}}

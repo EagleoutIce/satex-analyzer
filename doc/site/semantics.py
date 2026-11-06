@@ -526,13 +526,29 @@ def builtin_lines(root):
 
 
 def directive_cards(root):
-    """`\\satex@⟨name⟩` -> card for satex's comment directives, from `Machine::DIRECTIVES` (what completion offers too)."""
+    """`\\satex@⟨name⟩` -> card for satex's comment directives, from the parser's tables
+    (`DIRECTIVES`, `FORMS`, `RELATIONS`, what hover and completion read too)."""
     text = (root / "src/analysis/machine/directive.rs").read_text()
-    table = text[text.index("DIRECTIVES"):]
-    table = table[:table.index("];")]
-    return {f"\\satex@{n}": {"k": "satex directive", "sig": f"%\\satex@{n}{{…}}", "doc": about,
-                               "at": "src/analysis/machine/directive.rs"}
-            for n, about in re.findall(r'\("(\w+)", "([^"]*)"\)', table)}
+    table = lambda name: text[text.index(f"pub const {name}"):][:text[text.index(f"pub const {name}"):].index("];")]
+    lit = lambda s: s.replace("\\\\", "\\")
+    forms = {f: lit(g) for f, g in re.findall(r'\(\s*"(\w+)",\s*"((?:[^"\\]|\\.)*)",?\s*\)', table("FORMS"))}
+    forms["relation"] = "one of " + " ".join(f"`{r}`" for r in re.findall(r'\("([^"]+)", \'', table("RELATIONS")))
+
+    def grammar(usage):
+        out, todo = {}, [usage]
+        while todo:
+            for f in re.findall(r"⟨([^⟩]*)⟩", todo.pop()):
+                if f not in out and f in forms:
+                    out[f] = forms[f]
+                    todo.append(forms[f])
+        return out
+
+    cards = {}
+    for n, arg, about in re.findall(r'\("(\w+)", "([^"]*)", "([^"]*)"\)', table("DIRECTIVES")):
+        rules = " ".join(f"`⟨{f}⟩` is {g}." for f, g in grammar(arg).items())
+        cards[f"\\satex@{n}"] = {"k": "satex directive", "sig": f"%\\satex@{n}{arg}", "doc": f"{about} {rules}".strip(),
+                                   "at": "src/analysis/machine/directive.rs"}
+    return cards
 
 
 def build(root, repo, commit, env_decls, semantics_ids):
@@ -648,6 +664,13 @@ def cards(names, rows, ctx, refs, scope, engines, templates, previews, builtins,
                 have = [e for e, ns in engines.items() if name in ns]
                 if have:
                     card["e"] = "all engines" if name in every else ", ".join(have)
+            site = kernel_site(name) if pkg == "kernel" and rec and not rec.get("file") else None
+            if site:
+                rec = {**rec, "file": "latex.ltx", "line": site[1]}
+                if tag != "macro" and site[0] not in ("macro", "alias"):
+                    card["k"] = f"kernel {site[0]}"
+                if site[0] not in ("macro", "alias") and not rec.get("does"):
+                    rec["does"] = f"A {site[0]} of the kernel" + (f", set to `{site[2]}`" if site[2] else "") + (f" (latex.ltx: “{site[3]}”)." if site[3] else ".")
             if rec:
                 # the usage line with its arguments named by the manual or the run, never numbered
                 if rec.get("usage") and rec["usage"] != name:
@@ -695,6 +718,25 @@ def cards(names, rows, ctx, refs, scope, engines, templates, previews, builtins,
     return out
 
 
+_KERNEL = {}
+
+
+def kernel_site(name):
+    """(kind, line, value, comment) of `name`'s definition in `latex.ltx`: the value its line sets, the comment it ends with.
+    The format dump keeps no definition sites, so the source says where and what a kernel name is."""
+    if not _KERNEL:
+        path = Path(subprocess.run(["kpsewhich", "latex.ltx"], capture_output=True, text=True).stdout.strip())
+        text = path.read_text(errors="replace")
+        for n, k, at in definitions(text):
+            end = text.find("\n", at)
+            line = text[text.rfind("\n", 0, at) + 1:end]
+            note = re.search(r"(?<!\\)%\s*(.*\S)", line)
+            value = re.search(re.escape(n) + r"\s*=?\s*([^\s%\\]+)", line[at - text.rfind("\n", 0, at) - 1:])
+            _KERNEL.setdefault(n, (k, text.count("\n", 0, at) + 1, value.group(1) if value else None, note.group(1) if note else None))
+        _KERNEL.setdefault(None, None)
+    return _KERNEL.get(name)
+
+
 def no_doc(card):
     """What a card says when no documentation source speaks for its name: where it is defined, never a guess."""
     return f'No documentation found. Defined at `{card["at"]}`.' if card.get("at") else "No documentation found."
@@ -718,6 +760,7 @@ def primitive_doc(rule, source, engines):
 DEFINERS = [(r"(?:\\(?:gdef|edef|xdef|def)|\\(?:re)?newcommand\*?|\\(?:Provide|Declare)(?:Robust)?Command\*?|\\(?:New|Renew|Provide|Declare)(?:Expandable)?DocumentCommand)\s*\{?\s*(\\[A-Za-z@]+)", "macro"),
             (r"\\let\s*(\\[A-Za-z@]+)", "alias"),
             (r"\\new(count|dimen|skip|muskip|toks|box)\s*(\\[A-Za-z@]+)", None),
+            (r"\\(count|dimen|skip|muskip|toks|char|mathchar)def\s*(\\[A-Za-z@]+)", None),
             (r"\\newif\s*\\if([A-Za-z@]+)", "conditional"),
             (r"\\newcounter\s*\{([A-Za-z@]+)\}", "counter"),
             (r"\\(?:new|renew)environment\*?\s*\{([A-Za-z@]+)\}", "environment"),
@@ -729,7 +772,7 @@ def definitions(text):
     for rx, kind in DEFINERS:
         for m in re.finditer(rx, text):
             n = m.group(m.lastindex)
-            k = kind or {"count": "count register", "dimen": "dimen register", "skip": "skip register", "muskip": "muskip register", "toks": "token register", "box": "box register"}[m.group(1)]
+            k = kind or {"count": "count register", "dimen": "dimen register", "skip": "skip register", "muskip": "muskip register", "toks": "token register", "box": "box register", "char": "character constant", "mathchar": "math character constant"}[m.group(1)]
             names = {"conditional": [f"\\if{n}", f"\\{n}true", f"\\{n}false"], "counter": [f"\\c@{n}", f"\\the{n}"], "environment": [f"\\{n}", f"\\end{n}"]}.get(kind, [n])
             for x in names:
                 yield x, k, m.start()

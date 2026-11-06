@@ -143,7 +143,7 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
     if let Some(markdown) = super::directive::hover(doc.line(pos.line), pos.col) {
         return Some(markdown_hover(markdown));
     }
-    if let Some(markdown) = directive_hover(analysis, path, pos) {
+    if let Some(markdown) = directive_card(analysis, doc, path, pos) {
         return Some(markdown_hover(markdown));
     }
     if let Some(markdown) = magic_hover(analysis, doc, pos) {
@@ -425,6 +425,14 @@ fn magic_hover(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<String> {
         _ => "satex reads it and does not act on it.".into(),
     };
     Some(format!("**Magic comment** `{}` = `{}`\n\n{what}", magic.key, magic.value))
+}
+
+/// On a directive's name its card, then its outcomes on the paths.
+pub(super) fn directive_card(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> Option<String> {
+    let card = super::directive::name_hover(doc.line(pos.line), pos.col);
+    let outcomes = directive_hover(analysis, path, pos);
+    let parts: Vec<String> = [card, outcomes].into_iter().flatten().collect();
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
 
 /// The outcome of the `%\satex@` directive the cursor is on, from its
@@ -1505,6 +1513,10 @@ fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position
     if let Some(items) = super::dialogs::float_completion(analysis, doc, path, pos) {
         return CompletionResponse::Array(items);
     }
+    // a listing's body outside its escapes takes only what the listing reads
+    if let Some(items) = super::plugins::listing::items(analysis, doc, path, pos) {
+        return CompletionResponse::Array(items);
+    }
     // What the text at the cursor is ([`super::type_at`]): the names of that type.
     let at = super::type_at::type_at(analysis, doc, path, pos);
     let items = typed_items(analysis, doc, path, &at, after, pos);
@@ -1699,7 +1711,7 @@ fn typed_items(
                     && a.inside.rsplit(',').next().is_some_and(|k| k.contains('='))
                     && !query::options(analysis, a.cmd).is_empty()
             });
-            if keyed && valued {
+            if (keyed && valued) || hit.value {
                 return items;
             }
             out.extend(items.into_iter().filter(|i| !out.iter().any(|o| o.label == i.label)).collect::<Vec<_>>());

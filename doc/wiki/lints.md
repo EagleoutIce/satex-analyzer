@@ -35,11 +35,22 @@ A comment can state a property for satex to check. TeX skips the comment. satex 
 %\satex@configure{limits.site_forks=8, opaque_conditionals=[ifdraft]}
 ```
 
+* `\satex@assert{⟨condition⟩}`: Checks a condition on every path that reaches it.
+* `\satex@assume{⟨condition⟩}`: Drops the paths where a condition fails.
+* `\satex@configure{⟨key⟩=⟨value⟩, …}`: Changes settings of `satex.yaml` until the group ends.
+
+* `⟨condition⟩` is ⟨test⟩s joined by `or` and `and`, `and` binding tighter, each maybe after `not`.
+* `⟨test⟩` is ⟨operand⟩ ⟨relation⟩ ⟨operand⟩, or a TeX conditional such as `\ifdefined\x`.
+* `⟨operand⟩` is a TeX number (`\value{page}`, `\c@page`, `\numexpr…`), a dimension when one side has a unit (`\wd0 < 3cm`), `\the⟨counter⟩` the counter's value (`\thepage`).
+* `⟨relation⟩` is one of `<` `=` `>` `<=` `>=` `!=` `==`.
+* `⟨key⟩` is a setting of `satex.yaml`, dotted or written with `/`.
+* `⟨value⟩` is what the setting takes, as in `satex.yaml`.
+
 * `\satex@assert{cond}` checks `cond`. It is `assertion-proved` when it holds on every path that reads it. It is `assertion-refuted`, an error, when it fails on a path that approximated nothing. The message names what the operands are there. Otherwise it is `assertion-unknown`, with the reason: a value the run does not know, a path that approximated, or no path that reads it.
 * `\satex@assume{cond}` drops the paths where `cond` fails. On the others it narrows the registers a conjunction of comparisons reads, as an `\ifnum` arm does. It is listed as `assumption-made`.
 * `\satex@configure{key=value, …}` changes settings of `satex.yaml` until the current TeX group ends. Keys are dotted, or written with `/`. A setting the run reads only at its start keeps its value.
 
-A condition compares two TeX numbers with `<`, `<=`, `=`, `!=`, `>=` or `>`. `\value{page}`, `\c@page`, `\numexpr…` and box dimensions all work. When one side has a unit, as in `\wd0 < 3cm`, both are dimensions. A condition may also be a TeX conditional such as `\ifdefined\x` or `\ifx\a\b`. `and`, `or` and `not` combine tests, `and` binding tighter. `\the<counter>` stands for the counter's value. So `\thepage < 5` compares the page number whether `\pagenumbering` prints it in arabic or roman numerals. Only the document's own files are read for directives. A package's comments and text a conditional skips are not. A directive that cannot be read is `invalid-directive`.
+`\thepage < 5` compares the page number whether `\pagenumbering` prints it in arabic or roman numerals. Only the document's own files are read for directives. A package's comments and text a conditional skips are not. A directive that cannot be read is `invalid-directive`.
 
 ## Rules
 
@@ -812,10 +823,10 @@ See [chktex 21](https://www.nongnu.org/chktex/), [The TeXbook, chapter 9](https:
 
 The condition of `%\satex@assert` is true on every path that reads it. The paths cover every run of the document, so the property holds, under the assumptions the run reports.
 
-</details>
+</div>
 
-<details id="category-security">
-<summary><b>security</b> (2 rules)</summary>
+<div class="fold" id="category-security">
+<h3 class="fold-head"><b>security</b> (2 rules)</h3>
 
 ### build-shell-escape-unneeded
 
@@ -841,10 +852,10 @@ Fix by running with the flag the document needs, or by removing the call.
 
 See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 
-</details>
+</div>
 
-<details id="category-style">
-<summary><b>style</b> (52 rules)</summary>
+<div class="fold" id="category-style">
+<h3 class="fold-head"><b>style</b> (52 rules)</h3>
 
 ### accent-on-dotted-letter
 
@@ -1298,6 +1309,8 @@ A finding needs a word that names a kind of thing the document labels (a counter
 
 Where one label of that kind prints that very number, the fix names it: `\cref` with cleveref loaded, else `\autoref` with hyperref, else `Section~\ref{...}`. Otherwise the finding asks for a label.
 
+An `\item` of a numbered list counts too, labelled or not, in enumitem's inline lists as well: `see item (b)` or `in step 2`, where one item prints `(b)` or `Step~2`. Its words are the list counter's (`enumi`, its cleveref name `item`) and the word its label format writes (`Step`). The fix puts a `\label` right after that `\item` and refers to it. A number with no word before it, `in 3.)`, is never read.
+
 See [The LaTeX Companion § 2.4](https://ctan.org/pkg/tlc3-examples), [cleveref § 2](https://ctan.org/pkg/cleveref).
 
 ### inconsistent-precision
@@ -1522,10 +1535,10 @@ Fix by deleting it, or by checking why nothing calls it yet.
 
 Fix by deleting the `\label`, or by checking the `\ref` that was meant to use it.
 
-</details>
+</div>
 
-<details id="category-performance">
-<summary><b>performance</b> (6 rules)</summary>
+<div class="fold" id="category-performance">
+<h3 class="fold-head"><b>performance</b> (6 rules)</h3>
 
 ### package-after-preamble
 
@@ -1595,10 +1608,10 @@ Every name the package defines is unused, and no code outside it reads a setting
 
 Fix, if the package really is unused, by deleting the `\usepackage`: it is read on every build.
 
-</details>
+</div>
 
-<details id="category-precision">
-<summary><b>precision</b> (2 rules)</summary>
+<div class="fold" id="category-precision">
+<h3 class="fold-head"><b>precision</b> (2 rules)</h3>
 
 ### analysis-imprecision
 
@@ -1618,4 +1631,4 @@ There is nothing to fix in the document. Raising the limits in `satex.yaml` or n
 
 The condition of `%\satex@assert` is neither true on every path nor false on an exact one: a value it reads is not known, a path approximated, or no path reads the assertion. `%\satex@assume` can narrow what it reads.
 
-</details>
+</div>

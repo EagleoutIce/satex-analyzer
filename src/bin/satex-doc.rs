@@ -776,6 +776,9 @@ fn expand(directive: &str) -> Result<String, String> {
     if directive == "limits" {
         return limits_table();
     }
+    if directive == "satex-directives" {
+        return Ok(satex_directives());
+    }
     if let Some(rest) = directive.strip_prefix("fields:") {
         let (name, key) = rest.trim().split_once(' ').ok_or_else(|| format!("bad directive: {{{{{directive}}}}}"))?;
         return fields_text(name, key.trim());
@@ -1285,7 +1288,9 @@ fn fixes_list() -> Result<String, String> {
             count += 1;
         }
     }
-    Ok(format!("<details><summary>{count} rules with quick fixes</summary>\n\n{items}\n</details>\n"))
+    Ok(format!(
+        "<div class=\"fold\">\n<h3 class=\"fold-head\">{count} rules with quick fixes</h3>\n\n{items}\n</div>\n"
+    ))
 }
 
 /// The JSON `satex lint ARGS` prints.
@@ -1332,20 +1337,20 @@ fn explanations() -> Result<String, String> {
         let category = rule["category"].as_str().unwrap_or("");
         if open.as_deref() != Some(category) {
             if open.is_some() {
-                out.push_str("</details>\n\n");
+                out.push_str("</div>\n\n");
             }
             let count = rules.iter().filter(|r| r["category"].as_str() == Some(category)).count();
             let plural = if count == 1 { "rule" } else { "rules" };
-            let _ = writeln!(out, "<details id=\"category-{category}\">");
-            // GitHub renders markdown inside `<details>` only when a blank
-            // line follows the `<summary>`, so the headings below need it.
-            let _ = writeln!(out, "<summary><b>{category}</b> ({count} {plural})</summary>\n");
+            // every card shows without scripts; the site folds all but the first few
+            let _ = writeln!(out, "<div class=\"fold\" id=\"category-{category}\">");
+            // markdown inside a block of HTML needs the blank line after it
+            let _ = writeln!(out, "<h3 class=\"fold-head\"><b>{category}</b> ({count} {plural})</h3>\n");
             open = Some(category.to_string());
         }
         out.push_str(&explain_section(rule, &chktex)?);
     }
     if open.is_some() {
-        out.push_str("</details>\n");
+        out.push_str("</div>\n");
     }
     Ok(out)
 }
@@ -1752,6 +1757,24 @@ const PRECISION_LIMITS: &[&str] = &[
 /// `config::Limits`' precision fields, their `Default` value and their doc
 /// comment. `limits.*` is described in full on the configuration page; every
 /// row links there, so this table only has to give the number.
+/// The comment directives, from the table their parser reads: each usage
+/// line and what it does, then the grammar of every form they name.
+fn satex_directives() -> String {
+    use satex::analysis::machine::directive::{DIRECTIVES, grammar, usage};
+    let mut out = String::new();
+    let mut forms: Vec<(String, String)> = Vec::new();
+    for (name, _, does) in DIRECTIVES {
+        let usage = usage(name).unwrap_or_default();
+        let _ = writeln!(out, "* `{usage}`: {does}");
+        forms.extend(grammar(&usage).into_iter().filter(|f| !forms.contains(f)).collect::<Vec<_>>());
+    }
+    out.push('\n');
+    for (form, rule) in forms {
+        let _ = writeln!(out, "* `⟨{form}⟩` is {rule}.");
+    }
+    out
+}
+
 fn limits_table() -> Result<String, String> {
     let source = fs::read_to_string("src/project/config.rs").map_err(|e| format!("src/project/config.rs: {e}"))?;
     let fields = struct_doc_fields(&source, "Limits")?;

@@ -2657,7 +2657,7 @@ fn a_comment_completes_only_directives_and_their_code() {
 }
 
 /// After the first operand of `\ifnum` and a space, the relations TeX
-/// reads; a directive's condition adds `<=`, `>=` and `!=`.
+/// reads; a directive's condition adds `<=`, `>=`, `!=` and `==`.
 #[test]
 fn a_comparison_completes_its_relations() {
     let text = "\\documentclass{article}\n\\begin{document}\n\\ifnum\\value{page} \\fi\n% \\satex@assert{\\value{page} }\n\\end{document}\n";
@@ -2665,7 +2665,31 @@ fn a_comparison_completes_its_relations() {
     let tex = complete(&mut server, &uri, 2, 19);
     assert_eq!(labels(&tex), ["<", "=", ">"]);
     let directive = complete(&mut server, &uri, 3, 29);
-    assert_eq!(labels(&directive), ["<", "=", ">", "<=", ">=", "!="]);
+    assert_eq!(labels(&directive), ["<", "=", ">", "<=", ">=", "!=", "=="]);
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A directive's name shows its usage line and the grammar of its argument,
+/// from the table its parser reads.
+#[test]
+fn a_directive_hover_shows_its_signature() {
+    let text = "\\documentclass{article}\n\\begin{document}\n%\\satex@assert{\\thepage < 5}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("directive-hover", text);
+    let h = hover_at(&mut server, &uri, text, 2, "\\satex@assert", 3);
+    assert!(h.contains("`\\satex@assert{⟨condition⟩}`"), "{h}");
+    assert!(h.contains("`⟨relation⟩` one of `<` `=` `>` `<=`"), "{h}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// After `clock=` in a configure directive, the values the schema names.
+#[test]
+fn a_configure_directive_completes_clock_values() {
+    let text = "\\documentclass{article}\n\\begin{document}\n%\\satex@configure{clock=}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("directive-clock", text);
+    let items = complete(&mut server, &uri, 2, 24);
+    assert_eq!(labels(&items), ["now", "unknown"]);
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -4495,6 +4519,63 @@ fn overlay_and_frame_plugins_switch_off() {
     assert!(!lenses.contains("Compile only"), "{lenses}");
     let h = hover_md(&at(&mut server, &uri, "textDocument/hover", 2, 5));
     assert!(!h.contains("Overlay"), "{h}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A code language completes where listings reads one (`language=`, its dialects written
+/// `[LaTeX]TeX`, a language the document defines) and where minted reads one (Pygments' lexers,
+/// or the seed without Pygments); hover says where it is defined; listings' unknown name is a finding.
+#[test]
+fn code_languages_complete_hover_and_lint() {
+    let text = "\\documentclass{article}\n\\usepackage{listings}\n\\usepackage{minted}\n\\lstdefinelanguage{MyLang}{morekeywords={foo}}\n\\lstset{language=Python}\n\\begin{document}\n\\begin{lstlisting}[language=]\nx\n\\end{lstlisting}\n\\begin{lstlisting}[language=Nope]\nx\n\\end{lstlisting}\n\\mintinline{}{x}\n\\end{document}\n";
+    let (mut server, uri, published, dir) = open_loaded("codelang", text);
+    let line = |n: usize| text.lines().nth(n).unwrap();
+    let after = |n: usize, s: &str| u32::try_from(line(n).find(s).unwrap() + s.len()).unwrap();
+    let listings = complete(&mut server, &uri, 6, after(6, "language="));
+    for name in ["Python", "[LaTeX]TeX", "MyLang", "C"] {
+        assert!(labels(&listings).contains(&name), "{name}: {:?}", labels(&listings));
+    }
+    // the document's languages first, each with where it is defined
+    assert!(labels(&listings)[..3].contains(&"Python"), "{:?}", labels(&listings));
+    let python = listings.iter().find(|i| i["label"] == "Python").unwrap();
+    assert!(python["detail"].as_str().is_some_and(|d| d.ends_with(".sty")), "{python}");
+    let minted = complete(&mut server, &uri, 12, after(12, "\\mintinline{"));
+    assert!(labels(&minted).contains(&"python"), "{:?}", labels(&minted));
+    assert!(!labels(&minted).contains(&"[LaTeX]TeX"), "{:?}", labels(&minted));
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 4, "character": after(4, "language=P") } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(hover.contains("Code language `Python`") && hover.contains("Defined in lstlang"), "{hover}");
+    let diagnostics = published["params"]["diagnostics"].as_array().cloned().unwrap_or_default();
+    let unknown: Vec<&Value> = diagnostics.iter().filter(|d| d["data"]["rule"] == "unknown-code-language").collect();
+    assert_eq!(unknown.len(), 1, "{diagnostics:?}");
+    assert_eq!(unknown[0]["range"]["start"], json!({ "line": 9, "character": after(9, "language=") }), "{unknown:?}");
+    assert_eq!(unknown[0]["severity"], 2, "a warning: {unknown:?}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// In a listing's body only its `literate=` sequences complete, each with what it becomes; inside
+/// `escapeinside` and `mathescape` escapes TeX runs, so a `\ref` completes its labels there only.
+#[test]
+fn a_listing_completes_literate_outside_and_latex_inside_its_escapes() {
+    let text = "\\documentclass{article}\n\\usepackage{listings}\n\\lstset{literate={:yields:}{{$\\Rightarrow$}}1 {->}{{$\\to$}}2, escapeinside={(*}{*)}, mathescape}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\\begin{lstlisting}\nx :y\ny (*\\ref{sec:a}*) \\ref{sec:a}\nz = $\\ref{sec:a}$\n\\end{lstlisting}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("listing", text);
+    let line = |n: usize| text.lines().nth(n).unwrap();
+    let after =
+        |n: usize, s: &str, k: usize| u32::try_from(line(n).match_indices(s).nth(k).unwrap().0 + s.len()).unwrap();
+    let literate = complete(&mut server, &uri, 6, after(6, ":y", 0));
+    assert_eq!(labels(&literate), [":yields:"], "{literate:?}");
+    assert!(literate[0]["detail"].as_str().is_some_and(|d| d.contains("\\Rightarrow")), "{literate:?}");
+    let escaped = complete(&mut server, &uri, 7, after(7, "\\ref{", 0));
+    assert!(labels(&escaped).contains(&"sec:a"), "{:?}", labels(&escaped));
+    let outside = complete(&mut server, &uri, 7, after(7, "\\ref{", 1));
+    assert!(!labels(&outside).contains(&"sec:a"), "{:?}", labels(&outside));
+    let math = complete(&mut server, &uri, 8, after(8, "\\ref{", 0));
+    assert!(labels(&math).contains(&"sec:a"), "{:?}", labels(&math));
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }

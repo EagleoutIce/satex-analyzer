@@ -1416,6 +1416,17 @@ impl Engine {
         }
     }
 
+    /// Files outside the documents changed (a package bundle landed): every
+    /// analyzed document runs again at the next [`Self::flush`].
+    #[cfg(target_os = "emscripten")]
+    fn outside_changed(&mut self) {
+        for (uri, doc) in &self.docs {
+            if doc.analysis.is_some() && !self.dirty.contains(uri) {
+                self.dirty.push(uri.clone());
+            }
+        }
+    }
+
     /// Analyzes `uri` right away when it has no [`Analysis`] yet, so the first
     /// request after `didOpen` does not have to wait out the debounce.
     fn ensure(&mut self, uri: &Uri) {
@@ -1587,6 +1598,12 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
             let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
             let result = with_doc(docs, &uri, |analysis, text| {
                 let at = handlers::to_pos(text, pos);
+                // a directive's name is no control sequence: its card
+                if directive::name_hover(text.line(at.line), at.col).is_some()
+                    && let Some(card) = handlers::directive_card(analysis, text, &path, at)
+                {
+                    return Some(handlers::markdown_hover(card));
+                }
                 // the formula the cursor stands in, as the run set it, above the rest
                 let formula = handlers::formula_hover(analysis, text, &path, at);
                 // A control sequence's hover is kept for the next time,

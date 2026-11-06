@@ -20,6 +20,67 @@ pub const INVALID: &str = "directive-invalid";
 pub const SKIPPED: &str = "directive-skipped";
 pub const CODES: &[&str] = &[HOLDS, FAILS, OPEN, ASSUMED, INVALID, SKIPPED];
 
+/// The directives: name, argument as a usage line, what it does. Hover,
+/// completion, the docs and the messages below read this table.
+pub const DIRECTIVES: [(&str, &str, &str); 3] = [
+    ("assert", "{⟨condition⟩}", "Checks a condition on every path that reaches it."),
+    ("assume", "{⟨condition⟩}", "Drops the paths where a condition fails."),
+    ("configure", "{⟨key⟩=⟨value⟩, …}", "Changes settings of `satex.yaml` until the group ends."),
+];
+
+/// The forms an argument is written in, each with its grammar
+/// ([`clauses`], [`comparison`], [`has_unit`], [`Machine::operand`]).
+pub const FORMS: [(&str, &str); 5] = [
+    ("condition", "⟨test⟩s joined by `or` and `and`, `and` binding tighter, each maybe after `not`"),
+    ("test", "⟨operand⟩ ⟨relation⟩ ⟨operand⟩, or a TeX conditional such as `\\ifdefined\\x`"),
+    (
+        "operand",
+        "a TeX number (`\\value{page}`, `\\c@page`, `\\numexpr…`), a dimension when one side has a unit (`\\wd0 < 3cm`), `\\the⟨counter⟩` the counter's value (`\\thepage`)",
+    ),
+    ("key", "a setting of `satex.yaml`, dotted or written with `/`"),
+    ("value", "what the setting takes, as in `satex.yaml`"),
+];
+
+/// The relations of a comparison: what is written, the one `\ifnum` reads,
+/// whether its answer is negated (`<=` is not `>`), and what it tests.
+pub const RELATIONS: [(&str, char, bool, &str); 7] = [
+    ("<", '<', false, "less than"),
+    ("=", '=', false, "equal to"),
+    (">", '>', false, "greater than"),
+    ("<=", '>', true, "at most"),
+    (">=", '<', true, "at least"),
+    ("!=", '=', true, "not equal to"),
+    ("==", '=', false, "equal to"),
+];
+
+/// `\satex@⟨name⟩` with its argument, as hover and messages show it.
+pub fn usage(name: &str) -> Option<String> {
+    DIRECTIVES.iter().find(|(n, ..)| *n == name).map(|(n, arg, _)| format!("\\satex@{n}{arg}"))
+}
+
+/// The grammar of each form in `usage`, one line each: `⟨form⟩` and what it is.
+pub fn grammar(usage: &str) -> Vec<(String, String)> {
+    let relations = || RELATIONS.iter().map(|(r, ..)| format!("`{r}`")).collect::<Vec<_>>().join(" ");
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut todo = vec![usage.to_string()];
+    while let Some(text) = todo.pop() {
+        for form in text.split('⟨').skip(1).filter_map(|s| s.split_once('⟩')).map(|(f, _)| f) {
+            if out.iter().any(|(f, _)| f == form) {
+                continue;
+            }
+            let rule = match form {
+                "relation" => Some(format!("one of {}", relations())),
+                _ => FORMS.iter().find(|(f, _)| *f == form).map(|(_, g)| (*g).to_string()),
+            };
+            if let Some(rule) = rule {
+                todo.push(rule.clone());
+                out.push((form.to_string(), rule));
+            }
+        }
+    }
+    out
+}
+
 /// An operand of a comparison: its source text and its tokens.
 type Operand = (String, Vec<Token>);
 
@@ -103,24 +164,19 @@ impl Machine<'_> {
         }
     }
 
-    /// The directives, each with what it does: completion offers them.
-    pub const DIRECTIVES: [(&'static str, &'static str); 3] = [
-        ("assert", "Checks a condition on every path that reaches it."),
-        ("assume", "Drops the paths where a condition fails."),
-        ("configure", "Changes settings of `satex.yaml` until the group ends."),
-    ];
-
     fn directive(&mut self, d: &Directive) {
         let invalid = |m: &mut Self, message: String| m.diagnose(Severity::Info, INVALID, d.span, message);
         let Some((kind, arg)) = split_directive(&d.text) else {
-            return invalid(self, format!("`\\satex@{}` needs its argument in braces", d.text.trim()));
+            let name = d.text.split(|c: char| !c.is_ascii_alphabetic()).next().unwrap_or_default();
+            let form = usage(name).map(|u| format!(": `{u}`")).unwrap_or_default();
+            return invalid(self, format!("`\\satex@{}` needs its argument in braces{form}", d.text.trim()));
         };
         match kind {
             "assert" => self.assert(d.span, arg),
             "assume" => self.assume(d.span, arg),
             "configure" => self.configure(d.span, arg),
             _ => {
-                let names: Vec<&str> = Self::DIRECTIVES.iter().map(|(n, _)| *n).collect();
+                let names: Vec<String> = DIRECTIVES.iter().filter_map(|(n, ..)| usage(n)).collect();
                 invalid(self, format!("`\\satex@{kind}` is no directive: {}", names.join(", ")))
             }
         }
@@ -176,7 +232,11 @@ impl Machine<'_> {
         let mut cfg = self.cfg.clone().into_owned();
         for setting in top_level_split(text, ',').into_iter().filter(|s| !s.trim().is_empty()) {
             let Some((key, value)) = setting.split_once('=') else {
-                let message = format!("`{}` is no `key=value` setting", setting.trim());
+                let message = format!(
+                    "`{}` is no `key=value` setting: `{}`",
+                    setting.trim(),
+                    usage("configure").unwrap_or_default()
+                );
                 return self.diagnose(Severity::Info, INVALID, span, message);
             };
             let key = key.trim().replace('/', ".");
@@ -242,7 +302,8 @@ impl Machine<'_> {
         let Some((by, Meaning::Primitive(Primitive::If(cond)))) =
             first.and_then(|t| t.cs()).map(|s| (s, self.env.meaning(s)))
         else {
-            return Err("neither a comparison (`a < b`, `<=`, `=`, `!=`, `>=`, `>`) nor a TeX conditional".into());
+            let relations: Vec<&str> = RELATIONS.iter().map(|(r, ..)| *r).collect();
+            return Err(format!("neither a comparison (`a < b`, {}) nor a TeX conditional", relations.join(" ")));
         };
         let (holds, _) = self.test(cond, by, toks)?;
         Ok(Atom { holds, narrow: None, operands: None })
@@ -418,9 +479,8 @@ fn clauses(text: &str) -> Vec<Vec<(bool, &str)>> {
     out
 }
 
-/// `a rel b` outside braces and control sequence names: the operands, the
-/// relation `\ifnum` reads, and whether its answer is negated (`<=` is
-/// not `>`).
+/// `a rel b` outside braces and control sequence names: the operands, and
+/// the relation's `\ifnum` relation and negation ([`RELATIONS`]).
 fn comparison(text: &str) -> Option<(&str, char, bool, &str)> {
     let bytes = text.as_bytes();
     let (mut depth, mut i) = (0usize, 0);
@@ -434,18 +494,10 @@ fn comparison(text: &str) -> Option<(&str, char, bool, &str)> {
             b'{' => depth += 1,
             b'}' => depth = depth.saturating_sub(1),
             b'<' | b'>' | b'=' | b'!' if depth == 0 => {
-                let two = text.get(i..i + 2).unwrap_or_default();
-                let (relation, negate, width) = match two {
-                    "<=" => ('>', true, 2),
-                    ">=" => ('<', true, 2),
-                    "!=" => ('=', true, 2),
-                    "==" => ('=', false, 2),
-                    _ => match bytes[i] {
-                        b'!' => return None,
-                        b => (char::from(b), false, 1),
-                    },
-                };
-                return Some((&text[..i], relation, negate, &text[i + width..]));
+                // the longest relation written here; a lone `!` is none
+                let (r, relation, negate, _) =
+                    RELATIONS.iter().filter(|(r, ..)| text[i..].starts_with(r)).max_by_key(|(r, ..)| r.len())?;
+                return Some((&text[..i], *relation, *negate, &text[i + r.len()..]));
             }
             _ => {}
         }
@@ -520,6 +572,12 @@ mod tests {
         assert_eq!(comparison(r"\c@page<=5"), Some((r"\c@page", '>', true, "5")));
         assert_eq!(comparison(r"\value{a=b} != 2"), Some((r"\value{a=b} ", '=', true, " 2")));
         assert_eq!(comparison(r"\ifdefined\x"), None);
+    }
+
+    #[test]
+    fn the_assert_grammar_reaches_every_form() {
+        let forms: Vec<String> = grammar(&usage("assert").unwrap()).into_iter().map(|(f, _)| f).collect();
+        assert_eq!(forms, ["condition", "test", "operand", "relation"]);
     }
 
     #[test]

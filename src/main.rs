@@ -319,6 +319,7 @@ fn command_json(cmd: &clap::Command) -> serde_json::Value {
                 "value_names": a.get_value_names().map(|v| v.iter().map(|s| s.as_str()).collect::<Vec<_>>()),
                 "possible_values": a.get_possible_values().iter().filter(|p| !p.is_hide_set()).map(|p| p.get_name()).collect::<Vec<_>>(),
                 "help": a.get_help().map(|h| h.to_string()),
+                "defaults": a.get_default_values().iter().map(|v| v.to_string_lossy()).collect::<Vec<_>>(),
             })
         })
         .collect();

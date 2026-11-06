@@ -61,7 +61,7 @@ pub(crate) mod classes;
 pub(crate) use classes::decide;
 mod calls;
 mod checkpoint;
-pub(crate) mod directive;
+pub mod directive;
 pub use checkpoint::Checkpoints;
 pub(crate) use checkpoint::setup_key;
 pub(crate) mod explore;
@@ -1766,6 +1766,9 @@ pub struct Machine<'a> {
     /// Where the token read last stands: what a scan beginning now was
     /// opened by ([`Machine::scan_begin`]).
     read_at: Span,
+    /// The call whose arguments are being read: its code is the library's
+    /// where the call stands in a file not the project's.
+    pub(crate) reading: Option<Span>,
     /// LuaTeX's `\lastnamedcs`: the name the last `\csname`,
     /// `\begincsname` or `\ifcsname` built.
     pub(crate) last_named_cs: Option<Sym>,
@@ -2626,6 +2629,7 @@ impl<'a> Machine<'a> {
             cell_base: None,
             noexpanded: None,
             read_at: Span::default(),
+            reading: None,
             last_named_cs: None,
             name_slot: None,
             font_watch: FontWatch::default(),
@@ -6280,6 +6284,7 @@ will look undefined",
         let spelled = self.name(name).to_string();
         crate::analysis::observe::version_record(self, &spelled, &meaning);
         crate::analysis::observe::color_def(self, &spelled, &meaning, span);
+        crate::analysis::observe::list_item(self, &spelled, &meaning);
         if let Some(line) = self.source_extent(span) {
             self.out.graph.note_extent(span, line);
         }
@@ -9804,7 +9809,9 @@ will look undefined",
         // code may all be the document command's.
         let at = m.replacement_text.first().map_or(span, |t| t.span);
         let site = self.scratch.arg_site.replace(at);
+        let outer_reading = self.reading.replace(span);
         let arguments = self.read_arguments(&m);
+        self.reading = outer_reading;
         self.scratch.arg_site = site;
         crate::analysis::observe::between_angles(self, &m.parameter_text, &arguments);
         let abandoned = self.scan_abandoned;
@@ -11527,6 +11534,90 @@ will look undefined",
         Vec::new()
     }
 
+    /// One-of `t` met where literal `expected` is required: the rests of
+    /// the texts that begin with it, as one, where texts that cannot match
+    /// are refuted (library code only) and an empty text is followed by a
+    /// token other than `expected`. `None` where that does not hold.
+    fn empty_arm_refuted(&mut self, expected: Tok) -> bool {
+        if !self.reading.is_some_and(|at| !self.own_file(at.file)) {
+            return false;
+        }
+        let Some(next) = self.next_token() else { return false };
+        self.unread(next);
+        next.tok != expected
+            && !self.is_unknown_text(next, &[expected])
+            && self.one_of_members(next).is_none()
+            && self.typed_shape(next).is_none()
+            && !next.is_cat(Catcode::Space)
+    }
+
+    /// The texts `text` may hold after a first token `expected`, and
+    /// whether it may be empty: one-of and typed leaders opened, texts
+    /// that begin with another token gone. `None` past a few levels.
+    fn after_literal(&mut self, text: &[Token], expected: Tok, depth: u8) -> Option<(Vec<Rc<[Token]>>, bool)> {
+        let Some(&f) = text.first() else { return Some((Vec::new(), true)) };
+        if f.tok == expected {
+            return Some((vec![Rc::from(&text[1..])], false));
+        }
+        if depth > 3 {
+            return None;
+        }
+        if let Some(members) = self.one_of_members(f) {
+            let (mut rests, mut empty) = (Vec::new(), false);
+            for m in members.iter() {
+                let joined: Vec<Token> = m.iter().chain(&text[1..]).copied().collect();
+                let (r, e) = self.after_literal(&joined, expected, depth + 1)?;
+                rests.extend(r);
+                empty |= e;
+            }
+            return Some((rests, empty));
+        }
+        if let Some((class, one, cs)) = self.typed_shape(f) {
+            let mut rests = Vec::new();
+            if self.is_unknown_text(f, &[expected]) {
+                let len = self.text_len(f).map(|n| n.saturating_sub(1));
+                let mut rest = Vec::new();
+                if len != Some(0) {
+                    rest.push(self.unknown_text(Unk::Class(class, false, len, &cs), f.span));
+                }
+                rest.extend_from_slice(&text[1..]);
+                rests.push(Rc::from(rest));
+            }
+            if one {
+                return Some((rests, false));
+            }
+            let (r, e) = self.after_literal(&text[1..], expected, depth + 1)?;
+            rests.extend(r);
+            return Some((rests, e));
+        }
+        Some((Vec::new(), false))
+    }
+
+    /// One-of `t` met where literal `expected` is required and no path
+    /// may part: the texts it may hold after the literal, as one. Texts
+    /// that cannot begin with it raise "doesn't match" in library code
+    /// and are refuted there. `None` elsewhere, or where an empty text
+    /// could let the next token be the literal.
+    fn literal_rests(&mut self, t: Token, expected: Tok) -> Option<Vec<Token>> {
+        self.one_of_members(t)?;
+        if !self.reading.is_some_and(|at| !self.own_file(at.file)) {
+            return None;
+        }
+        let (mut fits, empty) = self.after_literal(&[t], expected, 0)?;
+        if empty && !self.empty_arm_refuted(expected) {
+            return None;
+        }
+        if fits.is_empty() {
+            return None;
+        }
+        fits.dedup_by(|a, b| a.iter().map(|t| t.tok).eq(b.iter().map(|t| t.tok)));
+        let first = fits[0].clone();
+        Some(match fits.iter().all(|p| p.iter().map(|t| t.tok).eq(first.iter().map(|t| t.tok))) {
+            true => first.to_vec(),
+            false => vec![self.one_of(fits, t.span)],
+        })
+    }
+
     fn match_parameter_text(&mut self, text: &ParameterText) -> Vec<Vec<Token>> {
         let mut args: Vec<Vec<Token>> = vec![Vec::new(); text.arity as usize];
         let mut i = 0;
@@ -11567,7 +11658,8 @@ will look undefined",
                     if let Some(t) = t
                         && self.is_unknown_text(t, &[*expected])
                     {
-                        match self.unknown_ends_argument(t) {
+                        let refuted = self.empty_arm_refuted(*expected);
+                        match if refuted { Some(true) } else { self.unknown_ends_argument(t) } {
                             Some(true) => {}
                             Some(false) => continue,
                             // No path may part: the text begins inside it, and
@@ -11583,6 +11675,16 @@ will look undefined",
                                 fuzzy.get_or_insert(t.span);
                             }
                         }
+                    }
+                    // No path may part on a one-of before a literal: the
+                    // texts that cannot begin with it are refuted (library
+                    // code compiles), the rest go on as one.
+                    if let Some(t) = t
+                        && let Some(rest) = self.literal_rests(t, *expected)
+                    {
+                        self.unread_all(&rest);
+                        i += 1;
+                        continue;
                     }
                     if let Some(t) = t
                         && (self.is_unknown_text(t, &[*expected]) || self.one_of_hides(t, &[*expected], None))
