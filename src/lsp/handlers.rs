@@ -195,6 +195,11 @@ pub(super) fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<Str
     let record = (switched.filter(|_| !key.starts_with('/')))
         .and_then(|full| query::resolve_key(analysis, &target, &full))
         .or_else(|| query::resolve_key(analysis, &target, key))?;
+    Some(key_markdown(analysis, &target, key, record))
+}
+
+/// The docs of `key` of `target`'s list from its [`query::resolve_key`] record: hover and completion.
+pub(super) fn key_markdown(analysis: &Analysis, target: &str, key: &str, record: Record) -> String {
     let text = |r: &Record, f: &str| r.get(f).and_then(Json::as_str).filter(|v| !v.is_empty()).map(str::to_string);
     let mut markdown = format!("### Key `{key}` of `\\{}`\n\n", target.trim_start_matches('\\'));
     // where the run defined the key (the package's file), not the call that loaded it
@@ -233,10 +238,10 @@ pub(super) fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<Str
     if let Some(comment) = text(&record, "comment") {
         markdown.push_str(&format!("{comment} {}\n\n", extracted("from the source comment")));
     }
-    let default = text(&record, "default").map(|d| match d.contains("pgfkeysvaluerequired") {
-        true => "needs a value".to_string(),
-        false => format!("default `{d}`"),
-    });
+    if let Some(does) = key_does(&record) {
+        markdown.push_str(&format!("{does}\n\n"));
+    }
+    let default = key_default(&record);
     let kind = text(&record, "kind").filter(|k| k != "code" && k != "initial");
     let initial = (text(&record, "kind").as_deref() == Some("initial"))
         .then(|| text(&record, "value").map(|v| format!("initial `{v}`")))
@@ -260,7 +265,7 @@ pub(super) fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<Str
             .iter()
             .filter_map(|r| text(r, "key")?.strip_prefix(&format!("{full}/")).map(str::to_string))
             .filter(|c| !c.starts_with('.') && !c.contains('/'))
-            .chain(query::key_values(analysis, &target, key))
+            .chain(query::key_values(analysis, target, key))
             .collect();
         if !choices.is_empty() {
             markdown.push_str(&format!(
@@ -276,7 +281,42 @@ pub(super) fn key_hover(analysis: &Analysis, line: &str, col: u32) -> Option<Str
     if let Some((doc, url)) = mined.and_then(|m| m.link) {
         markdown.push_str(&format!("[{doc}]({url})\n\n"));
     }
-    Some(markdown)
+    markdown
+}
+
+/// A key's default in words: `needs a value` where none is given (pgfkeys'
+/// `\pgfkeysvaluerequired`, a keyval key defined without `[default]`).
+fn key_default(r: &Record) -> Option<String> {
+    match r.get("default").and_then(Json::as_str) {
+        Some(d) if d.contains("pgfkeysvaluerequired") => Some("needs a value".into()),
+        Some("") => Some("default empty".into()),
+        Some(d) => Some(format!("default `{d}`")),
+        None => r.contains_key("store").then(|| "needs a value".into()),
+    }
+}
+
+/// What a key's code does with the value (`#1`), read off the code the run stored.
+fn key_does(r: &Record) -> Option<String> {
+    if !matches!(r.get("kind").and_then(Json::as_str).unwrap_or("code"), "code" | "code args") {
+        return None;
+    }
+    let code = r.get("value")?.as_str()?.trim();
+    let set = regex::Regex::new(r"^\\[gex]?def\s*(\\[A-Za-z@]+)\s*\{#1\}$").expect("valid regex");
+    Some(match set.captures(code) {
+        _ if code.is_empty() => "Its code is empty: the value is read and dropped.".into(),
+        Some(c) => format!("Sets `{}` to the value.", &c[1]),
+        None if code.chars().count() > 160 => {
+            format!("Runs `{}…` on the value `#1`.", code.chars().take(160).collect::<String>())
+        }
+        None => format!("Runs `{code}` on the value `#1`."),
+    })
+}
+
+/// A key item's detail: its kind, default and family.
+fn key_detail(r: &Record) -> String {
+    let f = |k: &str| r.get(k).and_then(Json::as_str).filter(|v| !v.is_empty() && *v != "code").map(str::to_string);
+    let default = key_default(r).map(|d| d.replace('`', ""));
+    [f("kind"), default, f("family")].into_iter().flatten().collect::<Vec<_>>().join(" · ")
 }
 
 /// The command or environment whose key list `arg` is: `\draw[…]`, `\tikzset{…}`, `\begin{x}[…]`.
@@ -1760,10 +1800,16 @@ fn takes_value(r: &Record) -> bool {
 }
 
 /// A key's completion: the key, then `=` with the cursor after it where it takes a value.
-fn key_item(analysis: &Analysis, mut it: CompletionItem, key: &str, r: &Record) -> CompletionItem {
-    if let Some(path) = r.get("key").and_then(Json::as_str) {
+fn key_item(analysis: &Analysis, mut it: CompletionItem, owner: &str, key: &str, r: &Record) -> CompletionItem {
+    let path = r.get("key").and_then(Json::as_str);
+    if let Some(path) = path {
         it = with_preview(it, crate::queries::preview::of_key(analysis, path, None));
     }
+    // what resolve documents: the list's owner and the key, by its path where it has one
+    let named = path.filter(|p| p.starts_with('/')).unwrap_or(key);
+    let data = it.data.get_or_insert_with(|| serde_json::json!({}));
+    data["key"] = serde_json::json!(named);
+    data["owner"] = serde_json::json!(owner);
     if takes_value(r) {
         it.insert_text = Some(format!("{}=$1", key.replace('$', "\\$")));
         it.insert_text_format = Some(InsertTextFormat::SNIPPET);
@@ -1962,9 +2008,8 @@ pub(super) fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) ->
         out
     };
     let children = |dir: &str| below(dir, 1);
-    let detail = |r: &Record| {
-        ["kind", "default"].iter().map(|f| field(r, f)).filter(|d| !d.is_empty()).collect::<Vec<_>>().join("  ")
-    };
+    let detail = key_detail;
+    let owner = key_list_owner(arg).unwrap_or_default();
     let under = |key: &str| -> Vec<String> {
         match key.starts_with('/') {
             true => vec![format!("{key}/")],
@@ -2004,6 +2049,7 @@ pub(super) fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) ->
                 let mut it = key_item(
                     analysis,
                     item(key.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank),
+                    &owner,
                     &key,
                     &r,
                 );
@@ -2037,6 +2083,7 @@ pub(super) fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) ->
                     key_item(
                         analysis,
                         item(key.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank),
+                        &owner,
                         &key,
                         &r,
                     )
@@ -2060,7 +2107,13 @@ pub(super) fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) ->
                 .filter(|(n, _)| n.contains('/'))
         });
         keys.extend(deeper.map(|(name, r)| {
-            key_item(analysis, item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 99_999), &name, &r)
+            key_item(
+                analysis,
+                item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 99_999),
+                &owner,
+                &name,
+                &r,
+            )
         }));
         return keys;
     }
@@ -2070,7 +2123,13 @@ pub(super) fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) ->
         })
         .map(|(name, r)| {
             let rank = name.matches('/').count();
-            key_item(analysis, item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank), &name, &r)
+            key_item(
+                analysis,
+                item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank),
+                &owner,
+                &name,
+                &r,
+            )
         })
         .collect()
 }
@@ -2108,19 +2167,11 @@ fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
             let family = r.get("family").and_then(Json::as_str).unwrap_or_default();
             let key = r.get("key")?.as_str()?;
             let key = key.strip_prefix(family).map_or(key, |k| k.trim_start_matches('/'));
-            let default = r.get("default").and_then(Json::as_str).filter(|d| !d.is_empty());
-            let kind = r.get("kind").and_then(Json::as_str).filter(|k| *k != "code");
-            // pgfkeys' marker for a key that needs a value reads as words
-            let default = default.map(|d| {
-                if d.contains("pgfkeysvaluerequired") { "needs a value".to_string() } else { format!("default {d}") }
-            });
-            let ty = r.get("type").and_then(Json::as_str).map(str::to_string);
-            let detail = [ty, kind.map(str::to_string), default, Some(family.to_string())];
-            let detail: Vec<String> = detail.into_iter().flatten().filter(|d| !d.is_empty()).collect();
             let rank = r.get("rank").and_then(Json::as_u64).unwrap_or(0) as usize * 10_000 + i.min(9_999);
             Some(key_item(
                 analysis,
-                item(key.to_string(), CompletionItemKind::PROPERTY, Some(detail.join("  ")), rank),
+                item(key.to_string(), CompletionItemKind::PROPERTY, Some(key_detail(r)), rank),
+                name,
                 key,
                 r,
             ))

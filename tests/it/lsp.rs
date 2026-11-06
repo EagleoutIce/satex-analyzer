@@ -3258,6 +3258,29 @@ fn hovering_a_graphics_key_shows_it() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// A graphics key's item says in words what it takes, and resolves to docs read off its code.
+#[test]
+fn graphics_key_items_explain_themselves() {
+    let text = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\includegraphics[]{example-image}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("gin-complete", text, &[]);
+    let items = complete(&mut server, &uri, 3, col(text, 3, "]", 0));
+    let find = |label: &str| items.iter().find(|i| i["label"] == label).cloned().expect(label);
+    let alt = find("alt");
+    assert!(alt["detail"].as_str().is_some_and(|d| d.starts_with("needs a value") && d.ends_with("Gin")), "{alt}");
+    let clip = find("clip");
+    assert!(clip["detail"].as_str().is_some_and(|d| d.starts_with("default true")), "{clip}");
+    let docs = |item: Value, server: &mut Server| {
+        let id = server.request("completionItem/resolve", item);
+        server.response(id)["result"]["documentation"]["value"].as_str().unwrap_or_default().to_string()
+    };
+    let width = docs(find("width"), &mut server);
+    assert!(width.contains("Sets `\\Gin@ewidth` to the value") && width.contains("graphicx.sty:"), "{width}");
+    let alt = docs(alt, &mut server);
+    assert!(alt.contains("Key `alt`") && alt.contains("needs a value") && alt.contains("code is empty"), "{alt}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// Key lists: completion with nothing typed after `,`, a family that goes on with its keys, hover
 /// docs on a family; switched off, no key items.
 #[test]

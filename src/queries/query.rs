@@ -6794,7 +6794,8 @@ pub fn resolve_key(analysis: &Analysis, cmd: &str, key: &str) -> Option<Record> 
             })?
         }
     };
-    let call = record.get("defined").and_then(Json::as_object).cloned();
+    // a keyval key's own record is its defining line
+    let call = record.get("defined").and_then(Json::as_object).cloned().or_else(|| Some(record.clone()));
     let name = text(&record, "key").rsplit('/').next().unwrap_or(key).to_string();
     let site = call.as_ref().filter(|_| !record.contains_key("unknown")).and_then(|c| key_line(c, &name));
     if let Some(site) = &site {
@@ -6909,6 +6910,9 @@ fn family_keys(analysis: &Analysis, dialect: KeyDialect<'_>, families: Vec<Strin
                     json!(crate::analysis::roles::Ty::Key(crate::analysis::roles::KeyKind::Option).to_string()),
                 );
                 record.insert("default".into(), default.map_or(Json::Null, |d| json!(d)));
+                // the key's code, as pgfkeys records carry theirs
+                let code = def.mac.as_ref().map(|m| detokenize(&m.replacement_text, &analysis.interner));
+                record.insert("value".into(), code.map_or(Json::Null, |c| json!(c)));
                 record.insert("package".into(), symbol(analysis, def.package));
                 record
             })

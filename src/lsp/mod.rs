@@ -1655,8 +1655,11 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
                 lsp_types::CompletionResponse::Array(items) => items,
                 lsp_types::CompletionResponse::List(list) => &mut list.items,
             };
-            for item in items.iter_mut().filter(|i| i.data.is_none()) {
-                item.data = Some(serde_json::json!({ "uri": uri.as_str() }));
+            for item in items.iter_mut() {
+                let data = item.data.get_or_insert_with(|| serde_json::json!({}));
+                if data.is_object() && data.get("uri").is_none() {
+                    data["uri"] = serde_json::json!(uri.as_str());
+                }
             }
             let _ = reply.send(result);
         }
@@ -1664,7 +1667,16 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
             // A command's documentation is its hover, kept or made from the last analysis.
             let uri = item.data.as_ref().and_then(|d| d["uri"].as_str()).and_then(|u| u.parse::<Uri>().ok());
             let name = format!("\\{}", item.label.trim_start_matches('\\'));
+            // a key's documentation is its key hover
+            let field = |f: &str| item.data.as_ref().and_then(|d| d[f].as_str()).map(str::to_string);
+            let keyed = field("owner").zip(field("key"));
             let markdown = uri.and_then(|uri| {
+                if let Some((owner, key)) = &keyed {
+                    return with_doc(docs, &uri, |analysis, _| {
+                        let record = crate::queries::query::resolve_key(analysis, owner, key)?;
+                        Some(handlers::key_markdown(analysis, owner, key.rsplit('/').next().unwrap_or(key), record))
+                    });
+                }
                 let key = (uri.clone(), name.clone());
                 hovers.lock().ok().and_then(|h| h.get(&key).cloned()).or_else(|| {
                     with_doc(docs, &uri, |analysis, _| {
