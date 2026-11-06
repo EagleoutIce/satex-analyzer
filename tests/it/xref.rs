@@ -175,3 +175,59 @@ fn a_name_given_on_some_paths_only_is_never_a_warning() {
     let found = cref_findings("cref-maybe", preamble, "See \\cref{t:a}.");
     assert!(found.iter().all(|f| f.0 == "hint"), "{found:?}");
 }
+
+/// The edits of `hand-written-reference` on a document with these lists.
+fn item_fixes(name: &str, preamble: &str, lists: &str, text: &str) -> Vec<String> {
+    let body = format!("{preamble}\\begin{{document}}\n{lists}\n{text}\n\\end{{document}}\n");
+    replacements(&records(name, &body, "", "hand-written-reference"))
+}
+
+#[test]
+fn a_typed_item_number_labels_the_item() {
+    let lists = "\\begin{enumerate}\n\\item a\n\\item b\n\\end{enumerate}";
+    let found = item_fixes("item-plain", "\\usepackage{cleveref}\n", lists, "See item 2.");
+    if !crate::support::installed() {
+        return;
+    }
+    assert_eq!(found, [r"\label{item:2}", r"\cref{item:2}"]);
+}
+
+#[test]
+fn an_inline_list_item_is_labelled_too() {
+    let lists = "\\begin{enumerate*}[label=(\\alph*)]\n\\item a \\item b\n\\end{enumerate*}";
+    let found =
+        item_fixes("item-inline", "\\usepackage[inline]{enumitem}\n\\usepackage{cleveref}\n", lists, "In item (b).");
+    if !crate::support::installed() {
+        return;
+    }
+    assert_eq!(found, [r"\label{item:b}", r"\cref{item:b}"]);
+}
+
+#[test]
+fn a_label_format_gives_its_own_word() {
+    let lists = "\\begin{enumerate}[label=Step~\\arabic*]\n\\item a\n\\item b\n\\end{enumerate}";
+    let found = item_fixes("item-step", "\\usepackage{enumitem}\n", lists, "Then step 2 follows.");
+    if !crate::support::installed() {
+        return;
+    }
+    assert_eq!(found, [r"\label{item:step2}", r"\ref{item:step2}"]);
+}
+
+#[test]
+fn a_nested_item_number_names_both_levels() {
+    let lists = "\\begin{enumerate}\n\\item a\n\\item b\n\\begin{enumerate}\n\\item c\n\\item d\n\\end{enumerate}\n\\end{enumerate}";
+    let found = item_fixes("item-nested", "\\usepackage{cleveref}\n", lists, "See item 2b.");
+    if !crate::support::installed() {
+        return;
+    }
+    assert_eq!(found, [r"\label{item:2b}", r"\cref{item:2b}"]);
+}
+
+#[test]
+fn a_number_no_item_prints_or_an_item_with_its_own_label_is_left_alone() {
+    let lists = "\\begin{enumerate}[label=Step~\\arabic*]\n\\item a\n\\item[x] b\n\\end{enumerate}\n\
+                 \\begin{enumerate}\n\\item c\\label{it:c}\n\\end{enumerate}";
+    let text = "See step 3, item 7 and in 1.) here.";
+    let found = item_fixes("item-none", "\\usepackage{enumitem}\n\\usepackage{cleveref}\n", lists, text);
+    assert!(found.is_empty(), "{found:?}");
+}

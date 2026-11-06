@@ -4,6 +4,7 @@
 
 use crate::fixed::HashSet;
 
+use crate::analysis::facts::ListItem;
 use crate::analysis::machine::Analysis;
 use crate::engine::builtins::OccKind;
 use crate::engine::tex::{Catcode, Span, Tok};
@@ -31,7 +32,14 @@ verbatim or a comment is never read, and neither is a number `\\ref` set.
 
 Where one label of that kind prints that very number, the fix names it:
 `\\cref` with cleveref loaded, else `\\autoref` with hyperref, else
-`Section~\\ref{...}`.  Otherwise the finding asks for a label.",
+`Section~\\ref{...}`.  Otherwise the finding asks for a label.
+
+An `\\item` of a numbered list counts too, labelled or not, in enumitem's
+inline lists as well: `see item (b)` or `in step 2`, where one item prints
+`(b)` or `Step~2`.  Its words are the list counter's (`enumi`, its cleveref
+name `item`) and the word its label format writes (`Step`).  The fix puts a
+`\\label` right after that `\\item` and refers to it.  A number with no word
+before it, `in 3.)`, is never read.",
         references: &[Ref { source: Source::Companion, at: "2.4" }, Ref { source: Source::Cleveref, at: "2" }],
         fixes: &[Applicability::Unsafe],
         engines: &[],
@@ -112,12 +120,128 @@ fn label_text(analysis: &Analysis, key: &str) -> Option<String> {
     Some(crate::engine::tex::text_of(&toks[1..end], &analysis.interner))
 }
 
+/// The document's numbered items that no `\label` names, each once:
+/// the ones every run made with one text.
+fn unlabelled_items(analysis: &Analysis) -> Vec<&ListItem> {
+    let mut items: Vec<&ListItem> = Vec::new();
+    let mut doubtful: HashSet<Span> = HashSet::default();
+    for item in &analysis.facts.items {
+        match items.iter().find(|i| i.span == item.span) {
+            Some(i) if i.label != item.label => _ = doubtful.insert(item.span),
+            Some(_) => {}
+            None => items.push(item),
+        }
+        if !item.certain {
+            doubtful.insert(item.span);
+        }
+    }
+    items.retain(|i| !doubtful.contains(&i.span));
+    items.sort_by_key(|i| (i.span.file, i.span.line, i.span.col));
+    // A label between an item and the next one that prints the item's text names it.
+    let labels: Vec<(Span, &str)> = analysis
+        .facts
+        .occurrences
+        .iter()
+        .filter(|o| o.kind == OccKind::Label)
+        .map(|o| (o.span, o.key.as_str()))
+        .collect();
+    let place = |s: Span| (s.file, s.line, s.col);
+    let ends: Vec<Option<Span>> = (0..items.len()).map(|k| items.get(k + 1).map(|i| i.span)).collect();
+    items
+        .into_iter()
+        .zip(ends)
+        .filter(|(item, end)| {
+            !labels.iter().any(|(at, key)| {
+                at.file == item.span.file
+                    && place(*at) > place(item.span)
+                    && end.is_none_or(|e| place(*at) < place(e))
+                    && label_text(analysis, key).as_deref() == Some(item.label.as_str())
+            })
+        })
+        .map(|(item, _)| item)
+        .collect()
+}
+
+/// An item's label split into the word its format writes and the number:
+/// `Step~2` into `Step` and `2`; `(b)` has no word.
+fn item_parts(label: &str) -> (Option<&str>, &str) {
+    let word_end = label.find(|c: char| !c.is_alphabetic()).unwrap_or(label.len());
+    match label[word_end..].strip_prefix(['~', ' ', '\u{a0}']) {
+        Some(number) if word_end >= 2 => (Some(&label[..word_end]), number),
+        _ => (None, label),
+    }
+}
+
+/// Whether `\ref` to the item prints `number`, typed in parentheses or not.
+fn item_prints(item: &ListItem, number: &str, paren: bool) -> bool {
+    let (_, printed) = item_parts(&item.label);
+    printed == number || (paren && printed == format!("({number})"))
+}
+
+/// A typed reference to one unlabelled item: label the item, refer to it.
+fn refer_to_item(
+    report: &mut Report,
+    (at, end): (Span, u32),
+    (word, number, paren): (&str, &str, bool),
+    item: &ListItem,
+    cleveref: bool,
+) {
+    let analysis = report.analysis();
+    let edits = report.edits();
+    let typed = if paren { format!("{word} ({number})") } else { format!("{word} {number}") };
+    let key: String = item.label.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
+    let key = format!("item:{key}");
+    let taken = analysis.facts.occurrences.iter().any(|o| o.kind == OccKind::Label && o.key == key);
+    let own = item_parts(&item.label).0.is_some_and(|w| names(&w.to_lowercase(), &word.to_lowercase()));
+    let call = if own {
+        // The label prints the word itself: `Step~2`.
+        format!(r"\ref{{{key}}}")
+    } else if cleveref {
+        let upper = word.chars().next().is_some_and(char::is_uppercase);
+        format!("{}{{{key}}}", if upper { r"\Cref" } else { r"\cref" })
+    } else if paren && !item.label.starts_with('(') {
+        format!(r"{word}~(\ref{{{key}}})")
+    } else {
+        format!(r"{word}~\ref{{{key}}}")
+    };
+    // The label goes right after `\item`; never into `\item[…]`.
+    let label_edit = edits.text(item.span.file).and_then(|(path, source)| {
+        let line = source.line(item.span.line);
+        let rest: String = line.chars().skip(item.span.col as usize - 1).collect();
+        let after = rest.strip_prefix(r"\item")?;
+        if after.starts_with(|c: char| c.is_alphabetic() || c == '@') || after.trim_start().starts_with('[') {
+            return None;
+        }
+        let col = item.span.col + r"\item".len() as u32;
+        Some(Edit {
+            path,
+            start: Pos::new(item.span.line, col),
+            end: Pos::new(item.span.line, col),
+            replacement: format!(r"\label{{{key}}}"),
+        })
+    });
+    let use_edit = edits.text(at.file).map(|(path, _)| Edit {
+        path,
+        start: Pos::new(at.line, at.col),
+        end: Pos::new(at.line, end),
+        replacement: call.clone(),
+    });
+    let fix = match (taken, label_edit, use_edit) {
+        (false, Some(label), Some(using)) => Some(vec![label, using]),
+        _ => None,
+    };
+    let message = format!("`{typed}` is typed by hand, and the item at {} prints it", report.place(item.span));
+    let fix = Fix::new(format!(r"label the item `\label{{{key}}}` and write `{call}`"), Applicability::Unsafe, fix);
+    report.add_fix(at, "item", message, fix);
+}
+
 /// Whether `word` is `name`, or an abbreviation of it with a period.
 fn names(name: &str, word: &str) -> bool {
     word == name || word.strip_suffix('.').is_some_and(|stem| stem.len() >= 2 && name.starts_with(stem))
 }
 
-/// The number or appendix letter at `at`, with its end: `2`, `3.1`, `A`.
+/// The number or appendix letter at `at`, with its end: `2`, `3.1`, `2b`,
+/// `A`, or `b` in parentheses.
 fn number_at(chars: &[char], at: usize) -> Option<usize> {
     let c = *chars.get(at)?;
     let mut end = at + 1;
@@ -126,6 +250,17 @@ fn number_at(chars: &[char], at: usize) -> Option<usize> {
             && (chars[end].is_ascii_digit()
                 || (chars[end] == '.' && chars.get(end + 1).is_some_and(char::is_ascii_digit)))
         {
+            end += 1;
+        }
+        // A nested item's number: `2b`.
+        if chars.get(end).is_some_and(char::is_ascii_lowercase)
+            && !chars.get(end + 1).is_some_and(|c| c.is_alphanumeric())
+        {
+            end += 1;
+        }
+    } else if c.is_ascii_lowercase() && at > 0 && chars[at - 1] == '(' {
+        // An item's letter or roman number in parentheses: `(b)`, `(ii)`.
+        while chars.get(end).is_some_and(char::is_ascii_lowercase) {
             end += 1;
         }
     } else if !c.is_ascii_uppercase() {
@@ -142,7 +277,8 @@ fn hand_written_reference(report: &mut Report) {
     let cleveref = loaded(analysis, "cleveref");
     // Only a kind the document labels is one it could refer to.
     let kinds: HashSet<&str> = counters.values().map(String::as_str).collect();
-    if kinds.is_empty() {
+    let items = unlabelled_items(analysis);
+    if kinds.is_empty() && items.is_empty() {
         return;
     }
     let chars: Vec<char> = view.chars().chars().collect();
@@ -210,7 +346,17 @@ fn hand_written_reference(report: &mut Report) {
             })
             .collect();
         let letter = number.chars().all(char::is_alphabetic);
-        if named.is_empty() || (letter && !appendix && !named.contains(&"appendix")) {
+        let named = match letter && !appendix && !named.contains(&"appendix") {
+            true => Vec::new(),
+            false => named,
+        };
+        let item_word = |item: &ListItem| {
+            let own = item_parts(&item.label).0.is_some_and(|w| names(&w.to_lowercase(), &word.to_lowercase()));
+            own || names_counter(analysis, cleveref, &item.counter, &word)
+        };
+        let matched: Vec<&ListItem> =
+            items.iter().copied().filter(|i| item_word(i) && item_prints(i, &number, paren)).collect();
+        if named.is_empty() && matched.is_empty() {
             continue;
         }
         let mut labels: Vec<&str> = counters
@@ -221,10 +367,18 @@ fn hand_written_reference(report: &mut Report) {
             .map(|(key, _)| *key)
             .collect();
         labels.sort_unstable();
-        findings.push((first, first.col + (end - start) as u32, word, number, paren, labels));
+        let item = match (labels.as_slice(), matched.as_slice()) {
+            ([], [item]) => Some(*item),
+            _ => None,
+        };
+        findings.push((first, first.col + (end - start) as u32, word, number, paren, labels, item));
         i = end;
     }
-    for (at, end, word, number, paren, labels) in findings {
+    for (at, end, word, number, paren, labels, item) in findings {
+        if let Some(item) = item {
+            refer_to_item(report, (at, end), (&word, &number, paren), item, cleveref);
+            continue;
+        }
         let typed = match paren {
             true => format!("{word} ({number})"),
             false => format!("{word} {number}"),
