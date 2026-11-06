@@ -1828,8 +1828,17 @@ def recapture(out):
     began = time.monotonic()
     # two browsers at most (each takes about 3 GB with the engine), one per entry, the next starting as one ends
     names, url = list(due), f"http://127.0.0.1:{server.server_address[1]}/"
-    run = lambda part: subprocess.run(["node", str(SITE / "showcase/capture.mjs"), url, str(img)],
-                                      env=dict(os.environ, ONLY=",".join(part), CHROME=str(chrome)), capture_output=True, text=True).stdout
+    print(f"showcase: retaking {len(names)} shots whose page code, example or entry changed: {', '.join(names)}", file=sys.stderr)
+    finished = [0]
+
+    def run(part):
+        t0 = time.monotonic()
+        out = subprocess.run(["node", str(SITE / "showcase/capture.mjs"), url, str(img)],
+                             env=dict(os.environ, ONLY=",".join(part), CHROME=str(chrome)), capture_output=True, text=True).stdout
+        finished[0] += 1
+        got = sorted(set(re.findall(r"^ok +\S+ (light|dark)", out, re.M)))
+        print(f"showcase: [{finished[0]}/{len(names)}] {part[0]}: {' and '.join(got) or 'failed'} in {time.monotonic() - t0:.0f} s", file=sys.stderr)
+        return out
     try:
         with concurrent.futures.ThreadPoolExecutor(2) as pool:
             outputs = list(pool.map(run, [[n] for n in names]))
