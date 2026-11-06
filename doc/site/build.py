@@ -1745,12 +1745,9 @@ def showcase(out, live):
                             f'data-src="showcase/{stem}-{scheme}"></video>')
         return "".join(pics)
 
-    # a capture of a dialog has its own title bar: no window around it
-    dialogs = re.findall(r'<dialog id="([^"]+)"', (SITE / "play.html").read_text())
-    def window(stem, alt, label, crop=""):
-        if isinstance(crop, str) and (crop.startswith("dialog") or crop.lstrip("#") in dialogs):
-            return f'<div class="shot-win shot-dialog">{pictures(stem, alt)}</div>'
-        return f'<div class="shot-win" data-label="{html.escape(label)}">{pictures(stem, alt)}</div>'
+    # the capture as cut out, no title bar around it
+    def window(stem, alt):
+        return f'<div class="shot-win">{pictures(stem, alt)}</div>'
 
     figures, cards = [], []
     for s in spec["shots"]:
@@ -1759,7 +1756,7 @@ def showcase(out, live):
             # a live editor in the same frame: until site.js starts the engine in view, the build's run of
             # its text stands there, findings underlined and the typeset text beside
             lines, data = live[name]
-            figures.append(f'<figure class="shot shot-big shot-live" id="shot-{name}" data-name="{html.escape(s["file"])}"><div class="shot-stage"><div class="shot-win" data-label="{html.escape(s["file"])} · live">'
+            figures.append(f'<figure class="shot shot-big shot-live" id="shot-{name}" data-name="{html.escape(s["file"])}"><div class="shot-stage"><div class="shot-win">'
                            f'<div class="live-grid"><pre class="src live-src live-poster"><code>{lines}</code></pre><div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div></div>'
                            f'<p class="muted live-status" aria-live="polite">{html.escape(s["status"])}</p></div></div>'
                            f'<script type="application/json" class="ex-data">{data}</script>'
@@ -1772,15 +1769,14 @@ def showcase(out, live):
         w = s.get("open")
         hash = s["file"] + "".join(f"&{k}={urllib.parse.quote(str(v), safe='')}" for k, v in zip(("widget", "at", "k"), w or []))
         try_it = f"play/index.html#{hash}"
-        label = s.get("window", s["file"])
         tags = s.get("tags", ["Before", "After"])
         # two captures of one dialog, the first behind the second and offset: its two pages at once
         if s.get("stack") and (src / f"{name}-back-light.png").exists():
-            stage = f'<div class="shot-stack">{window(f"{name}-back", "", label, s.get("crop"))}{window(name, alt, label, s.get("crop"))}</div>'
+            stage = f'<div class="shot-stack">{window(f"{name}-back", "")}{window(name, alt)}</div>'
         else:
-            stage = (f'<div class="shot-pair"><div><span class="shot-tag">{tags[0]}</span>{window(f"{name}-before", "", label)}</div>'
-                     f'<div><span class="shot-tag">{tags[1]}</span>{window(name, alt, label, s.get("crop"))}</div></div>'
-                     if (src / f"{name}-before-light.png").exists() else window(name, alt, label, s.get("crop")))
+            stage = (f'<div class="shot-pair"><div><span class="shot-tag">{tags[0]}</span>{window(f"{name}-before", "")}</div>'
+                     f'<div><span class="shot-tag">{tags[1]}</span>{window(name, alt)}</div></div>'
+                     if (src / f"{name}-before-light.png").exists() else window(name, alt))
         (figures if s.get("big") or s.get("wide") else cards).append(
             f'<figure class="shot{" shot-big" if s.get("big") or s.get("wide") else ""}{" shot-wide" if s.get("wide") else ""}"><a class="shot-stage" href="{html.escape(try_it)}" tabindex="-1">{stage}</a>'
             f'<figcaption><h3>{html.escape(s["title"])}</h3><p>{html.escape(s["caption"])}</p>'

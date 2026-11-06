@@ -8,7 +8,7 @@
    "title": "Try it right here",
    "caption": "Edit this document. Hover the length or the [ht] to see what they do, and fix the dash SaTeX underlines. The text on the right follows as you type.",
    "status": "Computed when this page was built. SaTeX starts in your browser when the window comes into view (about 10 MB, loaded once).",
-   "text": "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\section{Results}\nThe runs took 10-12 seconds on a warm cache.\n\\vspace{12pt}\n\\begin{figure}[ht]\n  \\centering\n  \\includegraphics[width=0.6\\linewidth]{example-image}\n  \\caption{The warm cache.}\n\\end{figure}\n\\end{document}\n"
+   "text": "\\documentclass{article}\n\\begin{document}\n\\section{Results}\nThe runs took 10-12 seconds on a warm cache.\n\\vspace{12pt}\n\\begin{figure}[ht]\n  \\centering\n  \\rule{0.6\\linewidth}{2cm}\n  \\caption{The warm cache.}\n\\end{figure}\n\\end{document}\n"
   },
   {
    "name": "image",
@@ -182,7 +182,6 @@
    "file": "spacing.tex",
    "title": "PDF, synced",
    "big": true,
-   "window": "spacing.tex — PDF",
    "caption": "Compile with your own TeX and the PDF sits beside the source. Findings and boxes show on the page, and a click jumps to the line. Compiling needs TeX and the local playground server.",
    "open": [
     "panel",
@@ -245,7 +244,6 @@
    "file": "expand.tex",
    "title": "Step through an expansion",
    "big": true,
-   "window": "expand.tex · trace",
    "caption": "Watch TeX expand a macro one step at a time. Each step shows its result and every name in force at that moment, groups and conditionals included.",
    "open": [
     "trace",
@@ -308,7 +306,6 @@
    "file": "paper.tex",
    "title": "Refactorings",
    "wide": true,
-   "window": "paper.tex",
    "caption": "Right-click a table to turn it into booktabs or to align its numbers with siunitx. The rule lines are rewritten for you.",
    "steps": [
     {
@@ -362,11 +359,10 @@
    "file": "proofs.tex",
    "title": "Quick fixes",
    "wide": true,
-   "window": "proofs.tex",
    "caption": "Typed “Section 1” by hand? SaTeX finds the label and writes the reference for you.",
    "steps": [
     {
-     "until": "[...document.querySelectorAll('#lsp-diagnostics li')].some((l) => /hand-written-reference/.test(l.textContent + (l.dataset.code ?? '')))",
+     "until": "[...document.querySelectorAll('#lsp-diagnostics li')].some((l) => /hand-written-reference|typed by hand/.test(l.textContent + (l.dataset.code ?? '') + (l.title ?? '')))",
      "ms": 60000
     },
     {
@@ -413,7 +409,6 @@
    "file": "runaway.tex",
    "title": "Errors at their cause",
    "wide": true,
-   "window": "runaway.tex",
    "tags": [
     "pdflatex",
     "SaTeX"
@@ -467,7 +462,6 @@
    "file": "clones.tex",
    "title": "Clones",
    "wide": true,
-   "window": "clones.tex",
    "caption": "Not just copy and paste: SaTeX finds blocks that differ only in their values and offers one macro for them.",
    "open": [
     "panel",
@@ -475,11 +469,11 @@
    ],
    "viewport": [
     1100,
-    560
+    760
    ],
    "steps": [
     {
-     "until": "[...document.querySelectorAll('#lsp-diagnostics li')].some((l) => /clone|differ only/i.test(l.textContent + (l.dataset.code ?? '')))",
+     "until": "[...document.querySelectorAll('#lsp-diagnostics li')].some((l) => /clones|S053|differ only/i.test(l.textContent + (l.dataset.code ?? '') + (l.title ?? '')))",
      "ms": 60000
     },
     {

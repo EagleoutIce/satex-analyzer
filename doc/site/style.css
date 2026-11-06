@@ -1941,11 +1941,10 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
    window frame (CSS, so it follows the theme and costs no bytes). The big ones reach into the page margin, alternating sides */
 .shots { --out: clamp(0px, (100vw - 64rem) / 2 - 2rem, 10rem); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s96); }
 /* the small entries: three to a row, a last row of one or two shared out so no card stands alone beside a hole */
-.cards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--s48) var(--s32); }
-.cards > .shot { grid-column: span 2; }
-.cards:has(> :last-child:nth-child(3n + 1)) > :nth-last-child(-n + 4), .cards:has(> :last-child:nth-child(3n + 2)) > :nth-last-child(-n + 2) { grid-column: span 3; }
-@media (max-width: 52rem) { .cards > .shot, .cards:has(> :last-child:nth-child(n)) > .shot { grid-column: span 3; } .cards > .shot:last-child:nth-child(odd) { grid-column: 1 / -1; } }
-@media (max-width: 34rem) { .cards { grid-template-columns: minmax(0, 1fr); } .cards > .shot, .cards:has(> :last-child:nth-child(n)) > .shot { grid-column: auto; } }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s48) var(--s32); }
+/* an odd last card takes the whole row, its picture beside its text */
+.cards > .shot:last-child:nth-child(odd) { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, 25rem); align-items: center; gap: var(--s48); }
+@media (max-width: 34rem) { .cards { grid-template-columns: minmax(0, 1fr); } .cards > .shot:last-child:nth-child(odd) { display: flex; } }
 .shot { margin: 0; display: flex; flex-direction: column; gap: var(--s16); }
 /* a big row: the frame takes the room, the text a column of about 25rem; the frame reaches into the margin on its side */
 .shot-big { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, 25rem); align-items: start; gap: var(--s48); margin-left: calc(-1 * var(--out)); }
@@ -1957,23 +1956,19 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
   background: linear-gradient(color-mix(in srgb, var(--accent) 3%, transparent), transparent), color-mix(in srgb, var(--accent) 3%, var(--sunk));
   border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border)); }
 /* a card: one 4:3 stage, the window inset alike on all sides, its capture filling it from the top left */
-.cards .shot-stage { display: flex; aspect-ratio: 4 / 3; }
+.cards .shot-stage { display: flex; aspect-ratio: 4 / 3; max-height: calc(30vh + 2 * var(--s24)); }
 .cards .shot-win { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .cards .shot-win picture { flex: 1; min-height: 0; } .cards .shot-win img { height: 100%; object-fit: cover; object-position: left top; }
 .shot-wide .shot-win { width: 100%; }
-/* the window: a title bar with three lights and the file, the capture under it */
+/* the window: the capture itself, cut out with rounded corners and a soft shadow */
 .shot-win { position: relative; display: block; border-radius: var(--r-card); overflow: hidden; background: var(--panel); transform: translate3d(0, var(--lift, 0px), 0);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 10%, transparent), 0 2px 4px #10141e14, 0 18px 40px -12px #10141e55; }
-.shot-win::before { content: attr(data-label); display: block; height: 1.7rem; padding: 0 3.6rem; font: 500 .72rem/1.7rem system-ui, sans-serif; color: var(--muted); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  border-bottom: 1px solid color-mix(in srgb, var(--fg) 8%, transparent); background: radial-gradient(circle at .9rem 50%, #ff5f57 .22rem, transparent .25rem), radial-gradient(circle at 1.55rem 50%, #febc2e .22rem, transparent .25rem), radial-gradient(circle at 2.2rem 50%, #28c840 .22rem, transparent .25rem), color-mix(in srgb, var(--fg) 4%, var(--panel)); }
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 8%, transparent), 0 1px 2px #10141e12, 0 12px 32px -10px #10141e40; }
 .shot-win picture, .shot-win img { display: block; width: 100%; height: auto; }
 /* no capture taller than 30% of the window: the frame shrinks to it, centred, so several show at once */
 .shots > .shot .shot-win { width: fit-content; max-width: 100%; margin-inline: auto; }
 .shots > .shot .shot-win img { width: auto; max-width: 100%; max-height: 30vh; }
 .shots > .shot .shot-video { max-height: 30vh; }
 /* a dialog stands on its own: no window around it, its own corners and shadow */
-.shot-win.shot-dialog { background: none; border-radius: var(--r-card); box-shadow: 0 2px 6px #10141e1a, 0 18px 40px -14px #10141e66; }
-.shot-win.shot-dialog::before { display: none; }
 /* two pages of one dialog: the first behind, up and left, the second over it */
 .shot-stack { display: grid; padding: var(--s24) 0 0 var(--s48); }
 .shot-stack > .shot-win { grid-area: 1 / 1; }
