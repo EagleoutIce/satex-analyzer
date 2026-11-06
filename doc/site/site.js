@@ -731,13 +731,14 @@
       if (!table) return '';
       if (mark === 'cell') return `${opened()}</span><span class="ts-td">`;
       if (mark !== 'row' && mark !== 'end') return '';
-      const shut = row === null ? '</span></span>' : row ? '<span class="ts-tr ts-ruled"></span>' : '';
+      // a rule after the last row (`\bottomrule`) is that row's lower border, so it spans every column
+      const shut = row === null ? '</span></span>' : row ? '<span class="ts-tr ts-ruled ts-rule-after"></span>' : '';
       if (mark === 'row') { row = false; return shut; }
       table--;
       row = null;
       return `${shut}</span>`;
     };
-    const html = marked.split(/(\uE000[^\uE001]*\uE001)/).map((part) => {
+    let html = marked.split(/(\uE000[^\uE001]*\uE001)/).map((part) => {
       const note = /^\uE000([^\uE001]*)\uE001$/.exec(part)?.[1];
       if (part === '' || note?.[0] === '\u0006') return note === undefined ? '' : (math = note.slice(1), '');
       return closeLimits(note?.[0] === '\u0003' ? note.slice(1) : null) + piece(part, note);
@@ -780,6 +781,8 @@
     }
     // set boxes at both ends (a contents line, a label) align the line as a row
     // the glue between lines stands apart from the row it borders
+    // a cell holding only leaders is a rule over its column (booktabs' `\cmidrule`), not a row of dots
+    html = html.replace(/<span class="ts-td">\s*<span class="ts-leaders" aria-hidden="true"><\/span>((?:<i class="ts-fill[^>]*><\/i>)?)\s*(?=<\/span>)/g, '<span class="ts-td ts-rule" title="a rule over this column">$1');
     const bare = html.replace(/<i class="ts-glue ts-glue-(?:vskip|parskip)[^>]*><\/i>/g, '');
     const aligned = bare.startsWith('<span class="ts-boxto"') && bare.endsWith('\u0000') || html.includes('ts-leaders');
     if (picture) return sketchSvg(picture);

@@ -370,6 +370,14 @@ const texts = (s) => s.rows.map((r) => r.cells.map((c) => c.span > 1 ? `${c.span
   T.setStyle(s, 'compact');
   assert.equal(T.styleOf(s), 'compact');
 }
+{
+  // array's injects: the alignment is the column's letter, not one inside `>{\bf}`; the preview sets what the inject switches
+  assert.deepEqual(['>{\\bf}r', '>{\\bfseries}l<{\\%}', 'p{3cm}', '@{}>{\\centering\\arraybackslash}m{2cm}'].map((x) => T.alignOf(x)), ['r', 'l', 'p', 'm']);
+  assert.equal(T.alignOf('>{\\bf}b{2cm}', 'lcrS'), 'l');
+  assert.equal(T.injectStyle('\\bf'), 'font-weight:bold');
+  assert.equal(T.injectStyle('\\itshape\\color{blue}'), 'font-style:italic;color:blue');
+  assert.equal(T.injectStyle('\\arraybackslash'), '');
+}
 console.log('table model: ok');
 
 // crop to content: the box of the pixels unlike the corners' background, then trim in bp with padding
@@ -438,6 +446,11 @@ console.log('table model: ok');
   try { createRequire(import.meta.url)('./site.js'); } catch {}
   const { notation, typesetView } = self.satexCards;
   const N = (s) => `${s}`, M = (m) => N(`\u0003${m}`);
+  // booktabs: the rule after the last row borders that row across every column; a cell of leaders alone is a rule over that column
+  const booktabs = notation(`${N('―')}A${M('cell')}1${M('row')}${M('cell')}${M('leaders')}${M('fill 0.0pt plus 1.0fill')}${M('row')}B${M('cell')}2${M('row')}${N('―')}${M('end')}`.replace(/^/, M('begin')));
+  assert.match(booktabs, /<span class="ts-tr ts-ruled ts-rule-after"><\/span><\/span>$/);
+  assert.match(booktabs, /<span class="ts-td"><\/span><span class="ts-td ts-rule" title="a rule over this column"><i class="ts-fill/);
+  assert.equal(booktabs.match(/class="ts-td"/g).length, 5);
   // display limits: one column of over, operator, under; a sub after them is a script again
   const sum = notation(`${N('\u0006L')}∑${N('\u0006')}${M('under')}i=1${M('scriptend')}${M('over')}N${M('scriptend')}x${M('sub')}i${M('scriptend')}`);
   assert.equal(sum, '<span class="ts-limits"><span class="ts-op">∑</span><span class="ts-under">i=1</span><span class="ts-over">N</span></span>x<span class="ts-sub">i</span>');

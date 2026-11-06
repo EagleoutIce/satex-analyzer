@@ -59,7 +59,8 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-num { width: 4.2rem; }
 .sd-len { width: 9rem; }
 .sd-injects { display: grid; grid-template-columns: 1fr 1fr; gap: .15rem; margin-top: .2rem; } .sd-grid th.sd-colh .sd-injects .sd-tex-in { margin-top: 0; } .sd-injects .sd-tex-in { font-size: .8em; }
-.sd-inj { opacity: .45; font-style: italic; }
+.sd-inj { display: inline-block; margin-right: .4rem; padding: 0 .25rem; border-radius: 3px; font-size: .75em; line-height: 1.4; vertical-align: .1em; color: var(--c-muted); background: var(--c-sunk); box-shadow: inset 0 0 0 1px var(--c-border); }
+.sd-inj.sd-inj-post { margin: 0 0 0 .4rem; }
 /* a TeX length field: the editor's token colours painted by a mirror over the input's transparent text */
 .sd-tex-in { position: relative; display: inline-block; max-width: 100%; overflow: hidden; vertical-align: middle; border-radius: 6px; }
 .sd-grid th.sd-colh .sd-tex-in { display: block; margin-top: .2rem; } .sd-grid th.sd-colh .sd-tex-in input { margin-top: 0; }
@@ -433,6 +434,20 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
   const RULES = ['\\hline', '\\toprule', '\\midrule', '\\bottomrule'];
   /** The text array's `>{a}>{b}` (or `<{…}`) injects: the groups' insides, joined. */
   const injected = (spec = '') => [...spec.matchAll(/[<>]\{((?:[^{}]|\{[^{}]*\})*)\}/g)].map((m) => m[1]).join('');
+  /** A column spec's alignment letter, its injects and argument left out (`>{\bf}r` is `r`, not the `b` of `\bf`). */
+  const alignOf = (spec = '', letters = 'lcrSpmbX') => spec.replace(/[<>@!]\{(?:[^{}]|\{[^{}]*\})*\}|\{(?:[^{}]|\{[^{}]*\})*\}/g, '').replace(new RegExp(`[^${letters}]`, 'g'), '')[0] ?? 'l';
+  /** The CSS of what an inject sets for each cell, as far as a preview shows it: font switches, sizes, colour, math, alignment. */
+  const SWITCH = {
+    bf: 'font-weight:bold', bfseries: 'font-weight:bold', textbf: 'font-weight:bold', boldmath: 'font-weight:bold',
+    it: 'font-style:italic', itshape: 'font-style:italic', em: 'font-style:italic', sl: 'font-style:oblique', slshape: 'font-style:oblique', mathit: 'font-style:italic',
+    tt: 'font-family:ui-monospace,monospace', ttfamily: 'font-family:ui-monospace,monospace', sf: 'font-family:sans-serif', sffamily: 'font-family:sans-serif',
+    sc: 'font-variant:small-caps', scshape: 'font-variant:small-caps', upshape: 'font-style:normal', mdseries: 'font-weight:normal',
+    tiny: 'font-size:.5em', scriptsize: 'font-size:.7em', footnotesize: 'font-size:.8em', small: 'font-size:.9em', normalsize: 'font-size:1em',
+    large: 'font-size:1.2em', Large: 'font-size:1.44em', LARGE: 'font-size:1.73em', huge: 'font-size:2.07em', Huge: 'font-size:2.49em',
+    centering: 'text-align:center', raggedleft: 'text-align:right', raggedright: 'text-align:left',
+  };
+  const injectStyle = (tex = '') => [...[...tex.matchAll(/\\([A-Za-z]+)/g)].map((m) => SWITCH[m[1]]).filter(Boolean),
+    ...[...tex.matchAll(/\\(?:color|textcolor)\{([A-Za-z]+)\}/g)].map((m) => `color:${m[1]}`), /\$/.test(tex) ? 'font-style:italic' : ''].filter(Boolean).join(';');
   const blank = () => ({ text: '', span: 1, spec: '' });
   const balanced = (t) => { let d = 0; for (const m of t.replace(/\\./g, '').matchAll(/[{}]/g)) if ((d += m[0] === '{' ? 1 : -1) < 0) return false; return d === 0; };
   const MR = /^\\multirow\s*\{(\d+)\}\s*\{([^{}]*)\}\s*\{([\s\S]*)\}$/;
@@ -499,7 +514,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     return cell;
   }
   const T = {
-    injected,
+    injected, alignOf, injectStyle,
     multirow, rowsOf, inner, setInner, layout, normalize, cellAt, width, RULES,
     /** Merges the block: a row span is a `\multicolumn`, a column span a `\multirow`, a block both. */
     merge(s, rect) {
@@ -871,7 +886,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
           col += span;
           if (skip[k].has(at)) return;
           const o = map[k][at], n = o && o.r === k && o.clean ? o.rows : 1;
-          const align = (c.spec || s.cols[at]?.align || 'l').replace(/[^lcrS]/g, '')[0] ?? 'l';
+          const align = alignOf(c.spec || s.cols[at]?.align || 'l', 'lcrS');
           const text = T.inner(c);
           const sel = !(k + n - 1 < r0 || k > r1 || at + span - 1 < c0 || at > c1);
           const merged = span > 1 || T.rowsOf(c) > 1;
@@ -879,8 +894,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
             class: 'sd-cell' + (sel ? ' sel' : '') + (k === focus[0] && at <= focus[1] && focus[1] < at + span ? ' cur' : '') + (merged ? ' merged' : ''),
             colspan: 2 * span, rowspan: n > 1 ? 2 * n - 1 : null, tabindex: -1, role: 'gridcell', 'aria-selected': String(sel),
             'data-r': k, 'data-c': at, 'data-align': align, title: merged ? `merged: ${span > 1 ? `\\multicolumn{${span}}{${c.spec}}` : ''}${T.rowsOf(c) > 1 ? ` \\multirow{${T.rowsOf(c)}}` : ''}` : null,
-          }, span === 1 && s.cols[at]?.pre ? h('span', { class: 'sd-inj' }, T.injected(s.cols[at].pre)) : null, text ? text : h('span', { class: 'sd-ph' }, '·'),
-          span === 1 && s.cols[at]?.post ? h('span', { class: 'sd-inj' }, T.injected(s.cols[at].post)) : null));
+          }, span === 1 && s.cols[at]?.pre ? h('span', { class: 'sd-inj', title: `set before each cell of this column: >{${T.injected(s.cols[at].pre)}}` }, T.injected(s.cols[at].pre)) : null, text ? text : h('span', { class: 'sd-ph' }, '·'),
+          span === 1 && s.cols[at]?.post ? h('span', { class: 'sd-inj sd-inj-post', title: `set after each cell of this column: <{${T.injected(s.cols[at].post)}}` }, T.injected(s.cols[at].post)) : null));
         });
         const short = n - T.width(r);
         if (short > 0) tds.push(h('td', { colspan: 2 * short, class: 'sd-muted' }));
@@ -1036,10 +1051,12 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
           col += span;
           const o = map[k][at];
           if (o && o.r < k) return '';
-          const a = (c.spec || s.cols[at]?.align || 'l').replace(/[^lcrSpmbX]/g, '')[0] ?? 'l';
+          const a = alignOf(c.spec || s.cols[at]?.align || 'l');
           const align = { c: 'center', r: 'right', S: 'center' }[a] ?? 'left';
           const wide = ['p', 'm', 'b'].includes(a) && span === 1 ? `width:${/^\d/.test(s.cols[at].arg) ? s.cols[at].arg.replace(/cm$/, '') * 37.8 + 'px' : '8em'};white-space:normal;` : a === 'X' ? 'width:100%;' : '';
-          const st = [`text-align:${align}`, top || part.has(at) ? `border-top:${top || '.5px'} solid` : '', k === s.rows.length - 1 && rule(s.after) ? `border-bottom:${rule(s.after)} solid` : '', at === 0 && vb(0) ? `border-left:${vb(0)}` : '', vb(at + span) ? `border-right:${vb(at + span)}` : '', wide].filter(Boolean).join(';');
+          // the column's injects (a \multicolumn's own spec instead), after its alignment so `\centering` wins as in LaTeX
+          const look = injectStyle(span > 1 || c.spec ? injected(c.spec) : `${injected(s.cols[at]?.pre)}${injected(s.cols[at]?.post)}`);
+          const st = [`text-align:${align}`, look, top || part.has(at) ? `border-top:${top || '.5px'} solid` : '', k === s.rows.length - 1 && rule(s.after) ? `border-bottom:${rule(s.after)} solid` : '', at === 0 && vb(0) ? `border-left:${vb(0)}` : '', vb(at + span) ? `border-right:${vb(at + span)}` : '', wide].filter(Boolean).join(';');
           const rs = o && o.r === k && o.rows > 1 ? ` rowspan="${o.rows}" class="mr"` : '';
           return `<td colspan="${span}"${rs} style="${st}">${html(T.inner(c)) || '&nbsp;'}</td>`;
         }).join('');

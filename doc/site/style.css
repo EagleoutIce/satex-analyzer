@@ -571,6 +571,9 @@ main td .badges, main td .cat { white-space: nowrap; }
 .typeset .ts-table { display: table; border-collapse: collapse; margin: .2rem 0; } .typeset .ts-tr { display: table-row; }
 .typeset .ts-td { display: table-cell; padding: 0 .7em; } .typeset .ts-ruled > .ts-td { border-top: 1px solid currentColor; }
 .typeset .ts-tr.ts-ruled:empty { display: block; border-top: 1px solid currentColor; }
+/* a rule after a row is its lower border (`\bottomrule`); a cell of leaders alone a rule over its column (`\cmidrule`) */
+.typeset .ts-tr:has(+ .ts-rule-after) > .ts-td { border-bottom: 1px solid currentColor; } .typeset .ts-tr + .ts-rule-after { display: none; }
+.typeset .ts-tr:has(> .ts-rule) { font-size: 0; line-height: 0; } .typeset .ts-td.ts-rule { background: linear-gradient(currentColor, currentColor) center / calc(100% - .5em) .5px no-repeat; height: 4px; }
 .typeset .ts-vrule { display: inline-block; width: 0; height: 1.2em; margin: 0 .35em; vertical-align: -.25em; border-left: 1px solid currentColor; }
 .typeset .ts-hrule { display: block; height: 0; margin: .15em 0; border-top: 1px solid currentColor; }
 .typeset .ts-text:has(.ts-hrule) { flex: none; width: fit-content; }
