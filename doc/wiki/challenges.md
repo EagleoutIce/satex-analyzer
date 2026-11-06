@@ -470,6 +470,7 @@ Hehe
 <tr><td><code>bazx</code></td><td><code>bazx</code></td><td>✓</td></tr>
 <tr><td><code>X1XHehe</code></td><td><code>X1XHehe</code></td><td>✓</td></tr>
 <tr><td><code>1 Later</code></td><td><code>1 Later</code></td><td>✓</td></tr>
+<tr><td><code></code></td><td><code>assumes forced-page-breaks</code></td><td></td></tr>
 </table>
 
 Why:
@@ -485,7 +486,8 @@ $ satex query typeset -f 06-unknown.tex --set limits.seconds=60
 8:5  paragraph  bazx
 14:80  paragraph  X1XHehe
 16:16  paragraph  1 Later
-17:15  page  page 1–2
+17:15  page  page 1–?
+8:5  assumption  forced-page-breaks
 assumption  clock-assumed
 recognized gaps
   unbalanced-conditional 1× first at 06-unknown.tex:0
@@ -619,7 +621,6 @@ Their length can depend on an unknown value.
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
 <tr><td><code>....</code></td><td><code><b>{</b>.<b>…</b><b>|</b><b>}</b></code></td><td>⊇</td></tr>
-<tr><td><code></code></td><td><code>assumes assumed-compiles</code></td><td></td></tr>
 </table>
 
 Why:
@@ -632,7 +633,6 @@ Why:
 $ satex query typeset -f 07-termination.tex --set limits.seconds=60
 6:6  paragraph  {.…|}
 7:15  page  page 1
-7:15  assumption  assumed-compiles
 assumption  clock-assumed
 ```
 
@@ -701,18 +701,14 @@ l.5 \nest ⇒ \ifnum \pdfuniformdeviate 4>0 (\nest {\n…
 ```
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>done</code></td><td><code><b>{</b>d<b>|</b><b>}</b>one</code></td><td>⊇</td></tr>
+<tr><td><code>done</code></td><td><code>done</code></td><td>✓</td></tr>
 </table>
-
-Why:
-
-- `{d|}`: l.3 `\ifnum\n>0` is undecided, it reads `\n`.
 
 <details><summary>Computed text</summary>
 
 ```sh
 $ satex query typeset -f r7-merge-cost.tex --set limits.seconds=60
-6:16  paragraph  {d|}one
+6:16  paragraph  done
 7:15  page  page 1
 assumption  clock-assumed
 ```
@@ -903,29 +899,27 @@ The label was on page \pageref{x}.
 ```
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>The label was on page 1.</code></td><td><code>The label was on page <b>{</b><b>⟨?⟩</b><b>|</b>2<b>}</b>.</code></td><td>⊇</td></tr>
-<tr><td><code>Here.</code></td><td><code>Here.</code></td><td>✓</td></tr>
+<tr><td><code>The label was on page 1.</code></td><td><code>The label was on page <b>⟨?⟩</b>.</code></td><td>⊇</td></tr>
+<tr><td><code>Here.</code></td><td><code><b>{</b><b>|</b>Here. <b>}</b></code></td><td>⊇</td></tr>
 <tr><td><code></code></td><td><code><b>{</b>Here. <b>|</b><b>}</b></code></td><td>⊇</td></tr>
-<tr><td><code></code></td><td><code>assumes assumed-compiles</code></td><td></td></tr>
 </table>
 
 Why:
 
 - `⟨?⟩`: l.4 sets a character the run could not compute.
-- `{⟨?⟩|2}`: l.4 is set on paths parted at 11-fixpoint.tex:4.
+- `{|Here. }`: l.5 `\ifnum\getpagerefnumber{x}=1` is undecided, it reads `\getpagerefnumber`.
 - `{Here. |}`: l.5 `\ifnum\getpagerefnumber{x}=1` is undecided, it reads `\getpagerefnumber`.
 
 <details><summary>Computed text</summary>
 
 ```sh
 $ satex query typeset -f 11-fixpoint.tex --set limits.seconds=60
-4:2  paragraph  The label was on page {⟨?⟩|2}.
+4:2  paragraph  The label was on page ⟨?⟩.
 5:38  page  page 1 → 2
-6:11  paragraph  Here.
+6:11  paragraph  {|Here. }
 7:15  page  page 2 → 3
 6:11  paragraph  {Here. |}
 7:15  page  page 3
-7:15  assumption  assumed-compiles
 assumption  clock-assumed
 ```
 
@@ -937,7 +931,11 @@ assumption  clock-assumed
 $ satex trace --format compact -f 11-fixpoint.tex --set limits.seconds=60
 l.4 \pageref ⇒ \__cmd_start:nNNnnn {s}\pageref  \pagere… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 18 more)
 l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex…
-l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex… (defines \par \@outputbox@reinsertbskip \@elt … 544 more)
+l.5 \ifnum\getpagerefnumber{x}=1 ⇒ undecided
+l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex…
+l.5 \ifnum\getpagerefnumber{x}=1 ⇒ undecided
+l.5 \newpage ⇒ \if@noskipsec \ifx \@nodocument \relax \… (defines \par \@outputbox@reinsertbskip \@elt … 147 more)
+l.6 \label ⇒ \@bsphack \begingroup \UseHookWithArgume… (defines \thepage \protect \reserved@a)
 ```
 
 </details>

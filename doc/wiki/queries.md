@@ -96,7 +96,7 @@ variable-definition  \pkgcls@targetdate                                         
 use                  @                                                             paper.tex  @ paper.tex:1:1
 use                  11pt                                                          paper.tex  @ paper.tex:1:1
 macro-call           \value                                                        paper.tex  @ paper.tex:0:0
-… 542 more lines omitted
+… 539 more lines omitted
 ```
 
 ## diagnostics
@@ -106,12 +106,12 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 ```text
 $ satex query diagnostics -f samples/paper.tex
 severity     code                          count  message              file            
-imprecision  call-summarized               1      a call with unknow…  latex.ltx       @ latex.ltx:1824:12
-imprecision  call-summarized               1      a call with unknow…  hyperref.sty    @ hyperref.sty:2143:24
+assumption   forced-page-breaks            1      the page may fill …  paper.tex       @ paper.tex:56:13
 imprecision  argument-ends-in-unknown      1      a delimited argume…  latex.ltx       @ latex.ltx:20534:3
-imprecision  unknown-name                  5      a name built from …  latex.ltx       @ latex.ltx:20322:31
-imprecision  unknown-name                  5      a name built from …  latex.ltx       @ latex.ltx:20322:41
-… 22 more lines omitted
+imprecision  unknown-name                  7      a name built from …  latex.ltx       @ latex.ltx:20322:31
+imprecision  unknown-name                  7      a name built from …  latex.ltx       @ latex.ltx:20322:41
+imprecision  mismatched-group              2      extra }, or forgot…  latex.ltx       @ latex.ltx:20534:3
+… 16 more lines omitted
 ```
 
 ## distribution
@@ -156,7 +156,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    texsys.aux                                
 4    input    expl3.ltx                                 
-… 295 more lines omitted
+… 307 more lines omitted
 ```
 
 ## gaps
@@ -348,7 +348,7 @@ index   step         name                        detail                    file
 10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
 10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
 10272   define       \ifdraft                    iffalse                   paper.tex      @ paper.tex:3:7
-… 182 more lines omitted
+… 209 more lines omitted
 ```
 
 `--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile, and `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown. `--include-internal` adds packages, classes and the kernel. `--format compact` prints at most 8 text lines instead: what each top-level call of the main file expands to, and each conditional's outcome. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.

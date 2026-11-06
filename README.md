@@ -436,7 +436,7 @@ $ satex explain -f samples/paper.tex '\norm'
   takes       1
   uses        1 time, in this run
   by          \newcommand
-  expands     \left, \right
+  expands     \left, \lVert, \right
   may_expand  \hat
   body        \left \lVert #1\right \rVert 
   file        samples/paper.tex:12
@@ -549,7 +549,7 @@ cache
   source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
   holds 197802 definitions
   state cached
-… 2 more lines omitted
+… 3 more lines omitted
 ```
 
 </details>
@@ -632,7 +632,7 @@ index   step         name                        detail                    file
 8412    open-file    \article                    /usr/local/texlive/YYYY…  paper.tex      @ paper.tex:1:1
 10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
 10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
-… 183 more lines omitted
+… 210 more lines omitted
 ```
 
 </details>

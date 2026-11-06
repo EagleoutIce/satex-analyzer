@@ -1092,8 +1092,112 @@
               "default": "ℵ",
               "type": "string"
             },
+            "577": {
+              "default": "𝒜",
+              "type": "string"
+            },
+            "578": {
+              "default": "ℬ",
+              "type": "string"
+            },
+            "579": {
+              "default": "𝒞",
+              "type": "string"
+            },
+            "580": {
+              "default": "𝒟",
+              "type": "string"
+            },
+            "581": {
+              "default": "ℰ",
+              "type": "string"
+            },
+            "582": {
+              "default": "ℱ",
+              "type": "string"
+            },
+            "583": {
+              "default": "𝒢",
+              "type": "string"
+            },
+            "584": {
+              "default": "ℋ",
+              "type": "string"
+            },
+            "585": {
+              "default": "ℐ",
+              "type": "string"
+            },
+            "586": {
+              "default": "𝒥",
+              "type": "string"
+            },
+            "587": {
+              "default": "𝒦",
+              "type": "string"
+            },
+            "588": {
+              "default": "ℒ",
+              "type": "string"
+            },
+            "589": {
+              "default": "ℳ",
+              "type": "string"
+            },
+            "590": {
+              "default": "𝒩",
+              "type": "string"
+            },
+            "591": {
+              "default": "𝒪",
+              "type": "string"
+            },
+            "592": {
+              "default": "𝒫",
+              "type": "string"
+            },
+            "593": {
+              "default": "𝒬",
+              "type": "string"
+            },
+            "594": {
+              "default": "ℛ",
+              "type": "string"
+            },
+            "595": {
+              "default": "𝒮",
+              "type": "string"
+            },
+            "596": {
+              "default": "𝒯",
+              "type": "string"
+            },
+            "597": {
+              "default": "𝒰",
+              "type": "string"
+            },
+            "598": {
+              "default": "𝒱",
+              "type": "string"
+            },
+            "599": {
+              "default": "𝒲",
+              "type": "string"
+            },
             "6": {
               "default": "Σ",
+              "type": "string"
+            },
+            "600": {
+              "default": "𝒳",
+              "type": "string"
+            },
+            "601": {
+              "default": "𝒴",
+              "type": "string"
+            },
+            "602": {
+              "default": "𝒵",
               "type": "string"
             },
             "603": {
