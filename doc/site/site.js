@@ -1838,7 +1838,11 @@
       const by = card.getBoundingClientRect().width + parseFloat(getComputedStyle(row).columnGap || '0');
       row.scrollBy({ left: dir * by, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     };
-    const ends = () => { prev.disabled = row.scrollLeft < 4; next.disabled = row.scrollLeft + row.clientWidth > row.scrollWidth - 4; };
+    const ends = () => {
+      prev.disabled = row.scrollLeft < 4; next.disabled = row.scrollLeft + row.clientWidth > row.scrollWidth - 4;
+      // the edge fades where more cards wait (style.css)
+      row.classList.toggle('at-start', prev.disabled); row.classList.toggle('at-end', next.disabled);
+    };
     prev.onclick = () => step(-1);
     next.onclick = () => step(1);
     row.addEventListener('keydown', (e) => { if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && e.target === row) { e.preventDefault(); step(e.key === 'ArrowLeft' ? -1 : 1); } });

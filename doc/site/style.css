@@ -2169,3 +2169,8 @@ header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(-
 .version .ver-local { color: var(--warning); font-weight: 600; }
 /* the source lines a hovered typeset paragraph comes from */
 :is(.ln, .cm-line).ts-src { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+/* the carousel fades out at the edge where more cards wait (site.js toggles .at-start/.at-end) */
+.cards { -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 4rem), transparent); mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 4rem), transparent); }
+.cards.at-end { -webkit-mask-image: linear-gradient(to right, transparent, #000 4rem, #000 100%); mask-image: linear-gradient(to right, transparent, #000 4rem, #000 100%); }
+.cards.at-start.at-end { -webkit-mask-image: none; mask-image: none; }
+.cards:not(.at-start):not(.at-end) { -webkit-mask-image: linear-gradient(to right, transparent, #000 4rem, #000 calc(100% - 4rem), transparent); mask-image: linear-gradient(to right, transparent, #000 4rem, #000 calc(100% - 4rem), transparent); }

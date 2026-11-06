@@ -5,8 +5,8 @@
    "name": "live",
    "live": true,
    "file": "results.tex",
-   "title": "Try it right here",
-   "caption": "Edit this document. Hover the length or the [ht] to see what they do, and fix the dash SaTeX underlines. The text on the right follows as you type.",
+   "title": "Try it here",
+   "caption": "Edit this document. Hover a length or the [ht] to see what they mean. The typeset text on the right follows as you type.",
    "status": "Computed when this page was built. SaTeX starts in your browser when the window comes into view (about 10 MB, loaded once).",
    "text": "\\documentclass{article}\n\\begin{document}\n\\section{Results}\nRuns took 10-12 s when warm.\n\\vspace{12pt}\n\\begin{figure}[ht]\n  \\centering\n  \\rule{0.6\\linewidth}{2cm}\n  \\caption{The warm cache.}\n\\end{figure}\n\\end{document}\n"
   },
@@ -14,7 +14,7 @@
    "name": "image",
    "file": "figure.tex",
    "title": "Images",
-   "caption": "Crop, rotate and tint a figure by dragging. SaTeX writes the \\includegraphics keys for you.",
+   "caption": "Crop, rotate and tint a figure with the mouse. The \\includegraphics options change with it.",
    "steps": [
     {
      "eval": "const c = document.createElement('canvas'); c.width = 960; c.height = 600; const g = c.getContext('2d'); let k = g.createLinearGradient(0, 0, 0, 600); k.addColorStop(0, '#1d3b8f'); k.addColorStop(.55, '#f08a5d'); k.addColorStop(1, '#f9d77e'); g.fillStyle = k; g.fillRect(0, 0, 960, 600); g.fillStyle = '#ffe9a8'; g.beginPath(); g.arc(640, 330, 70, 0, 7); g.fill(); for (const [y, col, a] of [[380, '#6b3a6e', 90], [430, '#3f2552', 60], [490, '#22163a', 40]]) { g.fillStyle = col; g.beginPath(); g.moveTo(0, 600); for (let x = 0; x <= 960; x += 20) g.lineTo(x, y - a * Math.abs(Math.sin(x / 140 + y))); g.lineTo(960, 600); g.fill(); } const f = new File([await new Promise((r) => c.toBlob(r, 'image/png'))], 'dusk.png', { type: 'image/png' }); const t = new DataTransfer(); t.items.add(f); const i = document.getElementById('play-files'); i.files = t.files; i.dispatchEvent(new Event('change'));",
@@ -76,8 +76,8 @@
   {
    "name": "tikz",
    "file": "spacing.tex",
-   "title": "Drawings",
-   "caption": "Drag the nodes of a TikZ picture on a grid, or paste a Mermaid flowchart. The code follows your hand.",
+   "title": "TikZ drawings",
+   "caption": "Drag nodes on a grid, give them properties and styles, or paste a Mermaid flowchart. The TikZ code changes with it.",
    "steps": [
     {
      "eval": "satexWidget('tikz', ...__at('\\\\node[draw] (run)', 2))",
@@ -126,7 +126,7 @@
    "name": "table",
    "file": "paper.tex",
    "title": "Tables",
-   "caption": "Edit a table like a spreadsheet. One click gives you booktabs rules and loads the package.",
+   "caption": "Edit a table like a spreadsheet. Booktabs rules are one click away, and the package is loaded when needed.",
    "steps": [
     {
      "open": true,
@@ -181,9 +181,9 @@
    "name": "pdf",
    "server": true,
    "file": "spacing.tex",
-   "title": "PDF, synced",
+   "title": "Compile and view the PDF",
    "big": true,
-   "caption": "Compile with your own TeX and the PDF sits beside the source. Findings and boxes show on the page, and a click jumps to the line. Compiling needs TeX and the local playground server.",
+   "caption": "Compile with your own TeX. The PDF opens next to the source with findings and boxes drawn on the page, and a click on the page jumps to its line.",
    "open": [
     "panel",
     "play-pdf"
@@ -243,9 +243,9 @@
   {
    "name": "trace",
    "file": "expand.tex",
-   "title": "Step through an expansion",
+   "title": "Step through a macro",
    "big": true,
-   "caption": "Watch TeX expand a macro one step at a time. Each step shows its result and every name in force at that moment, groups and conditionals included.",
+   "caption": "See each expansion step of a macro and every name it reads.",
    "open": [
     "trace",
     "\\greet{ab}"
@@ -307,7 +307,7 @@
    "file": "paper.tex",
    "title": "Refactorings",
    "wide": true,
-   "caption": "Right-click a table to turn it into booktabs or to align its numbers with siunitx. The rule lines are rewritten for you.",
+   "caption": "Right-click a table to switch it to booktabs or to align its numbers with siunitx.",
    "steps": [
     {
      "eval": "const v = document.querySelector('.cm-editor').satexView, i = __at('begin{table}')[2]; v.dispatch({ selection: { anchor: i } }); await new Promise((r) => setTimeout(r, 200)); v.scrollDOM.scrollTop += v.coordsAtPos(i).top - 140; await new Promise((r) => setTimeout(r, 300)); __xy('begin{tabular}', 2);",
@@ -360,7 +360,7 @@
    "file": "proofs.tex",
    "title": "Quick fixes",
    "wide": true,
-   "caption": "Typed “Section 1” by hand? SaTeX finds the label and writes the reference for you.",
+   "caption": "Wrote “Section 1” by hand? The fix adds the label and writes the reference.",
    "steps": [
     {
      "until": "[...document.querySelectorAll('#lsp-diagnostics li')].some((l) => /hand-written-reference|typed by hand/.test(l.textContent + (l.dataset.code ?? '') + (l.title ?? '')))",
@@ -409,13 +409,13 @@
    "name": "runaway",
    "server": true,
    "file": "runaway.tex",
-   "title": "Errors at their cause",
+   "title": "Where an error starts",
    "wide": true,
    "tags": [
     "pdflatex",
     "SaTeX"
    ],
-   "caption": "pdflatex only says the file ended. SaTeX points at line 5, where the brace of \\textbf opens and never closes.",
+   "caption": "pdflatex only says the file ended. SaTeX shows line 5, where the brace of \\textbf is never closed.",
    "open": [
     "panel",
     "play-findings"
@@ -462,9 +462,9 @@
   {
    "name": "clone",
    "file": "clones.tex",
-   "title": "Clones",
+   "title": "Repeated code",
    "wide": true,
-   "caption": "Not just copy and paste: SaTeX finds blocks that differ only in their values and offers one macro for them.",
+   "caption": "Blocks that differ only in a few values are found, and one macro can replace them.",
    "open": [
     "panel",
     "play-findings"
