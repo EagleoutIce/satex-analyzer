@@ -4949,8 +4949,11 @@ impl Machine<'_> {
         if level > 1 {
             return false;
         }
+        // On an arm a join left (a stream place, a flag) the stream may be
+        // closed only where the flag does not fit: not TeX's for certain.
+        let severity = if self.took_unknown_arm() { Severity::Imprecision } else { Severity::Warning };
         self.diagnose(
-            Severity::Warning,
+            severity,
             "terminal-read-fatal",
             span,
             "*** (cannot \\read from terminal in nonstop modes)".into(),

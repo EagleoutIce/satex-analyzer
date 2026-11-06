@@ -4432,6 +4432,9 @@ will look undefined",
         let n = stream.expect("a stream the table holds has a number");
         let pinned = places.len() <= usize::from(self.cfg.limits.value_set)
             && self.split(by, span, places.len(), |m, arm| {
+                // Places a join or an unknown line left: the arm holds only
+                // where the other facts fit this place.
+                m.joined_arm();
                 Rc::make_mut(&mut m.streams).insert(n, Rc::new(vec![places[arm].clone()]));
                 true
             });
