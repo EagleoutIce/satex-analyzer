@@ -6,7 +6,7 @@ use crate::analysis::facts::CsnameRole;
 use crate::analysis::machine::Machine;
 use crate::analysis::roles::Ty;
 use crate::engine::builtins::{Cond, OccKind, PdfOp, Primitive};
-use crate::engine::tex::{Catcode, Meaning, RegKind, Span, Tok, Token};
+use crate::engine::tex::{Catcode, Meaning, RegKind, Span, Sym, Tok, Token};
 
 /// TeX read the token at `span` as `ty`: a fact of the user's own files.
 pub fn arg_type(m: &mut Machine, span: Span, ty: Ty) {
@@ -137,7 +137,7 @@ fn color_use(m: &mut Machine, full: &str, color_name: &str, role: CsnameRole, sp
 /// models (xcolor § 2.5, `\XC@definec@lor`). Fired from
 /// [`crate::analysis::machine::Machine::define`], so `\definecolor`, `\providecolor`,
 /// `\colorlet` and `\definecolorset` all arrive here alike.
-pub fn color_def(m: &mut Machine, name: &str, meaning: &crate::engine::tex::Meaning, span: Span) {
+pub fn color_def(m: &mut Machine, name: &str, meaning: &crate::engine::tex::Meaning, by: Sym, span: Span) {
     let Some(color_name) = name.strip_prefix(COLOR_NAME_PREFIX) else { return };
     // A package-defined color is recorded too (see `color_use`).
     if color_name.is_empty() || m.out.facts.colors.len() >= m.cfg.limits.facts {
@@ -148,8 +148,17 @@ pub fn color_def(m: &mut Machine, name: &str, meaning: &crate::engine::tex::Mean
     // A package's own call declares nothing the document wrote.
     let from_document = m.file_call.is_some_and(|(_, at)| m.project_file(at.file));
     let declared = from_document.then(|| declared_spec(m, color_name)).flatten();
+    // The name's slot ([`slot`]) says how much of it the code put before the document's text.
+    let shown = (m.name_token.and_then(|t| m.out.facts.slots.get(&t.span)))
+        .and_then(|prefix| name.strip_prefix(prefix.as_str()))
+        .filter(|rest| !rest.is_empty())
+        .unwrap_or(color_name)
+        .to_string();
+    let alias = matches!(m.env.meaning(by).prim(), Some(Primitive::Let { .. }));
     m.out.facts.colors.push(crate::analysis::facts::ColorDef {
         name: color_name.to_string(),
+        shown,
+        alias,
         value,
         declared: declared.as_ref().map(|(model, spec, _)| (*model, spec.clone())),
         spec_span: declared.as_ref().map(|(.., span)| *span),

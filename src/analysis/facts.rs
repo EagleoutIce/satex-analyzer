@@ -52,6 +52,10 @@ pub struct Definition {
     /// `get_r_token`): written there, or built by a `\csname` written
     /// there.  A name package code builds for the document is not.
     pub spelled: bool,
+    /// The definition is part of the text the file's current call reads: a
+    /// statement on the file's own path, not a line of a macro body that
+    /// runs per call.
+    pub stated: bool,
 }
 
 impl Definition {
@@ -235,6 +239,12 @@ pub struct Quantity {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ColorDef {
     pub name: String,
+    /// The part of `name` the document's call wrote: `comments` for the
+    /// `xlst@colors@lst@comments` a package's `\lstcolorlet{comments}` makes.
+    pub shown: String,
+    /// The definition `\let`s another color's control sequence: xcolor's
+    /// `\colorlet` given a spec that is exactly a defined color's name.
+    pub alias: bool,
     /// The color as xcolor stored it, always in one of its core models
     /// (`\XC@coremodel`).  `None` when satex could not read the macro.
     pub value: Option<crate::engine::value::Colors>,

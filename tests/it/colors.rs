@@ -163,3 +163,49 @@ fn beamers_color_lookups_are_no_undefined_colours() {
     assert!(found.is_empty(), "{found:?}");
     let _ = std::fs::remove_dir_all(&directory);
 }
+
+/// A color named after a role and given an existing color's name is an alias on purpose, also
+/// through a package's wrapper whose internal name the document never wrote.
+#[test]
+fn a_colour_aliased_to_an_existing_name_is_no_duplicate() {
+    if !installed() {
+        return;
+    }
+    let f = findings(
+        "alias",
+        "duplicate-color-value",
+        "\\usepackage{xcolor}\n\\makeatletter\\newcommand*\\rolelet[2]{\\colorlet{my@role@#1}{#2}}\\makeatother\n\\colorlet{warning}{orange}\n\\rolelet{comments}{orange}",
+        "\\textcolor{warning}{x}",
+    );
+    assert!(f.is_empty(), "{f:?}");
+}
+
+/// A color whose components spell an existing color is a duplicate, named as the call wrote it.
+#[test]
+fn a_colour_with_the_components_of_another_is_a_duplicate() {
+    if !installed() {
+        return;
+    }
+    let f = findings(
+        "duplicate",
+        "duplicate-color-value",
+        "\\usepackage{xcolor}\n\\makeatletter\\newcommand*\\roledef[2]{\\definecolor{my@role@#1}{rgb}{#2}}\\makeatother\n\\definecolor{myred}{rgb}{1,0,0}\n\\roledef{alert}{1,0,0}",
+        "\\textcolor{myred}{x}",
+    );
+    assert_eq!(f, ["myred", "alert"]);
+}
+
+/// Recoloring a package's color (xcolor's `red`) is what the document means to do: no conflict.
+#[test]
+fn recolouring_a_package_colour_is_no_conflict() {
+    if !installed() {
+        return;
+    }
+    let f = findings(
+        "recolor",
+        "conflicting-color-definition",
+        "\\usepackage{xcolor}\n\\definecolor{red}{rgb}{0.8,0,0}",
+        "\\textcolor{red}{x}",
+    );
+    assert!(f.is_empty(), "{f:?}");
+}

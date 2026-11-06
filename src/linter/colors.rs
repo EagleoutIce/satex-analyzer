@@ -39,7 +39,8 @@ The document names a color with `\\definecolor`, `\\providecolor` or
 `\\colorlet` source.
 
 Silent for a color a package defines: a library may define more colors
-than any one document uses.",
+than any one document uses.  So is a name with `@`, which code built and no
+document text wrote, and xcolor's `.` for the current color.",
         references: &[Ref { source: Source::Xcolor, at: "2.5" }],
         fixes: &[],
         engines: &[],
@@ -52,7 +53,8 @@ than any one document uses.",
         summary: "the same color name is defined twice with different colors",
         explanation: "\
 Two `\\definecolor`-family calls store different colors under the same
-name. Only the last one is ever read back.
+name. Only the last one is ever read back.  Silent where the first is a
+package's: a default the document recolors on purpose.
 
 Fix by giving the second color its own name, or by removing the earlier
 definition.",
@@ -67,11 +69,13 @@ definition.",
         severity: Severity::Info,
         summary: "two color names store the exact same color",
         explanation: "\
-Two `\\definecolor`-family calls, at least one of them the document's own,
-store the same model and components under different names.  Not wrong, but
-one name likely means to be the other.
+Two `\\definecolor`-family calls, the later one the document's own, store
+the same model and components under different names.  Not wrong, but one
+name likely means to be the other.
 
-Silent unless the run could read both colors back exactly.",
+Silent unless the run could read both colors back exactly, and for a
+`\\colorlet` given exactly another color's name: an alias, such as a role
+named after the color it takes.",
         references: &[Ref { source: Source::Xcolor, at: "2.5" }],
         fixes: &[],
         engines: &[],
@@ -103,6 +107,12 @@ Fix by balancing every push with a pop in the same group.",
 /// silent.
 fn definitions_matter(analysis: &Analysis) -> bool {
     !matches!(analysis.settings.profile, Some(crate::project::config::Profile::Literate))
+}
+
+/// A name no document defines itself: one with `@`, which code built, or xcolor's `.`, the
+/// current color every `\color` sets.  No finding names it.
+fn internal(name: &str) -> bool {
+    name.contains('@') || name == "."
 }
 
 fn undefined_color(report: &mut Report) {
@@ -148,10 +158,10 @@ fn unused_color(report: &mut Report) {
         .map(|u| u.name.as_str())
         .collect();
     for def in &analysis.facts.colors {
-        if def.package.is_some() || used.contains(def.name.as_str()) {
+        if def.package.is_some() || internal(&def.shown) || used.contains(def.name.as_str()) {
             continue;
         }
-        report.add_absent("used", def.span, &def.name, format!("color `{}` is never used", def.name), None);
+        report.add_absent("used", def.span, &def.shown, format!("color `{}` is never used", def.shown), None);
     }
 }
 
@@ -164,13 +174,15 @@ fn conflicting_color_definition(report: &mut Report) {
     for def in &analysis.facts.colors {
         by_name.entry(def.name.as_str()).or_default().push(def);
     }
-    for (name, defs) in by_name {
+    for defs in by_name.into_values() {
         for pair in defs.windows(2) {
             let [first, second] = pair else { continue };
             let (Some(a), Some(b)) = (&first.value, &second.value) else { continue };
-            if !first.certain || !second.certain || a == b {
+            // A package's color is a default the document may recolor.
+            if !first.certain || !second.certain || a == b || first.package.is_some() || internal(&second.shown) {
                 continue;
             }
+            let name = &second.shown;
             report.add(
                 second.span,
                 name,
@@ -191,37 +203,31 @@ fn duplicate_color_value(report: &mut Report) {
     if !definitions_matter(analysis) {
         return;
     }
-    let exact: Vec<&ColorDef> = analysis.facts.colors.iter().filter(|d| d.certain && d.value.is_some()).collect();
-    let mut seen: crate::fixed::HashSet<(&str, &str)> = crate::fixed::HashSet::default();
-    for (i, a) in exact.iter().enumerate() {
-        if a.package.is_none() {
+    // An alias names an existing color on purpose: a role (`comments`) given a color (`orange`).
+    let exact: Vec<&ColorDef> =
+        analysis.facts.colors.iter().filter(|d| d.certain && d.value.is_some() && !d.alias).collect();
+    let mut seen: crate::fixed::HashSet<&str> = crate::fixed::HashSet::default();
+    for (i, doc) in exact.iter().enumerate() {
+        if doc.package.is_some() || internal(&doc.shown) || !seen.insert(doc.name.as_str()) {
             continue;
         }
-        for b in exact.iter().skip(i + 1) {
-            if a.name == b.name || (a.package.is_some() && b.package.is_some()) {
-                continue;
-            }
-            if a.value != b.value {
-                continue;
-            }
-            let key =
-                if a.name < b.name { (a.name.as_str(), b.name.as_str()) } else { (b.name.as_str(), a.name.as_str()) };
-            if !seen.insert(key) {
-                continue;
-            }
-            let (doc, other) = if a.package.is_none() { (a, b) } else { (b, a) };
-            report.add(
-                doc.span,
-                &doc.name,
-                format!(
-                    "color `{}` is exactly `{}` ({})",
-                    doc.name,
-                    other.name,
-                    doc.value.as_ref().unwrap().hull.spell()
-                ),
-                None,
-            );
-        }
+        // The first color defined before it with its value, never a package's internal one.
+        let Some(other) = exact[..i].iter().find(|other| {
+            other.name != doc.name && other.value == doc.value && !(other.package.is_some() && internal(&other.name))
+        }) else {
+            continue;
+        };
+        report.add(
+            doc.span,
+            &doc.shown,
+            format!(
+                "color `{}` is exactly `{}` ({})",
+                doc.shown,
+                other.shown,
+                doc.value.as_ref().map_or_else(String::new, |v| v.hull.spell())
+            ),
+            None,
+        );
     }
 }
 

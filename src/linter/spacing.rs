@@ -73,7 +73,10 @@ reported.
 
 So `etc. and` gets a sentence space and `the ABC. Next` a word space, both
 the wrong way round.  The rule reads the characters the run set and reports
-only where a real space token became glue.
+only where a real space token became glue.  A lowercase word counts as the
+sentence running on only when the source writes it right after the space,
+in the same line and group, unless the word before the period is a listed
+abbreviation.
 
 Fix by writing `etc.\\ and`, or `the ABC\\@. Next`.",
         references: &[
@@ -443,10 +446,14 @@ fn sentence_spacing(report: &mut Report) {
         let word = view.word_before(i).to_string();
         let spelled = abbreviation(view, i);
         let listed = report.analysis.settings.conventions.ties.abbreviations.contains(&spelled);
+        // A lowercase word is evidence of a sentence running on only where it follows the space
+        // in the same line and group: after a line break or a brace (`\textcolor{…}{henlo}`)
+        // the source no longer says the two belong to one sentence.
+        let runs_on = (before.is_lowercase() || before.is_numeric()) && after.is_lowercase() && view.joined(i + 2);
         if capitals && after.is_uppercase() && !listed {
             let message = format!("the period after `{word}` set a word space, where a sentence ends");
             findings.push(rewrite_space(i..i + 1, "intersentence", message, r"\@."));
-        } else if listed || (before.is_lowercase() || before.is_numeric()) && after.is_lowercase() {
+        } else if listed || runs_on {
             let message = format!("the period in `{spelled}` set a sentence space, where the sentence runs on");
             // `\ ` is a control space: the fix names it with its period, since
             // a lone backslash reads as a typo.

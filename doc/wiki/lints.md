@@ -527,7 +527,7 @@ See [The TeXbook, chapter 5](https://ctan.org/pkg/texbook#chapter-5).
 
 **the same color name is defined twice with different colors**
 
-Two `\definecolor`-family calls store different colors under the same name. Only the last one is ever read back.
+Two `\definecolor`-family calls store different colors under the same name. Only the last one is ever read back. Silent where the first is a package's: a default the document recolors on purpose.
 
 Fix by giving the second color its own name, or by removing the earlier definition.
 
@@ -1287,7 +1287,7 @@ See [chktex 18](https://www.nongnu.org/chktex/), [csquotes § 3.1](https://ctan.
 
 **a definition is replaced before anything uses it**
 
-The name is defined, and defined again, with no use in between: the first replacement text never reaches the typesetter. Both definitions are made on every path, so this is not a conditional fallback.
+The name is defined, and defined again, with no use in between: the first replacement text never reaches the typesetter. Both definitions are made on every path, so this is not a conditional fallback. The first is no `\providecommand`, which yields to a later definition on purpose, and both are statements the file reads in order: a definition inside a macro body runs whenever the macro is called, so a default that a key handler or a later call overrides is left alone.
 
 Fix by deleting the first definition, or by checking which one was meant.
 
@@ -1297,9 +1297,9 @@ Fix by deleting the first definition, or by checking which one was meant.
 
 **two color names store the exact same color**
 
-Two `\definecolor`-family calls, at least one of them the document's own, store the same model and components under different names. Not wrong, but one name likely means to be the other.
+Two `\definecolor`-family calls, the later one the document's own, store the same model and components under different names. Not wrong, but one name likely means to be the other.
 
-Silent unless the run could read both colors back exactly.
+Silent unless the run could read both colors back exactly, and for a `\colorlet` given exactly another color's name: an alias, such as a role named after the color it takes.
 
 See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
@@ -1561,7 +1561,7 @@ See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
 
 The document names a color with `\definecolor`, `\providecolor` or `\colorlet` and never reads it back through `\color`, `\textcolor` or a `\colorlet` source.
 
-Silent for a color a package defines: a library may define more colors than any one document uses.
+Silent for a color a package defines: a library may define more colors than any one document uses. So is a name with `@`, which code built and no document text wrote, and xcolor's `.` for the current color.
 
 See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
@@ -1571,7 +1571,7 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 **a macro defined in the document is never used**
 
-Nothing expands this name.
+Nothing expands this name. A name some other definition of it gives a meaning that is read is used: a default a later call overrides is no unused name, and `dead-definition` covers a definition replaced before any use.
 
 Fix by deleting it, or by checking why nothing calls it yet.
 

@@ -924,6 +924,19 @@ fn an_abbreviation_after_a_line_break_is_named_alone() {
     assert!(found.iter().any(|f| f.contains("`e.g.`")) && !found.iter().any(|f| f.contains("celle")), "{found:?}");
 }
 
+/// A lowercase word on the next line, or inside another command's group, is no evidence that the
+/// sentence runs on: `inch.` ends its sentence.
+#[test]
+fn a_period_before_a_new_line_or_group_is_no_abbreviation() {
+    let Some(analysis) = latex(
+        "\\documentclass{article}\n\\usepackage{xcolor}\n\\begin{document}\n\\hspace*{1in}Indented by an inch.\n\\textcolor{brown}{henlo}!\n\nThe end. {and} so.\n\\end{document}\n",
+    ) else {
+        return;
+    };
+    let found = findings(&analysis, "sentence-spacing");
+    assert!(found.is_empty(), "{found:?}");
+}
+
 /// `conventions.ties.abbreviations`: a listed abbreviation wants a word space before a capital too.
 #[test]
 fn a_listed_abbreviation_before_a_capital_is_reported() {
@@ -1677,4 +1690,32 @@ A word(with a gap) and ( spaced ) text.
     let found = placed(&analysis, "parenthesis-spacing");
     assert!(found.iter().all(|f| f.starts_with("5:")), "{found:?}");
     assert_eq!(found.len(), 3, "{found:?}");
+}
+
+/// `\T1\textquotedbl` is a name code builds around text the document wrote (the encoding it
+/// chose): the character it sets is the definition's, so no quotation rule reads it as the
+/// document's own, and none stands in the document's `\usepackage` options.
+#[test]
+fn a_symbol_named_by_document_text_is_not_the_documents_character() {
+    if satex::project::paths::which("kpsewhich").is_err() {
+        return;
+    }
+    let root = crate::support::tmp_root().join(format!("satex-chktex-symbol-{}", std::process::id()));
+    let (dir, lib) = (root.join("doc"), root.join("lib"));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(
+        lib.join("qsym.sty"),
+        "\\ProvidesPackage{qsym}\n\\expandafter\\chardef\\csname Xqsym\\endcsname=34\n\\newcommand\\qsym[1]{\\csname #1qsym\\endcsname}\n",
+    )
+    .unwrap();
+    let source = "\\documentclass{article}\n\\usepackage{qsym}\n\\begin{document}\nHe said \\qsym{X}hello\\qsym{X}.\n\\end{document}\n";
+    let path = dir.join("main.tex");
+    std::fs::write(&path, source).unwrap();
+    let mut cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    cfg.search_paths = vec![lib];
+    let analysis = Machine::analyze(source, Some(&path), &cfg);
+    let _ = std::fs::remove_dir_all(&root);
+    let found = findings(&analysis, "wrong-quote-character");
+    assert!(found.is_empty(), "{found:?}");
 }

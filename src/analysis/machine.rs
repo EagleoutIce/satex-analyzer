@@ -1911,6 +1911,9 @@ pub struct Machine<'a> {
     /// a macro body of the project's included: where its own text put what
     /// the call `file_call` does.
     project_site: Option<Span>,
+    /// The control sequence run last at [`Machine::project_site`]'s kind of
+    /// spot: the call the project's own text made, as it wrote it.
+    project_call: Option<(Sym, Span)>,
     /// The last character the main loop took straight from a project file: text the
     /// document itself sets, where an error it raises (`Missing \begin{document}`) stands.
     typed_at: Option<Span>,
@@ -1966,7 +1969,7 @@ pub struct Machine<'a> {
     /// The trace reached `limits.trace` and its truncation was reported.
     trace_full: bool,
     /// The token the last `get_r_token` read: the name a definition makes.
-    name_token: Option<Token>,
+    pub(crate) name_token: Option<Token>,
     /// [`Machine::project_file`] per file: 0 not asked, 1 no, 2 yes.
     own_files: Vec<u8>,
     /// The step the last typed digits were made at, and how many then: their
@@ -2675,6 +2678,7 @@ impl<'a> Machine<'a> {
             recent_file_spans: Vec::new(),
             file_call: None,
             project_site: None,
+            project_call: None,
             typed_at: None,
             text_site: None,
             built_name: None,
@@ -6283,7 +6287,7 @@ will look undefined",
         }
         let spelled = self.name(name).to_string();
         crate::analysis::observe::version_record(self, &spelled, &meaning);
-        crate::analysis::observe::color_def(self, &spelled, &meaning, span);
+        crate::analysis::observe::color_def(self, &spelled, &meaning, by, span);
         crate::analysis::observe::list_item(self, &spelled, &meaning);
         if let Some(line) = self.source_extent(span) {
             self.out.graph.note_extent(span, line);
@@ -6505,6 +6509,8 @@ will look undefined",
                     context: current_context,
                     via: self.within.last().map(|(sym, _)| *sym),
                     spelled: own_name,
+                    // A macro body stands before the call that runs it.
+                    stated: self.file_call.is_some_and(|(_, at)| at == span) || self.after_file_call(span),
                 };
                 if let Some(capture) = &mut self.package_capture {
                     capture.log.definitions.push((fact.clone(), relative));
@@ -9318,7 +9324,13 @@ will look undefined",
                         match self.env.value(sym).as_int().and_then(|c| u32::try_from(c).ok()) {
                             Some(c) => {
                                 if let Some(ch) = char::from_u32(c) {
-                                    self.note_text(ch, span);
+                                    // A name code built around the document's text (`\T1\textquotedbl`
+                                    // from the encoding it chose) sets a character of the code's, not
+                                    // one the document wrote: it is no part of the document's text.
+                                    match self.carried.foreign_names.contains(&(sym, span)) {
+                                        true => crate::analysis::observe::word_break(self),
+                                        false => self.note_text(ch, span),
+                                    }
                                 }
                                 self.append_char(c)
                             }
@@ -10034,6 +10046,12 @@ will look undefined",
     }
 
     fn record_argument_values(&mut self, sym: Sym, node: NodeId, arguments: &[Vec<Token>]) {
+        let called = self.out.graph.vertex(node).map(|v| v.span.file);
+        if let Some(first) = arguments.first().and_then(|a| a.first())
+            && called.is_some_and(|f| self.own_file(f))
+        {
+            self.project_call = Some((sym, first.span));
+        }
         if self.cfg.record_arguments {
             // Only arguments the document wrote: library calls would fill
             // `limits.vertices` before the document is read.
@@ -12016,18 +12034,22 @@ will look undefined",
         self.name_token = Some(t);
         match t.tok {
             Tok::Cs(sym) => {
-                // A name an expl3 module function defines is a variable of that module.
-                let var = self
-                    .within
-                    .iter()
-                    .find_map(|(f, _)| Some((crate::analysis::roles::VarKind::of_function(self.name(*f))?, *f)));
+                // A name an expl3 module function defines is a variable of that module. In the
+                // project's text, only the first argument of the function it called on it is:
+                // `\prop_get:NnN` stores into a `tl`.
+                let own = self.own_file(t.span.file);
+                let kind = |f: Sym| Some((crate::analysis::roles::VarKind::of_function(self.name(f))?, f));
+                let var = match own {
+                    true => self.project_call.filter(|(_, at)| *at == t.span).and_then(|(f, _)| kind(f)),
+                    false => self.within.iter().find_map(|(f, _)| kind(*f)),
+                };
                 crate::analysis::observe::arg_type(
                     self,
                     t.span,
                     var.map_or(crate::analysis::roles::Ty::Cs, |(k, _)| crate::analysis::roles::Ty::Var(k)),
                 );
                 if let Some((kind, by)) = var
-                    && self.own_file(t.span.file)
+                    && own
                     && self.out.facts.vars.len() < self.cfg.limits.facts
                 {
                     self.out.facts.vars.push(crate::analysis::facts::VarUse { name: sym, kind, by, span: t.span });

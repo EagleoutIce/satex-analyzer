@@ -4309,3 +4309,60 @@ fn text_in_the_preamble_is_an_error_where_it_stands() {
         "{found:?}"
     );
 }
+
+/// A dead definition is two statements the file reads one after the other.
+/// A default set inside a function that a key handler may override, and two
+/// macros that each set a name, run per call: neither is dead.
+#[test]
+fn a_definition_inside_a_macro_body_is_never_dead() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\tl_new:N \l_my_group_tl
+\keys_define:nn { my } { group .tl_set:N = \l_my_group_tl }
+\cs_new_protected:Npn \my_prepare:n #1
+  {
+    \tl_set:Nn \l_my_group_tl { default }
+    \keys_set:nn { my } {#1}
+    \tl_use:N \l_my_group_tl
+  }
+\NewDocumentCommand \Prep { m } { \my_prepare:n {#1} }
+\ExplSyntaxOff
+\newcommand\seta{\def\x{a}}\newcommand\setb{\def\x{b}}
+\def\y{a}\def\y{b}
+\begin{document}
+\Prep{group=a} \seta\setb\x \y
+\end{document}",
+    );
+    // The default is read whenever no key overrides it: no unused name either.
+    let names: Vec<String> = satex::linter::lint(&analysis)
+        .iter()
+        .filter(|f| matches!(f.get("code").and_then(|c| c.as_str()), Some("dead-definition" | "unused-definition")))
+        .filter_map(|f| Some(format!("{} {}", f.get("code")?.as_str()?, f.get("name")?.as_str()?)))
+        .collect();
+    assert_eq!(names, [r"dead-definition \y"]);
+}
+
+/// `\providecommand` gives a fallback that an optional input replaces on purpose.
+#[test]
+fn a_provided_fallback_is_never_dead() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\providecommand\measured{?}
+\renewcommand\measured{42}
+\begin{document}
+\measured
+\end{document}",
+    );
+    let dead: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("dead-definition"))
+        .collect();
+    assert!(dead.is_empty(), "{dead:?}");
+}

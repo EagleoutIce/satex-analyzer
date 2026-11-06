@@ -17,7 +17,11 @@ pub static RULES: &[Rule] = &[
         explanation: "\
 The name is defined, and defined again, with no use in between: the first
 replacement text never reaches the typesetter.  Both definitions are made on
-every path, so this is not a conditional fallback.
+every path, so this is not a conditional fallback.  The first is no
+`\\providecommand`, which yields to a later definition on purpose, and both
+are statements the file reads in order: a definition inside a macro body runs
+whenever the macro is called, so a default that a key handler or a later call
+overrides is left alone.
 
 Fix by deleting the first definition, or by checking which one was meant.",
         references: &[],
@@ -81,7 +85,9 @@ Fix by using LaTeX's interface for the same job.",
         severity: Severity::Info,
         summary: "a macro defined in the document is never used",
         explanation: "\
-Nothing expands this name.
+Nothing expands this name.  A name some other definition of it gives a
+meaning that is read is used: a default a later call overrides is no unused
+name, and `dead-definition` covers a definition replaced before any use.
 
 Fix by deleting it, or by checking why nothing calls it yet.",
         references: &[],
@@ -422,10 +428,13 @@ fn unused_definition(report: &mut Report) {
     let index = report.index();
     let rule = &analysis.settings.lints.unused_definition;
     let ignore: Vec<regex::Regex> = rule.ignore.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
+    let read: BTreeSet<Sym> =
+        analysis.facts.defs.iter().filter(|def| index.used_definition(def)).map(|def| def.name).collect();
     for def in &analysis.facts.defs {
         // A name one call defines for another it defines, whose text calls
         // it (ltcmd's `\fd code`), is that name's implementation.
         if def.tag != "macro"
+            || read.contains(&def.name)
             || index.implements_sibling(def)
             || !index.own_definition(def)
             || index.used_definition(def)
@@ -483,7 +492,7 @@ fn dead_definition(report: &mut Report) {
         .facts
         .defs
         .iter()
-        .filter(|def| def.certain && def.mac.is_some() && index.own_definition(def))
+        .filter(|def| def.certain && def.stated && def.mac.is_some() && index.own_definition(def))
         .collect();
     // Grouped by name, as the report is ordered.  Only a name defined twice
     // can have a definition nothing reads.
@@ -494,7 +503,9 @@ fn dead_definition(report: &mut Report) {
             let (first, second) = (pair[0], pair[1]);
             // Whatever reads the first definition, through any name, reads
             // it before the second replaces it.
-            if first.span == second.span || first.depth != second.depth || index.used_definition(first) {
+            // A `\providecommand`-family definition is a fallback that yields on purpose.
+            let fallback = analysis.interner.name(first.by).to_ascii_lowercase().starts_with("provide");
+            if first.span == second.span || first.depth != second.depth || fallback || index.used_definition(first) {
                 continue;
             }
             let rendered = analysis.interner.cs(name);

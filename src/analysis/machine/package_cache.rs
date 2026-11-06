@@ -428,6 +428,7 @@ type CachedDiagnostic = (u8, String, String, Span, Option<(String, Sym)>, u32, b
 #[derive(Serialize, Deserialize)]
 struct CachedColorDef {
     name: String,
+    alias: bool,
     value: Option<crate::engine::value::Colors>,
     declared: Option<(crate::engine::value::Model, String)>,
     spec_span: Option<Span>,
@@ -1563,6 +1564,7 @@ impl Machine<'_> {
             recent_file_spans: _,
             file_call: _,
             project_site: _,
+            project_call: _,
             typed_at: _,
             text_site: _,
             built_name: _,
@@ -2493,6 +2495,7 @@ impl Machine<'_> {
                 },
                 certain: d.certain,
                 spelled: false,
+                stated: false,
                 cds,
                 // Outside environment (not persisted; replay matches).
                 context: Rc::from(Vec::new()),
@@ -2612,6 +2615,8 @@ impl Machine<'_> {
         for c in &st.colors {
             self.out.facts.colors.push(ColorDef {
                 name: c.name.clone(),
+                shown: c.name.clone(),
+                alias: c.alias,
                 value: c.value.clone(),
                 declared: c.declared.clone(),
                 spec_span: c.spec_span.map(|s| span_in(s, site)),
@@ -3519,6 +3524,7 @@ impl Machine<'_> {
             .iter()
             .map(|c| CachedColorDef {
                 name: c.name.clone(),
+                alias: c.alias,
                 value: c.value.clone(),
                 declared: c.declared.clone(),
                 spec_span: c.spec_span.map(|s| span_out(s, site)),
