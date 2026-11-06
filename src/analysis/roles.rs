@@ -68,6 +68,8 @@ pub enum KeyKind {
     Entry,
     /// A color's name, which a `\\csname` forms for the color's definition (xcolor's `\\color@⟨name⟩`).
     Color,
+    /// A programming language a code listing highlights: listings' `language=`, a minted lexer.
+    Language,
     Any,
 }
 
@@ -278,6 +280,7 @@ impl Ty {
             KeyKind::Declared,
             KeyKind::Entry,
             KeyKind::Color,
+            KeyKind::Language,
         ];
         let files = FILE_KINDS.iter().map(|r| r.0).filter(|k| *k != FileKind::Any);
         let mut out = vec![
@@ -350,6 +353,10 @@ impl Ty {
             Key(KeyKind::Color) => {
                 ("a color's name, which a `\\csname` forms for its definition", "`\\color{⟨brand⟩}`")
             }
+            Key(KeyKind::Language) => (
+                "a programming language a code listing highlights",
+                "`\\begin{lstlisting}[language=⟨Python⟩]`, `\\begin{minted}{⟨python⟩}`",
+            ),
             File(FileKind::Any) => ("a file of no known kind", "`\\input{⟨a⟩}` read as `.bib` and `.tex`"),
             File(FileKind::Tex) => ("a file read as TeX source", "`\\input{⟨chapter1⟩}`"),
             File(FileKind::Sty) => ("a package", "`\\usepackage{⟨amsmath⟩}`"),
@@ -480,6 +487,7 @@ impl std::fmt::Display for Ty {
                 Ty::Key(KeyKind::Declared) => "declared key",
                 Ty::Key(KeyKind::Entry) => "index entry",
                 Ty::Key(KeyKind::Color) => "color name",
+                Ty::Key(KeyKind::Language) => "code language",
                 Ty::Key(KeyKind::Any) => "key",
                 Ty::File(_) => "file",
                 Ty::Name => "name",
@@ -662,7 +670,7 @@ type Typed = Vec<(String, usize, Ty, bool)>;
 /// the braced argument of the command its source text stands in. A
 /// definition's body is no argument (`\def\x{…}`), and a name the run
 /// left a register or constant is no command (`\setlength\x{…}`).
-fn typed(analysis: &Analysis) -> Typed {
+fn typed(analysis: &Analysis) -> (Typed, Vec<(String, Ty)>) {
     // Each file's text and where its lines start.
     let mut texts: crate::fixed::HashMap<crate::engine::tex::FileId, Option<(String, Vec<usize>)>> = Default::default();
     let defs = analysis.facts.defs.iter().filter(|d| analysis.project_file(d.span.file));
@@ -694,9 +702,19 @@ fn typed(analysis: &Analysis) -> Typed {
             out.push((cmd.to_string(), arg, Ty::Body, optional));
         }
     }
+    let mut values = Vec::new();
     for (at, ty) in &analysis.facts.types {
         let Some((text, byte)) = source(*at) else { continue };
+        if let Some(key) = value_key(text, byte) {
+            values.push((key.to_string(), *ty));
+        }
         let Some((cmd, arg, open, optional)) = enclosing_call(text, byte) else { continue };
+        // an environment's arguments are its command's: `\begin{minted}{python}` is `\minted{python}`
+        let (cmd, arg) = match environment(text, cmd) {
+            Some(env) if optional => (env, arg),
+            Some(env) if arg > 0 => (env, arg - 1),
+            _ => (cmd, arg),
+        };
         let first = text.len() - text[open + 1..].trim_start().len();
         let Some(sym) = analysis.interner.lookup(cmd) else { continue };
         let meaning = analysis.env.meaning(sym);
@@ -706,7 +724,48 @@ fn typed(analysis: &Analysis) -> Typed {
             out.push((cmd.to_string(), arg, *ty, optional));
         }
     }
-    out
+    (out, values)
+}
+
+/// The environment a `\begin` at `cmd` (a slice of `text`) opens.
+fn environment<'a>(text: &'a str, cmd: &str) -> Option<&'a str> {
+    let end = (cmd.as_ptr() as usize).checked_sub(text.as_ptr() as usize)? + cmd.len();
+    (cmd == "begin").then(|| text.get(end..)?.trim_start().strip_prefix('{')?.split_once('}').map(|(e, _)| e.trim()))?
+}
+
+/// The key whose value in a key list holds byte `at` of `text` (`language={[LaTeX]TeX}`): the
+/// name before the `=` its item opens with.
+pub fn value_key(text: &str, at: usize) -> Option<&str> {
+    let b = text.as_bytes();
+    let mut depth = 0i32;
+    for i in (0..at.min(b.len())).rev() {
+        match b[i] {
+            b'}' | b']' => depth += 1,
+            b'{' | b'[' if depth > 0 => depth -= 1,
+            // the value's own braces
+            b'{' | b'[' if text[..i].trim_end().ends_with('=') => {}
+            b'=' if depth == 0 => {
+                let lead = text[..i].trim_end();
+                let start = lead.rfind(|c: char| !(c.is_alphanumeric() || " -_".contains(c))).map_or(0, |k| k + 1);
+                let key = lead[start..].trim();
+                let opens = lead[..start].is_empty() || lead[..start].ends_with([',', '[', '{']);
+                return (opens && !key.is_empty()).then_some(key);
+            }
+            b',' | b'{' | b'[' | b'\\' | b'\n' if depth == 0 => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The type the run read a value of `key` in a key list as, joined over the values: only a kind of
+/// key, which names what the value is.
+pub fn value_type(analysis: &Analysis, key: &str) -> Option<Ty> {
+    let named = |t: &Ty| matches!(t, Ty::Key(k) if !matches!(k, KeyKind::Option | KeyKind::Pgf | KeyKind::Any));
+    let seen = sources(analysis).values.iter().filter(|(k, t)| k == key && named(t)).map(|(_, t)| *t);
+    // the conventions (an editor seed) where the run read none: listings' language keys
+    let seed = matches!(key, "language" | "alsolanguage" | "defaultdialect").then_some(Ty::Key(KeyKind::Language));
+    seen.reduce(Ty::join).filter(named).or(seed)
 }
 
 /// The command whose argument holds byte `at` of `text`: its name, the
@@ -790,6 +849,8 @@ fn roles_at(analysis: &Analysis, typed: &Typed, cmd: &str, depth: usize) -> Vec<
 #[derive(Clone, Default)]
 pub struct Sources {
     typed: Typed,
+    /// Each key whose value in a key list the run typed, with the type.
+    values: Vec<(String, Ty)>,
     calls: Vec<Call>,
 }
 
@@ -803,7 +864,10 @@ struct Call {
 }
 
 fn sources(analysis: &Analysis) -> &Sources {
-    analysis.role_sources.get_or_init(|| Sources { typed: typed(analysis), calls: calls(analysis) })
+    analysis.role_sources.get_or_init(|| {
+        let (typed, values) = typed(analysis);
+        Sources { typed, values, calls: calls(analysis) }
+    })
 }
 
 /// Each occurrence and load, with the rest of the lines where a call may
@@ -1088,6 +1152,10 @@ fn seed(cmd: &str) -> Vec<Role> {
         "ref" | "eqref" | "pageref" | "autoref" | "nameref" | "cref" | "Cref" | "cpageref" | "Cpageref" | "vref"
         | "Vref" | "labelcref" | "subref" => first(RoleKind::Occ(O::Ref)),
         c if c.contains("cite") => first(RoleKind::Occ(O::Cite)),
+        // minted's lexer, which only Pygments reads
+        "minted" | "mintinline" | "inputminted" | "newminted" | "newmint" | "newmintinline" | "newmintedfile" => {
+            first(RoleKind::Type(Ty::Key(KeyKind::Language)))
+        }
         _ => Vec::new(),
     }
 }

@@ -4264,6 +4264,28 @@
           "type": "object",
           "x-category": "completion"
         },
+        "language": {
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "pygmentize": {
+              "default": "pygmentize",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "listing": {
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
         "overlay": {
           "description": "an overlay specification, text a command reads between < and > (beamer's \\only<2->)",
           "properties": {

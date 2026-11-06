@@ -43,6 +43,14 @@ The picker (`view`) has a saturation and brightness square, a hue strip, the spe
 
 VS Code's own color picker goes through `textDocument/colorPresentation`, which writes the same.
 
+## language
+
+A code language (`Ty::Key(Language)`): a key's value listings forms its language driver `\lstlang@⟨language⟩$⟨dialect⟩` from (`language=`, `alsolanguage=`), or a lexer minted hands Pygments (`\begin{minted}{python}`, `\mintinline`, `\inputminted`, `\newminted`). After a key the run read a language for, completion offers the languages the run defined (`\lstdefinelanguage`) and those the language files in `\lstlanguagefiles` declare, each dialect as `[LaTeX]TeX`. In an argument it offers Pygments' lexers: `pygmentize -L lexers`, read once (the program is `pygmentize`, empty for none), else a seed list. The document's own languages come first. Each item's detail says where the language is defined, and so does hover. The rule `unknown-code-language` flags a listings value nothing defines: a warning where the run knew the language files, a note where it did not.
+
+## listing
+
+The body of an environment the run read verbatim, a listing. Outside its escapes only what the listing reads completes: the replacement sequences of its `literate=` key, each with what it becomes, offered on the sequence's first characters. Inside an escape TeX runs, so completion, hover and the rules work as anywhere in the document. The sequences and the escape delimiters (`escapeinside`, `escapechar`, `mathescape`) are the run's options in effect at the listing: those the listing's own options set, else those in effect when the run ended (`\lstset`).
+
 ## environment
 
 On the name of a `\begin` or `\end` the run met. Its view, "Change environment…", lists the environments defined there that make the same kind of material, with their required arguments. The kind is the first kernel builder the environment's code reaches, the most specific first: an alignment preamble (`tabular`, `array`, `longtable`), a list (`itemize`), a trivlist (`center`), a float (`figure`, `table`). An environment that reaches none, as `document`, offers no change. Picking one changes this occurrence only: both names, and the arguments, kept where both environments take them, added empty or dropped otherwise. Renaming an environment the project does not define is refused: it would change only its uses.

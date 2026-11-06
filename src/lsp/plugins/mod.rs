@@ -17,6 +17,8 @@ mod image;
 pub(super) mod incremental;
 mod index;
 mod keys;
+mod language;
+pub(super) mod listing;
 mod overlay;
 mod savebox;
 mod table;
@@ -121,6 +123,8 @@ pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
     &keys::Keys,
     &units::Units,
     &color::Color,
+    &language::Language,
+    &listing::Listing,
     &environment::Environment,
     &table::Table,
     &image::Image,

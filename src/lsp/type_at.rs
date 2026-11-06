@@ -51,11 +51,13 @@ pub(super) struct Hit {
     pub defines: bool,
     /// The part of the item the name is, where only its end is (`b` of `a.b`, a node's anchor).
     pub typed: Option<String>,
+    /// Whether the text is a key's value (`language=…`): only values fit there.
+    pub value: bool,
 }
 
 impl Hit {
     pub fn of(ty: Ty) -> Hit {
-        Hit { ty, prefix: String::new(), suffix: String::new(), file: false, defines: false, typed: None }
+        Hit { ty, prefix: String::new(), suffix: String::new(), file: false, defines: false, typed: None, value: false }
     }
 }
 
@@ -167,6 +169,27 @@ fn overlay(analysis: &Analysis, doc: &Text, path: &str, pos: Pos, item: &Item) -
 /// What the argument `p` takes, by its command's roles: per role of a
 /// braced one, the key list or the options of a bracketed one.
 fn argument_types(analysis: &Analysis, p: &Place) -> Vec<Hit> {
+    let mut out = argument_roles(analysis, p);
+    // a key's value of a kind the run read there before
+    let loads = out.iter().any(|h| h.ty == Ty::Options);
+    let value = roles::value_key(&p.inside, p.inside.len()).and_then(|k| roles::value_type(analysis, k));
+    if let Some(ty) = value.filter(|_| !loads) {
+        out.insert(0, Hit { value: true, ..Hit::of(ty) });
+    }
+    out
+}
+
+fn argument_roles(analysis: &Analysis, p: &Place) -> Vec<Hit> {
+    // an environment's arguments after its name are its command's (`\begin{minted}{python}`)
+    let env = (p.cmd == "begin" && p.open == '{' && p.nth() > 0)
+        .then(|| p.groups.trim_start().strip_prefix('{')?.split_once('}').map(|(e, _)| e.trim().to_string()))
+        .flatten();
+    if let Some(env) = env {
+        let nth = p.nth() - 1;
+        let roles = roles::roles(analysis, &env);
+        let named = roles.iter().filter(|r| r.arg == nth && matches!(r.ty(), Ty::Key(k) if k != KeyKind::Any));
+        return named.map(|r| Hit { prefix: r.prefix.clone(), suffix: r.suffix.clone(), ..Hit::of(r.ty()) }).collect();
+    }
     let mut all = roles::roles_probed(analysis, &p.cmd);
     // a command the run looked colors up or defined them through: which argument names one, from its probe
     let sym = analysis.interner.lookup(&p.cmd);

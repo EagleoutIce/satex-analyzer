@@ -12,6 +12,7 @@ pub mod dashes;
 pub mod expl3;
 pub mod fix;
 pub mod italics;
+pub mod languages;
 pub mod mathtext;
 pub mod numbering;
 pub mod packages;
@@ -61,6 +62,7 @@ pub fn all() -> impl Iterator<Item = &'static Rule> {
         .chain(build::RULES)
         .chain(suppress::RULES)
         .chain(colors::RULES)
+        .chain(languages::RULES)
         .chain(tables::RULES)
         .chain(xref::RULES)
 }

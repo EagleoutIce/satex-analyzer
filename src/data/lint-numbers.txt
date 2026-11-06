@@ -114,3 +114,4 @@ C047 missing-end
 S051 hand-written-reference
 S052 hand-written-author
 C048 undefined-cref-format
+C049 unknown-code-language

@@ -26,6 +26,8 @@ widget       theorem          environment name
 hover        units            dimen, glue, dimen register, skip register  
 hover        overlay          overlay specification                       
 completion   keys             options, option key, pgf key, declared key  
+completion   language         code language                               
+completion   listing          environment the run met                     
 incremental  comment_edit                                                 
 incremental  whitespace_edit                                              
 incremental  typing                                                       
@@ -65,6 +67,14 @@ The picker (`view`) has a saturation and brightness square, a hue strip, the spe
 - anywhere else (a TikZ key, a command without a model argument, or without xcolor): a `\definecolor{mycolor}{…}{…}` before `\begin{document}` and its name in place. Without any color package it adds `\usepackage{xcolor}` too.
 
 VS Code's own color picker goes through `textDocument/colorPresentation`, which writes the same.
+
+## language
+
+A code language (`Ty::Key(Language)`): a key's value listings forms its language driver `\lstlang@⟨language⟩$⟨dialect⟩` from (`language=`, `alsolanguage=`), or a lexer minted hands Pygments (`\begin{minted}{python}`, `\mintinline`, `\inputminted`, `\newminted`). After a key the run read a language for, completion offers the languages the run defined (`\lstdefinelanguage`) and those the language files in `\lstlanguagefiles` declare, each dialect as `[LaTeX]TeX`. In an argument it offers Pygments' lexers: `pygmentize -L lexers`, read once (the program is `pygmentize`, empty for none), else a seed list. The document's own languages come first. Each item's detail says where the language is defined, and so does hover. The rule `unknown-code-language` flags a listings value nothing defines: a warning where the run knew the language files, a note where it did not.
+
+## listing
+
+The body of an environment the run read verbatim, a listing. Outside its escapes only what the listing reads completes: the replacement sequences of its `literate=` key, each with what it becomes, offered on the sequence's first characters. Inside an escape TeX runs, so completion, hover and the rules work as anywhere in the document. The sequences and the escape delimiters (`escapeinside`, `escapechar`, `mathescape`) are the run's options in effect at the listing: those the listing's own options set, else those in effect when the run ended (`\lstset`).
 
 ## environment
 

@@ -455,6 +455,8 @@ pub struct TypePlugins {
     pub keys: KeysPlugin,
     pub units: UnitsPlugin,
     pub color: ColorPlugin,
+    pub language: LanguagePlugin,
+    pub listing: Switch,
     pub environment: Switch,
     pub table: Switch,
     pub image: Switch,
@@ -581,6 +583,21 @@ pub struct ColorPlugin {
 impl Default for ColorPlugin {
     fn default() -> Self {
         Self { enabled: true, swatches: true, name: "mycolor".into() }
+    }
+}
+
+/// `type_plugins.language:` code languages (listings' `language=`, minted's lexers).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LanguagePlugin {
+    pub enabled: bool,
+    /// The program whose `-L lexers` lists minted's languages, read once; empty: the seed list.
+    pub pygmentize: String,
+}
+
+impl Default for LanguagePlugin {
+    fn default() -> Self {
+        Self { enabled: true, pygmentize: "pygmentize".into() }
     }
 }
 

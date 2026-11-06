@@ -318,16 +318,17 @@ flowchart LR
   t50["declared key"]:::key
   t51["index entry"]:::key
   t52["color name"]:::key
-  t53["file"]:::file
-  t54["TeX file (.tex)"]:::file
-  t55["package (.sty)"]:::file
-  t56["class (.cls)"]:::file
-  t57["bibliography database (.bib)"]:::file
-  t58["bibliography style (.bst)"]:::file
-  t59["biblatex bibliography style (.bbx)"]:::file
-  t60["biblatex citation style (.cbx)"]:::file
-  t61["theme (.sty)"]:::file
-  t62["graphic file"]:::file
+  t53["code language"]:::key
+  t54["file"]:::file
+  t55["TeX file (.tex)"]:::file
+  t56["package (.sty)"]:::file
+  t57["class (.cls)"]:::file
+  t58["bibliography database (.bib)"]:::file
+  t59["bibliography style (.bst)"]:::file
+  t60["biblatex bibliography style (.bbx)"]:::file
+  t61["biblatex citation style (.cbx)"]:::file
+  t62["theme (.sty)"]:::file
+  t63["graphic file"]:::file
   subgraph g0_register[" "]
     direction LR
     t7
@@ -379,11 +380,11 @@ flowchart LR
     t50
     t51
     t52
+    t53
   end
   t44 --> g44_key
-  subgraph g53_file[" "]
+  subgraph g54_file[" "]
     direction LR
-    t54
     t55
     t56
     t57
@@ -392,8 +393,9 @@ flowchart LR
     t60
     t61
     t62
+    t63
   end
-  t53 --> g53_file
+  t54 --> g54_file
   t0 --> t1
   t1 --> t2
   t4 --> t3
@@ -413,7 +415,7 @@ flowchart LR
   t4 --> t30
   t5 --> t31
   t13 --> t44
-  t13 --> t53
+  t13 --> t54
   classDef top fill:#eef0f2,stroke:#8a8f98,color:#1f2328
   classDef quantity fill:#dbeafe,stroke:#3b82f6,color:#1f2328
   classDef register fill:#ffedd5,stroke:#f97316,color:#1f2328
