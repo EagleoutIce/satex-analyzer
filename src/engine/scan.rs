@@ -1126,6 +1126,7 @@ impl Machine<'_> {
         let tokens = self.digits_in(num, span);
         if let [Token { tok: Tok::Cs(sym), .. }] = tokens[..] {
             self.scratch.read_digits.insert(key, sym);
+            self.scratch.digits_of_reg.insert(sym, (storage, key.1));
         }
         tokens
     }

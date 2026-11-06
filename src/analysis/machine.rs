@@ -971,9 +971,9 @@ pub(crate) struct NameAccum {
     /// unknown part (once it has one) and the text after its last. The
     /// name is one of them, split again once it is complete.
     pub(crate) names: Vec<(Option<String>, String)>,
-    /// Per name, the texts the one-of tokens it read were narrowed to on
-    /// the paths that built it ([`Machine::split_one_of_groups`]): the
-    /// split per name narrows them again.
+    /// Per name, what the one-of tokens and typed digits it read were
+    /// narrowed to on the paths that built it ([`Machine::note_took`]):
+    /// the split per name narrows them again.
     pub(crate) took: Vec<Took>,
     pub(crate) at: Option<Span>,
     pub(crate) at_written: bool,
@@ -1078,19 +1078,30 @@ impl NameAccum {
     }
 }
 
-/// One-of tokens a path narrowed, with the texts each still stands for.
-pub(crate) type Took = Vec<(Sym, Rc<[Meaning]>)>;
+/// Tokens a path narrowed: a one-of token to the texts it still stands
+/// for, typed digits to the numbers they still are.
+pub(crate) type Took = Vec<(Sym, Narrowed)>;
+
+#[derive(Clone, PartialEq)]
+pub(crate) enum Narrowed {
+    Texts(Rc<[Meaning]>),
+    Number(crate::engine::value::Num),
+}
 
 /// What two paths that built one name took: the tokens both narrowed,
-/// each to the texts of either.
+/// each to what either left.
 pub(crate) fn join_took(a: &Took, b: &Took) -> Took {
     let mut out = Took::new();
     for (sym, x) in a {
-        if let Some((_, y)) = b.iter().find(|(s, _)| s == sym) {
-            let mut all = x.to_vec();
-            all.extend(y.iter().filter(|m| !x.contains(m)).cloned());
-            out.push((*sym, all.into()));
-        }
+        let Some((_, y)) = b.iter().find(|(s, _)| s == sym) else { continue };
+        let joined = match (x, y) {
+            (Narrowed::Texts(x), Narrowed::Texts(y)) => {
+                Narrowed::Texts(x.iter().chain(y.iter().filter(|m| !x.contains(m))).cloned().collect())
+            }
+            (Narrowed::Number(x), Narrowed::Number(y)) => Narrowed::Number(x.join(y)),
+            _ => continue,
+        };
+        out.push((*sym, joined));
     }
     out
 }
@@ -1471,6 +1482,8 @@ pub(crate) struct Scratch {
     /// The typed digits `\the` gave per count register, last write and
     /// interval ([`Machine::register_digits`]).
     pub(crate) read_digits: HashMap<(Sym, u64, i64, i64), Sym>,
+    /// Those typed digits back to their register and its last write then.
+    pub(crate) digits_of_reg: HashMap<Sym, (Sym, u64)>,
     /// How often satex approximated so far: a limitation reported, a
     /// widening, unknown text made. Only monotone.
     pub(crate) approximations: u64,
@@ -12510,15 +12523,19 @@ will look undefined",
             }
             let kept: Vec<Meaning> = groups[arm].iter().map(|&i| explore::text_meaning(texts[i].clone())).collect();
             m.refine_may(sym, &kept);
-            let kept: Rc<[Meaning]> = kept.into();
-            for n in m.scans.iter_mut().filter_map(|a| a.name.as_deref_mut()) {
-                for took in &mut n.took {
-                    took.retain(|(s, _)| *s != sym);
-                    took.push((sym, kept.clone()));
-                }
-            }
+            m.note_took(sym, Narrowed::Texts(kept.into()));
             enter(m, arm)
         })
+    }
+
+    /// The open name scans built on with `sym` narrowed so.
+    pub(crate) fn note_took(&mut self, sym: Sym, narrowed: Narrowed) {
+        for n in self.scans.iter_mut().filter_map(|a| a.name.as_deref_mut()) {
+            for took in &mut n.took {
+                took.retain(|(s, _)| *s != sym);
+                took.push((sym, narrowed.clone()));
+            }
+        }
     }
 
     /// [`Machine::split_one_of`] for a token a parameterless macro's whole

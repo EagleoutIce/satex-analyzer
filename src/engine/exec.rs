@@ -10,7 +10,7 @@ use crate::engine::env::{Binding, GroupKind};
 use crate::analysis::facts::Severity;
 use crate::analysis::graph::ControlDep;
 use crate::analysis::graph::EdgeKind;
-use crate::analysis::machine::{Accum, CondFrame, CondLimit, Machine, Step, Unit, Unk};
+use crate::analysis::machine::{Accum, CondFrame, CondLimit, Machine, Narrowed, Step, Unit, Unk};
 use crate::engine::scan::glue_of;
 use crate::engine::tex::TextClass;
 use crate::engine::tex::{Catcode, MacroDef, Meaning, ParameterText, RegKind, Span, Sym, Tok, Token};
@@ -1691,7 +1691,10 @@ impl Machine<'_> {
                 let n = acc.name.as_deref_mut().expect("the name scan");
                 // A replayed choice may count other arms: then any name.
                 match n.keep(arm) {
-                    Some(took) => took.iter().for_each(|(sym, kept)| m.refine_may(*sym, kept)),
+                    Some(took) => took.iter().for_each(|(sym, kept)| match kept {
+                        Narrowed::Texts(kept) => m.refine_may(*sym, kept),
+                        Narrowed::Number(num) => m.refine_value(*sym, Value::from_num(Quantity::Int, *num)),
+                    }),
                     None => n.collapse(),
                 }
                 true
@@ -1809,10 +1812,8 @@ impl Machine<'_> {
             let count = usize::try_from(num.hi - num.lo + 1).unwrap_or(0);
             if self.split(sym, t.span, count, |m, arm| {
                 let v = num.lo + arm as i64;
-                m.refine_value(
-                    sym,
-                    crate::engine::value::Value::from_num(crate::engine::value::Quantity::Int, Num::exact(v)),
-                );
+                m.refine_value(sym, Value::from_num(Quantity::Int, Num::exact(v)));
+                m.note_took(sym, Narrowed::Number(Num::exact(v)));
                 let digits = m.text_tokens(&v.to_string(), t.span);
                 m.unread_all(&digits);
                 true
@@ -2071,11 +2072,18 @@ impl Machine<'_> {
         }
     }
 
-    /// [`Machine::refine`] for a register's value.
+    /// [`Machine::refine`] for a register's value. Digits `\the` printed
+    /// of a count register not written since teach the register alike, so
+    /// what a join paired with it follows ([`Machine::register_digits`]).
     pub(crate) fn refine_value(&mut self, sym: Sym, value: Value) {
         let keep: Vec<bool> =
             self.env.arms(sym).iter().map(|arm| arm.as_ref().is_none_or(|b| self.may_be(&b.value, &value))).collect();
-        self.env.refine_value(sym, value, &keep);
+        self.env.refine_value(sym, value.clone(), &keep);
+        if let Some(&(reg, stamp)) = self.scratch.digits_of_reg.get(&sym)
+            && self.env.stamp_of(reg) == stamp
+        {
+            self.refine_value(reg, value);
+        }
     }
 
     /// Whether an arm's binding may mean `to`, as `\ifx` decides: no

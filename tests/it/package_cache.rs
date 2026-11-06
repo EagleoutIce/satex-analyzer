@@ -420,9 +420,8 @@ fn beamer_rebuilds_nothing_warm() {
 
 const BEAMER: &str = "\\documentclass{beamer}\\begin{document}\\begin{frame}x\\end{frame}\\end{document}\n";
 
-/// Red: the replay decides hyperref's `\ifnum\lastnodetype=1` in
-/// `\Hy@SaveLastskip` (1 arm), a read leaves it undecided (2 arms). Not the
-/// theme files: the same before they were stored.
+/// The replay decides hyperref's `\ifnum\lastnodetype=1` in
+/// `\Hy@SaveLastskip` as reading it does.
 #[test]
 fn beamer_replays_what_reading_it_reports() {
     if let Some((dir, replayed)) = rebuilds_nothing_warm("replay-beamer", BEAMER) {
