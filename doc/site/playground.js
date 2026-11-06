@@ -3217,7 +3217,12 @@
     traceBody.querySelector('.tr-cur')?.classList.remove('tr-cur');
     const row = rowOf(i);
     row?.classList.add('tr-cur');
-    row?.scrollIntoView({ block: 'nearest' });
+    // only the step list scrolls to the step: the dialog above it stays where it is
+    const list = row?.closest('.tr-tree');
+    if (row && list) {
+      const r = row.getBoundingClientRect(), l = list.getBoundingClientRect();
+      if (r.top < l.top) list.scrollTop -= l.top - r.top; else if (r.bottom > l.bottom) list.scrollTop += r.bottom - l.bottom;
+    }
     trace.cur = i;
     const at = trace.order.indexOf(i);
     for (const b of traceBody.querySelectorAll('[data-move]')) {

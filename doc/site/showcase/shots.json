@@ -251,8 +251,8 @@
     "\\greet{ab}"
    ],
    "viewport": [
-    1100,
-    720
+    1200,
+    900
    ],
    "steps": [
     {
@@ -262,8 +262,8 @@
      "wait": 800
     },
     {
-     "eval": "const d = document.querySelector('#play-trace .tr-state'); if (d) { d.open = true; d.dispatchEvent(new Event('toggle')); }",
-     "wait": 600
+     "eval": "document.querySelector('#trace-stream')?.scrollIntoView({ block: 'nearest' })",
+     "wait": 400
     }
    ],
    "video": [
