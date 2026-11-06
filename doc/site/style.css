@@ -2197,3 +2197,4 @@ main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/
 .ring .cards > .shot:not(.ring-front) figcaption { text-align: center; }
 /* the page settles on the ring when a scroll ends near it: a slight hold, never a lock */
 @media (prefers-reduced-motion: no-preference) and (min-width: 48rem) { html:has(.cards-wrap.ring) { scroll-snap-type: y proximity; } .cards-wrap.ring { scroll-snap-align: center; } }
+@media (max-width: 64rem) { .shot-big .shot-stage, .shot-big:nth-child(even of .shot-big) .shot-stage { justify-self: center; } }
