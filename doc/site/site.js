@@ -134,6 +134,8 @@
   const chipList = (names, chip, shown = CHIPS_SHOWN) => `<span class="chips">${names.slice(0, shown).map(chip).join('')}${names.length > shown
     ? `<details class="chip-more"><summary title="show the other ${names.length - shown}">+${names.length - shown}</summary><span class="chips">${names.slice(shown).map(chip).join('')}</span></details>` : ''}</span>`;
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  /** A key's chip title, in the Typeset view and on the pages alike: what its occurrence does to the key, by the run's role. */
+  const keyTitle = (k) => `${{ def: 'defines', use: 'refers to' }[k.role] ?? k.kind} ${k.key}${k.role ? ` (${k.kind})` : ''}`;
   /** TeX source colored like the editor: commands, braces, parameters, comments. */
   const tex = (text, link = false) => esc(text).replace(/(%[^\n]*)|(\\(?:[A-Za-z@_:]+|.))|([{}[\]])|(#+\d)/g, (m, com, cmd, br) =>
     `<span class="tok-${com ? 'com' : cmd ? 'cmd' : br ? 'br' : 'arg'}">${link && cmd && /^\\[A-Za-z@_:]+$/.test(m) ? `<a class="cs bl" href="#" data-cs="${m}">${m}</a>` : m}</span>`);
@@ -648,7 +650,7 @@
     if (!at.length) return marked;
     // a math note (`\u0006` and its class) is no text the query counts
     let out = '', seen = 0, i = 0, note = false, math = false, first = false;
-    const mark = (k) => k.style != null ? `\u0002${k.style}\u0001${k.color ?? ''}` : k.line != null ? `\u0007${k.line}` : k.mark != null ? `\u0003${k.mark}` : k.from != null ? `\u0005${k.from}\u0001${k.to}` : `\u0001${k.kind ?? 'key'}\u0001${k.key}`;
+    const mark = (k) => k.style != null ? `\u0002${k.style}\u0001${k.color ?? ''}` : k.line != null ? `\u0007${k.line}` : k.mark != null ? `\u0003${k.mark}` : k.from != null ? `\u0005${k.from}\u0001${k.to}` : `\u0001${k.kind ?? 'key'}\u0001${k.key}\u0001${k.role ?? ''}`;
     const put = (n) => { while (i < at.length && at[i].at <= n) out += `\uE000${mark(at[i++])}\uE001`; };
     for (const c of marked) {
       if (c === '\uE000') { put(seen); note = first = true; } else if (c === '\uE001') note = math = false;
@@ -772,9 +774,9 @@
       if (note === '⟦') { open++; return `${tr}<span class="ts-box" title="set in a box: on the page only if the box is used">`; }
       if (note === '⟧') { if (!open) return tr; open--; return `${tr}</span>`; }
       if (note[0] === '\u0001') {
-        const [, kind, key] = note.split('\u0001');
+        const [, kind, key, role] = note.split('\u0001');
         if (kind === 'choice') { pick = key; return ''; }
-        return `${tr}<span class="ts-key ts-key-${esc(kind)}" title="${esc(kind)}">${esc(key)}</span>`;
+        return `${tr}<span class="ts-key ts-key-${esc(kind)}${role ? ` ts-key-${esc(role)}` : ''}" title="${esc(keyTitle({ kind, key, role }))}">${esc(key)}</span>`;
       }
       // an undecided conditional's arms: the one taken when it is true, then the other
       if (note === '{' && pick != null) { choices++; const on = pick; pick = null; return `${tr}<span class="ts-choice" data-on="${esc(on)}"><span class="ts-arm ts-arm-true">`; }
@@ -1057,7 +1059,7 @@
     return sections(main) + (more ? `<details class="more"><summary>More definitions</summary>${sections(more)}</details>` : '');
   };
 
-  self.satexCards = { chipList, explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation, withKeys, typesetView, typesetWire, hover: hoverCard, useOf, duration };
+  self.satexCards = { keyTitle, chipList, explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation, withKeys, typesetView, typesetWire, hover: hoverCard, useOf, duration };
   // A rule named anywhere on the site, as a link into the rules page or its code or number in a
   // code span, shows its card. The cards' data is the rules the build wrote, fetched once.
   const RULES_URL = new URL('rules.json', document.currentScript?.src ?? location.href);
@@ -1088,12 +1090,18 @@
     build: '<path d="M14.5 6.5a4 4 0 0 0-5.4 5.4L3 18l3 3 6.1-6.1a4 4 0 0 0 5.4-5.4l-2.4 2.4-2.6-.4-.4-2.6z"/>',
   };
   const SITE_ROOT = new URL('.', RULES_URL);
+  const INTEGRATIONS = { playground: 'Playground', gui: 'gui', vscode: 'VS Code', intellij: 'IntelliJ', lsp: 'Neovim / LSP' };
+  /** The "works in" line of a plugin: the integrations that render it, partial ones marked; none for a plugin without an editor feature. */
+  const worksIn = (p) => {
+    const w = Object.entries(p.works_in ?? {}).filter(([, l]) => l === 'full' || l === 'partial');
+    return w.length ? `<p class="pt-works" title="the editors that render this plugin">works in ${w.map(([k, l]) => `<span class="pt-${l}" title="${l === 'full' ? 'all its features' : 'some of its features'}">${esc(INTEGRATIONS[k] ?? k)}${l === 'partial' ? ' (part)' : ''}</span>`).join('')}</p>` : '';
+  };
   const pluginTiles = (data, switches = null) => `<div class="pt-grid">${data.map((c) => `<section class="pt-tile${c.plugins.length > 5 ? ' pt-wide' : ''}" data-category="${esc(c.name)}">` +
     `<header><svg class="pt-icon" viewBox="0 0 24 24" aria-hidden="true">${TILE_ICONS[c.name] ?? '<circle cx="12" cy="12" r="8"/>'}</svg>` +
     `<div><h3>${esc(c.name)}</h3><p>${inline(c.about)}</p></div><span class="pt-count" title="${c.plugins.length} plugins">${c.plugins.length}</span></header>` +
     `<ul>${c.plugins.map((p) => `<li class="pt-plugin" data-plugin="${esc(p.name)}" data-key="${esc(p.key)}"><div class="pt-head"><a class="pt-name" href="${new URL(p.docs, SITE_ROOT).href}" title="its documentation">${esc(p.name)}</a>` +
       (switches ? switches.control(p) : `<span class="pt-default${p.default ? '' : ' off'}">${p.default ? 'on' : 'off'} by default</span>`) + '</div>' +
-      `<p class="pt-about">${inline(p.about)}</p><p class="pt-meta">${p.features.map((f) => `<span>${esc(f)}</span>`).join('')}` +
+      `<p class="pt-about">${inline(p.about)}</p>${worksIn(p)}<p class="pt-meta">${p.features.map((f) => `<span>${esc(f)}</span>`).join('')}` +
       `${p.demo ? `<a class="pt-demo" href="${new URL(`play/#${encodeURIComponent(p.demo)}`, SITE_ROOT).href}" title="open ${esc(p.demo)} in the playground">demo: ${esc(p.demo)}</a>` : ''}</p>` +
       `${switches?.more?.(p) ?? ''}</li>`).join('')}</ul></section>`).join('')}</div>`;
   self.satexTiles = pluginTiles;

@@ -616,11 +616,14 @@ pub struct TikzPlugin {
     pub grid: f64,
     /// The distance between the ranks of an imported Mermaid flowchart, in cm.
     pub spacing: f64,
+    /// Whether a moved or new node is written relative to a neighbour (`right=1cm of a`) rather
+    /// than `at (x,y)`; each viewer can change it on the canvas.
+    pub relative: bool,
 }
 
 impl Default for TikzPlugin {
     fn default() -> Self {
-        Self { enabled: true, grid: 0.5, spacing: 2.0 }
+        Self { enabled: true, grid: 0.5, spacing: 2.0, relative: false }
     }
 }
 
@@ -2423,7 +2426,7 @@ fn migrate_legacy(value: &mut serde_yaml_ng::Value, context: &str) {
     let cache_key = Value::String("cache".to_string());
     if matches!(map.get(&cache_key), Some(v) if !matches!(v, Value::Mapping(_))) {
         let old = map.remove(&cache_key).expect("just matched");
-        eprintln!("{FILE_NAME}: {context}: cache is now cache.enabled");
+        warn(format!("{FILE_NAME}: {context}: cache is now cache.enabled"));
         set_nested(map, &["cache", "enabled"], old);
     }
     // Both the plain key and its list-appending spelling (`skip_packages+:
@@ -2434,7 +2437,7 @@ fn migrate_legacy(value: &mut serde_yaml_ng::Value, context: &str) {
             let Some(old) = map.remove(Value::String(key_name.clone())) else { continue };
             let mut path: Vec<String> = new_path.iter().map(|s| (*s).to_string()).collect();
             *path.last_mut().expect("non-empty path") += suffix;
-            eprintln!("{FILE_NAME}: {context}: {key_name} is now {}", path.join("."));
+            warn(format!("{FILE_NAME}: {context}: {key_name} is now {}", path.join(".")));
             let borrowed: Vec<&str> = path.iter().map(String::as_str).collect();
             set_nested(map, &borrowed, old);
         }
@@ -2526,7 +2529,7 @@ impl Config {
         use serde_yaml_ng::Value;
         let migrated = migrate_set_path(path);
         if migrated != path {
-            eprintln!("{FILE_NAME}: --set {path}: this is now --set {migrated}");
+            warn(format!("{FILE_NAME}: --set {path}: this is now --set {migrated}"));
         }
         let parsed: Value = serde_yaml_ng::from_str(value).map_err(|e| format!("{migrated}: {e}"))?;
         let mut tree = serde_yaml_ng::to_value(&*self).map_err(|e| e.to_string())?;
@@ -2665,6 +2668,15 @@ fn anchor_frozen(value: &mut serde_yaml_ng::Value, path: &Path) {
     }
 }
 
+/// A notice about a config file, said once per process: each run reads the files again.
+fn warn(notice: String) {
+    static SAID: std::sync::Mutex<Option<std::collections::HashSet<String>>> = std::sync::Mutex::new(None);
+    let mut said = SAID.lock().unwrap_or_else(|e| e.into_inner());
+    if said.get_or_insert_default().insert(notice.clone()) {
+        eprintln!("{notice}");
+    }
+}
+
 /// What only the user's own configuration sets, never a project's.
 const USER_KEYS: [(&str, &str); 2] = [("cache", "dir"), ("plugins", "packages")];
 
@@ -2679,7 +2691,7 @@ fn merge_file(base: &mut serde_yaml_ng::Value, path: &Path, files: &mut Vec<Path
     // A layer that does not read is left out, but never silently.
     let mut incoming = match read_config_value(path) {
         Ok(incoming) => incoming,
-        Err(e) => return eprintln!("satex: {}: ignored: {e}", path.display()),
+        Err(e) => return warn(format!("satex: {}: ignored: {e}", path.display())),
     };
     // A project, maybe someone else's, does not say where satex writes its
     // caches or whether a lint reaches the network: only the user's own
@@ -2689,7 +2701,7 @@ fn merge_file(base: &mut serde_yaml_ng::Value, path: &Path, files: &mut Vec<Path
             if let Some(serde_yaml_ng::Value::Mapping(map)) = incoming.get_mut(section)
                 && map.remove(key).is_some()
             {
-                eprintln!("satex: {}: {section}.{key} ignored: only the user's own config sets it", path.display());
+                warn(format!("satex: {}: {section}.{key} ignored: only the user's own config sets it", path.display()));
             }
         }
     }
@@ -2718,8 +2730,8 @@ fn merge_file(base: &mut serde_yaml_ng::Value, path: &Path, files: &mut Vec<Path
                     .then(|| (without, [at, vec![name.clone()]].concat().join(".")))
             })
         });
-        let Some((without, key)) = dropped else { return eprintln!("satex: {}: ignored: {e}", path.display()) };
-        eprintln!("satex: {}: warning: unknown key `{key}` ignored, the rest of the file applies", path.display());
+        let Some((without, key)) = dropped else { return warn(format!("satex: {}: ignored: {e}", path.display())) };
+        warn(format!("satex: {}: warning: unknown key `{key}` ignored, the rest of the file applies", path.display()));
         incoming = without;
     }
 }

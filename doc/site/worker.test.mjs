@@ -103,7 +103,7 @@ console.log('worker.test.mjs: bundles ok');
 // `satex gui`: LocalEngine over a stand-in for its server (src/cli/gui/mod.rs).
 {
   const { LocalEngine } = SatexEngine;
-  const asked = [], held = [], statuses = [];
+  const asked = [], held = [], statuses = [], notes = [];
   let cancel = null;
   globalThis.fetch = async (url, init = {}) => {
     const u = new URL(url), path = u.pathname.replace('/__satex/', '');
@@ -113,17 +113,19 @@ console.log('worker.test.mjs: bundles ok');
     if (path === 'lsp/cancel') { cancel?.(); return new Response(''); }
     if (path === 'lsp') {
       // two status lines, split mid-line as a network may, then the replies
-      const lines = '{"method":"satex/status","params":{"text":"Analyzing"}}\n{"method":"satex/sta' + 'tus","params":{"text":"x"}}\n[{"id":1,"result":2}]\n';
+      const lines = '{"method":"satex/status","params":{"text":"Analyzing"}}\n{"method":"satex/sta' + 'tus","params":{"text":"x"}}\n' +
+        '{"method":"textDocument/publishDiagnostics","params":{"uri":"u"}}\n[{"id":1,"result":2}]\n';
       return new Response(new ReadableStream({ start(c) { for (const part of [lines.slice(0, 70), lines.slice(70)]) c.enqueue(new TextEncoder().encode(part)); c.close(); } }));
     }
     return new Response('{}');
   };
-  const local = LocalEngine('http://127.0.0.1:1/', (s) => statuses.push(s.text), (url) => held.push(url));
+  const local = LocalEngine('http://127.0.0.1:1/', (s) => statuses.push(s.text), (url) => held.push(url), (m) => notes.push(m.params.uri));
   const ready = await local.init();
   assert.deepEqual(ready.local.files, [['main.tex', 5]]);
   assert.equal(new TextDecoder().decode((await local.read('/p/main.tex')).data), 'hello');
   assert.deepEqual(await local.lsp({ id: 1 }), [{ id: 1, result: 2 }], 'the replies come after the status lines');
   assert.deepEqual(statuses, ['Analyzing', 'x']);
+  assert.deepEqual(notes, ['u'], "a run's findings come as they end, before the replies");
   assert.equal(held.length, 1, 'the session is held open by one connection');
   await local.lsp({ id: 1 });
   assert.equal(held.length, 1, 'and only one');
@@ -142,3 +144,13 @@ console.log('worker.test.mjs: bundles ok');
   await assert.rejects(local.lsp({ id: 2 }), /stopped/);
 }
 console.log('worker.js: LocalEngine ok');
+
+// A question asked ahead is dropped once a newer text came; what changes the server or the texts never is.
+{
+  const { readOnly } = SatexEngine;
+  assert.ok(readOnly({ id: 1, method: 'textDocument/completion' }));
+  assert.ok(readOnly({ id: 1, method: 'workspace/executeCommand', params: { command: 'satex/query' } }));
+  for (const m of [{ method: 'textDocument/didOpen' }, { id: 1, method: 'initialize' }, { id: 1, method: 'textDocument/rename' }, { id: 1, method: 'satex/dialogApply' }, { id: 1, method: 'workspace/executeCommand', params: { command: 'satex/fix' } }])
+    assert.ok(!readOnly(m), m.method);
+  console.log('worker.js: readOnly ok');
+}

@@ -942,15 +942,18 @@ pub fn relate(m: &mut Machine) {
     }
     // Keys document calls declared while they ran: not a name the call
     // read as its own (`\begin{document}` reads `\document`), nor a file
-    // it loaded (`\usepackage{x}` defines `\ver@x.sty`).
+    // it loaded (`\usepackage{x}` defines `\ver@x.sty`) or included, its
+    // extension left out (`\includegraphics{x}` caching `x.pdf`).
     let mut loads_at: crate::fixed::HashMap<Span, Vec<&String>> = crate::fixed::HashMap::default();
-    for load in &m.out.facts.loads {
-        loads_at.entry(load.span).or_default().push(&load.name);
+    let graphics = m.out.facts.occurrences.iter().filter(|o| o.kind == OccKind::Graphics).map(|o| (o.span, &o.key));
+    for (span, name) in m.out.facts.loads.iter().map(|l| (l.span, &l.name)).chain(graphics) {
+        loads_at.entry(span).or_default().push(name);
     }
+    let file = |l: &str, key: &str| l == key || l.rsplit_once('.').is_some_and(|(stem, _)| stem == key);
     let names: Vec<_> = std::mem::take(&mut m.key_names)
         .into_iter()
         .filter(|n| !reads_at.get(&n.3).into_iter().flatten().any(|r| m.name(r.name) == n.1))
-        .filter(|n| !loads_at.get(&n.3).into_iter().flatten().any(|l| **l == n.1))
+        .filter(|n| !loads_at.get(&n.3).into_iter().flatten().any(|l| file(l, &n.1)))
         .map(|(name, key, call, span, context)| {
             let at = name.find(key.as_str()).unwrap_or(0);
             let shape = (name[..at].to_string(), name[at + key.len()..].to_string());
@@ -1079,18 +1082,12 @@ pub fn relate(m: &mut Machine) {
             m.occurrence_in(kind, key.clone(), Some(head), *span, context);
         }
     }
-    // The keys the other lines carry are entries for the program that
-    // reads their file. The rest names files, the bibliography databases.
-    let mut tried = crate::fixed::HashSet::default();
+    // The other lines name files, the bibliography databases and style;
+    // the rest of their keys are entries for the program that reads them.
+    let (mut tried, mut files) = (crate::fixed::HashSet::default(), crate::fixed::HashSet::default());
     for (i, line) in lines.iter().enumerate() {
         if declaring.contains(&i) || named.iter().any(|n| n.2 == i) {
             continue;
-        }
-        for (key, at) in &line.keys {
-            if seen.insert((OccKind::Entry, key.clone(), line.span, line.context.call.map(|c| c.1))) {
-                let context = line.at(key).1;
-                m.occurrence_in(OccKind::Entry, key.clone(), Some(line.head.clone()), *at, &context);
-            }
         }
         for (n, arg) in line.args.iter().enumerate() {
             for name in crate::engine::tex::comma_split(arg) {
@@ -1099,6 +1096,7 @@ pub fn relate(m: &mut Machine) {
                     continue;
                 }
                 if line.head == "bibstyle" {
+                    files.insert(name.clone());
                     m.occurrence_in(OccKind::BibStyle, name, None, line.span, &line.context);
                     continue;
                 }
@@ -1116,8 +1114,24 @@ pub fn relate(m: &mut Machine) {
                     // Written later, it stands where the document's call gave the name.
                     let given = m.out.facts.occurrences.iter().find(|o| o.kind == OccKind::Key && o.key == name);
                     let at = given.map_or(line.span, |o| o.span);
+                    files.insert(name.clone());
                     m.occurrence_in(OccKind::Bibliography, name, None, at, &line.context);
                 }
+            }
+        }
+        // a key the call already uses or defines (`\gls` writing its entry) is that occurrence
+        let call = line.context.call.map(|c| c.1);
+        let names = |key: &String| line.args.iter().any(|a| crate::engine::tex::comma_split(a).contains(key));
+        for (key, at) in &line.keys {
+            let related = [OccKind::Ref, OccKind::KeyUse, OccKind::Label, OccKind::BibItem, OccKind::Key]
+                .iter()
+                .any(|k| seen.contains(&(*k, key.clone(), line.span, call)));
+            if !related
+                && !(files.contains(key) && names(key))
+                && seen.insert((OccKind::Entry, key.clone(), line.span, call))
+            {
+                let context = line.at(key).1;
+                m.occurrence_in(OccKind::Entry, key.clone(), Some(line.head.clone()), *at, &context);
             }
         }
     }

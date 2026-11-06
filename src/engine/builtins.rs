@@ -525,6 +525,26 @@ impl OccKind {
         .find(|kind| kind.as_str() == name)
     }
 
+    /// The kind whose occurrence defines the key this one refers to.
+    pub fn target(self) -> Option<OccKind> {
+        match self {
+            OccKind::Ref => Some(OccKind::Label),
+            OccKind::Cite => Some(OccKind::BibItem),
+            OccKind::KeyUse => Some(OccKind::Key),
+            _ => None,
+        }
+    }
+
+    /// What an occurrence of this kind does to its key: `def` defines it,
+    /// `use` refers to it (an index entry to none); `None` for no key.
+    pub fn role(self) -> Option<&'static str> {
+        match self {
+            OccKind::Label | OccKind::BibItem | OccKind::Key => Some("def"),
+            OccKind::Entry => Some("use"),
+            _ => self.target().map(|_| "use"),
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             OccKind::Label => "label",

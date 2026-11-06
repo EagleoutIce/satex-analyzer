@@ -717,7 +717,8 @@
     if (!boot?.started) return; // before the first start: it analyzes once up, an instance booted now would be thrown away
     if (running > 0) { analysisQueued = true; markStale(); return; }
     checking();
-    lsp('satex/analyze', filesChanged ? { files: true } : {}, true);
+    // the shown file (through its root) runs before every other one
+    lsp('satex/analyze', { first: uri(), ...(filesChanged ? { files: true } : {}) }, true);
     filesChanged = false;
     markStale();
   }
@@ -3931,10 +3932,12 @@
     boot.started = true;
     bootSettled();
     lsp('initialized', {}, true);
+    // The server publishes findings of open files only: a few of the project's inputs too, for the tree's counts.
+    // Another document is analyzed only once opened: a folder of documents would run them all first.
+    for (const n of state.files.filter((n) => !rootable(n)).slice(0, OPEN_AT_START)) open(n, false);
+    // the shown file last: the server runs the latest opened first
     open(state.root, false);
     open(state.file, false);
-    // the server publishes findings of open files only: the project's own, up to a few, for the tree's counts
-    for (const n of state.files.slice(0, OPEN_AT_START)) open(n, false);
     analyze();
     synced = version;
     typedSincePush = false;
@@ -4012,6 +4015,8 @@
     if (name === state.file) return redraw();
     keepView();
     sync();
+    // the shown file comes first: a run of another stops (it runs again after) and the analysis starts on this one
+    if (running > 0 && textsSent) { Atomics.add(textsSent, 0, 1); analysisQueued = true; }
     state.file = name;
     redraw();
     editor.set(state.texts[name], name in state.ro);
@@ -4806,7 +4811,14 @@
       + (shows.length ? `<details class="pdf-shows"><summary class="muted">How the playground shows the build (${shows.length})</summary><ol class="pdf-cmds">${shows.map(pdfCommand).join('')}</ol></details>` : '') + '</div>';
     pdfViewShow();
     pdfBody.querySelectorAll('.pdf-frame').forEach((f) => pdfStep(f, +f.dataset.step));
-    pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', () => { if (pdfZoom.fit === 'page') pdfZoomTo(0, 'page'); if (pdfFollowOn) pdfFollow(true); pdfOverlay(); }, { once: true }));
+    pdfBody.querySelectorAll('.pdf-page img').forEach((img) => img.addEventListener('load', pdfLoaded_, { once: true }));
+  }
+  /** A page image loaded: the fit, the cursor's place and the layers follow, once for the pages that load together
+   * (each would redraw every page's layers: a book of hundreds of pages held the page for minutes). */
+  let pdfLoadTimer = 0;
+  function pdfLoaded_() {
+    clearTimeout(pdfLoadTimer);
+    pdfLoadTimer = setTimeout(() => { if (pdfZoom.fit === 'page') pdfZoomTo(0, 'page'); if (pdfFollowOn) pdfFollow(true); pdfOverlay(); }, 50);
   }
   /** The commands of the build: the server's, the engine runs `satex compile` names on its console (`$ …`) after it. */
   const pdfRuns = () => (pdf.commands ?? []).flatMap((r) => [r, ...(/ compile( |$)/.test(r.command) ? String(pdf.stderr ?? '').split('\n').filter((l) => l.startsWith('$ ')).map((l) => ({ command: l.slice(2), inner: true })) : [])]);
@@ -4832,8 +4844,9 @@
   /** Where `file:line` stands on its first page: one rectangle per baseline, in bp. Only the points TeX set
    * (glue, kerns, math, the current point), not the boxes, which carry the line where a whole frame or float closed.
    * Glue lies between words, so a row grows to the words beside its first and last point. */
+  const setPoint = (b) => 'xgk$'.includes(b.kind);
   function pdfRects(file, line, all = false) {
-    const rows = new Map(), hits = (pdf.boxes ?? []).filter((b) => b.file === file && b.line === line && 'xgk$'.includes(b.kind));
+    const rows = new Map(), hits = (pdf.boxes ?? []).filter((b) => b.file === file && b.line === line && setPoint(b));
     for (const b of hits.filter((b) => all || b.page === hits[0].page)) {
       const key = `${b.page}|${Math.round(b.y / 6)}`, o = rows.get(key); // one row per baseline, a lowered letter (the E of \TeX) in it
       rows.set(key, { page: b.page, y: b.y, l: Math.min(o?.l ?? b.x, b.x), r: Math.max(o?.r ?? 0, b.x + 4), t: b.y - 8, d: b.y + 2 });
@@ -5136,8 +5149,36 @@
   pdfBackButton.onclick = (e) => { e.preventDefault(); pdfReturn(); };
   /** An occurrence's file as the project names it, else its base name (a .bbl the build wrote). */
   const occFile = (o) => { const p = String(o.path ?? o.file ?? ''); return Object.keys(state.texts).find((n) => !(n in state.ro) && p.endsWith(n)) ?? p.split('/').pop(); };
-  /** Where an occurrence stands on the pages: the first row SyncTeX gives its line. */
-  const occRect = (o) => pdfRects(occFile(o), o.line)[0];
+  /** The lines of each file SyncTeX set points for, ascending, per build. */
+  const syncLines = new WeakMap();
+  const linesOf = (file) => {
+    const boxes = pdf?.boxes ?? [];
+    if (!syncLines.has(boxes)) syncLines.set(boxes, new Map([...Map.groupBy(boxes.filter(setPoint), (b) => b.file)].map(([f, bs]) => [f, [...new Set(bs.map((b) => b.line))].sort((a, b) => a - b)])));
+    return syncLines.get(boxes).get(file) ?? [];
+  };
+  /** Where an occurrence stands on the pages: the first row SyncTeX gives its line, else the last line before it
+   * that set something, as the Typeset view places it (a `\label` alone on its line after a caption). The preamble sets none. */
+  /** `pdfRects` of a line, kept per build: the keys of a line ask for its rows each. */
+  const rowsKept = new WeakMap();
+  const pdfRowsOf = (file, line) => {
+    const boxes = pdf?.boxes ?? [];
+    if (!rowsKept.has(boxes)) rowsKept.set(boxes, new Map());
+    const kept = rowsKept.get(boxes), key = `${file}:${line}`;
+    if (!kept.has(key)) kept.set(key, pdfRects(file, line));
+    return kept.get(key);
+  };
+  const occLine = (o) => linesOf(occFile(o)).findLast((l) => l <= o.line);
+  const split = new Map(), sourceLine = (file, n) => {
+    const text = state.texts[file] ?? '';
+    if (split.get(file)?.[0] !== text) split.set(file, [text, text.split('\n')]);
+    return split.get(file)[1][n - 1] ?? '';
+  };
+  /** Of the rows its line set, the one the key stands on by its column (a `\label` after a caption, not the float's top); past its line, the last. */
+  const occRect = (o) => {
+    const at = occLine(o), rows = at ? pdfRowsOf(occFile(o), at) : [];
+    const text = sourceLine(occFile(o), at), share = at < o.line ? 1 : text.length ? ((o.col ?? 1) - 1) / text.length : 0;
+    return rows[Math.min(rows.length - 1, Math.floor(share * rows.length))];
+  };
   /** The keys placed on the pages, as the overlay's chips index them. */
   let pdfKeys = [];
   /** The view tabs fade at the bar's edge while some stand past it. */
@@ -5176,7 +5217,8 @@
   var pdfInternal = false; // var: a check may render before this line ran
   try { pdfInternal = localStorage.getItem('satex-pdf-internal') === 'on'; } catch {}
   const pdfShown = (layer, group, key) => !pdfHide.has(`${layer}|${group}|${key}`);
-  const DEF_KIND = ['label', 'bibitem'], REF_KIND = /^(ref|cite|gls|glossary|index|acr)/, isKey = (k) => DEF_KIND.includes(k) || REF_KIND.test(k);
+  /** A key's occurrence: the run says whether it defines (`role: 'def'`) or uses it, and what kind defines it (`target`). */
+  const isKey = (o) => o.role === 'def' || o.role === 'use';
   const facetTally = (items) => [...Map.groupBy(items, (x) => x[0])].map(([key, xs]) => [key, xs[0][1] ?? key, xs.length]).sort((a, b) => b[2] - a[2] || String(a[0]).localeCompare(String(b[0])));
   /** The findings drawn over the pages: the check's, then the build's, as [file, line, severity, text, range, code]. */
   const pdfFound = () => Object.keys(state.texts).filter((n) => !(n in state.ro)).flatMap((n) => (diagnostics[uri(n)] ?? []).map((d) => [n, d.range.start.line + 1, sev(d), `${d.code}: ${d.message}`, d.range, d.code]))
@@ -5217,8 +5259,7 @@
   }
   /** The groups of a layer's sub-filters. */
   function pdfFacetGroups(layer) {
-    const kinds = (pick) => facetTally(occurrences.filter((o) => pick(o.kind)).map((o) => [o.kind]));
-    if (layer === 'keys') return [['kind', 'kind', kinds(isKey)]];
+    if (layer === 'keys') return [['kind', 'kind', facetTally(occurrences.filter(isKey).map((o) => [o.kind]))]];
     if (layer === 'glue') return [['kind', 'kind', facetTally(pdfGlue().map((g) => [g.kind]))]];
     if (layer === 'findings') {
       const found = pdfFound();
@@ -5481,11 +5522,13 @@
     };
     const blocks = pdfBlocks(), rowsOf = (file, a, b) => { const out = []; for (let l = a; l <= b; l++) out.push(...pdfRects(file, l, true)); return out; };
     pdfKeys = [];
-    const wantKind = (k) => isKey(k) && pdfOverlayOn.keys && pdfShown('keys', 'kind', k);
-    for (const os of Map.groupBy(occurrences.filter((o) => wantKind(o.kind)), (o) => `${occFile(o)}:${o.line}`).values()) {
-      const r = occRect(os[0]), wh = r && size(r.page);
+    const wanted = (o) => isKey(o) && pdfOverlayOn.keys && pdfShown('keys', 'kind', o.kind);
+    // the keys standing on one row share its chip strip
+    const placed = occurrences.filter(wanted).map((o) => [o, occRect(o)]).filter(([, r]) => r);
+    for (const os of Map.groupBy(placed, ([, r]) => `${r.page}|${r.t}|${r.l}`).values()) {
+      const r = os[0][1], wh = size(r.page);
       if (!wh) continue;
-      const chips = os.sort((a, b) => (a.col ?? 0) - (b.col ?? 0)).map((o) => `<a href="#" class="pdf-key k-${o.kind}" data-k="${pdfKeys.push(o) - 1}" title="${['label', 'bibitem'].includes(o.kind) ? 'defines' : 'refers to'} ${escape(o.key)} (${o.kind} at ${escape(occFile(o))}:${o.line})${['label', 'bibitem'].includes(o.kind) ? '' : ': click to go to its target'}">${escape(o.key)}</a>`).join('');
+      const chips = os.map(([o]) => o).sort((a, b) => a.line - b.line || (a.col ?? 0) - (b.col ?? 0)).map((o) => `<a href="#" class="pdf-key k-${o.kind} k-${o.role}" data-k="${pdfKeys.push(o) - 1}" title="${escape(cards.keyTitle(o))} at ${escape(occFile(o))}:${o.line}${o.role === 'use' ? ': click to go to its target' : ''}">${escape(o.key)}</a>`).join('');
       put(r.page, `<span class="pdf-ov pdf-keys" style="left:${r.l / wh[0] * 100}%;top:${r.t / wh[1] * 100}%">${chips}</span>`);
     }
     if (pdfOverlayOn.findings) {
@@ -5586,13 +5629,13 @@
   async function pdfToTarget(o) {
     if (!o) return;
     const from = pdfSpot(), name = occFile(o), at = { line: o.line - 1, character: Math.max((o.col ?? 1) - 1, 0) };
-    const kind = { ref: 'label', cite: 'bibitem' }[o.kind];
+    const kind = o.target;
     const target = kind && occurrences.find((x) => x.kind === kind && x.key === o.key);
     // the definition of the key, asked where the key stands (on `\\ref` it would be the command's)
     const keyAt = (state.texts[name]?.split('\n')[at.line] ?? '').indexOf(o.key, at.character);
     const def = kind && keyAt >= 0 ? (await lsp('textDocument/definition', { textDocument: { uri: uri(name) }, position: { line: at.line, character: keyAt + 1 } }).catch(() => null)) : null;
     const loc = [def].flat().find(Boolean);
-    if (kind && !target && !loc) return toast(`${o.key}: no ${kind === 'label' ? '\\label' : 'bibliography entry'} found`);
+    if (kind && !target && !loc) return toast(`${o.key}: no ${kind} found`);
     pdfBack.push(from);
     pdfBackButton.hidden = false;
     if (loc) await openPlace(decodeURIComponent(new URL(loc.uri ?? loc.targetUri).pathname), (loc.range ?? loc.targetSelectionRange).start);
@@ -6486,10 +6529,10 @@
   const published = new Map();
   /** The packages still downloading when the findings shown were made: they may change once those are in. */
   var provisional = ''; // var: a render may run before this line
-  async function publish(p) {
+  async function publish(p, ended = false) {
     // of a text the server no longer has: its analysis of the newer one follows, else is asked for
     if (outdated(p)) { if (p.uri === uri() && timer === null) analyze(); return; }
-    if (running > 0 && p.uri === uri()) { heldFindings = p; return; }
+    if (running > 0 && p.uri === uri() && !ended) { heldFindings = p; return; }
     heldFindings = null;
     // The rule's number is the LSP code: the page keys rules by name.
     for (const d of p.diagnostics) [d.number, d.code] = [d.code, d.data?.rule ?? d.code];
@@ -6544,9 +6587,16 @@
     toast(`The language server stopped (${why}). It starts again on your text.`);
     restart();
   }
+  /** A notification; `ended`: of a run that ended, while others go on. */
+  function notified(m, ended = false) {
+    if (m.method === 'satex/styleCandidates') for (const c of m.params.candidates ?? []) askStyle(c);
+    else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) publish(m.params, ended);
+  }
   async function onWorkerMessage({ data }) {
     if (running > 0 || pending.size) maxGap = Math.max(maxGap, Math.round(performance.now() - lastHeard));
     lastHeard = performance.now();
+    // a notification of a run that ended while the message's other runs go on (`satex gui`)
+    if (data.type === 'note') for (const m of data.out) notified(m, true);
     if (data.type === 'lsp') {
       running -= order.shift() ? 1 : 0;
       for (const m of data.out) {
@@ -6554,11 +6604,7 @@
           const p = pending.get(m.id);
           pending.delete(m.id);
           if (m.error) p.reject(new Error(m.error.message.replace(/^[\w/]+: /, ''))); else p.resolve(m.result ?? null);
-        } else if (m.method === 'satex/styleCandidates') {
-          for (const c of m.params.candidates ?? []) askStyle(c);
-        } else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) {
-          publish(m.params);
-        }
+        } else notified(m);
       }
       drainAnalysis();
     } else if (data.type === 'status') {

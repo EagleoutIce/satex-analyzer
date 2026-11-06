@@ -70,6 +70,7 @@ impl TypePlugin for Tikz {
         section["run"] = facts(cx);
         section["grid"] = json!(cfg.grid);
         section["spacing"] = json!(cfg.spacing);
+        section["relative"] = json!(cfg.relative);
         Some(json!({ "title": title, "sections": [section] }))
     }
 
@@ -158,7 +159,129 @@ fn facts(cx: &Cx) -> Json {
     let load_at = crate::linter::shared::document_start(a)
         .filter(|s| Some(s.file) == file)
         .map(|s| lsp_types::Position::new(s.line.saturating_sub(1), 0));
-    json!({ "tips": tips, "colors": colors, "shapes": shapes, "libraries": libraries, "load_at": load_at, "layers": { "declared": declared, "order": order }, "layer_keys": keys })
+    json!({ "tips": tips, "colors": colors, "shapes": shapes, "libraries": libraries, "load_at": load_at, "layers": { "declared": declared, "order": order }, "layer_keys": keys, "keys": tikz_keys(cx, file) })
+}
+
+/// The `/tikz/` keys the run stored, as the property editor offers them: `name`, the value's
+/// `type` read off the key's handler and the setters its code reaches (`color`, `length`,
+/// `choice` with its `choices`, `bool`, `node`, `flag` for none, else `text`), its `default`. A
+/// style has its `body`; one this file defines (`\tikzset{name/.style={…}}`) also the `style`
+/// `range` of the body's braces and of its whole `entry`.
+fn tikz_keys(cx: &Cx, file: Option<crate::engine::tex::FileId>) -> Vec<Json> {
+    use crate::queries::preview::{Stroke, sets};
+    let a = cx.analysis;
+    let records = crate::queries::query::pgfkeys(a, Some("/tikz/"));
+    let str_of =
+        |r: &crate::queries::query::Record, k: &str| r.get(k).and_then(Json::as_str).unwrap_or_default().to_string();
+    let path_of =
+        |r: &crate::queries::query::Record| str_of(r, "key").strip_prefix("/tikz/").unwrap_or_default().to_string();
+    let here = file.map(|f| a.file_name(f).to_string());
+    let mut out = Vec::new();
+    for r in &records {
+        let (name, kind, code) = (path_of(r), str_of(r, "kind"), str_of(r, "value"));
+        // pgf's own internals, handlers and subkeys (a choice's, a family's) are no properties
+        if name.is_empty()
+            || name.contains(['@', '/'])
+            || name.starts_with('.')
+            || !matches!(kind.as_str(), "style" | "is if" | "is choice" | "code" | "code args")
+        {
+            continue;
+        }
+        let default = str_of(r, "default");
+        let path = format!("/tikz/{name}");
+        let reached = sets(a, &path);
+        let ty = match kind.as_str() {
+            "is if" => "bool",
+            "is choice" => "choice",
+            _ if reached.contains(&Stroke::Color) => "color",
+            _ if reached.contains(&Stroke::Width) || code.contains("pgfmathsetlength") => "length",
+            _ if reached.iter().any(|s| matches!(s, Stroke::Node | Stroke::NodeOf)) => "node",
+            _ if !code.contains("#1") => "flag",
+            _ => "text",
+        };
+        let mut key = json!({ "name": name, "type": ty });
+        if ty == "choice" {
+            let sub = format!("{name}/");
+            let choices: Vec<String> = (records.iter().map(path_of))
+                .filter_map(|p| {
+                    p.strip_prefix(&sub).filter(|c| !c.contains(['/', '@']) && !c.starts_with('.')).map(str::to_string)
+                })
+                .collect();
+            key["choices"] = json!(choices);
+        }
+        // a default, even an empty one (`fill` alone), lets the key stand without a value
+        if r.get("default").is_some_and(Json::is_string) && !default.contains("pgfkeysvaluerequired") {
+            key["default"] = json!(default);
+        }
+        if kind == "style" {
+            let body = code.trim().strip_prefix("\\pgfkeysalso").map(|b| {
+                let b = b.trim();
+                b.strip_prefix('{').and_then(|b| b.strip_suffix('}')).unwrap_or(b).trim()
+            });
+            key["body"] = json!(body.unwrap_or_default());
+        }
+        // the document's own: made by a call in this file that writes `name/.style={…}` there
+        let line = r.get("line").and_then(Json::as_u64).unwrap_or(1) as u32;
+        let found = (kind == "style" && here.as_deref() == r.get("path").and_then(Json::as_str))
+            .then(|| style_at(cx.doc, &name, line))
+            .flatten();
+        if let Some((inner, entry)) = found {
+            key["body"] = json!(super::slice(cx.doc, inner).trim());
+            key["style"] = json!({ "range": inner, "entry": entry });
+        }
+        out.push(key);
+    }
+    out
+}
+
+/// In `doc` from `line` on, `name/.style={…}`: the range inside its braces and
+/// its whole entry with the comma that separates it from the next (or the previous) one.
+fn style_at(doc: &Text, name: &str, line: u32) -> Option<(lsp_types::Range, lsp_types::Range)> {
+    let text = doc.body();
+    let from = doc.offset(crate::text::Pos::new(line, 1))?;
+    let lsp = |o: usize| super::super::handlers::to_lsp(doc, doc.pos(o));
+    let mut at = from;
+    loop {
+        let start = at + text[at..].find(name)?;
+        at = start + name.len();
+        let before = text[..start].chars().next_back();
+        let rest = &text[at..];
+        let Some(after) = rest.trim_start().strip_prefix("/.style") else { continue };
+        let Some(open) = after.trim_start().strip_prefix('=').map(str::trim_start).filter(|v| v.starts_with('{'))
+        else {
+            continue;
+        };
+        if before.is_some_and(|c| !matches!(c, '{' | ',' | '[') && !c.is_whitespace()) {
+            continue;
+        }
+        let open = text.len() - open.len();
+        let mut depth = 0;
+        let close = open
+            + text[open..]
+                .char_indices()
+                .find(|&(_, c)| {
+                    depth += match c {
+                        '{' => 1,
+                        '}' => -1,
+                        _ => 0,
+                    };
+                    depth == 0
+                })?
+                .0;
+        let tail = &text[close + 1..];
+        let comma = tail.len() - tail.trim_start().len();
+        let (s, e) = if tail[comma..].starts_with(',') {
+            let next = &tail[comma + 1..];
+            (start, close + 1 + comma + 1 + (next.len() - next.trim_start().len()))
+        } else {
+            let head = text[..start].trim_end();
+            (head.strip_suffix(',').map_or(start, |h| h.len()), close + 1)
+        };
+        return Some((
+            lsp_types::Range { start: lsp(open + 1), end: lsp(close) },
+            lsp_types::Range { start: lsp(s), end: lsp(e) },
+        ));
+    }
 }
 
 /// The nodes the run made in the picture: name, shape, and where pgf put each (cm) when the

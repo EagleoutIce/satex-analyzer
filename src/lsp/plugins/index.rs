@@ -42,14 +42,8 @@ impl TypePlugin for Index {
     fn manage(&self, cx: &Cx) -> Option<Json> {
         let occ = &cx.analysis.facts.occurrences;
         let text = cx.doc.body();
-        // the database lines of the `.aux` file carry keys too: their calls name bibliographies
-        let other: Vec<_> = occ
-            .iter()
-            .filter(|o| matches!(o.kind, OccKind::Bibliography | OccKind::BibStyle))
-            .map(|o| o.span)
-            .collect();
         let mut terms: BTreeMap<String, Vec<Use>> = BTreeMap::new();
-        for o in occ.iter().filter(|o| o.kind == OccKind::Entry && !other.contains(&o.span)) {
+        for o in occ.iter().filter(|o| o.kind == OccKind::Entry) {
             let (top, rest) = level(&o.key);
             // the top level's bytes in the call's argument, where the call stands in the open file
             let range = super::byte_of(cx, o.span)

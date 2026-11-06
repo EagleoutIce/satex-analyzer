@@ -349,8 +349,9 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
  * @param {string} base the site's URL
  * @param {(status: any) => void} [status]
  * @param {(url: string) => any} [hold] keeps a connection open while this engine lives (an EventSource)
+ * @param {(message: any) => void} [note] a notification of a run that ended while the message's others go on
  */
-function LocalEngine(base, status = () => {}, hold = (url) => new EventSource(url)) {
+function LocalEngine(base, status = () => {}, hold = (url) => new EventSource(url), note = () => {}) {
   const session = Math.random().toString(36).slice(2);
   const url = (path, query = {}) => `${base}__satex/${path}?${new URLSearchParams(query)}`;
   async function call(path, init = {}, query = {}) {
@@ -388,7 +389,7 @@ function LocalEngine(base, status = () => {}, hold = (url) => new EventSource(ur
             const m = JSON.parse(line);
             if (Array.isArray(m)) return m;
             if (m.error) throw new Error(m.error);
-            status(m.params);
+            if (m.method === 'satex/status') status(m.params); else note(m);
           }
         }
         throw new Error('the language server stopped');
@@ -411,9 +412,16 @@ function LocalEngine(base, status = () => {}, hold = (url) => new EventSource(ur
   };
 }
 
+/** A question that only reads the last analysis (a completion asked ahead, the typeset text, the lenses): one still
+ * waiting when a newer text comes, or another file is shown, is of a text or file the page no longer shows, and is answered null unasked, so
+ * the newer text's analysis never waits behind it. */
+const readOnly = (m) => m.id !== undefined && (/^textDocument\/(completion|hover|codeLens|documentColor|inlayHint|codeAction|documentSymbol|documentHighlight|documentLink|foldingRange|signatureHelp)$|^satex\/(typeset|written|caches)$/.test(m.method)
+  || (m.method === 'workspace/executeCommand' && m.params?.command === 'satex/query'));
+
 if (typeof module === 'object' && module.exports) {
   module.exports = SatexEngine;
   module.exports.LocalEngine = LocalEngine;
+  module.exports.readOnly = readOnly;
 } else if (typeof importScripts === 'function') {
   let engine = null;
   /** The cache directory in IndexedDB: one record per file, keyed [binary, path]; a load drops
@@ -468,7 +476,13 @@ if (typeof module === 'object' && module.exports) {
   let serial = Promise.resolve();
   /** The page's count of texts sent (an Int32Array on a SharedArrayBuffer), when the page is cross-origin isolated. */
   let cancelFlag = null;
+  /** Texts the page sent, and files it showed: each message knows how many came before it. */
+  let texts = 0, shown = null;
   self.onmessage = ({ data }) => {
+    const m = data.type === 'lsp' ? data.message : {};
+    if (/^textDocument\/did(Open|Change)$/.test(m.method) || (m.method === 'satex/analyze' && m.params?.first !== shown)) texts++;
+    if (m.method === 'satex/analyze') shown = m.params?.first ?? shown;
+    data.texts = texts;
     if (['init', 'bundle', 'bundles'].includes(data.type)) handle(data);
     else serial = serial.then(() => handle(data));
   };
@@ -478,7 +492,7 @@ if (typeof module === 'object' && module.exports) {
         const given = data.given ?? {};
         cancelFlag = data.cancel ?? null;
         if (data.manifest.local) {
-          engine = LocalEngine(data.base, (s) => self.postMessage({ type: 'status', ...s }));
+          engine = LocalEngine(data.base, (s) => self.postMessage({ type: 'status', ...s }), undefined, (m) => self.postMessage({ type: 'note', out: [m] }));
           self.postMessage({ type: 'ready', ...(await engine.init()) });
           return;
         }
@@ -511,6 +525,8 @@ if (typeof module === 'object' && module.exports) {
       } else if (data.type === 'uncache') {
         await engine.uncache(data.paths);
         self.postMessage({ type: 'caches', entries: engine.caches() });
+      } else if (data.type === 'lsp' && data.texts !== texts && readOnly(data.message)) {
+        self.postMessage({ type: 'lsp', out: [{ jsonrpc: '2.0', id: data.message.id, result: null }] });
       } else if (data.type === 'lsp') {
         // the page's shared counter of texts sent: a run of fewer stops once a newer one came
         const flag = cancelFlag, sent = data.sent;

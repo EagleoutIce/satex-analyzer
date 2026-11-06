@@ -423,6 +423,54 @@ pub(super) fn hover_types(analysis: &Analysis, doc: &Text, path: &str, pos: Pos)
     super::type_at::type_at(analysis, doc, path, Pos::new(pos.line, pos.col + rest))
 }
 
+/// The integrations, and what each renders of a feature kind: one letter per integration in this
+/// order, `f` full, `p` partial, `n` none. IntelliJ (LSP4IJ, `editors/intellij`) has no webview and
+/// its lens commands (`satex.openView`) are client-side, so lenses show and do nothing. A plain LSP
+/// client has no dialog: code actions and hovers stand in. Features not listed here (`reuse`,
+/// `build`) are not the editor's.
+pub const INTEGRATIONS: &[(&str, &str)] = &[
+    ("playground", "Playground"),
+    ("gui", "satex gui"),
+    ("vscode", "VS Code"),
+    ("intellij", "IntelliJ"),
+    ("lsp", "Neovim / LSP"),
+];
+const RENDERS: &[(&str, &str)] = &[
+    ("hover", "fffff"),
+    ("complete", "fffff"),
+    ("actions", "fffff"),
+    ("colors", "ffffp"),
+    ("inlay", "ffffp"),
+    ("lens", "fffpp"),
+    ("view", "fffpp"),
+    ("dialog", "fffpp"),
+    ("manage", "fffnn"),
+];
+
+/// Per integration, how much of a plugin it renders: `full`, `partial`, `none`, or `-` for a plugin
+/// with no editor feature. Full when every feature is, none when no feature is, else partial.
+pub fn works_in(features: &[&str]) -> Vec<(&'static str, &'static str)> {
+    let levels: Vec<&str> =
+        features.iter().filter_map(|f| RENDERS.iter().find(|(k, _)| k == f).map(|(_, l)| *l)).collect();
+    (0..INTEGRATIONS.len())
+        .map(|i| {
+            let at: Vec<u8> = levels.iter().map(|l| l.as_bytes()[i]).collect();
+            let level = match () {
+                _ if at.is_empty() => "-",
+                _ if at.iter().all(|&c| c == b'f') => "full",
+                _ if at.iter().all(|&c| c == b'n') => "none",
+                _ => "partial",
+            };
+            (INTEGRATIONS[i].0, level)
+        })
+        .collect()
+}
+
+/// Each plugin's name and features, as `list` reports them, without a run.
+pub fn plugin_features() -> Vec<(&'static str, &'static [&'static str])> {
+    PLUGINS.iter().map(|p| (p.name(), p.features())).chain([("l3build", &["build"][..])]).collect()
+}
+
 /// `satex query type-plugins`: one record per plugin, grouped by category, then the build
 /// plugins (`plugins.l3build`). `places` counts the lenses, swatches and inlay hints it has for
 /// the run's main file, switched on or not: where a client shows it.
@@ -440,6 +488,10 @@ pub fn list(analysis: &Analysis) -> Vec<crate::queries::query::Record> {
             r.insert("enabled".into(), json!(enabled));
             r.insert("types".into(), json!(types));
             r.insert("features".into(), json!(features));
+            r.insert(
+                "works_in".into(),
+                json!(works_in(features).into_iter().collect::<std::collections::BTreeMap<_, _>>()),
+            );
             r.insert("about".into(), json!(about));
             r.insert("places".into(), json!(places));
             r

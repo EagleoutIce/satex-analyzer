@@ -37,6 +37,8 @@ satex completions fish > ~/.config/fish/completions/satex.fish
 ## The playground on your machine
 
 `satex gui [DIR]` opens the browser playground on the project in `DIR`, the current directory by default. A file names the root document, its folder the project.
+Without a file the root is the document `satex` itself would start from in `DIR`.
+Only the file shown and the files it reads are analyzed, the file shown first. Another document of the folder runs once you open it.
 It differs from the web playground in four ways:
 
 - The project's files are the files in `DIR`. Hidden and git-ignored files are left out. Edits are saved to the files as you type.
@@ -45,6 +47,7 @@ It differs from the web playground in four ways:
 - Compile builds the PDF with your TeX, in a copy of the project under the cache directory.
 
 `satex gui` prints the address and opens it in the default browser. `--no-open` only prints it. `--port N` picks the port, 8800 by default, or the next free one above it.
+The terminal names the document each run analyzes. The language server's messages go to `satex-gui.log` in the cache directory. `-v` prints them in the terminal instead.
 The server listens on 127.0.0.1 only. The address carries a random token, and the server answers only a browser that has it. Other users and other web sites cannot reach the project.
 A file that is not UTF-8 is never overwritten, and a file with `\r\n` line ends keeps them.
 

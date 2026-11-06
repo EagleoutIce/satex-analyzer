@@ -42,10 +42,16 @@ impl Batch {
                     req,
                 ),
             })],
-            // `{"files": true}`: files outside the documents changed, so all run again
+            // `{"files": true}`: files outside the documents changed, so all run again.
+            // `{"first": URI}`: the document the page shows, analyzed before the others.
             Ok(Message::Notification(not)) if not.method == "satex/analyze" => {
                 if not.params.get("files").is_some_and(|f| f.as_bool() == Some(true)) {
                     engine.outside_changed();
+                }
+                if let Some(first) = not.params.get("first").and_then(|f| f.as_str()).and_then(|f| f.parse().ok())
+                    && engine.dirty.contains(&first)
+                {
+                    engine.first(&first);
                 }
                 engine.flush();
                 vec![]
@@ -70,8 +76,8 @@ impl Batch {
 const CANCEL: &str = "{\"cancel\"";
 
 /// `satex lsp --lines`: one message per line on stdin. Per message it
-/// writes a `satex/status` line for each step of the work (a JSON object)
-/// and then the replies (a JSON array). A line `{"cancel":true}` stops the
+/// writes a `satex/status` line for each step of the work and each
+/// notification of a run that ended (JSON objects), then the replies (a JSON array). A line `{"cancel":true}` stops the
 /// run under way, as a newer text does. The end of stdin stops it too.
 #[cfg(not(target_os = "emscripten"))]
 pub fn lines(cfg: crate::project::config::Config, root: std::path::PathBuf, main: Option<std::path::PathBuf>) {
@@ -103,7 +109,12 @@ pub fn lines(cfg: crate::project::config::Config, root: std::path::PathBuf, main
         let mut out = std::io::stdout().lock();
         let _ = writeln!(out, "{line}").and_then(|()| out.flush());
     }
+    // A run's findings go out once it ends, not when the message's other runs end too.
+    let outbox = batch.outbox.clone();
     crate::util::progress::listen(Some(Box::new(move |now: &crate::util::progress::Status| {
+        for note in outbox.try_iter() {
+            say(serde_json::to_string(&note).unwrap_or_default());
+        }
         say(serde_json::to_string(&Notification::new("satex/status".into(), now)).unwrap_or_default());
     })));
     for line in rx {

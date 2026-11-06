@@ -512,14 +512,22 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         }
     };
     let (on_page, lost) = reach(text);
-    // The labels, references and citations of the user's files, each set
-    // as a `KEY` mark before the first character read past it.
+    // The keys the user's files define and use (an occurrence with a role), each set as a
+    // `KEY` mark before the first character read past it. The preamble sets no text: a key
+    // declared there (`\newglossaryentry`) stands nowhere on the page.
+    let body = analysis
+        .facts
+        .occurrences
+        .iter()
+        .find(|o| o.kind == OccKind::BeginEnvironment && o.key == "document")
+        .map(|o| o.span);
     let mut named: Vec<(Span, &'static str, &str)> = analysis
         .facts
         .occurrences
         .iter()
-        .filter(|o| matches!(o.kind, OccKind::Label | OccKind::Ref | OccKind::Cite | OccKind::BibItem))
+        .filter(|o| o.kind.role().is_some())
         .filter(|o| origin(analysis, o.span.file) == "document")
+        .filter(|o| body.is_none_or(|b| b.file != o.span.file || (b.line, b.col) < (o.span.line, o.span.col)))
         .map(|o| (o.span, o.kind.as_str(), o.key.as_str()))
         .collect();
     named.sort_by_key(|(s, ..)| (s.file, s.line, s.col));
@@ -732,14 +740,37 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                 .iter()
                 .take_while(|(s, ..)| s.file == site.file && (s.line, s.col) < (site.line, site.col))
                 .count();
-        // a key read from where a paragraph begins on (`\ref` opening it) is that paragraph's
-        let starts =
-            text.par_starts.binary_search_by_key(&end.unwrap_or(i as u32), |s| s.0).ok().map(|k| text.par_starts[k].1);
-        let cut = starts
-            .filter(|e| e.file == site.file)
-            .map_or(upto, |e| from + named[from..upto].partition_point(|(s, ..)| (s.line, s.col) < (e.line, e.col)));
+        // a key read from where a paragraph begins on (`\ref` opening it) is that paragraph's, and
+        // so is one in the environment it begins (`\begin{lemma}\label{l}`)
+        let starts = text
+            .par_starts
+            .binary_search_by_key(&end.unwrap_or(i as u32), |s| s.0)
+            .ok()
+            .map(|k| text.par_starts[k].1)
+            .filter(|e| e.file == site.file);
+        let here = env_at(site);
+        let cut = from
+            + named[from..upto].partition_point(|(s, ..)| {
+                starts.is_none_or(|e| (s.line, s.col) < (e.line, e.col))
+                    && !(here.is_some() && here != env && env_at(*s) == here)
+            });
         put_keys(&named[from..cut], &mut line, &mut choice, &mut keys);
         next_key.insert(site.file, upto);
+        // a key of the file the character was read from, where the user's line stands for it (a `.bbl`)
+        let read = spot.span;
+        let read_keys = match read.file != site.file {
+            true => {
+                let a =
+                    *next_key.entry(read.file).or_insert_with(|| named.partition_point(|(s, ..)| s.file < read.file));
+                let b = a + named[a..]
+                    .iter()
+                    .take_while(|(s, ..)| s.file == read.file && (s.line, s.col) < (read.line, read.col))
+                    .count();
+                next_key.insert(read.file, b);
+                a..b
+            }
+            false => 0..0,
+        };
         // A picture or graphic the document set before this character.
         while let Some((_, label, sketch)) =
             boxes.next_if(|(at, ..)| (at.file, at.line, at.col) < (site.file, site.line, site.col))
@@ -785,14 +816,30 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         // an insert's text (a footnote) goes to the foot, after the paragraph that set it
         if text.inserts.iter().any(|&(a, b)| (a..b).contains(&(i as u32))) {
             foot.push_str(&piece);
+            put_keys(&named[cut..upto], &mut line, &mut choice, &mut keys);
+            put_keys(&named[read_keys], &mut line, &mut choice, &mut keys);
             continue;
         }
-        let here = env_at(site);
         // the rules and marks closing an environment belong to it
         if env.is_some() && here != env {
             flush(i, &mut line, &mut keys, Some(here));
         }
-        if (end.is_some() || here != env) && !line.trim().is_empty() {
+        // a line of marks alone (a `\label` before a list's `\par`) waits for the paragraph's text
+        if (end.is_some() || here != env) && line.chars().any(|c| c != KEY && !c.is_whitespace()) {
+            // the keys left in the outermost environment it ends: a float's `\label` after its caption
+            let inside = |e: &(Span, Span, String), s: Span| {
+                s.file == e.0.file && (e.0.line, e.0.col) <= (s.line, s.col) && (s.line, s.col) <= (e.1.line, e.1.col)
+            };
+            let outer = env.map(|k| envs.iter().find(|e| inside(e, envs[k].0)).unwrap_or(&envs[k]));
+            if let Some((f, t, _)) = outer.filter(|o| here.is_none_or(|h| !inside(o, envs[h].0))) {
+                let at = *next_key.entry(f.file).or_insert_with(|| named.partition_point(|(s, ..)| s.file < f.file));
+                let left = named[at..]
+                    .iter()
+                    .take_while(|(s, ..)| s.file == f.file && (s.line, s.col) <= (t.line, t.col))
+                    .count();
+                put_keys(&named[at..at + left], &mut line, &mut choice, &mut keys);
+                next_key.insert(f.file, at + left);
+            }
             close(&mut line, &mut choice, &mut causes);
             let shown = held(&line);
             let mut record = paragraph(
@@ -836,6 +883,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             last_origin = None;
         }
         put_keys(&named[cut..upto], &mut line, &mut choice, &mut keys);
+        put_keys(&named[read_keys], &mut line, &mut choice, &mut keys);
         if let Some(end) = end {
             began = end as usize;
         }
@@ -934,6 +982,12 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         }
     }
     close(&mut line, &mut choice, &mut causes);
+    // a key no character followed is the last paragraph's, never dropped
+    for (k, (s, ..)) in named.iter().enumerate() {
+        if next_key.get(&s.file).is_none_or(|&at| k >= at) {
+            put_keys(&named[k..=k], &mut line, &mut choice, &mut keys);
+        }
+    }
     for (_, label, sketch) in boxes {
         line.push_str(&note(&format!("▢ {label}")));
         sketches.push(sketch);
@@ -1722,7 +1776,8 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
                 let (from, to) = key.split_once('\u{1}').unwrap_or((&key, &key));
                 ligatures.push(json!({ "from": from, "to": to, "at": offset }));
             } else {
-                placed.push(json!({ "kind": kind, "key": key, "at": offset }));
+                let role = OccKind::named(kind).and_then(OccKind::role);
+                placed.push(json!({ "kind": kind, "key": key, "role": role, "at": offset }));
             }
         }
     }
@@ -2089,6 +2144,12 @@ fn occurrences(analysis: &Analysis) -> Vec<Record> {
             let mut record = place(analysis, occ.span);
             record.insert("kind".into(), json!(occ.kind.as_str()));
             record.insert("key".into(), json!(occ.key));
+            if let Some(role) = occ.kind.role() {
+                record.insert("role".into(), json!(role));
+            }
+            if let Some(target) = occ.kind.target() {
+                record.insert("target".into(), json!(target.as_str()));
+            }
             record.insert("detail".into(), json!(occ.detail));
             record.insert("expanded".into(), occ.expanded.map_or(Json::Null, |s| Json::Object(place(analysis, s))));
             record.insert("section".into(), json!(occ.section));

@@ -712,6 +712,7 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
     grid: 0.5  # the grid in cm a dragged or added node snaps to
       #! affects: output
     spacing: 2.0  # the distance in cm between the ranks of an imported Mermaid flowchart
+    relative: false  # write moved and new nodes relative to a neighbour (right=1cm of a), not at (x,y)
       #! affects: output
   savebox:  # a \begin name of a picture, listing or other environment the run met
     #! category: widget

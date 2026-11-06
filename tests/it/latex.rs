@@ -4093,6 +4093,81 @@ fn alignment_cells_are_placed_text() {
     assert_eq!(texts, ["x", "abcd", "y"]);
 }
 
+/// The keys layer's facts: each definition and use of a key is an occurrence
+/// with its role (and a use with the kind defining its target); the Typeset
+/// view places each in its paragraph, a `\label` opening a theorem in the
+/// theorem and one after a float's caption in the caption. A glossary entry
+/// the preamble declares stands nowhere; a graphic's file name is no key.
+#[test]
+fn every_key_has_a_role_and_its_paragraph() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{graphicx}
+\usepackage{amsthm}
+\usepackage{glossaries}
+\newtheorem{lemma}{Lemma}
+\newglossaryentry{tex}{name=TeX,description={a system}}
+\begin{document}
+\section{One}\label{sec:one}
+\begin{lemma}\label{lem:a}
+Lemma text on \gls{tex}.
+\end{lemma}
+See Lemma~\ref{lem:a}.
+\begin{figure}
+\includegraphics{example-image}
+\caption{Cap}
+\label{fig:x}
+\end{figure}
+\end{document}",
+    );
+    use satex::queries::query::{Filter, Query, run};
+    let text =
+        |r: &satex::queries::query::Record, k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let occ = run(&analysis, Query::Occurrences, &Filter::Always);
+    let mut roles: Vec<[String; 4]> = occ
+        .iter()
+        .filter(|r| r.contains_key("role"))
+        .map(|r| [text(r, "kind"), text(r, "key"), text(r, "role"), text(r, "target")])
+        .collect();
+    roles.sort();
+    roles.dedup();
+    let want = [
+        ["key", "tex", "def", ""],
+        ["key-use", "tex", "use", "key"],
+        ["label", "fig:x", "def", ""],
+        ["label", "lem:a", "def", ""],
+        ["label", "sec:one", "def", ""],
+        ["ref", "lem:a", "use", "label"],
+    ];
+    assert_eq!(roles, want.map(|r| r.map(String::from)));
+    // each key with the paragraph it stands in
+    let mut placed: Vec<(String, String)> = run(&analysis, Query::Typeset, &Filter::Always)
+        .iter()
+        .flat_map(|r| {
+            let detail = text(r, "detail");
+            let keys = r.get("keys").and_then(|k| k.as_array()).cloned().unwrap_or_default();
+            keys.into_iter().filter(|k| k.get("role").is_some_and(|r| !r.is_null())).map(move |k| {
+                (
+                    k["key"].as_str().unwrap_or_default().to_string(),
+                    detail.split_whitespace().take(2).collect::<Vec<_>>().join(" "),
+                )
+            })
+        })
+        .collect();
+    placed.sort();
+    let want = [
+        ("fig:x", "Figure 1:"),
+        ("lem:a", "Lemma 1."),
+        ("lem:a", "See Lemma"),
+        ("sec:one", "1 One"),
+        ("tex", "Lemma 1."),
+    ];
+    assert_eq!(placed, want.map(|(k, p)| (k.to_string(), p.to_string())));
+}
+
 /// The typeset record of text in `center` names the environment, though the
 /// kernel defines it, and says its lines are centered; text outside is justified.
 #[test]

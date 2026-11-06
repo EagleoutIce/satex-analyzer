@@ -341,7 +341,7 @@ fn run() -> Result<(), String> {
     #[cfg(not(target_os = "emscripten"))]
     if let Some(Command::Gui { dir, port, site, no_open, dev }) = &cli.command {
         let dir = dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-        return satex::cli::gui::run(&dir, *port, site.as_deref(), !no_open, *dev);
+        return satex::cli::gui::run(&dir, *port, site.as_deref(), !no_open, *dev, cli.verbose > 0);
     }
     anstream::ColorChoice::from(cli.color).write_global();
     // Progress is for a person reading text, not for a program reading output.

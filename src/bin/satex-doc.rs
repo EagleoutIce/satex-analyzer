@@ -203,6 +203,30 @@ fn installation(bin: &str) -> Result<String, String> {
     Ok(format!("{kernel}, files {hash:016x}\n"))
 }
 
+/// Which integration renders each type plugin, from the plugins' features and the integrations' table.
+fn plugin_support() -> String {
+    use satex::lsp::{INTEGRATIONS, plugin_features, works_in};
+    let mut out = format!(
+        "| Plugin | Features | {} |\n|---|---|{}\n",
+        INTEGRATIONS.iter().map(|i| i.1).collect::<Vec<_>>().join(" | "),
+        "---|".repeat(INTEGRATIONS.len())
+    );
+    for (name, features) in plugin_features() {
+        let cells = works_in(features)
+            .iter()
+            .map(|(_, l)| match *l {
+                "full" => "full",
+                "partial" => "partial",
+                "none" => "none",
+                _ => "-",
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let _ = writeln!(out, "| `{name}` | {} | {cells} |", features.join(", "));
+    }
+    out
+}
+
 /// The table of the types from [`Ty::about`], rows with the same text merged.
 fn type_table() -> String {
     use satex::analysis::roles::Ty;
@@ -769,6 +793,9 @@ fn expand(directive: &str) -> Result<String, String> {
     }
     if directive == "type-table" {
         return Ok(type_table());
+    }
+    if directive == "plugin-support" {
+        return Ok(plugin_support());
     }
     if directive == "primitives" {
         return primitives_table();

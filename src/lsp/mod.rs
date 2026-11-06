@@ -36,6 +36,7 @@ mod graphic;
 mod handlers;
 pub mod knowledge;
 pub(crate) mod plugins;
+pub use plugins::{INTEGRATIONS, plugin_features, works_in};
 mod tabular;
 mod type_at;
 mod unreached;
@@ -1421,23 +1422,30 @@ impl Engine {
         }
     }
 
+    /// `uri` to run next: the document last opened, edited or shown goes first.
+    fn first(&mut self, uri: &Uri) {
+        self.dirty.retain(|d| d != uri);
+        self.dirty.push(uri.clone());
+    }
+
     /// Analyzes every document edited since the last call, the latest
-    /// first. One the project takes as given (a submodule's, another
+    /// first ([`Self::first`]). One the project takes as given (a submodule's, another
     /// repository's, `project.frozen`) waits until a request asks for it.
     fn flush(&mut self) {
         let frozen = crate::linter::Frozen::new(&self.cfg.project, &self.root);
-        let dirty = std::mem::take(&mut self.dirty);
+        let mut dirty = std::mem::take(&mut self.dirty);
         self.cancelled = false;
-        for uri in dirty.iter().rev() {
-            // after a stopped run the rest waits for the newer text too
+        while let Some(uri) = dirty.pop() {
+            // after a stopped run the rest waits, in its order, behind the stopped one and the newer text
             if self.cancelled {
-                if !self.dirty.contains(uri) {
-                    self.dirty.push(uri.clone());
-                }
-                continue;
+                dirty.push(uri);
+                dirty.retain(|d| !self.dirty.contains(d));
+                dirty.append(&mut self.dirty);
+                self.dirty = dirty;
+                return;
             }
-            if self.docs.get(uri).is_some_and(|d| d.analysis.is_some() || !frozen.holds(&d.path)) {
-                self.analyze(uri);
+            if self.docs.get(&uri).is_some_and(|d| d.analysis.is_some() || !frozen.holds(&d.path)) {
+                self.analyze(&uri);
             }
         }
     }
@@ -1479,9 +1487,7 @@ impl Engine {
                     self.blank = Some(Rc::new(Machine::analyze("", None, &cfg)));
                 }
                 self.docs.insert(uri.clone(), Doc { text, version, path, analysis: None, analyzed: None, shift: None });
-                if !self.dirty.contains(&uri) {
-                    self.dirty.push(uri);
-                }
+                self.first(&uri);
             }
             EngineMsg::Change(uri, text, version) => {
                 // The last analysis answers until the next one replaces it,
@@ -1490,9 +1496,7 @@ impl Engine {
                     self.edited.insert(uri.clone(), std::time::Instant::now());
                     doc.text = text;
                     doc.version = version.unwrap_or(doc.version);
-                    if !self.dirty.contains(&uri) {
-                        self.dirty.push(uri);
-                    }
+                    self.first(&uri);
                 }
             }
             EngineMsg::Close(uri) => {

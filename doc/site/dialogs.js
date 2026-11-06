@@ -109,9 +109,9 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-grid th.sd-vcol.on, .sd-grid td.sd-vcol.on { background: linear-gradient(var(--c-fg), var(--c-fg)) 50% 0 / 1px 100% no-repeat; }
 .sd-grid th.sd-vcol:hover { background: linear-gradient(var(--c-accent), var(--c-accent)) 50% 0 / 2px 100% no-repeat; }
 /* inserting in place: a slim + on the line between rows (in the gutter) and columns (in the header) */
-.sd .sd-ins { position: absolute; z-index: 3; display: grid; place-items: center; box-sizing: border-box; width: .95rem; height: .95rem; min-width: 0; min-height: 0; aspect-ratio: 1; flex: none; padding: 0; margin: 0; border-radius: 50% !important; box-shadow: none !important; font-size: .8rem; font-weight: 700; line-height: 1; border: 1px solid var(--c-accent); background: var(--c-bg); color: var(--c-accent); opacity: 0; transition: opacity .12s, transform .12s; }
+.sd .sd-ins { position: absolute; z-index: 3; display: grid; place-items: center; width: .95rem; height: .95rem; padding: 0; border-radius: 50%; font-size: .8rem; font-weight: 700; line-height: 1; border: 1px solid var(--c-accent); background: var(--c-bg); color: var(--c-accent); opacity: 0; transition: opacity .12s, transform .12s; }
 .sd-grid:hover .sd-ins { opacity: .28; }
-.sd .sd-ins:hover, .sd .sd-ins:focus-visible { opacity: 1; transform: scale(1.12) !important; background: var(--c-accent); color: var(--c-accent-fg); }
+.sd .sd-ins:hover, .sd .sd-ins:focus-visible { opacity: 1; transform: scale(1.12); background: var(--c-accent); color: var(--c-accent-fg); }
 .sd-rule .sd-ins { right: .37rem; top: 50%; margin-top: -.475rem; }
 .sd-vcol .sd-ins { left: 50%; top: 50%; margin: -.475rem 0 0 -.475rem; }
 .sd-grid tr.sd-rule:has(.sd-ins:hover) td:not(.sd-rh) { background: linear-gradient(var(--c-accent), var(--c-accent)) 0 50% / 100% 2px no-repeat; }
@@ -179,6 +179,18 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
 .sd .sd-letter code { font: .85em ui-monospace, monospace; background: var(--c-sunk); border-radius: 4px; padding: 0 .25rem; }
 .sd .sd-letter[aria-pressed=true] { background: var(--c-sel); border-color: var(--c-accent); color: var(--c-fg); }
 .sd .sd-letter[aria-pressed=true] b { background: var(--c-accent); color: var(--c-accent-fg); border-color: var(--c-accent); }
+/* the property editor: rows key | value | move and drop, then "Add property" */
+.sd-props { --p-b: var(--c-border, var(--tv-border)); --p-m: var(--c-muted, var(--tv-muted)); display: grid; gap: .25rem; min-width: 0; }
+.sd-prop { display: grid; grid-template-columns: minmax(5rem, 9rem) minmax(0, 1fr) auto; gap: .3rem; align-items: center; font-size: .8rem; }
+.sd-prop > code { font: .78rem ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sd-prop-val { display: flex; gap: .25rem; align-items: center; min-width: 0; } .sd-prop-val > input:not([type=color]), .sd-prop-val > select { flex: 1; min-width: 0; font: .8rem ui-monospace, monospace; }
+.sd-prop-val > .sd-prop-unit { flex: 0 0 4rem; } .sd-prop-val > input[type=color] { width: 1.7rem; height: 1.5rem; padding: 0; border: 1px solid var(--p-b); border-radius: 5px; flex: none; }
+.sd-prop-on { color: var(--p-m); font-size: .75rem; }
+.sd-prop-btns { display: inline-flex; } .sd-prop-btns button { border: 0; background: none; color: var(--p-m); cursor: pointer; padding: 0 .2rem; font: inherit; line-height: 1.4; border-radius: 4px; }
+.sd-prop-btns button:hover:not(:disabled) { color: var(--c-fg, var(--tv-fg)); background: var(--c-sunk, var(--tv-sunk)); } .sd-prop-btns button:disabled { opacity: .3; cursor: default; }
+.sd-prop.sd-prop-pending code { font-style: italic; } .sd-prop .sd-bad, .sd-prop-add .sd-bad { border-color: var(--danger, #c33) !important; }
+.sd-prop-add { display: flex; gap: .3rem; align-items: center; margin-top: .15rem; } .sd-prop-add input { flex: 1; min-width: 0; font: .8rem ui-monospace, monospace; }
+.sd-prop-hint { color: var(--p-m); font-size: .72rem; }
 /* the file picker: a button and a drop zone naming the file */
 .sd-drop { display: flex; align-items: center; gap: .55rem; padding: .4rem .5rem; margin: .25rem 0; border: 1.5px dashed var(--c-border); border-radius: 8px; transition: border-color .12s, background .12s; min-width: 0; }
 .sd-drop.over { border-color: var(--c-accent); background: var(--c-hover); }
@@ -524,6 +536,143 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       if (e.target === document.body && [...document.querySelectorAll('dialog[open]')].pop()?.contains(root)) on(e);
     };
     addEventListener('keydown', stray, true);
+  }
+
+  // ------------------------------------------------------------ properties: a key=value list (TikZ options, image options)
+
+  /** A key list split at its top-level commas (braces kept). */
+  const splitKeys = (s = '') => {
+    const out = [];
+    let depth = 0, from = 0;
+    for (let i = 0; i <= s.length; i++) {
+      if (s[i] === '{') depth++;
+      else if (s[i] === '}') depth--;
+      else if (i === s.length || (s[i] === ',' && !depth)) { out.push(s.slice(from, i).trim()); from = i + 1; }
+    }
+    return out.filter(Boolean);
+  };
+  /** `key=value` as `[key, value]`, the value's outer braces dropped; a bare key has value null. */
+  const keyOf = (o) => { const i = o.indexOf('='); return i < 0 ? [o.trim(), null] : [o.slice(0, i).trim(), o.slice(i + 1).trim().replace(/^\{([^]*)\}$/, '$1')]; };
+  /** An option's text again: a value with a comma or `=` in braces, no value a bare key. */
+  const keyText = (k, v) => v == null ? k : `${k}=${/[,=]/.test(v) && !/^\{[^]*\}$/.test(v) ? `{${v}}` : v}`;
+  /** A length as `[number, unit]`, else null. */
+  const SPLIT_LENGTH = /^(-?\d*\.?\d+)\s*(pt|cm|mm|in|bp|em|ex|sp|pc|dd|cc)?$/;
+  /**
+   * The property editor every widget shares: one row per option (`key | value | ↑ ↓ ×`) and "Add
+   * property", completed from `keys` (`{name, type, choices?, default?}`, the run's). The value's
+   * widget follows the key's type: a colour (names of `colors`, a picker), a length (number and
+   * unit), a choice, a truth value, a node (`nodes`), none for a flag, text otherwise. `get()` gives
+   * the options now, `set(list)` takes them after each edit, `commit()` ends a gesture (an undo
+   * step). `skip(o)` hides options other fields show: they keep their places. A key added without
+   * its required value waits in the editor until it has one.
+   */
+  function properties({ get, set, commit = () => {}, keys = [], colors = [], nodes = [], skip = () => false, label = 'Add property', css = () => null }) {
+    style();
+    const byName = new Map(keys.map((k) => [k.name, k]));
+    const box = h('div', { class: 'sd-props' });
+    let waiting = [];
+    const uid = `sd-p-${Math.random().toString(36).slice(2, 8)}`;
+    const keyList = h('datalist', { id: `${uid}-k` }, keys.map((k) => h('option', { value: k.name }, k.type === 'flag' ? '' : k.type)));
+    const colorList = h('datalist', { id: `${uid}-c` }, colors.map((c) => h('option', { value: c })));
+    const nodeList = h('datalist', { id: `${uid}-n` }, nodes.map((c) => h('option', { value: c })));
+    // the options shown, each with its index in all of them
+    const rowsNow = () => get().map((o, i) => ({ o, i })).filter(({ o }) => !skip(o));
+    const put = (i, text) => { const l = [...get()]; if (text == null) l.splice(i, 1); else l[i] = text; set(l); };
+    const swap = (i, j) => { const l = [...get()]; [l[i], l[j]] = [l[j], l[i]]; set(l); commit(); draw(); };
+    const input = (value, attrs, on) => {
+      const e = h('input', { class: 'tv-input', value: value ?? '', spellcheck: 'false', ...attrs });
+      e.addEventListener('input', () => on(e.value, e));
+      e.addEventListener('change', () => commit());
+      return e;
+    };
+    const balanced = (t) => { let d = 0; for (const m of t.replace(/\\./g, '').matchAll(/[{}]/g)) if ((d += m[0] === '{' ? 1 : -1) < 0) return false; return d === 0; };
+    /** The value's widget for key `k`: `change(v)` with the new value (null: none). */
+    function widget(k, v, change) {
+      const type = byName.get(k)?.type ?? (v == null ? 'flag' : 'text');
+      const text = (val, attrs = {}) => input(val, { 'aria-label': `${k} value`, ...attrs }, (t, e) => { e.classList.toggle('sd-bad', !balanced(t)); if (balanced(t)) change(t.trim() === '' ? null : t.trim()); });
+      if (type === 'flag' && v == null) return [h('span', { class: 'sd-prop-on' }, 'on')];
+      if (type === 'choice' || type === 'bool') {
+        const cs = type === 'bool' ? ['true', 'false'] : byName.get(k).choices ?? [];
+        const all = [...new Set([...(v == null ? [''] : []), ...cs, ...(v != null && !cs.includes(v) ? [v] : [])])];
+        const s = h('select', { class: 'tv-input', 'aria-label': `${k} value` }, all.map((c) => h('option', { value: c, selected: c === (v ?? '') }, c || (byName.get(k)?.default != null ? `default (${byName.get(k).default})` : 'choose…'))));
+        s.addEventListener('change', () => { change(s.value || null); commit(); });
+        return [s];
+      }
+      if (type === 'length') {
+        const m = (v ?? '').trim().match(SPLIT_LENGTH);
+        if (v != null && !m) return [text(v)];
+        const n = input(m?.[1] ?? '', { type: 'number', step: 'any', 'aria-label': `${k} number` }, () => emit());
+        const u = h('select', { class: 'tv-input sd-prop-unit', 'aria-label': `${k} unit` }, ['pt', 'cm', 'mm', 'em', 'ex', 'in', 'bp'].map((x) => h('option', { value: x, selected: x === (m?.[2] ?? 'pt') }, x)));
+        const emit = () => change(n.value === '' ? null : `${n.value}${u.value}`);
+        u.addEventListener('change', () => { emit(); commit(); });
+        return [n, u];
+      }
+      if (type === 'color') {
+        const t = text(v, { list: `${uid}-c`, placeholder: 'a colour: red, blue!30' });
+        const pick = h('input', { type: 'color', title: 'Pick any colour: written as {rgb,255:red,…}', 'aria-label': `${k} colour picker` });
+        const show = (val) => { const c = css(val); if (/^#[0-9a-f]{6}$/i.test(c ?? '')) pick.value = c; };
+        show(v);
+        t.addEventListener('input', () => show(t.value));
+        pick.addEventListener('input', () => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(pick.value.slice(i, i + 2), 16)); t.value = `{rgb,255:red,${r};green,${g};blue,${b}}`; change(t.value); });
+        pick.addEventListener('change', () => commit());
+        return [pick, t];
+      }
+      if (type === 'node') return [text(v, { list: `${uid}-n` })];
+      return [text(v, { placeholder: type === 'flag' ? 'no value' : byName.get(k)?.default != null ? `default: ${byName.get(k).default}` : 'value' })];
+    }
+    const btn = (label, title, f, disabled = false) => h('button', { type: 'button', title, 'aria-label': title, disabled, onclick: f }, label);
+    function row({ o, i }, prev, next) {
+      const [k, v] = keyOf(o);
+      const val = h('div', { class: 'sd-prop-val' }, widget(k, v, (nv) => { put(i, keyText(k, nv)); }));
+      return h('div', { class: 'sd-prop', 'data-key': k }, h('code', { title: o }, k), val,
+        h('span', { class: 'sd-prop-btns' },
+          btn('↑', `Move ${k} up`, () => swap(i, prev), prev == null),
+          btn('↓', `Move ${k} down`, () => swap(i, next), next == null),
+          btn('×', `Remove ${k}`, () => { put(i, null); commit(); draw(); })));
+    }
+    // a key added that needs a value first: written with its first value, among the others once the row loses focus
+    function pendingRow(k) {
+      let at = null;
+      const val = h('div', { class: 'sd-prop-val' }, widget(k, '', (nv) => {
+        if (at != null) return put(at, keyText(k, nv));
+        if (nv == null) return;
+        waiting = waiting.filter((w) => w !== k);
+        at = get().length;
+        set([...get(), keyText(k, nv)]);
+      }));
+      const r = h('div', { class: 'sd-prop sd-prop-pending', 'data-key': k }, h('code', { title: `${k}: give it a value` }, k), val,
+        h('span', { class: 'sd-prop-btns' }, btn('×', `Drop ${k}`, () => { if (at != null) put(at, null); waiting = waiting.filter((w) => w !== k); draw(); })));
+      r.addEventListener('focusout', (e) => { if (at != null && !r.contains(e.relatedTarget)) draw(); });
+      return r;
+    }
+    const add = input('', { list: `${uid}-k`, placeholder: `${label}: a key…`, 'aria-label': label }, () => add.classList.remove('sd-bad'));
+    const take = () => {
+      const k = add.value.trim().replace(/=$/, '');
+      if (!k) return;
+      if (k.includes('=')) { const [kk, vv] = keyOf(k); set([...get(), keyText(kk, vv)]); }
+      else {
+        const key = byName.get(k);
+        // a flag, or a key with a default, is set by its name alone
+        if (!key || key.type === 'flag' || key.default != null) set([...get(), k]);
+        else waiting.push(k);
+      }
+      add.value = '';
+      commit();
+      draw();
+      box.querySelector('.sd-prop-pending:last-of-type input, .sd-prop-pending:last-of-type select')?.focus();
+    };
+    add.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); take(); } });
+    const addRow = h('div', { class: 'sd-prop-add' }, add, h('button', { type: 'button', class: 'tv-button sd-ghost', onclick: take, title: 'Add the key (Enter)' }, 'Add'));
+    function draw() {
+      const rows = rowsNow();
+      box.replaceChildren(keyList, colorList, nodeList,
+        ...rows.map((r, j) => row(r, rows[j - 1]?.i, rows[j + 1]?.i)),
+        ...waiting.map(pendingRow), addRow,
+        ...(keys.length ? [] : [h('span', { class: 'sd-prop-hint' }, 'No keys from the run yet: type any key=value.')]));
+    }
+    draw();
+    box.refresh = draw;
+    return box;
   }
 
   // ------------------------------------------------------------ escaping and validation (no DOM: views.test.mjs)
@@ -1573,7 +1722,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     },
     popup, enhance, store, picker, footer, discard, applier, keys, texText, texIssue, texSafe, check, guard, table: T, image: { contentBox, trimTo, colorModel, DECODE },
   };
-  Object.assign(api, { texTokens, history, HINT });
+  Object.assign(api, { texTokens, history, HINT, properties, keyval: { split: splitKeys, of: keyOf, text: keyText } });
   self.satexDialogs = api;
   self.satexStore = store;
 })();

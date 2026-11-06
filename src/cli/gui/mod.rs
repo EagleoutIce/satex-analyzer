@@ -7,12 +7,13 @@
 //!
 //! The page's worker (`doc/site/worker.js`) talks to it instead of the wasm:
 //!
-//! - `GET /__satex/local`: the project, `{dir, name, root, files: [[name, size]]}`.
+//! - `GET /__satex/local`: the project, `{dir, name, root, files: [[name, size]]}`. The root is
+//!   the file given, else the document discovery starts from (`root_document`).
 //! - `GET|PUT|DELETE /__satex/file?path=P`: a file. Reads reach the project
 //!   and the files kpathsea finds, writes the project only.
 //! - `POST /__satex/run`: `{args, cwd}`, one `satex` run, `{lines, status, ms}`.
 //! - `POST /__satex/lsp?s=S`: one message to session `S`'s server. The
-//!   answer streams its status lines, then the replies (`batch.rs`).
+//!   answer streams its status lines and the findings of each run that ended, then the replies (`batch.rs`).
 //! - `POST /__satex/lsp/reset?s=S`: `{args, cwd}`, the next server's.
 //! - `POST /__satex/lsp/cancel?s=S`: stops the run under way.
 //! - `GET /__satex/session?s=S`: held open by the worker; its end ends `S`.
@@ -47,6 +48,10 @@ pub struct Gui {
     pub token: String,
     pub port: u16,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+    /// Where the language servers' messages go: a log file, or with `-v` the terminal.
+    log: Option<PathBuf>,
+    /// The document the terminal's status line last named.
+    said: Mutex<String>,
 }
 
 /// A language server for one page: the flags and directory of its next
@@ -74,11 +79,15 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 /// `satex gui`: serves `dir` until stopped, printing the address first.
-pub fn run(dir: &Path, port: u16, site: Option<&Path>, open: bool, dev: bool) -> Result<(), String> {
+pub fn run(dir: &Path, port: u16, site: Option<&Path>, open: bool, dev: bool, verbose: bool) -> Result<(), String> {
     let listener = http::bind(port)?;
-    let gui = Gui::new(dir, site, dev, listener.local_addr().map_err(|e| e.to_string())?.port())?;
+    let gui = Gui::new(dir, site, dev, listener.local_addr().map_err(|e| e.to_string())?.port(), verbose)?;
     let url = format!("http://127.0.0.1:{}/play/?token={}", gui.port, gui.token);
-    println!("satex gui: {} at\n  {url}\nCtrl+C stops", gui.dir.display());
+    let root = gui.root.as_deref().map(|r| format!(", root {r}")).unwrap_or_default();
+    println!("satex gui: {}{root} at\n  {url}\nCtrl+C stops", gui.dir.display());
+    if let Some(log) = &gui.log {
+        println!("The language server's messages go to {} (-v prints them here)", log.display());
+    }
     if open {
         browse(&url);
     }
@@ -87,7 +96,8 @@ pub fn run(dir: &Path, port: u16, site: Option<&Path>, open: bool, dev: bool) ->
 }
 
 impl Gui {
-    pub fn new(dir: &Path, site: Option<&Path>, dev: bool, port: u16) -> Result<Arc<Gui>, String> {
+    /// `verbose`: the language servers' messages go to the terminal, else to a log file.
+    pub fn new(dir: &Path, site: Option<&Path>, dev: bool, port: u16, verbose: bool) -> Result<Arc<Gui>, String> {
         let given = dir.canonicalize().map_err(|e| format!("{}: {e}", dir.display()))?;
         // a file names the root document, its folder the project
         let (dir, root) = match given.is_file() {
@@ -95,11 +105,31 @@ impl Gui {
                 given.parent().map(Path::to_path_buf).unwrap_or_default(),
                 given.file_name().map(|n| n.to_string_lossy().into_owned()),
             ),
-            false => (given, None),
+            // else the document the command line would start from
+            false => {
+                let found = crate::plugins::discovery::scan(&given).root_document();
+                let root = found.and_then(|p| Some(p.strip_prefix(&given).ok()?.to_string_lossy().replace('\\', "/")));
+                (given, root)
+            }
         };
         let site = find_site(site)?.canonicalize().map_err(|e| e.to_string())?;
         let src = dev.then(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/site"));
-        Ok(Arc::new(Gui { dir, root, site, src, token: token(), port, sessions: Mutex::default() }))
+        // beside the builds, which are pruned
+        let log = (!verbose).then(|| cache().with_extension("log"));
+        if let Some(log) = &log {
+            let _ = std::fs::create_dir_all(log.parent().unwrap_or(&dir)).and_then(|()| std::fs::write(log, ""));
+        }
+        Ok(Arc::new(Gui {
+            dir,
+            root,
+            site,
+            src,
+            token: token(),
+            port,
+            sessions: Mutex::default(),
+            log,
+            said: Mutex::default(),
+        }))
     }
 
     pub fn serve(self: Arc<Self>, listener: std::net::TcpListener) {
@@ -190,7 +220,7 @@ impl Gui {
                 Ok(())
             }
             _ if path.starts_with("/__satex/compile") => {
-                let root = crate::project::paths::cache_dir().unwrap_or_else(std::env::temp_dir).join("satex-gui");
+                let root = cache();
                 let rest = &path["/__satex/compile".len()..];
                 compile::respond(&mut stream, method, rest, &req.body, &root, Some(&self.dir))
             }
@@ -225,6 +255,10 @@ impl Gui {
                 .current_dir(&cwd)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
+                .stderr(match self.log.as_ref().and_then(|l| std::fs::OpenOptions::new().append(true).open(l).ok()) {
+                    Some(log) => Stdio::from(log),
+                    None => Stdio::inherit(),
+                })
                 .spawn();
             if let Ok(mut child) = started {
                 *lock(&s.stdin) = child.stdin.take();
@@ -250,12 +284,27 @@ impl Gui {
                 if line.starts_with('[') {
                     return Ok(());
                 }
+                self.tell(&line);
             }
         }
         // no answer: the server stopped. The next message starts another
         out.take();
         s.stop();
         stream.write_all(b"{\"error\":\"the language server stopped\"}\n")
+    }
+
+    /// The terminal's status: the document a run reads, once per document.
+    fn tell(&self, line: &str) {
+        let Ok(status) = serde_json::from_str::<Value>(line) else { return };
+        // `analyzing main.tex (preamble)`: the run's own file
+        let text = status["params"]["text"].as_str().unwrap_or_default();
+        let Some(file) = text.strip_prefix("analyzing ").and_then(|t| t.split(" (").next()) else { return };
+        let file = file.to_string();
+        let mut said = lock(&self.said);
+        if *said != file {
+            println!("satex gui: analyzing {file} …");
+            *said = file;
+        }
     }
 
     /// One `satex` run of the page's console: its lines, status and time.
@@ -329,6 +378,11 @@ fn save(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
             std::fs::write(path, bytes)
         }
     }
+}
+
+/// The server's own directory in the cache: the builds, the log.
+fn cache() -> PathBuf {
+    crate::project::paths::cache_dir().unwrap_or_else(std::env::temp_dir).join("satex-gui")
 }
 
 fn strings(v: &Value) -> Vec<String> {

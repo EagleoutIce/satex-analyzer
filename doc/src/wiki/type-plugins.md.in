@@ -158,3 +158,9 @@ An incremental plugin decides for one edit whether the last run still holds. It 
 - `typing`: letters typed into a control word the run met undefined on every path, while the new name has no meaning or definition in the run. Its results stand, marked provisional, until typing pauses for `pause_ms`, then the run follows. This one is not claimed sound, only likely. The playground asks for its runs itself, so there it runs at once.
 
 Writing a plugin: [Writing a type plugin](writing-type-plugins.md).
+
+## Where each plugin works
+
+A plugin works *fully* in an integration that renders all its features, *partially* when some are missing or degraded, and *none* when it renders none. TeXstudio reads the log only, so it shows findings and no plugin. In IntelliJ (through LSP4IJ) the plugin has no webview, and a code lens shows but its button does nothing, because `satex.openView` is a client command. A client without dialogs gets the code actions and hovers instead. Neovim and other clients vary: lenses, colors and inlay hints need client support. A `-` marks a plugin with no editor feature (`reuse`, `build`).
+
+{{plugin-support}}

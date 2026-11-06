@@ -78,12 +78,16 @@ impl Gui {
         self.ask(method, target, &headers, body)
     }
 
-    /// One language server message: its replies, after the status lines.
+    /// One language server message: the notifications of runs that ended
+    /// meanwhile, in order, then its replies. Status lines left out.
     fn lsp(&self, message: serde_json::Value) -> Vec<serde_json::Value> {
         let (head, body) = self.page("POST", "/__satex/lsp?s=t", &message.to_string());
         assert!(head.starts_with("HTTP/1.1 200"), "{head}");
         let last = body.lines().last().unwrap_or_default();
-        serde_json::from_str(last).unwrap_or_else(|_| panic!("no replies: {body}"))
+        let replies: Vec<serde_json::Value> =
+            serde_json::from_str(last).unwrap_or_else(|_| panic!("no replies: {body}"));
+        let streamed = body.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok());
+        streamed.filter(|m| m.is_object() && m["method"] != "satex/status").chain(replies).collect()
     }
 }
 
@@ -158,4 +162,43 @@ fn gui_language_server_answers_through_the_page_transport() {
         .unwrap_or_else(|| panic!("no diagnostics for {uri}: {out:?}"));
     let said = published["params"]["diagnostics"].to_string();
     assert!(said.contains("undefinedname"), "{said}");
+}
+
+#[test]
+fn gui_runs_the_shown_document_first_and_no_other_unasked() {
+    // documents named before `main.tex`: a folder of them must not run them all, nor start from the first
+    let doc = |n: &str| format!("\\documentclass{{article}}\\begin{{document}}\\undefined{n}\\end{{document}}\n");
+    let names = ["a.tex", "b.tex", "c.tex", "d.tex", "main.tex"];
+    let texts: Vec<String> = names.iter().map(|n| doc(&n[..1])).collect();
+    let files: Vec<(&str, &str)> = names.iter().zip(&texts).map(|(n, t)| (*n, t.as_str())).collect();
+    let gui = Gui::start("order", &files);
+    let local: serde_json::Value = serde_json::from_str(&gui.page("GET", "/__satex/local", "").1).unwrap();
+    assert_eq!(local["root"], "main.tex", "the root is the one the command line would take");
+    let flags = ["--no-packages", "--no-classes", "--set", "load.format=false", "--set", "texmf.kpsewhich=false"];
+    let args = [&flags[..], &["-f", "main.tex"][..]].concat();
+    let reset = serde_json::json!({ "args": args, "cwd": gui.dir });
+    gui.page("POST", "/__satex/lsp/reset?s=t", &reset.to_string());
+    gui.lsp(serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }));
+    let uri = |n: &str| format!("file://{}", gui.dir.join(n).to_string_lossy());
+    let open = |n: &str| {
+        let doc = serde_json::json!({ "uri": uri(n), "languageId": "latex", "version": 1, "text": doc(&n[..1]) });
+        gui.lsp(serde_json::json!({ "jsonrpc": "2.0", "method": "textDocument/didOpen", "params": { "textDocument": doc } }));
+    };
+    // The files published, in the order their runs ended: streamed lines first, then the replies.
+    let analyze = |first: &str| -> Vec<String> {
+        let all = gui
+            .lsp(serde_json::json!({ "jsonrpc": "2.0", "method": "satex/analyze", "params": { "first": uri(first) } }));
+        let published = all.iter().filter(|m| m["method"] == "textDocument/publishDiagnostics");
+        published
+            .filter_map(|m| m["params"]["uri"].as_str())
+            .map(|u| u.rsplit('/').next().unwrap().to_string())
+            .collect()
+    };
+    open("main.tex");
+    assert_eq!(analyze("main.tex"), ["main.tex"], "only the opened document runs");
+    // opened in turn, the shown one named: it runs first, then the latest opened
+    for n in ["a.tex", "b.tex", "c.tex"] {
+        open(n);
+    }
+    assert_eq!(analyze("a.tex"), ["a.tex", "c.tex", "b.tex"]);
 }

@@ -247,6 +247,46 @@ assert.equal(back.dir, 'TD');
   Object.assign(sc.items[0], { x: 3, y: 4, dirty: true });
   assert.equal(D.emit(sc, 2), '\n  \\node (a) at (1.5,2) {A};\n');
 }
+{
+  const D = self.satexViews.drawing;
+  // 12. a bend makes a curve on a `to` path: read with its options, written with `to` once an arrow has one
+  const bent = D.parse('\n  \\draw[->] (a) to[bend left=20] (b);\n  \\draw (a) -- (b);\n');
+  const [c1, c2] = bent.items;
+  assert.deepEqual([c1.type, c1.via, c2.via], ['edge', 'bend left=20', undefined]);
+  c2.opts = ['bend right']; c2.dirty = true;
+  assert.equal(D.emit(bent), '\n  \\draw[->] (a) to[bend left=20] (b);\n  \\draw[bend right] (a) to (b);\n');
+  // 13. a node at (x,y) moved in relative mode: a relation to the nearest node before it, distances on the grid
+  {
+    const sz = () => [1, 0.6], A = { name: 'a', x: 0, y: 0, opts: [] };
+    const env = { size: sz, distance: [1, 1], onGrid: false, grid: 0.5, by: new Map([['a', A]]), earlier: [A] };
+    const r = D.relocate({ name: 'b', x: 3.1, y: 0, opts: ['draw'], place: null }, 3.1, 0.05, env);
+    assert.deepEqual([r.opts, r.at], [['draw', 'right=2cm of a'], false], 'border to border: 3 - 1 = 2cm');
+    const placed = D.relPos({ name: 'b', opts: r.opts, place: r.place }, A, env);
+    assert.deepEqual(placed, [3, 0], 'TikZ puts it on the grid point next to where it was dropped');
+    const lone = D.relocate({ name: 'b', x: 1, y: 1, opts: [], place: null }, 1, 1, { ...env, earlier: [] });
+    assert.deepEqual([lone.at, lone.x, lone.y], [true, 1, 1], 'no node before it: at (x,y)');
+    // where a size is a guess, only a shift from the neighbour's center is sure: `at (a)` shifted
+    const sure = D.relocate({ name: 'b', x: 3.1, y: -1, opts: ['draw'], place: null }, 3.1, -1, { ...env, exact: (n) => n.name === 'a' });
+    assert.deepEqual([sure.opts, sure.place.of, sure.place.shift], [['draw', 'xshift=3cm', 'yshift=-1cm'], 'a', true]);
+    assert.deepEqual(D.relPos({ opts: sure.opts, place: sure.place }, A, env), [3, -1]);
+    const sh = D.parse('\n  \\node[draw, xshift=3cm, yshift=-1cm] (b) at (a) {B};\n');
+    assert.deepEqual([sh.items[0].type, sh.items[0].place.of, sh.items[0].place.shift, sh.items[0].at], ['node', 'a', true, false]);
+    sh.items[0].dirty = true;
+    assert.equal(D.emit(sh), '\n  \\node[draw, xshift=3cm, yshift=-1cm] (b) at (a) {B};\n', 'written back the same');
+  }
+  // 11. styles: a name in the options is followed by its keys, nested ones too; a style with a parameter is not
+  const bodies = new Map([['box', 'draw, hot'], ['hot', 'fill=red!20'], ['thick', 'line width=0.8pt'], ['arg', 'fill=#1'], ['loop', 'loop']]);
+  assert.deepEqual(D.expandStyles(['box', 'thick', 'text=blue'], bodies), ['box', 'draw', 'hot', 'fill=red!20', 'thick', 'line width=0.8pt', 'text=blue']);
+  assert.deepEqual(D.expandStyles(['arg'], bodies), ['arg']);
+  assert.ok(D.expandStyles(['loop'], bodies).length < 10, 'a style naming itself stops');
+  assert.deepEqual(['box/.style', 'every node/.append style', 'draw'].map((x) => x.match(D.STYLE_DEF)?.[1] ?? null), ['box', 'every node', null]);
+  // the picture's options: a style's keys go in braces, a style dropped leaves the rest
+  const po = D.picOptions('node distance=2cm, box/.style={draw, thick}');
+  po.set('hot/.style', 'fill=red!20');
+  assert.equal(po.text(), 'node distance=2cm, box/.style={draw, thick}, hot/.style={fill=red!20}');
+  po.set('box/.style', null);
+  assert.equal(po.text(), 'node distance=2cm, hot/.style={fill=red!20}');
+}
 console.log('drawing model: ok');
 
 // forest trees: bracket → state → bracket, untouched text as it was
@@ -444,7 +484,7 @@ console.log('table model: ok');
   globalThis.location ??= { href: 'http://localhost/' };
   // the page's own wiring fails without a page; the cards are set before it
   try { createRequire(import.meta.url)('./site.js'); } catch {}
-  const { notation, typesetView } = self.satexCards;
+  const { notation, typesetView, withKeys, keyTitle } = self.satexCards;
   const N = (s) => `${s}`, M = (m) => N(`\u0003${m}`);
   // booktabs: the rule after the last row borders that row across every column; a cell of leaders alone is a rule over that column
   const booktabs = notation(`${N('―')}A${M('cell')}1${M('row')}${M('cell')}${M('leaders')}${M('fill 0.0pt plus 1.0fill')}${M('row')}B${M('cell')}2${M('row')}${N('―')}${M('end')}`.replace(/^/, M('begin')));
@@ -462,6 +502,12 @@ console.log('table model: ok');
   // an undecided conditional's arms, its switch named; marks the view does not know draw nothing, in a table too
   assert.equal(notation(`${N('\u0001choice\u00017')}${N('{')}Heads${N('|')}${N('}')}.`), '<span class="ts-choice" data-on="7"><span class="ts-arm ts-arm-true">Heads</span><span class="ts-arm ts-arm-false"></span></span>.');
   assert.ok(!notation(`${M('begin')}a${M('limits')}${M('cell')}b${M('end')}`).includes('ts-limits'));
+  // keys: the run's role, not a table of kinds, says what defines and what refers; one title for the Typeset view and the pages
+  const keyed = notation(withKeys('ab', [{ kind: 'key', key: 'tex', role: 'def', at: 0 }, { kind: 'key-use', key: 'tex', role: 'use', at: 1 }, { kind: 'label', key: 'fig:a', role: 'def', at: 2 }]));
+  assert.deepEqual([...keyed.matchAll(/class="ts-key ([^"]*)" title="([^"]*)"/g)].map((m) => [m[1], m[2]]),
+    [['ts-key-key ts-key-def', 'defines tex (key)'], ['ts-key-key-use ts-key-use', 'refers to tex (key-use)'], ['ts-key-label ts-key-def', 'defines fig:a (label)']]);
+  assert.equal(keyTitle({ kind: 'entry', key: 'source', role: 'use' }), 'refers to source (entry)');
+  assert.equal(keyTitle({ kind: 'choice', key: '7' }), 'choice 7', 'no role: no claim about the key');
   // glue with its spec: infinite glue in a line still sets where the text sits, glue between lines stands apart
   const filled = notation(`${M('fill 0.0pt plus 1.0fill')}Right`);
   assert.match(filled, /^<i class="ts-fill ts-fill-l" title="infinite glue in the line: 0.0pt plus 1.0fill" data-glue="0.0pt plus 1.0fill"><\/i>Right$/);
@@ -661,6 +707,17 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   nm.head.OR = '\\thepage';
   assert.deepEqual(P.headerEdits(none, nm, false).map((e) => e.newText), ['\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n\\fancyhf{}\n\\fancyhead[R]{\\thepage}\n']);
   console.log('page model: ok');
+}
+
+// the property editor's key lists (dialogs.js `keyval`): split at top-level commas, a value's braces
+{
+  const K = self.satexDialogs.keyval;
+  assert.deepEqual(K.split('draw, fill={rgb,255:red,1;green,2;blue,3}, label={[red]above:x}, thick'), ['draw', 'fill={rgb,255:red,1;green,2;blue,3}', 'label={[red]above:x}', 'thick']);
+  assert.deepEqual(['thick', 'fill=red!20', 'label={above:x}', 'right=of a'].map(K.of), [['thick', null], ['fill', 'red!20'], ['label', 'above:x'], ['right', 'of a']]);
+  assert.deepEqual([['thick', null], ['fill', 'red'], ['label', 'above:x, red'], ['x', 'a=b'], ['f', '{rgb:red,1}']].map(([k, v]) => K.text(k, v)), ['thick', 'fill=red', 'label={above:x, red}', 'x={a=b}', 'f={rgb:red,1}']);
+  // a key written back reads the same
+  for (const o of ['fill=red!20', 'label={above:x, red}', 'thick']) assert.equal(K.text(...K.of(o)), o);
+  console.log('property editor model: ok');
 }
 
 // the Apply lifecycle (dialogs.js `applier`): Apply before the first answer waits for it, a pending change is

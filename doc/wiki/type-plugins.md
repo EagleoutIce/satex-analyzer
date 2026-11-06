@@ -113,9 +113,12 @@ A float is an environment whose code reaches `\@float`: `figure`, `table` and th
 
 A `tikzpicture` the run met: a lens "Edit drawing…" on its `\begin` line and the view anywhere inside. The canvas shows the nodes the run made, where pgf put each, with its shape and size (`\pgf@sh@ns@⟨node⟩` and its saved anchors). Plain paths between coordinates show too.
 
-- Tools: add a rectangle or circle node, move one by drag (snapped to `grid` cm), connect two with `->`, `<->` or `--`, delete, edit a label.
+- Tools: add a rectangle, circle or text node, move one by drag (snapped to `grid` cm), connect two with `->`, `<->` or `--`, delete, edit a label. A node can get a neighbour on any side (`below=of a`).
 - It writes `\node[draw] (n1) at (x,y) {label};` and `\draw[->] (a) -- (b);`. Statements it did not change stay as they were.
-- Anything else stays code and shows read-only: a `\foreach`, a scope, a node placed relative to another. A node the run put elsewhere than its text says counts as code too. Nothing is dropped.
+- A node placed relative to another (`right=of a`, `right of=a`, `at (a)` with `xshift`) stays relative: a drag changes its distance or shift. With "place nodes relative to a neighbour" (or `relative: true`) a moved or new node gets a relation to the nearest node before it, and "Make all relative" converts the nodes at `(x,y)`. Where the canvas only guesses a size, the relation is `at (a)` with shifts, which holds whatever the size.
+- Properties: every key of a node, an arrow or the picture is a row, edited by its type and removable. "Add property" completes the `/tikz/` keys the run defined. A colour gets a picker, a length a unit, a choice its values. The canvas follows styles to their keys, so `thick`, `dashed`, `bend left` and a style's arrow tips show.
+- Styles: the picture's `name/.style={…}` and the document's `\tikzset` styles, each with its keys. Edit, delete or apply one to the selection. "Create from selection" moves the selection's keys into a new style, in the picture or the preamble.
+- Anything else stays code and shows read-only: a `\foreach`, a scope. A node the run put elsewhere than its text says counts as code too. Nothing is dropped.
 - Mermaid: paste a flowchart (`graph TD`, `A[x] -->|y| B((z))`) to add its nodes, ranked by longest path, `spacing` cm apart. Export writes the picture's nodes and arrows as a flowchart.
 
 On a blank line of the document body, "Insert tikzpicture" writes a small picture and the view "New drawing" starts an empty one. Both add `\usepackage{tikz}` when the run has no tikz.
@@ -184,3 +187,33 @@ An incremental plugin decides for one edit whether the last run still holds. It 
 - `typing`: letters typed into a control word the run met undefined on every path, while the new name has no meaning or definition in the run. Its results stand, marked provisional, until typing pauses for `pause_ms`, then the run follows. This one is not claimed sound, only likely. The playground asks for its runs itself, so there it runs at once.
 
 Writing a plugin: [Writing a type plugin](writing-type-plugins.md).
+
+## Where each plugin works
+
+A plugin works *fully* in an integration that renders all its features, *partially* when some are missing or degraded, and *none* when it renders none. TeXstudio reads the log only, so it shows findings and no plugin. In IntelliJ (through LSP4IJ) the plugin has no webview, and a code lens shows but its button does nothing, because `satex.openView` is a client command. A client without dialogs gets the code actions and hovers instead. Neovim and other clients vary: lenses, colors and inlay hints need client support. A `-` marks a plugin with no editor feature (`reuse`, `build`).
+
+| Plugin | Features | Playground | satex gui | VS Code | IntelliJ | Neovim / LSP |
+|---|---|---|---|---|---|---|
+| `keys` | hover, complete, view | full | full | full | partial | partial |
+| `units` | hover, complete, view | full | full | full | partial | partial |
+| `color` | hover, complete, view, colors | full | full | full | partial | partial |
+| `language` | hover, complete | full | full | full | full | full |
+| `listing` | complete | full | full | full | full | full |
+| `environment` | view | full | full | full | partial | partial |
+| `table` | lens, actions, dialog | full | full | full | partial | partial |
+| `image` | lens, actions, dialog | full | full | full | partial | partial |
+| `float` | lens, hover, complete, dialog | full | full | full | partial | partial |
+| `tikz` | lens, actions, view | full | full | full | partial | partial |
+| `forest` | lens, actions, view | full | full | full | partial | partial |
+| `savebox` | hover, actions | full | full | full | full | full |
+| `glossary` | view, manage | full | full | full | partial | partial |
+| `bibliography` | view, manage | full | full | full | partial | partial |
+| `index` | view, manage | full | full | full | partial | partial |
+| `theorem` | view, manage | full | full | full | partial | partial |
+| `overlay` | hover, complete | full | full | full | full | full |
+| `frame` | actions, view, lens | full | full | full | partial | partial |
+| `page` | lens, hover, view | full | full | full | partial | partial |
+| `comment_edit` | reuse | - | - | - | - | - |
+| `whitespace_edit` | reuse | - | - | - | - | - |
+| `typing` | reuse | - | - | - | - | - |
+| `l3build` | build | - | - | - | - | - |

@@ -4094,6 +4094,44 @@ fn tikz_plugin_offers_what_the_run_declared() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// The property editor's keys come from the run: each `/tikz/` key with the value type its
+/// handler and code give, choices with their values; a style the document defines with its body
+/// and where that body and its whole entry stand.
+#[test]
+fn tikz_plugin_offers_the_runs_keys_and_styles() {
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\tikzset{box/.style={draw, rounded corners}, hot/.style={fill=red!20}}\n\\tikzset{pace/.is choice, pace/fast/.code={}, pace/slow/.code={}}\n\\begin{document}\n\\begin{tikzpicture}\n  \\node[box] (a) {A};\n\\end{tikzpicture}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("tikz-keys", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 6, 3);
+    let views = at(&mut server, &uri, "satex/view", 6, 3);
+    let draw = &views.as_array().unwrap().iter().find(|v| v["plugin"] == "tikz").expect("a drawing")["sections"][0];
+    let keys = draw["run"]["keys"].as_array().unwrap();
+    let key = |name: &str| keys.iter().find(|k| k["name"] == name).unwrap_or_else(|| panic!("{name}: {keys:?}"));
+    for (name, ty) in
+        [("fill", "color"), ("line width", "length"), ("thick", "flag"), ("pace", "choice"), ("box", "flag")]
+    {
+        assert_eq!(key(name)["type"], ty, "{name}: {}", key(name));
+    }
+    assert_eq!(key("fill")["default"], "", "fill alone fills: {}", key("fill"));
+    assert!(key("line width")["default"].is_null(), "line width needs a value: {}", key("line width"));
+    assert_eq!(key("pace")["choices"], json!(["fast", "slow"]), "{}", key("pace"));
+    assert!(!keys.iter().any(|k| k["name"].as_str().unwrap().contains(['@', '/'])), "no internals, no subkeys");
+    assert_eq!(key("box")["body"], "draw, rounded corners");
+    let box_ = &key("box")["style"];
+    let at_line =
+        |r: &Value| (r["start"]["line"].as_u64(), r["start"]["character"].as_u64(), r["end"]["character"].as_u64());
+    let line = text.lines().nth(2).unwrap();
+    let col = |s: &str| line.find(s).map(|c| c as u64);
+    assert_eq!(at_line(&box_["range"]), (Some(2), col("draw"), col("}, hot")), "{box_}");
+    // the entry takes its comma and the space after it along
+    assert_eq!(at_line(&box_["entry"]), (Some(2), col("box"), col("hot")), "{box_}");
+    assert_eq!(key("hot")["body"], "fill=red!20");
+    assert_eq!(at_line(&key("hot")["style"]["entry"]), (Some(2), col(", hot"), col("}}").map(|c| c + 1)));
+    assert!(key("thick")["style"].is_null(), "TikZ's own styles are no document styles");
+    assert!(key("thick")["body"].as_str().unwrap().starts_with("line width"), "{}", key("thick"));
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// The canvas's matrix of nodes (`views.js` `toMatrix`): steps between origins from the anchor
 /// node keep every node where it stood, as the run computes them.
 #[test]
@@ -4786,4 +4824,30 @@ fn a_listing_completes_literate_outside_and_latex_inside_its_escapes() {
     assert!(labels(&math).contains(&"sec:a"), "{:?}", labels(&math));
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn every_plugin_has_integration_support() {
+    use satex::lsp::{INTEGRATIONS, plugin_features, works_in};
+    let known =
+        ["hover", "complete", "actions", "colors", "inlay", "lens", "view", "dialog", "manage", "reuse", "build"];
+    let plugins = plugin_features();
+    assert!(plugins.len() > 10);
+    for (name, features) in plugins {
+        assert!(
+            features.iter().all(|f| known.contains(f)),
+            "{name}: a feature no integration table knows: {features:?}"
+        );
+        let w = works_in(features);
+        assert_eq!(
+            w.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            INTEGRATIONS.iter().map(|i| i.0).collect::<Vec<_>>(),
+            "{name}"
+        );
+        let editor = features.iter().any(|f| !["reuse", "build"].contains(f));
+        assert_eq!(w.iter().all(|(_, l)| *l == "-"), !editor, "{name}");
+        assert!(w.iter().all(|(k, l)| *k != "playground" || *l != "none"), "{name}");
+    }
+    assert_eq!(works_in(&["hover"]).iter().find(|(k, _)| *k == "intellij").unwrap().1, "full");
+    assert_eq!(works_in(&["view"]).iter().find(|(k, _)| *k == "intellij").unwrap().1, "partial");
 }

@@ -1336,7 +1336,7 @@ def plugin_tiles(plugged):
         if not out or out[-1]["name"] != r["category"]:
             out.append({"name": r["category"], "about": r.get("purpose") or "", "plugins": []})
         key, default = switch(r["name"])
-        out[-1]["plugins"].append({"name": r["name"], "about": r["about"], "types": r["types"], "features": r["features"],
+        out[-1]["plugins"].append({"name": r["name"], "about": r["about"], "types": r["types"], "features": r["features"], "works_in": r.get("works_in", {}),
                                    "key": key, "default": default, "docs": docs(r["name"]), "demo": demo(r["name"])})
     return out
 
