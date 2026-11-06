@@ -958,6 +958,7 @@ limits:
     #! affects: precision, memory
     #! example: `\ifdraft\def\a{1}\def\b{1}\else\def\a{2}\def\b{2}\fi`: a and b stay paired
   join_names: 64  # how many names a merge keeps paired at most, the rest are merged on their own
+  text_names: 8  # how many control sequences unknown text names (a widened float list keeps its boxes), past them any
     #! affects: precision, memory
     #! example: higher: more names keep their pairing after an `\if`
   value_set: 8  # how many exact values a number or length keeps after branches merge before only its range is kept

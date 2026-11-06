@@ -1145,6 +1145,22 @@ fn a_name_read_from_a_family_keeps_the_meanings_it_was_given() {
     assert!(names(&analysis).contains(&"inarm".to_string()));
 }
 
+/// A list of names an undecided loop appends to (a float queue), past
+/// the exact set a join keeps: joined, it still holds only the names it
+/// may, so running it with `\elt` runs `\elt` on them, never unknown code.
+#[test]
+fn lists_of_names_through_an_undecided_loop_keep_their_names() {
+    let analysis = analyze(
+        r"\chardef\bA=1 \chardef\bB=2 \def\F{}\let\elt\relax
+          \def\loop{\ifnum\pdfuniformdeviate2=0
+            \ifnum\pdfuniformdeviate2=0 \xdef\F{\F\elt\bA}\else\xdef\F{\F\elt\bB}\fi
+            \expandafter\loop\fi}\loop
+          \def\elt#1{\global\let\got#1}\F",
+    );
+    assert!(with_code(&analysis, "unknown-text-run").is_empty(), "{:?}", with_code(&analysis, "unknown-text-run"));
+    assert!(crate::support::maybe_defined(&analysis, "got"));
+}
+
 /// Two lists a join left paired, as a float on the top list or deferred
 /// but never both: one `\xdef` of both holds the float once on every arm.
 #[test]

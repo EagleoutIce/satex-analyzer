@@ -252,6 +252,7 @@ impl Machine<'_> {
                 writes.push((sym, b));
             }
         }
+        self.mint();
         for (sym, b) in writes {
             let global = b.global;
             self.env.set(sym, b, global);

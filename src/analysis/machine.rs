@@ -1837,6 +1837,8 @@ pub struct Machine<'a> {
     /// per class and lower bound, once made: widening at a loop head names
     /// them without the interner.
     typed_syms: Option<Rc<[Sym]>>,
+    /// Typed names an env call made, interned by [`Machine::mint`].
+    pub(crate) minted: std::cell::RefCell<Vec<String>>,
     /// The `edef_depth` of the expansion that makes a definition's
     /// replacement text: what `\the` and `\unexpanded` give it is stored as
     /// it stands (tex.web § 478), so a `#` among it is no parameter.
@@ -2649,6 +2651,7 @@ impl<'a> Machine<'a> {
             unknown_digits,
             unknown_more,
             typed_syms: None,
+            minted: Default::default(),
             def_body_depth: None,
             definition_sites: Default::default(),
             expansion_sites: Default::default(),
@@ -3181,14 +3184,7 @@ impl<'a> Machine<'a> {
         m.install_clock();
         m.install_format();
         m.install_clock();
-        let limits = &m.cfg.limits;
-        m.env.sets = crate::engine::env::SetLimits {
-            meanings: usize::from(limits.meaning_set).max(1),
-            arms: usize::from(limits.join_arms),
-            names: usize::from(limits.join_names),
-            values: usize::from(limits.value_set).max(1),
-            intervals: usize::from(limits.interval_set).max(1),
-        };
+        m.env.sets = set_limits(&m.cfg.limits);
         // What the kernel wrote (latex.ltx's `texsys.aux` holds the clock) is the
         // format build's, not the document's: kept, it made every package cache
         // root differ from one minute to the next.
@@ -4483,6 +4479,9 @@ will look undefined",
     }
 
     pub fn intern(&mut self, s: &str) -> Sym {
+        if !self.minted.get_mut().is_empty() {
+            self.mint();
+        }
         self.out.interner.intern(s)
     }
 
@@ -5215,6 +5214,7 @@ will look undefined",
             && top == below
         {
             self.env.unfold(false, &mut self.catcodes, &typed);
+            self.mint();
             self.env.set_top_many();
         } else {
             self.diagnose(
@@ -5227,6 +5227,7 @@ will look undefined",
         }
         let typed = crate::engine::env::typed!(self, syms);
         self.env.unfold(true, &mut self.catcodes, &typed);
+        self.mint();
     }
 
     /// `}`, `\endgroup` or a closing `$`. Each ends only the kind of group its opener
@@ -7794,13 +7795,7 @@ will look undefined",
             0 => 0,
             n => (n >> (2 * stage)).max(1),
         };
-        self.env.sets = crate::engine::env::SetLimits {
-            meanings: usize::from(limits.meaning_set),
-            arms: usize::from(limits.join_arms),
-            names: usize::from(limits.join_names),
-            values: usize::from(limits.value_set),
-            intervals: usize::from(limits.interval_set),
-        };
+        self.env.sets = set_limits(limits);
         // Reported when the run ends: a replayed command rolls back what it
         // diagnosed, and this must not be rolled back with it.
         if self.degraded_at.is_none() {
@@ -7976,7 +7971,9 @@ will look undefined",
             let nest = self.env.nest();
             let syms = self.typed_syms();
             let typed = crate::engine::env::typed!(self, syms);
-            if !self.env.close_since(at.1, at.2, keep_many, &mut self.catcodes, &typed) {
+            let closed = self.env.close_since(at.1, at.2, keep_many, &mut self.catcodes, &typed);
+            self.mint();
+            if !closed {
                 break;
             }
             self.group_dropped(nest, span);
@@ -13733,6 +13730,18 @@ fn read_out(f: &Frame) -> bool {
 pub(crate) const NO_FILE: &str = "<input>";
 /// A [`Scratch::cond_gaps`] record no state matches: the skip is unsure.
 pub(crate) const UNSURE: (u64, u64) = (u64::MAX, u64::MAX);
+/// The env's set bounds from the run's limits.
+fn set_limits(limits: &crate::project::config::Limits) -> crate::engine::env::SetLimits {
+    crate::engine::env::SetLimits {
+        meanings: usize::from(limits.meaning_set).max(1),
+        arms: usize::from(limits.join_arms),
+        names: usize::from(limits.join_names),
+        values: usize::from(limits.value_set).max(1),
+        intervals: usize::from(limits.interval_set).max(1),
+        text_names: usize::from(limits.text_names),
+    }
+}
+
 pub(crate) const UNKNOWN_NAME: &str = "\u{2}unknown name:";
 pub(crate) const UNKNOWN_NAME_GAP: char = '\u{3}';
 /// A `\csname` that spelled one of several known names: the names, each
@@ -13894,6 +13903,7 @@ impl Machine<'_> {
     fn widen_names(&mut self, written: &[Sym]) {
         let syms = self.typed_syms();
         self.env.widen(written, None, &crate::engine::env::typed!(self, syms));
+        self.mint();
         // After: widening writes, and those are no news.
         self.env.clear_recent();
     }
@@ -13903,6 +13913,7 @@ impl Machine<'_> {
     /// category (an `\ifx` then sees a character, as it does for unknown
     /// digits), else to an unknown meaning.
     pub(crate) fn typed_syms(&mut self) -> Rc<[Sym]> {
+        self.mint();
         // A path resumed from before the bindings were made lost them:
         // make them again.
         if let Some(syms) = &self.typed_syms
@@ -13914,8 +13925,7 @@ impl Machine<'_> {
         let mut syms = Vec::with_capacity(BOUNDED_BASE);
         for i in 0..2 * TextClass::COUNT {
             let (class, one) = (TextClass((i / 2) as u8), i % 2 == 1);
-            let name = format!("{UNKNOWN_NAME}{TYPED_TEXT}{}{}", class.spell(), if one { '+' } else { '*' });
-            let sym = self.intern(&name);
+            let sym = self.intern(&crate::engine::env::named_text(class, one, std::iter::empty::<&str>()));
             let meaning = match class.one_char() {
                 Some(Tok::Chr(c, cat)) => Meaning::Char(c, cat),
                 _ => Meaning::Unknown,
@@ -13972,6 +13982,25 @@ impl Machine<'_> {
         syms
     }
 
+    /// The typed text of `name`, of unknown meaning.
+    fn typed_named(&mut self, name: &str) -> Sym {
+        let sym = self.intern(name);
+        if !matches!(self.env.meaning(sym), Meaning::Unknown) {
+            self.env.constant(sym, Binding::builtin(Meaning::Unknown));
+        }
+        sym
+    }
+
+    /// Interns the typed names an env call made ([`crate::engine::env::Typed::named`]),
+    /// in the order their symbols were given.
+    pub(crate) fn mint(&mut self) {
+        for name in std::mem::take(self.minted.get_mut()) {
+            let at = self.out.interner.len();
+            let sym = self.typed_named(&name);
+            debug_assert_eq!(sym.0 as usize, at, "minted name interned in order");
+        }
+    }
+
     /// The one constructor of unknown text: typed text of the class, lower
     /// bound, length and named control sequences `of` allows; a class with
     /// control sequences is typed too. The untyped marker only stands for
@@ -13996,16 +14025,11 @@ impl Machine<'_> {
             false => (class, one),
         };
         if !cs.is_empty() {
-            let mut name = format!("{UNKNOWN_NAME}{TYPED_TEXT}{}{}", class.spell(), if one { '+' } else { '*' });
-            for cs in cs.iter().map(|sym| self.name(*sym).to_string()).collect::<std::collections::BTreeSet<_>>() {
-                name.push(UNKNOWN_NAME_GAP);
-                name.push_str(&cs);
-            }
-            let sym = self.intern(&name);
-            if !matches!(self.env.meaning(sym), Meaning::Unknown) {
-                self.env.constant(sym, Binding::builtin(Meaning::Unknown));
-            }
-            return Token::new(Tok::Cs(sym), span);
+            let names: std::collections::BTreeSet<String> = cs.iter().map(|sym| self.name(*sym).to_string()).collect();
+            return Token::new(
+                Tok::Cs(self.typed_named(&crate::engine::env::named_text(class, one, names.iter()))),
+                span,
+            );
         }
         let syms = self.typed_syms();
         // A bounded or rest text is its own text: a test on one teaches
@@ -14091,18 +14115,23 @@ impl Machine<'_> {
     /// many. Untyped text counts as the widest class. Braces are balanced
     /// ones, as in every argument.
     fn cover(&self, texts: &[&[Token]]) -> Option<(TextClass, bool, Option<u32>, Vec<Sym>)> {
-        /// Named control sequences a typed text may hold before it is any text.
-        const NAMED: usize = 8;
-
+        let syms = self.typed_syms.clone().unwrap_or_default();
+        let typed = crate::engine::env::typed!(self, syms);
         let (mut class, mut cs, mut len, mut one) = (TextClass::EMPTY, Vec::new(), Some(0u32), true);
         for text in texts {
             // Typed text that may be empty leaves the text perhaps empty.
             let (mut n, mut some) = (Some(0u32), false);
             for t in *text {
+                let listed = typed.one_of_names(t).zip(typed.one_of_class(t));
                 let (c, k, s) = match (t.tok, self.typed_shape(*t)) {
                     (_, Some((c, s, named))) => {
                         cs.extend(named);
                         (c, self.text_len(*t), s)
+                    }
+                    // A one-of list of names: its names.
+                    _ if let Some((names, (_, s))) = listed => {
+                        cs.extend(names.iter().filter_map(|n| self.out.interner.lookup(n)));
+                        (TextClass::EMPTY, None, s)
                     }
                     (Tok::Cs(sym), None) if !self.is_unknown_marker(sym) => {
                         cs.push(sym);
@@ -14118,7 +14147,7 @@ impl Machine<'_> {
                 cs.dedup();
                 // More names than a type spells: any control sequence,
                 // still balanced text of the classes read.
-                if cs.len() > NAMED || class.meets(TextClass::CS) {
+                if cs.len() > self.env.sets.text_names || class.meets(TextClass::CS) {
                     class = class.union(TextClass::CS);
                     cs.clear();
                 }

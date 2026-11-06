@@ -1365,7 +1365,7 @@ impl Env {
     fn widen_in_place(&mut self, sym: Sym, typed: &Typed) {
         let i = sym.0 as usize;
         let Some(Some(binding)) = self.slots.get(i).cloned() else { return };
-        let binding = widened(binding, typed);
+        let binding = widened(binding, typed, self.sets.text_names);
         // A slot already as wide as it gets is not written: widening it
         // again changes nothing a later read could see.
         if same_slot(&self.slots[i], &Some(binding.clone())) {
@@ -2156,6 +2156,8 @@ pub struct SetLimits {
     pub names: usize,
     pub values: usize,
     pub intervals: usize,
+    /// Control sequences typed text names ([`Typed::named`]).
+    pub text_names: usize,
 }
 
 impl Default for SetLimits {
@@ -2166,6 +2168,7 @@ impl Default for SetLimits {
             names: 64,
             values: crate::engine::value::MAY_VALUES,
             intervals: crate::engine::value::MAY_INTERVALS,
+            text_names: 8,
         }
     }
 }
@@ -2264,7 +2267,7 @@ pub fn widen_slot(
             _ => match texts() {
                 Some(mut texts) if texts.len() == 1 => (texts.pop().expect("one text"), None),
                 Some(texts) => (Meaning::Unknown, Some(texts.into())),
-                None => hull_meaning(&joined, typed, reach),
+                None => hull_meaning(&joined, typed, reach, sets.text_names),
             },
         };
     }
@@ -2299,8 +2302,18 @@ type Hulled = (Meaning, Option<std::rc::Rc<[Meaning]>>);
 
 /// The meaning and set a widened binding keeps: the macros' hull, still
 /// perhaps undefined where the set held that.
-fn hull_meaning(b: &Binding, typed: &Typed, reach: Reach) -> Hulled {
-    hull_by(b, &|t| Some(text_hull(t, typed, reach))).unwrap_or((Meaning::Unknown, None))
+fn hull_meaning(b: &Binding, typed: &Typed, reach: Reach, limit: usize) -> Hulled {
+    let hull = |t: &[&[Token]]| names_hull(t, typed, limit).or_else(|| Some(text_hull(t, typed, reach)));
+    hull_by(b, &hull).unwrap_or((Meaning::Unknown, None))
+}
+
+/// Lists of names (`\@elt\bx@A\@elt\bx@B`) as one typed text that may
+/// hold their names, in any order and number: a float queue keeps which
+/// boxes it holds. `None` for other texts or past `limit` names.
+fn names_hull(texts: &[&[Token]], typed: &Typed, limit: usize) -> Option<Vec<Token>> {
+    let (names, one) = typed.names_of(texts, limit)?;
+    let span = texts.iter().find_map(|t| t.first()).map_or_else(Span::default, |t| t.span);
+    Some(vec![Token::new(Tok::Cs(typed.named(one, &names)), span)])
 }
 
 /// How texts are hulled into one: `None` where they are refused.
@@ -2658,6 +2671,7 @@ macro_rules! typed {
             syms: &$syms,
             digits: $m.unknown_digits,
             more: $m.unknown_more,
+            minted: &$m.minted,
         }
     };
 }
@@ -2669,9 +2683,39 @@ pub struct Typed<'a> {
     pub syms: &'a [Sym],
     pub digits: Sym,
     pub more: Sym,
+    /// Typed names made here, not yet interned: the machine interns them
+    /// in order after the env call ([`crate::analysis::machine::Machine::mint`]).
+    pub minted: &'a std::cell::RefCell<Vec<String>>,
+}
+
+/// The name of typed text of `class`, at least one token where `one`,
+/// that may hold the control sequences `names` (sorted, each once).
+pub fn named_text(class: TextClass, one: bool, names: impl Iterator<Item = impl AsRef<str>>) -> String {
+    use crate::analysis::machine::{TYPED_TEXT, UNKNOWN_NAME, UNKNOWN_NAME_GAP};
+    let mut name = format!("{UNKNOWN_NAME}{TYPED_TEXT}{}{}", class.spell(), if one { '+' } else { '*' });
+    for n in names {
+        name.push(UNKNOWN_NAME_GAP);
+        name.push_str(n.as_ref());
+    }
+    name
 }
 
 impl Typed<'_> {
+    /// Typed text that may hold `names` and nothing else, at least one
+    /// token where `one`: a name the interner has, else one minted.
+    pub fn named(&self, one: bool, names: &std::collections::BTreeSet<String>) -> Sym {
+        let name = named_text(TextClass::EMPTY, one, names.iter());
+        if let Some(sym) = self.interner.lookup(&name) {
+            return sym;
+        }
+        let mut minted = self.minted.borrow_mut();
+        let at = minted.iter().position(|n| *n == name).unwrap_or_else(|| {
+            minted.push(name);
+            minted.len() - 1
+        });
+        Sym((self.interner.len() + at) as u32)
+    }
+
     /// The class, lower bound and control sequences a typed name spells,
     /// `None` for any other name.
     pub fn parse_name(name: &str) -> Option<(TextClass, bool, Vec<&str>)> {
@@ -2720,8 +2764,58 @@ impl Typed<'_> {
             .strip_prefix(crate::analysis::machine::UNKNOWN_NAME)?
             .strip_prefix(crate::analysis::machine::explore::ONE_OF)?;
         let (_, head) = rest.rsplit_once(CLASS_MARK)?;
+        let head = head.split(crate::analysis::machine::UNKNOWN_NAME_GAP).next()?;
         let (spelled, one) = head.split_at(head.len().checked_sub(1)?);
         Some((TextClass::parse(spelled)?, one == "+"))
+    }
+
+    /// The names a one-of token of lists of names spells after its class
+    /// ([`Typed::names_of`]): `None` for other tokens.
+    pub fn one_of_names(&self, t: &Token) -> Option<Vec<&str>> {
+        let name = self.interner.name(t.cs()?);
+        let rest = name
+            .strip_prefix(crate::analysis::machine::UNKNOWN_NAME)?
+            .strip_prefix(crate::analysis::machine::explore::ONE_OF)?;
+        let (_, head) = rest.rsplit_once(CLASS_MARK)?;
+        let names: Vec<&str> = head.split(crate::analysis::machine::UNKNOWN_NAME_GAP).skip(1).collect();
+        (!names.is_empty()).then_some(names)
+    }
+
+    /// The names texts of names only may hold, and whether every text holds
+    /// one: plain names, typed text of names ([`named_text`]) and one-of
+    /// tokens of such lists. `None` for other texts or past `limit` names.
+    pub fn names_of(&self, texts: &[&[Token]], limit: usize) -> Option<(std::collections::BTreeSet<String>, bool)> {
+        let (mut names, mut one) = (std::collections::BTreeSet::new(), true);
+        for text in texts {
+            let mut some = false;
+            for t in *text {
+                let sym = t.cs()?;
+                if let Some(cs) = self.one_of_names(t) {
+                    names.extend(cs.into_iter().map(str::to_owned));
+                    some |= self.one_of_class(t)?.1;
+                    continue;
+                }
+                // Made by this env call: not interned yet.
+                let minted = (sym.0 as usize)
+                    .checked_sub(self.interner.len())
+                    .and_then(|k| self.minted.borrow().get(k).cloned());
+                let name = minted.as_deref().unwrap_or_else(|| self.interner.name(sym));
+                match Self::parse_name(name) {
+                    Some((class, o, cs)) if class == TextClass::EMPTY && !cs.is_empty() => {
+                        names.extend(cs.into_iter().map(str::to_owned));
+                        some |= o;
+                    }
+                    // A marker stands for text, not for itself.
+                    _ if name.starts_with(|c: char| c < ' ') => return None,
+                    _ => {
+                        names.insert(name.to_owned());
+                        some = true;
+                    }
+                }
+            }
+            one &= some;
+        }
+        (!names.is_empty() && names.len() <= limit).then_some((names, one))
     }
 
     /// Whether `text` holds at least one token: some token of it is not
@@ -2782,10 +2876,10 @@ pub fn unknown_runs(text: &[Token], typed: &Typed) -> std::rc::Rc<[Token]> {
 /// [`join`] for the loop heads in [`crate::analysis::machine`].
 /// `binding` with any value, and where it held a macro the [`macro_hull`]
 /// of its meanings, else any meaning.
-fn widened(mut binding: Binding, typed: &Typed) -> Binding {
+fn widened(mut binding: Binding, typed: &Typed, limit: usize) -> Binding {
     binding.value = Value::Unknown;
     if matches!(binding.meaning, Meaning::Macro(_)) || binding.may.is_some() {
-        (binding.meaning, binding.may) = hull_meaning(&binding, typed, Reach::Havoc);
+        (binding.meaning, binding.may) = hull_meaning(&binding, typed, Reach::Havoc, limit);
     }
     binding.certain = false;
     binding
@@ -2869,7 +2963,13 @@ fn join(a: Option<Binding>, b: Option<Binding>, sets: SetLimits, typed: Option<&
                 // part typed unknown text: what they may hold stays known.
                 (false, false, Some(set)) => match typed.and_then(|typed| typed_join(&set, typed, false)) {
                     Some(meaning) => (meaning, None),
-                    None => (Meaning::Unknown, None),
+                    // Lists of names: one list of the names they hold.
+                    None => typed
+                        .and_then(|typed| {
+                            let b = Binding { may: Some(set.into()), ..Binding::builtin(Meaning::Unknown) };
+                            hull_by(&b, &|t| names_hull(t, typed, sets.text_names))
+                        })
+                        .unwrap_or((Meaning::Unknown, None)),
                 },
                 (false, false, _) => (Meaning::Unknown, None),
             };
@@ -3021,7 +3121,8 @@ mod tests {
         // The table as the machine builds it: 256 one-of names, the rest
         // serials, and the names typed with a length bound.
         let syms: Vec<Sym> = (0..TYPED_NAMES as u32).map(|i| Sym(1000 + i)).collect();
-        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2) };
+        let minted = Default::default();
+        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2), minted: &minted };
         let digit = |c| Token::new(Tok::Chr(c, crate::engine::tex::Catcode::Other), Span::default());
         let def = crate::engine::tex::MacroDef {
             parameter_text: Default::default(),
@@ -3031,7 +3132,8 @@ mod tests {
             outer: false,
             protected: false,
         };
-        let b = widened(Binding::builtin(Meaning::Macro(std::rc::Rc::new(def))), &typed);
+        let b =
+            widened(Binding::builtin(Meaning::Macro(std::rc::Rc::new(def))), &typed, SetLimits::default().text_names);
         let Meaning::Macro(d) = &b.meaning else { panic!("not a macro: {:?}", b.meaning) };
         // Two digits widen to digits of that length.
         let two = syms[bounded_index(TextClass::DIGIT, true, 2, 0).expect("bounded")];
@@ -3047,7 +3149,8 @@ mod tests {
     fn widened_sum_keeps_its_operator() {
         let interner = Interner::default();
         let syms: Vec<Sym> = (0..TYPED_NAMES as u32).map(|i| Sym(1000 + i)).collect();
-        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2) };
+        let minted = Default::default();
+        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2), minted: &minted };
         let def = |s: &str| {
             Meaning::Macro(Rc::new(crate::engine::tex::MacroDef {
                 parameter_text: Default::default(),
@@ -3061,7 +3164,9 @@ mod tests {
         let mut b = Binding::builtin(Meaning::Unknown);
         b.may = Some(vec![def("12+1"), def("345+1")].into());
         // A summary's widening may be any text of the kind: one token.
-        let Meaning::Macro(d) = &widened(b, &typed).meaning else { panic!("not a macro") };
+        let Meaning::Macro(d) = &widened(b, &typed, SetLimits::default().text_names).meaning else {
+            panic!("not a macro")
+        };
         assert_eq!(d.replacement_text.len(), 1);
         let plus = Tok::Chr('+', Catcode::Other);
         let lead = syms[lead_index(true, 3).expect("lead")];
@@ -3133,7 +3238,8 @@ mod tests {
     fn printed_numbers_hull_to_printed_numbers() {
         let interner = Interner::default();
         let syms: Vec<Sym> = (0..TYPED_NAMES as u32).map(|i| Sym(1000 + i)).collect();
-        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2) };
+        let minted = Default::default();
+        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2), minted: &minted };
         let mut lang: std::collections::HashMap<Sym, String> =
             std::collections::HashMap::from([(Sym(1), "[0-9]+".into()), (Sym(2), "[0-9]*".into())]);
         for len in 1..=MAX_LEN {
@@ -3215,7 +3321,8 @@ mod tests {
     fn a_summary_keeps_no_operator_a_head_join_does() {
         let interner = Interner::default();
         let syms: Vec<Sym> = (0..TYPED_NAMES as u32).map(|i| Sym(1000 + i)).collect();
-        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2) };
+        let minted = Default::default();
+        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2), minted: &minted };
         let mac = |s: &str| {
             Binding::builtin(Meaning::Macro(Rc::new(crate::engine::tex::MacroDef {
                 parameter_text: Default::default(),

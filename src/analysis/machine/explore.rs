@@ -740,6 +740,7 @@ impl Machine<'_> {
         );
         let syms = self.typed_syms();
         self.env.widen(&written, None, &crate::engine::env::typed!(self, syms));
+        self.mint();
         (self.halted, self.infeasible) = (false, false);
         self.taint_after_cut();
         self.resync_now();
@@ -1548,6 +1549,7 @@ impl Machine<'_> {
         // A bound no pass moved stays; one that moved goes to its end.
         let syms = self.typed_syms();
         self.env.widen(&written, Some((&began, fork)), &crate::engine::env::typed!(self, syms));
+        self.mint();
         let here = Config::new(self.save_path(), self.env.path(fork), false);
         let env = here.env.clone();
         self.cut_loop(paths, fork, here, env, id, depth, span, by, cut)
@@ -1605,6 +1607,7 @@ impl Machine<'_> {
             }
             self.resume_config(fork, here);
             self.env.widen(&written, Some((&summary, fork)), &crate::engine::env::typed!(self, syms));
+            self.mint();
             let here = Config::new(self.save_path(), self.env.path(fork), false);
             let env = here.env.clone();
             return self.cut_loop(paths, fork, here, env, id, entry, span, id.1, true);
@@ -1619,6 +1622,7 @@ impl Machine<'_> {
             let ended = c.ended;
             self.resume_config(fork, c.clone_config());
             self.env.widen(&written, Some((&summary, fork)), &crate::engine::env::typed!(self, syms));
+            self.mint();
             self.wild.union(&here.state.wild);
             let c = Config::new(self.save_path(), self.env.path(fork), ended);
             match i {
@@ -1709,6 +1713,7 @@ impl Machine<'_> {
         for i in exits {
             self.resume_config(fork, paths.done[i].clone_config());
             self.env.widen(&written, Some((&entry, fork)), &crate::engine::env::typed!(self, syms));
+            self.mint();
             self.wild.union(&summary.state.wild);
             if let Some(acc) = self.scans.last_mut() {
                 acc.widen_from(made, unknown);
@@ -2606,15 +2611,22 @@ impl Machine<'_> {
     fn class_name<'t>(&mut self, texts: impl Iterator<Item = &'t [Token]>) -> String {
         let syms = self.typed_syms();
         let typed = crate::engine::env::typed!(self, syms);
+        let texts: Vec<&[Token]> = texts.collect();
         let (mut class, mut one) = (crate::engine::tex::TextClass::EMPTY, true);
-        for text in texts {
+        for text in &texts {
             one &= typed.holds_one(text);
-            for t in text {
+            for t in *text {
                 class =
                     class.union(typed.class_of(t).map_or_else(|| crate::engine::tex::TextClass::of(t.tok), |c| c.0));
             }
         }
-        format!("{}{}{}", crate::engine::env::CLASS_MARK, class.spell(), if one { '+' } else { '_' })
+        let mut name = format!("{}{}{}", crate::engine::env::CLASS_MARK, class.spell(), if one { '+' } else { '_' });
+        // Lists of names spell which names they may hold.
+        for n in typed.names_of(&texts, self.env.sets.text_names).map(|(n, _)| n).unwrap_or_default() {
+            name.push(UNKNOWN_NAME_GAP);
+            name.push_str(&n);
+        }
+        name
     }
 
     /// A token for any number of repetitions of `text` (`text*`): one of the
@@ -2902,6 +2914,7 @@ impl Machine<'_> {
         let typed = crate::engine::env::typed!(self, syms);
         self.out.joined_slots += (a.env.len() + b.env.len()) as u64;
         let (env, slots, waiting) = self.env.join_paths(fork, &a.env, &b.env, &typed, (reach, paired), &after);
+        self.mint();
         // Widened, a name the loop makes from a number (`\flag test 12`,
         // `\csname f\the\i`) is one of a family that may be defined
         // ([`Wild`]): its members stay as defined, and one more is no

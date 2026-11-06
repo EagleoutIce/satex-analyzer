@@ -117,6 +117,10 @@ pub struct Limits {
     /// How many names a join pairs at most: past them the rest are joined
     /// apart, as unpaired names are.
     pub join_names: u16,
+    /// How many control sequences typed unknown text names: a widened
+    /// list of names (`\@elt\bx@A…`) keeps which it may hold. Past them
+    /// it may hold any control sequence.
+    pub text_names: u16,
     /// How many exact values a count or length keeps after branches merge.
     /// Past them only its range is kept, so `{1, 5}` becomes `1..5`. Also
     /// the places an `\openin` stream keeps apart (texts and their lines)
@@ -284,6 +288,7 @@ impl Default for Limits {
             meaning_set: 8,
             join_arms: 32,
             join_names: 64,
+            text_names: 8,
             value_set: 8,
             interval_set: 4,
             degrade_at_percent: 100,

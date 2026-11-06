@@ -1521,6 +1521,7 @@ impl Machine<'_> {
             unknown_digits: _,
             unknown_more: _,
             typed_syms: _,
+            minted: _,
             clock: _,
             clock_read_at: _,
             clock_cached: _,
