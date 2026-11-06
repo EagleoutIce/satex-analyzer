@@ -2198,3 +2198,15 @@ main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/
 /* the page settles on the ring when a scroll ends near it: a slight hold, never a lock */
 @media (prefers-reduced-motion: no-preference) and (min-width: 48rem) { html:has(.cards-wrap.ring) { scroll-snap-type: y proximity; } .cards-wrap.ring { scroll-snap-align: center; } }
 @media (max-width: 64rem) { .shot-big .shot-stage, .shot-big:nth-child(even of .shot-big) .shot-stage { justify-self: center; } }
+/* the title: the logo a little larger, the claim and buttons under it with room to breathe */
+.logo-anim { width: min(44rem, 100%); }
+@media (max-width: 36rem) { .logo-anim { width: min(23rem, 100%); } }
+/* section titles a step smaller, and fading in as they come into view (where the browser ties animations to scrolling) */
+.band h2 { font-size: 1.75rem; }
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .band > h2, .band > h2 + .sub { animation: rise linear both; animation-timeline: view(); animation-range: entry 10% cover 30%; }
+  }
+}
+/* the title page: the first screen holds the title alone, its parts spread by the glue between them */
+@media (min-height: 40rem) and (min-width: 48rem) { .hero { min-height: max(calc(var(--hero-room) + clamp(var(--s24), 5vh, var(--s64)) + var(--s32)), calc(100svh - 4.5rem)); padding-top: clamp(var(--s32), 8vh, var(--s96)); } }
