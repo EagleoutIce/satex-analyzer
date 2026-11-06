@@ -6,7 +6,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
-<!-- reviewed: 260c995 -->
+<!-- reviewed: 228b584 -->
 
 ### Playground
 
@@ -26,6 +26,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Editor plugins and widgets
 
+- `feat` Managers add, edit and search: glossary fields from the run, index subentries, sort keys and formats, `thebibliography` items with a convert to `.bib`, theorem numbering. [`ce5ebdd`](https://github.com/EagleoutIce/satex-analyzer/commit/ce5ebdd)
 - `feat` Keys layer: labels, citations, glossary and index keys in Typeset and PDF from one kind table, none dropped. TikZ dialog edits node properties and styles. Plugins name the editors they work in. [`260c995`](https://github.com/EagleoutIce/satex-analyzer/commit/260c995)
 - `fix` Widget fields check their input, and a package a fix needs is loaded once. [`0fa22f1`](https://github.com/EagleoutIce/satex-analyzer/commit/0fa22f1)
 - `feat` Typeset and PDF layers: glue as brackets, a PDF grid in any TeX unit, booktabs rules across the table, choices offer the texts they set. [`7f5458c`](https://github.com/EagleoutIce/satex-analyzer/commit/7f5458c) [`1ec39d8`](https://github.com/EagleoutIce/satex-analyzer/commit/1ec39d8) [`cc697b6`](https://github.com/EagleoutIce/satex-analyzer/commit/cc697b6)
@@ -58,6 +59,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` A here-float the output routine places keeps its caption in the typeset text. [`2b8137f`](https://github.com/EagleoutIce/satex-analyzer/commit/2b8137f)
 - `fix` A read loop's flag stays with its stream place: no false certain terminal-read error in KOMA notecolumn. [`0eb1ce6`](https://github.com/EagleoutIce/satex-analyzer/commit/0eb1ce6)
 - `fix` Reading a register in code that may run no longer makes every register unknown (KOMA notecolumn fonts). Lists of names keep their names through loops. [`d08536a`](https://github.com/EagleoutIce/satex-analyzer/commit/d08536a) [`3c99a0b`](https://github.com/EagleoutIce/satex-analyzer/commit/3c99a0b)
 - `fix` Typed digits narrow their register, the nonzero bit and digit places never join. Number scans split by digit count. [`b01d4bd`](https://github.com/EagleoutIce/satex-analyzer/commit/b01d4bd) [`3e67c8a`](https://github.com/EagleoutIce/satex-analyzer/commit/3e67c8a) [`5f1e403`](https://github.com/EagleoutIce/satex-analyzer/commit/5f1e403) [`5352e4f`](https://github.com/EagleoutIce/satex-analyzer/commit/5352e4f)
