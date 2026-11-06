@@ -360,7 +360,7 @@
    "file": "proofs.tex",
    "title": "Quick fixes",
    "wide": true,
-   "caption": "Wrote “Section 1” by hand? The fix adds the label and writes the reference.",
+   "caption": "Wrote “Section 1” by hand? The fix writes \\Cref to the label, loads cleveref if needed, and the number stays right.",
    "steps": [
     {
      "until": "[...document.querySelectorAll('#lsp-diagnostics li')].some((l) => /hand-written-reference|typed by hand/.test(l.textContent + (l.dataset.code ?? '') + (l.title ?? '')))",
@@ -368,6 +368,10 @@
     },
     {
      "hover": "__xy('Section 1', 3)"
+    },
+    {
+     "eval": "clearInterval(self.__mark); self.__mark = setInterval(() => { for (const l of document.querySelectorAll('.cm-line')) l.style.background = /Section 1/.test(l.textContent) ? 'color-mix(in srgb, #b42318 22%, transparent)' : ''; }, 100);",
+     "wait": 300
     },
     {
      "until": "document.querySelector('.tip-card:not([hidden])')",
@@ -386,8 +390,12 @@
      "click": "[...document.querySelectorAll('#play-ctx .ctx-nested li')].find((l) => /ref/.test(l.textContent))"
     },
     {
-     "until": "/Section~?\\\\(auto)?ref/.test(document.querySelector('.cm-editor').satexView.state.doc.toString())",
+     "until": "/\\\\[cC]ref\\{/.test(document.querySelector('.cm-editor').satexView.state.doc.toString())",
      "wait": 1500
+    },
+    {
+     "eval": "clearInterval(self.__mark); self.__mark = setInterval(() => { for (const l of document.querySelectorAll('.cm-line')) l.style.background = /\\\\[cC]ref\\{/.test(l.textContent) ? 'color-mix(in srgb, #067647 22%, transparent)' : ''; }, 100);",
+     "wait": 400
     }
    ],
    "crop": [
