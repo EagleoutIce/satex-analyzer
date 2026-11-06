@@ -156,7 +156,7 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
         })
         .map_err(|e| e.to_string())?;
 
-    let result = main_loop(&connection, &engine_tx, &outbox_rx, &hovers);
+    let result = main_loop(&connection, &engine_tx, &outbox_rx, &hovers, &refreshes(&params));
     crate::analysis::probe::stop_all();
     let _ = engine_tx.send(EngineMsg::Shutdown);
     let _ = engine.join();
@@ -217,11 +217,13 @@ fn main_loop(
     engine_tx: &Sender<EngineMsg>,
     outbox: &Receiver<Notification>,
     hovers: &Hovers,
+    refreshes: &[&str],
 ) -> Result<(), String> {
     // The open documents' text, to find the name under a hover here.
     let mut texts: HashMap<Uri, String> = HashMap::default();
     let mut prompts: HashMap<lsp_server::RequestId, Json> = HashMap::default();
     let mut findings: Findings = HashMap::default();
+    let mut refreshed = 0u64;
     loop {
         select! {
             recv(connection.receiver) -> msg => {
@@ -275,6 +277,13 @@ fn main_loop(
                 }
             }
             recv(outbox) -> note => match note {
+                Ok(note) if note.method == REFRESH => {
+                    for method in refreshes {
+                        refreshed += 1;
+                        let id = lsp_server::RequestId::from(format!("satex-refresh-{refreshed}"));
+                        let _ = connection.sender.send(Message::Request(Request::new(id, method.to_string(), Json::Null)));
+                    }
+                }
                 Ok(note) if note.method == STYLE_NOTIFICATION => {
                     for candidate in note.params["candidates"].as_array().into_iter().flatten() {
                         let id = lsp_server::RequestId::from(format!("satex-style-{}", prompts.len()));
@@ -297,6 +306,19 @@ fn main_loop(
 
 /// The answer that opens the rule's first finding and asks again.
 const SHOW_FIRST: &str = "Show first";
+
+/// The engine's notification that a document has a new analysis: what the client asked
+/// before it (lenses, inlay hints) is asked again.
+const REFRESH: &str = "satex/refresh";
+
+/// The refresh requests the client takes (`workspace/{codeLens,inlayHint}/refresh`).
+fn refreshes(params: &Json) -> Vec<&'static str> {
+    let takes = |feature: &str| params["capabilities"]["workspace"][feature]["refreshSupport"] == true;
+    [("codeLens", "workspace/codeLens/refresh"), ("inlayHint", "workspace/inlayHint/refresh")]
+        .into_iter()
+        .filter_map(|(feature, method)| takes(feature).then_some(method))
+        .collect()
+}
 
 /// The engine's notification naming the rules that may be the project's style.
 const STYLE_NOTIFICATION: &str = "satex/styleCandidates";
@@ -939,6 +961,7 @@ impl Engine {
         self.runs.retain(|_, run| Rc::strong_count(&run.analysis) > 1);
         if changed {
             self.refresh_hovers(uri);
+            let _ = self.outbox.send(Notification::new(REFRESH.into(), Json::Null));
         }
     }
 

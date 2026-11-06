@@ -3802,6 +3802,53 @@ fn table_lens_marks_tables_not_drawings() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// The way VS Code asks: lenses right at `didOpen`, before any analysis, then again on
+/// `workspace/codeLens/refresh`, which the server sends once the run is in. The table, the
+/// figure's placement and image, and the drawing get theirs without an edit of the document.
+#[test]
+fn lenses_asked_before_the_run_come_with_its_refresh() {
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{figure}[ht]\n\\includegraphics{example-image}\n\\end{figure}\n\\begin{tabular}{lr}\na & b \\\\\n\\end{tabular}\n\\begin{tikzpicture}\n\\node (a) {x};\n\\end{tikzpicture}\n\\end{document}\n";
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-lens-refresh-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.tex"), text).unwrap();
+    let mut server = Server::start_with(&crate::support::test_cache(), &dir, &["--set", "limits.seconds=0"]);
+    let caps = json!({ "workspace": { "codeLens": { "refreshSupport": true } } });
+    let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": caps }));
+    server.response(id);
+    server.notify("initialized", json!({}));
+    let uri = fixture_uri(&dir.join("main.tex"));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "latex", "version": 1, "text": text } }),
+    );
+    server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    // the refresh, a request from the server, comes before the run's diagnostics
+    let refresh = loop {
+        let msg = server.read();
+        match msg["method"].as_str() {
+            Some("workspace/codeLens/refresh") => break msg,
+            Some("textDocument/publishDiagnostics") => panic!("the run is in, the lenses asked before it stay empty"),
+            _ => {}
+        }
+    };
+    server.write(&json!({ "jsonrpc": "2.0", "id": refresh["id"], "result": null }));
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].clone();
+    let line = |s: &str| text.lines().position(|l| l.contains(s)).unwrap() as u64;
+    let titles = |at: &str| -> Vec<&str> {
+        (lenses.as_array().unwrap().iter())
+            .filter(|l| l["range"]["start"]["line"] == line(at))
+            .filter_map(|l| l["command"]["title"].as_str())
+            .collect()
+    };
+    assert_eq!(titles("\\begin{tabular}"), ["Edit table…"], "{lenses}");
+    assert_eq!(titles("\\begin{figure}"), ["Edit placement…"], "{lenses}");
+    assert_eq!(titles("\\includegraphics"), ["Edit image…"], "{lenses}");
+    assert!(!titles("\\begin{tikzpicture}").is_empty(), "{lenses}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 const TREE: &str = "\\documentclass{article}\n\\usepackage{forest}\n\\begin{document}\n\\begin{forest}\n  for tree={draw}\n  [VP [DP, name=dp] [V]]\n\\end{forest}\n\n\\end{document}\n";
 
 /// "Edit tree…": a lens on the tree, a view with its body and the nodes forest made, in
