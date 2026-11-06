@@ -337,6 +337,17 @@ fn a_path_waiting_to_the_end_still_runs_on() {
     assert!(body(&analysis, "z").contains("one of:"), "{}", body(&analysis, "z"));
 }
 
+/// Paths that end apart (pending code that differs) still end in one
+/// join: what every one of them did is kept, never only the last one's.
+#[test]
+fn paths_ending_apart_keep_every_effect() {
+    for pending in [r"\afterassignment\relax", r"\begingroup\aftergroup\relax", "{"] {
+        let analysis = analyze(&format!(r"\ifnum\pdfuniformdeviate2=0 \def\m{{a}}{pending}\else\def\m{{b}}\fi"));
+        let may = analysis.interner.lookup("m").and_then(|m| analysis.env.slot(m)?.may.clone());
+        assert_eq!(may.map_or(0, |may| may.len()), 2, "{pending}");
+    }
+}
+
 /// The same in LaTeX: a preamble that defines a macro per arm of an
 /// undecided `\ifx` starts the body on one path.
 #[test]

@@ -675,10 +675,11 @@ impl Machine<'_> {
     }
 
     /// The run ends in the join of every path that ended as the last one
-    /// did, by `\end` or off the end of its input. A last path that ran off
-    /// its input without `\end` while others ran it is a fatal error ("***
-    /// (job aborted, no legal \end found)", tex.web § 360): a document that
-    /// compiles took none like it, so the run ends as those others did.
+    /// did, by `\end` or off the end of its input, never in one of them. A
+    /// last path that ran off its input without `\end` while others ran it
+    /// is a fatal error ("*** (job aborted, no legal \end found)", tex.web
+    /// § 360): a document that compiles took none like it, so the run ends
+    /// as those others did.
     fn end_with_the_job(&mut self, paths: &mut Paths, fork: &Fork) {
         let (jobs, inputs) = (std::mem::take(&mut paths.job_ends), std::mem::take(&mut paths.input_ends));
         let aborted = !self.job_ended && !jobs.is_empty() && self.cfg.compiles();
@@ -696,9 +697,14 @@ impl Machine<'_> {
         if ends.len() < 2 {
             return;
         }
+        // Ends whose pending code or input differ still join their effects:
+        // the run is over, so what they would do or read next is moot.
         let last = match self.join_done(fork, &ends, false) {
             Some(joined) => joined,
-            None => ends.last().expect("not empty").clone_config(),
+            None => {
+                let (last, rest) = ends.split_last().expect("not empty");
+                rest.iter().fold(last.clone_config(), |a, b| self.join_configs(fork, &a, b, None, true).0)
+            }
         };
         self.resume_config(fork, last);
     }

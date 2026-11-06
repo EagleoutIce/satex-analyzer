@@ -839,6 +839,34 @@ fn text_of_parted_paths_stays_alternatives() {
     assert!(matches!(text[..], ["Z{By|Ax}Q"] | ["Z{Ax|By}Q"]), "{text:?}");
 }
 
+/// Text after an undecided arm with no `\else`: pdflatex sets "Here."
+/// either way, so satex keeps it on every path. What the path that
+/// skipped to `\fi` sets is that arm's, as the other's is the taken one's.
+#[test]
+fn text_past_an_undecided_arm_is_set_on_every_path() {
+    for (i, arm) in [r"\relax", r"\par"].into_iter().enumerate() {
+        set_on_every_path(&format!("arm-{i}"), &format!(r"\ifnum\pdfuniformdeviate2=0 {arm}\fi Here."));
+    }
+}
+
+/// A `\par` that ends a paragraph on one path only: pdflatex sets "Here."
+/// on both. The path left in vertical mode and the one still in the
+/// paragraph join after `\fi` as if their lists were one, and "Here." is
+/// lost on every path. Red: keeping them apart until their modes agree
+/// (`partner`) multiplied paths (budgets, notecolumn).
+#[test]
+fn text_past_a_par_ending_a_paragraph_on_one_path_is_set_on_every_path() {
+    set_on_every_path("par-ends", r"Ab \ifnum\pdfuniformdeviate2=0 \par\fi Here.");
+}
+
+/// Some paragraph of `body` that ends in "Here." on every path.
+fn set_on_every_path(tag: &str, body: &str) {
+    let rows = typeset_rows(tag, "", body);
+    let text: Vec<&str> =
+        rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
+    assert!(text.iter().any(|t| t.ends_with("Here.") && !t.contains('|')), "{body}: {text:?}");
+}
+
 /// A character both arms of an undecided conditional set is no choice:
 /// `{Z|}` would say a path may lack it.
 #[test]

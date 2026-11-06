@@ -2428,6 +2428,11 @@ impl Machine<'_> {
             }
             found => {
                 self.note_conditional(by, span, Some(None));
+                // No arm to open, yet the path parted here all the same:
+                // text it sets is this arm's, as the other's is that one's.
+                if let Some(on) = on {
+                    self.parted_by.get_or_insert(ControlDep { on, taken: false });
+                }
                 if let Some((_, mark)) = found {
                     self.note_cond_mark(span, mark, true);
                 }
