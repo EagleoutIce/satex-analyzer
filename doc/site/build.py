@@ -610,6 +610,7 @@ def bundle(satex, work):
         shared, alone = work / f"cache-{kernel}", work / f"cache-{kernel}-sample"
         shutil.rmtree(alone, ignore_errors=True)
         alone.mkdir(parents=True)
+        shared.mkdir(parents=True, exist_ok=True)
         for f in shared.glob("format-*"):
             shutil.copy2(f, alone / f.name)
         kenv = dict(os.environ, SATEX_CACHE=str(alone))
