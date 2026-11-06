@@ -6,10 +6,11 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
-<!-- reviewed: 0fa22f1 -->
+<!-- reviewed: 260c995 -->
 
 ### Playground
 
+- `fix` `satex gui` analyzes the open file first and no other file unasked, picks the root like the CLI, and no longer freezes after a big compile. [`260c995`](https://github.com/EagleoutIce/satex-analyzer/commit/260c995)
 - `fix` The trace stepper keeps its place while stepping. Table insert buttons stay round. [`ce9713f`](https://github.com/EagleoutIce/satex-analyzer/commit/ce9713f) [`3227afc`](https://github.com/EagleoutIce/satex-analyzer/commit/3227afc)
 - `feat` Landing page: a live window that answers from build data before the engine loads, a showcase carousel, plain captions, "local" on a local playground. [`672c02e`](https://github.com/EagleoutIce/satex-analyzer/commit/672c02e) [`75e9e51`](https://github.com/EagleoutIce/satex-analyzer/commit/75e9e51) [`fc867f4`](https://github.com/EagleoutIce/satex-analyzer/commit/fc867f4) [`762cc60`](https://github.com/EagleoutIce/satex-analyzer/commit/762cc60)
 - `fix` After a package download every document runs again, so glossaries and figures are right without an edit. A widget opened during a run waits for it. [`de3795e`](https://github.com/EagleoutIce/satex-analyzer/commit/de3795e) [`062f2be`](https://github.com/EagleoutIce/satex-analyzer/commit/062f2be)
@@ -25,6 +26,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Editor plugins and widgets
 
+- `feat` Keys layer: labels, citations, glossary and index keys in Typeset and PDF from one kind table, none dropped. TikZ dialog edits node properties and styles. Plugins name the editors they work in. [`260c995`](https://github.com/EagleoutIce/satex-analyzer/commit/260c995)
 - `fix` Widget fields check their input, and a package a fix needs is loaded once. [`0fa22f1`](https://github.com/EagleoutIce/satex-analyzer/commit/0fa22f1)
 - `feat` Typeset and PDF layers: glue as brackets, a PDF grid in any TeX unit, booktabs rules across the table, choices offer the texts they set. [`7f5458c`](https://github.com/EagleoutIce/satex-analyzer/commit/7f5458c) [`1ec39d8`](https://github.com/EagleoutIce/satex-analyzer/commit/1ec39d8) [`cc697b6`](https://github.com/EagleoutIce/satex-analyzer/commit/cc697b6)
 - `fix` Dialogs share one Apply that never drops an edit, ask before discarding changes and undo in one step. Float placement toggles as checkmarks. [`17e9816`](https://github.com/EagleoutIce/satex-analyzer/commit/17e9816) [`66a3e25`](https://github.com/EagleoutIce/satex-analyzer/commit/66a3e25)
