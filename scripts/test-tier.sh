@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # The integration suite in tiers, chosen by the seconds in tests/times.txt:
+#   smoke    the per-edit loop: quick with QUICK_SECONDS 0.3, QUICK_MIN 0 and
+#            QUICK_NEW 0 (tests not in tests/times.txt left out: some take minutes)
 #   quick    the edit loop: tests under QUICK_SECONDS (1), the QUICK_MIN (1)
 #            cheapest of every module, and tests not measured yet
 #   fast     the gate before a commit: all but tests/slow.txt and
@@ -21,7 +23,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export LC_ALL=C
-tier=${1:?usage: $0 quick|fast|slow|reds|measure [filter...] [-- libtest args]}; shift
+tier=${1:?usage: $0 smoke|quick|fast|slow|reds|measure [filter...] [-- libtest args]}; shift
+[ "$tier" != smoke ] || { tier=quick; QUICK_SECONDS=${QUICK_SECONDS:-0.3} QUICK_MIN=${QUICK_MIN:-0} QUICK_NEW=${QUICK_NEW:-0}; }
 filters=(); while [ $# -gt 0 ] && [ "$1" != -- ]; do filters+=("$1"); shift; done
 [ "${1:-}" != -- ] || shift
 pass=("$@")
@@ -55,11 +58,11 @@ case $tier in
     measure) set_=$(printf '%s\n' "$set_" "${slow[@]}" | sort -u) ;;
     slow) set_=$(printf '%s\n' "${slow[@]}") ;;
     quick) timed=$(join -a1 -1 1 -2 2 -o 0,2.1 -e - <(echo "$set_" | sort) <(sort -k2,2 tests/times.txt 2>/dev/null))
-        set_=$({ awk -v q="${QUICK_SECONDS:-1}" '$2 == "-" || $2 < q { print $1 }' <<<"$timed"
+        set_=$({ awk -v q="${QUICK_SECONDS:-1}" -v new="${QUICK_NEW:-1}" '$2 == "-" ? new : $2 < q { print $1 }' <<<"$timed"
                  awk '$2 != "-" { m = $1; sub(/::.*/, "", m); print m, $2, $1 }' <<<"$timed" |
                      sort -k1,1 -k2,2g | awk -v k="${QUICK_MIN:-1}" 'n[$1]++ < k { print $3 }'; } | sort -u) ;;
     fast) ;;
-    *) echo "usage: $0 quick|fast|slow|reds|measure [filter...] [-- libtest args]" >&2; exit 2 ;;
+    *) echo "usage: $0 smoke|quick|fast|slow|reds|measure [filter...] [-- libtest args]" >&2; exit 2 ;;
 esac
 for f in "${filters[@]}"; do set_=$(grep -F -- "$f" <<<"$set_" || true); done
 [ -n "$set_" ] || { echo "no tests selected" >&2; exit 1; }

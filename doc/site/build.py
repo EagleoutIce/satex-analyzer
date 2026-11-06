@@ -18,8 +18,21 @@ ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "doc" / "site"
 
 
+def proc(cmd, **kw):
+    """`subprocess.run`, with a satex run holding one of the JOBS slots: every step's pool may be
+    as wide as it likes, never more than JOBS satex processes run at once. Its seconds go to RUNS."""
+    if not (SATEX and cmd and str(cmd[0]) == str(SATEX)):
+        return subprocess.run(cmd, **kw)
+    with SLOTS:
+        start = time.monotonic()
+        try:
+            return subprocess.run(cmd, **kw)
+        finally:
+            RUNS.append((time.monotonic() - start, " ".join(map(str, cmd[1:]))))
+
+
 def run(*cmd, **kw):
-    return subprocess.run(cmd, check=True, text=True, capture_output=True, **kw).stdout
+    return proc(cmd, check=True, text=True, capture_output=True, **kw).stdout
 
 
 def digest(data):
@@ -37,6 +50,7 @@ def available_memory():
 # How many satex runs go at once: each takes a core and up to 2 GB of the memory free now;
 # SATEX_SITE_JOBS overrides.
 JOBS = int(os.environ.get("SATEX_SITE_JOBS") or max(1, min(os.cpu_count() or 2, available_memory() // 2**31)))
+SLOTS, RUNS = threading.BoundedSemaphore(JOBS), []  # see proc()
 
 
 BOARD = {"lines": {}, "drawn": 0, "lock": threading.Lock()}  # the steps running side by side, a bar each
@@ -122,18 +136,40 @@ def save_listings():
 # The satex binary's digest, its cache key (what the analysis is: reporting code
 # aside) and whether to ignore remembered results (--fresh): set by main().
 BINARY, KEY, FRESH, SATEX = "", "", False, None
+MEMO_USED = set()  # the memo files this build asked for
+
+
+def prune_memo():
+    """Drop the memo files this build superseded: those of a label it asked for under other parts.
+    A label it did not ask for (a step it reused whole) keeps its files."""
+    for d in {p.parent for p in MEMO_USED}:
+        asked = {p.name.rsplit("-", 1)[0] for p in MEMO_USED if p.parent == d}
+        for p in d.glob("*.pkl"):
+            if p not in MEMO_USED and p.name.rsplit("-", 1)[0] in asked:
+                p.unlink(missing_ok=True)
 
 
 def memo(work, label, parts, make):
     """`make()`, remembered in WORK/memo under `label` while `parts` (what it depends on) stay the
     same: a build that changes only the page's code reuses every satex run."""
     path = work / "memo" / f"{label}-{digest(json.dumps(parts, default=str).encode())}.pkl"
+    MEMO_USED.add(path)
     if path.exists() and not FRESH:
         return pickle.loads(path.read_bytes())
     value = make()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(pickle.dumps(value))
     return value
+
+
+def binary_digest(satex):
+    """The binary's digest without the build time and commit it names (`satex --version`):
+    relinking the same code keeps every run keyed on it."""
+    data = satex.read_bytes()
+    about = json.loads(subprocess.run([str(satex), "--format", "json", "--version"], capture_output=True, text=True).stdout or "{}")
+    for stamp in filter(None, (about.get("built"), about.get("commit"))):
+        data = data.replace(stamp.encode(), b"")
+    return digest(data)
 
 
 def tree_digest(root):
@@ -154,7 +190,7 @@ def files_read(satex, flags, doc, cwd, env, config=b"", absent=False):
     key = digest(json.dumps([flags, str(doc), str(cwd), doc.read_bytes().decode(errors="replace"), config.decode(errors="replace"),
                              LISTINGS.get("@stamp", "")]).encode())
     if key not in LISTINGS:
-        done = subprocess.run([str(satex), *flags, "query", "files", "-f", str(doc), "--format", "json"],
+        done = proc([str(satex), *flags, "query", "files", "-f", str(doc), "--format", "json"],
                               cwd=cwd, env=env, capture_output=True, text=True)
         LISTINGS[key] = [entry.get("path") or f"?{entry['file']}" for entry in json.loads(done.stdout or "[]")
                          if "path" in entry or entry.get("kind") == "absent"]
@@ -570,7 +606,7 @@ def bundle(satex, work):
     # `cache export` writes only the valid entries.
     def kernel_caches(kernel, flags):
         kenv = dict(os.environ, SATEX_CACHE=str(work / f"cache-{kernel}"))
-        subprocess.run([str(satex), *flags, "lint", "-f", SAMPLE], cwd=project, env=kenv, capture_output=True, check=False)
+        proc([str(satex), *flags, "lint", "-f", SAMPLE], cwd=project, env=kenv, capture_output=True, check=False)
         archive = work / f"satex-cache-{kernel}.bin"
         run(str(satex), "cache", "export", str(archive), env=kenv)
         return archive
@@ -588,15 +624,13 @@ def bundle(satex, work):
         shutil.rmtree(cache, ignore_errors=True)
         shutil.copytree(work / f"cache-{kernel}", cache, copy_function=os.link, ignore=shutil.ignore_patterns("*.lock"))
         penv = dict(os.environ, SATEX_CACHE=str(cache))
-        # the kernels' runs go at once (`ran`), so each takes its share of the jobs
-        with concurrent.futures.ThreadPoolExecutor(max(1, JOBS // len(KERNELS))) as inner:
-            list(inner.map(lambda d: subprocess.run([str(satex), *flags, "lint", "-f", d.name], cwd=project, env=penv,
-                                                    capture_output=True, check=False), docs))
-            # the first download's packages get entries even when no example loads them: a probe document's.
-            # Not its classes: a KOMA class's entries are about 9 MiB gz each, too much for the first download.
-            first = [probe_doc(probes, n) for n in installed(first_download()) if kernel != "plain" and not n.endswith(".cls")]
-            list(inner.map(lambda d: subprocess.run([str(satex), *flags, "lint", "-f", d.name], cwd=probes, env=penv,
-                                                    capture_output=True, check=False), first))
+        # the first download's packages get entries even when no example loads them: a probe document's.
+        # Not its classes: a KOMA class's entries are about 9 MiB gz each, too much for the first download.
+        first = [probe_doc(probes, n) for n in installed(first_download()) if kernel != "plain" and not n.endswith(".cls")]
+        # all kernels' runs share the JOBS slots (proc), so a kernel done early leaves no core idle
+        with concurrent.futures.ThreadPoolExecutor(JOBS) as inner:
+            list(inner.map(lambda job: proc([str(satex), *flags, "lint", "-f", job[1].name], cwd=job[0], env=penv,
+                                            capture_output=True, check=False), [(project, d) for d in docs] + [(probes, d) for d in first]))
         out = work / f"export-{kernel}.bin"
         held = set(json.loads(run(str(satex), "--format", "json", "cache", "export", str(out), env=penv))["holds"].values())
         archives = {}
@@ -710,7 +744,7 @@ def providers(satex, work, missing):
     doc.write_text("\\documentclass{article}\n\\begin{document}\n\\end{document}\n")
     request = json.dumps({"file": doc.name, "queries": [{"type": "providers", "names": sorted(missing)}]})
     env = dict(os.environ, SATEX_CACHE=str(work / "cache-pdftex"))
-    done = subprocess.run([str(satex), *KERNELS[0][2], "query", "--request", "-", "-f", doc.name], input=request, cwd=doc.parent,
+    done = proc([str(satex), *KERNELS[0][2], "query", "--request", "-", "-f", doc.name], input=request, cwd=doc.parent,
                           env=env, capture_output=True, text=True)
     try:
         rows = json.loads(done.stdout)[0]["records"]
@@ -733,7 +767,7 @@ def scope_cards(satex, work, names):
         doc = tmp / f"{kernel}.tex"
         doc.write_text(text)
         env = dict(os.environ, SATEX_CACHE=str(work / f"cache-{kernel}"))
-        done = subprocess.run([str(satex), *flags, "--format", "json", "scope", "--all", *extra, "-f", doc.name], cwd=tmp, env=env, capture_output=True, text=True)
+        done = proc([str(satex), *flags, "--format", "json", "scope", "--all", *extra, "-f", doc.name], cwd=tmp, env=env, capture_output=True, text=True)
         try:
             return json.loads(done.stdout)
         except json.JSONDecodeError:
@@ -742,7 +776,7 @@ def scope_cards(satex, work, names):
     def probe(text):
         doc = tmp / "shapes.tex"
         doc.write_text(text)
-        done = subprocess.run([str(satex), *KERNELS[0][2], "--format", "json", "query", "diagnostics", "-f", doc.name], cwd=tmp,
+        done = proc([str(satex), *KERNELS[0][2], "--format", "json", "query", "diagnostics", "-f", doc.name], cwd=tmp,
                               env=dict(os.environ, SATEX_CACHE=str(work / "cache-pdftex")), capture_output=True, text=True)
         try:
             return json.loads(done.stdout)
@@ -765,7 +799,7 @@ def scope_cards(satex, work, names):
         doc.write_text(text)
         asked = sorted(n for n in names if n in records and records[n].get("tag") != "primitive")
         env = dict(os.environ, SATEX_CACHE=str(work / "cache-pdftex"))
-        done = subprocess.run([str(satex), *KERNELS[0][2], "--format", "json", "explain", *asked, "-f", doc.name], cwd=tmp, env=env,
+        done = proc([str(satex), *KERNELS[0][2], "--format", "json", "explain", *asked, "-f", doc.name], cwd=tmp, env=env,
                               capture_output=True, text=True) if asked else None
         try:
             seen = set()
@@ -868,14 +902,14 @@ def mine(satex, work, names):
     def mined(name):
         doc = probe_doc(probes, name)
         request = json.dumps({"file": doc.name, "queries": [{"type": "docs"}]})
-        done = subprocess.run([str(satex), *flags, "query", "--request", "-", "-f", doc.name], input=request, cwd=probes, env=env,
+        done = proc([str(satex), *flags, "query", "--request", "-", "-f", doc.name], input=request, cwd=probes, env=env,
                               capture_output=True, text=True)
         try:
             return json.loads(done.stdout)[0]["records"]
         except (json.JSONDecodeError, IndexError, KeyError):
             return []
     # beside the bundle's own steps: half the workers each
-    return memo(work, "manuals", [BINARY, names], lambda: [r for rs in parallel("[4/4] package manuals", names, mined, max(1, JOBS // 2)) for r in rs])
+    return memo(work, "manuals", [BINARY, names], lambda: [r for rs in parallel("[4/4] package manuals", names, mined) for r in rs])
 
 
 def manuals(satex, work, tables, packages, offered, records):
@@ -990,7 +1024,7 @@ def explained(satex, project, env, name, names, dist):
 
 
 def explained_run(satex, project, env, name, names, dist):
-    done = subprocess.run([str(satex), "explain", *sorted(names), "--format", "json", "-f", name], cwd=project, env=env,
+    done = proc([str(satex), "explain", *sorted(names), "--format", "json", "-f", name], cwd=project, env=env,
                           capture_output=True, text=True)
     by = {}
     for r in json.loads(done.stdout or "[]"):
@@ -1015,9 +1049,9 @@ def findings(satex, project, env, name, source):
 
 
 def findings_run(satex, project, env, name, source):
-    lsp = json.loads(subprocess.run([str(satex), "lint", "--format", "lsp", "-f", name], cwd=project, env=env,
+    lsp = json.loads(proc([str(satex), "lint", "--format", "lsp", "-f", name], cwd=project, env=env,
                                     capture_output=True, text=True).stdout or "[]")
-    rows = json.loads(subprocess.run([str(satex), "lint", "--format", "json", "-f", name], cwd=project, env=env,
+    rows = json.loads(proc([str(satex), "lint", "--format", "json", "-f", name], cwd=project, env=env,
                                      capture_output=True, text=True).stdout or "[]")
     lines = source.splitlines()
     text = lambda p: lines[p["line"] - 1] if p["line"] - 1 < len(lines) else ""
@@ -1044,7 +1078,7 @@ def typeset(satex, project, env, name, source):
         # a plain TeX file (its magic comment names `tex`) runs on the plain kernel, as the playground runs it
         plain = re.search(r"^%\s*!T[eE]X\s+(?:TS-)?program\s*=\s*tex\b", source, re.M)
         flags = next(f for k, _, f in KERNELS if k == "plain") if plain else []
-        done = subprocess.run([str(satex), *flags, "query", "typeset", "--format", "json", "-f", name], cwd=project, env=env, capture_output=True, text=True)
+        done = proc([str(satex), *flags, "query", "typeset", "--format", "json", "-f", name], cwd=project, env=env, capture_output=True, text=True)
         try:
             rows = json.loads(done.stdout or "[]")
         except json.JSONDecodeError:
@@ -1163,7 +1197,7 @@ def playground(satex, wasm, work, out):
 
         def per_file(query):
             """Whether the query's rows name their file: the playground then shows the open file's rows only."""
-            done = subprocess.run([str(satex), "query", query, "--filter", f"file={sample}", "--format", "json", "-f", sample],
+            done = proc([str(satex), "query", query, "--filter", f"file={sample}", "--format", "json", "-f", sample],
                                   cwd=project, env=env, capture_output=True, text=True)
             try:
                 return done.returncode == 0 and len(json.loads(done.stdout or "[]")) > 0
@@ -1455,7 +1489,7 @@ def symbols(satex, project, env):
         math += [[italic.get(n[4:], c) if "small" in about else c, "\\" + n[4:], cls, about] for c, n, cls, about in list(math)
                  if n.startswith("\\mup") and cls == "alpha" and "\\" + n[4:] not in names]
         request = json.dumps({"file": SAMPLE, "queries": [{"type": "providers", "names": sorted({n for _, n, *_ in math})}]})
-        done = subprocess.run([str(satex), "query", "--request", "-", "-f", SAMPLE], input=request, cwd=project, env=env, capture_output=True, text=True)
+        done = proc([str(satex), "query", "--request", "-", "-f", SAMPLE], input=request, cwd=project, env=env, capture_output=True, text=True)
         try:
             provider = {r["name"]: r["package"] for r in json.loads(done.stdout)[0]["records"]}
         except (json.JSONDecodeError, IndexError, KeyError):
@@ -1511,8 +1545,8 @@ def main():
         signal.signal(stop, lambda number, _: os._exit(128 + number))
     global MINIFY, SCRATCH, BINARY, KEY, FRESH, SATEX, SITE, EXAMPLES, LISTINGS_FILE
     SATEX, MINIFY = args.satex.resolve(), not args.no_minify
-    BINARY, FRESH = digest(args.satex.resolve().read_bytes()), args.fresh
-    KEY = BINARY if args.docs_only else json.loads(subprocess.run([str(args.satex), "cache", "--format", "json"], capture_output=True, text=True).stdout or "{}").get("key") or BINARY
+    BINARY, FRESH = binary_digest(args.satex.resolve()), args.fresh
+    KEY = BINARY if args.docs_only else json.loads(proc([str(args.satex), "cache", "--format", "json"], capture_output=True, text=True).stdout or "{}").get("key") or BINARY
     out, work = args.out.resolve(), (args.work or args.out.resolve().parent / "site-work").resolve()
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
@@ -1650,6 +1684,7 @@ def main():
     page("bench/index.html", "Benchmarks", fill((SITE / "bench.html").read_text(), {"root": "../", "repository": repo}), side=False)
     (out / ".nojekyll").write_text("")
     sem.check_links(out, refs.used)
+    prune_memo()
     offline(out)
     if args.precompress:
         precompress(out)
@@ -1712,4 +1747,9 @@ def precompress(out):
 
 
 if __name__ == "__main__":
+    began = time.monotonic()
     main()
+    # where the time went: the satex runs' seconds against the build's, and the slowest runs
+    took = sum(t for t, _ in RUNS)
+    print(f"playground: {len(RUNS)} satex runs, {took:.0f} s of {JOBS} slots' time in {time.monotonic() - began:.0f} s; slowest: "
+          + "; ".join(f"{t:.0f} s {c[:90]}" for t, c in sorted(RUNS, reverse=True)[:5]), file=sys.stderr)

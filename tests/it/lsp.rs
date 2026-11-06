@@ -5,7 +5,8 @@
 //! waiting on `latex.ltx`.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
+use std::sync::mpsc;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -14,11 +15,45 @@ use serde_json::{Value, json};
 // no newline so line/column positions below stay on their original lines.
 const FIXTURE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 \\def\\greet#1{Hello, #1!}\n\\greet{world}\n\\def\\unused{\\greet{x}}\n\\let\\alias\\greet\n";
 
+/// The longest a test waits for one message: a server that stops answering
+/// fails its test instead of hanging the suite.
+const SILENCE: Duration = Duration::from_secs(600);
+
 struct Server {
     child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    stdin: Option<ChildStdin>,
+    /// The framed messages, read on a thread; `None` once stdout closed.
+    messages: mpsc::Receiver<Option<Value>>,
+    /// Everything the server says on stderr, drained on a thread so a full pipe never blocks it.
+    stderr: Option<std::thread::JoinHandle<String>>,
     next_id: i64,
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// One framed message from `stdout`, `None` at its end.
+fn read_message(stdout: &mut impl BufRead) -> Option<Value> {
+    let mut length = None;
+    loop {
+        let mut line = String::new();
+        if stdout.read_line(&mut line).ok()? == 0 {
+            return None;
+        }
+        if line == "\r\n" {
+            break;
+        }
+        if let Some(rest) = line.strip_prefix("Content-Length:") {
+            length = rest.trim().parse::<usize>().ok();
+        }
+    }
+    let mut body = vec![0u8; length.expect("a Content-Length header")];
+    stdout.read_exact(&mut body).ok()?;
+    Some(serde_json::from_slice(&body).expect("valid JSON-RPC"))
 }
 
 impl Server {
@@ -59,15 +94,37 @@ impl Server {
             .spawn()
             .expect("satex lsp starts");
         let stdin = child.stdin.take().unwrap();
-        let stdout = BufReader::new(child.stdout.take().unwrap());
-        Server { child, stdin, stdout, next_id: 1 }
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+        let (send, messages) = mpsc::channel();
+        std::thread::spawn(move || {
+            loop {
+                let msg = read_message(&mut stdout);
+                let end = msg.is_none();
+                if send.send(msg).is_err() || end {
+                    break;
+                }
+            }
+        });
+        let mut pipe = child.stderr.take().unwrap();
+        let stderr = Some(std::thread::spawn(move || {
+            let mut text = String::new();
+            let _ = pipe.read_to_string(&mut text);
+            text
+        }));
+        Server { child, stdin: Some(stdin), messages, stderr, next_id: 1 }
+    }
+
+    /// What the server said on stderr, once it has exited.
+    fn said(&mut self) -> String {
+        self.stderr.take().map(|t| t.join().unwrap()).unwrap_or_default()
     }
 
     fn write(&mut self, value: &Value) {
         let body = serde_json::to_vec(value).unwrap();
-        write!(self.stdin, "Content-Length: {}\r\n\r\n", body.len()).unwrap();
-        self.stdin.write_all(&body).unwrap();
-        self.stdin.flush().unwrap();
+        let stdin = self.stdin.as_mut().expect("stdin is open");
+        write!(stdin, "Content-Length: {}\r\n\r\n", body.len()).unwrap();
+        stdin.write_all(&body).unwrap();
+        stdin.flush().unwrap();
     }
 
     fn notify(&mut self, method: &str, params: Value) {
@@ -81,27 +138,20 @@ impl Server {
         id
     }
 
-    /// Reads one framed JSON-RPC message, whichever it is; the caller knows
+    /// The next framed JSON-RPC message, whichever it is; the caller knows
     /// from context whether to expect a response or a notification.
     fn read(&mut self) -> Value {
-        let mut length = None;
-        loop {
-            let mut line = String::new();
-            let read = self.stdout.read_line(&mut line).expect("a header line");
-            if read == 0 {
-                panic!("satex lsp closed stdout before sending {length:?} bytes");
+        match self.messages.recv_timeout(SILENCE) {
+            Ok(Some(msg)) => msg,
+            Ok(None) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = self.child.kill();
+                panic!("satex lsp closed stdout: {}", self.said())
             }
-            if line == "\r\n" {
-                break;
-            }
-            if let Some(rest) = line.strip_prefix("Content-Length:") {
-                length = rest.trim().parse::<usize>().ok();
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let _ = self.child.kill();
+                panic!("satex lsp sent nothing for {SILENCE:?}: {}", self.said())
             }
         }
-        let length = length.expect("a Content-Length header");
-        let mut body = vec![0u8; length];
-        self.stdout.read_exact(&mut body).expect("the framed body");
-        serde_json::from_slice(&body).expect("valid JSON-RPC")
     }
 
     /// Reads messages until one matches `id`, the way a client ignores
@@ -125,15 +175,16 @@ impl Server {
         }
     }
 
-    fn shutdown(mut self) {
+    /// Shuts the server down and returns what it said on stderr.
+    fn shutdown(mut self) -> String {
         let id = self.request("shutdown", Value::Null);
         let resp = self.response(id);
         assert!(resp.get("error").is_none(), "shutdown failed: {resp:?}");
         self.notify("exit", Value::Null);
-        drop(self.stdin);
+        drop(self.stdin.take());
         for _ in 0..100 {
             if self.child.try_wait().expect("satex lsp runs").is_some() {
-                return;
+                return self.said();
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -4248,12 +4299,6 @@ fn a_root_named_relative_resumes_after_a_body_edit() {
         &dir,
         &["-vv", "-f", "main.tex", "--set", "limits.seconds=0"],
     );
-    let mut stderr = server.child.stderr.take().unwrap();
-    let said = std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = std::io::Read::read_to_string(&mut stderr, &mut text);
-        text
-    });
     let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
     server.response(id);
     server.notify("initialized", json!({}));
@@ -4265,8 +4310,7 @@ fn a_root_named_relative_resumes_after_a_body_edit() {
         json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": edited }] }),
     );
     server.notification("textDocument/publishDiagnostics");
-    server.shutdown();
-    let said = said.join().unwrap();
+    let said = server.shutdown();
     // the edit's run: `resuming at` precedes its `resume …, run …` line
     let runs: Vec<&str> = said.lines().filter(|l| l.starts_with("satex: resum")).collect();
     assert!(
