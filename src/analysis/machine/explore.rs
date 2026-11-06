@@ -3483,7 +3483,13 @@ fn same_code(a: &Tag, b: &Tag) -> bool {
 fn partner(parked: &[Config], config: &Config, apart: &dyn Fn(&Config, &Config) -> usize) -> Option<usize> {
     let (key, tag) = (&config.key, &config.tag);
     let here: Vec<usize> = (0..parked.len()).filter(|&i| !parked[i].ended && parked[i].key == *key).collect();
-    let fi = |i: usize| config.state.fi_mark.is_some() && parked[i].state.fi_mark == config.state.fi_mark;
+    // Arms at different stream places stay apart: the place decides `\ifeof`
+    // and `\read`, so a join would part it from the flags the arms set.
+    let fi = |i: usize| {
+        config.state.fi_mark.is_some()
+            && parked[i].state.fi_mark == config.state.fi_mark
+            && same_streams(&parked[i].tag.streams, &tag.streams)
+    };
     let file = key.places.iter().all(|p| matches!(p, Place::File(..) | Place::Pseudo(..)));
     let merge = here.len() >= PARTITIONS || file;
     // Arms of a digit split wait for as many paths as the split made.

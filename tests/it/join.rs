@@ -1027,6 +1027,33 @@ fn a_stream_read_past_its_end_on_one_path_is_at_end_there_only() {
     assert!(with_code(&analysis, "terminal-read").is_empty(), "{:?}", with_code(&analysis, "terminal-read"));
 }
 
+/// scrlayer-notecolumn's `.slnc` loop, called twice: each pass reads a
+/// line, may stop, and stops at `\ifeof`; a call starts only before the
+/// end. TeX never reads the terminal. The flag and the stream's place
+/// must not be joined apart into a path that reads a closed stream as a
+/// certain fatal error. Variants: two lines, and six (the paths crowd).
+#[test]
+fn a_read_loop_flag_stays_with_its_stream_place() {
+    for lines in [2, 6] {
+        let write = (0..lines).map(|n| format!(r"\immediate\write1{{l{n}}}")).collect::<String>();
+        let source = format!(
+            r"\immediate\openout1=flag.tex {write}\immediate\closeout1 \nonstopmode \openin1=flag.tex
+              \def\body{{\read1 to\l \let\go\body \ifnum\pdfuniformdeviate2=0 \let\go\relax\fi
+                \ifeof1 \let\go\relax\fi \go}}
+              \def\readto{{\ifeof1 \else \expandafter\body\fi}}\readto \readto \gdef\reached{{}}"
+        );
+        let analysis = analyze_files(&source);
+        let certain: Vec<_> = analysis
+            .facts
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "terminal-read-fatal" && d.severity == satex::analysis::facts::Severity::Warning)
+            .collect();
+        assert!(certain.is_empty(), "{lines} lines: {:?}", with_code(&analysis, "terminal-read-fatal"));
+        assert!(names(&analysis).contains(&"reached".to_string()), "{lines} lines: {:?}", names(&analysis));
+    }
+}
+
 /// A written line of unknown digits reads back as typed digits, by `\read`
 /// in a loop and by `\input`: the number stays a number.
 #[test]

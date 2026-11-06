@@ -321,7 +321,6 @@
 2.152 documents::map_of_unknown_depth_calls_the_body_it_defined
 2.719 documents::map_over_unknown_token_list_is_summarized_once
 1.854 documents::mutual_recursion_with_unknown_bound_is_summarized_once
-27.297 documents::notecolumn_read_loop_at_frontmatter_clearpage
 2.621 documents::pgfmath_of_unknown_integer_stays_a_number
 3.929 documents::pgfmath_of_unknown_integer_three_times
 7.645 documents::pgfmath_seed_from_unknown_random_seed
