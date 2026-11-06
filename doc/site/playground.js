@@ -534,6 +534,9 @@
   function lsp(method, params, notify = false) {
     // while a new worker starts, nothing is asked of the old one: restart() then tells the new one everything
     if (recovering) return notify ? null : Promise.resolve(null);
+    // a widget never waits for a run: the run stops (the shared counter), the widget is answered from the last
+    // finished one, and the run starts again after it
+    if (running > 0 && textsSent && /^satex\/(view|dialog|dialogApply)$/.test(method)) { Atomics.add(textsSent, 0, 1); analysisQueued = true; }
     const message = { jsonrpc: '2.0', method, params, ...(notify ? {} : { id: nextId++ }) };
     const runs = method === 'satex/analyze';
     // A read-only question asked while a run goes on is answered from the last finished one, never queued behind it.
