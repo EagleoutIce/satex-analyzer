@@ -294,12 +294,14 @@
     toastBox.before(ask);
   }
   self.satexToast = (text) => toast(text);
-  function toast(text) {
+  /** A short note at the bottom; `ms` null keeps it until the next note or `toast.off()`. */
+  function toast(text, ms = 2600) {
     toastBox.textContent = text;
     toastBox.classList.add('on');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastBox.classList.remove('on'), 2600);
+    if (ms != null) toastTimer = setTimeout(() => toastBox.classList.remove('on'), ms);
   }
+  toast.off = () => { clearTimeout(toastTimer); toastBox.classList.remove('on'); };
   /** One row of the timing pop-up: a line of text, `items` folded under it. */
   const timing = (id, text, title = '', items = null) => {
     const dd = Object.assign($(id), { title });
@@ -3724,7 +3726,7 @@
     const [view] = (await lsp('satex/view', { textDocument: { uri: target }, plugin }).catch(() => [])) ?? [];
     if (!view) {
       // no finished run of this text yet: the manager opens once there is one
-      if (running > 0 || act.phase) { toast('Opening once the analysis is done…'); afterRun = () => manage(plugin, kept, target); return; }
+      if (running > 0 || act.phase) { toast('Opening once the analysis is done…', null); afterRun = () => { toast.off(); manage(plugin, kept, target); }; return; }
       return toast(`No ${plugin} here`);
     }
     if (kept && view.sections?.[0]) Object.assign(view.sections[0], { query: kept.q, focus: kept.open ?? view.sections[0].focus });
@@ -5994,7 +5996,7 @@
     if (!v) {
       if (quiet) return;
       // the server has no finished run of this text yet (a start, a restart, an edit): the widget opens once it has
-      if (running > 0 || act.phase || !(target in diagnostics)) { toast('Opening once the analysis is done…'); afterRun = () => openDialog(position, true); if (!running && !act.phase) analyze(); return; }
+      if (running > 0 || act.phase || !(target in diagnostics)) { toast('Opening once the analysis is done…', null); afterRun = () => { toast.off(); openDialog(position, true); }; if (!running && !act.phase) analyze(); return; }
       return toast('No table or figure here: the analysis found none at this place');
     }
     const was = textIn(editor.text(), v.range);
@@ -6062,7 +6064,12 @@
   };
   /** Opens a link's widget after the open file's next run, again after the next while it finds none. */
   const widgetAsked = (want, tries = 4) => {
-    afterRun = async () => { if (!await self.satexOpen(want).catch(() => false) && --tries) widgetAsked(want, tries); };
+    // the link's widget needs the file's run: say so at once, until it opens
+    if (tries === 4 && want.widget !== 'panel') toast(`Opening the ${want.widget} editor once the file is analyzed…`, null);
+    afterRun = async () => {
+      if (await self.satexOpen(want).catch(() => false)) return toast.off();
+      if (--tries) widgetAsked(want, tries); else toast.off();
+    };
   };
   // a hover's "Edit table…" link opens the dialog
   document.addEventListener('click', (e) => {
