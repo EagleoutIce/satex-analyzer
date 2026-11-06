@@ -212,7 +212,7 @@ const shotMissing = [];
 for (const src of shotImgs.flatMap((s) => [s, s.replace(/png$/, 'webp'), s.replace(/png$/, 'avif')])) if (!(base.startsWith('file:') ? existsSync(fileURLToPath(base + src)) : (await fetch(base + src).catch(() => ({}))).ok)) shotMissing.push(src);
 check('landing showcase images are sized and served', shotImgs.length >= 4 && shotImgs.length % 2 === 0 && !shotMissing.length, shotMissing.join(' '));
 // its videos are sized, lazy (no source until site.js loads one) and served in both formats; each try-it link names its widget
-const shotVideos = [...landing.matchAll(/<video class="shot-video[^"]*" width="\d+" height="\d+" muted loop playsinline preload="none"[^>]* data-src="([^"]+)"><\/video>/g)].map((m) => m[1]);
+const shotVideos = [...landing.matchAll(/<video class="shot-video[^"]*" width="\d+" height="\d+" muted playsinline preload="none"[^>]* data-src="([^"]+)"><\/video>/g)].map((m) => m[1]);
 const videoMissing = [];
 for (const src of shotVideos.flatMap((s) => [`${s}.webm`, `${s}.mp4`])) if (!(base.startsWith('file:') ? existsSync(fileURLToPath(base + src)) : (await fetch(base + src).catch(() => ({}))).ok)) videoMissing.push(src);
 check('landing showcase videos are sized, lazy and served', shotVideos.length >= 2 && !videoMissing.length, videoMissing.join(' '));

@@ -2,6 +2,15 @@
  "width": 1200,
  "shots": [
   {
+   "name": "live",
+   "live": true,
+   "file": "results.tex",
+   "title": "Try it right here",
+   "caption": "Edit this document. Hover the length or the [ht] to see what they do, and fix the dash SaTeX underlines. The text on the right follows as you type.",
+   "status": "Computed when this page was built. SaTeX starts in your browser when the window comes into view (about 10 MB, loaded once).",
+   "text": "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\section{Results}\nThe runs took 10-12 seconds on a warm cache.\n\\vspace{12pt}\n\\begin{figure}[ht]\n  \\centering\n  \\includegraphics[width=0.6\\linewidth]{example-image}\n  \\caption{The warm cache.}\n\\end{figure}\n\\end{document}\n"
+  },
+  {
    "name": "image",
    "file": "figure.tex",
    "title": "Images",
@@ -112,15 +121,6 @@
      "wait": 300
     }
    ]
-  },
-  {
-   "name": "live",
-   "live": true,
-   "file": "results.tex",
-   "title": "Try it right here",
-   "caption": "Edit this document. Hover the length or the [ht] to see what they do, and fix the dash SaTeX underlines. The text on the right follows as you type.",
-   "status": "SaTeX starts when this window comes into view (about 10 MB, loaded once).",
-   "text": "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\section{Results}\nThe runs took 10-12 seconds on a warm cache.\n\\vspace{12pt}\n\\begin{figure}[ht]\n  \\centering\n  \\includegraphics[width=0.6\\linewidth]{example-image}\n  \\caption{The warm cache.}\n\\end{figure}\n\\end{document}\n"
   },
   {
    "name": "table",
@@ -309,11 +309,20 @@
    "title": "Refactorings",
    "wide": true,
    "window": "paper.tex",
-   "caption": "Right-click a table to turn it into booktabs or to align its numbers with siunitx. One click rewrites the source.",
+   "caption": "Right-click a table to turn it into booktabs or to align its numbers with siunitx. The rule lines are rewritten for you.",
    "steps": [
     {
      "eval": "const v = document.querySelector('.cm-editor').satexView, i = __at('begin{table}')[2]; v.dispatch({ selection: { anchor: i } }); await new Promise((r) => setTimeout(r, 200)); v.scrollDOM.scrollTop += v.coordsAtPos(i).top - 140; await new Promise((r) => setTimeout(r, 300)); __xy('begin{tabular}', 2);",
      "wait": 4000
+    },
+    {
+     "eval": "for (const l of document.querySelectorAll('.cm-line')) if (/\\\\\\\\hline/.test(l.textContent)) l.style.background = 'color-mix(in srgb, #b42318 18%, transparent)';",
+     "wait": 300
+    },
+    {
+     "snap": "before",
+     "eval": "0",
+     "wait": 300
     },
     {
      "eval": "const v = document.querySelector('.cm-editor').satexView; v.focus(); __xy(\"begin{tabular}\", 2); v.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', code: 'F10', keyCode: 121, shiftKey: true, bubbles: true, cancelable: true })); for (let k = 0; k < 100 && document.getElementById('play-ctx').hidden; k++) await new Promise((r) => setTimeout(r, 200));",
@@ -324,29 +333,25 @@
      "hover": "[...document.querySelectorAll('#play-ctx > li')].find((l) => l.textContent.startsWith('Refactor'))"
     },
     {
-     "until": "/booktabs/.test(document.querySelector('#play-ctx .ctx-nested')?.textContent)",
-     "wait": 500,
-     "snap": "before"
-    },
-    {
      "click": "[...document.querySelectorAll('#play-ctx .ctx-nested li')].find((l) => /booktabs/.test(l.textContent))"
     },
     {
      "until": "document.querySelector('.cm-editor').satexView.state.doc.toString().includes('\\\\toprule')",
      "wait": 1500
+    },
+    {
+     "eval": "for (const l of document.querySelectorAll('.cm-line')) if (/\\\\\\\\(top|mid|bottom)rule/.test(l.textContent)) l.style.background = 'color-mix(in srgb, #1a7f37 20%, transparent)';",
+     "wait": 300
     }
    ],
-   "crop": [
-    "=lines('\\\\begin{table}', '\\\\end{table}')",
-    "#play-ctx:not([hidden])",
-    "#play-ctx .ctx-nested"
-   ],
+   "crop": "=lines('\\\\begin{table}', '\\\\end{table}')",
    "pad": 8,
    "keepMouse": true,
    "viewport": [
     1000,
     760
-   ]
+   ],
+   "beforeCrop": "=lines('\\\\begin{table}', '\\\\end{table}')"
   },
   {
    "name": "handref",
@@ -454,6 +459,41 @@
    "keepMouse": true
   },
   {
+   "name": "clone",
+   "file": "clones.tex",
+   "title": "Clones",
+   "wide": true,
+   "window": "clones.tex",
+   "caption": "Not just copy and paste: SaTeX finds blocks that differ only in their values and offers one macro for them.",
+   "open": [
+    "panel",
+    "play-findings"
+   ],
+   "viewport": [
+    1100,
+    560
+   ],
+   "steps": [
+    {
+     "until": "[...document.querySelectorAll('#lsp-diagnostics li')].some((l) => /clone|differ only/i.test(l.textContent + (l.dataset.code ?? '')))",
+     "ms": 60000
+    },
+    {
+     "hover": "__xy('\\\\begin{figure}', 3)"
+    },
+    {
+     "until": "document.querySelector('.tip-card:not([hidden])')",
+     "wait": 900
+    }
+   ],
+   "crop": [
+    ".cm-editor .cm-content",
+    ".tip-card:not([hidden])"
+   ],
+   "pad": 8,
+   "keepMouse": true
+  },
+  {
    "name": "color",
    "file": "colors.tex",
    "title": "Colors",
@@ -471,6 +511,10 @@
     "color",
     "\\textcolor{brand}",
     12
+   ],
+   "viewport": [
+    640,
+    760
    ]
   },
   {
@@ -627,6 +671,10 @@
    "open": [
     "manager",
     "glossary"
+   ],
+   "viewport": [
+    640,
+    760
    ]
   },
   {
@@ -649,8 +697,8 @@
    ],
    "crop": "#play-view",
    "viewport": [
-    1000,
-    640
+    640,
+    760
    ]
   },
   {
@@ -672,8 +720,8 @@
    ],
    "crop": "#play-view",
    "viewport": [
-    1000,
-    640
+    640,
+    760
    ]
   },
   {
@@ -697,8 +745,8 @@
    ],
    "crop": "#play-library",
    "viewport": [
-    1000,
-    700
+    640,
+    760
    ]
   },
   {
@@ -715,14 +763,22 @@
      "until": "document.getElementById('play-config').open"
     },
     {
+     "wait": 1500,
+     "snap": "back",
+     "eval": "0"
+    },
+    {
+     "eval": "[...document.querySelectorAll('#play-config [role=tab], #play-config button')].find((b) => b.textContent.trim() === 'Plugins')?.click()",
      "wait": 1500
     }
    ],
    "crop": "#play-config",
    "viewport": [
-    1000,
-    700
-   ]
+    640,
+    760
+   ],
+   "stack": true,
+   "wide": true
   }
  ],
  "video": 1000

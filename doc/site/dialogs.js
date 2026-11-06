@@ -1183,6 +1183,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const strengthOut = h('output', { class: 'sd-out' });
     const tintWhy = h('p', { class: 'sd-muted sd-why' });
     const preset = (mode, label, title) => h('button', { type: 'button', 'data-tint': mode, title, onclick: () => setTint(mode) }, label);
+    // a blocked tint says why where the buttons are, not only in the note below
     const tintSeg = h('span', { class: 'sd-seg', role: 'group', 'aria-label': 'tint' },
       preset('none', 'None', 'Show the colours as they are in the file'), preset('tint', 'Tint', 'Turn white into the colour and keep black'),
       preset('invert', 'Invert', 'Invert each channel (decodearray 1 0)'),
@@ -1224,7 +1225,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const field = (label, input, id = input.id) => [h('label', { for: id }, label), input];
     side.append(
       h('h4', {}, 'File'),
-      row(h('span', { class: 'sd-chip sd-file', title: ctx.path ?? '' }, s().file), ctx.path ? download : null),
+      // the name as written, and the format the run found for it (`example-image` is a PDF)
+      row(h('span', { class: 'sd-chip sd-file', title: ctx.path ?? '' }, s().file, ...[(ctx.path ?? s().file).match(/\.(\w+)$/)?.[1]].filter(Boolean).map((x) => h('span', { class: 'sd-fmt', title: `the file the run reads is a ${x.toUpperCase()}` }, x.toUpperCase()))), ctx.path ? download : null),
       replace ?? null,
       h('h4', {}, 'Crop ', h('span', { class: 'sd-unit' }, 'trim, bp')),
       h('div', { class: 'sd-quad' }, ...num(0, 'left'), ...num(2, 'right'), ...num(3, 'top'), ...num(1, 'bottom')),
@@ -1282,7 +1284,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       if (mode === 'tint' && ![tintColor, strength].includes(document.activeElement) && ui.join() !== st.decode.join()) { tintColor.value = hexOf(rgb); strength.value = 100; }
       strength.fill();
       strengthOut.textContent = `${strength.value}%`;
-      for (const b of tintSeg.querySelectorAll('[data-tint]')) { b.setAttribute('aria-pressed', String(b.dataset.tint === mode)); b.disabled = b.dataset.tint !== 'none' && !!blocked; }
+      for (const b of tintSeg.querySelectorAll('[data-tint]')) { b.setAttribute('aria-pressed', String(b.dataset.tint === mode)); b.disabled = b.dataset.tint !== 'none' && !!blocked; if (b.disabled) b.title = blocked; }
+      tintWhy.classList.toggle('sd-blocked', !!blocked);
       tintColor.disabled = strength.disabled = !!blocked;
       tintWhy.textContent = blocked ?? (mode === 'custom' ? `A decodearray of its own: ${st.decode.join(' ')}.` : model === 'gray' ? 'A gray image has one channel: a tint darkens it by the colour\'s luminance.' : 'decodearray maps each channel from [0, 1] to [Dmin, Dmax]; the preview applies the same map.');
       const d = st.decode?.length && st.decode.length === channels() ? st.decode : null;

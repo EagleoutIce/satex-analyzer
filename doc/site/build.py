@@ -1104,13 +1104,13 @@ def typeset(satex, project, env, name, source):
 def examples(satex, work, project):
     """Each example as a tab, analyzed at build time: its findings underlined in the source with
     a marker at the line's end, what it typesets beside it, and what `satex explain` says of every
-    command it uses, shown on hover. A last tab is the reader's own text, analyzed in the page."""
+    command it uses, shown on hover. A last tab is the reader's own text, analyzed in the page.
+    Also the showcase's live windows as they stand before the page's engine starts: name -> (source HTML, data)."""
     env = dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))
     dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
 
-    def one(job):
-        i, name = job
-        source = (EXAMPLES / name).read_text()
+    def rendered(project, name, source):
+        """The source as HTML, its findings underlined and marked at the line's end, and the data site.js reads."""
         lints = findings(satex, project, env, name, source)
         used = {m.group() for line in source.splitlines() for m in TOKEN.finditer(line) if m.lastgroup == "cmd"}
         cs = explained(satex, project, env, name, used, dist)
@@ -1137,7 +1137,11 @@ def examples(satex, work, project):
                 times = f" ×{len(ks)}" if len(ks) > 1 else ""
                 out.append(f'<span class="eol f-{d["severity"]}" data-lint="{" ".join(map(str, ks))}" title="{html.escape(code)}{times}">{html.escape(d.get("number") or code)}{times}</span>')
             return "".join(out)
-        lines = "\n".join(f'<span class="ln" data-l="{n + 1}">{tex_html(l, n, lints)}{ends(n)}</span>' for n, l in enumerate(source.splitlines()))
+        return "\n".join(f'<span class="ln" data-l="{n + 1}">{tex_html(l, n, lints)}{ends(n)}</span>' for n, l in enumerate(source.splitlines())), data
+
+    def one(job):
+        i, name = job
+        lines, data = rendered(project, name, (EXAMPLES / name).read_text())
         sel = "true" if i == 0 else "false"
         tab = (f'<button role="tab" aria-selected="{sel}" aria-controls="ex-{i}" id="ex-tab-{i}">{html.escape(name)}</button>')
         return tab, (
@@ -1157,7 +1161,14 @@ def examples(satex, work, project):
              f'<figcaption><span class="muted live-status" aria-live="polite">Type LaTeX, even a tikzpicture: SaTeX reads it again as you type, in this page (about 10&nbsp;MB, loaded once).</span>'
              f'<a class="button ghost small" href="play/index.html">open the playground →</a></figcaption>\n'
              f'<div class="src live-src"></div>\n<div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div></figure>')
-    return f'<div class="tabs" role="tablist">{"".join(tabs)}{tab}</div>' + "\n".join([*panels, panel])
+    def live(s):
+        # its own directory: the text is the showcase's, no example's
+        project = work / "showcase-live"
+        project.mkdir(exist_ok=True)
+        (project / s["file"]).write_text(s["text"])
+        return s["name"], rendered(project, s["file"], s["text"])
+    spec = [s for s in json.loads((SITE / "showcase/shots.json").read_text())["shots"] if s.get("live")]
+    return f'<div class="tabs" role="tablist">{"".join(tabs)}{tab}</div>' + "\n".join([*panels, panel]), dict(map(live, spec))
 
 
 def playground(satex, wasm, work, out):
@@ -1239,7 +1250,7 @@ def playground(satex, wasm, work, out):
     sizes = {k["id"]: f"{k['size'] / 2**20:.1f} MiB gz, {len(k['files'])} files" for k in kernels}
     print(f"playground: wasm {len(wasm_bytes) / 2**20:.1f} MiB, {sizes}; {len(extra)} package bundles on demand, "
           f"{sum(p['size'] for p in extra) / 2**20:.1f} MiB gz in all", file=sys.stderr)
-    return manifest, examples(satex, work, project)
+    return manifest, *examples(satex, work, project)
 
 
 # Icon packages whose own files map each command to a character of their own font.
@@ -1648,7 +1659,7 @@ def main():
     # The pages beside the playground's satex runs: they need none of them.
     with concurrent.futures.ThreadPoolExecutor(1) as side:
         pages_done = side.submit(docs)
-        manifest, shown = ({"symbols": ""}, "") if args.docs_only else playground(args.satex.resolve(), args.wasm.resolve(), work, out)
+        manifest, shown, live = ({"symbols": ""}, "", {}) if args.docs_only else playground(args.satex.resolve(), args.wasm.resolve(), work, out)
         written = pages_done.result()
     save_listings()
     manifest["worker"] = minify_script((SITE / "worker.js").read_text())
@@ -1682,10 +1693,11 @@ def main():
     if args.docs_only:
         sem.check_links(out, refs.used)
         return
-    parts["showcase"] = showcase(out)
-    home = fill((SITE / "home.html").read_text(), {**assets, **parts, "version": release, "versiontitle": release_title, "repository": repo,
-                                                       "description": html.escape(cargo["description"])})
-    page("index.html", "Static Analysis for (La)TeX and Friends", home, side=False)
+    def home():
+        parts["showcase"] = showcase(out, live)
+        page("index.html", "Static Analysis for (La)TeX and Friends", fill((SITE / "home.html").read_text(), {
+            **assets, **parts, "version": release, "versiontitle": release_title, "repository": repo, "description": html.escape(cargo["description"])}), side=False)
+    home()
     page("play/index.html", "Playground", fill((SITE / "play.html").read_text(), {**assets, **parts}), side=False, kind="play")
     # Draw alone, to embed: its own page without the site's chrome
     (out / "draw").mkdir(exist_ok=True)
@@ -1705,12 +1717,13 @@ def main():
         precompress(out)
 
 
-def showcase(out):
+def showcase(out, live):
     """The landing page's showcase: per entry of showcase/shots.json its light and dark images
     (showcase/capture.mjs takes them from a built playground), sized so the page never shifts, in a
-    window frame; a `before` image beside them, a looping video over them where the capture made one."""
+    window frame; a `before` image beside them, a looping video over them where the capture made one.
+    The small entries go into one card grid after the rest."""
     spec, src = json.loads((SITE / "showcase/shots.json").read_text()), SITE / "showcase/img"
-    (out / "showcase").mkdir()
+    (out / "showcase").mkdir(exist_ok=True)
     size = lambda f: tuple(int.from_bytes(f.read_bytes()[o:o + 4], "big") for o in (16, 20))
 
     def pictures(stem, alt):
@@ -1725,21 +1738,28 @@ def showcase(out):
                         f'<img src="showcase/{stem}-{scheme}.png" width="{width}" height="{height}" alt="{alt if scheme == "light" else ""}" loading="lazy" decoding="async"></picture>')
             # the video plays over its poster, the still: site.js loads it near the viewport, never under reduced motion
             if (src / f"{stem}-{scheme}.webm").exists():
-                pics.append(f'<video class="shot-video shot-{scheme}" width="{width}" height="{height}" muted loop playsinline preload="none" aria-hidden="true" '
+                pics.append(f'<video class="shot-video shot-{scheme}" width="{width}" height="{height}" muted playsinline preload="none" aria-hidden="true" '
                             f'data-src="showcase/{stem}-{scheme}"></video>')
         return "".join(pics)
 
-    def window(stem, alt, label):
+    # a capture of a dialog has its own title bar: no window around it
+    dialogs = re.findall(r'<dialog id="([^"]+)"', (SITE / "play.html").read_text())
+    def window(stem, alt, label, crop=""):
+        if isinstance(crop, str) and (crop.startswith("dialog") or crop.lstrip("#") in dialogs):
+            return f'<div class="shot-win shot-dialog">{pictures(stem, alt)}</div>'
         return f'<div class="shot-win" data-label="{html.escape(label)}">{pictures(stem, alt)}</div>'
 
-    figures = []
+    figures, cards = [], []
     for s in spec["shots"]:
         name, alt = s["name"], html.escape(f'{s["title"]}: {s["caption"]}')
         if s.get("live"):
-            # a live editor in the same frame: its source as text until site.js starts the engine in view
-            figures.append(f'<figure class="shot shot-big shot-live" data-name="{html.escape(s["file"])}"><div class="shot-stage"><div class="shot-win" data-label="{html.escape(s["file"])} · live">'
-                           f'<div class="live-grid"><pre class="src live-src live-poster">{html.escape(s["text"])}</pre><div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div></div>'
+            # a live editor in the same frame: until site.js starts the engine in view, the build's run of
+            # its text stands there, findings underlined and the typeset text beside
+            lines, data = live[name]
+            figures.append(f'<figure class="shot shot-big shot-live" id="shot-{name}" data-name="{html.escape(s["file"])}"><div class="shot-stage"><div class="shot-win" data-label="{html.escape(s["file"])} · live">'
+                           f'<div class="live-grid"><pre class="src live-src live-poster"><code>{lines}</code></pre><div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div></div>'
                            f'<p class="muted live-status" aria-live="polite">{html.escape(s["status"])}</p></div></div>'
+                           f'<script type="application/json" class="ex-data">{data}</script>'
                            f'<figcaption><h3>{html.escape(s["title"])}</h3><p>{html.escape(s["caption"])}</p>'
                            f'<a class="shot-try" href="play/index.html">The full playground →</a></figcaption></figure>')
             continue
@@ -1751,13 +1771,18 @@ def showcase(out):
         try_it = f"play/index.html#{hash}"
         label = s.get("window", s["file"])
         tags = s.get("tags", ["Before", "After"])
-        stage = (f'<div class="shot-pair"><div><span class="shot-tag">{tags[0]}</span>{window(f"{name}-before", "", label)}</div>'
-                 f'<div><span class="shot-tag">{tags[1]}</span>{window(name, alt, label)}</div></div>'
-                 if (src / f"{name}-before-light.png").exists() else window(name, alt, label))
-        figures.append(f'<figure class="shot{" shot-big" if s.get("big") else ""}{" shot-wide" if s.get("wide") else ""}"><a class="shot-stage" href="{html.escape(try_it)}" tabindex="-1">{stage}</a>'
-                       f'<figcaption><h3>{html.escape(s["title"])}</h3><p>{html.escape(s["caption"])}</p>'
-                       f'<a class="shot-try" href="{html.escape(try_it)}">Try it in {html.escape(s["file"])} →</a></figcaption></figure>')
-    return "\n".join(figures)
+        # two captures of one dialog, the first behind the second and offset: its two pages at once
+        if s.get("stack") and (src / f"{name}-back-light.png").exists():
+            stage = f'<div class="shot-stack">{window(f"{name}-back", "", label, s.get("crop"))}{window(name, alt, label, s.get("crop"))}</div>'
+        else:
+            stage = (f'<div class="shot-pair"><div><span class="shot-tag">{tags[0]}</span>{window(f"{name}-before", "", label)}</div>'
+                     f'<div><span class="shot-tag">{tags[1]}</span>{window(name, alt, label, s.get("crop"))}</div></div>'
+                     if (src / f"{name}-before-light.png").exists() else window(name, alt, label, s.get("crop")))
+        (figures if s.get("big") or s.get("wide") else cards).append(
+            f'<figure class="shot{" shot-big" if s.get("big") or s.get("wide") else ""}{" shot-wide" if s.get("wide") else ""}"><a class="shot-stage" href="{html.escape(try_it)}" tabindex="-1">{stage}</a>'
+            f'<figcaption><h3>{html.escape(s["title"])}</h3><p>{html.escape(s["caption"])}</p>'
+            f'<a class="shot-try" href="{html.escape(try_it)}">Try it in {html.escape(s["file"])} →</a></figcaption></figure>')
+    return "\n".join(figures + [f'<div class="cards">{"".join(cards)}</div>'])
 
 
 def offline(out):

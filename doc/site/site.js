@@ -13,6 +13,14 @@
     label();
   };
   label();
+  // a phone's header: the links in a panel under a menu button
+  const menu = document.getElementById('menu'), top = menu?.closest('.top');
+  if (menu) {
+    const set = (on) => { top.classList.toggle('open', on); menu.setAttribute('aria-expanded', String(on)); };
+    menu.onclick = () => set(!top.classList.contains('open'));
+    document.addEventListener('click', (e) => { if (!top.contains(e.target) || e.target.closest('nav a')) set(false); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && top.classList.contains('open')) { set(false); menu.focus(); } });
+  }
 
   // Tabs: a tablist's buttons show the panel each controls.
   for (const list of document.querySelectorAll('.examples > .tabs')) {
@@ -1100,7 +1108,8 @@
   /** The findings' cards, then their rules' cards. */
   const findingCards = async (ds) => ds.map(lintCard).join('') + (await Promise.all([...new Set(ds.map((d) => d.code))].map(ruleNamed)))
     .filter(Boolean).map((r) => ruleCard(r, ruleLink(r.code))).join('');
-  for (const fig of document.querySelectorAll('.example:not(.live)')) {
+  // the examples, and the showcase's live window until its engine runs: the build's findings and text
+  for (const fig of document.querySelectorAll('.example:not(.live), .shot-live')) {
     const data = JSON.parse(fig.querySelector('.ex-data').textContent);
     fig.querySelector('.ex-side').innerHTML = paragraphs(data.ts ?? []);
     // A command before `\begin{document}` means what it means in the preamble.
@@ -1161,7 +1170,11 @@
     const worker = new Worker(URL.createObjectURL(new Blob([manifest.worker], { type: 'text/javascript' })));
     let line = Promise.resolve(), waiting = null, id = 0;
     worker.onmessage = ({ data }) => {
-      if (data.type === 'progress') return say(`${self.satexProgress.html(data.total ? data.loaded / data.total : null, 'loading SaTeX')} Loading SaTeX: ${MiB(data.loaded)} of ${MiB(data.total)} MiB`);
+      // a step with no size (unpacking, importing the kernel's caches) names itself; a download without a total says what came so far
+      if (data.type === 'progress') {
+        const step = { unpacking: 'Unpacking SaTeX…', importing: 'Preparing the kernel…' }[data.label];
+        return say(`${self.satexProgress.html(data.total ? data.loaded / data.total : null, 'loading SaTeX')} ${step ?? `Loading SaTeX${data.loaded ? `: ${MiB(data.loaded)}${data.total ? ` of ${MiB(data.total)}` : ''} MiB` : '…'}`}`);
+      }
       if (data.type === 'status') return;
       if (data.type === 'lsp') for (const m of data.out) if (m.method === 'textDocument/publishDiagnostics') found.set(m.params.uri, m.params.diagnostics);
       const w = waiting;
@@ -1332,9 +1345,9 @@
       reset.hidden = true;
     });
   }
-  // the showcase's live window: its source stands as text until the window has been in view a moment, then the engine starts
+  // the showcase's live window: the build's run stands there until the window has been in view a moment, then the engine starts
   for (const fig of document.querySelectorAll('.shot-live')) {
-    const poster = fig.querySelector('.live-poster');
+    const poster = fig.querySelector('.live-poster'), data = JSON.parse(fig.querySelector('.ex-data').textContent);
     let timer = 0, started = false;
     const go = async () => {
       if (started) return;
@@ -1342,7 +1355,7 @@
       io.disconnect();
       const host = Object.assign(document.createElement('div'), { className: 'src live-src' });
       host.style.minHeight = `${poster.offsetHeight}px`;
-      const t0 = performance.now(), first = poster.textContent;
+      const t0 = performance.now(), first = data.source;
       const live = await liveEditor(fig, host, fig.dataset.name, first);
       poster.replaceWith(host);
       await live.analyze();
@@ -1587,7 +1600,18 @@
     const sketchPad = () => `<a class="claim-draw" href="draw/index.html" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 24 24"><path pathLength="1" d="M8 22V9C8 3 20 3 20 10c0 6-9 6-12 2"/></svg><ol>${HITS.map(([s, c], i) => `<li style="--i:${i}"><span class="dr-sym">${s}</span><code class="dr-cmd">${esc(c)}</code></li>`).join('')}</ol></a>`;
     const effect = () => {
       if (effects[shown] === 'draw') { line.insertAdjacentHTML('beforeend', sketchPad()); return true; }
-      if (effects[shown] === 'stepper') { line.insertAdjacentHTML('beforeend', stepper()); return true; }
+      if (effects[shown] === 'stepper') {
+        // the trace hangs under the call it traces, its notch pointing at it, the call tinted as in the trace's first row
+        line.insertAdjacentHTML('beforeend', stepper());
+        const call = line.querySelector(':scope > code'), box = /** @type {HTMLElement} */ (line.lastElementChild);
+        if (call) {
+          call.classList.add('claim-call');
+          const left = Math.max(0, Math.min(call.offsetLeft, line.clientWidth - box.offsetWidth));
+          Object.assign(box.style, { marginLeft: `${left}px`, marginRight: '0' });
+          box.style.setProperty('--notch', `${call.offsetLeft + call.offsetWidth / 2 - left}px`);
+        }
+        return true;
+      }
       if (effects[shown] === 'catcodes') { annotate(); return true; }
       const wrapped = !!WRAPS[effects[shown]];
       for (const [re, wrap] of WRAPS[effects[shown]] ?? []) line.innerHTML = line.innerHTML.replace(re, wrap);
@@ -1700,12 +1724,14 @@
       v.innerHTML = `<source type="video/webm" src="${v.dataset.src}.webm"><source type="video/mp4" src="${v.dataset.src}.mp4">`;
       v.load();
     };
-    const stop = (w) => { for (const v of w.querySelectorAll('video')) { v.pause(); v.classList.remove('playing'); } w.closest('.shot')?.classList.remove('shot-focus'); };
+    // out of focus a clip holds the frame it is at: it never jumps back to its start
+    const stop = (w) => { for (const v of w.querySelectorAll('video')) v.pause(); w.closest('.shot')?.classList.remove('shot-focus'); };
     const play = (w) => {
       const v = shown(w);
       if (!v) return;
       load(v);
-      v.currentTime = 0;
+      // on from where it stopped; a clip played to its end, which holds its last frame, starts over
+      if (v.ended) v.currentTime = 0;
       v.addEventListener('playing', () => v.classList.add('playing'), { once: true });
       v.play().catch(() => {});
       w.closest('.shot')?.classList.add('shot-focus');
