@@ -342,8 +342,78 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
   return { init, run, lsp, reset, bundle, bundles, project, read, caches, uncache };
 }
 
+/* exported LocalEngine */
+/**
+ * The engine under `satex gui` (src/cli/gui/mod.rs): SatexEngine's calls, answered by the local server
+ * on this machine's files, TeX installation and native language server. Nothing is downloaded.
+ * @param {string} base the site's URL
+ * @param {(status: any) => void} [status]
+ * @param {(url: string) => any} [hold] keeps a connection open while this engine lives (an EventSource)
+ */
+function LocalEngine(base, status = () => {}, hold = (url) => new EventSource(url)) {
+  const session = Math.random().toString(36).slice(2);
+  const url = (path, query = {}) => `${base}__satex/${path}?${new URLSearchParams(query)}`;
+  async function call(path, init = {}, query = {}) {
+    const r = await fetch(url(path, query), init);
+    if (!r.ok) throw new Error(`${path}: ${r.status}`);
+    return r;
+  }
+  const post = (path, body, query = {}) => call(path, { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body) }, query);
+  const nothing = { lines: [], status: 0, ms: 0 };
+  let dir = '', held = null;
+  return {
+    async init() {
+      const local = await (await call('local')).json();
+      dir = local.dir;
+      return { samples: {}, imported: nothing, local };
+    },
+    async run(args, edits = {}, cwd = dir) {
+      for (const [path, text] of Object.entries(edits)) await call('file', { method: 'PUT', body: text }, { path }).catch(() => {});
+      return (await post('run', { args, cwd })).json();
+    },
+    /** One message: the server streams its status lines, then the replies. A newer text stops the run, as in the wasm. */
+    async lsp(message, cancelled = () => false) {
+      // the server ends the session, and its language server, once this connection closes
+      held ??= hold(url('session', { s: session }));
+      const watch = setInterval(() => { if (cancelled()) { clearInterval(watch); post('lsp/cancel', '', { s: session }).catch(() => {}); } }, 50);
+      try {
+        const r = await post('lsp', message, { s: session });
+        const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
+        for (let rest = ''; ;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const lines = (rest + value).split('\n');
+          rest = lines.pop();
+          for (const line of lines.filter(Boolean)) {
+            const m = JSON.parse(line);
+            if (Array.isArray(m)) return m;
+            if (m.error) throw new Error(m.error);
+            status(m.params);
+          }
+        }
+        throw new Error('the language server stopped');
+      } finally { clearInterval(watch); }
+    },
+    reset: (args = [], cwd = dir) => post('lsp/reset', { args, cwd }, { s: session }),
+    bundle: async () => nothing,
+    bundles: async () => nothing,
+    /** Edits are saved to the project's files; nothing leaves it in bulk, only what `removed` names. */
+    async project(at, given, replace = false, removed = []) {
+      for (const name of removed) await call('file', { method: 'DELETE' }, { path: `${at}/${name}` }).catch(() => {});
+      for (const [name, data] of Object.entries(given)) await call('file', { method: 'PUT', body: data }, { path: `${at}/${name}` }).catch(() => {});
+    },
+    async read(path) {
+      const r = await call('file', {}, { path }).catch(() => null);
+      return { path, data: r ? new Uint8Array(await r.arrayBuffer()) : null };
+    },
+    caches: () => [],
+    uncache: async () => {},
+  };
+}
+
 if (typeof module === 'object' && module.exports) {
   module.exports = SatexEngine;
+  module.exports.LocalEngine = LocalEngine;
 } else if (typeof importScripts === 'function') {
   let engine = null;
   /** The cache directory in IndexedDB: one record per file, keyed [binary, path]; a load drops
@@ -407,6 +477,11 @@ if (typeof module === 'object' && module.exports) {
       if (data.type === 'init') {
         const given = data.given ?? {};
         cancelFlag = data.cancel ?? null;
+        if (data.manifest.local) {
+          engine = LocalEngine(data.base, (s) => self.postMessage({ type: 'status', ...s }));
+          self.postMessage({ type: 'ready', ...(await engine.init()) });
+          return;
+        }
         importScripts(given.js ? URL.createObjectURL(new Blob([given.js], { type: 'text/javascript' })) : data.base + data.manifest.js);
         // At most every 100 ms, and every phase change.
         let last = 0, phase = '';
@@ -422,11 +497,11 @@ if (typeof module === 'object' && module.exports) {
       } else if (data.type === 'bundles') {
         self.postMessage({ type: 'bundle', ids: data.entries.map((e) => e.id), ...(await engine.bundles(data.base, data.entries, data.given)) });
       } else if (data.type === 'project') {
-        engine.project(data.dir, data.files ?? {}, data.replace, data.removed);
+        await engine.project(data.dir, data.files ?? {}, data.replace, data.removed);
       } else if (data.type === 'read') {
-        self.postMessage({ type: 'file', ...engine.read(data.path) });
+        self.postMessage({ type: 'file', ...(await engine.read(data.path)) });
       } else if (data.type === 'reset') {
-        engine.reset(data.args, data.cwd);
+        await engine.reset(data.args, data.cwd);
       } else if (data.type === 'run') {
         const encode = (t) => new TextEncoder().encode(t);
         const edits = Object.fromEntries(Object.entries(data.edits).map(([path, text]) => [path, encode(text)]));

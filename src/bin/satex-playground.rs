@@ -12,7 +12,8 @@
 //! builds beside it (`--out` with `.next`); the new one replaces it when done.
 //!
 //! The playground's Compile button posts to this server, which builds the
-//! project with the machine's TeX (`satex-playground/compile.rs`).
+//! project with the machine's TeX (`src/cli/gui/compile.rs`). `satex gui`
+//! serves the same pages on a project of this machine.
 //!
 //! It needs what the site's workflow has: Python 3, pandoc and pdftocairo,
 //! git, and `rustup`. The Rust target `wasm32-unknown-emscripten` is added
@@ -22,8 +23,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-#[path = "satex-playground/compile.rs"]
-mod compile;
+use satex::cli::gui::{compile, http};
 
 fn main() -> ExitCode {
     match run() {
@@ -56,33 +56,34 @@ fn run() -> Result<(), String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let dev = dev.then(|| root.join("doc/site"));
     take_over(&port);
+    let port: u16 = port.parse().map_err(|_| format!("`{port}` is no port"))?;
     if dev.is_some() && root.join(&out).join("play/index.html").is_file() {
-        let port = free_port(&port)?;
-        compile::warm(&root.join(&out), &root.join("doc/site/examples"));
+        let listener = http::bind(port)?;
+        compile::warm(&compile::root(&root.join(&out)), &root.join("doc/site/examples"));
+        let port = listener.local_addr().map_err(|e| e.to_string())?.port();
         println!("playground: dev mode on the existing build in {} at http://127.0.0.1:{port}/play/", out.display());
-        return serve(&root.join(&out), port.parse().map_err(|_| "no port".to_string())?, dev);
+        return serve(&root.join(&out), listener, dev);
     }
     let site = root.join(&out);
-    let port = free_port(&port)?;
-    let url = format!("http://127.0.0.1:{port}/play/");
-    let port = port.parse().map_err(|_| "no port".to_string())?;
+    let listener = http::bind(port)?;
+    let url = format!("http://127.0.0.1:{}/play/", listener.local_addr().map_err(|e| e.to_string())?.port());
     // A last build serves at once; this one replaces it when done.
     if site.join("play/index.html").is_file() {
         println!("playground: serving the last build at {url} while rebuilding. Ctrl+C stops");
         let next = site.clone();
         std::thread::spawn(move || match build(root, &next, profile) {
             Ok(()) => {
-                compile::warm(&next, &root.join("doc/site/examples"));
+                compile::warm(&compile::root(&next), &root.join("doc/site/examples"));
                 say("built. Reload the page to load this build");
             }
             Err(message) => eprintln!("playground: {message}. The last build stays"),
         });
-        return serve(&site, port, dev);
+        return serve(&site, listener, dev);
     }
     build(root, &site, profile)?;
-    compile::warm(&site, &root.join("doc/site/examples"));
+    compile::warm(&compile::root(&site), &root.join("doc/site/examples"));
     println!("playground: serving {url}. Ctrl+C stops");
-    serve(&site, port, dev)
+    serve(&site, listener, dev)
 }
 
 /// Builds the site into `site.next`, then swaps it in for `site`.
@@ -159,8 +160,7 @@ fn build(root: &Path, site: &Path, profile: &str) -> Result<(), String> {
 /// does: the type by extension, the `.gz` beside a file to a client that
 /// takes gzip (`build.py --precompress`), and pages revalidated while
 /// assets, whose names carry their content's hash, are kept for good.
-fn serve(site: &Path, port: u16, dev: Option<PathBuf>) -> Result<(), String> {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", port)).map_err(|e| format!("port {port}: {e}"))?;
+fn serve(site: &Path, listener: std::net::TcpListener, dev: Option<PathBuf>) -> Result<(), String> {
     let site = site.canonicalize().map_err(|e| format!("{}: {e}", site.display()))?;
     for stream in listener.incoming().flatten() {
         let (site, dev) = (site.clone(), dev.clone());
@@ -172,93 +172,34 @@ fn serve(site: &Path, port: u16, dev: Option<PathBuf>) -> Result<(), String> {
 }
 
 fn respond(mut stream: std::net::TcpStream, site: &Path, dev: Option<&Path>) -> std::io::Result<()> {
-    use std::io::{BufRead, Write};
-    let mut reader = std::io::BufReader::new(stream.try_clone()?);
-    let mut request = String::new();
-    reader.read_line(&mut request)?;
-    let (mut gzip, mut length) = (false, 0);
-    loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line)? <= 2 {
-            break;
-        }
-        let line = line.to_ascii_lowercase();
-        gzip |= line.starts_with("accept-encoding:") && line.contains("gzip");
-        length = line.strip_prefix("content-length:").and_then(|n| n.trim().parse().ok()).unwrap_or(length);
-    }
-    let mut words = request.split_whitespace();
-    let (method, target) = (words.next().unwrap_or_default(), words.next().unwrap_or("/"));
-    let path = target.split(['?', '#']).next().unwrap_or("/");
-    let path = percent_encoding::percent_decode_str(path).decode_utf8_lossy().into_owned();
+    let req = http::Request::read(&stream)?;
+    let (method, path) = (req.method.as_str(), req.path.as_str());
     // a newer server asks for the port ([`take_over`])
     if method == "POST" && path == "/__satex/quit" {
-        stream.write_all(
-            b"HTTP/1.1 200 OK\r\nx-satex-playground: quit\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        )?;
-        let _ = stream.flush();
+        http::status(&mut stream, "200 OK", "x-satex-playground: quit\r\n")?;
+        let _ = std::io::Write::flush(&mut stream);
         std::process::exit(0);
     }
     if let Some(rest) = path.strip_prefix("/__satex/compile") {
-        let mut body = vec![0; length];
-        std::io::Read::read_exact(&mut reader, &mut body)?;
-        return compile::respond(&mut stream, method, rest, &body, site);
+        return compile::respond(&mut stream, method, rest, &req.body, &compile::root(site), None);
     }
-    if let Some(src) = dev {
-        if path == "/__dev/events" {
-            return watch(stream, src);
-        }
-        if let Some((name, body)) = dev_source(&path, site, src) {
-            return send(&mut stream, method, &name, "no-cache", false, dev_inject(&name, body));
-        }
+    let Some(src) = dev else { return http::file(&mut stream, &req, site, |_, body| body) };
+    if path == "/__dev/events" {
+        return watch(stream, src);
     }
-    let mut file = site.join(path.trim_start_matches('/'));
-    if file.is_dir() && !path.ends_with('/') {
-        let head = format!(
-            "HTTP/1.1 301 Moved Permanently\r\nLocation: {path}/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-        );
-        return stream.write_all(head.as_bytes());
-    }
-    if file.is_dir() {
-        file.push("index.html");
-    }
-    // Nothing outside the site, whatever the path spells.
-    let Some(file) = file.canonicalize().ok().filter(|f| f.starts_with(site) && f.is_file()) else {
-        let head = "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 10\r\nConnection: close\r\n\r\nnot found\n";
-        return stream.write_all(head.as_bytes());
+    let found = match path {
+        "/__dev.js" => Some(("dev.js".into(), include_bytes!("../../doc/site/dev.js").to_vec())),
+        // version `dev`: it asks the network first
+        "/play/sw.js" => std::fs::read_to_string(src.join("sw.js"))
+            .ok()
+            .map(|w| ("sw.js".into(), w.replace("__VERSION__", "dev").into_bytes())),
+        "/play/" | "/play/index.html" => http::page(site, Some(src), |_| ()).map(|p| ("index.html".into(), p)),
+        _ => http::source(path, src),
     };
-    let name = file.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
-    let zipped = file.with_file_name(format!("{name}.gz"));
-    let encoded = gzip && zipped.is_file();
-    let body = std::fs::read(if encoded { &zipped } else { &file })?;
-    let body = if dev.is_some() && !encoded { dev_inject(&name, body) } else { body };
-    send(&mut stream, method, &name, cache_control(&name), encoded, body)
-}
-
-pub(crate) fn send(
-    stream: &mut std::net::TcpStream,
-    method: &str,
-    name: &str,
-    cache: &str,
-    encoded: bool,
-    body: Vec<u8>,
-) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut head = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: {cache}\r\nVary: Accept-Encoding\r\nConnection: close\r\n",
-        content_type(name),
-        body.len(),
-    );
-    if encoded {
-        head.push_str("Content-Encoding: gzip\r\n");
+    match found {
+        Some((name, body)) => http::send(&mut stream, method, &name, "no-cache", false, dev_inject(&name, body)),
+        None => http::file(&mut stream, &req, site, dev_inject),
     }
-    // Cross-origin isolated from the first load, as doc/site/sw.js makes it later: the page shares
-    // a SharedArrayBuffer with its worker, which a run polls to stop for a newer text.
-    head.push_str("Cross-Origin-Opener-Policy: same-origin\r\nCross-Origin-Embedder-Policy: credentialless\r\n\r\n");
-    stream.write_all(head.as_bytes())?;
-    if method != "HEAD" {
-        stream.write_all(&body)?;
-    }
-    stream.flush()
 }
 
 /// Dev mode: a page gets the reload client.
@@ -267,48 +208,6 @@ fn dev_inject(name: &str, body: Vec<u8>) -> Vec<u8> {
         return body;
     }
     String::from_utf8_lossy(&body).replace("</body>", "<script src=\"/__dev.js\"></script></body>").into_bytes()
-}
-
-/// Dev mode: what `path` is when read from `doc/site` instead of the build:
-/// the reload client, the service worker (version `dev`: it asks the network first), a hashed asset (`style-0123456789ab.css`) whose source
-/// is `doc/site/style.css`, or the playground page filled from `play.html`
-/// into the built page, with the built manifest and the current `worker.js`.
-fn dev_source(path: &str, site: &Path, src: &Path) -> Option<(String, Vec<u8>)> {
-    if path == "/__dev.js" {
-        return Some(("dev.js".into(), include_bytes!("../../doc/site/dev.js").to_vec()));
-    }
-    if path == "/play/sw.js" {
-        let worker = std::fs::read_to_string(src.join("sw.js")).ok()?.replace("__VERSION__", "dev");
-        return Some(("sw.js".into(), worker.into_bytes()));
-    }
-    if path == "/play/" || path == "/play/index.html" {
-        let built = std::fs::read_to_string(site.join("play/index.html")).ok()?;
-        let (lo, hi) = (built.find("<main>")? + 6, built.find("</main>")?);
-        let marker = "id=\"satex-play\" type=\"application/json\">";
-        let m = built.find(marker)? + marker.len();
-        let manifest = &built[m..m + built[m..].find("</script>")?];
-        let mut manifest: serde_json::Value = serde_json::from_str(&manifest.replace("<\\/", "</")).ok()?;
-        manifest["worker"] = std::fs::read_to_string(src.join("worker.js")).ok()?.into();
-        let json = manifest.to_string().replace("</", "<\\/");
-        let page = std::fs::read_to_string(src.join("play.html")).ok()?;
-        let page = page
-            .replace("{{manifest}}", &json)
-            .replace("{{root}}", "../")
-            .replace("{{playjs}}", "play/playground.js")
-            .replace("{{drawjs}}", "draw.js")
-            .replace("{{dialogsjs}}", "dialogs.js")
-            .replace("{{layersjs}}", "layers.js")
-            .replace("{{viewsjs}}", "views.js");
-        return Some(("index.html".into(), format!("{}{page}{}", &built[..lo], &built[hi..]).into_bytes()));
-    }
-    let name = path.rsplit('/').next()?;
-    let (stem, ext) = name.split_once('.')?;
-    let stem = stem
-        .rsplit_once('-')
-        .filter(|(_, h)| h.len() == 12 && h.bytes().all(|b| b.is_ascii_hexdigit()))
-        .map_or(stem, |(s, _)| s);
-    let file = src.join(format!("{stem}.{ext}"));
-    (matches!(ext, "css" | "js") && file.is_file()).then(|| (name.to_string(), std::fs::read(file).unwrap_or_default()))
 }
 
 /// Dev mode: the newest modification time under `dir`, for CSS and the rest.
@@ -345,40 +244,8 @@ fn watch(mut stream: std::net::TcpStream, dir: &Path) -> std::io::Result<()> {
     }
 }
 
-/// How long a browser may keep a file: for good when its name carries its
-/// content's hash (`site-d8283f8c8028.js`, as `build.py` names assets), else
-/// asking again each time, so a rebuilt page shows at once.
-fn cache_control(name: &str) -> &'static str {
-    let hashed = name
-        .split('.')
-        .next()
-        .and_then(|stem| stem.rsplit_once('-'))
-        .is_some_and(|(_, h)| h.len() == 12 && h.bytes().all(|b| b.is_ascii_hexdigit()));
-    if hashed { "public, max-age=31536000, immutable" } else { "no-cache" }
-}
-
 fn say(what: &str) {
     println!("playground: {what}");
-}
-
-/// The media type a static host gives a file by its extension.
-pub(crate) fn content_type(name: &str) -> &'static str {
-    match name.rsplit('.').next().unwrap_or_default() {
-        "html" => "text/html; charset=utf-8",             // not prose
-        "js" | "mjs" => "text/javascript; charset=utf-8", // not prose
-        "css" => "text/css; charset=utf-8",               // not prose
-        "json" => "application/json",
-        "svg" => "image/svg+xml",
-        "png" => "image/png",
-        "ico" => "image/x-icon",
-        "wasm" => "application/wasm",
-        "gz" => "application/gzip",
-        "zip" => "application/zip",
-        "woff2" => "font/woff2",
-        "pdf" => "application/pdf",
-        "txt" | "tex" | "md" => "text/plain; charset=utf-8", // not prose
-        _ => "application/octet-stream",
-    }
 }
 
 /// Asks an older playground server on `port` to quit, so this one serves there.
@@ -400,15 +267,6 @@ fn take_over(port: &str) {
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-}
-
-/// `port`, or the next one up that nothing listens on.
-fn free_port(port: &str) -> Result<String, String> {
-    let first: u16 = port.parse().map_err(|_| format!("`{port}` is no port"))?;
-    (first..first.saturating_add(100))
-        .find(|p| std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
-        .map(|p| p.to_string())
-        .ok_or_else(|| format!("no free port from {first} on"))
 }
 
 /// A `cargo` whose `rustc` has Rust's `wasm32-unknown-emscripten` standard
@@ -492,24 +350,4 @@ fn install_emsdk(root: &Path) -> Result<PathBuf, String> {
 fn step(command: &mut Command) -> Result<(), String> {
     let status = command.status().map_err(|e| format!("cannot run {:?}: {e}", command.get_program()))?;
     status.success().then_some(()).ok_or_else(|| format!("{:?} failed ({status})", command.get_program()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hashed_assets_are_kept_and_pages_asked_again() {
-        assert_eq!(cache_control("site-d8283f8c8028.js"), "public, max-age=31536000, immutable");
-        assert_eq!(cache_control("satex-aa1e200b2fdc.wasm"), "public, max-age=31536000, immutable");
-        assert_eq!(cache_control("index.html"), "no-cache");
-        assert_eq!(cache_control("guide.html"), "no-cache");
-    }
-
-    #[test]
-    fn the_wasm_is_served_as_wasm() {
-        assert_eq!(content_type("satex-aa1e200b2fdc.wasm"), "application/wasm");
-        assert_eq!(content_type("pdftex-e876c77dca82.bin.gz"), "application/gzip");
-        assert_eq!(content_type("index.html"), "text/html; charset=utf-8");
-    }
 }

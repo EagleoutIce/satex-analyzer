@@ -338,6 +338,11 @@ fn run() -> Result<(), String> {
     if let Some(Command::Completions { shell, target }) = &cli.command {
         return completions(shell, target.as_deref());
     }
+    #[cfg(not(target_os = "emscripten"))]
+    if let Some(Command::Gui { dir, port, site, no_open, dev }) = &cli.command {
+        let dir = dir.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        return satex::cli::gui::run(&dir, *port, site.as_deref(), !no_open, *dev);
+    }
     anstream::ColorChoice::from(cli.color).write_global();
     // Progress is for a person reading text, not for a program reading output.
     if !matches!(cli.format, Format::Text) {
@@ -430,8 +435,8 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool) -> Result<(), 
     // again once the project and the magic comments are read; commands that
     // tokenize without an analysis, such as `tokens`, keep this one.
     satex::engine::source::set_encoding(satex::plugins::Plugins::sniff_engine(&cfg, &source).encoding());
-    if let Some(Command::Lsp { port, host, .. }) = &cli.command {
-        return satex::cli::lsp::run(&cfg, cli.file.as_deref(), *port, host.as_deref());
+    if let Some(Command::Lsp { port, host, lines, .. }) = &cli.command {
+        return satex::cli::lsp::run(&cfg, cli.file.as_deref(), *port, host.as_deref(), *lines);
     }
     if let Some(Command::Cache { action: Some(action) }) = &cli.command {
         let mut out = anstream::stdout().lock();

@@ -592,7 +592,7 @@
   // ---------------------------------------------------------------- editor
 
   let editor; // { text(), set(text), diagnostics(list), apply(edits), cursor(), select(c), word() }
-  let version = 0, synced = 0, analyzedVersion = 0, timer = null, checkStart = 0, retryCompletion = false;
+  let version = 0, synced = 0, saved = 0, analyzedVersion = 0, timer = null, checkStart = 0, retryCompletion = false;
   let typedAt = 0;
   function changed() {
     version++;
@@ -657,6 +657,11 @@
   function push() {
     if (!state.file || state.file in state.ro) return false;
     state.texts[state.file] = editor.text();
+    // `satex gui` saves each text to its file as it is sent
+    if (manifest.local && saved !== version) {
+      saved = version;
+      post({ type: 'project', dir: state.dir, files: { [state.file]: new TextEncoder().encode(editor.text()) } });
+    }
     if (data(state.file) && synced !== version) {
       synced = version;
       post({ type: 'project', dir: state.dir, files: { [state.file]: new TextEncoder().encode(editor.text()) } });
@@ -3529,7 +3534,7 @@
   // ---------------------------------------------------------------- runs
 
   /** The kernel's flags; a project in its own directory under /work reads the playground's satex.yaml by name. */
-  const flags = () => [...manifest.kernels[state.kernel].args, ...(state.dir !== '/work' ? ['--config', '/work/satex.yaml'] : []), ...configFlags()];
+  const flags = () => [...manifest.kernels[state.kernel].args, ...(state.dir !== '/work' && !manifest.local ? ['--config', '/work/satex.yaml'] : []), ...configFlags()];
   const command = () => words(args.value).filter((x) => x !== 'satex' && !x.startsWith('-'))[0];
   /** Plain `lint` repeats what the language server shows: it runs only when asked to. */
   const plainLint = () => words(args.value).filter((x) => x !== 'satex').join(' ') === 'lint';
@@ -4406,7 +4411,7 @@
     writtenShow();
   });
   /* PDF: Compile builds the project with the TeX of the machine serving the playground (`cargo playground`,
-   * src/bin/satex-playground/compile.rs). The request and the SyncTeX parse run in a worker of their own,
+   * src/cli/gui/compile.rs). The request and the SyncTeX parse run in a worker of their own,
    * so the analysis stays responsive. Pages come as images; SyncTeX links them to the source both ways. */
   const COMPILE = `${location.origin}/__satex/compile`;
   /** The compile worker's code: posts the build, fetches and parses its SyncTeX data and the words of its pages. */
@@ -6015,7 +6020,7 @@
     return named.length ? named : Object.keys(texts).filter((n) => /\\documentclass/.test(texts[n]) && /\\begin\s*\{document\}/.test(texts[n]));
   }
   /** A new project: a .zip or a folder, its root found, the examples set aside. */
-  async function project(files, label, root = null) {
+  async function project(files, label, root = null, dir = '/work/upload') {
     sync();
     const decoder = new TextDecoder();
     const texts = Object.fromEntries(Object.entries(files).filter(([n]) => TEXT.test(n)).sort(([a], [b]) => a.localeCompare(b)).map(([n, d]) => [n, decoder.decode(d)]));
@@ -6023,7 +6028,7 @@
     if (!found.length) throw new Error('no root document: no file has \\documentclass and \\begin{document}');
     const first = root in texts ? root : found[0];
     manualKernel = false;
-    Object.assign(state, { dir: '/work/upload', texts, root: first, file: first, open: [first], files: Object.keys(texts), example: null, upload: true, ro: {}, bins: Object.fromEntries(Object.entries(files).filter(([n]) => !TEXT.test(n))) });
+    Object.assign(state, { dir, texts, root: first, file: first, open: [first], files: Object.keys(texts), example: null, upload: true, ro: {}, bins: Object.fromEntries(Object.entries(files).filter(([n]) => !TEXT.test(n))) });
     post({ type: 'project', dir: state.dir, files, replace: true });
     redraw();
     editor.set(texts[state.file]);
@@ -6032,6 +6037,13 @@
     await restart();
     args.value = 'lint';
     outBox.hidden = true;
+  }
+  /** `satex gui`: the project is the folder it serves, its texts read from there (src/cli/gui/mod.rs). */
+  async function openLocal({ dir, name, root, files }) {
+    $('play-exsect').hidden = $('play-local-note').hidden = true;
+    const texts = {};
+    for (const [n, bytes] of files) if (TEXT.test(n) && bytes <= LIMIT) texts[n] = (await ask({ type: 'read', path: `${dir}/${n}` })).data ?? new Uint8Array();
+    await project(texts, name, root, dir);
   }
   /** Single files join the open project; images and the like only its file system. */
   async function add(files) {
@@ -6050,6 +6062,8 @@
   async function upload(entries) {
     if (!editor || !entries.length) return;
     const whole = entries.length > 1 || /\.zip$/i.test(entries[0][0]);
+    // `satex gui` works on its own folder: another one is another `satex gui DIR`
+    if (whole && manifest.local) return toast(`This page works on ${manifest.local.dir}. Run satex gui in another folder to open that one.`);
     if (whole) bootOpen(`Opening ${entries.length === 1 ? entries[0][0] : entries[0][0].split('/')[0]}`);
     try {
       const total = entries.reduce((n, [, f]) => n + f.size, 0);
@@ -6511,7 +6525,7 @@
     offlineBox.title = title;
   };
   async function offlineSetup() {
-    if (!navigator.serviceWorker || !/^https?:$/.test(location.protocol) || !self.caches) return;
+    if (manifest.local || !navigator.serviceWorker || !/^https?:$/.test(location.protocol) || !self.caches) return;
     try {
       await navigator.serviceWorker.register(`${base}play/sw.js`);
       await navigator.serviceWorker.ready;
@@ -6592,7 +6606,7 @@
     const link = hash.startsWith('s=') ? await restore(hash.slice(2)) : null;
     if (hash.startsWith('open=')) history.replaceState(null, '', location.pathname);
     const ex = link ? link.x : hash in sampleTexts && !shared.has(hash) ? hash : projectOf(hash) ?? manifest.sample;
-    const kept = drafts(), restored = Object.keys(kept.texts ?? {}).filter((n) => typeof kept.texts[n] === 'string');
+    const kept = manifest.local ? {} : drafts(), restored = Object.keys(kept.texts ?? {}).filter((n) => typeof kept.texts[n] === 'string');
     state.texts = { ...sampleTexts, ...Object.fromEntries(restored.map((n) => [n, kept.texts[n]])), ...(link?.x ? link.p : {}) };
     if (kept.lists && typeof kept.lists === 'object') state.lists = Object.fromEntries(Object.entries(kept.lists).filter(([ex, l]) => ex in sampleTexts && Array.isArray(l) && l.every((n) => n in state.texts)));
     if (restored.length) toast(`Your edits to ${restored.slice(0, 3).join(', ')}${restored.length > 3 ? ` and ${restored.length - 3} more` : ''} are restored from this browser.`);
@@ -6620,7 +6634,8 @@
     button.disabled = false;
     if (setting) cfgFromLink(setting);
     if (asked && !link) widgetAsked(asked);
-    if (link) await openLink(link);
+    if (ready.local) await openLocal(ready.local);
+    else if (link) await openLink(link);
     else await example(ex, { file: shared.has(hash) ? hash : ex });
     const opening = hash.match(/^open=(.+):(\d+)$/);
     if (opening) await openPlace(opening[1], { line: Number(opening[2]) - 1, character: 0 });

@@ -1,20 +1,17 @@
 //! The server inside the browser playground (`doc/site/worker.js`): no
 //! threads, no stdio. `satex lsp` sets up the engine and returns with the
 //! runtime alive. The page then hands each JSON-RPC message to `satex_lsp`,
-//! which answers with the JSON array of messages to send back. While a
+//! which answers with the JSON array of messages to send back ([`Batch`]). While a
 //! message runs, `satex_status` (src/lsp/wasm-status.js) hands the page what
 //! the engine is doing, as `satex/status` does for an editor.
 
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char};
 
-use lsp_server::{Message, Notification, Response};
-
-use super::{Engine, notification, respond, server_capabilities};
+use super::batch::Batch;
 
 struct Local {
-    engine: Engine,
-    outbox: crossbeam_channel::Receiver<Notification>,
+    batch: Batch,
     reply: CString,
 }
 
@@ -32,60 +29,14 @@ pub(super) fn cancelled() -> bool {
 }
 
 pub fn serve(cfg: crate::project::config::Config, root: std::path::PathBuf, main: Option<std::path::PathBuf>) -> ! {
-    let (tx, outbox) = crossbeam_channel::unbounded();
-    let engine = Engine::new(cfg, root, main, tx);
+    let batch = Batch::new(cfg, root, main);
     crate::util::progress::listen(Some(Box::new(|now: &crate::util::progress::Status| {
         if let Some(json) = serde_json::to_string(now).ok().and_then(|j| CString::new(j).ok()) {
             unsafe { satex_status(json.as_ptr()) }
         }
     })));
-    LOCAL.set(Some(Local { engine, outbox, reply: CString::default() }));
+    LOCAL.set(Some(Local { batch, reply: CString::default() }));
     unsafe { emscripten_exit_with_live_runtime() }
-}
-
-impl Local {
-    /// Handles one message. An edit only updates the text, so a hover or a
-    /// completion asked while typing is answered from the last analysis;
-    /// the page sends `satex/analyze` once the typing pauses.
-    fn message(&mut self, text: &str) -> Vec<Message> {
-        let engine = &mut self.engine;
-        let mut out = match serde_json::from_str::<Message>(text) {
-            Ok(Message::Request(req)) => vec![Message::Response(match req.method.as_str() {
-                "initialize" => Response::new_ok(req.id, serde_json::json!({"capabilities": server_capabilities()})),
-                "shutdown" => Response::new_ok(req.id, ()),
-                "textDocument/linkedEditingRange" => {
-                    let found = super::linked(&req, |uri| engine.docs.get(uri).map(|d| &d.text));
-                    Response::new_ok(req.id, found.unwrap_or(serde_json::Value::Null))
-                }
-                _ => respond(
-                    &mut |m| {
-                        engine.step(m);
-                        true
-                    },
-                    req,
-                ),
-            })],
-            // `{"files": true}`: files outside the documents changed, so all run again
-            Ok(Message::Notification(not)) if not.method == "satex/analyze" => {
-                if not.params.get("files").is_some_and(|f| f.as_bool() == Some(true)) {
-                    engine.outside_changed();
-                }
-                engine.flush();
-                vec![]
-            }
-            // An opened document waits for `satex/analyze` too: the page
-            // opens a project's files together and asks for one run.
-            Ok(Message::Notification(not)) => {
-                if let Some(m) = notification(not, |uri| engine.docs.get(uri).map(|d| d.text.as_str())) {
-                    engine.step(m);
-                }
-                vec![]
-            }
-            _ => vec![],
-        };
-        out.extend(self.outbox.try_iter().map(Message::Notification));
-        out
-    }
 }
 
 /// # Safety
@@ -95,7 +46,7 @@ pub unsafe extern "C" fn satex_lsp(text: *const c_char) -> *const c_char {
     let text = unsafe { CStr::from_ptr(text) }.to_string_lossy();
     LOCAL.with_borrow_mut(|local| {
         let Some(local) = local else { return c"[]".as_ptr() };
-        let out = serde_json::to_string(&local.message(&text)).unwrap_or_else(|_| "[]".into());
+        let out = serde_json::to_string(&local.batch.message(&text)).unwrap_or_else(|_| "[]".into());
         local.reply = CString::new(out).unwrap_or_default();
         local.reply.as_ptr()
     })

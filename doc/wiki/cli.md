@@ -34,6 +34,22 @@ source <(satex completions zsh)
 satex completions fish > ~/.config/fish/completions/satex.fish
 ```
 
+## The playground on your machine
+
+`satex gui [DIR]` opens the browser playground on the project in `DIR`, the current directory by default. A file names the root document, its folder the project.
+It differs from the web playground in four ways:
+
+- The project's files are the files in `DIR`. Hidden and git-ignored files are left out. Edits are saved to the files as you type.
+- The TeX packages are those installed on your computer, found by kpathsea. Nothing is downloaded.
+- The language server is the native `satex`, not the WebAssembly build. It is faster and reads the project's `satex.yaml`.
+- Compile builds the PDF with your TeX, in a copy of the project under the cache directory.
+
+`satex gui` prints the address and opens it in the default browser. `--no-open` only prints it. `--port N` picks the port, 8800 by default, or the next free one above it.
+The server listens on 127.0.0.1 only. The address carries a random token, and the server answers only a browser that has it. Other users and other web sites cannot reach the project.
+A file that is not UTF-8 is never overwritten, and a file with `\r\n` line ends keeps them.
+
+The pages come from a built site: `share/satex/site` beside the binary, or `--site DIR`. In a checkout of satex, `cargo playground` builds one in `target/site`, which `satex gui` finds by itself.
+
 ## Command tree as JSON
 
 `satex completions json` prints the subcommands, flags, value names, possible values, query names and config keys as JSON. It is hidden from `--help`. Tools such as the web playground use it.

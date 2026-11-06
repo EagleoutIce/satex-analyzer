@@ -11,11 +11,15 @@
 //! `GET /__satex/compile/ID/FILE` serves what a build wrote, `GET
 //! /__satex/compile` says the server compiles. A static host has none of
 //! this, so the page offers Compile only where the probe answers.
+//! Under `satex gui` a build starts from a copy of the project's directory
+//! (`base`), the page's texts laid over it.
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::Ordering::Relaxed;
 
 use serde_json::{Value, json};
+
+use super::http::{content_type, send};
 
 /// Builds kept for their pages and SyncTeX data: the newest few.
 const KEEP: usize = 4;
@@ -32,8 +36,8 @@ static SUPERSEDED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::
 /// Compiles every example once in the background, so the first Compile
 /// finds the native caches of this `satex` built: a stale cache costs a
 /// minute, a warm one a few seconds.
-pub fn warm(site: &Path, examples: &Path) {
-    let (root, examples) = (compile_root(site), examples.to_path_buf());
+pub fn warm(root: &Path, examples: &Path) {
+    let (root, examples) = (root.to_path_buf(), examples.to_path_buf());
     WARMING.store(true, std::sync::atomic::Ordering::Relaxed);
     std::thread::spawn(move || {
         let dir = root.join("warm");
@@ -78,7 +82,8 @@ fn mains(dir: &Path) -> Vec<String> {
     mains
 }
 
-fn compile_root(site: &Path) -> PathBuf {
+/// Where the builds of the site `site` go: beside it.
+pub fn root(site: &Path) -> PathBuf {
     site.with_file_name(format!("{}-compile", site.file_name().and_then(|n| n.to_str()).unwrap_or("site")))
 }
 
@@ -87,13 +92,14 @@ pub fn respond(
     method: &str,
     rest: &str,
     body: &[u8],
-    site: &Path,
+    root: &Path,
+    base: Option<&Path>,
 ) -> std::io::Result<()> {
-    let root = compile_root(site);
+    let root = root.to_path_buf();
     // `POST /__satex/compile/render`: a PDF's first page as PNG, for the image dialog (doc/site/dialogs.js)
     if method == "POST" && rest == "/render" {
         return match render(&root, body) {
-            Some(png) => super::send(stream, method, "page.png", "no-cache", false, png),
+            Some(png) => send(stream, method, "page.png", "no-cache", false, png),
             None => std::io::Write::write_all(
                 stream,
                 b"HTTP/1.1 422 Unprocessable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
@@ -109,14 +115,14 @@ pub fn respond(
         let one = ONE.lock().unwrap_or_else(|e| e.into_inner());
         WANTED.fetch_sub(1, Relaxed);
         let mut runs = Vec::new();
-        let answer = build(&root, body, &mut runs).unwrap_or_else(|e| json!({ "error": e, "commands": runs }));
+        let answer = build(&root, body, base, &mut runs).unwrap_or_else(|e| json!({ "error": e, "commands": runs }));
         drop(one);
-        return super::send(stream, method, "answer.json", "no-cache", false, answer.to_string().into_bytes());
+        return send(stream, method, "answer.json", "no-cache", false, answer.to_string().into_bytes());
     }
     if rest.is_empty() {
         let warming = WARMING.load(std::sync::atomic::Ordering::Relaxed);
         let probe = json!({ "compile": true, "warming": warming });
-        return super::send(stream, method, "probe.json", "no-cache", false, probe.to_string().into_bytes());
+        return send(stream, method, "probe.json", "no-cache", false, probe.to_string().into_bytes());
     }
     // `ID.zip`, `ID/slice.zip`: every file of that build, sources as compiled included
     if let Some(build) = rest.strip_suffix(".zip") {
@@ -124,7 +130,7 @@ pub fn respond(
         if let Some(dir) = dir.filter(|d| root.canonicalize().is_ok_and(|r| d.starts_with(&r) && *d != r) && d.is_dir())
         {
             let name = format!("{}.zip", dir.file_name().and_then(|n| n.to_str()).unwrap_or("build"));
-            return super::send(stream, method, &name, "no-cache", false, zip(&dir)?);
+            return send(stream, method, &name, "no-cache", false, zip(&dir)?);
         }
     }
     let file = root.join(rest.trim_start_matches('/')).canonicalize().ok();
@@ -133,8 +139,8 @@ pub fn respond(
             let name = f.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
             let bytes = std::fs::read(&f)?;
             // a text file of the build (.aux, .log, .fls) shows in the browser, not as a download
-            let text = super::content_type(&name) == "application/octet-stream" && std::str::from_utf8(&bytes).is_ok();
-            super::send(stream, method, &if text { format!("{name}.txt") } else { name }, "no-cache", false, bytes)
+            let text = content_type(&name) == "application/octet-stream" && std::str::from_utf8(&bytes).is_ok();
+            send(stream, method, &if text { format!("{name}.txt") } else { name }, "no-cache", false, bytes)
         }
         None => std::io::Write::write_all(
             stream,
@@ -161,9 +167,20 @@ fn render(root: &Path, pdf: &[u8]) -> Option<Vec<u8>> {
 
 /// One build of the request's project in a new directory under `root`.
 /// Every command it runs goes into `runs`, the page shows them.
-fn build(root: &Path, body: &[u8], runs: &mut Vec<Value>) -> Result<Value, String> {
-    let request: Value = serde_json::from_slice(body).map_err(|e| format!("bad request: {e}"))?;
-    let main = request["main"].as_str().filter(|m| safe(m)).ok_or("no main file")?;
+fn build(root: &Path, body: &[u8], base: Option<&Path>, runs: &mut Vec<Value>) -> Result<Value, String> {
+    let mut request: Value = serde_json::from_slice(body).map_err(|e| format!("bad request: {e}"))?;
+    let main = request["main"].as_str().filter(|m| safe(m)).ok_or("no main file")?.to_string();
+    let main = main.as_str();
+    // the project's other files, by name, size and time: a change to one is another build
+    let copied: Vec<(PathBuf, String)> = base.map(project).unwrap_or_default();
+    let stamps: Vec<String> = copied
+        .iter()
+        .filter_map(|(p, n)| {
+            let m = p.metadata().ok()?;
+            Some(format!("{n} {} {:?}", m.len(), m.modified().ok()?))
+        })
+        .collect();
+    request["base"] = json!(stamps);
     let key = request_key(&request);
     if let Some(kept) = kept(root, &key) {
         return Ok(kept);
@@ -178,6 +195,11 @@ fn build(root: &Path, body: &[u8], runs: &mut Vec<Value>) -> Result<Value, Strin
         .to_string();
     prune(root);
     let dir = root.join(&id);
+    for (file, name) in &copied {
+        let to = dir.join(name);
+        std::fs::create_dir_all(to.parent().unwrap_or(&dir)).map_err(|e| e.to_string())?;
+        std::fs::copy(file, &to).map_err(|e| format!("{}: {e}", file.display()))?;
+    }
     for (name, text) in request["files"].as_object().into_iter().flatten() {
         let bytes = text.as_str().map(|t| t.as_bytes().to_vec()).or_else(|| Some(unb64(text["b64"].as_str()?)));
         let (Some(bytes), true) = (bytes, safe(name)) else { continue };
@@ -253,8 +275,13 @@ fn build(root: &Path, body: &[u8], runs: &mut Vec<Value>) -> Result<Value, Strin
     let base = work.strip_prefix(root).unwrap_or(&work).to_string_lossy().into_owned();
     let log = std::fs::read_to_string(work.join(stem.with_extension("log"))).unwrap_or_default();
     // What the build wrote beside the sources: the page shows each, the logs (BibTeX's too) as text.
-    let sent: std::collections::HashSet<&str> =
-        request["files"].as_object().into_iter().flatten().map(|(n, _)| n.as_str()).collect();
+    let sent: std::collections::HashSet<&str> = request["files"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(n, _)| n.as_str())
+        .chain(copied.iter().map(|(_, n)| n.as_str()))
+        .collect();
     let mut outputs = Vec::new();
     let mut logs = serde_json::Map::new();
     for entry in walkdir(&work) {
@@ -292,7 +319,7 @@ fn build(root: &Path, body: &[u8], runs: &mut Vec<Value>) -> Result<Value, Strin
 fn request_key(request: &Value) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for part in [&request["main"], &request["at"], &request["files"], &request["sets"]] {
+    for part in [&request["main"], &request["at"], &request["files"], &request["sets"], &request["base"]] {
         part.to_string().hash(&mut hasher);
     }
     format!("{:016x}", hasher.finish())
@@ -353,7 +380,7 @@ fn run(runs: &mut Vec<Value>, command: &mut Command) -> Result<std::process::Out
 }
 
 /// `command`'s output, unless `stop` turns true first: then it is killed.
-fn output_unless(command: &mut Command, stop: impl Fn() -> bool) -> std::io::Result<std::process::Output> {
+pub(super) fn output_unless(command: &mut Command, stop: impl Fn() -> bool) -> std::io::Result<std::process::Output> {
     use std::process::Stdio;
     let mut child = command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     // read both pipes meanwhile: a full pipe would stall the child
@@ -449,6 +476,20 @@ fn zip(dir: &Path) -> std::io::Result<Vec<u8>> {
     out.extend(start.to_le_bytes());
     out.extend(0u16.to_le_bytes());
     Ok(out)
+}
+
+/// The files of the project in `dir` with their names in it: hidden and
+/// ignored ones (`.gitignore`) left out, as a build tool sees the sources.
+pub fn project(dir: &Path) -> Vec<(PathBuf, String)> {
+    ignore::WalkBuilder::new(dir)
+        .build()
+        .flatten()
+        .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
+        .filter_map(|e| {
+            let name = e.path().strip_prefix(dir).ok()?.to_str()?.replace('\\', "/");
+            Some((e.path().to_path_buf(), name))
+        })
+        .collect()
 }
 
 /// Every file under `dir`, sorted.

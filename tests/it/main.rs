@@ -42,6 +42,7 @@ mod explain;
 mod fix;
 mod fonts;
 mod format_flags;
+mod gui;
 mod incremental;
 mod install;
 mod join;

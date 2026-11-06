@@ -26,7 +26,10 @@
 #![allow(clippy::mutable_key_type)]
 
 mod argument_hover;
+mod batch;
 mod bib;
+#[cfg(not(target_os = "emscripten"))]
+pub use batch::lines;
 mod dialogs;
 mod directive;
 mod graphic;
@@ -1418,7 +1421,6 @@ impl Engine {
 
     /// Files outside the documents changed (a package bundle landed): every
     /// analyzed document runs again at the next [`Self::flush`].
-    #[cfg(target_os = "emscripten")]
     fn outside_changed(&mut self) {
         // a finished run is keyed on the documents' texts alone, a checkpoint holds the state the
         // missing files left: both are of the installation before the files landed

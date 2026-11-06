@@ -99,3 +99,46 @@ console.log('worker.test.mjs: ok');
   assert.ok(lspBoots[0].has('/texmf.bundle/x.sty'), 'the running server has the package files');
 }
 console.log('worker.test.mjs: bundles ok');
+
+// `satex gui`: LocalEngine over a stand-in for its server (src/cli/gui/mod.rs).
+{
+  const { LocalEngine } = SatexEngine;
+  const asked = [], held = [], statuses = [];
+  let cancel = null;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = new URL(url), path = u.pathname.replace('/__satex/', '');
+    asked.push([init.method ?? 'GET', path, u.searchParams.get('path') ?? u.searchParams.get('s')]);
+    if (path === 'local') return new Response(JSON.stringify({ dir: '/p', name: 'p', root: null, files: [['main.tex', 5]] }));
+    if (path === 'file') return init.method ? new Response('') : new Response('hello');
+    if (path === 'lsp/cancel') { cancel?.(); return new Response(''); }
+    if (path === 'lsp') {
+      // two status lines, split mid-line as a network may, then the replies
+      const lines = '{"method":"satex/status","params":{"text":"Analyzing"}}\n{"method":"satex/sta' + 'tus","params":{"text":"x"}}\n[{"id":1,"result":2}]\n';
+      return new Response(new ReadableStream({ start(c) { for (const part of [lines.slice(0, 70), lines.slice(70)]) c.enqueue(new TextEncoder().encode(part)); c.close(); } }));
+    }
+    return new Response('{}');
+  };
+  const local = LocalEngine('http://127.0.0.1:1/', (s) => statuses.push(s.text), (url) => held.push(url));
+  const ready = await local.init();
+  assert.deepEqual(ready.local.files, [['main.tex', 5]]);
+  assert.equal(new TextDecoder().decode((await local.read('/p/main.tex')).data), 'hello');
+  assert.deepEqual(await local.lsp({ id: 1 }), [{ id: 1, result: 2 }], 'the replies come after the status lines');
+  assert.deepEqual(statuses, ['Analyzing', 'x']);
+  assert.equal(held.length, 1, 'the session is held open by one connection');
+  await local.lsp({ id: 1 });
+  assert.equal(held.length, 1, 'and only one');
+  // a project's files are saved; a replace never deletes, only `removed` does
+  asked.length = 0;
+  await local.project('/p', { 'a.tex': text('x') }, true, ['old.tex']);
+  assert.deepEqual(asked, [['DELETE', 'file', '/p/old.tex'], ['PUT', 'file', '/p/a.tex']]);
+  // a newer text sent meanwhile cancels the run under way
+  let stale = false, cancelled = false;
+  cancel = () => { cancelled = true; };
+  const slow = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { if (url.includes('/lsp?')) { stale = true; await new Promise((r) => setTimeout(r, 120)); } return slow(url, init); };
+  await local.lsp({ id: 1 }, () => stale);
+  assert.ok(cancelled, 'a stale run is cancelled');
+  globalThis.fetch = async () => new Response('{"error":"the language server stopped"}\n');
+  await assert.rejects(local.lsp({ id: 2 }), /stopped/);
+}
+console.log('worker.js: LocalEngine ok');

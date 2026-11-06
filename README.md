@@ -83,6 +83,7 @@ Commands:
   tokens        The token stream the mouth produces
   completions   Print the shell completion script: bash, zsh, fish, elvish or powershell.  Values complete from the running binary.  `install [bash|zsh|fish]` registers it in that shell's startup file. Without a shell, it does so in every shell installed or in use
   lsp           A Language Server Protocol server: a thin facade over the queries and lints above, driven by `initialize`/`didOpen`/`didChange` instead of one-shot arguments.  Stdio by default, `--port` switches to TCP
+  gui           The browser playground on this machine: opens it on the project in DIR, with the TeX packages installed here, the native language server and the local TeX for the PDF. Edits are saved to the files
   help          Print this message or the help of the given subcommand(s)
 
 Options:
@@ -660,6 +661,8 @@ Every command prints text by default. You can use `--format json`, `csv` or `mar
 ## Editor integration
 
 `satex lsp` runs a Language Server: diagnostics, hover, definitions, references, completion, document symbols and quick fixes, all backed by the commands above. Stdio by default, `--port`/`--host` for TCP. See the [LSP wiki page](doc/wiki/lsp.md) for the protocol details and Neovim/VS Code setup.
+
+`satex gui [DIR]` opens the browser playground on a project of your computer: its files, the TeX packages installed there, the native language server and your TeX for the PDF. Edits are saved to the files. See [the playground on your machine](doc/wiki/cli.md#the-playground-on-your-machine).
 
 ## Configuration
 

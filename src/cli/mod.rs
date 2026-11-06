@@ -3,6 +3,8 @@
 pub mod cache;
 pub mod compile;
 mod graph;
+#[cfg(not(target_os = "emscripten"))]
+pub mod gui;
 mod inspect;
 pub mod install;
 mod lint;
@@ -296,6 +298,33 @@ pub enum Command {
         /// Stdio, the default: accepted because language clients pass it.
         #[arg(long, hide = true)]
         stdio: bool,
+        /// One message per line in, per message its status lines and then
+        /// the replies as one JSON array out: what `satex gui` speaks.
+        #[arg(long, hide = true)]
+        lines: bool,
+    },
+    /// The browser playground on this machine: opens it on the project in
+    /// DIR, with the TeX packages installed here, the native language
+    /// server and the local TeX for the PDF. Edits are saved to the files.
+    Gui {
+        /// The project directory, or its root document. Default: the
+        /// current directory.
+        #[arg(value_name = "DIR")]
+        dir: Option<std::path::PathBuf>,
+        /// The port on 127.0.0.1, or the next free one above it. 0 lets the
+        /// system pick.
+        #[arg(long, value_name = "N", default_value_t = 8800)]
+        port: u16,
+        /// A built site (`cargo playground`, `doc/site/build.py`) to serve the
+        /// pages from. Default: `share/satex/site` beside the binary.
+        #[arg(long, value_name = "DIR")]
+        site: Option<std::path::PathBuf>,
+        /// Print the address only, do not open a browser.
+        #[arg(long)]
+        no_open: bool,
+        /// Serve the page's sources from this checkout's `doc/site`.
+        #[arg(long, hide = true)]
+        dev: bool,
     },
 }
 
@@ -358,6 +387,7 @@ impl Command {
                 | Command::Lint { chktex: true, .. }
                 | Command::Cache { action: Some(_) }
                 | Command::Lsp { .. }
+                | Command::Gui { .. }
                 | Command::Completions { .. }
         )
     }
@@ -485,7 +515,7 @@ impl Command {
             // `Lsp` before a `Context` exists, the same way it does
             // `Query { request: Some(_) }`.
             Command::Cache { action: Some(_) } => Ok(Output::Done),
-            Command::Lsp { .. } | Command::Completions { .. } => Ok(Output::Done),
+            Command::Lsp { .. } | Command::Gui { .. } | Command::Completions { .. } => Ok(Output::Done),
             Command::Compile => compile::run(context),
             Command::Install { packages, yes, dry_run, usermode } => {
                 let options = install::Options { yes: *yes, dry_run: *dry_run, usermode: *usermode };
