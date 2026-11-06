@@ -1,0 +1,24 @@
+\documentclass{article}
+\usepackage{amsthm}
+\usepackage{forest}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\begin{document}
+\section{Parse trees}\label{sec:trees}
+\begin{definition}\label{def:tree}
+A parse tree shows how a grammar derives a sentence.
+\end{definition}
+\begin{forest}
+  for tree={draw, rounded corners}
+  [S [NP [SaTeX]] [VP [V [reads]] [NP [the code]]]]
+\end{forest}
+\begin{lemma}\label{lem:leaves}
+The leaves of a tree from Definition~\ref{def:tree}, read left to right, spell the sentence.
+\end{lemma}
+\begin{theorem}
+Every sentence of the grammar has a tree, by Lemma~\ref{lem:leaves}.
+\end{theorem}
+As Section 1 shows, one tree is enough.
+\end{document}

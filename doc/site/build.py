@@ -9,7 +9,7 @@ files` says the samples and the offered packages read, and its caches from `sate
     build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site-out
 """
 
-import argparse, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, tempfile, threading, time, tomllib
+import argparse, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, tempfile, threading, time, tomllib, urllib.parse
 from pathlib import Path
 
 import semantics as sem
@@ -1576,11 +1576,13 @@ def main():
     assets |= {
         "css": emit(out, "style.css", (SITE / "style.css").read_bytes()),
         "sitejs": emit(out, "site.js", (SITE / "site.js").read_bytes()),
+        "clijs": emit(out, "cli.js", (SITE / "cli.js").read_bytes()),
         "cmjs": emit(out, "codemirror.js", (SITE / "codemirror.js").read_bytes()),
         "playjs": emit(out, "play/playground.js", (SITE / "playground.js").read_bytes()),
         "drawjs": emit(out, "draw.js", (SITE / "draw.js").read_bytes()),
         "viewsjs": emit(out, "views.js", (SITE / "views.js").read_bytes()),
         "dialogsjs": emit(out, "dialogs.js", (SITE / "dialogs.js").read_bytes()),
+        "layersjs": emit(out, "layers.js", (SITE / "layers.js").read_bytes()),
     }
     table = pages()
     nav = sidebar(table)
@@ -1656,6 +1658,8 @@ def main():
     # satex's own comment directives: no package defines them
     card_data.update((k, v) for k, v in sem.directive_cards(ROOT).items() if k in card_data)
     assets["cards"] = emit(out, "cs-cards.json", json.dumps(card_data, ensure_ascii=False, separators=(",", ":")).encode())
+    # the command line's help on every page's `satex …` lines (cli.js), from clap's command tree
+    assets["cli"] = emit(out, "cli.json", run(str(args.satex.resolve()), "completions", "json").encode())
     print(f"cards: {len(card_data)} of {len(names)} control sequences named in code spans", file=sys.stderr)
     left = {k: v.get("k", "") for k, v in card_data.items() if v.get("k") == "undefined" or v.get("at", "").startswith(("the example", "the text", "the pattern"))}
     print(f"cards: {sum(v == 'undefined' for v in left.values())} names without a definition, {len(left) - sum(v == 'undefined' for v in left.values())} defined by an example: "
@@ -1692,26 +1696,56 @@ def main():
 
 def showcase(out):
     """The landing page's showcase: per entry of showcase/shots.json its light and dark images
-    (showcase/capture.mjs takes them from a built playground), sized so the page never shifts."""
+    (showcase/capture.mjs takes them from a built playground), sized so the page never shifts, in a
+    window frame; a `before` image beside them, a looping video over them where the capture made one."""
     spec, src = json.loads((SITE / "showcase/shots.json").read_text()), SITE / "showcase/img"
     (out / "showcase").mkdir()
+    size = lambda f: tuple(int.from_bytes(f.read_bytes()[o:o + 4], "big") for o in (16, 20))
+
+    def pictures(stem, alt):
+        pics = []
+        for scheme in ("light", "dark"):
+            width, height = size(src / f"{stem}-{scheme}.png")
+            for ext in ("avif", "webp", "png", "webm", "mp4"):
+                if (src / f"{stem}-{scheme}.{ext}").exists():
+                    shutil.copy2(src / f"{stem}-{scheme}.{ext}", out / "showcase" / f"{stem}-{scheme}.{ext}")
+            pics.append(f'<picture class="shot-{scheme}"><source type="image/avif" srcset="showcase/{stem}-{scheme}.avif">'
+                        f'<source type="image/webp" srcset="showcase/{stem}-{scheme}.webp">'
+                        f'<img src="showcase/{stem}-{scheme}.png" width="{width}" height="{height}" alt="{alt if scheme == "light" else ""}" loading="lazy" decoding="async"></picture>')
+            # the video plays over its poster, the still: site.js loads it near the viewport, never under reduced motion
+            if (src / f"{stem}-{scheme}.webm").exists():
+                pics.append(f'<video class="shot-video shot-{scheme}" width="{width}" height="{height}" muted loop playsinline preload="none" aria-hidden="true" '
+                            f'data-src="showcase/{stem}-{scheme}"></video>')
+        return "".join(pics)
+
+    def window(stem, alt, label):
+        return f'<div class="shot-win" data-label="{html.escape(label)}">{pictures(stem, alt)}</div>'
+
     figures = []
     for s in spec["shots"]:
         name, alt = s["name"], html.escape(f'{s["title"]}: {s["caption"]}')
-        if not (src / f"{name}-light.png").exists():
+        if s.get("live"):
+            # a live editor in the same frame: its source as text until site.js starts the engine in view
+            figures.append(f'<figure class="shot shot-big shot-live" data-name="{html.escape(s["file"])}"><div class="shot-stage"><div class="shot-win" data-label="{html.escape(s["file"])} · live">'
+                           f'<div class="live-grid"><pre class="src live-src live-poster">{html.escape(s["text"])}</pre><div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div></div>'
+                           f'<p class="muted live-status" aria-live="polite">{html.escape(s["status"])}</p></div></div>'
+                           f'<figcaption><h3>{html.escape(s["title"])}</h3><p>{html.escape(s["caption"])}</p>'
+                           f'<a class="shot-try" href="play/index.html">The full playground →</a></figcaption></figure>')
             continue
-        pics = []
-        for scheme in ("light", "dark"):
-            width, height = (int.from_bytes((src / f"{name}-{scheme}.png").read_bytes()[o:o + 4], "big") for o in (16, 20))
-            for ext in ("avif", "webp", "png"):
-                shutil.copy2(src / f"{name}-{scheme}.{ext}", out / "showcase" / f"{name}-{scheme}.{ext}")
-            pics.append(f'<picture class="shot-{scheme}"><source type="image/avif" srcset="showcase/{name}-{scheme}.avif">'
-                        f'<source type="image/webp" srcset="showcase/{name}-{scheme}.webp">'
-                        f'<img src="showcase/{name}-{scheme}.png" width="{width}" height="{height}" alt="{alt if scheme == "light" else ""}" loading="lazy" decoding="async"></picture>')
-        try_it = f'play/index.html#{s["file"]}'
-        figures.append(f'<figure class="shot{" shot-big" if s.get("big") else ""}"><a class="shot-stage" href="{try_it}" tabindex="-1">{"".join(pics)}</a>'
+        if not all((src / f"{name}-{scheme}.png").exists() for scheme in ("light", "dark")):
+            continue
+        # the link opens the example and, once its run is in, the widget the shot shows (playground.js `satexOpen`)
+        w = s.get("open")
+        hash = s["file"] + "".join(f"&{k}={urllib.parse.quote(str(v), safe='')}" for k, v in zip(("widget", "at", "k"), w or []))
+        try_it = f"play/index.html#{hash}"
+        label = s.get("window", s["file"])
+        tags = s.get("tags", ["Before", "After"])
+        stage = (f'<div class="shot-pair"><div><span class="shot-tag">{tags[0]}</span>{window(f"{name}-before", "", label)}</div>'
+                 f'<div><span class="shot-tag">{tags[1]}</span>{window(name, alt, label)}</div></div>'
+                 if (src / f"{name}-before-light.png").exists() else window(name, alt, label))
+        figures.append(f'<figure class="shot{" shot-big" if s.get("big") else ""}{" shot-wide" if s.get("wide") else ""}"><a class="shot-stage" href="{html.escape(try_it)}" tabindex="-1">{stage}</a>'
                        f'<figcaption><h3>{html.escape(s["title"])}</h3><p>{html.escape(s["caption"])}</p>'
-                       f'<a class="shot-try" href="{try_it}">Try it on {html.escape(s["file"])} →</a></figcaption></figure>')
+                       f'<a class="shot-try" href="{html.escape(try_it)}">Try it in {html.escape(s["file"])} →</a></figcaption></figure>')
     return "\n".join(figures)
 
 

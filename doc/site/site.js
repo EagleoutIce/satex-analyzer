@@ -259,17 +259,35 @@
     };
     return { el, show, hide, later };
   }
-  /** An "Use as a widget" line folds into a small button after a moment; a click opens it again. */
-  self.satexEmbedFold = (line) => {
-    if (!line || line.dataset.fold) return;
-    line.dataset.fold = '1';
-    const open = Object.assign(document.createElement('button'), { type: 'button', className: 'ghost small embed-open', textContent: '</> Embed', title: 'Show the snippet that embeds this as a widget' });
-    open.onclick = () => { line.classList.remove('folded'); open.hidden = true; clearTimeout(line._t); line._t = setTimeout(fold, 6000); };
-    const fold = () => { if (!line.matches(':hover, :focus-within')) { line.classList.add('folded'); open.hidden = false; } else line._t = setTimeout(fold, 1500); };
-    open.hidden = true;
-    line.after(open);
-    line._t = setTimeout(fold, 1500);
+  /** A toolbar button in `tools` that copies `snippet`, the iframe that embeds this pad as a widget, and says so in a note. */
+  self.satexEmbedButton = (tools, snippet) => {
+    if (!tools || tools.querySelector('.embed-open')) return;
+    const b = Object.assign(document.createElement('button'), { type: 'button', className: 'pill embed-open', title: 'Copy the snippet that embeds this pad in a page. A pick posts {type: \'satex-draw\', text, package} to that page' });
+    b.setAttribute('aria-label', 'Copy the embed snippet');
+    b.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5"/></svg>';
+    b.onclick = () => {
+      const done = () => { tips.note.show(b, `Embed snippet copied: <code>${esc(snippet)}</code>`); tips.note.hide(4000); };
+      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(snippet).then(done, () => prompt('Embed snippet', snippet));
+      else prompt('Embed snippet', snippet);
+    };
+    tools.append(b);
   };
+  // A press and release both outside an open modal dialog's box (on its backdrop) close it, as Esc does:
+  // through `cancel`, so a dialog that keeps unsaved edits can still ask.
+  {
+    let downOut = null;
+    const outside = (e) => {
+      const d = e.target instanceof HTMLDialogElement && e.target.open && e.target.matches(':modal') ? e.target : null;
+      const r = d?.getBoundingClientRect();
+      return d && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) ? d : null;
+    };
+    document.addEventListener('pointerdown', (e) => { downOut = outside(e); });
+    document.addEventListener('click', (e) => {
+      const d = outside(e);
+      if (d && d === downOut) { if (d.requestClose) d.requestClose(); else if (d.dispatchEvent(new Event('cancel', { cancelable: true }))) d.close(); }
+      downOut = null;
+    });
+  }
   const tips = self.satexTip = { card: floating('tip-card'), note: floating('tip-note') };
   // One progress bar for the site: a share when the work has a total (and the time left once it is
   // known), a moving shimmer when it has none. `satexProgress.html(done)` writes one, `.set(el, done)`
@@ -357,6 +375,50 @@
       if (html && el.matches(':hover')) tips.note.show(el, html, el.closest('.tip, .cm-tooltip'));
     });
   }
+  // A `satex …` line in a code block: hovering a subcommand, flag or value shows its help (cli.js), from
+  // clap's command tree in the JSON next to the site, loaded on the first hover.
+  {
+    const meta = document.querySelector('meta[name=satex-cli]');
+    let tree = null;
+    const load = () => (tree ??= fetch(meta.content).then((r) => r.json()).catch(() => null));
+    /** The text node and offset under the pointer. */
+    const caret = (x, y) => {
+      const p = document.caretPositionFromPoint?.(x, y);
+      if (p) return [p.offsetNode, p.offset];
+      const r = document.caretRangeFromPoint?.(x, y);
+      return r ? [r.startContainer, r.startOffset] : [];
+    };
+    let last = '';
+    if (meta && self.satexCli) document.addEventListener('mousemove', async (e) => {
+      const code = e.target.closest?.('pre > code');
+      if (!code || !/(^|\n)\s*(\$\s+)?satex\s/.test(code.textContent)) return;
+      const [node, offset] = caret(e.clientX, e.clientY);
+      if (!node || !code.contains(node)) return;
+      // the offset in the block's text, then in its line
+      const walk = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+      let at = 0;
+      while (walk.nextNode() && walk.currentNode !== node) at += walk.currentNode.data.length;
+      at += offset;
+      const text = code.textContent, start = text.lastIndexOf('\n', at - 1) + 1, line = text.slice(start, (text.indexOf('\n', at) + 1 || text.length + 1) - 1);
+      const t = await load();
+      const hit = t && /^\s*(\$\s+)?satex\s/.test(line) ? self.satexCli.at(t, line, at - start) : null;
+      const key = hit ? `${start}:${hit.from}` : '';
+      if (key === last) return;
+      last = key;
+      if (!hit) return tips.note.hide(250);
+      // the word's own box: a range over its characters
+      const range = document.createRange(), walk2 = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+      let seen = 0;
+      for (let n; (n = walk2.nextNode());) {
+        const len = n.data.length;
+        if (seen + len > start + hit.from && !range.startContainer.data) range.setStart(n, start + hit.from - seen);
+        if (seen + len >= start + hit.to) { range.setEnd(n, start + hit.to - seen); break; }
+        seen += len;
+      }
+      const html = self.satexCli.card(hit);
+      if (html) tips.note.show(range.getBoundingClientRect(), html, code.closest('.tip, .cm-tooltip'));
+    });
+  }
   /** explain's `types` (`#1 skip register`) by argument name: `{ arg1: 'skip register' }`. */
   const typesOf = (r) => Object.fromEntries((r.types ?? []).map((t) => t.match(/^#(\d+) (.+)$/)).filter(Boolean).map(([, n, t]) => [`arg${n}`, t]));
   const KIND = { mand: 'mandatory', opt: 'optional', emb: 'an embellishment' };
@@ -403,6 +465,8 @@
       if (c === '⟨') { const j = spec.indexOf('⟩', i); out.push({ key: spec.slice(i, j + 1), html: slot(spec.slice(i + 1, j)) }); i = j + 1; continue; }
       // required text, as written (`‹key:›`)
       if (c === '‹') { const j = spec.indexOf('›', i); const lit = spec.slice(i + 1, j < 0 ? spec.length : j); out.push({ key: lit, html: `<span class="arg arg-lit" title="text the command requires here">${esc(lit)}</span>` }); i = j < 0 ? spec.length : j + 1; continue; }
+      // optional text, as a primitive's syntax writes it (`\\parindent [=]⟨dimen⟩`)
+      if (c === '[') { const j = spec.indexOf(']', i); const lit = spec.slice(i + 1, j < 0 ? spec.length : j); out.push({ key: `[${lit}]`, html: `<span class="arg arg-lit arg-optlit" title="optional text: may be left out">${esc(lit)}<small>optional</small></span>` }); i = j < 0 ? spec.length : j + 1; continue; }
       if (c === '…') { out.push({ html: '<span class="arg arg-more" title="satex saw no more: the command may read further arguments">…</span>' }); i++; continue; }
       if (c === '+' || c === '!') { prefix += c; i++; continue; }
       if (c === '>') { i++; group(); prefix += '>'; continue; }
@@ -495,8 +559,8 @@
     if (r.types?.length) rows.push(['types', `<span class="chips">${Object.entries(types).map(([n, t]) => `<span class="x-type"><code>#${n.slice(3)}</code> ${tyLink(t)}</span>`).join('')}</span>`]);
     if (r.tag === 'register' && r.value != null) rows.push(['value', `<code>${esc(r.value)}</code> <span class="muted">when the run ends</span>`]);
     if (r.forms?.length) rows.push(['forms', r.forms.map((f) => `<code>${esc(f)}</code>`).join(' ')]);
-    if (primitive) rows.push(['body', 'none: a TeX primitive']);
-    else if (r.body != null) rows.push(['body', r.body === '' ? '<span class="muted">empty</span>' : `<pre class="x-body"><code>${tex(r.body, true)}</code></pre>`]);
+    // a primitive has no body: its kind chip says so already
+    if (!primitive && r.body != null) rows.push(['body', r.body === '' ? '<span class="muted">empty</span>' : `<pre class="x-body"><code>${tex(r.body, true)}</code></pre>`]);
     if (r.by) rows.push(['by', csChip(r.by)]);
     // at a use paths reach with different definitions: each text it may hold, with the lines that define it
     if (r.one_of?.length) {
@@ -623,8 +687,14 @@
     let boxes = 0;
     // whether the box or cell open now set text yet: a fill before it pushes the text right, one after left
     let inked = false, hidden = 0, framed = 0, bar = null, scripts = 0, eqno = 0, choices = 0, pick = null;
+    // glue that may stretch or shrink, with its spec (`.show-glue` marks it): infinite glue in a line also sets where the text sits
+    const GLUE = { fill: 'infinite glue in the line', hskip: 'glue in the line', vskip: 'glue between lines', parskip: '\\parskip before the paragraph' };
     const grid = (mark) => {
-      if (mark === 'fill') return `<i class="ts-fill ts-fill-${inked ? 'r' : 'l'}"></i>`;
+      const glue = /^(fill|hskip|vskip|parskip) (.+)$/.exec(mark);
+      if (glue) {
+        const [, kind, spec] = glue, about = `title="${esc(`${GLUE[kind]}: ${spec}`)}" data-glue="${esc(spec)}"`;
+        return kind === 'fill' ? `<i class="ts-fill ts-fill-${inked ? 'r' : 'l'}" ${about}></i>` : `<i class="ts-glue ts-glue-${kind}" ${about}></i>`;
+      }
       // a math script, to its character or its group's end
       if (mark === 'sup' || mark === 'sub' || mark === 'over' || mark === 'under') { if (mark === 'over' || mark === 'under') { limitAt.push(scripts); limitDone = false; } scripts++; return `<span class="ts-${mark}">`; }
       if (mark === 'scriptend') { if (!scripts) return ''; scripts--; if (limitAt.at(-1) === scripts) { limitAt.pop(); limitDone = true; } return '</span>'; }
@@ -657,7 +727,7 @@
       const note = /^\uE000([^\uE001]*)\uE001$/.exec(part)?.[1];
       if (part === '' || note?.[0] === '\u0006') return note === undefined ? '' : (math = note.slice(1), '');
       return closeLimits(note?.[0] === '\u0003' ? note.slice(1) : null) + piece(part, note);
-    }).join('').replace(/<span class="ts-boxto" style="[^"]*">(?:<i class="ts-fill[^"]*"><\/i>)*<\/span>\u0000/g, '');
+    }).join('').replace(/<span class="ts-boxto" style="[^"]*">(?:<i class="ts-(?:fill|glue)[^>]*><\/i>)*<\/span>\u0000/g, '');
     function piece(part, note) {
       if (note === undefined) {
         if (row !== null && !part.trim()) return '';
@@ -695,12 +765,15 @@
       return `${tr}<span class="ts-note">${esc(note)}</span>`;
     }
     // set boxes at both ends (a contents line, a label) align the line as a row
-    const aligned = html.startsWith('<span class="ts-boxto"') && html.endsWith('\u0000') || html.includes('ts-leaders');
+    // the glue between lines stands apart from the row it borders
+    const bare = html.replace(/<i class="ts-glue ts-glue-(?:vskip|parskip)[^>]*><\/i>/g, '');
+    const aligned = bare.startsWith('<span class="ts-boxto"') && bare.endsWith('\u0000') || html.includes('ts-leaders');
     if (picture) return sketchSvg(picture);
     // infinite glue at both ends of a line (`\hbox to\hsize{\hfil …\hfil}`): the line is centred by it
     const done = html.replaceAll('\u0000', '') + '</span>'.repeat(open + 2 * table + boxes + hidden + framed + scripts + limits + eqno + 2 * choices);
     // a box the run did not show (a list's ▢) before the last fill: that fill ends the list, it centres nothing
-    if (/^<i class="ts-fill/.test(done) && /<i class="ts-fill[^"]*"><\/i>$/.test(done) && !done.includes('class="ts-note"')) return `<span class="ts-fillrow">${done}</span>`;
+    const ends = done.replace(/<i class="ts-glue ts-glue-(?:vskip|parskip)[^>]*><\/i>/g, '');
+    if (/^<i class="ts-fill/.test(ends) && /<i class="ts-fill[^>]*><\/i>$/.test(ends) && !done.includes('class="ts-note"')) return `<span class="ts-fillrow">${done}</span>`;
     return (aligned ? '<i class="ts-row" hidden></i>' : '') + done;
   }
   /** One typeset paragraph as a row of the view's grid: the source line in the gutter, one rail per
@@ -997,7 +1070,15 @@
   const tileBoxes = document.querySelectorAll('[data-plugin-tiles]');
   if (tileBoxes.length) fetch(new URL('type-plugins.json', SITE_ROOT)).then((r) => r.ok ? r.json() : []).catch(() => []).then((data) => {
     for (const box of tileBoxes) { box.innerHTML = data.length ? pluginTiles(data) : ''; box.hidden = !data.length; }
+    const n = data.reduce((sum, c) => sum + c.plugins.length, 0);
+    for (const s of document.querySelectorAll('.plugins-fold > summary')) if (n) s.textContent = `Show all ${n} plugins in ${data.length} groups`;
   });
+  // a folded overview stays as the reader left it
+  for (const fold of document.querySelectorAll('details[data-fold]')) {
+    const key = `satex-fold-${fold.dataset.fold}`;
+    try { fold.open = localStorage.getItem(key) === 'open'; } catch {}
+    fold.addEventListener('toggle', () => { try { localStorage.setItem(key, fold.open ? 'open' : 'closed'); } catch {} });
+  }
   document.addEventListener('mouseout', (e) => {
     // leaving the card's own code, or going onto the card, keeps it
     const el = e.target.closest?.('a[href*="lints.html#"], code');
@@ -1251,6 +1332,26 @@
       reset.hidden = true;
     });
   }
+  // the showcase's live window: its source stands as text until the window has been in view a moment, then the engine starts
+  for (const fig of document.querySelectorAll('.shot-live')) {
+    const poster = fig.querySelector('.live-poster');
+    let timer = 0, started = false;
+    const go = async () => {
+      if (started) return;
+      started = true;
+      io.disconnect();
+      const host = Object.assign(document.createElement('div'), { className: 'src live-src' });
+      host.style.minHeight = `${poster.offsetHeight}px`;
+      const t0 = performance.now(), first = poster.textContent;
+      const live = await liveEditor(fig, host, fig.dataset.name, first);
+      poster.replaceWith(host);
+      await live.analyze();
+      fig.dataset.firstFinding = String(Math.round(performance.now() - t0));
+    };
+    const io = new IntersectionObserver(([e]) => { clearTimeout(timer); if (e.isIntersecting) timer = setTimeout(go, 600); }, { threshold: .4 });
+    io.observe(fig);
+    poster.addEventListener('pointerdown', go, { once: true });
+  }
   const own = document.querySelector('.example.live');
   if (own) {
     const FIRST = '\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, \\emph{#1}!}\n\\begin{document}\n\\section{Welcome}\n\\greet{world} Pages 10-12 come next.\nSee Section~\\ref{sec:none}.\n\\end{document}\n';
@@ -1376,13 +1477,31 @@
     a.onclick = () => { try { navigator.clipboard.writeText(new URL(`#${h.id}`, location.href).href); } catch {} };
     h.append(a);
   }
-  // A link into a folded section unfolds it.
-  const unfold = () => { const t = location.hash ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null; t?.closest('details')?.setAttribute('open', ''); t?.scrollIntoView(); };
+  // A group of cards or items (`.fold`: the lint rules of a category, the rules with fixes) shows its
+  // first FOLD_SHOWN, then a button for the rest. Without scripts every one shows.
+  const FOLD_SHOWN = 3;
+  const folds = [...document.querySelectorAll('main .fold')].map((f) => {
+    const items = [...f.querySelectorAll(':scope > section.rule, :scope > ul > li')], rest = items.slice(FOLD_SHOWN);
+    if (!rest.length) return null;
+    const more = Object.assign(document.createElement('button'), { type: 'button', className: 'small fold-more' });
+    const set = (open) => {
+      for (const n of rest) n.hidden = !open;
+      more.setAttribute('aria-expanded', String(open));
+      more.textContent = open ? 'Show fewer' : `Show ${rest.length} more`;
+    };
+    more.onclick = () => { const open = more.getAttribute('aria-expanded') !== 'true'; set(open); if (!open) f.scrollIntoView({ block: 'nearest' }); };
+    f.append(more);
+    set(false);
+    return { f, set };
+  }).filter(Boolean);
+  // A link into a folded group shows all of it.
+  const unfold = () => {
+    const t = location.hash ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
+    t?.closest('details')?.setAttribute('open', '');
+    folds.find((g) => g.f.contains(t) && g.f !== t)?.set(true);
+    t?.scrollIntoView();
+  };
   addEventListener('hashchange', unfold);
-  document.addEventListener('click', (e) => {
-    const d = e.target.closest('main details[id^=category-] > summary')?.parentElement;
-    if (d) setTimeout(() => { if (d.open) { history.replaceState(null, '', '#' + d.id); d.scrollIntoView({ behavior: 'smooth' }); } });
-  });
   unfold();
 
   // The landing page: the claim turns through what a run knows; tab rows show one case at a time.
@@ -1411,17 +1530,18 @@
     const line = knows[0];
     knows.slice(1).forEach((k) => k.remove());
     line.classList.add('typing');
-    let shown = 0, paused = false, timer = 0;
+    let shown = 0, paused = false, timer = 0, fit = () => {};
     dots.innerHTML = knows.map((k, i) => `<button type="button" role="tab" aria-selected="${!i}" aria-label="${parts[i].map((p) => p.text).join('')}"></button>`).join('');
     // a typist's rhythm: quick within a word, a beat after a space or a comma
     const text = (i) => parts[i].map((p) => p.text).join('');
     const run = (i, n, then) => {
       line.innerHTML = typed(i, n);
+      fit();
       if (n >= length(i)) return then();
       const c = text(i)[n - 1] ?? '';
       timer = setTimeout(() => run(i, n + 1, then), 18 + Math.random() * 28 + (c === ' ' ? 45 : c === ',' ? 160 : 0));
     };
-    const erase = (then) => { line.innerHTML = ''; then(); };
+    const erase = (then) => { line.innerHTML = ''; fit(); then(); };
     // a typed `\command` opens a sketch of the editor's completion: the examples' own commands, as their cards write them
     const own = [...document.querySelectorAll('.ex-data')].flatMap((s) => { try { const d = JSON.parse(s.textContent); return Object.values(d.cs).flat().filter((r) => r.path === d.name && r.effective && r.effective !== r.name); } catch { return []; } });
     const offered = [...new Map(own.map((r) => [r.name, r])).values()].slice(0, 3);
@@ -1452,7 +1572,6 @@
       options: [[/options/, '<span class="claim-opt claim-anchor"><span>options</span><code>colorlinks</code></span>']],
       // the word a hover card opens on: where a command comes from, what changed it, the line that loads that
       origin: [[/command/, '<span class="claim-hov claim-anchor">command</span>']],
-      runs: [[/runs/, tag('claim-count', '')]],
       diff: [[/yesterday/, tag('claim-ok', '✓')], [/today/, tag('claim-bad', '✗')]],
       ligatures: [[/fi(?=ne)/, '<span class="claim-lig" title="f and i set as one glyph, ﬁ"><span class="lig-f">f</span><span class="lig-i">i</span><span class="lig-fi">ﬁ</span></span>']],
     };
@@ -1463,8 +1582,9 @@
       const rows = STEPS.map(([step, tokens]) => `<li style="--r:${at}"><span class="st-step">${step}</span>${tokens.map((t) => `<code class="st-tk" style="--i:${at++}">${esc(t)}</code>`).join('')}</li>`).join('');
       return `<ol class="claim-steps" aria-hidden="true"><li class="st-head"><span>satex trace</span><span>#1 = ab</span></li>${rows}</ol>`;
     };
-    // the drawing pad's answer: a stroke draws itself, then the symbol it matches and its command; the card links to /draw
-    const sketchPad = () => '<a class="claim-draw" href="draw/index.html" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 24 24"><path pathLength="1" d="M8 22V9C8 3 20 3 20 10c0 6-9 6-12 2"/></svg><span class="dr-sym">ρ</span><code class="dr-cmd">\\rho</code></a>';
+    // the drawing pad's answer: a stroke draws itself, then the best matches and their macros; the card links to /draw
+    const HITS = [['ρ', '\\rho'], ['ϱ', '\\varrho'], ['℘', '\\wp']];
+    const sketchPad = () => `<a class="claim-draw" href="draw/index.html" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 24 24"><path pathLength="1" d="M8 22V9C8 3 20 3 20 10c0 6-9 6-12 2"/></svg><ol>${HITS.map(([s, c], i) => `<li style="--i:${i}"><span class="dr-sym">${s}</span><code class="dr-cmd">${esc(c)}</code></li>`).join('')}</ol></a>`;
     const effect = () => {
       if (effects[shown] === 'draw') { line.insertAdjacentHTML('beforeend', sketchPad()); return true; }
       if (effects[shown] === 'stepper') { line.insertAdjacentHTML('beforeend', stepper()); return true; }
@@ -1489,6 +1609,7 @@
       timer = setTimeout(() => {
         fits();
         if (effect() || line.querySelector('.claim-fix')) requestAnimationFrame(() => line.classList.add('shows'));
+        fit();
         timer = setTimeout(() => paused || show((shown + 1) % knows.length), HOLD);
       }, SHOWS_AFTER);
     };
@@ -1501,21 +1622,32 @@
     dots.onclick = (e) => { const b = e.target.closest('button'); if (b) show([...dots.children].indexOf(b)); };
     const claim = line.closest('.claim');
     for (const el of [claim, dots]) { el.onmouseenter = () => (paused = true); el.onmouseleave = () => { paused = false; if (line.classList.contains('shows')) { clearTimeout(timer); timer = setTimeout(() => paused || show((shown + 1) % knows.length), 1500); } }; }
-    // the claims differ in height (a sketch, a trace): the tallest sets the room, so the page below never moves
-    const rot = line.parentElement;
+    // the claims differ in height (a sketch, a trace): the room follows the claim shown, eased (style.css), while the
+    // hero keeps the height it has with the tallest one, so what is below never moves
+    const rot = line.parentElement, hero = line.closest('.hero');
+    const tall = (h) => Math.ceil(Math.max(h, parseFloat(getComputedStyle(line).lineHeight) || 0));
+    fit = () => { rot.style.height = `${tall(line.offsetHeight)}px`; };
     const reserve = () => {
       const [was, html] = [shown, line.innerHTML];
-      rot.style.minHeight = '';
       let most = 0;
       for (let i = 0; i < knows.length; i++) { shown = i; line.innerHTML = typed(i, length(i)); effect(); most = Math.max(most, line.offsetHeight); }
       [shown, line.innerHTML] = [was, html];
-      rot.style.minHeight = `${Math.ceil(most)}px`;
+      if (!hero) return fit();
+      hero.classList.remove('glued');
+      hero.style.height = '';
+      rot.style.transition = 'none';
+      rot.style.height = `${tall(most)}px`;
+      hero.style.height = `${hero.offsetHeight}px`;
+      hero.classList.add('glued');
+      fit();
+      rot.offsetHeight;
+      rot.style.transition = '';
     };
     reserve();
     document.fonts?.ready.then(reserve);
     let resized = 0;
-    addEventListener('resize', () => { clearTimeout(resized); resized = setTimeout(reserve, 150); });
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { line.innerHTML = typed(0, length(0)); line.classList.add('shows'); }
+    addEventListener('resize', () => { clearTimeout(resized); resized = setTimeout(reserve, 150); }, { passive: true });
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { line.innerHTML = typed(0, length(0)); effect(); line.classList.add('shows'); fit(); }
     else { line.innerHTML = ''; run(0, 0, settle); }
   }
   for (const [tabs, key] of [['.contrast', 'case'], ['.install-tabs', 'way']]) {
@@ -1553,6 +1685,67 @@
     addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(drift); } }, { passive: true });
   }
 
+  // The showcase's videos: only the one in focus plays (the frame most visible near the viewport's centre),
+  // from its start, over its poster (the still); every other one pauses and fades back to its poster. A video
+  // loads when it first comes into focus, in the theme shown. Reduced motion plays none on its own: each frame
+  // gets a play button instead.
+  const wins = [...new Set([...document.querySelectorAll('video.shot-video[data-src]')].map((v) => v.parentElement))];
+  if (wins.length && 'IntersectionObserver' in self) {
+    const still = matchMedia('(prefers-reduced-motion: reduce)');
+    const seen = new Map();
+    let focus = null, chosen = null;
+    const shown = (w) => [...w.querySelectorAll('video.shot-video')].find((v) => v.checkVisibility());
+    const load = (v) => {
+      if (v.childElementCount) return;
+      v.innerHTML = `<source type="video/webm" src="${v.dataset.src}.webm"><source type="video/mp4" src="${v.dataset.src}.mp4">`;
+      v.load();
+    };
+    const stop = (w) => { for (const v of w.querySelectorAll('video')) { v.pause(); v.classList.remove('playing'); } w.closest('.shot')?.classList.remove('shot-focus'); };
+    const play = (w) => {
+      const v = shown(w);
+      if (!v) return;
+      load(v);
+      v.currentTime = 0;
+      v.addEventListener('playing', () => v.classList.add('playing'), { once: true });
+      v.play().catch(() => {});
+      w.closest('.shot')?.classList.add('shot-focus');
+    };
+    const pick = () => {
+      // the frame most visible, weighted by how near its centre is to the viewport's
+      let best = null, score = .25;
+      for (const [w, ratio] of seen) {
+        const r = w.getBoundingClientRect(), off = Math.abs((r.top + r.bottom) / 2 - innerHeight / 2) / innerHeight;
+        const s = ratio * (1 - Math.min(off, 1));
+        if (s > score) [best, score] = [w, s];
+      }
+      const want = still.matches ? chosen : best;
+      if (want === focus) return;
+      if (focus) stop(focus);
+      focus = want;
+      if (focus) play(focus);
+    };
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) e.isIntersecting ? seen.set(e.target, e.intersectionRatio) : seen.delete(e.target);
+      if (chosen && !seen.has(chosen)) chosen = null;
+      pick();
+    }, { threshold: [0, .25, .5, .75, 1] });
+    for (const w of wins) {
+      io.observe(w);
+      // reduced motion: a button plays this one, and stops it again
+      const b = Object.assign(document.createElement('button'), { type: 'button', className: 'shot-play', textContent: '▶' });
+      b.setAttribute('aria-label', 'play the animation');
+      b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); chosen = chosen === w ? null : w; pick(); b.textContent = chosen === w ? '❚❚' : '▶'; };
+      w.append(b);
+    }
+    let queued = false;
+    addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; pick(); }); } }, { passive: true });
+    still.addEventListener?.('change', () => { if (focus) stop(focus); focus = chosen = null; pick(); });
+    // a theme switch shows the other video: the focused one starts over in it
+    const restart = () => { if (focus) { stop(focus); play(focus); } };
+    matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', restart);
+    new MutationObserver(restart).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  }
+
   // "category 12" on a documentation page links to that code's row
   const catcodes = document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? '';
   for (const root of document.querySelectorAll('body.doc main')) {
@@ -1567,7 +1760,7 @@
   }
 
   // The headings of a documentation page, the one in view marked; a heading
-  // in a folded group (the lint rules' categories) comes under the group's name.
+  // in a group (`.fold`: the lint rules' categories) comes under the group's name.
   const toc = document.getElementById('toc');
   const heads = [...document.querySelectorAll('body.doc main :is(h2, h3)[id]')];
   if (!toc || heads.length < 2) return toc?.remove();
@@ -1575,7 +1768,7 @@
   // and unfolds to list its headings.
   let group = null;
   const blocks = heads.map((h) => {
-    const g = h.closest('details')?.querySelector('summary')?.textContent ?? null;
+    const g = h.closest('.fold[id]')?.querySelector('.fold-head')?.textContent ?? null;
     const name = g?.split(/\s+[(—-]/)[0] ?? '';
     const open = g && g !== group ? `<div class="grp-block"><span class="grp-row"><a class="grp" href="#category-${esc(name.toLowerCase())}" data-cat="${esc(name)}">${esc(g)}</a><button type="button" class="grp-more" aria-expanded="false" title="list its rules">▸</button></span><div class="grp-items" hidden>` : '';
     const close = group && g !== group ? '</div></div>' : '';

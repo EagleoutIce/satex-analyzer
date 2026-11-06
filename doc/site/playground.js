@@ -236,6 +236,18 @@
     const sig = (x) => String(+x.toPrecision(3));
     return `${sig(pt)}pt = ${sig(pt * 2.54 / 72.27 * 10)}mm = ${sig(pt * 2.54 / 72.27)}cm = ${sig(pt / 72.27)}in = ${sig(pt * 72 / 72.27)}bp`;
   };
+  /** A length in every unit TeX knows, as the editor's length hover shows it (TeXbook p. 57). */
+  const UNITS_PER_PT = { pt: 1, mm: 25.4 / 72.27, cm: 2.54 / 72.27, in: 1 / 72.27, bp: 72 / 72.27, pc: 1 / 12, dd: 1157 / 1238, cc: 1157 / 14856, sp: 65536 };
+  const unitsCard = (pt) => {
+    const sig = (x) => String(+x.toPrecision(4));
+    const units = Object.keys(UNITS_PER_PT);
+    return `**${sig(pt)}pt**\n\n| ${units.join(' | ')} |\n|${units.map(() => '---').join('|')}|\n| ${units.map((u) => sig(pt * UNITS_PER_PT[u])).join(' | ')} |`;
+  };
+  // a length shown on the page (the PDF's text block) explains itself as an editor length does
+  document.addEventListener('mouseover', (e) => {
+    const el = e.target instanceof Element && e.target.closest('[data-pt]');
+    if (el) { self.satexTip.card.show(el, self.satexCards.hover(unitsCard(+el.dataset.pt))); el.addEventListener('mouseleave', () => self.satexTip.card.hide(150), { once: true }); }
+  });
   const size = (n) => n < 2 ** 20 ? `${Math.ceil(n / 1024)} KiB` : `${(n / 2 ** 20).toFixed(1)} MiB`;
   const started = performance.now();
 
@@ -333,7 +345,13 @@
    * code, links, emphasis. A `file:line` in code is a place that opens (site.js). */
   const cards = self.satexCards, tips = self.satexTip;
   const inline = (t) => cards.inline(t).replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>');
-  const findingCard = (d) => `<div class="tip-lint f-${sev(d)}"><p><span class="sev sev-${sev(d)}">${sev(d)}</span> <code>${escape(d.code)}</code> ${inline(d.message)}</p></div>`;
+  /** The fixes the open hover card offers, by the index its buttons carry. */
+  const hoverFixes = [];
+  /** A finding as a card; `fixes`: with a button per fix, applied in place. */
+  const findingCard = (d, fixes = false) => {
+    const buttons = fixes && d.fixes?.length ? `<div class="hover-tools">${d.fixes.map((f) => `<button type="button" class="small${f.safety === 'safe' ? '' : ' ghost'}" data-fix="${hoverFixes.push(f) - 1}" title="${escape(f.safety)} fix">${escape(f.title)}</button>`).join('')}</div>` : '';
+    return `<div class="tip-lint f-${sev(d)}"><p><span class="sev sev-${sev(d)}">${sev(d)}</span> <code>${escape(d.code)}</code> ${inline(d.message)}</p>${buttons}</div>`;
+  };
   /** A command in text, or alone in a code span, explains itself on hover (`tips.card`), as the editor's hover does. */
   const commandRefs = (html) => html.replace(/(<code>(\\[A-Za-z@_]+(?::[A-Za-z]*)?\*?)<\/code>)|(<code[^>]*>[\s\S]*?<\/code>|<a [^>]*>[\s\S]*?<\/a>|<[^>]+>)|(\\[A-Za-z@_]+(?::[A-Za-z]*)?\*?)/g,
     (m, span, c1, skip, c2) => skip ? m : `<code class="cs-ref" data-cs="${c1 ?? c2}" tabindex="0">${c1 ?? c2}</code>`);
@@ -680,12 +698,16 @@
     if (!shownOf.has(list)) list.classList.toggle('stale', pending);
     for (const [el, [target, of, cls]] of shownOf) el.classList.toggle(cls, target !== uri() || (of !== null && sent !== undefined && of !== sent) || typedSincePush || pending);
   }
-  function analyze() {
+  /** Whether files beside the texts changed (a package landed) since the last analysis asked for: then every document runs again, not only the edited ones. */
+  let filesChanged = false;
+  function analyze(files = false) {
     dirty = false;
+    filesChanged ||= files;
     if (!boot?.started) return; // before the first start: it analyzes once up, an instance booted now would be thrown away
     if (running > 0) { analysisQueued = true; markStale(); return; }
     checking();
-    lsp('satex/analyze', {}, true);
+    lsp('satex/analyze', filesChanged ? { files: true } : {}, true);
+    filesChanged = false;
     markStale();
   }
   function drainAnalysis() {
@@ -900,7 +922,7 @@
       const widgets = tools.filter((t) => t[3]);
       const buttons = widgets.length ? `<div class="hover-tools">${widgets.map(([label, , i]) => `<button type="button" class="small ghost" data-tool="${i}">${escape(label)}</button>`).join('')}</div>` : '';
       const body = macro || (value ? card(value) : '');
-      return { from, to, html: found.map(([d]) => findingCard(d) + explanation(d)).join('') + (body || opens ? `<div class="hover">${opens}${body}${buttons}</div>` : '') };
+      return { from, to, html: (hoverFixes.length = 0, found).map(([d]) => findingCard(d, true) + explanation(d)).join('') + (body || opens ? `<div class="hover">${opens}${body}${buttons}</div>` : '') };
     }
     // Another file or project replaces the whole text: every range-based decoration field starts empty, in this one place
     // (a mapped range would otherwise stretch over the new text).
@@ -1084,7 +1106,7 @@
     const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment(), setup = new st.Compartment();
     const ev = new EditorView({
       parent, doc: text,
-      extensions: [setup.of(basicSetup), closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), lint.lintGutter({ tooltipFilter: () => [] }), lint.linter(null, { tooltipFilter: () => [] }), ac.autocompletion({ override: [complete], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
+      extensions: [setup.of(basicSetup), closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), heatGutter, lint.lintGutter({ tooltipFilter: () => [] }), widgetGutter, lint.linter(null, { tooltipFilter: () => [] }), ac.autocompletion({ override: [complete], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
         // the detail: a usage line colored like the hover's, then where it comes from
         const span = Object.assign(document.createElement('span'), { className: 'cm-completionDetail' });
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
@@ -1099,7 +1121,7 @@
         if (c.preview) span.prepend(Object.assign(document.createElement('img'), { className: 'cm-preview', src: `data:image/svg+xml;utf8,${encodeURIComponent(c.preview)}`, alt: '' }));
         return span;
       } }] }),
-        linkField, markField, flashField, swatchField, lensField, linkedField, heatField, heatGutter, widgetGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
+        linkField, markField, flashField, swatchField, lensField, linkedField, heatField, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }, { key: 'Shift-F10', run: () => { const c = editor.coords() ?? { left: 40, bottom: 80 }; menuAt(c.left, c.bottom); return true; } }]),
         EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([])],
     });
     ev.dom.satexView = ev; // doc/site/showcase.mjs reads the text and the places through it
@@ -1272,16 +1294,24 @@
    * analysis (`satex query typeset`); a click goes to the paragraph. */
   const typesetBody = $('typeset-body');
   const notation = self.satexCards.notation;
-  // the Typeset panel's switches, kept across visits
-  for (const [id, cls, store, on] of ['boxes', 'keys', 'ligs', 'findings', 'envs', 'maybe'].map((k) => [`typeset-${k}`, `show-${k}`, `satex-typeset-${k}`, k === 'maybe'])) {
-    // the preamble's findings sit on the document's begin mark only while the marks show
-    const box = $(id), apply = () => { typesetBody.classList.toggle(cls, box.checked); if (cls === 'show-envs') typesetFindings(); };
-    // what may be set shows unless switched off
-    box.checked = on;
-    try { box.checked = (localStorage.getItem(store) ?? (on ? '1' : '0')) === '1'; } catch {}
-    box.onchange = () => { apply(); try { localStorage.setItem(store, box.checked ? '1' : '0'); } catch {} };
-    apply();
-  }
+  // the Typeset panel's layers, kept across visits; what may be set shows unless switched off
+  const TS_LAYERS = {
+    envs: 'Name the environment each paragraph is set in',
+    keys: 'Show the keys of labels, references and citations where they stand',
+    boxes: 'Show the text set in boxes that never reach the page',
+    glue: 'Mark the glue that may stretch or shrink (\\hfill, \\vfill, \\parskip, \\hskip … plus …): hover one for its spec',
+    ligs: 'Mark the ligatures the fonts set: the letters, then the glyph they join to',
+    findings: 'Mark the paragraphs with findings; hover a mark for them',
+    maybe: 'Show text that may be typeset or not: where the run could not decide a conditional (\\ifdraft), both cases, with a switch per conditional to see one. Off: only text that is surely typeset',
+  };
+  const tsLegacy = {};
+  try { for (const k of Object.keys(TS_LAYERS)) { const v = localStorage.getItem(`satex-typeset-${k}`); if (v != null) tsLegacy[k] = v === '1'; } } catch {}
+  const tsOn = self.satexLayers.state('typeset', Object.fromEntries(Object.keys(TS_LAYERS).map((k) => [k, k === 'maybe'])), self.satexStore, tsLegacy);
+  $('typeset-layers').innerHTML = self.satexLayers.html(TS_LAYERS, tsOn, { prefix: 'typeset' });
+  // the preamble's findings sit on the document's begin mark only while the marks show
+  const tsApply = (k) => { typesetBody.classList.toggle(`show-${k}`, tsOn[k]); if (k === 'envs') typesetFindings(); };
+  self.satexLayers.wire($('typeset-layers'), 'typeset', tsOn, self.satexStore, tsApply);
+  for (const k of Object.keys(TS_LAYERS)) tsApply(k);
   /** The document's outline from the root's run (`satex query occurrences`), in reading order: its
    * sectioning units indented by level, each with its labels, then the bibliography and its entries. */
   // the examples fold away; kept across visits
@@ -1562,7 +1592,7 @@
     if (!rows || target !== uri()) return;
     typesetRows = rows;
     shownFor(typesetBody, target, of);
-    if (pdfOverlayOn?.findings) pdfOverlay();
+    if (pdfOverlayOn?.findings || pdfOverlayOn?.glue) pdfOverlay();
     const lines = state.texts[state.file]?.split('\n') ?? [];
     const html = cards.typesetView(rows, { file: state.file, closed: tsClosed, plural, lineOf: (n) => lines[n - 1] });
     typesetBody.innerHTML = html || '<p class="muted">The document sets no paragraph.</p>';
@@ -1800,6 +1830,8 @@
     if (plain) chip.title = plain;
   });
   document.addEventListener('click', (e) => { const b = e.target.closest('[data-tool]'); if (b) { e.preventDefault(); runTool(+b.dataset.tool); } });
+  // a fix offered on a finding's hover card: applied, the card goes
+  document.addEventListener('click', (e) => { const b = e.target.closest('.tip [data-fix]'); const f = b && hoverFixes[+b.dataset.fix]; if (f) { e.preventDefault(); tips.card.hide(); fix(f); } });
   $('view-close').onclick = () => $('play-view').close();
   $('cfg-reset-view').onclick = () => resetView();
   // dev mode: traces carry the abstract state of each step (`trace_state`); off, the runs pay nothing for it
@@ -3676,7 +3708,7 @@
     } else if (flag?.takes_value && flag.long === 'file') items = state.files.map((n) => [n, 'file']);
     else if (flag?.takes_value && flag.long === 'explain') items = tree.rules.map((r) => [r, manifest.rules[r]?.message]);
     else if (flag?.takes_value && flag.long === 'at') items = atChoices(node.name);
-    else if (flag?.takes_value) items = [];
+    else if (flag?.takes_value) items = (flag.possible_values ?? []).map((v) => [v, flag.help]);
     else if (cur.startsWith('-')) items = node.args.filter((f) => f.long).map((f) => [`--${f.long}`, f.help]);
     else if (node.name === 'explain') {
       // the commands in scope at the end of the open file, from the language server
@@ -3721,6 +3753,17 @@
     args.selectionStart = args.selectionEnd = from + label.length + glue.length;
     suggest();
   }
+  // hovering a word of the command line shows its help (cli.js): the character under the pointer, measured in the input's font
+  const measure = document.createElement('canvas').getContext('2d');
+  args.addEventListener('mousemove', (e) => {
+    const css = getComputedStyle(args), x = e.offsetX - parseFloat(css.paddingLeft) + args.scrollLeft;
+    measure.font = css.font;
+    let i = 0;
+    while (i < args.value.length && measure.measureText(args.value.slice(0, i + 1)).width < x) i++;
+    const hit = self.satexCli?.at({ ...tree, command: top }, args.value, i), html = hit && self.satexCli.card(hit, manifest.queryAbout);
+    if (html) self.satexTip?.note.show(args, html); else self.satexTip?.note.hide(150);
+  });
+  args.addEventListener('mouseleave', () => self.satexTip?.note.hide(250));
   args.oninput = suggest;
   args.onblur = () => setTimeout(() => { menu.hidden = true; }, 120);
   menu.onmousedown = (e) => { e.preventDefault(); const li = e.target.closest('li'); if (li) accept(+li.dataset.i); };
@@ -3786,6 +3829,14 @@
     toast(`${manifest.kernels[want].label} selected for ${state.root}`);
     return true;
   }
+  /** Stops the run under way: a cross-origin isolated page tells it through the shared counter (it stops at its next
+   * check); else the worker is replaced, which starts the server again. False when the replacement took over. */
+  function stopRun(why) {
+    if (!running) return true;
+    if (textsSent) { Atomics.add(textsSent, 0, 1); return true; }
+    recoverWorker(why, 'Stopping the run…');
+    return false;
+  }
   /** Starts the language server again: another kernel, project or root. */
   /** How long the language server may take to answer its first message. */
   const START_MS = 90000;
@@ -3812,6 +3863,8 @@
     loadSeed();
     for (const p of pending.values()) p.resolve(null);
     pending.clear();
+    // the run under way is of the server this replaces: it stops now, never runs to its end first
+    if (running > 0 && !stopRun('restarted')) return false;
     worker.postMessage({ type: 'reset', args: [...flags(), '-f', state.root], cwd: state.dir });
     busy('Starting', 'Starting the language server…');
     try { localStorage.setItem('satex-start', JSON.stringify(configSet)); } catch {}
@@ -3831,7 +3884,7 @@
     }
     try { localStorage.removeItem('satex-start'); } catch {}
     // an error said before (a failed start, a stopped server) is over: the line comes back to ready, not to it
-    if (status.dataset.done === 'error') { status.dataset.done = 'ready'; act.rest = 'Ready. Findings update as you type.'; }
+    if (status.dataset.done === 'error') { status.dataset.done = 'ready'; act.rest = READY; }
     // the server answered: the card may go once no download is left, whichever phase idle() last saw
     boot.started = true;
     bootSettled();
@@ -3929,6 +3982,9 @@
     render();
     typeset(uri());
     heatDraw();
+    // a new text drops every decoration: the swatches and lenses of this file come back from the server's last run
+    lensify();
+    colorize();
   }
   /** Closes a tab; the last one closed leaves the root open. */
   function closeTab(name) {
@@ -4030,9 +4086,16 @@
   };
   treeBox.addEventListener('keydown', (e) => { const row = e.target.closest?.('.file[data-name]'); if (e.key === 'F2' && row && !e.target.closest('.renaming')) { e.preventDefault(); renameFile(row.dataset.name); } });
   for (const box of [treeBox, examplesBox]) box.onkeydown = (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-name], [data-example], [data-folder]')) { e.preventDefault(); e.target.click(); } };
+  /** A hash `name&widget=…&at=…&k=…` as [name, the widget it asks for or null]. */
+  const linkWidget = (raw) => {
+    const [name, rest] = raw.split(/&(?=widget=)/), q = new URLSearchParams(rest ?? '');
+    return [name, q.get('widget') ? { widget: q.get('widget'), at: q.get('at') ?? '', k: q.get('k') ?? 0 } : null];
+  };
   addEventListener('hashchange', () => {
-    const h = decodeURIComponent(location.hash.slice(1)), opening = h.match(/^open=(.+):(\d+)$/);
-    if (opening) openPlace(opening[1], { line: Number(opening[2]) - 1, character: 0 });
+    const [named, asked] = linkWidget(location.hash.slice(1)), h = decodeURIComponent(named), opening = h.match(/^open=(.+):(\d+)$/);
+    if (asked && h === state.example) self.satexOpen(asked);
+    else if (asked && h in sampleTexts && !shared.has(h)) { widgetAsked(asked); exampleAsked(h); }
+    else if (opening) openPlace(opening[1], { line: Number(opening[2]) - 1, character: 0 });
     else if (h.startsWith('s=')) linkAsked(h);
     else if (h in sampleTexts && !shared.has(h) && h !== state.example) exampleAsked(h);
   });
@@ -4192,13 +4255,21 @@
   let quietLoads = 0;
   const background = new Set();
   /** packages.txt's first section, after the open document's first run: a batch at a time while the page is idle, so a switch waits for one batch at most. */
+  /** The status line at rest: never ready while a package still downloads, even one fetched in the background. */
+  const READY = 'Ready. Findings update as you type.', FETCH_REST = 'Fetching ';
+  const restLine = () => {
+    const n = new Set([...inFlight, ...background]).size;
+    return n ? `${FETCH_REST}${plural(n, 'package')} in the background…` : READY;
+  };
   async function preload() {
     const todo = wanted_(manifest.preload ?? []);
     while (todo.length) {
       while (act.phase || running > 0 || pending.size || !boot.started) await new Promise((r) => setTimeout(r, 500));
       const batch = [];
       for (let bytes = 0; todo.length && bytes < 2 ** 21;) { const id = todo.shift(); if (!fetchedPackages.has(id)) { batch.push(id); bytes += PACKAGES.get(id).size; } }
-      if (batch.length && !await fetchPackages(batch, true)) return;
+      const load = batch.length && fetchPackages(batch, true);
+      if (load && !act.phase && (status.textContent === READY || status.textContent.startsWith(FETCH_REST))) status.textContent = restLine();
+      if (load && !await load) return;
     }
   }
   async function fetchPackages(ids, quiet = false) {
@@ -4220,7 +4291,10 @@
       const why = /: 404$/m.test(e.message) ? 'The playground was updated since this page loaded: reload it to fetch packages.' : `${label} did not load (${navigator.onLine === false ? 'offline' : e.message.split('\n')[0]}). The next edit tries again.`;
       if (!quiet) { loads.clear(); idle(why); status.dataset.done = 'error'; toast(why); }
       return false;
-    } finally { ids.forEach((id) => flying.delete(id)); quietLoads -= +quiet; }
+    } finally {
+      ids.forEach((id) => flying.delete(id)); quietLoads -= +quiet;
+      if (!act.phase && status.textContent.startsWith(FETCH_REST)) status.textContent = restLine();
+    }
     if (!quiet) {
       loads.clear();
       idle();
@@ -4338,12 +4412,12 @@
   /** The compile worker's code: posts the build, fetches and parses its SyncTeX data and the words of its pages. */
   function compileWorkerMain() {
     const BP = 65781.76; // scaled points per big point
-    /** SyncTeX records of the project's own files: page, file, line, kind, x and y (baseline) in bp from the top left. */
+    /** SyncTeX records of the project's own files: page, file, line, kind, x and y (baseline) in bp from the top left; a box's size, a kern's width. */
     const parse = (text) => {
       const files = {}, boxes = [];
       let unit = 1, page = 0;
       for (const l of text.split('\n')) {
-        const m = /^([[(hvxkg$])(\d+),(\d+):(-?\d+),(-?\d+)(?::(-?\d+),(-?\d+),(-?\d+))?/.exec(l);
+        const m = /^([[(hvxkg$])(\d+),(\d+):(-?\d+),(-?\d+)(?::(-?\d+)(?:,(-?\d+),(-?\d+))?)?/.exec(l);
         if (m && page && files[m[2]]) {
           const s = unit / BP;
           boxes.push({ page, file: files[m[2]], line: +m[3], kind: m[1], x: m[4] * s, y: m[5] * s, w: (m[6] ?? 0) * s, h: (m[7] ?? 0) * s, d: (m[8] ?? 0) * s });
@@ -4419,19 +4493,7 @@
     };
   }
   // the draw popup offers the same embed snippet as the /draw page: that page's address beside this one
-  {
-    const embed = `<iframe src="${new URL('../draw/index.html', location.href).href}" title="Draw a symbol" width="720" height="560" style="border:0"></iframe>`;
-    const code = $('play-draw-embed'), copyBtn = $('play-draw-embed-copy');
-    if (code && copyBtn) {
-      self.satexEmbedFold?.(code.closest('.draw-embed'));
-      code.textContent = embed;
-      copyBtn.onclick = () => {
-        navigator.clipboard?.writeText(embed).catch(() => {});
-        copyBtn.textContent = 'Copied';
-        setTimeout(() => (copyBtn.textContent = 'Copy'), 1500);
-      };
-    }
-  }
+  self.satexEmbedButton?.(document.querySelector('#play-draw .draw-tools, .draw-tools'), `<iframe src="${new URL('../draw/index.html', location.href).href}" title="Draw a symbol" width="720" height="560" style="border:0"></iframe>`);
   const pdfBody = $('pdf-body'), pdfStatus = $('pdf-status'), pdfButtons = [$('pdf-compile')];
   var pdf = null, pdfWorker = null, pdfLine = '', pdfBusy = false, pdfWarming = false; // var: the cursor may move before this line runs
   /** The server builds its native caches once after a rebuild; a Compile meanwhile waits for that. */
@@ -5050,25 +5112,25 @@
   new ResizeObserver(pdfViewsFit).observe($('pdf-views').parentElement);
   new MutationObserver(pdfViewsFit).observe($('pdf-views'), { childList: true, subtree: true });
   /** The layers drawn over the pages, each switched on its own and remembered per viewer. */
-  const PDF_LAYERS = [
-    ['defs', 'definitions', 'Labels and bibliography entries where they are set'],
-    ['refs', 'references', 'References and citations where they are set: click one to follow it'],
-    ['findings', 'findings', 'The findings of the check and of the build, on the characters they are about'],
-    ['envs', 'environments', 'Where each environment begins and ends'],
-    ['geometry', 'text block', 'The text block the lines fill, the margins shaded'],
-    ['figures', 'bounding boxes', 'The bounding box of each figure, table, picture, minipage … with its environment name'],
-    ['boxes', 'bad boxes', 'Overfull and underfull boxes of the log, an overfull one by how much it sticks out'],
-  ];
+  const PDF_LAYERS = {
+    envs: 'Where each environment begins and ends',
+    keys: 'Labels, bibliography entries, references and citations where they are set: click a reference to follow it',
+    glue: 'Glue that stretches in a line (\\hfill, \\hspace{\\fill}, \\hskip … plus …) where SyncTeX places it, its spec on hover',
+    geometry: 'The text block the lines fill, the margins shaded',
+    figures: 'The bounding box of each figure, table, picture, minipage … with its environment name',
+    findings: 'The findings of the check and of the build, on the characters they are about',
+    bad: 'Overfull and underfull boxes of the log, an overfull one by how much it sticks out',
+  };
   const FIGURE_ENV = /^(figure|table|sidewaysfigure|sidewaystable|wrapfigure|wraptable|subfigure|tikzpicture|picture|minipage|lstlisting|tabular|center)\*?$/;
   /** Sub-filters per layer, from the data: [group, title, rows of [key, label, count]]. What the viewer switched off is kept as `layer|group|key`. */
-  const PDF_FACETS = new Map([['defs', 0], ['refs', 0], ['findings', 0], ['envs', 0], ['figures', 0]]);
+  const PDF_FACETS = new Set(['keys', 'findings', 'envs', 'figures', 'glue']);
   var pdfHide = new Set(); // var: a check may render before this line ran
-  try { pdfHide = new Set(JSON.parse(localStorage.getItem('satex-pdf-facets') ?? '[]')); } catch {}
+  try { pdfHide = new Set(JSON.parse(localStorage.getItem('satex-pdf-facets') ?? '[]').map((k) => k.replace(/^(defs|refs)\|/, 'keys|'))); } catch {}
   /** Environments begun in class and package code (beamer's own nesting): off unless asked, kept per viewer. */
   var pdfInternal = false; // var: a check may render before this line ran
   try { pdfInternal = localStorage.getItem('satex-pdf-internal') === 'on'; } catch {}
   const pdfShown = (layer, group, key) => !pdfHide.has(`${layer}|${group}|${key}`);
-  const DEF_KIND = ['label', 'bibitem'], REF_KIND = /^(ref|cite|gls|glossary|index|acr)/;
+  const DEF_KIND = ['label', 'bibitem'], REF_KIND = /^(ref|cite|gls|glossary|index|acr)/, isKey = (k) => DEF_KIND.includes(k) || REF_KIND.test(k);
   const facetTally = (items) => [...Map.groupBy(items, (x) => x[0])].map(([key, xs]) => [key, xs[0][1] ?? key, xs.length]).sort((a, b) => b[2] - a[2] || String(a[0]).localeCompare(String(b[0])));
   /** The findings drawn over the pages: the check's, then the build's, as [file, line, severity, text, range, code]. */
   const pdfFound = () => Object.keys(state.texts).filter((n) => !(n in state.ro)).flatMap((n) => (diagnostics[uri(n)] ?? []).map((d) => [n, d.range.start.line + 1, sev(d), `${d.code}: ${d.message}`, d.range, d.code]))
@@ -5110,8 +5172,8 @@
   /** The groups of a layer's sub-filters. */
   function pdfFacetGroups(layer) {
     const kinds = (pick) => facetTally(occurrences.filter((o) => pick(o.kind)).map((o) => [o.kind]));
-    if (layer === 'defs') return [['kind', 'kind', kinds((k) => DEF_KIND.includes(k))]];
-    if (layer === 'refs') return [['kind', 'kind', kinds((k) => REF_KIND.test(k))]];
+    if (layer === 'keys') return [['kind', 'kind', kinds(isKey)]];
+    if (layer === 'glue') return [['kind', 'kind', facetTally(pdfGlue().map((g) => [g.kind]))]];
     if (layer === 'findings') {
       const found = pdfFound();
       return [['severity', 'severity', facetTally(found.map((f) => [f[2]]))], ['rule', 'category and rule', facetTally(found.map((f) => [f[5], `${manifest.rules[f[5]]?.category ?? 'other'} · ${f[5]}`]))]];
@@ -5123,27 +5185,29 @@
   }
   /** Fills each layer's fold, keeping the ones open that are; a click on a row never closes the menu. */
   function pdfFacetsDraw() {
-    for (const d of $('pdf-layer-list').querySelectorAll('.pdf-sub')) {
-      const layer = d.dataset.sub, list = d.querySelector('.pdf-sub-list');
+    for (const d of $('pdf-layer-list').querySelectorAll('.layer-sub')) {
+      const layer = d.dataset.sub, list = d.querySelector('.layer-sub-list');
       const internal = layer === 'envs' ? `<div class="pdf-sub-group"><label><input type="checkbox" data-internal${pdfInternal ? ' checked' : ''}>internal (class, packages)</label></div>` : '';
       const html = pdfFacetGroups(layer).filter(([, , rows]) => rows.length).map(([g, title, rows]) => `<div class="pdf-sub-group"><span class="muted">${escape(title)}</span>${rows.map(([key, label, n]) => `<label><input type="checkbox" data-facet="${escape(`${layer}|${g}|${key}`)}"${pdfShown(layer, g, key) ? ' checked' : ''}>${escape(label)} <b class="count">${n}</b></label>`).join('')}</div>`).join('') + internal;
-      d.previousElementSibling.hidden = !html;
+      $('pdf-layer-list').querySelector(`[data-fold="${layer}"]`).disabled = !html;
       if (list.dataset.html !== html) { list.innerHTML = html; list.dataset.html = html; }
     }
   }
-  var pdfOverlayOn = Object.fromEntries(PDF_LAYERS.map(([k]) => [k, false])); // var: a check may render before this line ran
+  // kept per viewer; an older version kept them apart, definitions and references as two
+  const pdfLegacy = {};
   try {
     const kept = JSON.parse(localStorage.getItem('satex-pdf-overlay') ?? '{}');
-    if ('keys' in kept) kept.defs = kept.refs = kept.keys;
-    for (const k of Object.keys(pdfOverlayOn)) pdfOverlayOn[k] = !!kept[k];
+    Object.assign(pdfLegacy, kept, { keys: kept.keys ?? (kept.defs || kept.refs), bad: kept.boxes });
   } catch {}
-  $('pdf-layer-list').innerHTML = PDF_LAYERS.map(([k, name, about]) => `<div class="pdf-layer-row"><label class="pdf-layer" title="${escape(about)}"><input type="checkbox" data-layer="${k}"${pdfOverlayOn[k] ? ' checked' : ''}><i class="pdf-swatch sw-${k}"></i>${escape(name)}<b class="count pdf-layer-n"></b></label>${PDF_FACETS.has(k) ? `<button type="button" class="pdf-sub-toggle" hidden aria-expanded="false" title="Filter ${escape(name)}" aria-label="filter ${escape(name)}"></button><div class="pdf-sub" data-sub="${k}" hidden><div class="pdf-sub-list"></div></div>` : ''}</div>`).join('');
-  // a layer's filters fold open under its row, the chevron stays in the row
+  var pdfOverlayOn = self.satexLayers.state('pdf', Object.fromEntries(Object.keys(PDF_LAYERS).map((k) => [k, false])), self.satexStore, pdfLegacy); // var: a check may render before this line ran
+  $('pdf-layer-list').innerHTML = self.satexLayers.html(PDF_LAYERS, pdfOverlayOn, { prefix: 'pdf-layer', facets: PDF_FACETS });
+  self.satexLayers.wire($('pdf-layer-list'), 'pdf', pdfOverlayOn, self.satexStore, () => { pdfLayersCount(); pdfOverlay(); });
+  // a layer's filters fold open under its group, the chevron stays beside its switch
   $('pdf-layer-list').addEventListener('click', (e) => {
-    const t = e.target.closest('.pdf-sub-toggle');
+    const t = e.target.closest('.layer-sub-toggle');
     if (!t) return;
     e.preventDefault();
-    const sub = t.nextElementSibling, open = sub.hidden;
+    const sub = $('pdf-layer-list').querySelector(`.layer-sub[data-sub="${t.dataset.fold}"]`), open = sub.hidden;
     sub.hidden = !open;
     t.setAttribute('aria-expanded', String(open));
     if (open) pdfFacetsDraw();
@@ -5152,7 +5216,7 @@
   const NEAR_PX = 110;
   var pdfNear = false;
   try { pdfNear = localStorage.getItem('satex-pdf-near') === 'on'; } catch {}
-  $('pdf-layer-list').insertAdjacentHTML('beforeend', `<label class="pdf-layer pdf-near" title="Draw the layers only around the mouse pointer, fading with distance"><input type="checkbox" data-near${pdfNear ? ' checked' : ''}>near the pointer</label>`);
+  $('pdf-layer-list').insertAdjacentHTML('beforeend', `<label class="pdf-near" title="Draw the layers only around the mouse pointer, fading with distance"><input type="checkbox" data-near${pdfNear ? ' checked' : ''}>near the pointer</label>`);
   let nearFrame = 0, nearAt = null;
   function pdfNearDraw() {
     nearFrame = 0;
@@ -5186,12 +5250,6 @@
       pdfOverlay();
       return;
     }
-    const k = e.target.dataset?.layer;
-    if (!k) return;
-    pdfOverlayOn[k] = e.target.checked;
-    try { localStorage.setItem('satex-pdf-overlay', JSON.stringify(pdfOverlayOn)); } catch {}
-    pdfLayersCount();
-    pdfOverlay();
   });
   const pdfLayersCount = () => { const n = Object.values(pdfOverlayOn).filter(Boolean).length; $('pdf-layers').querySelector('summary').innerHTML = `&#x25A4; <span>${n ? `layers ${n}` : 'layers'}</span>`; };
   pdfLayersCount();
@@ -5280,6 +5338,35 @@
     }
     return null;
   }
+  /** The glue the run set in the user's lines (its `fill` and `hskip` marks), where SyncTeX placed glue on their source
+   * lines: as many as the run set there, the widest first and infinite glue widest. Stretched glue may be a kern record
+   * (its width, ending at its x), other glue a point, up to the row's next record. Glue between lines has no record.
+   * In bp: {page, l, t, r, d, file, line, kind, spec}. */
+  function pdfGlue() {
+    const want = new Map();
+    for (const r of typesetRows ?? []) {
+      for (const m of r.align ?? []) {
+        const g = /^(fill|hskip) (.+)$/.exec(m.mark ?? ''), s = g && r.sites?.length && (r.sites.find((x) => x.at >= m.at) ?? r.sites.at(-1));
+        if (!s) continue;
+        const path = String(s.path ?? r.path ?? ''), key = `${path}|${s.line}`;
+        if (!want.has(key)) want.set(key, { path, line: s.line, marks: [] });
+        want.get(key).marks.push([g[1], g[2]]);
+      }
+    }
+    const boxes = pdf?.boxes ?? [], out = [];
+    const near = (a, b) => a.page === b.page && Math.abs(a.y - b.y) < 0.5;
+    const span = (b) => b.kind === 'k' ? [b.x - b.w, b.x] : [b.x, Math.min(...boxes.filter((o) => near(o, b) && o.x > b.x + 0.01).map((o) => o.x), ...boxes.filter((o) => o.kind === '(' && near(o, b)).map((o) => o.x + o.w))];
+    for (const w of want.values()) {
+      const marks = w.marks.sort((a, b) => (a[0] === 'fill' ? 0 : 1) - (b[0] === 'fill' ? 0 : 1));
+      const own = boxes.filter((b) => b.line === w.line && w.path.endsWith(b.file) && (b.kind === 'k' && b.w > 0 || b.kind === 'g'));
+      const wide = own.map((b) => [b, span(b)]).filter(([, [l, r]]) => Number.isFinite(r) && r > l).sort((a, b) => (b[1][1] - b[1][0]) - (a[1][1] - a[1][0]));
+      wide.slice(0, marks.length).forEach(([b, [l, r]], i) => {
+        const line = boxes.find((o) => o.kind === '(' && near(o, b));
+        out.push({ page: b.page, l, r, t: b.y - (line?.h || 7), d: b.y + (line?.d || 2), file: b.file, line: w.line, kind: marks[i][0], spec: marks[i][1] });
+      });
+    }
+    return out;
+  }
   /** The text block of each page, from the lines SyncTeX places: the most common left edge and width of its line boxes, from the first to the last. */
   function pdfBlocks() {
     const out = new Map(), mode = (xs) => { const n = new Map(); for (const x of xs) n.set(x, (n.get(x) ?? 0) + 1); return [...n].sort((a, b) => b[1] - a[1])[0]?.[0]; };
@@ -5297,9 +5384,8 @@
     shownFor(pdfBody, uri(), diagnosticVersions[uri()], 'ov-stale');
     pdfFacetsDraw();
     pdfOverlayDraw();
-    for (const [k, cls] of [['envs', 'pdf-env'], ['figures', 'pdf-fig'], ['findings', 'pdf-finding']]) {
-      const n = pdfBody.querySelectorAll(`.pdf-ov.${cls}`).length;
-      $('pdf-layer-list').querySelector(`[data-layer="${k}"]`).parentElement.querySelector('.pdf-layer-n').textContent = pdfOverlayOn[k] && n ? String(n) : '';
+    for (const [k, cls] of [['envs', 'pdf-env'], ['figures', 'pdf-fig'], ['findings', 'pdf-finding'], ['glue', 'pdf-glue']]) {
+      self.satexLayers.count($('pdf-layer-list'), k, pdfOverlayOn[k] && pdfBody.querySelectorAll(`.pdf-ov.${cls}`).length);
     }
     pdfLabelsFit();
     if (pdfNear) pdfNearSoon();
@@ -5334,7 +5420,7 @@
     };
     const blocks = pdfBlocks(), rowsOf = (file, a, b) => { const out = []; for (let l = a; l <= b; l++) out.push(...pdfRects(file, l, true)); return out; };
     pdfKeys = [];
-    const wantKind = (k) => DEF_KIND.includes(k) ? pdfOverlayOn.defs && pdfShown('defs', 'kind', k) : REF_KIND.test(k) && pdfOverlayOn.refs && pdfShown('refs', 'kind', k);
+    const wantKind = (k) => isKey(k) && pdfOverlayOn.keys && pdfShown('keys', 'kind', k);
     for (const os of Map.groupBy(occurrences.filter((o) => wantKind(o.kind)), (o) => `${occFile(o)}:${o.line}`).values()) {
       const r = occRect(os[0]), wh = r && size(r.page);
       if (!wh) continue;
@@ -5375,10 +5461,13 @@
         if (!wh) continue;
         const pt = (bp) => (bp * 72.27 / 72).toFixed(0);
         for (const [l, t, r, d] of [[0, 0, wh[0], g.t], [0, g.d, wh[0], wh[1]], [0, g.t, g.l, g.d], [g.r, g.t, wh[0], g.d]]) box(page, 'pdf-margin', l, t, r, d, 'margin');
-        box(page, 'pdf-block', g.l, g.t, g.r, g.d, `text block: ${lengths((g.r - g.l) * 72.27 / 72)} wide, its lines from ${pt(g.t)}pt to ${pt(g.d)}pt from the top`, `<b>${pt(g.r - g.l)}pt</b>`);
+        box(page, 'pdf-block', g.l, g.t, g.r, g.d, `text block: ${lengths((g.r - g.l) * 72.27 / 72)} wide, its lines from ${pt(g.t)}pt to ${pt(g.d)}pt from the top`, `<b data-pt="${(g.r - g.l) * 72.27 / 72}">${pt(g.r - g.l)}pt</b>`);
       }
     }
-    if (pdfOverlayOn.boxes) {
+    if (pdfOverlayOn.glue) {
+      for (const g of pdfGlue().filter((g) => pdfShown('glue', 'kind', g.kind))) box(g.page, `pdf-glue g-${g.kind}`, g.l, g.t, g.r, g.d, `${g.kind === 'fill' ? 'infinite glue' : 'glue'} ${g.spec} · ${g.file}:${g.line}`);
+    }
+    if (pdfOverlayOn.bad) {
       for (const rec of pdf.records ?? []) {
         const m = /^(Over|Under)full \\([hv])box \((?:([\d.]+)pt too \w+|badness (\d+))\).*?lines? (\d+)(?:--(\d+))?/.exec(rec.message ?? '');
         if (!m) continue;
@@ -5754,10 +5843,10 @@
     return r?.ok && /image/.test(r.headers.get('content-type') ?? '') ? URL.createObjectURL(await r.blob()) : null;
   }
   /** The table or image dialog at `position` of the open file (`satex/dialog`, doc/site/dialogs.js). */
-  async function openDialog(position) {
+  async function openDialog(position, quiet = false) {
     const target = uri();
     const v = await lsp('satex/dialog', { textDocument: { uri: target }, position }).catch(() => null);
-    if (!v) return toast('No table or figure here the analysis met: analyze first');
+    if (!v) return quiet || toast('No table or figure here the analysis met: analyze first');
     self.satexDialogs.open(v, {
       apply: (state, op) => lsp('satex/dialogApply', { textDocument: { uri: target }, kind: v.kind, range: v.range, state, op }),
       commit: (edits) => { if (target === uri()) editor.apply(edits); else toast('The file changed meanwhile: not written'); },
@@ -5789,6 +5878,37 @@
   /** Opens a widget at a place (0-based) of the open file, a manager by its kind ('manager', 'glossary'): media.mjs and the tests drive the page through it. */
   self.satexWidget = (plugin, line = 0, character = 0) => ['table', 'image', 'float'].includes(plugin) ? openDialog({ line, character })
     : plugin === 'manager' ? manage(line || 'glossary') : openViews({ line, character }, plugin);
+  /** The widget a link asks for (`#figure.tex&widget=image&at=\includegraphics&k=2`, the landing's
+   * showcase): `plugin` at `k` characters into the first `at` of the open file, a manager by its
+   * kind (`at`), a panel by its id, the trace of the call at `at`, the Library searched for `at`, the Settings. True once it is open. */
+  self.satexOpen = async ({ widget, at = '', k = 0 }) => {
+    if (widget === 'panel') { document.querySelector(`[data-panel=${CSS.escape(at)}]`)?.click(); return true; }
+    // the trace of the call `at` begins (its first command), stepped from its first step
+    if (widget === 'trace') {
+      const text = editor.text(), i = text.indexOf(at), before = text.slice(0, i).split('\n');
+      if (i < 0) return false;
+      await traceCall(at.match(/^\\[A-Za-z@]+/)?.[0] ?? at, { file: state.file, line: before.length, col: before.at(-1).length + 1 });
+      return $('play-trace').open && !!traceBody.querySelector('[data-move]');
+    }
+    // the Library searched for `at`, the Settings
+    if (widget === 'library' || widget === 'settings') {
+      $(widget === 'library' ? 'lib-open' : 'cfg-open').click();
+      const box = $(widget === 'library' ? 'lib-search' : 'cfg-search');
+      if (at && box) { box.value = at; box.dispatchEvent(new Event('input', { bubbles: true })); }
+      return $(widget === 'library' ? 'play-library' : 'play-config').open;
+    }
+    if (widget === 'manager') { await manage(at || 'glossary'); return $('play-view').open; }
+    const text = editor.text(), i = text.indexOf(at);
+    if (!at || i < 0) return false;
+    const before = text.slice(0, i + Number(k)).split('\n'), p = { line: before.length - 1, character: before.at(-1).length };
+    editor.focus({ start: p, end: p });
+    await (['table', 'image', 'float'].includes(widget) ? openDialog(p, true) : openViews(p, widget));
+    return !!document.querySelector('dialog.sd-dialog[open]') || $('play-view').open;
+  };
+  /** Opens a link's widget after the open file's next run, again after the next while it finds none. */
+  const widgetAsked = (want, tries = 4) => {
+    afterRun = async () => { if (!await self.satexOpen(want).catch(() => false) && --tries) widgetAsked(want, tries); };
+  };
   // a hover's "Edit table…" link opens the dialog
   document.addEventListener('click', (e) => {
     const a = e.target.closest?.('a.sd-open');
@@ -5798,9 +5918,10 @@
   });
   /** The colors of the open file as swatches; none when the server offers none. */
   async function colorize() {
-    const found = await lsp('textDocument/documentColor', { textDocument: { uri: uri() } }).catch(() => null);
+    const asked = uri(), found = await lsp('textDocument/documentColor', { textDocument: { uri: asked } }).catch(() => null);
     const css = ({ red, green, blue, alpha }) => `rgba(${[red, green, blue].map((x) => Math.round(x * 255)).join(',')},${alpha})`;
-    editor?.colors?.((found ?? []).map((c) => [c.range.start, css(c.color)]));
+    // an answer for a file no longer shown, or none (a run cancelled it), leaves the swatches as they are
+    if (Array.isArray(found) && asked === uri()) editor?.colors?.(found.map((c) => [c.range.start, css(c.color)]));
   }
   /** The bundles holding files the run looked for and did not find (`\IfFileExists`, listings' language files). */
   async function absentBundles() {
@@ -5821,7 +5942,7 @@
    * for absent are part of its checkpoints, so none that saw them missing is reused. */
   async function recheck() {
     if (following) return; // a start under way analyzes once it is up
-    analyze();
+    analyze(true);
     if (!plainLint()) await start();
   }
   /** Waits for package loads already under way, counting them down as each lands. */
@@ -6155,7 +6276,7 @@
       // one analysis is one timeline: only an edit, or work long after, starts the next run
       const edited = version !== act.version;
       if (edited || now - act.ended > FOLLOW_MS) Object.assign(act, { started: now, steps: [], run: act.run + 1, after: act.run && edited ? 'after your edit' : '', version });
-      act.rest = status.dataset.done ? status.textContent : 'Ready. Findings update as you type.';
+      act.rest = status.dataset.done && status.textContent !== restLine() ? status.textContent : READY;
     }
     // one step per phase the page or the engine names, in the order they came
     const key = stage?.phase ? `${stage.run ?? 1} ${stage.phase}` : name;
@@ -6179,8 +6300,16 @@
     status.textContent = act.shown = overrun ? `${text} · ${secs(now - act.started)}` : left ? `${text} · about ${left} s left` : text;
     status.title = '';
     status.dataset.busy = '';
+    $('play-stop')?.toggleAttribute('hidden', !(running > 0 || name === 'Starting'));
     drawAct();
   }
+  // Stop: the run under way ends now; a start under way is dropped and the last findings stay
+  const stopButton = $('play-stop') ?? document.createElement('button');
+  stopButton.onclick = () => {
+    stopButton.hidden = true;
+    if (act.phase === 'Starting' && !running) { starts++; following = false; idle('Stopped. Edit or press Run to start again.'); return; }
+    if (stopRun('stopped')) idle('Stopped. The findings are from the last finished run.');
+  };
   /** Work is over: the bar goes, the last result stays or comes back. */
   function idle(text = null) {
     // satex has started, or did not: the card gives way to the page
@@ -6188,11 +6317,12 @@
     if (act.phase === 'Starting') boot.started = true;
     bootSettled();
     bar.hidden = true;
-    if (act.phase && text === null && status.textContent === act.shown && act.rest) status.textContent = act.rest;
+    if (act.phase && text === null && status.textContent === act.shown && act.rest) status.textContent = act.rest === READY ? restLine() : act.rest;
     if (text !== null) status.textContent = text;
     if (act.phase) act.ended = performance.now();
     act.phase = ''; act.text = '';
     delete status.dataset.busy;
+    $('play-stop')?.toggleAttribute('hidden', true);
     drawAct();
   }
   const mib = (n) => (n / 2 ** 20).toFixed(1);
@@ -6458,7 +6588,7 @@
     idle();
     sampleTexts = ready.samples;
     const setting = location.hash.startsWith('#setting=') ? new URLSearchParams(location.hash.slice(1)) : null;
-    const hash = setting ? '' : decodeURIComponent(location.hash.slice(1));
+    const [named, asked] = linkWidget(setting ? '' : location.hash.slice(1)), hash = decodeURIComponent(named);
     const link = hash.startsWith('s=') ? await restore(hash.slice(2)) : null;
     if (hash.startsWith('open=')) history.replaceState(null, '', location.pathname);
     const ex = link ? link.x : hash in sampleTexts && !shared.has(hash) ? hash : projectOf(hash) ?? manifest.sample;
@@ -6489,6 +6619,7 @@
     button.textContent = 'Run';
     button.disabled = false;
     if (setting) cfgFromLink(setting);
+    if (asked && !link) widgetAsked(asked);
     if (link) await openLink(link);
     else await example(ex, { file: shared.has(hash) ? hash : ex });
     const opening = hash.match(/^open=(.+):(\d+)$/);
@@ -6496,7 +6627,7 @@
     offlineSetup();
     preload().catch(() => {});
     if (!plainLint()) return link && !link.x ? start() : undefined;
-    status.textContent = 'Ready. Findings update as you type.';
+    status.textContent = restLine();
     status.dataset.done = 'ready';
     pdfRestore();
   })().catch((e) => { status.textContent = `the playground failed: ${e.message}`; status.dataset.done = 'error'; bootClose(); });

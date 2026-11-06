@@ -3,33 +3,33 @@
     <img class="ink word" src="{{mark}}" alt="">
     <span class="tag"><img class="ink l1" src="{{line1}}" alt=""><img class="ink l2" src="{{line2}}" alt=""></span>
   </a>
-  <p class="claim"><span class="claim-lead">SaTeX interprets TeX abstractly, on every path at once. Without compiling, it tells you</span><span class="claim-rot" aria-live="polite"><span data-knows class="on" data-effect="complete">which <code>\macros</code> exist at each line, on every path</span><span data-knows data-effect="origin">where each command comes from, and which line loads it<template><li><code>\ref</code><span>defined by the kernel, latex.ltx</span></li><li><code>\ref</code><span>changed by hyperref.sty</span></li><li><code>\usepackage{hyperref}</code><span>line 4 loads it</span></li></template></span><span data-knows>which dash a range like 10<u data-fix="–">-</u>12 needs</span><span data-knows>the names <code>\csname</code> builds, and what they expand to<template><li><code>\csname r@sec:intro\endcsname</code><span>the label</span></li><li><code>\r@sec:intro</code> → <code>{1}{2}</code><span>section 1, page 2</span></li><li><code>\ref{sec:intro}</code> → <code>1</code><span>after one more run</span></li></template></span><span data-knows data-effect="stepper">every expansion step, as in <code>\twice{ab}</code></span><span data-knows data-effect="branch">where branches you never compiled break</span><span data-knows data-effect="catcodes">the category code of each character, as in <code>\a@b{$x^2$&amp;#1}</code></span><span data-knows data-effect="options">which options packages read and what they change<template><li><code>\usepackage[colorlinks]{hyperref}</code><span>read by hyperref</span></li><li><b><code>\ifHy@colorlinks</code> → <code>\iftrue</code></b><span>links in color</span></li><li><b><code>\@pdfborder</code> → <code>0 0 0</code></b><span>no boxes</span></li></template></span><span data-knows data-effect="ligatures">the text each paragraph sets, down to its ligatures</span><span data-knows data-effect="runs">the <code>.aux</code> contents and how many runs the build needs</span><span data-knows data-effect="draw">which command sets a symbol you can only <a href="draw/index.html">draw</a></span><span data-knows data-effect="diff">why it compiled yesterday and not today 🙃</span><span data-knows data-effect="peek">that the author of <a href="https://github.com/EagleoutIce/tikzpingus">TikZpingus</a> approves 🐧</span></span></p>
+  <p class="claim"><span class="claim-lead">SaTeX interprets TeX abstractly, on every path at once. Without compiling, it tells you</span><span class="claim-rot" aria-live="polite"><span data-knows class="on" data-effect="complete">which <code>\macros</code> exist at each line, on every path</span><span data-knows data-effect="origin">where each command comes from and which line loads it<template><li><code>\ref</code><span>defined by the kernel, latex.ltx</span></li><li><code>\ref</code><span>changed by hyperref.sty</span></li><li><code>\usepackage{hyperref}</code><span>line 4 loads it</span></li></template></span><span data-knows>which dash a range like 10<u data-fix="–">-</u>12 needs</span><span data-knows>the names <code>\csname</code> builds and what they expand to<template><li><code>\csname r@sec:intro\endcsname</code><span>the label</span></li><li><code>\r@sec:intro</code> → <code>{1}{2}</code><span>section 1, page 2</span></li><li><code>\ref{sec:intro}</code> → <code>1</code><span>after one more run</span></li></template></span><span data-knows data-effect="stepper">each expansion step of <code>\twice{ab}</code></span><span data-knows data-effect="branch">where branches you never compiled break</span><span data-knows data-effect="catcodes">the category code of each character in <code>\a@b{$x^2$&amp;#1}</code></span><span data-knows data-effect="options">which options packages read and what they change<template><li><code>\usepackage[colorlinks]{hyperref}</code><span>read by hyperref</span></li><li><b><code>\ifHy@colorlinks</code> → <code>\iftrue</code></b><span>links in color</span></li><li><b><code>\@pdfborder</code> → <code>0 0 0</code></b><span>no boxes</span></li></template></span><span data-knows data-effect="ligatures">the text each paragraph sets, down to its ligatures</span><span data-knows data-effect="runs">what the <code>.aux</code> holds and how many runs the build needs<template><li><code>run 1</code><span>writes <code>\newlabel{sec:intro}</code></span></li><li><code>run 2</code><span>reads it: <code>\ref{sec:intro}</code> → 1</span></li><li><b><code>2 runs</code></b><span>a third changes nothing</span></li></template></span><span data-knows data-effect="draw">the macros that set a symbol you <a href="draw/index.html">sketch</a></span><span data-knows data-effect="diff">why it compiled yesterday and not today 🙃</span><span data-knows data-effect="peek">that the author of <a href="https://github.com/EagleoutIce/tikzpingus">TikZpingus</a> approves 🐧</span></span></p>
   <p class="claim-dots" role="tablist" aria-label="what SaTeX tells you"></p>
   <p class="actions"><a class="button" href="play/index.html">Try it in the browser</a> <a class="button ghost" href="#install">Install</a> <a class="button ghost" href="#compare">Comparison</a> <a class="button ghost" href="guide.html">Guide</a></p>
 </section>
 
 <section class="band showcase" id="showcase">
   <h2>In the editor</h2>
-  <p class="sub">Each widget opens on what the run found: a table, a graphic, a color, a length. Its edits go back into the source as plain LaTeX.</p>
+  <p class="sub">Click a table, a figure, a color or a length to edit it in place. Your changes go back into the source as plain LaTeX.</p>
   <div class="shots">{{showcase}}</div>
 </section>
 
 <section class="band" id="examples">
   <h2>Examples</h2>
-  <p class="sub">Hover a command for its explanation, an underline or a marker for its finding. Beside each file is what it typesets. All of it comes from SaTeX's analysis of the file. The last tab is yours to type in.</p>
+  <p class="sub">Hover a command to see what it does, or an underline to see what is wrong. Next to each file is what it typesets, all from SaTeX's analysis. The last tab is yours to type in.</p>
   <div class="examples">{{examples}}</div>
   <p class="muted small">Analyzed at build time with SaTeX <span title="{{versiontitle}}">{{version}}</span>.</p>
 </section>
 
 <section class="band alt" id="plugins">
   <h2>Editor plugins</h2>
-  <p class="sub">Each editor feature is a plugin that triggers on a type the run computed, never on a command's name: a color, a length, a table, a figure. Each one can be switched off in <code>satex.yaml</code> or in the playground's settings.</p>
-  <div class="plugin-tiles" data-plugin-tiles hidden></div>
+  <p class="sub">Every editor feature is a plugin. It reacts to what the run computed, such as a color, a length, a table or a figure, never to a command's name. Switch any of them off in <code>satex.yaml</code> or in the playground's settings.</p>
+  <details class="plugins-fold" data-fold="plugins"><summary>Show every plugin</summary><div class="plugin-tiles" data-plugin-tiles hidden></div></details>
 </section>
 
 <section class="band" id="run">
   <h2>Why interpret the code</h2>
-  <p class="sub">TeX decides what a line means while it runs: catcodes change, names are built, definitions come and go. A tool that only reads the text has to guess at these. SaTeX interprets the kernel, the class and every package as TeX would, over every path at once, and joins the paths soundly where it cannot decide.</p>
+  <p class="sub">TeX decides what a line means while it runs. Catcodes change, names get built, definitions come and go. A tool that only reads the text has to guess. SaTeX runs the kernel, the class and every package as TeX would, on every path at once, and joins the paths soundly where it cannot decide.</p>
   <div class="contrast" role="tablist" aria-label="examples of what a run knows">
     <button type="button" role="tab" aria-selected="true" data-case="0">A name built by <code>\csname</code></button>
     <button type="button" role="tab" aria-selected="false" data-case="1">An expl3 variant</button>
@@ -60,7 +60,7 @@ a | b \gdef\Maybe{}</code></pre>
 
 <section class="band alt" id="compare">
   <h2>Comparison</h2>
-  <p class="sub">The other tools are good at what they do. SaTeX interprets the code abstractly, so it can check what the others infer from names and text.</p>
+  <p class="sub">The other tools are good at what they do. SaTeX runs the code abstractly, so it can check what the others infer from names and text.</p>
   <div class="table-wrap"><table class="compare">
     <thead><tr><th scope="col"></th><th scope="col">SaTeX</th><th scope="col"><a href="https://github.com/witiko/expltools">explcheck</a></th><th scope="col"><a href="https://github.com/latex-lsp/texlab">TeXLab</a></th><th scope="col"><a href="https://github.com/astoff/digestif">digestif</a></th><th scope="col"><a href="https://www.nongnu.org/chktex/">ChkTeX</a></th></tr></thead>
     <tbody>
