@@ -260,10 +260,6 @@
      "until": "document.querySelector('#play-trace [data-move=next]')",
      "ms": 90000,
      "wait": 800
-    },
-    {
-     "eval": "document.querySelector('#trace-stream')?.scrollIntoView({ block: 'nearest' })",
-     "wait": 400
     }
    ],
    "video": [
@@ -367,16 +363,13 @@
      "ms": 60000
     },
     {
-     "hover": "__xy('Section 1', 3)"
-    },
-    {
      "eval": "clearInterval(self.__mark); self.__mark = setInterval(() => { for (const l of document.querySelectorAll('.cm-line')) l.style.background = /Section 1/.test(l.textContent) ? 'color-mix(in srgb, #b42318 22%, transparent)' : ''; }, 100);",
      "wait": 300
     },
     {
-     "until": "document.querySelector('.tip-card:not([hidden])')",
-     "wait": 900,
-     "snap": "before"
+     "wait": 500,
+     "snap": "before",
+     "eval": "0"
     },
     {
      "eval": "const v = document.querySelector('.cm-editor').satexView; v.focus(); __xy(\"Section 1\", 3); v.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', code: 'F10', keyCode: 121, shiftKey: true, bubbles: true, cancelable: true })); for (let k = 0; k < 100 && document.getElementById('play-ctx').hidden; k++) await new Promise((r) => setTimeout(r, 200));",
@@ -398,20 +391,14 @@
      "wait": 400
     }
    ],
-   "crop": [
-    "=lines('\\\\begin{lemma}', '\\\\end{document}')",
-    ".tip-card:not([hidden])"
-   ],
+   "crop": "=lines('\\\\begin{lemma}', '\\\\end{document}')",
    "pad": 8,
    "keepMouse": true,
    "viewport": [
-    1400,
-    640
+    1000,
+    760
    ],
-   "open": [
-    "panel",
-    "play-findings"
-   ]
+   "beforeCrop": "=lines('\\\\begin{lemma}', '\\\\end{document}')"
   },
   {
    "name": "runaway",
