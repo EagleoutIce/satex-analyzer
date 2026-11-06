@@ -448,6 +448,18 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
+  # Not blocking: lists the user-visible commits CHANGELOG.md's Unreleased
+  # section does not cover yet (scripts/changelog.py draft shows them).
+  changelog:
+    name: Changelog covers the commits
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: python3 scripts/changelog.py check
+
   link-check:
     name: Check documentation links
     needs: changes

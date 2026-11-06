@@ -302,7 +302,7 @@ def version(cargo):
 def pages():
     """Repository Markdown -> site path: the README is the guide, wiki pages live under wiki/."""
     table = {"README.md": "guide.html", "SEMANTICS.md": "SEMANTICS.html",
-             "doc/chktex-coverage.md": "chktex-coverage.html", "doc/developing.md": "developing.html", "doc/credits.md": "credits.html"}
+             "doc/chktex-coverage.md": "chktex-coverage.html", "doc/developing.md": "developing.html", "doc/credits.md": "credits.html", "CHANGELOG.md": "changelog.html"}
     for md in sorted((ROOT / "doc/wiki").glob("*.md")):
         if not md.name.startswith("_"):
             table[f"doc/wiki/{md.name}"] = f"wiki/{md.stem}.html"
@@ -1640,6 +1640,8 @@ def main():
         for src, dst in table.items():
             text = strip_banner((ROOT / src).read_text())
             body = rewrite(markdown(text), src, table | lean_table, homepage, repo, out, "../" * dst.count("/"))
+            if dst == "changelog.html":
+                body = re.sub(r"<li>(?:<p>)?<code>(feat|fix|perf|docs|build)</code>", lambda m: f'<li><span class="badge b-{m[1]}">{m[1]}</span>', body)
             if dst == "wiki/formal-semantics.html":
                 body = formal(body)
             nav_html = chapter_nav(dst, order)

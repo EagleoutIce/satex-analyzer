@@ -52,6 +52,8 @@ exclude = [
   # wiki-style page links in the root pages (README, SEMANTICS): pages of the wiki, not files
   "^file://[^#]*/[A-Z][A-Za-z-]*(#.*)?$",
   "^file://.*/releases$",
+  # commits and pull requests of the changelog: a branch's hashes change until it is merged
+  "^https://github\\.com/EagleoutIce/satex-analyzer/(commit|pull)/",
   "^https://doi\\.org/10\\.1145/",
 ]
 

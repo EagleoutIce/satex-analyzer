@@ -12,12 +12,15 @@ To cut a new release, use the `scripts/release.sh` script:
 scripts/release.sh <patch|minor|major> "<release-title>"
 ```
 
+Before it, curate the changelog. `scripts/changelog.py draft` lists the commits `CHANGELOG.md` does not cover yet, grouped by area. Write them as one-liners under "Unreleased", run `scripts/changelog.py links` to turn `@sha` and `#N` into links, then `scripts/changelog.py mark` to record how far you reviewed. CI runs `scripts/changelog.py check` and warns about user-visible commits still missing.
+
 The script will:
 1. Verify the working tree is clean
 2. Read the current version from Cargo.toml
 3. Bump the version according to the specified type (patch, minor, or major)
 4. Update Cargo.toml and Cargo.lock
-5. Generate release notes in `doc/release-notes/<version>.md` with commits since the previous release
+5. Turn "Unreleased" in `CHANGELOG.md` into the new version (`scripts/changelog.py release`)
+6. Generate release notes in `doc/release-notes/<version>.md` from the changelog section, with the commits since the previous release
 
 The script will print two commands you must run manually:
 
