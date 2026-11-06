@@ -605,10 +605,21 @@ def bundle(satex, work):
     # cache directory stays from the last build: satex rebuilds what this binary cannot use, and
     # `cache export` writes only the valid entries.
     def kernel_caches(kernel, flags):
-        kenv = dict(os.environ, SATEX_CACHE=str(work / f"cache-{kernel}"))
+        # The kernel's archive holds the format and what the sample loads, nothing else: the shared
+        # directory gathers every package any run met, which would ship with the first download.
+        shared, alone = work / f"cache-{kernel}", work / f"cache-{kernel}-sample"
+        shutil.rmtree(alone, ignore_errors=True)
+        alone.mkdir(parents=True)
+        for f in shared.glob("format-*"):
+            shutil.copy2(f, alone / f.name)
+        kenv = dict(os.environ, SATEX_CACHE=str(alone))
         proc([str(satex), *flags, "lint", "-f", SAMPLE], cwd=project, env=kenv, capture_output=True, check=False)
         archive = work / f"satex-cache-{kernel}.bin"
         run(str(satex), "cache", "export", str(archive), env=kenv)
+        # a format built here keeps the shared directory warm for the next build
+        for f in alone.glob("format-*"):
+            if not (shared / f.name).exists():
+                shutil.copy2(f, shared / f.name)
         return archive
 
     # Packages: the files a probe document reads. The cache entries are those the examples' runs, from a
