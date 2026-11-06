@@ -1737,7 +1737,7 @@
       queued = false;
       for (const s of near) {
         const r = s.getBoundingClientRect(), mid = (r.top + r.height / 2) / innerHeight - .5;
-        s.style.setProperty('--lift', `${(Math.max(-1, Math.min(1, mid)) * -10).toFixed(1)}px`);
+        s.style.setProperty('--lift', `${(Math.max(-1, Math.min(1, mid)) * -4).toFixed(1)}px`);
       }
     };
     addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(drift); } }, { passive: true });

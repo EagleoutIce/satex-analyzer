@@ -2001,7 +2001,7 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 /* the frame in focus lifts a little and glows: the one that plays */
 .shot-win { transition: transform .5s var(--ease), box-shadow .5s var(--ease); }
 .shot-focus .shot-win { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent), 0 4px 10px #10141e1a, 0 26px 60px -14px color-mix(in srgb, var(--accent) 45%, #10141e66); }
-@media (prefers-reduced-motion: no-preference) { .shot-focus .shot-win { --hover: -3px; } }
+@media (prefers-reduced-motion: no-preference) { .shot-focus .shot-win { --hover: -1px; } }
 .shot-play { display: none; position: absolute; right: .6rem; bottom: .6rem; z-index: 2; width: 2.2rem; height: 2.2rem; min-width: 0; padding: 0; border-radius: var(--r-pill); border: 1px solid var(--border); background: color-mix(in srgb, var(--panel) 85%, transparent); color: var(--fg); font-size: .8rem; cursor: pointer; box-shadow: var(--shadow); }
 @media (prefers-reduced-motion: reduce) { .shot-play { display: grid; place-items: center; } }
 .shot-dark { display: none !important; }
@@ -2018,7 +2018,7 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
   .shot.pending .shot-stage, .shot.pending figcaption { opacity: 0; transform: translateY(1.4rem); }
   .shot .shot-stage, .shot figcaption { transition: opacity .7s var(--ease), transform .7s var(--ease); }
   .shot figcaption { transition-delay: .08s; }
-  .shot-stage:hover .shot-win { --hover: -4px; }
+  .shot-stage:hover .shot-win { --hover: -2px; }
   .shot-win { transform: translate3d(0, calc(var(--lift, 0px) + var(--hover, 0px)), 0); transition: transform .4s var(--ease), box-shadow .5s var(--ease); }
 }
 @media (max-width: 52rem) {
