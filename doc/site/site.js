@@ -1120,7 +1120,7 @@
   // card, so nothing on the page moves; a click on a command pins its full card.
   const { card } = tips, tip = card.el;
   /** Typeset paragraphs as the playground's Typeset panel draws them. */
-  const paragraphs = (rows) => rows.map((r) => `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}${r.footnote ? ' ts-foot' : ''}"${typeof r.skip === 'number' && !r.heading ? ` style="--skip: ${Math.max(r.skip, 0)}pt"` : ''}${r.env ? ` data-env="${esc(r.env)}"` : ''}><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`).join('')
+  const paragraphs = (rows) => rows.map((r) => `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}${r.footnote ? ' ts-foot' : ''}"${r.line ? ` data-line="${r.line}" data-last="${Math.max(r.line, ...[...(r.marked ?? '').matchAll(/\u0007(\d+)/g)].map((m) => +m[1]))}"` : ''}${typeof r.skip === 'number' && !r.heading ? ` style="--skip: ${Math.max(r.skip, 0)}pt"` : ''}${r.env ? ` data-env="${esc(r.env)}"` : ''}><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures, r.lines), r.sketches, r.sketch)}</span></p>`).join('')
     || '<p class="muted">It sets no paragraph.</p>';
   const lintCard = (d) => {
     const diff = d.typo ? (d.edits ?? []).map((e) => ` <span class="diff"><del>${esc(e.from) || '␣'}</del>→<ins>${esc(e.to) || '∅'}</ins></span>`).join('') : '';
@@ -1130,25 +1130,61 @@
   /** The findings' cards, then their rules' cards. */
   const findingCards = async (ds) => ds.map(lintCard).join('') + (await Promise.all([...new Set(ds.map((d) => d.code))].map(ruleNamed)))
     .filter(Boolean).map((r) => ruleCard(r, ruleLink(r.code))).join('');
-  // the examples, and the showcase's live window until its engine runs: the build's findings and text
+  /** The command record of `name` from the build's run: in the preamble its preamble meaning. */
+  const record = (data, name, preamble) => {
+    const all = data.cs[name] ?? [];
+    return all.find((r) => r.when && r.when === (preamble ? 'preamble' : 'document')) ?? all.find((r) => !r.error) ?? all[0];
+  };
+  /** A source line's typeset paragraphs lit, and back: a paragraph's lines in the source, the static one or the editor. */
+  function typesetSync(fig) {
+    const side = fig.querySelector('.ex-side'), own = () => [...side.querySelectorAll('p.ts[data-line]')];
+    const lineOf = (el) => {
+      const ln = el.closest?.('.ln');
+      if (ln) return +ln.dataset.l;
+      const cm = el.closest?.('.cm-line'), view = fig.satexView;
+      return cm && view ? view.state.doc.lineAt(view.posAtDOM(cm)).number : null;
+    };
+    const lineEl = (n) => {
+      const view = fig.satexView;
+      if (!view) return fig.querySelector(`.ln[data-l="${n}"]`);
+      if (n > view.state.doc.lines) return null;
+      const { node } = view.domAtPos(view.state.doc.line(n).from);
+      return (node.nodeType === 1 ? node : node.parentElement)?.closest('.cm-line');
+    };
+    const clear = () => fig.querySelectorAll('.ts-current, .ts-src').forEach((x) => x.classList.remove('ts-current', 'ts-src'));
+    fig.addEventListener('mouseover', (e) => {
+      const p = e.target.closest?.('p.ts[data-line]');
+      clear();
+      if (p && side.contains(p)) {
+        p.classList.add('ts-current');
+        for (let n = +p.dataset.line; n <= +p.dataset.last; n++) lineEl(n)?.classList.add('ts-src');
+        return;
+      }
+      const n = !side.contains(e.target) && lineOf(e.target);
+      if (!n) return;
+      // the paragraphs the line sets, else the one set last before it
+      const ps = own(), held = ps.filter((x) => +x.dataset.line <= n && n <= +x.dataset.last);
+      const here = held.length ? held : ps.filter((x, i) => +x.dataset.line <= n && (i + 1 >= ps.length || +ps[i + 1].dataset.line > n));
+      here.forEach((x) => x.classList.add('ts-current'));
+    });
+    fig.addEventListener('mouseleave', clear);
+  }
+  // the examples, and the showcase's live window until its editor stands: the build's findings and text
   for (const fig of document.querySelectorAll('.example:not(.live), .shot-live')) {
     const data = JSON.parse(fig.querySelector('.ex-data').textContent);
     fig.querySelector('.ex-side').innerHTML = paragraphs(data.ts ?? []);
+    typesetSync(fig);
     // A command before `\begin{document}` means what it means in the preamble.
     const src = fig.querySelector('pre.src');
     const lines = [...src.querySelectorAll('.ln')];
     const begins = lines.findIndex((l) => l.textContent.includes('\\begin{document}'));
-    const when = (el) => el && begins >= 0 && lines.indexOf(el.closest('.ln')) < begins ? 'preamble' : 'document';
-    const record = (name, el) => {
-      const all = data.cs[name] ?? [];
-      return all.find((r) => r.when && r.when === when(el)) ?? all.find((r) => !r.error) ?? all[0];
-    };
+    const preamble = (el) => el && begins >= 0 && lines.indexOf(el.closest('.ln')) < begins;
     const lit = (ks, on) => { for (const k of ks) for (const x of fig.querySelectorAll(`[data-lint~="${k}"]`)) x.classList.toggle('lit', on); };
     src.addEventListener('mouseover', async (e) => {
       const el = e.target.closest('[data-cs], [data-lint]');
       if (!el || tip.dataset.pin) return;
       const ks = el.dataset.lint ? el.dataset.lint.split(' ') : [];
-      const cs = el.dataset.cs ? record(el.dataset.cs, el) : null;
+      const cs = el.dataset.cs ? record(data, el.dataset.cs, preamble(el)) : null;
       if (!ks.length && !cs) return card.hide(250);
       lit(ks, true);
       const html = (ks.length ? await findingCards(ks.map((k) => data.lints[k])) : '') + (cs ? brief(cs) : '');
@@ -1164,7 +1200,7 @@
     // a click on a command, here or in its card, pins its full card
     const pin = (e) => {
       const a = e.target.closest('[data-cs]');
-      const r = a && (e.currentTarget !== tip || tip.dataset.fig === fig.id) && record(a.dataset.cs, a);
+      const r = a && (e.currentTarget !== tip || tip.dataset.fig === fig.id) && record(data, a.dataset.cs, preamble(a));
       if (!r) return;
       e.preventDefault();
       card.show(a, explain(r, true));
@@ -1235,20 +1271,23 @@
     e.kernel = kernel.id;
     e.open.clear();
   }
-  /** An editor in `host` for file `name` of `fig`, starting from `first`. */
-  async function liveEditor(fig, host, name, first) {
+  /** An editor in `host` for file `name` of `fig`, starting from `first`. Until the engine has read it, the build's
+   * run of `first` (`data`, an example's) answers: its findings, mapped through the edits, its cards and typeset text. */
+  async function liveEditor(fig, host, name, first, data = null) {
     const out = fig.querySelector('.live-ts'), status = fig.querySelector('.live-status'), uri = `file:///work/${name}`;
-    let version = 0, timer = 0, view = null, underline = () => {};
+    let version = 0, timer = 0, view = null, underline = () => {}, ran = false, shown = data ? first : null;
     const tell = (html, bad = false) => { status.innerHTML = html; status.classList.toggle('live-bad', bad); };
     async function analyze() {
       say = tell;
-      const mine = ++version, e = await start(), now = view.state.doc.toString(), t0 = performance.now();
+      const mine = ++version, now = view.state.doc.toString(), t0 = performance.now();
+      // text the pane does not show yet: it dims until the engine's answer comes
+      fig.classList.toggle('busy', now !== shown);
+      const e = await start();
       const kernel = PLAIN.test(now) ? e.manifest.kernels.find((k) => k.id === 'plain') : e.manifest.kernels[0];
       const more = wanted(e, kernel, now);
       if (more.length) { tell(`Loading ${esc(more.map((p) => p.label).join(', '))}…`); await e.ask({ type: 'bundles', base: e.base, entries: more }); more.forEach((p) => e.have.add(p.id)); }
       if (mine !== version) return;
       tell('Analyzing…');
-      fig.classList.add('busy');
       e.ask({ type: 'project', dir: '/work', files: { [name]: new TextEncoder().encode(now) } });
       await onKernel(e, kernel, name);
       if (!e.open.has(uri)) {
@@ -1262,6 +1301,8 @@
       const rows = (await e.lsp('satex/typeset', { textDocument: { uri } })) ?? [];
       if (mine !== version) return;
       fig.classList.remove('busy');
+      ran = true;
+      shown = now;
       out.innerHTML = paragraphs(rows.filter((r) => r.kind === 'paragraph' && !String(r.path ?? '').startsWith('/texmf')));
       underline(found.get(uri) ?? []);
       tell(`Analyzed in ${duration(performance.now() - t0)}. <a href="play/index.html">The playground</a> has traces, the library and more.`);
@@ -1279,41 +1320,77 @@
     const theme = new st.Compartment();
     view = new EditorView({
       parent: host, doc: first,
-      extensions: [basicSetup, EditorView.lineWrapping, language.syntaxHighlighting(tex.highlighter), tex.language, lint.linter(null), lint.lintGutter(), ac.autocompletion({ override: [complete] }), theme.of(dark() ? oneDark : []),
+      extensions: [basicSetup, language.syntaxHighlighting(tex.highlighter), tex.language, lint.linter(null, { tooltipFilter: () => [] }), lint.lintGutter(), ac.autocompletion({ override: [complete] }), theme.of(dark() ? oneDark : []),
         EditorView.updateListener.of((u) => { if (u.docChanged) { clearTimeout(timer); timer = setTimeout(analyze, 350); } })],
     });
     new MutationObserver(() => view.dispatch({ effects: theme.reconfigure(dark() ? oneDark : []) })).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     underline = (ds) => view.dispatch(lint.setDiagnostics(view.state, ds.map((d) => {
       const from = off(view.state.doc, d.range.start), to = off(view.state.doc, d.range.end);
-      return { from, to: Math.min(Math.max(to, from + 1), view.state.doc.length), severity: SEV[d.severity] || 'info', message: d.message, source: d.data?.rule ?? d.code };
+      return { from, to: Math.min(Math.max(to, from + 1), view.state.doc.length), severity: SEV[d.severity] || 'info', message: d.message, source: d.data?.rule ?? d.code,
+        // the card a finding shows, the build's or the server's, as on the examples
+        card: d.card ?? { code: d.data?.rule ?? d.code, message: d.message, severity: SEV[d.severity] || 'info', fix: d.data?.fix, applicability: d.data?.applicability ?? 'unsafe' } };
     })));
-    // hover: the language server's card, as in the playground
-    let shown = null;
-    host.addEventListener('mousemove', (ev) => {
-      const p = view.posAtCoords({ x: ev.clientX, y: ev.clientY });
-      if (p == null || !engine) return;
-      clearTimeout(shown);
-      shown = setTimeout(async () => {
+    fig.satexView = view;
+    // the build's findings, as the server's: CodeMirror maps them through edits
+    if (data) underline(data.lints.map((d) => ({ card: d, message: d.message, code: d.code, severity: SEV.indexOf(d.severity),
+      range: { start: { line: d.start[0], character: d.start[1] }, end: { line: d.end[0], character: d.end[1] } } })));
+    /** The findings' cards at `p`. */
+    const findingsAt = (p) => {
+      const ds = [];
+      lint.forEachDiagnostic(view.state, (d, from, to) => { if (from <= p && p <= to) ds.push(d.card); });
+      return ds.length ? findingCards(ds) : '';
+    };
+    /** The build's card for the command at `p`. */
+    const built = (p) => {
+      const doc = view.state.doc, line = doc.lineAt(p);
+      const at = [...line.text.matchAll(/\\(?:[A-Za-z@]+|.)/g)].find((m) => m.index <= p - line.from && p - line.from < m.index + m[0].length);
+      const begins = doc.toString().indexOf('\\begin{document}');
+      const cs = at && record(data, at[0], begins >= 0 && p < begins);
+      return cs ? brief(cs) : '';
+    };
+    // hover: the language server's card, as in the playground; before its first run the build's, as on the examples
+    let hovering = null, hovered = null;
+    /** The card at `p`; `again` refreshes it in place after a card's edit, the pointer on the card. */
+    const hoverAt = async (p, again = false) => {
+      let html = await findingsAt(p);
+      if (ran || !data) {
         const e = await engine, r = await e.lsp('textDocument/hover', { textDocument: { uri }, position: pos(view.state.doc, p) }).catch(() => null);
         const c = r?.contents, value = typeof c === 'string' ? c : c?.value ?? '';
-        const at = view.coordsAtPos(p);
-        if (value && at && host.matches(':hover')) { card.show({ left: at.left, top: at.top, right: at.right, bottom: at.bottom }, `<div class="hover">${hoverCard(value)}</div>`); card.el.dataset.owner = uri; }
-      }, 300);
+        html += value ? `<div class="hover">${hoverCard(value)}</div>` : '';
+      } else html += built(p);
+      const at = view.coordsAtPos(p);
+      if (!html || !at || !(again ? card.el.dataset.owner === uri && !card.el.hidden : host.matches(':hover'))) return;
+      hovered = p;
+      card.show({ left: at.left, top: at.top, right: at.right, bottom: at.bottom }, html);
+      card.el.dataset.owner = uri;
+      delete tip.dataset.fig;
+    };
+    host.addEventListener('mousemove', (ev) => {
+      const p = view.posAtCoords({ x: ev.clientX, y: ev.clientY });
+      if (p == null || tip.dataset.pin || (!data && !engine)) return;
+      clearTimeout(hovering);
+      hovering = setTimeout(() => hoverAt(p), ran || !data ? 300 : 120);
     });
-    host.addEventListener('mouseleave', () => { clearTimeout(shown); card.hide(350); });
+    host.addEventListener('mouseleave', () => { clearTimeout(hovering); card.hide(350); });
     // a card's actions: a value link writes into this editor, a dialog link opens the full playground on this file there
-    const act = (ev) => {
+    const act = async (ev) => {
       const edit = ev.target.closest?.('.cmd-edit'), open = ev.target.closest?.('.sd-open');
       // only the editor whose hover the card shows acts on it
       if ((!edit && !open) || card.el.dataset.owner !== uri) return;
       ev.preventDefault();
-      card.hide();
       if (edit) {
+        // the card stays and answers the new text, so several values can be set in a row
         let range, text;
         try { [, range, text] = JSON.parse(decodeURIComponent(edit.dataset.args)); } catch { return; }
-        view.dispatch({ changes: { from: off(view.state.doc, range.start), to: off(view.state.doc, range.end), insert: text ?? '' } });
-        return;
+        const tr = view.state.update({ changes: { from: off(view.state.doc, range.start), to: off(view.state.doc, range.end), insert: text ?? '' } });
+        view.dispatch(tr);
+        if (hovered == null) return card.hide();
+        hovered = tr.changes.mapPos(hovered);
+        clearTimeout(timer);
+        await analyze();
+        return hoverAt(hovered, true);
       }
+      card.hide();
       let at = null;
       try { at = JSON.parse(open.dataset.position); } catch {}
       const line = at ? view.state.doc.line(Math.min(at.line + 1, view.state.doc.lines)).text.trim() : '';
@@ -1321,7 +1398,7 @@
       location.href = `play/index.html#${encodeURIComponent(name)}${widget ? `&widget=${widget}&at=${encodeURIComponent(line.slice(0, 40))}` : ''}`;
     };
     card.el.addEventListener('click', act);
-    return { view, analyze, destroy: () => { clearTimeout(timer); version++; view.destroy(); } };
+    return { view, analyze, destroy: () => { clearTimeout(timer); version++; view.destroy(); delete fig.satexView; } };
   }
   // an example: its source becomes an editor on a click that is no command's, "reset" brings the build's result back
   for (const fig of document.querySelectorAll('.example:not(.live)')) {
@@ -1351,7 +1428,7 @@
       Object.assign(host.style, { position: 'absolute', visibility: 'hidden', left: `${pre.offsetLeft}px`, top: `${pre.offsetTop}px`, width: `${pre.offsetWidth}px`, minHeight: `${pre.offsetHeight}px` });
       pre.after(host);
       card.hide();
-      live = await liveEditor(fig, host, data.name, data.source);
+      live = await liveEditor(fig, host, data.name, data.source, data);
       const gutter = host.querySelector('.cm-gutters')?.offsetWidth ?? 0;
       pre.style.transition = 'padding-left .15s var(--ease)';
       pre.style.paddingLeft = `calc(${getComputedStyle(pre).paddingLeft} + ${gutter}px)`;
@@ -1398,7 +1475,7 @@
       const host = Object.assign(document.createElement('div'), { className: 'src live-src' });
       host.style.minHeight = `${poster.offsetHeight}px`;
       const t0 = performance.now(), first = data.source;
-      const live = await liveEditor(fig, host, fig.dataset.name, first);
+      const live = await liveEditor(fig, host, fig.dataset.name, first, data);
       poster.replaceWith(host);
       await live.analyze();
       fig.dataset.firstFinding = String(Math.round(performance.now() - t0));
@@ -1409,6 +1486,7 @@
   }
   const own = document.querySelector('.example.live');
   if (own) {
+    typesetSync(own);
     const FIRST = '\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, \\emph{#1}!}\n\\begin{document}\n\\section{Welcome}\n\\greet{world} Pages 10-12 come next.\nSee Section~\\ref{sec:none}.\n\\end{document}\n';
     let live = null;
     const open = async () => { if (!live) { live = liveEditor(own, own.querySelector('.live-src'), 'try.tex', FIRST); (await live).analyze(); } };

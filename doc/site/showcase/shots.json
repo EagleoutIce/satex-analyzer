@@ -8,7 +8,7 @@
    "title": "Try it right here",
    "caption": "Edit this document. Hover the length or the [ht] to see what they do, and fix the dash SaTeX underlines. The text on the right follows as you type.",
    "status": "Computed when this page was built. SaTeX starts in your browser when the window comes into view (about 10 MB, loaded once).",
-   "text": "\\documentclass{article}\n\\begin{document}\n\\section{Results}\nThe runs took 10-12 seconds on a warm cache.\n\\vspace{12pt}\n\\begin{figure}[ht]\n  \\centering\n  \\rule{0.6\\linewidth}{2cm}\n  \\caption{The warm cache.}\n\\end{figure}\n\\end{document}\n"
+   "text": "\\documentclass{article}\n\\begin{document}\n\\section{Results}\nRuns took 10-12 s when warm.\n\\vspace{12pt}\n\\begin{figure}[ht]\n  \\centering\n  \\rule{0.6\\linewidth}{2cm}\n  \\caption{The warm cache.}\n\\end{figure}\n\\end{document}\n"
   },
   {
    "name": "image",
