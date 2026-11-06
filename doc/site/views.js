@@ -40,6 +40,18 @@
     const [L, A, B] = [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
     return [L, Math.hypot(A, B), (Math.atan2(B, A) * 180 / Math.PI + 360) % 360];
   };
+  /** The defined color nearest to `c` as the eye sees it (distance in OKLab), or null. */
+  const closest = (c, defined) => {
+    const lab = (x) => { const [l, ch, h] = oklch(x); return [l, ch * Math.cos(h * Math.PI / 180), ch * Math.sin(h * Math.PI / 180)]; };
+    const [l, a, b] = lab(c);
+    let best = null, gap = Infinity;
+    for (const d of defined ?? []) {
+      if (!d.rgb) continue;
+      const [l2, a2, b2] = lab(d.rgb), g = Math.hypot(l - l2, a - a2, b - b2);
+      if (g < gap) { gap = g; best = d; }
+    }
+    return best;
+  };
   /** The defined colors as groups by who defined them (the document first, then xcolor, then the rest by name),
    * each sorted by perception: hue families of 30° by lightness, greys (low chroma) last by lightness. */
   const colorBand = (defined) => {
@@ -244,6 +256,10 @@
     color: (s, view, ctx) => {
       const box = el('div', 'tv-color');
       const start = s.rgb ?? [0.5, 0.5, 0.5];
+      // `name`: the closest color a name stands for here, written as that name
+      const models = s.defined?.length && s.pick ? [...s.models, 'name'] : s.models;
+      const specOf = (m, c) => m === 'name' ? closest(c, s.defined)?.name ?? '' : SPEC[m](c);
+      const parse = (m, text) => m === 'name' ? s.defined.find((d) => d.name === text.trim())?.rgb ?? null : PARSE[m]?.(text) ?? null;
       let hsb = toHsb(start), model = s.models[0];
       const rgb = () => fromHsb(hsb);
       // the saturation/brightness square and the hue strip
@@ -270,16 +286,36 @@
       const swatch = el('div', 'tv-swatches', `<span class="tv-was" title="${esc(s.name)}"></span><span class="tv-is"></span>`);
       swatch.querySelector('.tv-was').style.background = s.rgb ? hex(s.rgb) : 'repeating-linear-gradient(45deg, #8884 0 4px, transparent 4px 8px)';
       const tabs = el('div', 'tv-tabs');
-      for (const m of s.models) {
+      for (const m of models) {
         const t = el('button', 'tv-tab', esc(m));
         t.type = 'button';
         t.onclick = () => { model = m; draw(); };
         tabs.append(t);
       }
       const spec = Object.assign(el('input', 'tv-input tv-spec'), { spellcheck: false, ariaLabel: 'spec' });
-      spec.onchange = () => { const c = PARSE[model]?.(spec.value); if (c) { hsb = toHsb(c); draw(); settle(); } };
+      const HOW = { HTML: 'six hex digits, as 1A2B3C', rgb: 'three numbers 0 to 1, as 0.2,0.4,0.6', RGB: 'three numbers 0 to 255', cmyk: 'four numbers 0 to 1', gray: 'one number 0 to 1', hsb: 'three numbers 0 to 1', name: 'a color defined here' };
+      spec.oninput = () => {
+        const ok = !!parse(model, spec.value);
+        spec.classList.toggle('tv-bad', !ok);
+        spec.title = ok ? '' : `not a ${model} spec: ${HOW[model] ?? 'unknown model'}`;
+      };
+      spec.onchange = () => { const c = parse(model, spec.value); if (c) { hsb = toHsb(c); draw(); settle(); } };
+      // what does not read goes back to the color shown
+      spec.onblur = () => { if (!parse(model, spec.value)) { spec.value = specOf(model, rgb()); spec.classList.remove('tv-bad'); spec.title = ''; } };
+      // a color from anywhere on the screen (EyeDropper), else the system's picker
+      const pickers = el('div', 'tv-pickers');
+      const native = Object.assign(el('input', 'tv-native'), { type: 'color', title: "the system's color picker" });
+      native.oninput = () => { const c = PARSE.HTML(native.value); if (c) { hsb = toHsb(c); draw(); } };
+      native.onchange = settle;
+      pickers.append(native);
+      if ('EyeDropper' in self) {
+        const eye = el('button', 'tv-button', 'Pick from screen');
+        eye.type = 'button';
+        eye.onclick = async () => { try { const { sRGBHex } = await new self.EyeDropper().open(); const c = PARSE.HTML(sRGBHex); if (c) { hsb = toHsb(c); draw(); settle(); } } catch {} };
+        pickers.append(eye);
+      }
       const all = el('div', 'tv-specs');
-      side.append(swatch, tabs, spec, all);
+      side.append(swatch, tabs, spec, pickers, all);
       // an xcolor expression, mixed from the colors defined here
       let expr = null;
       if (s.expressions) {
@@ -324,12 +360,21 @@
         write.type = 'button';
         write.onclick = () => {
           if (expr && s.pick) return ctx.apply([{ range: s.pick, newText: expr }]);
+          // a color some name already has: that name, never its value spelled out
+          const same = model === 'name' ? closest(rgb(), s.defined) : named();
+          if (same && s.pick) return ctx.apply(same.name === s.name ? [] : [{ range: s.pick, newText: same.name }]);
           const vars = { model, spec: SPEC[model](rgb()), name: s.apply.name ?? s.name };
           ctx.apply(s.apply.edits.map((e) => ({ range: e.range, newText: fill(e.newText, vars) })));
         };
         foot.append(write);
       }
       if (foot.children.length) box.append(foot);
+      /** The defined color the picked one equals, the color's own name first. */
+      function named() {
+        const h = hex(rgb());
+        const all = (s.defined ?? []).filter((d) => d.rgb && hex(d.rgb) === h);
+        return all.find((d) => d.name === s.name) ?? all[0] ?? null;
+      }
       function draw(clearExpr = true) {
         if (clearExpr) expr = null;
         const c = rgb();
@@ -338,7 +383,8 @@
         knob.style.left = `${hsb[0] * 100}%`;
         swatch.querySelector('.tv-is').style.background = hex(c);
         for (const t of tabs.children) t.classList.toggle('on', t.textContent === model);
-        if (document.activeElement !== spec) spec.value = SPEC[model](c);
+        if (document.activeElement !== spec) spec.value = specOf(model, c);
+        native.value = hex(c);
         // each model's value is its own action: a click writes the color in that model
         all.replaceChildren(...s.models.map((m) => {
           const b = el(s.apply ? 'button' : 'span', 'tv-spec-value' + (m === model ? ' on' : ''), `<b>${esc(m)}</b> ${esc(SPEC[m](c))}`);
@@ -346,7 +392,8 @@
           return b;
         }));
         const w = foot.querySelector('.tv-primary');
-        if (w) w.textContent = expr ? `Write ${expr}` : s.apply.edits.length > 1 ? `Define ${s.apply.name} as ${model} ${SPEC[model](c)}` : `Write [${model}]{${SPEC[model](c)}}`;
+        const same = !expr && s.pick && (model === 'name' ? closest(c, s.defined) : named());
+        if (w) w.textContent = expr ? `Write ${expr}` : same ? (same.name === s.name ? `Keep ${s.name}` : `Write ${same.name}`) : s.apply.edits.length > 1 ? `Define ${s.apply.name} as ${model} ${SPEC[model](c)}` : `Write [${model}]{${SPEC[model](c)}}`;
       }
       draw();
       return box;

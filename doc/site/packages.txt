@@ -19,7 +19,7 @@ setspace lipsum todonotes algorithm2e algpseudocode wrapfig titlesec parskip
 etoolbox pgfplots lmodern fontspec unicode-math polyglossia acronym pdflscape
 
 # asked for by name
-tikzducks tikzpingus microtype forest accsupp tcolorbox enumitem cleveref mwe
+tikzducks tikzpingus microtype forest accsupp tcolorbox enumitem cleveref mwe xcolor-material
 tikz-cd mhchem chemfig physics braket cancel ulem textcomp amsfonts
 threeparttable dcolumn colortbl hhline nicematrix tocloft appendix
 framed mdframed upquote footmisc placeins afterpage qrcode
