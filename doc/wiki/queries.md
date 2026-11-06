@@ -107,10 +107,10 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 $ satex query diagnostics -f samples/paper.tex
 severity     code                          count  message              file            
 assumption   forced-page-breaks            1      the page may fill …  paper.tex       @ paper.tex:56:13
-imprecision  argument-ends-in-unknown      1      a delimited argume…  latex.ltx       @ latex.ltx:20534:3
-imprecision  unknown-name                  7      a name built from …  latex.ltx       @ latex.ltx:20322:31
-imprecision  unknown-name                  7      a name built from …  latex.ltx       @ latex.ltx:20322:41
-imprecision  mismatched-group              2      extra }, or forgot…  latex.ltx       @ latex.ltx:20534:3
+imprecision  argument-ends-in-unknown      1      a delimited argume…  latex.ltx       @ latex.ltx:21076:3
+imprecision  paths-widened                 5      more than 8 paths …  paper.tex       @ paper.tex:82:15
+imprecision  unknown-name                  2      a name built from …  latex.ltx       @ latex.ltx:20322:31
+imprecision  unknown-name                  2      a name built from …  latex.ltx       @ latex.ltx:20322:41
 … 16 more lines omitted
 ```
 
@@ -204,13 +204,13 @@ The pgfkeys keys defined at the end of the run and what each does (`initial`, `c
 
 ```text
 $ satex query pgfkeys -f samples/keys.tex
-kind       key                                                  value         default  file      
-is family  /demo                                                \edef \pgfk…           keys.tex  @ keys.tex:4:1
-style      /demo/color                                          \pgfkeysals…  red      keys.tex  @ keys.tex:4:1
-is if      /demo/draft                                          \pgfkeys@ha…  true     keys.tex  @ keys.tex:4:1
-initial    /demo/family                                         /demo                  keys.tex  @ keys.tex:4:1
-code args  /demo/label                                          \def \demol…           keys.tex  @ keys.tex:4:1
-… 90 more lines omitted
+kind       key       value     default                                       detail    file      
+is family  /demo     \edef \…                                                          keys.tex  @ keys.tex:5:1
+style      /demo/c…  \pgfkey…  red                                                     keys.tex  @ keys.tex:5:1
+is if      /demo/d…  \pgfkey…  true                                                    keys.tex  @ keys.tex:5:1
+initial    /demo/f…  /demo                                                             keys.tex  @ keys.tex:5:1
+code args  /demo/l…  \def \d…                                                          keys.tex  @ keys.tex:5:1
+… 1932 more lines omitted
 ```
 
 ## plugins

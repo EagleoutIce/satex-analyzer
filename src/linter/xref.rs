@@ -2,6 +2,10 @@
 //! could take from a label or a bibliography entry instead.  And cleveref
 //! references to a label type it has no format for.
 
+use std::sync::OnceLock;
+
+use regex::Regex;
+
 use crate::fixed::HashSet;
 
 use crate::analysis::facts::ListItem;
@@ -62,11 +66,39 @@ It needs natbib or biblatex too: without `\\textcite`, `\\citet` or
 `\\citeauthor`, there is nothing better to write.
 
 Fix by writing `\\textcite{knuth84}`, `\\citet{knuth84}` or
-`\\citeauthor{knuth84}~\\cite{knuth84}`.",
+`\\citeauthor{knuth84}~\\cite{knuth84}`.  These shorten a long author
+list as the style says (biblatex's `maxcitenames`, natbib's `.bst`).
+
+`Plass et al.` before a citation whose entry starts with another name, or
+has fewer than three authors, gets a hint without an edit: the name or the
+key may be the slip.",
         references: &[Ref { source: Source::Biblatex, at: "3.9.1" }, Ref { source: Source::Companion, at: "16.3" }],
         fixes: &[Applicability::Unsafe],
         engines: &[],
         run: hand_written_author,
+    },
+    Rule {
+        code: "et-al",
+        category: Category::Style,
+        severity: Severity::Warning,
+        summary: "`et al.` spelled another way, or a citation number typed after it",
+        explanation: "\
+`et al.` shortens *et alii*.  `et` is a whole word, so only `al.` takes a
+period.  `et. al.`, `et.al.`, `et al` and the spelled-out `et alii` or
+`et alia` read as slips.  The fix writes `et al.` and keeps a tie the
+source had.
+
+A number in brackets typed after it, as in `Smith et al. [3]`, is a
+citation typed by hand, so it does not follow the bibliography.  Write
+`\\cite`, or `\\textcite` (biblatex) and `\\citet` (natbib), which print
+the authors too.
+
+Text in math, verbatim or a comment is never read.  The space after `al.`
+is the business of `sentence-spacing`.",
+        references: &[Ref { source: Source::Companion, at: "16.3" }],
+        fixes: &[Applicability::Unsafe],
+        engines: &[],
+        run: et_al,
     },
     Rule {
         code: "undefined-cref-format",
@@ -440,6 +472,8 @@ fn spellings(names: &[String]) -> Vec<String> {
     out
 }
 
+static ET_AL_BEFORE: OnceLock<Regex> = OnceLock::new();
+
 fn hand_written_author(report: &mut Report) {
     let analysis = report.analysis();
     let view = report.text();
@@ -467,6 +501,7 @@ fn hand_written_author(report: &mut Report) {
     }
     let mut keys: Vec<_> = keys.into_iter().collect();
     keys.sort_by_key(|(s, _)| (s.file, s.line, s.col));
+    let other = ET_AL_BEFORE.get_or_init(|| Regex::new(r"(\p{Lu}[\p{L}'-]*)[ ~]+et[ ~]+al\.$").unwrap());
     for (span, mut keys) in keys {
         keys.dedup();
         let [key] = keys.as_slice() else { continue };
@@ -496,18 +531,29 @@ fn hand_written_author(report: &mut Report) {
             }
         }
         let names = last_names(author);
+        let col = |byte: usize| line[..byte].chars().count() as u32 + 1;
+        // The name is prose the document set, not math, verbatim or a heading's argument read twice.
+        let prose = |from: usize| {
+            let at = Span { file: span.file, line: span.line, col: col(from) };
+            view.at_span(at).is_some_and(|i| view.is_prose_text(i)).then_some(at)
+        };
         let Some(typed) = spellings(&names).into_iter().find(|s| {
             before.strip_suffix(s.as_str()).is_some_and(|b| !b.chars().last().is_some_and(char::is_alphanumeric))
         }) else {
+            // `Name et al.` that is not the entry's: a hint, no edit.
+            if let Some(m) = other.captures(before).and_then(|c| c.get(0))
+                && let Some(at) = prose(m.start())
+            {
+                let message = format!(
+                    "`{}` is typed before the citation of `{key}`, whose entry names {}",
+                    m.as_str(),
+                    names.join(", ")
+                );
+                report.add(at, "unmatched", message, Some(format!("check the name, then write `\\{command}`")));
+            }
             continue;
         };
-        let from = before.len() - typed.len();
-        let col = |byte: usize| line[..byte].chars().count() as u32 + 1;
-        let at = Span { file: span.file, line: span.line, col: col(from) };
-        // The name is prose the document set, not math, verbatim or a heading's argument read twice.
-        if !view.at_span(at).is_some_and(|i| view.is_prose_text(i)) {
-            continue;
-        }
+        let Some(at) = prose(before.len() - typed.len()) else { continue };
         let replacement = match command {
             "citeauthor" => format!(r"\citeauthor{{{key}}}~\{name}{args}"),
             _ => format!(r"\{command}{args}"),
@@ -567,5 +613,61 @@ fn undefined_cref_format(report: &mut Report) {
         let fix = load.and_then(|l| edits.insert_after_load(l, &name));
         let fix = Fix::new(format!("name the type: `{name}`"), Applicability::Unsafe, fix);
         report.add_fix_as(severity, span, kind, message, fix);
+    }
+}
+
+/// `et al.` in any spelling, with a citation number typed after it.
+static ET_AL: OnceLock<Regex> = OnceLock::new();
+
+fn et_al(report: &mut Report) {
+    let view = report.text();
+    let edits = report.edits();
+    let form = ET_AL.get_or_init(|| {
+        Regex::new(r"^([Ee]t)(\.?)((?:\\ |[ ~])*)(al(?:ii|ia|\.)?)(?:[ ~]*(\[[0-9][0-9,\- ]*\]))?").unwrap()
+    });
+    let mut seen = HashSet::default();
+    let mut findings = Vec::new();
+    for i in 0..view.len() {
+        if !matches!(view.char_at(i), Some('e' | 'E')) || view.char_at(i + 1) != Some('t') || !view.is_prose_text(i) {
+            continue;
+        }
+        let Some(at) = view.span(i).filter(|s| seen.insert(*s)) else { continue };
+        let Some((path, source)) = edits.text(at.file) else { continue };
+        let line = source.line(at.line);
+        let Some(byte) = line.char_indices().nth((at.col as usize).saturating_sub(1)).map(|(b, _)| b) else { continue };
+        let Some(c) = form.captures(&line[byte..]) else { continue };
+        let (dot, gap, al, (al_start, end)) = (&c[2], &c[3], &c[4], c.get(4).map_or((0, 0), |m| (m.start(), m.end())));
+        let words = line[..byte].chars().last().is_some_and(char::is_alphanumeric)
+            || line[byte + end..].chars().next().is_some_and(char::is_alphanumeric);
+        let col = |k: usize| at.col + line[byte..byte + k].chars().count() as u32;
+        let prose = |k: usize| view.at_span(Span { col: col(k), ..at }).is_some_and(|v| view.is_prose_text(v));
+        // `etal` without a gap or a period is no `et al.` at all.
+        if words || (gap.is_empty() && dot.is_empty()) || !prose(al_start) {
+            continue;
+        }
+        if !dot.is_empty() || gap.is_empty() || al != "al." {
+            let want = format!("{}{}al.", &c[1], if gap.contains('~') { "~" } else { " " });
+            let edit = Edit {
+                path: path.clone(),
+                start: Pos::new(at.line, at.col),
+                end: Pos::new(at.line, col(end)),
+                replacement: want.clone(),
+            };
+            let message = format!("`{}` is not how `et al.` is spelled", &line[byte..byte + end]);
+            findings.push((
+                at,
+                "spelling",
+                message,
+                Fix::new(format!("write `{want}`"), Applicability::Unsafe, Some(vec![edit])),
+            ));
+        }
+        if let Some(number) = c.get(5).filter(|m| prose(m.start())) {
+            let message = format!("`{}` after `et al.` is a citation typed by hand", number.as_str());
+            let hint = Fix::new("write `\\cite` with the entry's key", Applicability::Unsafe, None);
+            findings.push((Span { col: col(number.start()), ..at }, "typed", message, hint));
+        }
+    }
+    for (at, name, message, fix) in findings {
+        report.add_fix(at, name, message, fix);
     }
 }

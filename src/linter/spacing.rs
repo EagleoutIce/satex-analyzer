@@ -68,7 +68,8 @@ Fix by writing `Figure~\\ref{fig:one}`.",
 How wide a space TeX sets follows the space factor of the character before
 it (tex.web § 1034).  A period raises it to 3000, which asks for the wider
 space between sentences, but a period after an uppercase letter leaves it at
-1000.
+1000.  Under `\\frenchspacing` a period sets 1000 too, so nothing is
+reported.
 
 So `etc. and` gets a sentence space and `the ABC. Next` a word space, both
 the wrong way round.  The rule reads the characters the run set and reports
@@ -409,7 +410,17 @@ fn plain_space(report: &Report, index: usize) -> bool {
         && glue(view.modes(index))
 }
 
+/// `\frenchspacing`: the run left the period's `\sfcode` at 1000, so it
+/// sets a word space everywhere.
+fn french_spacing(analysis: &Analysis) -> bool {
+    let name = format!("{}sfcode.", crate::engine::exec::CODE);
+    analysis.interner.lookup(&name).is_some_and(|sym| analysis.env.value(sym).as_int() == Some(1000))
+}
+
 fn sentence_spacing(report: &mut Report) {
+    if french_spacing(report.analysis) {
+        return;
+    }
     let view = report.text();
     let mut findings = Vec::new();
     for (byte, _) in view.chars().match_indices('.') {

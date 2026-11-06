@@ -79,6 +79,18 @@ pub fn verbatims(analysis: &Analysis, files: &[File]) -> Verbatims {
             _ => {}
         }
     }
+    // Lines where the run expanded a control sequence typed there.
+    let read: HashSet<(FileId, u32)> = analysis
+        .facts
+        .expansions
+        .iter()
+        .filter(|e| {
+            texts
+                .get(&e.span.file)
+                .is_some_and(|t| t.line(e.span.line).chars().nth((e.span.col as usize).saturating_sub(1)) == Some('\\'))
+        })
+        .map(|e| (e.span.file, e.span.line))
+        .collect();
     let mut out = Verbatims::default();
     for span in escaped {
         let Some(text) = texts.get(&span.file) else { continue };
@@ -87,7 +99,12 @@ pub fn verbatims(analysis: &Analysis, files: &[File]) -> Verbatims {
             out.inline.push((span.file, span.line, span.col, end));
             continue;
         };
-        if let Some((to, after)) = closing(text, name, span.line) {
+        // A body the run expanded a typed command in was read as TeX: `\` was
+        // sanitized for a moment only (biblatex reading its `.bbl` at
+        // `\begin{document}`).
+        if let Some((to, after)) = closing(text, name, span.line)
+            && !(span.line + 1..to).any(|line| read.contains(&(span.file, line)))
+        {
             out.bodies.push(Verbatim { file: span.file, name: (*name).to_string(), from: span.line, to, after });
         }
     }

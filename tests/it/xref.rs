@@ -231,3 +231,67 @@ fn a_number_no_item_prints_or_an_item_with_its_own_label_is_left_alone() {
     let found = item_fixes("item-none", "\\usepackage{enumitem}\n\\usepackage{cleveref}\n", lists, text);
     assert!(found.is_empty(), "{found:?}");
 }
+
+const ETAL: &str =
+    "@article{lps20, author = {Lamport, Leslie and Plass, Michael and Spivak, Michael}, title = {T}, year = 2020}\n";
+
+#[test]
+fn an_et_al_author_becomes_the_citation_of_the_loaded_package() {
+    let tail = "\\begin{document}\nAs Lamport et al.~\\cite{lps20} say.\n";
+    let natbib = format!(
+        "\\usepackage{{natbib}}\n{tail}\\bibliographystyle{{plainnat}}\n\\bibliography{{refs}}\n\\end{{document}}\n"
+    );
+    let biblatex = format!(
+        "\\usepackage{{biblatex}}\n\\addbibresource{{refs.bib}}\n{tail}\\printbibliography\n\\end{{document}}\n"
+    );
+    let natbib = records("etal-natbib", &natbib, ETAL, "hand-written-author");
+    let biblatex = records("etal-biblatex", &biblatex, ETAL, "hand-written-author");
+    if !crate::support::installed() {
+        return;
+    }
+    assert_eq!(replacements(&natbib), [r"\citet{lps20}"], "{natbib:?}");
+    assert_eq!(replacements(&biblatex), [r"\textcite{lps20}"], "{biblatex:?}");
+}
+
+#[test]
+fn an_et_al_author_the_entry_does_not_start_with_gets_a_hint() {
+    let body = "\\usepackage{natbib}\n\\begin{document}\nAs Plass et al.~\\cite{lps20} and Knuth et al. \\cite{knuth84} say.\n\
+                \\bibliographystyle{plainnat}\n\\bibliography{refs}\n\\end{document}\n";
+    let found = records("etal-other", body, &format!("{BIB}{ETAL}"), "hand-written-author");
+    if !crate::support::installed() {
+        return;
+    }
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(replacements(&found).is_empty(), "{found:?}");
+}
+
+#[test]
+fn et_al_spelled_another_way_is_fixed() {
+    let body = "\\begin{document}\nBy Lamport et. al. and Plass et.al. and Knuth et~al and Spivak et alii, and Lamport et al. [3].\n\\end{document}\n";
+    let found = records("etal-spelling", body, "", "et-al");
+    if !crate::support::installed() {
+        return;
+    }
+    assert_eq!(replacements(&found), ["et al.", "et al.", "et~al.", "et al."], "{found:?}");
+    // `[3]` gets a hint without an edit.
+    assert_eq!(found.len(), 5, "{found:?}");
+}
+
+#[test]
+fn et_al_in_math_verbatim_or_a_comment_is_not_read() {
+    let body = "\\begin{document}\nBy Lamport et al. here, $et. al$, \\verb|et. al.| % et. al.\n\
+                and petal, set alike, et all.\n\\end{document}\n";
+    assert!(records("etal-quiet", body, "", "et-al").is_empty());
+}
+
+#[test]
+fn et_al_before_a_lowercase_word_wants_a_word_space_unless_frenchspacing() {
+    let body = "\\begin{document}\nLamport et al. and Plass et al. Then more.\n\\end{document}\n";
+    let found = records("etal-space", body, "", "sentence-spacing");
+    let french = records("etal-french", &format!("\\frenchspacing\n{body}"), "", "sentence-spacing");
+    if !crate::support::installed() {
+        return;
+    }
+    assert_eq!(replacements(&found), [r"\ "], "{found:?}");
+    assert!(french.is_empty(), "{french:?}");
+}
