@@ -1853,14 +1853,16 @@
       raf = 0;
       at += (goal - at) * .14;
       if (Math.abs(goal - at) < .05) at = goal;
-      const w = wrap.clientWidth, radius = Math.min(w * .42, cards[0].offsetWidth * n / 5.2);
-      row.style.height = `${Math.max(...cards.map((c) => c.offsetHeight))}px`;
+      const cw = cards[0].offsetWidth, radius = Math.min(cw * .82 / Math.sin(step * Math.PI / 180), cw * 2.6);
+      row.style.height = `${Math.ceil(Math.max(...cards.map((c) => c.offsetHeight)) * 1.07)}px`;
       let best = 0, bestCos = -2;
       cards.forEach((c, i) => {
         const a = norm(i * step - at - spin), r = a * Math.PI / 180, cos = Math.cos(r);
-        const x = Math.sin(r) * radius, z = (cos - 1) * radius * .9;
-        c.style.transform = `translate3d(calc(-50% + ${x.toFixed(1)}px), 0, ${z.toFixed(1)}px) rotateY(${(-a * .55).toFixed(2)}deg) scale(${(1 + .06 * Math.max(0, cos) ** 8).toFixed(3)})`;
-        c.style.opacity = Math.max(0, Math.min(1, (cos + .35) / 1.1)).toFixed(3);
+        const x = Math.sin(r) * radius, z = (cos - 1) * radius * .55;
+        c.style.transform = `translate3d(calc(-50% + ${x.toFixed(1)}px), 0, ${z.toFixed(1)}px) rotateY(${(-a * .22).toFixed(2)}deg) scale(${(1 + .06 * Math.max(0, cos) ** 8).toFixed(3)})`;
+        c.style.opacity = Math.max(0, Math.min(1, (cos + .1) / .8)).toFixed(3);
+        // a title rides with its card while the card faces the page
+        c.style.setProperty('--title', Math.max(0, (cos - .55) / .45).toFixed(3));
         c.style.zIndex = String(Math.round(cos * 100) + 100);
         c.style.pointerEvents = cos > .2 ? '' : 'none';
         if (cos > bestCos) { bestCos = cos; best = i; }
@@ -1896,11 +1898,15 @@
     // the page's scroll turns it a little, as if the ring sat on the page
     const scrolled = () => {
       const r = wrap.getBoundingClientRect(), mid = (r.top + r.height / 2) / innerHeight - .5;
-      spin = Math.max(-1, Math.min(1, mid)) * step * .6;
+      // a hint of the turn, never a whole card: the page scrolls on as usual
+      spin = Math.max(-1, Math.min(1, mid)) * step * .45;
       kick();
     };
     addEventListener('scroll', scrolled, { passive: true });
-    new ResizeObserver(kick).observe(wrap);
+    // images load late: a card that grows makes the ring taller, so no caption is cut off
+    const grown = new ResizeObserver(kick);
+    grown.observe(wrap);
+    cards.forEach((c) => grown.observe(c));
     scrolled();
     return true;
   }

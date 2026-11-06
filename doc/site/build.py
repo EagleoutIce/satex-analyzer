@@ -1803,6 +1803,8 @@ def showcase(out, live):
     def window(stem, alt):
         return f'<div class="shot-win">{pictures(stem, alt)}</div>'
 
+    # TikZ is written with its italic k, as its manual does
+    tikz = lambda text: text.replace("TikZ", "Ti<i class=\"tk\">k</i>Z")
     figures, cards = [], []
     for s in spec["shots"]:
         name, alt = s["name"], html.escape(f'{s["title"]}: {s["caption"]}')
@@ -1814,7 +1816,7 @@ def showcase(out, live):
                            f'<div class="live-grid"><pre class="src live-src live-poster"><code>{lines}</code></pre><div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div></div>'
                            f'<p class="muted live-status" aria-live="polite">{html.escape(s["status"])}</p></div></div>'
                            f'<script type="application/json" class="ex-data">{data}</script>'
-                           f'<figcaption><h3>{html.escape(s["title"])}</h3><p>{html.escape(s["caption"])}</p>'
+                           f'<figcaption><h3>{tikz(html.escape(s["title"]))}</h3><p>{tikz(html.escape(s["caption"]))}</p>'
                            f'<a class="shot-try" href="play/index.html">The full playground →</a></figcaption></figure>')
             continue
         if not all((src / f"{name}-{scheme}.png").exists() for scheme in ("light", "dark")):

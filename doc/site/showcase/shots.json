@@ -100,8 +100,8 @@
     2
    ],
    "viewport": [
-    1000,
-    660
+    1400,
+    860
    ],
    "video": [
     {
@@ -190,8 +190,8 @@
    ],
    "text": "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\section{Results}\nThe loss falls with each run.\nThe office files need\nthree passes, see pages 10-12.\n\\begin{equation}\n  \\sum_{k=1}^{n} k^2 \\leq n^3\n\\end{equation}\n\\end{document}\n",
    "viewport": [
-    1200,
-    700
+    960,
+    600
    ],
    "steps": [
     {
@@ -764,7 +764,8 @@
     {
      "eval": "document.querySelector('#cfg-tabs [data-tab=core]').click()",
      "until": "document.querySelector('#cfg-tabs [data-tab=core]').getAttribute('aria-pressed') === 'true'",
-     "wait": 1500
+     "wait": 1500,
+     "snap": "back"
     },
     {
      "eval": "document.querySelector('#cfg-tabs [data-tab=plugins]').click()",
@@ -777,6 +778,7 @@
     640,
     760
    ],
+   "stack": true,
    "wide": true
   }
  ],

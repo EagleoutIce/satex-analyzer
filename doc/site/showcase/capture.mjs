@@ -229,7 +229,8 @@ try {
       const [w, h] = s.viewport ?? [1080, 700];
       await raw('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 2, mobile: false });
       try {
-        // a first visit may miss the widget while the page still fetches what it shows: one more try
+        // a first visit may miss the widget while the page still fetches what it shows, or wait past its
+        // budget under load: one more try, from a fresh page with a fresh budget
         for (let attempt = 0; ; attempt++) {
           try {
             deadline = Infinity;
@@ -243,7 +244,7 @@ try {
               if (st.snap) await still({ ...s, crop: s.beforeCrop ?? s.crop, video: undefined, keepMouse: true, keepFocus: true }, `${s.name}-${st.snap}-${scheme}`);
             }
             break;
-          } catch (e) { if (attempt || Date.now() >= deadline) throw e; console.log('retry', s.name, e.message.slice(0, 200)); }
+          } catch (e) { if (attempt) throw e; console.log('retry', s.name, e.message.slice(0, 200)); }
         }
         deadline = Infinity;
         const clip = await still(s, `${s.name}-${scheme}`, [w, h]);

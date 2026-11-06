@@ -2050,8 +2050,8 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 .plugins-fold > summary::-webkit-details-marker { display: none; }
 .plugins-fold > summary::before { content: "▸"; transition: rotate .2s var(--ease); } .plugins-fold[open] > summary::before { rotate: 90deg; }
 .plugins-fold[open] > summary { margin-bottom: var(--s32); }
-.shot-live .live-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 0; min-height: 17rem; }
-.shot-live .live-src { margin: 0; min-height: 17rem; border: 0; border-radius: 0; border-right: 1px solid var(--border); font-size: 12.5px; }
+.shot-live .live-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 0; min-height: 19rem; }
+.shot-live .live-src { margin: 0; min-height: 19rem; border: 0; border-radius: 0; border-right: 1px solid var(--border); font-size: 12.5px; }
 .shot-live pre.live-src { padding: .5rem .8rem .5rem 2.6rem; background: var(--panel); white-space: pre-wrap; cursor: text; }
 .shot-live .live-ts { padding: .7rem .9rem; font-size: .85rem; overflow: auto; max-height: 22rem; }
 .shot-live .live-status { margin: 0; padding: var(--s8) var(--s16); font-size: .75rem; line-height: 1.4; height: calc(2 * 1.05rem + var(--s16)); overflow: hidden; border-top: 1px solid var(--border); }
@@ -2182,11 +2182,15 @@ main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/
 /* the stepper keeps one height while stepping: the step panel and the token stream scroll inside, nothing below them moves */
 .tr-now { height: 14rem; overflow: auto; align-content: start; overscroll-behavior: contain; }
 #trace-stream { height: 3.6rem; overflow: auto; }
-/* the showcase ring (site.js): full width, the cards on a turning ring, the front one largest */
-.cards-wrap.ring { width: 100vw; margin-inline: calc(50% - 50vw); padding-block: var(--s24); overflow: hidden; }
+/* the showcase ring (site.js): full width, the cards on a ring that the page's scroll turns a little, the front one largest */
+.cards-wrap.ring { width: 100vw; margin-inline: calc(50% - 50vw); padding-block: var(--s48) var(--s24); overflow-x: clip; }
 .ring .cards { display: block; position: relative; overflow: visible; perspective: 1700px; transform-style: preserve-3d; -webkit-mask-image: none; mask-image: none; cursor: grab; touch-action: pan-y; user-select: none; }
 .ring .cards:active { cursor: grabbing; }
-.ring .cards > .shot { position: absolute; top: 0; left: 50%; width: min(34rem, 36vw); transform-origin: 50% 50%; will-change: transform, opacity; backface-visibility: hidden; }
+.ring .cards > .shot { position: absolute; top: 0; left: 50%; width: min(32rem, 34vw); transform-origin: 50% 50%; will-change: transform, opacity; backface-visibility: hidden; }
 .ring .cards > .shot:not(.ring-front) { cursor: pointer; }
-.ring .cards > .shot figcaption { transition: opacity .3s var(--ease); } .ring .cards > .shot:not(.ring-front) figcaption { opacity: 0; }
-.ring .cards-nav { top: 30%; } .ring .cards-prev { left: calc(50% - min(17rem, 18vw) - 5.5rem); } .ring .cards-next { right: calc(50% - min(17rem, 18vw) - 5.5rem); }
+.ring .cards > .shot figcaption > * { transition: opacity .3s var(--ease); }
+.ring .cards > .shot figcaption > h3 { opacity: var(--title, 1); }
+.ring .cards > .shot:not(.ring-front) figcaption > :not(h3) { opacity: 0; }
+.ring .cards-nav { top: 30%; z-index: 300; } .ring .cards-prev { left: var(--s24); } .ring .cards-next { right: var(--s24); }
+/* the big shots share one height: each window hugs its image (the video lies exactly over it), so they line up */
+.shots > .shot-big:not(.shot-live) .shot-win img { height: 39vh; width: auto; max-width: 100%; object-fit: contain; }
