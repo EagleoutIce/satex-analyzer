@@ -65,7 +65,11 @@ impl Local {
                     req,
                 ),
             })],
+            // `{"files": true}`: files outside the documents changed, so all run again
             Ok(Message::Notification(not)) if not.method == "satex/analyze" => {
+                if not.params.get("files").is_some_and(|f| f.as_bool() == Some(true)) {
+                    engine.outside_changed();
+                }
                 engine.flush();
                 vec![]
             }

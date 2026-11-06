@@ -1420,6 +1420,10 @@ impl Engine {
     /// analyzed document runs again at the next [`Self::flush`].
     #[cfg(target_os = "emscripten")]
     fn outside_changed(&mut self) {
+        // a finished run is keyed on the documents' texts alone, a checkpoint holds the state the
+        // missing files left: both are of the installation before the files landed
+        self.runs.clear();
+        self.checkpoints.clear();
         for (uri, doc) in &self.docs {
             if doc.analysis.is_some() && !self.dirty.contains(uri) {
                 self.dirty.push(uri.clone());

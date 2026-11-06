@@ -1133,6 +1133,48 @@ pub(super) fn load_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) 
     Some(md)
 }
 
+/// Where what a typed word names is defined: a load's option (`\DeclareOption`
+/// in the loaded file, or the key that file declares), a color (its
+/// `\definecolor`), a column type of a tabular's preamble (its `\newcolumntype`).
+fn typed_target(analysis: &Analysis, doc: &Text, path: &str, pos: Pos, word: &str) -> Option<Location> {
+    let sources = Sources::default();
+    let at = |span: crate::engine::tex::Span| record_location(&query::place(analysis, span), &sources);
+    let line = doc.line(pos.line);
+    let before = &line[..crate::engine::source::byte_of_col(line, pos.col).min(line.len())];
+    let arg = argument_at(before);
+    // an option of a load on this line: where the loaded file declares it
+    if let Some(arg) = arg.as_ref().filter(|a| a.open == '[') {
+        let item = arg.inside.rsplit(',').next().unwrap_or_default().trim_start();
+        let rest: String = line[before.len()..].chars().take_while(|c| !matches!(c, ',' | '=' | ']')).collect();
+        let key = format!("{item}{rest}");
+        let key = key.split('=').next().unwrap_or_default().trim();
+        let file = analysis
+            .facts
+            .loads
+            .iter()
+            .filter(|l| l.span.line == pos.line && analysis.file_name(l.span.file) == path)
+            .find_map(|l| l.file)?;
+        let def = analysis.facts.defs.iter().find(|d| {
+            d.span.file == file
+                && ((d.tag == "option" && d.subject.is_some_and(|s| analysis.interner.name(s) == key))
+                    || (d.tag == "key"
+                        && analysis.interner.name(d.name).rsplit('/').next().is_some_and(|last| last == key)))
+        })?;
+        return at(def.span);
+    }
+    let found = super::plugins::hover_types(analysis, doc, path, pos);
+    if found.hits.iter().any(|h| h.ty == crate::analysis::roles::Ty::Key(crate::analysis::roles::KeyKind::Color)) {
+        let def = analysis.facts.colors.iter().rev().find(|c| c.name == word)?;
+        return at(def.span);
+    }
+    // a column type in a tabular's preamble: array's `\newcolumntype{X}` defines `\NC@find@X`
+    arg.filter(|a| a.open == '{' && a.cmd == "begin")?;
+    let letter = line[before.len()..].chars().next().filter(|c| c.is_ascii_alphabetic())?;
+    let sym = analysis.interner.lookup(&format!("NC@find@{letter}"))?;
+    let def = analysis.facts.defs.iter().rev().find(|d| d.name == sym)?;
+    at(def.span)
+}
+
 /// `\input`/`\include`/`\usepackage`/`\documentclass`: the resolved file for
 /// the load whose command or argument the cursor sits on, from
 /// `analysis.facts.loads` (the run's own resolution). `None` off a load line
@@ -1197,6 +1239,9 @@ fn file_target(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<GotoDefiniti
 pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Option<GotoDefinitionResponse> {
     let pos = to_pos(doc, position);
     let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
+    if let Some(target) = typed_target(analysis, doc, path, pos, &name) {
+        return Some(GotoDefinitionResponse::Array(vec![target]));
+    }
     if let Some(target) = file_target(analysis, doc, pos).or_else(|| load_target(analysis, path, pos, &name)) {
         return Some(target);
     }
@@ -2359,10 +2404,18 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
                 });
                 let parts: Vec<String> = [detail.take(), provided(&head), tree, other].into_iter().flatten().collect();
                 detail = Some(parts.join(" · "));
+                // what the package is (catalogue, README, its identification), its version, its manual
                 if matches!(ext, "sty" | "cls") {
+                    let about = identify.then(|| crate::plugins::docs::about(&analysis.settings.docs, &path)).flatten();
+                    let version = provided(&head).map(|v| format!("`{v}`"));
+                    let value = [about, version, Some(format!("[documentation](https://texdoc.org/pkg/{stem})"))]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
                     it.documentation = Some(lsp_types::Documentation::MarkupContent(MarkupContent {
                         kind: MarkupKind::Markdown,
-                        value: format!("[documentation](https://texdoc.org/pkg/{stem})"),
+                        value,
                     }));
                 }
             }
