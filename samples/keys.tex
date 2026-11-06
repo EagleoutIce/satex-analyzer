@@ -1,5 +1,6 @@
 \documentclass{article}
 \usepackage{pgfkeys}
+\usepackage{tikzpingus}
 \newif\ifdraft
 \pgfkeys{
   /demo/.is family, /demo,
@@ -13,4 +14,8 @@
 }
 \begin{document}
 \pgfkeys{/demo/mode=fast, /demo/draft}
+% a pingu: its look is one key list, completed and explained like any other
+\begin{tikzpicture}
+  \pingu[body=teal!70, bill color=orange, eyes color=black]
+\end{tikzpicture}
 \end{document}
