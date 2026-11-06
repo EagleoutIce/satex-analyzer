@@ -426,6 +426,8 @@ Joining pending code into unknown text keeps what it may do (`may_run`): undefin
 - Only data joins that way. Paths whose pending code differs never join until a common point. Code differs only between passes of one loop.
 - A path raising an error with an exact cause (a certainly undefined name) is dropped: the document is assumed to compile. Library code that redefines `\fi` drops its path too.
 - A cut keeps the lists holding the document's own text, and one in an output routine ends only the routine (tex.web § 1100).
+- A call dropped in text a cut left takes its arguments with it. A `\fi` there of a conditional open below may have been TeX's, so that level becomes `many`: closed or still open (`unbalanced-conditional`, an assumption).
+- A conditional's level ends with the file it began in. A skip of it that reaches that end past an approximation ends there too, with the levels its skipped text opened (`unbalanced-conditional`, an assumption). Without an approximation the skip reads on as TeX does (§ 336).
 
 ## Precision limits: where the domains stop being precise
 

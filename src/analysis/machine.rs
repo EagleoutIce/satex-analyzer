@@ -1438,8 +1438,9 @@ pub(crate) struct Scratch {
     /// The gap that has now been met `limits.repeat_failures` times at one
     /// place: said at the next step.
     pub(crate) repeat_cut: Option<(&'static str, Span)>,
-    /// `gaps_raised` when each conditional's test was read, by where it stands.
-    pub(crate) cond_gaps: HashMap<Span, u64>,
+    /// `gaps_raised` and `approximations` when each conditional's test was
+    /// read, by where it stands ([`Machine::skip_unsure`]).
+    pub(crate) cond_gaps: HashMap<Span, (u64, u64)>,
     /// The families of names built from unknown digits whose number's own
     /// name was defined ([`Machine::unknown_name_token`]).
     pub(crate) numbered: Vec<Sym>,
@@ -1762,6 +1763,9 @@ pub struct Machine<'a> {
     guard_seen: GuardSeen,
     /// This path ran `\end` (tex.web § 1054), not off the end of its input.
     pub(crate) job_ended: bool,
+    /// Where a scan library code opened ran on to the end of the document's
+    /// file: the run's end there is the analysis', not the document's.
+    pub(crate) ran_off: Option<Span>,
     /// The step count the budget was last checked at. A distance, not a
     /// multiple: a read can step onto a multiple the charge then passes.
     checked_at: u64,
@@ -2585,6 +2589,7 @@ impl<'a> Machine<'a> {
             call_recs: Rc::default(),
             guard_seen: GuardSeen::default(),
             job_ended: false,
+            ran_off: None,
             checked_at: 0,
             unknown_digits,
             unknown_more,
@@ -4783,6 +4788,7 @@ will look undefined",
         if let Some(opener) = opener.filter(|o| !self.own_file(o.file))
             && file.is_some_and(|f| self.own_file(f))
         {
+            self.ran_off.get_or_insert(opener);
             self.library_runaway(&format!("File ended while scanning {what}"), opener);
         }
         self.diagnose(
@@ -6699,9 +6705,24 @@ will look undefined",
             return;
         }
         let latex = self.out.plugins.kernel == crate::plugins::Kernel::Latex;
+        let end = if latex { "`\\end{document}`" } else { "`\\bye`" };
+        // A scan library code opened ran on past the end: the document's end
+        // was read as its text, not run. That is the analysis' end. Never silent.
+        if let Some(opener) = self.ran_off {
+            let name = self.out.short_name(opener.file).to_string();
+            self.diagnose(
+                Severity::Unsupported,
+                "analysis-ended-early",
+                opener,
+                format!(
+                    "analysis ended early: a scan begun at {name}:{} read on to the end of the document, past its {end}",
+                    opener.line
+                ),
+            );
+            return;
+        }
         let (lines, last) = (source.lines().count().max(1) as u32, source.lines().last().unwrap_or_default());
         let span = Span { file: self.out.main_file, line: lines, col: last.chars().count() as u32 + 1 };
-        let end = if latex { "`\\end{document}`" } else { "`\\bye`" };
         self.diagnose(
             Severity::Warning,
             "missing-end",
@@ -7223,7 +7244,9 @@ will look undefined",
     /// taken the `{` it closes as an argument, so this is no engine error.
     /// The call is dropped and `\par }` read next, as TeX's recovery
     /// (§ 395) leaves it, but without the error. The `}` is given back.
-    fn cut_right_brace(&mut self, at: Span) -> Vec<Token> {
+    /// What the scan read goes back as the argument, for
+    /// [`Machine::loosen_lost_closers`]: the call is dropped with it.
+    fn cut_right_brace(&mut self, at: Span, read: Vec<Token>) -> Vec<Token> {
         let par = self.intern("par");
         self.unread(Token::new(Tok::Cs(par), at));
         self.runaway = Runaway::Cut;
@@ -7234,7 +7257,42 @@ will look undefined",
             "an argument ran into a `}` of text a cut left, which the code cut may have taken; the call is dropped"
                 .into(),
         );
-        Vec::new()
+        read
+    }
+
+    /// A call dropped in text a cut left ([`Machine::cut_right_brace`])
+    /// took `dropped` with it. A `\fi` there closing a conditional open
+    /// below may have been TeX's, or the cut code's: each such level may
+    /// be closed or still open, so it stands for any number (`many`).
+    fn loosen_lost_closers(&mut self, arguments: &[Vec<Token>], delimiters: &[Tok], at: Span) {
+        let (mut depth, mut lost) = (0usize, 0usize);
+        for &tok in arguments.iter().flatten().map(|t| &t.tok).chain(delimiters) {
+            match CondDepth::role(self.cond_prim(Token::new(tok, at))) {
+                1 => depth += 1,
+                2 if depth > 0 => depth -= 1,
+                2 => lost += 1,
+                _ => {}
+            }
+        }
+        let n = self.conds.len();
+        if lost == 0 || n == 0 {
+            return;
+        }
+        let from = n - lost.min(n);
+        for frame in &mut Rc::make_mut(&mut self.conds)[from..] {
+            frame.many = true;
+        }
+        let opened = self.conds[from].at;
+        let name = self.out.short_name(opened.file).to_string();
+        self.diagnose(
+            Severity::Assumption,
+            "unbalanced-conditional",
+            at,
+            format!(
+                "a call a cut dropped took {lost} `\\fi` of conditionals open around it, the outermost begun at {name}:{}; each may be closed or still open",
+                opened.line
+            ),
+        );
     }
 
     /// tex.web § 94 `overflow`: "TeX capacity exceeded", which ends the run.
@@ -9663,6 +9721,15 @@ will look undefined",
             }
             // tex.web § 396: the call is dropped. Only `\par` in a macro not
             // `\long` says so; `\outer` was reported where it was met.
+            if runaway == Runaway::Cut {
+                // Its arguments and the delimiters matched before the last.
+                let last = u8::try_from(arguments.len()).unwrap_or(u8::MAX);
+                let items =
+                    m.parameter_text.items.iter().take_while(|i| !matches!(i, ParamItem::Param(k) if *k >= last));
+                let delimiters: Vec<Tok> =
+                    items.filter_map(|i| if let ParamItem::Lit(t) = i { Some(*t) } else { None }).collect();
+                self.loosen_lost_closers(&arguments, &delimiters, span);
+            }
             let name = self.name(sym).to_string();
             let message = match runaway {
                 Runaway::Par => format!("Paragraph ended before \\{name} was complete; the call is abandoned"),
@@ -10118,6 +10185,9 @@ will look undefined",
         if runaway == Runaway::No {
             return Some(arguments);
         }
+        if runaway == Runaway::Cut {
+            self.loosen_lost_closers(&arguments, &[], span);
+        }
         if runaway == Runaway::FileEnded {
             let name = self.name(sym).to_string();
             let message = format!("File ended while scanning use of \\{name}: its argument never closes");
@@ -10243,7 +10313,7 @@ will look undefined",
             // In text a cut left, no error ([`Machine::cut_right_brace`]).
             Some(t) if t.is_cat(Catcode::End) && self.after_cut() => {
                 self.unread(t);
-                self.cut_right_brace(t.span)
+                self.cut_right_brace(t.span, Vec::new())
             }
             // An unmatched `}` can never become an argument (tex.web § 395):
             // the `\par` inserted before it is read instead.
@@ -11007,7 +11077,7 @@ will look undefined",
                     // satex invented.
                     if fuzzy.is_none() {
                         if self.after_cut() {
-                            return self.cut_right_brace(t.span);
+                            return self.cut_right_brace(t.span, out);
                         }
                         self.extra_right_brace(t);
                         continue;
@@ -11868,13 +11938,21 @@ will look undefined",
     /// (tex.web § 494): nested conditionals are counted, nothing is executed.
     /// Stops at `\fi`, and at `\else`/`\or` unless `to_fi`. Returns the
     /// primitive that ended the skip.
-    pub fn pass_text(&mut self, to_fi: bool, at: Span) -> Option<(Primitive, Span)> {
+    /// `level` is where the skipped conditional stands on the stack.
+    pub fn pass_text(&mut self, to_fi: bool, at: Span, level: usize) -> Option<(Primitive, Span)> {
         let scanner = std::mem::replace(&mut self.scanner, Scanner::Skipping);
         let id = self.scan_begin();
-        let found = self.pass_text_in(to_fi, at);
+        let found = self.pass_text_in(to_fi, at, level);
         self.scan_end(id);
         self.scanner = scanner;
         found
+    }
+
+    /// Whether satex approximated since the test of the conditional at `at`
+    /// was read: what its skipped text holds may then not be TeX's.
+    fn skip_unsure(&self, at: Span) -> bool {
+        let now = (self.gaps_raised, self.scratch.approximations);
+        self.scratch.cond_gaps.get(&at).is_none_or(|&then| then != now)
     }
 
     /// [`Self::pass_text`] for a conditional whose own test left conditionals
@@ -11884,7 +11962,7 @@ will look undefined",
     /// was before the conditional was read.
     pub(crate) fn pass_outer(&mut self, to_fi: bool, at: Span, base: usize) -> Option<(Primitive, Span)> {
         loop {
-            match self.pass_text(to_fi, at)? {
+            match self.pass_text(to_fi, at, base)? {
                 (Primitive::Fi, mark) if self.conds.len() > base => {
                     if let Some(inner) = self.conds.last() {
                         self.note_cond_mark(inner.at, mark, true);
@@ -11906,7 +11984,7 @@ will look undefined",
 
     /// Skipping holds and expands nothing, so it reads only what the input
     /// stack holds or a file, and no token budget cuts it short.
-    fn pass_text_in(&mut self, to_fi: bool, at: Span) -> Option<(Primitive, Span)> {
+    fn pass_text_in(&mut self, to_fi: bool, at: Span, level: usize) -> Option<(Primitive, Span)> {
         let mut nesting = CondDepth::default();
         loop {
             let Some(t) = self.next_token() else {
@@ -11920,17 +11998,34 @@ will look undefined",
                 if nesting.feed(Some(Primitive::Fi)).is_some() {
                     return Some((Primitive::Fi, end));
                 }
+                // The conditional began in this file, which ends its level
+                // ([`Machine::balance_conditionals`]). Past an approximation
+                // the levels its skipped text opened may be none, so the
+                // skip ends with the file, never reading on through the rest.
+                let home = matches!(self.input.last(), Some(Frame::File { conds, .. }) if level >= *conds);
+                if home && self.skip_unsure(at) {
+                    let name = self.out.short_name(at.file).to_string();
+                    self.diagnose(
+                        Severity::Assumption,
+                        "unbalanced-conditional",
+                        end,
+                        format!(
+                            "skipping a conditional begun at {name}:{} after an approximation reached the end of the file it began in; the {} conditional(s) its skipped text opened are assumed to end there too",
+                            at.line, nesting.0 + 1
+                        ),
+                    );
+                    return Some((Primitive::Fi, end));
+                }
                 self.end_input_frame();
                 continue;
             };
             if let Some(log) = &mut self.skip_log {
                 log.push(t);
             }
-            // A skip crossing into another file after a gap ends here, as if
+            // A skip crossing into another file past an approximation ends here, as if
             // `\fi` were inserted (tex.web § 336); a marker forks the path
-            // skipping on. Without a gap it is a deliberate skip (comment.sty).
-            let unsure = self.scratch.cond_gaps.get(&at).is_none_or(|&gaps| gaps != self.gaps_raised);
-            if unsure && self.last_file.is_some_and(|f| f != at.file) {
+            // skipping on. Without one it is a deliberate skip (comment.sty).
+            if self.skip_unsure(at) && self.last_file.is_some_and(|f| f != at.file) {
                 self.unread(t);
                 // A library conditional skipping on into the document's text
                 // is no run of it (`analysis.assume_compiles`): it ends here.

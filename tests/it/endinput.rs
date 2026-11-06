@@ -101,6 +101,34 @@ fn a_file_ending_inside_skipped_text_inserts_fi() {
     assert!(diagnosed(&analysis, "unterminated-conditional").is_empty());
 }
 
+/// A library conditional whose `\fi` a cut dropped (the call scanning
+/// for its delimiter ran into a `}` the cut left) may be closed or open,
+/// so a later `\else` may pair with it and skip, or not (`\b` maybe).
+/// Past that cut the levels the skipped text opens may be none: the skip
+/// ends with the file the conditional began in, never reading on.
+#[test]
+fn a_skip_past_a_cut_ends_with_the_file_its_conditional_began_in() {
+    if !installed() {
+        return;
+    }
+    let dir = scratch("cut-skip");
+    std::fs::write(
+        dir.join("lib.tex"),
+        "\\def\\empty{}\\def\\start#1{#1\\start\\empty}\\def\\stop#1\\stoppoint{}\n\
+         \\def\\lib{\\ifnum\\count1=0 \\start abcdef{\\stop x\\fi}\\stoppoint}\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("chapter.tex"), "\\lib \\def\\a{1}\\else \\iftrue \\def\\b{1}\n").unwrap();
+    let source = format!("{PRELUDE}\\input lib \\input chapter \\def\\after{{1}}\n\\fi\\def\\last{{1}}\n");
+    let analysis = analyze_files(&source, &dir.join("main.tex"));
+    let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&"argument-ends-in-unknown"), "the cut drops the call: {codes:?}");
+    assert_eq!(state(&analysis, &["a", "b", "after", "last"]), "a=1 b=? after=1 last=1");
+    let ended =
+        analysis.facts.diagnostics.iter().any(|d| d.code == "unbalanced-conditional" && d.message.contains("lib.tex"));
+    assert!(ended, "the assumption is reported: {codes:?}");
+}
+
 #[test]
 fn a_file_opened_on_the_same_line_takes_the_flag_over() {
     if !installed() {

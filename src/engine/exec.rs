@@ -1863,7 +1863,7 @@ impl Machine<'_> {
     /// arm and `\else`/`\fi` stay in the stream, so a macro delimited by `\fi`
     /// still sees it (tex.web §§ 489-500). An undecided one runs every arm.
     fn conditional(&mut self, cond: Cond, by: Sym, span: Span, negate: bool) {
-        self.scratch.cond_gaps.insert(span, self.gaps_raised);
+        self.scratch.cond_gaps.insert(span, (self.gaps_raised, self.scratch.approximations));
         self.command_level = false;
         // `satex controls` asks what a switch governs, which only has an
         // answer if the switch is left undecided.
@@ -2333,7 +2333,7 @@ impl Machine<'_> {
             0 => true,
             1 => {
                 let mut open = nested;
-                while let Some((end, _)) = m.pass_text(to_fi, span) {
+                while let Some((end, _)) = m.pass_text(to_fi, span, m.conds.len()) {
                     match end {
                         Primitive::Fi if open == 0 => break,
                         Primitive::Fi => open -= 1,
@@ -2670,7 +2670,7 @@ impl Machine<'_> {
             }
             Some(frame) => {
                 let at = frame.at;
-                if let Some((_, fi)) = self.pass_text(true, span) {
+                if let Some((_, fi)) = self.pass_text(true, at, self.conds.len() - 1) {
                     self.note_cond_mark(at, fi, true);
                 }
                 self.pop_conditional();

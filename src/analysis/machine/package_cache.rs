@@ -1510,6 +1510,7 @@ impl Machine<'_> {
             call_recs: _,
             guard_seen: _,
             job_ended: _,
+            ran_off: _,
             checked_at: _,
             unknown_digits: _,
             unknown_more: _,

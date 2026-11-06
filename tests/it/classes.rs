@@ -77,3 +77,27 @@ fn beamer() {
     assert!(!a.facts.diagnostics.iter().any(|d| CUTS.contains(&d.code)), "beamer: cut");
     assert_eq!(body(&a, "depth"), "0");
 }
+
+/// A scan library code opened that reads on through the rest of the
+/// document (here a library `\iffalse` the document never closes) ran past
+/// `\end{document}` without running it: the run says it ended early, at the
+/// scan's start, never only that the document lacks its end.
+#[test]
+fn a_library_scan_past_the_end_says_the_analysis_ended_early() {
+    if !installed() {
+        return;
+    }
+    let root =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-ran-off-{}", std::process::id())));
+    let (lib, doc) = (root.join("lib"), root.join("doc"));
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::create_dir_all(&doc).unwrap();
+    std::fs::write(lib.join("hide.tex"), "\\def\\hide{\\iffalse}\n").unwrap();
+    let source = "\\documentclass{article}\n\\input{../lib/hide}\n\\begin{document}\nA\\hide B\n\\end{document}\n";
+    let main = doc.join("main.tex");
+    std::fs::write(&main, source).unwrap();
+    let a = Machine::analyze(source, Some(&main), &crate::support::config());
+    let early: Vec<_> = a.facts.diagnostics.iter().filter(|d| d.code == "analysis-ended-early").collect();
+    assert!(early.iter().any(|d| d.message.contains("hide.tex")), "{:?}", codes(&a));
+    assert!(!codes(&a).contains(&"missing-end".to_string()), "{:?}", codes(&a));
+}
