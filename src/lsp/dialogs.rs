@@ -219,25 +219,17 @@ fn float_card(analysis: &Analysis, doc: &Text, uri: &str, t: &Target) -> String 
         (_, Some(d)) => format!("### Placement: this {env} takes the default `{d}` (`\\fps@{env}`)\n\n"),
         _ => format!("### Placement: LaTeX may put this {env}\n\n"),
     };
-    let cells: Vec<String> = known
-        .iter()
-        .map(|(c, _)| {
-            let on = shown.contains(*c);
-            let next = toggled(&shown, *c);
-            let text = if next.is_empty() { String::new() } else { format!("[{next}]") };
-            let args = json!([uri, range, text, null]);
-            format!("[{}](command:satex.applyEdit?{})", if on { "✓ on" } else { "off" }, percent(&args.to_string()))
-        })
-        .collect();
-    md.push_str(&format!(
-        "| {} |\n|{}\n| {} |\n\n",
-        known.iter().map(|(c, _)| format!("`{c}`")).collect::<Vec<_>>().join(" | "),
-        ":---:|".repeat(known.len()),
-        cells.join(" | ")
-    ));
+    // one line per letter: its checkmark switches it (a link that rewrites the brackets), then what it means
     for (c, what) in &known {
-        let on = if shown.contains(*c) { "**on**" } else { "off" };
-        md.push_str(&format!("- `{c}` {on}: {what}\n"));
+        let on = shown.contains(*c);
+        let next = toggled(&shown, *c);
+        let text = if next.is_empty() { String::new() } else { format!("[{next}]") };
+        let args = json!([uri, range, text, null]);
+        let (mark, state) = if on { ("✓", "**on**") } else { ("○", "off") };
+        md.push_str(&format!(
+            "- [{mark} `{c}`](command:satex.applyEdit?{}) {state}: {what}\n",
+            percent(&args.to_string())
+        ));
     }
     for c in shown.chars().filter(|c| !known.iter().any(|(k, _)| k == c)) {
         md.push_str(&format!("- `{c}`: unknown: LaTeX reports an error and uses `p`\n"));
@@ -279,17 +271,8 @@ fn limits(analysis: &Analysis) -> Option<String> {
     if cells.is_empty() {
         return None;
     }
-    let mut md = String::from("Limits as the run ended:\n\n");
-    for chunk in cells.chunks(4) {
-        let row = |f: &dyn Fn(&(String, String)) -> String| chunk.iter().map(f).collect::<Vec<_>>().join(" | ");
-        md.push_str(&format!(
-            "| {} |\n|{}\n| {} |\n\n",
-            row(&|c| c.0.clone()),
-            "---:|".repeat(chunk.len()),
-            row(&|c| c.1.trim().to_string())
-        ));
-    }
-    Some(md)
+    let line: Vec<String> = cells.iter().map(|(n, v)| format!("{n} {}", v.trim())).collect();
+    Some(format!("Limits as the run ended: {}\n", line.join(" · ")))
 }
 
 /// The placement letters to complete inside a float's `[…]`, its `]` typed or not: those not yet written,

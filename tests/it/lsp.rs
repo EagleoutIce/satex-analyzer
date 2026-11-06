@@ -3426,10 +3426,16 @@ fn a_float_placement_hovers_completes_and_writes() {
     let hover = ask(&mut server, "textDocument/hover", at(fig, 15));
     let md = hover["contents"]["value"].as_str().unwrap_or_default().to_string();
     assert!(
-        md.contains("Placement `[ht]`") && md.contains("- `h` **on**: here") && md.contains("- `t` **on**: at the top"),
+        md.contains("Placement `[ht]`")
+            && md.contains("[✓ `h`](command:satex.applyEdit?")
+            && md.contains("**on**: here")
+            && md.contains("**on**: at the top"),
         "{md}"
     );
-    assert!(md.contains("- `b` off"), "every letter, the written ones on: {md}");
+    assert!(
+        md.contains("[○ `b`](command:satex.applyEdit?") && md.contains(") off: at the bottom"),
+        "every letter, the written ones on: {md}"
+    );
     // each toggle is a link that writes the brackets with its letter switched
     let writes: Vec<String> = md
         .match_indices("command:satex.applyEdit?")
@@ -3447,14 +3453,17 @@ fn a_float_placement_hovers_completes_and_writes() {
         .collect();
     assert_eq!(writes, ["[t]", "[h]", "[htb]", "[htp]", "[ht!]", "[H]"], "{md}");
     assert!(
-        md.contains("`topnumber` | `\\topfraction`") && md.contains("| 2 | .7 |"),
+        md.contains("Limits as the run ended: `topnumber` 2 · `\\topfraction` .7"),
         "the limits as the run ended: {md}"
     );
     let md = ask(&mut server, "textDocument/hover", at(tab, 3))["contents"]["value"]
         .as_str()
         .unwrap_or_default()
         .to_string();
-    assert!(md.contains("default `tbp`") && md.contains("- `p`"), "the class's \\fps@table: {md}");
+    assert!(
+        md.contains("default `tbp`") && md.contains("`p`](command:satex.applyEdit?"),
+        "the class's \\fps@table: {md}"
+    );
     assert!(md.contains("does not matter"), "the order is lost: {md}");
     let items = complete(&mut server, &uri, fig, 16);
     assert_eq!(labels(&items), ["b", "p", "!", "H"], "the letters not written, H from float.sty");
