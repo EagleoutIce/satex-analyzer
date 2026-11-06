@@ -4790,6 +4790,25 @@
     try { localStorage.setItem('satex-pdf-follow', pdfFollowOn ? 'on' : 'off'); } catch {}
     if (pdfFollowOn) pdfFollow(); else pdfBody.querySelectorAll('.pdf-mark').forEach((m) => m.remove());
   };
+  /** Dark PDF: unset follows the site theme, the button overrides it, remembered per viewer. */
+  const pdfDarkButton = document.createElement('button');
+  pdfDarkButton.type = 'button'; pdfDarkButton.id = 'pdf-dark'; pdfDarkButton.className = 'small ghost icon';
+  pdfDarkButton.setAttribute('aria-label', 'dark PDF');
+  pdfFollowButton.before(pdfDarkButton);
+  const siteDark = () => { const t = document.documentElement.dataset.theme; return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; };
+  const darkState = () => {
+    let v = null;
+    try { v = localStorage.getItem('satex-pdf-dark'); } catch {}
+    const dark = v ? v === 'on' : siteDark(), pane = $('play-pdf');
+    pane.classList.toggle('pdf-night', v === 'on'); pane.classList.toggle('pdf-day', v === 'off');
+    pdfDarkButton.setAttribute('aria-pressed', String(dark)); pdfDarkButton.textContent = dark ? '☾' : '☀'; pdfDarkButton.title = `Dark PDF: ${dark ? 'on' : 'off'}`;
+  };
+  darkState();
+  pdfDarkButton.onclick = (e) => {
+    e.preventDefault();
+    try { localStorage.setItem('satex-pdf-dark', pdfDarkButton.getAttribute('aria-pressed') === 'true' ? 'off' : 'on'); } catch {}
+    darkState();
+  };
   /** A build's download asks first, once: the answer stays with this viewer. */
   addEventListener('click', (e) => {
     const a = e.target instanceof Element ? e.target.closest('#play-pdf a[download]') : null;

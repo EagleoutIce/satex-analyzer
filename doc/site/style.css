@@ -1718,6 +1718,10 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf-bar #pdf-follow[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 18%, var(--bg)); color: var(--accent); border-color: var(--accent); font-weight: 600; }
 .pdf-bar #pdf-follow[aria-pressed=false] { color: var(--muted); border-style: dashed; }
 .pdf-bar #pdf-follow { gap: .3rem; }
+:root { --pdf-night: invert(.88) hue-rotate(180deg); }
+#play-pdf.pdf-night :is(.pdf-page img, iframe, embed) { filter: var(--pdf-night); }
+:root[data-theme=dark] #play-pdf:not(.pdf-day) :is(.pdf-page img, iframe, embed) { filter: var(--pdf-night); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme=light]) #play-pdf:not(.pdf-day) :is(.pdf-page img, iframe, embed) { filter: var(--pdf-night); } }
 /* a layer's chevron stays in the layer's row, its list below */
 .pdf-layer-row > .pdf-layer { flex: 1 1 0; min-width: 0; }
 .pdf-layer-row > .pdf-sub-toggle { flex: none; }
