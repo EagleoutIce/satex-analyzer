@@ -44,24 +44,26 @@ fn a_typed_section_number_names_its_label() {
     if !crate::support::installed() {
         return;
     }
-    assert_eq!(
-        replacements(&found),
-        [r"Section~\ref{sec:a}", r"Sec.~\ref{sec:a}", r"Eq.~(\ref{eq:x})", r"Appendix~\ref{app:b}"],
-        "{found:?}"
-    );
+    // the fix writes `\Cref` after a capital word and loads cleveref, which prints the word itself
+    let (loads, calls): (Vec<String>, Vec<String>) =
+        replacements(&found).into_iter().partition(|r| r.contains("usepackage"));
+    assert_eq!(calls, [r"\Cref{sec:a}", r"\Cref{sec:a}", r"\Cref{eq:x}", r"\Cref{app:b}"], "{found:?}");
+    assert!(loads.len() == 4 && loads.iter().all(|l| l.contains(r"\usepackage{cleveref}")), "{loads:?}");
     // `Table 9`: the document labels no table, so nothing could be referred to.
     assert_eq!(found.len(), 4, "{found:?}");
 }
 
 #[test]
-fn a_typed_number_follows_the_loaded_package() {
+fn a_typed_number_becomes_a_cleveref_reference() {
     let body = "\\usepackage{amsmath}\n\\usepackage{hyperref}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\
                 \\begin{figure}\\caption{c}\\label{fig:f}\\end{figure}\nSee Figure 1 and Section 4.\n\\end{document}\n";
     let found = records("autoref", body, "", "hand-written-reference");
     if !crate::support::installed() {
         return;
     }
-    assert_eq!(replacements(&found), [r"\autoref{fig:f}"], "{found:?}");
+    // with hyperref loaded, cleveref still names the figure: loaded after it
+    let calls: Vec<String> = replacements(&found).into_iter().filter(|r| !r.contains("usepackage")).collect();
+    assert_eq!(calls, [r"\Cref{fig:f}"], "{found:?}");
     // No label prints 4: the finding asks for one.
     assert_eq!(found.len(), 2, "{found:?}");
 }

@@ -34,9 +34,10 @@ letter typed in the source, as in `Figure 2`, `Eq. (5)` or `Appendix A`.
 The words come from the run, so babel's names count too.  Text in math,
 verbatim or a comment is never read, and neither is a number `\\ref` set.
 
-Where one label of that kind prints that very number, the fix names it:
-`\\cref` with cleveref loaded, else `\\autoref` with hyperref, else
-`Section~\\ref{...}`.  Otherwise the finding asks for a label.
+Where one label of that kind prints that very number, the fix writes
+`\\cref` (`\\Cref` after a capital word), and loads cleveref when the
+document does not.  cleveref then prints the word itself.  Otherwise the
+finding asks for a label.
 
 An `\\item` of a numbered list counts too, labelled or not, in enumitem's
 inline lists as well: `see item (b)` or `in step 2`, where one item prints
@@ -420,28 +421,24 @@ fn hand_written_reference(report: &mut Report) {
             report.add(at, "typed", message, Some("label the target and write `\\ref` to it".into()));
             continue;
         };
-        let call = if cleveref {
-            let upper = word.chars().next().is_some_and(char::is_uppercase);
-            format!("{}{{{key}}}", if upper { r"\Cref" } else { r"\cref" })
-        } else if loaded(analysis, "hyperref") {
-            format!(r"\autoref{{{key}}}")
-        } else if paren && defined(analysis, "eqref") {
-            format!(r"{word}~\eqref{{{key}}}")
-        } else if paren {
-            format!(r"{word}~(\ref{{{key}}})")
-        } else {
-            format!(r"{word}~\ref{{{key}}}")
-        };
-        let fix = edits.text(at.file).map(|(path, _)| {
-            vec![Edit {
-                path,
-                start: Pos::new(at.line, at.col),
-                end: Pos::new(at.line, end),
-                replacement: call.clone(),
-            }]
+        // cleveref prints the word itself: the fix writes `\cref` (`\Cref` for a capital word), loading
+        // cleveref when the document does not, as prefer-cleveref does
+        let upper = word.chars().next().is_some_and(char::is_uppercase);
+        let call = format!("{}{{{key}}}", if upper { r"\Cref" } else { r"\cref" });
+        let replace = edits.text(at.file).map(|(path, _)| Edit {
+            path,
+            start: Pos::new(at.line, at.col),
+            end: Pos::new(at.line, end),
+            replacement: call.clone(),
         });
+        let fix = replace.and_then(|r| {
+            let mut all = edits.ensure_package("cleveref")?;
+            all.push(r);
+            Some(all)
+        });
+        let load = if cleveref { "" } else { "load cleveref and " };
         let message = format!("`{typed}` is typed by hand, and the label `{key}` has that number");
-        report.add_fix(at, "labelled", message, Fix::new(format!("write `{call}`"), Applicability::Unsafe, fix));
+        report.add_fix(at, "labelled", message, Fix::new(format!("{load}write `{call}`"), Applicability::Unsafe, fix));
     }
 }
 
