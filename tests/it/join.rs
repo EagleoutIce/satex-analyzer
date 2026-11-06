@@ -335,6 +335,14 @@ fn a_path_waiting_to_the_end_still_runs_on() {
           \ifnum\pdfuniformdeviate2=0 \expandafter\a\else\expandafter\b\fi\edef\z{\m}",
     );
     assert!(body(&analysis, "z").contains("one of:"), "{}", body(&analysis, "z"));
+    // `explain` (and so hover) lists each path's text.
+    let (records, _) = satex::queries::query::explain(&analysis, &["z".into()], false).unwrap();
+    let one_of = records.iter().find_map(|r| r.get("one_of")?.as_array().cloned()).unwrap_or_default();
+    let bodies: Vec<&str> = one_of.iter().filter_map(|o| o.get("body")?.as_str()).collect();
+    assert!(bodies.contains(&"a") && bodies.contains(&"b"), "{records:?}");
+    // One path running a site again: its last text.
+    let one = analyze(r"\def\set#1{\edef\z{#1}}\set a\set b");
+    assert_eq!(body(&one, "z"), "b");
 }
 
 /// Paths that end apart (pending code that differs) still end in one
@@ -427,6 +435,35 @@ fn certain_error_drops_its_path() {
     let kept = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
     assert!(body(&kept, "z").contains("one of:"), "{}", body(&kept, "z"));
     assert!(with_code(&kept, "assumed-compiles").is_empty());
+}
+
+/// `analysis.assume_compiles` refutes nothing once nothing compiles
+/// (errors kept): a library conditional's `\else` skip crossing into the
+/// document past an approximation is then followed both ways, never
+/// ended as refuted.
+#[test]
+fn a_crossing_skip_is_refuted_only_while_the_document_may_compile() {
+    let lib = crate::support::scratch_dir(
+        crate::support::tmp_root().join(format!("satex-join-cross-{}", std::process::id())),
+    );
+    std::fs::write(lib.join("opener.tex"), r"\def\opener{\iftrue}").unwrap();
+    // Every arm raises an error: nothing compiles, so errors are kept.
+    let bad = r"\ifnum\pdfuniformdeviate2=0 \undefinedcs\else\undefinedtoo\fi ";
+    std::fs::write(lib.join("bad.tex"), bad).unwrap();
+    let run = |error: &str| {
+        let source = format!(
+            r"\input {}/opener.tex {error}\opener\lccode\pdfuniformdeviate 200=65 \else\def\a{{}}\fi\def\after{{}}",
+            crate::support::tex_path(&lib)
+        );
+        let mut cfg = satex::project::config::Config { arm_joins: true, ..crate::support::bare() };
+        cfg.load.inputs = true;
+        let analysis = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
+        with_code(&analysis, "conditional-crosses-file")
+    };
+    let refuted = run("");
+    assert!(refuted.iter().any(|d| d.ends_with("it ends there")), "{refuted:?}");
+    let kept = run(&format!(r"\input {}/bad.tex ", crate::support::tex_path(&lib)));
+    assert!(kept.iter().any(|d| d.contains("both its end there and the skip on")), "{kept:?}");
 }
 
 /// Rows about `\argcs` other than the drop's own note.

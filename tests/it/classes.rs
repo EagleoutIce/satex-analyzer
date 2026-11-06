@@ -101,3 +101,26 @@ fn a_library_scan_past_the_end_says_the_analysis_ended_early() {
     assert!(early.iter().any(|d| d.message.contains("hide.tex")), "{:?}", codes(&a));
     assert!(!codes(&a).contains(&"missing-end".to_string()), "{:?}", codes(&a));
 }
+
+/// Only a scan past the main file's end hides the document's end: one a
+/// chapter's end stopped (TeX inserts `\fi` and reads on) leaves a
+/// document that really lacks `\end{document}` said so.
+#[test]
+fn a_scan_a_chapter_end_stopped_hides_no_missing_end() {
+    if !installed() {
+        return;
+    }
+    let root =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-no-end-{}", std::process::id())));
+    let (lib, doc) = (root.join("lib"), root.join("doc"));
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::create_dir_all(&doc).unwrap();
+    std::fs::write(lib.join("hide.tex"), "\\def\\hide{\\iffalse}\n").unwrap();
+    std::fs::write(doc.join("ch.tex"), "A\\hide B\n").unwrap();
+    let source = "\\documentclass{article}\n\\input{../lib/hide}\n\\begin{document}\n\\input{ch}\n";
+    let main = doc.join("main.tex");
+    std::fs::write(&main, source).unwrap();
+    let a = Machine::analyze(source, Some(&main), &crate::support::config());
+    let codes: Vec<&str> = a.facts.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&"missing-end") && !codes.contains(&"analysis-ended-early"), "{codes:?}");
+}

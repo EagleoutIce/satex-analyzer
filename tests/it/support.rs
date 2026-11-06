@@ -193,6 +193,24 @@ pub fn body(analysis: &Analysis, name: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The texts a definition fact's body stands for: each path's text where
+/// several paths ran its site (one one-of token), else the body itself.
+pub fn site_bodies(analysis: &Analysis, d: &satex::analysis::facts::Definition) -> Vec<String> {
+    let Some(m) = d.mac.as_ref() else { return Vec::new() };
+    let spell = |t: &[satex::engine::tex::Token]| satex::engine::tex::detokenize(t, &analysis.interner);
+    let members = match &*m.replacement_text {
+        [t] => t
+            .cs()
+            .filter(|&s| analysis.interner.name(s).contains("one of:"))
+            .and_then(|s| analysis.env.slot(s)?.may.clone()),
+        _ => None,
+    };
+    match members {
+        Some(may) => may.iter().filter_map(|m| m.as_macro()).map(|m| spell(&m.replacement_text)).collect(),
+        None => vec![spell(&m.replacement_text)],
+    }
+}
+
 /// The last definition of `name` in analysis order.
 pub fn last_definition<'a>(analysis: &'a Analysis, name: &str) -> Option<&'a satex::analysis::facts::Definition> {
     analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == name)

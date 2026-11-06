@@ -1512,7 +1512,10 @@ impl Machine<'_> {
             call_recs: _,
             guard_seen: _,
             job_ended: _,
+            // Set only where the main file ends, which no cached load reads.
             ran_off: _,
+            path_id: _,
+            path_ids: _,
             checked_at: _,
             unknown_digits: _,
             unknown_more: _,

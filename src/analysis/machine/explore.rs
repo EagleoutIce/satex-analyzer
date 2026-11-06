@@ -834,6 +834,10 @@ impl Machine<'_> {
         loop {
             self.charge(&mut mark);
             self.choices.clear();
+            if self.runs > 0 {
+                self.path_ids += 1;
+                self.path_id = self.path_ids;
+            }
             (self.infeasible, self.ended_run) = (false, false);
             self.at_join = None;
             // A top run starts clean; a nested one keeps what its path raised.
@@ -2417,12 +2421,7 @@ impl Machine<'_> {
             let texts: Vec<&[Token]> = members.iter().map(|t| &**t).collect();
             return self.unknown_text(Unk::Of(&texts), span);
         }
-        let mut named: Vec<(u128, Rc<[Token]>)> =
-            members.into_iter().map(|t| (text_hash(&t, |s| self.name(s).to_owned()), t)).collect();
-        named.sort_by_key(|n| n.0);
-        let class = self.class_name(named.iter().map(|n| &n.1[..]));
-        let sym = self.intern(&format!("{prefix}{:x?}{class}", named.iter().map(|n| n.0).collect::<Vec<_>>()));
-        let may: Vec<Meaning> = named.into_iter().map(|(_, text)| text_meaning(text)).collect();
+        let (sym, may) = self.one_of_sym(members);
         let now = self.carried.passes_joined;
         self.carried.made.entry(sym).and_modify(|m| m.1 = true).or_insert((now, false));
         match self.env.slot(sym).and_then(|b| b.may.clone()) {
@@ -2436,6 +2435,17 @@ impl Machine<'_> {
             }
         }
         Token::new(Tok::Cs(sym), span)
+    }
+
+    /// The name of the one-of token for `members`, and its meanings.
+    pub(crate) fn one_of_sym(&mut self, members: Vec<Rc<[Token]>>) -> (Sym, Vec<Meaning>) {
+        let mut named: Vec<(u128, Rc<[Token]>)> =
+            members.into_iter().map(|t| (text_hash(&t, |s| self.name(s).to_owned()), t)).collect();
+        named.sort_by_key(|n| n.0);
+        let class = self.class_name(named.iter().map(|n| &n.1[..]));
+        let ids = named.iter().map(|n| n.0).collect::<Vec<_>>();
+        let sym = self.intern(&format!("{UNKNOWN_NAME}{ONE_OF}{ids:x?}{class}"));
+        (sym, named.into_iter().map(|(_, text)| text_meaning(text)).collect())
     }
 
     /// One token for either of two balanced texts. Data with unknown parts
@@ -2900,6 +2910,7 @@ impl Machine<'_> {
         }
         x.material |= y.material;
         x.approximated |= y.approximated;
+        x.ran_off = x.ran_off.or(y.ran_off);
         // An error raised on every joined path is the join's: a path
         // without one is a run, its recovery the other's.
         x.dropping = match (x.dropping.0.take(), &y.dropping) {
@@ -3387,7 +3398,7 @@ fn keep_last<T>(table: &mut Vec<T>, n: u16) {
 }
 
 /// Whether two token lists are the same text.
-fn same_text(a: &[Token], b: &[Token]) -> bool {
+pub(crate) fn same_text(a: &[Token], b: &[Token]) -> bool {
     a.iter().map(|t| t.tok).eq(b.iter().map(|t| t.tok))
 }
 

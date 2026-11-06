@@ -1421,6 +1421,9 @@ carried! {
     pub(crate) absorbed: Option<Span>,
 }
 
+/// The text each path last gave a definition site, by path id.
+type SiteRuns = Vec<(u64, Option<Rc<MacroDef>>)>;
+
 /// Per-load state every cacheable load forgets at its end, read or
 /// replayed alike ([`Machine::end_cacheable_load`]).
 #[derive(Clone, Default)]
@@ -1451,9 +1454,14 @@ pub(crate) struct Scratch {
     /// The gap that has now been met `limits.repeat_failures` times at one
     /// place: said at the next step.
     pub(crate) repeat_cut: Option<(&'static str, Span)>,
-    /// `gaps_raised` and `approximations` when each conditional's test was
-    /// read, by where it stands ([`Machine::skip_unsure`]).
-    pub(crate) cond_gaps: HashMap<Span, (u64, u64)>,
+    /// `gaps_raised` and `approximations` when each open conditional's test
+    /// was read, by its frame's level on the stack and its `\if…`
+    /// ([`Machine::skip_unsure`]). Two live frames on one key (paths, a
+    /// test nesting itself) that differ: [`UNSURE`].
+    pub(crate) cond_gaps: HashMap<(usize, Span), (u64, u64)>,
+    /// Per definition fact run by a path besides the first, the text each
+    /// path last gave it, by [`Machine::path_id`].
+    pub(crate) site_texts: HashMap<usize, SiteRuns>,
     /// The families of names built from unknown digits whose number's own
     /// name was defined ([`Machine::unknown_name_token`]).
     pub(crate) numbered: Vec<Sym>,
@@ -1776,9 +1784,14 @@ pub struct Machine<'a> {
     guard_seen: GuardSeen,
     /// This path ran `\end` (tex.web § 1054), not off the end of its input.
     pub(crate) job_ended: bool,
-    /// Where a scan library code opened ran on to the end of the document's
-    /// file: the run's end there is the analysis', not the document's.
+    /// Where a scan library code opened on this path ran on to the end of
+    /// the main file: the run's end there is the analysis', not the
+    /// document's. Per path: a refuted path takes it along.
     pub(crate) ran_off: Option<Span>,
+    /// Which path runs: each run of a command past its first is a new one.
+    pub(crate) path_id: u64,
+    /// The last path id handed out.
+    pub(crate) path_ids: u64,
     /// The step count the budget was last checked at. A distance, not a
     /// multiple: a read can step onto a multiple the charge then passes.
     checked_at: u64,
@@ -2135,6 +2148,8 @@ struct PathState {
     call_recs: Rc<Vec<calls::CallRec>>,
     guard_seen: GuardSeen,
     job_ended: bool,
+    ran_off: Option<Span>,
+    path_id: u64,
     /// The path's own scans in flight ([`Machine::scan_begin`]): a cut on
     /// one path ends no other path's scan.
     scan_starts: Vec<(usize, bool, Span)>,
@@ -2608,6 +2623,8 @@ impl<'a> Machine<'a> {
             guard_seen: GuardSeen::default(),
             job_ended: false,
             ran_off: None,
+            path_id: 0,
+            path_ids: 0,
             checked_at: 0,
             unknown_digits,
             unknown_more,
@@ -4805,11 +4822,15 @@ will look undefined",
         let span = file.map_or_else(|| self.position_span(), |f| Span::new(f, 0, 0));
         // A scan library code opened ran to the end of the document's file:
         // TeX stops with an error there (§ 338), a fault of library code.
+        // Only the main file's end is the document's: past a chapter's TeX
+        // goes on.
         let opener = self.scan_starts.last().map(|s| s.2);
         if let Some(opener) = opener.filter(|o| !self.own_file(o.file))
             && file.is_some_and(|f| self.own_file(f))
         {
-            self.ran_off.get_or_insert(opener);
+            if file == Some(self.out.main_file) {
+                self.ran_off.get_or_insert(opener);
+            }
             self.library_runaway(&format!("File ended while scanning {what}"), opener);
         }
         self.diagnose(
@@ -6480,6 +6501,10 @@ will look undefined",
                     self.carried.own_switches.insert(name);
                 }
                 if existing.is_none() {
+                    // Path 0, the first, is the one a site without a record had.
+                    if self.path_id != 0 {
+                        self.scratch.site_texts.insert(self.out.facts.defs.len(), vec![(self.path_id, mac.clone())]);
+                    }
                     self.definition_sites.insert((span, name, fact.package), self.out.facts.defs.len());
                     self.out.facts.defs.push(fact);
                 } else if context_is_new {
@@ -6487,12 +6512,26 @@ will look undefined",
                 }
             }
         }
-        // A new context got its own fact above. The site's original fact
-        // keeps its own `mac`, not this run's: a later local meaning must
-        // not overwrite what the first one recorded.
+        // A new context got its own fact above. Else the site's fact holds
+        // the text each path last gave it: a path running it again replaces
+        // its own, another path's is an alternative (`one of`).
         if let Some(i) = existing
             && !context_is_new
         {
+            let (id, had) = (self.path_id, self.out.facts.defs[i].mac.clone());
+            let mac = match self.scratch.site_texts.contains_key(&i) || id != 0 {
+                // The first path alone: its last text.
+                false => mac,
+                true => {
+                    let runs = self.scratch.site_texts.entry(i).or_insert_with(|| vec![(0, had)]);
+                    match runs.iter_mut().find(|r| r.0 == id) {
+                        Some(run) => run.1 = mac,
+                        None => runs.push((id, mac)),
+                    }
+                    let texts: Vec<Option<Rc<MacroDef>>> = runs.iter().map(|r| r.1.clone()).collect();
+                    self.site_text(texts, span)
+                }
+            };
             let previous = &mut self.out.facts.defs[i];
             previous.certain &= certain;
             previous.mac = mac;
@@ -6502,6 +6541,39 @@ will look undefined",
             self.record_metadata(name);
         }
         node
+    }
+
+    /// The texts paths gave one definition site, as one: the text they
+    /// share, else a one-of token of them, past `limits.meaning_set` or for
+    /// differing parameters unknown text. Made with no effect on the run.
+    fn site_text(&mut self, texts: Vec<Option<Rc<MacroDef>>>, span: Span) -> Option<Rc<MacroDef>> {
+        let same = |a: &MacroDef, b: &MacroDef| {
+            a.parameter_text == b.parameter_text && explore::same_text(&a.replacement_text, &b.replacement_text)
+        };
+        let mut defs: Vec<Rc<MacroDef>> = Vec::new();
+        for d in texts.iter().flatten() {
+            if !defs.iter().any(|x| same(x, d)) {
+                defs.push(d.clone());
+            }
+        }
+        let every = texts.iter().all(Option::is_some);
+        let last = match defs.len() {
+            0 => return None,
+            1 if every => return defs.pop(),
+            _ => defs.last().cloned().expect("not empty"),
+        };
+        let alike = every && defs.iter().all(|d| d.parameter_text == last.parameter_text);
+        let sym = match alike && defs.len() <= usize::from(self.limits.meaning_set) {
+            true => {
+                let (sym, may) = self.one_of_sym(defs.iter().map(|d| d.replacement_text.clone()).collect());
+                if self.env.slot(sym).is_none() {
+                    self.env.constant(sym, Binding { may: Some(may.into()), ..Binding::builtin(Meaning::Unknown) });
+                }
+                sym
+            }
+            false => self.unknown,
+        };
+        Some(Rc::new(MacroDef { replacement_text: Rc::from([Token::new(Tok::Cs(sym), span)]), ..(*last).clone() }))
     }
 
     /// `\ref{k}` depends on `\label{k}`, wherever it is.
@@ -9740,11 +9812,7 @@ will look undefined",
         // tex.web §§ 395-396: a runaway after a scan took unknown text to hold
         // no delimiter refutes that arm, satex's own split: the other arm ended
         // the argument in that text.
-        if self.runaway != Runaway::No
-            && std::mem::take(&mut self.arm_assumed)
-            && self.cfg.compiles()
-            && self.probe.is_none()
-        {
+        if self.runaway != Runaway::No && std::mem::take(&mut self.arm_assumed) && self.may_refute(span) {
             self.runaway = Runaway::No;
             self.no_arm();
             return;
@@ -11996,7 +12064,8 @@ will look undefined",
     /// (tex.web § 494): nested conditionals are counted, nothing is executed.
     /// Stops at `\fi`, and at `\else`/`\or` unless `to_fi`. Returns the
     /// primitive that ended the skip.
-    /// `level` is where the skipped conditional stands on the stack.
+    /// `level` is the skipped conditional's frame's index on the stack,
+    /// where it stands or, not pushed yet, will stand.
     pub fn pass_text(&mut self, to_fi: bool, at: Span, level: usize) -> Option<(Primitive, Span)> {
         let scanner = std::mem::replace(&mut self.scanner, Scanner::Skipping);
         let id = self.scan_begin();
@@ -12007,10 +12076,11 @@ will look undefined",
     }
 
     /// Whether satex approximated since the test of the conditional at `at`
-    /// was read: what its skipped text holds may then not be TeX's.
-    fn skip_unsure(&self, at: Span) -> bool {
+    /// on `level` was read: what its skipped text holds may then not be
+    /// TeX's. No record: unsure.
+    fn skip_unsure(&self, at: Span, level: usize) -> bool {
         let now = (self.gaps_raised, self.scratch.approximations);
-        self.scratch.cond_gaps.get(&at).is_none_or(|&then| then != now)
+        self.scratch.cond_gaps.get(&(level, at)).is_none_or(|&then| then != now)
     }
 
     /// [`Self::pass_text`] for a conditional whose own test left conditionals
@@ -12061,7 +12131,7 @@ will look undefined",
                 // the levels its skipped text opened may be none, so the
                 // skip ends with the file, never reading on through the rest.
                 let home = matches!(self.input.last(), Some(Frame::File { conds, .. }) if level >= *conds);
-                if home && self.skip_unsure(at) {
+                if home && self.skip_unsure(at, level) {
                     let name = self.out.short_name(at.file).to_string();
                     self.diagnose(
                         Severity::Assumption,
@@ -12083,11 +12153,11 @@ will look undefined",
             // A skip crossing into another file past an approximation ends here, as if
             // `\fi` were inserted (tex.web § 336); a marker forks the path
             // skipping on. Without one it is a deliberate skip (comment.sty).
-            if self.skip_unsure(at) && self.last_file.is_some_and(|f| f != at.file) {
+            if self.skip_unsure(at, level) && self.last_file.is_some_and(|f| f != at.file) {
                 self.unread(t);
                 // A library conditional skipping on into the document's text
                 // is no run of it (`analysis.assume_compiles`): it ends here.
-                let ends = self.cfg.compiles() && !self.own_file(at.file) && self.own_file(t.span.file);
+                let ends = self.may_refute(at) && self.own_file(t.span.file);
                 let name = self.out.short_name(at.file).to_string();
                 let on = if ends { "it ends there" } else { "both its end there and the skip on are analyzed" };
                 self.diagnose(
@@ -12183,6 +12253,8 @@ will look undefined",
             call_recs: self.call_recs.clone(),
             guard_seen: self.guard_seen,
             job_ended: self.job_ended,
+            ran_off: self.ran_off,
+            path_id: self.path_id,
             scan_starts: self.scan_starts.clone(),
         }
     }
@@ -12229,6 +12301,8 @@ will look undefined",
         self.call_recs = state.call_recs;
         self.guard_seen = state.guard_seen;
         self.job_ended = state.job_ended;
+        self.ran_off = state.ran_off;
+        self.path_id = state.path_id;
         self.scan_starts = state.scan_starts;
         self.scan_cut = self.scan_starts.iter().any(|s| s.1);
         if self.call_recs.is_empty() {
@@ -13518,6 +13592,8 @@ fn read_out(f: &Frame) -> bool {
 
 /// The name of a source read from no file.
 pub(crate) const NO_FILE: &str = "<input>";
+/// A [`Scratch::cond_gaps`] record no state matches: the skip is unsure.
+pub(crate) const UNSURE: (u64, u64) = (u64::MAX, u64::MAX);
 pub(crate) const UNKNOWN_NAME: &str = "\u{2}unknown name:";
 pub(crate) const UNKNOWN_NAME_GAP: char = '\u{3}';
 /// A `\csname` that spelled one of several known names: the names, each

@@ -150,9 +150,10 @@ fn a_walk_past_an_undefined_stop_reads_on_as_tex_does() {
     let analysis = analyze(
         r"\def\walk#1{\ifx#1\stop\else\edef\rev{\rev#1}\expandafter\walk\fi}\def\conv#1{\def\rev{}\expandafter\walk#1\stop}\ifnum\pdfuniformdeviate2=0 \conv{12}\else\conv{}\fi\def\after{x}",
     );
+    // A site both paths ran records each path's text.
     let bodies: Vec<String> = (analysis.facts.defs.iter())
         .filter(|d| analysis.interner.name(d.name) == "rev")
-        .filter_map(|d| d.mac.as_ref().map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner)))
+        .flat_map(|d| crate::support::site_bodies(&analysis, d))
         .collect();
     assert!(bodies.iter().all(|b| ["", "1", "12", "\\def "].contains(&b.as_str())), "{bodies:?}");
 }
@@ -597,6 +598,44 @@ fn a_skip_begun_in_another_file_skips_on_as_tex_does() {
     assert!(definition(&analysis, "b").expect("the false text").certain);
     assert!(definition(&analysis, "after").expect("after the conditional").certain);
     assert!(diagnosed(&analysis, "conditional-crosses-file").is_empty());
+}
+
+/// A plain run of `source` as `doc/main.tex`, with `files` in `lib/`, a
+/// library outside the project.
+fn analyze_with_library(tag: &str, files: &[(&str, &str)], source: &str) -> Analysis {
+    let root =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-{tag}-{}", std::process::id())));
+    let (lib, doc) = (root.join("lib"), root.join("doc"));
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::create_dir_all(&doc).unwrap();
+    for (name, text) in files {
+        std::fs::write(lib.join(name), text).unwrap();
+    }
+    let main = doc.join("main.tex");
+    std::fs::write(&main, source).unwrap();
+    let cfg = Config {
+        load: Load { packages: false, classes: false, format: false, ..Default::default() },
+        texmf: Texmf { kpsewhich: false, ..Default::default() },
+        ..crate::support::config()
+    };
+    let analysis = Machine::analyze(source, Some(&main), &cfg);
+    let _ = std::fs::remove_dir_all(&root);
+    analysis
+}
+
+/// Whether a skip is sure is told per open conditional: a recursive call
+/// running the same `\ifnum` after an approximation leaves the outer one,
+/// whose test came before it, unsure, so its skip into the document is
+/// said to cross.
+#[test]
+fn a_recursive_conditional_leaves_the_outer_skip_unsure() {
+    let source = format!(
+        "{PRELUDE}\\input ../lib/r \\r{{1}}{{\\lccode\\pdfuniformdeviate 200=65 \\r{{0}}{{}}\\fi}}\\def\\a{{}}\\fi\\def\\after{{}}\n"
+    );
+    let analysis =
+        analyze_with_library("recursive-skip", &[("r.tex", "\\def\\r#1#2{\\ifnum#1>0 #2\\else}\n")], &source);
+    let crossed = diagnosed(&analysis, "conditional-crosses-file");
+    assert!(!crossed.is_empty(), "{:?}", analysis.facts.diagnostics.iter().map(|d| d.code).collect::<Vec<_>>());
 }
 
 #[test]
@@ -1113,13 +1152,13 @@ fn a_delimiter_may_begin_before_unknown_text_and_end_in_it() {
         \edef\n{\number\pdfuniformdeviate 20}
         \expandafter\p\expandafter\mark\n\mark1\stop";
     let analysis = analyze(source);
+    // The site every path ran records each path's text.
     let outs: Vec<String> = analysis
         .facts
         .defs
         .iter()
         .filter(|d| analysis.interner.name(d.name) == "out")
-        .filter_map(|d| d.mac.as_ref())
-        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .flat_map(|d| crate::support::site_bodies(&analysis, d))
         .collect();
     assert!(outs.iter().any(|o| o == "[]"), "{outs:?}");
 }
@@ -2678,13 +2717,23 @@ fn a_summarized_loop_keeps_the_bounds_no_pass_moved() {
 /// `|\End` names a control sequence) meets it only where it ends in its
 /// start: the argument never ends inside the text, so `\End` is not left
 /// behind to run (hyperref's `\HyPsd@RemoveMask` on an unknown page label).
+/// Library code, as there: only its arm that ran away is refuted
+/// (`analysis.assume_compiles`).
 #[test]
 fn a_delimiter_only_straddles_text_that_cannot_hold_it() {
-    let analysis = analyze(
+    let lib =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-straddle-{}", std::process::id())));
+    std::fs::write(
+        lib.join("rm.tex"),
         "\\catcode`\\|=12 \\count1=\\pdfuniformdeviate 100 \
          \\def\\s{}\\def\\l{\\edef\\s{\\s|}\\advance\\count1 -1 \\ifnum\\count1>0 \\expandafter\\l\\fi}\\l \
-         \\def\\rm|#1|\\End#2{\\def#2{#1}}\\expandafter\\rm\\expandafter|\\s\\End\\r",
-    );
+         \\def\\rm|#1|\\End#2{\\def#2{#1}}\\expandafter\\rm\\expandafter|\\s\\End\\r\n",
+    )
+    .unwrap();
+    let mut cfg = crate::support::bare();
+    cfg.load.inputs = true;
+    let source = format!("{PRELUDE}\\input {}/rm.tex ", crate::support::tex_path(&lib));
+    let analysis = Machine::analyze(&source, None, &cfg);
     assert!(crate::support::defined(&analysis, "r"), "the argument ends where `|` ends the text");
     assert!(crate::support::undefined(&analysis, "End"), "`\\End` is never an argument");
 }

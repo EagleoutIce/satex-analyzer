@@ -5389,6 +5389,10 @@ fn record_for_def(analysis: &Analysis, def: &crate::analysis::facts::Definition,
     record.insert("context".into(), json!(def_context_label(analysis, &[(def.context.to_vec(), def.via)])));
     let (body, primitive) = body_of(analysis, def.name, def.mac.as_deref());
     record.insert("body".into(), body);
+    if let Some(texts) = site_alternatives(analysis, def.mac.as_deref()) {
+        let one_of: Vec<Json> = texts.into_iter().map(|b| json!({ "line": def.span.line, "body": b })).collect();
+        record.insert("one_of".into(), json!(one_of));
+    }
     if primitive {
         record.insert("kind".into(), json!("primitive"));
     }
@@ -5749,7 +5753,21 @@ fn defs_reaching(analysis: &Analysis, sym: Sym, node: NodeId) -> Vec<&crate::ana
 }
 
 fn def_body(analysis: &Analysis, def: &crate::analysis::facts::Definition) -> String {
-    def.mac.as_ref().map(|m| detokenize(&m.replacement_text, &analysis.interner)).unwrap_or_default()
+    match site_alternatives(analysis, def.mac.as_deref()) {
+        Some(texts) => format!("one of: {}", texts.join(" | ")),
+        None => def.mac.as_ref().map(|m| detokenize(&m.replacement_text, &analysis.interner)).unwrap_or_default(),
+    }
+}
+
+/// The texts several paths gave one definition site, when its body is the
+/// one-of token standing for them.
+fn site_alternatives(analysis: &Analysis, mac: Option<&crate::engine::tex::MacroDef>) -> Option<Vec<String>> {
+    let [t] = &*mac?.replacement_text else { return None };
+    let sym = t.cs()?;
+    let name = analysis.interner.name(sym).strip_prefix(crate::analysis::machine::UNKNOWN_NAME)?;
+    name.strip_prefix(crate::analysis::machine::explore::ONE_OF)?;
+    let may = analysis.env.slot(sym)?.may.clone()?;
+    Some(may.iter().filter_map(|m| m.as_macro()).map(|m| detokenize(&m.replacement_text, &analysis.interner)).collect())
 }
 
 /// The latest definition of `sym` at or before `boundary`; `None` for the
