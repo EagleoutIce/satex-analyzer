@@ -678,6 +678,44 @@ pub(super) fn key_values(text: &str, range: std::ops::Range<usize>) -> Vec<(Stri
     out
 }
 
+/// The bytes a key list item drops when it goes: from the comma before it to its value's end,
+/// else (the first item) up to and with the comma after it.
+pub(super) fn item_cut(text: &str, list: std::ops::Range<usize>, value: std::ops::Range<usize>) -> (usize, usize) {
+    let (mut depth, mut prev, mut next) = (0i32, None, None);
+    for (i, c) in text[list.clone()].bytes().enumerate().map(|(i, c)| (list.start + i, c)) {
+        match c {
+            b'{' => depth += 1,
+            b'}' => depth -= 1,
+            b',' if depth == 0 && i < value.start => prev = Some(i),
+            b',' if depth == 0 && i >= value.end && next.is_none() => next = Some(i),
+            _ => {}
+        }
+    }
+    match (prev, next) {
+        (Some(p), _) => (p, value.end),
+        (None, Some(n)) => (list.start, n + 1 + text[n + 1..list.end].len() - text[n + 1..list.end].trim_start().len()),
+        (None, None) => (list.start, list.end),
+    }
+}
+
+/// Every key of the keyval family that defined all of `written` (the store `\KV@⟨family⟩@` the
+/// run filled): what a key list of the same command takes.
+pub(super) fn family_keys(analysis: &Analysis, written: &[String]) -> Vec<String> {
+    let Some(first) = written.first() else { return Vec::new() };
+    let names: std::collections::HashSet<&str> =
+        analysis.facts.defs.iter().map(|d| analysis.interner.name(d.name)).collect();
+    let mut best: Vec<String> = Vec::new();
+    for p in names.iter().filter_map(|n| n.strip_suffix(first.as_str())).filter(|p| p.len() > 1 && p.ends_with('@')) {
+        if written.iter().all(|k| names.contains(format!("{p}{k}").as_str())) {
+            let keys: Vec<String> = crate::queries::query::keyval_keys(analysis, p).into_iter().map(|k| k.0).collect();
+            if keys.len() > best.len() {
+                best = keys;
+            }
+        }
+    }
+    best
+}
+
 /// A value without the one pair of braces around all of it.
 pub(super) fn unbraced(value: &str) -> &str {
     let v = value.trim();

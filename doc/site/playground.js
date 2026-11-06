@@ -577,6 +577,11 @@
   }
   /** A WorkspaceEdit: the open file through the editor, the others in the project's texts. */
   function applyEdit(edit) {
+    // a file the edit creates (a manager's new .bib) joins the project, empty
+    for (const d of edit?.documentChanges ?? []) {
+      const name = d.kind === 'create' && decodeURIComponent(d.uri.split('/').pop());
+      if (name && !state.files.includes(name) && d.uri === uri(name)) { state.texts[name] = ''; state.files.push(name); }
+    }
     const changes = { ...edit?.changes };
     for (const d of edit?.documentChanges ?? []) if (d.edits) changes[d.textDocument.uri] = d.edits;
     let n = 0;
@@ -585,7 +590,8 @@
       if (target === uri()) editor.apply(edits);
       else {
         const name = Object.keys(state.texts).find((f) => uri(f) === target);
-        if (name) { state.texts[name] = edited(state.texts[name], edits); if (opened.has(target)) { lsp('textDocument/didChange', { textDocument: { uri: target, version: ++version }, contentChanges: [{ text: state.texts[name] }] }, true); analyze(); } }
+        // a file the server has not opened is read from the project's files: written there
+        if (name) { state.texts[name] = edited(state.texts[name], edits); if (opened.has(target)) { lsp('textDocument/didChange', { textDocument: { uri: target, version: ++version }, contentChanges: [{ text: state.texts[name] }] }, true); analyze(); } else store([name]); }
       }
     }
     return n;
@@ -1817,7 +1823,21 @@
     $('view-title').textContent = t.view.title;
     self.satexViews.render(t.view, $('view-body'), {
       markdown: (md) => card(md),
-      apply: (edits) => { closeView(true); fix({ title: t.view.title, edit: Array.isArray(edits) ? { changes: { [t.target]: edits } } : edits }); },
+      // a manager comes back after its edit's run, with its search and open record
+      apply: (edits, kept) => {
+        closeView(true);
+        fix({ title: t.view.title, edit: Array.isArray(edits) ? { changes: { [t.target]: edits } } : edits });
+        if (t.manager) afterRun = () => manage(t.manager, kept, t.target);
+      },
+      // text at the editor's cursor (a manager's new index term)
+      insert: (text) => {
+        if (uri() !== t.target) return toast('Open the file to insert into first');
+        const at = editor.cursor()[1], before = editor.text().slice(0, at), line = before.split('\n').length - 1;
+        const p = { line, character: at - before.lastIndexOf('\n') - 1 };
+        closeView(true);
+        fix({ title: t.view.title, edit: { changes: { [t.target]: [{ range: { start: p, end: p }, newText: text }] } } });
+        if (t.manager) afterRun = () => manage(t.manager, null, t.target);
+      },
       close: () => closeView(),
       guard: (dirty) => viewGuards.push(dirty),
     });
@@ -1838,7 +1858,8 @@
   async function openViews(p, plugin) {
     const rows = await typedTools(p);
     const i = tools.findIndex((t) => t.view?.plugin === plugin);
-    if (i >= 0) runTool(i); else if (rows.length) runTool(rows[0][2]);
+    // a lens where no text of the plugin's type stands (`\begin{thebibliography}`): its manager
+    if (i >= 0) runTool(i); else if (plugin) manage(plugin); else if (rows.length) runTool(rows[0][2]);
   }
   // a value of the units hover writes itself in place of the length
   document.addEventListener('click', (e) => {
@@ -3697,11 +3718,17 @@
     manage: { about: 'open a manager: glossary, bibliography, index or theorem', run: (rest) => manage(rest[0] ?? 'glossary') },
   };
   /** A type plugin's manager: `satex/view` without a position. */
-  async function manage(plugin) {
+  /** `kept`: the search and open record a manager had before an Apply; `target` the file it manages. */
+  async function manage(plugin, kept = null, target = uri()) {
     sync();
-    const [view] = (await lsp('satex/view', { textDocument: { uri: uri() }, plugin }).catch(() => [])) ?? [];
-    if (!view) return toast(`No ${plugin} here`);
-    tools = [{ view, target: uri() }];
+    const [view] = (await lsp('satex/view', { textDocument: { uri: target }, plugin }).catch(() => [])) ?? [];
+    if (!view) {
+      // no finished run of this text yet: the manager opens once there is one
+      if (running > 0 || act.phase) { toast('Opening once the analysis is done…'); afterRun = () => manage(plugin, kept, target); return; }
+      return toast(`No ${plugin} here`);
+    }
+    if (kept && view.sections?.[0]) Object.assign(view.sections[0], { query: kept.q, focus: kept.open ?? view.sections[0].focus });
+    tools = [{ view, target, manager: plugin }];
     runTool(0);
   }
   /** Forgets every kept view state and reloads; the drafts, the settings and the theme stay. */

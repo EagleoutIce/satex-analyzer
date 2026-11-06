@@ -4223,6 +4223,15 @@ fn applied(text: &str, uri: &str, edit: &Value, vars: &[(&str, &str)]) -> String
                 start + p["character"].as_u64().unwrap() as usize
             };
             let mut t = e["newText"].as_str().unwrap().to_string();
+            // `${?k}…${/k}`: kept when `k` has a value, as the client fills it
+            while let Some(a) = t.find("${?") {
+                let k = t[a + 3..].split('}').next().unwrap().to_string();
+                let close = format!("${{/{k}}}");
+                let b = t.find(&close).unwrap();
+                let filled = vars.iter().any(|(n, v)| *n == k && !v.trim().is_empty());
+                let body = if filled { t[a + k.len() + 4..b].to_string() } else { String::new() };
+                t.replace_range(a..b + close.len(), &body);
+            }
             for (k, v) in vars {
                 t = t.replace(&format!("${{{k}}}"), v);
             }
@@ -4313,6 +4322,20 @@ fn glossary_manager_round_trips() {
     let vars = [("key", "dag"), ("name", "DAG"), ("description", "a directed acyclic graph"), ("plural", "DAGs")];
     let out = applied(GLOSSARY, &uri, &new["edit"], &vars);
     assert!(out.contains("\\newglossaryentry{dag}{name={DAG},description={a directed acyclic graph},plural={DAGs}}\n\\newglossaryentry{tree}") || out.contains("{dag}{name={DAG}"), "{out}");
+    // every key of the family the run defined: a field to add, an optional one to remove
+    let names = graph["more"]["names"].to_string();
+    assert!(names.contains("\"symbol\"") && names.contains("\"first\"") && !names.contains("\"plural\""), "{names}");
+    let out = applied(GLOSSARY, &uri, &graph["more"]["edit"], &[("name", "symbol"), ("value", "G")]);
+    assert!(out.contains("plural={graphs},symbol={G}}"), "{out}");
+    let out = applied(GLOSSARY, &uri, &field_of(graph, "plural")["remove"], &[]);
+    assert!(out.contains("description={a set of nodes and edges}}\n"), "{out}");
+    assert!(field_of(graph, "name")["remove"].is_null(), "every entry writes a name: {graph}");
+    // a new entry writes only the fields given
+    let short = [("key", "dag"), ("name", "DAG"), ("description", "d")];
+    let out = applied(GLOSSARY, &uri, &new["edit"], &short);
+    assert!(out.contains("\\newglossaryentry{dag}{name={DAG},description={d}}\n"), "{out}");
+    let symbol = new["fields"].as_array().unwrap().iter().find(|f| f["name"] == "symbol").expect("symbol from the run");
+    assert_eq!(symbol["more"], true, "{symbol}");
     // the view at a use focuses that key
     let views = at(&mut server, &uri, "satex/view", 6, 9);
     let mine = views.as_array().unwrap().iter().find(|v| v["plugin"] == "glossary").expect("glossary view at \\gls");
@@ -4349,14 +4372,20 @@ fn bibliography_and_index_managers_round_trip() {
     let _ = at(&mut server, &uri, "textDocument/hover", 4, 12);
     let view = manager(&mut server, &uri, "bibliography");
     let knuth = record(&view, "knuth");
-    assert!(knuth["table"]["rows"].to_string().contains("line 5"), "{knuth}");
+    assert!(knuth["uses"].as_str().is_some_and(|u| u.contains("main.tex:5`")), "{knuth}");
     assert!(knuth["actions"][0]["disabled"].is_string(), "{knuth}");
     let bib_uri = knuth["fields"][0]["edit"]["changes"].as_object().unwrap().keys().next().unwrap().clone();
     assert!(bib_uri.ends_with("refs.bib"), "{bib_uri}");
     let year = field_of(knuth, "year");
     assert_eq!(year["value"], "1984");
     let out = applied(REFS, &bib_uri, &year["edit"], &[("value", "1986")]);
-    assert!(out.contains("year = {1986},"), "{out}");
+    assert!(out.contains("year = 1986,"), "a bare number stays bare: {out}");
+    // an emptied field goes with its line, a new one follows the last
+    let out = applied(REFS, &bib_uri, &field_of(knuth, "year")["remove"], &[]);
+    assert!(out.contains("{The {\\TeX}book},\n  publisher"), "{out}");
+    let out = applied(REFS, &bib_uri, &knuth["more"]["edit"], &[("name", "address"), ("value", "Reading")]);
+    assert!(out.contains("publisher = {Addison-Wesley},\n  address = {Reading}\n}"), "{out}");
+    assert!(knuth["more"]["names"].to_string().contains("\"edition\""), "the style's book fields: {}", knuth["more"]);
     let lamport = record(&view, "lamport");
     assert_eq!(lamport["badge"], "uncited");
     let out = applied(REFS, &bib_uri, &lamport["actions"][0]["edit"], &[]);
@@ -4365,11 +4394,121 @@ fn bibliography_and_index_managers_round_trip() {
     let article = kinds.iter().find(|k| k["name"] == "article").expect("article from plain.bst");
     let fields: Vec<&str> = article["fields"].as_array().unwrap().iter().filter_map(|f| f["name"].as_str()).collect();
     assert!(fields.contains(&"journal") && fields.contains(&"author"), "{fields:?}");
+    // an empty field is not written
+    let out = applied(REFS, &bib_uri, &article["edit"], &[("citekey", "new"), ("author", "A"), ("title", "T")]);
+    assert!(out.ends_with("@article{new,\n  author = {A},\n  title = {T}\n}\n"), "{out}");
     let index = manager(&mut server, &uri, "index");
     let graph = record(&index, "graph");
     assert!(graph["table"]["rows"].to_string().contains("directed"), "{graph}");
-    let out = applied(CITES, &uri, &field_of(graph, "term")["edit"], &[("value", "network")]);
+    let out = applied(CITES, &uri, &graph["forms"][0]["edit"], &[("entry", "network"), ("sort", "")]);
     assert!(out.contains("\\index{network} \\index{network!directed} \\index{tree}"), "{out}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+const INDEX: &str = "\\documentclass{article}\n\\usepackage{makeidx}\n\\makeindex\n\\begin{document}\nA\\index{alpha!beta} B\\index{x@$x$|seealso{alpha}} C\\index{eps|see{alpha}}\nD\\index{Beta@\\textbf{Beta}} E\\index{zeta|(} F\\index{zeta|)} G\\index{delta|textbf}\n\\printindex\n\\end{document}\n";
+
+/// Every index entry path is a record with its levels, sort key, page format and cross
+/// reference as fields: subentries, `@` keys and `|see` edit too, an emptied format goes
+/// with its `|`, a range keeps its parentheses; deleting removes the calls.
+#[test]
+fn index_manager_edits_every_part() {
+    let (mut server, uri, dir) = open_set("idxmgr", INDEX, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 4, 3);
+    let view = manager(&mut server, &uri, "index");
+    let titles: Vec<&str> =
+        view["sections"][0]["items"].as_array().unwrap().iter().filter_map(|r| r["title"].as_str()).collect();
+    assert!(
+        titles.contains(&"alpha › beta") && titles.contains(&"\\textbf{Beta}") && titles.contains(&"$x$"),
+        "{titles:?}"
+    );
+    let edit =
+        |title: &str, vars: &[(&str, &str)]| applied(INDEX, &uri, &record(&view, title)["forms"][0]["edit"], vars);
+    // a subentry: its own level only
+    let out = edit("alpha › beta", &[("entry", "gamma"), ("sort", "")]);
+    assert!(out.contains("\\index{alpha!gamma}"), "{out}");
+    // a parent renames its subentries' level too
+    let out = edit("alpha", &[("entry", "omega"), ("sort", "")]);
+    assert!(out.contains("\\index{omega!beta}"), "{out}");
+    // a sort key: kept, changed, dropped
+    let beta = record(&view, "\\textbf{Beta}");
+    assert_eq!(field_of(&beta["forms"][0], "sort")["value"], "Beta");
+    let out = edit("\\textbf{Beta}", &[("entry", "\\textbf{Beta}"), ("sort", "")]);
+    assert!(out.contains("\\index{\\textbf{Beta}}"), "{out}");
+    // cross references
+    let out = edit("$x$", &[("entry", "$x$"), ("sort", "x"), ("seealso", "beta")]);
+    assert!(out.contains("\\index{x@$x$|seealso{beta}}"), "{out}");
+    let out = edit("eps", &[("entry", "eps"), ("sort", ""), ("see", "omega")]);
+    assert!(out.contains("\\index{eps|see{omega}}"), "{out}");
+    // page formats: a range keeps `(` and `)`, an emptied format drops its `|`
+    let out = edit("zeta", &[("entry", "zeta"), ("sort", ""), ("format", "textit")]);
+    assert!(out.contains("\\index{zeta|(textit} F\\index{zeta|)}"), "{out}");
+    let out = edit("delta", &[("entry", "delta"), ("sort", ""), ("format", "")]);
+    assert!(out.contains("G\\index{delta}\n"), "{out}");
+    let out = applied(INDEX, &uri, &record(&view, "zeta")["actions"][0]["edit"], &[]);
+    assert!(out.contains("E F G"), "{out}");
+    // a new call is written at the cursor: a template the client fills
+    let page = &view["sections"][0]["add"]["kinds"][0]["insert"];
+    assert_eq!(
+        page,
+        "\\index{${?sort}${sort}@${/sort}${entry}${?subentry}!${subentry}${/subentry}${?format}|${format}${/format}}"
+    );
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+const BIBITEMS: &str = "\\documentclass{article}\n\\begin{document}\nSee \\cite{knuth84} and \\cite{lamport94,knuth84}.\n\\begin{thebibliography}{9}\n\\bibitem{knuth84} D.~E. Knuth.\n\\newblock Literate programming.\n\\newblock {\\em The Computer Journal}, 27(2):97--111, 1984.\n\\bibitem[Lam94]{lamport94} Leslie Lamport. {\\LaTeX}: A Document Preparation System. Addison-Wesley, 1994.\n\\bibitem{old} U. Nused. Text.\n\\end{thebibliography}\n\\end{document}\n";
+
+/// Without a `.bib` file the manager lists `thebibliography`'s items: label, text and key edit
+/// in place (the key in its `\\cite`s too), a new item goes before `\\end`, and converting writes a
+/// database of guessed `@misc` entries and `\\bibliography` in the list's place.
+#[test]
+fn bibliography_manager_reads_thebibliography() {
+    let (mut server, uri, dir) = open_set("bibitems", BIBITEMS, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 2, 6);
+    let view = manager(&mut server, &uri, "bibliography");
+    let knuth = record(&view, "knuth84");
+    assert!(knuth["uses"].as_str().is_some_and(|u| u.contains("main.tex:3`")), "{knuth}");
+    assert!(
+        knuth["actions"][0]["disabled"].is_string() && record(&view, "old")["actions"][0]["disabled"].is_null(),
+        "{view}"
+    );
+    let out = applied(BIBITEMS, &uri, &field_of(knuth, "key")["edit"], &[("value", "knuth")]);
+    assert!(out.contains("\\cite{knuth} and \\cite{lamport94,knuth}") && out.contains("\\bibitem{knuth} D."), "{out}");
+    let lamport = record(&view, "lamport94");
+    assert_eq!(field_of(lamport, "label")["value"], "Lam94");
+    let out = applied(BIBITEMS, &uri, &field_of(lamport, "label")["edit"], &[("value", "")]);
+    assert!(out.contains("\\bibitem{lamport94} Leslie"), "{out}");
+    let out = applied(BIBITEMS, &uri, &field_of(knuth, "label")["edit"], &[("value", "K84")]);
+    assert!(out.contains("\\bibitem[K84]{knuth84} D."), "{out}");
+    let out = applied(BIBITEMS, &uri, &field_of(lamport, "text")["edit"], &[("value", "L. Lamport. LaTeX. 1994.")]);
+    assert!(out.contains("{lamport94} L. Lamport. LaTeX. 1994.\n\\bibitem{old}"), "{out}");
+    let kinds = view["sections"][0]["add"]["kinds"].as_array().unwrap();
+    let item = kinds.iter().find(|k| k["name"] == "\\bibitem").expect("a \\bibitem kind");
+    let out = applied(
+        BIBITEMS,
+        &uri,
+        &item["edit"],
+        &[("citekey", "new"), ("label", ""), ("text", "A. Author. A title. 2001.")],
+    );
+    assert!(out.contains("Text.\n\\bibitem{new} A. Author. A title. 2001.\n\\end{thebibliography}"), "{out}");
+    // convert: a database and \bibliography in the list's place
+    let action = &view["sections"][2]["items"][0];
+    assert_eq!(action["title"], "Convert to a .bib file");
+    let changes = action["edits"]["documentChanges"].as_array().unwrap();
+    assert_eq!(changes[0]["kind"], "create");
+    let bib = changes[1]["edits"][0]["newText"].as_str().unwrap();
+    assert!(
+        bib.contains("@misc{knuth84,\n  author       = {D.~E. Knuth},\n  title        = {Literate programming},")
+            && bib.contains("year         = {1984}"),
+        "{bib}"
+    );
+    assert!(bib.contains("@misc{lamport94,\n  author       = {Leslie Lamport},\n  title        = {{\\LaTeX}: A Document Preparation System},"), "{bib}");
+    assert!(bib.contains("@misc{old,\n  author = {U. Nused},\n  title  = {Text},\n}"), "{bib}");
+    let tex_uri = changes[2]["textDocument"]["uri"].as_str().unwrap();
+    let edit = json!({ "changes": { tex_uri: changes[2]["edits"] } });
+    let out = applied(BIBITEMS, tex_uri, &edit, &[]);
+    assert!(out.contains("knuth84}.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}"), "{out}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
@@ -4394,11 +4533,36 @@ fn theorem_manager_round_trips() {
     assert!(out.contains("\\newtheorem{thm}{Theorem}[section]\n\\newtheorem{lemma}[thm]{Lemma}"), "{out}");
     assert!(out.contains("\\begin{thm}\\label{thm:a}\nX.\n\\end{thm}"), "{out}");
     // definition: numbered within section, in the slot \newtheorem's calls use
-    let def = record(&view, "definition");
-    let within =
-        def["forms"].as_array().unwrap().iter().find(|f| f["title"] == "Set numbered within").expect("within form");
-    let out = applied(THEOREMS, &uri, &within["edit"], &[("counter", "section")]);
-    assert!(out.contains("\\newtheorem{definition}{Definition}[section]"), "{out}");
+    let numbering = |env: &str, choice: &str| {
+        let r = record(&view, env);
+        let f = r["forms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["title"] == "Set numbering")
+            .unwrap_or_else(|| panic!("{r}"));
+        applied(THEOREMS, &uri, &f["edits"][choice], &[])
+    };
+    assert!(numbering("definition", "within section").contains("\\newtheorem{definition}{Definition}[section]"));
+    // one numbering at a time: the other slot is cleared, a later kind is no counter to share
+    assert!(numbering("lemma", "within section").contains("\\newtheorem{lemma}{Lemma}[section]\n"));
+    assert!(numbering("theorem", "own counter").contains("\\newtheorem{theorem}{Theorem}\n"));
+    let form = &theorem["forms"][0];
+    assert_eq!(form["fields"][0]["value"], "within section", "{form}");
+    let choices = form["fields"][0]["choices"].to_string();
+    assert!(!choices.contains("shares definition") && !choices.contains('@'), "{choices}");
+    assert!(record(&view, "definition")["forms"][0]["fields"][0]["choices"].to_string().contains("shares theorem"));
+    // instances are places to open
+    assert!(theorem["uses"].as_str().is_some_and(|u| u.contains("main.tex:9` (thm:a)")), "{theorem}");
+    // a new kind: like the document's call, numbered as chosen
+    let new = &view["sections"][0]["add"]["kinds"][0];
+    let vars = [("env", "prop"), ("title", "Proposition")];
+    let out = applied(THEOREMS, &uri, &new["edits"]["shares theorem"], &vars);
+    assert!(out.contains("{Definition}\n\\newtheorem{prop}[theorem]{Proposition}\n\\begin{document}"), "{out}");
+    let out = applied(THEOREMS, &uri, &new["edits"]["within section"], &vars);
+    assert!(out.contains("\\newtheorem{prop}{Proposition}[section]\n"), "{out}");
+    let out = applied(THEOREMS, &uri, &new["edits"]["own counter"], &vars);
+    assert!(out.contains("\\newtheorem{prop}{Proposition}\n"), "{out}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }

@@ -41,12 +41,23 @@ impl TypePlugin for Glossary {
             return None;
         }
         let keys: Vec<&str> = all.iter().map(|e| e.key.as_str()).collect();
-        let items: Vec<Json> = all.iter().map(|e| record(cx, e, &all, &keys)).collect();
+        // the keys the declaring command's family takes: from the run, by the keys the document wrote
+        let text = cx.doc.body();
+        let written: Vec<String> = (all.iter().filter_map(|e| list_of(text, e)))
+            .flat_map(|l| key_values(text, l).into_iter().map(|kv| kv.0))
+            .fold(Vec::new(), |mut v, k| {
+                if !v.contains(&k) {
+                    v.push(k);
+                }
+                v
+            });
+        let family = super::family_keys(cx.analysis, &written);
+        let items: Vec<Json> = all.iter().map(|e| record(cx, e, &all, &keys, &family)).collect();
         Some(json!({
             "title": "Edit glossary",
             "sections": [
                 { "kind": "records", "placeholder": "Search keys, names and descriptions", "sorts": ["key", "name", "uses", "line"],
-                  "items": items, "add": add(cx, &all) },
+                  "items": items, "add": add(cx, &all, &family) },
             ],
         }))
     }
@@ -156,7 +167,25 @@ fn stored(cx: &Cx, e: &Entry) -> Vec<(String, String)> {
     out
 }
 
-fn record(cx: &Cx, e: &Entry, all: &[Entry], keys: &[&str]) -> Json {
+/// The entry's key list: its first braced group of `key=value` items.
+fn list_of(text: &str, e: &Entry) -> Option<std::ops::Range<usize>> {
+    e.groups.iter().find(|g| g.open == '{' && !key_values(text, g.inner.clone()).is_empty()).map(|g| g.inner.clone())
+}
+
+/// The keys every entry of `e`'s command in the open file writes: what that command needs.
+fn common(text: &str, e: &Entry, all: &[Entry]) -> Vec<String> {
+    let lists = all.iter().filter(|o| o.head == e.head && o.elsewhere.is_none()).filter_map(|o| list_of(text, o));
+    let mut sets = lists.map(|l| key_values(text, l).into_iter().map(|kv| kv.0).collect::<Vec<_>>());
+    let first = sets.next().unwrap_or_default();
+    sets.fold(first, |acc, s| acc.into_iter().filter(|k| s.contains(k)).collect())
+}
+
+/// How the document separates key list items: `, ` or `,`.
+fn sep(text: &str, list: &std::ops::Range<usize>) -> &'static str {
+    if text[list.clone()].contains(", ") { ", " } else { "," }
+}
+
+fn record(cx: &Cx, e: &Entry, all: &[Entry], keys: &[&str], family: &[String]) -> Json {
     let text = cx.doc.body();
     let fs = if e.elsewhere.is_none() { fields(cx, e, all) } else { Vec::new() };
     let value = |name: &str| fs.iter().find(|(f, _)| f == name).map(|(_, r)| unbraced(&text[r.clone()]).to_string());
@@ -165,8 +194,26 @@ fn record(cx: &Cx, e: &Entry, all: &[Entry], keys: &[&str]) -> Json {
         .chain(fs.iter().map(|(_, r)| text[r.clone()].to_string()))
         .collect::<Vec<_>>()
         .join(" ");
-    let fields: Vec<Json> =
-        fs.iter().map(|(f, r)| field(cx, f, unbraced(&text[r.clone()]), r.start, r.end, "{${value}}")).collect();
+    // a key only some entries write goes when emptied; a new one joins the list
+    let list = list_of(text, e).filter(|_| e.elsewhere.is_none());
+    let needed = common(text, e, all);
+    let mut fields: Vec<Json> = Vec::new();
+    for (f, r) in &fs {
+        let mut j = field(cx, f, unbraced(&text[r.clone()]), r.start, r.end, "{${value}}");
+        if let Some(l) = list.clone().filter(|l| l.contains(&r.start) && !needed.contains(f)) {
+            let (from, to) = super::item_cut(text, l, r.clone());
+            j["remove"] = edit_of(cx.path, vec![put(cx.doc, from, to, "")]);
+        } else if list.as_ref().is_some_and(|l| l.contains(&r.start)) {
+            j["check"] = json!(["required", "tex"]);
+        }
+        fields.push(j);
+    }
+    let more = list.as_ref().map(|l| {
+        let names: Vec<&String> = family.iter().filter(|k| !fs.iter().any(|(f, _)| f == *k)).collect();
+        let at = l.end - (text[l.clone()].len() - text[l.clone()].trim_end().len());
+        json!({ "title": "Add field", "names": names,
+                "edit": edit_of(cx.path, vec![put(cx.doc, at, at, format!("{}${{name}}={{${{value}}}}", sep(text, l)))]) })
+    });
     // what the call wrote comes first, what the run stored only when the call did not write it
     let summary = |names: &[&str]| {
         let stored = |n: &&str| stored.iter().find(|s| s.0 == *n).map(|s| s.1.clone());
@@ -209,9 +256,10 @@ fn record(cx: &Cx, e: &Entry, all: &[Entry], keys: &[&str]) -> Json {
         "title": e.key,
         "detail": detail.join(" · "),
         "badge": e.uses.is_empty().then_some("unused"),
-        "search": format!("{search} {}", detail.join(" ")),
+        "search": format!("{search} {} {uses}", detail.join(" ")),
         "sort": { "key": e.key, "name": value("name").unwrap_or_default(), "uses": format!("{:06}", e.uses.len()), "line": format!("{:06}", e.span.line) },
         "fields": fields,
+        "more": more,
         "forms": forms,
         "uses": format!("Declared at `{}:{}`. {uses}", e.elsewhere.as_ref().map_or(cx.path, |(f, _)| f.as_str()), e.span.line),
         "actions": actions,
@@ -220,7 +268,7 @@ fn record(cx: &Cx, e: &Entry, all: &[Entry], keys: &[&str]) -> Json {
 
 /// A new entry made like the first one of each declaring command in the open file, written
 /// after the last declaration.
-fn add(cx: &Cx, all: &[Entry]) -> Option<Json> {
+fn add(cx: &Cx, all: &[Entry], family: &[String]) -> Option<Json> {
     let text = cx.doc.body();
     let last = all.iter().filter(|e| e.elsewhere.is_none()).map(|e| lines_of(text, e.at, e.end).1).max()?;
     let mut kinds = Vec::new();
@@ -231,9 +279,31 @@ fn add(cx: &Cx, all: &[Entry]) -> Option<Json> {
         }
         heads.push(&e.head);
         let fs = fields(cx, e, all);
-        // the call's text with the key and each field's value made a template
+        let list = list_of(text, e);
+        let needed = common(text, e, all);
+        let in_list = |r: &std::ops::Range<usize>| list.as_ref().is_some_and(|l| l.contains(&r.start));
+        // the call's text with the key and each field's value made a template; its key list
+        // written anew: the keys every entry writes, then each other key of the family when filled
         let mut cuts: Vec<(std::ops::Range<usize>, String)> =
-            fs.iter().map(|(f, r)| (r.clone(), format!("{{${{{}}}}}", slot(f)))).collect();
+            fs.iter().filter(|(_, r)| !in_list(r)).map(|(f, r)| (r.clone(), format!("{{${{{}}}}}", slot(f)))).collect();
+        let mut optional: Vec<String> = Vec::new();
+        if let Some(l) = &list {
+            let sep = sep(text, l);
+            let inner: Vec<String> = needed.iter().map(|k| format!("{k}={{${{{k}}}}}")).collect();
+            optional = (fs.iter().map(|(f, _)| f.clone()).filter(|f| !needed.contains(f)))
+                .chain(family.iter().filter(|k| !fs.iter().any(|(f, _)| f == *k)).cloned())
+                .collect();
+            let first = inner.is_empty();
+            let tail: String = optional
+                .iter()
+                .enumerate()
+                .map(|(i, k)| {
+                    let lead = if first && i == 0 { "" } else { sep };
+                    format!("${{?{k}}}{lead}{k}={{${{{k}}}}}${{/{k}}}")
+                })
+                .collect();
+            cuts.push((l.clone(), format!("{}{tail}", inner.join(sep))));
+        }
         if let Some(g) = e.groups.iter().find(|g| text[g.inner.clone()].trim() == e.key) {
             cuts.push((g.inner.clone(), "${key}".into()));
         }
@@ -250,8 +320,15 @@ fn add(cx: &Cx, all: &[Entry]) -> Option<Json> {
         let mut form = vec![
             json!({ "name": "key", "value": "", "placeholder": "key", "check": ["required", "key", "unique"], "taken": taken }),
         ];
+        // what the command needs first, the family's other keys folded below
+        let shown = fs.iter().map(|(f, _)| f.as_str()).filter(|f| !optional.iter().any(|o| o == f));
         form.extend(
-            fs.iter().map(|(f, _)| json!({ "name": slot(f), "value": "", "placeholder": f, "check": ["tex"] })),
+            shown.map(|f| json!({ "name": slot(f), "value": "", "placeholder": f, "check": ["required", "tex"] })),
+        );
+        form.extend(
+            optional
+                .iter()
+                .map(|f| json!({ "name": f, "value": "", "placeholder": f, "check": ["tex"], "more": true })),
         );
         let line = if text[..last].ends_with('\n') { format!("{out}\n") } else { format!("\n{out}") };
         kinds.push(json!({ "name": format!("\\{}", e.head), "fields": form, "edit": edit_of(cx.path, vec![put(cx.doc, last, last, line)]) }));

@@ -706,6 +706,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     tex: texIssue,
     key: (v) => /^[^\s,{}%#\\]*$/.test(v) ? '' : 'a key has no spaces, commas, braces, %, # or \\',
     bibkey: (v) => /^[A-Za-z0-9_:.+\-/]*$/.test(v) ? '' : 'a BibTeX key takes letters, digits and _ : . + - / only',
+    // an index level: makeindex reads ! @ | as syntax unless `"` quotes them
+    index: (v) => /(^|[^"])[!@|]/.test(String(v).replace(/\{[^{}]*\}/g, '')) ? 'makeindex reads ! @ | as levels, sort key and format: write "! "@ "|' : '',
     unique: (v, taken = []) => taken.includes(String(v).trim()) ? `${String(v).trim()} exists already` : '',
     length: (v) => !String(v).trim() || LENGTH.test(v) ? '' : 'a length: a number and a unit (2cm, 0.5\\linewidth)',
     integer: (v) => /^\s*-?\d+\s*$/.test(v) ? '' : 'a whole number',

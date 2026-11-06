@@ -4,9 +4,13 @@
 (() => {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const el = (tag, cls, html) => Object.assign(document.createElement(tag), cls ? { className: cls } : {}, html != null ? { innerHTML: html } : {});
-  const fill = (text, vars) => text.replace(/\$\{(\w+)\}/g, (m, k) => vars[k] ?? m);
+  // `${name}` the value; `${?name}…${/name}` kept only when the value is not empty (an optional field)
+  let optsId = 0;
+  const fill = (text, vars) => text.replace(/\$\{\?(\w+)\}([\s\S]*?)\$\{\/\1\}/g, (m, k, body) => String(vars[k] ?? '').trim() ? body : '').replace(/\$\{(\w+)\}/g, (m, k) => vars[k] ?? m);
   // a WorkspaceEdit `{changes: {uri: [TextEdit]}}` with its templates filled, and several as one
   const filled = (edit, vars) => ({ changes: Object.fromEntries(Object.entries(edit?.changes ?? {}).map(([u, es]) => [u, es.map((e) => ({ range: e.range, newText: fill(e.newText, vars) }))])) });
+  // a form whose edit depends on a choice (`by`: the field, `edits`: one per choice)
+  const chosen = (f, vals) => f.by ? f.edits?.[vals[f.by]] : f.edit;
   const merge = (edits) => ({ changes: edits.reduce((all, e) => { for (const [u, es] of Object.entries(e.changes)) (all[u] ??= []).push(...es); return all; }, {}) });
   // braces that close in order, as TeX reads a value (a `\{` is no group)
   /** The footer every view shares (dialogs.js `footer`): `status`, the undo tools, Reset, Cancel and Apply. Ctrl+Enter
@@ -136,7 +140,7 @@
     records: (s, view, ctx) => {
       const box = el('div', 'tv-records');
       const head = el('div', 'tv-row');
-      const input = Object.assign(el('input', 'tv-input'), { placeholder: s.placeholder ?? 'search', spellcheck: false, ariaLabel: s.placeholder ?? 'search' });
+      const input = Object.assign(el('input', 'tv-input'), { placeholder: s.placeholder ?? 'search', spellcheck: false, ariaLabel: s.placeholder ?? 'search', value: s.query ?? '' });
       const sort = el('select', 'tv-input', (s.sorts ?? []).map((k) => `<option>${esc(k)}</option>`).join(''));
       sort.ariaLabel = 'sort by';
       head.append(input);
@@ -144,6 +148,8 @@
       const list = el('div', 'tv-list');
       // exactly one record is open for editing: the focused one, else the first
       let open = s.items.find((r) => r.title === s.focus) ?? s.items[0] ?? null;
+      // what the manager shows again after an Apply: the search and the open record
+      const kept = () => ({ q: input.value, open: open?.title });
       const draw = () => {
         const q = input.value.trim().toLowerCase(), by = sort.value;
         const hit = (r) => !q || q.split(/\s+/).every((w) => (r.search ?? r.title).toLowerCase().includes(w));
@@ -164,9 +170,14 @@
       };
       const record = (r) => {
         const body = el('div', 'tv-body');
-        if (r.fields?.length) body.append(form(r.fields, r.save ?? 'Save', (vals, changed) => merge(r.fields.filter((f) => changed.has(f.name)).map((f) => filled(f.edit, { value: vals[f.name] })))));
-        for (const f of r.forms ?? []) body.append(form(f.fields, f.title, (vals) => filled(f.edit, vals)));
-        if (r.uses) body.append(el('div', 'tv-text tv-uses', ctx.markdown(r.uses)));
+        // an emptied field with a `remove` edit goes; the others write their value
+        if (r.fields?.length) body.append(form(r.fields, r.save ?? 'Save', (vals, changed) => merge(r.fields.filter((f) => changed.has(f.name)).map((f) => !vals[f.name].trim() && f.remove ? f.remove : filled(f.edit, { value: vals[f.name] })))));
+        // a new field of the record: a name the run knows (or any) and its value
+        if (r.more) body.append(form([{ name: 'name', label: 'new field', value: '', placeholder: 'field name', options: r.more.names, check: ['required', 'key', 'unique'], taken: (r.fields ?? []).map((f) => f.name) }, { name: 'value', value: '', placeholder: 'value', check: ['required', r.more.check ?? 'tex'] }], r.more.title, (vals) => filled(r.more.edit, vals)));
+        for (const f of r.forms ?? []) body.append(form(f.fields, f.title, (vals) => filled(chosen(f, vals), vals), f.note));
+        if (r.why) body.append(el('div', 'tv-text', `<p>${esc(r.why)}</p>`));
+        // a place opens in the editor: the manager steps aside
+        if (r.uses) body.append(Object.assign(el('div', 'tv-text tv-uses', ctx.markdown(r.uses)), { onclick: (e) => { if (e.target.closest('a.place')) ctx.close?.(); } }));
         if (r.table?.rows.length) body.append(RENDER.table(r.table));
         if (r.actions?.length) {
           const acts = el('div', 'tv-actions');
@@ -175,29 +186,39 @@
             b.type = 'button';
             b.disabled = !!a.disabled;
             b.title = a.disabled ?? '';
-            b.onclick = () => ctx.apply(a.edit);
+            b.onclick = () => ctx.apply(a.edit, kept());
             acts.append(b);
           }
           body.append(acts);
-          const why = r.actions.filter((a) => a.disabled).map((a) => `${a.title}: ${a.disabled}`);
+          const why = r.actions.filter((a) => a.disabled || a.note).map((a) => `${a.title}: ${a.disabled ?? a.note}`);
           if (why.length) body.append(el('div', 'tv-text', why.map((w) => `<p>${esc(w)}</p>`).join('')));
         }
         return body;
       };
       // labelled inputs; `go(values, changed names)` makes the edit, applied when every value is balanced
-      const form = (fields, title, go) => {
+      // `more` fields fold under "More fields"; `options` offer names to an input; `note` says what it writes
+      const form = (fields, title, go, note) => {
         const f = el('form', 'tv-form');
+        const fold = fields.some((d) => d.more) ? el('details', 'tv-more', `<summary>More fields (${fields.filter((d) => d.more).length})</summary>`) : null;
         const ins = fields.map((d) => {
-          const lab = el('label', 'tv-field', `<span>${esc(d.name)}</span>`);
+          const lab = el('label', 'tv-field', `<span>${esc(d.label ?? d.name)}</span>`);
           const i = Object.assign(el(d.choices ? 'select' : d.long ? 'textarea' : 'input', 'tv-input'), { spellcheck: false, name: d.name });
           if (d.choices) i.innerHTML = d.choices.map((c) => `<option${c === d.value ? ' selected' : ''}>${esc(c)}</option>`).join('');
           else { i.value = d.value ?? ''; i.dataset.was = i.value; }
           if (d.placeholder) i.placeholder = d.placeholder;
+          if (d.options?.length) {
+            const list = el('datalist', null, d.options.map((o) => `<option value="${esc(o)}">`).join(''));
+            list.id = `tv-opts-${++optsId}`;
+            i.setAttribute('list', list.id);
+            lab.append(list);
+          }
           lab.append(i);
-          f.append(lab);
+          (d.more ? fold : f).append(lab);
           // the server's checks of the field (dialogs.js `check`), the message under it
           return [d, i, d.choices ? null : self.satexDialogs.guard(i, d.check ?? ['balanced'], d.taken ?? [])];
         });
+        if (fold) f.append(fold);
+        if (note) f.append(el('div', 'tv-text tv-note', `<p>${esc(note)}</p>`));
         const b = el('button', 'tv-button tv-primary', esc(title));
         b.type = 'submit';
         f.append(el('div', 'tv-actions'));
@@ -210,7 +231,8 @@
           if (bad.length) { b.disabled = true; return bad[0][1].focus(); }
           const vals = Object.fromEntries(ins.map(([d, i]) => [d.name, i.value]));
           const changed = new Set(ins.filter(([d, i]) => i.value !== (d.value ?? '')).map(([d]) => d.name));
-          if (changed.size || !fields.some((d) => 'value' in d)) ctx.apply(go(vals, changed));
+          const out = changed.size || !fields.some((d) => 'value' in d) ? go(vals, changed) : null;
+          if (out?.insert != null) ctx.insert(out.insert); else if (out) ctx.apply(out, kept());
         };
         return f;
       };
@@ -220,13 +242,14 @@
       // closing with a field typed in and not written asks first
       ctx.guard?.(() => [...box.querySelectorAll('[data-was]')].some((i) => i.value !== i.dataset.was));
       box.append(head, list);
-      if (s.add) {
+      // a kind that `insert`s writes at the editor's cursor: only where the page has one
+      const kinds = s.add ? (s.add.kinds ?? [s.add]).filter((k) => !k.insert || ctx.insert) : [];
+      if (kinds.length) {
         const more = el('details', 'tv-add', `<summary>${esc(s.add.title)}</summary>`);
-        const kinds = s.add.kinds ?? [s.add];
         const pick = el('select', 'tv-input', kinds.map((k) => `<option>${esc(k.name ?? s.add.title)}</option>`).join(''));
         pick.ariaLabel = 'kind';
         const slot = el('div');
-        const show = () => { const k = kinds[pick.selectedIndex]; slot.replaceChildren(form(k.fields, s.add.title, (vals) => filled(k.edit, vals))); };
+        const show = () => { const k = kinds[pick.selectedIndex]; slot.replaceChildren(form(k.fields, s.add.title, (vals) => k.insert ? { insert: fill(k.insert, vals) } : filled(chosen(k, vals), vals), k.note)); };
         pick.onchange = show;
         if (kinds.length > 1) more.append(pick);
         more.append(slot);
@@ -2391,5 +2414,5 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
       (st.paired?.names?.length ? `<div class="ds-sec"><b>paired by a join</b><span>${st.paired.names.map(cs).join(' ')} · ${st.paired.arms} arms</span></div>` : '') +
       (cats ? `<div class="ds-sec"><b>catcodes ahead</b><span>${cats}</span></div>` : '');
   };
-  self.satexViews = { render, RENDER, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker }, forest: forestFns, page: { pageOf, pageBox, pageEdits, headerOf, headerText, headerEdits, setKeys }, dev: { traceCsv, stateHtml } };
+  self.satexViews = { render, RENDER, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker }, forest: forestFns, page: { pageOf, pageBox, pageEdits, headerOf, headerText, headerEdits, setKeys }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();

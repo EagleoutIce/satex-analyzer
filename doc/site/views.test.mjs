@@ -782,3 +782,23 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   assert.match(check('2020-02-30', ['date']), /no day/); assert.equal(check('2020-02-29T10:00', ['date']), ''); assert.equal(check('now', ['date']), '');
   console.log('field checks: ok');
 }
+
+// the managers' edit templates (views.js): an optional part goes with its empty value, a choice picks its edit
+{
+  const { fill, filled, chosen } = self.satexViews.templates;
+  const index = '\\index{${?sort}${sort}@${/sort}${entry}${?format}|${format}${/format}}';
+  assert.equal(fill(index, { entry: 'alpha', sort: '', format: '' }), '\\index{alpha}');
+  assert.equal(fill(index, { entry: '$x$', sort: 'x', format: 'textbf' }), '\\index{x@$x$|textbf}');
+  assert.equal(fill('${?a},\n  a = {${a}}${/a}${?b},\n  b = {${b}}${/b}', { a: ' ', b: '1' }), ',\n  b = {1}', 'blank is empty');
+  assert.equal(fill('${?x}[${x}]${/x}{${k}}', { k: 'key' }), '{key}');
+  const r = { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } };
+  const form = { by: 'numbering', edits: { 'own counter': { changes: { u: [{ range: r, newText: '' }] } }, 'within section': { changes: { u: [{ range: r, newText: '[section]' }] } } } };
+  assert.equal(filled(chosen(form, { numbering: 'within section' }), {}).changes.u[0].newText, '[section]');
+  assert.equal(chosen({ edit: 1 }, {}), 1);
+  const { check } = self.satexDialogs;
+  assert.equal(check('alpha', ['index']), '');
+  assert.match(check('a!b', ['index']), /makeindex/);
+  assert.equal(check('a"!b', ['index']), '', 'a quoted ! is text');
+  assert.equal(check('\\textbf{a|b}', ['index']), '', 'braces hide |');
+  console.log('manager templates: ok');
+}
