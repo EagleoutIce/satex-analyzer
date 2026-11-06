@@ -4441,3 +4441,27 @@ fn a_provided_fallback_is_never_dead() {
         .collect();
     assert!(dead.is_empty(), "{dead:?}");
 }
+
+/// A here-float the output routine puts on its own list (`\box\@currbox` in `\@addtocurcol`)
+/// reaches the page with that list: its caption is typeset, not lost to the next box built.
+#[test]
+fn a_here_float_set_by_the_output_routine_keeps_its_caption() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\begin{figure}[ht]\centering X\caption{Alpha}\end{figure}
+\begin{figure}[ht]\centering Y\caption{Beta}\end{figure}
+\end{document}",
+    );
+    use satex::queries::query::{Filter, Query, run};
+    let marked: Vec<String> = run(&analysis, Query::Typeset, &Filter::Always)
+        .iter()
+        .filter_map(|r| r.get("marked").and_then(|v| v.as_str()).map(str::to_string))
+        .collect();
+    for want in ["X", "Figure 1: Alpha", "Y", "Figure 2: Beta"] {
+        assert!(marked.iter().any(|m| m == want), "{want} missing in {marked:?}");
+    }
+}

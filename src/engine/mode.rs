@@ -2174,6 +2174,9 @@ impl Machine<'_> {
         // back onto the page, ahead of what waits.
         if nest.code == Some(group::OUTPUT) {
             self.page_touched |= material & BOXED != 0;
+            // the boxes it put on its list (a here-float's `\box\@currbox`) reach the page with it:
+            // no box encloses an output routine
+            self.place_chars(Vec::new(), false);
             // etex.ch: the page discards go with the routine; then the
             // break's penalty, now 10000, is discarded (§ 1017).
             if let Some(n) = &mut self.natural
