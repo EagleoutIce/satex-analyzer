@@ -2141,3 +2141,11 @@ header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(-
 /* the image dialog: the file's format beside its name, a blocked tint's reason in view (dialogs.js) */
 .sd-fmt { margin-left: .4em; padding: 0 .35em; border-radius: var(--r-tag, 4px); background: var(--sunk); color: var(--muted); font-size: .72em; font-weight: 600; letter-spacing: .04em; }
 .sd-why.sd-blocked { color: var(--warning); }
+/* a big row's frame: as wide as its capture, not the whole column, and a third taller than a card's */
+.shot-big .shot-stage { width: fit-content; max-width: 100%; justify-self: end; }
+.shot-big:nth-child(even of .shot-big) .shot-stage { justify-self: start; }
+.shots > .shot-big .shot-win img, .shots > .shot-big .shot-video { max-height: 39vh; }
+/* a card's tables (a length in every unit): equal columns, every table of the card as wide */
+.tip .md-table { table-layout: fixed; width: 100%; }
+.tip .md-table th, .tip .md-table td { overflow-wrap: anywhere; }
+.tip code { overflow-wrap: anywhere; }
