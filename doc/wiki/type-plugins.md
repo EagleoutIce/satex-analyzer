@@ -113,12 +113,9 @@ A float is an environment whose code reaches `\@float`: `figure`, `table` and th
 
 A `tikzpicture` the run met: a lens "Edit drawing…" on its `\begin` line and the view anywhere inside. The canvas shows the nodes the run made, where pgf put each, with its shape and size (`\pgf@sh@ns@⟨node⟩` and its saved anchors). Plain paths between coordinates show too.
 
-- Tools: add a rectangle, circle or text node, move one by drag (snapped to `grid` cm), connect two with `->`, `<->` or `--`, delete, edit a label. A node can get a neighbour on any side (`below=of a`).
+- Tools: add a rectangle or circle node, move one by drag (snapped to `grid` cm), connect two with `->`, `<->` or `--`, delete, edit a label.
 - It writes `\node[draw] (n1) at (x,y) {label};` and `\draw[->] (a) -- (b);`. Statements it did not change stay as they were.
-- A node placed relative to another (`right=of a`, `right of=a`, `at (a)` with `xshift`) stays relative: a drag changes its distance or shift. With "place nodes relative to a neighbour" (or `relative: true`) a moved or new node gets a relation to the nearest node before it, and "Make all relative" converts the nodes at `(x,y)`. Where the canvas only guesses a size, the relation is `at (a)` with shifts, which holds whatever the size.
-- Properties: every key of a node, an arrow or the picture is a row, edited by its type and removable. "Add property" completes the `/tikz/` keys the run defined. A colour gets a picker, a length a unit, a choice its values. The canvas follows styles to their keys, so `thick`, `dashed`, `bend left` and a style's arrow tips show.
-- Styles: the picture's `name/.style={…}` and the document's `\tikzset` styles, each with its keys. Edit, delete or apply one to the selection. "Create from selection" moves the selection's keys into a new style, in the picture or the preamble.
-- Anything else stays code and shows read-only: a `\foreach`, a scope. A node the run put elsewhere than its text says counts as code too. Nothing is dropped.
+- Anything else stays code and shows read-only: a `\foreach`, a scope, a node placed relative to another. A node the run put elsewhere than its text says counts as code too. Nothing is dropped.
 - Mermaid: paste a flowchart (`graph TD`, `A[x] -->|y| B((z))`) to add its nodes, ranked by longest path, `spacing` cm apart. Export writes the picture's nodes and arrows as a flowchart.
 
 On a blank line of the document body, "Insert tikzpicture" writes a small picture and the view "New drawing" starts an empty one. Both add `\usepackage{tikz}` when the run has no tikz.
@@ -207,7 +204,7 @@ A plugin works *fully* in an integration that renders all its features, *partial
 | `forest` | lens, actions, view | full | full | full | partial | partial |
 | `savebox` | hover, actions | full | full | full | full | full |
 | `glossary` | view, manage | full | full | full | partial | partial |
-| `bibliography` | view, manage | full | full | full | partial | partial |
+| `bibliography` | view, manage, lens | full | full | full | partial | partial |
 | `index` | view, manage | full | full | full | partial | partial |
 | `theorem` | view, manage | full | full | full | partial | partial |
 | `overlay` | hover, complete | full | full | full | full | full |

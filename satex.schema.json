@@ -2601,12 +2601,7 @@
           "default": 64,
           "description": "how many names a merge keeps paired at most, the rest are merged on their own",
           "minimum": 0,
-          "type": "integer",
-          "x-affects": [
-            "precision",
-            "memory"
-          ],
-          "x-example": "higher: more names keep their pairing after an `\\if`"
+          "type": "integer"
         },
         "line_steps": {
           "default": 100000000,
@@ -2790,6 +2785,17 @@
             "speed"
           ],
           "x-example": "a 1000-page thesis with TikZ may need more"
+        },
+        "text_names": {
+          "default": 8,
+          "description": "how many control sequences unknown text names (a widened float list keeps its boxes), past them any",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "memory"
+          ],
+          "x-example": "higher: more names keep their pairing after an `\\if`"
         },
         "threads": {
           "default": 0,
@@ -4502,14 +4508,19 @@
                 "output"
               ]
             },
+            "relative": {
+              "default": false,
+              "description": "write moved and new nodes relative to a neighbour (right=1cm of a), not at (x,y)",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
+            },
             "spacing": {
               "default": 2.0,
               "description": "the distance in cm between the ranks of an imported Mermaid flowchart",
               "minimum": 0,
-              "type": "number",
-              "x-affects": [
-                "output"
-              ]
+              "type": "number"
             }
           },
           "type": "object",

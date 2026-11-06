@@ -380,7 +380,6 @@ The height of a node with `text width` depends on the line breaker, and pgf's ro
 ```sh
 $ satex query typeset -f s2-rounded-paragraph.tex --set limits.seconds=60
 5:64  paragraph  files, de·pen·den·cies, more
-7:1  paragraph  
 0:0  paragraph  
 7:15  page  page 1
 assumption  clock-assumed
@@ -900,15 +899,12 @@ The label was on page \pageref{x}.
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
 <tr><td><code>The label was on page 1.</code></td><td><code>The label was on page <b>⟨?⟩</b>.</code></td><td>⊇</td></tr>
-<tr><td><code>Here.</code></td><td><code><b>{</b><b>|</b>Here. <b>}</b></code></td><td>⊇</td></tr>
-<tr><td><code></code></td><td><code><b>{</b>Here. <b>|</b><b>}</b></code></td><td>⊇</td></tr>
+<tr><td><code>Here.</code></td><td><code>Here.</code></td><td>✓</td></tr>
 </table>
 
 Why:
 
 - `⟨?⟩`: l.4 sets a character the run could not compute.
-- `{|Here. }`: l.5 `\ifnum\getpagerefnumber{x}=1` is undecided, it reads `\getpagerefnumber`.
-- `{Here. |}`: l.5 `\ifnum\getpagerefnumber{x}=1` is undecided, it reads `\getpagerefnumber`.
 
 <details><summary>Computed text</summary>
 
@@ -916,9 +912,8 @@ Why:
 $ satex query typeset -f 11-fixpoint.tex --set limits.seconds=60
 4:2  paragraph  The label was on page ⟨?⟩.
 5:38  page  page 1 → 2
-6:11  paragraph  {|Here. }
+6:11  paragraph  Here.
 7:15  page  page 2 → 3
-6:11  paragraph  {Here. |}
 7:15  page  page 3
 assumption  clock-assumed
 ```

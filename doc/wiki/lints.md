@@ -1075,7 +1075,7 @@ See [chktex 32](https://www.nongnu.org/chktex/), [chktex 33](https://www.nongnu.
 
 How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000. Under `\frenchspacing` a period sets 1000 too, so nothing is reported.
 
-So `etc. and` gets a sentence space and `the ABC. Next` a word space, both the wrong way round. The rule reads the characters the run set and reports only where a real space token became glue.
+So `etc. and` gets a sentence space and `the ABC. Next` a word space, both the wrong way round. The rule reads the characters the run set and reports only where a real space token became glue. A lowercase word counts as the sentence running on only when the source writes it right after the space, in the same line and group, unless the word before the period is a listed abbreviation.
 
 Fix by writing `etc.\ and`, or `the ABC\@. Next`.
 
@@ -1355,7 +1355,7 @@ See [biblatex § 3.9.1](https://ctan.org/pkg/biblatex), [The LaTeX Companion § 
 
 A finding needs a word that names a kind of thing the document labels (a counter's name, its `\<counter>name` text such as `Figure`, a cleveref name, or an abbreviation with a period such as `Eq.`), then a number or a letter typed in the source, as in `Figure 2`, `Eq. (5)` or `Appendix A`. The words come from the run, so babel's names count too. Text in math, verbatim or a comment is never read, and neither is a number `\ref` set.
 
-Where one label of that kind prints that very number, the fix names it: `\cref` with cleveref loaded, else `\autoref` with hyperref, else `Section~\ref{...}`. Otherwise the finding asks for a label.
+Where one label of that kind prints that very number, the fix writes `\cref` (`\Cref` after a capital word), and loads cleveref when the document does not. cleveref then prints the word itself. Otherwise the finding asks for a label.
 
 An `\item` of a numbered list counts too, labelled or not, in enumitem's inline lists as well: `see item (b)` or `in step 2`, where one item prints `(b)` or `Step~2`. Its words are the list counter's (`enumi`, its cleveref name `item`) and the word its label format writes (`Step`). The fix puts a `\label` right after that `\item` and refers to it. A number with no word before it, `in 3.)`, is never read.
 
