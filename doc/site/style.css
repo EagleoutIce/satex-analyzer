@@ -2195,3 +2195,5 @@ main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/
 /* the live window fills its column like a shot at full size, before and after the engine takes over */
 .shot-live .shot-stage, .shots > .shot-live .shot-win { width: 100%; }
 .ring .cards > .shot:not(.ring-front) figcaption { text-align: center; }
+/* the page settles on the ring when a scroll ends near it: a slight hold, never a lock */
+@media (prefers-reduced-motion: no-preference) and (min-width: 48rem) { html:has(.cards-wrap.ring) { scroll-snap-type: y proximity; } .cards-wrap.ring { scroll-snap-align: center; } }
