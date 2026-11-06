@@ -3312,26 +3312,10 @@ impl<'a> Machine<'a> {
             let source = crate::engine::tex::detokenize(&macro_def.replacement_text, &self.out.interner);
             let source = squeeze(&source);
             let tokens = macro_def.replacement_text.to_vec();
-            // satex's own rendering, which no TeX run does: what it raises
-            // (siunitx's `\day` is `d` in a PDF string) is not the document's.
-            let facts = &self.out.facts;
-            let kept = (facts.diagnostics.clone(), facts.occurrences.len(), facts.raised.len(), self.tex_errors);
-            // A look-ahead in it ends at the field's end (`\\` reads past
-            // `B` in `\author{A\\ B}`): the conditional it left open there
-            // is this rendering's, closed with it.
-            let conds = self.conds.len();
             // A field the run never set holds the format's default. Its own
             // definitions stand where the field was set (`\gdef\@title`).
             let Some(at) = self.out.facts.defs.iter().rev().find(|d| d.name == sym).map(|d| d.span) else { return };
-            let expanded = self.expand_as_pdf_string(&tokens, at);
-            while self.conds.len() > conds {
-                self.pop_conditional();
-            }
-            let facts = &mut self.out.facts;
-            facts.diagnostics = kept.0;
-            facts.occurrences.truncate(kept.1);
-            facts.raised.truncate(kept.2);
-            self.tex_errors = kept.3;
+            let expanded = self.aside(|m| m.expand_as_pdf_string(&tokens, at));
             let text = squeeze(&self.pdf_string_text(&expanded));
             // `\maketitle` empties `\@title` once it has set it. The title
             // is what it held before.
@@ -3343,12 +3327,31 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// `f`, run as satex's own work that no TeX run does (`\title` rendered
+    /// as a PDF string), then the path put back as it was: the groups and
+    /// conditionals it left open, its writes, cuts and errors (siunitx's
+    /// `\day` is `d` in a PDF string) are not the document's.
+    fn aside<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let (state, env, limits) = (self.save_path(), self.env.clone(), self.out.limits.clone());
+        let facts = &self.out.facts;
+        let kept = (facts.diagnostics.clone(), facts.occurrences.len(), facts.raised.len(), self.tex_errors);
+        let out = f(self);
+        self.restore_path(state);
+        (self.env, self.out.limits) = (env, limits);
+        let facts = &mut self.out.facts;
+        facts.diagnostics = kept.0;
+        facts.occurrences.truncate(kept.1);
+        facts.raised.truncate(kept.2);
+        self.tex_errors = kept.3;
+        out
+    }
+
     /// The document-properties form of a token list.  With hyperref loaded
     /// its own `\pdfstringdef\⟨cs⟩{⟨text⟩}` makes it (hyperref manual,
     /// "PDF strings"), and `\⟨cs⟩` is read back.  Without it the list is
-    /// expanded in a group, and what is left of it as characters is the text.
+    /// expanded, and what is left of it as characters is the text. Run it
+    /// [`Machine::aside`]: it changes the state.
     fn expand_as_pdf_string(&mut self, tokens: &[Token], span: Span) -> Vec<Token> {
-        self.env.push_group(GroupKind::SemiSimple, Span::default());
         // hyperref's PDF string, else what LaTeX writes text with
         // (`\protected@edef`, `\protect` as `\noexpand`): a robust `\\`
         // stays a command.
@@ -3366,7 +3369,6 @@ impl<'a> Machine<'a> {
             run.push(Token::new(Tok::Chr('}', Catcode::End), span));
             self.run_tokens(Rc::from(run));
             let body = self.env.meaning(target).as_macro().map(|m| m.replacement_text.to_vec()).unwrap_or_default();
-            self.env.pop_group(&mut self.catcodes);
             if self.name(define) != "pdfstringdef" {
                 return body;
             }
@@ -3378,7 +3380,6 @@ impl<'a> Machine<'a> {
         self.pdf_string = true;
         let expanded = self.expand_reported(tokens);
         self.pdf_string = false;
-        self.env.pop_group(&mut self.catcodes);
         expanded
     }
 

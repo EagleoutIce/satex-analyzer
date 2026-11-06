@@ -662,6 +662,31 @@ fn metadata_is_recorded() {
     );
 }
 
+/// satex renders `\title` as a PDF string itself, which no TeX run does.
+/// algorithm2e's `\nl` there steps a counter under hyperref's `\let`, and
+/// the rendering recurses until cut. None of that reaches the run: the
+/// later `\stepcounter` is the kernel's, no limit is hit, the end is read.
+#[test]
+fn rendering_the_title_leaves_the_run_as_it_was() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{hyperref}
+\usepackage{algorithm2e}
+\title{A\nl B}
+\newcounter{other}
+\stepcounter{other}
+\begin{document}
+x
+\end{document}",
+    );
+    let found = codes(&analysis);
+    assert!(!found.iter().any(|c| c == "missing-end"), "{found:?}");
+    assert!(analysis.limits.is_empty(), "{:?}", broken_gaps(&analysis));
+}
+
 #[test]
 fn the_sample_document_keeps_what_it_already_analyzed() {
     // A regression net for tests/fixtures/project/paper.tex: these are things satex reads
