@@ -703,7 +703,7 @@ def previews_run(satex, work, libs):
 
 def providers(satex, work, missing):
     """The packages that define the control sequences `missing`, by `satex query`'s `providers`: the installed files whose
-    text defines each name through a definer the run saw. Classes are left out: a card's run loads packages."""
+    text defines each name through a definer the run saw: `name.sty` for a package, `name.cls` for a class."""
     if not missing:
         return set()
     doc = work / "cards" / "providers.tex"
@@ -716,7 +716,7 @@ def providers(satex, work, missing):
         rows = json.loads(done.stdout)[0]["records"]
     except (json.JSONDecodeError, IndexError, KeyError):
         return set()
-    return {r["package"] for r in rows if not r["package"].endswith(".cls")}
+    return {r["package"] for r in rows}
 
 
 def scope_cards(satex, work, names):
@@ -754,7 +754,9 @@ def scope_cards(satex, work, names):
         records = {r["name"]: r for r in scope("pdftex", KERNELS[0][2], text)}
         # a name no loaded package defines: the installed packages that define it, each loaded alone
         for n in sorted(providers(satex, work, [x for x in names if x not in records and re.fullmatch(r"\\[A-Za-z@]+", x)])):
-            more = scope("pdftex", KERNELS[0][2], "\\documentclass{article}\n" + f"\\usepackage{{{n}}}\n\\begin{{document}}\n\\end{{document}}\n")
+            # a class (beamer's \mode, \uncover) is the document's class, a package is loaded by article
+            head = f"\\documentclass{{{n[:-4]}}}\n" if n.endswith(".cls") else f"\\documentclass{{article}}\n\\usepackage{{{n.removesuffix('.sty')}}}\n"
+            more = scope("pdftex", KERNELS[0][2], head + "\\begin{document}\n\\end{document}\n")
             for r in more:
                 if r["name"] in names:
                     records.setdefault(r["name"], r)
@@ -778,7 +780,7 @@ def scope_cards(satex, work, names):
         engines = {label: {r["name"] for r in scope(kernel, flags, "\\documentclass{article}\n\\begin{document}\n\\end{document}\n", ["--filter", "tag=primitive"])}
                    for kernel, label, flags in KERNELS if kernel != "plain"}
         return records, engines, templates(scope, probe, names)
-    return memo(work, "cards-scope-keyed2", [BINARY, wanted, sorted(names)], make)
+    return memo(work, "cards-scope-keyed3", [BINARY, wanted, sorted(names)], make)
 
 
 # Declarations whose names are made from a key: the probe declares one key, a record naming it is a template for any key.
