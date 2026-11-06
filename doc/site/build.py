@@ -1732,15 +1732,42 @@ def showcase(out, live):
     (out / "showcase").mkdir(exist_ok=True)
     size = lambda f: tuple(int.from_bytes(f.read_bytes()[o:o + 4], "big") for o in (16, 20))
 
+    # git holds only the sources (a PNG still, a WebM video); the smaller formats are derived here once per
+    # source, kept in the work directory, so a capture never commits five files
+    derived_dir = SCRATCH / "showcase-derived"
+    derived_dir.mkdir(parents=True, exist_ok=True)
+    recipes = {
+        "avif": lambda i, o: ["avifenc", "-q", "60", "-s", "4", "-j", "1", str(i), str(o)],
+        "webp": lambda i, o: ["magick", str(i), "-quality", "80", "-define", "webp:method=6", str(o)],
+        "mp4": lambda i, o: ["ffmpeg", "-y", "-loglevel", "error", "-i", str(i), "-c:v", "libx264", "-crf", "27", "-preset", "slow",
+                             "-profile:v", "high", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", str(o)],
+    }
+
+    def derive(source, ext):
+        """`source` in format `ext`, made once per source content; None without the encoder."""
+        target = derived_dir / f"{digest(source.read_bytes())}.{ext}"
+        if not target.exists():
+            cmd = recipes[ext](source, target)
+            if not shutil.which(cmd[0]) or subprocess.run(cmd, capture_output=True).returncode or not target.exists():
+                return None
+        return target
+
     def pictures(stem, alt):
         pics = []
         for scheme in ("light", "dark"):
-            width, height = size(src / f"{stem}-{scheme}.png")
-            for ext in ("avif", "webp", "png", "webm", "mp4"):
-                if (src / f"{stem}-{scheme}.{ext}").exists():
-                    shutil.copy2(src / f"{stem}-{scheme}.{ext}", out / "showcase" / f"{stem}-{scheme}.{ext}")
-            pics.append(f'<picture class="shot-{scheme}"><source type="image/avif" srcset="showcase/{stem}-{scheme}.avif">'
-                        f'<source type="image/webp" srcset="showcase/{stem}-{scheme}.webp">'
+            still, video = src / f"{stem}-{scheme}.png", src / f"{stem}-{scheme}.webm"
+            width, height = size(still)
+            shutil.copy2(still, out / "showcase" / still.name)
+            sources = ""
+            for ext, kind in (("avif", "image/avif"), ("webp", "image/webp")):
+                if made := derive(still, ext):
+                    shutil.copy2(made, out / "showcase" / f"{stem}-{scheme}.{ext}")
+                    sources += f'<source type="{kind}" srcset="showcase/{stem}-{scheme}.{ext}">'
+            if video.exists():
+                shutil.copy2(video, out / "showcase" / video.name)
+                if made := derive(video, "mp4"):
+                    shutil.copy2(made, out / "showcase" / f"{stem}-{scheme}.mp4")
+            pics.append(f'<picture class="shot-{scheme}">{sources}'
                         f'<img src="showcase/{stem}-{scheme}.png" width="{width}" height="{height}" alt="{alt if scheme == "light" else ""}" loading="lazy" decoding="async"></picture>')
             # the video plays over its poster, the still: site.js loads it near the viewport, never under reduced motion
             if (src / f"{stem}-{scheme}.webm").exists():
@@ -1819,7 +1846,7 @@ def recapture(out):
     if not due:
         return False
     chrome = os.environ.get("CHROME") or next(iter(sorted(Path.home().glob(".cache/ms-playwright/chromium-*/chrome-linux64/chrome"), reverse=True)), None)
-    missing = [t for t in ("node", "magick", "avifenc", "pngquant", "ffmpeg") if not shutil.which(t)] + ([] if chrome else ["chromium"])
+    missing = [t for t in ("node", "magick", "pngquant", "ffmpeg") if not shutil.which(t)] + ([] if chrome else ["chromium"])
     if missing:
         print(f"showcase: {len(due)} captures out of date, kept: no {', '.join(missing)}", file=sys.stderr)
         return False
@@ -1851,10 +1878,23 @@ def recapture(out):
     ok = re.findall(r"^ok +(\S+) (light|dark)", done.stdout, re.M)
     taken = [n for n in due if (n, "light") in ok and (n, "dark") in ok]
     keys.update((n, due[n] if n in taken else f"failed {due[n]}") for n in due)
-    for f in img.iterdir():
-        if f.name.split("-")[0] in taken:
-            if f.resolve() != (SITE / "showcase/img" / f.name).resolve():
-                shutil.copy2(f, SITE / "showcase/img" / f.name)
+    # only the sources go into git, and a shot whose still barely changed keeps its files (no churn in the history)
+    def alike(a, b):
+        try:
+            from PIL import Image, ImageChops, ImageStat
+            x, y = Image.open(a).convert("RGB"), Image.open(b).convert("RGB")
+            return x.size == y.size and max(ImageStat.Stat(ImageChops.difference(x, y)).mean) < 1.5
+        except Exception:
+            return False
+    repo = SITE / "showcase/img"
+    same = lambda png: (repo / png.name).exists() and (png.resolve() == (repo / png.name).resolve() or alike(png, repo / png.name))
+    for f in sorted(img.iterdir()):
+        if f.name.split("-")[0] not in taken or f.suffix not in (".png", ".webm"):
+            continue
+        # a video goes with its still: kept when the still is
+        if same(f.with_suffix(".png")):
+            continue
+        shutil.copy2(f, repo / f.name)
     keys_file.write_text(json.dumps(keys, indent=1, sort_keys=True) + "\n")
     failed = [line for line in done.stdout.splitlines() if line.startswith("FAIL")]
     print(f"showcase: {len(taken)} of {len(due)} captures taken again in {time.monotonic() - began:.0f} s" + "".join(f"\n  {f}" for f in failed), file=sys.stderr)

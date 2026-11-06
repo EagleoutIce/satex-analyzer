@@ -149,7 +149,7 @@ const union = (a, b) => { const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y); 
 const capture = async (clip) => Buffer.from((await raw('Page.captureScreenshot', { format: 'png', ...(clip ? { clip } : {}), captureBeyondViewport: false })).result.data, 'base64');
 
 /** The `video` steps recorded as screencast frames, then cut to the union of the crop before and after,
- * `<stem>.webm` and `.mp4` beside the still (its first frame). */
+ * `<stem>.webm` beside the still (its first frame); build.py derives the MP4. */
 async function record(s, stem, [w, h]) {
   const dir = mkdtempSync(join(scratch, 'showcase-frames-'));
   try {
@@ -178,7 +178,6 @@ async function record(s, stem, [w, h]) {
     const vf = `${crop},scale=${wide}:-2:flags=lanczos,fps=25,format=yuv420p`;
     const input = ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', join(dir, 'list.txt')];
     execFileSync('ffmpeg', [...input, '-vf', vf, '-c:v', 'libvpx-vp9', '-crf', '40', '-b:v', '0', '-row-mt', '1', '-deadline', 'good', '-cpu-used', '2', '-an', `${stem}.webm`]);
-    execFileSync('ffmpeg', [...input, '-vf', vf, '-c:v', 'libx264', '-crf', '27', '-preset', 'slow', '-profile:v', 'high', '-movflags', '+faststart', '-an', `${stem}.mp4`]);
     // the still: the first frame, cut alike
     const still = join(dir, 'still.png');
     execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', frames[0][0], '-vf', crop, still]);
@@ -189,12 +188,10 @@ async function record(s, stem, [w, h]) {
   }
 }
 
-/** AVIF, WebP and a quantized PNG of `png`, `width` px wide at most. */
+/** A quantized PNG of `png`, `width` px wide at most: the source git keeps (build.py derives AVIF and WebP). */
 function encode(png, stem, width) {
   const sized = `${stem}.tmp.png`;
   execFileSync('magick', [png, '-resize', `${width}x>`, '-strip', sized]);
-  execFileSync('magick', [sized, '-quality', '80', '-define', 'webp:method=6', `${stem}.webp`]);
-  execFileSync('avifenc', ['-q', '60', '-s', '4', '-j', '1', sized, `${stem}.avif`], { stdio: 'ignore' });
   execFileSync('pngquant', ['--force', '--skip-if-larger', '--strip', '-Q', '60-85', '-o', `${stem}.png`, sized]);
   if (!existsSync(`${stem}.png`)) execFileSync('magick', [sized, `${stem}.png`]);
   rmSync(sized);
