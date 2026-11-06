@@ -231,6 +231,8 @@ Both builds must use the same profile: a cache is keyed on the build that wrote 
 The landing page's showcase images come from a served playground.
 `doc/site/showcase/shots.json` lists each widget: its example, the steps that open it, the crop and the caption.
 `node doc/site/showcase/capture.mjs http://127.0.0.1:8000/` takes each one in light and dark and writes AVIF, WebP and PNG to `doc/site/showcase/img`.
+Entries marked `"server": true` (the PDF and the log) need the compile server of `cargo playground`: the site build keeps their last images, so run `ONLY=pdf,runaway node doc/site/showcase/capture.mjs http://127.0.0.1:8000/` while it serves.
+Each entry gets `budget` ms (90 s by default, `shots.json`) for its steps, and a build runs two captures at a time.
 It needs Chromium, ImageMagick, `avifenc` and `pngquant`.
 `build.py` copies the images and sizes each one in the page.
 

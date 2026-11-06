@@ -1,6 +1,7 @@
 // The landing page's showcase images, taken from a built playground: per entry of shots.json, its
 // example opened, its steps run, the widget cropped, in light and dark, encoded as AVIF, WebP and PNG.
 //   cargo playground --dev --port 8123 & node doc/site/showcase/capture.mjs http://127.0.0.1:8123/
+// Entries with `"server": true` need the compile server of `cargo playground`: build.py leaves them out.
 // ONLY=a,b takes the entries of those names, SCHEMES=dark one theme. RAW=dir keeps a full screenshot per entry.
 // An entry's `open` is the widget its try-it link opens (playground.js `satexOpen`); a step `{ "open": true }` opens it
 // the same way. A step with `snap` keeps the crop at that point as `<name>-<snap>` (a refactoring's before), `video`
@@ -15,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const base = process.argv[2] ?? 'http://127.0.0.1:8000/';
 const out = process.argv[3] ?? join(here, 'img');
-const { width: WIDTH, video: VIDEO = 1000, shots } = JSON.parse(readFileSync(join(here, 'shots.json'), 'utf8'));
+const { width: WIDTH, video: VIDEO = 1000, budget: BUDGET = 90000, shots } = JSON.parse(readFileSync(join(here, 'shots.json'), 'utf8'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failed = false;
 
@@ -43,7 +44,8 @@ const js = async (expr) => {
   if (r.result?.exceptionDetails) throw new Error(`${expr.slice(0, 80)}: ${r.result.exceptionDetails.exception?.description}`);
   return r.result?.result?.value;
 };
-const until = async (expr, ms = 60000) => { for (const end = Date.now() + ms; Date.now() < end; await sleep(200)) if (await js(expr).catch(() => false)) return true; return false; };
+let deadline = Infinity;
+const until = async (expr, ms = 60000) => { for (const end = Math.min(Date.now() + ms, deadline); Date.now() < end; await sleep(200)) if (await js(expr).catch(() => false)) return true; return false; };
 const QUIET = `document.getElementById('lsp-status').textContent !== 'checking…' && !document.getElementById('play-status').classList.contains('busy')`;
 /** In the page: `__at(needle, k)` is the editor position k characters into needle, `__xy` its screen point. */
 const HELPERS = `const v = () => document.querySelector('.cm-editor').satexView;
@@ -51,6 +53,8 @@ const HELPERS = `const v = () => document.querySelector('.cm-editor').satexView;
   self.__xy = (n, k = 0) => { const i = __at(n, k)[2]; v().dispatch({ selection: { anchor: i }, scrollIntoView: true }); const c = v().coordsAtPos(i); return [c.left + 2, (c.top + c.bottom) / 2]; };`;
 
 async function open(file) {
+  // a fresh page per entry: an example seen before comes back with its edits (drafts stay in memory), and a view left open or a run not yet in skews the next
+  await raw('Page.navigate', { url: 'about:blank' }); await sleep(500); // the old page's last draft write lands before the clear
   // each entry starts from the example as shipped: no draft, no kept view
   await raw('Storage.clearDataForOrigin', { origin: new URL(base).origin, storageTypes: 'local_storage,indexeddb' });
   await raw('Page.navigate', { url: `${base}play/index.html#${file}` });
@@ -110,7 +114,7 @@ async function step(s, shot) {
   if (s.type != null) { await type(s.type); if (s.wait) await sleep(s.wait); return; }
   // an eval with an until repeats until it holds: a widget asked for before the server answers opens nothing
   let ok = !s.until;
-  for (const end = Date.now() + (s.ms ?? 120000); !ok && Date.now() < end || !s.until && s.eval && !ok;) {
+  for (const end = Math.min(Date.now() + (s.ms ?? 120000), deadline); !ok && Date.now() < end || !s.until && s.eval && !ok;) {
     if (s.eval) await js(s.eval).catch((e) => process.env.DEBUG && console.log('eval failed', e.message.slice(0, 300)));
     ok = !s.until || await until(`return !!(${s.until})`, s.eval ? 8000 : s.ms ?? 120000);
   }
@@ -231,19 +235,25 @@ try {
         // a first visit may miss the widget while the page still fetches what it shows: one more try
         for (let attempt = 0; ; attempt++) {
           try {
+            deadline = Infinity;
             await open(s.file);
+            // the steps share one budget: a failing wait fails fast, never one timeout per step
+            deadline = Date.now() + (s.budget ?? BUDGET);
+            if (process.env.PROBE0) console.log('PROBE0', JSON.stringify(await js(process.env.PROBE0)));
             if (s.text) await write(s.text);
             for (const st of s.steps) {
               await step({ ms: 45000, ...st }, s);
               if (st.snap) await still({ ...s, crop: s.beforeCrop ?? s.crop, video: undefined, keepMouse: true, keepFocus: true }, `${s.name}-${st.snap}-${scheme}`);
             }
             break;
-          } catch (e) { if (attempt) throw e; }
+          } catch (e) { if (attempt || Date.now() >= deadline) throw e; console.log('retry', s.name, e.message.slice(0, 200)); }
         }
+        deadline = Infinity;
         const clip = await still(s, `${s.name}-${scheme}`, [w, h]);
         console.log(`ok   ${s.name} ${scheme} ${Math.round(clip.width)}x${Math.round(clip.height)}${s.video ? ' + video' : ''}`);
       } catch (e) {
         failed = true;
+        if (process.env.PROBE) console.log('PROBE', JSON.stringify(await js(process.env.PROBE).catch((e) => String(e))));
         if (process.env.RAW) writeFileSync(join(process.env.RAW, `${s.name}-${scheme}-fail.png`), Buffer.from((await raw('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
         console.log(`FAIL ${s.name} ${scheme}: ${e.message.slice(0, 300)}`); }
     }

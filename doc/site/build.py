@@ -596,16 +596,10 @@ def bundle(satex, work):
     # and the tree lacks (the playground's Files view calls what it looks for "absent in TeX Live too").
     looked = parallel("[4/4] examples over the bundle", [d for d in docs if d.suffix == ".tex"],
                       lambda d: files_read(satex, KERNELS[0][2], project / d.name, project, env, config=config.encode(), absent=True))
-    # a file an example only looks for (`\IfFileExists`, graphicx's extension probes: mwe's example-image.tex) is read by
-    # no listing: it joins the tree, so the playground answers as TeX Live does
-    found = {path for names in looked for path in kpsewhich(names, work).values() if path.is_relative_to(dist)}
-    for path in found:
-        target = tree / path.relative_to(dist)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, target)
-        extra[path.relative_to(dist).as_posix()] = path  # in the first download, as the extra files are
-    if found:
-        print(f"playground: {len(found)} files the examples look for joined the bundle: {', '.join(sorted(p.name for p in found))}", file=sys.stderr)
+    # a gap is a warning, never a failed build: the playground then says the file is not in the playground
+    lacking = sorted({f"{d.name}: {n}" for d, names in zip([d for d in docs if d.suffix == ".tex"], looked) for n in kpsewhich(names, work)})
+    if lacking:
+        print(f"playground: warning: examples look for TeX Live files the bundle lacks: {', '.join(lacking)}", file=sys.stderr)
 
     # Kernels: the sample's files and the cache entries of running it. A kernel's
     # cache directory stays from the last build: satex rebuilds what this binary cannot use, and
@@ -1810,8 +1804,13 @@ def recapture(out):
     key = lambda s: digest(ui + json.dumps(s, sort_keys=True).encode() + source(s).read_bytes())
     # an entry whose example is not there yet (a feature still to come) waits
     due = {s["name"]: key(s) for s in spec["shots"] if not s.get("live") and source(s)}
+    # entries that need the local compile server (`cargo playground`) keep their last images: the static server here has none
+    needs_server = [n for n, k in due.items() if keys.get(n) != k and next(s for s in spec["shots"] if s["name"] == n).get("server")]
+    due = {n: k for n, k in due.items() if next(s for s in spec["shots"] if s["name"] == n).get("server") is None}
     # a capture that failed on these inputs waits for them to change: no retry on every build
     due = {n: k for n, k in due.items() if keys.get(n) not in (k, f"failed {k}") or keys[n] == k and not all((img / f"{n}-{c}.png").exists() for c in ("light", "dark"))}
+    if needs_server:
+        print(f"showcase: kept (needs the compile server): {', '.join(needs_server)}", file=sys.stderr)
     if not due:
         return False
     chrome = os.environ.get("CHROME") or next(iter(sorted(Path.home().glob(".cache/ms-playwright/chromium-*/chrome-linux64/chrome"), reverse=True)), None)
@@ -1825,17 +1824,23 @@ def recapture(out):
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(quiet, directory=str(out)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     began = time.monotonic()
+    # two browsers at most (each takes about 3 GB with the engine), one per entry, the next starting as one ends
+    names, url = list(due), f"http://127.0.0.1:{server.server_address[1]}/"
+    run = lambda part: subprocess.run(["node", str(SITE / "showcase/capture.mjs"), url, str(img)],
+                                      env=dict(os.environ, ONLY=",".join(part), CHROME=str(chrome)), capture_output=True, text=True).stdout
     try:
-        done = subprocess.run(["node", str(SITE / "showcase/capture.mjs"), f"http://127.0.0.1:{server.server_address[1]}/", str(img)],
-                              env=dict(os.environ, ONLY=",".join(due), CHROME=str(chrome)), capture_output=True, text=True)
+        with concurrent.futures.ThreadPoolExecutor(2) as pool:
+            outputs = list(pool.map(run, [[n] for n in names]))
     finally:
         server.shutdown()
+    done = type("Done", (), {"stdout": "\n".join(outputs)})
     ok = re.findall(r"^ok +(\S+) (light|dark)", done.stdout, re.M)
     taken = [n for n in due if (n, "light") in ok and (n, "dark") in ok]
     keys.update((n, due[n] if n in taken else f"failed {due[n]}") for n in due)
     for f in img.iterdir():
         if f.name.split("-")[0] in taken:
-            shutil.copy2(f, SITE / "showcase/img" / f.name)
+            if f.resolve() != (SITE / "showcase/img" / f.name).resolve():
+                shutil.copy2(f, SITE / "showcase/img" / f.name)
     keys_file.write_text(json.dumps(keys, indent=1, sort_keys=True) + "\n")
     failed = [line for line in done.stdout.splitlines() if line.startswith("FAIL")]
     print(f"showcase: {len(taken)} of {len(due)} captures taken again in {time.monotonic() - began:.0f} s" + "".join(f"\n  {f}" for f in failed), file=sys.stderr)

@@ -179,6 +179,7 @@
   },
   {
    "name": "pdf",
+   "server": true,
    "file": "spacing.tex",
    "title": "PDF, synced",
    "big": true,
@@ -385,19 +386,19 @@
      "click": "[...document.querySelectorAll('#play-ctx .ctx-nested li')].find((l) => /ref/.test(l.textContent))"
     },
     {
-     "until": "/\\\\autoref|\\\\ref/.test(document.querySelector('.cm-editor').satexView.state.doc.toString().split('Results')[1])",
+     "until": "/Section~?\\\\(auto)?ref/.test(document.querySelector('.cm-editor').satexView.state.doc.toString())",
      "wait": 1500
     }
    ],
    "crop": [
-    ".cm-editor .cm-content",
+    "=lines('\\\\begin{lemma}', '\\\\end{document}')",
     ".tip-card:not([hidden])"
    ],
    "pad": 8,
    "keepMouse": true,
    "viewport": [
-    1000,
-    560
+    1400,
+    640
    ],
    "open": [
     "panel",
@@ -406,6 +407,7 @@
   },
   {
    "name": "runaway",
+   "server": true,
    "file": "runaway.tex",
    "title": "Errors at their cause",
    "wide": true,
@@ -485,7 +487,7 @@
     }
    ],
    "crop": [
-    ".cm-editor .cm-content",
+    "=lines('\\\\begin{figure}', '\\\\end{document}')",
     ".tip-card:not([hidden])"
    ],
    "pad": 8,
@@ -597,6 +599,9 @@
    "caption": "Hover a length to see it in every unit and as a share of the text width.",
    "steps": [
     {
+     "wait": 4000
+    },
+    {
      "hover": "__xy('\\\\vspace{12pt}', 9)"
     },
     {
@@ -609,6 +614,7 @@
    "crop": ".tip-card:not([hidden])",
    "pad": 0,
    "keepMouse": true,
+   "settle": 300,
    "open": [
     "units",
     "\\vspace{12pt}",
@@ -761,12 +767,14 @@
      "until": "document.getElementById('play-config').open"
     },
     {
+     "eval": "document.querySelector('#cfg-tabs [data-tab=core]').click()",
+     "until": "document.querySelector('#cfg-tabs [data-tab=core]').getAttribute('aria-pressed') === 'true'",
      "wait": 1500,
-     "snap": "back",
-     "eval": "0"
+     "snap": "back"
     },
     {
-     "eval": "[...document.querySelectorAll('#play-config [role=tab], #play-config button')].find((b) => b.textContent.trim() === 'Plugins')?.click()",
+     "eval": "document.querySelector('#cfg-tabs [data-tab=plugins]').click()",
+     "until": "document.querySelector('#cfg-tabs [data-tab=plugins]').getAttribute('aria-pressed') === 'true'",
      "wait": 1500
     }
    ],
