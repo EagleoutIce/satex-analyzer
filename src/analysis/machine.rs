@@ -14470,6 +14470,7 @@ impl Machine<'_> {
     /// value of its kind; past the depth followed, the run says so.
     /// `texts` is code known in order, `named` names known in no order.
     pub(crate) fn may_run(&mut self, by: Sym, named: &[Sym], texts: &[&[Token]], span: Span) {
+        use crate::engine::builtins::TextOf;
         use crate::engine::tex::RegKind;
         let mut seen: HashSet<Sym> = named.iter().copied().collect();
         let mut queue: Vec<(Sym, u8)> = named.iter().map(|&s| (s, 1)).collect();
@@ -14513,36 +14514,64 @@ impl Machine<'_> {
                 },
             };
             let text = self.named_csnames(&text, span);
-            let (mut defines, mut numbered) = (false, None::<(RegKind, Option<i64>)>);
+            // A register numbered in the text, and whether it is written.
+            let (mut defines, mut numbered) = (false, None::<(RegKind, Option<i64>, bool)>);
             // A definition inside a group the text opens and closes is gone
             // when it ends; a `\global` one is not.
             let (mut grouped, mut global, mut definer) = (0usize, false, None::<Primitive>);
+            // A quantity here is read, not assigned: the value after a target
+            // (`\escapechar\m@ne`), the operand of `\the`, a test or an
+            // expression, and after a test's relation.
+            let (mut operand, mut test) = (false, false);
             // The delimiters a macro called here reads up to: never code.
             let mut delimiters: Vec<(Tok, usize)> = Vec::new();
             for (i, t) in text.iter().enumerate() {
                 left = left.saturating_sub(1);
-                if let Some((kind, n)) = numbered {
+                if let Some((kind, n, write)) = numbered {
+                    let mut kept = || write && (grouped == 0 || std::mem::take(&mut global));
                     match (t.tok, n) {
                         (Tok::Chr(c, Catcode::Other), _) if c.is_ascii_digit() => {
                             let n = n.unwrap_or(0).saturating_mul(10) + i64::from(c as u8 - b'0');
-                            numbered = Some((kind, Some(n)));
+                            numbered = Some((kind, Some(n), write));
                             continue;
                         }
                         (Tok::Chr(' ', _), None) => continue,
-                        (_, Some(n)) => regs.push((self.register_sym(kind, n), kind)),
-                        // `\count\z@`: a `\chardef` constant names one; else any.
-                        (_, None) => match t.cs().map(|cs| self.env.meaning(cs)) {
-                            Some(Meaning::Register(RegKind::Char, n)) => {
-                                regs.push((self.register_sym(kind, i64::from(n)), kind))
+                        (_, Some(n)) => {
+                            if kept() {
+                                regs.push((self.register_sym(kind, n), kind));
                             }
-                            _ => kinds.push(kind),
-                        },
+                        }
+                        // `\count\z@`: a `\chardef` constant names one; else any.
+                        (_, None) => {
+                            let index = t.cs().map(|cs| self.env.meaning(cs));
+                            match (kept(), &index) {
+                                (true, Some(Meaning::Register(RegKind::Char, n))) => {
+                                    regs.push((self.register_sym(kind, i64::from(*n)), kind))
+                                }
+                                (true, _) => kinds.push(kind),
+                                _ => {}
+                            }
+                            numbered = None;
+                            operand = write;
+                            // A register naming the number is read.
+                            if matches!(index, Some(Meaning::Register(..))) {
+                                continue;
+                            }
+                        }
                     }
                     numbered = None;
+                    operand = write;
                 }
                 match t.tok {
                     Tok::Chr(_, Catcode::Begin) => grouped += 1,
                     Tok::Chr(_, Catcode::End) => grouped = grouped.saturating_sub(1),
+                    _ => {}
+                }
+                match t.tok {
+                    Tok::Chr(' ', _) | Tok::Chr('+' | '-', Catcode::Other) => {}
+                    Tok::Chr('=' | '<' | '>', Catcode::Other) => operand |= test,
+                    Tok::Chr(c, Catcode::Other) if c.is_ascii_digit() => operand = false,
+                    Tok::Chr(..) => (operand, test) = (false, false),
                     _ => {}
                 }
                 // A definer's target is the next token, spaces aside: a
@@ -14591,18 +14620,47 @@ impl Machine<'_> {
                 }
                 // A parameter or code set in a group the code opens is put back.
                 let kept = |global: &mut bool| grouped == 0 || std::mem::take(global);
+                let quantity = matches!(
+                    meaning,
+                    Meaning::Register(..)
+                        | Meaning::Primitive(
+                            Primitive::Register(_)
+                                | Primitive::IntegerParameter
+                                | Primitive::DimenParameter
+                                | Primitive::GlueParameter { .. }
+                                | Primitive::TokensParameter
+                        )
+                );
+                let read = quantity && operand;
+                if let (true, Meaning::Primitive(Primitive::Register(kind))) = (read, &meaning) {
+                    numbered = Some((*kind, None, false));
+                }
+                // A target's value follows it; a read operand ends one.
+                (operand, test) = match meaning.prim() {
+                    _ if quantity => (!read, test),
+                    Some(Primitive::If(_)) => (true, true),
+                    Some(Primitive::Text(TextOf::The | TextOf::Number | TextOf::Roman) | Primitive::Expr(_)) => {
+                        (true, false)
+                    }
+                    _ => (false, false),
+                };
                 match meaning {
                     Meaning::Undefined if defines => fresh.push(cs),
                     Meaning::Macro(_) if !seen.contains(&cs) && level >= self.limits.may_run_depth => deeper = true,
                     Meaning::Macro(_) if seen.insert(cs) => queue.push((cs, level + 1)),
-                    Meaning::Register(kind, _) if reg_kind(kind) => regs.push((self.storage(cs), kind)),
-                    Meaning::Primitive(Primitive::Register(kind)) if reg_kind(kind) => numbered = Some((kind, None)),
+                    Meaning::Register(..) | Meaning::Primitive(Primitive::Register(_)) if read => {}
+                    Meaning::Register(kind, _) if reg_kind(kind) && kept(&mut global) => {
+                        regs.push((self.storage(cs), kind))
+                    }
+                    Meaning::Primitive(Primitive::Register(kind)) if reg_kind(kind) => {
+                        numbered = Some((kind, None, true))
+                    }
                     Meaning::Primitive(
                         Primitive::IntegerParameter
                         | Primitive::DimenParameter
                         | Primitive::GlueParameter { .. }
                         | Primitive::TokensParameter,
-                    ) if kept(&mut global) => params.push(self.env.identity(cs)),
+                    ) if !read && kept(&mut global) => params.push(self.env.identity(cs)),
                     Meaning::Primitive(Primitive::CatcodeAssign) if kept(&mut global) => {
                         codes.push((None, code_target(&text[i + 1..], &self.out.interner)))
                     }

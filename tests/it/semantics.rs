@@ -2863,6 +2863,21 @@ mod model_deviations {
                 r"\def\n{1}\count1=0 \ifnum\pdfuniformdeviate2=0 \count\n=5 \fi\edef\R{\the\count1}",
                 "0",
             ),
+            (
+                "register after a value",
+                r"\count2=0 \ifnum\pdfuniformdeviate2=0 \count1=5\count2=3 \fi\edef\R{\the\count2}",
+                "0",
+            ),
+            (
+                "register after a read",
+                r"\countdef\m=22 \m=0 \ifnum\pdfuniformdeviate2=0 \edef\y{\the\count1}\m=3 \fi\edef\R{\the\m}",
+                "0",
+            ),
+            (
+                "advanced by name",
+                r"\countdef\m=22 \m=0 \ifnum\pdfuniformdeviate2=0 \global\advance\m by 1 \fi\edef\R{\the\m}",
+                "0",
+            ),
         ];
         let wrong: Vec<String> = rows
             .iter()
@@ -2872,6 +2887,42 @@ mod model_deviations {
             })
             .collect();
         assert!(wrong.is_empty(), "kept the value before: {wrong:?}");
+    }
+
+    /// D6: a register the arms only read (`\the`, `\number`, a test, the
+    /// value of an assignment) keeps its value, and one they set in a group
+    /// they close gets it back. LaTeX's `\m@ne` havocked so made
+    /// `\escapechar\m@ne` unknown and every `\string` after it.
+    #[test]
+    fn widened_arms_keep_registers_they_only_read() {
+        let rows = [
+            (
+                "constant read by name",
+                r"\countdef\m=22 \m=-1 \ifnum\pdfuniformdeviate2=0 \escapechar\m \count1=\m \advance\count1\m
+                  \edef\y{\the\m\number\m}\ifnum\m<0 \fi\fi\edef\R{\the\m}",
+                "-1",
+            ),
+            (
+                "register read by number",
+                r"\count2=7 \countdef\n=3 \n=\pdfuniformdeviate 9
+                  \ifnum\pdfuniformdeviate2=0 \edef\y{\the\count\n}\ifnum\count\n>0 \fi\fi\edef\R{\the\count2}",
+                "7",
+            ),
+            ("set in a group", r"\count1=0 \ifnum\pdfuniformdeviate2=0 {\count1=5 }\fi\edef\R{\the\count1}", "0"),
+            (
+                "escape char from a constant",
+                r"\countdef\m=22 \m=-1 \ifnum\pdfuniformdeviate2=0 \escapechar\m\fi\escapechar\m\edef\R{\string\relax}",
+                "relax",
+            ),
+        ];
+        let wrong: Vec<String> = rows
+            .iter()
+            .filter_map(|(what, source, kept)| {
+                let got = bodies(&run(source, |l| l.choices = 0));
+                (got.iter().any(|b| b != kept) || got.is_empty()).then(|| format!("{what}: {got:?}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "lost a value the arms only read: {wrong:?}");
     }
 
     /// D6 (c): macros past `limits.may_run_depth` are reported, and
