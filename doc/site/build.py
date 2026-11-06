@@ -1815,7 +1815,7 @@ def recapture(out):
     # a capture that failed on these inputs waits for them to change: no retry on every build
     due = {n: k for n, k in due.items() if keys.get(n) not in (k, f"failed {k}") or keys[n] == k and not all((img / f"{n}-{c}.png").exists() for c in ("light", "dark"))}
     if needs_server:
-        print(f"showcase: kept (needs the compile server): {', '.join(needs_server)}", file=sys.stderr)
+        print(f"showcase: kept {', '.join(needs_server)}: they compile through the local playground server, which a build does not run; retake with ONLY={','.join(needs_server)} node doc/site/showcase/capture.mjs http://127.0.0.1:8000/ while cargo playground serves", file=sys.stderr)
     if not due:
         return False
     chrome = os.environ.get("CHROME") or next(iter(sorted(Path.home().glob(".cache/ms-playwright/chromium-*/chrome-linux64/chrome"), reverse=True)), None)
