@@ -337,6 +337,38 @@ lints:
     rows: 3  # rows with text, header included, before booktabs rules are suggested
       #! affects: output
       #! example: a two-row table with `\hline` gets no finding
+  clones:  # blocks of the source that repeat with only their values changed
+    enabled: true  # look for clones at all
+      #! affects: output
+    min_tokens: 40  # tokens a clone must share, its differing values not counted
+      #! affects: output
+      #! example: two copies of `\begin{itemize}\item A\end{itemize}` are too short
+    min_lines: 1  # source lines a clone must span
+      #! affects: output
+    similarity: 0.85  # share of matching tokens two near-identical blocks need, 1 for values only
+      #! affects: output
+      #! range: 0..1
+      #! example: a copy with one inserted line is found at 0.85, not at 0.95
+    max_parameters: 9  # the most holes the macro a fix writes may take, as TeX allows
+      #! affects: output
+    max_value_share: 0.5  # share of a clone its differing values may take
+      #! affects: output
+      #! range: 0..1
+      #! example: two paragraphs with only their text different are no clone
+    ignore: []  # regexes on environment names whose bodies are never read for clones
+      #! affects: output
+      #! example: `ignore: ['tabular\*?']`
+    scope: both  # where to look
+      #! affects: output
+      #! option: body: after \begin{document}
+      #! option: preamble: before it, and the document's own packages
+      #! option: both: everywhere
+    min_occurrences: 2  # places a block must stand at
+      #! affects: output
+    seed: 8  # tokens of the window whose hash finds candidates
+      #! affects: output, speed
+    partners: 32  # later places with the same window one place is compared with
+      #! affects: output, speed
 # profile: package          # the kind of input whose defaults apply: document, package, class, literate or plain. Detected when unset
 #! affects: output, precision
 #! option: document: an ordinary LaTeX document, a .tex file with a body

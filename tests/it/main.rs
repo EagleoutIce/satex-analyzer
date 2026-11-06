@@ -15,6 +15,7 @@ mod cache_concurrency;
 mod cache_semantics;
 mod chktex;
 mod classes;
+mod clones;
 mod colors;
 mod compile;
 #[cfg(unix)]

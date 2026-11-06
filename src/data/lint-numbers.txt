@@ -115,3 +115,5 @@ S051 hand-written-reference
 S052 hand-written-author
 C048 undefined-cref-format
 C049 unknown-code-language
+S053 clones
+S054 et-al

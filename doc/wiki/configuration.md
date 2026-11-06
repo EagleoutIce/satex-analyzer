@@ -354,6 +354,38 @@ lints:
     rows: 3  # rows with text, header included, before booktabs rules are suggested
       #! affects: output
       #! example: a two-row table with `\hline` gets no finding
+  clones:  # blocks of the source that repeat with only their values changed
+    enabled: true  # look for clones at all
+      #! affects: output
+    min_tokens: 40  # tokens a clone must share, its differing values not counted
+      #! affects: output
+      #! example: two copies of `\begin{itemize}\item A\end{itemize}` are too short
+    min_lines: 1  # source lines a clone must span
+      #! affects: output
+    similarity: 0.85  # share of matching tokens two near-identical blocks need, 1 for values only
+      #! affects: output
+      #! range: 0..1
+      #! example: a copy with one inserted line is found at 0.85, not at 0.95
+    max_parameters: 9  # the most holes the macro a fix writes may take, as TeX allows
+      #! affects: output
+    max_value_share: 0.5  # share of a clone its differing values may take
+      #! affects: output
+      #! range: 0..1
+      #! example: two paragraphs with only their text different are no clone
+    ignore: []  # regexes on environment names whose bodies are never read for clones
+      #! affects: output
+      #! example: `ignore: ['tabular\*?']`
+    scope: both  # where to look
+      #! affects: output
+      #! option: body: after \begin{document}
+      #! option: preamble: before it, and the document's own packages
+      #! option: both: everywhere
+    min_occurrences: 2  # places a block must stand at
+      #! affects: output
+    seed: 8  # tokens of the window whose hash finds candidates
+      #! affects: output, speed
+    partners: 32  # later places with the same window one place is compared with
+      #! affects: output, speed
 # profile: package          # the kind of input whose defaults apply: document, package, class, literate or plain. Detected when unset
 #! affects: output, precision
 #! option: document: an ordinary LaTeX document, a .tex file with a body
@@ -1083,6 +1115,28 @@ A rule's own settings live under `lints.⟨code⟩`.
 `lints.user-pattern.regexes` (default `[]`): Regular expressions reported the same way, as chktex's `UserWarnRegex`.
 
 `lints.comment-marker.markers` (default `[TODO, FIXME, XXX, HACK]`): The markers in a comment worth a finding. This is satex's reading of chktex's warning 22, which prints every comment.
+
+`lints.clones.enabled` (default `true`): Whether the rule looks for clones at all.
+
+`lints.clones.min_tokens` (default `40`): Tokens a clone must share, its differing values not counted.
+
+`lints.clones.min_lines` (default `1`): Source lines a clone must span.
+
+`lints.clones.similarity` (default `0.85`): The share of matching tokens two near-identical blocks need. 1 finds only blocks that differ in their values.
+
+`lints.clones.max_parameters` (default `9`): The most holes a macro the fix writes may take. TeX allows 9.
+
+`lints.clones.max_value_share` (default `0.5`): The share of a clone its differing values may take, so paragraphs and lists of items are no clones.
+
+`lints.clones.ignore` (default `[]`): Regexes on environment names whose bodies are never read for clones.
+
+`lints.clones.scope` (default `both`): Where to look: `body`, `preamble` or `both`.
+
+`lints.clones.min_occurrences` (default `2`): How many places a block must stand at.
+
+`lints.clones.seed` (default `8`): Tokens of a window whose hash finds candidates: smaller finds shorter clones.
+
+`lints.clones.partners` (default `32`): How many later places with the same window one place is compared with.
 
 ## Search paths
 

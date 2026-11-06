@@ -1599,6 +1599,15 @@ pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
         if crate::linter::number(&code).is_some() {
             diagnostic["codeDescription"] = serde_json::json!({ "href": crate::linter::url(&code) });
         }
+        if let Some(related) = record.get("related").and_then(Json::as_array) {
+            let place = |r: &Json| {
+                let path = plain(r.get("path").unwrap_or(&Json::Null));
+                let (line, col) = (r["line"].as_u64().unwrap_or(1), r["col"].as_u64().unwrap_or(1));
+                let at = position(&path, line, col);
+                serde_json::json!({ "location": { "uri": uri(&path), "range": { "start": at, "end": at } }, "message": "repeated here" })
+            };
+            diagnostic["relatedInformation"] = related.iter().map(place).collect();
+        }
         let changes: serde_json::Map<String, Json> = edits_by_file(record)
             .into_iter()
             .map(|(file, edits)| {

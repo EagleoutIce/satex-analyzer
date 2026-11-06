@@ -2108,6 +2108,64 @@ pub struct Lints {
     pub microtype_available: MicrotypeAvailable,
     pub ellipsis_dots: EllipsisDots,
     pub table_rules: TableRules,
+    pub clones: Clones,
+}
+
+/// `lints.clones:` in `satex.yaml`: which repeated blocks of the source are worth a macro.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Clones {
+    /// Whether the rule looks for clones at all.
+    pub enabled: bool,
+    /// Tokens a clone must share, its differing values not counted.
+    pub min_tokens: usize,
+    /// Source lines a clone must span.
+    pub min_lines: usize,
+    /// The share of matching tokens two near-identical blocks need. 1 finds
+    /// only blocks that differ in their values.
+    pub similarity: f64,
+    /// The most holes a macro the fix writes may take. TeX allows 9.
+    pub max_parameters: usize,
+    /// The share of a clone its differing values may take, so paragraphs and
+    /// lists of items are no clones.
+    pub max_value_share: f64,
+    /// Regexes on environment names whose bodies are never read for clones.
+    pub ignore: Vec<String>,
+    /// Where to look: `body`, `preamble` or `both`.
+    pub scope: CloneScope,
+    /// How many places a block must stand at.
+    pub min_occurrences: usize,
+    /// Tokens of a window whose hash finds candidates: smaller finds shorter clones.
+    pub seed: usize,
+    /// How many later places with the same window one place is compared with.
+    pub partners: usize,
+}
+
+/// Which part of the document [`Clones`] reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CloneScope {
+    Body,
+    Preamble,
+    Both,
+}
+
+impl Default for Clones {
+    fn default() -> Clones {
+        Clones {
+            enabled: true,
+            min_tokens: 40,
+            min_lines: 1,
+            similarity: 0.85,
+            max_parameters: 9,
+            max_value_share: 0.5,
+            ignore: Vec::new(),
+            scope: CloneScope::Both,
+            min_occurrences: 2,
+            seed: 8,
+            partners: 32,
+        }
+    }
 }
 
 /// `lints.table-rules:` in `satex.yaml`.

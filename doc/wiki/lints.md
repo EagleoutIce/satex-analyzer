@@ -100,6 +100,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C036 | [`undefined-optional-content`](#undefined-optional-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | marked content refers to an optional content group no resource names | — |
 | C037 | [`undefined-reference`](#undefined-reference) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | `\ref` names a label that is never defined | — |
 | C038 | [`uninstalled-package`](#uninstalled-package) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | the package is not installed, and the distribution could install it | — |
+| C049 | [`unknown-code-language`](#unknown-code-language) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a listings key names a language nothing defines | — |
 | C039 | [`unresolved-file`](#unresolved-file) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a package, class or input file is not in the installation | <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a> |
 | C045 | [`assumption-made`](#assumption-made) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | — | the document assumes a condition | — |
 | C040 | [`expected-load`](#expected-load) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | — | the file was read after a package it expects loaded | — |
@@ -113,6 +114,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | S003 | [`dimension-times`](#dimension-times) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | the letter x stands between two numbers where a multiplication sign belongs | <a class="from" href="Chktex-Coverage" title="follows chktex warning 29">chktex 29</a> |
 | S004 | [`double-space`](#double-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | two interword spaces reached the page, one of them from a tie | <a class="from" href="Chktex-Coverage" title="follows chktex warning 30, 39">chktex 30, 39</a> |
 | S005 | [`ellipsis-dots`](#ellipsis-dots) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | three periods set three periods, not an ellipsis | <a class="from" href="Chktex-Coverage" title="follows chktex warning 11">chktex 11</a> |
+| S054 | [`et-al`](#et-al) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | `et al.` spelled another way, or a citation number typed after it | — |
 | S006 | [`expl3-scope`](#expl3-scope) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | an expl3 variable's scope prefix disagrees with how the run assigned it | — |
 | S007 | [`expl3-type`](#expl3-type) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | an expl3 variable's type suffix disagrees with the functions that set it | — |
 | S008 | [`group-local-definition`](#group-local-definition) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | a definition is made inside a group and lost when it closes | — |
@@ -133,6 +135,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | S023 | [`build-bibliography-unneeded`](#build-bibliography-unneeded) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | the build configures BibTeX or biber for a document without a bibliography | — |
 | S024 | [`build-engine-options`](#build-engine-options) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | the engine command could report errors as file:line and write SyncTeX data | — |
 | S025 | [`build-unused-custom-dependency`](#build-unused-custom-dependency) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | a latexmk custom dependency that nothing in the document triggers | — |
+| S053 | [`clones`](#clones) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a block of the source repeats with only its values changed | — |
 | S026 | [`comment-marker`](#comment-marker) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | a comment still carries a TODO-style marker | <a class="from" href="Chktex-Coverage" title="follows chktex warning 22">chktex 22</a> |
 | S027 | [`computer-modern-in-t1`](#computer-modern-in-t1) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex">pdftex</span> | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | T1 text in Computer Modern relies on cm-super for scalable fonts | — |
 | S028 | [`csquotes-available`](#csquotes-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | the document sets quotation marks by hand instead of loading csquotes | <a class="from" href="Chktex-Coverage" title="follows chktex warning 18">chktex 18</a> |
@@ -182,7 +185,8 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 
 `S` marks a safe fix, `U` an unsafe one. A rule with both has findings of each kind: the fix is safe where it cannot change what the document means and unsafe where it might. Each finding names its own kind.
 
-<details><summary>54 rules with quick fixes</summary>
+<div class="fold">
+<h3 class="fold-head">56 rules with quick fixes</h3>
 
 * C001 [`already-defined`](#already-defined) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\newcommand` redefines an existing name
 * C002 [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a BibTeX command biblatex replaces stops the run
@@ -203,6 +207,7 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 * S003 [`dimension-times`](#dimension-times) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> the letter x stands between two numbers where a multiplication sign belongs
 * S004 [`double-space`](#double-space) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> two interword spaces reached the page, one of them from a tie
 * S005 [`ellipsis-dots`](#ellipsis-dots) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> three periods set three periods, not an ellipsis
+* S054 [`et-al`](#et-al) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `et al.` spelled another way, or a citation number typed after it
 * S009 [`math-operator-name`](#math-operator-name) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> an operator name is set in math italic instead of by its command
 * S010 [`missing-italic-correction`](#missing-italic-correction) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a slanted letter runs into upright text with no `\/` between them
 * S011 [`missing-nonbreaking-space`](#missing-nonbreaking-space) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> an ordinary space in front of a reference lets the line break before the number
@@ -215,6 +220,7 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 * S020 [`wrong-dash`](#wrong-dash) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a run of hyphens sets a dash of the wrong length for what stands around it
 * S021 [`wrong-quote-character`](#wrong-quote-character) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a character that is not a quotation mark stands in for one
 * S022 [`zero-italic-correction`](#zero-italic-correction) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> the italic correction is zero here, so `\/` changes nothing
+* S053 [`clones`](#clones) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a block of the source repeats with only its values changed
 * S027 [`computer-modern-in-t1`](#computer-modern-in-t1) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> T1 text in Computer Modern relies on cm-super for scalable fonts
 * S028 [`csquotes-available`](#csquotes-available) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> the document sets quotation marks by hand instead of loading csquotes
 * S029 [`dead-definition`](#dead-definition) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a definition is replaced before anything uses it
@@ -239,14 +245,14 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 * P005 [`unused-dependency`](#unused-dependency) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> the dependency file lists a TeX Live package no file of the run comes from
 * P006 [`unused-package`](#unused-package) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a loaded package defines nothing the document uses
 
-</details>
+</div>
 
 ## Explanations
 
-One group per category. Open a group to read its rules.
+One group per category, each with its first rules. A group's button shows the rest.
 
-<details id="category-correctness">
-<summary><b>correctness</b> (48 rules)</summary>
+<div class="fold" id="category-correctness">
+<h3 class="fold-head"><b>correctness</b> (49 rules)</h3>
 
 ### already-defined
 
@@ -757,6 +763,18 @@ Fix by running the command the finding gives, or `satex install`, which never ru
 
 See [TeX Live manual § tlmgr](https://tug.org/texlive/doc.html), [MiKTeX manual § miktex packages](https://docs.miktex.org/manual/).
 
+### unknown-code-language
+
+<p class="badges"><code class="num" title="rule number">C049</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
+
+**a listings key names a language nothing defines**
+
+listings finds a language through the driver `\lstlang@⟨language⟩$⟨dialect⟩`, which `\lstdefinelanguage` defines and the language files (`\lstlanguagefiles`, `lstlang1.sty` and its siblings) declare. A name none of them defines raises `Couldn't load requested language`, and the listing is typeset without highlighting.
+
+The rule reads the keys whose values the run formed such a driver from (`language=`), and checks every value of those keys against the run's definitions and the declarations of the language files. Where the run did not know the list of language files, the finding is a note.
+
+Fix by correcting the name, or by defining the language with `\lstdefinelanguage`.
+
 ### unresolved-file
 
 <p class="badges"><code class="num" title="rule number">C039</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a></p>
@@ -855,7 +873,7 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 </div>
 
 <div class="fold" id="category-style">
-<h3 class="fold-head"><b>style</b> (52 rules)</h3>
+<h3 class="fold-head"><b>style</b> (54 rules)</h3>
 
 ### accent-on-dotted-letter
 
@@ -926,6 +944,20 @@ The rule reads the periods that reached the page, so an ellipsis a command produ
 Fix by writing the command.
 
 See [chktex 11](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https://ctan.org/pkg/texbook#chapter-18).
+
+### et-al
+
+<p class="badges"><code class="num" title="rule number">S054</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
+
+**`et al.` spelled another way, or a citation number typed after it**
+
+`et al.` shortens *et alii*. `et` is a whole word, so only `al.` takes a period. `et. al.`, `et.al.`, `et al` and the spelled-out `et alii` or `et alia` read as slips. The fix writes `et al.` and keeps a tie the source had.
+
+A number in brackets typed after it, as in `Smith et al. [3]`, is a citation typed by hand, so it does not follow the bibliography. Write `\cite`, or `\textcite` (biblatex) and `\citet` (natbib), which print the authors too.
+
+Text in math, verbatim or a comment is never read. The space after `al.` is the business of `sentence-spacing`.
+
+See [The LaTeX Companion § 16.3](https://ctan.org/pkg/tlc3-examples).
 
 ### expl3-scope
 
@@ -1041,7 +1073,7 @@ See [chktex 32](https://www.nongnu.org/chktex/), [chktex 33](https://www.nongnu.
 
 **a period set the wrong width of space for the sentence around it**
 
-How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000.
+How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000. Under `\frenchspacing` a period sets 1000 too, so nothing is reported.
 
 So `etc. and` gets a sentence space and `the ABC. Next` a word space, both the wrong way round. The rule reads the characters the run set and reports only where a real space token became glue.
 
@@ -1193,6 +1225,20 @@ Fix by removing the rule, or keep it if another document of the project needs it
 
 See [latexmk § CUSTOM DEPENDENCIES](https://ctan.org/pkg/latexmk).
 
+### clones
+
+<p class="badges"><code class="num" title="rule number">S053</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
+
+**a block of the source repeats with only its values changed**
+
+Two figures that differ only in the width, the file, the caption and the label are one macro used twice. Copies drift apart when one is edited and the other is not.
+
+The rule reads the document's own files token by token, as TeX reads them, with comments and spaces dropped. A run of letters and other characters is a value. Blocks that match up to their values are clones, and so are blocks that match after a few inserted or deleted tokens (`lints.clones.similarity`). The finding stands at the first block and names the other places. Its message lists each hole, the places where the blocks differ, with the values there.
+
+A clone shares at least `min_tokens` tokens, and its values take at most `max_value_share` of it, so paragraphs and lists of items are no clones. Library code is never read. Two of the document's macros with the same body are reported too.
+
+Fix by defining one macro with a parameter per hole and using it at every place. The fix writes it when there are at most `max_parameters` holes (TeX allows 9). It is unsafe: the macro's name is a guess.
+
 ### comment-marker
 
 <p class="badges"><code class="num" title="rule number">S026</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 22">chktex 22</a></p>
@@ -1293,7 +1339,9 @@ In `Knuth \cite{knuth84}` the name is typed by hand. natbib's `\citet` and bibla
 
 A finding needs a citation of one key whose entry, in a database the run read, has that author's last name right before it. `Knuth and Plass` and `Knuth et al.` count, as does a citation in brackets, `Knuth~[\cite{k}]`. It needs natbib or biblatex too: without `\textcite`, `\citet` or `\citeauthor`, there is nothing better to write.
 
-Fix by writing `\textcite{knuth84}`, `\citet{knuth84}` or `\citeauthor{knuth84}~\cite{knuth84}`.
+Fix by writing `\textcite{knuth84}`, `\citet{knuth84}` or `\citeauthor{knuth84}~\cite{knuth84}`. These shorten a long author list as the style says (biblatex's `maxcitenames`, natbib's `.bst`).
+
+`Plass et al.` before a citation whose entry starts with another name, or has fewer than three authors, gets a hint without an edit: the name or the key may be the slip.
 
 See [biblatex § 3.9.1](https://ctan.org/pkg/biblatex), [The LaTeX Companion § 16.3](https://ctan.org/pkg/tlc3-examples).
 

@@ -15,6 +15,13 @@ fn extensions(kind: LoadKind) -> &'static [&'static str] {
     }
 }
 
+/// Whether `path` names a file TeX reads as source, by the extensions the
+/// loader looks for: not an image, a `.bib` or a Lua module the run read.
+pub fn tex_source(path: &Path) -> bool {
+    let ext = path.extension().and_then(|e| e.to_str());
+    ext.is_none_or(|e| [LoadKind::Input, LoadKind::Package].iter().any(|k| extensions(*k).contains(&e)))
+}
+
 /// Finds a package, class or input file: first beside the document, then in
 /// the [`Trees`] of the configured [`Distribution`].
 /// [`crate::analysis::machine::Machine::load`] calls it once per `\usepackage`-family

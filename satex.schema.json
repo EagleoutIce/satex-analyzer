@@ -2912,6 +2912,124 @@
           },
           "type": "object"
         },
+        "clones": {
+          "description": "blocks of the source that repeat with only their values changed",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "look for clones at all",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "ignore": {
+              "default": [],
+              "description": "regexes on environment names whose bodies are never read for clones",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`ignore: ['tabular\\*?']`"
+            },
+            "max_parameters": {
+              "default": 9,
+              "description": "the most holes the macro a fix writes may take, as TeX allows",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "max_value_share": {
+              "default": 0.5,
+              "description": "share of a clone its differing values may take",
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "two paragraphs with only their text different are no clone"
+            },
+            "min_lines": {
+              "default": 1,
+              "description": "source lines a clone must span",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "min_occurrences": {
+              "default": 2,
+              "description": "places a block must stand at",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "min_tokens": {
+              "default": 40,
+              "description": "tokens a clone must share, its differing values not counted",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "two copies of `\\begin{itemize}\\item A\\end{itemize}` are too short"
+            },
+            "partners": {
+              "default": 32,
+              "description": "later places with the same window one place is compared with",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output",
+                "speed"
+              ]
+            },
+            "scope": {
+              "default": "both",
+              "description": "where to look",
+              "enumDescriptions": [
+                "after \\begin{document}",
+                "before it, and the document's own packages",
+                "everywhere"
+              ],
+              "type": "string",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "seed": {
+              "default": 8,
+              "description": "tokens of the window whose hash finds candidates",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output",
+                "speed"
+              ]
+            },
+            "similarity": {
+              "default": 0.85,
+              "description": "share of matching tokens two near-identical blocks need, 1 for values only",
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "a copy with one inserted line is found at 0.85, not at 0.95"
+            }
+          },
+          "type": "object"
+        },
         "comment-marker": {
           "properties": {
             "markers": {

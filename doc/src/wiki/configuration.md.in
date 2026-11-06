@@ -105,6 +105,8 @@ A rule's own settings live under `lints.⟨code⟩`.
 
 {{fields: CommentMarker lints.comment-marker}}
 
+{{fields: Clones lints.clones}}
+
 ## Search paths
 
 `TEXINPUTS` and `BIBINPUTS` (plus `BSTINPUTS`, `TFMFONTS`, `ENCFONTS`, passed on to `kpsewhich`) come from, first wins: the environment, the `latexmkrc` (`ensure_path`, `$ENV{…}`), the Makefile (`export`, inline), then `paths.*` in `satex.yaml`. kpathsea syntax applies (`:`, `//`, an empty component for the default). Relative entries resolve against the build's directory. `satex --version` shows each value and its source.

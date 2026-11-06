@@ -173,6 +173,11 @@ impl Scan {
         self.ahead.front()
     }
 
+    /// What `\makeatletter` and its kin change for the lexemes still to come.
+    pub fn set_cat(&mut self, c: char, cat: Catcode) {
+        self.cats.set(c, cat);
+    }
+
     pub fn name(&self, lexeme: &Lexeme) -> Option<&str> {
         match lexeme.tok {
             Tok::Cs(sym) => Some(self.interner.name(sym)),
@@ -339,7 +344,7 @@ impl<'a> Edits<'a> {
     /// The category codes a file is read with: LaTeX's, with `@` a letter
     /// in a package or class, which `\usepackage` and `\documentclass` make
     /// it (source2e, ltclass.dtx).
-    fn cats(&self, file: FileId) -> CatcodeTable {
+    pub(crate) fn cats(&self, file: FileId) -> CatcodeTable {
         if let Some(cats) = self.sources.cats.borrow().get(&file) {
             return cats.clone();
         }
@@ -698,7 +703,7 @@ impl<'a> Edits<'a> {
     }
 
     /// Where `\⟨command⟩` stands last before `span` on its line.
-    fn call_before(&self, span: Span, command: &str) -> Option<Span> {
+    pub(crate) fn call_before(&self, span: Span, command: &str) -> Option<Span> {
         let (_, text) = self.text(span.file)?;
         let end = text.offset(Pos::of(span))?;
         let line = text.offset(Pos::new(span.line, 1))?;

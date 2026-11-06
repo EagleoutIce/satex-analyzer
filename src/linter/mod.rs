@@ -6,6 +6,7 @@ pub mod bibliography;
 pub mod build;
 pub mod chktex;
 pub mod cite;
+pub mod clones;
 pub mod colors;
 pub mod correctness;
 pub mod dashes;
@@ -65,6 +66,7 @@ pub fn all() -> impl Iterator<Item = &'static Rule> {
         .chain(languages::RULES)
         .chain(tables::RULES)
         .chain(xref::RULES)
+        .chain(clones::RULES)
 }
 
 /// Which lint family a [`Rule`] belongs to. `satex lint --filter category=…`
@@ -394,6 +396,18 @@ impl<'a> Report<'a> {
     pub fn add_fix_as(&mut self, severity: Severity, span: Span, name: &str, message: String, fix: fix::Fix) {
         let edits = (!fix.edits.is_empty()).then_some((fix.applicability, fix.edits));
         self.push(severity, span, name, message, Some(fix.description), edits);
+    }
+
+    /// [`Report::add_fix`] for a finding that stands at `related` too: the
+    /// other places, which an editor links.
+    pub fn add_fix_related(&mut self, span: Span, name: &str, message: String, fix: fix::Fix, related: &[Span]) {
+        let before = self.out.len();
+        self.add_fix(span, name, message, fix);
+        if let Some(record) = self.out.get_mut(before) {
+            let places =
+                related.iter().map(|s| serde_json::Value::Object(crate::queries::query::place(self.analysis, *s)));
+            record.insert("related".into(), places.collect());
+        }
     }
 
     /// A finding over the characters `rewrite` covers, whose fix writes
