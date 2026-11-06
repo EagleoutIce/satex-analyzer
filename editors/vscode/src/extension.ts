@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { LanguageClient, State, StreamInfo } from 'vscode-languageclient/node';
 import { openDialog } from './dialogs';
+import { peers, uninstallCommand, yields } from './peers';
 import { Actions } from './sidebar';
 import { STALE, Status, Work } from './status';
 import { Steps, TraceEvent } from './steps';
@@ -12,6 +13,8 @@ import { manage, openView, ViewActions } from './views';
 
 const INSTALL_HINT = 'Install it with `cargo install satex-analyzer`, download a release from https://github.com/EagleoutIce/satex-analyzer/releases, or set `satex.path`.';
 let client: LanguageClient | undefined;
+/** The window's one status item. */
+let status: Status | undefined;
 let binaryPath = '';
 const trace = vscode.window.createOutputChannel('satex trace');
 const build = vscode.window.createOutputChannel('satex build');
@@ -169,14 +172,47 @@ async function showCaches(): Promise<void> {
         { title: `satex caches: ${path.basename(editor.document.uri.fsPath)}`, placeHolder: 'reused caches load in milliseconds; rebuilt ones are kept for the next run' });
 }
 
+/** A command; one another copy of SaTeX holds already stays its, and this activation goes on. */
+function command(id: string, run: (...args: never[]) => unknown): vscode.Disposable {
+    try {
+        return vscode.commands.registerCommand(id, run);
+    } catch (error) {
+        trace.appendLine(`satex: ${String(error)}`);
+        return new vscode.Disposable(() => undefined);
+    }
+}
+
+/** Once per set of other SaTeX copies: say they double the server and offer to uninstall them. */
+async function warnPeers(context: vscode.ExtensionContext, others: string[]): Promise<void> {
+    const key = `satex.warnedPeers:${others.join(',')}`;
+    if (context.globalState.get(key)) { return; }
+    await context.globalState.update(key, true);
+    const remove = others.length === 1 ? `Uninstall ${others[0]}` : 'Uninstall the others';
+    const answer = await vscode.window.showWarningMessage(
+        `SaTeX is installed more than once (${others.join(', ')} besides ${context.extension.id}): each copy starts a server and a status item. `
+        + `Uninstall the others? From a terminal: ${others.map(uninstallCommand).join('; ')}`, remove, 'Keep');
+    if (answer !== remove) { return; }
+    for (const id of others) { await vscode.commands.executeCommand('workbench.extensions.uninstallExtension', id); }
+    const reload = 'Reload Window';
+    if (await vscode.window.showInformationMessage('SaTeX: reload the window to stop the removed copy.', reload) === reload) {
+        await vscode.commands.executeCommand('workbench.action.reloadWindow');
+    }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
+    const others = peers(vscode.extensions.all, context.extension.id);
+    if (others.length > 0) {
+        void warnPeers(context, others);
+        // a local build gives way to the published extension
+        if (yields(context.extension.id, others)) { return; }
+    }
     const binary = resolveBinary(context);
     if (!binary) {
         void vscode.window.showErrorMessage(`satex binary not found. ${INSTALL_HINT}`);
         return;
     }
     binaryPath = binary;
-    const status = new Status();
+    const bar = (status ??= new Status());
     // The findings live in the Problems view. While a newer analysis runs they
     // are hidden (`satex.findings.whileAnalyzing`: `hide`) or marked as old (`mark`).
     const published = new Map<string, [vscode.Uri, vscode.Diagnostic[]]>();
@@ -207,7 +243,7 @@ export function activate(context: vscode.ExtensionContext): void {
             },
         });
     const working = (work: Work) => {
-        status.working(work);
+        bar.working(work);
         // A hover's trial run changes no finding.
         const now = Boolean(work.text) && work.phase !== 'probe';
         if (now === analyzing) { return; }
@@ -215,32 +251,32 @@ export function activate(context: vscode.ExtensionContext): void {
         for (const [uri, diagnostics] of published.values()) { client?.diagnostics?.set(uri, shown(diagnostics)); }
     };
     context.subscriptions.push(
-        trace, build, buildDiagnostics, status, steps,
-        vscode.commands.registerCommand('satex.traceNext', () => steps.move(1)),
-        vscode.commands.registerCommand('satex.tracePrevious', () => steps.move(-1)),
-        vscode.commands.registerCommand('satex.tracePick', () => steps.pick()),
-        vscode.commands.registerCommand('satex.traceClose', () => steps.clear()),
+        trace, build, buildDiagnostics, bar, { dispose: () => { status = undefined; } }, steps,
+        command('satex.traceNext', () => steps.move(1)),
+        command('satex.tracePrevious', () => steps.move(-1)),
+        command('satex.tracePick', () => steps.pick()),
+        command('satex.traceClose', () => steps.clear()),
         vscode.window.registerTreeDataProvider('satex.actions', new Actions()),
-        vscode.commands.registerCommand('satex.traceAtCursor', traceAtCursor),
-        vscode.commands.registerCommand('satex.compile', compile),
-        vscode.commands.registerCommand('satex.focus', () => vscode.commands.executeCommand('workbench.actions.view.problems')),
-        vscode.commands.registerCommand('satex.caches', showCaches),
+        command('satex.traceAtCursor', traceAtCursor),
+        command('satex.compile', compile),
+        command('satex.focus', () => vscode.commands.executeCommand('workbench.actions.view.problems')),
+        command('satex.caches', showCaches),
         // the table and image dialogs (src/lsp/dialogs.rs): `satex/dialog` in a webview
-        vscode.commands.registerCommand('satex.openDialog', (arg) => openDialog(context, client, arg)),
-        vscode.commands.registerCommand('satex.restart', () => client?.restart()),
-        vscode.commands.registerCommand('satex.showOutput', () => client?.outputChannel.show(true)),
+        command('satex.openDialog', (arg) => openDialog(context, client, arg)),
+        command('satex.restart', () => client?.restart()),
+        command('satex.showOutput', () => client?.outputChannel.show(true)),
         // type plugins' dialogs (color picker, length converter, drawing): the server's `satex/view` in a webview
-        vscode.commands.registerCommand('satex.applyEdit', async (uri: string, range: vscode.Range, newText: string) => {
+        command('satex.applyEdit', async (uri: string, range: vscode.Range, newText: string) => {
             const edit = new vscode.WorkspaceEdit();
             edit.replace(vscode.Uri.parse(uri), new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character), newText);
             await vscode.workspace.applyEdit(edit);
         }),
-        vscode.commands.registerCommand('satex.openView', (uri?: vscode.Uri | string, at?: vscode.Position, plugin?: string) => openView(context, client, uri, at, plugin)),
+        command('satex.openView', (uri?: vscode.Uri | string, at?: vscode.Position, plugin?: string) => openView(context, client, uri, at, plugin)),
         vscode.languages.registerCodeActionsProvider(['latex', 'tex'].map(language => ({ language })), new ViewActions(() => client)),
-        vscode.commands.registerCommand('satex.manage', () => manage(context, client)),
-        vscode.commands.registerCommand('satex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
+        command('satex.manage', () => manage(context, client)),
+        command('satex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
         client.onNotification('satex/status', working),
-        client.onDidChangeState(e => status.down(e.newState === State.Stopped)));
+        client.onDidChangeState(e => bar.down(e.newState === State.Stopped)));
     checkTeX();
     void client.start();
     void harmonize(context);

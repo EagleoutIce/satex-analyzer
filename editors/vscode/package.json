@@ -226,7 +226,8 @@
     "vscode:prepublish": "npm run compile",
     "package": "vsce package --no-dependencies",
     "package:local": "node scripts/try.mjs",
-    "try": "node scripts/try.mjs --install"
+    "try": "node scripts/try.mjs --install",
+    "test": "esbuild src/test/*.test.ts --bundle --platform=node --format=cjs --outdir=out/test --log-level=warning && node --test out/test/"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
