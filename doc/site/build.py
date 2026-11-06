@@ -596,10 +596,16 @@ def bundle(satex, work):
     # and the tree lacks (the playground's Files view calls what it looks for "absent in TeX Live too").
     looked = parallel("[4/4] examples over the bundle", [d for d in docs if d.suffix == ".tex"],
                       lambda d: files_read(satex, KERNELS[0][2], project / d.name, project, env, config=config.encode(), absent=True))
-    # a gap is a warning, never a failed build: the playground then says the file is not in the playground
-    lacking = sorted({f"{d.name}: {n}" for d, names in zip([d for d in docs if d.suffix == ".tex"], looked) for n in kpsewhich(names, work)})
-    if lacking:
-        print(f"playground: warning: examples look for TeX Live files the bundle lacks: {', '.join(lacking)}", file=sys.stderr)
+    # a file an example only looks for (`\IfFileExists`, graphicx's extension probes: mwe's example-image.tex) is read by
+    # no listing: it joins the tree, so the playground answers as TeX Live does
+    found = {path for names in looked for path in kpsewhich(names, work).values() if path.is_relative_to(dist)}
+    for path in found:
+        target = tree / path.relative_to(dist)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+        extra[path.relative_to(dist).as_posix()] = path  # in the first download, as the extra files are
+    if found:
+        print(f"playground: {len(found)} files the examples look for joined the bundle: {', '.join(sorted(p.name for p in found))}", file=sys.stderr)
 
     # Kernels: the sample's files and the cache entries of running it. A kernel's
     # cache directory stays from the last build: satex rebuilds what this binary cannot use, and
