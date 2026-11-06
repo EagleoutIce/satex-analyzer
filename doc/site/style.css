@@ -2210,3 +2210,4 @@ main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/
 }
 /* the title page: the first screen holds the title alone, its parts spread by the glue between them */
 @media (min-height: 40rem) and (min-width: 48rem) { .hero { min-height: max(calc(var(--hero-room) + clamp(var(--s24), 5vh, var(--s64)) + var(--s32)), calc(100svh - 4.5rem)); padding-top: clamp(var(--s32), 8vh, var(--s96)); } }
+.showcase > h2 { font-size: 1.5rem; }
