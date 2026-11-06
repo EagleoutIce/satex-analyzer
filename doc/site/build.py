@@ -1713,6 +1713,9 @@ def main():
     sem.check_links(out, refs.used)
     prune_memo()
     offline(out)
+    # the showcase's captures follow the UI they show: stale ones are taken again from this build
+    if recapture(out):
+        home()
     if args.precompress:
         precompress(out)
 
@@ -1783,6 +1786,57 @@ def showcase(out, live):
             f'<figcaption><h3>{html.escape(s["title"])}</h3><p>{html.escape(s["caption"])}</p>'
             f'<a class="shot-try" href="{html.escape(try_it)}">Try it in {html.escape(s["file"])} →</a></figcaption></figure>')
     return "\n".join(figures + [f'<div class="cards">{"".join(cards)}</div>'])
+
+
+# what a showcase capture shows: the playground's code and style, besides its example and its entry
+SHOT_SOURCES = ("playground.js", "views.js", "dialogs.js", "layers.js", "draw.js", "site.js", "style.css", "play.html", "showcase/capture.mjs")
+
+
+def recapture(out):
+    """Takes again, from the built site in `out`, every showcase capture whose inputs changed since it was taken
+    (showcase/img/keys.json); the rest stay. Without Chromium or the encoders the last captures stay, with a warning.
+    SATEX_SHOTS=off skips it. Whether any capture is new."""
+    if os.environ.get("SATEX_SHOTS") == "off":
+        return False
+    # the captures land in the repository, where the next build finds them, and in this build's snapshot
+    spec, img = json.loads((SITE / "showcase/shots.json").read_text()), ROOT / "doc/site/showcase/img"
+    keys_file = img / "keys.json"
+    keys = json.loads(keys_file.read_text()) if keys_file.exists() else {}
+    ui = b"".join((SITE / f).read_bytes() for f in SHOT_SOURCES)
+    source = lambda s: next((d / s["file"] for d in (EXAMPLES, ROOT / "samples") if (d / s["file"]).exists()), None)
+    key = lambda s: digest(ui + json.dumps(s, sort_keys=True).encode() + source(s).read_bytes())
+    # an entry whose example is not there yet (a feature still to come) waits
+    due = {s["name"]: key(s) for s in spec["shots"] if not s.get("live") and source(s)}
+    # a capture that failed on these inputs waits for them to change: no retry on every build
+    due = {n: k for n, k in due.items() if keys.get(n) not in (k, f"failed {k}") or keys[n] == k and not all((img / f"{n}-{c}.png").exists() for c in ("light", "dark"))}
+    if not due:
+        return False
+    chrome = os.environ.get("CHROME") or next(iter(sorted(Path.home().glob(".cache/ms-playwright/chromium-*/chrome-linux64/chrome"), reverse=True)), None)
+    missing = [t for t in ("node", "magick", "avifenc", "pngquant", "ffmpeg") if not shutil.which(t)] + ([] if chrome else ["chromium"])
+    if missing:
+        print(f"showcase: {len(due)} captures out of date, kept: no {', '.join(missing)}", file=sys.stderr)
+        return False
+    import http.server, functools
+    http.server.SimpleHTTPRequestHandler.extensions_map[".wasm"] = "application/wasm"
+    quiet = type("Quiet", (http.server.SimpleHTTPRequestHandler,), {"log_message": lambda *a: None})
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(quiet, directory=str(out)))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    began = time.monotonic()
+    try:
+        done = subprocess.run(["node", str(SITE / "showcase/capture.mjs"), f"http://127.0.0.1:{server.server_address[1]}/", str(img)],
+                              env=dict(os.environ, ONLY=",".join(due), CHROME=str(chrome)), capture_output=True, text=True)
+    finally:
+        server.shutdown()
+    ok = re.findall(r"^ok +(\S+) (light|dark)", done.stdout, re.M)
+    taken = [n for n in due if (n, "light") in ok and (n, "dark") in ok]
+    keys.update((n, due[n] if n in taken else f"failed {due[n]}") for n in due)
+    for f in img.iterdir():
+        if f.name.split("-")[0] in taken:
+            shutil.copy2(f, SITE / "showcase/img" / f.name)
+    keys_file.write_text(json.dumps(keys, indent=1, sort_keys=True) + "\n")
+    failed = [line for line in done.stdout.splitlines() if line.startswith("FAIL")]
+    print(f"showcase: {len(taken)} of {len(due)} captures taken again in {time.monotonic() - began:.0f} s" + "".join(f"\n  {f}" for f in failed), file=sys.stderr)
+    return bool(taken)
 
 
 def offline(out):

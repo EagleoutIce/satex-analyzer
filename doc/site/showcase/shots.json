@@ -183,7 +183,7 @@
    "title": "PDF, synced",
    "big": true,
    "window": "spacing.tex — PDF",
-   "caption": "Compile with your own TeX and the PDF sits beside the source. Findings and boxes are drawn on the page, the page follows your cursor, and a click on the page jumps to its line. Compiling needs TeX and the local playground server. The analysis runs in your browser.",
+   "caption": "Compile with your own TeX and the PDF sits beside the source. Findings and boxes show on the page, and a click jumps to the line. Compiling needs TeX and the local playground server.",
    "open": [
     "panel",
     "play-pdf"
@@ -316,12 +316,16 @@
      "wait": 4000
     },
     {
-     "eval": "for (const l of document.querySelectorAll('.cm-line')) if (/\\\\\\\\hline/.test(l.textContent)) l.style.background = 'color-mix(in srgb, #b42318 18%, transparent)';",
-     "wait": 300
+     "eval": "clearInterval(self.__mark); self.__mark = setInterval(() => { for (const l of document.querySelectorAll('.cm-line')) l.style.background = /\\\\hline/.test(l.textContent) ? 'color-mix(in srgb, #b42318 18%, transparent)' : ''; }, 100);",
+     "wait": 400
     },
     {
-     "snap": "before",
      "eval": "0",
+     "wait": 300,
+     "snap": "before"
+    },
+    {
+     "eval": "clearInterval(self.__mark); for (const l of document.querySelectorAll('.cm-line')) l.style.background = '';",
      "wait": 300
     },
     {
@@ -340,8 +344,8 @@
      "wait": 1500
     },
     {
-     "eval": "for (const l of document.querySelectorAll('.cm-line')) if (/\\\\\\\\(top|mid|bottom)rule/.test(l.textContent)) l.style.background = 'color-mix(in srgb, #1a7f37 20%, transparent)';",
-     "wait": 300
+     "eval": "clearInterval(self.__mark); self.__mark = setInterval(() => { for (const l of document.querySelectorAll('.cm-line')) l.style.background = /\\\\(top|mid|bottom)rule/.test(l.textContent) ? 'color-mix(in srgb, #1a7f37 20%, transparent)' : ''; }, 100);",
+     "wait": 400
     }
    ],
    "crop": "=lines('\\\\begin{table}', '\\\\end{table}')",
@@ -421,7 +425,7 @@
    ],
    "viewport": [
     1100,
-    640
+    800
    ],
    "steps": [
     {
