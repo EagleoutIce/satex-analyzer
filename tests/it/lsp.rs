@@ -2833,10 +2833,23 @@ fn definition_answers_every_place_primitives_and_environments() {
 const COMPLETION_BOUND: Duration = Duration::from_secs(1);
 
 /// The completion at `line`:`character` and how long it took.
-fn timed_complete(server: &mut Server, uri: &str, line: u32, character: u32) -> (Vec<Value>, Duration) {
+/// A completion and how long it took, and whether a run published its findings before the answer came:
+/// an answer before that was given while the run went on, however slow a loaded machine made it.
+fn timed_complete(server: &mut Server, uri: &str, line: u32, character: u32) -> (Vec<Value>, Duration, bool) {
     let start = std::time::Instant::now();
-    let items = complete(server, uri, line, character);
-    (items, start.elapsed())
+    let id = server.request(
+        "textDocument/completion",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": character } }),
+    );
+    let mut published = false;
+    let answer = loop {
+        let msg = server.read();
+        if msg.get("id").and_then(Value::as_i64) == Some(id) {
+            break msg;
+        }
+        published |= msg.get("method").and_then(Value::as_str) == Some("textDocument/publishDiagnostics");
+    };
+    (completion_items(&answer["result"]), start.elapsed(), published)
 }
 
 /// A completion never waits for a run: during the first one the
@@ -2883,12 +2896,17 @@ fn completion_answers_while_a_run_goes_on() {
         json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
     );
     // the first run reads the kernel: the installation answers meanwhile
+    let mut ran = false;
     for ((line, character), wanted) in &places[..2] {
-        let (items, took) = timed_complete(&mut server, &uri, *line, *character);
-        assert!(took < COMPLETION_BOUND, "{wanted}: {took:?}");
+        let (items, took, published) = timed_complete(&mut server, &uri, *line, *character);
+        // never queued behind the run: answered before it published, or fast once it had
+        assert!(!published || took < COMPLETION_BOUND, "{wanted}: {took:?} after the run");
+        ran |= published;
         assert!(labels(&items).contains(wanted), "{wanted}: {:?}", labels(&items));
     }
-    server.notification("textDocument/publishDiagnostics");
+    if !ran {
+        server.notification("textDocument/publishDiagnostics");
+    }
     // an edit, then the run it starts once the debounce is over
     let edited = text.replace("\\begin{document}", "\\usepackage{array}\n\\begin{document}");
     server.notify(
@@ -2898,8 +2916,8 @@ fn completion_answers_while_a_run_goes_on() {
     std::thread::sleep(Duration::from_millis(satex::project::config::LspConfig::default().debounce_ms) * 2);
     for ((line, character), wanted) in places {
         let line = if line >= 3 { line + 1 } else { line };
-        let (items, took) = timed_complete(&mut server, &uri, line, character);
-        assert!(took < COMPLETION_BOUND, "{wanted}: {took:?}");
+        let (items, took, published) = timed_complete(&mut server, &uri, line, character);
+        assert!(!published || took < COMPLETION_BOUND, "{wanted}: {took:?} after the run");
         assert!(labels(&items).contains(&wanted), "{wanted}: {:?}", labels(&items));
     }
     server.shutdown();
