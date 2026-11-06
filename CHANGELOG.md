@@ -6,10 +6,12 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
-<!-- reviewed: 6545e34 -->
+<!-- reviewed: 0fa22f1 -->
 
 ### Playground
 
+- `fix` The trace stepper keeps its place while stepping. Table insert buttons stay round. [`ce9713f`](https://github.com/EagleoutIce/satex-analyzer/commit/ce9713f) [`3227afc`](https://github.com/EagleoutIce/satex-analyzer/commit/3227afc)
+- `feat` Landing page: a live window that answers from build data before the engine loads, a showcase carousel, plain captions, "local" on a local playground. [`672c02e`](https://github.com/EagleoutIce/satex-analyzer/commit/672c02e) [`75e9e51`](https://github.com/EagleoutIce/satex-analyzer/commit/75e9e51) [`fc867f4`](https://github.com/EagleoutIce/satex-analyzer/commit/fc867f4) [`762cc60`](https://github.com/EagleoutIce/satex-analyzer/commit/762cc60)
 - `fix` After a package download every document runs again, so glossaries and figures are right without an edit. A widget opened during a run waits for it. [`de3795e`](https://github.com/EagleoutIce/satex-analyzer/commit/de3795e) [`062f2be`](https://github.com/EagleoutIce/satex-analyzer/commit/062f2be)
 - `perf` The first download is 6 MiB instead of 120: the kernel bundle holds only its sample's caches. The files examples look for (mwe's example images) ship too. [`003da0b`](https://github.com/EagleoutIce/satex-analyzer/commit/003da0b) [`8138420`](https://github.com/EagleoutIce/satex-analyzer/commit/8138420)
 - `feat` Landing page redesign: try-it first, a showcase of the editor widgets with shots retaken by the build, four live examples. [`d2d6c19`](https://github.com/EagleoutIce/satex-analyzer/commit/d2d6c19) [`217ff78`](https://github.com/EagleoutIce/satex-analyzer/commit/217ff78) [`f5a3057`](https://github.com/EagleoutIce/satex-analyzer/commit/f5a3057) [`3af2880`](https://github.com/EagleoutIce/satex-analyzer/commit/3af2880) [`2004fba`](https://github.com/EagleoutIce/satex-analyzer/commit/2004fba)
@@ -23,6 +25,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Editor plugins and widgets
 
+- `fix` Widget fields check their input, and a package a fix needs is loaded once. [`0fa22f1`](https://github.com/EagleoutIce/satex-analyzer/commit/0fa22f1)
 - `feat` Typeset and PDF layers: glue as brackets, a PDF grid in any TeX unit, booktabs rules across the table, choices offer the texts they set. [`7f5458c`](https://github.com/EagleoutIce/satex-analyzer/commit/7f5458c) [`1ec39d8`](https://github.com/EagleoutIce/satex-analyzer/commit/1ec39d8) [`cc697b6`](https://github.com/EagleoutIce/satex-analyzer/commit/cc697b6)
 - `fix` Dialogs share one Apply that never drops an edit, ask before discarding changes and undo in one step. Float placement toggles as checkmarks. [`17e9816`](https://github.com/EagleoutIce/satex-analyzer/commit/17e9816) [`66a3e25`](https://github.com/EagleoutIce/satex-analyzer/commit/66a3e25)
 - `feat` Type plugins: an editor feature is a plugin that a type of the analysis triggers. Table and image dialogs come first. [`75d96fd`](https://github.com/EagleoutIce/satex-analyzer/commit/75d96fd)
@@ -44,6 +47,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `feat` A reference typed by hand becomes `\cref` (`\Cref` after a capital word), loading cleveref when needed. [`c75edd1`](https://github.com/EagleoutIce/satex-analyzer/commit/c75edd1) [`a8fc6d3`](https://github.com/EagleoutIce/satex-analyzer/commit/a8fc6d3)
 - `feat` Clone lint for near-duplicate blocks. [`87c3dbc`](https://github.com/EagleoutIce/satex-analyzer/commit/87c3dbc)
 - `feat` The `et al.` spelling, biblatex prose and a bibtex-to-biblatex migration. [`2b2727b`](https://github.com/EagleoutIce/satex-analyzer/commit/2b2727b) [`45ceb45`](https://github.com/EagleoutIce/satex-analyzer/commit/45ceb45)
 - `feat` Table typography and advice, written references, `undefined-cref-format`. [`572442f`](https://github.com/EagleoutIce/satex-analyzer/commit/572442f) [`abde87a`](https://github.com/EagleoutIce/satex-analyzer/commit/abde87a) [`2039be6`](https://github.com/EagleoutIce/satex-analyzer/commit/2039be6)
