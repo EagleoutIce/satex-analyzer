@@ -23,6 +23,7 @@ widget       glossary         declared key
 widget       bibliography     citation key                                
 widget       index            index entry                                 
 widget       theorem          environment name                            
+widget       page             environment the run met                     
 hover        units            dimen, glue, dimen register, skip register  
 hover        overlay          overlay specification                       
 completion   keys             options, option key, pgf key, declared key  
@@ -130,6 +131,17 @@ On an overlay specification, text a command reads between `<` and `>` (`\only<2-
 ## frame
 
 On each frame of a document whose run defined `\includeonlyframes`: a lens "Compile only this frame", its view and a code action. They write `\includeonlyframes{label}` before `\begin{document}`, replacing an earlier one, and add `label=frame⟨n⟩` to the frame's options when it has no label. The view's `compile` field carries the setup as data for a client to compile with: `engine`, `label`, the frame's `lines` and the `edit`.
+
+## page
+
+The page geometry the run computed: `\paperwidth`, `\textwidth`, `\oddsidemargin`, `\topmargin`, `\headheight`, `\headsep`, `\footskip`, `\marginparwidth` and the rest of LaTeX's page model, as the run ended. A length the run left open is an interval. The dialog draws its middle and says so. "Page layout…" is a lens on `\documentclass` and on geometry's calls, a link in the hover of geometry's keys, and a view on a sectioning command or a blank line.
+
+The dialog draws the page to scale, both pages when the class is two-sided: the text block, header, footer and margin notes, each margin labelled in the chosen unit.
+
+- Margins: paper, margins (inner and outer when two-sided), text size, header, footer and margin notes. Apply writes geometry's keys of each group that changed and drops the keys of that group already written: `left=3cm, right=2cm, top=2cm, bottom=2cm`. A paper is written by the name geometry defines for it (`\Gm@a4paper`). The keys go into the last `\geometry{…}` of the preamble, else into `\usepackage[…]{geometry}`, else a new `\usepackage` before `\begin{document}`.
+- typearea: when the run loaded it (the KOMA classes do), `DIV` and `BCOR` are the default and go into the class's options. The text keeps one stripe inside and two outside (one-sided: the rest split evenly), one above and two below. Exact margins through geometry are the other choice.
+- These pages only: from the cursor or a sectioning command up to a later one or the end, it writes `\newgeometry{…}` and `\restoregeometry`. Both start a new page. The places are in the source: their page numbers are known only by typesetting. Without geometry it adds `\usepackage[pass]{geometry}`, which keeps the layout elsewhere.
+- Header and footer: the fields of the package the run loaded. fancyhdr: left, center and right, odd and even pages when two-sided, and `\headrulewidth` and `\footrulewidth`. It writes `\fancyhf{}` and one `\fancyhead[LE,RO]{…}` per text. scrlayer-scrpage: `\ihead`, `\chead`, `\ohead`, `\ifoot`, `\cfoot`, `\ofoot`, the optional `plain` text kept. The new block replaces the calls it read. Without either, "Load fancyhdr" adds it with `\pagestyle{fancy}`.
 
 ## Managers
 

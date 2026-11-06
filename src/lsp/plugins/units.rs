@@ -7,7 +7,7 @@ use super::{Cx, TypePlugin, range};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::Ty;
 use crate::engine::tex::{Meaning, RegKind};
-use crate::engine::value::{Num, UNIT, UNITS, parse_dimen};
+use crate::engine::value::{Num, UNIT, UNITS, Value, parse_dimen};
 use crate::project::config::TypePlugins;
 use lsp_types::{CompletionItem, CompletionItemKind};
 use serde_json::{Value as Json, json};
@@ -167,7 +167,12 @@ pub(in crate::lsp) fn register_value(analysis: &Analysis, name: &str) -> Option<
     let sym = analysis.interner.lookup(name)?;
     let Meaning::Register(kind, n) = analysis.env.meaning(sym) else { return None };
     let reg = analysis.interner.lookup(&format!("\u{2}{}{n}", kind.as_str()))?;
-    Some(analysis.env.num(reg)?.1)
+    // a skip: its natural width
+    analysis.env.num(reg).map(|n| n.1).or_else(|| match analysis.env.value(reg) {
+        Value::Glue(g) => Some(Num::exact(g.width)),
+        Value::GlueNum { hull, .. } => Some(hull.width),
+        _ => None,
+    })
 }
 
 /// `(n, d)` of a unit: `n/d` points.
@@ -335,7 +340,7 @@ pub(super) fn apply_link(cx: &Cx, range: lsp_types::Range, shown: &str, text: &s
 }
 
 /// Percent-encoding of a command link's argument.
-fn encode(s: &str) -> String {
+pub(super) fn encode(s: &str) -> String {
     s.bytes()
         .map(|b| {
             if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {

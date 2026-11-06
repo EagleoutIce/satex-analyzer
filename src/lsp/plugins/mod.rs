@@ -20,6 +20,7 @@ mod keys;
 mod language;
 pub(super) mod listing;
 mod overlay;
+mod page;
 mod savebox;
 mod table;
 mod theorem;
@@ -75,6 +76,10 @@ pub(super) trait TypePlugin: Sync {
         self.types().contains(&hit.ty)
     }
     fn hover(&self, _cx: &Cx, _hit: &Hit) -> Option<String> {
+        None
+    }
+    /// A widget's link that ends any hover at the position, after the first plugin's card.
+    fn entry(&self, _cx: &Cx, _hit: &Hit) -> Option<String> {
         None
     }
     /// `None` leaves the hit to the next plugin or the core.
@@ -138,6 +143,7 @@ pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
     &theorem::Theorem,
     &overlay::Overlay,
     &frame::Frame,
+    &page::Page,
     &incremental::CommentEdit,
     &incremental::WhitespaceEdit,
     &incremental::Typing,
@@ -166,7 +172,13 @@ fn context<'a>(analysis: &'a Analysis, doc: &'a Text, path: &'a str, pos: Pos, a
 /// The first plugin hover at `pos`: `at` from [`super::type_at::type_at`] at the end of the word.
 pub(super) fn hover(analysis: &Analysis, doc: &Text, path: &str, pos: Pos, at: &At) -> Option<String> {
     let cx = context(analysis, doc, path, pos, at);
-    triggered(&cx).find_map(|(p, h)| p.hover(&cx, h))
+    let card = triggered(&cx).find_map(|(p, h)| p.hover(&cx, h));
+    let links: Vec<String> = triggered(&cx).filter_map(|(p, h)| p.entry(&cx, h)).collect();
+    match (card, links.is_empty()) {
+        (card, true) => card,
+        (Some(card), false) => Some(format!("{card}\n\n{}", links.join(" · "))),
+        (None, false) => Some(links.join(" · ")),
+    }
 }
 
 /// The plugin items for `hit`, `None` when no enabled plugin takes it.
@@ -345,19 +357,18 @@ pub(super) fn env_lenses(
     title: &str,
     plugin: &str,
 ) -> Vec<CodeLens> {
-    let uri = super::handlers::path_uri(path);
-    pairs(analysis, path, env)
-        .into_iter()
-        .map(|(b, _)| {
-            let at = super::handlers::to_lsp(doc, Pos::new(b.span.line, 1));
-            let command = Command {
-                title: title.into(),
-                command: "satex.openView".into(),
-                arguments: Some(vec![json!(uri.as_str()), json!(at), json!(plugin)]),
-            };
-            CodeLens { range: Range { start: at, end: at }, command: Some(command), data: None }
-        })
-        .collect()
+    pairs(analysis, path, env).into_iter().map(|(b, _)| lens(doc, path, b.span.line, title, plugin)).collect()
+}
+
+/// A lens `title` on `line`, opening `plugin`'s view there.
+pub(super) fn lens(doc: &Text, path: &str, line: u32, title: &str, plugin: &str) -> CodeLens {
+    let at = super::handlers::to_lsp(doc, Pos::new(line, 1));
+    let command = Command {
+        title: title.into(),
+        command: "satex.openView".into(),
+        arguments: Some(vec![json!(super::handlers::path_uri(path).as_str()), json!(at), json!(plugin)]),
+    };
+    CodeLens { range: Range { start: at, end: at }, command: Some(command), data: None }
 }
 
 /// The types of the whole word at `pos`, asked at its end, as hover asks.

@@ -4419,6 +4419,22 @@
           "type": "object",
           "x-category": "hover"
         },
+        "page": {
+          "description": "the page geometry the run computed: \\documentclass, geometry's calls and keys, a sectioning command, a blank line",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "\"Page layout…\": margins, paper, header and footer to scale, for the document or a part",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: no page layout lens, link or dialog"
+            }
+          },
+          "type": "object",
+          "x-category": "widget"
+        },
         "savebox": {
           "description": "a \\begin name of a picture, listing or other environment the run met",
           "properties": {

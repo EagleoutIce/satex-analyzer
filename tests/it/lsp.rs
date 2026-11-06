@@ -3229,6 +3229,53 @@ fn units_plugin_converts_lengths() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Page layout: the view gets the page geometry the run computed, geometry's options as written,
+/// and with a KOMA class typearea's `DIV` and `BCOR`; lenses on the class and geometry, a link on its keys.
+#[test]
+fn page_plugin_reads_the_run_geometry() {
+    let text = "\\documentclass{article}\n\\usepackage[margin=2cm]{geometry}\n\\begin{document}\nText\n\n\\section{One}\nMore\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("page", text, &[]);
+    let page = |server: &mut Server, line, c| {
+        let views = at(server, &uri, "satex/view", line, c);
+        views.as_array().unwrap().iter().find(|v| v["plugin"] == "page").map(|v| v["sections"][0].clone())
+    };
+    let s = page(&mut server, 1, col(text, 1, "margin", 1)).expect("a page view on geometry's load");
+    let len = |k: &str| s["run"][k][0].as_i64().unwrap();
+    let cm2 = satex::engine::value::parse_dimen("2cm").unwrap();
+    assert!((len("paperwidth") - 2 * cm2 - len("textwidth")).abs() < 8, "{s}");
+    assert_eq!(s["geometry"]["global"]["options"], "margin=2cm", "{s}");
+    assert_eq!(s["koma"], json!(null));
+    assert!(s["papers"].as_array().unwrap().iter().any(|p| p["name"] == "a4paper"), "{s}");
+    // a sectioning command and a blank line open it, other text not
+    assert!(page(&mut server, 5, 1).is_some() && page(&mut server, 4, 0).is_some());
+    assert!(page(&mut server, 3, 1).is_none());
+    let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 1, col(text, 1, "margin", 1)));
+    assert!(md.contains("[Page layout…](command:satex.openView?"), "{md}");
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].clone();
+    let lines: Vec<u64> = lenses
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|l| l["command"]["arguments"][2] == "page")
+        .map(|l| l["range"]["start"]["line"].as_u64().unwrap())
+        .collect();
+    assert_eq!(lines, [0, 1], "{lenses}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    let text = "\\documentclass[DIV=10,BCOR=5mm]{scrartcl}\n\\begin{document}\nText\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("page-koma", text, &[]);
+    let views = at(&mut server, &uri, "satex/view", 0, 2);
+    let s = views.as_array().unwrap().iter().find(|v| v["plugin"] == "page").expect("a page view").clone();
+    let s = &s["sections"][0];
+    assert_eq!(s["koma"]["div"], 10, "{s}");
+    assert_eq!(s["koma"]["bcor"], satex::engine::value::parse_dimen("5mm").unwrap(), "{s}");
+    assert_eq!(s["koma"]["options"], "DIV=10,BCOR=5mm", "{s}");
+    assert_eq!(s["geometry"]["loaded"], false);
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// Colors with xcolor: items with their hex, hover in every model, an expression mixed, a picker
 /// that writes `[model]{spec}` into `\color`, a `\definecolor` in a TikZ-like key, VS Code's
 /// presentation, and `\definecolor` model conversions.
@@ -3535,6 +3582,7 @@ fn tables_and_figures_open_dialogs_that_write_them_back() {
     let lenses = ask("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
     let lenses: Vec<(u64, &str)> = (lenses.as_array().unwrap().iter())
         .map(|l| (l["range"]["start"]["line"].as_u64().unwrap(), l["command"]["title"].as_str().unwrap()))
+        .filter(|(_, t)| !t.starts_with("Page layout"))
         .collect::<Vec<_>>()
         .into_iter()
         .map(|(line, t)| (line, if t.contains("table") { "table" } else { "image" }))
@@ -3624,7 +3672,8 @@ fn tables_and_figures_open_dialogs_that_write_them_back() {
 #[test]
 fn switched_off_dialog_plugins_offer_nothing() {
     let text = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{tabular}{l}\na \\\\\n\\end{tabular}\n\\includegraphics{example-image}\n\\end{document}\n";
-    let off = ["type_plugins.table.enabled=false", "type_plugins.image.enabled=false"];
+    let off =
+        ["type_plugins.table.enabled=false", "type_plugins.image.enabled=false", "type_plugins.page.enabled=false"];
     let (mut server, uri, dir) = open_set("dialogs-off", text, &off);
     let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
     assert_eq!(server.response(id)["result"], json!([]));
@@ -4044,7 +4093,8 @@ fn tikz_plugin_new_drawing_and_off() {
     assert_eq!(at(&mut server, &uri, "satex/view", 2, 1), json!([]), "not on a line with text");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
-    let (mut server, uri, dir) = open_set("tikz-off", PICTURE, &["type_plugins.tikz.enabled=false"]);
+    let (mut server, uri, dir) =
+        open_set("tikz-off", PICTURE, &["type_plugins.tikz.enabled=false", "type_plugins.page.enabled=false"]);
     let _ = at(&mut server, &uri, "textDocument/hover", 4, 3);
     assert_eq!(at(&mut server, &uri, "satex/view", 5, 3), json!([]));
     let actions = at(&mut server, &uri, "textDocument/codeAction", 9, 0);

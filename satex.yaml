@@ -733,6 +733,11 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
     #! category: widget
     enabled: true  # a manager: kinds with counters and styles, instances with labels and references, rename, numbering
       #! affects: output
+  page:  # the page geometry the run computed: \documentclass, geometry's calls and keys, a sectioning command, a blank line
+    #! category: widget
+    enabled: true  # "Page layout…": margins, paper, header and footer to scale, for the document or a part
+      #! affects: output
+      #! example: `enabled: false`: no page layout lens, link or dialog
   forest:  # a forest environment the run met, a blank line of the document body
     #! category: widget
     enabled: true  # "Edit tree…": add, delete, rename and drag nodes, node and `for tree` options, indented outlines in

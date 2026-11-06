@@ -470,6 +470,7 @@ pub struct TypePlugins {
     pub savebox: Switch,
     pub overlay: Switch,
     pub frame: Switch,
+    pub page: Switch,
     pub comment_edit: Switch,
     pub whitespace_edit: Switch,
     pub typing: TypingPlugin,
