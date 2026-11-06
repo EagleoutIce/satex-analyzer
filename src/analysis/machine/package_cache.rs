@@ -353,10 +353,10 @@ struct Scalars {
     last_named_cs: Option<Sym>,
     /// File spans yielded back (lookahead from files); before are the run's own.
     recent_file_spans: Vec<Span>,
-    /// Whether material may have reached the page (tex.web § 986).
-    page_touched: bool,
-    /// The load neither set nor forgot the main vertical list's last item.
-    main_kept: bool,
+    /// The modes and lists at the load's start and at the segment's end: a
+    /// replay holds only where the lists start alike, and leaves them as
+    /// the read did.
+    builder: (super::ListsState, super::ListsState),
 }
 
 /// The state a checkpoint leaves that changes now and then: stored only
@@ -780,7 +780,7 @@ struct Before {
     recent_file_spans: Vec<Span>,
     /// Call the load is read on behalf of.
     reader: Option<NodeId>,
-    main_changes: u64,
+    builder: super::ListsState,
     carried: Carried,
     facts: FactMaps,
 }
@@ -1418,7 +1418,7 @@ impl Machine<'_> {
             def_owner: std::cell::OnceCell::new(),
             vertices: graph.len(),
             reader: graph.reader,
-            main_changes: self.main_changes,
+            builder: self.lists_state(),
             loads: self.out.facts.loads.len(),
             counters,
             steps: self.out.steps,
@@ -1606,7 +1606,6 @@ impl Machine<'_> {
             page_grew: _,
             natural: _,
             main_tail: _,
-            main_changes: _,
             main_depth: _,
             docstrip,
             pinned,
@@ -2241,6 +2240,9 @@ impl Machine<'_> {
         // Segment's files registered above (in order read); unread files stay unread.
         let files = self.lookup_files(&node.paths);
         let st = decode_effect(&node.effect, &syms, &files).ok_or(("a segment cannot be decoded", false))?;
+        if st.scalars.builder.0 != before.builder {
+            return Err(("the lists differ", false));
+        }
         // Texts the segment copied, as this run has them at segment start.
         let mut origs: HashMap<Sym, Rc<[Token]>> = HashMap::default();
         let spliced =
@@ -2717,12 +2719,7 @@ impl Machine<'_> {
                 s.call_shape.clone().map(|(sym, span, shape, depth)| Rc::new((sym, span_in(span, site), shape, depth)));
         }
         self.last_named_cs = s.last_named_cs;
-        self.page_touched |= s.page_touched;
-        // What the replayed code put on the main vertical list is not kept, unless it put nothing.
-        if !s.main_kept {
-            self.main_tail = crate::engine::mode::Last::UNKNOWN;
-            self.main_depth = crate::engine::mode::Dim::ANY;
-        }
+        self.set_lists_state(s.builder.1);
         let mut recent = before.recent_file_spans.clone();
         recent.extend(s.recent_file_spans.iter().map(|span| span_in(*span, site)));
         let excess = recent.len().saturating_sub(RECENT_FILE_SPANS);
@@ -3609,8 +3606,7 @@ impl Machine<'_> {
                 .map(|(sym, span, shape, depth)| (sym, span_out(span, site), shape, depth)),
             finished_call: rec.seg_call_finished,
             last_named_cs: self.last_named_cs,
-            page_touched: self.page_touched,
-            main_kept: self.main_changes == rec.before.main_changes,
+            builder: (rec.before.builder, self.lists_state()),
             recent_file_spans: {
                 let before = &rec.before.recent_file_spans;
                 let kept = (0..=before.len())

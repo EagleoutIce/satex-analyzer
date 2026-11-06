@@ -305,3 +305,32 @@ fn a_package_and_a_document_in_one_project_share_the_kernel_cache() {
         names.iter().filter(|n| stem(n).is_some_and(|s| !caches.contains(&s.as_str()))).collect();
     assert!(orphans.is_empty(), "locks of no cache: {orphans:?}");
 }
+
+/// Reads what the main vertical list holds after the class: whether the
+/// kernel and the class were read or replayed, a job reads the same.
+const LISTS: &str = "\\documentclass{article}\n\
+\\ifnum\\lastnodetype=-1 \\gdef\\listmark{empty}\\else\\gdef\\listmark{items}\\fi\n\
+\\begin{document}x\\end{document}\n";
+
+/// A format holds no lists (tex.web § 1299), and a replayed load leaves
+/// them as reading it did: no cache makes `\lastnodetype` more decided.
+#[test]
+fn the_lists_a_job_reads_are_the_same_whether_the_kernel_was_read_or_loaded() {
+    if !installed() {
+        return;
+    }
+    let dir = project("lists");
+    let marks = |a: &Analysis| {
+        let mark = a.interner.lookup("listmark");
+        a.facts.defs.iter().filter(|d| Some(d.name) == mark).map(|d| (d.span.line, d.span.col)).collect::<Vec<_>>()
+    };
+    let uncached =
+        analyze(&dir, LISTS, &Config { cache: Cache { enabled: false, ..Default::default() }, ..config(&dir) });
+    let stored = run(&dir, LISTS);
+    let loaded = run(&dir, LISTS);
+    assert!(loaded.format.as_ref().is_some_and(|f| f.cached), "the third run installed the cached kernel");
+    assert!(!marks(&uncached).is_empty(), "the mark is defined");
+    assert_eq!(marks(&uncached), marks(&stored), "interpreting the kernel into the cache");
+    assert_eq!(marks(&uncached), marks(&loaded), "installing the kernel and replaying the class");
+    same_rows(&uncached, &loaded, "the lists a job reads");
+}

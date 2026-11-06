@@ -481,6 +481,19 @@ const CHECK_INTERVAL: u64 = 256;
 /// How many tokens of an input list a call's shape hashes: an identity
 /// key, not a limit on what runs.
 const SHAPE_TOKENS: usize = 64;
+/// What [`Machine::lists_state`] returns.
+type ListsState = (
+    crate::engine::mode::Modes,
+    Option<Span>,
+    crate::engine::mode::Modes,
+    u8,
+    bool,
+    bool,
+    Option<crate::engine::mode::Natural>,
+    crate::engine::mode::Last,
+    crate::engine::mode::Dim,
+);
+
 /// Slots of [`Machine::shape_memo`].
 const SHAPE_MEMO: usize = 1024;
 /// One slot of [`Machine::shape_memo`]: the list, the position in it, and
@@ -2012,9 +2025,6 @@ pub struct Machine<'a> {
     /// the last item it moved, and an output routine leaves the items from
     /// the break on, the last one among them, after its own).
     pub(crate) main_tail: crate::engine::mode::Last,
-    /// How often the main vertical list's tail was set or forgotten: a cached load that
-    /// changed it changed what the list ends with.
-    pub(crate) main_changes: u64,
     /// The depth the page would be packed with (tex.web § 669 `vpack`):
     /// the last box's where only penalties and the like follow it, zero
     /// after glue or a kern.
@@ -2703,7 +2713,6 @@ impl<'a> Machine<'a> {
                 n
             }),
             main_tail: crate::engine::mode::Last::UNKNOWN,
-            main_changes: 0,
             main_depth: crate::engine::mode::Dim::ANY,
             wild: Wild::default(),
             trace_full: false,
@@ -3750,6 +3759,7 @@ impl<'a> Machine<'a> {
         self.budget = Some(self.cfg.limits.format_steps);
         let lines = text.lines().count() as u32;
         self.format_progress = Some(self.input.len() - 1);
+        let job_lists = self.lists_state();
         self.run();
         // tex.web § 1335: `\dump` ended the format's job, not the document's.
         self.job_ended = false;
@@ -3836,6 +3846,8 @@ will look undefined",
         self.stream_files.clear();
         self.section = None;
         self.docstrip_dir = None;
+        // Nor lists: the job starts on the empty page a loaded format starts on.
+        self.set_lists_state(job_lists);
         // The kernel stops at `\dump` inside its own `\input` call: leaving
         // it set would date `\everyjob`'s messages to latex.ltx.
         self.file_call = None;
@@ -5462,6 +5474,36 @@ will look undefined",
         self.region_catcode(character);
         self.env.save_catcode_state(character, self.catcodes.get(character), self.catcodes.may(character));
         self.catcodes.set_may(character, cats);
+    }
+
+    /// The modes and what the lists hold: everything `\lastskip`,
+    /// `\lastnodetype` and the page builder read.
+    fn lists_state(&self) -> ListsState {
+        (
+            self.mode,
+            self.par_inserted,
+            self.list,
+            self.material,
+            self.page_touched,
+            self.page_grew,
+            self.natural,
+            self.main_tail,
+            self.main_depth,
+        )
+    }
+
+    fn set_lists_state(&mut self, state: ListsState) {
+        (
+            self.mode,
+            self.par_inserted,
+            self.list,
+            self.material,
+            self.page_touched,
+            self.page_grew,
+            self.natural,
+            self.main_tail,
+            self.main_depth,
+        ) = state;
     }
 
     /// Steps a cached segment replayed at once are not spent in the region,

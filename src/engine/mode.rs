@@ -1198,7 +1198,6 @@ impl Machine<'_> {
         self.material = MATERIAL | BOXED;
         // A paragraph the main vertical list gets the lines of.
         if self.mode.meets(Modes::VERTICAL) {
-            self.main_changes += 1;
             self.main_tail = Last::UNKNOWN;
             self.main_depth = Dim::ANY;
         }
@@ -1775,7 +1774,6 @@ impl Machine<'_> {
         };
         // the main vertical list ends as the paragraph's list does: `\lastskip` reads its last line
         if only && to == Modes::VERTICAL {
-            self.main_changes += 1;
             self.main_tail = tail[0];
         }
         // tex.web § 1096: a null paragraph makes no line; else the last
@@ -4292,7 +4290,6 @@ impl Machine<'_> {
         if self.mode.meets(Modes::VERTICAL) {
             self.page_so_far_moved(false);
             self.contribute(&item);
-            self.main_changes += 1;
             self.main_tail = match (self.mode == Modes::VERTICAL, &item) {
                 (false, _) | (_, Item::Unknown | Item::Glue(_, None)) => Last::UNKNOWN,
                 (_, Item::Glue(w, spec)) => Last::Glue(*w, *spec, false),
@@ -5939,7 +5936,6 @@ impl Machine<'_> {
                 | P::Mode(ModeCmd::Vertical(crate::engine::builtins::Material::Glue | crate::engine::builtins::Material::Fil(_)))
             );
         if !quiet && !self.appends_nothing(p) {
-            self.main_changes += 1;
             self.main_tail = Last::UNKNOWN;
             self.main_depth = Dim::ANY;
         }

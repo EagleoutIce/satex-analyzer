@@ -1574,7 +1574,7 @@ fn different_aftergroup_tokens_join_into_one_of_them() {
         r"\documentclass{article}
 \def\one{\gdef\seen{1}}\def\two{\gdef\seen{2}}\def\three{\gdef\seen{3}}
 \begin{document}
-{\ifcase\numexpr\lastskip/65536\relax \aftergroup\one\or\aftergroup\two\else\aftergroup\three\fi}
+{\ifcase\pdfuniformdeviate 3 \aftergroup\one\or\aftergroup\two\else\aftergroup\three\fi}
 \label{after}
 \end{document}",
     );
