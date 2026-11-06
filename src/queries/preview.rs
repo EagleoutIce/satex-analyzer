@@ -346,7 +346,7 @@ fn wanted(analysis: &Analysis) -> Vec<String> {
 }
 
 /// The pgf and TikZ libraries the run loaded, by their files' names.
-fn libraries(analysis: &Analysis) -> Vec<String> {
+pub fn libraries(analysis: &Analysis) -> Vec<String> {
     let mut out = BTreeSet::new();
     for info in &analysis.files {
         let file = info.path.rsplit(['/', '\\']).next().unwrap_or_default();

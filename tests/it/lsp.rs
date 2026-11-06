@@ -3912,6 +3912,64 @@ fn tikz_plugin_places_relative_nodes() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// What the canvas offers comes from the run: the arrow tips declared, the shapes, the layers in
+/// pgf's order, the keys that open a layer, the libraries loaded; and where the options stand.
+#[test]
+fn tikz_plugin_offers_what_the_run_declared() {
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\usetikzlibrary{arrows.meta,backgrounds,shapes.geometric}\n\\pgfdeclarelayer{fore}\n\\pgfsetlayers{background,main,fore}\n\\begin{document}\n\\begin{tikzpicture}[node distance=2cm]\n  \\node[draw] (a) {A};\n  \\begin{pgfonlayer}{fore}\\node[right of=a] (b) {B};\\end{pgfonlayer}\n  \\draw[-Stealth] (a.north) -- (b);\n\\end{tikzpicture}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("tikz-facts", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 7, 3);
+    let views = at(&mut server, &uri, "satex/view", 7, 3);
+    let draw = &views.as_array().unwrap().iter().find(|v| v["plugin"] == "tikz").expect("a drawing")["sections"][0];
+    let run = &draw["run"];
+    let names = |v: &Value, key: &str| -> Vec<String> {
+        v.as_array().unwrap().iter().map(|t| t[key].as_str().or(t.as_str()).unwrap_or_default().to_string()).collect()
+    };
+    let tips = names(&run["tips"], "name");
+    assert!(["Stealth", "Latex", ">", "Circle"].iter().all(|t| tips.iter().any(|x| x == t)), "{tips:?}");
+    let shapes = names(&run["shapes"], "");
+    assert!(["rectangle", "circle", "diamond", "ellipse"].iter().all(|t| shapes.iter().any(|x| x == t)), "{shapes:?}");
+    assert_eq!(run["layers"]["order"], json!(["background", "main", "fore"]), "{run}");
+    let declared = names(&run["layers"]["declared"], "");
+    assert!(declared.contains(&"fore".to_string()) && declared.contains(&"background".to_string()), "{declared:?}");
+    assert_eq!(run["layer_keys"]["on background layer"], "background", "{run}");
+    let libs = names(&run["libraries"], "");
+    assert!(libs.contains(&"backgrounds".to_string()) && !libs.contains(&"matrix".to_string()), "{libs:?}");
+    assert_eq!(run["load_at"]["line"], 5, "before \\begin{{document}}");
+    assert!(run["colors"].as_array().unwrap().iter().any(|c| c["name"] == "red" && c["hex"] == "#ff0000"), "{run}");
+    assert!(!run["colors"].as_array().unwrap().iter().any(|c| c["name"] == "."), "not the current color: {run}");
+    // the options' place: the canvas rewrites `[node distance=2cm]`
+    assert_eq!(draw["head"]["start"], json!({ "line": 6, "character": "\\begin{tikzpicture}".len() }));
+    assert_eq!(draw["head"]["end"], draw["range"]["start"]);
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// The canvas's matrix of nodes (`views.js` `toMatrix`): steps between origins from the anchor
+/// node keep every node where it stood, as the run computes them.
+#[test]
+fn tikz_plugin_matrix_keeps_the_nodes_places() {
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\usetikzlibrary{matrix}\n\\begin{document}\n\\begin{tikzpicture}[every node/.style={draw}]\n  \\matrix (m) [matrix of nodes, row sep={2cm,between origins}, column sep={3cm,between origins}, matrix anchor=a.center] at (1,2) {\n    |(a)| A & |[circle] (b)| Bee \\\\\n     & |(c)| C \\\\\n  };\n  \\draw[->] (a) -- (c);\n\\end{tikzpicture}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("tikz-matrix", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 5, 3);
+    let views = at(&mut server, &uri, "satex/view", 5, 3);
+    let draw = &views.as_array().unwrap().iter().find(|v| v["plugin"] == "tikz").expect("a drawing")["sections"][0];
+    let node = |name: &str| {
+        let n = draw["nodes"].as_array().unwrap().iter().find(|n| n["name"] == name).cloned();
+        let n = n.unwrap_or_else(|| panic!("{name}: {draw}"));
+        (n["x"].as_f64().unwrap(), n["y"].as_f64().unwrap())
+    };
+    let near = |(x, y): (f64, f64), (ex, ey): (f64, f64)| (x - ex).abs() < 0.01 && (y - ey).abs() < 0.01;
+    // the anchor node at `at`, the others whole steps from it
+    let (step_x, step_y) = (3.0, 2.0);
+    let a = (1.0, 2.0);
+    assert!(near(node("a"), a), "{draw}");
+    assert!(near(node("b"), (a.0 + step_x, a.1)), "{draw}");
+    assert!(near(node("c"), (a.0 + step_x, a.1 - step_y)), "{draw}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// Without tikz the new picture loads it; `enabled: false` takes lens, view and action away.
 #[test]
 fn tikz_plugin_new_drawing_and_off() {

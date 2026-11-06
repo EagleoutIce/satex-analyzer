@@ -97,6 +97,158 @@ const back = mermaidIn(text);
 assert.deepEqual(graph(back), graph(mermaidIn(flow)));
 assert.equal(back.dir, 'TD');
 
+// the canvas's model beyond nodes and arrows (views.js `drawing`)
+{
+  const D = self.satexViews.drawing;
+  const ty = (st) => st.items.map((i) => i.type);
+  // 1. arrow tips as the text names them, per end; any tip the run declares
+  assert.deepEqual(['->', '-Stealth', 'Latex-{Straight Barb[open]}', '-', '<->', 'thick', 'draw=red', 'right hook-latex'].map(D.tipsOf),
+    [['', '>'], ['', 'Stealth'], ['Latex', '{Straight Barb[open]}'], ['', ''], ['<', '>'], null, null, ['right hook', 'latex']]);
+  const tipped = '\n  \\draw[Latex-{Stealth[open]}, thick] (a.north) -- (b.30);\n';
+  const te = D.parse(tipped);
+  const [e] = te.items;
+  assert.deepEqual([e.type, e.arrow, e.opts, e.from, e.fromAt, e.to, e.toAt], ['edge', 'Latex-{Stealth[open]}', ['thick'], 'a', 'north', 'b', '30']);
+  assert.equal(D.emit(te), tipped, 'untouched: as it was');
+  // 3. anchors written back, and read back the same
+  Object.assign(e, { arrow: '-Triangle', fromAt: 'south east', toAt: '', dirty: true });
+  assert.equal(D.emit(te), '\n  \\draw[-Triangle, thick] (a.south east) -- (b);\n');
+  assert.deepEqual((({ arrow, fromAt, toAt }) => [arrow, fromAt, toAt])(D.parse(D.emit(te)).items[0]), ['-Triangle', 'south east', '']);
+  const box = { x: 0, y: 0 };
+  assert.deepEqual(D.anchorAt(box, [2, 1], false, 'north east'), [1, 0.5]);
+  assert.deepEqual(D.anchorAt(box, [2, 2], true, '0').map((v) => +v.toFixed(6)), [1, 0]);
+  assert.equal(D.nearestAnchor(box, [2, 1], false, [0.05, 0.55]), 'north');
+  assert.equal(D.nearestAnchor(box, [2, 1], false, [1, 1]), '45', 'away from the compass points: the angle, in steps of 15°');
+  assert.equal(D.nearestAnchor(box, [2, 1], false, [-0.9, -0.48]), 'south west');
+  // a tip TeX drew becomes a marker: its last points, the line's height its reference
+  const m = D.tipMarker("<svg version='1.1' width='52' height='10' viewBox='76 57 26 5'><g id='page1'><g transform='translate(77,59.5)scale(1,-1)'><g fill='#888' stroke='#888'><path d='M0 0H21'/></g></g></g></svg>");
+  assert.deepEqual([m.box, m.ref], [[94, 57, 8, 5], [102, 59.5]]);
+  assert.ok(m.inner.includes("fill='currentColor'") && !m.inner.includes('id='), m.inner);
+
+  // 8. layers: blocks of `pgfonlayer` and of a scope whose key opens a layer
+  const layered = `
+  \\node (a) at (0,0) {A};
+  \\begin{pgfonlayer}{background}
+    \\node[fill=red] (b) at (1,0) {B};
+    \\draw (a) -- (b);
+  \\end{pgfonlayer}
+  \\begin{scope}[on background layer, blue]
+    \\node (c) at (2,0) {C};
+  \\end{scope}
+  \\begin{scope}[xshift=1cm]
+    \\node (d) at (3,0) {D};
+  \\end{scope}
+`;
+  const L = D.parse(layered, { 'on background layer': 'background' });
+  assert.equal(D.emit(L), layered);
+  const by = (n) => L.items.find((i) => i.name === n);
+  assert.deepEqual(['a', 'b', 'c', 'd'].map((n) => by(n).layer), ['main', 'background', 'background', 'main']);
+  assert.equal(L.items.find((i) => i.type === 'edge').layer, 'background');
+  assert.deepEqual(L.items.filter((i) => i.type === 'layer').map((i) => i.layer ?? (i.close ? '/' : 'scope')), ['background', '/', 'background', '/', 'scope', '/'], 'a scope without a layer key: a block on no layer');
+  // moved: written where it stood, out of its block and into one of its own
+  D.toLayer(by('b'), 'main');
+  D.toLayer(by('a'), 'background');
+  const moved = D.emit(L);
+  assert.equal(moved, `
+  \\begin{pgfonlayer}{background}
+    \\node (a) at (0,0) {A};
+  \\end{pgfonlayer}
+  \\begin{pgfonlayer}{background}
+  \\end{pgfonlayer}
+    \\node[fill=red] (b) at (1,0) {B};
+  \\begin{pgfonlayer}{background}
+    \\draw (a) -- (b);
+  \\end{pgfonlayer}
+  \\begin{scope}[on background layer, blue]
+    \\node (c) at (2,0) {C};
+  \\end{scope}
+  \\begin{scope}[xshift=1cm]
+    \\node (d) at (3,0) {D};
+  \\end{scope}
+`);
+  const L2 = D.parse(moved, { 'on background layer': 'background' });
+  assert.deepEqual(['a', 'b', 'c'].map((n) => L2.items.find((i) => i.name === n).layer), ['background', 'main', 'background'], 'read back: the same layers');
+  assert.equal(L2.items.find((i) => i.type === 'edge').layer, 'background');
+
+  // 4. nodes in a grid as one matrix of nodes, centers kept, arrows by name
+  const grid = '\n  \\node[draw] (a) at (0,0) {A};\n  \\node[draw, circle] (b) at (2,0) {B};\n  \\node (c) at (2,-1.5) {C};\n  \\draw[->] (a) -- (b);\n';
+  const G = D.parse(grid);
+  const where = (ns) => ns.map((n) => `${n.name}:${n.x},${n.y}`).sort();
+  const before = where(G.items.filter((i) => i.type === 'node'));
+  const { matrix } = D.toMatrix(G, G.items.filter((i) => i.type === 'node'), 'm');
+  const text = D.emit(G);
+  assert.equal(text, `
+  \\matrix (m) [matrix of nodes, row sep={1.5cm,between origins}, column sep={2cm,between origins}, matrix anchor=a.center] at (0,0) {
+    |[draw] (a)| A & |[draw, circle] (b)| B \\\\
+     & |(c)| C \\\\
+  };
+  \\draw[->] (a) -- (b);
+`);
+  const G2 = D.parse(text);
+  assert.deepEqual(ty(G2), ['matrix', 'edge']);
+  const [mx] = G2.items;
+  D.cellPlaces(mx).forEach(([x, y], i) => Object.assign(mx.cells[i], { x, y }));
+  assert.deepEqual(where(mx.cells), before, 'read back: every node where it was');
+  assert.deepEqual(mx.cells.map((c) => [c.name, c.opts, c.label]), [['a', ['draw'], 'A'], ['b', ['draw', 'circle'], 'B'], ['c', [], 'C']]);
+  assert.equal(D.emit(G2), text);
+  assert.ok(matrix && D.toMatrix(D.parse('\n  \\node (a) at (0,0) {A};\n  \\node (b) at (1,0.3) {B};\n  \\node (c) at (0.5,0) {C};\n  \\node (e) at (0.25,0.3) {E};\n'), [], 'x').why);
+  const skew = D.parse('\n  \\node (a) at (0,0) {A};\n  \\node (b) at (1,0) {B};\n  \\node (c) at (2.5,0) {C};\n');
+  assert.equal(D.toMatrix(skew, skew.items, 'm').why, 'the nodes are not in a grid');
+  // a matrix whose cells have no names: `m-r-c`, as TikZ names them
+  assert.deepEqual(D.parse('\\matrix (q) [matrix of nodes] { x & y \\\\ };').items[0].cells.map((c) => c.name), ['q-1-1', 'q-1-2']);
+
+  // 5. Mermaid out and back: the same graph; what it cannot say, named
+  const flow = D.parse('\n  \\node[draw] (s) at (0,0) {Start};\n  \\node[draw, circle] (e) at (0,-2) {End};\n  \\node[draw, rounded corners] (w) at (2,-2) {Wait};\n  \\draw[->] (s) -- node[above] {go} (e);\n  \\draw[<-] (w) -- (e);\n  \\draw (s) -- (w);\n');
+  const ns = flow.items.filter((i) => i.type === 'node'), es = flow.items.filter((i) => i.type === 'edge');
+  const out = D.mermaidOut(ns, es);
+  assert.equal(out, 'graph TD\n  s[Start]\n  e((End))\n  w(Wait)\n  s -->|go| e\n  e --> w\n  s --- w');
+  const into = { items: [], tail: '\n' };
+  D.importMermaid(into, out, 2);
+  const g = (items) => [items.filter((i) => i.type === 'node').map((n) => `${n.name}:${n.label}:${n.opts.join('+')}`).sort(), items.filter((i) => i.type === 'edge').map((e) => `${e.from}${e.arrow}${e.to}:${e.label}`).sort()];
+  assert.deepEqual(g(D.parse(D.emit(into)).items), [['e:End:draw+circle', 's:Start:draw', 'w:Wait:draw+rounded corners'], ['e->w:', 's-->e:go', 's-w:'].map((x) => x.replace('-->', '->'))]);
+  assert.deepEqual(D.mermaidLoss(ns, es), ['positions']);
+  es[0].toAt = 'north'; ns[0].opts.push('fill=red'); es[1].arrow = '-Stealth';
+  assert.deepEqual(D.mermaidLoss(ns, es, 2), ['positions', 'node styles', 'anchors', 'arrow tips', '2 statements kept as code']);
+  // import replaces, or merges by name
+  const rep = D.parse('\n  \\node (s) at (0,0) {Old};\n  \\draw (0,0) -- (1,1);\n');
+  D.importMermaid(rep, 'graph TD\n  s[New] --> t[T]', 2, true);
+  assert.deepEqual(D.parse(D.emit(rep)).items.map((i) => i.type), ['code', 'node', 'node', 'edge'], 'the path stays, the old node goes');
+
+  // 6. a relative node dragged: the smallest edit of its placement
+  const size = () => [1, 0.6];
+  const env = (by, earlier = []) => ({ by: new Map(by.map((n) => [n.name, n])), earlier, size, distance: [1, 1], onGrid: false, grid: 0.5 });
+  const rel = D.parse('\n  \\node (a) at (0,0) {A};\n  \\node (b) at (0,-3) {B};\n  \\node (c) [right=of a] {C};\n  \\node (d) [right of=a] {D};\n');
+  const [na, nb, nc, nd] = rel.items;
+  // the same relation, a new distance; the default distance needs none
+  assert.deepEqual((({ opts, hint }) => [opts, hint])(D.relocate(nc, 4.1, 0.1, env([na]))), [['right=3cm of a'], 'right of a, 3 cm']);
+  assert.deepEqual(D.relocate(nc, 2, 0, env([na])).opts, ['right=of a']);
+  assert.deepEqual(D.relocate(nd, 2.5, 0, env([na])).opts, ['right of=a', 'node distance=2.5cm'], 'centers apart: its own node distance');
+  // off the line, a little: a shift
+  assert.deepEqual(D.relocate(nc, 2, 0.5, env([na])).opts, ['right=of a', 'yshift=0.5cm']);
+  // far off: a relation to the nearest node before it, else `at`
+  assert.deepEqual(D.relocate(nc, 0, -4.6, env([na, nb], [na, nb])).opts, ['below=of b']);
+  assert.deepEqual(D.relocate(nc, 3.2, -2.1, env([na, nb], [na, nb])).opts, ['above right=0.5cm and 2cm of b'], 'borders apart: a diagonal reads any place');
+  const free = D.relocate(nd, 3.2, -2.1, env([na, nb], [na, nb]));
+  assert.deepEqual([free.opts, free.at, free.x, free.y, free.place], [[], true, 3, -2, null]);
+  // written back and read back: the node as placed
+  Object.assign(nc, D.relocate(nc, 4.1, 0.1, env([na])), { dirty: true });
+  const back2 = D.parse(D.emit(rel)).items[2];
+  assert.deepEqual([back2.place.dir, back2.place.of, back2.place.dist], [[1, 0], 'a', '3cm']);
+  assert.deepEqual(D.relPos(back2, { name: 'a', x: 0, y: 0 }, env([])), [4, 0]);
+
+  // 7. the picture's options: one key changed, the rest as typed
+  const po = D.picOptions('node distance=2cm, every node/.style={draw, circle}, >=Stealth');
+  assert.deepEqual([po.get('node distance'), po.get('every node/.style'), po.get('>')], ['2cm', 'draw, circle', 'Stealth']);
+  po.set('every node/.style', 'draw');
+  po.set('scale', '2');
+  po.set('>', '');
+  assert.equal(po.text(), 'node distance=2cm, every node/.style={draw}, scale=2');
+  // scaled: the text's coordinates written back as they were
+  const sc = D.parse('\n  \\node (a) at (1,2) {A};\n');
+  Object.assign(sc.items[0], { x: 3, y: 4, dirty: true });
+  assert.equal(D.emit(sc, 2), '\n  \\node (a) at (1.5,2) {A};\n');
+}
+console.log('drawing model: ok');
+
 // forest trees: bracket → state → bracket, untouched text as it was
 const F = self.satexViews.forest;
 const tree = `

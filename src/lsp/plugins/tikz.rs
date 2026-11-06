@@ -54,7 +54,7 @@ impl TypePlugin for Tikz {
         let (title, drawing) = match super::body(cx.analysis, cx.doc, cx.path, cx.pos.line, ENV, true) {
             Some(p) => (
                 "Edit drawing",
-                json!({ "range": p.range, "body": super::slice(cx.doc, p.range), "options": options(cx.doc, &p), "nodes": nodes(cx, &p) }),
+                json!({ "range": p.range, "head": head(cx.doc, &p), "body": super::slice(cx.doc, p.range), "options": options(cx.doc, &p), "nodes": nodes(cx, &p) }),
             ),
             None => {
                 let new = super::blank(cx, ENV, "tikz")?;
@@ -67,6 +67,7 @@ impl TypePlugin for Tikz {
         };
         let mut section = drawing;
         section["kind"] = json!("drawing");
+        section["run"] = facts(cx);
         section["grid"] = json!(cfg.grid);
         section["spacing"] = json!(cfg.spacing);
         Some(json!({ "title": title, "sections": [section] }))
@@ -82,12 +83,82 @@ fn wrap(body: &str) -> String {
     format!("\\begin{{{ENV}}}\n  {body}\\end{{{ENV}}}")
 }
 
-/// The picture's options (`every node/.style`, `node distance`), which the canvas applies.
-fn options(doc: &Text, p: &super::Body) -> String {
+/// The text between `\begin{tikzpicture}` and the body: the options, if any.
+fn after_begin(doc: &Text, p: &super::Body) -> String {
     let start = lsp_types::Position::new(p.lines.0.saturating_sub(1), 0);
     let head = super::slice(doc, lsp_types::Range { start, end: p.range.start });
-    let head = head.rsplit_once(&format!("\\begin{{{ENV}}}")).map_or("", |(_, o)| o.trim());
+    head.rsplit_once(&format!("\\begin{{{ENV}}}")).map_or(String::new(), |(_, o)| o.to_string())
+}
+
+/// The picture's options (`every node/.style`, `node distance`), which the canvas applies.
+fn options(doc: &Text, p: &super::Body) -> String {
+    let head = after_begin(doc, p);
+    let head = head.trim();
     head.strip_prefix('[').and_then(|o| o.strip_suffix(']')).unwrap_or_default().trim().to_string()
+}
+
+/// Where the options stand, `[…]` or nothing, when on the line of `\begin`: the canvas rewrites them.
+fn head(doc: &Text, p: &super::Body) -> Option<lsp_types::Range> {
+    let head = after_begin(doc, p);
+    let units = head.encode_utf16().count() as u32;
+    let start = lsp_types::Position::new(p.range.start.line, p.range.start.character.checked_sub(units)?);
+    (!head.contains('\n')).then_some(lsp_types::Range { start, end: p.range.start })
+}
+
+/// What the run declared that a canvas offers: arrow tips (each with TeX's picture once drawn),
+/// colors, node shapes, layers in their order, the keys that put a scope on a layer, the TikZ
+/// libraries loaded and where `\usetikzlibrary` goes for one more.
+fn facts(cx: &Cx) -> Json {
+    let a = cx.analysis;
+    use crate::queries::preview::{Stroke, arrow_specs, drawn};
+    let tips: Vec<Json> = arrow_specs(a)
+        .iter()
+        .filter_map(|s| s.strip_prefix('-'))
+        .map(|t| json!({ "name": t, "svg": drawn(a, Stroke::Arrows, &format!("-{t}")).map(|p| p.svg) }))
+        .collect();
+    let colors: Vec<Json> =
+        // not xcolor's current color `.` nor pgf's own
+        (super::color_items(a).into_iter())
+            .filter(|c| !c.label.starts_with(['.', '-']) && !c.label.starts_with("pgf"))
+            .map(|c| json!({ "name": c.label, "hex": c.detail }))
+            .collect();
+    let text = |name: &str| {
+        let m = a.env.meaning(a.interner.lookup(name)?).as_macro().cloned()?;
+        Some(crate::engine::tex::detokenize(&m.replacement_text, &a.interner))
+    };
+    let mut declared = Vec::new();
+    let mut shapes = Vec::new();
+    let mut keys = serde_json::Map::new();
+    for sym in (0..a.interner.len() as u32).map(crate::engine::tex::Sym) {
+        let name = a.interner.name(sym);
+        if let Some(layer) = name.strip_prefix("pgf@layerbox@").filter(|_| a.env.is_defined(sym)) {
+            declared.push(layer.to_string());
+        } else if let Some(shape) = name.strip_prefix("pgf@sh@s@").filter(|s| !s.contains('@') && a.env.is_defined(sym))
+        {
+            shapes.push(shape.to_string());
+        } else if let Some(key) = name.strip_prefix("pgfk@/tikz/").and_then(|k| k.strip_suffix("/.@cmd")) {
+            // a style whose code opens a layer (backgrounds' `on background layer`)
+            let layer = text(name).and_then(|t| {
+                let rest = &t[t.find("\\pgfonlayer")? + "\\pgfonlayer".len()..];
+                braced_groups(rest).first().map(|l| l.trim().to_string())
+            });
+            if let Some(layer) = layer.filter(|l| !l.is_empty() && !l.contains(['#', '\\'])) {
+                keys.insert(key.to_string(), json!(layer));
+            }
+        }
+    }
+    let order: Vec<String> = text("pgf@layerlist")
+        .map(|l| l.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+    shapes.sort();
+    let libraries: Vec<String> = (crate::queries::preview::libraries(a).iter())
+        .filter_map(|l| l.strip_prefix("\\usetikzlibrary{")?.strip_suffix('}').map(str::to_string))
+        .collect();
+    let file = super::super::type_at::file_of(a, cx.path);
+    let load_at = crate::linter::shared::document_start(a)
+        .filter(|s| Some(s.file) == file)
+        .map(|s| lsp_types::Position::new(s.line.saturating_sub(1), 0));
+    json!({ "tips": tips, "colors": colors, "shapes": shapes, "libraries": libraries, "load_at": load_at, "layers": { "declared": declared, "order": order }, "layer_keys": keys })
 }
 
 /// The nodes the run made in the picture: name, shape, and where pgf put each (cm) when the
