@@ -1563,6 +1563,15 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf .pdf-block { z-index: 1; outline: 1px dashed #0e7490; pointer-events: none !important; }
 .pdf .pdf-block b { position: absolute; right: 0; top: 0; transform: translateY(-100%); font: 600 .55rem/1.2 ui-monospace, Menlo, monospace; color: #0e7490; }
 .pdf .pdf-margin { background: #0e749014; pointer-events: none !important; }
+/* the grid over a page: thin lines every step, stronger ones labelled along the top and left edges */
+.pdf .pdf-grid { --g: color-mix(in srgb, var(--c4) 14%, transparent); --G: color-mix(in srgb, var(--c4) 40%, transparent); inset: 0; z-index: 0; pointer-events: none !important;
+  background: linear-gradient(to right, var(--G) 1px, transparent 1px) 0 0 / var(--Gx) 100%, linear-gradient(to bottom, var(--G) 1px, transparent 1px) 0 0 / 100% var(--Gy),
+    linear-gradient(to right, var(--g) 1px, transparent 1px) 0 0 / var(--gx) 100%, linear-gradient(to bottom, var(--g) 1px, transparent 1px) 0 0 / 100% var(--gy); }
+.pdf .pdf-grid.g-coarse { background-size: var(--Gx) 100%, 100% var(--Gy), 0 0, 0 0; }
+.pdf .pdf-grid b { position: absolute; font: 500 .5rem/1 ui-monospace, Menlo, monospace; color: var(--c4); background: color-mix(in srgb, var(--bg) 80%, transparent); padding: 1px 2px; border-radius: 2px; }
+.pdf .pdf-grid b.gx { top: 0; transform: translateX(-50%); } .pdf .pdf-grid b.gy { left: 0; transform: translateY(-50%); }
+.pdf-grid-set input[type="text"] { width: 8ch; } .pdf-grid-set input[type="number"] { width: 5ch; } .pdf-grid-set input:invalid { outline: 1px solid var(--error); }
+.sw-grid { background: linear-gradient(to right, var(--c4) 1px, transparent 1px) 0 0 / 4px 100%, linear-gradient(to bottom, var(--c4) 1px, transparent 1px) 0 0 / 100% 4px; }
 .pdf .pdf-bad { z-index: 1; border-radius: 2px; }
 .pdf .pdf-bad.b-over { outline: 1px solid #d92d20; background: #d92d2014; } .pdf .pdf-bad.b-under { outline: 1px dashed #b07400; background: #b0740014; }
 .pdf .pdf-bar-out { z-index: 2; background: #d92d20; }
@@ -2109,17 +2118,24 @@ header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(-
 .pdf-layer-list .layer-group { display: grid; justify-items: start; }
 .sw-envs { border: 1px solid #7c3aed; border-left-width: 3px; } .sw-keys { background: linear-gradient(90deg, #1a7f37 50%, #1d5fb8 50%); }
 .sw-boxes { border: 1px dashed var(--c3); } .sw-ligs { background: color-mix(in srgb, var(--accent) 35%, transparent); box-shadow: inset 0 -2px 0 var(--accent); }
-.sw-glue { background: repeating-linear-gradient(90deg, var(--c6) 0 2px, transparent 2px 4px) center / 100% 2px no-repeat; border-inline: 1.5px solid var(--c6); }
+.sw-glue { border: 1.5px solid var(--c6); border-top: 0; }
 .sw-geometry { border: 1px dashed #0e7490; background: #0e749018; } .sw-figures { border: 1px dashed #c2410c; background: #c2410c18; }
 .sw-findings { border-bottom: 2px solid #b07400; background: #b0740022; } .sw-maybe { border: 1px dotted var(--muted); background: repeating-linear-gradient(135deg, var(--sunk) 0 2px, transparent 2px 4px); } .sw-bad { background: #d92d20; }
-/* glue that may stretch or shrink (`.show-glue`): a thin marker, its spec on hover */
+/* glue that may stretch or shrink (`.show-glue`): a thin bracket as big as its natural size, its spec on hover; glue
+   that stretches without bound dotted. Glue between lines stands in the gutter and takes no room from the text. */
 .typeset .ts-glue { display: none; }
-.typeset.show-glue .ts-glue { display: inline-block; width: .45em; height: 1em; vertical-align: -.15em; cursor: help; background: repeating-linear-gradient(var(--c6) 0 2px, transparent 2px 4px) center / 1.5px 100% no-repeat; }
-.typeset.show-glue :is(.ts-glue-vskip, .ts-glue-parskip) { display: block; width: auto; height: .5em; background: repeating-linear-gradient(90deg, var(--c6) 0 4px, transparent 4px 7px) center / 100% 1.5px no-repeat; }
-.typeset.show-glue .ts-glue-parskip { opacity: .6; }
-.typeset.show-glue .ts-fill { display: inline-block; min-width: 1.2em; height: .9em; cursor: help; background: repeating-linear-gradient(90deg, var(--c6) 0 4px, transparent 4px 7px) bottom / 100% 1.5px no-repeat; }
-.pdf .pdf-glue { z-index: 1; border-inline: 1px solid #0e7c86; background: repeating-linear-gradient(90deg, #0e7c86 0 3px, transparent 3px 6px) center / 100% 1.5px no-repeat, #0e7c8614; }
-.pdf .pdf-glue.g-hskip { border-style: dashed; }
+.typeset.show-glue .ts-glue { --glue-c: color-mix(in srgb, var(--c6) 70%, transparent); display: inline-block; box-sizing: border-box; width: clamp(.2em, var(--glue), 1.5em); height: .3em; vertical-align: baseline; cursor: help; border: 1px solid var(--glue-c); border-top: 0; }
+.typeset.show-glue :is(.ts-glue-vskip, .ts-glue-parskip) { display: block; position: relative; width: 0; height: 0; border: 0; }
+.typeset.show-glue :is(.ts-glue-vskip, .ts-glue-parskip)::before { content: ""; position: absolute; left: -.55rem; top: calc(clamp(4px, var(--glue), 1.6em) / -2); width: .35rem; height: clamp(4px, var(--glue), 1.6em); box-sizing: border-box; border: 1.5px solid var(--glue-c); border-right: 0; }
+/* glue right after glue stands beside it, so a heading's skip and the \parskip after it both show */
+.typeset.show-glue :is(.ts-glue-vskip, .ts-glue-parskip) + :is(.ts-glue-vskip, .ts-glue-parskip)::before { left: -.95rem; }
+.typeset.show-glue :is(.ts-glue-vskip, .ts-glue-parskip) + :is(.ts-glue-vskip, .ts-glue-parskip) + :is(.ts-glue-vskip, .ts-glue-parskip)::before { left: -1.35rem; }
+.typeset.show-glue :is(.ts-glue-vskip, .ts-glue-parskip):hover::before { border-color: var(--c6); border-width: 2px; }
+.typeset.show-glue .ts-glue.ts-inf, .typeset.show-glue .ts-glue.ts-inf::before { border-style: dotted; }
+/* infinite glue in a line shows where it fills: a dotted base line in the room it takes, none where it takes none (a cell) */
+.typeset.show-glue .ts-fill { display: inline-block; height: .3em; cursor: help; background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--c6) 70%, transparent) 0 1.5px, transparent 1.5px 4px) bottom / 100% 1px no-repeat; }
+.pdf .pdf-glue { z-index: 1; box-sizing: border-box; border: 1px solid #0e7c86b0; border-top: 0; cursor: help; }
+.pdf .pdf-glue.g-fill { border-style: dotted; }
 .pdf-layer-list .layer-seg { flex-wrap: nowrap; }
 .pdf-layer-list.layers { max-width: min(26rem, calc(100vw - 1.5rem)); }
 /* the image dialog: the file's format beside its name, a blocked tint's reason in view (dialogs.js) */

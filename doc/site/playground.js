@@ -5126,12 +5126,16 @@
     glue: 'Glue that stretches in a line (\\hfill, \\hspace{\\fill}, \\hskip … plus …) where SyncTeX places it, its spec on hover',
     geometry: 'The text block the lines fill, the margins shaded',
     figures: 'The bounding box of each figure, table, picture, minipage … with its environment name',
+    grid: 'A grid over each page from its top left corner: its step in any TeX unit, labelled along the edges',
     findings: 'The findings of the check and of the build, on the characters they are about',
     bad: 'Overfull and underfull boxes of the log, an overfull one by how much it sticks out',
   };
   const FIGURE_ENV = /^(figure|table|sidewaysfigure|sidewaystable|wrapfigure|wraptable|subfigure|tikzpicture|picture|minipage|lstlisting|tabular|center)\*?$/;
   /** Sub-filters per layer, from the data: [group, title, rows of [key, label, count]]. What the viewer switched off is kept as `layer|group|key`. */
-  const PDF_FACETS = new Set(['keys', 'findings', 'envs', 'figures', 'glue']);
+  const PDF_FACETS = new Set(['keys', 'findings', 'envs', 'figures', 'glue', 'grid']);
+  /** The grid's step (a TeX length) and how many steps lie between labels, kept per viewer. */
+  var pdfGrid = { step: '1cm', every: 5 }; // var: a check may render before this line ran
+  try { Object.assign(pdfGrid, self.satexStore?.get('pdf-grid')); } catch {}
   var pdfHide = new Set(); // var: a check may render before this line ran
   try { pdfHide = new Set(JSON.parse(localStorage.getItem('satex-pdf-facets') ?? '[]').map((k) => k.replace(/^(defs|refs)\|/, 'keys|'))); } catch {}
   /** Environments begun in class and package code (beamer's own nesting): off unless asked, kept per viewer. */
@@ -5195,8 +5199,12 @@
   function pdfFacetsDraw() {
     for (const d of $('pdf-layer-list').querySelectorAll('.layer-sub')) {
       const layer = d.dataset.sub, list = d.querySelector('.layer-sub-list');
+      // the grid's fields hold what was typed: drawn once, never under the cursor
+      if (layer === 'grid' && list.querySelector('[data-grid]')) continue;
       const internal = layer === 'envs' ? `<div class="pdf-sub-group"><label><input type="checkbox" data-internal${pdfInternal ? ' checked' : ''}>internal (class, packages)</label></div>` : '';
-      const html = pdfFacetGroups(layer).filter(([, , rows]) => rows.length).map(([g, title, rows]) => `<div class="pdf-sub-group"><span class="muted">${escape(title)}</span>${rows.map(([key, label, n]) => `<label><input type="checkbox" data-facet="${escape(`${layer}|${g}|${key}`)}"${pdfShown(layer, g, key) ? ' checked' : ''}>${escape(label)} <b class="count">${n}</b></label>`).join('')}</div>`).join('') + internal;
+      const html = layer === 'grid' ? `<div class="pdf-sub-group pdf-grid-set"><label>step <input type="text" data-grid="step" value="${escape(pdfGrid.step)}" list="pdf-grid-units" size="6" spellcheck="false" title="a TeX length: 1cm, 5mm, 10pt, .5in, 36bp, 2pc …"></label>` +
+        `<label>label every <input type="number" data-grid="every" value="${escape(pdfGrid.every)}" min="1" max="50"> steps</label>` +
+        `<datalist id="pdf-grid-units">${['1cm', '5mm', '1mm', '10pt', '12pt', '1in', '.5in', '36bp', '1pc'].map((v) => `<option value="${v}">`).join('')}</datalist></div>` : pdfFacetGroups(layer).filter(([, , rows]) => rows.length).map(([g, title, rows]) => `<div class="pdf-sub-group"><span class="muted">${escape(title)}</span>${rows.map(([key, label, n]) => `<label><input type="checkbox" data-facet="${escape(`${layer}|${g}|${key}`)}"${pdfShown(layer, g, key) ? ' checked' : ''}>${escape(label)} <b class="count">${n}</b></label>`).join('')}</div>`).join('') + internal;
       $('pdf-layer-list').querySelector(`[data-fold="${layer}"]`).disabled = !html;
       if (list.dataset.html !== html) { list.innerHTML = html; list.dataset.html = html; }
     }
@@ -5249,6 +5257,17 @@
     if (e.target.dataset?.internal !== undefined) {
       pdfInternal = e.target.checked;
       try { localStorage.setItem('satex-pdf-internal', pdfInternal ? 'on' : 'off'); } catch {}
+      pdfOverlay();
+      return;
+    }
+    if (e.target.dataset?.grid) {
+      const k = e.target.dataset.grid, v = k === 'every' ? Math.round(+e.target.value) : e.target.value.trim();
+      const ok = k === 'every' ? v >= 1 && v <= 50 : !!self.satexLayers.length(v);
+      e.target.setCustomValidity(ok ? '' : k === 'every' ? 'a whole number from 1 to 50' : 'a TeX length above 0: 1cm, 5mm, 10pt, .5in …');
+      e.target.reportValidity();
+      if (!ok) return;
+      pdfGrid[k] = v;
+      self.satexStore?.set('pdf-grid', { ...pdfGrid });
       pdfOverlay();
       return;
     }
@@ -5369,8 +5388,8 @@
       const own = boxes.filter((b) => b.line === w.line && w.path.endsWith(b.file) && (b.kind === 'k' && b.w > 0 || b.kind === 'g'));
       const wide = own.map((b) => [b, span(b)]).filter(([, [l, r]]) => Number.isFinite(r) && r > l).sort((a, b) => (b[1][1] - b[1][0]) - (a[1][1] - a[1][0]));
       wide.slice(0, marks.length).forEach(([b, [l, r]], i) => {
-        const line = boxes.find((o) => o.kind === '(' && near(o, b));
-        out.push({ page: b.page, l, r, t: b.y - (line?.h || 7), d: b.y + (line?.d || 2), file: b.file, line: w.line, kind: marks[i][0], spec: marks[i][1] });
+        // a low bracket on the baseline, as the Typeset view draws it
+        out.push({ page: b.page, l, r, t: b.y - 3.5, d: b.y + 0.5, file: b.file, line: w.line, kind: marks[i][0], spec: marks[i][1] });
       });
     }
     return out;
@@ -5474,6 +5493,20 @@
     }
     if (pdfOverlayOn.glue) {
       for (const g of pdfGlue().filter((g) => pdfShown('glue', 'kind', g.kind))) box(g.page, `pdf-glue g-${g.kind}`, g.l, g.t, g.r, g.d, `${g.kind === 'fill' ? 'infinite glue' : 'glue'} ${g.spec} · ${g.file}:${g.line}`);
+    }
+    if (pdfOverlayOn.grid) {
+      // lines every step from the top left corner, stronger and labelled every `every` steps; fewer when they would crowd
+      const step = self.satexLayers.length(pdfGrid.step) ?? self.satexLayers.length('1cm'), every = Math.max(1, Math.round(pdfGrid.every) || 5);
+      const s = step.pt * 72 / 72.27, num = (k) => `${+(k * step.num).toFixed(3)}${step.unit}`;
+      for (const page of [...pdfBody.querySelectorAll('.pdf-page[data-page]')].map((p) => +p.dataset.page)) {
+        const wh = size(page);
+        if (!wh || wh[0] / s > 2000) continue;
+        const minor = wh[0] / s <= 200, labels = [];
+        for (let k = every; k * s < wh[0]; k += every) labels.push(`<b class="gx" style="left:${k * s / wh[0] * 100}%">${num(k)}</b>`);
+        for (let k = every; k * s < wh[1]; k += every) labels.push(`<b class="gy" style="top:${k * s / wh[1] * 100}%">${num(k)}</b>`);
+        const at = `--gx:${s / wh[0] * 100}%;--gy:${s / wh[1] * 100}%;--Gx:${every * s / wh[0] * 100}%;--Gy:${every * s / wh[1] * 100}%`;
+        put(page, `<span class="pdf-ov pdf-grid${minor ? '' : ' g-coarse'}" style="${at}" title="grid: ${escape(num(1))} steps, labelled every ${escape(num(every))}">${labels.join('')}</span>`);
+      }
     }
     if (pdfOverlayOn.bad) {
       for (const rec of pdf.records ?? []) {

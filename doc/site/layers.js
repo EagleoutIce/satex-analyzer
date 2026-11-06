@@ -13,6 +13,7 @@
     ligs: ['ligs', 'layout'],
     geometry: ['text block', 'layout'],
     figures: ['bounding boxes', 'layout'],
+    grid: ['grid', 'layout'],
     findings: ['findings', 'analysis'],
     maybe: ['maybe', 'analysis'],
     bad: ['bad boxes', 'analysis'],
@@ -44,5 +45,13 @@
   }
   /** Shows `n` beside layer `id`'s name, nothing while it is off or none. */
   const count = (root, id, n) => { const b = root.querySelector(`[data-layer="${id}"]`)?.closest('.layer')?.querySelector('.layer-n'); if (b) b.textContent = n ? String(n) : ''; };
-  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count };
+  /** Points per unit, as TeX counts them (tex.web § 458); `px` is pdfTeX's default \pdfpxdimen, 1bp. */
+  const PT = { pt: 1, pc: 12, in: 72.27, bp: 72.27 / 72, px: 72.27 / 72, cm: 72.27 / 2.54, mm: 72.27 / 25.4, dd: 1238 / 1157, cc: 14856 / 1157, sp: 1 / 65536 };
+  /** A TeX length (`1cm`, `.5in`, `12 pt`, `2em` given `font` {em, ex} in pt) as {pt, num, unit}; null when it is none or not above 0. */
+  function length(text, font = {}) {
+    const m = /^\s*(\d*\.?\d+)\s*(pt|pc|in|bp|px|cm|mm|dd|cc|sp|em|ex)\s*$/i.exec(String(text ?? ''));
+    const unit = m?.[2].toLowerCase(), per = unit && (PT[unit] ?? font[unit]);
+    return per && +m[1] > 0 ? { pt: +m[1] * per, num: +m[1], unit } : null;
+  }
+  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, length };
 })();

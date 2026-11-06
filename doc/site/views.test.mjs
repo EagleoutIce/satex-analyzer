@@ -466,6 +466,9 @@ console.log('table model: ok');
   const filled = notation(`${M('fill 0.0pt plus 1.0fill')}Right`);
   assert.match(filled, /^<i class="ts-fill ts-fill-l" title="infinite glue in the line: 0.0pt plus 1.0fill" data-glue="0.0pt plus 1.0fill"><\/i>Right$/);
   assert.match(notation(`A${M('hskip 2.0pt plus 3.0pt')}B`), /^A<i class="ts-glue ts-glue-hskip" title="glue in the line: 2.0pt plus 3.0pt"[^>]*><\/i>B$/);
+  // glue between lines: its natural size sets the mark's, glue that stretches without bound is marked so
+  assert.match(notation(`A${M('vskip 6.0pt plus 2.0pt')}B`), /<i class="ts-glue ts-glue-vskip" [^>]*style="--glue: 6pt"/);
+  assert.match(notation(`A${M('vskip 0.0pt plus 1.0fil')}B`), /<i class="ts-glue ts-glue-vskip ts-inf" [^>]*style="--glue: 0pt"/);
   // a \parskip before a centred line leaves it centred
   assert.match(notation(`${M('fill 0.0pt plus 1.0fil')}${M('parskip 0.0pt plus 1.0pt')}Mid${M('fill 0.0pt plus 1.0fil')}`), /^<span class="ts-fillrow">/);
   // glue in a row keeps the cell's fill on its side
@@ -584,3 +587,10 @@ assert.equal(applied, 'glue');
 assert.deepEqual(kept.get('layers-typeset'), { glue: true, maybe: true, keys: true });
 assert.equal(kept.get('layers-pdf'), undefined);
 assert.deepEqual(layers.state('typeset', { glue: false, maybe: true, keys: false }, store, { keys: false, glue: false }), { glue: true, maybe: true, keys: true }, 'the store wins over older keys');
+// the grid's step: any TeX unit, em and ex only with the run's font, nothing at or below 0
+assert.deepEqual(layers.length(' 1in'), { pt: 72.27, num: 1, unit: 'in' });
+assert.equal(layers.length('2pc').pt, 24);
+assert.equal(layers.length('1em'), null);
+assert.equal(layers.length('1.5em', { em: 10 }).pt, 15);
+assert.deepEqual([layers.length('0cm'), layers.length('cm'), layers.length('-1pt')], [null, null, null]);
+assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layout', ['glue', 'geometry', 'grid']]]);

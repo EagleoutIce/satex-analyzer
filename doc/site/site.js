@@ -707,7 +707,9 @@
       const glue = /^(fill|hskip|vskip|parskip) (.+)$/.exec(mark);
       if (glue) {
         const [, kind, spec] = glue, about = `title="${esc(`${GLUE[kind]}: ${spec}`)}" data-glue="${esc(spec)}"`;
-        return kind === 'fill' ? `<i class="ts-fill ts-fill-${inked ? 'r' : 'l'}" ${about}></i>` : `<i class="ts-glue ts-glue-${kind}" ${about}></i>`;
+        // its natural size sets the mark's (`--glue`); glue that stretches without bound (fil, fill, filll) is drawn dotted
+        return kind === 'fill' ? `<i class="ts-fill ts-fill-${inked ? 'r' : 'l'}" ${about}></i>`
+          : `<i class="ts-glue ts-glue-${kind}${/fil/.test(spec) ? ' ts-inf' : ''}" ${about} style="--glue: ${Math.max(parseFloat(spec) || 0, 0)}pt"></i>`;
       }
       // a math script, to its character or its group's end
       if (mark === 'sup' || mark === 'sub' || mark === 'over' || mark === 'under') { if (mark === 'over' || mark === 'under') { limitAt.push(scripts); limitDone = false; } scripts++; return `<span class="ts-${mark}">`; }
