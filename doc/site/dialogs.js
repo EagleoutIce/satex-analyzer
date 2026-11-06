@@ -109,9 +109,9 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-grid th.sd-vcol.on, .sd-grid td.sd-vcol.on { background: linear-gradient(var(--c-fg), var(--c-fg)) 50% 0 / 1px 100% no-repeat; }
 .sd-grid th.sd-vcol:hover { background: linear-gradient(var(--c-accent), var(--c-accent)) 50% 0 / 2px 100% no-repeat; }
 /* inserting in place: a slim + on the line between rows (in the gutter) and columns (in the header) */
-.sd .sd-ins { position: absolute; z-index: 3; display: grid; place-items: center; width: .95rem; height: .95rem; padding: 0; border-radius: 50%; font-size: .8rem; font-weight: 700; line-height: 1; border: 1px solid var(--c-accent); background: var(--c-bg); color: var(--c-accent); opacity: 0; transition: opacity .12s, transform .12s; }
+.sd .sd-ins { position: absolute; z-index: 3; display: grid; place-items: center; box-sizing: border-box; width: .95rem; height: .95rem; min-width: 0; min-height: 0; aspect-ratio: 1; flex: none; padding: 0; margin: 0; border-radius: 50% !important; box-shadow: none !important; font-size: .8rem; font-weight: 700; line-height: 1; border: 1px solid var(--c-accent); background: var(--c-bg); color: var(--c-accent); opacity: 0; transition: opacity .12s, transform .12s; }
 .sd-grid:hover .sd-ins { opacity: .28; }
-.sd .sd-ins:hover, .sd .sd-ins:focus-visible { opacity: 1; transform: scale(1.12); background: var(--c-accent); color: var(--c-accent-fg); }
+.sd .sd-ins:hover, .sd .sd-ins:focus-visible { opacity: 1; transform: scale(1.12) !important; background: var(--c-accent); color: var(--c-accent-fg); }
 .sd-rule .sd-ins { right: .37rem; top: 50%; margin-top: -.475rem; }
 .sd-vcol .sd-ins { left: 50%; top: 50%; margin: -.475rem 0 0 -.475rem; }
 .sd-grid tr.sd-rule:has(.sd-ins:hover) td:not(.sd-rh) { background: linear-gradient(var(--c-accent), var(--c-accent)) 0 50% / 100% 2px no-repeat; }
