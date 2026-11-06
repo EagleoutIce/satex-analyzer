@@ -3245,6 +3245,23 @@ fn key_list_after_a_switch_offers_keys_not_units() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Hovering in a formula shows it as the run set it, a user macro expanded: on a letter and on
+/// the macro's own name.
+#[test]
+fn hovering_inline_math_shows_the_formula_set() {
+    let text = "\\documentclass{article}\n\\usepackage{amsmath}\n\\newcommand\\norm[1]{\\lVert#1\\rVert}\n\\begin{document}\nSo $\\norm{x}^2$ holds.\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("math-hover", text, &[]);
+    for (needle, off) in [("x}", 0), ("\\norm", 2)] {
+        let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 4, col(text, 4, needle, off)));
+        assert!(md.contains("`‖x‖^2`") && md.contains("data:image/svg+xml"), "{needle}: {md}");
+    }
+    // plain text has no formula
+    let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 4, col(text, 4, "holds", 1)));
+    assert!(!md.contains("Formula"), "{md}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// Keys of a keyval family (graphicx's `Gin`) show their docs on hover, with or without a value.
 #[test]
 fn hovering_a_graphics_key_shows_it() {

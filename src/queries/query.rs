@@ -490,7 +490,7 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 fn typeset(analysis: &Analysis) -> Vec<Record> {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
-    let mut math = math_atoms(text, &analysis.settings.conventions.math_symbols);
+    let mut math = math_atoms(text, &analysis.settings.conventions.math_symbols, 0..text.at.len());
     let marks = script_marks(text, &mut math);
     // each mark with its place in `text.align`: rules set before it go first
     let mut aligns = text.align.iter().zip(&marks).enumerate().filter(|(_, (_, m))| !m.is_empty()).peekable();
@@ -1064,7 +1064,7 @@ pub(crate) fn invisible(literals: &[crate::analysis::facts::Literal]) -> Vec<std
 
 /// Per character: whether a placed box carried it to the page, and whether it was set only in
 /// boxes lost unused.
-fn reach(text: &crate::analysis::facts::Text) -> (Vec<bool>, Vec<bool>) {
+pub(crate) fn reach(text: &crate::analysis::facts::Text) -> (Vec<bool>, Vec<bool>) {
     let mark = |ranges: &[(u32, u32)]| {
         let mut out = vec![false; text.at.len()];
         for &(from, to) in ranges {
@@ -1403,7 +1403,7 @@ fn encoding_slots(analysis: &Analysis) -> HashMap<String, HashMap<u32, char>> {
 }
 
 /// A character as typeset text: satex's private-use sentinels vanish.
-fn public(c: char) -> String {
+pub(crate) fn public(c: char) -> String {
     match c {
         '\u{10FF00}'..='\u{10FFFF}' | '\u{E000}'..='\u{F8FF}' => String::new(),
         _ => c.to_string(),
@@ -1537,14 +1537,18 @@ const VARIABLE: u16 = 7;
 /// math code draws, when that is not the character. A binary operator at the start of a formula
 /// or after another operator, relation, opening or punctuation, or before a relation, closing or
 /// punctuation, is ordinary (tex.web § 728). A letter of the math italic family is tagged `i`.
-fn math_atoms(
+pub(crate) fn math_atoms(
     text: &crate::analysis::facts::Text,
     symbols: &std::collections::BTreeMap<u32, char>,
+    within: std::ops::Range<usize>,
 ) -> HashMap<usize, (char, Option<char>)> {
     let mut out = HashMap::default();
     let mut formulas: Vec<Vec<(usize, u16)>> = Vec::new();
-    let chars: Vec<char> = text.chars.chars().collect();
-    for &(at, code) in &text.math {
+    // the characters `within`, from its start
+    let chars: Vec<char> = text.chars.chars().skip(within.start).take(within.len()).collect();
+    let from = text.math.partition_point(|m| (m.0 as usize) < within.start);
+    let to = text.math.partition_point(|m| (m.0 as usize) < within.end);
+    for &(at, code) in &text.math[from..to] {
         let at = at as usize;
         match formulas.last_mut() {
             Some(f) if f.last().is_some_and(|&(p, _)| p + 1 == at) => f.push((at, code)),
@@ -1553,7 +1557,8 @@ fn math_atoms(
     }
     for formula in formulas {
         // math ignores spaces (tex.web § 1045): they are no atoms
-        let formula: Vec<(usize, u16)> = formula.into_iter().filter(|&(at, _)| chars[at] != ' ').collect();
+        let formula: Vec<(usize, u16)> =
+            formula.into_iter().filter(|&(at, _)| chars[at - within.start] != ' ').collect();
         let classes: Vec<u16> = formula.iter().map(|&(_, c)| (c >> 12).min(VARIABLE)).collect();
         let mut before: Option<u16> = None;
         for (k, &(at, code)) in formula.iter().enumerate() {
@@ -1576,7 +1581,10 @@ fn math_atoms(
 /// The name of each alignment mark, a script set as a limit above (`over`) or below (`under`) its
 /// operator: an operator atom in display math or after `\limits`, not after `\nolimits`, and not
 /// itself in a script (tex.web §§ 749, 1159). Its nucleus is tagged `L`. `\limits` marks are empty.
-fn script_marks(text: &crate::analysis::facts::Text, math: &mut HashMap<usize, (char, Option<char>)>) -> Vec<String> {
+pub(crate) fn script_marks(
+    text: &crate::analysis::facts::Text,
+    math: &mut HashMap<usize, (char, Option<char>)>,
+) -> Vec<String> {
     use crate::analysis::facts::Align;
     let chars: Vec<char> = text.chars.chars().collect();
     let mut switch = None::<(u32, bool)>;

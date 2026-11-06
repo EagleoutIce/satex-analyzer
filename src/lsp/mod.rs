@@ -1587,6 +1587,8 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
             let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
             let result = with_doc(docs, &uri, |analysis, text| {
                 let at = handlers::to_pos(text, pos);
+                // the formula the cursor stands in, as the run set it, above the rest
+                let formula = handlers::formula_hover(analysis, text, &path, at);
                 // A control sequence's hover is kept for the next time,
                 // and placed where it is asked.
                 if let Some((name, true)) = handlers::word_at(text.line(at.line), at.col) {
@@ -1606,11 +1608,11 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
                         (Some(m), Some(t)) => Some(format!("{m}\n\n{t}")),
                         (m, t) => m.or(t),
                     };
-                    let link = dialogs::hover_link(analysis, text, &path, uri.as_str(), pos);
+                    let link = with_link(dialogs::hover_link(analysis, text, &path, uri.as_str(), pos), formula);
                     let markdown = markdown.map(|m| handlers::placed(analysis, m, &name, &path, at));
                     return with_link(markdown, link).map(handlers::markdown_hover);
                 }
-                let link = dialogs::hover_link(analysis, text, &path, uri.as_str(), pos);
+                let link = with_link(dialogs::hover_link(analysis, text, &path, uri.as_str(), pos), formula);
                 match (handlers::hover(analysis, text, &path, pos), link) {
                     (Some(mut h), Some(link)) => {
                         if let lsp_types::HoverContents::Markup(m) = &mut h.contents {

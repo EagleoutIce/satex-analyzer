@@ -162,6 +162,85 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
     Some(markdown_hover(markdown))
 }
 
+/// The formula the cursor stands in (`$…$`, `$$…$$`, `\\(…\\)`, `\\[…\\]`, else the innermost
+/// environment around it) as the run set it there ([`crate::queries::preview::formula`]).
+pub(super) fn formula_hover(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> Option<String> {
+    let body = doc.body();
+    let at = doc.offset(pos)?;
+    let (from, to) = math_delimited(body, at).or_else(|| environment_around(body, at))?;
+    let file = query::At { file: Some(path.to_string()), line: 0, col: 0, end: None }.file(analysis)?;
+    let (a, b) = (doc.pos(from), doc.pos(to));
+    let p = crate::queries::preview::formula(analysis, file, (a.line, a.col), (b.line, b.col))?;
+    let text = format!("Formula as the run set it: `{}`", p.text);
+    Some(crate::queries::preview::Preview { text, svg: p.svg }.markdown())
+}
+
+/// The source between the math delimiters around byte `at`, skipping comments and escapes.
+fn math_delimited(body: &str, at: usize) -> Option<(usize, usize)> {
+    let b = body.as_bytes();
+    let (mut i, mut open) = (0, None::<(usize, usize, &str)>);
+    while i < b.len() {
+        let (tok, len) = match (b[i], b.get(i + 1)) {
+            (b'%', _) => {
+                i += body[i..].find('\n').unwrap_or(b.len() - i);
+                continue;
+            }
+            (b'\\', Some(b'(')) => ("(", 2),
+            (b'\\', Some(b')')) => (")", 2),
+            (b'\\', Some(b'[')) => ("[", 2),
+            (b'\\', Some(b']')) => ("]", 2),
+            (b'\\', _) => {
+                i += 2;
+                continue;
+            }
+            (b'$', Some(b'$')) => ("$$", 2),
+            (b'$', _) => ("$", 1),
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        match open {
+            None if matches!(tok, "$" | "$$" | "(" | "[") => {
+                if i > at {
+                    return None;
+                }
+                open = Some((i, i + len, tok));
+            }
+            Some((start, inner, o)) if matches!((o, tok), ("$", "$") | ("$$", "$$") | ("(", ")") | ("[", "]")) => {
+                if (start..=i + len).contains(&at) {
+                    return Some((inner, i));
+                }
+                open = None;
+            }
+            _ => {}
+        }
+        i += len;
+    }
+    None
+}
+
+/// The inside of the innermost environment around byte `at` but `document`.
+fn environment_around(body: &str, at: usize) -> Option<(usize, usize)> {
+    let marks = regex::Regex::new(r"\\(begin|end)\s*\{([^}]*)\}").expect("valid regex");
+    let mut open: Vec<(&str, usize)> = Vec::new();
+    for m in marks.captures_iter(body) {
+        let (whole, name) = (m.get(0)?, m.get(2)?.as_str());
+        if &m[1] == "begin" {
+            open.push((name, whole.end()));
+            continue;
+        }
+        let Some(k) = open.iter().rposition(|(n, _)| *n == name) else { continue };
+        let (_, inner) = open[k];
+        open.truncate(k);
+        // amsmath sets a collected body at its `\end`: the region holds it
+        if name != "document" && inner <= at && at <= whole.start() {
+            return Some((inner, whole.end()));
+        }
+    }
+    None
+}
+
 /// The key under column `col` in the option list of a command (`\\captionsetup{aboveskip=}`):
 /// the family and package that define it, its type, default and choices as the run stored them
 /// ([`query::options`]), and what the mined manual says of it.

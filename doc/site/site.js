@@ -140,7 +140,9 @@
       codes.push(at ? placeLink(at[1], +at[2]) : bar ? `<code class="bar"><b>${bar[1]}</b><i>${bar[2]}</i></code>` : `<code>${code}</code>`);
       return `\u0000${codes.length - 1}\u0000`;
     });
-    return text.replace(/\[([^\]]+)\]\(command:satex\.applyEdit\?([^)\s]+)\)/g, (_, shown, args) => {
+    // a picture the server drew (a formula as the run set it), only as an inline SVG
+    return text.replace(/!\[([^\]]*)\]\((data:image\/svg\+xml;[^)\s]+)\)/g, '<img class="md-img" alt="$1" src="$2">')
+      .replace(/\[([^\]]+)\]\(command:satex\.applyEdit\?([^)\s]+)\)/g, (_, shown, args) => {
       // `[uri, range, text, exact]`: the value is the action
       let to = '', exact = false;
       try { [, , to, exact] = JSON.parse(decodeURIComponent(args)); } catch {}

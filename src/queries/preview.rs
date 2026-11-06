@@ -429,3 +429,102 @@ fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>
     let _ = std::fs::remove_dir_all(&dir);
     Some(svgs)
 }
+
+/// The font size, in px, a formula preview is drawn at.
+const FORMULA_PX: f64 = 18.0;
+
+/// What the run set for the formula whose source stands between `from` and `to` (line, column)
+/// in `file`: the characters its text facts hold there (macros as the run expanded them) with
+/// their scripts, as text and SVG. A character the run could not know is a `?`; one only some
+/// paths set is faint. `None` where the run set no math there.
+pub fn formula(
+    analysis: &Analysis,
+    file: crate::engine::tex::FileId,
+    from: (u32, u32),
+    to: (u32, u32),
+) -> Option<Preview> {
+    use crate::analysis::facts::Align;
+    use std::fmt::Write;
+    let text = &analysis.facts.text;
+    let n = text.site.len().min(text.at.len());
+    let inside =
+        |i: &usize| text.site[*i].file == file && (from..=to).contains(&(text.site[*i].line, text.site[*i].col));
+    let mut own: Vec<usize> = (0..n).filter(inside).collect();
+    // a measurement (amsmath sets an `align` twice) sets text in boxes lost unused
+    let (on_page, lost) = super::query::reach(text);
+    own.retain(|&i| !lost[i]);
+    if own.iter().any(|&i| on_page[i]) {
+        own.retain(|&i| on_page[i]);
+    }
+    let is_math = |i: usize| text.math.binary_search_by_key(&(i as u32), |m| m.0).is_ok();
+    // what a macro's body set counts at its definition: the formula is all set from its first
+    // character here to its last, and the math right before and after (`\norm`'s `‖`)
+    let (mut lo, mut hi) = (*own.first()?, *own.last()?);
+    while lo > 0 && is_math(lo - 1) && is_math(lo) {
+        lo -= 1;
+    }
+    while hi + 1 < n && is_math(hi + 1) && is_math(hi) {
+        hi += 1;
+    }
+    let own: Vec<usize> = (lo..=hi).filter(|&i| !lost[i] && on_page[i] == on_page[own[0]]).collect();
+    let math = own.iter().filter(|&&i| is_math(i)).count();
+    if math == 0 || math * 2 < own.len() {
+        return None;
+    }
+    let (first, last) = (own[0], own[own.len() - 1]);
+    let atoms = super::query::math_atoms(text, &analysis.settings.conventions.math_symbols, first..last + 1);
+    let chars: Vec<char> = text.chars.chars().skip(first).take(last + 1 - first).collect();
+    let arms: BTreeSet<u32> = text.arms.iter().map(|a| a.0).collect();
+    let mut marks = text.align.iter().skip_while(|(at, _)| (*at as usize) < first).peekable();
+    // each script open now: superscript or not, and where its text starts in `plain`
+    let (mut plain, mut spans, mut scripts) = (String::new(), String::new(), Vec::<(bool, usize)>::new());
+    let close = |plain: &mut String, scripts: &mut Vec<(bool, usize)>| {
+        let Some((_, at)) = scripts.pop() else { return };
+        // a one-character script reads without braces
+        match plain[at..].chars().count() == 1 {
+            true => _ = plain.remove(at - 1),
+            false => plain.push('}'),
+        }
+    };
+    for &i in &own {
+        while let Some((_, mark)) = marks.next_if(|(at, _)| *at as usize <= i) {
+            match mark {
+                Align::Script(sup) => {
+                    plain.push_str(if *sup { "^{" } else { "_{" });
+                    scripts.push((*sup, plain.len()));
+                }
+                Align::ScriptEnd => close(&mut plain, &mut scripts),
+                _ => {}
+            }
+        }
+        let c = chars[i - first];
+        // math sets no spaces (tex.web § 1045)
+        if c == ' ' && is_math(i) {
+            continue;
+        }
+        let (tag, glyph) = atoms.get(&i).copied().unwrap_or(('0', None));
+        let unknown = crate::engine::tex::is_unknown_char(c);
+        let shown = if unknown { "?".to_string() } else { super::query::public(glyph.unwrap_or(c)) };
+        plain.push_str(if unknown { "⟨?⟩" } else { &shown });
+        let size = FORMULA_PX * 0.7f64.powi(scripts.len().min(2) as i32);
+        let rise: f64 = scripts.iter().map(|&(sup, _)| if sup { 0.4 } else { -0.25 }).sum::<f64>() * FORMULA_PX;
+        let faint = unknown || arms.contains(&(i as u32));
+        let _ = write!(
+            spans,
+            "<tspan y=\"{:.1}\" font-size=\"{size:.1}\"{}{}>{}</tspan>",
+            FORMULA_PX * 1.6 - rise,
+            if tag == 'i' { " font-style=\"italic\"" } else { "" },
+            if faint { " opacity=\"0.45\"" } else { "" },
+            shown.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+        );
+    }
+    while !scripts.is_empty() {
+        close(&mut plain, &mut scripts);
+    }
+    let width = 8.0 + FORMULA_PX * 0.62 * plain.chars().count() as f64;
+    let height = FORMULA_PX * 2.4;
+    let svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width:.0}\" height=\"{height:.0}\"><text x=\"4\" fill=\"{INK}\" font-family=\"Latin Modern Math, STIX Two Math, Cambria Math, serif\" xml:space=\"preserve\">{spans}</text></svg>"
+    );
+    Some(Preview { text: plain, svg })
+}
