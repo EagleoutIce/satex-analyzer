@@ -1837,8 +1837,77 @@
     addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(drift); } }, { passive: true });
   }
 
+  // The showcase's cards on a ring: the card in front is the largest, the others turn away to both sides
+  // and fade behind. Scrolling the page turns the ring a little; the arrows, the arrow keys, a drag or a
+  // click on a side card bring a card to the front. Without motion or on a phone: the plain row below.
+  function ring(row) {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches || !matchMedia('(min-width: 48rem)').matches) return false;
+    const cards = [...row.querySelectorAll(':scope > .shot')], n = cards.length;
+    if (n < 3) return false;
+    const wrap = row.parentElement, [prev, next] = wrap.querySelectorAll('.cards-nav');
+    wrap.classList.add('ring');
+    const step = 360 / n;
+    let at = 0, goal = 0, spin = 0, raf = 0, front = -1;
+    const norm = (d) => ((d % 360) + 540) % 360 - 180;
+    const draw = () => {
+      raf = 0;
+      at += (goal - at) * .14;
+      if (Math.abs(goal - at) < .05) at = goal;
+      const w = wrap.clientWidth, radius = Math.min(w * .42, cards[0].offsetWidth * n / 5.2);
+      row.style.height = `${Math.max(...cards.map((c) => c.offsetHeight))}px`;
+      let best = 0, bestCos = -2;
+      cards.forEach((c, i) => {
+        const a = norm(i * step - at - spin), r = a * Math.PI / 180, cos = Math.cos(r);
+        const x = Math.sin(r) * radius, z = (cos - 1) * radius * .9;
+        c.style.transform = `translate3d(calc(-50% + ${x.toFixed(1)}px), 0, ${z.toFixed(1)}px) rotateY(${(-a * .55).toFixed(2)}deg) scale(${(1 + .06 * Math.max(0, cos) ** 8).toFixed(3)})`;
+        c.style.opacity = Math.max(0, Math.min(1, (cos + .35) / 1.1)).toFixed(3);
+        c.style.zIndex = String(Math.round(cos * 100) + 100);
+        c.style.pointerEvents = cos > .2 ? '' : 'none';
+        if (cos > bestCos) { bestCos = cos; best = i; }
+      });
+      if (best !== front) {
+        front = best;
+        cards.forEach((c, i) => c.classList.toggle('ring-front', i === best));
+      }
+      if (at !== goal) raf = requestAnimationFrame(draw);
+    };
+    const kick = () => { if (!raf) raf = requestAnimationFrame(draw); };
+    const turn = (by) => { goal = Math.round((goal + by * step) / step) * step; kick(); };
+    prev.disabled = next.disabled = false;
+    prev.onclick = () => turn(-1);
+    next.onclick = () => turn(1);
+    row.addEventListener('keydown', (e) => { if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && e.target === row) { e.preventDefault(); turn(e.key === 'ArrowLeft' ? -1 : 1); } });
+    // a side card turns to the front first; the front card's links work as usual
+    cards.forEach((c, i) => c.addEventListener('click', (e) => {
+      if (i === front) return;
+      e.preventDefault();
+      goal += norm(i * step - goal); kick();
+    }, true));
+    // a drag turns the ring with the pointer, then settles on the nearest card
+    let drag = null;
+    row.addEventListener('pointerdown', (e) => { if (e.button === 0) drag = { x: e.clientX, from: goal, moved: false }; });
+    addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x;
+      if (Math.abs(dx) > 6) drag.moved = true;
+      if (drag.moved) { goal = drag.from - dx / wrap.clientWidth * step * 2.2; at = goal; kick(); }
+    });
+    addEventListener('pointerup', () => { if (drag?.moved) { turn(0); row.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); }, { capture: true, once: true }); } drag = null; });
+    // the page's scroll turns it a little, as if the ring sat on the page
+    const scrolled = () => {
+      const r = wrap.getBoundingClientRect(), mid = (r.top + r.height / 2) / innerHeight - .5;
+      spin = Math.max(-1, Math.min(1, mid)) * step * .6;
+      kick();
+    };
+    addEventListener('scroll', scrolled, { passive: true });
+    new ResizeObserver(kick).observe(wrap);
+    scrolled();
+    return true;
+  }
+
   // The showcase's card row: the arrows and the arrow keys step it a card at a time, each arrow gone at its end.
   for (const row of document.querySelectorAll('.cards')) {
+    if (ring(row)) continue;
     const [prev, next] = row.parentElement.querySelectorAll('.cards-nav');
     const step = (dir) => {
       const card = row.querySelector('.shot');

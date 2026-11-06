@@ -2182,3 +2182,11 @@ main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/
 /* the stepper keeps one height while stepping: the step panel and the token stream scroll inside, nothing below them moves */
 .tr-now { height: 14rem; overflow: auto; align-content: start; overscroll-behavior: contain; }
 #trace-stream { height: 3.6rem; overflow: auto; }
+/* the showcase ring (site.js): full width, the cards on a turning ring, the front one largest */
+.cards-wrap.ring { width: 100vw; margin-inline: calc(50% - 50vw); padding-block: var(--s24); overflow: hidden; }
+.ring .cards { display: block; position: relative; overflow: visible; perspective: 1700px; transform-style: preserve-3d; -webkit-mask-image: none; mask-image: none; cursor: grab; touch-action: pan-y; user-select: none; }
+.ring .cards:active { cursor: grabbing; }
+.ring .cards > .shot { position: absolute; top: 0; left: 50%; width: min(34rem, 36vw); transform-origin: 50% 50%; will-change: transform, opacity; backface-visibility: hidden; }
+.ring .cards > .shot:not(.ring-front) { cursor: pointer; }
+.ring .cards > .shot figcaption { transition: opacity .3s var(--ease); } .ring .cards > .shot:not(.ring-front) figcaption { opacity: 0; }
+.ring .cards-nav { top: 30%; } .ring .cards-prev { left: calc(50% - min(17rem, 18vw) - 5.5rem); } .ring .cards-next { right: calc(50% - min(17rem, 18vw) - 5.5rem); }
