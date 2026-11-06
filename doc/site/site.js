@@ -1857,9 +1857,10 @@
       row.style.height = `${Math.ceil(Math.max(...cards.map((c) => c.offsetHeight)) * 1.07)}px`;
       let best = 0, bestCos = -2;
       cards.forEach((c, i) => {
+        // each card a step out is a fifth smaller: the front one stands out
         const a = norm(i * step - at - spin), r = a * Math.PI / 180, cos = Math.cos(r);
         const x = Math.sin(r) * radius, z = (cos - 1) * radius * .55;
-        c.style.transform = `translate3d(calc(-50% + ${x.toFixed(1)}px), 0, ${z.toFixed(1)}px) rotateY(${(-a * .22).toFixed(2)}deg) scale(${(1 + .06 * Math.max(0, cos) ** 8).toFixed(3)})`;
+        c.style.transform = `translate3d(calc(-50% + ${x.toFixed(1)}px), 0, ${z.toFixed(1)}px) rotateY(${(-a * .22).toFixed(2)}deg) scale(${(1.06 * .8 ** Math.min(3, Math.abs(a) / step)).toFixed(3)})`;
         c.style.opacity = Math.max(0, Math.min(1, (cos + .1) / .8)).toFixed(3);
         // a title rides with its card while the card faces the page
         c.style.setProperty('--title', Math.max(0, (cos - .55) / .45).toFixed(3));
