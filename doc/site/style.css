@@ -2192,6 +2192,6 @@ main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/
 .ring .cards > .shot figcaption > h3 { opacity: var(--title, 1); }
 .ring .cards > .shot:not(.ring-front) figcaption > :not(h3) { opacity: 0; }
 .ring .cards-nav { top: 30%; z-index: 300; } .ring .cards-prev { left: var(--s24); } .ring .cards-next { right: var(--s24); }
-/* the big shots share one height: each window hugs its image (the video lies exactly over it), so they line up */
-.shots > .shot-big:not(.shot-live) .shot-win img { height: 39vh; width: auto; max-width: 100%; object-fit: contain; }
+/* the live window fills its column like a shot at full size, before and after the engine takes over */
+.shot-live .shot-stage, .shots > .shot-live .shot-win { width: 100%; }
 .ring .cards > .shot:not(.ring-front) figcaption { text-align: center; }

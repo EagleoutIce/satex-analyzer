@@ -2336,7 +2336,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-beside { display: flex; gap: .2rem; } .tv-beside .tv-button { min-width: 2rem; padding: 0 .4rem; }
 @media (max-width: 760px) { .tv-draw { height: auto; } .tv-draw-main { grid-template-columns: 1fr; } .tv-draw-side { overflow: visible; } .tv-draw-main > .tv-canvas { height: auto; max-height: 55vh; } }
 .tv-muted { color: var(--tv-muted); font-size: .78rem; } .tv-sel { align-items: center; min-height: 2rem; } .tv-sel input { flex: 1; font-size: .88rem; }
-.tv-canvas { width: 100%; max-height: 55vh; background: var(--tv-sunk); border: 1px solid var(--tv-border); border-radius: 8px; touch-action: none; color: var(--tv-fg); font-family: ui-sans-serif, system-ui, sans-serif; }
+.tv-canvas { width: 100%; max-height: 55vh; background: var(--tv-sunk); border: 1px solid var(--tv-border); border-radius: 8px; overflow: hidden; clip-path: inset(0 round 8px); touch-action: none; color: var(--tv-fg); font-family: ui-sans-serif, system-ui, sans-serif; }
 .tv-grid { stroke: var(--tv-border); stroke-width: .01; fill: none; }
 .tv-canvas text { font-size: .32px; text-anchor: middle; dominant-baseline: central; fill: currentColor; pointer-events: none; }
 .tv-node { cursor: grab; } .tv-node text { font: .32px var(--serif, Georgia, serif); } .tv-node rect, .tv-node circle { fill: var(--tv-bg); stroke: currentColor; stroke-width: .03; }
