@@ -5913,7 +5913,12 @@
   async function openDialog(position, quiet = false) {
     const target = uri();
     const v = await lsp('satex/dialog', { textDocument: { uri: target }, position }).catch(() => null);
-    if (!v) return quiet || toast('No table or figure here the analysis met: analyze first');
+    if (!v) {
+      if (quiet) return;
+      // the server has no finished run of this text yet (a start, a restart, an edit): the widget opens once it has
+      if (running > 0 || act.phase || !(target in diagnostics)) { toast('Opening once the analysis is done…'); afterRun = () => openDialog(position, true); if (!running && !act.phase) analyze(); return; }
+      return toast('No table or figure here: the analysis found none at this place');
+    }
     const was = textIn(editor.text(), v.range);
     self.satexDialogs.open(v, {
       apply: (state, op) => lsp('satex/dialogApply', { textDocument: { uri: target }, kind: v.kind, range: v.range, state, op }),
