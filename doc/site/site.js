@@ -1281,10 +1281,30 @@
         const e = await engine, r = await e.lsp('textDocument/hover', { textDocument: { uri }, position: pos(view.state.doc, p) }).catch(() => null);
         const c = r?.contents, value = typeof c === 'string' ? c : c?.value ?? '';
         const at = view.coordsAtPos(p);
-        if (value && at && host.matches(':hover')) card.show({ left: at.left, top: at.top, right: at.right, bottom: at.bottom }, `<div class="hover">${hoverCard(value)}</div>`);
+        if (value && at && host.matches(':hover')) { card.show({ left: at.left, top: at.top, right: at.right, bottom: at.bottom }, `<div class="hover">${hoverCard(value)}</div>`); card.el.dataset.owner = uri; }
       }, 300);
     });
     host.addEventListener('mouseleave', () => { clearTimeout(shown); card.hide(350); });
+    // a card's actions: a value link writes into this editor, a dialog link opens the full playground on this file there
+    const act = (ev) => {
+      const edit = ev.target.closest?.('.cmd-edit'), open = ev.target.closest?.('.sd-open');
+      // only the editor whose hover the card shows acts on it
+      if ((!edit && !open) || card.el.dataset.owner !== uri) return;
+      ev.preventDefault();
+      card.hide();
+      if (edit) {
+        let range, text;
+        try { [, range, text] = JSON.parse(decodeURIComponent(edit.dataset.args)); } catch { return; }
+        view.dispatch({ changes: { from: off(view.state.doc, range.start), to: off(view.state.doc, range.end), insert: text ?? '' } });
+        return;
+      }
+      let at = null;
+      try { at = JSON.parse(open.dataset.position); } catch {}
+      const line = at ? view.state.doc.line(Math.min(at.line + 1, view.state.doc.lines)).text.trim() : '';
+      const widget = /\\begin\{(?:table|figure)/.test(line) ? 'float' : /\\includegraphics/.test(line) ? 'image' : /\\begin\{tabular/.test(line) ? 'table' : '';
+      location.href = `play/index.html#${encodeURIComponent(name)}${widget ? `&widget=${widget}&at=${encodeURIComponent(line.slice(0, 40))}` : ''}`;
+    };
+    card.el.addEventListener('click', act);
     return { view, analyze, destroy: () => { clearTimeout(timer); version++; view.destroy(); } };
   }
   // an example: its source becomes an editor on a click that is no command's, "reset" brings the build's result back
