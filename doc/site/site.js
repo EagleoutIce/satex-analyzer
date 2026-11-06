@@ -1829,6 +1829,23 @@
     addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(drift); } }, { passive: true });
   }
 
+  // The showcase's card row: the arrows and the arrow keys step it a card at a time, each arrow gone at its end.
+  for (const row of document.querySelectorAll('.cards')) {
+    const [prev, next] = row.parentElement.querySelectorAll('.cards-nav');
+    const step = (dir) => {
+      const card = row.querySelector('.shot');
+      if (!card) return;
+      const by = card.getBoundingClientRect().width + parseFloat(getComputedStyle(row).columnGap || '0');
+      row.scrollBy({ left: dir * by, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    };
+    const ends = () => { prev.disabled = row.scrollLeft < 4; next.disabled = row.scrollLeft + row.clientWidth > row.scrollWidth - 4; };
+    prev.onclick = () => step(-1);
+    next.onclick = () => step(1);
+    row.addEventListener('keydown', (e) => { if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && e.target === row) { e.preventDefault(); step(e.key === 'ArrowLeft' ? -1 : 1); } });
+    row.addEventListener('scroll', ends, { passive: true });
+    new ResizeObserver(ends).observe(row);
+  }
+
   // The showcase's videos: only the one in focus plays (the frame most visible near the viewport's centre),
   // from its start, over its poster (the still); every other one pauses and fades back to its poster. A video
   // loads when it first comes into focus, in the theme shown. Reduced motion plays none on its own: each frame
@@ -1884,7 +1901,8 @@
       w.append(b);
     }
     let queued = false;
-    addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; pick(); }); } }, { passive: true });
+    // capture: a card row scrolled sideways moves its frames too
+    addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; pick(); }); } }, { passive: true, capture: true });
     still.addEventListener?.('change', () => { if (focus) stop(focus); focus = chosen = null; pick(); });
     // a theme switch shows the other video: the focused one starts over in it
     const restart = () => { if (focus) { stop(focus); play(focus); } };

@@ -1784,7 +1784,10 @@ def showcase(out, live):
             f'<figure class="shot{" shot-big" if s.get("big") or s.get("wide") else ""}{" shot-wide" if s.get("wide") else ""}"><a class="shot-stage" href="{html.escape(try_it)}" tabindex="-1">{stage}</a>'
             f'<figcaption><h3>{html.escape(s["title"])}</h3><p>{html.escape(s["caption"])}</p>'
             f'<a class="shot-try" href="{html.escape(try_it)}">Try it in {html.escape(s["file"])} →</a></figcaption></figure>')
-    return "\n".join(figures + [f'<div class="cards">{"".join(cards)}</div>'])
+    # the small entries: one row that scrolls sideways, a card at a time (site.js steps it)
+    nav = lambda d, label, arrow: f'<button type="button" class="cards-nav cards-{d}" aria-label="{label}" disabled>{arrow}</button>'
+    return "\n".join(figures + [f'<div class="cards-wrap"><div class="cards" tabindex="0" role="region" aria-label="More of what SaTeX shows, {len(cards)} cards: scroll sideways">{"".join(cards)}</div>'
+                                 f'{nav("prev", "previous cards", "‹")}{nav("next", "next cards", "›")}</div>'])
 
 
 # what a showcase capture shows: the playground's code and style, besides its example and its entry

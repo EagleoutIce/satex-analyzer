@@ -1951,11 +1951,22 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 /* landing showcase: the playground's widgets as captured by showcase/capture.mjs, one image per theme, each in a
    window frame (CSS, so it follows the theme and costs no bytes). The big ones reach into the page margin, alternating sides */
 .shots { --out: clamp(0px, (100vw - 64rem) / 2 - 2rem, 10rem); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s96); }
-/* the small entries: three to a row, a last row of one or two shared out so no card stands alone beside a hole */
-.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s48) var(--s32); }
+/* one row that scrolls sideways, a card snapping to its start: two cards and the edge of the next in view, one and an edge on a phone */
+.cards-wrap { position: relative; container-type: inline-size; --per: 2.25; }
+.cards { display: grid; grid-auto-flow: column; grid-auto-columns: calc((100% - 2 * var(--s32)) / var(--per)); gap: var(--s32); overflow-x: auto; overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory; scrollbar-width: none; padding-block: var(--s4); }
+.cards::-webkit-scrollbar { display: none; }
+.cards > .shot { scroll-snap-align: start; }
+.cards:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--r-card); }
+/* the arrows sit on the row's edges, halfway down a card's frame */
+.cards-nav { position: absolute; z-index: 2; top: calc(var(--s4) + min(30vh + 2 * var(--s24), (100cqw - 2 * var(--s32)) / var(--per) * 3 / 4) / 2); translate: 0 -50%;
+  display: grid; place-items: center; width: 2.6rem; height: 2.6rem; min-width: 0; padding: 0; border-radius: var(--r-pill); border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 90%, transparent); color: var(--fg); font-size: 1.4rem; line-height: 1; cursor: pointer; box-shadow: var(--shadow); transition: opacity .2s var(--ease); }
+.cards-prev { left: calc(-1 * var(--s12)); } .cards-next { right: calc(-1 * var(--s12)); }
+.cards-nav:disabled { opacity: 0; pointer-events: none; }
+.cards-nav:hover { border-color: var(--accent); color: var(--accent); }
 /* an odd last card takes the whole row, its picture beside its text */
-.cards > .shot:last-child:nth-child(odd) { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, 25rem); align-items: center; gap: var(--s48); }
-@media (max-width: 34rem) { .cards { grid-template-columns: minmax(0, 1fr); } .cards > .shot:last-child:nth-child(odd) { display: flex; } }
+@media (max-width: 34rem) { .cards-wrap { --per: 1.15; } .cards { gap: var(--s16); grid-auto-columns: calc((100% - var(--s16)) / var(--per)); } .cards-nav { display: none; } }
 .shot { margin: 0; display: flex; flex-direction: column; gap: var(--s16); }
 /* a big row: the frame takes the room, the text a column of about 25rem; the frame reaches into the margin on its side */
 .shot-big { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, 25rem); align-items: start; gap: var(--s48); margin-left: calc(-1 * var(--out)); }
