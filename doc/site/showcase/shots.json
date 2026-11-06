@@ -489,6 +489,30 @@
    "keepMouse": true
   },
   {
+   "name": "page",
+   "file": "spacing.tex",
+   "title": "Page layout",
+   "caption": "Margins, paper and header to scale, as the run computed them. Apply writes geometry's options, or typearea's for KOMA-Script.",
+   "open": [
+    "page",
+    "\\documentclass",
+    1
+   ],
+   "crop": "#play-view",
+   "viewport": [
+    1000,
+    860
+   ],
+   "steps": [
+    {
+     "open": true,
+     "until": "document.getElementById('play-view')?.open && document.querySelector('#play-view .tv-page, #play-view svg')",
+     "ms": 90000,
+     "wait": 900
+    }
+   ]
+  },
+  {
    "name": "color",
    "file": "colors.tex",
    "title": "Colors",
