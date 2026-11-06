@@ -212,7 +212,7 @@ impl Machine<'_> {
                     let Some((sym, yes, no)) = &atom.narrow else { continue };
                     let value = if *negate { no } else { yes };
                     if let Some(value) = value.clone() {
-                        self.refine_value(*sym, value);
+                        let _ = self.refine_value(*sym, value);
                         narrowed.push(format!("`\\{}`", self.name(*sym)));
                     }
                 }

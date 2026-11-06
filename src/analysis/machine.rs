@@ -10156,7 +10156,7 @@ will look undefined",
                     let value = match typed {
                         Some(StubResult::Number { number: [lo, hi] }) => crate::engine::value::Value::Num {
                             quantity: crate::engine::value::Quantity::Int,
-                            num: crate::engine::value::Num { lo, hi },
+                            num: crate::engine::value::Num::range(lo, hi),
                         },
                         _ => crate::engine::value::Value::Unknown,
                     };
@@ -10202,11 +10202,9 @@ will look undefined",
         Some(match result {
             StubResult::Plain(StubKind::Nothing) => Vec::new(),
             StubResult::Plain(StubKind::Number) => {
-                self.digits_in(crate::engine::value::Num { lo: -2_147_483_647, hi: 2_147_483_647 }, span)
+                self.digits_in(crate::engine::value::Num::range(-2_147_483_647, 2_147_483_647), span)
             }
-            StubResult::Number { number: [lo, hi] } => {
-                self.digits_in(crate::engine::value::Num { lo: *lo, hi: *hi }, span)
-            }
+            StubResult::Number { number: [lo, hi] } => self.digits_in(crate::engine::value::Num::range(*lo, *hi), span),
             StubResult::Plain(StubKind::Dimen) => vec![self.unknown_text(Unk::Class(dimension, true, None, &[]), span)],
             StubResult::Plain(StubKind::Text) => vec![self.unknown_text(Unk::Any, span)],
             StubResult::Text { text } => {
@@ -10489,9 +10487,9 @@ will look undefined",
                             let (part, text) = &arms[arm];
                             let value =
                                 crate::engine::value::Value::from_num(crate::engine::value::Quantity::Int, *part);
-                            m.refine_value(whole, value);
+                            let live = m.refine_value(whole, value);
                             m.unread_all(text);
-                            true
+                            live
                         }) {
                             return self.read_undelimited();
                         }
@@ -10528,12 +10526,12 @@ will look undefined",
                 if !unbounded
                     && self.split(sym, t.span, arms.len(), |m, arm| {
                         let (part, text) = &arms[arm];
-                        m.refine_value(
+                        let live = m.refine_value(
                             sym,
                             crate::engine::value::Value::from_num(crate::engine::value::Quantity::Int, *part),
                         );
                         m.unread_all(text);
-                        true
+                        live
                     })
                 {
                     return self.read_undelimited();

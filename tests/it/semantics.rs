@@ -80,6 +80,13 @@ const BODIES: &[crate::support::BodyRow] = &[
         r"\ifnum\pdfuniformdeviate2=0 \def\x{a}\else\ifx\x\undefined\def\clean{yes}\fi\fi",
         &[("clean", "yes")],
     ),
+    // A count in [-6, -1] or [1, 6] is never 0, whatever joins it.
+    (
+        "a_count_of_either_sign_but_never_zero_is_not_zero",
+        r"\count1=\pdfuniformdeviate 6 \advance\count1 1 \ifodd\pdfuniformdeviate 2 \count1=-\count1 \fi
+\ifnum\count1=0 \def\x{zero}\else\def\x{nonzero}\fi",
+        &[("x", "nonzero")],
+    ),
     // tex.web § 1224: `\Z` is `\relax` while its number is scanned, so it
     // does not expand to `3` and the register is `\count1`.
     (
@@ -3195,4 +3202,18 @@ fn a_group_local_copy_never_provides_a_name() {
     assert_ne!(r.get("file").and_then(|f| f.as_str()), Some("ifthen.sty"), "{r:?}");
     let (records, _) = query::explain(&analysis, &["ref".into()], false).unwrap();
     assert!(records.iter().all(|r| r.get("file").and_then(|f| f.as_str()) != Some("ifthen.sty")), "{records:?}");
+}
+
+/// Typed digits then a one-of fraction (`\strip@pt`'s `\ifnum F>\z@ .F\fi`):
+/// the number reads on into each text, so the unit is `pt` and the
+/// relation is read, never a missing number (graphics' `\Gscale@box`).
+#[test]
+fn typed_digits_before_a_one_of_fraction_read_on_into_it() {
+    let analysis = analyze(
+        r"\edef\x{\the\numexpr\pdfuniformdeviate 100\relax\ifnum\pdfuniformdeviate 2>0 .5\fi}
+\ifdim\x pt<\dimen0 \def\a{}\fi\def\after{}",
+    );
+    let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
+    assert!(!codes.contains(&"missing-number"), "{codes:?}");
+    assert!(crate::support::defined(&analysis, "after"));
 }

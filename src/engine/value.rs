@@ -147,7 +147,7 @@ pub enum Value {
     /// interval per component. [`Value::Num`]'s counterpart for glue.
     GlueNum {
         quantity: Quantity,
-        hull: GlueHull,
+        hull: Box<GlueHull>,
     },
     /// A few values of one kind this may be, in a fixed order: exact ones
     /// up to `limits.value_set`, or intervals and hulls among them up to
@@ -172,20 +172,42 @@ pub const MAY_INTERVALS: usize = 4;
 /// are bounded (`MAX_INT`, `MAX_DIMEN`), so the full interval of its kind is
 /// the top of the lattice, which widening reaches. The exact values a
 /// binding may be, while there are few, are not `Num`'s to keep: that is
-/// [`Value::OneOf`], the one set lift every kind shares.
+/// [`Value::OneOf`], the one set lift every kind shares. `nz` excludes 0
+/// from an interval around it (a reduced product with the sign): a
+/// number `\the` prints without a leading `0`, or a test told apart from 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Num {
     pub lo: i64,
     pub hi: i64,
+    #[serde(default)]
+    pub nz: bool,
 }
 
 impl Num {
     pub fn exact(n: i64) -> Num {
-        Num { lo: n, hi: n }
+        Num { lo: n, hi: n, nz: false }
     }
 
     pub fn range(lo: i64, hi: i64) -> Num {
-        Num { lo: lo.min(hi), hi: hi.max(lo) }
+        Num { lo: lo.min(hi), hi: hi.max(lo), nz: false }
+    }
+
+    /// `[lo, hi]`, without 0 where `nz`: an end at 0 moves in, and the bit
+    /// stays only while 0 lies inside. `None` when nothing is left.
+    pub fn without_zero(lo: i64, hi: i64, nz: bool) -> Option<Num> {
+        let lo = if nz && lo == 0 { 1 } else { lo };
+        let hi = if nz && hi == 0 { -1 } else { hi };
+        (lo <= hi).then_some(Num { lo, hi, nz: nz && lo < 0 && hi > 0 })
+    }
+
+    /// Whether 0 is not among its values.
+    pub fn excludes_zero(&self) -> bool {
+        self.nz || self.lo > 0 || self.hi < 0
+    }
+
+    /// Greatest lower bound: the values both hold. `None` when none.
+    pub fn meet(&self, other: &Num) -> Option<Num> {
+        Num::without_zero(self.lo.max(other.lo), self.hi.min(other.hi), self.nz || other.nz)
     }
 
     /// Every value of the kind a scan gives: a dimension is checked
@@ -201,7 +223,8 @@ impl Num {
 
     /// Least upper bound: the interval spanning both.
     pub fn join(&self, other: &Num) -> Num {
-        Num::range(self.lo.min(other.lo), self.hi.max(other.hi))
+        let nz = self.excludes_zero() && other.excludes_zero();
+        Num::without_zero(self.lo.min(other.lo), self.hi.max(other.hi), nz).expect("a join is never empty")
     }
 
     /// Widening: a bound that grew goes to the end of TeX's 32-bit range,
@@ -210,11 +233,12 @@ impl Num {
     pub fn widen(&self, next: &Num) -> Num {
         let lo = if next.lo < self.lo { WORD_MIN } else { self.lo };
         let hi = if next.hi > self.hi { WORD_MAX } else { self.hi };
-        Num::range(lo, hi)
+        let nz = self.excludes_zero() && next.excludes_zero();
+        Num::without_zero(lo, hi, nz).expect("a widening is never empty")
     }
 
     pub fn neg(&self) -> Num {
-        Num::range(-self.hi, -self.lo)
+        Num { nz: self.nz, ..Num::range(-self.hi, -self.lo) }
     }
 
     pub fn abs(&self) -> Num {
@@ -223,7 +247,7 @@ impl Num {
         } else if self.hi <= 0 {
             self.neg()
         } else {
-            Num::range(0, self.hi.max(-self.lo))
+            Num::range(if self.nz { 1 } else { 0 }, self.hi.max(-self.lo))
         }
     }
 
@@ -329,6 +353,12 @@ impl Num {
             '>' if self.hi <= other.lo => Some(false),
             '=' if self.lo == self.hi && other.lo == other.hi && self.lo == other.lo => Some(true),
             '=' if self.hi < other.lo || self.lo > other.hi => Some(false),
+            // A number told apart from 0, compared with 0.
+            '=' if (self.excludes_zero() && *other == Num::exact(0))
+                || (other.excludes_zero() && *self == Num::exact(0)) =>
+            {
+                Some(false)
+            }
             _ => None,
         }
     }
@@ -355,7 +385,9 @@ impl Num {
             ),
             _ => (self.lo, self.hi),
         };
-        (lo <= hi).then(|| Num::range(lo, hi))
+        // Not 0: told apart from it from now on.
+        let nz = self.nz || (relation == '=' && !holds && bound == 0);
+        Num::without_zero(lo, hi, nz)
     }
 }
 
@@ -413,7 +445,7 @@ impl GlueHull {
             Value::Glue(g) | Value::MuGlue(g) => Some(GlueHull::exact(g)),
             Value::Int(n) | Value::Dimen(n) => Some(GlueHull { width: Num::exact(*n), ..zero }),
             Value::Num { num, .. } => Some(GlueHull { width: *num, ..zero }),
-            Value::GlueNum { hull, .. } => Some(*hull),
+            Value::GlueNum { hull, .. } => Some(**hull),
             Value::OneOf(set) => set.iter().map(GlueHull::of).reduce(|a, b| Some(a?.join(&b?)))?,
             _ => None,
         }
@@ -426,7 +458,9 @@ impl GlueHull {
             Some(g) if mu => Value::MuGlue(g),
             Some(g) => Value::Glue(g),
             None if self == GlueHull::full() => Value::Unknown,
-            None => Value::GlueNum { quantity: if mu { Quantity::MuGlue } else { Quantity::Glue }, hull: self },
+            None => {
+                Value::GlueNum { quantity: if mu { Quantity::MuGlue } else { Quantity::Glue }, hull: Box::new(self) }
+            }
         }
     }
 
@@ -705,8 +739,8 @@ impl Value {
         match self {
             Value::Int(n) => Value::Num { quantity: Quantity::Int, num: Num::exact(*n) },
             Value::Dimen(d) => Value::Num { quantity: Quantity::Dimen, num: Num::exact(*d) },
-            Value::Glue(g) => Value::GlueNum { quantity: Quantity::Glue, hull: GlueHull::exact(g) },
-            Value::MuGlue(g) => Value::GlueNum { quantity: Quantity::MuGlue, hull: GlueHull::exact(g) },
+            Value::Glue(g) => Value::GlueNum { quantity: Quantity::Glue, hull: Box::new(GlueHull::exact(g)) },
+            Value::MuGlue(g) => Value::GlueNum { quantity: Quantity::MuGlue, hull: Box::new(GlueHull::exact(g)) },
             // A token list has no interval domain: nothing narrower than
             // unknown once it is not one of a few exact lists.
             Value::Toks(_) => Value::Unknown,
@@ -729,7 +763,7 @@ impl Value {
                 Value::Num { quantity: *x, num: p.join(q) }
             }
             (Value::GlueNum { quantity: x, hull: p }, Value::GlueNum { quantity: y, hull: q }) if x == y => {
-                Value::GlueNum { quantity: *x, hull: p.join(q) }
+                Value::GlueNum { quantity: *x, hull: Box::new(p.join(q)) }
             }
             (Value::Color(p), Value::Color(q)) => p.join(q).map_or(Value::Unknown, Value::Color),
             _ => Value::Unknown,
@@ -1165,6 +1199,9 @@ mod tests {
             for w in [0i64, 1, 2] {
                 let (lo, hi) = ((c - w).max(WORD_MIN), (c + w).min(WORD_MAX));
                 out.push((Num::range(lo, hi), (lo..=hi).collect()));
+                if let Some(n) = Num::without_zero(lo, hi, true).filter(|n| n.nz) {
+                    out.push((n, (lo..=hi).filter(|&v| v != 0).collect()));
+                }
             }
         }
         out
@@ -1172,12 +1209,12 @@ mod tests {
 
     /// Whether `num` stands for `v`: inside the interval.
     fn holds(num: &Num, v: i64) -> bool {
-        num.lo <= v && v <= num.hi
+        num.lo <= v && v <= num.hi && !(num.nz && v == 0)
     }
 
     /// A [`Num`] keeps what it promises: `lo <= hi`.
     fn well_formed(num: &Num) {
-        assert!(num.lo <= num.hi, "{num:?}");
+        assert!(num.lo <= num.hi && (!num.nz || (num.lo < 0 && num.hi > 0)), "{num:?}");
     }
 
     #[test]

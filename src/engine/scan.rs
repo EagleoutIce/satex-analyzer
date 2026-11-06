@@ -80,7 +80,7 @@ pub(crate) fn first_digits(num: Num) -> Vec<char> {
         }
     }
     let (lo, hi) = (num.lo.max(0), num.hi.max(0));
-    if lo == 0 && !out.contains(&'0') {
+    if lo == 0 && !num.nz && !out.contains(&'0') {
         out.push('0');
     }
     // Numbers of one length at a time: their first digits are a run.
@@ -415,6 +415,13 @@ impl Machine<'_> {
             // Reading on may expand a scan of its own, which leaves its own
             // interval, so this one is set once the constant has ended.
             let mut next = self.next_x_token();
+            // A one-of after them (`\strip@pt`'s fraction): a path per
+            // text, where each is read in full or ends the digits.
+            while let Some(t) = next
+                && (self.split_scanned(t) || self.split_digits_end(t))
+            {
+                next = self.next_x_token();
+            }
             let mut from = token.cs();
             // Slices of one number's spelling, in order from its first
             // place: that number, or the number its first places make.
@@ -431,11 +438,13 @@ impl Machine<'_> {
                     from = (i == 0 && complete(k, j)).then_some(whole);
                 }
             }
+            // Digits, or unknown text that may be digits (a one-of no
+            // path split), read on as [`Machine::scan_digits`] does.
             let more = next.is_some_and(|t| {
                 self.digit(t, DECIMAL).is_some()
                     || matches!(t.tok, Tok::Chr(c, Catcode::Other) if crate::engine::tex::is_unknown_digit(c))
                     || t.cs().is_some_and(|sym| self.is_unknown_digits(sym))
-            });
+            }) || next.is_some_and(|t| self.is_unknown(t));
             if more {
                 // More digits after them: any number, unsigned where these are.
                 let backed_up = self.scan_digits(DECIMAL, next).1;
@@ -608,6 +617,24 @@ impl Machine<'_> {
             self.unread(token);
         }
         split
+    }
+
+    /// A one-of token whose texts are each empty or begin with a known
+    /// character other than a digit (not active), after digits: a path
+    /// per text, as the digits end at it on each
+    /// ([`Machine::split_one_of_refining`]).
+    fn split_digits_end(&mut self, token: Token) -> bool {
+        let ends = |t: Option<&Token>| match t.map(|t| t.tok) {
+            None => true,
+            Some(tok @ Tok::Chr(c, cat)) => {
+                cat != Catcode::Active
+                    && !crate::engine::tex::is_unknown_char(c)
+                    && self.digit(Token::new(tok, token.span), DECIMAL).is_none()
+            }
+            Some(Tok::Cs(_) | Tok::Param(_)) => false,
+        };
+        self.one_of_members(token).is_some_and(|texts| texts.iter().all(|x| ends(x.first())))
+            && self.split_one_of_refining(token)
     }
 
     /// Whether TeX would read `text` as satex has it: no unknown name,
@@ -1003,8 +1030,7 @@ impl Machine<'_> {
         let (lo, hi) = self.name(sym)[TYPED_DIGITS.len()..].split(['#', '@']).next()?.split_once("..")?;
         let ty = Num::range(lo.parse().ok()?, hi.parse().ok()?);
         let Some((_, num)) = self.env.slot(sym).and_then(|b| b.value.num()) else { return Some(ty) };
-        let (lo, hi) = (num.lo.max(ty.lo), num.hi.min(ty.hi));
-        Some(if lo <= hi { Num::range(lo, hi) } else { ty })
+        Some(num.meet(&ty).unwrap_or(ty))
     }
 
     /// A slice of typed digits: the number it is cut from, the length of
@@ -1046,8 +1072,12 @@ impl Machine<'_> {
             text.extend(self.digits_in(magnitude, span));
             arms.push((Num::range(num.lo, num.hi.min(-1)), text));
         }
-        if num.hi >= 0 && num.lo <= 9 {
-            arms.push((Num::range(num.lo.max(0), num.hi.min(9)), vec![Token::new(Tok::Cs(whole), span)]));
+        // One digit, never `0` where the number excludes it.
+        if num.hi >= 0
+            && num.lo <= 9
+            && let Some(one) = Num::without_zero(num.lo.max(0), num.hi.min(9), num.excludes_zero())
+        {
+            arms.push((one, vec![Token::new(Tok::Cs(whole), span)]));
         }
         // Several digits: the first place and the rest, an arm per length,
         // the last allowed one open until a read needs where it ends.

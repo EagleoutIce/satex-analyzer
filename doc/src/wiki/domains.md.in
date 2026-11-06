@@ -35,6 +35,8 @@ The bounded set is `OneOf` for every kind (below). Code that does not inspect th
 - **Numbers through text.** `\the`, `\number` of a bounded number give one token of typed digits that carries its `Num`. A later scan reads the `Num` back, so a bound survives text and a recursion over it ends.
 - **Typed digits** stay inside the interval their name spells, even after a widening join.
 - **Tests.** `\ifnum` and `\ifdim` decide by the interval, `\ifpdfabsnum` by the interval of the absolute values.
+- **Not zero.** An interval around 0 may exclude 0 (`Num::nz`, a reduced product with the sign). A failed test against 0 sets it, and a join or widening keeps it only where both sides exclude 0. So `[-6,-1]` joined with `[1,6]` is never 0 for `\ifnum ...=0`, and a number told apart from 0 has no one-digit arm `0`.
+- **Typed digits then a one-of** (`\strip@pt`'s fraction): a scan splits the one-of per text where each is read in full or ends the digits. Other unknown text after them may be more digits, so the number reads on and is unknown.
 - **Token lists** past the set keep their frame: pgfmath's operand stacks with different tops join to one stack whose top is typed digits, so a delimited pop still finds its braces (tex.web § 1227).
 
 ## The set lift: `OneOf`

@@ -1693,7 +1693,9 @@ impl Machine<'_> {
                 match n.keep(arm) {
                     Some(took) => took.iter().for_each(|(sym, kept)| match kept {
                         Narrowed::Texts(kept) => m.refine_may(*sym, kept),
-                        Narrowed::Number(num) => m.refine_value(*sym, Value::from_num(Quantity::Int, *num)),
+                        Narrowed::Number(num) => {
+                            m.refine_value(*sym, Value::from_num(Quantity::Int, *num));
+                        }
                     }),
                     None => n.collapse(),
                 }
@@ -1812,11 +1814,11 @@ impl Machine<'_> {
             let count = usize::try_from(num.hi - num.lo + 1).unwrap_or(0);
             if self.split(sym, t.span, count, |m, arm| {
                 let v = num.lo + arm as i64;
-                m.refine_value(sym, Value::from_num(Quantity::Int, Num::exact(v)));
+                let live = m.refine_value(sym, Value::from_num(Quantity::Int, Num::exact(v)));
                 m.note_took(sym, Narrowed::Number(Num::exact(v)));
                 let digits = m.text_tokens(&v.to_string(), t.span);
                 m.unread_all(&digits);
-                true
+                live
             }) {
                 return false;
             }
@@ -2075,7 +2077,17 @@ impl Machine<'_> {
     /// [`Machine::refine`] for a register's value. Digits `\the` printed
     /// of a count register not written since teach the register alike, so
     /// what a join paired with it follows ([`Machine::register_digits`]).
-    pub(crate) fn refine_value(&mut self, sym: Sym, value: Value) {
+    /// `false` where the path already excludes `value` (⊥): it is dead.
+    pub(crate) fn refine_value(&mut self, sym: Sym, value: Value) -> bool {
+        // An interval meets the one the path holds, which may exclude 0.
+        let now = self.env.slot(sym).and_then(|b| b.value.num());
+        let value = match (&value, now) {
+            (Value::Num { quantity, num }, Some((q, n))) if q == *quantity => match num.meet(&n) {
+                Some(m) => Value::from_num(*quantity, m),
+                None => return false,
+            },
+            _ => value,
+        };
         let keep: Vec<bool> =
             self.env.arms(sym).iter().map(|arm| arm.as_ref().is_none_or(|b| self.may_be(&b.value, &value))).collect();
         self.env.refine_value(sym, value.clone(), &keep);
@@ -2084,6 +2096,7 @@ impl Machine<'_> {
         {
             self.refine_value(reg, value);
         }
+        true
     }
 
     /// Whether an arm's binding may mean `to`, as `\ifx` decides: no
@@ -3727,7 +3740,7 @@ impl Machine<'_> {
         // Bound once on every path to the empty hull, so a path that never
         // reached the family joins as reaching nothing.
         if self.env.slot(any).is_none() {
-            let empty = Value::Num { quantity: Quantity::Int, num: Num { lo: i64::MAX, hi: i64::MIN } };
+            let empty = Value::Num { quantity: Quantity::Int, num: Num { lo: i64::MAX, hi: i64::MIN, nz: false } };
             self.env.constant(
                 any,
                 crate::engine::env::Binding {
