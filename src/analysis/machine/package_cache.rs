@@ -419,8 +419,10 @@ impl Lists {
     }
 }
 
-/// One cached diagnostic: severity, code, message, span, and the gap it names, if any.
-type CachedDiagnostic = (u8, String, String, Span, Option<(String, Sym)>, u32);
+/// One cached diagnostic: severity, code, message, span, the gap it names, if any,
+/// its count, and whether it is reported: a row only refuted paths raised
+/// still counts, but is not ([`Machine::retract`]).
+type CachedDiagnostic = (u8, String, String, Span, Option<(String, Sym)>, u32, bool);
 
 /// A color definition: name, value, model, where defined and via which command.
 #[derive(Serialize, Deserialize)]
@@ -2636,7 +2638,7 @@ impl Machine<'_> {
                 certain: *certain && self.exact(),
             });
         }
-        for (severity, code, message, span, gap, count) in &st.diagnostics {
+        for (severity, code, message, span, gap, count, live) in &st.diagnostics {
             // A gap is reported once per run: not again if this run already
             // has.
             if let Some((gap_code, sym)) = gap
@@ -2658,6 +2660,9 @@ impl Machine<'_> {
                 None => {
                     let row = Diagnostic { severity, code, message, span, count: *count, origin, after: replayed_from };
                     self.push_row(key, row);
+                    if !live {
+                        self.retract_row();
+                    }
                 }
             }
         }
@@ -3555,6 +3560,7 @@ impl Machine<'_> {
                         span_out(d.span, site),
                         gap_of.get(&i).map(|(code, sym)| (code.to_string(), *sym)),
                         d.count - then,
+                        self.diag_live.get(i).is_none_or(|&n| n > 0),
                     )
                 })
             })

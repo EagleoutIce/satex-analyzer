@@ -334,3 +334,20 @@ fn the_lists_a_job_reads_are_the_same_whether_the_kernel_was_read_or_loaded() {
     assert_eq!(marks(&uncached), marks(&loaded), "installing the kernel and replaying the class");
     same_rows(&uncached, &loaded, "the lists a job reads");
 }
+
+/// `\DocumentMetadata` loads the PDF management and tagging code, whose
+/// conditionals fork at a few hot sites.
+const METADATA: &str = "\\DocumentMetadata{lang=en}\n\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
+
+/// The fork counts that widen a hot site are kept per load, so a load read
+/// and the same load replayed in part widen at the same choices.
+#[test]
+fn a_tagged_document_reads_the_same_with_its_loads_replayed() {
+    if !installed() {
+        return;
+    }
+    let dir = seeded("metadata");
+    let cold = run(&dir, METADATA);
+    let warm = run(&dir, METADATA);
+    same_rows(&cold, &warm, "a tagged document");
+}

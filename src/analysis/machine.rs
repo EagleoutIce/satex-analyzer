@@ -5880,6 +5880,13 @@ will look undefined",
         }
     }
 
+    /// The row just pushed is reported only if a raise later makes it live.
+    pub(crate) fn retract_row(&mut self) {
+        if let Some(n) = self.diag_live.last_mut() {
+            *n = 0;
+        }
+    }
+
     /// Where the next raise goes in the log [`Machine::retract`] reads.
     pub(crate) fn raised_mark(&self) -> usize {
         self.diag_raised.len()
