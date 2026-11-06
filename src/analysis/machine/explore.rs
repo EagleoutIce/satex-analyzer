@@ -225,6 +225,8 @@ pub(super) struct Paths {
     top: bool,
     /// Paths at a join point ([`Machine::join_arrived`]), waiting for the rest.
     arrived: Vec<Config>,
+    /// One of them waits at an output routine's end.
+    at_output: bool,
     /// Paths dropped for a certain error (`analysis.assume_compiles`), with
     /// where: kept until the others are done. If one of those ended in an
     /// error too, no path compiles and these run on ([`Machine::settle`]).
@@ -456,14 +458,14 @@ impl Machine<'_> {
             self.report_memory(&paths);
             commands += 1;
             let live = match next {
-                Some(Next::One) if self.at_join && paths.top && paths.fork.is_some() => {
-                    self.at_join = false;
+                Some(Next::One) if self.at_join.is_some() && paths.top && paths.fork.is_some() => {
+                    paths.at_output |= self.at_join.take() == Some(JoinAt::Output);
                     let env = self.env.path(paths.fork.as_ref().expect("checked"));
                     paths.arrived.push(Config::new(self.save_path(), env, false));
                     false
                 }
                 Some(Next::One) => {
-                    self.at_join = false;
+                    self.at_join = None;
                     true
                 }
                 Some(Next::Ended) => {
@@ -481,9 +483,12 @@ impl Machine<'_> {
                 Some(Next::Many(outcomes)) => {
                     let fork = paths.fork.clone().expect("paths parted");
                     for mut outcome in outcomes {
-                        match std::mem::take(&mut outcome.state.at_join) && paths.top {
-                            true => paths.arrived.push(outcome),
-                            false => self.park(&mut paths, &fork, outcome),
+                        match outcome.state.at_join.take().filter(|_| paths.top) {
+                            Some(at) => {
+                                paths.at_output |= at == JoinAt::Output;
+                                paths.arrived.push(outcome);
+                            }
+                            None => self.park(&mut paths, &fork, outcome),
                         }
                     }
                     false
@@ -517,6 +522,15 @@ impl Machine<'_> {
                 }
             };
             let Some(fork) = paths.fork.take() else { continue };
+            // Paths wait at a join point for the others until the running
+            // path has passed it: it stands further on between two commands,
+            // in their mode, where their texts meet. One at an output
+            // routine's end inside a command waits on: the command may fire
+            // the routine again. Joined, they run on as paths behind.
+            if live && !paths.arrived.is_empty() && self.passed(&paths) {
+                let first = self.join_arrived(&mut paths, &fork);
+                paths.parked.push(first);
+            }
             if live && !ended {
                 self.close_extra_groups(&mut paths, &fork);
                 self.meet(&mut paths, &fork);
@@ -539,7 +553,9 @@ impl Machine<'_> {
                 ended = path.ended;
                 self.resume_config(&fork, path);
             } else if !live && !paths.arrived.is_empty() {
-                self.join_arrived(&mut paths, &fork);
+                let first = self.join_arrived(&mut paths, &fork);
+                ended = false;
+                self.resume_config(&fork, first);
             } else if !live {
                 let configs = std::mem::take(&mut paths.done);
                 if configs.is_empty() {
@@ -813,7 +829,7 @@ impl Machine<'_> {
             self.charge(&mut mark);
             self.choices.clear();
             (self.infeasible, self.ended_run) = (false, false);
-            self.at_join = false;
+            self.at_join = None;
             // A top run starts clean; a nested one keeps what its path raised.
             (self.dropping, self.dropping_possible, self.dropping_breaks, self.dropping_nested) = match paths.top {
                 true => (None, false, false, false),
@@ -1879,8 +1895,9 @@ impl Machine<'_> {
     /// Every path is at a join point (`analysis.join_paths_at`): those that
     /// stand in the same conditionals, groups and scans, and whose input can
     /// be one, are joined. The first runs on, the rest wait as before.
-    fn join_arrived(&mut self, paths: &mut Paths, fork: &Fork) {
+    fn join_arrived(&mut self, paths: &mut Paths, fork: &Fork) -> Config {
         let arrived = std::mem::take(&mut paths.arrived);
+        paths.at_output = false;
         let count = arrived.len();
         let span = self.position_span();
         let (groups, growth) = self.fold(fork, arrived, 1, |a, b| same_stacks(a, b) && same_code(&a.tag, &b.tag));
@@ -1908,7 +1925,7 @@ impl Machine<'_> {
                 format!("{count} paths arrived at a join point and were joined{kept}. They differed in {apart}"),
             );
         }
-        self.resume_config(fork, first);
+        first
     }
 
     /// `configs` with each joined into the first before it that `same`
@@ -1959,6 +1976,18 @@ impl Machine<'_> {
         let Some(input) = input else { return Some((joined, growth)) };
         growth.parts.push("input");
         Some((Config::new(PathState { input, ..joined.state }, joined.env, joined.ended), growth))
+    }
+
+    /// Whether the running path passed every path waiting at a join point
+    /// ([`Paths::arrived`]).
+    fn passed(&self, paths: &Paths) -> bool {
+        let file = |p: &Place| matches!(p, Place::File(..) | Place::Pseudo(..));
+        self.input.iter().filter_map(place).all(|p| file(&p))
+            && paths.arrived.iter().all(|a| {
+                a.key.progress < self.place_progress()
+                    && a.tag.mode == self.mode
+                    && (!paths.at_output || a.key.places.iter().all(file))
+            })
     }
 
     /// Where the running path stands in the source, as [`Key`] counts it.

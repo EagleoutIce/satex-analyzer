@@ -1945,9 +1945,8 @@ pub struct Machine<'a> {
     /// when it runs, and the code macros of hooks.
     join_commands: Vec<Sym>,
     join_hooks: Vec<Sym>,
-    /// The running path started a join point ([`Machine::join_commands`]):
-    /// it waits there for the others.
-    pub(crate) at_join: bool,
+    /// The running path reached a join point: it waits there for the others.
+    pub(crate) at_join: Option<JoinAt>,
     /// The conditional the running path closed last, by its `\if…` and the
     /// stack depth below it: paths that closed the same one and stand at
     /// one place join there whatever else tells them apart.
@@ -2045,6 +2044,15 @@ pub struct Machine<'a> {
     checkpoints: checkpoint::Taker<'a>,
 }
 
+/// A join point (`analysis.join_paths_at`): a command, or the end of an
+/// output routine (tex.web § 1026), which the command that fired it may
+/// reach again (a `\clearpage` loop).
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum JoinAt {
+    Command,
+    Output,
+}
+
 /// Everything besides the bindings that a path through an undecided
 /// conditional changes, so each arm starts where the test was. What the run
 /// records (facts, graph, hooks, loaded files) is shared: analysis reports
@@ -2107,7 +2115,7 @@ struct PathState {
     file_calls: Vec<(FileId, Option<(Sym, Span)>)>,
     reader: Option<NodeId>,
     scans: Vec<Accum>,
-    at_join: bool,
+    at_join: Option<JoinAt>,
     fi_mark: Option<(Span, usize)>,
     approximated: bool,
     /// An error a nested drive's path raised: it is the enclosing
@@ -2649,7 +2657,7 @@ impl<'a> Machine<'a> {
             tex_errors: 0,
             join_commands: Vec::new(),
             join_hooks: Vec::new(),
-            at_join: false,
+            at_join: None,
             fi_mark: None,
             dropping: None,
             dropping_possible: false,
@@ -9587,7 +9595,7 @@ will look undefined",
         if self.join_hooks.contains(&sym)
             || self.join_commands.iter().any(|&c| self.env.meaning(c).as_macro().is_some_and(|d| Rc::ptr_eq(d, &m)))
         {
-            self.at_join = true;
+            self.at_join = Some(JoinAt::Command);
         }
         let node = self.out.graph.push(
             VertexTag::MacroCall,

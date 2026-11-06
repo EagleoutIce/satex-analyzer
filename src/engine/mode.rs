@@ -2194,7 +2194,7 @@ impl Machine<'_> {
             // § 1026: the page builder resumes where the routine was
             // fired, whichever way its code went: paths parted inside it
             // meet there.
-            self.at_join = true;
+            self.at_join = Some(crate::analysis::machine::JoinAt::Output);
             return;
         }
         let kind = match nest.code {

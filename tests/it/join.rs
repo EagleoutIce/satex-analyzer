@@ -305,6 +305,38 @@ fn paths_join_at_document() {
     assert!(body(&analysis, "z").contains("one of:"), "{}", body(&analysis, "z"));
 }
 
+/// A path at a join point waits for the others only while one may still
+/// reach it. One arm reaches `\document`, the other passes by: the waiting
+/// path runs on behind the other and meets it, so the text after is read
+/// about once, not once per path. It waited to the end before, and what it
+/// did after the join point was lost (`\z` held `b` only).
+#[test]
+fn a_join_point_another_path_passed_waits_no_longer() {
+    let run = |join: &str| {
+        let analysis = analyze(&format!(
+            r"\def\document{{\relax}}\def\a{{\def\m{{a}}{join}}}\def\b{{\def\m{{b}}}}
+              \ifnum\pdfuniformdeviate2=0 \expandafter\a\else\expandafter\b\fi{}\edef\z{{\m}}",
+            r"\def\t{x}\edef\u{\t\t}".repeat(40)
+        ));
+        assert!(body(&analysis, "z").contains("one of:"), "{}", body(&analysis, "z"));
+        analysis.steps
+    };
+    let (waits, plain) = (run(r"\document"), run(""));
+    assert!(waits <= plain + plain / 4, "{waits} steps with a join point, {plain} without");
+}
+
+/// A path waits at a join point to the end when the running path never
+/// stands in its mode past it (here in a paragraph): it still runs on
+/// from there once the others ended, so what it does after is kept.
+#[test]
+fn a_path_waiting_to_the_end_still_runs_on() {
+    let analysis = analyze(
+        r"\def\document{\relax}\def\a{\def\m{a}\document x}\def\b{\def\m{b}x}
+          \ifnum\pdfuniformdeviate2=0 \expandafter\a\else\expandafter\b\fi\edef\z{\m}",
+    );
+    assert!(body(&analysis, "z").contains("one of:"), "{}", body(&analysis, "z"));
+}
+
 /// The same in LaTeX: a preamble that defines a macro per arm of an
 /// undecided `\ifx` starts the body on one path.
 #[test]
