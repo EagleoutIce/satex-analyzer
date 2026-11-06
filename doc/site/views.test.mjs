@@ -487,6 +487,10 @@ console.log('table model: ok');
   // a paragraph that may be set carries a switch per conditional
   const may = typesetView([{ kind: 'paragraph', line: 3, detail: 'x', marked: 'x', causes: [{ on: '7', test: '\\ifdraft', line: 3, mark: '{x|}' }] }]);
   assert.match(may, /<span class="ts-switch" data-on="7" title="may be typeset: depends on \\ifdraft \(line 3\)[^>]*><span class="ts-switch-q">maybe<\/span><code>\\ifdraft<\/code><button type="button" data-arm="both" aria-pressed="true"/);
+  // a macro of several meanings is no test: its options are the texts its paths set
+  const meant = typesetView([{ kind: 'paragraph', line: 3, detail: 'x', marked: 'x', causes: [{ on: '8', test: '', parted: '`\\tleapy`', line: 3, mark: '{|not }', arms: ['', 'not '] }] }]);
+  assert.deepEqual([...meant.matchAll(/data-arm="(\w+)"[^>]*>(.*?)<\/button>/g)].map((m) => [m[1], m[2]]), [['both', 'both'], ['true', '<code>empty</code>'], ['false', '<code>not␣</code>']]);
+  assert.match(may, /data-arm="true"[^>]*>true<\/button>/);
   // the document's marks from the open file's lines; a block's header joins its begin mark
   const doc = ['\\documentclass{article}', '\\begin{document}', 'x', '\\begin{figure}[ht]', 'y\\label{f}', '\\end{figure}', '\\end{document}'];
   const fig = { env: 'figure', line: 4, end: 6 };

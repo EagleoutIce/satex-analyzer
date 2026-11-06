@@ -43,12 +43,9 @@ fn about(key: &str, node: &Value) -> String {
     if let Some(text) = node.get("description").and_then(Value::as_str) {
         out.push_str(&format!("{text}\n\n"));
     }
-    if let Some(ty) = node.get("type").and_then(Value::as_str) {
-        out.push_str(&format!("type `{ty}`"));
-    }
-    if let Some(default) = node.get("default") {
-        out.push_str(&format!(", default `{default}`"));
-    }
+    let ty = node.get("type").and_then(Value::as_str).map(|ty| format!("type `{ty}`"));
+    let default = node.get("default").map(|d| format!("default `{d}`"));
+    out.push_str(&[ty, default].into_iter().flatten().collect::<Vec<_>>().join(", "));
     if let Some(example) = node.get("x-example").and_then(Value::as_str) {
         out.push_str(&format!("\n\n*{example}*"));
     }
@@ -308,4 +305,15 @@ pub fn name_hover(line: &str, col: u32) -> Option<String> {
     let rest = &line[start + "\\satex@".len()..];
     let name = &rest[..rest.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(rest.len())];
     (at < start + "\\satex@".len() + name.len()).then(|| card(name))?
+}
+
+#[cfg(test)]
+mod tests {
+    /// A setting without a `type` (`clock` is a `oneOf`) shows its default without a separator before it.
+    #[test]
+    fn a_default_without_type_has_no_leading_comma() {
+        let line = "%\\satex@configure{clock=now}";
+        let h = super::hover(line, line.find("clock").unwrap() as u32 + 1).unwrap();
+        assert!(h.contains("\n\ndefault `\"now\"`"), "{h}");
+    }
 }

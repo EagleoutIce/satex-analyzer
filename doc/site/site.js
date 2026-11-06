@@ -809,9 +809,12 @@
    * the true one or the false one (`typesetWire` flips every choice of that conditional). */
   const switches = (r) => (r.causes ?? []).filter((c) => c.on != null).map((c) => {
     const name = c.test || c.parted || c.mark;
-    const arm = { both: 'show the text of both cases', true: `show the text when ${name} is true`, false: `show the text when ${name} is false` };
+    // a conditional's test is true or false; other parted paths (a macro of several meanings) are named by the text each sets
+    const label = (i) => c.test || !c.arms ? ['true', 'false'][i] : `<code>${c.arms[i] ? esc(c.arms[i].replace(/ /g, '␣')) : 'empty'}</code>`;
+    const arm = { both: 'show the text of every path', true: c.test || !c.arms ? `show the text when ${name} is true` : `show the paths where ${name} sets ${c.arms[0] ? `“${c.arms[0]}”` : 'nothing'}`,
+      false: c.test || !c.arms ? `show the text when ${name} is false` : `show the paths where ${name} sets ${c.arms[1] ? `“${c.arms[1]}”` : 'nothing'}` };
     return `<span class="ts-switch" data-on="${esc(c.on)}" title="${esc(maybeTip(c))}. Pick a case to see its text"><span class="ts-switch-q">maybe</span><code>${esc(name)}</code>` +
-      ['both', 'true', 'false'].map((a) => `<button type="button" data-arm="${a}" aria-pressed="${a === 'both'}" title="${esc(arm[a])}">${a}</button>`).join('') + '</span>';
+      ['both', 'true', 'false'].map((a, i) => `<button type="button" data-arm="${a}" aria-pressed="${a === 'both'}" title="${esc(arm[a])}">${i ? label(i - 1) : a}</button>`).join('') + '</span>';
   }).join('');
   const maybeTip = (c) => `may be typeset: depends on ${c.test || c.parted || c.mark} (line ${c.line}), which the run could not decide`;
   /** Each paragraph's environments opened since the last paragraph (`envOpen`) and closed after it (`envClose`). */

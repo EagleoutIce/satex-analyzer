@@ -2883,7 +2883,7 @@
         if (pos < from || pos > to) return null;
         const full = [...pathOf(v.state.doc, line.number), keyName(m[2])].join('.'), k = leafOf(full), dom = document.createElement('div');
         dom.className = 'cfg-tip';
-        if (k) dom.innerHTML = `<code>${escape(full)}</code> <span class="muted">${escape(k.type)}${k.def !== undefined ? `, default ${escape(yamlValue(k.def).slice(0, 60))}` : ''}</span><p>${escape(k.about)}</p>`;
+        if (k) dom.innerHTML = `<code>${escape(full)}</code> <span class="muted">${escape([k.type, k.def !== undefined && `default ${yamlValue(k.def).slice(0, 60)}`].filter(Boolean).join(', '))}</span><p>${escape(k.about)}</p>`;
         else if (known(full)) {
           // an entry of a map: its code points, and the other entries that look the same but are other characters
           const name = keyName(m[2]), cp = (x) => [...x].map((c) => `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`).join(' ');

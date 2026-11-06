@@ -1500,6 +1500,27 @@ fn may_text_names_its_switch() {
     let cause =
         row["causes"].as_array().into_iter().flatten().find(|c| c["on"].is_string()).expect("a cause with its switch");
     assert_eq!(choice["key"], cause["on"], "{row}");
+    assert!(cause["test"].as_str().is_some_and(|t| t.starts_with("\\ifnum")), "{row}");
+    assert_eq!(cause["arms"], serde_json::json!(["Heads", "Tails"]), "{row}");
+}
+
+/// A macro whose meaning paths decided apart is no test: its choice has no
+/// `test`, and its arms are the texts its meanings set (`not ` or nothing).
+#[test]
+fn a_macro_choice_offers_its_texts() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body =
+        "\\def\\tleapy{not }\\ifnum\\pdfuniformdeviate 2=0 \\def\\tleapy{}\\fi The year is \\tleapy a leap year.";
+    let rows = typeset_rows("macro-switch", "", body);
+    let row = paragraph(&rows, "The year");
+    let cause =
+        row["causes"].as_array().into_iter().flatten().find(|c| c["on"].is_string()).expect("a cause with its switch");
+    assert_eq!(cause["test"], "", "{row}");
+    let mut arms: Vec<&str> = cause["arms"].as_array().into_iter().flatten().filter_map(|a| a.as_str()).collect();
+    arms.sort();
+    assert_eq!(arms, ["", "not "], "{row}");
 }
 
 /// `\bottomrule` is a `\noalign` of its alignment: the rule comes before the

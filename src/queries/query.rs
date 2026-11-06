@@ -484,7 +484,8 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 /// with the place in `detail` where each stands. `fonts` lists where the
 /// font changes, as [`font_styles`] names it.
 /// A `choice` key before a `{…|…}` names the conditional's node, as its
-/// cause's `on` does. `align` marks a limit `over` or `under` its operator
+/// cause's `on` does, its `arms` the text of the first path and of the
+/// others: true and false where the cause has a `test`. `align` marks a limit `over` or `under` its operator
 /// (tagged `L`) and `eqno`/`leqno` before an equation's number. `envs` names
 /// every environment of the user's a paragraph stands in, `origins` where
 /// its characters were read when elsewhere than where they were set (a
@@ -507,7 +508,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                 return;
             }
             let _ = write!(line, "{}{yes}{}{no}{}", note("{"), note("|"), note("}"));
-            causes.push(Cause::Choice(on, site, format!("{{{}|{}}}", unmarked(&yes), unmarked(&no))));
+            causes.push(Cause::Choice(on, site, [unmarked(&yes), unmarked(&no)]));
         }
     };
     let (on_page, lost) = reach(text);
@@ -1160,8 +1161,9 @@ type Choice = (crate::engine::env::NodeId, Span, [String; 2]);
 /// What made a character of the typeset text uncertain.
 enum Cause {
     /// A `{a|b}` choice set where paths parted at this node (an undecided
-    /// conditional or a split), first set at this place in the user's files.
-    Choice(crate::engine::env::NodeId, Span, String),
+    /// conditional or a split), first set at this place in the user's files,
+    /// with the text of the first arm and of the others.
+    Choice(crate::engine::env::NodeId, Span, [String; 2]),
     /// A character the run could not compute, set here.
     Unknown(Span),
 }
@@ -1755,8 +1757,9 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
     for cause in causes {
         let mut switch = None;
         let (mark, line, test, reads, parted) = match cause {
-            Cause::Choice(on, set, mark) => {
-                switch = Some(on);
+            Cause::Choice(on, set, arms) => {
+                let mark = format!("{{{}|{}}}", arms[0], arms[1]);
+                switch = Some((on, arms));
                 let vertex = analysis.graph.vertices.get(on as usize);
                 let site = vertex.map(|v| v.span).unwrap_or_default();
                 let (test, reads) = test_text(analysis, site);
@@ -1782,8 +1785,9 @@ fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>, ke
             if !parted.is_empty() {
                 cause["parted"] = json!(strip_private(&parted));
             }
-            if let Some(on) = switch {
+            if let Some((on, arms)) = switch {
                 cause["on"] = json!(on.to_string());
+                cause["arms"] = json!(arms.map(|a| clip(&strip_private(&a))));
             }
             why.push(cause);
         }
