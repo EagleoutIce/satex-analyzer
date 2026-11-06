@@ -107,3 +107,71 @@ fn a_space_before_a_wrapper_of_ref_is_reported() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(replacements(&found), ["~"], "{columns:?}");
 }
+
+const TASK: &str = "\\usepackage{amsthm}\n\\usepackage{cleveref}\n\\newcounter{task}\n\\newtheorem{claim}{Claim}\n";
+
+/// The `undefined-cref-format` findings: severity, line and fix edits.
+fn cref_findings(name: &str, preamble: &str, text: &str) -> Vec<(String, u64, Vec<String>)> {
+    let body = format!(
+        "{TASK}{preamble}\\begin{{document}}\n\\refstepcounter{{task}}\\label{{t:a}}\n\
+         \\begin{{claim}}\\label{{c:a}}x\\end{{claim}}\\begin{{claim}}\\label{{c:b}}y\\end{{claim}}\n\
+         \\begin{{figure}}\\caption{{c}}\\label{{f:a}}\\end{{figure}}\n\
+         \\begin{{equation}}x\\label{{e:a}}\\end{{equation}}\n{text}\n\\end{{document}}\n"
+    );
+    records(name, &body, "", "undefined-cref-format")
+        .iter()
+        .map(|r| {
+            let severity = r["severity"].as_str().unwrap_or_default().to_string();
+            (severity, r["line"].as_u64().unwrap_or_default(), replacements(std::slice::from_ref(r)))
+        })
+        .collect()
+}
+
+/// The line `text` starts on in [`cref_findings`]'s document.
+fn text_line(preamble: &str) -> u64 {
+    (format!("\\documentclass{{article}}\n{TASK}{preamble}").lines().count() + 6) as u64
+}
+
+#[test]
+fn a_reference_to_an_unnamed_counter_asks_for_crefname_once() {
+    let found = cref_findings("cref-task", "", "See \\cref{t:a}, \\Cref{t:a} and \\cref{t:a}.");
+    if !crate::support::installed() {
+        return;
+    }
+    let fix = vec!["\n\\crefname{task}{task}{tasks}".to_string()];
+    assert_eq!(found, [("warning".to_string(), text_line(""), fix)]);
+}
+
+#[test]
+fn a_theorem_range_without_crefname_asks_for_it() {
+    // cleveref names a theorem from its heading, but makes no range format.
+    let found = cref_findings("cref-claim", "", "See \\cref{c:a}.\n\\crefrange{c:a}{c:b}.");
+    if !crate::support::installed() {
+        return;
+    }
+    let fix = vec!["\n\\crefname{claim}{claim}{claims}".to_string()];
+    assert_eq!(found, [("warning".to_string(), text_line("") + 1, fix)]);
+}
+
+#[test]
+fn named_and_built_in_types_need_no_crefname() {
+    let preamble = "\\crefname{task}{task}{tasks}\n\\crefname{claim}{claim}{claims}\n";
+    let text = "\\cref{t:a}, \\Cref{c:a}, \\crefrange{c:a}{c:b}, \\cref{f:a}, \\cref{e:a}, \\ref{t:a}.";
+    assert!(cref_findings("cref-named", preamble, text).is_empty());
+}
+
+#[test]
+fn a_reference_made_on_some_paths_only_is_a_hint() {
+    let found = cref_findings("cref-path", "", "\\ifnum\\pdfuniformdeviate 2=0 \\cref{t:a}\\fi");
+    if !crate::support::installed() {
+        return;
+    }
+    assert_eq!(found.iter().map(|f| f.0.as_str()).collect::<Vec<_>>(), ["hint"], "{found:?}");
+}
+
+#[test]
+fn a_name_given_on_some_paths_only_is_never_a_warning() {
+    let preamble = "\\ifnum\\pdfuniformdeviate 2=0 \\crefname{task}{task}{tasks}\\fi\n";
+    let found = cref_findings("cref-maybe", preamble, "See \\cref{t:a}.");
+    assert!(found.iter().all(|f| f.0 == "hint"), "{found:?}");
+}

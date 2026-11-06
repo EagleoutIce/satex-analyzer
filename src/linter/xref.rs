@@ -1,5 +1,6 @@
 //! Cross-references and author names typed by hand: text the document
-//! could take from a label or a bibliography entry instead.
+//! could take from a label or a bibliography entry instead.  And cleveref
+//! references to a label type it has no format for.
 
 use crate::fixed::HashSet;
 
@@ -58,6 +59,31 @@ Fix by writing `\\textcite{knuth84}`, `\\citet{knuth84}` or
         fixes: &[Applicability::Unsafe],
         engines: &[],
         run: hand_written_author,
+    },
+    Rule {
+        code: "undefined-cref-format",
+        category: Category::Correctness,
+        severity: Severity::Warning,
+        summary: "cleveref has no name for a label's type, so `\\cref` prints `??`",
+        explanation: "\
+cleveref prints a reference with the format of the label's type: `\\cref`
+the `cref` one, `\\Cref` the `Cref` one, `\\crefrange` the range ones.
+`\\crefname` makes them all.  cleveref names the common types itself, and
+a theorem's from its heading, but a counter of the document's own (a
+`\\newcounter` stepped with `\\refstepcounter`) has none.  The reference
+then prints `?? 1`, and cleveref warns that the `cref` reference format for
+label type `task` is undefined.
+
+The finding is that warning, raised by cleveref's own code in the run, at
+the first reference of each type.  Where it was raised on only some paths
+of the analysis, or after code the run could not follow, it is a hint.
+
+Fix by naming the type after `\\usepackage{cleveref}`:
+`\\crefname{task}{task}{tasks}`.",
+        references: &[Ref { source: Source::Cleveref, at: "8.1.2" }],
+        fixes: &[Applicability::Unsafe],
+        engines: &[],
+        run: undefined_cref_format,
     },
 ];
 
@@ -340,5 +366,52 @@ fn hand_written_author(report: &mut Report) {
             Some(vec![edit]),
         );
         report.add_fix(at, "author", message, fix);
+    }
+}
+
+/// The label type of cleveref's warning for a reference it has no format
+/// for: `cref reference format for label type `task' undefined`, and the
+/// range form.
+fn cref_type(message: &str) -> Option<&str> {
+    let rest = &message[message.find("reference ")?..];
+    let rest = &rest[rest.find(" format for label type `")? + " format for label type `".len()..];
+    let (kind, tail) = rest.split_once('\'')?;
+    tail.trim_start().starts_with("undefined").then_some(kind)
+}
+
+fn undefined_cref_format(report: &mut Report) {
+    let analysis = report.analysis();
+    let view = report.text();
+    let edits = report.edits();
+    let load = analysis.facts.loads.iter().find(|l| l.kind.is_package() && l.name == "cleveref" && l.by.is_none());
+    // Once per type: the first site that warned on every path, else the first.
+    let mut types: Vec<(&str, Span, bool)> = Vec::new();
+    for (i, o) in analysis.facts.occurrences.iter().enumerate() {
+        let Some(kind) = (o.kind == OccKind::Message).then(|| cref_type(&o.key)).flatten() else { continue };
+        if !view.document(o.span.file) {
+            continue;
+        }
+        let sure = o.certain && crate::linter::shared::doubt(analysis, i).is_none();
+        match types.iter_mut().find(|t| t.0 == kind) {
+            Some(t) if sure && !t.2 => *t = (kind, o.span, sure),
+            Some(_) => {}
+            None => types.push((kind, o.span, sure)),
+        }
+    }
+    for (kind, span, sure) in types {
+        let severity = if sure { Severity::Warning } else { Severity::Hint };
+        let maybe = if sure { "" } else { " on some paths of the analysis" };
+        // A type made of unknown text has no name to write.
+        let plain = !kind.is_empty() && kind.chars().all(|c| c.is_alphanumeric() || "@*-_:.".contains(c));
+        if !plain {
+            let message = format!("cleveref has no format for this reference's label type{maybe}, so it prints `??`");
+            report.add_as(Severity::Hint, span, "unknown", message, Some("name the type with `\\crefname`".into()));
+            continue;
+        }
+        let name = format!("\\crefname{{{kind}}}{{{kind}}}{{{kind}s}}");
+        let message = format!("cleveref has no format for label type `{kind}`{maybe}, so the reference prints `??`");
+        let fix = load.and_then(|l| edits.insert_after_load(l, &name));
+        let fix = Fix::new(format!("name the type: `{name}`"), Applicability::Unsafe, fix);
+        report.add_fix_as(severity, span, kind, message, fix);
     }
 }

@@ -463,15 +463,18 @@ impl<'a> Edits<'a> {
         let line = format!("\\usepackage{{{package}}}");
         let mut loads =
             self.analysis.facts.loads.iter().rev().filter(|l| l.kind == LoadKind::Package && l.by.is_none());
-        let last = loads.find_map(|l| {
-            let (path, text, mut scan, cs) = self.command(l.span)?;
-            scan.name(&cs).filter(|n| *n == "usepackage")?;
-            scan.optional();
-            let end = scan.group()?.end;
-            let at = Pos::new(end.line, text.line(end.line).chars().count() as u32 + 1);
-            Some(vec![Edit { path, start: at, end: at, replacement: format!("\n{line}") }])
-        });
+        let last = loads.find_map(|l| self.insert_after_load(l, &line));
         last.or_else(|| self.insert_before(crate::linter::shared::document_start(self.analysis)?, &line))
+    }
+
+    /// A line of its own after the `\usepackage` line that made `load`.
+    pub fn insert_after_load(&self, load: &Load, line: &str) -> Option<Vec<Edit>> {
+        let (path, text, mut scan, cs) = self.command(load.span)?;
+        scan.name(&cs).filter(|n| *n == "usepackage")?;
+        scan.optional();
+        let end = scan.group()?.end;
+        let at = Pos::new(end.line, text.line(end.line).chars().count() as u32 + 1);
+        Some(vec![Edit { path, start: at, end: at, replacement: format!("\n{line}") }])
     }
 
     /// Insert a line of its own before the line `at` starts, when `at` is

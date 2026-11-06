@@ -85,6 +85,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C033 | [`unbalanced-color-stack`](#unbalanced-color-stack) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | <span class="eng" title="only under pdftex, luatex">pdftex, luatex</span> | — | a `\pdfcolorstack` push is never popped, or a pop has nothing to pop | — |
 | C034 | [`unbalanced-pdf-content`](#unbalanced-pdf-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | <span class="eng" title="only under pdftex, luatex, xetex">pdftex, luatex, xetex</span> | — | a PDF literal opens marked content or a graphics state that is never closed | — |
 | C035 | [`undefined-citation`](#undefined-citation) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a citation names a key no bibliography entry declares | — |
+| C048 | [`undefined-cref-format`](#undefined-cref-format) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | cleveref has no name for a label's type, so `\cref` prints `??` | — |
 | C036 | [`undefined-optional-content`](#undefined-optional-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | marked content refers to an optional content group no resource names | — |
 | C037 | [`undefined-reference`](#undefined-reference) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | `\ref` names a label that is never defined | — |
 | C038 | [`uninstalled-package`](#uninstalled-package) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | the package is not installed, and the distribution could install it | — |
@@ -170,7 +171,7 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 
 `S` marks a safe fix, `U` an unsafe one. A rule with both has findings of each kind: the fix is safe where it cannot change what the document means and unsafe where it might. Each finding names its own kind.
 
-<details><summary>53 rules with quick fixes</summary>
+<details><summary>54 rules with quick fixes</summary>
 
 * C001 [`already-defined`](#already-defined) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\newcommand` redefines an existing name
 * C002 [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a BibTeX command biblatex replaces stops the run
@@ -184,6 +185,7 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 * C029 [`ignored-verbatim-tail`](#ignored-verbatim-tail) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> text stands on the line that closes a verbatim body and never reaches the page
 * C030 [`math-script-braces`](#math-script-braces) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> `^` and `_` take one token, so what follows needs braces
 * C031 [`missing-dependency`](#missing-dependency) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> a TeX Live package the run reads from is not in the dependency file
+* C048 [`undefined-cref-format`](#undefined-cref-format) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> cleveref has no name for a label's type, so `\cref` prints `??`
 * C042 [`unintended-escape`](#unintended-escape) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a command is followed by an escaped punctuation mark, which is another command
 * S001 [`accent-on-dotted-letter`](#accent-on-dotted-letter) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> an accent sits on top of the dot of an `i` or a `j`
 * S002 [`command-terminated-space`](#command-terminated-space) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> a control word ate the space after it and the next word is set against what it produced
@@ -233,7 +235,7 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 One group per category. Open a group to read its rules.
 
 <details id="category-correctness">
-<summary><b>correctness</b> (47 rules)</summary>
+<summary><b>correctness</b> (48 rules)</summary>
 
 ### already-defined
 
@@ -693,6 +695,20 @@ No `\bibitem` and no entry of the `.bib` databases `\bibliography` names declare
 Fix by adding the entry, or by correcting the key.
 
 See [source2e § ltbibl.dtx](https://ctan.org/pkg/source2e).
+
+### undefined-cref-format
+
+<p class="badges"><code class="num" title="rule number">C048</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
+
+**cleveref has no name for a label's type, so `\cref` prints `??`**
+
+cleveref prints a reference with the format of the label's type: `\cref` the `cref` one, `\Cref` the `Cref` one, `\crefrange` the range ones. `\crefname` makes them all. cleveref names the common types itself, and a theorem's from its heading, but a counter of the document's own (a `\newcounter` stepped with `\refstepcounter`) has none. The reference then prints `?? 1`, and cleveref warns that the `cref` reference format for label type `task` is undefined.
+
+The finding is that warning, raised by cleveref's own code in the run, at the first reference of each type. Where it was raised on only some paths of the analysis, or after code the run could not follow, it is a hint.
+
+Fix by naming the type after `\usepackage{cleveref}`: `\crefname{task}{task}{tasks}`.
+
+See [cleveref § 8.1.2](https://ctan.org/pkg/cleveref).
 
 ### undefined-optional-content
 
