@@ -2252,3 +2252,9 @@ main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/
     .band > h2, .band > h2 + .sub { animation: rise linear both; animation-timeline: view(); animation-range: entry 10% cover 30%; }
   }
 }
+
+/* a satex command's output on the docs pages: highlighted, its metadata in light gray at the lower right on hover */
+pre.out-block { position: relative; } pre.out-block .out-cmd { color: var(--accent); } pre.out-block .out-head { color: var(--muted); font-weight: 600; }
+pre.out-block .out-omit { color: var(--muted); font-style: italic; } pre.out-block .out-loc { color: var(--c5); }
+pre.out-block .out-meta { position: absolute; right: .7rem; bottom: .35rem; font: .68rem system-ui, sans-serif; color: var(--muted); opacity: 0; transition: opacity var(--quick); pointer-events: none; }
+pre.out-block:hover .out-meta { opacity: .85; }

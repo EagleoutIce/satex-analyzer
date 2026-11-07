@@ -38,7 +38,13 @@
   /** `hit` as a card, in the shape of the control sequence cards (`.cs-card`). */
   function card(hit, about = {}) {
     if (!hit) return '';
-    const head = (name, kind) => `<div class="cs-head"><b>${esc(name)}</b><span class="cs-chip cs-k">${esc(kind)}</span></div>`;
+    // the page that documents it: a query its section, `satex lint` the lints, any other command the CLI page
+    const root = new URL('.', document.querySelector('script[src*="cli"]')?.src ?? location.href).href;
+    const docs = (kind, name) => kind === 'query' ? `wiki/queries.html#${name}` : /^satex (query|trace)\b/.test(name) ? `wiki/queries.html${name.endsWith('trace') ? '#trace' : ''}` : /^satex lint\b/.test(name) ? 'wiki/lints.html' : 'wiki/cli.html';
+    const head = (name, kind) => {
+      const href = kind === 'query' || kind === 'subcommand' ? new URL(docs(kind, name), root).href : null;
+      return `<div class="cs-head">${href ? `<a href="${esc(href)}" title="its documentation"><b>${esc(name)}</b></a>` : `<b>${esc(name)}</b>`}<span class="cs-chip cs-k">${esc(kind)}</span></div>`;
+    };
     const p = (text) => (text ? `<p>${esc(text).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` : '');
     const a = hit.arg;
     if (hit.kind === 'command') return `<div class="cs-card">${head(hit.path ?? `satex ${hit.node.name}`, 'subcommand')}${p(hit.node.about)}</div>`;

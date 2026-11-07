@@ -420,6 +420,21 @@
       const r = document.caretRangeFromPoint?.(x, y);
       return r ? [r.startContainer, r.startOffset] : [];
     };
+    // a `$ satex …` block shows its output highlighted: the command, the column header, control sequences, places and
+    // numbers, the omitted tail muted; on hover, what the block is in light gray at its lower right
+    for (const code of document.querySelectorAll('pre > code')) {
+      const text = code.textContent, lines = text.split('\n');
+      if (!/^\$ satex\s/.test(lines[0] ?? '') || code.dataset.out) continue;
+      code.dataset.out = '1';
+      const omitted = +(text.match(/… (\d+) more lines? omitted/)?.[1] ?? 0), shown = lines.slice(1).filter((l) => l && !l.startsWith('… ')).length;
+      const body = (l) => esc(l).replace(/(\\[A-Za-z@]+)|([\w./-]+\.(?:tex|sty|cls|ltx|bib|aux|def)(?::\d+(?::\d+)?)?)|(\b\d+(?:\.\d+)?\b)/g,
+        (m, cs, loc, num) => cs ? `<span class="tok-cmd">${cs}</span>` : loc ? `<span class="out-loc">${loc}</span>` : `<span class="tok-num">${num}</span>`);
+      const header = (l) => /^[a-z][\w-]*(\s{2,}[a-z][\w-]*)+\s*$/.test(l);
+      code.innerHTML = lines.map((l, i) => i === 0 ? `<span class="out-cmd">${esc(l)}</span>` : l.startsWith('… ') ? `<span class="out-omit">${esc(l)}</span>`
+        : i === 1 && header(l) ? `<span class="out-head">${esc(l)}</span>` : body(l)).join('\n');
+      code.parentElement.classList.add('out-block');
+      code.parentElement.insertAdjacentHTML('beforeend', `<span class="out-meta" aria-hidden="true">${shown} ${shown === 1 ? 'line' : 'lines'} shown${omitted ? `, ${omitted} omitted` : ''} · the output of this command when the page was built</span>`);
+    }
     let last = '';
     if (meta && self.satexCli) document.addEventListener('mousemove', async (e) => {
       const code = e.target.closest?.('pre > code');
