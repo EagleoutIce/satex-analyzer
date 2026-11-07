@@ -243,7 +243,7 @@
   {
    "name": "trace",
    "file": "expand.tex",
-   "title": "Step through a macro",
+   "title": "Debugger",
    "big": true,
    "caption": "See each expansion step of a macro and every name it reads.",
    "open": [
