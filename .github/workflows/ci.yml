@@ -189,6 +189,7 @@ jobs:
             scheme-basic
             pgf
             beamer
+            booktabs
             microtype
             luacode
             luatexbase
