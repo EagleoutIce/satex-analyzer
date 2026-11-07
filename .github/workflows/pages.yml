@@ -67,7 +67,11 @@ jobs:
       - name: Install the build tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends build-essential git xz-utils ca-certificates python3 pandoc poppler-utils
+          apt-get install -y --no-install-recommends build-essential git xz-utils ca-certificates python3 pandoc poppler-utils curl
+
+      # The semantics pages export the Lean declarations; lake fetches the pinned toolchain.
+      - name: Install Lean
+        run: curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
 
       - uses: actions/checkout@v5
 
