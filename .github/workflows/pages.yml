@@ -59,7 +59,7 @@ jobs:
 
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 170
     container: texlive/texlive:latest
     steps:
       # Lua and LPeg are compiled from C; pandoc renders the Markdown,
@@ -91,7 +91,8 @@ jobs:
           npx --yes -p typescript@5.9.3 tsc -p doc/site/jsconfig.worker.json
 
       # build.py keys its memo by the analysis, so stale entries are ignored.
-      - uses: actions/cache@v4
+      # Saved even when the build fails or runs out of time: the next run goes on from there.
+      - uses: actions/cache/restore@v4
         with:
           path: site-work
           key: site-work-${{ github.sha }}
@@ -107,13 +108,19 @@ jobs:
         run: target/ci/satex-doc
 
       - name: Build the site
-        timeout-minutes: 45
+        timeout-minutes: 100
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SATEX_WASM_READY: wasm.ready
         run: |
           python3 scripts/ci-await-artifact.py wasm wasm wasm-build wasm.ready &
           python3 doc/site/build.py --satex target/ci/satex --wasm wasm-build --work site-work --out site
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: site-work
+          key: site-work-${{ github.sha }}
 
       # Late or failing, the site still deploys.
       - name: Test the playground
