@@ -556,6 +556,9 @@ analysis:
   assume_messages_output_only: true  # assume wrapping a message for the terminal or log changes nothing but the text written
     #! affects: precision, soundness
     #! example: off: a message over unknown text is wrapped a path per way it may break into lines
+  assume_unknown_char_catcode: true  # assume a \catcode of a character satex could not pin down never changes a structural one
+    #! affects: precision, soundness
+    #! example: off: `\catcode\count@=11` after a summarized loop may make `{` a letter, one path each way
 
 # shell_escape: restricted # which programs \write18 may run: none, restricted or full. Unset: what the build files ask for
 #! affects: precision, soundness
@@ -1185,6 +1188,8 @@ analysis:
 `analysis.assume_forced_page_breaks` (default `true`): Assumes pages break only where something forces it (`\clearpage`, `\newpage`, `\end`). `false` also follows a page break wherever the page may have filled, one path each way.
 
 `analysis.assume_messages_output_only` (default `true`): Assumes formatting a message for the terminal or log (expl3's `\iow_wrap:nnnN`) changes nothing but the text it writes. A message over unknown text then writes unknown text, on one path, reported as an `assumption`. `false` wraps it for real, a path per way it may wrap.
+
+`analysis.assume_unknown_char_catcode` (default `true`): Assumes a `\catcode` through a character satex could not pin down (a summarized loop's counter) never names a structural character, one of category neither letter nor other (`\ { } % $ & # ^ _`, space, end of line, active). Reported as `unknown-char-catcode`. `false` lets it reach them: the reader splits a path per category.
 
 ## Stubs
 

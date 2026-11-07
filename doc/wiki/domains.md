@@ -626,9 +626,9 @@ A write through an index not pinned to one number (`\count#1=…`) must hold for
 
 ### Code tables behind an unknown character
 
-A `\catcode`, `\lccode`, `\uccode`, `\sfcode`, `\mathcode` or `\delcode` write through an unknown character ([tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23040)) leaves every entry it may name at {old, new}, structural characters included.
+A `\catcode`, `\lccode`, `\uccode`, `\sfcode`, `\mathcode` or `\delcode` write through an unknown character ([tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23040)) leaves every entry it may name at {old, new}.
 
-- **Categories**: the table keeps the hull of the codes reached (`reach`) and the categories written (`reach_cats`). Reading a character whose set holds a structural category splits the path per category (`split_catcode`, at most `SPLIT_CATS`), once per path. A letter-or-other character is a one-of token.
+- **Categories**: the table keeps the hull of the codes reached (`reach`) and the categories written (`reach_cats`). A character of a structural category (neither letter nor other) keeps it when the hull is too wide to list: the named assumption `unknown-char-catcode` (`analysis.assume_unknown_char_catcode`, `keep_structural`). A listed interval, or the assumption off, reaches them too. Reading a character whose set holds a structural category splits the path per category (`split_catcode`, at most `SPLIT_CATS`), once per path. A letter-or-other character is a one-of token.
 - **Codes**: the written values join in one slot per table (`family_value`). An entry reads its own code joined with it.
 - `\lowercase`/`\uppercase` split per code where the category is structural, else give a one-of of the characters.
 

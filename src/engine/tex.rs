@@ -828,6 +828,22 @@ impl CatcodeTable {
         self.known = Rc::new(known);
     }
 
+    /// The characters in `lo..=hi` of a structural category (neither letter
+    /// nor other) and known keep it past [`CatcodeTable::set_reach`]: the
+    /// named assumption `unknown-char-catcode`. Whether any was kept.
+    pub fn keep_structural(&mut self, lo: u32, hi: u32) -> bool {
+        let plain = |cat| matches!(cat, Catcode::Letter | Catcode::Other);
+        let ascii = (lo..=hi.min(255)).filter_map(char::from_u32);
+        let kept: Vec<char> = ascii
+            .chain(self.wide.keys().copied().filter(|c| (lo..=hi).contains(&(*c as u32))))
+            .filter(|c| !self.unknown.contains_key(c) && !plain(self.get(*c)))
+            .collect();
+        if !kept.is_empty() {
+            Rc::make_mut(&mut self.known).extend(kept.iter().copied());
+        }
+        !kept.is_empty()
+    }
+
     fn reaches(&self, c: char) -> bool {
         self.reach.is_some_and(|(lo, hi)| (lo..=hi).contains(&(c as u32)))
     }

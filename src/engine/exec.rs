@@ -4704,7 +4704,7 @@ impl Machine<'_> {
                             self.set_catcode_may(ch, old | cats);
                         }
                     }
-                    None => self.set_catcodes_reach(part, cats),
+                    None => self.set_catcodes_reach(part, cats, span),
                 }
             }
             return self.diagnose(

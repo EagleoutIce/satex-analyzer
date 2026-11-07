@@ -53,6 +53,16 @@
           ],
           "x-example": "off: a group a package leaves open is followed into the document"
         },
+        "assume_unknown_char_catcode": {
+          "default": true,
+          "description": "assume a \\catcode of a character satex could not pin down never changes a structural one",
+          "type": "boolean",
+          "x-affects": [
+            "precision",
+            "soundness"
+          ],
+          "x-example": "off: `\\catcode\\count@=11` after a summarized loop may make `{` a letter, one path each way"
+        },
         "join_paths_at": {
           "default": [
             {

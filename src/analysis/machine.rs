@@ -5482,11 +5482,21 @@ will look undefined",
     /// (tex.web § 1232): each character `abs` spans (all for `None`) keeps
     /// its old category or takes one of `cats`. The save stack cannot put
     /// back what was never one character's, so the enclosing group does not end it.
-    pub fn set_catcodes_reach(&mut self, abs: Option<crate::engine::value::Num>, cats: u16) {
+    /// Under `analysis.assume_unknown_char_catcode` a structural character
+    /// (category neither letter nor other) is assumed not to be the one.
+    pub fn set_catcodes_reach(&mut self, abs: Option<crate::engine::value::Num>, cats: u16, span: Span) {
         let top = i64::from(char::MAX as u32);
         let (lo, hi) = abs.map_or((0, top), |n| (n.lo.clamp(0, top), n.hi.clamp(0, top)));
         self.leak_call_recs();
         self.catcodes.set_reach(lo as u32, hi as u32, cats);
+        if self.cfg.analysis.assume_unknown_char_catcode && self.catcodes.keep_structural(lo as u32, hi as u32) {
+            self.diagnose(
+                Severity::Assumption,
+                "unknown-char-catcode",
+                span,
+                "\\catcode of a character satex could not pin down: structural characters are assumed to keep their categories (`analysis.assume_unknown_char_catcode`)".into(),
+            );
+        }
     }
 
     /// A cut unwinds to the main loop: readers find the input ended.
@@ -14766,7 +14776,7 @@ impl Machine<'_> {
             let value = value.map_or(crate::engine::value::Value::Unknown, crate::engine::value::Value::Int);
             match (table, ch) {
                 (None, Some(ch)) => self.set_catcode_may(ch, self.catcodes.cats(ch) | cats),
-                (None, None) => self.set_catcodes_reach(None, u16::MAX),
+                (None, None) => self.set_catcodes_reach(None, u16::MAX, span),
                 (Some(table), Some(ch)) => self.join_code(table, ch, &value, false, span),
                 (Some(table), None) => self.weaken_code_table(table, None, &value, false),
             }

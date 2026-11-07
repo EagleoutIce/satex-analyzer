@@ -59,10 +59,13 @@ moment the character is tokenized, not when the token is used. ([*TeXbook*][texb
   differs from `X`'s in bit 6. `^^XY` with two lower-case hex digits denotes
   that code directly. Above 127 no substitution happens. ([tex.web § 352][tw-352].)
 * `\catcode` through a character number `satex` cannot pin down leaves each
-  character it may name at its old category or the new one, structural
-  characters included. The same holds for `\lccode`, `\uccode`, `\sfcode`,
-  `\mathcode` and `\delcode`. The reader splits the path where it meets a
-  character that may be structural, one path per category.
+  character it may name at its old category or the new one. The same holds
+  for `\lccode`, `\uccode`, `\sfcode`, `\mathcode` and `\delcode`. Where the
+  number is not bounded to a short interval, a character of a structural
+  category (neither letter nor other) is assumed to keep it
+  (`unknown-char-catcode`, `analysis.assume_unknown_char_catcode`). The
+  reader splits the path where it meets a character that may be structural,
+  one path per category.
 * `\makeatletter` sets `@` to category 11, `\makeatother` to 12.
   ([*clsguide*][clsguide] § 2.)
 * `\ExplSyntaxOn` sets tab and space to ignored (9), `"` and `|` to other

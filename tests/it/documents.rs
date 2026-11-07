@@ -459,15 +459,13 @@ fn rule_of_unknown_height_before_clearpage() {
     assert!(count(&a, "recursion-widened") <= 1, "{}", count(&a, "recursion-widened"));
 }
 
-/// `\catcode<unknown>=11` from a summarized loop may reach `\ { }`: the
-/// reader splits there, and on the path where they kept their categories
-/// the `\include` still reads its file. Where `}` became a letter, its
-/// argument never closes. Both `\u` and `\z` loop forever in TeX
-/// (pdflatex never gets past them), so each is reported as an
-/// `endless-loop` before it is summarized.
+/// `\catcode<unknown>=11` from a summarized loop is assumed to miss
+/// `\ { }` (`unknown-char-catcode`), so the `\include` reads its file.
+/// Both `\u` and `\z` loop forever in TeX (pdflatex never gets past
+/// them), so each is reported as an `endless-loop` before it is summarized.
 #[test]
 fn include_after_unknown_char_catcode_loop_is_read() {
-    check_allowing("catcode_loop_include", "main.tex", &["ch1"], &["endless-loop", "runaway-argument"]);
+    check_allowing("catcode_loop_include", "main.tex", &["ch1"], &["endless-loop"]);
 }
 
 /// A recursion cut inside a group that set `\escapechar` before it began:
@@ -489,6 +487,14 @@ fn cut_widens_only_what_the_recursion_wrote() {
 #[test]
 fn include_after_endless_macro_is_read() {
     check_allowing("include_after_loop", "main.tex", &["ch1"], &["endless-loop"]);
+}
+
+/// `\catcode<unknown>=11` from a summarized loop is assumed to miss the
+/// structural characters (`unknown-char-catcode`): `{` and `}` keep their
+/// categories, so no `}` closes a group a letter `{` never opened.
+#[test]
+fn unknown_char_catcode_keeps_braces() {
+    check_allowing("catcode_loop_braces", "main.tex", &[], &["endless-loop"]);
 }
 
 /// A loop summarized inside `\begingroup\let\protect\string ... \endgroup`:

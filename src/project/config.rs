@@ -1514,6 +1514,12 @@ pub struct AnalysisConfig {
     /// unknown text then writes unknown text, on one path, reported as an
     /// `assumption`. `false` wraps it for real, a path per way it may wrap.
     pub assume_messages_output_only: bool,
+    /// Assumes a `\catcode` through a character satex could not pin down
+    /// (a summarized loop's counter) never names a structural character,
+    /// one of category neither letter nor other (`\ { } % $ & # ^ _`,
+    /// space, end of line, active). Reported as `unknown-char-catcode`.
+    /// `false` lets it reach them: the reader splits a path per category.
+    pub assume_unknown_char_catcode: bool,
 }
 
 impl Default for AnalysisConfig {
@@ -1525,6 +1531,7 @@ impl Default for AnalysisConfig {
             assume_environment: true,
             assume_forced_page_breaks: true,
             assume_messages_output_only: true,
+            assume_unknown_char_catcode: true,
         }
     }
 }
