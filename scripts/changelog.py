@@ -132,7 +132,8 @@ def notes(tag):
     m = re.search(rf"^## {re.escape(tag)} .*?\n(.*?)(?=^## |\Z)", FILE.read_text(), re.S | re.M)
     if not m:
         sys.exit(f"no section for {tag}")
-    print(m.group(1).strip())
+    # links relative to the repository root, made absolute: the notes live elsewhere
+    print(re.sub(r"\]\((?![a-z]+:|#)([^)]+)\)", rf"]({REPO}/blob/main/\1)", m.group(1).strip()))
 
 
 if __name__ == "__main__":
