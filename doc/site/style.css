@@ -1096,7 +1096,7 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .band h2 { font-size: 2rem; line-height: 1.2; margin: 0 0 var(--s12); letter-spacing: -.02em; }
 .band > h2 + :not(p) { margin-top: var(--s32); }
 /* the first section after the hero leads: a larger title */
-#showcase > h2 { font-size: clamp(2rem, 4.5vw, 2.75rem); letter-spacing: -.025em; } #showcase > .sub { font-size: 1.125rem; }
+#showcase > .sub { font-size: 1.125rem; }
 .band .sub, .band > p { max-width: var(--measure); } .band .sub { margin: 0 0 var(--s32); color: var(--muted); } .small { font-size: .8rem; }
 .band > h2 + p:not(.sub) { margin-top: 0; }
 /* type plugin tiles (site.js `satexTiles`): landing, the type plugins page and the playground's settings */
@@ -1981,8 +1981,9 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 .shot-big figcaption { padding-top: var(--s24); }
 .shot-wide { grid-column: 1 / -1; }
 .shot-stage { --glow: color-mix(in srgb, var(--accent) 22%, transparent); display: block; position: relative; padding: clamp(var(--s12), 2.6vw, var(--s24)); border-radius: var(--r-card); overflow: hidden; isolation: isolate;
-  background: linear-gradient(color-mix(in srgb, var(--accent) 3%, transparent), transparent), color-mix(in srgb, var(--accent) 3%, var(--sunk));
-  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border)); }
+  /* a soft light from the top: the window floats on it, no hard frame */
+  background: radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%), color-mix(in srgb, var(--accent) 2%, var(--sunk));
+  border: 1px solid color-mix(in srgb, var(--fg) 6%, transparent); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 6%, transparent); }
 /* a card: one 4:3 stage, the window inset alike on all sides, its capture filling it from the top left */
 .cards .shot-stage { display: flex; aspect-ratio: 4 / 3; max-height: calc(30vh + 2 * var(--s24)); }
 .cards .shot-win { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -1998,9 +1999,10 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 .shots > .shot .shot-video { max-height: 30vh; }
 /* a dialog stands on its own: no window around it, its own corners and shadow */
 /* two pages of one dialog: the first behind, up and left, the second over it */
-.shot-stack { display: grid; padding: var(--s24) 0 0 var(--s48); }
+/* spread sideways, so the pair reads wide rather than tall */
+.shot-stack { --dx: clamp(var(--s48), 12vw, 10rem); --dy: var(--s16); display: grid; padding: var(--dy) 0 0 var(--dx); }
 .shot-stack > .shot-win { grid-area: 1 / 1; }
-.shot-stack > .shot-win:first-child { translate: calc(-1 * var(--s48)) calc(-1 * var(--s24)); opacity: .9; }
+.shot-stack > .shot-win:first-child { translate: calc(-1 * var(--dx)) calc(-1 * var(--dy)); opacity: .9; }
 /* where SaTeX runs: one card, a row per editor with what it gets, how to set it up and where to read more */
 .editors { display: grid; grid-template-columns: max-content max-content minmax(0, 1fr) max-content; margin: 0 0 var(--s48); padding: var(--s4) var(--s16); list-style: none;
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-card); }
@@ -2046,6 +2048,12 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 }
 @media (max-width: 34rem) { .shot-pair { grid-template-columns: minmax(0, 1fr); } }
 /* the plugin overview folds: a summary row, the tiles under it */
+.pt-groups { list-style: none; padding: 0; margin: var(--s24) 0 var(--s16); display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: var(--s12); }
+.pt-groups:has(+ .plugins-fold[open]) { display: none; }
+.pt-groups button { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: auto 1fr auto; align-items: center; column-gap: .6rem; row-gap: .25rem; width: 100%; height: 100%; padding: .8rem 1rem; border: 1px solid var(--border); border-radius: var(--r-lg, 12px); background: var(--panel, transparent); }
+.pt-groups button:hover, .pt-groups button:focus-visible { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.pt-groups .pt-icon { width: 1.25rem; height: 1.25rem; } .pt-groups b { font-weight: 600; }
+.pt-groups small { grid-column: 1 / -1; color: var(--muted); font-size: .85rem; line-height: 1.35; }
 .plugins-fold > summary { display: inline-flex; align-items: center; gap: .5rem; cursor: pointer; font-weight: 600; color: var(--accent); list-style: none; padding: .35rem .8rem; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); border-radius: var(--r-pill); }
 .plugins-fold > summary::-webkit-details-marker { display: none; }
 .plugins-fold > summary::before { content: "▸"; transition: rotate .2s var(--ease); } .plugins-fold[open] > summary::before { rotate: 90deg; }
@@ -2208,6 +2216,3 @@ main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/
     .band > h2, .band > h2 + .sub { animation: rise linear both; animation-timeline: view(); animation-range: entry 10% cover 30%; }
   }
 }
-/* the title page: the first screen holds the title alone, its parts spread by the glue between them */
-@media (min-height: 40rem) and (min-width: 48rem) { .hero { min-height: max(calc(var(--hero-room) + clamp(var(--s24), 5vh, var(--s64)) + var(--s32)), calc(100svh - 4.5rem)); padding-top: clamp(var(--s32), 8vh, var(--s96)); } }
-.showcase > h2 { font-size: 1.5rem; }

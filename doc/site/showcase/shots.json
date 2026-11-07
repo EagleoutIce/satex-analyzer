@@ -457,21 +457,26 @@
   {
    "name": "clone",
    "file": "clones.tex",
-   "title": "Repeated code",
+   "title": "Lint rules",
    "wide": true,
-   "caption": "Blocks that differ only in a few values are found, and one macro can replace them.",
+   "caption": "Rules find what compiles but goes wrong: repeated blocks, wrong dashes, hand-written references. Each finding names its rule and how to fix it.",
    "open": [
     "panel",
     "play-findings"
    ],
    "viewport": [
-    1100,
-    760
+    1200,
+    600
    ],
    "steps": [
     {
      "until": "[...document.querySelectorAll('#lsp-diagnostics li')].some((l) => /clones|S053|differ only/i.test(l.textContent + (l.dataset.code ?? '') + (l.title ?? '')))",
      "ms": 60000
+    },
+    {
+     "until": "document.querySelectorAll('#lsp-diagnostics li:not(.cat-group)').length >= 2",
+     "wait": 800,
+     "snap": "back"
     },
     {
      "hover": "__xy('\\\\begin{figure}', 3)"
@@ -486,7 +491,10 @@
     ".tip-card:not([hidden])"
    ],
    "pad": 8,
-   "keepMouse": true
+   "keepMouse": true,
+   "text": "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{figure}[ht]\\centering\\includegraphics[width=.8\\linewidth]{example-image-a}\\caption{Alpha results}\\label{fig:a}\\end{figure}\n\\begin{figure}[ht]\\centering\\includegraphics[width=.7\\linewidth]{example-image-b}\\caption{Beta results}\\label{fig:b}\\end{figure}\nRuns took 10-12 s, see figure 1.\n\\end{document}\n",
+   "stack": true,
+   "beforeCrop": "#play-findings"
   },
   {
    "name": "page",

@@ -1110,6 +1110,18 @@
     for (const box of tileBoxes) { box.innerHTML = data.length ? pluginTiles(data) : ''; box.hidden = !data.length; }
     const n = data.reduce((sum, c) => sum + c.plugins.length, 0);
     for (const s of document.querySelectorAll('.plugins-fold > summary')) if (n) s.textContent = `Show all ${n} plugins in ${data.length} groups`;
+    // the groups at a glance while the fold is shut: a click opens it at that group
+    for (const ul of document.querySelectorAll('[data-plugin-groups]')) {
+      ul.innerHTML = data.map((c) => `<li><button type="button" data-group="${esc(c.name)}"><svg class="pt-icon" viewBox="0 0 24 24" aria-hidden="true">${TILE_ICONS[c.name] ?? '<circle cx="12" cy="12" r="8"/>'}</svg><b>${esc(c.name)}</b><span class="pt-count">${c.plugins.length}</span><small>${inline(c.about)}</small></button></li>`).join('');
+      ul.hidden = !data.length;
+      ul.onclick = (e) => {
+        const g = e.target.closest('[data-group]'), fold = ul.nextElementSibling;
+        if (!g || !fold) return;
+        fold.open = true;
+        const at = [...fold.querySelectorAll('.plugin-tiles h3')].find((h) => h.textContent === g.dataset.group);
+        (at?.closest('section') ?? fold).scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+    }
   });
   // a folded overview stays as the reader left it
   for (const fold of document.querySelectorAll('details[data-fold]')) {
