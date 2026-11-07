@@ -9,8 +9,8 @@
   const fill = (text, vars) => text.replace(/\$\{\?(\w+)\}([\s\S]*?)\$\{\/\1\}/g, (m, k, body) => String(vars[k] ?? '').trim() ? body : '').replace(/\$\{(\w+)\}/g, (m, k) => vars[k] ?? m);
   // a WorkspaceEdit `{changes: {uri: [TextEdit]}}` with its templates filled, and several as one
   const filled = (edit, vars) => ({ changes: Object.fromEntries(Object.entries(edit?.changes ?? {}).map(([u, es]) => [u, es.map((e) => ({ range: e.range, newText: fill(e.newText, vars) }))])) });
-  // a form whose edit depends on a choice (`by`: the field, `edits`: one per choice)
-  const chosen = (f, vals) => f.by ? f.edits?.[vals[f.by]] : f.edit;
+  // a form's writing: its snapshots (`print`) filled for the server to print, else its edit's templates; one per choice of `by` (`prints`, `edits`)
+  const chosen = (f, vals) => { const pick = (one, per) => f.by ? f[per]?.[vals[f.by]] : f[one], p = pick('print', 'prints'); return p ? { nodes: self.satexSnapshot.fill(p, vals) } : filled(pick('edit', 'edits'), vals); };
   const merge = (edits) => ({ changes: edits.reduce((all, e) => { for (const [u, es] of Object.entries(e.changes)) (all[u] ??= []).push(...es); return all; }, {}) });
   // braces that close in order, as TeX reads a value (a `\{` is no group)
   /** The footer every view shares (dialogs.js `footer`): `status`, the undo tools, Reset, Cancel and Apply. Ctrl+Enter
@@ -170,11 +170,12 @@
       };
       const record = (r) => {
         const body = el('div', 'tv-body');
-        // an emptied field with a `remove` edit goes; the others write their value
-        if (r.fields?.length) body.append(form(r.fields, r.save ?? 'Save', (vals, changed) => merge(r.fields.filter((f) => changed.has(f.name)).map((f) => !vals[f.name].trim() && f.remove ? f.remove : filled(f.edit, { value: vals[f.name] })))));
+        // an emptied field with a `remove` edit goes; the others write their value, snapshots (`print`) printed together
+        const saved = (fs, vals) => fs.some((f) => f.print) ? { nodes: fs.flatMap((f) => chosen(f, { value: vals[f.name] }).nodes ?? []) } : merge(fs.map((f) => !vals[f.name].trim() && f.remove ? f.remove : filled(f.edit, { value: vals[f.name] })));
+        if (r.fields?.length) body.append(form(r.fields, r.save ?? 'Save', (vals, changed) => saved(r.fields.filter((f) => changed.has(f.name)), vals)));
         // a new field of the record: a name the run knows (or any) and its value
         if (r.more) body.append(form([{ name: 'name', label: 'new field', value: '', placeholder: 'field name', options: r.more.names, check: ['required', 'key', 'unique'], taken: (r.fields ?? []).map((f) => f.name) }, { name: 'value', value: '', placeholder: 'value', check: ['required', r.more.check ?? 'tex'] }], r.more.title, (vals) => filled(r.more.edit, vals)));
-        for (const f of r.forms ?? []) body.append(form(f.fields, f.title, (vals) => filled(chosen(f, vals), vals), f.note));
+        for (const f of r.forms ?? []) body.append(form(f.fields, f.title, (vals) => chosen(f, vals), f.note));
         if (r.why) body.append(el('div', 'tv-text', `<p>${esc(r.why)}</p>`));
         // a place opens in the editor: the manager steps aside
         if (r.uses) body.append(Object.assign(el('div', 'tv-text tv-uses', ctx.markdown(r.uses)), { onclick: (e) => { if (e.target.closest('a.place')) ctx.close?.(); } }));
@@ -219,10 +220,10 @@
         });
         if (fold) f.append(fold);
         if (note) f.append(el('div', 'tv-text tv-note', `<p>${esc(note)}</p>`));
-        const b = el('button', 'tv-button tv-primary', esc(title));
+        const b = el('button', 'tv-button tv-primary', esc(title)), said = el('span', 'tv-muted');
         b.type = 'submit';
         f.append(el('div', 'tv-actions'));
-        f.lastChild.append(b);
+        f.lastChild.append(b, said);
         // a field showing a problem holds the button; a submit shows every problem, `needed` too
         f.oninput = () => { b.disabled = ins.some(([, i]) => i.getAttribute('aria-invalid') === 'true'); };
         f.onsubmit = (e) => {
@@ -232,7 +233,7 @@
           const vals = Object.fromEntries(ins.map(([d, i]) => [d.name, i.value]));
           const changed = new Set(ins.filter(([d, i]) => i.value !== (d.value ?? '')).map(([d]) => d.name));
           const out = changed.size || !fields.some((d) => 'value' in d) ? go(vals, changed) : null;
-          if (out?.insert != null) ctx.insert(out.insert); else if (out) ctx.apply(out, kept());
+          if (out?.insert != null) ctx.insert(out.insert); else if (out?.nodes) self.satexSnapshot.write(ctx, out.nodes, (m) => { said.textContent = m; }, kept()); else if (out) ctx.apply(out, kept());
         };
         return f;
       };
@@ -249,7 +250,7 @@
         const pick = el('select', 'tv-input', kinds.map((k) => `<option>${esc(k.name ?? s.add.title)}</option>`).join(''));
         pick.ariaLabel = 'kind';
         const slot = el('div');
-        const show = () => { const k = kinds[pick.selectedIndex]; slot.replaceChildren(form(k.fields, s.add.title, (vals) => k.insert ? { insert: fill(k.insert, vals) } : filled(chosen(k, vals), vals), k.note)); };
+        const show = () => { const k = kinds[pick.selectedIndex]; slot.replaceChildren(form(k.fields, s.add.title, (vals) => k.insert ? { insert: fill(k.insert, vals) } : chosen(k, vals), k.note)); };
         pick.onchange = show;
         if (kinds.length > 1) more.append(pick);
         more.append(slot);
@@ -971,12 +972,13 @@
   // LaTeX's font switches a `font=` key may hold: the size relative to \normalsize, and the face
   const FONT = { tiny: 0.5, scriptsize: 0.7, footnotesize: 0.8, small: 0.9, normalsize: 1, large: 1.2, Large: 1.44, LARGE: 1.73, huge: 2.07, Huge: 2.49 };
   const PT = 2.54 / 72.27;
-  /** An arrow tip TeX drew (`previews.json`) as a marker: its last 8pt, the line's height its reference. */
+  /** An arrow tip TeX drew (`previews.json`) as a marker: its last 8pt, the line's height its reference.
+   * The sample's shaft (`M0 0H…`) is dropped: the edge draws its own line, dashed or bent as it is. */
   function tipMarker(svg) {
     const box = svg.match(/viewBox='([^']*)'/)?.[1].trim().split(/\s+/).map(Number), line = svg.match(/translate\(([-\d.]+),([-\d.]+)\)/);
     if (box?.length !== 4 || !line) return null;
     const [x, y, w, h] = box, cut = Math.min(w, 8);
-    const inner = svg.replace(/^[^]*?<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '').replace(/\sid='[^']*'/g, '').replace(/#888(888)?\b/g, 'currentColor');
+    const inner = svg.replace(/^[^]*?<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '').replace(/\sid='[^']*'/g, '').replace(/<path d='M0 0H[\d.]+'[^>]*\/>/g, '').replace(/#888(888)?\b/g, 'currentColor');
     return { box: [x + w - cut, y, cut, h], ref: [x + w, +line[2]], inner };
   }
   // the canvas grid each viewer chose: its step in cm (0: none) and whether drags snap to it
@@ -1261,15 +1263,14 @@
     };
     // the markers of the tips in use, by tip and color
     const markers = new Map();
-    // `bent`: the tip's straight shaft is clipped to the tip, else it sticks out of a curve
-    const marker = (defs, tip, color, start, bent = false) => {
+    const marker = (defs, tip, color, start) => {
       // a start tip is the end tip drawn backwards: `<` at the start is `>` turned round
       let name = start ? tip.replace(/[<>]/g, (c) => (c === '<' ? '>' : '<')) : tip;
       if (name === '>' && tipDefault) name = tipDefault;
-      const key = `${name}|${color}|${bent}`;
+      const key = `${name}|${color}`;
       if (!markers.has(key)) {
         const t = (R.tips ?? []).find((x) => x.name === name)?.svg, m = t && tipMarker(t), mid = `tv-tip-${markers.size}`;
-        const e = m ? svgEl('marker', { id: mid, viewBox: m.box.join(' '), refX: m.ref[0], refY: m.ref[1], markerUnits: 'userSpaceOnUse', markerWidth: m.box[2] * PT, markerHeight: m.box[3] * PT, orient: 'auto-start-reverse', overflow: bent ? 'hidden' : 'visible' })
+        const e = m ? svgEl('marker', { id: mid, viewBox: m.box.join(' '), refX: m.ref[0], refY: m.ref[1], markerUnits: 'userSpaceOnUse', markerWidth: m.box[2] * PT, markerHeight: m.box[3] * PT, orient: 'auto-start-reverse', overflow: 'visible' })
           : svgEl('marker', { id: mid, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 5, markerHeight: 5, orient: 'auto-start-reverse' });
         e.innerHTML = m ? m.inner : '<path d="M0 0L10 5L0 10z" fill="currentColor"/>';
         e.style.color = color;
@@ -1360,8 +1361,8 @@
       if (look.opacity != null) line.style.opacity = look.opacity;
       // tips written in the arrow's options, else those a style of it brings (`flow/.style={-Stealth}`)
       const [st, en] = tipsOf(e.arrow !== '-' ? e.arrow : expand(e.opts).findLast(tipsOf) ?? '-') ?? ['', ''];
-      if (en) line.setAttribute('marker-end', marker(defs, en, color, false, !!turn));
-      if (st) line.setAttribute('marker-start', marker(defs, st, color, true, !!turn));
+      if (en) line.setAttribute('marker-end', marker(defs, en, color, false));
+      if (st) line.setAttribute('marker-start', marker(defs, st, color, true));
       const hit = svgEl('path', { d: path, class: 'tv-hit' });
       g.append(hit, line);
       if (e.label) g.append(Object.assign(svgEl('text', { x: mid[0], y: -mid[1] - 0.15 }), { textContent: plain(e.label) }));
@@ -2252,6 +2253,10 @@
             if (t) { const n = label(x + [0, pt(tw) / 2, pt(tw)][i], fy, t, 'tv-page-field'); n.style.textAnchor = ['start', 'middle', 'end'][i]; out.push(n); }
           }
         });
+        // the body's edges drag its margins: the page's own side, mirrored on an even page
+        const grip = (edge, x1, y1, x2, y2) => { const g = svgEl('line', { class: `tv-page-grip tv-grip-${x1 === x2 ? 'x' : 'y'}`, x1, y1, x2, y2, 'data-edge': edge, style: `stroke-width:${fs * 0.9}px` }); g.append(Object.assign(svgEl('title'), { textContent: 'drag to set this margin' })); out.push(g); };
+        grip(even ? 'right' : 'left', x, y, x, y + pt(th)); grip(even ? 'left' : 'right', x + pt(tw), y, x + pt(tw), y + pt(th));
+        grip('top', x, y, x + pt(tw), y); grip('bottom', x, y + pt(th), x + pt(tw), y + pt(th));
         out.push(label(x + pt(tw) / 2, y + pt(th) / 2 - fs * 0.7, `${num(tw)} × ${num(th)} ${unit}`, 'tv-page-big'), label(x + pt(tw) / 2, y + pt(th) / 2 + fs * 0.7, 'text'));
         const mid = y + pt(th) * 0.75;
         out.push(label(x0 + pt(left) / 2, mid, num(left)), label(x + pt(tw) + pt(even ? b.left : b.right) / 2, mid, num(even ? b.left : b.right)),
@@ -2261,6 +2266,32 @@
       svg.setAttribute('viewBox', [-fs, -fs, width + 2 * fs, Hh + 2 * fs].join(' '));
       svg.replaceChildren(...out);
     }
+    /** Dragging a body edge moves its margin, in steps of a tenth of the unit; typearea's DIV follows the text size. */
+    svg.addEventListener('pointerdown', (e) => {
+      const edge = e.target.dataset?.edge;
+      if (!edge) return;
+      e.preventDefault(); svg.setPointerCapture(e.pointerId);
+      const at = (ev) => { const m = svg.getScreenCTM().inverse(); return new DOMPoint(ev.clientX, ev.clientY).matrixTransform(m); };
+      const p0 = at(e), b0 = pageBox(st, two), step = per[unit] / 10;
+      // a dragged margin grows toward the page's middle; a mirrored even page moves the other way
+      const sign = { left: 1, right: -1, top: 1, bottom: -1 }[edge], horiz = edge === 'left' || edge === 'right';
+      const even = two && e.target.getAttribute('x1') < pt0(st.pw), dir = horiz && even ? -1 : 1;
+      const move = (ev) => {
+        const p = at(ev), d = (horiz ? p.x - p0.x : p.y - p0.y) * 65536 * sign * dir;
+        const v = Math.max(0, Math.round((b0[edge] + d) / step) * step);
+        const other = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' }[edge], size = horiz ? st.pw : st.ph;
+        if (size - v - b0[other] < step) return;
+        if (st.mode === 'koma') {
+          // typearea: the text's share of the page sets DIV (text = page · (DIV − 3) / DIV)
+          const t = size - v - b0[other] - (horiz ? st.bcor : 0), whole = size - (horiz ? st.bcor : 0);
+          st.div = Math.max(4, Math.round(3 / (1 - t / whole)));
+        } else st[edge] = v;
+        paint();
+      };
+      const up = () => { svg.removeEventListener('pointermove', move); svg.removeEventListener('pointerup', up); svg.removeEventListener('pointercancel', up); touch(); };
+      svg.addEventListener('pointermove', move); svg.addEventListener('pointerup', up); svg.addEventListener('pointercancel', up);
+    });
+    const pt0 = (sp) => sp / 65536;
     /** The snapshots Apply sends. */
     const nodes = () => pageNodes(s, st0, st, len);
     function paint() {
@@ -2376,6 +2407,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-forest-side, .tv-forest-tree { display: grid; gap: .4rem; } .tv-forest-side .tv-row > span, .tv-forest-tree .tv-row > span { min-width: 4.5rem; align-self: center; }
 .tv-page { min-width: min(46rem, 100%); } .tv-page-main { display: grid; grid-template-columns: minmax(14rem, 1.2fr) minmax(15rem, 1fr); gap: .9rem; align-items: start; }
 .tv-sheet { max-height: 62vh; } .tv-page-side { display: grid; gap: .6rem; max-height: 62vh; overflow: auto; padding-right: .2rem; } .tv-page-side .tv-field { grid-template-columns: 6.5rem 1fr; }
+.tv-page-grip { stroke: transparent; } .tv-page-grip:hover { stroke: color-mix(in srgb, var(--tv-accent) 35%, transparent); } .tv-grip-x { cursor: ew-resize; } .tv-grip-y { cursor: ns-resize; }
 .tv-page-paper { fill: var(--tv-bg); stroke: var(--tv-muted); stroke-width: .6; } .tv-page-body { fill: color-mix(in srgb, var(--tv-accent) 16%, transparent); stroke: var(--tv-accent); stroke-width: .8; }
 .tv-page-head, .tv-page-foot { fill: color-mix(in srgb, var(--tv-accent) 10%, transparent); stroke: var(--tv-accent); stroke-width: .8; stroke-dasharray: 3 2; } .tv-start { justify-self: start; }
 .tv-sheet text.tv-page-field { fill: var(--tv-fg); font-style: italic; } .tv-page-mp { fill: none; stroke: var(--tv-muted); stroke-width: .5; stroke-dasharray: 2 2; }
