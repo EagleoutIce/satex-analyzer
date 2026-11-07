@@ -466,39 +466,62 @@ jobs:
     needs: changes
     if: needs.changes.outputs.links == 'true'
     runs-on: ubuntu-latest
-    # Usually two minutes, but slow hosts plus lychee's retries have taken
-    # fourteen.
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
-      # Links that answered stay checked for a day, so a slow host costs one run.
+      # Links that answered stay checked for a day; saved even when the web check ran out of time,
+      # so the next run goes on where this one stopped.
       - name: Link cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .lycheecache
           key: lychee-${{ github.sha }}
           restore-keys: lychee-
 
-      - name: Lychee
-        uses: lycheeverse/lychee-action@v2
+      - name: Install lychee
+        run: curl -sSfL https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C "$RUNNER_TEMP" && echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      # Links into this repository (a `main` blob link is checked against the checkout, see
+      # lychee.toml): every page, offline, in seconds.
+      - name: Repository links
+        run: |
+          lychee --config lychee.toml --offline --no-progress \
+            --remap "https://github\.com/EagleoutIce/satex-analyzer/blob/main/([^#]*)(#.*)? file://$PWD/\$1" \
+            *.md doc/**/*.md
+
+      # Web links: a pull request checks the pages it changes, main and a manual run every page.
+      # Ten minutes at most: a host that throttles the runner says nothing about the link, so
+      # running out of time warns and never fails.
+      - name: Web links
         env:
-          # Raises GitHub's anonymous API rate limit, which the many
-          # github.com/.../blob/<sha>/...#L<line> citations would otherwise hit.
+          # Raises GitHub's anonymous rate limit for the many github.com citations.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          pages=(*.md doc/**/*.md)
+          if [[ -n "$BASE" ]]; then
+            mapfile -t changed < <(git diff --name-only "$BASE"...HEAD -- '*.md')
+            pages=($(comm -12 <(printf '%s\n' "${pages[@]}" | sort) <(printf '%s\n' "${changed[@]}" | sort)))
+          fi
+          if (( ${#pages[@]} == 0 )); then echo "no page changed"; exit 0; fi
+          echo "checking ${#pages[@]} pages"
+          status=0
+          timeout -s INT 600 lychee --config lychee.toml --cache --max-cache-age 1d --no-progress \
+            --remap "https://github\.com/EagleoutIce/satex-analyzer/blob/main/([^#]*)(#.*)? file://$PWD/\$1" \
+            --remap '^https://mirrors\.ctan\.org/(.*)$ https://ctan.net/$1' \
+            "${pages[@]}" || status=$?
+          if (( status == 124 )); then echo "::warning::the web link check ran out of its ten minutes: the rest is checked next run"; exit 0; fi
+          exit $status
+
+      - name: Save the link cache
+        if: always()
+        uses: actions/cache/save@v4
         with:
-          # Links into this repository's `main` are checked against the
-          # checkout, and CTAN's mirror redirector against one fixed mirror
-          # (see lychee.toml).
-          args: >-
-            --config lychee.toml
-            --cache --max-cache-age 1d
-            --no-progress
-            --remap 'https://github\.com/EagleoutIce/satex-analyzer/blob/main/([^#]*)(#.*)? file://${{ github.workspace }}/$1'
-            --remap '^https://mirrors\.ctan\.org/(.*)$ https://ctan.net/$1'
-            *.md
-            doc/**/*.md
-          fail: true
+          path: .lycheecache
+          key: lychee-${{ github.sha }}
 
   # A `tex.web § N` / `etex.ch \`identifier\`` citation names a module number
   # or an identifier, never a line, so this re-resolves every one against the
