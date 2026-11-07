@@ -99,7 +99,7 @@
     side.querySelector('.side-tabs').addEventListener('keydown', (e) => {
       const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key], shown = tabs.filter((t) => t.offsetParent);
       if (!step || !e.target.matches('[role=tab]')) return;
-      const next = shown[(shown.indexOf(e.target) + step + shown.length) % shown.length];
+      const next = shown[(shown.indexOf(/** @type {HTMLElement} */ (e.target)) + step + shown.length) % shown.length];
       show(next.dataset.panel);
       next.focus();
     });
@@ -1408,7 +1408,7 @@
     };
     const base = (p) => String(p ?? '').split('/').pop();
     const html = [];
-    let open = null;
+    let open = /** @type {any} */ (null);
     // one line per part; labels, files and citations unfold under it
     const stack = [];
     const row = (id, depth, head, body, kids = false) => {
@@ -1674,7 +1674,7 @@
     const others = Object.entries(diagnostics).filter(([u]) => u !== uri()).flatMap(([u, rs]) => rs.map((d) => ({ ...d, file: u.split('/').pop(), target: u })));
     listed = [...ds, ...others];
     if (retryCompletion && !running) { retryCompletion = false; asked.clear(); editor.complete?.(); }
-    count.textContent = listed.length;
+    count.textContent = String(listed.length);
     shownFor(list, uri(), diagnosticVersions[uri()]);
     shownFor(count, uri(), diagnosticVersions[uri()]);
     pills(ds);
@@ -1966,7 +1966,7 @@
   async function definition(x = innerWidth / 2, y = innerHeight / 3) {
     sync();
     const r = await definitionAt(editor.text(), editor.position());
-    const locs = (Array.isArray(r) ? r : r ? [r] : []).map((l) => [new URL(l.uri ?? l.targetUri), (l.range ?? l.targetSelectionRange).start]);
+    const locs = (Array.isArray(r) ? r : r ? [r] : []).map((l) => /** @type {[URL, any]} */ ([new URL(l.uri ?? l.targetUri), (l.range ?? l.targetSelectionRange).start]));
     if (!locs.length) return toast('No definition found');
     const open = ([url, start]) => url.protocol === 'file:' ? openPlace(decodeURIComponent(url.pathname), start) : window.open(url.href, '_blank', 'noopener');
     if (locs.length === 1) return open(locs[0]);
@@ -4510,7 +4510,7 @@
         const m = /^([[(hvxkg$])(\d+),(\d+):(-?\d+),(-?\d+)(?::(-?\d+)(?:,(-?\d+),(-?\d+))?)?/.exec(l);
         if (m && page && files[m[2]]) {
           const s = unit / BP;
-          boxes.push({ page, file: files[m[2]], line: +m[3], kind: m[1], x: m[4] * s, y: m[5] * s, w: (m[6] ?? 0) * s, h: (m[7] ?? 0) * s, d: (m[8] ?? 0) * s });
+          boxes.push({ page, file: files[m[2]], line: +m[3], kind: m[1], x: +m[4] * s, y: +m[5] * s, w: +(m[6] ?? 0) * s, h: +(m[7] ?? 0) * s, d: +(m[8] ?? 0) * s });
           continue;
         }
         const i = /^Input:(\d+):.*\/\.\/(.*)$/.exec(l), u = /^Unit:(\d+)/.exec(l), p = /^\{(\d+)/.exec(l);
@@ -4630,6 +4630,7 @@
     else pdfZoom.value = Math.min(4, Math.max(0.3, Number(z) || 1));
   }
   /** `fit` keeps the zoom at the pane (width: the page as wide as the pane; page: the whole first page in view); a number zoom ends it. */
+  /** @param {'' | 'width' | 'page'} [fit] */
   function pdfZoomTo(z, fit = '') {
     pdfZoom.fit = fit;
     if (fit) {
@@ -4809,7 +4810,7 @@
       el.addEventListener('animationend', () => el.classList.remove('flare-ok', 'flare-bad'), { once: true });
     }
   }
-  const pdfOrder = (a, b) => a.path.localeCompare(b.path) || (a.line ?? 0) - (b.line ?? 0) || (b.severity === 'error') - (a.severity === 'error');
+  const pdfOrder = (a, b) => a.path.localeCompare(b.path) || (a.line ?? 0) - (b.line ?? 0) || +(b.severity === 'error') - +(a.severity === 'error');
   const pdfRecord = (r) => {
     const s = r.severity === 'error' ? 'error' : 'warning', where = r.line ? `${r.path}:${r.line}` : r.path;
     return `<li class="f-${s}" tabindex="0" data-path="${escape(r.path)}" data-line="${r.line ?? 1}"><p><span class="sev sev-${s}">${s}</span> <code>${escape(r.code)}</code> ${escape(r.message)} <span class="muted">${escape(where)}</span></p>${r.fix ? `<p class="pdf-why"><b>satex:</b> ${escape(r.fix)}</p>` : ''}</li>`;
@@ -5304,6 +5305,7 @@
     return kept.map(([b, o]) => [b, o, kept.filter(([b2, o2]) => b2 !== b && occFile(b2) === occFile(b) && b2.line <= b.line && o2.line >= o.line && (b2.line < b.line || o2.line > o.line)).length]);
   }
   /** The groups of a layer's sub-filters. */
+  /** @returns {[string, string, any[][]][]} */
   function pdfFacetGroups(layer) {
     if (layer === 'keys') return [['kind', 'kind', facetTally(occurrences.filter(isKey).map((o) => [o.kind]))]];
     if (layer === 'glue') return [['kind', 'kind', facetTally(pdfGlue().map((g) => [g.kind]))]];
@@ -5981,6 +5983,7 @@
   /** The lenses the text shows before a run answers: a seed of the kernel's and common packages' names, each
    * mark at once on opening a file; the run's lenses (`lensify`) replace them, so a name the run reads
    * otherwise (a redefined `table`, a float of a package) is right once it lands. */
+  /** @type {[RegExp, string, string?][]} */
   const SEED_LENSES = [[/\\begin\{(?:figure|table)\*?\}/, 'Edit placement…'], [/\\begin\{(?:tabular[*x]?|array|longtable)\}/, 'Edit table…'],
     [/\\includegraphics\b/, 'Edit image…'], [/\\begin\{tikzpicture\}/, 'Edit drawing…', 'tikz']];
   function textLenses(text) {

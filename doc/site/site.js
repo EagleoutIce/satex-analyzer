@@ -92,6 +92,7 @@
     // a verbatim body (lstlisting, minted, verbatim) is code in the language it names, not TeX:
     // its comments, strings and numbers by that language's comment marker, TeX by TeX's own rules
     const VERBATIM = /\\begin\{(lstlisting|verbatim\*?|Verbatim|BVerbatim|minted|comment)\}(?:\[([^\]]*)\])?(?:\{([^}]*)\})?/;
+    /** @type {[RegExp, string][]} */
     const COMMENT = [[/^(python|ruby|r|perl|bash|sh|make|yaml|julia)$/i, '#'], [/^(tex|latex|matlab|octave|erlang|prolog)$/i, '%'], [/^(lua|sql|haskell|ada)$/i, '--'], [/./, '//']];
     const code = (s, lang) => {
       const mark = lang ? COMMENT.find(([re]) => re.test(lang))[1] : null;
@@ -414,6 +415,7 @@
     let tree = null;
     const load = () => (tree ??= fetch(meta.content).then((r) => r.json()).catch(() => null));
     /** The text node and offset under the pointer. */
+    /** @returns {[Node?, number?]} */
     const caret = (x, y) => {
       const p = document.caretPositionFromPoint?.(x, y);
       if (p) return [p.offsetNode, p.offset];
@@ -1289,7 +1291,7 @@
   const MiB = (n) => (n / 2 ** 20).toFixed(1), SEV = ['', 'error', 'warning', 'info', 'info'];
   const NAMED = /\\(?:documentclass|usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
   const PLAIN = /^%\s*!T[eE]X\s+(?:TS-)?program\s*=\s*tex\b/m;
-  let engine = null, say = () => {};
+  let engine = null, say = /** @type {(...args: any[]) => void} */ (() => {});
   const found = new Map(); // uri -> its last diagnostics
   async function boot() {
     say('Loading SaTeX…');
@@ -1345,7 +1347,7 @@
    * run of `first` (`data`, an example's) answers: its findings, mapped through the edits, its cards and typeset text. */
   async function liveEditor(fig, host, name, first, data = null) {
     const out = fig.querySelector('.live-ts'), status = fig.querySelector('.live-status'), uri = `file:///work/${name}`;
-    let version = 0, timer = 0, view = null, underline = () => {}, ran = false, shown = data ? first : null;
+    let version = 0, timer = 0, view = null, underline = /** @type {(ds: any[]) => void} */ (() => {}), ran = false, shown = data ? first : null;
     const tell = (html, bad = false) => { status.innerHTML = html; status.classList.toggle('live-bad', bad); };
     async function analyze() {
       say = tell;
@@ -1609,7 +1611,7 @@
     // the engine and origin columns start hidden: the summary gets their room
     names.forEach((name, i) => toggle(name, saved[name] ?? !['engine', 'origin'].includes(name), (on) => { for (const row of table.rows) if (row.cells[i]) row.cells[i].hidden = !on; }));
     toggle('wrap text', saved['wrap text'] ?? false, (on) => table.classList.toggle('wrap', on));
-    menu.onclick = menu.onkeydown = (e) => e.stopPropagation();
+    menu.onclick = menu.onkeydown = (/** @type {Event} */ e) => e.stopPropagation();
     document.addEventListener('click', (e) => { if (!menu.contains(e.target)) menu.open = false; });
     bar.append(menu);
     table.classList.add('long');
@@ -1779,6 +1781,7 @@
       ligatures: [[/fi(?=ne)/, '<span class="claim-lig" title="f and i set as one glyph, ﬁ"><span class="lig-f">f</span><span class="lig-i">i</span><span class="lig-fi">ﬁ</span></span>']],
     };
     // `satex trace` of `\def\twice#1{#1#1}\twice{ab}`: expand \twice, then its replacement `#1#1` with #1 = ab, then the tokens it hands on
+    /** @type {[string, string[]][]} */
     const STEPS = [['expand', ['\\twice', '{ab}']], ['replace', ['#1', '#1']], ['read', ['a', 'b', 'a', 'b']]];
     const stepper = () => {
       let at = 0;
