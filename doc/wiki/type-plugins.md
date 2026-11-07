@@ -81,7 +81,7 @@ The body of an environment the run read verbatim, a listing. Outside its escapes
 
 ## environment
 
-On the name of a `\begin` or `\end` the run met. Its view, "Change environment…", lists the environments defined there that make the same kind of material, with their required arguments. The kind is the first kernel builder the environment's code reaches, the most specific first: an alignment preamble (`tabular`, `array`, `longtable`), a list (`itemize`), a trivlist (`center`), a float (`figure`, `table`). An environment that reaches none, as `document`, offers no change. Picking one changes this occurrence only: both names, and the arguments, kept where both environments take them, added empty or dropped otherwise. Renaming an environment the project does not define is refused: it would change only its uses.
+On the name of a `\begin` or `\end` the run met. Its view, "Change environment…", lists the environments defined there that make the same kind of material, with their required arguments. The kind is the first kernel builder the environment's code reaches, the most specific first: an alignment preamble (`tabular`, `array`, `longtable`), a list (`itemize`), a trivlist (`center`), a float (`figure`, `table`). An environment that reaches none, as `document`, offers no change. Picking one changes this occurrence only, through the snapshot printer: both names, and the arguments, kept where both environments take them, added empty or dropped otherwise. Renaming an environment the project does not define is refused: it would change only its uses.
 
 ## table
 
@@ -124,6 +124,8 @@ A `tikzpicture` the run met: a lens "Edit drawing…" on its `\begin` line and t
 
 On a blank line of the document body, "Insert tikzpicture" writes a small picture and the view "New drawing" starts an empty one. Both add `\usepackage{tikz}` when the run has no tikz.
 
+The view sends the picture as a snapshot: its options as a key list, its body as text. Each document style comes with the snapshot of the `\tikzset` that defines it. Apply sets them, adds `\usetikzlibrary` and `\tikzset` calls before `\begin{document}` for new libraries and styles, and the printer writes them. Options over several lines are edited in place.
+
 ## savebox
 
 On the name of a `\begin` in the document's body. "Store in a box" moves the environment to the preamble as a saved box and writes `\usebox` in its place: `\newsavebox` and `\sbox`, or `lrbox` when its `\begin` made characters of what TeX's initial catcodes make commands (`&` in TikZ, everything in a listing). A body the run read in vertical mode goes into a `minipage` of `\textwidth`. Identical copies get a second action that stores one box for all of them. The hover says which applies. Content that reads where it stands is refused, with the reason: a label, reference or citation the run met in it, or a command whose code reads a counter or a reference (`\thepage`, `\footnote`).
@@ -148,7 +150,7 @@ The dialog draws the page to scale, both pages when the class is two-sided: the 
 - Class families, from the run: KOMA-Script when typearea is loaded, memoir when the run defines `\checkandfixthelayout`, else a basic class. memoir's layout is read from the run and written with geometry, which memoir accepts. Outside KOMA-Script the dialog suggests geometry: a note says that Apply loads it.
 - Header and footer: the fields of the package the run loaded. fancyhdr: left, center and right, odd and even pages when two-sided, and `\headrulewidth` and `\footrulewidth`. It writes `\fancyhf{}` and one `\fancyhead[LE,RO]{…}` per text. scrlayer-scrpage: `\ihead`, `\chead`, `\ohead`, `\ifoot`, `\cfoot`, `\ofoot`, the optional `plain` text kept. The new block replaces the calls it read. Without either, "Load fancyhdr" adds it with `\pagestyle{fancy}`.
 
-The dialog edits snapshots and never writes LaTeX itself. The server reads each call it shows into a snapshot: its name, its arguments, its key lists with keys and values, its text and range. The dialog changes values and adds or drops calls. Apply sends the snapshots back (`satex/dialogApply`, kind `snapshot`). One printer writes them as minimal edits. An untouched call stays as it is. A key list keeps its order and separator style, a removed key goes with its comma, and an added key follows the list's style. A new call is written in one canonical form. A command the run does not define loads its package. A snapshot of text that changed since is refused.
+The dialog edits snapshots and never writes LaTeX itself. The server reads each call it shows into a snapshot: its name, its arguments, its key lists with keys and values, its text and range. The dialog changes values and adds or drops calls. Apply sends the snapshots back (`satex/dialogApply`, kind `snapshot`). One printer writes them as minimal edits. An untouched call stays as it is. A key list keeps its order and separator style, a removed key goes with its comma, and an added key follows the list's style. An empty value is written `{}`. A new call is written in one canonical form. A command the run does not define loads its package. A snapshot of text that changed since is refused.
 
 ## Managers
 
@@ -156,7 +158,7 @@ The next four are managers. Each opens on a name of its type, focused on that na
 
 ### glossary
 
-Every key a document call declared (`\newglossaryentry`, `\newacronym`, acro's `\DeclareAcronym`), taken from the run, not a list of commands. The fields are the key list's keys, else each argument named by the field the run stored its text in (`\glo@cfg@short`). The table holds the uses and every value the run stored, the plural and first forms too. Unused entries are marked. Delete is refused while an entry is used. "Replace uses and delete" moves the uses to another key first. A new entry is written like the first one of the same command in the document.
+Every key a document call declared (`\newglossaryentry`, `\newacronym`, acro's `\DeclareAcronym`), taken from the run, not a list of commands. The fields are the key list's keys, else each argument named by the field the run stored its text in (`\glo@cfg@short`). The table holds the uses and every value the run stored, the plural and first forms too. Unused entries are marked. Delete is refused while an entry is used. "Replace uses and delete" moves the uses to another key first. A new entry is written like the first one of the same command in the document: its arguments, its key list in the printer's one form (`name=DAG, description=…`).
 
 ### bibliography
 
@@ -168,7 +170,7 @@ Every term an index line carried (`\index{graph!directed}`), by its top level, s
 
 ### theorem
 
-Every environment a document call defined together with its number (`\the⟨env⟩`), with any package: the counter it owns, shares or is numbered within, and the commands its code has that the others lack (its style). Each instance shows its labels and the lines referencing them. Renaming rewrites the definition, both ends of each instance and the kinds that share its counter. Numbering writes the group the document's own calls of the same command use for a shared counter or a parent counter.
+Every environment a document call defined together with its number (`\the⟨env⟩`), with any package: the counter it owns, shares or is numbered within, and the commands its code has that the others lack (its style). Each instance shows its labels and the lines referencing them. Renaming rewrites the definition, both ends of each instance and the kinds that share its counter. Numbering writes the group the document's own calls of the same command use for a shared counter or a parent counter. A new kind copies the document's first call of its command. These forms send snapshots the view fills, and the snapshot printer writes them.
 
 ## forest
 

@@ -125,6 +125,10 @@ assert.equal(back.dir, 'TD');
   const m = D.tipMarker("<svg version='1.1' width='52' height='10' viewBox='76 57 26 5'><g id='page1'><g transform='translate(77,59.5)scale(1,-1)'><g fill='#888' stroke='#888'><path d='M0 0H21'/></g></g></g></svg>");
   assert.deepEqual([m.box, m.ref], [[94, 57, 8, 5], [102, 59.5]]);
   assert.ok(m.inner.includes("fill='currentColor'") && !m.inner.includes('id='), m.inner);
+  // the sample's shaft is the edge's line, not the marker's: else a solid stub sits on a dashed or missing line
+  const shaft = 'M0 0H24.8';
+  const shafted = D.tipMarker(`<svg viewBox='76 55 26 7'><g transform='translate(77,59)'><path d='${shaft}' fill='none'/><g transform='translate(25,0)'><path d='M-2.5 3C-1 1 0 0 0 0' fill='none'/></g></g></svg>`);
+  assert.ok(!shafted.inner.includes(shaft) && shafted.inner.includes('M-2.5 3'), shafted.inner);
 
   // 8. layers: blocks of `pgfonlayer` and of a scope whose key opens a layer
   const layered = `
@@ -812,8 +816,13 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   assert.equal(fill('${?x}[${x}]${/x}{${k}}', { k: 'key' }), '{key}');
   const r = { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } };
   const form = { by: 'numbering', edits: { 'own counter': { changes: { u: [{ range: r, newText: '' }] } }, 'within section': { changes: { u: [{ range: r, newText: '[section]' }] } } } };
-  assert.equal(filled(chosen(form, { numbering: 'within section' }), {}).changes.u[0].newText, '[section]');
-  assert.equal(chosen({ edit: 1 }, {}), 1);
+  assert.equal(chosen(form, { numbering: 'within section' }).changes.u[0].newText, '[section]');
+  assert.deepEqual(filled(chosen({ edit: { changes: { u: [] } } }, {}), {}), { changes: { u: [] } });
+  // a form of snapshots: each field's value where its fill puts it, an empty key dropped
+  const node = { kind: 'call', name: 'newglossaryentry', args: [{ open: '{', text: '' }, { open: '{', keys: [], text: '' }] };
+  const fills = [['key', 0, 0, null], ['name', 0, 1, 'name'], ['plural', 0, 1, 'plural'], ['value', 0, null, null]];
+  const [n] = chosen({ by: 'k', prints: { a: { nodes: [node], fills } } }, { k: 'a', key: 'dag', name: 'DAG', plural: ' ', value: 'b' }).nodes;
+  assert.deepEqual([n.args[0].text, n.args[1].keys, n.body, node.args[1].keys.length], ['dag', [{ key: 'name', value: 'DAG' }], 'b', 0]);
   const { check } = self.satexDialogs;
   assert.equal(check('alpha', ['index']), '');
   assert.match(check('a!b', ['index']), /makeindex/);

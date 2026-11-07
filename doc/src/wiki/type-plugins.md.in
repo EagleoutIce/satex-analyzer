@@ -55,7 +55,7 @@ The body of an environment the run read verbatim, a listing. Outside its escapes
 
 ## environment
 
-On the name of a `\begin` or `\end` the run met. Its view, "Change environment…", lists the environments defined there that make the same kind of material, with their required arguments. The kind is the first kernel builder the environment's code reaches, the most specific first: an alignment preamble (`tabular`, `array`, `longtable`), a list (`itemize`), a trivlist (`center`), a float (`figure`, `table`). An environment that reaches none, as `document`, offers no change. Picking one changes this occurrence only: both names, and the arguments, kept where both environments take them, added empty or dropped otherwise. Renaming an environment the project does not define is refused: it would change only its uses.
+On the name of a `\begin` or `\end` the run met. Its view, "Change environment…", lists the environments defined there that make the same kind of material, with their required arguments. The kind is the first kernel builder the environment's code reaches, the most specific first: an alignment preamble (`tabular`, `array`, `longtable`), a list (`itemize`), a trivlist (`center`), a float (`figure`, `table`). An environment that reaches none, as `document`, offers no change. Picking one changes this occurrence only, through the snapshot printer: both names, and the arguments, kept where both environments take them, added empty or dropped otherwise. Renaming an environment the project does not define is refused: it would change only its uses.
 
 ## table
 
@@ -132,7 +132,7 @@ The next four are managers. Each opens on a name of its type, focused on that na
 
 ### glossary
 
-Every key a document call declared (`\newglossaryentry`, `\newacronym`, acro's `\DeclareAcronym`), taken from the run, not a list of commands. The fields are the key list's keys, else each argument named by the field the run stored its text in (`\glo@cfg@short`). The table holds the uses and every value the run stored, the plural and first forms too. Unused entries are marked. Delete is refused while an entry is used. "Replace uses and delete" moves the uses to another key first. A new entry is written like the first one of the same command in the document.
+Every key a document call declared (`\newglossaryentry`, `\newacronym`, acro's `\DeclareAcronym`), taken from the run, not a list of commands. The fields are the key list's keys, else each argument named by the field the run stored its text in (`\glo@cfg@short`). The table holds the uses and every value the run stored, the plural and first forms too. Unused entries are marked. Delete is refused while an entry is used. "Replace uses and delete" moves the uses to another key first. A new entry is written like the first one of the same command in the document: its arguments, its key list in the printer's one form (`name=DAG, description=…`).
 
 ### bibliography
 
@@ -144,7 +144,7 @@ Every term an index line carried (`\index{graph!directed}`), by its top level, s
 
 ### theorem
 
-Every environment a document call defined together with its number (`\the⟨env⟩`), with any package: the counter it owns, shares or is numbered within, and the commands its code has that the others lack (its style). Each instance shows its labels and the lines referencing them. Renaming rewrites the definition, both ends of each instance and the kinds that share its counter. Numbering writes the group the document's own calls of the same command use for a shared counter or a parent counter.
+Every environment a document call defined together with its number (`\the⟨env⟩`), with any package: the counter it owns, shares or is numbered within, and the commands its code has that the others lack (its style). Each instance shows its labels and the lines referencing them. Renaming rewrites the definition, both ends of each instance and the kinds that share its counter. Numbering writes the group the document's own calls of the same command use for a shared counter or a parent counter. A new kind copies the document's first call of its command. These forms send snapshots the view fills, and the snapshot printer writes them.
 
 ## forest
 

@@ -10,7 +10,7 @@ use crate::analysis::facts::ColorDef;
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{KeyKind, Ty};
 use crate::lsp::handlers::to_pos;
-use crate::lsp::snapshot::{self, Arg, Kind, Node, Package};
+use crate::lsp::snapshot::{self, Node, Package};
 use crate::project::config::TypePlugins;
 use crate::text::{Pos, Text};
 use lsp_types::{ColorInformation, CompletionItem, CompletionItemKind, Position, Range, TextEdit};
@@ -157,15 +157,7 @@ fn slot(cx: &Cx, hit: &Hit) -> Option<Range> {
 fn writes(cx: &Cx, slot: Range) -> Json {
     let doc = cx.doc;
     let (from, to) = (doc.offset(to_pos(doc, slot.start)), doc.offset(to_pos(doc, slot.end)));
-    let typed = from.zip(to).and_then(|(a, b)| doc.body().get(a..b)).unwrap_or_default();
-    let name = Node {
-        kind: Kind::Text,
-        range: Some(slot),
-        text: typed.into(),
-        body: typed.into(),
-        body_at: Some((0, typed.len())),
-        ..Node::default()
-    };
+    let name = from.zip(to).map(|(a, b)| snapshot::text(doc, a, b));
     let x = xcolor(cx.analysis);
     let place = cx.at.place.as_ref();
     let own = place.filter(|p| p.open == '{' && p.nth() == 0 && x && by_color_package(cx.analysis, &p.cmd));
@@ -182,7 +174,7 @@ fn writes(cx: &Cx, slot: Range) -> Json {
     let at = preamble_end(doc).map(|line| Position { line, character: 0 });
     let define = at.map(|at| Node {
         package: Some(Package { name: "xcolor".into(), options: String::new() }),
-        ..Node::new_call("definecolor", ["", "", ""].map(|t| Arg::text('{', t)).into(), at)
+        ..Node::call("definecolor", &["", "", ""], at)
     });
     json!({ "title": format!("Define {fresh}"), "name": fresh, "nodes": { "name": name, "define": define } })
 }

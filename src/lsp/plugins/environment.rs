@@ -4,8 +4,8 @@
 //! kind of material ([`handlers::material`]), with their arguments.
 
 use super::{Cx, Hit, TypePlugin, button, rewrite};
-use crate::analysis::roles::{KeyKind, Ty, braced_groups};
-use crate::lsp::handlers;
+use crate::analysis::roles::{KeyKind, Ty};
+use crate::lsp::{handlers, snapshot};
 use crate::project::config::TypePlugins;
 use lsp_types::TextEdit;
 use serde_json::{Value as Json, json};
@@ -88,37 +88,28 @@ fn name_col(line: &str, from: u32, word: &str, name: &str) -> Option<u32> {
     Some(crate::engine::source::col_of_byte(line, at + word.len() + 2))
 }
 
-/// The edits that make the pair `env`: both names, and the `\begin`'s required arguments, kept
-/// where both take them, dropped or added empty.
+/// The edits that make the pair `env`, through the printer: both names, and the `\begin`'s
+/// arguments the old one read (through its last `{…}`) made the new one's, kept where both take
+/// them, dropped or added empty.
 fn edits(cx: &Cx, pair: &Pair, env: &str) -> Vec<TextEdit> {
-    let len = pair.name.chars().count() as u32;
-    let line = cx.doc.line(pair.begin.0);
-    let after = crate::engine::source::byte_of_col(line, pair.begin.1 + len + 1).min(line.len());
     let had = usize::from(handlers::environment_arguments(cx.analysis, &pair.name));
     let wants = usize::from(handlers::environment_arguments(cx.analysis, env));
-    let given: Vec<String> = braced_groups(&line[after..]).into_iter().take(had).collect();
-    // the text of the arguments the old environment read, through the last one
-    let mut taken = 0;
-    let mut rest = &line[after..];
-    for _ in 0..given.len() {
-        let trimmed = rest.trim_start();
-        let Some(close) = trimmed.find('}') else { break };
-        let used = rest.len() - trimmed.len() + close + 1;
-        taken += used;
-        rest = &rest[used..];
+    let at = cx.doc.offset(crate::text::Pos::new(pair.begin.0, pair.begin.1)).and_then(|b| b.checked_sub(7));
+    let Some(mut n) = at.and_then(|at| snapshot::read(cx.doc, at, &[], false)) else { return Vec::new() };
+    let mut braced = 0;
+    let read = n.args.iter().take_while(|a| {
+        let more = braced < had;
+        braced += usize::from(a.open == '{');
+        more
+    });
+    let read = read.count();
+    n.args.truncate(read);
+    let mut kept = 0;
+    for a in &mut n.args {
+        kept += usize::from(a.open == '{');
+        a.drop = a.open == '[' || kept > wants;
     }
-    let args: String = (0..wants).map(|i| format!("{{{}}}", given.get(i).map_or("", String::as_str))).collect();
-    let name = |(l, c): (u32, u32)| super::range(cx.doc, l, c, c + len);
-    let tail = super::range(
-        cx.doc,
-        pair.begin.0,
-        crate::engine::source::col_of_byte(line, after),
-        crate::engine::source::col_of_byte(line, after + taken),
-    );
-    let mut out = vec![TextEdit { range: name(pair.begin), new_text: env.to_string() }];
-    if taken > 0 || !args.is_empty() {
-        out.push(TextEdit { range: tail, new_text: args });
-    }
-    out.push(TextEdit { range: name(pair.end), new_text: env.to_string() });
-    out
+    n.args.extend((kept..wants).map(|_| snapshot::Arg::text('{', "")));
+    n.name = env.into();
+    snapshot::edits(cx.analysis, cx.doc, &[n])
 }

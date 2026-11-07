@@ -4,10 +4,11 @@
 //! document's style reads of its type, an uncited entry can be deleted; a `thebibliography`
 //! edits in place and converts to a `.bib` file.
 
-use super::{Cx, Hit, TypePlugin, call_at, closing, edit_of, key_values, lines_of, put, unbraced};
+use super::{Cx, Hit, TypePlugin, call_at, closing, edit_of, key_values, lines_of, put, span, unbraced};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{KeyKind, Ty};
 use crate::engine::builtins::OccKind;
+use crate::lsp::snapshot;
 use crate::project::config::TypePlugins;
 use crate::text::Text;
 use serde_json::{Value as Json, json};
@@ -331,32 +332,29 @@ fn convert(cx: &Cx, l: &List) -> Vec<Json> {
     }
     let biblatex = crate::linter::shared::loaded(cx.analysis, "biblatex");
     let styled = cx.analysis.facts.occurrences.iter().any(|o| o.kind == OccKind::BibStyle);
+    // through the printer: the list becomes the commands that print the database
+    let begin = text.find("\\begin{document}").unwrap_or(0);
+    let call = |cmd: &str, args: &[&str]| snapshot::Node::call(cmd, args, span(cx.doc, begin, begin).start);
     let print = match (biblatex, styled) {
-        (true, _) => "\\printbibliography".to_string(),
-        (false, true) => format!("\\bibliography{{{name}}}"),
-        (false, false) => format!("\\bibliographystyle{{plain}}\n\\bibliography{{{name}}}"),
+        (true, _) => vec![call("printbibliography", &[])],
+        (false, true) => vec![call("bibliography", &[&name])],
+        (false, false) => vec![call("bibliographystyle", &["plain"]), call("bibliography", &[&name])],
     };
-    let mut tex = vec![put(cx.doc, l.begin, l.end, print)];
-    if biblatex {
-        let begin = text.find("\\begin{document}").unwrap_or(0);
-        tex.push(put(cx.doc, begin, begin, format!("\\addbibresource{{{name}.bib}}\n")));
-    }
+    let add = biblatex.then(|| call("addbibresource", &[&format!("{name}.bib")]));
+    let how: Vec<String> =
+        print.iter().chain(&add).map(|n| format!("`{}`", snapshot::canonical(n).trim_end())).collect();
+    let nodes: Vec<_> = std::iter::once(snapshot::replaced(cx.doc, l.begin, l.end, &print)).chain(add).collect();
     let bib_uri = super::super::handlers::path_uri(&bib_path);
     let tex_uri = cx.uri();
     let zero = json!({ "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } });
     let edit = json!({ "documentChanges": [
         { "kind": "create", "uri": bib_uri.as_str(), "options": { "ignoreIfExists": true } },
         { "textDocument": { "uri": bib_uri.as_str(), "version": null }, "edits": [{ "range": zero, "newText": bib }] },
-        { "textDocument": { "uri": tex_uri.as_str(), "version": null }, "edits": tex },
+        { "textDocument": { "uri": tex_uri.as_str(), "version": null }, "edits": snapshot::edits(cx.analysis, cx.doc, &nodes) },
     ] });
-    let how = if biblatex {
-        format!("`\\printbibliography` and `\\addbibresource{{{name}.bib}}`")
-    } else {
-        format!("`\\bibliography{{{name}}}`")
-    };
     vec![
         json!({ "kind": "text", "markdown": format!(
-            "This list is `thebibliography`, with no `.bib` file. **Convert to a .bib file** writes `{name}.bib` with one `@misc` entry per `\\bibitem` and puts {how} in its place. The fields are guessed from each text (author, title, year): check them. A `[label]` is not kept. The style numbers or labels the entries." ) }),
+            "This list is `thebibliography`, with no `.bib` file. **Convert to a .bib file** writes `{name}.bib` with one `@misc` entry per `\\bibitem` and puts {} in its place. The fields are guessed from each text (author, title, year): check them. A `[label]` is not kept. The style numbers or labels the entries.", how.join(" and ") ) }),
         json!({ "kind": "actions", "items": [{ "title": "Convert to a .bib file", "edits": edit }] }),
     ]
 }

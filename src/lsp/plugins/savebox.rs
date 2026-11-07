@@ -6,10 +6,11 @@
 //! whose code reads a counter or a reference (`\c@…`, `\r@…`).
 
 use super::environment::pair;
-use super::{Cx, Hit, TypePlugin, put, rewrite};
+use super::{Cx, Hit, TypePlugin, rewrite, span};
 use crate::analysis::roles::{KeyKind, Ty};
 use crate::engine::builtins::OccKind;
 use crate::engine::tex::{Sym, Tok};
+use crate::lsp::snapshot::{self, Kind::Env, Node, canonical};
 use crate::project::config::TypePlugins;
 use lsp_types::CodeAction;
 
@@ -77,24 +78,22 @@ struct Plan {
 }
 
 impl Plan {
+    /// Through the printer: the box made before `\begin{document}`, each copy its `\usebox`.
     fn edits(&self, cx: &Cx, copies: &[(usize, usize)]) -> Vec<lsp_types::TextEdit> {
-        let text = cx.doc.body();
-        let (from, to) = copies[0];
-        let body = &text[from..to];
-        let name = &self.name;
-        let body = if self.vertical {
-            format!("\\begin{{minipage}}{{\\textwidth}}\n{body}\n\\end{{minipage}}")
-        } else {
-            body.to_string()
+        let (doc, name) = (cx.doc, format!("\\{}", self.name));
+        let mut body = doc.body()[copies[0].0..copies[0].1].to_string();
+        let at = span(doc, self.preamble, self.preamble).start;
+        let call = |cmd: &str, args: &[&str]| Node::call(cmd, args, at);
+        if self.vertical {
+            body = canonical(&Node { kind: Env, body, line: false, ..call("minipage", &["\\textwidth"]) });
+        }
+        let saved = match self.verbatim {
+            true => Node { kind: Env, body, ..call("lrbox", &[&name]) },
+            false => call("sbox", &[&name, &format!("%\n{body}%\n")]),
         };
-        let saved = if self.verbatim {
-            format!("\\newsavebox{{\\{name}}}\n\\begin{{lrbox}}{{\\{name}}}\n{body}\n\\end{{lrbox}}\n")
-        } else {
-            format!("\\newsavebox{{\\{name}}}\n\\sbox{{\\{name}}}{{%\n{body}%\n}}\n")
-        };
-        let mut out = vec![put(cx.doc, self.preamble, self.preamble, saved)];
-        out.extend(copies.iter().map(|&(a, b)| put(cx.doc, a, b, format!("\\usebox{{\\{name}}}"))));
-        out
+        let uses = copies.iter().map(|&(a, b)| snapshot::replaced(doc, a, b, &[call("usebox", &[&name])]));
+        let nodes: Vec<Node> = [call("newsavebox", &[&name]), saved].into_iter().chain(uses).collect();
+        snapshot::edits(cx.analysis, doc, &nodes)
     }
 }
 

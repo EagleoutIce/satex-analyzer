@@ -4023,7 +4023,14 @@ fn change_environment_edits_both_ends_only() {
     assert_eq!(lines, [3, 5], "{to}");
     let center = names(&center);
     assert!(!center.iter().any(|n| ["itemize", "tabular", "figure", "document"].contains(&n.as_str())), "{center:?}");
-    let tabular = names(&items(7, 9, &mut server));
+    let write =
+        |item: Option<&Value>| applied(text, &uri, &json!({ "changes": { &uri: item.unwrap()["edits"] } }), &[]);
+    assert!(write(Some(to)).contains("\\begin{flushright}\nA\n\\end{flushright}\n\\begin{flushright}B"));
+    // the printer adjusts the arguments: kept where both take them, an empty one added
+    let tabular = items(7, 9, &mut server);
+    let star = write(tabular.iter().find(|i| i["title"] == "tabular*"));
+    assert!(star.contains("\n\\begin{tabular*}{l}{}x\\end{tabular*}\n"), "{star}");
+    let tabular = names(&tabular);
     for want in ["array", "tabular*", "longtable"] {
         assert!(tabular.iter().any(|n| n == want), "{want} missing from {tabular:?}");
     }
@@ -4476,6 +4483,36 @@ fn applied(text: &str, uri: &str, edit: &Value, vars: &[(&str, &str)]) -> String
     out
 }
 
+/// A form's snapshots (`print`) filled with `vars` as `snapshot.js` `fill` fills them, printed by
+/// the server and written into `text`.
+fn print_form(server: &mut Server, text: &str, uri: &str, print: &Value, vars: &[(&str, &str)]) -> String {
+    let mut nodes = print["nodes"].clone();
+    for f in print["fills"].as_array().unwrap() {
+        let v = vars.iter().find(|(n, _)| f[0] == *n).map_or("", |(_, v)| *v);
+        let node = &mut nodes[f[1].as_u64().unwrap() as usize];
+        let Some(a) = f[2].as_u64() else {
+            node["body"] = json!(v);
+            continue;
+        };
+        let arg = &mut node["args"][a as usize];
+        let Some(k) = f[3].as_str() else {
+            arg["text"] = json!(v);
+            continue;
+        };
+        let keys = arg["keys"].as_array_mut().unwrap();
+        match keys.iter().position(|x| x["key"] == k) {
+            Some(i) if v.trim().is_empty() => drop(keys.remove(i)),
+            Some(i) => keys[i]["value"] = json!(v),
+            None if v.trim().is_empty() => {}
+            None => keys.push(json!({ "key": k, "value": v })),
+        }
+    }
+    let params = json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": nodes });
+    let id = server.request("satex/dialogApply", params);
+    let out = server.response(id)["result"].clone();
+    applied(text, uri, &json!({ "changes": { uri: out["edits"] } }), &[])
+}
+
 /// The manager `plugin` opens without a position, as a sidebar asks.
 fn manager(server: &mut Server, uri: &str, plugin: &str) -> Value {
     let id = server.request("satex/view", json!({ "textDocument": { "uri": uri }, "plugin": plugin }));
@@ -4550,8 +4587,12 @@ fn glossary_manager_round_trips() {
     let kinds = view["sections"][0]["add"]["kinds"].as_array().unwrap();
     let new = kinds.iter().find(|k| k["name"] == "\\newglossaryentry").expect("newglossaryentry kind");
     let vars = [("key", "dag"), ("name", "DAG"), ("description", "a directed acyclic graph"), ("plural", "DAGs")];
-    let out = applied(GLOSSARY, &uri, &new["edit"], &vars);
-    assert!(out.contains("\\newglossaryentry{dag}{name={DAG},description={a directed acyclic graph},plural={DAGs}}\n\\newglossaryentry{tree}") || out.contains("{dag}{name={DAG}"), "{out}");
+    let out = print_form(&mut server, GLOSSARY, &uri, &new["print"], &vars);
+    // a new node prints in the printer's one form
+    assert!(
+        out.contains("\\newglossaryentry{dag}{name=DAG, description=a directed acyclic graph, plural=DAGs}\n"),
+        "{out}"
+    );
     // every key of the family the run defined: a field to add, an optional one to remove
     let names = graph["more"]["names"].to_string();
     assert!(names.contains("\"symbol\"") && names.contains("\"first\"") && !names.contains("\"plural\""), "{names}");
@@ -4562,8 +4603,8 @@ fn glossary_manager_round_trips() {
     assert!(field_of(graph, "name")["remove"].is_null(), "every entry writes a name: {graph}");
     // a new entry writes only the fields given
     let short = [("key", "dag"), ("name", "DAG"), ("description", "d")];
-    let out = applied(GLOSSARY, &uri, &new["edit"], &short);
-    assert!(out.contains("\\newglossaryentry{dag}{name={DAG},description={d}}\n"), "{out}");
+    let out = print_form(&mut server, GLOSSARY, &uri, &new["print"], &short);
+    assert!(out.contains("\\newglossaryentry{dag}{name=DAG, description=d}\n"), "{out}");
     let symbol = new["fields"].as_array().unwrap().iter().find(|f| f["name"] == "symbol").expect("symbol from the run");
     assert_eq!(symbol["more"], true, "{symbol}");
     // the view at a use focuses that key
@@ -4759,7 +4800,7 @@ fn theorem_manager_round_trips() {
     assert_eq!(record(&view, "definition")["badge"], "unused");
     let rows = theorem["table"]["rows"].to_string();
     assert!(rows.contains("thm:a") && rows.contains("15"), "{rows}");
-    let out = applied(THEOREMS, &uri, &field_of(theorem, "environment")["edit"], &[("value", "thm")]);
+    let out = print_form(&mut server, THEOREMS, &uri, &field_of(theorem, "environment")["print"], &[("value", "thm")]);
     assert!(out.contains("\\newtheorem{thm}{Theorem}[section]\n\\newtheorem{lemma}[thm]{Lemma}"), "{out}");
     assert!(out.contains("\\begin{thm}\\label{thm:a}\nX.\n\\end{thm}"), "{out}");
     // definition: numbered within section, in the slot \newtheorem's calls use
@@ -4787,11 +4828,11 @@ fn theorem_manager_round_trips() {
     // a new kind: like the document's call, numbered as chosen
     let new = &view["sections"][0]["add"]["kinds"][0];
     let vars = [("env", "prop"), ("title", "Proposition")];
-    let out = applied(THEOREMS, &uri, &new["edits"]["shares theorem"], &vars);
+    let out = print_form(&mut server, THEOREMS, &uri, &new["prints"]["shares theorem"], &vars);
     assert!(out.contains("{Definition}\n\\newtheorem{prop}[theorem]{Proposition}\n\\begin{document}"), "{out}");
-    let out = applied(THEOREMS, &uri, &new["edits"]["within section"], &vars);
+    let out = print_form(&mut server, THEOREMS, &uri, &new["prints"]["within section"], &vars);
     assert!(out.contains("\\newtheorem{prop}{Proposition}[section]\n"), "{out}");
-    let out = applied(THEOREMS, &uri, &new["edits"]["own counter"], &vars);
+    let out = print_form(&mut server, THEOREMS, &uri, &new["prints"]["own counter"], &vars);
     assert!(out.contains("\\newtheorem{prop}{Proposition}\n"), "{out}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();

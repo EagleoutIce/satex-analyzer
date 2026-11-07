@@ -21,8 +21,8 @@ pub struct Key {
 }
 
 /// An argument: its delimiter, its inner bytes in the node's `text` (none: not written), and
-/// its content, a key list or text.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+/// its content, a key list or text; `drop` removes it with its delimiters.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct Arg {
     pub open: char,
     #[serde(default)]
@@ -31,6 +31,8 @@ pub struct Arg {
     pub keys: Option<Vec<Key>>,
     #[serde(default)]
     pub text: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub drop: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
@@ -85,14 +87,18 @@ impl Node {
     pub fn new_call(name: &str, args: Vec<Arg>, at: Position) -> Node {
         Node { name: name.into(), args, at: Some(at), line: true, ..Node::default() }
     }
+    /// A new call whose required arguments hold `texts`.
+    pub fn call(name: &str, texts: &[&str], at: Position) -> Node {
+        Node::new_call(name, texts.iter().map(|t| Arg::text('{', t)).collect(), at)
+    }
 }
 
 impl Arg {
     pub fn keys(open: char, keys: Vec<Key>) -> Arg {
-        Arg { open, inner: None, keys: Some(keys), text: String::new() }
+        Arg { open, keys: Some(keys), ..Arg::default() }
     }
     pub fn text(open: char, text: &str) -> Arg {
-        Arg { open, inner: None, keys: None, text: text.into() }
+        Arg { open, text: text.into(), ..Arg::default() }
     }
     fn empty(&self) -> bool {
         self.keys.as_ref().map_or(self.text.is_empty(), Vec::is_empty)
@@ -202,7 +208,13 @@ pub fn read(doc: &Text, at: usize, keyed: &[usize], options: bool) -> Option<Nod
     for (k, g) in groups.enumerate() {
         let inner = (g.inner.start - at, g.inner.end - at);
         let keys = keyed.contains(&k).then(|| read_keys(text, g.inner.start, g.inner.end));
-        node.args.push(Arg { open: g.open, inner: Some(inner), keys, text: text[g.inner.clone()].to_string() });
+        node.args.push(Arg {
+            open: g.open,
+            inner: Some(inner),
+            keys,
+            text: text[g.inner.clone()].to_string(),
+            ..Arg::default()
+        });
     }
     if options && node.args.first().is_none_or(|a| a.open != '[') {
         node.args.insert(0, Arg::keys('[', Vec::new()));
@@ -218,6 +230,26 @@ pub fn env(doc: &Text, at: usize, body: std::ops::Range<usize>, options: bool) -
     n.body_at = Some((body.start - at, body.end - at));
     n.body = doc.body().get(body)?.to_string();
     Some(n)
+}
+
+/// The bytes `from..to` of `doc` as a text node: its body set, they become it.
+pub fn text(doc: &Text, from: usize, to: usize) -> Node {
+    let t = doc.body()[from..to].to_string();
+    let (range, body_at) = (Some(span(doc, from, to)), Some((0, t.len())));
+    Node { kind: Kind::Text, range, body_at, body: t.clone(), text: t, ..Node::default() }
+}
+
+/// The bytes `from..to` of `doc` becoming the nodes `by`, printed in their one form.
+pub fn replaced(doc: &Text, from: usize, to: usize, by: &[Node]) -> Node {
+    let body: String = by.iter().map(canonical).collect();
+    Node { body: body.trim_end_matches('\n').into(), ..text(doc, from, to) }
+}
+
+/// A record's field through the printer: the bytes at each of `places` become its value.
+pub fn field(doc: &Text, name: &str, value: &str, places: &[(usize, usize)]) -> Json {
+    let nodes: Vec<_> = places.iter().map(|&(a, b)| text(doc, a, b)).collect();
+    let fills: Vec<_> = (0..nodes.len()).map(|i| ("value", i, None, None)).collect();
+    json!({ "name": name, "value": value, "long": value.len() > 40, "check": ["tex"], "print": form(&nodes, &fills) })
 }
 
 /// The keys of `n`'s first key list.
@@ -269,7 +301,7 @@ fn arg_text(a: &Arg) -> String {
 
 /// A new node in its one canonical form.
 pub fn canonical(n: &Node) -> String {
-    let args: String = n.args.iter().filter(|a| a.open == '{' || !a.empty()).map(arg_text).collect();
+    let args: String = n.args.iter().filter(|a| !a.drop && (a.open == '{' || !a.empty())).map(arg_text).collect();
     let star = if n.star { "*" } else { "" };
     let out = match n.kind {
         Kind::Call => format!("\\{}{star}{args}", n.name),
@@ -277,6 +309,15 @@ pub fn canonical(n: &Node) -> String {
         Kind::Text => n.body.clone(),
     };
     if n.line { out + "\n" } else { out }
+}
+
+/// Where a form's field goes: `(field, node, arg, key)`; no arg: the node's body; a key: its
+/// value in that key list, dropped when empty.
+pub type Fill<'a> = (&'a str, usize, Option<usize>, Option<&'a str>);
+
+/// A form's snapshots and fills: the view writes each field's value and prints them (`snapshot.js` `fill`).
+pub fn form(nodes: &[Node], fills: &[Fill]) -> Json {
+    json!({ "nodes": nodes, "fills": fills })
 }
 
 /// A byte edit: `from..to` becomes `text`.
@@ -363,14 +404,16 @@ fn node_edits(text: &str, at: usize, n: &Node) -> Vec<Edit> {
     }
     for a in &n.args {
         let Some((s, e)) = a.inner.map(|(s, e)| (at + s, at + e)) else {
-            if !a.empty() {
+            // as `canonical`: a `{…}` is written even when empty
+            if !a.drop && (a.open == '{' || !a.empty()) {
                 out.push((after, after, arg_text(a)));
             }
             continue;
         };
         after = e + 1;
         match &a.keys {
-            // an emptied `[…]` goes with its brackets
+            // a dropped argument, an emptied `[…]`, goes with its delimiters
+            _ if a.drop => out.push((s - 1, e + 1, String::new())),
             _ if a.open == '[' && a.empty() && a.keys.as_ref().map_or(s < e, |_| !items(text, s..e).is_empty()) => {
                 out.push((s - 1, e + 1, String::new()))
             }
@@ -563,6 +606,11 @@ pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<E
 /// Byte edits as LSP edits.
 pub fn lsp_edits(doc: &Text, edits: Vec<Edit>) -> Vec<lsp_types::TextEdit> {
     edits.into_iter().map(|(a, b, t)| lsp_types::TextEdit::new(span(doc, a, b), t)).collect()
+}
+
+/// The LSP edits that write `nodes`, none when refused.
+pub fn edits(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Vec<lsp_types::TextEdit> {
+    printed(analysis, doc, nodes).map(|(e, _)| lsp_edits(doc, e)).unwrap_or_default()
 }
 
 /// The edits that write `nodes` as LSP edits: `{edits, notes}`.
@@ -800,6 +848,25 @@ mod tests {
         n.body = n.body.replace("[V]", "[V [x]]");
         assert_eq!(edits_of(&d, &n).unwrap().iter().map(|e| e.2.as_str()).collect::<Vec<_>>(), [" [x]"]);
         assert_eq!(print_one(&d, &n), format!("% before\n{}\nafter\n", tree.replace("[V]", "[V [x]]")));
+    }
+
+    /// Arguments by position: a dropped `{…}` goes with its braces, an unwritten empty `{}` is
+    /// written after the argument before it, a renamed environment changes both ends only.
+    #[test]
+    fn arguments_drop_and_insert_by_position() {
+        let tab = "\\begin{tabular}[t]{ll} % keep\na & b\n\\end{tabular}";
+        let (d, mut n) = opened(tab, &[]);
+        n.name = "center".into();
+        n.args.iter_mut().for_each(|a| a.drop = true);
+        assert_eq!(print_one(&d, &n), "% before\n\\begin{center} % keep\na & b\n\\end{center}\nafter\n");
+        let (d, mut n) = opened(tab, &[]);
+        n.name = "tabularx".into();
+        n.args[0].drop = true;
+        n.args.push(Arg::text('{', ""));
+        assert_eq!(print_one(&d, &n), "% before\n\\begin{tabularx}{ll}{} % keep\na & b\n\\end{tabularx}\nafter\n");
+        let mut new = Node::call("c", &["x", "y"], Position::new(0, 0));
+        new.args[1].drop = true;
+        assert_eq!(canonical(&new), "\\c{x}\n");
     }
 
     /// The color picker: a name in its place as a text node, the command's `[model]` added.

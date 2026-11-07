@@ -6,10 +6,11 @@
 //! that share its counter; numbering edits the group the document's own calls of that command
 //! use for it.
 
-use super::{Cx, Group, Hit, TypePlugin, call_at, edit_of, key_values, put, unbraced};
+use super::{Cx, Group, Hit, TypePlugin, call_at, edit_of, key_values, unbraced};
 use crate::analysis::roles::{KeyKind, Ty};
 use crate::engine::builtins::OccKind;
 use crate::engine::tex::{Span, Tok};
+use crate::lsp::snapshot::{self, Node};
 use crate::project::config::TypePlugins;
 use serde_json::{Value as Json, json};
 use std::collections::BTreeSet;
@@ -240,9 +241,9 @@ fn render(cx: &Cx, all: &[Kind]) -> Option<Json> {
         let mut forms = Vec::new();
         if let Some(call) = &k.call {
             // rename: the definition's group, every \begin and \end, the kinds sharing its counter
-            let mut edits = Vec::new();
+            let mut places = Vec::new();
             if let Some(g) = call.1.iter().find(|g| text[g.inner.clone()].trim() == k.env) {
-                edits.push(put(cx.doc, g.inner.start, g.inner.end, "${value}"));
+                places.push((g.inner.start, g.inner.end));
             }
             for o in occ
                 .iter()
@@ -250,15 +251,9 @@ fn render(cx: &Cx, all: &[Kind]) -> Option<Json> {
             {
                 let Some(at) = super::byte_of(cx, o.span) else { continue };
                 let word = if o.kind == OccKind::BeginEnvironment { "begin" } else { "end" };
-                let head = format!("\\{word}{{{}}}", k.env);
-                if text[at..].starts_with(&head) {
+                if text[at..].starts_with(&format!("\\{word}{{{}}}", k.env)) {
                     let from = at + word.len() + 2;
-                    if !edits
-                        .iter()
-                        .any(|e: &lsp_types::TextEdit| e.range == super::span(cx.doc, from, from + k.env.len()))
-                    {
-                        edits.push(put(cx.doc, from, from + k.env.len(), "${value}"));
-                    }
+                    places.push((from, from + k.env.len()));
                 }
             }
             for other in
@@ -267,11 +262,16 @@ fn render(cx: &Cx, all: &[Kind]) -> Option<Json> {
                 if let Some((_, g, _)) = &other.call
                     && let Some(g) = g.iter().skip(1).find(|g| text[g.inner.clone()].trim() == k.env)
                 {
-                    edits.push(put(cx.doc, g.inner.start, g.inner.end, "${value}"));
+                    places.push((g.inner.start, g.inner.end));
                 }
             }
+            places.sort_unstable();
+            places.dedup();
             let taken: Vec<&str> = envs.iter().copied().filter(|e| *e != k.env).collect();
-            fields.push(json!({ "name": "environment", "value": k.env, "check": ["required", "key", "unique"], "taken": taken, "edit": edit_of(cx.path, edits) }));
+            let mut f = snapshot::field(cx.doc, "environment", &k.env, &places);
+            f["check"] = json!(["required", "key", "unique"]);
+            f["taken"] = json!(taken);
+            fields.push(f);
             // the title: the first braced group after the name that is not a counter
             if let Some(g) = call
                 .1
@@ -280,34 +280,34 @@ fn render(cx: &Cx, all: &[Kind]) -> Option<Json> {
                 .skip(1)
                 .find(|g| g.open == '{' && !counters.iter().any(|c| *c == text[g.inner.clone()].trim()))
             {
-                let mut f = super::field(cx, "title", &text[g.inner.clone()], g.inner.start, g.inner.end, "${value}");
+                let mut f = snapshot::field(cx.doc, "title", &text[g.inner.clone()], &[(g.inner.start, g.inner.end)]);
                 f["check"] = json!(["required", "tex"]);
                 fields.push(f);
             }
             // numbering: one choice of own, within a counter, shared with an earlier kind; written
             // in the slots the document's own calls of this command use, the other one cleared
             let slot = |what: &str| slots.iter().find(|s| s.0 == k.head && s.1 == what).map(|s| &s.2);
+            let now = |c: &Option<String>| c.as_ref().and_then(|c| slot_of(text, call, c));
+            // the call with the groups a key slot names read as key lists
+            let keyed: Vec<usize> = [now(&k.shared), now(&k.within), slot("within").cloned(), slot("shared").cloned()]
+                .into_iter()
+                .flatten()
+                .filter_map(|(i, key)| key.map(|_| i))
+                .collect();
+            // unread, nothing prints and no choice is offered
+            let base = snapshot::read(cx.doc, call.0, &keyed, false).unwrap_or_default();
+            let print =
+                |n: Node| snapshot::printed(cx.analysis, cx.doc, &[n]).map(|(e, _)| snapshot::lsp_edits(cx.doc, e));
             let mut choices: Vec<(String, Vec<lsp_types::TextEdit>)> = Vec::new();
-            let clear = |c: &Option<String>| -> Vec<lsp_types::TextEdit> {
-                let Some((i, key)) = c.as_ref().and_then(|c| slot_of(text, call, c)) else { return Vec::new() };
-                let g = &call.1[i];
-                match key {
-                    None => vec![put(cx.doc, g.inner.start - 1, g.inner.end + 1, "")],
-                    Some(key) => (key_values(text, g.inner.clone()).into_iter().find(|(n, _)| *n == key))
-                        .map(|(_, r)| super::item_cut(text, g.inner.clone(), r))
-                        .map(|(f, t)| vec![put(cx.doc, f, t, "")])
-                        .unwrap_or_default(),
-                }
-            };
-            let mut own = clear(&k.shared);
-            own.extend(clear(&k.within));
-            choices.push(("own counter".into(), own));
-            let set = |what: &str, now: &Option<String>, other: &Option<String>, c: &str| {
-                let (i, key) = slot(what)?;
-                let mut edits = numbering_edit(cx, call, *i, key.as_deref(), now.as_deref())?;
-                edits.iter_mut().for_each(|e| e.new_text = e.new_text.replace("${counter}", c));
-                edits.extend(clear(other));
-                Some(edits)
+            let mut own = base.clone();
+            clear(&mut own, now(&k.shared));
+            clear(&mut own, now(&k.within));
+            choices.extend(print(own).ok().map(|e| ("own counter".to_string(), e)));
+            let set = |what: &str, was: &Option<String>, other: &Option<String>, c: &str| {
+                let mut n = base.clone();
+                set_slot(&mut n, slot(what)?, now(was), c)?;
+                clear(&mut n, now(other));
+                print(n).ok()
             };
             for c in counters.iter().filter(|c| !envs.contains(&c.as_str())) {
                 choices.extend(set("within", &k.within, &k.shared, c).map(|e| (format!("within {c}"), e)));
@@ -366,8 +366,10 @@ fn add(cx: &Cx, all: &[Kind], slots: &[(String, &str, Slot)], counters: &[String
             continue;
         }
         heads.push(&k.head);
-        let (name_end, _, _) = call_at(text, call.0)?;
-        // the groups as written, a numbering one left out, the name and title made slots
+        let Some(mut base) = snapshot::read(cx.doc, call.0, &[], false) else { continue };
+        let at = Some(super::span(cx.doc, last, last).start);
+        base = Node { range: None, text: String::new(), at, line: true, ..base };
+        // the arguments as written, a numbering one left out, the name and title the form's
         let numbering: Vec<usize> = [&k.shared, &k.within]
             .iter()
             .filter_map(|c| slot_of(text, call, c.as_ref()?))
@@ -375,29 +377,31 @@ fn add(cx: &Cx, all: &[Kind], slots: &[(String, &str, Slot)], counters: &[String
             .map(|s| s.0)
             .collect();
         let title = call.1.iter().skip(1).position(|g| g.open == '{').map(|i| i + 1);
-        let mut groups: Vec<String> = Vec::new();
-        for (i, g) in call.1.iter().enumerate() {
-            let inner = &text[g.inner.clone()];
-            let close = if g.open == '{' { '}' } else { ']' };
-            match i {
-                0 if inner.trim() == k.env => groups.push("{${env}}".into()),
-                _ if Some(i) == title => groups.push("{${title}}".into()),
-                _ if numbering.contains(&i) => groups.push(String::new()),
-                _ => groups.push(format!("{}{inner}{close}", g.open)),
-            }
+        let mut roles: Vec<Option<&str>> = Vec::new();
+        for (i, a) in std::mem::take(&mut base.args).into_iter().enumerate() {
+            let role = match i {
+                0 if a.text.trim() == k.env => Some("env"),
+                _ if Some(i) == title => Some("title"),
+                _ if numbering.contains(&i) => continue,
+                _ => None,
+            };
+            let text = if role.is_some() { String::new() } else { a.text };
+            base.args.push(snapshot::Arg { inner: None, text, ..a });
+            roles.push(role);
         }
+        let form = |n: &Node, roles: &[Option<&str>]| {
+            let fills: Vec<snapshot::Fill> =
+                roles.iter().enumerate().filter_map(|(i, r)| Some(((*r)?, 0, Some(i), None))).collect();
+            snapshot::form(std::slice::from_ref(n), &fills)
+        };
         let positional =
             |what: &str| slots.iter().find(|s| s.0 == k.head && s.1 == what && s.2.1.is_none()).map(|s| s.2.0);
-        let line = |gs: &[String]| format!("{}{}\n", &text[call.0..name_end], gs.concat());
-        let mut choices: Vec<(String, String)> = vec![("own counter".into(), line(&groups))];
+        let mut choices: Vec<(String, Json)> = vec![("own counter".into(), form(&base, &roles))];
         let mut with = |what: &str, label: String, c: &str| {
-            let Some(i) = positional(what) else { return };
-            let mut gs = groups.clone();
-            // after the `i`th braced group
-            let braced: Vec<usize> = (0..gs.len()).filter(|j| gs[*j].starts_with('{')).collect();
-            let at = if i == 0 { 0 } else { braced.get(i - 1).map_or(gs.len(), |j| j + 1) };
-            gs.insert(at, format!("[{c}]"));
-            choices.push((label, line(&gs)));
+            let (mut n, mut r) = (base.clone(), roles.clone());
+            let Some(j) = positional(what).and_then(|i| set_slot(&mut n, &(i, None), None, c)) else { return };
+            r.insert(j, None);
+            choices.push((label, form(&n, &r)));
         };
         for c in counters.iter().filter(|c| !all.iter().any(|o| o.env == **c)) {
             with("within", format!("within {c}"), c);
@@ -406,10 +410,8 @@ fn add(cx: &Cx, all: &[Kind], slots: &[(String, &str, Slot)], counters: &[String
             with("shared", format!("shares {}", o.env), &o.env);
         }
         let labels: Vec<&str> = choices.iter().map(|c| c.0.as_str()).collect();
-        let edits: serde_json::Map<String, Json> = (choices.iter())
-            .map(|(l, t)| (l.clone(), edit_of(cx.path, vec![put(cx.doc, last, last, t.clone())])))
-            .collect();
-        kinds.push(json!({ "name": format!("\\{}", k.head), "by": "numbering", "edits": edits, "fields": [
+        let prints: serde_json::Map<String, Json> = choices.iter().cloned().collect();
+        kinds.push(json!({ "name": format!("\\{}", k.head), "by": "numbering", "prints": prints, "fields": [
             { "name": "env", "label": "environment", "value": "", "placeholder": "proposition", "check": ["required", "key", "unique"], "taken": envs },
             { "name": "title", "value": "", "placeholder": "Proposition", "check": ["required", "tex"] },
             { "name": "numbering", "value": "own counter", "choices": labels },
@@ -418,38 +420,35 @@ fn add(cx: &Cx, all: &[Kind], slots: &[(String, &str, Slot)], counters: &[String
     (!kinds.is_empty()).then(|| json!({ "title": "New environment", "kinds": kinds }))
 }
 
-/// The edit that writes `${counter}` into a call's numbering slot: a `[…]` after its `n`th
-/// braced group, or `key=` of the key list in group `n`.
-fn numbering_edit(
-    cx: &Cx,
-    call: &(usize, Vec<Group>, usize),
-    n: usize,
-    key: Option<&str>,
-    now: Option<&str>,
-) -> Option<Vec<lsp_types::TextEdit>> {
-    let text = cx.doc.body();
-    let edits = match key {
-        None => match now.and_then(|c| slot_of(text, call, c)).filter(|s| s.1.is_none()) {
-            Some((j, _)) => {
-                let g = &call.1[j];
-                vec![put(cx.doc, g.inner.start - 1, g.inner.end + 1, "[${counter}]")]
-            }
-            // not given: after the `n`th braced group
-            None => {
-                let at = match n {
-                    0 => call_at(text, call.0)?.0,
-                    _ => call.1.iter().filter(|g| g.open == '{').nth(n - 1).map(|g| g.inner.end + 1)?,
-                };
-                vec![put(cx.doc, at, at, "[${counter}]")]
-            }
-        },
-        Some(key) => {
-            let g = call.1.get(n)?;
-            match key_values(text, g.inner.clone()).into_iter().find(|(k, _)| k == key) {
-                Some((_, r)) => vec![put(cx.doc, r.start, r.end, "${counter}")],
-                None => vec![put(cx.doc, g.inner.end, g.inner.end, format!(",{key}=${{counter}}"))],
-            }
+/// `n`'s numbering slot `slot` set to counter `c`: the `[…]` it writes (`was`), else a new `[c]`
+/// after its `slot.0`th braced argument, or `key=c` in the key list of argument `slot.0`. The
+/// index of the argument written.
+fn set_slot(n: &mut Node, slot: &Slot, was: Option<Slot>, c: &str) -> Option<usize> {
+    let Some(key) = &slot.1 else {
+        if let Some((j, _)) = was.filter(|s| s.1.is_none()) {
+            n.args.get_mut(j)?.text = c.into();
+            return Some(j);
         }
+        let mut braced = n.args.iter().enumerate().filter(|a| a.1.open == '{').map(|a| a.0 + 1);
+        let at = if slot.0 == 0 { 0 } else { braced.nth(slot.0 - 1)? };
+        n.args.insert(at, snapshot::Arg::text('[', c));
+        return Some(at);
     };
-    Some(edits)
+    let keys = n.args.get_mut(slot.0)?.keys.as_mut()?;
+    match keys.iter_mut().find(|k| k.key == *key) {
+        Some(k) => k.value = Some(c.into()),
+        None => keys.push(snapshot::Key { key: key.clone(), value: Some(c.into()) }),
+    }
+    Some(slot.0)
+}
+
+/// The slot `s` of `n` emptied: its `[…]` dropped, its key removed.
+fn clear(n: &mut Node, s: Option<Slot>) {
+    let Some((i, key)) = s else { return };
+    let Some(a) = n.args.get_mut(i) else { return };
+    match (key, a.keys.as_mut()) {
+        (None, _) => a.drop = true,
+        (Some(key), Some(keys)) => keys.retain(|k| k.key != key),
+        _ => {}
+    }
 }

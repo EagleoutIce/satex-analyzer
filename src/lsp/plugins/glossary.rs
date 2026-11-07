@@ -3,9 +3,10 @@
 //! uses, and edits that write back the call: a field, a new entry made like the document's own,
 //! deleting an unused one or replacing its uses first. The commands are the run's, not a list.
 
-use super::{Cx, Hit, TypePlugin, call_at, edit_of, field, key_values, lines_of, put, unbraced};
+use super::{Cx, Hit, TypePlugin, call_at, edit_of, field, key_values, lines_of, put, span, unbraced};
 use crate::analysis::roles::{KeyKind, Ty};
 use crate::engine::builtins::OccKind;
+use crate::lsp::snapshot;
 use crate::project::config::TypePlugins;
 use serde_json::{Value as Json, json};
 
@@ -281,41 +282,38 @@ fn add(cx: &Cx, all: &[Entry], family: &[String]) -> Option<Json> {
         let fs = fields(cx, e, all);
         let list = list_of(text, e);
         let needed = common(text, e, all);
-        let in_list = |r: &std::ops::Range<usize>| list.as_ref().is_some_and(|l| l.contains(&r.start));
-        // the call's text with the key and each field's value made a template; its key list
-        // written anew: the keys every entry writes, then each other key of the family when filled
-        let mut cuts: Vec<(std::ops::Range<usize>, String)> =
-            fs.iter().filter(|(_, r)| !in_list(r)).map(|(f, r)| (r.clone(), format!("{{${{{}}}}}", slot(f)))).collect();
-        let mut optional: Vec<String> = Vec::new();
-        if let Some(l) = &list {
-            let sep = sep(text, l);
-            let inner: Vec<String> = needed.iter().map(|k| format!("{k}={{${{{k}}}}}")).collect();
-            optional = (fs.iter().map(|(f, _)| f.clone()).filter(|f| !needed.contains(f)))
-                .chain(family.iter().filter(|k| !fs.iter().any(|(f, _)| f == *k)).cloned())
-                .collect();
-            let first = inner.is_empty();
-            let tail: String = optional
-                .iter()
-                .enumerate()
-                .map(|(i, k)| {
-                    let lead = if first && i == 0 { "" } else { sep };
-                    format!("${{?{k}}}{lead}{k}={{${{{k}}}}}${{/{k}}}")
-                })
-                .collect();
-            cuts.push((l.clone(), format!("{}{tail}", inner.join(sep))));
+        let optional: Vec<String> = (fs.iter().map(|(f, _)| f.clone()).filter(|f| !needed.contains(f)))
+            .chain(family.iter().filter(|k| !fs.iter().any(|(f, _)| f == *k)).cloned())
+            .filter(|_| list.is_some())
+            .collect();
+        // the call as a new node after the last: the key and each field's argument the form's,
+        // its key list written anew: the keys every entry writes, then each other key when filled
+        let Some(mut n) = snapshot::read(cx.doc, e.at, &[], false) else { continue };
+        n = snapshot::Node {
+            range: None,
+            text: String::new(),
+            at: Some(span(cx.doc, last, last).start),
+            line: true,
+            ..n
+        };
+        let mut fills: Vec<(String, usize, Option<String>)> = Vec::new();
+        for (i, a) in n.args.iter_mut().enumerate() {
+            let inner = a.inner.take().map(|(s, t)| e.at + s..e.at + t);
+            let field = fs.iter().find(|(_, r)| inner.as_ref().is_some_and(|g| g.start - 1 == r.start));
+            if inner == list {
+                a.keys = Some(Vec::new());
+                fills.extend(needed.iter().chain(&optional).map(|k| (k.clone(), i, Some(k.clone()))));
+            } else if a.text.trim() == e.key {
+                fills.push(("key".into(), i, None));
+            } else if let Some((f, _)) = field {
+                fills.push((slot(f), i, None));
+            } else {
+                continue;
+            }
+            a.text.clear();
         }
-        if let Some(g) = e.groups.iter().find(|g| text[g.inner.clone()].trim() == e.key) {
-            cuts.push((g.inner.clone(), "${key}".into()));
-        }
-        cuts.sort_by_key(|c| c.0.start);
-        let mut out = String::new();
-        let mut at = e.at;
-        for (r, t) in cuts {
-            out.push_str(&text[at..r.start]);
-            out.push_str(&t);
-            at = r.end;
-        }
-        out.push_str(&text[at..e.end]);
+        let fills: Vec<snapshot::Fill> =
+            fills.iter().map(|(f, i, k)| (f.as_str(), 0, Some(*i), k.as_deref())).collect();
         let taken: Vec<&str> = all.iter().map(|e| e.key.as_str()).collect();
         let mut form = vec![
             json!({ "name": "key", "value": "", "placeholder": "key", "check": ["required", "key", "unique"], "taken": taken }),
@@ -330,8 +328,7 @@ fn add(cx: &Cx, all: &[Entry], family: &[String]) -> Option<Json> {
                 .iter()
                 .map(|f| json!({ "name": f, "value": "", "placeholder": f, "check": ["tex"], "more": true })),
         );
-        let line = if text[..last].ends_with('\n') { format!("{out}\n") } else { format!("\n{out}") };
-        kinds.push(json!({ "name": format!("\\{}", e.head), "fields": form, "edit": edit_of(cx.path, vec![put(cx.doc, last, last, line)]) }));
+        kinds.push(json!({ "name": format!("\\{}", e.head), "fields": form, "print": snapshot::form(&[n], &fills) }));
     }
     Some(json!({ "title": "Add entry", "kinds": kinds }))
 }
