@@ -12,7 +12,7 @@ It provides [diagnostics, quick fixes, hover, definitions, completion and docume
 
 1. Install LSP4IJ from the Marketplace.
 2. Build the plugin with `./gradlew buildPlugin --no-daemon` in `editors/intellij/`.
-3. In Settings, Plugins, use the gear, Install Plugin from Disk, and pick `build/distributions/satex-intellij-0.1.0.zip`.
+3. In Settings, Plugins, use the gear, Install Plugin from Disk, and pick `build/distributions/satex-intellij-0.2.0.zip`.
 4. Restart the IDE.
 
 ## Settings

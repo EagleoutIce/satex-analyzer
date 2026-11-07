@@ -93,9 +93,13 @@ EOF
 # Update Cargo.toml
 sed -i "s/^version = \"${CURRENT_VERSION}\"/version = \"${NEW_VERSION}\"/" Cargo.toml
 sed -i "s/^version: ${CURRENT_VERSION}$/version: ${NEW_VERSION}/" CITATION.cff
+sed -i "s/^version = \"${CURRENT_VERSION}\"/version = \"${NEW_VERSION}\"/" editors/intellij/build.gradle.kts
+sed -i "s/satex-intellij-${CURRENT_VERSION}\.zip/satex-intellij-${NEW_VERSION}.zip/" doc/src/wiki/intellij.md.in doc/wiki/intellij.md
+sed -i "s/^Current version: ${CURRENT_VERSION}\./Current version: ${NEW_VERSION}./; s/^satex ${CURRENT_VERSION}$/satex ${NEW_VERSION}/" README.md
+(cd editors/vscode && npm version --no-git-tag-version --allow-same-version "$NEW_VERSION" > /dev/null)
 
 # Update Cargo.lock
-cargo update -p satex 2>/dev/null || true
+cargo update --offline -p "$(sed -n 's/^name = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
 
 # Print summary
 echo "Prepared release v${NEW_VERSION}"
@@ -103,9 +107,10 @@ echo ""
 echo "Files changed:"
 echo "  - Cargo.toml (version: $CURRENT_VERSION -> $NEW_VERSION)"
 echo "  - Cargo.lock (updated)"
+echo "  - CITATION.cff, README.md, editors/vscode, editors/intellij"
 echo "  - CHANGELOG.md (Unreleased -> v${NEW_VERSION})"
 echo "  - doc/release-notes/${NEW_VERSION}.md (created)"
 echo ""
 echo "Next steps:"
-echo "  git commit -am 'Bump version to $NEW_VERSION'"
+echo "  git commit -S -am 'build(release): v$NEW_VERSION, <what it brings>'"
 echo "  git tag -a v${NEW_VERSION} -m \"Release v${NEW_VERSION}\""

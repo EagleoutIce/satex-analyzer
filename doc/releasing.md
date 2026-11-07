@@ -18,14 +18,14 @@ The script will:
 1. Verify the working tree is clean
 2. Read the current version from Cargo.toml
 3. Bump the version according to the specified type (patch, minor, or major)
-4. Update Cargo.toml and Cargo.lock
+4. Update Cargo.toml, Cargo.lock, CITATION.cff, README.md and the VS Code and IntelliJ plugin versions
 5. Turn "Unreleased" in `CHANGELOG.md` into the new version (`scripts/changelog.py release`)
 6. Generate release notes in `doc/release-notes/<version>.md` from the changelog section, with the commits since the previous release
 
 The script will print two commands you must run manually:
 
 ```bash
-git commit -am 'Bump version to X.Y.Z'
+git commit -S -am 'build(release): vX.Y.Z, <what it brings>'
 git tag -a vX.Y.Z -m "Release vX.Y.Z"
 ```
 

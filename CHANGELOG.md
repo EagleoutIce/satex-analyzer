@@ -6,7 +6,11 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
-<!-- reviewed: 7ad4681 -->
+<!-- reviewed: 31d41cf -->
+
+## v0.2.0 (2026-11-07)
+
+Sound and usable on real documents: joins, loops and caches that keep the analysis precise and ending, the playground and `satex gui`, editor widgets and managers, VS Code and IntelliJ plugins, latexmk builds.
 
 ### Playground
 
@@ -116,6 +120,9 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site and docs
 
+- `fix` **Site scripts type-check again**, so the pages deploy.
+- `fix` **Every in-page link reaches its section.** [`8028fda`](https://github.com/EagleoutIce/satex-analyzer/commit/8028fda)
+- `fix` **Semantics pages match tex.web and the code.** Theorems state their limits, the main theorem has no free hypotheses. [`2e43003`](https://github.com/EagleoutIce/satex-analyzer/commit/2e43003) [`566fb52`](https://github.com/EagleoutIce/satex-analyzer/commit/566fb52) [`74777e5`](https://github.com/EagleoutIce/satex-analyzer/commit/74777e5) [`6d534b2`](https://github.com/EagleoutIce/satex-analyzer/commit/6d534b2) [`23e02be`](https://github.com/EagleoutIce/satex-analyzer/commit/23e02be) [`2be133d`](https://github.com/EagleoutIce/satex-analyzer/commit/2be133d) [`8757fc4`](https://github.com/EagleoutIce/satex-analyzer/commit/8757fc4)
 - `feat` **Command output on the docs pages** is highlighted, and its cards link to the docs. [`b0d090f`](https://github.com/EagleoutIce/satex-analyzer/commit/b0d090f)
 - `feat` **Landing page.** The first cards show on the first screen, plugin groups show at a glance, lint rules get their own shot, quick fixes and settings join the ring, the build runs as stacked `.aux` cards, before and after overlap. [`2f8a357`](https://github.com/EagleoutIce/satex-analyzer/commit/2f8a357) [`fd50308`](https://github.com/EagleoutIce/satex-analyzer/commit/fd50308) [`3e8a887`](https://github.com/EagleoutIce/satex-analyzer/commit/3e8a887) [`641737d`](https://github.com/EagleoutIce/satex-analyzer/commit/641737d)
 - `docs` **Wiki** on the type lattice, precision limits and why TeX is hard, regenerated from the code. See [why TeX is hard](doc/wiki/challenges.md). [`5083317`](https://github.com/EagleoutIce/satex-analyzer/commit/5083317) [`3a04299`](https://github.com/EagleoutIce/satex-analyzer/commit/3a04299) [`85e15a6`](https://github.com/EagleoutIce/satex-analyzer/commit/85e15a6)
@@ -124,6 +131,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Build and infrastructure
 
+- `build` **Sharded CI** builds once and its shards reuse prebuilt tests and cached kernels. [`03858a7`](https://github.com/EagleoutIce/satex-analyzer/commit/03858a7) [`61992f1`](https://github.com/EagleoutIce/satex-analyzer/commit/61992f1) [`31d41cf`](https://github.com/EagleoutIce/satex-analyzer/commit/31d41cf) [`b8031fc`](https://github.com/EagleoutIce/satex-analyzer/commit/b8031fc)
 - `build` **Incremental CI**, a portable wasm toolchain, Pages from main. [`ff16822`](https://github.com/EagleoutIce/satex-analyzer/commit/ff16822) [`7397e7c`](https://github.com/EagleoutIce/satex-analyzer/commit/7397e7c)
 - `build` **Benchmarks over releases.** [`9a9de54`](https://github.com/EagleoutIce/satex-analyzer/commit/9a9de54)
 - `build` **Developer binaries** behind a `tools` feature. [`8bfbc07`](https://github.com/EagleoutIce/satex-analyzer/commit/8bfbc07)
