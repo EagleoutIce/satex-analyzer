@@ -554,7 +554,7 @@ cache
   source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
   holds 197802 definitions
   state cached
-… 3 more lines omitted
+… 2 more lines omitted
 ```
 
 </details>
