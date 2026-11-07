@@ -1217,3 +1217,21 @@ fn a_loop_defines_late_what_its_first_passes_do_not() {
     );
     assert!(crate::support::maybe_defined(&a, "late"), "\\late is never defined after the loop");
 }
+
+/// Names of unknown text given a text per record (a note per line read):
+/// the family's texts widen to their hull, so the paths a read of the
+/// family parts into do not grow with the number of records.
+#[test]
+fn a_family_given_a_text_per_record_keeps_the_paths_few() {
+    let peak = |records: usize| {
+        let name = r"\csname rec@\romannumeral\count255\endcsname";
+        let mut source = String::from(r"\long\def\addto#1#2{\toks0\expandafter{#1#2}\xdef#1{\the\toks0}}");
+        for r in 0..records {
+            source += &format!("\\count255=\\pdfuniformdeviate 100000 \\expandafter\\addto{name}{{\\def\\r{{{r}}}}}\n");
+        }
+        source += &format!("{name}{name}");
+        analyze(&source).peak_paths
+    };
+    let (few, many) = (peak(2), peak(6));
+    assert!(many <= few, "{many} paths with 6 records, {few} with 2");
+}

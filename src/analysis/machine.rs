@@ -6389,6 +6389,7 @@ will look undefined",
                 }
             }
             self.wild.add(prefix, suffix, digits, Some(meaning.clone()));
+            self.widen_wild();
             self.diagnose(
                 Severity::Imprecision,
                 "unknown-name",
@@ -12564,11 +12565,11 @@ will look undefined",
     }
 
     /// A name built from partly unknown text (`\\csname h⟨digits⟩\\endcsname`),
-    /// run: a path per meaning of the names of its family it may spell,
-    /// that name in its place, and one where it was never defined and is
-    /// `\\relax` (tex.web § 372), which does nothing here. `false` when it
-    /// is no such name or the family has more than `limits.meaning_set`
-    /// meanings; it then runs as unknown text.
+    /// run: a path per meaning of the names of its family it may spell or
+    /// names of unknown text were given, and one where it was never defined
+    /// and is `\\relax` (tex.web § 372), which does nothing here. `false`
+    /// when it is no such name or the family has any meaning or more than
+    /// `limits.meaning_set`; it then runs as unknown text.
     /// The name keeps that meaning on its path, so each later read of the
     /// same token agrees with it; the caller goes on with it in the same
     /// step, as given back its paths would meet at once and join.
@@ -12580,23 +12581,28 @@ will look undefined",
         let gap = self.name_gap_class(sym);
         let num = self.name_number(sym);
         let limit = usize::from(self.limits.meaning_set);
-        let mut members: Vec<(Sym, Meaning)> = Vec::new();
+        // What names of unknown text were given: any is no split.
+        let Some(given) = self.wild.overlap_meanings(&prefix, &suffix) else { return false };
+        let mut members = given;
+        if members.len() > limit {
+            return false;
+        }
         for s in self.bound_shaped(&prefix, &suffix) {
             let name = self.out.interner.name(s);
             if self.is_unknown_name(s) || !gap_fits(&name[prefix.len()..name.len() - suffix.len()], gap, num) {
                 continue;
             }
             let meaning = self.env.meaning(s);
-            if matches!(meaning, Meaning::Undefined) || members.iter().any(|(_, m)| *m == meaning) {
+            if matches!(meaning, Meaning::Undefined) || members.contains(&meaning) {
                 continue;
             }
             if members.len() == limit {
                 return false;
             }
-            members.push((s, meaning));
+            members.push(meaning);
         }
         self.split(sym, span, members.len() + 1, |m, arm| {
-            let meaning = members.get(arm).map_or(Meaning::Primitive(Primitive::Relax), |(_, meaning)| meaning.clone());
+            let meaning = members.get(arm).map_or(Meaning::Primitive(Primitive::Relax), Meaning::clone);
             m.refine(sym, meaning);
             true
         })
@@ -13661,6 +13667,16 @@ impl Wild {
         }
     }
 
+    /// Each family's meanings, `hull` where it gives one: a widening, so
+    /// texts written per record read do not grow the set with the input.
+    pub(crate) fn widen(&mut self, hull: impl Fn(&[Meaning]) -> Option<Meaning>) {
+        for p in &mut self.0 {
+            if let Some(h) = p.meanings.as_deref().and_then(&hull) {
+                p.meanings = Some(Rc::from([h]));
+            }
+        }
+    }
+
     pub(crate) fn matches(&self, name: &str) -> bool {
         self.0.iter().any(|p| p.fits(name))
     }
@@ -13901,6 +13917,15 @@ impl Machine<'_> {
     pub(crate) fn widen_recent(&mut self) {
         let written = self.env.recent_since(0);
         self.widen_names(&written);
+    }
+
+    /// [`Wild::widen`] by the macros' hull ([`crate::engine::env::macros_hull`]).
+    pub(crate) fn widen_wild(&mut self) {
+        let syms = self.typed_syms();
+        let limit = self.env.sets.text_names;
+        let typed = crate::engine::env::typed!(self, syms);
+        self.wild.widen(|ms| crate::engine::env::macros_hull(ms, &typed, limit));
+        self.mint();
     }
 
     fn widen_names(&mut self, written: &[Sym]) {

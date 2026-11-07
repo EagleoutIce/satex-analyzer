@@ -2307,6 +2307,19 @@ fn hull_meaning(b: &Binding, typed: &Typed, reach: Reach, limit: usize) -> Hulle
     hull_by(b, &hull).unwrap_or((Meaning::Unknown, None))
 }
 
+/// Meanings a family of names was given, widened: two or more parameterless
+/// macros of like prefixes are their hull ([`hull_meaning`]), so texts that
+/// grow per pass (a note per record read) stay one meaning. `None` where
+/// `ms` are no such macros.
+pub fn macros_hull(ms: &[Meaning], typed: &Typed, limit: usize) -> Option<Meaning> {
+    if ms.len() < 2 {
+        return None;
+    }
+    let b = Binding { may: Some(ms.into()), ..Binding::builtin(Meaning::Unknown) };
+    let hull = |t: &[&[Token]]| names_hull(t, typed, limit).or_else(|| Some(text_hull(t, typed, Reach::Havoc)));
+    macro_hull(&b, &hull)
+}
+
 /// Lists of names (`\@elt\bx@A\@elt\bx@B`) as one typed text that may
 /// hold their names, in any order and number: a float queue keeps which
 /// boxes it holds. `None` for other texts or past `limit` names.
