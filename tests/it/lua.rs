@@ -209,11 +209,13 @@ fn a_library_function_satex_lacks_is_not_an_error_pcall_catches() {
 
 #[test]
 fn an_upper_case_magic_comment_selects_the_engine() {
-    // TeXworks and TeXShop read `% !TEX program` and `% !TEX TS-program` alike.
+    // TeXworks and TeXShop read `% !TEX program` and `% !TEX TS-program` alike. Which engine a
+    // comment names is a reading of the source, settled before any kernel runs, so the test
+    // reads it there: a full run would build a XeTeX kernel only to ask this.
     for magic in ["% !TEX program = xelatex", "% !TeX TS-program = XeLaTeX"] {
         let source = format!("{magic}\n\\relax\n");
-        let analysis = analyze_latex(&source);
-        assert_eq!(analysis.plugins.engine, Engine::XeTeX, "{magic}");
+        let engine = satex::plugins::Plugins::sniff_engine(&crate::support::config(), &source);
+        assert_eq!(engine, Engine::XeTeX, "{magic}");
     }
 }
 
