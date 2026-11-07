@@ -118,6 +118,8 @@ A float is an environment whose code reaches `\@float`: `figure`, `table` and th
 A `tikzpicture` the run met: a lens "Edit drawing…" on its `\begin` line and the view anywhere inside. The canvas shows the nodes the run made, where pgf put each, with its shape and size (`\pgf@sh@ns@⟨node⟩` and its saved anchors). Plain paths between coordinates show too.
 
 - Tools: add a rectangle or circle node, move one by drag (snapped to the grid, a free length field, `0.5cm` or `1in`), connect two with `->`, `<->` or `--`, delete, edit a label.
+- Click an arrow, or Tab to it, to edit its tips, style, bend, label and anchors. Tab walks nodes and arrows in the text's order.
+- Shapes: every shape the run's pgf declared (`\pgf@sh@s@⟨name⟩`), then those of the installation's libraries not loaded, grouped by the `\usetikzlibrary` Apply adds. Each is drawn from a sample TeX drew (`previews.json`), stretched to the node. The keys a shape's code reads that `rectangle`'s does not (`regular polygon sides`, `star points`) are fields, the run's value as placeholder.
 - It writes `\node[draw] (n1) at (x,y) {label};` and `\draw[->] (a) -- (b);`. Statements it did not change stay as they were.
 - Anything else stays code and shows read-only: a `\foreach`, a scope, a node placed relative to another. A node the run put elsewhere than its text says counts as code too. Nothing is dropped.
 - Mermaid: paste a flowchart (`graph TD`, `A[x] -->|y| B((z))`) to add its nodes, ranked by longest path, `spacing` cm apart. Export writes the picture's nodes and arrows as a flowchart.

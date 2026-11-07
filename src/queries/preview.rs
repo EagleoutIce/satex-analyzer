@@ -22,6 +22,8 @@ pub enum Stroke {
     Node,
     /// A node after `of` (positioning's `right=of a`).
     NodeOf,
+    /// A node shape, drawn by TeX as a sample node.
+    Shape,
 }
 
 impl Stroke {
@@ -49,6 +51,9 @@ const DEPTH: usize = 3;
 const PX: f64 = 2.0;
 /// The ink of every preview, readable on light and dark backgrounds.
 const INK: &str = "#888888";
+/// A shape sample's minimum width and height (cm).
+pub const SAMPLE_W: f64 = 1.0;
+pub const SAMPLE_H: f64 = 0.5;
 /// The width, in points, a dash pattern is drawn with when the run left `\pgflinewidth` unknown.
 const UNKNOWN_WIDTH: f64 = 0.4;
 
@@ -268,9 +273,33 @@ pub fn pattern_names(analysis: &Analysis) -> Vec<String> {
     names.collect::<BTreeSet<_>>().into_iter().collect()
 }
 
+/// The node shapes the run declared: pgf defines `pgf@sh@s@⟨name⟩` for each.
+pub fn shape_names(analysis: &Analysis) -> Vec<String> {
+    let names = (0..analysis.interner.len() as u32).map(Sym).filter_map(|sym| {
+        let name = analysis.interner.name(sym).strip_prefix("pgf@sh@s@")?;
+        (analysis.env.is_defined(sym) && !name.is_empty() && !name.contains('@')).then(|| name.to_string())
+    });
+    names.collect::<BTreeSet<_>>().into_iter().collect()
+}
+
+/// The shapes the installation's libraries declare that the run lacks, each with its load.
+pub fn library_shapes(analysis: &Analysis) -> Vec<(String, String)> {
+    let have = shape_names(analysis);
+    let usable = |n: &str| !n.is_empty() && !n.contains(['#', '\\', '@']);
+    let mut out = crate::linter::shared::library_declared(analysis, "shape");
+    out.retain(|(n, _)| usable(n) && !have.contains(n));
+    out.sort();
+    out
+}
+
 /// A sprite's name in `previews.json`.
 fn sprite(kind: Stroke, name: &str) -> String {
-    format!("{}:{}", if kind == Stroke::Arrows { "arrow" } else { "pattern" }, name.trim())
+    let kind = match kind {
+        Stroke::Arrows => "arrow",
+        Stroke::Shape => "shape",
+        _ => "pattern",
+    };
+    format!("{kind}:{}", name.trim())
 }
 
 #[derive(Default)]
@@ -305,15 +334,19 @@ pub fn drawn(analysis: &Analysis, kind: Stroke, name: &str) -> Option<Preview> {
     load(&mut sheet);
     match sheet.svgs.get(&key) {
         Some(svg) if !svg.is_empty() => {
-            let what = if kind == Stroke::Arrows { "arrows" } else { "pattern" };
+            let what = match kind {
+                Stroke::Arrows => "arrows",
+                Stroke::Shape => "shape",
+                _ => "pattern",
+            };
             Some(Preview { text: format!("{what}={}", name.trim()), svg: svg.clone() })
         }
         Some(_) => None,
         None => {
             if !cfg!(target_os = "emscripten") && !sheet.busy && !sheet.failed {
                 sheet.busy = true;
-                let missing = wanted(analysis).into_iter().filter(|w| !sheet.svgs.contains_key(w));
-                let (libs, wanted): (_, Vec<String>) = (libraries(analysis), missing.collect());
+                let (all, libs) = wanted(analysis);
+                let wanted: Vec<String> = all.into_iter().filter(|w| !sheet.svgs.contains_key(w)).collect();
                 std::thread::spawn(move || {
                     let svgs = render(&libs, &wanted);
                     if let Ok(mut sheet) = SHEET.lock() {
@@ -339,10 +372,16 @@ fn save(svgs: &BTreeMap<String, String>) {
     }
 }
 
-/// Every tip and pattern the run declared, as sprite names.
-fn wanted(analysis: &Analysis) -> Vec<String> {
+/// Every tip, pattern and shape the run declared and every shape the installation's libraries
+/// declare, as sprite names, with the loads that draw them.
+fn wanted(analysis: &Analysis) -> (Vec<String>, Vec<String>) {
+    let more = library_shapes(analysis);
+    let mut loads = libraries(analysis);
+    loads.extend(more.iter().map(|(_, l)| l.clone()).filter(|l| !loads.contains(l)).collect::<BTreeSet<_>>());
     let arrows = arrow_specs(analysis).into_iter().map(|s| sprite(Stroke::Arrows, &s));
-    arrows.chain(pattern_names(analysis).into_iter().map(|p| sprite(Stroke::Pattern, &p))).collect()
+    let patterns = pattern_names(analysis).into_iter().map(|p| sprite(Stroke::Pattern, &p));
+    let shapes = shape_names(analysis).into_iter().chain(more.into_iter().map(|(n, _)| n));
+    (arrows.chain(patterns).chain(shapes.map(|s| sprite(Stroke::Shape, &s))).collect(), loads)
 }
 
 /// The pgf and TikZ libraries the run loaded, by their files' names.
@@ -363,12 +402,12 @@ pub fn libraries(analysis: &Analysis) -> Vec<String> {
 /// Every sprite of `previews.json` the run needs, drawn now: what the
 /// `previews` query gives and the site ships for the playground.
 pub fn sheet(analysis: &Analysis) -> BTreeMap<String, String> {
-    let wanted = wanted(analysis);
+    let (wanted, libs) = wanted(analysis);
     let Ok(mut sheet) = SHEET.lock() else { return BTreeMap::new() };
     load(&mut sheet);
     let missing: Vec<String> = wanted.iter().filter(|w| !sheet.svgs.contains_key(*w)).cloned().collect();
     if !missing.is_empty() {
-        sheet.svgs.extend(render(&libraries(analysis), &missing).unwrap_or_default());
+        sheet.svgs.extend(render(&libs, &missing).unwrap_or_default());
         save(&sheet.svgs);
     }
     wanted.into_iter().filter_map(|w| Some((w.clone(), sheet.svgs.get(&w)?.clone()))).collect()
@@ -384,6 +423,10 @@ fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>
         .iter()
         .map(|w| match w.split_once(':') {
             Some(("arrow", spec)) => format!("\\tikz\\draw[ink,thick,{spec}] (0,0) -- (0.9,0);"), // not prose
+            // twice as wide as high: a shape that keeps its own proportions shows it
+            Some(("shape", name)) => format!(
+                "\\tikz\\node[draw=ink,fill=ink,fill opacity=.15,shape={{{name}}},inner sep=0pt,minimum width={SAMPLE_W}cm,minimum height={SAMPLE_H}cm] {{}};" // not prose
+            ),
             Some((_, name)) => {
                 format!("\\tikz\\path[pattern={{{name}}},pattern color=ink] (0,0) rectangle (0.9,0.45);") // not prose
             }

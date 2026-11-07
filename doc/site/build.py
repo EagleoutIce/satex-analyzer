@@ -740,7 +740,7 @@ def bundle(satex, work):
 
 
 def previews(satex, work, tree):
-    """Completion's pictures of the arrow tips and patterns the bundled TikZ libraries declare,
+    """Completion's and the drawing canvas's pictures of the arrow tips, patterns and node shapes the bundled TikZ libraries declare,
     drawn by TeX here (`satex query previews`): the browser has no TeX to draw them."""
     libs = sorted(p.name.removeprefix("tikzlibrary").removesuffix(".code.tex") for p in tree.rglob("tikzlibrary*.code.tex"))
     data = memo(work, "previews", [BINARY, libs], lambda: previews_run(satex, work, libs))
@@ -748,7 +748,7 @@ def previews(satex, work, tree):
     return data
 
 
-# The pictures of arrow tips and patterns (`kind:name` -> SVG), for the playground's completion and the wiki's hover cards.
+# The pictures of arrow tips, patterns and node shapes (`kind:name` -> SVG), for the playground's completion and the wiki's hover cards.
 PREVIEWS = {}
 
 

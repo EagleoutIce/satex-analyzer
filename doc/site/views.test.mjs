@@ -129,6 +129,23 @@ assert.equal(back.dir, 'TD');
   const shaft = 'M0 0H24.8';
   const shafted = D.tipMarker(`<svg viewBox='76 55 26 7'><g transform='translate(77,59)'><path d='${shaft}' fill='none'/><g transform='translate(25,0)'><path d='M-2.5 3C-1 1 0 0 0 0' fill='none'/></g></g></svg>`);
   assert.ok(!shafted.inner.includes(shaft) && shafted.inner.includes('M-2.5 3'), shafted.inner);
+  // a shape TeX drew: its ink and widths dropped for the node's own, a path only stroked stays unfilled
+  const sample = D.shapeSample("<svg width='60' height='30' viewBox='10 20 30 15'><g id='page3'><g fill='#888' stroke='#888' fill-opacity='0.15'><g stroke-width='0.4'><path d='M0 0L5 5Z'/><path d='M1 1H4' fill='none'/></g></g></g></svg>");
+  assert.deepEqual(sample.box, [10, 20, 30, 15]);
+  assert.ok(!/#888|stroke-width|fill-opacity|id=/.test(sample.inner) && sample.inner.includes("fill='none'"), sample.inner);
+  // the shapes offered are the ones the run defined, by name, then the libraries' with their load; none named: rectangle and circle
+  const offered = D.shapeList({ shapes: [{ name: 'rectangle' }, { name: 'star', keys: [{ name: 'star points', default: '5' }] }, { name: 'cloud', load: '\\usetikzlibrary{shapes.symbols}' }] });
+  assert.deepEqual([...offered.keys()], ['rectangle', 'star', 'cloud']);
+  assert.deepEqual([offered.get('star').keys[0].name, offered.get('cloud').load, offered.get('rectangle').keys], ['star points', '\\usetikzlibrary{shapes.symbols}', []]);
+  assert.deepEqual([...D.shapeList({ shapes: ['rectangle', 'diamond'] }).keys()], ['rectangle', 'diamond'], 'names alone, as older runs send them');
+  assert.deepEqual([...D.shapeList({}).keys()], ['rectangle', 'circle']);
+  // Tab walks nodes and arrows in order and leaves the canvas past either end
+  const [n1, e1, n2] = [{}, {}, {}];
+  assert.deepEqual([D.cycle([n1, e1, n2], null, false), D.cycle([n1, e1, n2], n1, false), D.cycle([n1, e1, n2], e1, true), D.cycle([n1, e1, n2], n2, false), D.cycle([n1, e1, n2], null, true)], [n1, e1, n1, null, n2]);
+  // an arrow's hit band: its width set per drawing in screen pixels, never fixed in cm by the style; its label takes clicks too
+  const hitRule = D.STYLE.match(/\.tv-hit \{[^}]*\}/)[0];
+  assert.ok(!/stroke-width/.test(hitRule) && /stroke: transparent/.test(hitRule), hitRule);
+  assert.match(D.STYLE, /\.tv-edge text \{[^}]*pointer-events: auto/);
 
   // 8. layers: blocks of `pgfonlayer` and of a scope whose key opens a layer
   const layered = `
@@ -850,14 +867,4 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   assert.equal(L.show(Math.round(1.5 * 72.27 * 65536), 'in'), '1.5in');
   assert.equal(L.show(Math.round(2 * cm), 'mm'), '20mm');
   assert.ok(Math.abs(L.to('1in', 'cm') - 2.54) < 1e-9);
-}
-
-// a definition history's event as text: the augment's added text, the copy, the call holding an older text
-{
-  const { historyEvent } = self.satexViews.history;
-  const e = historyEvent({ by: '\\appto', file: 'main.tex', path: 'main.tex', line: 4, state: 'replaced', owner: 'document', change: { kind: 'appends', added: ' world', removed: '' } });
-  assert.deepEqual([e.by, e.at, e.change, e.when], ['\\appto', 'main.tex:4', 'appends ` world`', '']);
-  assert.equal(historyEvent({ change: { kind: 'replaces', added: '\\oldgreet !', removed: 'Hello world' } }).change, 'replaces `Hello world` by `\\oldgreet !`');
-  const copy = historyEvent({ by: '\\let', copies: { name: '\\greet', file: 'main.tex', line: 4, by: '\\appto' }, calls: [{ name: '\\oldgreet', holds: '\\greet', at: 'main.tex:4' }], when: ['\\ifnum true at main.tex:10'] });
-  assert.deepEqual([copy.copies, copy.calls, copy.when], [{ name: '\\greet', at: 'main.tex:4', by: '\\appto' }, [{ name: '\\oldgreet', note: 'holds \\greet of main.tex:4' }], '\\ifnum true at main.tex:10']);
 }

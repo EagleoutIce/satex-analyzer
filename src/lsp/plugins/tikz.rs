@@ -108,15 +108,11 @@ fn facts(cx: &Cx, own: std::ops::Range<usize>) -> Json {
         Some(crate::engine::tex::detokenize(&m.replacement_text, &a.interner))
     };
     let mut declared = Vec::new();
-    let mut shapes = Vec::new();
     let mut keys = serde_json::Map::new();
     for sym in (0..a.interner.len() as u32).map(crate::engine::tex::Sym) {
         let name = a.interner.name(sym);
         if let Some(layer) = name.strip_prefix("pgf@layerbox@").filter(|_| a.env.is_defined(sym)) {
             declared.push(layer.to_string());
-        } else if let Some(shape) = name.strip_prefix("pgf@sh@s@").filter(|s| !s.contains('@') && a.env.is_defined(sym))
-        {
-            shapes.push(shape.to_string());
         } else if let Some(key) = name.strip_prefix("pgfk@/tikz/").and_then(|k| k.strip_suffix("/.@cmd")) {
             // a style whose code opens a layer (backgrounds' `on background layer`)
             let layer = text(name).and_then(|t| {
@@ -131,7 +127,7 @@ fn facts(cx: &Cx, own: std::ops::Range<usize>) -> Json {
     let order: Vec<String> = text("pgf@layerlist")
         .map(|l| l.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
         .unwrap_or_default();
-    shapes.sort();
+    let shapes = shapes(a, &text);
     let libraries: Vec<String> = (crate::queries::preview::libraries(a).iter())
         .filter_map(|l| l.strip_prefix("\\usetikzlibrary{")?.strip_suffix('}').map(str::to_string))
         .collect();
@@ -140,7 +136,31 @@ fn facts(cx: &Cx, own: std::ops::Range<usize>) -> Json {
         .filter(|s| Some(s.file) == file)
         .map(|s| lsp_types::Position::new(s.line.saturating_sub(1), 0));
     let (keys_of, defs) = tikz_keys(cx, file, own);
-    json!({ "tips": tips, "colors": colors, "shapes": shapes, "libraries": libraries, "load_at": load_at, "layers": { "declared": declared, "order": order }, "layer_keys": keys, "keys": keys_of, "defs": defs })
+    let sample = [crate::queries::preview::SAMPLE_W, crate::queries::preview::SAMPLE_H];
+    json!({ "tips": tips, "colors": colors, "shapes": shapes, "sample": sample, "libraries": libraries, "load_at": load_at, "layers": { "declared": declared, "order": order }, "layer_keys": keys, "keys": keys_of, "defs": defs })
+}
+
+/// Every node shape: the run's (`pgf@sh@s@⟨name⟩`) with the `/pgf/` keys its code reads that
+/// `rectangle`'s does not (`regular polygon sides`) and their values, then those the
+/// installation's libraries declare with the `load` that brings each. Each with TeX's `svg` sample.
+fn shapes(a: &Analysis, text: &dyn Fn(&str) -> Option<String>) -> Vec<Json> {
+    use crate::queries::preview::{Stroke, drawn, library_shapes, shape_names};
+    // the keys a shape's saved macros and background path read
+    let reads = |shape: &str| -> std::collections::BTreeSet<String> {
+        let code: String = ["s", "bg"].iter().filter_map(|k| text(&format!("pgf@sh@{k}@{shape}"))).collect();
+        code.split("{/pgf/").skip(1).filter_map(|r| Some(r[..r.find('}')?].trim().to_string())).collect()
+    };
+    let base = reads("rectangle");
+    let svg = |name: &str| drawn(a, Stroke::Shape, name).map(|p| p.svg);
+    let own = shape_names(a).into_iter().map(|name| {
+        let keys: Vec<Json> = (reads(&name).difference(&base))
+            .filter_map(|k| Some(json!({ "name": k, "default": text(&format!("pgfk@/pgf/{k}"))? })))
+            .collect();
+        json!({ "name": name, "svg": svg(&name), "keys": keys })
+    });
+    let more =
+        library_shapes(a).into_iter().map(|(name, load)| json!({ "name": name, "svg": svg(&name), "load": load }));
+    own.chain(more).collect()
 }
 
 /// The `/tikz/` keys the run stored, as the property editor offers them: `name`, the value's

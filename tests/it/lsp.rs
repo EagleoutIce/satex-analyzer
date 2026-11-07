@@ -4280,7 +4280,7 @@ fn tikz_plugin_offers_what_the_run_declared() {
     };
     let tips = names(&run["tips"], "name");
     assert!(["Stealth", "Latex", ">", "Circle"].iter().all(|t| tips.iter().any(|x| x == t)), "{tips:?}");
-    let shapes = names(&run["shapes"], "");
+    let shapes = names(&run["shapes"], "name");
     assert!(["rectangle", "circle", "diamond", "ellipse"].iter().all(|t| shapes.iter().any(|x| x == t)), "{shapes:?}");
     assert_eq!(run["layers"]["order"], json!(["background", "main", "fore"]), "{run}");
     let declared = names(&run["layers"]["declared"], "");
@@ -4294,6 +4294,47 @@ fn tikz_plugin_offers_what_the_run_declared() {
     // the picture as a snapshot: its `[node distance=2cm]` a key list the canvas sets
     assert_eq!(draw["node"]["range"]["start"]["line"], 6, "{draw}");
     assert_eq!(draw["node"]["args"][0]["keys"], json!([{ "key": "node distance", "value": "2cm" }]), "{draw}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Every shape pgf knows: the run's (`pgf@sh@s@⟨name⟩`), each with the `/pgf/` keys its code reads
+/// that `rectangle`'s does not and the run's value, then those the installation's libraries
+/// declare with the load that brings each, which the printer writes before `\\begin{document}`.
+#[test]
+fn tikz_plugin_offers_every_shape() {
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\usetikzlibrary{shapes.geometric}\n\\begin{document}\n\\begin{tikzpicture}\n  \\node[draw, star] (a) {A};\n\\end{tikzpicture}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("tikz-shapes", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 5, 3);
+    let views = at(&mut server, &uri, "satex/view", 5, 3);
+    let draw = &views.as_array().unwrap().iter().find(|v| v["plugin"] == "tikz").expect("a drawing")["sections"][0];
+    let shapes = draw["run"]["shapes"].as_array().unwrap();
+    let shape = |name: &str| shapes.iter().find(|s| s["name"] == name).unwrap_or_else(|| panic!("{name}: {shapes:?}"));
+    let keys = |name: &str| -> Vec<(String, String)> {
+        let list = shape(name)["keys"].as_array().cloned().unwrap_or_default();
+        list.iter()
+            .map(|k| (k["name"].as_str().unwrap().to_string(), k["default"].as_str().unwrap().to_string()))
+            .collect()
+    };
+    // pgf's defaults: five sides, five points
+    assert!(
+        keys("regular polygon").contains(&("regular polygon sides".into(), "5".into())),
+        "{:?}",
+        keys("regular polygon")
+    );
+    assert!(keys("star").iter().any(|(k, v)| k == "star points" && v == "5"), "{:?}", keys("star"));
+    assert!(keys("rectangle").is_empty() && shape("star")["load"].is_null(), "loaded: {}", shape("star"));
+    // a shape of a library the document does not load, and its load printed in the preamble
+    let cloud = shape("cloud");
+    assert_eq!(cloud["load"], "\\usetikzlibrary{shapes.symbols}", "{cloud}");
+    let lib = cloud["load"].as_str().unwrap().strip_prefix("\\usetikzlibrary{").unwrap().trim_end_matches('}');
+    let tikz = json!({ "name": "tikz", "options": "" });
+    let call = json!({ "kind": "call", "name": "usetikzlibrary", "args": [{ "open": "{", "keys": [{ "key": lib, "value": null }] }], "at": draw["run"]["load_at"], "line": true, "package": tikz });
+    let id = server
+        .request("satex/dialogApply", json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": [call] }));
+    let out = server.response(id)["result"].clone();
+    let written = applied(text, &uri, &json!({ "changes": { uri.clone(): out["edits"] } }), &[]);
+    assert!(written.contains("\\usetikzlibrary{shapes.symbols}\n\\begin{document}"), "{written}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
@@ -4412,11 +4453,8 @@ fn tikz_plugin_new_drawing_and_off() {
     assert_eq!(at(&mut server, &uri, "satex/view", 2, 1), json!([]), "not on a line with text");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
-    let (mut server, uri, dir) = open_set(
-        "tikz-off",
-        PICTURE,
-        &["type_plugins.tikz.enabled=false", "type_plugins.page.enabled=false", "type_plugins.history.enabled=false"],
-    );
+    let (mut server, uri, dir) =
+        open_set("tikz-off", PICTURE, &["type_plugins.tikz.enabled=false", "type_plugins.page.enabled=false"]);
     let _ = at(&mut server, &uri, "textDocument/hover", 4, 3);
     assert_eq!(at(&mut server, &uri, "satex/view", 5, 3), json!([]));
     let actions = at(&mut server, &uri, "textDocument/codeAction", 9, 0);
@@ -5288,88 +5326,4 @@ fn every_plugin_has_integration_support() {
     }
     assert_eq!(works_in(&["hover"]).iter().find(|(k, _)| *k == "intellij").unwrap().1, "full");
     assert_eq!(works_in(&["view"]).iter().find(|(k, _)| *k == "intellij").unwrap().1, "partial");
-}
-
-const HISTORY: &str = "\\documentclass{article}\n\\usepackage{etoolbox}\n\\newcommand\\greet{Hello}\n\\appto\\greet{ world}\n\\let\\oldgreet\\greet\n\\renewcommand\\greet{\\oldgreet!}\n\\makeatletter\n\\g@addto@macro\\greet{?}\n\\makeatother\n\\ifnum\\pdfuniformdeviate2=0 \\def\\mode{a}\\else\\def\\mode{b}\\fi\n\\begin{document}\n\\greet \\mode\n\\end{document}\n";
-
-/// The view of `name` on 0-based `line`'s first call of it.
-fn history_view(server: &mut Server, uri: &str, text: &str, line: usize, name: &str) -> Value {
-    let views = at(server, uri, "satex/view", line as u32, col(text, line, name, 2));
-    views.as_array().unwrap().iter().find(|v| v["plugin"] == "history").cloned().unwrap_or(Value::Null)
-}
-
-/// A command's history: each event newest first, with what an augment added; a `\let` copy links to
-/// the definition it copied, and the call of the copy in a later body says whose text it holds.
-#[test]
-fn history_lists_events_newest_first_with_copies() {
-    let (mut server, uri, dir) = open_set("history", HISTORY, &[]);
-    let view = history_view(&mut server, &uri, HISTORY, 11, "\\greet");
-    let s = &view["sections"][0];
-    assert_eq!(s["kind"], "history", "{view}");
-    let entries = s["history"]["entries"].as_array().unwrap();
-    let by: Vec<&str> = entries.iter().filter_map(|e| e["by"].as_str()).collect();
-    assert_eq!(by, ["\\g@addto@macro", "\\renewcommand", "\\appto", "\\newcommand"], "{view}");
-    assert_eq!(entries[0]["state"], "in force");
-    assert_eq!(entries[0]["change"], json!({ "kind": "appends", "added": "?", "removed": "" }));
-    assert_eq!(entries[2]["change"]["added"], " world");
-    assert_eq!(entries[1]["change"]["kind"], "replaces");
-    // the body calls \oldgreet, which holds \greet's text of line 4 (the \appto)
-    let call = &entries[0]["calls"][0];
-    assert_eq!((call["name"].as_str(), call["holds"].as_str()), (Some("\\oldgreet"), Some("\\greet")), "{view}");
-    assert!(call["at"].as_str().unwrap().ends_with(":4"), "{call}");
-    // the copy's own history links back to what it copied
-    let old = &s["histories"]["\\oldgreet"]["entries"][0];
-    assert_eq!((old["by"].as_str(), old["copies"]["name"].as_str()), (Some("\\let"), Some("\\greet")), "{old}");
-    assert_eq!(old["copies"]["line"], 4);
-    assert_eq!(s["trace"], "\\greet");
-    // the hover links it, the light bulb offers it
-    let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 11, col(HISTORY, 11, "\\greet", 2)));
-    assert!(md.contains("[Definition history…](command:satex.openView?"), "{md}");
-    let actions = at(&mut server, &uri, "textDocument/codeAction", 11, col(HISTORY, 11, "\\greet", 2));
-    assert!(actions.as_array().unwrap().iter().any(|a| a["command"]["arguments"][2] == "history"), "{actions}");
-    server.shutdown();
-    std::fs::remove_dir_all(dir).ok();
-    let (mut server, uri, dir) = open_set("history-off", HISTORY, &["type_plugins.history.enabled=false"]);
-    assert_eq!(history_view(&mut server, &uri, HISTORY, 11, "\\greet"), Value::Null);
-    server.shutdown();
-    std::fs::remove_dir_all(dir).ok();
-}
-
-/// Definitions on the arms of an undecided conditional: the arm on the path the view follows is
-/// the history, the other arm is listed under it, each with the condition it stands under.
-#[test]
-fn history_lists_definitions_on_other_paths() {
-    let (mut server, uri, dir) = open_set("history-paths", HISTORY, &[]);
-    let view = history_view(&mut server, &uri, HISTORY, 11, "\\mode");
-    let h = &view["sections"][0]["history"];
-    let (entries, other) = (h["entries"].as_array().unwrap(), h["other"].as_array().unwrap());
-    assert_eq!((entries.len(), other.len()), (1, 1), "{view}");
-    let bodies = [entries[0]["body"].as_str(), other[0]["body"].as_str()];
-    assert!(bodies.contains(&Some("a")) && bodies.contains(&Some("b")), "{view}");
-    let when = |e: &Value| e["when"][0].as_str().unwrap_or_default().to_string();
-    assert!(when(&entries[0]).contains("at main.tex:10") && when(&other[0]).contains("at main.tex:10"), "{view}");
-    assert_ne!(when(&entries[0]), when(&other[0]));
-    assert_eq!(other[0]["state"], "in force on another path");
-    server.shutdown();
-    std::fs::remove_dir_all(dir).ok();
-}
-
-const PRETTY: &str = "\\documentclass{article}\n\\newcommand\\setup[1]{\\def\\a{#1}\\ifx\\a\\empty\\let\\b\\relax\\else\\def\\b{#1 and #1}\\fi\\setlength\\parindent{0pt}}\n\\begin{document}\n\\setup{x}\n\\end{document}\n";
-
-/// A long body on hover: one statement per line, the conditional's arms indented; off, no block.
-#[test]
-fn hover_pretty_prints_bodies() {
-    let (mut server, uri, dir) = open_set("pretty", PRETTY, &[]);
-    let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 3, col(PRETTY, 3, "\\setup", 2)));
-    assert!(
-        md.contains("```tex\n\\def\\a{#1}\n\\ifx\\a\\empty\n  \\let\\b\\relax\n\\else\n  \\def\\b{#1 and #1}\n\\fi\n\\setlength\\parindent{0pt}\n```"),
-        "{md}"
-    );
-    server.shutdown();
-    std::fs::remove_dir_all(dir).ok();
-    let (mut server, uri, dir) = open_set("pretty-off", PRETTY, &["type_plugins.pretty.enabled=false"]);
-    let md = hover_md(&at(&mut server, &uri, "textDocument/hover", 3, col(PRETTY, 3, "\\setup", 2)));
-    assert!(!md.contains("```tex") && md.contains("setup"), "{md}");
-    server.shutdown();
-    std::fs::remove_dir_all(dir).ok();
 }
