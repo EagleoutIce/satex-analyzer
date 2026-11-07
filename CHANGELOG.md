@@ -69,6 +69,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **Names built from unknown text stay few.** A family written once per record widens to one typed text instead of one path per record. See [domains](doc/wiki/domains.md). [`0231561`](https://github.com/EagleoutIce/satex-analyzer/commit/0231561)
 - `fix` **Class options no longer stale every package cache.** Only the class replays them. [`3f9142f`](https://github.com/EagleoutIce/satex-analyzer/commit/3f9142f)
 - `fix` **No false errors in KOMA notecolumn.** Read flags stay with their stream, and reading a register no longer makes every register unknown. [`79becb2`](https://github.com/EagleoutIce/satex-analyzer/commit/79becb2) [`fff4841`](https://github.com/EagleoutIce/satex-analyzer/commit/fff4841)
 - `fix` **Here-float captions** stay in the typeset text. See [deferred material](doc/wiki/domains.md#files-written-in-the-run). [`39c9b7b`](https://github.com/EagleoutIce/satex-analyzer/commit/39c9b7b)
