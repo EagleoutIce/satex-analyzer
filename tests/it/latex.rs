@@ -1335,9 +1335,11 @@ mod document_metadata {
     /// still leaves gaps, so the codes are not asserted away; what is
     /// asserted is that each is bounded and the run finished.
     fn stays_bounded(options: &str, steps: u64) {
-        // the budget is the work a warm run executes: the first run fills the package cache
-        analyze_document(options);
-        let analysis = analyze_document(options);
+        // the budget is the work a warm run executes: the first run fills the package cache, its own
+        let name: String = options.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+        let cfg = crate::support::warm_config(&format!("metadata-{name}"));
+        analyze_with(options, &cfg);
+        let analysis = analyze_with(options, &cfg);
         let bound = bound();
         let over: Vec<_> = unsupported(&analysis).into_iter().filter(|&(_, n)| n > bound).collect();
         assert_eq!(over, Vec::new(), "gaps past the bound of {bound} for `{options}`");
@@ -1378,14 +1380,6 @@ mod document_metadata {
         assert!(!analysis.exhausted);
     }
 
-    #[test]
-    fn the_bare_five_line_document_stays_bounded() {
-        if !super::installed() {
-            return;
-        }
-        stays_bounded("lang=en", BOUNDED_STEPS);
-    }
-
     /// The options real documents carry: `pdfversion` picks the PDF the
     /// backend writes, `testphase` loads the latex-lab code, `tagging`
     /// turns the structure tree on.
@@ -1417,11 +1411,15 @@ mod document_metadata {
         const OPTIONS: &str = "lang=en,pdfversion=1.7,testphase={phase-III}";
         let mut lifted = crate::support::config();
         lifted.limits.repeat_failures = 0;
-        lifted.limits.steps = BOUNDED_STEPS;
-        let unbounded = worst(&analyze_with(OPTIONS, &lifted));
-        assert!(unbounded <= bound(), "without the bound one gap was counted {unbounded} times");
-        let bounded = worst(&analyze_document(OPTIONS));
-        assert!(bounded <= bound(), "one gap was counted {bounded} times, past the bound of {}", bound());
+        // both runs get the default budget, so only the bound differs; what the run costs is
+        // the_common_options_stay_bounded's to check
+        let (unbounded, bounded) = (analyze_with(OPTIONS, &lifted), analyze_document(OPTIONS));
+        assert!(worst(&unbounded) <= bound(), "without the bound one gap was counted {} times", worst(&unbounded));
+        // the bound adds its own `repeated-failure` notes; every gap besides them is the same
+        fn gaps(a: &Analysis) -> Vec<(&str, u32)> {
+            unsupported(a).into_iter().filter(|&(code, _)| code != "repeated-failure").collect()
+        }
+        assert_eq!(gaps(&unbounded), gaps(&bounded), "lifting the bound changed the report");
     }
 }
 

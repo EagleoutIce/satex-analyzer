@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 
 use satex::analysis::machine::Analysis;
-use satex::project::config::{Config, Load, Texmf};
+use satex::project::config::{Cache, Config, Load, Texmf};
 use std::path::{Path, PathBuf};
 
 /// `Config::default()` with `limits.seconds = 0` (no wall-clock budget), so
@@ -444,4 +444,18 @@ pub fn assert_r(source: &str, expected: &str) {
     let got: String = last_body(&analysis, "R").split_whitespace().collect();
     assert_eq!(got, expected.split_whitespace().collect::<String>(), "\\R");
     assert!(def.certain, "\\R is not certain");
+}
+
+/// A warm-run measurement's own config: package caches in a directory of its own (target/scratch/warm/<name>),
+/// fresh per run, the kernel seeded. Which caches other tests left behind must not change what a budget measures,
+/// and a stored whole run would serve the very work it measures.
+pub fn warm_config(name: &str) -> Config {
+    let dir = scratch_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/warm").join(name));
+    let cfg = Config {
+        cache: Cache { dir: Some(dir), document: false, ..Default::default() },
+        load: Load { packages: true, classes: true, ..Default::default() },
+        ..config()
+    };
+    seed_kernel(&cfg);
+    cfg
 }

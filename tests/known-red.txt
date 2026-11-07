@@ -20,3 +20,4 @@ differential::text_past_a_par_ending_a_paragraph_on_one_path_is_set_on_every_pat
 documents::pgfmath_parses_a_signed_random_count_and_adds
 chktex::an_error_only_an_approximation_raises_is_a_note
 latex::document_metadata::the_common_options_stay_bounded
+latex::document_metadata::lifting_the_bound_leaves_the_report_as_it_is

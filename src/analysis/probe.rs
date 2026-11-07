@@ -479,11 +479,15 @@ pub(crate) fn all_environments(analysis: &Analysis) -> Vec<Sym> {
 
 fn candidate_environments(analysis: &Analysis, sym: Sym) -> Vec<Sym> {
     let reach = closure(analysis, sym);
-    all_environments(analysis)
+    // the environments sharing most of `sym`'s reach first: the cap keeps the closest, never an arbitrary few
+    let mut ranked: Vec<(usize, Sym)> = all_environments(analysis)
         .into_iter()
-        .filter(|&env| env != sym && closure(analysis, env).intersection(&reach).next().is_some())
-        .take(MAX_CONTEXTS)
-        .collect()
+        .filter(|&env| env != sym)
+        .map(|env| (closure(analysis, env).intersection(&reach).count(), env))
+        .filter(|&(shared, _)| shared > 0)
+        .collect();
+    ranked.sort_by_key(|&(shared, env)| (std::cmp::Reverse(shared), analysis.interner.name(env).to_string()));
+    ranked.into_iter().take(MAX_CONTEXTS).map(|(_, env)| env).collect()
 }
 
 /// What a bare call to `sym` does — nothing follows it, the way `\item`

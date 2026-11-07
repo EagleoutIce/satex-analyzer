@@ -195,17 +195,15 @@ fn warm_steps(name: &str, source: &str) -> Option<u64> {
     if !crate::support::installed() {
         return None;
     }
-    let cfg = satex::project::config::Config {
-        // package caches only: a stored whole run would serve the work these budgets measure
-        cache: Cache { dir: Some(fresh(name)), document: false, ..Default::default() },
-        load: Load { packages: true, classes: true, ..Default::default() },
-        ..crate::support::config()
-    };
-    crate::support::seed_kernel(&cfg);
+    let cfg = crate::support::warm_config(name);
     let cold = Machine::analyze(source, None, &cfg);
     let warm = Machine::analyze(source, None, &cfg);
     eprintln!("budget {name}: {} steps, {} served, cold {}", warm.steps, warm.served_steps, cold.steps);
     without(name, &warm, &["line-budget-cut", "budget-exhausted"]);
+    // a gap may repeat, but never past the bound: a run that pays for each repeat is the budget's real cost
+    let bound = cfg.limits.repeat_failures;
+    let over: Vec<_> = warm.facts.diagnostics.iter().filter(|d| d.count > bound).map(|d| (d.code, d.count)).collect();
+    assert_eq!(over, Vec::new(), "{name}: gaps past the bound of {bound}");
     Some(warm.steps - warm.served_steps)
 }
 

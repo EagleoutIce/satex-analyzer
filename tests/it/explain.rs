@@ -659,10 +659,12 @@ fn item_context_meanings_show_with_no_document_uses_at_all() {
     // `itemize`, `enumerate` and `description` are all built on `\trivlist`,
     // which sets up what `\item` needs before it is ever called there.
     for name in ["itemize", "enumerate", "description"] {
-        let found = records.iter().find(|r| str_field(r, "context").is_some_and(|c| c.contains(name)));
-        if let Some(record) = found {
-            assert!(str_field(record, "error").is_none(), "\\item in {name} should not error: {record:?}");
-        }
+        // the probe must find each list: a missing one would leave nothing to check
+        let record = records
+            .iter()
+            .find(|r| str_field(r, "context").is_some_and(|c| c.contains(name)))
+            .unwrap_or_else(|| panic!("the probe found no {name} meaning: {records:?}"));
+        assert!(str_field(record, "error").is_none(), "\\item in {name} should not error: {record:?}");
     }
 }
 
