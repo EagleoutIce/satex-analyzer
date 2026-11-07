@@ -516,7 +516,7 @@ fn a_map_function_some_earlier_package_left_does_not_key_the_cache() {
         }
     }
     let read = run(&dir, alone);
-    assert_ne!(served(&read, "mapper"), Some(true), "{:?}", read.package_caches);
+    assert_eq!(served(&read, "mapper"), Some(false), "{:?}", read.package_caches);
     assert_eq!(differing_facts(&read, &replayed), Vec::<String>::new());
     same_facts(&read, &replayed);
 }
@@ -718,7 +718,7 @@ fn a_prior_definition_the_package_tests_makes_it_miss() {
     let dir = project("tested");
     run(&dir, DOCUMENT);
     let warm = run(&dir, &preamble("\\def\\userflag{}"));
-    assert_ne!(served(&warm, "outer"), Some(true), "{:?}", warm.package_caches);
+    assert_eq!(served(&warm, "outer"), Some(false), "{:?}", warm.package_caches);
     assert!(defined(&warm, "flagged"));
 }
 
@@ -728,7 +728,7 @@ fn other_options_make_it_miss() {
     run(&dir, "\\documentclass{article}\n\\usepackage{withopts}\n\\begin{document}\\end{document}\n");
     let other = "\\documentclass{article}\n\\usepackage[draft]{withopts}\n\\begin{document}\\end{document}\n";
     let warm = run(&dir, other);
-    assert_ne!(served(&warm, "withopts"), Some(true), "{:?}", warm.package_caches);
+    assert_eq!(served(&warm, "withopts"), Some(false), "{:?}", warm.package_caches);
     assert!(defined(&warm, "isdraft"));
     let cold = run_cold(&dir, other);
     same_facts(&cold, &warm);
@@ -788,9 +788,9 @@ fn two_projects_sharing_a_cache_do_not_shadow_each_others_package() {
     let from_b = analyze(&b, DOCUMENT, &cfg_for(&b));
     assert!(defined(&from_b, "onlyinB"), "b must read its own outer.sty, not a's cache: {:?}", from_b.package_caches);
     assert!(undefined(&from_b, "onlyinA"), "b must not see a's package");
-    assert_ne!(
+    assert_eq!(
         served(&from_b, "outer"),
-        Some(true),
+        Some(false),
         "a's cache for the same name must not be served to b: {:?}",
         from_b.package_caches
     );
@@ -903,7 +903,8 @@ const BASE: &[&str] = &[
 ];
 
 /// Warm the caches with `base`, then run `edited` and check which packages
-/// are served whole from their cache, and that the run reports exactly what
+/// are served whole from their cache and which are read and stored again (a miss
+/// must show as stored: a package missing from the report would pass a weaker check), and that the run reports exactly what
 /// a run that reads every package does.
 fn after_edit(name: &str, base: &[String], edited: &[String], hit: &[&str], miss: &[&str]) {
     if !installed() {
@@ -918,9 +919,9 @@ fn after_edit(name: &str, base: &[String], edited: &[String], hit: &[&str], miss
         assert_eq!(served(&warm, package), Some(true), "{package} is served after {name}: {:?}", warm.package_caches);
     }
     for package in miss {
-        assert_ne!(
+        assert_eq!(
             served(&warm, package),
-            Some(true),
+            Some(false),
             "{package} is read again after {name}: {:?}",
             warm.package_caches
         );
@@ -1103,7 +1104,7 @@ fn a_list_the_package_inspects_before_appending_makes_it_miss() {
     run_latex(&dir, &doc("a"), true);
     let source = doc("b");
     let warm = run_latex(&dir, &source, true);
-    assert_ne!(served(&warm, "inspector"), Some(true), "{:?}", warm.package_caches);
+    assert_eq!(served(&warm, "inspector"), Some(false), "{:?}", warm.package_caches);
     assert!(undefined(&warm, "wasa"));
     assert_eq!(text_of(&warm, "biglist").as_deref(), Some("b,inspector"));
     same_facts(&run_cold(&dir, &source), &warm);
@@ -1724,7 +1725,7 @@ fn a_changed_package_of_a_class_rebuilds_only_that_package() {
     std::fs::write(dir.join("pa.sty"), "\\ProvidesPackage{pa}\n\\def\\pamacro{changed}\n").unwrap();
     let again = run_latex(&dir, WITH_CLASS, true);
     assert_eq!(served(&again, "pb"), Some(true), "{:?}", again.package_caches);
-    assert_ne!(served(&again, "pa"), Some(true), "{:?}", again.package_caches);
+    assert_eq!(served(&again, "pa"), Some(false), "{:?}", again.package_caches);
     same_facts(&run_cold(&dir, WITH_CLASS), &again);
 }
 
