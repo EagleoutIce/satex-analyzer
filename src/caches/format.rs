@@ -12,15 +12,15 @@ use crate::engine::tex::{Interner, Meaning, Span, Sym};
 use crate::engine::value::Value;
 
 /// Cache version: different encodings get different files.
-const ENCODING_VERSION: u32 = 7;
+const ENCODING_VERSION: u32 = 8;
 /// The encoding of the package caches, versioned apart from the kernel's.
-pub(crate) const PACKAGE_ENCODING_VERSION: u32 = 13;
+pub(crate) const PACKAGE_ENCODING_VERSION: u32 = 14;
 
 /// What a cache means, bumped by hand whenever the interpreter would
 /// analyse a cached file differently. Caches are keyed on it, not on the
 /// source, so builds of one version share them across machines.
 /// `tests/it/cache_semantics.rs` fails when the analysis changes without a bump.
-pub const SEMANTIC_VERSION: u32 = 1;
+pub const SEMANTIC_VERSION: u32 = 2;
 
 /// The key every cache file name carries: `s⟨SEMANTIC_VERSION⟩`. A build
 /// outside the `release` profile appends its source digest (build.rs), so a

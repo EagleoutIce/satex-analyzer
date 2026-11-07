@@ -265,10 +265,10 @@ impl Printer<'_> {
                         for (k, p) in params.iter().enumerate() {
                             j = match (p, params.get(k + 1)) {
                                 // delimited: up to its delimiter's first token
-                                (ParamItem::Param(_), Some(ParamItem::Lit(t))) => (j..list.len())
+                                (ParamItem::Param(..), Some(ParamItem::Lit(t))) => (j..list.len())
                                     .find(|&n| list[n].kids.is_none() && self.toks[list[n].from].tok == *t)
                                     .unwrap_or(list.len()),
-                                (ParamItem::Param(_), _) => arg(j),
+                                (ParamItem::Param(..), _) => arg(j),
                                 (ParamItem::Lit(t), _)
                                     if list.get(j).is_some_and(|n| n.kids.is_none() && self.toks[n.from].tok == *t) =>
                                 {

@@ -162,12 +162,6 @@ impl Ref {
         {
             return format!("{}#L{line}", self.source.url());
         }
-        if self.source == Source::TeXbook
-            && let Some((kind, n)) = self.at.split_once(' ')
-            && matches!(kind, "chapter" | "appendix")
-        {
-            return format!("{}#{kind}-{}", self.source.url(), n.to_lowercase());
-        }
         self.source.url().to_string()
     }
 }

@@ -87,7 +87,7 @@ use std::time::Instant;
 use regex::Regex;
 use satex::engine::builtins::{self, Primitive, Site, Verdict};
 use satex::engine::tex::{Interner, Meaning};
-use satex::linter::cite::linkify_citations;
+use satex::linter::cite::{anchor, linkify_citations};
 use satex::project::config::{Engine, Limits};
 
 const TEMPLATES: &[(&str, &str)] = &[
@@ -742,16 +742,6 @@ fn still_wrong(wrong: &[String]) -> String {
     } else {
         wrong.join("\n") + "\n"
     }
-}
-
-/// The anchor a wiki gives a heading: lower case, punctuation dropped, spaces as `-`.
-fn anchor(heading: &str) -> String {
-    heading
-        .to_lowercase()
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-')
-        .map(|c| if c == ' ' { '-' } else { c })
-        .collect()
 }
 
 fn expand(directive: &str) -> Result<String, String> {
@@ -1953,6 +1943,32 @@ warning: see [tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/{s
 "
         );
         assert_eq!(linkify_citations(markdown), expected);
+    }
+
+    /// A bare `§` after a link that is not tex.web's is still tex.web's
+    /// (audit B 17): `[machine.rs](…) … § 1352`.
+    #[test]
+    fn bare_section_after_other_link_is_tex_web() {
+        let got = linkify_citations("See [the code](src/analysis/machine.rs) and § 1352.\n");
+        let sha = include_str!("../../doc/src/tex-web-sha.txt").trim();
+        assert!(
+            got.contains(&format!(
+                "[§ 1352](https://github.com/TeX-Live/texlive-source/blob/{sha}/texk/web2c/tex.web#L"
+            )),
+            "{got}"
+        );
+    }
+
+    /// `SEMANTICS § 14` links its heading, a TeXbook chapter the book's
+    /// page, which has no anchor per chapter (audit B 18, 52).
+    #[test]
+    fn semantics_and_texbook_targets() {
+        let got = linkify_citations("(SEMANTICS § 14) and The TeXbook, chapter 8 says so.\n");
+        assert!(
+            got.contains("(https://eagleoutice.github.io/satex-analyzer/SEMANTICS#14-where-satex-is-not-exact)"),
+            "{got}"
+        );
+        assert!(got.contains("[The TeXbook, chapter 8](https://ctan.org/pkg/texbook)"), "{got}");
     }
 
     /// A citation-looking string inside a fence that is *not* a `{{run:

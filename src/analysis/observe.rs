@@ -44,7 +44,7 @@ pub fn between_angles(m: &mut Machine, text: &crate::engine::tex::ParameterText,
     use crate::engine::tex::ParamItem as P;
     let angle = |i: Option<&P>, c: char| matches!(i, Some(P::Lit(Tok::Chr(d, Catcode::Other))) if *d == c);
     for (i, item) in text.items.iter().enumerate() {
-        let P::Param(n) = item else { continue };
+        let P::Param(n, _) = item else { continue };
         if i > 0
             && angle(text.items.get(i - 1), '<')
             && angle(text.items.get(i + 1), '>')

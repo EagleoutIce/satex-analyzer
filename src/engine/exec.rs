@@ -306,12 +306,15 @@ impl Machine<'_> {
                     self.push_tokens(Rc::from(tokens));
                     return;
                 }
-                // Lines end at `\newlinechar`. The last one ends too.
+                // Lines end at `\newlinechar`. The last one ends too, but
+                // `pseudo_start` makes no line of nothing (etex.ch).
                 let mut lines: String = match newline {
                     Some(c) if c != '\n' => text.replace(c, "\n"),
                     _ => text,
                 };
-                lines.push('\n');
+                if !lines.is_empty() && !lines.ends_with('\n') {
+                    lines.push('\n');
+                }
                 let eof: Rc<[Token]> = Rc::from(Vec::new());
                 // An open input file until its `\everyeof` is read (etex.ch). TeX Live
                 // caps open files at `max_in_open`.
@@ -444,9 +447,7 @@ impl Machine<'_> {
                 }
                 self.read_equals();
                 let value = self.scan_number();
-                // tex.web § 1265: `\interactionmode` is not on the save
-                // stack, so the enclosing group never takes it back.
-                let global = self.prefixes.global || self.name(by) == "interactionmode";
+                let global = self.prefixes.global || crate::engine::builtins::always_global(self.name(by));
                 let limit = crate::engine::builtins::limit(self.name(by), self.out.plugins.engine);
                 let stored = match limit {
                     Some(limit) => self.limited(by, by, limit, value, span),
@@ -475,7 +476,7 @@ impl Machine<'_> {
                 }
                 self.read_equals();
                 let value = self.scan_dimen();
-                let global = self.prefixes.global;
+                let global = self.prefixes.global || crate::engine::builtins::always_global(self.name(by));
                 self.env.set_value(by, value.map_or(Value::Unknown, Value::Dimen), global);
                 // tex.web § 1243: the vertical list's own, for its next box.
                 if self.name(by) == "prevdepth"
@@ -528,7 +529,13 @@ impl Machine<'_> {
             P::IgnoreSpaces => {
                 while let Some(token) = self.next_x_token() {
                     if !matches!(self.category_of(token), Some(Catcode::Space)) {
-                        self.unread(token);
+                        // tex.web § 1045 goes on with the token as read: a
+                        // `\noexpand`ed one stays `\relax`.
+                        if self.read_noexpanded(token) {
+                            self.unread_noexpanded(token)
+                        } else {
+                            self.unread(token)
+                        }
                         break;
                     }
                 }
@@ -981,6 +988,17 @@ impl Machine<'_> {
                 if self.split_one_of(token) {
                     return self.produce_text(kind, by, span);
                 }
+                // tex.web §§ 358, 227: an expandable token behind `\noexpand`'s
+                // marker is `relax`, printed `\relax`.
+                if kind == TextOf::Meaning
+                    && self.read_noexpanded(token)
+                    && let Some(sym) = self.active_cs(token).or(token.cs())
+                    && self.expandable_meaning(&self.env.meaning(sym))
+                {
+                    let text = format!("{}relax", self.escape_char().map(String::from).unwrap_or_default());
+                    let tokens = self.text_tokens(&text, span);
+                    return self.unread_all(&tokens);
+                }
                 // A name of one of several meanings prints each on its path,
                 // a built name each name it may be, `\relax` if none
                 // (tex.web § 372).
@@ -1386,7 +1404,7 @@ impl Machine<'_> {
         let mut parameters = String::new();
         for item in &m.parameter_text.items {
             match item {
-                crate::engine::tex::ParamItem::Param(n) => parameters.push_str(&format!("#{n}")),
+                crate::engine::tex::ParamItem::Param(n, _) => parameters.push_str(&format!("#{n}")),
                 crate::engine::tex::ParamItem::Lit(tok) => parameters.push_str(&crate::engine::tex::detokenize_in(
                     &[Token::new(*tok, Span::default())],
                     &self.out.interner,
@@ -4121,6 +4139,11 @@ impl Machine<'_> {
                 }
                 Tok::Cs(sym) => match self.env.meaning(sym) {
                     Meaning::Primitive(Primitive::Relax) => continue,
+                    // tex.web §§ 473, 403: `scan_left_brace` takes an implicit `{`.
+                    Meaning::Char(c, Catcode::Begin) => {
+                        self.unread(Token::new(Tok::Chr(c, Catcode::Begin), token.span));
+                        continue;
+                    }
                     // `\toks1=\toks0` copies the other register, by number or `\toksdef` name.
                     Meaning::Primitive(Primitive::Register(RegKind::Toks)) => {
                         // An unpinned number names any token register. It holds unknown, not
@@ -4979,21 +5002,40 @@ impl Machine<'_> {
                 let mut name = String::new();
                 let (mut quoted, mut any_quote) = (false, false);
                 while let Some(t) = self.next_token() {
-                    match t.tok {
-                        Tok::Chr('"', Catcode::Letter | Catcode::Other) => {
+                    if let Some(sym) = t.cs()
+                        && self.expandable(sym)
+                    {
+                        self.unread(t);
+                        if !self.step() {
+                            break;
+                        }
+                        continue;
+                    }
+                    // tex.web § 526: a character of any category up to 12,
+                    // explicit or implicit, is part of the name (`_`, `^`,
+                    // braces too: `pgfplotsoldpgfsupp_loader.code.tex`).
+                    // `more_name` ends it at code 32, whatever the category
+                    // (§ 516), and the space is consumed.
+                    let ch = match t.tok {
+                        Tok::Chr(c, cat) => Some((c, cat)),
+                        Tok::Cs(sym) => match self.env.meaning(sym) {
+                            Meaning::Char(c, cat) => Some((c, cat)),
+                            _ => None,
+                        },
+                        Tok::Param(_) => None,
+                    };
+                    match ch {
+                        Some(('"', Catcode::Letter | Catcode::Other)) => {
                             quoted = !quoted;
                             any_quote = true;
                         }
-                        Tok::Chr(c, Catcode::Space) if quoted => name.push(c),
-                        // tex.web § 526: consume space that ends the name.
-                        Tok::Chr(_, Catcode::Space) => break,
-                        // A character of any category up to 12 is part of the
-                        // name (`cur_cmd <= other_char`): `_`, `^`, `&`, `$`
-                        // and braces too (`pgfplotsoldpgfsupp_loader.code.tex`).
-                        Tok::Chr(
+                        Some((' ', _)) if quoted => name.push(' '),
+                        Some((' ', _)) => break,
+                        Some((
                             c,
                             Catcode::Letter
                             | Catcode::Other
+                            | Catcode::Space
                             | Catcode::Begin
                             | Catcode::End
                             | Catcode::Math
@@ -5001,13 +5043,7 @@ impl Machine<'_> {
                             | Catcode::Param
                             | Catcode::Sup
                             | Catcode::Sub,
-                        ) => name.push(c),
-                        Tok::Cs(sym) if self.expandable(sym) => {
-                            self.unread(t);
-                            if !self.step() {
-                                break;
-                            }
-                        }
+                        )) => name.push(c),
                         _ => {
                             self.unread(t);
                             break;
@@ -5184,10 +5220,10 @@ fn register_top(kind: RegKind) -> Option<Num> {
     }
 }
 
-/// tex.web § 433 (`scan_four_bit_int`): stream numbers are 0..15. "Bad
+/// tex.web § 435 (`scan_four_bit_int`): stream numbers are 0..15. "Bad
 /// number" names stream 0 (probed: `\closein99` closes stream 0).
 impl Machine<'_> {
-    /// A stream's ⟨4-bit number⟩ (tex.web § 436: outside 0..=15 it is "Bad
+    /// A stream's ⟨4-bit number⟩ (tex.web § 435: outside 0..=15 it is "Bad
     /// number" and 0). One read in an interval parts the path per stream it
     /// may name, the register it came from narrowed to match, so a later
     /// read of that register names the same stream. `None`: any stream.
@@ -5548,7 +5584,7 @@ fn reach(params: &ParameterText, get: &mut impl FnMut(usize) -> Option<Token>) -
             .iter()
             .map_while(|item| match item {
                 ParamItem::Lit(t) => Some(*t),
-                ParamItem::Param(_) => None,
+                ParamItem::Param(..) => None,
             })
             .collect();
         if delimiter.is_empty() {

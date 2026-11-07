@@ -1291,6 +1291,9 @@ pub struct Mouth {
     /// The unknown digit a run wrote that the last token stands for, its
     /// digits of other categories now: one of them, each as it reads now.
     pub digit: Option<char>,
+    /// A `^^` after a control word, reduced when the name ended (tex.web
+    /// § 356 rewrites the buffer): its position, width and character.
+    reduced: Option<(usize, usize, char)>,
     pub file: FileId,
     /// The `%\satex@…` directives of comments read since the reader last
     /// took them ([`Directive`]).
@@ -1383,6 +1386,7 @@ impl Mouth {
             undecided: None,
             written: None,
             digit: None,
+            reduced: None,
             file,
             directives: Vec::new(),
             lines: Vec::new(),
@@ -1687,6 +1691,11 @@ impl Mouth {
 
     /// `^^A` / `^^41` notation (The TeXbook § 355); returns (char, width).
     fn sup_escape_at(&self, at: usize, cats: &CatcodeTable) -> Option<(char, usize)> {
+        if let Some((p, width, c)) = self.reduced
+            && p == at
+        {
+            return Some((c, width));
+        }
         let first = self.src.get(at).copied()?;
         if cats.get(first) != Catcode::Sup || self.src.get(at + 1).copied()? != first {
             return None;
@@ -1812,7 +1821,11 @@ impl Mouth {
                     self.take(width);
                     name.push(decoded);
                 }
-                _ => {
+                Some((decoded, width)) => {
+                    self.reduced = Some((self.pos, width, decoded));
+                    break;
+                }
+                None => {
                     // Whether the appended character carries the name on
                     // is not known, so the name is not either.
                     if self.line_ends_at(self.pos) && self.line_end.is_unknown() {
@@ -1990,7 +2003,9 @@ impl Mouth {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum ParamItem {
     Lit(Tok),
-    Param(u8),
+    /// `#n` with the token that stood for `#`: tex.web § 476 keeps its
+    /// character (`match_token+cur_chr`), and § 508 compares it.
+    Param(u8, Tok),
 }
 
 /// The `#1,#2.` part of a `\def`'s parameter text, matched against the call
@@ -2027,7 +2042,7 @@ impl ParameterText {
                     // only when it is the one expected.
                     Some(Tok::Chr(d, _)) if d.is_ascii_digit() && d as u8 - b'0' == arity + 1 && arity < 9 => {
                         arity += 1;
-                        items.push(ParamItem::Param(arity));
+                        items.push(ParamItem::Param(arity, t.tok));
                         i += 2;
                         continue;
                     }
@@ -2039,7 +2054,7 @@ impl ParameterText {
                     Some(_) => {
                         if arity < 9 {
                             arity += 1;
-                            items.push(ParamItem::Param(arity));
+                            items.push(ParamItem::Param(arity, t.tok));
                             i += 1;
                         } else {
                             i += 2;
@@ -2058,7 +2073,7 @@ impl ParameterText {
         let mut out = String::new();
         for item in &self.items {
             match item {
-                ParamItem::Param(n) => {
+                ParamItem::Param(n, _) => {
                     out.push('#');
                     out.push((b'0' + n) as char);
                 }
@@ -2072,7 +2087,7 @@ impl ParameterText {
     }
 
     pub fn is_simple(&self) -> bool {
-        self.items.iter().all(|i| matches!(i, ParamItem::Param(_)))
+        self.items.iter().all(|i| matches!(i, ParamItem::Param(..)))
     }
 }
 
@@ -2132,7 +2147,7 @@ impl ArgSpec {
                     Some(delimiter) => delimiter.push_str(&lit(*tok)),
                     None => prefix.push_str(&lit(*tok)),
                 },
-                ParamItem::Param(_) => {
+                ParamItem::Param(..) => {
                     if !prefix.is_empty() {
                         items.push(ArgType::Literal(std::mem::take(&mut prefix)));
                     }
@@ -2240,8 +2255,10 @@ impl MacroDef {
             Some(spec) => spec.items.iter().all(|item| *item == ArgType::Mandatory).then(|| spec.arity()),
             None => {
                 let text = &self.parameter_text;
-                (!text.brace_end && text.items.iter().all(|item| matches!(item, ParamItem::Param(_))))
-                    .then_some(text.arity)
+                // `\newcommand` writes its parameters with `#`; another
+                // parameter character makes another macro (tex.web § 508).
+                let hash = |item: &ParamItem| matches!(item, ParamItem::Param(_, Tok::Chr('#', _)));
+                (!text.brace_end && text.items.iter().all(hash)).then_some(text.arity)
             }
         }
     }

@@ -9842,7 +9842,7 @@ will look undefined",
             let text = &m.parameter_text;
             let delimited: Vec<bool> = (1..=arguments.len())
                 .map(|n| {
-                    let at = text.items.iter().position(|i| matches!(i, ParamItem::Param(k) if *k as usize == n));
+                    let at = text.items.iter().position(|i| matches!(i, ParamItem::Param(k, _) if *k as usize == n));
                     at.is_some_and(|at| match text.items.get(at + 1) {
                         Some(ParamItem::Lit(_)) => true,
                         None => text.brace_end,
@@ -9894,7 +9894,7 @@ will look undefined",
                 // Its arguments and the delimiters matched before the last.
                 let last = u8::try_from(arguments.len()).unwrap_or(u8::MAX);
                 let items =
-                    m.parameter_text.items.iter().take_while(|i| !matches!(i, ParamItem::Param(k) if *k >= last));
+                    m.parameter_text.items.iter().take_while(|i| !matches!(i, ParamItem::Param(k, _) if *k >= last));
                 let delimiters: Vec<Tok> =
                     items.filter_map(|i| if let ParamItem::Lit(t) = i { Some(*t) } else { None }).collect();
                 self.loosen_lost_closers(&arguments, &delimiters, span);
@@ -11744,7 +11744,7 @@ will look undefined",
                             .iter()
                             .map_while(|item| match item {
                                 ParamItem::Lit(tok) => Some(*tok),
-                                ParamItem::Param(_) => None,
+                                ParamItem::Param(..) => None,
                             })
                             .collect();
                         self.probe_wants(&[t], &wanted, crate::analysis::probe::Want::Literal);
@@ -11753,7 +11753,7 @@ will look undefined",
                     }
                     i += 1;
                 }
-                ParamItem::Param(n) => {
+                ParamItem::Param(n, _) => {
                     let mut delimiter = Vec::new();
                     let mut j = i + 1;
                     while let Some(ParamItem::Lit(tok)) = text.items.get(j) {
@@ -11810,7 +11810,7 @@ will look undefined",
         // a delimiter matched like any other, and the replacement text puts
         // it back (tex.web § 476, § 392).
         if text.brace_end
-            && !matches!(text.items.last(), Some(ParamItem::Param(_)))
+            && !matches!(text.items.last(), Some(ParamItem::Param(..)))
             && let Some(t) = self.next_token()
             && !t.is_cat(Catcode::Begin)
         {

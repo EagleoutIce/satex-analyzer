@@ -2415,6 +2415,15 @@ pub fn owned(name: &str) -> Option<Owned> {
     })
 }
 
+/// tex.web §§ 1242-1246 (`alter_aux`, `alter_prev_graf`, `alter_page_so_far`,
+/// `alter_integer`) and etex.ch's `\interactionmode`: quantities kept outside
+/// the table of equivalents, so every assignment to them is global. A list's
+/// own ([`Owned::List`]) leaves with its list instead, so the box group keeps it.
+pub fn always_global(name: &str) -> bool {
+    matches!(owned(name), Some(Owned::PageSoFar { .. }))
+        || matches!(name, "prevgraf" | "deadcycles" | "insertpenalties" | "interactionmode")
+}
+
 /// tex.web § 982: the page builder's `page_so_far` array.
 pub const PAGE_SO_FAR: &str =
     "pagegoal pagetotal pagestretch pagefilstretch pagefillstretch pagefilllstretch pageshrink pagedepth";

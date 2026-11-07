@@ -2468,17 +2468,23 @@ impl Machine<'_> {
         if let Some(GroupKind::Math { display }) = self.env.group_kind() {
             // tex.web § 1194: the `$` that ends an `\eqno` ends the display
             // too, and needs its second `$`.
+            // § 1197 reads it with expansion, before `unsave`.
             let eqno = self.env.nest().is_some_and(|n| n.part == EQNO);
-            if display || eqno {
-                self.take_math_shift();
+            if (display || eqno)
+                && let Some(next) = self.next_x_token()
+                && self.category_of(next) != Some(Catcode::Math)
+            {
+                self.unread(next);
             }
             self.close_group(GroupKind::Math { display }, token);
             if eqno && let Some(GroupKind::Math { display: true }) = self.env.group_kind() {
                 self.close_group(GroupKind::Math { display: true }, token);
             }
-            // tex.web § 1199: a display may be packed to fit the line.
+            // tex.web § 1199: a display may be packed to fit the line;
+            // § 1200 `resume_after_display` scans an optional space.
             if display || eqno {
                 self.set_badness(None);
+                self.scan_optional_x_space();
             }
             return;
         }

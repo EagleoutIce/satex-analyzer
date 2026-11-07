@@ -218,6 +218,12 @@ impl Machine<'_> {
         let outer = std::mem::replace(&mut self.scanner, crate::analysis::machine::Scanner::Normal);
         let next = self.next_token();
         self.scanner = outer;
+        // tex.web § 358: it is read as behind the `dont_expand` marker.
+        if let Some(t) = next
+            && (t.cs().is_some() || self.active_cs(t).is_some())
+        {
+            self.noexpanded = Some(t);
+        }
         next
     }
 
@@ -243,7 +249,7 @@ impl Machine<'_> {
     }
 
     /// "Scan an optional space" (tex.web § 443).
-    fn scan_optional_x_space(&mut self) {
+    pub(crate) fn scan_optional_x_space(&mut self) {
         if let Some(token) = self.next_x_token()
             && !self.is_spacer(token)
         {
@@ -349,6 +355,13 @@ impl Machine<'_> {
     fn scan_internal(&mut self, token: Token) -> Option<(RegKind, Option<Value>)> {
         let sym = token.cs().or_else(|| self.active_cs(token))?;
         let level = self.internal_level(&self.env.meaning(sym))?;
+        // tex.web § 413: a token list where a number is due is "Missing
+        // number", a zero dimension, and the token is read again.
+        if level == RegKind::Toks {
+            self.unread(token);
+            self.missing_number(Some(token));
+            return Some((RegKind::Dimen, Some(Value::Dimen(0))));
+        }
         let value = self.internal_quantity(sym, token.span).filter(|v| !matches!(v, Value::Unknown));
         Some((level, value))
     }
@@ -496,7 +509,6 @@ impl Machine<'_> {
             Tok::Chr('\'', Catcode::Other) => (self.scan_digits(OCTAL, None).0, false),
             Tok::Chr('"', Catcode::Other) => (self.scan_digits(HEXADECIMAL, None).0, false),
             _ => match self.scan_internal(token) {
-                Some((RegKind::Toks, _)) => (None, false),
                 Some((_, value)) => {
                     self.abs_odd = None;
                     (value.and_then(|v| v.as_int()), false)
@@ -840,7 +852,7 @@ impl Machine<'_> {
         let mut fraction = 0;
         // The integer part's interval where its digits are typed, and
         // whether the digits after the point are unknown.
-        let mut range: Option<crate::engine::value::Num> = None;
+        let range: Option<crate::engine::value::Num>;
         let mut fraction_unknown = false;
         let integer = match shortcut {
             // A count of unknown value left its interval, signed.
@@ -860,7 +872,6 @@ impl Machine<'_> {
                         range = integer.map(crate::engine::value::Num::exact).or_else(|| self.abs.take());
                         integer
                     }
-                    Some((RegKind::Toks, _)) => None,
                     // tex.web § 449: an internal dimension or glue is the
                     // whole value; no unit follows.
                     Some((kind, value)) => {
@@ -1375,7 +1386,6 @@ impl Machine<'_> {
                 let width = self.scan_dimen_with(mu, false, Some(integer)).0;
                 width.map(Num::exact).or_else(|| self.abs.take())
             }
-            Some((RegKind::Toks, _)) => None,
             Some((_, value)) => match value.and_then(|v| v.as_dimen()) {
                 Some(v) => Some(Num::exact(if negative { -v } else { v })),
                 None => self.abs.take().map(sign),

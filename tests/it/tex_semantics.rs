@@ -493,3 +493,331 @@ pin! {
     /// `\moveleft` (tex.web § 1073): shifts a box left, narrowing the enclosing vbox.
     p_moveleft: r#"\setbox0\vbox{\moveleft5pt\hbox to 8pt{}}\edef\R{\the\wd0}"# => "3.0pt";
 }
+
+// Behaviours checked against tex.web one by one (rf). Each expectation is the
+// `R=[...]` line `pdftex -ini -etex` logs for the snippet after the prelude,
+// with `\immediate\write16{R=[\meaning\R]}` appended.
+pin! {
+    /// A single `^` stays a superscript character: only a second identical one starts `^^` ([tex.web § 352](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7371), [tex.web § 355](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7436)).
+    /// Log: `R=[macro:->macro:->^A]`.
+    rf_hat_single: r#"\def\a{^A}\edef\R{\meaning\a}"# => r#"macro:->^A"#;
+    /// `^^41` is `A` ([tex.web § 352](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7371)).
+    /// Log: `R=[macro:->macro:->A]`.
+    rf_hat_double: r#"\def\a{^^41}\edef\R{\meaning\a}"# => r#"macro:->A"#;
+    /// `scan_spec` takes an implicit `\bgroup` as the box's `{` ([tex.web § 645](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L12843)).
+    /// Log: `R=[macro:->1.0pt]`.
+    rf_bgroup_hbox: r#"\let\bgroup={ \let\egroup=} \setbox0\hbox\bgroup\kern1pt\egroup \edef\R{\the\wd0}"# => r#"1.0pt"#;
+    /// `scan_toks` reads its `{` with `scan_left_brace`, which takes an implicit `\bgroup` ([tex.web § 473](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9292), [tex.web § 403](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8189)).
+    /// Log: `R=[macro:->a]`.
+    rf_bgroup_toks: r#"\let\bgroup={ \toks0=\bgroup a}\edef\R{\the\toks0}"# => r#"a"#;
+    /// `\vtop\bgroup` opens the box ([tex.web § 645](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L12843)).
+    /// Log: `R=[macro:->2.0pt]`.
+    rf_bgroup_vtop: r#"\let\bgroup={ \let\egroup=} \setbox0\vtop\bgroup\kern2pt\egroup \edef\R{\the\dp0}"# => r#"2.0pt"#;
+    /// `}` of a vbox ends the paragraph inside (`end_graf`) before packaging ([tex.web § 1085](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21051), [tex.web § 1096](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21177)).
+    /// Log: `R=[macro:->v]`.
+    rf_vbox_par: r#"\setbox0\vbox{\noindent\kern1pt}\edef\R{\ifvmode v\fi\ifhmode h\fi\ifinner i\fi}"# => r#"v"#;
+    /// The paragraph line inside a vbox is packaged with the box ([tex.web § 1085](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21051)).
+    /// Log: `R=[macro:->3.0pt]`.
+    rf_vbox_par_ht: r#"\hsize=10pt \setbox0\vbox{\noindent\vrule height 3pt depth 0pt\relax}\edef\R{\the\ht0}"# => r#"3.0pt"#;
+    /// `}` of a vtop ends its paragraph and returns to the outer internal vertical mode ([tex.web § 1085](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21051)).
+    /// Log: `R=[macro:->vi]`.
+    rf_vtop_par: r#"\setbox0\vbox{\setbox1\vtop{\noindent\kern1pt}\xdef\R{\ifvmode v\fi\ifhmode h\fi\ifinner i\fi}}"# => r#"vi"#;
+    /// `$$\eqno(1)$$`: the second `$$` ends the number and the display in one `after_math` ([tex.web § 1194](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22404)).
+    /// Log: `R=[macro:->h]`.
+    rf_eqno: r#"\catcode`\$=3 \noindent$$\eqno(1)$$\edef\R{\ifhmode h\fi\ifinner i\fi\ifmmode m\fi}"# => r#"h"#;
+    /// The second `$` is checked before `unsave`, so a display's `\aftergroup` token runs after it ([tex.web § 1194](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22404), [tex.web § 1200](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22526)).
+    /// Log: `R=[macro:->xh]`.
+    rf_display_aftergroup: r#"\catcode`\$=3 \def\x{\gdef\R{x}}\noindent$$\aftergroup\x$$\edef\R{\R\ifhmode h\fi}"# => r#"xh"#;
+    /// `\afterassignment` with `\setbox\hbox`: the token comes first inside the box ([tex.web § 1241](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23181), [tex.web § 1269](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23473)).
+    /// Log: `R=[macro:->h]`.
+    rf_afterassign_setbox: r#"\def\x{\xdef\R{\ifhmode h\else n\fi}}\afterassignment\x\setbox0\hbox{}"# => r#"h"#;
+    /// `\afterassignment` with `\setbox\box`: the token comes after the assignment ([tex.web § 1241](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23181), [tex.web § 1269](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23473)).
+    /// Log: `R=[macro:->n]`.
+    rf_afterassign_setbox_box: r#"\def\x{\xdef\R{\ifhmode h\else n\fi}}\setbox1\hbox{}\afterassignment\x\setbox0\box1"# => r#"n"#;
+    /// A `\noexpand`ed macro is `relax` with `no_expand_flag`: `\meaning` prints `\relax` ([tex.web § 358](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7503), [tex.web § 227](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L4694)).
+    /// Log: `R=[macro:->\relax]`.
+    rf_meaning_noexpand: r#"\def\a{x}\edef\R{\expandafter\meaning\noexpand\a}"# => r#"\relax"#;
+    /// Several prefixes print back to back, one space before `macro` ([etex.ch l. 3053](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L3053)).
+    /// Log: `R=[macro:->[\protected\long]]`.
+    rf_meaning_prefixes: r#"\protected\long\def\a{x}\edef\m{\meaning\a}\def\f#1 #2\end{\def\R{[#1]}}\expandafter\f\m\end"# => r#"[\protected\long]"#;
+    /// `\lowercase` maps an active character too (`t<cs_token_flag+single_base`) ([tex.web § 1289](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23622)).
+    /// Log: `R=[macro:->y]`.
+    rf_lowercase_active: r#"\catcode`\~=13 \lccode`\~=`\X \lowercase{\def~{y}}\catcode`\X=13 \edef\R{X}"# => r#"y"#;
+    /// `\uppercase` maps an active character too ([tex.web § 1289](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23622)).
+    /// Log: `R=[macro:->Y]`.
+    rf_uppercase_active: r#"\catcode`\~=13 \uccode`\~=`\X \uppercase{\def~{y}}\catcode`\X=13 \edef\R{X}"# => r#"Y"#;
+    /// `\lastnodetype` of an empty list is -1 ([etex.ch l. 1263](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L1263)).
+    /// Log: `R=[macro:->-1]`.
+    rf_lastnodetype_empty: r#"\setbox0\hbox{\xdef\R{\the\lastnodetype}}"# => r#"-1"#;
+    /// `\lastnodetype` of glue is 11 ([etex.ch l. 1263](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L1263)).
+    /// Log: `R=[macro:->11]`.
+    rf_lastnodetype_glue: r#"\setbox0\hbox{\hskip1pt\xdef\R{\the\lastnodetype}}"# => r#"11"#;
+    /// `\lastnodetype` of a kern is 12 ([etex.ch l. 1263](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L1263)).
+    /// Log: `R=[macro:->12]`.
+    rf_lastnodetype_kern: r#"\setbox0\hbox{\kern1pt\xdef\R{\the\lastnodetype}}"# => r#"12"#;
+    /// `\currentifbranch` in a chosen `\ifcase` branch past `\or` is 1 ([etex.ch l. 3408](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L3408)).
+    /// Log: `R=[macro:->1]`.
+    rf_ifbranch_case: r#"\edef\R{\ifcase1 \or\the\currentifbranch\fi}"# => r#"1"#;
+    /// `\currentifbranch` in `\ifcase` case 0 (limit `or_code`) is 1 ([etex.ch l. 3408](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L3408)).
+    /// Log: `R=[macro:->1]`.
+    rf_ifbranch_case0: r#"\edef\R{\ifcase0 \the\currentifbranch\or\fi}"# => r#"1"#;
+    /// `\currentiftype` of `\ifincsname` is 21 ([pdftex.web l. 38626](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/pdftexdir/pdftex.web#L38626)).
+    /// Log: `R=[macro:->21]`.
+    rf_iftype_incsname: r#"\edef\R{\ifincsname\else\the\currentiftype\fi}"# => r#"21"#;
+    /// `\currentiftype` of `\ifpdfprimitive` is 22 ([pdftex.web l. 11689](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/pdftexdir/pdftex.web#L11689)).
+    /// Log: `R=[macro:->22]`.
+    rf_iftype_primitive: r#"\edef\R{\ifpdfprimitive\relax\the\currentiftype\fi}"# => r#"22"#;
+    /// `\currentiftype` of `\ifpdfabsnum` is 23 ([pdftex.web l. 38627](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/pdftexdir/pdftex.web#L38627)).
+    /// Log: `R=[macro:->23]`.
+    rf_iftype_absnum: r#"\edef\R{\ifpdfabsnum1=1 \the\currentiftype\fi}"# => r#"23"#;
+    /// `\currentiftype` of `\ifpdfabsdim` is 24 ([pdftex.web l. 38628](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/pdftexdir/pdftex.web#L38628)).
+    /// Log: `R=[macro:->24]`.
+    rf_iftype_absdim: r#"\edef\R{\ifpdfabsdim1pt=1pt \the\currentiftype\fi}"# => r#"24"#;
+    /// An illegal unit inserts `pt`, the token stays ([tex.web § 459](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9042)).
+    /// Log: `R=[macro:->5.0pt]`.
+    rf_illegal_unit: r#"\dimen0=5 x\edef\R{\the\dimen0}"# => r#"5.0pt"#;
+    /// An internal integer as unit counts in sp ([tex.web § 455](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8965)).
+    /// Log: `R=[macro:->0.00009pt]`.
+    rf_int_unit: r#"\count0=3 \dimen0=2\count0 \edef\R{\the\dimen0}"# => r#"0.00009pt"#;
+    /// `sp` scans the optional space too ([tex.web § 448](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8829)).
+    /// Log: `R=[macro:->12]`.
+    rf_sp_space: r#"\setbox0\hbox{\kern5sp \xdef\R{\the\lastnodetype}}"# => r#"12"#;
+    /// `\gluestretch` of a muskip reads it with `scan_normal_glue` ([etex.ch l. 5397](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L5397)).
+    /// Log: `R=[macro:->2.0pt]`.
+    rf_gluestretch_mu: r#"\muskip0=1mu plus 2fil \edef\R{\the\gluestretch\muskip0}"# => r#"2.0pt"#;
+    /// After an internal glue `scan_glue` returns: `plus` stays text ([tex.web § 461](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9064)).
+    /// Log: `R=[macro:->1.0pt]`.
+    rf_glue_internal_plus: r#"\skip1=1pt \skip0=\skip1 plus 2pt\edef\R{\the\skip0}"# => r#"1.0pt"#;
+    /// `\advance` of glue normalizes a zero stretch to order normal ([tex.web § 1239](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23143)).
+    /// Log: `R=[macro:->1.0pt plus 2.0pt]`.
+    rf_glue_advance_norm: r#"\skip0=1pt plus 0fil \advance\skip0 by 0pt plus 2pt \edef\R{\the\skip0}"# => r#"1.0pt plus 2.0pt"#;
+    /// `\delcode` takes a negative value ([tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23040)).
+    /// Log: `R=[macro:->-5]`.
+    rf_delcode_neg: r#"\delcode`a=-5 \edef\R{\the\delcode`a}"# => r#"-5"#;
+    /// `scan_fifteen_bit_int` rejects 32768 ([tex.web § 436](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8653)).
+    /// Log: `R=[macro:->0]`.
+    rf_mathchardef_max: r#"\mathchardef\m=32768 \edef\R{\the\m}"# => r#"0"#;
+    /// "Arithmetic overflow" returns before `done:`: the `\afterassignment` token stays pending ([tex.web § 1236](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23078)).
+    /// Log: `R=[macro:->x]`.
+    rf_overflow_afterassign: r#"\def\x{\xdef\R{x}}\def\R{n}\count0=1 \afterassignment\x\divide\count0 by 0 \let\Q\R \edef\R{\Q}"# => r#"x"#;
+    /// `\ifcsname` without `\endcsname` still looks the name up ([etex.ch l. 4776](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L4776)).
+    /// Log: `R=[macro:->\relax y]`.
+    rf_ifcsname_missing: r#"\edef\R{\ifcsname relax\relax y\else n\fi}"# => r#"\relax y"#;
+    /// `\string` of the null control sequence is `\csname\endcsname` ([tex.web § 263](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L5618)).
+    /// Log: `R=[macro:->\csname\endcsname]`.
+    rf_string_nullcs: r#"\edef\R{\expandafter\string\csname\endcsname}"# => r#"\csname\endcsname"#;
+    /// `\raise` shifts up: the hbox gets the height ([tex.web § 1073](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20853)).
+    /// Log: `R=[macro:->2.0pt]`.
+    rf_raise_ht: r#"\setbox1\hbox{\raise2pt\hbox{}}\edef\R{\the\ht1}"# => r#"2.0pt"#;
+    /// `\lower` shifts down: the hbox gets the depth ([tex.web § 1073](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20853)).
+    /// Log: `R=[macro:->2.0pt]`.
+    rf_lower_dp: r#"\setbox1\hbox{\lower2pt\hbox{}}\edef\R{\the\dp1}"# => r#"2.0pt"#;
+    /// `\hbox` in vertical mode opens an `adjusted_hbox_group` (3) ([tex.web § 1083](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21009)).
+    /// Log: `R=[macro:->3]`.
+    rf_grouptype_hbox_v: r#"\hbox{\xdef\R{\the\currentgrouptype}}"# => r#"3"#;
+    /// `\setbox\hbox` opens an `hbox_group` (2) ([tex.web § 1083](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21009)).
+    /// Log: `R=[macro:->2]`.
+    rf_grouptype_setbox: r#"\setbox0\hbox{\xdef\R{\the\currentgrouptype}}"# => r#"2"#;
+    /// `scan_int` skips implicit spaces (`cur_cmd=spacer`) ([tex.web § 441](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8723)).
+    /// Log: `R=[macro:->5]`.
+    rf_implicit_space_num: r#"\def\:{\let\s= }\: \count0=\s\s 5 \edef\R{\the\count0}"# => r#"5"#;
+    /// Entering math sets `\fam` to -1 ([tex.web § 1139](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21720)).
+    /// Log: `R=[macro:->-1]`.
+    rf_fam_math: r#"\catcode`\$=3 \fam=3 \setbox0\hbox{$\xdef\R{\the\fam}$}"# => r#"-1"#;
+    /// `\deadcycles` is global (`alter_integer`) ([tex.web § 1246](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23255)).
+    /// Log: `R=[macro:->2]`.
+    rf_global_deadcycles: r#"{\deadcycles=2 }\edef\R{\the\deadcycles}"# => r#"2"#;
+    /// `\spacefactor` is global (`alter_aux`) ([tex.web § 1243](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23212)).
+    /// Log: `R=[macro:->2000]`.
+    rf_global_spacefactor: r#"\setbox0\hbox{{\spacefactor=2000 }\xdef\R{\the\spacefactor}}"# => r#"2000"#;
+    /// `\prevdepth` is global (`alter_aux`) ([tex.web § 1243](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23212)).
+    /// Log: `R=[macro:->3.0pt]`.
+    rf_global_prevdepth: r#"{\prevdepth=3pt}\edef\R{\the\prevdepth}"# => r#"3.0pt"#;
+    /// `\prevgraf` is global (`alter_prev_graf`) ([tex.web § 1244](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23232)).
+    /// Log: `R=[macro:->3]`.
+    rf_global_prevgraf: r#"{\prevgraf=3 }\edef\R{\the\prevgraf}"# => r#"3"#;
+    /// `\insertpenalties` is global (`alter_integer`) ([tex.web § 1246](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23255)).
+    /// Log: `R=[macro:->4]`.
+    rf_global_insertpenalties: r#"{\insertpenalties=4 }\edef\R{\the\insertpenalties}"# => r#"4"#;
+    /// `\interactionmode` is global ([etex.ch l. 2970](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L2970)).
+    /// Log: `R=[macro:->0]`.
+    rf_global_interactionmode: r#"{\interactionmode=0 }\edef\R{\the\interactionmode}"# => r#"0"#;
+    /// `\ifcat` of `\bgroup` and `\egroup` compares the categories 1 and 2 ([tex.web § 506](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9814)).
+    /// Log: `R=[macro:->n]`.
+    rf_ifcat_bgroup: r#"\let\bgroup={ \let\egroup=} \edef\R{\ifcat\bgroup\egroup y\else n\fi}"# => r#"n"#;
+    /// `\if\bgroup{`: an implicit character has its code ([tex.web § 506](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9814)).
+    /// Log: `R=[macro:->y]`.
+    rf_if_bgroup: r#"\let\bgroup={ \edef\R{\if\bgroup{y\else n\fi}}"# => r#"y"#;
+    /// Two `\noexpand`ed macros are `\ifx`-equal ([tex.web § 358](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7503), [tex.web § 507](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9840)).
+    /// Log: `R=[macro:->y]`.
+    rf_ifx_noexpand2: r#"\def\a{x}\def\b{y}\edef\R{\expandafter\expandafter\expandafter\ifx\expandafter\noexpand\expandafter\a\noexpand\b y\else n\fi}"# => r#"y"#;
+    /// `}` ends a math group (9) inside math shift (15) ([tex.web § 1085](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21051), [tex.web § 1100](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21213)).
+    /// Log: `R=[macro:->915]`.
+    rf_brace_math: r#"\catcode`\$=3 \setbox0\hbox{${\xdef\R{\the\currentgrouptype}}\xdef\R{\R\the\currentgrouptype}$}"# => r#"915"#;
+    /// `}` ends a vcenter group ([tex.web § 1085](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21051), [tex.web § 1168](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22117)).
+    /// Log: `R=[macro:->15]`.
+    rf_brace_vcenter: r#"\catcode`\$=3 \setbox0\hbox{$\vcenter{\kern1pt}\xdef\R{\the\currentgrouptype}$}"# => r#"15"#;
+    /// `}` ends an insert group ([tex.web § 1100](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21213)).
+    /// Log: `R=[macro:->0v]`.
+    rf_brace_insert: r#"\insert100{\kern1pt}\edef\R{\the\currentgrouptype\ifvmode v\fi}"# => r#"0v"#;
+    /// `}` ends an align group ([tex.web § 1085](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21051)).
+    /// Log: `R=[macro:->0v]`.
+    rf_brace_align: r#"\halign{#\cr\kern1pt\cr}\edef\R{\the\currentgrouptype\ifvmode v\fi}"# => r#"0v"#;
+    /// `\advance` of a dimen passes `\maxdimen` unchecked ([tex.web § 1238](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23134)).
+    /// Log: `R=[macro:->32767.99997pt]`.
+    rf_dimen_advance_top: r#"\dimen0=16383.99999pt \advance\dimen0 by\dimen0 \edef\R{\the\dimen0}"# => r#"32767.99997pt"#;
+    /// `\advance` of a count reaches -2^31 ([tex.web § 1238](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23134)).
+    /// Log: `R=[macro:->-2147483648]`.
+    rf_count_bottom: r#"\count0=-2147483647 \advance\count0 by -1 \edef\R{\the\count0}"# => r#"-2147483648"#;
+    /// A control symbol of a category-10 character enters state S ([tex.web § 354](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7401)).
+    /// Log: `R=[macro:->(\~x)]`.
+    rf_ctrl_sym_spacer: r#"\catcode`\~=10 \def\b{\~ x y}\def\c#1 #2\end{\def\R{(#1)}}\expandafter\c\b\end"# => r#"(\~x)"#;
+    /// `\pdfstrcmp` expands ([pdftex.web l. 11283](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/pdftexdir/pdftex.web#L11283)).
+    /// Log: `R=[macro:->-1]`.
+    rf_pdfstrcmp: r#"\edef\R{\pdfstrcmp{a}{b}}"# => r#"-1"#;
+    /// An illegal `\mag` is reset to 1000 globally ([tex.web § 288](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L6129)).
+    /// Log: `R=[macro:->1000]`.
+    rf_mag_illegal: r#"\mag=2000 {\mag=0 \dimen0=1truept}\edef\R{\the\mag}"# => r#"1000"#;
+    /// `\vskip` in restricted horizontal mode ends the box (`off_save`) ([tex.web § 1095](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21162)).
+    /// Log: `R=[macro:->v]`.
+    rf_hmode_vskip: r#"\setbox0\hbox{\vskip1pt\xdef\R{\ifvmode v\fi\ifhmode h\fi}}"# => r#"v"#;
+    /// `\noboundary` in vertical mode starts a paragraph ([tex.web § 1090](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21102)).
+    /// Log: `R=[macro:->h]`.
+    rf_noboundary_vmode: r#"\noboundary\edef\R{\ifhmode h\fi}"# => r#"h"#;
+}
+
+/// `resume_after_display` scans one optional space ([tex.web § 1200](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22526)).
+/// Log: `R=[macro:->-1]`.
+/// SaTeX does not follow the list after a display, so `\lastnodetype` reads
+/// unknown there: sound, never the 11 of a space left on the list.
+#[test]
+fn rf_display_space() {
+    let analysis = crate::support::analyze_plain(r#"\catcode`\$=3 \noindent$$$$ \edef\R{\the\lastnodetype}"#);
+    let got: String = crate::support::last_body(&analysis, "R").split_whitespace().collect();
+    assert!(got == "-1" || got.contains("unknowndigits:-2147483648..2147483647"), "\\R: {got}");
+}
+
+pin! {
+    /// A dimension read through `scan_dimen` past `\maxdimen` is "Dimension too large" and `\maxdimen` ([tex.web § 448](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8829), [tex.web § 460](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9056)); `\the` prints it unchecked.
+    /// Log: `R=[macro:->32767.99997ptnp]`.
+    rf_dimen_scan_clamp: r#"\dimen0=16383.99999pt \advance\dimen0 by\dimen0 \edef\R{\the\dimen0 \ifdim\dimen0>16383.99999pt y\else n\fi \ifdim\dimen0>0pt p\fi}"# => r#"32767.99997ptnp"#;
+}
+
+/// A dimen register an unpinned `\advance` may have taken past `\maxdimen`:
+/// `\the` prints it unchecked, so SaTeX must not print a known value. A scan
+/// read is clamped to ±`\maxdimen` instead (`rf_dimen_scan_clamp`) ([tex.web § 1238](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23134)).
+/// Log (`\pdfsetrandomseed 2`, so `\count1=0`): `R=[macro:->32767.99997pt]`.
+#[test]
+fn rf_dimen_top_unpinned() {
+    let analysis = crate::support::analyze_plain(
+        r#"\count1=\pdfuniformdeviate 2 \dimen\count1=16383.99999pt \advance\dimen\count1 by\dimen\count1 \edef\R{\the\dimen0}"#,
+    );
+    let got = crate::support::last_body(&analysis, "R");
+    assert!(got.contains("unknown"), "\\R: {got}");
+}
+
+pin! {
+    /// A token register read as a number is "Missing number": 0, and the register is read again ([tex.web § 413](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8345)).
+    /// Log: `R=[macro:->0b]`.
+    rf_toks_as_number: r#"\toks0={a}\count1=7 \count1=\toks0={b}\edef\R{\the\count1 \the\toks0}"# => r#"0b"#;
+    /// A font identifier read as a number is "Missing number": 0, and the font is selected after ([tex.web § 413](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8345)).
+    /// Log: `R=[macro:->0]`.
+    rf_font_as_number: r#"\count1=7 \count1=\nullfont \edef\R{\the\count1}"# => r#"0"#;
+    /// `\ignorespaces` keeps the `\noexpand` mark: the token acts as `\relax` ([tex.web § 1045](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20377)).
+    /// Log: `R=[macro:->N]`.
+    rf_ignorespaces_noexpand: r#"\def\foo{\gdef\R{E}}\def\R{N}\ignorespaces\noexpand\foo\edef\R{\R}"# => r#"N"#;
+    /// `\ifx` compares the parameter characters of two macros ([tex.web § 476](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9357), [tex.web § 508](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9856)).
+    /// Log: `R=[macro:->d]`.
+    rf_ifx_param_char: r#"\catcode`\!=6 \def\a#1{x}\def\b!1{x}\edef\R{\ifx\a\b s\else d\fi}"# => r#"d"#;
+    /// A `^^` after a control word's letters is reduced in the buffer at once ([tex.web § 356](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7464)).
+    /// Log: `R=[macro:->*]`.
+    rf_hat_after_cs: r#"\def\x{\catcode`\^=12 \y}\def\y#1{\edef\R{\string#1}}\x^^2a"# => r#"*"#;
+    /// `\scantokens{}` makes no line, so no `\par` ([etex.ch l. 4613](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L4613)).
+    /// Log: `R=[macro:->]`.
+    rf_scantokens_empty: r#"\everyeof{\noexpand}\edef\R{\scantokens{}}"# => r#""#;
+    /// A final `\newlinechar` makes no extra empty line ([etex.ch l. 4613](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L4613)).
+    /// Log: `R=[macro:->a ]`.
+    rf_scantokens_final_nl: r#"\everyeof{\noexpand}\newlinechar=10 \edef\R{\scantokens{a^^J}}"# => r#"a "#;
+    /// `\long\count`: the prefix error, then the assignment ([tex.web § 1213](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22759)).
+    /// Log: `R=[macro:->5]`.
+    rf_long_count: r#"\long\count1=5 \edef\R{\the\count1}"# => r#"5"#;
+}
+
+/// `src` run on disk next to `c8.tex`, which holds `\gdef\R{INSIDE}`.
+fn with_c8(tag: &str, src: &str) -> String {
+    let dir = crate::support::tmp_root().join(format!("satex-rf-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("c8.tex"), "\\gdef\\R{INSIDE}\n").unwrap();
+    let main = dir.join("main.tex");
+    let source = format!("{}{src}", crate::support::PRELUDE);
+    std::fs::write(&main, &source).unwrap();
+    let cfg = satex::project::config::Config {
+        engine: Some(satex::project::config::Engine::PdfTeX),
+        kernel: Some(satex::plugins::Kernel::None),
+        ..crate::support::config()
+    };
+    let analysis = satex::analysis::machine::Machine::analyze(&source, Some(&main), &cfg);
+    crate::support::last_body(&analysis, "R").split_whitespace().collect()
+}
+
+/// An implicit character belongs to a file name: `cur_cmd<=other_char` ([tex.web § 526](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L10201)).
+/// Log of `\def\R{OUT}\let\cc=c \input \cc8 `: `(./c8.tex)`, `R=[macro:->INSIDE]`.
+#[test]
+fn rf_file_name_implicit_char() {
+    assert_eq!(with_c8("implicit", r#"\def\R{OUT}\let\cc=c \input \cc8 \relax"#), "INSIDE");
+}
+
+/// `more_name` ends a file name at code 32 of any category ([tex.web § 516](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L10017)).
+/// Log of `\def\R{OUT}\def\n{c8}{\catcode32=12 \input\n \relax}`: `(./c8.tex)`, `R=[macro:->INSIDE]`.
+#[test]
+fn rf_file_name_other_space() {
+    assert_eq!(with_c8("space", r#"\def\R{OUT}\def\n{c8}{\catcode32=12 \input\n \relax}"#), "INSIDE");
+}
+
+/// A loop that `\let`s a name to `\ignorespaces` on odd and `\relax` on
+/// even passes, run a number of times SaTeX does not know, leaves the name
+/// one of both: pdftex (`\pdfsetrandomseed 1`, `3`, `\the\count2` prepended)
+/// logs `R=[macro:->71o]` and `R=[macro:->64r]` ([tex.web § 1221](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22838), [§ 507](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9840)). Audit D3: a summary
+/// must not keep one meaning.
+#[test]
+fn rf_havoc_let() {
+    let analysis = crate::support::analyze_plain(
+        r#"\let\x=\relax \count2=\pdfuniformdeviate 100 \def\l{\ifnum\count1<\count2 \advance\count1 1 \ifodd\count1 \let\x=\ignorespaces\else\let\x=\relax\fi \expandafter\l\fi}\l \edef\R{\ifx\x\relax r\else o\fi}"#,
+    );
+    let def = crate::support::last_definition(&analysis, "R").expect("\\R is defined");
+    let mut bodies = crate::support::site_bodies(&analysis, def);
+    bodies.sort();
+    assert_eq!(bodies, ["o", "r"]);
+}
+
+/// `\lastnodetype` of an hbox is 1 ([etex.ch l. 1263](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L1263)).
+/// Log: `R=[macro:->1]`.
+/// SaTeX reads a box tail as some node, 1 to 10: sound, not exact.
+#[test]
+fn rf_lastnodetype_hlist() {
+    covers(r#"\setbox0\hbox{\hbox{}\xdef\R{\the\lastnodetype}}"#, 1);
+}
+
+/// `\lastnodetype` of a vbox is 2 ([etex.ch l. 1263](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L1263)).
+/// Log: `R=[macro:->2]`.
+/// SaTeX reads a box tail as some node, 1 to 10: sound, not exact.
+#[test]
+fn rf_lastnodetype_vlist() {
+    covers(r#"\setbox0\hbox{\vbox{}\xdef\R{\the\lastnodetype}}"#, 2);
+}
+
+/// `\R` is `expected`, or an interval of unknown digits that holds it.
+fn covers(src: &str, expected: i64) {
+    let analysis = crate::support::analyze_plain(src);
+    let got: String = crate::support::last_body(&analysis, "R").split_whitespace().collect();
+    let range = got.split("digits:").nth(1).and_then(|r| {
+        let (lo, rest) = r.split_once("..")?;
+        let hi: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '-').collect();
+        Some((lo.parse::<i64>().ok()?, hi.parse::<i64>().ok()?))
+    });
+    assert!(
+        got == expected.to_string() || range.is_some_and(|(lo, hi)| lo <= expected && expected <= hi),
+        "\\R: {got}"
+    );
+}

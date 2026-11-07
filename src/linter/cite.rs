@@ -32,6 +32,25 @@ const ETEX_MANUAL_URL: &str = "https://mirrors.ctan.org/systems/doc/etex/etex_ma
 /// Same reasoning as [`ETEX_MANUAL_URL`], for the XeTeX reference.
 const XETEX_REFERENCE_URL: &str = "https://tug.org/xetex/";
 
+/// SaTeX's own semantics, as the site serves `SEMANTICS.md`.
+const SEMANTICS_URL: &str = "https://eagleoutice.github.io/satex-analyzer/SEMANTICS";
+
+/// The anchor a wiki gives a heading: lower case, punctuation dropped, spaces as `-`.
+pub fn anchor(heading: &str) -> String {
+    heading
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-')
+        .map(|c| if c == ' ' { '-' } else { c })
+        .collect()
+}
+
+/// `SEMANTICS § n`: the anchor of its heading `## n. …`.
+fn semantics_section(n: &str) -> Option<String> {
+    let prefix = format!("## {n}. ");
+    include_str!("../../SEMANTICS.md").lines().find(|l| l.starts_with(&prefix)).map(|l| anchor(&l[3..]))
+}
+
 /// Every name the generated docs use for a source, built from
 /// [`Source::as_str`]/[`Source::url`] so the URL always comes from that one
 /// place. A source gets more than one entry here when the docs spell it
@@ -81,6 +100,7 @@ fn source_aliases() -> Vec<Alias> {
     aliases.push(Alias { name: "e-TeX manual", url: ETEX_MANUAL_URL.to_string(), always: true });
     aliases.push(Alias { name: "etex_man", url: ETEX_MANUAL_URL.to_string(), always: true });
     aliases.push(Alias { name: "XeTeX reference", url: XETEX_REFERENCE_URL.to_string(), always: true });
+    aliases.push(Alias { name: "SEMANTICS", url: SEMANTICS_URL.to_string(), always: false });
     aliases
 }
 
@@ -102,8 +122,10 @@ fn link_href(link: &str) -> Option<&str> {
 ///   [`Alias`] that is unambiguously a citation on its own, `always: true`):
 ///   `Source: the LuaTeX manual.`
 /// - a section mark with no source name of its own, read as citing
-///   whichever source was last named: `hpack (tex.web § 649) and vpack
-///   (§ 668)`.
+///   whichever source was last named, tex.web when none was: `hpack
+///   (tex.web § 649) and vpack (§ 668)`. A link to anything but tex.web
+///   names no source.
+/// - `SEMANTICS § 14`: the heading of SaTeX's own semantics.
 ///
 /// Leaves an existing markdown link and an inline code span exactly as they
 /// are, and never opens a second link inside one already there. A fenced
@@ -235,8 +257,6 @@ fn tex_web_citation(prefix: &str, cite: &str) -> Option<String> {
 /// `last_url` through so a bare `§ N` after a real citation resolves to the
 /// same source. See [`linkify_citations`] for the forms this handles.
 fn linkify_prose(text: &str, master: &Regex, aliases: &[Alias], last_url: &mut Option<String>) -> String {
-    static CHAPTER: OnceLock<Regex> = OnceLock::new();
-    let chapter = CHAPTER.get_or_init(|| Regex::new(r"(chapter|appendix)\s+([0-9A-Z]+)").expect("valid regex"));
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
     for caps in master.captures_iter(text) {
@@ -244,8 +264,10 @@ fn linkify_prose(text: &str, master: &Regex, aliases: &[Alias], last_url: &mut O
         out.push_str(&text[last..m.start()]);
         last = m.end();
         if let Some(link) = caps.name("link") {
-            if let Some(url) = link_href(link.as_str()) {
-                *last_url = Some(url.to_string());
+            // Only a link into tex.web is a citation a bare `§` continues;
+            // any other link (a SaTeX source, a wiki page) is not.
+            if link_href(link.as_str()).is_some_and(|url| url.starts_with(Source::TeXWeb.url())) {
+                *last_url = Some(Source::TeXWeb.url().to_string());
             }
             out.push_str(link.as_str());
         } else if let Some(code) = caps.name("code") {
@@ -267,8 +289,13 @@ fn linkify_prose(text: &str, master: &Regex, aliases: &[Alias], last_url: &mut O
                 out.push_str(&rendered);
             } else if entry.always || caps.name("cite").is_some() {
                 *last_url = Some(entry.url.clone());
-                let url = match (entry.name, chapter.captures(m.as_str())) {
-                    ("The TeXbook", Some(c)) => format!("{}#{}-{}", entry.url, &c[1], c[2].to_lowercase()),
+                // CTAN's TeXbook page has no anchor per chapter: the chapter
+                // stays in the link text only.
+                let section = caps.name("cite").and_then(|c| tex_web_numbers(c.as_str()).first().map(|(n, _)| *n));
+                let url = match (entry.name, section) {
+                    ("SEMANTICS", Some(n)) => {
+                        semantics_section(&n.to_string()).map_or(entry.url.clone(), |a| format!("{}#{a}", entry.url))
+                    }
                     _ => entry.url.clone(),
                 };
                 out.push_str(&format!("[{}]({url})", m.as_str()));
@@ -276,7 +303,8 @@ fn linkify_prose(text: &str, master: &Regex, aliases: &[Alias], last_url: &mut O
                 out.push_str(m.as_str());
             }
         } else if let Some(bare) = caps.name("bare") {
-            if last_url.as_deref() == Some(Source::TeXWeb.url()) {
+            // A `§` with no source named before it is tex.web's.
+            if last_url.as_deref().is_none_or(|u| u == Source::TeXWeb.url()) {
                 let rendered = tex_web_citation("", bare.as_str());
                 out.push_str(rendered.as_deref().unwrap_or(bare.as_str()));
             } else if let Some(url) = &last_url {

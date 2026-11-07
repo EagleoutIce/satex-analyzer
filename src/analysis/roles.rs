@@ -1377,12 +1377,12 @@ fn call_args<'a>(bodies: &Bodies<'_>, toks: &[&'a Token], callee: &MacroDef, n: 
                 i += 1;
                 j += 1;
             }
-            Some(ParamItem::Param(_)) => {
+            Some(ParamItem::Param(..)) => {
                 let delim: Vec<&Tok> = items[j + 1..]
                     .iter()
                     .map_while(|d| match d {
                         ParamItem::Lit(t) => Some(t),
-                        ParamItem::Param(_) => None,
+                        ParamItem::Param(..) => None,
                     })
                     .collect();
                 j += 1 + delim.len();

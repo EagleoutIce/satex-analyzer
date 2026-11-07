@@ -4453,8 +4453,11 @@ fn tikz_plugin_new_drawing_and_off() {
     assert_eq!(at(&mut server, &uri, "satex/view", 2, 1), json!([]), "not on a line with text");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
-    let (mut server, uri, dir) =
-        open_set("tikz-off", PICTURE, &["type_plugins.tikz.enabled=false", "type_plugins.page.enabled=false"]);
+    let (mut server, uri, dir) = open_set(
+        "tikz-off",
+        PICTURE,
+        &["type_plugins.tikz.enabled=false", "type_plugins.page.enabled=false", "type_plugins.history.enabled=false"],
+    );
     let _ = at(&mut server, &uri, "textDocument/hover", 4, 3);
     assert_eq!(at(&mut server, &uri, "satex/view", 5, 3), json!([]));
     let actions = at(&mut server, &uri, "textDocument/codeAction", 9, 0);
