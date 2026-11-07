@@ -474,9 +474,10 @@
      "ms": 60000
     },
     {
-     "until": "document.querySelectorAll('#lsp-diagnostics li:not(.cat-group)').length >= 2",
+     "until": "document.querySelector('#play-findings') && getComputedStyle(document.querySelector('#play-findings')).display !== 'none' && document.querySelectorAll('#lsp-diagnostics li:not(.cat-group)').length >= 2",
      "wait": 800,
-     "snap": "back"
+     "snap": "back",
+     "eval": "document.querySelector('[data-panel=play-findings]')?.click()"
     },
     {
      "hover": "__xy('\\\\begin{figure}', 3)"

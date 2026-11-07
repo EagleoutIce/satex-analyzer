@@ -795,8 +795,9 @@ def scope_cards(satex, work, names):
     tmp = work / "cards"
     tmp.mkdir(exist_ok=True)
 
-    def scope(kernel, flags, text, extra=()):
-        doc = tmp / f"{kernel}.tex"
+    def scope(kernel, flags, text, extra=(), name=None):
+        # own file per run: runs go in parallel
+        doc = tmp / f"{name or kernel}.tex"
         doc.write_text(text)
         env = dict(os.environ, SATEX_CACHE=str(work / f"cache-{kernel}"))
         done = proc([str(satex), *flags, "--format", "json", "scope", "--all", *extra, "-f", doc.name], cwd=tmp, env=env, capture_output=True, text=True)
@@ -819,10 +820,11 @@ def scope_cards(satex, work, names):
         text = "\\documentclass{article}\n" + "".join(f"\\usepackage{{{n}}}\n" for n in wanted) + "\\begin{document}\n\\end{document}\n"
         records = {r["name"]: r for r in scope("pdftex", KERNELS[0][2], text)}
         # a name no loaded package defines: the installed packages that define it, each loaded alone
-        for n in sorted(providers(satex, work, [x for x in names if x not in records and re.fullmatch(r"\\[A-Za-z@]+", x)])):
-            # a class (beamer's \mode, \uncover) is the document's class, a package is loaded by article
-            head = f"\\documentclass{{{n[:-4]}}}\n" if n.endswith(".cls") else f"\\documentclass{{article}}\n\\usepackage{{{n.removesuffix('.sty')}}}\n"
-            more = scope("pdftex", KERNELS[0][2], head + "\\begin{document}\n\\end{document}\n")
+        # a class (beamer's \mode, \uncover) is the document's class, a package is loaded by article
+        head = lambda n: f"\\documentclass{{{n[:-4]}}}\n" if n.endswith(".cls") else f"\\documentclass{{article}}\n\\usepackage{{{n.removesuffix('.sty')}}}\n"
+        alone = sorted(providers(satex, work, [x for x in names if x not in records and re.fullmatch(r"\\[A-Za-z@]+", x)]))
+        runs = parallel("hover cards: packages alone", alone, lambda n: scope("pdftex", KERNELS[0][2], head(n) + "\\begin{document}\n\\end{document}\n", name=f"alone-{n}"))
+        for more in runs:
             for r in more:
                 if r["name"] in names:
                     records.setdefault(r["name"], r)
@@ -843,8 +845,9 @@ def scope_cards(satex, work, names):
                 seen.add(r["name"])
         except json.JSONDecodeError:
             pass
-        engines = {label: {r["name"] for r in scope(kernel, flags, "\\documentclass{article}\n\\begin{document}\n\\end{document}\n", ["--filter", "tag=primitive"])}
-                   for kernel, label, flags in KERNELS if kernel != "plain"}
+        kernels = [k for k in KERNELS if k[0] != "plain"]
+        prims = parallel("hover cards: primitives per engine", kernels, lambda k: scope(k[0], k[2], "\\documentclass{article}\n\\begin{document}\n\\end{document}\n", ["--filter", "tag=primitive"], name=f"prims-{k[0]}"))
+        engines = {label: {r["name"] for r in got} for (kernel, label, flags), got in zip(kernels, prims)}
         return records, engines, templates(scope, probe, names)
     return memo(work, "cards-scope-keyed3", [BINARY, wanted, sorted(names)], make)
 
@@ -1908,9 +1911,11 @@ def recapture(out):
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(quiet, directory=str(out)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     began = time.monotonic()
-    # two browsers at most (each takes about 3 GB with the engine), one per entry, the next starting as one ends
+    # browsers by what the machine has free now: about 3 GB each with the engine, a few idle cores each, three at most
+    idle = (os.cpu_count() or 2) - os.getloadavg()[0]
+    slots = max(1, min(3, available_memory() // (3 * 2**30), int(idle) // 4))
     names, url = list(due), f"http://127.0.0.1:{server.server_address[1]}/"
-    print(f"showcase: retaking {len(names)} shots whose page code, example or entry changed: {', '.join(names)}", file=sys.stderr)
+    print(f"showcase: retaking {len(names)} shots in {slots} browsers (load {os.getloadavg()[0]:.1f}) whose page code, example or entry changed: {', '.join(names)}", file=sys.stderr)
     finished = [0]
 
     def run(part):
@@ -1922,7 +1927,7 @@ def recapture(out):
         print(f"showcase: [{finished[0]}/{len(names)}] {part[0]}: {' and '.join(got) or 'failed'} in {time.monotonic() - t0:.0f} s", file=sys.stderr)
         return out
     try:
-        with concurrent.futures.ThreadPoolExecutor(2) as pool:
+        with concurrent.futures.ThreadPoolExecutor(slots) as pool:
             outputs = list(pool.map(run, [[n] for n in names]))
     finally:
         server.shutdown()
