@@ -73,6 +73,24 @@ Every theorem was checked for hypotheses that never hold or assume the result.
 - The theorem's wording: budget per run, free `Read`/`Other`, unused lemmas, the hypotheses of `loopHead_sound` and `summaryHavoc_sound` (B1, B3, B4, B6).
 - Concrete.lean follows tex.web closer (audit A1–A55). No proof uses the changed rules. A macro call now pops used-up token lists first (§ 390, A43), so a tail-recursive loop keeps its input depth, which `Footprint` (B6) asks for. Core gained `Item.vbox`, `Cmd.alter`, `Macro.brace`, `FileLevel.eofSeen` and `Font`; each rule cites tex.web and the SaTeX code it maps to.
 
+## Model changes after audit C (2026-11-07)
+
+Concrete.lean and Core.lean follow tex.web for audit C1–C13. Each changed rule cites its § and the SaTeX code; the pdfTeX/XeTeX runs are target/scratch/audit-c/tNN.tex. No proof uses the changed rules.
+
+- **C1.** A token register, `\every…`, a font or `\font` read as a number (`tokLevelTok`, § 415): "Missing number", the token is read again, 0 at `dimen_val`. `ScanInt.missing`, `ScanUnit.tokLevel`, `ScanDimen.tokLevel`/`tokLevelMu`, `ScanGlue.tokLevel` (t01, t07).
+- **C2.** `\ignorespaces` pushes the next token with its `\noexpand` marker, so it acts as `\relax` (§ 1045, t05).
+- **C3.** `ParamItem.arg c` keeps the parameter character (§ 476): `\ifx` tells `#1` from `!1` (§ 508, t11). `\meaning` prints it, and the body's `#n` uses `match_chr` (§ 294). Abstract.lean only matches `.arg _`.
+- **C4.** `scanLetters` keeps a `^^` reduction after a control word's letters in the buffer (§ 356, t10).
+- **C5.** `force_eof` is one flag, `State.forceEof` (§ 361). `\endinput` sets it, the next file level that wants a line ends and clears it (§ 362, § 378, t04). `FileLevel.forceEof` is gone.
+- **C6.** `splitLines`: no line for an empty `\scantokens` text, none after a final `\newlinechar` (etex.ch `pseudo_start`, t13).
+- **C7.** Register glue passes `trap_zero_glue` (`trapVal`, § 1236, t06).
+- **C8.** File names (§ 526, § 516, TeX Live tex.ch): any token whose meaning is a character ≤ 255 counts, implicit ones too; code 32 ends the name in any category; `\input{…}` reads an expanded balanced text (`FileName.braced`, t02, t08). The TeX Live rule that a space at the end of a buffer line ends even a quoted name is not modelled.
+- **C9.** Already fixed (`dimVal`/`dimState`, t12).
+- **C10.** `\everyeof` counts the fake empty line: `\inputlineno` is one past the last line (§ 362, t09).
+- **C11.** `\long`, `\outer` or `\protected` before a command other than `\def` (`longMisplaced`, § 1213, etex.ch): `Exec.prefixLong` raises the error, keeps only `\global` and runs the command (t14). `Head` excludes that case.
+- **C12.** `\ifx` compares primitives by identity: `Engine.primId` names one primitive per (`cur_cmd`, `cur_chr`), so engine aliases are equal (§ 507, t15).
+- **C13.** `nameOf` is injective on codes up to `0x10FFFF`: `U+FFFF` and surrogates are escaped, `strCodes` undoes it (§ 372, t16).
+
 ## Open
 
 - `ReadCovers`: an abstract mouth and abstract scanners (`Next`, `ScanInt`, `ScanDimen`, `Internal`, `MatchParams` over `AInput`). Without it `scanDelim_sound` is not yet linked to `Expand.macro`.

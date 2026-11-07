@@ -199,10 +199,10 @@ XeTeXlinebreakpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 XeTeXlinebreakskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
 XeTeXmathaccent	Exec.operands	tex.web §§ 1151–1186	over
 XeTeXmathchar	Exec.operands	tex.web §§ 1151–1186	over
-XeTeXmathchardef	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+XeTeXmathchardef	Exec.lua,Test.ifx (Engine.primId)	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 XeTeXmathcharnum	Exec.operands	tex.web §§ 1151–1186	over
 XeTeXmathcharnumdef	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
-XeTeXmathcode	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
+XeTeXmathcode	Exec.specialTable,Internal.specialTable,Test.ifx (Engine.primId)	XeTeX/LuaTeX manuals	exact
 XeTeXmathcodenum	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
 XeTeXpdffile	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
 XeTeXpdfpagecount	Internal.unknowable,Exec.illegal	pdfTeX manual	over
@@ -337,7 +337,7 @@ endL	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricte
 endR	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
 endcsname	Exec.endcsname	tex.web § 1135	exact
 endgroup	Exec.endgroup,Exec.endgroupBottom,Exec.endgroupWrong	tex.web § 1069	exact
-endinput	Expand.endinput	tex.web § 362	exact
+endinput	Expand.endinput,Next.endFile	tex.web § 378 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7807; tex.web § 362 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7563; SaTeX `take_pending_eof` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs	exact
 endlinechar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 endlocalcontrol	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 eqno	Exec.eqno,Exec.eqnoEnd	tex.web § 1140	over
@@ -450,16 +450,16 @@ iftrue	Expand.ifTrue,Expand.ifFalse,Test.iftrue	tex.web §§ 501–508	exact
 ifvbox	Expand.ifTrue,Expand.ifFalse,Test.box	tex.web §§ 501–508	exact
 ifvmode	Expand.ifTrue,Expand.ifFalse,Test.vmode	tex.web §§ 501–508	exact
 ifvoid	Expand.ifTrue,Expand.ifFalse,Test.box	tex.web §§ 501–508	exact
-ifx	Expand.ifTrue,Expand.ifFalse,Test.ifx	tex.web §§ 501–508	exact
+ifx	Expand.ifTrue,Expand.ifFalse,Test.ifx	tex.web § 507 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9840; SaTeX `Primitive` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	exact
 ignoreligaturesinfont	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
 ignoreprimitiveerror	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-ignorespaces	Exec.ignorespaces	tex.web § 1045	exact
+ignorespaces	Exec.ignorespaces	tex.web § 1045 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20377; SaTeX `execute_command` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
 immediate	Exec.immediate	tex.web § 1375	exact
 immediateassigned	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 immediateassignment	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 indent	Exec.startPar	tex.web §§ 1088–1093; pdfTeX manual	exact
 initcatcodetable	Exec.lua	LuaTeX manual, "Lua related primitives", "Catcode tables"	over
-input	Expand.input,Expand.inputMissing,Expand.inputPrompt	tex.web §§ 526–537	exact
+input	Expand.input,Expand.inputMissing,Expand.inputPrompt,FileName.braced	tex.web § 526 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L10201; tex.web § 516 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L10017; tex.ch (TeX Live) https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.ch#L4808; SaTeX `read_file_name_quoted` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
 inputlineno	Internal.inputLineNo,Exec.illegal	tex.web §§ 416–424	exact
 insert	Exec.insert,Exec.egroupList	tex.web § 1099 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21197; tex.web § 1100 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21213; SaTeX `group_closed` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs	exact
 insertht	Internal.unknowable,Exec.illegal	LuaTeX manual	over
@@ -508,7 +508,7 @@ localbrokenpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 localinterlinepenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 localleftbox	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
 localrightbox	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
-long	Exec.prefix_	tex.web § 1211	exact
+long	Exec.prefix_,Exec.prefixLong	tex.web § 1211 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22720; tex.web § 1213 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22759; SaTeX `drop_prefixes` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
 looseness	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 lower	Exec.shift	tex.web § 1073 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20853; SaTeX `box_end` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs	exact
 lowercase	Exec.caseShift	tex.web § 1289 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23622; SaTeX `case_shift` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
@@ -576,7 +576,7 @@ moveright	Exec.shift	tex.web § 1073 https://github.com/TeX-Live/texlive-source/
 mskip	Exec.operands	tex.web §§ 1057–1061, 1105	over
 muexpr	Internal.expr,ScanExpr.ok,ScanExpr.overflow	etex_man § 3.5	exact
 multiply	Exec.scale	tex.web §§ 1236–1240	exact
-muskip	Exec.register,Internal.register	tex.web §§ 413, 1224	exact
+muskip	Exec.register,Internal.register	tex.web § 413 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8345; tex.web § 1224 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22902; tex.web § 1236 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23078; SaTeX `scan_register_value` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
 muskipdef	Exec.shorthandDef	tex.web § 1224	exact
 mutoglue	Internal.muToGlue,Exec.illegal	etex_man § 3	exact
 newlinechar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
@@ -601,7 +601,7 @@ omit	Exec.alignment	tex.web §§ 768–812	over
 openin	Exec.openin	tex.web § 1275	exact
 openout	Exec.write,Exec.immediate,WriteCmd.openNow,WriteCmd.closeNow	tex.web §§ 1351–1374	over
 or	Expand.elseOr	tex.web § 510	exact
-outer	Exec.prefix_	tex.web § 1211	exact
+outer	Exec.prefix_,Exec.prefixLong	tex.web § 1211 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22720; tex.web § 1213 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22759; SaTeX `drop_prefixes` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
 output	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
 outputbox	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 outputmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
@@ -795,7 +795,7 @@ pretolerance	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 prevdepth	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
 prevgraf	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
 primitive	Expand.primitive	pdfTeX manual, "\pdfprimitive"	exact
-protected	Exec.prefix_	etex_man § 3.4	exact
+protected	Exec.prefix_,Exec.prefixLong	etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L2754; SaTeX `drop_prefixes` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
 protrudechars	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 protrusionboundary	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
 pxdimen	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
@@ -822,7 +822,7 @@ savepos	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
 savinghyphcodes	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 savingvdiscards	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 scantextokens	Expand.scantokens	LuaTeX manual, "\scantextokens"	exact
-scantokens	Expand.scantokens	etex_man § 3.9	exact
+scantokens	Expand.scantokens	etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L4613; SaTeX `execute_command` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
 scriptfont	Exec.famFont,Internal.famFont	tex.web §§ 415, 1234	exact
 scriptscriptfont	Exec.famFont,Internal.famFont	tex.web §§ 415, 1234	exact
 scriptscriptstyle	Exec.mathStyle	tex.web § 1169	exact
@@ -849,7 +849,7 @@ showstream	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 showthe	Exec.showCmd	tex.web §§ 1291–1298; etex_man § 3.11	over
 showtokens	Exec.showCmd	tex.web §§ 1291–1298; etex_man § 3.11	over
 skewchar	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
-skip	Exec.register,Internal.register	tex.web §§ 413, 1224	exact
+skip	Exec.register,Internal.register	tex.web § 413 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8345; tex.web § 1224 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22902; tex.web § 1236 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23078; SaTeX `scan_register_value` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
 skipdef	Exec.shorthandDef	tex.web § 1224	exact
 spacefactor	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
 spaceskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
@@ -882,7 +882,7 @@ the	Expand.the	tex.web § 465	exact
 thickmuskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
 thinmuskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
 time	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
-toks	Exec.register,Internal.register	tex.web §§ 413, 1224	exact
+toks	Exec.register,Internal.register,ScanInt.missing	tex.web § 413 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8345; tex.web § 415 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8391; tex.web § 1224 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22902; SaTeX `scan_int_from` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs	exact
 toksapp	Exec.toksApp	LuaTeX manual, "Token lists"	exact
 toksdef	Exec.shorthandDef	tex.web § 1224	exact
 tokspre	Exec.toksApp	LuaTeX manual, "Token lists"	exact

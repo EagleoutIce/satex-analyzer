@@ -283,10 +283,12 @@ inductive Cmd where
 
 /-! ## Meanings (§ 210, SEM § 5) -/
 
-/-- An item of a macro's parameter text: a delimiter token, or `#n`. -/
+/-- An item of a macro's parameter text: a delimiter token, or `#n` with
+its parameter character (§ 476 `match_token+cur_chr`). -/
+-- source: tex.web § 476 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9357; SaTeX `ParameterText` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/tex.rs
 inductive ParamItem where
   | tok (t : Token)
-  | arg
+  | arg (c : CharCode)
   deriving DecidableEq, Repr, Inhabited
 
 structure Macro where
@@ -375,8 +377,6 @@ structure FileLevel where
   `\scantextokens` (no `\endlinechar` on the last line, no `\everyeof`). -/
   pseudo : Bool := false
   text : Bool := false
-  /-- `\endinput` was executed: the file ends after this line (§ 362). -/
-  forceEof : Bool := false
   /-- `\everyeof` was inserted at the end of this file (etex.ch `eof_seen`). -/
   -- source: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L933; SaTeX `end_input_frame` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs
   eofSeen : Bool := false
@@ -460,6 +460,10 @@ structure State where
   halted : Bool := false
   /-- Fatal error ended the job (§ 93). -/
   fatal : Bool := false
+  /-- `force_eof` (§ 361): `\endinput` was executed; the next file level
+  that wants a line ends instead, and clears it (§ 362). One global flag. -/
+  -- source: tex.web § 362 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7563; SaTeX `take_pending_eof` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs
+  forceEof : Bool := false
 
 namespace State
 

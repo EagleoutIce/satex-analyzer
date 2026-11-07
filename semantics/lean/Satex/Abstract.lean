@@ -892,7 +892,7 @@ delimit it (empty: undelimited). -/
 def splitParams : List ParamItem → TokList × List TokList
   | [] => ([], [])
   | .tok t :: ps => let r := splitParams ps; (t :: r.1, r.2)
-  | .arg :: ps => let r := splitParams ps; ([], r.1 :: r.2)
+  | .arg _ :: ps => let r := splitParams ps; ([], r.1 :: r.2)
 
 /-- § 400: a delimited argument that is one `{…}` group loses its braces.
 Either reading: the argument, or its tokens as one hole. -/
