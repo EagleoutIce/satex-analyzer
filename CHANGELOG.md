@@ -72,6 +72,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **A catcode set for an unknown character leaves braces alone.** `{`, `}` and `\` keep their category, a named and configurable assumption. [`8a2804c`](https://github.com/EagleoutIce/satex-analyzer/commit/8a2804c)
 - `fix` **Names built from unknown text stay few.** A family written once per record widens to one typed text instead of one path per record. See [domains](doc/wiki/domains.md). [`0231561`](https://github.com/EagleoutIce/satex-analyzer/commit/0231561)
 - `fix` **Class options no longer stale every package cache.** Only the class replays them. [`3f9142f`](https://github.com/EagleoutIce/satex-analyzer/commit/3f9142f)
 - `fix` **No false errors in KOMA notecolumn.** Read flags stay with their stream, and reading a register no longer makes every register unknown. [`79becb2`](https://github.com/EagleoutIce/satex-analyzer/commit/79becb2) [`fff4841`](https://github.com/EagleoutIce/satex-analyzer/commit/fff4841)
@@ -107,7 +108,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site and docs
 
-- `feat` **Landing page.** The first cards show on the first screen, plugin groups show at a glance, lint rules get their own shot. [`0f26102`](https://github.com/EagleoutIce/satex-analyzer/commit/0f26102)
+- `feat` **Landing page.** The first cards show on the first screen, plugin groups show at a glance, lint rules get their own shot, quick fixes and settings join the ring. [`0f26102`](https://github.com/EagleoutIce/satex-analyzer/commit/0f26102) [`aa78dab`](https://github.com/EagleoutIce/satex-analyzer/commit/aa78dab)
 - `docs` **Wiki** on the type lattice, precision limits and why TeX is hard, regenerated from the code. See [why TeX is hard](doc/wiki/challenges.md). [`5083317`](https://github.com/EagleoutIce/satex-analyzer/commit/5083317) [`ea975ed`](https://github.com/EagleoutIce/satex-analyzer/commit/ea975ed) [`85e15a6`](https://github.com/EagleoutIce/satex-analyzer/commit/85e15a6)
 - `feat` **Hover cards** for control sequences. [`3b86d4b`](https://github.com/EagleoutIce/satex-analyzer/commit/3b86d4b)
 - `docs` **This changelog**, with a page on the site. [`0a4854c`](https://github.com/EagleoutIce/satex-analyzer/commit/0a4854c)
