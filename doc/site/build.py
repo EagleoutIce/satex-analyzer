@@ -1952,10 +1952,14 @@ def precompress(out):
     """`name.gz` beside each compressible file where it is smaller: what a server
     that compresses on the fly, as GitHub Pages does, would send."""
     for path in out.rglob("*"):
-        if path.is_file() and path.suffix in COMPRESSIBLE and path.stat().st_size > 1024:
-            packed = gzip.compress(path.read_bytes(), compresslevel=9, mtime=0)
-            if len(packed) < path.stat().st_size:
-                path.with_name(path.name + ".gz").write_bytes(packed)
+        # a file another build removed meanwhile is skipped, never a failed build
+        try:
+            if path.is_file() and path.suffix in COMPRESSIBLE and path.stat().st_size > 1024:
+                packed = gzip.compress(path.read_bytes(), compresslevel=9, mtime=0)
+                if len(packed) < path.stat().st_size:
+                    path.with_name(path.name + ".gz").write_bytes(packed)
+        except FileNotFoundError:
+            continue
 
 
 if __name__ == "__main__":
