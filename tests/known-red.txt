@@ -2,6 +2,7 @@
 budgets::pgfmath_parse_of_typed_numbers
 documents::notecolumn_loop_over_slnc_file
 documents::notecolumn_clear_loop_paths_do_not_grow_with_notes
+documents::notecolumn_slnc_on_master_thesis_title_page
 documents::reparsing_a_pgfmath_result_of_unknown_width_raises_nothing
 documents::rounded_node_of_unknown_width_ends
 documents::rounding_an_unknown_dimension_ends_bounded
