@@ -449,7 +449,7 @@ The `limits:` settings in `satex.yaml` trade precision for a bounded search ([`s
 A write through an index not pinned to one number (`\count#1=…`) must hold for every register it may name (`weaken_registers`, [`src/engine/exec.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs)):
 
 - A narrow interval (at most `limits.value_set` registers): each is joined with the value.
-- Otherwise every register of the kind is weakened, and unseen ones read as the whole range (`register_top`), no longer as zero.
+- Otherwise every register of the kind is weakened, and unseen ones read as their kind's top (`register_top`): a count the whole 32-bit word, a dimen ±`\maxdimen` (every dimension scan clamps there, tex.web §§ 448, 460), no longer as zero.
 
 ### Code tables behind an unknown character
 

@@ -736,8 +736,12 @@ on, and it never invents a meaning.
   value is not known is still a number of its kind, in an interval
   `[lo, hi]` within TeX's 32-bit range and, when there are at most
   `value_set` (8) of them, one of a set of values. A box dimension or a
-  node size starts from ±`\maxdimen`. A register of unknown value, and
-  widening, from the whole 32-bit range, which `\advance` can reach.
+  node size starts from the whole 32-bit range. An unknown count, and
+  widening, starts from the whole range too, which `\advance` can reach. An
+  unseen dimen register starts from ±`\maxdimen`: every scan of a dimension
+  clamps there ([tex.web § 448][tw-448], [§ 460][tw-460]), and `\the` of one past it
+  prints unknown digits, never a known value. Glue amounts of unknown value
+  keep ±`\maxdimen` though `\advance` may pass it: an open imprecision.
   `\advance`, `\multiply`, `\divide` and every step of `\numexpr` and
   `\dimexpr` are TeX's exact operation (§ 11) on every combination of
   members when there are few (at most 64), else the operation on
@@ -796,7 +800,9 @@ on, and it never invents a meaning.
   it becomes one token that stands for either text (`paths-widened`).
 * **Typesetting is not modeled.** Box dimensions, the last item of a list
   and page breaks are unknown, so a conditional on them is undecided and goes
-  through the rule above. The mode is tracked (§ 9).
+  through the rule above. `\lastnodetype` after a box is any of 1..10, after
+  a display unknown, where TeX knows 1, 2 or -1. The list after a display is
+  not followed. The mode is tracked (§ 9).
 * **Unknown text.** What the engine yields and `satex` cannot know, a
   random number, an unknown register or parameter under `\the`, `\number`
   or `\string` with an unknown `\escapechar`, a line read from the terminal
@@ -1105,6 +1111,7 @@ redefines the name gets its own meaning back.
 [tw-424]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8517
 [tw-446]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8802
 [tw-448]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8829
+[tw-460]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9056
 [tw-449]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8875
 [tw-455]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8965
 [tw-461]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9064

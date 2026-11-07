@@ -87,7 +87,9 @@ Each lets the Rust lose a concrete outcome the model keeps.
 - **D3. Havoc keeps non-macro meanings.** env.rs:2660 (`widened`). `widened`
   replaces only macros and sets. A name a pass `\let` to a primitive, a
   `\chardef` or a register keeps that one meaning; domains.md says
-  "anything else is an unknown meaning".
+  "anything else is an unknown meaning". Not reproduced as a wrong result
+  (2026-11-07): a loop that `\let`s a name to two primitives leaves both
+  outcomes, checked against pdftex in `tex_semantics::rf_havoc_let`.
 - **D4. Call summaries cover only the runs seen.** calls.rs:161-252. After
   `call_summary_after` (2) runs with the same written names, a third call
   with unknown operands assigns the join of those runs, widened with
