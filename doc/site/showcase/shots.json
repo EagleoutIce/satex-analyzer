@@ -355,7 +355,6 @@
    "name": "handref",
    "file": "proofs.tex",
    "title": "Quick fixes",
-   "wide": true,
    "caption": "Wrote “Section 1” by hand? The fix writes \\Cref to the label, loads cleveref if needed, and the number stays right.",
    "steps": [
     {
@@ -811,8 +810,7 @@
     640,
     760
    ],
-   "stack": true,
-   "wide": true
+   "stack": true
   }
  ],
  "video": 1000

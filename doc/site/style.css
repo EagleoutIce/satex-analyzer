@@ -2002,6 +2002,9 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 /* spread sideways, so the pair reads wide rather than tall */
 .shot-stack { --dx: clamp(var(--s48), 12vw, 10rem); --dy: var(--s16); display: grid; padding: var(--dy) 0 0 var(--dx); }
 .shot-stack > .shot-win { grid-area: 1 / 1; }
+/* a stack on a ring card fills the card: both windows the card's height, the back one peeking out on the left */
+.cards .shot-stage:has(> .shot-stack) { display: block; } .cards .shot-stack { --dx: 18%; --dy: var(--s12); height: 100%; box-sizing: border-box; }
+.cards .shot-stack > .shot-win { min-height: 0; height: 100%; } .cards .shot-stack > .shot-win img { height: 100%; object-fit: cover; object-position: left top; }
 .shot-stack > .shot-win:first-child { translate: calc(-1 * var(--dx)) calc(-1 * var(--dy)); opacity: .9; }
 /* where SaTeX runs: one card, a row per editor with what it gets, how to set it up and where to read more */
 .editors { display: grid; grid-template-columns: max-content max-content minmax(0, 1fr) max-content; margin: 0 0 var(--s48); padding: var(--s4) var(--s16); list-style: none;
