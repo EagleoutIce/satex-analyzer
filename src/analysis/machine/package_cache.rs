@@ -1353,10 +1353,11 @@ impl Machine<'_> {
             // Counter namespace known: decides whether package's first counter probes.
             hash.put(&self.counter_namespace);
             parts.push(("the counter namespace".into(), std::mem::replace(&mut hash, Fnv::new()).0));
-            // A replay restores both whole, and an undefined name a pattern
+            // A replay restores them whole, and an undefined name a pattern
             // matches may be defined: the recording must have seen the same.
-            hash.put(&(&self.wild, &self.class_options));
-            parts.push(("the wild names and class options".into(), std::mem::replace(&mut hash, Fnv::new()).0));
+            // Class options need no key: only a class sets them (see the replay).
+            hash.put(&self.wild);
+            parts.push(("the wild names".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             parts
         });
         digest
@@ -2700,7 +2701,10 @@ impl Machine<'_> {
             self.end_line = EndLineChar(lists.end_line);
             let from = &before.lists;
             self.loaded = Rc::new([&from.loaded[..], &lists.loaded[..]].concat());
-            self.class_options = lists.class_options.clone();
+            // only the class sets them, while none are set (as `load` does): a package's replay keeps the run's
+            if self.class_options.is_empty() {
+                self.class_options = lists.class_options.clone();
+            }
             self.wild = lists.wild.clone();
             self.verbatim_environments =
                 patched(&from.verbatim, &lists.verbatim).into_iter().map(|(n, ())| n).collect();
