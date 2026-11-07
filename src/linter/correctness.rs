@@ -807,7 +807,9 @@ fn unresolved_files(report: &mut Report) {
     }
     // The kernel's own error when `\IfFileExists` finds nothing (latex.ltx
     // `\@missingfileerror`): `LaTeX Error: File `⟨name⟩' not found.`
+    // only `\@missingfileerror`'s (its prompt names a default extension): graphics' own is `missing-graphic`'s
     let missing = kernel_errors(report, |text| {
+        text.contains("Default extension").then_some(())?;
         let rest = &text[text.find("LaTeX Error: File `")? + "LaTeX Error: File `".len()..];
         Some(rest[..rest.find("' not found")?].to_string())
     });
@@ -1097,8 +1099,32 @@ fn missing_graphic(report: &mut Report) {
                 continue;
             }
         }
-        report.add(span, &name, format!("no file for `{name}` in any format the graphics driver reads"), None);
+        let fix =
+            graphics_dir(report, &name).map(|dir| format!("`{name}` is in `{dir}`: add `\\graphicspath{{{{{dir}}}}}`"));
+        report.add(span, &name, format!("no file for `{name}` in any format the graphics driver reads"), fix);
     }
+}
+
+/// The project folder, relative to the main file's, that holds `name` in a format graphics tries
+/// (`\Gin@extensions`): what `\graphicspath` would need to find it.
+fn graphics_dir(report: &Report, name: &str) -> Option<String> {
+    let analysis = report.analysis;
+    let tried = crate::linter::shared::macro_text(analysis, "Gin@extensions").unwrap_or_default();
+    let names: Vec<String> =
+        std::iter::once(name.to_string()).chain(tried.split(',').map(|e| format!("{name}{}", e.trim()))).collect();
+    let main = analysis.files.get(usize::from(analysis.main_file))?;
+    let base = crate::project::paths::dir_of(std::path::Path::new(&main.path));
+    let base = std::fs::canonicalize(&base).unwrap_or(base);
+    let named = |p: &std::path::Path| {
+        p.file_name().and_then(|f| f.to_str()).is_some_and(|f| names.iter().any(|n| n.ends_with(f)))
+    };
+    crate::plugins::discovery::files_where(&base, named).into_iter().find_map(|path| {
+        let path = std::fs::canonicalize(path).ok()?;
+        let rel = path.strip_prefix(&base).ok()?.to_str()?.replace('\\', "/");
+        let hit = names.iter().find(|n| rel.ends_with(&format!("/{n}")))?;
+        let dir = &rel[..rel.len() - hit.len()];
+        (!dir.is_empty()).then(|| dir.to_string())
+    })
 }
 
 /// The programs a restricted build runs: the installation's own

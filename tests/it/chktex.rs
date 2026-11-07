@@ -1287,6 +1287,7 @@ fn with_files(name: &str, source: &str, files: &[(&str, &str)]) -> Option<OnDisk
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).ok()?;
     for (file, text) in files {
+        std::fs::create_dir_all(dir.join(file).parent()?).ok()?;
         std::fs::write(dir.join(file), text).ok()?;
     }
     let path = dir.join("doc.tex");
@@ -1333,6 +1334,25 @@ fn a_graphic_epstopdf_converts_is_not_missing() {
     let Some(doc) = with_files("eps", source, &[("logo.eps", "%!PS-Adobe-3.0 EPSF-3.0\n")]) else { return };
     let found = findings(&doc.analysis, "missing-graphic");
     assert!(found.iter().all(|f| !f.contains("logo")), "{found:?}");
+}
+
+/// An image in a project folder graphics does not search: one `missing-graphic` that names
+/// the folder for `\\graphicspath`, no second finding that it is not installed.
+#[test]
+fn a_graphic_in_a_project_folder_suggests_its_graphicspath() {
+    let source = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\includegraphics{pic}\n\\end{document}\n";
+    let doc = with_files("graphicspath", source, &[("img/pic.png", "png")]).expect("kpsewhich and the fixture");
+    let lint = satex::linter::lint(&doc.analysis);
+    let of = |code: &str| {
+        lint.iter()
+            .filter(|r| r["code"] == code && serde_json::to_string(r).unwrap_or_default().contains("pic"))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let missing = of("missing-graphic");
+    assert_eq!(missing.len(), 1, "{lint:?}");
+    assert!(serde_json::to_string(&missing[0]).unwrap_or_default().contains("\\\\graphicspath{{img/}}"), "{missing:?}");
+    assert!(of("unresolved-file").is_empty(), "graphics' own error is not a missing package: {lint:?}");
 }
 
 #[test]

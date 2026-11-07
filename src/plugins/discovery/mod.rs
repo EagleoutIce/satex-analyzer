@@ -220,6 +220,20 @@ pub fn scan_with(root: &Path, threads: usize) -> Discovery {
     found
 }
 
+/// The project files under `root` (the walk's depth and ignores) whose path `hit` accepts:
+/// read only when asked, so files a build writes never change what discovery found.
+pub fn files_where(root: &Path, hit: impl Fn(&Path) -> bool) -> Vec<PathBuf> {
+    let root = if root.as_os_str().is_empty() { Path::new(".") } else { root };
+    let mut builder = ignore::WalkBuilder::new(root);
+    builder.max_depth(Some(MAX_DEPTH)).require_git(false);
+    builder
+        .build()
+        .flatten()
+        .filter(|e| e.file_type().is_some_and(|k| k.is_file()) && hit(e.path()))
+        .map(|e| e.into_path())
+        .collect()
+}
+
 impl Discovery {
     /// The document a run starts from when the command line names none: the
     /// file a `% !TeX root` line points at, else the document closest to the
