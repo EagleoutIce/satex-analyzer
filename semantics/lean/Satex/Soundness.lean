@@ -141,9 +141,9 @@ theorem loopAbs_post (f : A → A) (stable : A → A → Bool) (summary : A → 
     intro a
     simp only [loopAbs]
     by_cases h : stable (D.join a (f a)) a = true
-    · rw [if_pos h]
+    · simp only [h, ↓reduceIte]
       exact ⟨D.le_refl a, D.le_trans _ _ _ (D.join_r a (f a)) (hstable _ _ h)⟩
-    · rw [if_neg h]
+    · simp only [h, Bool.false_eq_true, ↓reduceIte]
       obtain ⟨h1, h2⟩ := ih (D.join a (f a))
       exact ⟨D.le_trans _ _ _ (D.join_l a (f a)) h1, h2⟩
 
@@ -166,7 +166,7 @@ theorem loopAbs_sound (f : A → A) (stable : A → A → Bool) (summary : A →
 theorem top_summary (f : A → A) :
     (∀ a : A, D.le a ((fun _ : A => D.top) a)) ∧
       (∀ a : A, D.le (f ((fun _ : A => D.top) a)) ((fun _ : A => D.top) a)) :=
-  ⟨fun a => D.le_top a, fun a => D.le_top (f D.top)⟩
+  ⟨fun a => D.le_top a, fun _ => D.le_top (f D.top)⟩
 
 /-- The loop runs at most `k` passes plus one summary. -/
 def loopPasses (f : A → A) (stable : A → A → Bool) : Nat → A → Nat
@@ -184,8 +184,8 @@ theorem loopPasses_le (f : A → A) (stable : A → A → Bool) :
     intro a
     simp only [loopPasses]
     by_cases h : stable (D.join a (f a)) a = true
-    · rw [if_pos h]; omega
-    · rw [if_neg h]; have := ih (D.join a (f a)); omega
+    · simp only [h, ↓reduceIte]; omega
+    · simp only [h, Bool.false_eq_true, ↓reduceIte]; have := ih (D.join a (f a)); omega
 
 end AbsDom
 
@@ -269,8 +269,8 @@ open Satex Satex.Abstract
 theorem ite_prop {p : Prop} [Decidable p] {α : Type} {P : α → Prop} {x y : α}
     (hx : p → P x) (hy : ¬p → P y) : P (if p then x else y) := by
   by_cases h : p
-  · rw [if_pos h]; exact hx h
-  · rw [if_neg h]; exact hy h
+  · simp only [h, ↓reduceIte]; exact hx h
+  · simp only [h, ↓reduceIte]; exact hy h
 
 theorem upd_same {α β : Type} [DecidableEq α] (f : α → β) (a : α) (b : β) :
     upd f a b a = b := by
@@ -339,7 +339,7 @@ theorem widen_rank_step (a b : Itv) :
   simp only [itvRank, Itv.widen, Itv.wlo, Itv.whi, Itv.wordMin, Itv.wordMax]
   by_cases h1 : b.lo < a.lo <;> by_cases h2 : a.hi < b.hi <;>
     by_cases h3 : a.lo = -2147483648 <;> by_cases h4 : a.hi = 2147483647 <;>
-    simp only [h1, h2, h3, h4, ↓reduceIte, Int.reduceEq, and_true, true_and, and_self, and_false, false_and, if_true, if_false, ite_self] <;>
+    simp only [h1, h2, h3, h4, ↓reduceIte, and_true, true_and, and_self, ite_self] <;>
     (repeat' split) <;> omega
 
 /-- Steps of a chain that changed its interval. -/
@@ -674,7 +674,7 @@ theorem inWord_iff (i : Itv) : i.inWord ↔ Itv.le i Itv.word := by
 theorem foldl_join_le (c : Itv) : ∀ (t : List Itv) (acc : Itv), Itv.le acc c →
     (∀ i, i ∈ t → Itv.le i c) → Itv.le (t.foldl Itv.join acc) c
   | [], _, h, _ => h
-  | y :: t, acc, h, ht => foldl_join_le c t _
+  | y :: t, _, h, ht => foldl_join_le c t _
       (itv_join_lub _ _ _ h (ht y (List.mem_cons_self ..)))
       (fun i hi => ht i (List.mem_cons_of_mem _ hi))
 
@@ -1267,6 +1267,100 @@ theorem compare_sound (i : Itv) (r : Itv.Rel) (k : Int) (b : Bool) (n : Int)
       · simp only [c2, ↓reduceIte] at h; cases h; simp only [Itv.Rel.holds, decide_eq_false_iff_not]; omega
       · simp only [c2, ↓reduceIte] at h; cases h
 
+theorem narrow_some {lo hi n : Int} (h1 : lo ≤ n) (h2 : n ≤ hi) :
+    ∃ j, (if lo ≤ hi then some (⟨lo, hi⟩ : Itv) else none) = some j ∧ j.γ n :=
+  ⟨⟨lo, hi⟩, by simp only [show lo ≤ hi by omega, ↓reduceIte], h1, h2⟩
+
+/-- `Num::narrow`: the member's value survives on the arm its answer takes. -/
+theorem narrow_sound (i : Itv) (r : Itv.Rel) (k n : Int) (hn : i.γ n) :
+    ∃ j, i.narrow r k (r.holds n k) = some j ∧ j.γ n := by
+  obtain ⟨h1, h2⟩ := hn
+  cases r
+  · by_cases c : n < k
+    · rw [show Itv.Rel.holds .lt n k = true by simp [Itv.Rel.holds, c]]
+      exact narrow_some (lo := i.lo) (hi := min i.hi (k - 1)) (by omega) (by omega)
+    · rw [show Itv.Rel.holds .lt n k = false by simp [Itv.Rel.holds, c]]
+      exact narrow_some (lo := max i.lo k) (hi := i.hi) (by omega) (by omega)
+  · by_cases c : n = k
+    · rw [show Itv.Rel.holds .eq n k = true by simp [Itv.Rel.holds, c]]
+      exact narrow_some (lo := max i.lo k) (hi := min i.hi k) (by omega) (by omega)
+    · rw [show Itv.Rel.holds .eq n k = false by simp [Itv.Rel.holds, c]]
+      exact narrow_some (lo := if i.lo = k then i.lo + 1 else i.lo)
+        (hi := if i.hi = k then i.hi - 1 else i.hi) (by split <;> omega) (by split <;> omega)
+  · by_cases c : k < n
+    · rw [show Itv.Rel.holds .gt n k = true by simp [Itv.Rel.holds, c]]
+      exact narrow_some (lo := max i.lo (k + 1)) (hi := i.hi) (by omega) (by omega)
+    · rw [show Itv.Rel.holds .gt n k = false by simp [Itv.Rel.holds, c]]
+      exact narrow_some (lo := i.lo) (hi := min i.hi k) (by omega) (by omega)
+
+/-- `ifNumTest`: a decided answer is TeX's (§ 503). -/
+theorem ifNumTest_sound {a : AState} {s : State} {l : Loc} {r : Itv.Rel} {k n : Int} {b : Bool}
+    (ha : a.γ s) (hv : (s.eqtb l).val = .int n) (h : ifNumTest l r k a = some b) :
+    r.holds n k = b := by
+  have hl := ha.1 l
+  rw [hv] at hl
+  unfold ifNumTest at h
+  cases e : a.eqtb l with
+  | ints ms =>
+    rw [e] at h hl
+    obtain ⟨i, m, hi, hm, hγ⟩ := hl
+    cases hm
+    cases ms with
+    | nil => cases hi
+    | cons i0 rest =>
+      simp only [List.map_cons] at h
+      split at h
+      · rename_i b0 rs heq
+        simp only [List.cons.injEq] at heq
+        obtain ⟨e1, e2⟩ := heq
+        split at h
+        · rename_i hall
+          cases h
+          rcases List.mem_cons.mp hi with hi | hi
+          · subst hi; exact compare_sound _ _ _ _ _ e1 hγ
+          · subst e2
+            have := (List.all_eq_true.mp hall) _ (List.mem_map_of_mem hi)
+            exact compare_sound _ _ _ _ _ (by simpa using this) hγ
+        · cases h
+      · cases h
+  | _ => rw [e] at h; cases h
+
+/-- `ifNumNarrow`: the state narrowed to TeX's answer still covers `s`. -/
+theorem ifNumNarrow_sound {a : AState} {s : State} {l : Loc} {r : Itv.Rel} {k n : Int}
+    (ha : a.γ s) (hv : (s.eqtb l).val = .int n) :
+    ∃ a', ifNumNarrow l r k (r.holds n k) a = some a' ∧ a'.γ s := by
+  have hl := ha.1 l
+  rw [hv] at hl
+  unfold ifNumNarrow
+  cases e : a.eqtb l with
+  | ints ms =>
+    rw [e] at hl
+    obtain ⟨i, m, hi, hm, hγ⟩ := hl
+    cases hm
+    obtain ⟨j, hj, hjγ⟩ := narrow_sound i r k n hγ
+    have hmem : j ∈ ms.filterMap (fun i => i.narrow r k (r.holds n k)) :=
+      List.mem_filterMap.mpr ⟨i, hi, hj⟩
+    have hne : (ms.filterMap (fun i => i.narrow r k (r.holds n k))).isEmpty = false := by
+      cases hq : ms.filterMap (fun i => i.narrow r k (r.holds n k)) with
+      | nil => rw [hq] at hmem; cases hmem
+      | cons _ _ => rfl
+    simp only [hne, Bool.false_eq_true, ↓reduceIte]
+    refine ⟨_, rfl, ?_⟩
+    obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := ha
+    refine ⟨fun l' => ?_, h2, h3, h4, h5, h6, h7⟩
+    by_cases hl' : l' = l
+    · subst hl'; simp only [upd_same, hv]; exact ⟨j, n, hmem, rfl, hjγ⟩
+    · simp only [upd_other hl']; exact h1 l'
+  | _ => exact ⟨a, rfl, ha⟩
+
+/-- `\ifnum⟨loc⟩⟨rel⟩⟨k⟩` by `branch`: TeX's answer has an arm that covers
+the state. `branch_sound` with both hypotheses discharged. -/
+theorem ifNum_branch_sound {a : AState} {s : State} {l : Loc} {r : Itv.Rel} {k n : Int}
+    (ha : a.γ s) (hv : (s.eqtb l).val = .int n) :
+    ∃ a', (r.holds n k, a') ∈ branch (ifNumTest l r k) (ifNumNarrow l r k) a ∧ a'.γ s :=
+  branch_sound _ _ a s _ ha (fun _ h => ifNumTest_sound ha hv h)
+    (fun _ => ifNumNarrow_sound ha hv)
+
 /-- `AState.join_sound` (CHANGES.md item 10): arms meeting at `\fi` in the
 same stacks join soundly. -/
 theorem astate_join_sound (L : Limits) (a b : AState) (s : State)
@@ -1407,7 +1501,7 @@ theorem walk_shift : ∀ (p : TokList) (n k m : Nat), walk n p = some m → walk
         by_cases hn : n = 0
         · simp [hn] at h
         · simp only [hn, ↓reduceIte] at h
-          rw [if_neg (by omega), show n + k - 1 = n - 1 + k by omega]
+          rw [ite_eq_right_iff.mpr (fun h => absurd h (by omega)), show n + k - 1 = n - 1 + k by omega]
           exact walk_shift p (n - 1) k m h
       · simp only [hb, he, Bool.false_eq_true, ↓reduceIte] at h ⊢
         exact walk_shift p n k m h
@@ -1740,22 +1834,26 @@ theorem covered_comp {A C : Type} {γ : A → C → Prop} {T : A → A → Prop}
   exact ⟨a2, Star.trans t1 t2, g2⟩
 
 /-- A command as TeX reads it, with its operand: an assignment (§ 1211),
-`\begingroup`/`{` (§ 1063), or a group's end (§ 1086). -/
+`\begingroup`/`{` (§ 1063), a group's end (§ 1086), or `none`: the step's
+whole change is in its reading (expansion, `\relax`, a test). -/
 inductive CCmd where
   | assign (glob : Bool) (l : Loc) (x : Val)
   | begin (c : GroupCode) (ctx : Option BoxContext)
   | close (c : GroupCode)
+  | none
 
 /-- The same command as the abstract run reads it. -/
 inductive ACmd where
   | assign (glob : Bool) (l : Loc) (v : AVal)
   | begin (c : GroupCode)
   | close (c : GroupCode)
+  | none
 
 def ACmd.covers : ACmd → CCmd → Prop
   | .assign g l v, .assign g' l' x => g = g' ∧ l = l' ∧ v.γ x
   | .begin c, .begin c' _ => c = c'
   | .close c, .close c' => c = c'
+  | .none, .none => True
   | _, _ => False
 
 /-- The concrete effect of a command. `glob` is the globality after
@@ -1770,12 +1868,14 @@ inductive Effect : State → CCmd → State → Prop
       {crest : List SaveEntry} :
       Concrete.unsaveAux s.eqtb [] s.save = (E, ins, some (c, ctx), crest) →
       Effect s (.close c) (Concrete.unsave s).1
+  | none {s : State} : Effect s .none s
 
 /-- The abstract effect: the model's transfers. -/
 def aeffect (L : Limits) (a : AState) : ACmd → List AState
   | .assign glob l v => [a.assign glob l v]
   | .begin c => [a.beginGroup c]
   | .close c => a.endGroup L c
+  | .none => [a]
 
 /-- The abstract step: read a command (`read`, the abstract mouth and
 scanners), then run its effect. -/
@@ -1815,6 +1915,10 @@ theorem effect_sound (L : Limits) {a : AState} {s s' : State} {k : CCmd} {k' : A
   | @close c E ins ctx crest hu =>
     cases k' with
     | close c' => subst hk; exact endGroup_sound L ha hu
+    | _ => cases hk
+  | none =>
+    cases k' with
+    | none => exact ⟨_, List.mem_singleton.mpr rfl, ha⟩
     | _ => cases hk
 
 /-- The families with a transfer are covered, given the abstract reading. -/
@@ -1866,9 +1970,12 @@ theorem paths_covered (E : Concrete.Engine) (trans : AState → List AState)
 
 /-! ### The budget: never hang, and stay sound
 
-`Machine::check_budget` charges every step. Modelled: a counter that each
-step decreases; at zero the run is cut to a state covering everything
-(`none`). Sound only if the cut really is a top (P6 in PROOF-STATUS.md). -/
+`Machine::charge` pays every step from `limits.steps`. Modelled: one
+counter per run, in the state, that each abstract step decreases; at zero
+the run is cut to a state covering everything (`none`). A budget per run,
+not per step or per line (the Rust's line guard is not modelled). Past the
+cut `bγ` is `True`: nothing is claimed of the rest of the run. Sound only if
+the cut really is a top (P6 in PROOF-STATUS.md). -/
 
 inductive BStep {A : Type} (T : A → A → Prop) : Nat × Option A → Nat × Option A → Prop where
   | step {n : Nat} {a a' : A} : T a a' → BStep T (n + 1, some a) (n, some a')
@@ -1916,10 +2023,11 @@ theorem budget_covers {A C : Type} (γ : A → C → Prop) (Step : C → C → P
     · subst e; exact hγ
     · obtain ⟨m, o⟩ := y; simp only at e; subst e; exact True.intro
 
-/-- The main theorem: with a per-step budget the abstract run covers every
+/-- The main theorem: with one budget per run the abstract run covers every
 concrete run, and it terminates (no infinite abstract run, and no run
 longer than the budget). The cut goes to a state that covers everything:
-the budget never makes the run unsound, only coarser. -/
+the budget never makes the run unsound, only coarser, and after the cut
+nothing is claimed. Conditional on `hloc`. -/
 theorem sound_and_terminating {A C : Type} (γ : A → C → Prop) (Step : C → C → Prop)
     (T : A → A → Prop) (hloc : Covered γ T Step) :
     (∀ c₀ c, Star Step c₀ c → ∀ x₀, bγ γ x₀ c₀ → ∃ x, Star (BStep T) x₀ x ∧ bγ γ x c) ∧
@@ -1931,7 +2039,10 @@ theorem sound_and_terminating {A C : Type} (γ : A → C → Prop) (Step : C →
 
 /-- The main theorem for SaTeX's model, its local obligation split by
 family: the abstract reading of commands (`hread`) and the families without
-a transfer (`hother`). -/
+a transfer (`hother`). Both are hypotheses, and `Read`, `Other` are free:
+with `Other := Concrete.Step E` the whole obligation is `hother`, and with
+`Read := ⊥` `hread` is trivial. What is proven is the induction, the budget
+and the effects of `ACmd` (assign, begin, close, none). -/
 theorem satex_sound_and_terminating (E : Concrete.Engine) (L : Limits)
     (Read : State → State → CCmd → Prop) (read : AState → List (AState × ACmd))
     (hread : ReadCovers Read read) (Other : State → State → Prop)

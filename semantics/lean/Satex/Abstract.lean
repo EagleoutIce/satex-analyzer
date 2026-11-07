@@ -77,9 +77,10 @@ def join (a b : Itv) : Itv :=
 /-- The whole 32-bit word: the top every widening reaches. -/
 def word : Itv := ⟨wordMin, wordMax⟩
 
-/-- `Num::full`: every value of a kind, `±maxDimen` or `±infinity`. -/
+/-- `Num::full`: every value of a kind. A count is any word: `\advance`
+reaches `-2^31` (§ 1238 checks no overflow; D10). Dimensions: R2-5. -/
 def full (dimen : Bool) : Itv :=
-  if dimen then ⟨-maxDimen, maxDimen⟩ else ⟨-infinity, infinity⟩
+  if dimen then ⟨-maxDimen, maxDimen⟩ else word
 
 /-- One bound of `Num::widen`: a bound that moved goes to the word's end. -/
 def wlo (a b : Int) : Int := if b < a then wordMin else a
@@ -315,6 +316,8 @@ def printInt (n : Int) : TokList :=
   let ds := (Nat.toDigits 10 n.natAbs).map (fun ch => Token.char ch.toNat .other)
   if n < 0 then Token.char 45 .other :: ds else ds
 
+/-- A hole holds balanced text only, so no hole stands for unbalanced
+unknown text (e.g. `\directlua` output, `Expand.lua`). Open (PROOF-STATUS). -/
 def Hole.γ (h : Hole) (p : TokList) : Prop :=
   (∀ t, t ∈ p → h.cls.admits t) ∧ (h.nonempty = true → p ≠ []) ∧
     (∀ n, h.maxLen = some n → p.length ≤ n) ∧ balanced p = true
@@ -429,8 +432,9 @@ def AVal.join (L : Limits) : AVal → AVal → AVal
   | _, _ => .top
 
 /-- Widening at a loop head (`widen_slot`): numbers widen each moving bound
-to the word, everything else that still grows goes to `top`, except text,
-which keeps only its class. -/
+to the word, text keeps only its class, meanings that differ go to `top`.
+Glue and box values take `AVal.join`, a bounded hull, not `top`: they have
+no widening, so their chains end only by the round count (`loopRounds_le`). -/
 def AVal.widen (L : Limits) : AVal → AVal → AVal
   | .ints a, .ints b =>
     (match hullItv a, hullItv (a ++ b) with
@@ -554,7 +558,8 @@ inductive ASave where
   | retain (l : Loc)
   | insertToken (t : Token)
   /-- A group; `many = some ls`: zero or more alike groups whose copies may
-  save the locations `ls`. -/
+  save the locations `ls`. The copies hold restore entries only, so
+  `\aftergroup` tokens of repeated groups are not covered. -/
   | group (c : GroupCode) (many : Option (List Loc))
   deriving Inhabited
 
@@ -913,7 +918,11 @@ def scanParams (ps : List ParamItem) (rest : AText) : List (List AText × AText)
 /-- Expanding a control sequence (§ 366): split per member of its meaning
 set (`limits.meaning_splits`), each macro called with every scan the
 abstract input allows. A widened macro inserts its typed body. `top`: its
-output is unknown text and what it does is unknown (`havoc`, mapping.md). -/
+output is unknown text and what it does is unknown (`havoc`, mapping.md).
+Restrictions any `expand_sound` must assume: a file on top of the input
+(`| _ => [a]`) and a non-macro meaning (`.exact _ => [a]`) leave the state
+unchanged; arguments are read from the top token list only, never across
+levels as TeX does; `#{` (`braceDelim`, §§ 473, 476) is ignored. -/
 def expandWith (havoc : AState → AState) (a : AState) (r : CsRef) : List AState :=
   match a.input with
   | AInput.toks k rest :: below =>

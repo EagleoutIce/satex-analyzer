@@ -45,3 +45,6 @@ open Satex.Soundness
 
 /-- info: 'Satex.Soundness.branch_sound' depends on axioms: [propext] -/
 #guard_msgs in #print axioms branch_sound
+
+/-- info: 'Satex.Soundness.ifNum_branch_sound' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms ifNum_branch_sound

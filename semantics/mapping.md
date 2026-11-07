@@ -12,17 +12,17 @@ that implements it. Status:
 - **deviates**: the Rust differs in a way that can lose a concrete
   outcome. Each is a potential soundness bug, listed again below.
 
-Line numbers are of HEAD 26ef7ce (2026-11-04, branch `getting-sound`). New findings against this code: REVIEW-2.md (R2-1 to R2-7).
+Line numbers and statuses are of 26ef7ce (2026-11-04, branch `getting-sound`). The branch has moved on since (at 5082e4a, for example, `read_delimited` is at machine.rs:10947 and `charge` at 7813), so look names up rather than lines. Rows that changed after 26ef7ce say so. New findings against this code: REVIEW-2.md (R2-1 to R2-7).
 
 ## Domains
 
 | Lean | Rust | Status |
 | --- | --- | --- |
 | `Limits` | `Limits` defaults, src/project/config.rs:240-280 | same |
-| `Itv`, `Itv.γ`, `Itv.exact` | `Num`, `Num::exact`, src/engine/value.rs:177-186 (`exact` 183) | same |
+| `Itv`, `Itv.γ`, `Itv.exact` | `Num`, `Num::exact`, src/engine/value.rs:177-186 (`exact` 183) | same at 26ef7ce. Later the Rust `Num` carries an `nz` bit (non-zero, value.rs:185-260 at 5082e4a), finer; the model has none |
 | `Itv.join` | `Num::join`, value.rs:201 | same |
 | `Itv.widen`, `wlo`, `whi` | `Num::widen`, value.rs:208 | same. Sound only for values in the 32-bit word (`Itv.le_widen` needs `inWord`) |
-| `Itv.full` | `Num::full`, value.rs:193 | for counts the word (fixed 2026-11-04, D10). **deviates** for dimensions in model and Rust: `±maxdimen`, but `\advance` and box sums reach the word (REVIEW-2 R2-5; also `Dim::ANY`, mode.rs:232, `register_top`, exec.rs:5037) |
+| `Itv.full` | `Num::full`, value.rs:193 | for counts the word in model and Rust (D10: Rust fixed 2026-11-04, model 2026-11-07). **deviates** for dimensions in model and Rust: `±maxdimen`, but `\advance` and box sums reach the word (REVIEW-2 R2-5; also `Dim::ANY`, mode.rs:232, `register_top`, exec.rs:5037) |
 | `Itv.compare` | `Num::compare`, value.rs:322 | same |
 | `Itv.narrow` | `Num::narrow`, value.rs:342 | same (Rust saturates at `i64` ends) |
 | `GlueHull`, `.γ`, `.join` | `GlueHull`, value.rs:364-445 | same |
@@ -33,15 +33,15 @@ Line numbers are of HEAD 26ef7ce (2026-11-04, branch `getting-sound`). New findi
 | `AVal.meanings`, `AMeaning` | `Binding.meaning` + `Binding.may`, env.rs:24-35 | same. `may = None` with `Meaning::Unknown` is `top`; `(m, {Undefined, m})` (`maybe_undefined`) is `meanings [m, undefined]` |
 | `AMeaning.text` | a macro whose body holds typed tokens, `macro_hull`, env.rs:2195 | same |
 | `AVal.join` | `Value::join`, value.rs:777; `env::join`, env.rs:2675 | numbers and glue same. Rust merges touching intervals (`Value::union`, value.rs:750), finer and sound. Meanings: Rust past the bound takes `typed_join` (finer). A join with the top is the top on either side (fixed 2026-11-04, D1) |
-| `AVal.widen` | `widen_slot`, env.rs:2122 | numbers same (`p.widen(p ∪ q)`). Rust finer for texts at `Reach::Joined` (`shaped`, `numbers`, `printed_hull`, env.rs:2234-2422); justified only because a loop head reruns from the join. `Reach::Havoc` keeps unmoved bounds and equal texts: see D4, D5 |
+| `AVal.widen` | `widen_slot`, env.rs:2122 | numbers same (`p.widen(p ∪ q)`). Glue and box: the model takes the bounded hull (`AVal.join`), no widening; their chains end only by the round count. Rust finer for texts at `Reach::Joined` (`shaped`, `numbers`, `printed_hull`, env.rs:2234-2422); justified only because a loop head reruns from the join. `Reach::Havoc` keeps unmoved bounds and equal texts: see D4, D5 |
 | `TClass`, `TClass.union`, `.le`, `.effHex`, `.norm` | `TextClass`, `union`, `contains`, `hex`, `new`, src/engine/tex.rs:289-370 | same |
-| `kindOf`, `TClass.admits` | `TextClass::of`, `holds`, tex.rs:372-395 | same. Rust's placeholder characters (`UNKNOWN_CHAR`, `UNKNOWN_DIGIT`, ...) are holes in the model |
+| `kindOf`, `TClass.admits` | `TextClass::of`, `holds`, tex.rs:372-395 | `kindOf` same. `holds` tests with `meets`, which masks `HEX`, so the Rust ignores the hex restriction `TClass.admits` checks: coarser, sound. Rust's placeholder characters (`UNKNOWN_CHAR`, `UNKNOWN_DIGIT`, ...) are holes in the model |
 | `Hole` | a typed-unknown control sequence (`Machine::unknown_text`, machine.rs:13185) with `LEN_MARK` bound (env.rs:2455) | same |
 | `AItem.digits`, `printInt` | typed digits, `TYPED_DIGITS`, src/engine/scan.rs:16 | same. Rust also splits a read of digits by sign and length (domains.md "Joins at `\fi`"), not modelled |
 | `AItem.oneOf` | one-of tokens, `split_one_of_groups`, machine.rs:11883 | Rust finer: narrows every copy on a path to the texts it took. The model forgets that copies are one choice (coarser, sound) |
 | `AText.γ` | — | the model's meaning of an abstract token list: the concatenation of its items' texts |
 | `AText.hull` | `run_hull`, env.rs:2286 | Rust finer (keeps one typed token when all texts are one, and printed integers) |
-| `Ty`, `Ty.parent`, `Ty.join`, `Ty.le` | `Ty`, `parent`, `join`, `leq`, src/analysis/roles.rs:210-414 | same, case for case. `γ` is a parameter (`Ty.Admissible`): types add no narrowing to the run |
+| `Ty`, `Ty.parent`, `Ty.join`, `Ty.le` | `Ty`, `parent`, `join`, `leq`, src/analysis/roles.rs:210-414 | same, case for case, at 26ef7ce. The Rust has since added `Ty::Overlay`, `KeyKind::Language`, `FileKind::Theme` and `RegKind::{Char, MathChar, UMathChar}` (roles.rs:216-418 at 5082e4a), which the model lacks. `γ` is a parameter (`Ty.Admissible`): types add no narrowing to the run |
 | `ASave`, `SaveRel` | the journal `Entry`, `Mark` with `many`, env.rs:46-170 | same for sure entries. Levels: Rust's 0 is the model's 1 (`level_one`). `touched` has no Rust entry: where the model cannot decide a save, the Rust decides it by its frame-relative level and widens the saved slots at `unfold`. Model coarser: a touched location is unknown at its frame's end |
 | `ACond`, `CondRel` | `CondFrame` with `many`, explore.rs `Key.conds` | same |
 | `AState`, `AState.γ` | `Env` + `PathState`, env.rs:173; machine.rs | levels `Option Nat` (`none`: any). `pinned`: the group level is TeX's. The Rust counts a `many` mark as one level and keeps comparing levels relative to frames, finer than the model, which stops trusting levels once a `many` frame closed. Also: | catcode sets, files written (`Outputs`), streams (`Streams` of `At` hulls, machine.rs:1158-1261, joined by `join_streams`, pinned by `pin_stream`, machine.rs:4168), `Wild` name families, `Corr` arm pairing and marks are not modelled |
@@ -54,7 +54,7 @@ Line numbers are of HEAD 26ef7ce (2026-11-04, branch `getting-sound`). New findi
 | `AState.assign` | `Env::set` / `set_tracked`, env.rs:839-880 | same where the level is known (tex.web §§ 277, 279). Unknown level or unpinned: `touched` (P1, P5) |
 | `AState.weakAssign`, `weakAt` | `weaken_registers`, src/engine/exec.rs:3726 (`weaken_register_range` 3738) | same values up to `limits.value_set` locations. Levels: the model joins old and new (`lvJoin`) and leaves `touched`. Not checked against the Rust's levels |
 | `AState.havocRegs` | `weaken_registers` past the bound, `register_top`, exec.rs:5037 (dimension top too small: R2-5) | same |
-| `AState.beginGroup`, `restoreOne`, `closeFrom`, `endGroup` | `push_group`, `pop_group`, `unwind_into`, env.rs:957, 1045, 1108 | same for plain frames (§§ 282-283), `\aftergroup` tokens as one list (`pop_group`). `many` frames: `unfold`, env.rs:750 (one copy closes and its saved slots widen, or none is left and the closer acts below), `many_from`, env.rs:1968 |
+| `AState.beginGroup`, `restoreOne`, `closeFrom`, `endGroup` | `push_group`, `pop_group`, `unwind_into`, env.rs:957, 1045, 1108 | same for plain frames (§§ 282-283), `\aftergroup` tokens as one list (`pop_group`). `many` frames: `unfold`, env.rs:752 (one copy closes and its saved slots widen, or none is left and the closer acts below), `many_from`, env.rs:1968 |
 | `branch` | `Machine::branch`, explore.rs:304 | same while choices remain. Past `limits.choices`/`RUNS`/hot site, `branch` gives `None`; each caller must then over-approximate. D8's callers do so since 2026-11-04 (`unforked_end`) |
 | `ifNumTest`, `ifNumNarrow` | `\ifnum` over `member_nums`, exec.rs:5228; `Num::narrow` | same |
 | `AState.joinable`, `AState.join` | `join_configs`, explore.rs:2755; `Env::join_paths`, env.rs:1580 | Rust finer: joins paths in different groups ("in the groups of the path that goes on") and keeps arms paired (`Corr`). The model keeps such paths apart. Open: not checked |
