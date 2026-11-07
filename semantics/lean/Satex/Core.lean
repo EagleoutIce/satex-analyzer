@@ -72,7 +72,7 @@ namespace Token
 def isBgroup : Token → Bool | char _ .bgroup => true | _ => false
 def isEgroup : Token → Bool | char _ .egroup => true | _ => false
 def isSpace  : Token → Bool | char _ .space => true | _ => false
-/-- The space token every category-10 character becomes (§ 347). -/
+/-- The space token every category-10 character becomes (§§ 348–349). -/
 def space : Token := char 32 .space
 def ofName (n : String) : Token := cs (.name n)
 end Token
@@ -123,6 +123,8 @@ inductive BoxVal where
 inductive Item where
   | char | ligature | box | rule | glue (g : Glue) | kern (d : Scaled)
   | penalty (n : Int) | mark | whatsit | math | disc | other
+  | vbox                            -- a vlist node; `box` is an hlist node
+  -- source: tex.web § 137 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L2937; SaTeX `append_box` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
   deriving DecidableEq, Repr, Inhabited
 
 /-- Modes (§ 211). `inner` is internal vertical, restricted horizontal or
@@ -271,6 +273,12 @@ inductive Cmd where
   | letCharcode                              -- LuaTeX `\letcharcode`
   | fontCopy (spacing : Bool)                -- \copyfont, \pdfcopyfont; \letterspacefont
   | alignMark | alignTab
+  /-- `\spacefactor`, `\prevdepth`, `\prevgraf`, `\deadcycles`,
+  `\insertpenalties`, the page dimensions, `\interactionmode`: list, page or
+  global values set by `alter_aux` and its relatives (§§ 1242–1246), never
+  saved by groups. -/
+  -- source: tex.web § 1242 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs
+  | alter (n : String)
   deriving Inhabited
 
 /-! ## Meanings (§ 210, SEM § 5) -/
@@ -288,6 +296,9 @@ structure Macro where
   params : List ParamItem := []
   /-- The parameter text ended in `#{` (§ 476). -/
   braceDelim : Bool := false
+  /-- The brace token that ended it (§ 476 `hash_brace`). -/
+  -- source: tex.web § 476 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9357; SaTeX `make_macro` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
+  brace : Token := .char 123 .bgroup
   body : TokList := []          -- `outParam n` marks `#n`
   deriving DecidableEq, Repr, Inhabited
 
@@ -366,6 +377,9 @@ structure FileLevel where
   text : Bool := false
   /-- `\endinput` was executed: the file ends after this line (§ 362). -/
   forceEof : Bool := false
+  /-- `\everyeof` was inserted at the end of this file (etex.ch `eof_seen`). -/
+  -- source: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L933; SaTeX `end_input_frame` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs
+  eofSeen : Bool := false
   deriving Repr, Inhabited
 
 inductive InputLevel where
@@ -412,6 +426,14 @@ structure Pending where
   afterAssignment : Option Token := none   -- § 1269
   deriving Repr, Inhabited
 
+/-- A loaded font (§ 549): its name, size, design size, parameters. -/
+-- source: tex.web § 549 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L10711; SaTeX `font_def` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
+structure Font where
+  name : String
+  size : Scaled := 0
+  dsize : Scaled := 0
+  params : Nat → Scaled := fun _ => 0
+
 /-! ## The state -/
 
 structure State where
@@ -430,8 +452,8 @@ structure State where
   jobname : String := "texput"
   interaction : Nat := 1                    -- nonstopmode (§ 73: batch 0, nonstop 1, scroll 2, errorstop 3), SEM § 1
   errorCount : Nat := 0                     -- § 76
-  /-- Fonts: name and parameters (§ 549); index 0 is `\nullfont`. -/
-  fonts : List (String × (Nat → Scaled)) := [("nullfont", fun _ => 0)]
+  /-- Fonts (§ 549); index 0 is `\nullfont`. -/
+  fonts : List Font := [{ name := "nullfont" }]
   inCsname : Nat := 0                       -- pdfTeX \ifincsname
   lastCs : Option CsRef := none             -- LuaTeX \lastnamedcs
   /-- Set by `\end` once the job is over (§ 1054). -/

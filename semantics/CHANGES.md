@@ -3,6 +3,19 @@
 Coordination log for the three semantics jobs. Newest first. Core names are
 stable once published; a change to one is announced here first.
 
+## Audit A fixes (2026-11-07)
+
+* Core: `Item.vbox`, `Cmd.alter` (`\spacefactor`, `\prevdepth`, `\prevgraf`,
+  `\deadcycles`, `\insertpenalties`, page dimensions, `\interactionmode`),
+  `Macro.brace`, `FileLevel.eofSeen`, `Font` (fonts keep size and design size).
+* Concrete: `ScanUnit`, `ScanDimen`, `ScanGlue` follow §§ 448–462 in order
+  (`FilAbsent`, `NotInternal`, `UnitKw`; `NoKeyword`, `physValue` removed);
+  `FontIdent` (§ 577); `Drained`, `Next.everyEof`; `HeadNP` for commands that
+  take no prefix; new rules `ScanInt.alphaBad`, `vacuous`, `ScanBox.rule`,
+  `Exec.endEject`, `noInputPrompt`, `readlineTerminal`, `alter`,
+  `alterIllegal`, `eqnoEnd`, `Internal.alter`, `alterImproper`,
+  `interactionMode`. `ParamText` returns the `#{` brace token.
+
 ## Lean round (2026-11-04)
 
 * Core: `Cmd.mathParam`, `toksApp`, `famFont`, `letCharcode`, `fontCopy`

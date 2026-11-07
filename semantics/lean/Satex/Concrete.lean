@@ -34,6 +34,8 @@ structure Engine where
   findFile : String → Option String
   /-- TFM or native metrics of a font file at a size: its parameters. -/
   loadFont : String → Scaled → Option (Nat → Scaled)
+  /-- The design size a font file states (§ 568 `font_dsize`). -/
+  designSize : String → Scaled := fun _ => 10 * 65536
   /-- Whether a loaded font has a character (`\iffontchar`, etex_man § 3.10). -/
   hasChar : Nat → CharCode → Bool
   /-- Operand grammar of a primitive SaTeX scans but does not run. -/
@@ -186,9 +188,12 @@ def printCs (s : State) (r : CsRef) : List CharCode :=
     | _ => escapeChars s ++ cs ++ [32]
 
 /-- `sprint_cs` (§ 263): no trailing space (`\string`). -/
+-- source: tex.web § 263 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L5618
+-- source: SaTeX `meaning_text` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
 def sprintCs (s : State) (r : CsRef) : List CharCode :=
   match r with
   | .active c => [c]
+  | .name "" => escapeChars s ++ strCodes "csname" ++ escapeChars s ++ strCodes "endcsname"
   | .name n => escapeChars s ++ strCodes n
 
 /-- `show_token_list` (§ 292–294): macro parameter characters print doubled,
@@ -211,7 +216,7 @@ def showParams (s : State) (m : Macro) : List CharCode :=
     | [] => []
     | .arg :: rest => [35] ++ digitsOf (Int.ofNat k) ++ go (k + 1) rest
     | .tok t :: rest => showToks s [t] ++ go k rest
-  go 1 m.params ++ (if m.braceDelim then [123] else [])
+  go 1 m.params ++ (if m.braceDelim then showToks s [m.brace] else [])
 
 def catWord : Cat → String
   | .bgroup => "begin-group character " | .egroup => "end-group character "
@@ -224,10 +229,25 @@ def catWord : Cat → String
 def hexOf (n : Nat) : List CharCode :=
   [34] ++ (Nat.toDigits 16 n).map (fun c => (Char.toUpper c).toNat)
 
+/-- A font's name, and ` at <size>pt` when that is not its design size
+(§ 1261, § 472). -/
+-- source: tex.web § 1261 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23422
+-- source: tex.web § 472 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9276
+-- source: SaTeX `meaning_text` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
+def fontNameText (s : State) (f : Nat) : List CharCode :=
+  match nth? s.fonts f with
+  | some ft => strCodes ft.name ++
+      (if ft.size ≠ ft.dsize then strCodes " at " ++ printScaled ft.size ++ strCodes "pt" else [])
+  | none => strCodes "nullfont"
+
 /-- `print_meaning` (§ 296) through `print_cmd_chr` (§ 227). -/
+-- source: tex.web § 296 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L6320
+-- source: etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L3052
+-- source: SaTeX `macro_head` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
 def meaningText (s : State) (m : Meaning) : List CharCode :=
   match m with
   | .undefined => strCodes "undefined"
+  | .prim "notexpanded:" _ => escapeChars s ++ strCodes "relax"   -- § 227: `relax` whatever `cur_chr`
   | .prim n _ => escapeChars s ++ strCodes n
   | .char c k => strCodes (catWord k) ++ [c]
   | .chardef n => escapeChars s ++ strCodes "char" ++ hexOf n
@@ -237,13 +257,14 @@ def meaningText (s : State) (m : Meaning) : List CharCode :=
       | .count => "count" | .dimen => "dimen" | .skip => "skip"
       | .muskip => "muskip" | .toks => "toks" | .box => "box"
     escapeChars s ++ strCodes kn ++ digitsOf (Int.ofNat i)
-  | .font f => strCodes "select font " ++
-      strCodes ((nth? s.fonts f).map Prod.fst |>.getD "nullfont")
+  | .font f => strCodes "select font " ++ fontNameText s f
   | .luaCall id _ => escapeChars s ++ strCodes "luacall" ++ digitsOf (Int.ofNat id)
   | .call mac =>
-    (if mac.prot then escapeChars s ++ strCodes "protected " else []) ++
-    (if mac.long then escapeChars s ++ strCodes "long " else []) ++
-    (if mac.outer then escapeChars s ++ strCodes "outer " else []) ++
+    -- etex.ch (§ 1295): the prefixes back to back, then one space
+    (if mac.prot then escapeChars s ++ strCodes "protected" else []) ++
+    (if mac.long then escapeChars s ++ strCodes "long" else []) ++
+    (if mac.outer then escapeChars s ++ strCodes "outer" else []) ++
+    (if mac.prot || mac.long || mac.outer then [32] else []) ++
     strCodes "macro:" ++ showParams s mac ++ strCodes "->" ++ showToks s mac.body
 
 /-! ## Meanings of tokens -/
@@ -257,23 +278,6 @@ def frozenRelax : Token := .cs (.name "frozen\\relax")
 
 /-- The `\par` token as the mouth inserts it (§ 333 `par_token`). -/
 def parToken : Token := .cs (.name "par")
-
-def meaningTok (s : State) : Token → Meaning
-  | .char c k => .char c k
-  | .cs r => s.meaningOf r
-  | .noexp _ => notExpanded
-  | .outParam _ => .undefined
-
-/-- A token as stored: `\noexpand`'s marker is gone once the token is read
-(§ 358: `cur_tok` is the plain token). -/
-def _root_.Satex.Token.stored : Token → Token
-  | .noexp r => .cs r
-  | t => t
-
-def cmdOf (s : State) (t : Token) : Option Cmd :=
-  match meaningTok s t with
-  | .prim _ c => some c
-  | _ => none
 
 /-- Gullet commands (§ 366: `cur_cmd > max_command`). -/
 def _root_.Satex.Cmd.expandable : Cmd → Bool
@@ -290,6 +294,27 @@ def _root_.Satex.Meaning.expandable : Meaning → Bool
   | .prim _ c => c.expandable
   | .luaCall _ p => !p
   | _ => false
+
+/-- § 358: the marker turns a token into `notExpanded` only if its meaning
+is expandable when the marker is read. -/
+-- source: tex.web § 358 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7503
+-- source: SaTeX `read_noexpanded` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs
+def meaningTok (s : State) : Token → Meaning
+  | .char c k => .char c k
+  | .cs r => s.meaningOf r
+  | .noexp r => if (s.meaningOf r).expandable then notExpanded else s.meaningOf r
+  | .outParam _ => .undefined
+
+/-- A token as stored: `\noexpand`'s marker is gone once the token is read
+(§ 358: `cur_tok` is the plain token). -/
+def _root_.Satex.Token.stored : Token → Token
+  | .noexp r => .cs r
+  | t => t
+
+def cmdOf (s : State) (t : Token) : Option Cmd :=
+  match meaningTok s t with
+  | .prim _ c => some c
+  | _ => none
 
 def expandableTok (s : State) (t : Token) : Bool := (meaningTok s t).expandable
 
@@ -309,11 +334,13 @@ def ifxEq : Meaning → Meaning → Bool
 /-- `\if`/`\ifcat` operands (§ 506): character code and category, with every
 control sequence that is no character as code 256 and category 16. A
 noexpanded active character counts as itself. -/
-def charCat (s : State) : Token → Nat × Nat
-  | .noexp (.active c) => (c, 13)
-  | t => match meaningTok s t with
-    | .char c k => (c, k.toNat)
-    | _ => (256, 16)
+-- source: tex.web § 506 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9814
+-- source: SaTeX `meaning_of` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
+def charCat (s : State) (t : Token) : Nat × Nat :=
+  match t, meaningTok s t with
+  | .noexp (.active c), .prim "notexpanded:" _ => (c, 13)   -- § 506
+  | _, .char c k => (c, k.toNat)
+  | _, _ => (256, 16)
 
 /-! ## Eqtb assignment and grouping (§§ 274–284, SEM § 10) -/
 
@@ -347,6 +374,14 @@ def unsaveAux (eqtb : Loc → Entry) (ins : TokList) :
     unsaveAux (if (eqtb l).level = 1 then eqtb else upd eqtb l old) ins rest
   | .retain _ :: rest => unsaveAux eqtb ins rest
   | .insertToken t :: rest => unsaveAux eqtb (t :: ins) rest
+
+/-- `end_token_list` on every used-up token list on top, except a `v`
+template (§ 390). -/
+-- source: tex.web § 390 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7978
+-- source: SaTeX `expand_macro` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs
+def popDone : List InputLevel → List InputLevel
+  | .toks k [] :: rest => if k = .vTemplate then .toks k [] :: rest else popDone rest
+  | l => l
 
 def pushToks (k : TokListKind) (ts : TokList) (s : State) : State :=
   { s with input := .toks k ts :: s.input }
@@ -413,7 +448,9 @@ def isHexDigit (c : CharCode) : Bool := (48 ≤ c ∧ c ≤ 57) || (97 ≤ c ∧
 def hexVal (c : CharCode) : Nat := if c ≤ 57 then c - 48 else c - 87
 
 /-- `^^` reduction (§ 352): `cs` starts after the first superscript
-character `c`. -/
+character `c`, so its head must be a second, identical one. -/
+-- source: tex.web § 352 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7371
+-- source: SaTeX `sup_escape_at` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/tex.rs
 def reduceHat (c : CharCode) : List CharCode → Option (CharCode × List CharCode)
   | c2 :: c3 :: rest =>
     if c2 = c ∧ c3 < 128 then
@@ -433,7 +470,7 @@ def scanLetters (cat : CharCode → Cat) : Nat → List CharCode → List CharCo
       let (ls, r) := scanLetters cat fuel rest
       (c :: ls, r)
     else if cat c = .sup then
-      match reduceHat c (c :: rest) with
+      match reduceHat c rest with
       | some (c', rest') =>
         if cat c' = .letter then scanLetters cat fuel (c' :: rest') else ([], c :: rest)
       | none => ([], c :: rest)
@@ -448,7 +485,7 @@ inductive LineTok (cat : CharCode → Cat) :
     MouthState → List CharCode → Option Token → MouthState → List CharCode → Prop
   | done {st : MouthState} : LineTok cat st [] none st []
   | hat {st st' : MouthState} {c c' : CharCode} {rest rest' rest'' : List CharCode} {r : Option Token} :
-      cat c = .sup → reduceHat c (c :: rest) = some (c', rest') →
+      cat c = .sup → reduceHat c rest = some (c', rest') →
       LineTok cat st (c' :: rest') r st' rest'' →
       LineTok cat st (c :: rest) r st' rest''
   | escWord {st : MouthState} {c c1 : CharCode} {rest : List CharCode} :
@@ -458,12 +495,12 @@ inductive LineTok (cat : CharCode → Cat) :
         .skipBlanks (scanLetters cat (rest.length + 1) (c1 :: rest)).2
   | escSymbol {st : MouthState} {c c1 : CharCode} {rest : List CharCode} :
       cat c = .escape → cat c1 ≠ .letter →
-      (cat c1 = .sup → reduceHat c1 (c1 :: rest) = none) →
+      (cat c1 = .sup → reduceHat c1 rest = none) →
       LineTok cat st (c :: c1 :: rest) (some (.cs (.name (nameOf [c1]))))
         (if cat c1 = .space then .skipBlanks else .midLine) rest
   | escHat {st : MouthState} {c c1 c' : CharCode} {rest rest' : List CharCode} {r : Option Token}
       {st' : MouthState} {rest'' : List CharCode} :
-      cat c = .escape → cat c1 = .sup → reduceHat c1 (c1 :: rest) = some (c', rest') →
+      cat c = .escape → cat c1 = .sup → reduceHat c1 rest = some (c', rest') →
       LineTok cat st (c :: c' :: rest') r st' rest'' →
       LineTok cat st (c :: c1 :: rest) r st' rest''
   | escEmpty {st : MouthState} {c : CharCode} :
@@ -471,7 +508,7 @@ inductive LineTok (cat : CharCode → Cat) :
   | active {st : MouthState} {c : CharCode} {rest : List CharCode} :
       cat c = .active → LineTok cat st (c :: rest) (some (.cs (.active c))) .midLine rest
   | plain {st : MouthState} {c : CharCode} {rest : List CharCode} :
-      (cat c).tokenable = true → cat c ≠ .space → cat c ≠ .sup ∨ reduceHat c (c :: rest) = none →
+      (cat c).tokenable = true → cat c ≠ .space → cat c ≠ .sup ∨ reduceHat c rest = none →
       LineTok cat st (c :: rest) (some (.char c (cat c))) .midLine rest
   | spaceMid {c : CharCode} {rest : List CharCode} :
       cat c = .space → LineTok cat .midLine (c :: rest) (some Token.space) .skipBlanks rest
@@ -503,6 +540,13 @@ def prepareLine (s : State) (line : List CharCode) : List CharCode :=
 def replaceTop (lv : InputLevel) (s : State) : State :=
   { s with input := lv :: s.input.drop 1 }
 
+/-- A file level as `start_input` leaves it (§ 538): its first line is read
+at once, with the `\endlinechar` in force now. -/
+-- source: tex.web § 538 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L10400
+-- source: SaTeX `locate_input` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
+def openFile (s : State) (key : String) (lines : List (List CharCode)) : InputLevel :=
+  .file { name := key, cur := prepareLine s (lines.headD []), lines := lines.tail, line := 1 }
+
 /-- `get_next` (§§ 341–365): the next token, unexpanded. -/
 inductive Next : State → Token → State → Prop
   /-- From a token list (§ 357). -/
@@ -527,15 +571,49 @@ inductive Next : State → Token → State → Prop
       Next { s with input := .file { f with cur := prepareLine s line, lines := lines,
                                               state := .newLine, line := f.line + 1 } :: rest } t s' →
       Next s t s'
-  /-- End of file (§ 362): the file level goes, `\everyeof` comes (etex.ch),
-  except after `\scantextokens`. -/
+  /-- End of file (§ 362): the file level goes. -/
+  -- source: tex.web § 362 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7563
+  -- source: SaTeX `end_input` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/tex.rs
   | endFile {s s' : State} {f : FileLevel} {rest : List InputLevel} {t : Token} {st : MouthState} :
       s.input = .file f :: rest →
       LineTok s.catOf f.state f.cur none st [] →
-      (f.lines = [] ∨ f.forceEof = true) →
-      Next (let s1 := { s with input := rest }
-            if f.text then s1 else insertEvery "everyeof" s1) t s' →
+      (f.lines = [] ∧ (f.eofSeen = true ∨ f.text = true ∨ s.toksAt (.toksPar "everyeof") = []) ∨
+       f.forceEof = true) →
+      Next { s with input := rest } t s' →
       Next s t s'
+  /-- etex.ch: at the end of a file not ended by `\endinput` (nor a
+  `\scantextokens` one), `\everyeof` comes first, the file still open with
+  a fake empty line. -/
+  -- source: etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L933
+  -- source: SaTeX `end_input_frame` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs
+  | everyEof {s s' : State} {f : FileLevel} {rest : List InputLevel} {t : Token} {st : MouthState} :
+      s.input = .file f :: rest →
+      LineTok s.catOf f.state f.cur none st [] →
+      f.lines = [] → f.forceEof = false → f.eofSeen = false → f.text = false →
+      s.toksAt (.toksPar "everyeof") ≠ [] →
+      Next (insertEvery "everyeof"
+              { s with input := .file { f with eofSeen := true, cur := [], state := .newLine } :: rest }) t s' →
+      Next s t s'
+
+/-- The input yields no token any more (§ 360): every level is used up. -/
+inductive Drained : State → Prop
+  -- source: tex.web § 360 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7522
+  -- source: SaTeX `end_input` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs
+  | empty {s : State} : s.input = [] → Drained s
+  | tokEnd {s : State} {k : TokListKind} {rest : List InputLevel} :
+      s.input = .toks k [] :: rest → Drained { s with input := rest } → Drained s
+  | nextLine {s : State} {f : FileLevel} {rest : List InputLevel} {st : MouthState}
+      {line : List CharCode} {lines : List (List CharCode)} :
+      s.input = .file f :: rest → LineTok s.catOf f.state f.cur none st [] →
+      f.lines = line :: lines → f.forceEof = false →
+      Drained { s with input := .file { f with cur := prepareLine s line, lines := lines,
+                                               state := .newLine, line := f.line + 1 } :: rest } →
+      Drained s
+  | endFile {s : State} {f : FileLevel} {rest : List InputLevel} {st : MouthState} :
+      s.input = .file f :: rest → LineTok s.catOf f.state f.cur none st [] →
+      (f.lines = [] ∧ (f.eofSeen = true ∨ f.text = true ∨ s.toksAt (.toksPar "everyeof") = []) ∨
+       f.forceEof = true) →
+      Drained { s with input := rest } → Drained s
 
 /-- Reading a given token sequence with `get_token` (§ 365). -/
 inductive ReadToks : State → TokList → State → Prop
@@ -769,20 +847,26 @@ def forceEofTop : List InputLevel → List InputLevel
   | .file f :: rest => .file { f with forceEof := true } :: rest
   | l :: rest => l :: forceEofTop rest
 
+-- source: pdftex.web https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/pdftexdir/pdftex.web#L38626
+-- source: SaTeX `if_type` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
 def _root_.Satex.IfOp.code : IfOp → Int
   | .charIf => 0 | .catIf => 1 | .num => 2 | .dim => 3 | .odd => 4 | .vmode => 5
   | .hmode => 6 | .mmode => 7 | .inner => 8 | .void => 9 | .hboxIf => 10
   | .vboxIf => 11 | .ifx => 12 | .eof => 13 | .iftrue => 14 | .iffalse => 15
   | .ifcase => 16 | .defined => 17 | .csname => 18 | .fontchar => 19
-  | .absnum => 20 | .absdim => 21 | .incsname => 22 | .primitive => 23
+  | .incsname => 20 | .primitive => 21 | .absnum => 22 | .absdim => 23   -- pdftex.web
   | .condition => 24   -- LuaTeX; the number is not checked against luatex.web
 
+/-- etex.ch `last_node_type`: -1 for an empty list, 0 for a character,
+the node type plus one otherwise. -/
+-- source: etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L1262
+-- source: SaTeX `last_item` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
 def itemCode : Option Item → Int
   | none => -1
   | some .char => 0 | some .ligature => 7 | some .box => 1 | some .rule => 3
   | some (.glue _) => 11 | some (.kern _) => 12 | some (.penalty _) => 13
   | some .mark => 5 | some .whatsit => 9 | some .math => 10 | some .disc => 8
-  | some .other => 15
+  | some .vbox => 2 | some .other => 15
 
 def relHolds (rel : Nat) (a b : Int) : Bool :=
   if rel = 60 then decide (a < b) else if rel = 62 then decide (a > b) else a == b
@@ -816,12 +900,104 @@ def splitLines (nl : Int) (cs : List CharCode) : List (List CharCode) :=
 
 def fontParamOf (s : State) (f : Nat) (n : Nat) : Scaled :=
   match nth? s.fonts f with
-  | some p => p.2 n
+  | some p => p.params n
   | none => 0
 
 def curFontParam (s : State) (n : Nat) : Scaled := fontParamOf s (s.intAt .curFont).toNat n
 
+/-- `scan_four_bit_int` (§ 436): out of range is "Bad number" and 0. -/
+-- source: tex.web § 436 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8653
+-- source: SaTeX `scan_int` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+def fourBit (n : Int) : Nat := if 0 ≤ n ∧ n ≤ 15 then n.toNat else 0
+
+def fourBitErr (n : Int) (s : State) : State := if 0 ≤ n ∧ n ≤ 15 then s else raise "Bad number" s
+
 def isRelax : Option Cmd → Bool | some .relax => true | _ => false
+
+/-- `cur_cmd = spacer`: explicit or implicit spaces of any code (§ 406). -/
+def isSpacer : Meaning → Bool | .char _ .space => true | _ => false
+
+-- source: tex.web § 406 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8220
+-- source: SaTeX `next_non_blank_x_token` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+def spacerTok (s : State) (t : Token) : Bool := isSpacer (meaningTok s t)
+
+/-- `\prevdepth`, `\pagegoal`, … are dimensions (§ 1243, § 1245). -/
+def alterDimen (n : String) : Bool := n == "prevdepth" || n.startsWith "page"
+
+/-- The mode `alter_aux` needs (§ 1243). -/
+-- source: tex.web § 1243 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23212
+-- source: SaTeX `spacefactor (Owned::List)` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs
+def alterModeOk (n : String) (s : State) : Bool :=
+  if n == "spacefactor" then s.mode.kind == .horizontal
+  else if n == "prevdepth" then s.mode.kind == .vertical else true
+
+/-- `cur_cmd = left_brace`: `{` or an implicit `\bgroup` (§ 403). -/
+-- source: tex.web § 403 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8189
+-- source: SaTeX `scan_left_brace` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
+def leftBraceTok (s : State) (t : Token) : Bool :=
+  match meaningTok s t with | .char _ .bgroup => true | _ => false
+
+/-- `prepare_mag` (§ 288): an invalid `\mag` is an error and becomes 1000,
+globally. `mag_set` is not modelled. -/
+-- source: tex.web § 288 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L6129
+-- source: SaTeX `scan_unit_of` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+def prepMag (s : State) : State × Nat :=
+  let m := s.intPar "mag"
+  if 0 < m ∧ m ≤ 32768 then (s, m.toNat)
+  else (geqDefine (raise "Illegal magnification has been changed to 1000" s) (.intPar "mag") (.int 1000), 1000)
+
+/-- § 457: `true` divides by the magnification. -/
+def magAdjust (m : Nat) (tr : Bool) (i f : Nat) : Nat × Nat :=
+  if tr = true ∧ m ≠ 1000 then scaleUnit i f 1000 m else (i, f)
+
+/-- `attach_sign` (§ 448, § 460): arith_error or `|v| ≥ 2^30` is "Dimension
+too large", `max_dimen`; then the sign. -/
+def dimOk : Option Int → Bool
+  | some x => decide (x.natAbs < 1073741824)
+  | none => false
+
+-- source: tex.web § 448 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8829
+-- source: SaTeX `attach_sign` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+def dimVal (neg : Bool) (o : Option Int) : Int :=
+  let v := match o with | some x => if dimOk (some x) then x else maxDimen | none => maxDimen
+  if neg then -v else v
+
+def dimState (o : Option Int) (s : State) : State := if dimOk o then s else raise "Dimension too large" s
+
+/-- How `scan_dimen` takes an internal quantity (§ 448–449): `some e` goes
+straight to `attach_sign` (`e`: `mu_error`, "Incompatible glue units"). -/
+def directDim (mu : Bool) : IVal → Option Bool
+  | .dimen _ => if mu then none else some false
+  | .glue _ => if mu then none else some false
+  | .mu _ => some (!mu)
+  | _ => none
+
+/-- … `some e`: its value is a count of units. -/
+def unitsDim (mu : Bool) : IVal → Option Bool
+  | .int _ => some false
+  | .dimen _ => if mu then some true else none
+  | .glue _ => if mu then some true else none
+  | _ => none
+
+/-- An internal quantity used as unit (§ 455), with `mu_error`. -/
+def internalUnitErr (mu : Bool) : IVal → Option Bool
+  | .int _ | .dimen _ | .glue _ => some mu
+  | .mu _ => some (!mu)
+  | _ => none
+
+def muError (e : Bool) (s : State) : State := if e then raise "Incompatible glue units" s else s
+
+/-- `\read`'s line (§ 483): an unmatched `}` ends it, the rest of the line
+is dropped. The tokens kept, and whether that happened. -/
+-- source: tex.web § 483 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9465
+-- source: SaTeX `read_line_into` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
+def cutUnmatched : Int → TokList → TokList × Bool
+  | _, [] => ([], false)
+  | d, t :: ts =>
+    if t.isEgroup ∧ d = 0 then ([], true)
+    else
+      let r := cutUnmatched (if t.isBgroup then d + 1 else if t.isEgroup then d - 1 else d) ts
+      (t :: r.1, r.2)
 
 /-- Commands `scan_something_internal` accepts (§ 413). -/
 def internalTok (s : State) (t : Token) : Bool :=
@@ -831,7 +1007,7 @@ def internalTok (s : State) (t : Token) : Bool :=
   | .prim _ c => match c with
     | .register k => k != .box
     | .intPar _ | .dimPar _ | .gluePar _ _ | .toksPar _ | .codeTable _ | .lastItem _
-    | .expr _ | .fontParam _ | .special _ | .fontDef => true
+    | .expr _ | .fontParam _ | .special _ | .fontDef | .alter _ => true
     | _ => false
   | _ => false
 
@@ -844,6 +1020,13 @@ def inBound (l : Level) (x : Int) : Option Int := if x.natAbs ≤ (levelBound l)
 def addOrder (neg : Bool) (a : Int) (ao : Nat) (b : Int) (bo : Nat) : Int × Nat :=
   if ao = bo then (if neg then a - b else a + b, ao)
   else if ao < bo ∧ b ≠ 0 then (b, bo) else (a, ao)
+
+/-- etex.ch `normalize_glue`: a zero component has order normal. -/
+-- source: etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L5169
+-- source: SaTeX `scan_expr` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+def normGlue (g : Glue) : Glue :=
+  { g with stretchOrder := if g.stretch = 0 then 0 else g.stretchOrder,
+           shrinkOrder := if g.shrink = 0 then 0 else g.shrinkOrder }
 
 def glueOk (g : Glue) : Option Glue :=
   match inBound .glue g.width, inBound .glue g.stretch, inBound .glue g.shrink with
@@ -862,11 +1045,11 @@ def exprAdd (l : Level) (neg : Bool) : Option IVal → Option IVal → Option IV
       (inBound l (if neg then v.toInt - w.toInt else v.toInt + w.toInt)).map (fun x => ivalOf l x {})
     | _ =>
       let a := v.toGlue
-      let b := w.toGlue
+      let b := normGlue w.toGlue
       let st := addOrder neg a.stretch a.stretchOrder b.stretch b.stretchOrder
       let sh := addOrder neg a.shrink a.shrinkOrder b.shrink b.shrinkOrder
-      (glueOk { width := if neg then a.width - b.width else a.width + b.width,
-                stretch := st.1, stretchOrder := st.2, shrink := sh.1, shrinkOrder := sh.2 }).map
+      (glueOk (normGlue { width := if neg then a.width - b.width else a.width + b.width,
+                          stretch := st.1, stretchOrder := st.2, shrink := sh.1, shrinkOrder := sh.2 })).map
         (fun g => ivalOf l 0 g)
   | _, _ => none
 
@@ -885,15 +1068,6 @@ def exprScale (l : Level) (n d : Int) : Option IVal → Option IVal
         some (ivalOf l 0 { g with width := w, stretch := st, shrink := sh })
       | _, _, _ => none
   | none => none
-
-/-- A physical unit applied to `i + f/2^16` (§§ 457–458); `none` is
-"Dimension too large". -/
-def physValue (mag : Int) (tr : Bool) (i f num den : Nat) : Option Int :=
-  let m := mag.toNat
-  let m := if 0 < m ∧ m ≤ 32768 then m else 1000
-  let p1 := if tr = true ∧ m ≠ 1000 then scaleUnit i f 1000 m else (i, f)
-  let p2 := scaleUnit p1.1 p1.2 num den
-  attachFraction p2.1 p2.2
 
 /-- The head of a conditional, with `\unless` (etex.ch). -/
 inductive CondHead : State → Token → IfOp → Bool → State → Prop
@@ -943,9 +1117,11 @@ inductive XNext (E : Engine) : State → Token → State → Prop
 
 /-- The next non-blank token after expansion (§ 406). -/
 inductive XNonBlank (E : Engine) : State → Token → State → Prop
-  | here {s s1 : State} {t : Token} : XNext E s t s1 → t ≠ Token.space → XNonBlank E s t s1
-  | skip {s s1 s2 : State} {t : Token} :
-      XNext E s Token.space s1 → XNonBlank E s1 t s2 → XNonBlank E s t s2
+  -- source: tex.web § 406 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8220
+  -- source: SaTeX `next_non_blank_x_token` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+  | here {s s1 : State} {t : Token} : XNext E s t s1 → spacerTok s1 t = false → XNonBlank E s t s1
+  | skip {s s1 s2 : State} {t u : Token} :
+      XNext E s u s1 → spacerTok s1 u = true → XNonBlank E s1 t s2 → XNonBlank E s t s2
 
 /-- Non-blank, non-`\relax` (§ 404). -/
 inductive XNonRelax (E : Engine) : State → Token → State → Prop
@@ -958,13 +1134,16 @@ inductive XNonRelax (E : Engine) : State → Token → State → Prop
 first; on failure the tokens go back. -/
 inductive Keyword (E : Engine) : State → List Char → TokList → Bool → State → Prop
   | done {s : State} {acc : TokList} : Keyword E s [] acc true s
+  -- source: tex.web § 407 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8224
+  -- source: SaTeX `scan_keyword` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
   | letter {s s1 s2 : State} {t : Token} {k : Char} {ks : List Char} {acc : TokList} {b : Bool} :
       XNext E s t s1 → kwMatches k t = true → Keyword E s1 ks (acc ++ [t]) b s2 →
       Keyword E s (k :: ks) acc b s2
-  | space {s s1 s2 : State} {k : Char} {ks : List Char} {b : Bool} :
-      XNext E s Token.space s1 → Keyword E s1 (k :: ks) [] b s2 → Keyword E s (k :: ks) [] b s2
+  | space {s s1 s2 : State} {u : Token} {k : Char} {ks : List Char} {b : Bool} :
+      XNext E s u s1 → kwMatches k u = false → spacerTok s1 u = true →
+      Keyword E s1 (k :: ks) [] b s2 → Keyword E s (k :: ks) [] b s2
   | fail {s s1 : State} {t : Token} {k : Char} {ks : List Char} {acc : TokList} :
-      XNext E s t s1 → kwMatches k t = false → ¬ (t = Token.space ∧ acc = []) →
+      XNext E s t s1 → kwMatches k t = false → ¬ (spacerTok s1 t = true ∧ acc = []) →
       Keyword E s (k :: ks) acc false (backList (acc ++ [t]) s1)
 
 /-- `scan_optional_equals` (§ 405). -/
@@ -984,13 +1163,15 @@ inductive Signs (E : Engine) : State → Bool → Token → State → Prop
 /-- Digits (§§ 444–445): accumulate, then one optional space (§ 443). The
 value is unbounded here; the caller checks it. -/
 inductive Digits (E : Engine) : Nat → State → Nat → List Nat → State → Prop
+  -- source: tex.web § 444 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8759
+  -- source: SaTeX `scan_digits` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
   | more {s s1 s2 : State} {radix acc d : Nat} {t : Token} {ds : List Nat} :
       XNext E s t s1 → isDigitTok radix t = some d →
       Digits E radix s1 (acc * radix + d) ds s2 → Digits E radix s acc ds s2
-  | endSpace {s s1 : State} {radix acc : Nat} :
-      XNext E s Token.space s1 → Digits E radix s acc [acc] s1
+  | endSpace {s s1 : State} {radix acc : Nat} {t : Token} :
+      XNext E s t s1 → isDigitTok radix t = none → spacerTok s1 t = true → Digits E radix s acc [acc] s1
   | endOther {s s1 : State} {radix acc : Nat} {t : Token} :
-      XNext E s t s1 → isDigitTok radix t = none → t ≠ Token.space →
+      XNext E s t s1 → isDigitTok radix t = none → spacerTok s1 t = false →
       Digits E radix s acc [acc] (backInput t s1)
 
 /-- `scan_int` (§ 440). -/
@@ -999,6 +1180,8 @@ inductive ScanInt (E : Engine) : State → Int → State → Prop
       Signs E s neg t s1 → internalTok s1 t = true → Internal E (backInput t s1) v s2 →
       ScanInt E s (if neg then -v.toInt else v.toInt) s2
   /-- `` `c ``: the character's code, then an optional space (§ 442). -/
+  -- source: tex.web § 442 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8731
+  -- source: SaTeX `scan_alphabetic_constant` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
   | alpha {s s1 s2 s3 : State} {neg : Bool} {u : Token} {c : Nat} :
       Signs E s neg (otherChar '`') s1 → Next s1 u s2 →
       (match u with
@@ -1008,20 +1191,40 @@ inductive ScanInt (E : Engine) : State → Int → State → Prop
        | .noexp (.active d) => c = d
        | .noexp (.name n) => strCodes n = [c]
        | _ => False) →
-      OptSpace E s2 s3 →
+      c ≤ charMax E → OptSpace E s2 s3 →
       ScanInt E s (if neg then -(Int.ofNat c) else Int.ofNat c) s3
+  /-- "Improper alphabetic constant" (§ 442): a multi-letter name or a code
+  out of range gives `"0"`, the token is read again. -/
+  | alphaBad {s s1 s2 : State} {neg : Bool} {u : Token} :
+      Signs E s neg (otherChar '`') s1 → Next s1 u s2 →
+      (match u with
+       | .char d _ => d > charMax E
+       | .cs (.name n) => (strCodes n).length ≠ 1 ∨ (∀ c, strCodes n = [c] → c > charMax E)
+       | .cs (.active d) => d > charMax E
+       | .noexp (.name n) => (strCodes n).length ≠ 1 ∨ (∀ c, strCodes n = [c] → c > charMax E)
+       | .noexp (.active d) => d > charMax E
+       | _ => True) →
+      ScanInt E s (if neg then -48 else 48) (raise "Improper alphabetic constant" (backInput u s2))
   | decimal {s s1 s2 : State} {neg : Bool} {t : Token} {d n : Nat} :
       Signs E s neg t s1 → isDigitTok 10 t = some d → Digits E 10 s1 d [n] s2 →
       ScanInt E s (if neg then -(min (Int.ofNat n) infinity) else min (Int.ofNat n) infinity)
         (if Int.ofNat n > infinity then raise "Number too big" s2 else s2)
-  | octal {s s1 s2 : State} {neg : Bool} {n : Nat} :
-      Signs E s neg (otherChar '\'') s1 → Digits E 8 s1 0 [n] s2 →
+  | octal {s s1 s2 s3 : State} {neg : Bool} {n d : Nat} {t : Token} :
+      Signs E s neg (otherChar '\'') s1 → XNext E s1 t s2 → isDigitTok 8 t = some d → Digits E 8 s2 d [n] s3 →
       ScanInt E s (if neg then -(min (Int.ofNat n) infinity) else min (Int.ofNat n) infinity)
-        (if Int.ofNat n > infinity then raise "Number too big" s2 else s2)
-  | hex {s s1 s2 : State} {neg : Bool} {n : Nat} :
-      Signs E s neg (otherChar '"') s1 → Digits E 16 s1 0 [n] s2 →
+        (if Int.ofNat n > infinity then raise "Number too big" s3 else s3)
+  | hex {s s1 s2 s3 : State} {neg : Bool} {n d : Nat} {t : Token} :
+      Signs E s neg (otherChar '"') s1 → XNext E s1 t s2 → isDigitTok 16 t = some d → Digits E 16 s2 d [n] s3 →
       ScanInt E s (if neg then -(min (Int.ofNat n) infinity) else min (Int.ofNat n) infinity)
-        (if Int.ofNat n > infinity then raise "Number too big" s2 else s2)
+        (if Int.ofNat n > infinity then raise "Number too big" s3 else s3)
+  /-- `'` or `"` without a digit (§ 444 `vacuous`): "Missing number", the
+  token is read again. -/
+  -- source: tex.web § 444 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8759
+  -- source: SaTeX `scan_digits` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+  | vacuous {s s1 s2 : State} {neg : Bool} {q t : Token} {radix : Nat} :
+      (q = otherChar '\'' ∧ radix = 8 ∨ q = otherChar '"' ∧ radix = 16) →
+      Signs E s neg q s1 → XNext E s1 t s2 → isDigitTok radix t = none →
+      ScanInt E s 0 (raise "Missing number, treated as zero" (backInput t s2))
   /-- "Missing number, treated as zero" (§ 446). -/
   | missing {s s1 s2 : State} {neg : Bool} {t : Token} :
       Signs E s neg t s1 → isDigitTok 10 t = none →
@@ -1031,15 +1234,21 @@ inductive ScanInt (E : Engine) : State → Int → State → Prop
 
 /-- One optional space (§ 443). -/
 inductive OptSpace (E : Engine) : State → State → Prop
-  | space {s s1 : State} : XNext E s Token.space s1 → OptSpace E s s1
-  | other {s s1 : State} {t : Token} : XNext E s t s1 → t ≠ Token.space → OptSpace E s (backInput t s1)
+  -- source: tex.web § 443 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8755
+  -- source: SaTeX `scan_optional_x_space` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+  | space {s s1 : State} {t : Token} : XNext E s t s1 → spacerTok s1 t = true → OptSpace E s s1
+  | other {s s1 : State} {t : Token} : XNext E s t s1 → spacerTok s1 t = false → OptSpace E s (backInput t s1)
 
 /-- The fraction digits after a decimal point (§ 452). -/
 inductive Fraction (E : Engine) : State → List Nat → State → Prop
+  -- source: tex.web § 452 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8902
+  -- source: SaTeX `scan_dimen_parts` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
   | more {s s1 s2 : State} {d : Nat} {ds : List Nat} {t : Token} :
       XNext E s t s1 → isDigitTok 10 t = some d → Fraction E s1 ds s2 → Fraction E s (d :: ds) s2
+  /-- § 452: a space after the digits goes. -/
   | stop {s s1 : State} {t : Token} :
-      XNext E s t s1 → isDigitTok 10 t = none → Fraction E s [] (backInput t s1)
+      XNext E s t s1 → isDigitTok 10 t = none →
+      Fraction E s [] (if spacerTok s1 t then s1 else backInput t s1)
 
 /-- Integer and fraction part of a decimal constant (§ 448, § 452). -/
 inductive Decimal (E : Engine) : State → Token → Nat → Nat → State → Prop
@@ -1066,91 +1275,150 @@ inductive PointFraction (E : Engine) : State → List Nat → State → Prop
       XNext E s t s1 → (t = otherChar '.' ∨ t = otherChar ',') → Fraction E s1 ds s2 →
       PointFraction E s ds s2
 
-/-- The unit after a number (§§ 453–459), for a magnitude `i + f/2^16`;
-`inf` allows `fil` (glue components), `mu` math units only. -/
-inductive ScanUnit (E : Engine) : Bool → Bool → State → Nat → Nat → Int × Nat → State → Prop
-  /-- `em`, `ex` (§ 455): the current font's quad and x-height. -/
-  | fontUnit {s s1 s2 : State} {inf : Bool} {i f : Nat} {kw : String} {r : Int} {v : Scaled} :
-      (kw = "em" ∧ v = curFontParam s 6 ∨ kw = "ex" ∧ v = curFontParam s 5) →
-      Keyword E s kw.toList [] true s1 → OptSpace E s1 s2 →
-      nxPlusY (Int.ofNat i) v (tdiv (v * Int.ofNat f) 65536) = some r →
-      ScanUnit E inf false s i f (r, 0) s2
-  /-- An internal dimension as unit (§ 455): `2\dimen0`. -/
-  | internalUnit {s s1 s2 : State} {inf : Bool} {i f : Nat} {t : Token} {v : IVal} {r : Int} :
-      XNonBlank E s t s1 → internalTok s1 t = true → Internal E (backInput t s1) v s2 →
-      (match v with | .dimen _ => True | .glue _ => True | _ => False) →
-      nxPlusY (Int.ofNat i) v.toInt (tdiv (v.toInt * Int.ofNat f) 65536) = some r →
-      ScanUnit E inf false s i f (r, 0) s2
-  /-- `true` then a physical unit (§§ 457–458). -/
-  | physical {s s1 s2 s3 : State} {inf : Bool} {i f : Nat} {tr : Bool} {u : String}
-      {num den : Nat} :
-      Keyword E s "true".toList [] tr s1 →
-      u ∈ physicalUnits → unitRatio u = some (num, den) →
-      Keyword E s1 u.toList [] true s2 → OptSpace E s2 s3 →
-      ScanUnit E inf false s i f ((physValue (s.intPar "mag") tr i f num den).getD maxDimen, 0)
-        (if (physValue (s.intPar "mag") tr i f num den).isNone then raise "Dimension too large" s3 else s3)
-  /-- `sp` (§ 459): the integer part only. -/
-  | sp {s s1 s2 : State} {inf : Bool} {i f : Nat} {tr : Bool} :
-      Keyword E s "true".toList [] tr s1 → Keyword E s1 "sp".toList [] true s2 →
-      ScanUnit E inf false s i f (Int.ofNat i, 0) s2
-  /-- `fil`, `fill`, `filll` (§ 454): the order, more `l`s stay `filll`. -/
-  | fil {s s1 s2 s3 : State} {i f : Nat} {ls : Nat} :
+/-- The unit after a number (§§ 453–459) for the magnitude `i + f/2^16`, in
+tex.web's order: `fil` (if `inf`), an internal quantity, `em`/`ex` (not `mu`),
+`mu` (only `mu`), `true` and a physical unit. The value is `none` on
+arith_error (§ 453, § 105); `scan_dimen` reports it at `attach_sign`. -/
+inductive ScanUnit (E : Engine) : Bool → Bool → State → Nat → Nat → Option Int × Nat → State → Prop
+  /-- `fil`, `fill`, `filll` (§ 454). -/
+  -- source: tex.web § 454 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8946
+  -- source: SaTeX `scan_unit_of` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+  | fil {s s1 s2 s3 : State} {mu : Bool} {i f : Nat} {ls : Nat} :
       Keyword E s "fil".toList [] true s1 → MoreL E s1 0 ls s2 → OptSpace E s2 s3 →
-      ScanUnit E true false s i f (Int.ofNat (i * 65536 + f), min (ls + 1) 3) s3
-  /-- `mu` (§ 456). -/
-  | mu {s s1 s2 : State} {inf : Bool} {i f : Nat} :
-      Keyword E s "mu".toList [] true s1 → OptSpace E s1 s2 →
-      ScanUnit E inf true s i f (Int.ofNat (i * 65536 + f), 0) s2
-  /-- "Illegal unit of measure (pt inserted)" (§ 459). -/
-  | missing {s s1 : State} {inf mu : Bool} {i f : Nat} :
-      NoKeyword E (if mu then ["mu"] else ["em", "ex", "true"] ++ physicalUnits ++ ["sp"]) s s1 →
-      ScanUnit E inf mu s i f ((attachFraction i f).getD maxDimen, 0)
-        (raise "Illegal unit of measure (pt inserted)" s1)
+      ScanUnit E true mu s i f (attachFraction i f, min (ls + 1) 3) s3
+  /-- An internal quantity as unit (§ 455): `2\dimen0`, `2\count0` (sp),
+  `2\muskip0` in math glue. No optional space. -/
+  -- source: tex.web § 455 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8965
+  -- source: SaTeX `scan_unit_of` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+  | internal {s s1 s2 s3 : State} {inf mu : Bool} {i f : Nat} {t : Token} {v : IVal} {e : Bool} :
+      FilAbsent E inf s s1 → XNonBlank E s1 t s2 → internalTok s2 t = true →
+      Internal E (backInput t s2) v s3 → internalUnitErr mu v = some e →
+      ScanUnit E inf mu s i f
+        (nxPlusY (Int.ofNat i) v.toInt (tdiv (v.toInt * Int.ofNat f) 65536), 0) (muError e s3)
+  /-- `em`, `ex` (§ 455): the current font's quad and x-height. -/
+  -- source: tex.web § 455 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8965
+  -- source: SaTeX `scan_unit_of` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+  | em {s s1 s2 s3 s4 : State} {inf : Bool} {i f : Nat} :
+      FilAbsent E inf s s1 → NotInternal E s1 s2 → Keyword E s2 "em".toList [] true s3 →
+      OptSpace E s3 s4 →
+      ScanUnit E inf false s i f
+        (nxPlusY (Int.ofNat i) (curFontParam s2 6) (tdiv (curFontParam s2 6 * Int.ofNat f) 65536), 0) s4
+  | ex {s s1 s2 s3 s4 s5 : State} {inf : Bool} {i f : Nat} :
+      FilAbsent E inf s s1 → NotInternal E s1 s2 → Keyword E s2 "em".toList [] false s3 →
+      Keyword E s3 "ex".toList [] true s4 → OptSpace E s4 s5 →
+      ScanUnit E inf false s i f
+        (nxPlusY (Int.ofNat i) (curFontParam s3 5) (tdiv (curFontParam s3 5 * Int.ofNat f) 65536), 0) s5
+  /-- `mu` (§ 456); without it "Illegal unit of measure (mu inserted)". -/
+  -- source: tex.web § 456 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8987
+  -- source: SaTeX `scan_unit_of` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+  | mu {s s1 s2 s3 s4 : State} {inf b : Bool} {i f : Nat} :
+      FilAbsent E inf s s1 → NotInternal E s1 s2 → Keyword E s2 "mu".toList [] b s3 →
+      OptSpace E (if b then s3 else raise "Illegal unit of measure (mu inserted)" s3) s4 →
+      ScanUnit E inf true s i f (attachFraction i f, 0) s4
+  /-- `true` (§ 457), then `pt`, a physical unit (§ 458), `sp` (no fraction)
+  or none: "Illegal unit of measure (pt inserted)" (§ 459). -/
+  -- source: tex.web § 457 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9000
+  -- source: tex.web § 458 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9009
+  -- source: SaTeX `scan_unit_of` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+  | physical {s s1 s2 s3 s4 s5 s6 : State} {inf tr : Bool} {i f : Nat} {u : Option String} :
+      FilAbsent E inf s s1 → NotInternal E s1 s2 → Keyword E s2 "em".toList [] false s3 →
+      Keyword E s3 "ex".toList [] false s4 → Keyword E s4 "true".toList [] tr s5 →
+      UnitKw E (physicalUnits ++ ["sp"]) (if tr then (prepMag s5).1 else s5) u s6 →
+      ScanUnit E inf false s i f
+        (let m := (prepMag s5).2
+         let p := magAdjust m tr i f
+         match u with
+         | some "sp" => (some (Int.ofNat p.1), 0)
+         | some k => match unitRatio k with
+           | some (num, den) => let q := scaleUnit p.1 p.2 num den; (attachFraction q.1 q.2, 0)
+           | none => (attachFraction p.1 p.2, 0)
+         | none => (attachFraction p.1 p.2, 0))
+        (match u with | none => raise "Illegal unit of measure (pt inserted)" s6 | some _ => s6)
 
-/-- Each keyword in turn is absent (§§ 453–459). -/
-inductive NoKeyword (E : Engine) : List String → State → State → Prop
-  | nil {s : State} : NoKeyword E [] s s
-  | cons {s s1 s2 : State} {k : String} {ks : List String} :
-      Keyword E s k.toList [] false s1 → NoKeyword E ks s1 s2 → NoKeyword E (k :: ks) s s2
+/-- `fil` was looked for and is absent, or not allowed here. -/
+inductive FilAbsent (E : Engine) : Bool → State → State → Prop
+  | notInf {s : State} : FilAbsent E false s s
+  | absent {s s1 : State} : Keyword E s "fil".toList [] false s1 → FilAbsent E true s s1
 
-/-- Further `l`s after `fil` (§ 454). -/
+/-- The next non-blank token is no internal quantity (§ 455); it goes back. -/
+inductive NotInternal (E : Engine) : State → State → Prop
+  | other {s s1 : State} {t : Token} :
+      XNonBlank E s t s1 → internalTok s1 t = false → NotInternal E s (backInput t s1)
+
+/-- The first of the units that comes (§ 458), then the optional space
+(§ 448); `none` if none does. -/
+inductive UnitKw (E : Engine) : List String → State → Option String → State → Prop
+  | none_ {s s1 : State} : OptSpace E s s1 → UnitKw E [] s none s1
+  | hit {s s1 s2 : State} {k : String} {ks : List String} :
+      Keyword E s k.toList [] true s1 → OptSpace E s1 s2 → UnitKw E (k :: ks) s (some k) s2
+  | miss {s s1 s2 : State} {k : String} {ks : List String} {r : Option String} :
+      Keyword E s k.toList [] false s1 → UnitKw E ks s1 r s2 → UnitKw E (k :: ks) s r s2
+
+/-- Further `l`s after `fil` (§ 454): past `filll` each is an error. -/
 inductive MoreL (E : Engine) : State → Nat → Nat → State → Prop
+  -- source: tex.web § 454 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8946
+  -- source: SaTeX `scan_unit_of` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
   | stop {s s1 : State} {n : Nat} : Keyword E s ['l'] [] false s1 → MoreL E s n n s1
-  | more {s s1 s2 : State} {n m : Nat} : Keyword E s ['l'] [] true s1 → MoreL E s1 (n + 1) m s2 → MoreL E s n m s2
+  | more {s s1 s2 : State} {n m : Nat} :
+      Keyword E s ['l'] [] true s1 →
+      MoreL E (if n ≥ 2 then raise "Illegal unit of measure (replaced by filll)" s1 else s1) (n + 1) m s2 →
+      MoreL E s n m s2
 
-/-- `scan_dimen` (§ 448): an internal dimension, or a number and a unit.
-Returns the value and its glue order. -/
+/-- `scan_dimen` (§ 448): an internal dimension, or a number and a unit;
+every value passes `attach_sign` (§ 460). Returns the value and its glue
+order. -/
 inductive ScanDimen (E : Engine) : Bool → Bool → State → Int × Nat → State → Prop
-  | internal {s s1 s2 : State} {inf mu neg : Bool} {t : Token} {v : IVal} :
+  -- source: tex.web § 448 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8829
+  -- source: SaTeX `scan_dimen_parts` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+  | internal {s s1 s2 : State} {inf mu neg e : Bool} {t : Token} {v : IVal} :
       Signs E s neg t s1 → internalTok s1 t = true → Internal E (backInput t s1) v s2 →
-      (match v with | .int _ => False | _ => True) →
-      ScanDimen E inf mu s ((if neg then -v.toInt else v.toInt), 0) s2
-  /-- An internal integer, then a unit (§ 449). -/
-  | intUnit {s s1 s2 s3 : State} {inf mu neg : Bool} {t : Token} {n : Int} {r : Int × Nat} :
-      Signs E s neg t s1 → Internal E (backInput t s1) (.int n) s2 →
-      ScanUnit E inf mu s2 n.natAbs 0 r s3 →
-      ScanDimen E inf mu s
-        ((if neg != decide (n < 0) then -r.1 else r.1), r.2) s3
-  | constant {s s1 s2 s3 : State} {inf mu neg : Bool} {t : Token} {i f : Nat} {r : Int × Nat} :
+      directDim mu v = some e →
+      ScanDimen E inf mu s (dimVal neg (some v.toInt), 0) (dimState (some v.toInt) (muError e s2))
+  /-- An internal integer (in math glue also a dimension, with `mu_error`),
+  then a unit (§ 449). -/
+  | intUnit {s s1 s2 s3 : State} {inf mu neg e : Bool} {t : Token} {v : IVal} {r : Option Int × Nat} :
+      Signs E s neg t s1 → internalTok s1 t = true → Internal E (backInput t s1) v s2 →
+      unitsDim mu v = some e →
+      ScanUnit E inf mu (muError e s2) v.toInt.natAbs 0 r s3 →
+      ScanDimen E inf mu s (dimVal (neg != decide (v.toInt < 0)) r.1, r.2) (dimState r.1 s3)
+  | constant {s s1 s2 s3 : State} {inf mu neg : Bool} {t : Token} {i f : Nat} {r : Option Int × Nat} :
       Signs E s neg t s1 → Decimal E s1 t i f s2 → ScanUnit E inf mu s2 i f r s3 →
-      ScanDimen E inf mu s ((if neg then -r.1 else r.1), r.2) s3
-  | radixConst {s s1 s2 s3 : State} {inf mu neg : Bool} {t : Token} {n : Int} {r : Int × Nat} :
+      ScanDimen E inf mu s (dimVal neg r.1, r.2) (dimState r.1 s3)
+  | radixConst {s s1 s2 s3 : State} {inf mu neg : Bool} {t : Token} {n : Int} {r : Option Int × Nat} :
       Signs E s neg t s1 → (t = otherChar '\'' ∨ t = otherChar '"' ∨ t = otherChar '`') →
       ScanInt E (backInput t s1) n s2 → ScanUnit E inf mu s2 n.natAbs 0 r s3 →
-      ScanDimen E inf mu s ((if neg then -r.1 else r.1), r.2) s3
+      ScanDimen E inf mu s (dimVal (neg != decide (n < 0)) r.1, r.2) (dimState r.1 s3)
 
-/-- `scan_glue` (§ 461). -/
+/-- `scan_glue` (§ 461). An internal glue is the whole value; an internal
+dimension or a constant is the width, `plus` and `minus` may follow. -/
 inductive ScanGlue (E : Engine) : Bool → State → Glue → State → Prop
-  | internal {s s1 s2 : State} {mu neg : Bool} {t : Token} {g : Glue} :
-      Signs E s neg t s1 → internalTok s1 t = true →
-      Internal E (backInput t s1) (if mu then .mu g else .glue g) s2 →
+  -- source: tex.web § 461 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9064
+  -- source: SaTeX `scan_glue_spec` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
+  | internal {s s1 s2 : State} {mu neg : Bool} {t : Token} {v : IVal} :
+      Signs E s neg t s1 → internalTok s1 t = true → Internal E (backInput t s1) v s2 →
+      (match v with | .glue _ => True | .mu _ => True | _ => False) →
       ScanGlue E mu s
-        (if neg then { g with width := -g.width, stretch := -g.stretch, shrink := -g.shrink } else g) s2
-  | spec {s s1 s2 s3 : State} {mu : Bool} {w : Int × Nat} {st sh : Int × Nat} :
-      ScanDimen E false mu s w s1 →
-      Stretch E mu "plus" s1 st s2 → Stretch E mu "minus" s2 sh s3 →
-      ScanGlue E mu s { width := w.1, stretch := st.1, stretchOrder := st.2,
-                        shrink := sh.1, shrinkOrder := sh.2 } s3
+        (let g := v.toGlue
+         if neg then { g with width := -g.width, stretch := -g.stretch, shrink := -g.shrink } else g)
+        (muError (mu != (match v with | .mu _ => true | _ => false)) s2)
+  | dimen {s s1 s2 s3 s4 : State} {mu neg : Bool} {t : Token} {d : Scaled} {st sh : Int × Nat} :
+      Signs E s neg t s1 → internalTok s1 t = true → Internal E (backInput t s1) (.dimen d) s2 →
+      Stretch E mu "plus" (muError mu s2) st s3 → Stretch E mu "minus" s3 sh s4 →
+      ScanGlue E mu s { width := if neg then -d else d, stretch := st.1, stretchOrder := st.2,
+                        shrink := sh.1, shrinkOrder := sh.2 } s4
+  | intUnit {s s1 s2 s3 s4 s5 : State} {mu neg : Bool} {t : Token} {n : Int} {r : Option Int × Nat}
+      {st sh : Int × Nat} :
+      Signs E s neg t s1 → internalTok s1 t = true → Internal E (backInput t s1) (.int n) s2 →
+      ScanUnit E false mu s2 n.natAbs 0 r s3 →
+      Stretch E mu "plus" (dimState r.1 s3) st s4 → Stretch E mu "minus" s4 sh s5 →
+      ScanGlue E mu s { width := dimVal (neg != decide (n < 0)) r.1, stretch := st.1, stretchOrder := st.2,
+                        shrink := sh.1, shrinkOrder := sh.2 } s5
+  | spec {s s1 s2 s3 s4 : State} {mu neg : Bool} {t : Token} {w : Int × Nat} {st sh : Int × Nat} :
+      Signs E s neg t s1 → internalTok s1 t = false →
+      ScanDimen E false mu (backInput t s1) w s2 →
+      Stretch E mu "plus" s2 st s3 → Stretch E mu "minus" s3 sh s4 →
+      ScanGlue E mu s { width := if neg then -w.1 else w.1, stretch := st.1, stretchOrder := st.2,
+                        shrink := sh.1, shrinkOrder := sh.2 } s4
 
 /-- `plus`/`minus` part of glue (§ 462). -/
 inductive Stretch (E : Engine) : Bool → String → State → Int × Nat → State → Prop
@@ -1202,7 +1470,7 @@ inductive Internal (E : Engine) : State → IVal → State → Prop
   /-- `\fontdimen n f` (§ 425, § 578). -/
   | fontdimen {s s1 s2 s3 : State} {t : Token} {n : Int} {f : Nat} :
       Next s t s1 → cmdOf s1 t = some (.fontParam "fontdimen") → ScanInt E s1 n s2 →
-      Internal E s2 (.font f) s3 →
+      FontIdent E s2 f s3 →
       Internal E s (.dimen (fontParamOf s3 f n.toNat)) s3
   /-- **[over]** `\hyphenchar`, `\skewchar` and the pdfTeX/LuaTeX per-font
   codes: an integer SaTeX keeps per font, any value here. -/
@@ -1234,22 +1502,27 @@ inductive Internal (E : Engine) : State → IVal → State → Prop
       Next s t s1 → cmdOf s1 t = some (.lastItem .currentiflevel) →
       Internal E s (.int (Int.ofNat s1.cond.length)) s1
   /-- etex.ch: the type, negative after `\unless`, 0 outside conditionals. -/
+  -- source: pdftex.web https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/pdftexdir/pdftex.web#L38626
+  -- source: SaTeX `last_item` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
   | ifType {s s1 : State} {t : Token} :
       Next s t s1 → cmdOf s1 t = some (.lastItem .currentiftype) →
       Internal E s (.int (match s1.cond with
         | [] => 0
         | c :: _ => if c.negated then -(c.op.code + 1) else c.op.code + 1)) s1
-  /-- etex.ch: 1 true branch, -1 false, 0 while the test is read. -/
+  /-- etex.ch: 1 in a true branch or a chosen `\ifcase` case (`or_code`),
+  -1 in a false branch, 0 while the test is read. -/
+  -- source: etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L3408
+  -- source: SaTeX `last_item` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
   | ifBranch {s s1 : State} {t : Token} :
       Next s t s1 → cmdOf s1 t = some (.lastItem .currentifbranch) →
       Internal E s (.int (match s1.cond with
         | [] => 0
-        | c :: _ => if c.limit = .ifCode then 0 else if c.limit = .elseCode then 1 else -1)) s1
+        | c :: _ => if c.limit = .ifCode then 0 else if c.limit = .fiCode then -1 else 1)) s1
+  -- source: etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L1262
+  -- source: SaTeX `last_item` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
   | lastNodeType {s s1 : State} {t : Token} :
       Next s t s1 → cmdOf s1 t = some (.lastItem .lastnodetype) →
-      Internal E s (.int (match s1.nest with
-        | [l] => if l.items = [] then -1 else itemCode l.items.head? + 1
-        | _ => itemCode (tailItem s1) + 1)) s1
+      Internal E s (.int (itemCode (tailItem s1))) s1
   | parshapeLength {s s1 s2 : State} {t : Token} {n : Int} {which : Nat} :
       Next s t s1 →
       (cmdOf s1 t = some (.lastItem .parshapelength) ∧ which = 1 ∨
@@ -1265,11 +1538,14 @@ inductive Internal (E : Engine) : State → IVal → State → Prop
         if n ≤ 0 ∨ m = 0 then 0
         else let k := if n > 2 * m then 2 * m - (n % 2) else n
              s2.intAt (.special "parshape" k.toNat))) s2
-  | glueComp {s s1 s2 : State} {t : Token} {op : LastOp} {g : Glue} {mu : Bool} :
+  /-- etex.ch `scan_normal_glue`: glue level. -/
+  -- source: etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L5169
+  -- source: SaTeX `last_item` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
+  | glueComp {s s1 s2 : State} {t : Token} {op : LastOp} {g : Glue} :
       Next s t s1 →
       cmdOf s1 t = some (.lastItem op) →
       (op = .gluestretch ∨ op = .glueshrink ∨ op = .gluestretchorder ∨ op = .glueshrinkorder) →
-      ScanGlue E mu s1 g s2 →
+      ScanGlue E false s1 g s2 →
       Internal E s (match op with
         | .gluestretch => .dimen g.stretch
         | .glueshrink => .dimen g.shrink
@@ -1302,6 +1578,24 @@ inductive Internal (E : Engine) : State → IVal → State → Prop
       ScanInt E s1 n s2 → 0 ≤ n →
       Internal E s (.dimen (let (w, h, d) := boxDims (boxAt s2 n.toNat)
                             if which = 0 then w else if which = 1 then h else d)) s2
+  /-- `\interactionmode` reads the interaction (etex.ch). -/
+  -- source: etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L3752
+  -- source: SaTeX `last_item` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
+  | interactionMode {s s1 : State} {t : Token} :
+      Next s t s1 → cmdOf s1 t = some (.alter "interactionmode") →
+      Internal E s (.int (Int.ofNat s1.interaction)) s1
+  /-- **[over]** `\spacefactor`, `\prevdepth`, `\prevgraf`, `\deadcycles`,
+  `\insertpenalties`, the page dimensions (§§ 418–422): values of lists and
+  of the page builder SaTeX does not keep: any value. In the wrong mode
+  "Improper \spacefactor" and 0 (§ 418). -/
+  -- source: tex.web § 418 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8465
+  -- source: SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs
+  | alter {s s1 : State} {t : Token} {n : String} {v : Int} :
+      Next s t s1 → cmdOf s1 t = some (.alter n) → n ≠ "interactionmode" → alterModeOk n s1 = true →
+      Internal E s (if alterDimen n then .dimen v else .int v) s1
+  | alterImproper {s s1 : State} {t : Token} {n : String} :
+      Next s t s1 → cmdOf s1 t = some (.alter n) → alterModeOk n s1 = false →
+      Internal E s (if alterDimen n then .dimen 0 else .int 0) (raise "Improper" s1)
   | parshape {s s1 : State} {t : Token} :
       Next s t s1 → cmdOf s1 t = some (.special "parshape") →
       Internal E s (.int (s1.intAt (.special "parshape" 0))) s1
@@ -1330,13 +1624,33 @@ inductive Internal (E : Engine) : State → IVal → State → Prop
       ScanInt E s1 i s2 →
       Internal E s (.int (s2.intAt (.special n i.toNat))) s2
 
+/-- `scan_font_ident` (§ 577): after expansion and blanks, `\font`, a font
+name, or `\textfont n` and its relatives; else "Missing font identifier". -/
+inductive FontIdent (E : Engine) : State → Nat → State → Prop
+  -- source: tex.web § 577 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L11227
+  -- source: SaTeX `scan_font_ident` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
+  | cur {s s1 : State} {t : Token} :
+      XNonBlank E s t s1 → cmdOf s1 t = some .fontDef → FontIdent E s (s1.intAt .curFont).toNat s1
+  | font {s s1 : State} {t : Token} {f : Nat} :
+      XNonBlank E s t s1 → meaningTok s1 t = .font f → FontIdent E s f s1
+  | fam {s s1 s2 : State} {t : Token} {size : Nat} {fam : Int} :
+      XNonBlank E s t s1 → cmdOf s1 t = some (.famFont size) → ScanInt E s1 fam s2 → 0 ≤ fam →
+      fam.toNat < famCount E → FontIdent E s (s2.intAt (.famFont size fam.toNat)).toNat s2
+  | missing {s s1 : State} {t : Token} :
+      XNonBlank E s t s1 → cmdOf s1 t ≠ some .fontDef → (∀ f, meaningTok s1 t ≠ .font f) →
+      (∀ n, cmdOf s1 t ≠ some (.famFont n)) →
+      FontIdent E s 0 (raise "Missing font identifier" (backInput t s1))
+
 /-- etex.ch `scan_expr`: `+ - * /` and parentheses at one level. Each
 operation is checked against the level's bound; an overflow makes the
 whole expression 0 with "Arithmetic overflow". `\relax` may end it. -/
 inductive ScanExpr (E : Engine) : Level → State → IVal → State → Prop
+  -- source: etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L5169
+  -- source: SaTeX `scan_expr` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
   | ok {s s1 s2 : State} {l : Level} {v : IVal} {t : Token} :
       ExprSum E l s (some v) s1 → XNonBlank E s1 t s2 →
-      ScanExpr E l s v (if isRelax (cmdOf s2 t) then s2 else backInput t s2)
+      ScanExpr E l s (match v with | .glue g => .glue (normGlue g) | .mu g => .mu (normGlue g) | w => w)
+        (if isRelax (cmdOf s2 t) then s2 else backInput t s2)
   | overflow {s s1 s2 : State} {l : Level} {t : Token} :
       ExprSum E l s none s1 → XNonBlank E s1 t s2 →
       ScanExpr E l s (ivalOf l 0 {})
@@ -1418,7 +1732,7 @@ inductive Operands (E : Engine) : State → List Operand → State → Prop
   | fileName {s s1 s2 : State} {ops : List Operand} {n : List CharCode} :
       FileName E s n s1 → Operands E s1 ops s2 → Operands E s (.fileName :: ops) s2
   | font {s s1 s2 : State} {ops : List Operand} {f : Nat} :
-      Internal E s (.font f) s1 → Operands E s1 ops s2 → Operands E s (.font :: ops) s2
+      FontIdent E s f s1 → Operands E s1 ops s2 → Operands E s (.font :: ops) s2
   | anyToken {s s1 s2 : State} {ops : List Operand} {t : Token} :
       Next s t s1 → Operands E s1 ops s2 → Operands E s (.anyToken :: ops) s2
   | keyword {s s1 s2 : State} {ops : List Operand} {k : String} :
@@ -1449,18 +1763,21 @@ inductive RuleSpec (E : Engine) : State → State → Prop
 (`xpand = false`) or with expansion (§ 473–477). `balanced = true` takes the
 group as a `\pdfstrcmp`-style balanced text: no `\relax` skipping. -/
 inductive GeneralText (E : Engine) : Bool → State → TokList → State → Prop
+  -- source: tex.web § 403 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8189
+  -- source: tex.web § 473 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9292
+  -- source: SaTeX `read_general_text` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
   | plain {s s1 s2 : State} {bal : Bool} {b : Token} {ts : TokList} :
-      XNonRelax E s b s1 → b.isBgroup = true → BodyRaw s1 0 ts s2 → GeneralText E bal s ts s2
+      XNonRelax E s b s1 → leftBraceTok s1 b = true → BodyRaw s1 0 ts s2 → GeneralText E bal s ts s2
   /-- "Missing { inserted" (§ 403): the token is read again inside. -/
   | missing {s s1 s2 : State} {bal : Bool} {b : Token} {ts : TokList} :
-      XNonRelax E s b s1 → b.isBgroup = false →
+      XNonRelax E s b s1 → leftBraceTok s1 b = false →
       BodyRaw (raise "Missing { inserted" (backInput b s1)) 0 ts s2 → GeneralText E bal s ts s2
 
 /-- The same, expanded: `\message`, `\write`, `\edef` body, `\expanded`.
 Protected macros stay (etex.ch), `\the` and `\unexpanded` text stands. -/
 inductive ExpandedText (E : Engine) : State → TokList → State → Prop
   | text {s s1 s2 : State} {b : Token} {ts : TokList} :
-      XNonRelax E s b s1 → b.isBgroup = true → BodyX E s1 0 [] ts s2 → ExpandedText E s ts s2
+      XNonRelax E s b s1 → leftBraceTok s1 b = true → BodyX E s1 0 [] ts s2 → ExpandedText E s ts s2
 
 /-- Collect an expanded body up to its balancing `}` (§ 477). -/
 inductive BodyX (E : Engine) : State → Nat → TokList → TokList → State → Prop
@@ -1564,20 +1881,25 @@ inductive Test (E : Engine) : IfOp → State → Bool → State → Prop
   /-- `\ifx` reads both tokens with `get_next` (§ 507). -/
   | ifx {s s1 s2 : State} {t u : Token} :
       Next s t s1 → Next s1 u s2 → Test E .ifx s (ifxEq (meaningTok s2 t) (meaningTok s2 u)) s2
+  -- source: tex.web § 506 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9814
+  -- source: SaTeX `scan_int` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
   | eof {s s1 : State} {n : Int} :
       ScanInt E s n s1 →
-      Test E .eof s (match s1.readStreams n.toNat with | .closed => true | _ => false) s1
+      Test E .eof s (match s1.readStreams (fourBit n) with | .closed => true | _ => false) (fourBitErr n s1)
   | defined {s s1 : State} {t : Token} :
       Next s t s1 →
       Test E .defined s (match meaningTok s1 t with | .undefined => false | _ => true) s1
-  /-- etex.ch: the name is looked up, never entered. -/
+  /-- etex.ch: the name is looked up, never entered, also after a missing
+  `\endcsname`. -/
+  -- source: etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L4771
+  -- source: SaTeX `scan_csname_text` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
   | csname {s s1 : State} {n : List CharCode} {ok : Bool} :
       CsName E { s with inCsname := s.inCsname + 1 } [] n ok s1 →
-      Test E .csname s (ok && (match s1.meaningOf (.name (nameOf n)) with
-                               | .undefined => false | _ => true))
+      Test E .csname s (match s1.meaningOf (.name (nameOf n)) with
+                        | .undefined => false | _ => true)
         { s1 with inCsname := s.inCsname, lastCs := some (.name (nameOf n)) }
   | fontchar {s s1 s2 : State} {f : Nat} {c : Int} :
-      Internal E s (.font f) s1 → ScanInt E s1 c s2 → Test E .fontchar s (E.hasChar f c.toNat) s2
+      FontIdent E s f s1 → ScanInt E s1 c s2 → Test E .fontchar s (E.hasChar f c.toNat) s2
   | incsname {s : State} : Test E .incsname s (decide (s.inCsname > 0)) s
   /-- **[over]** LuaTeX `\ifcondition`: the test expands what follows, any
   answer (LuaTeX manual, "Conditions"). -/
@@ -1601,13 +1923,18 @@ inductive Relation (E : Engine) : State → Nat → State → Prop
 
 /-- `expand` (§ 366): one expansion of the next token. -/
 inductive Expand (E : Engine) : State → State → Prop
-  /-- A macro call (§§ 389–390): match the parameter text, then push the
-  replacement text with the arguments substituted. -/
+  /-- A macro call (§§ 389–390): match the parameter text, pop the used-up
+  token lists (§ 390, "conserve stack space"), then push the replacement
+  text with the arguments substituted. -/
+  -- source: tex.web § 389 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7938
+  -- source: tex.web § 390 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7978
+  -- source: SaTeX `expand_macro` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs
   | call {s s1 s2 : State} {t : Token} {m : Macro} {args : List TokList} :
       Next s t s1 → meaningTok s1 t = .call m →
-      MatchParams m.long s1 (if m.braceDelim then m.params ++ [.tok (.char 123 .bgroup)] else m.params) args s2 →
+      MatchParams m.long s1 (if m.braceDelim then m.params ++ [.tok m.brace] else m.params) args s2 →
       Expand E s (pushToks (.macroBody (match t with | .cs r => r | .noexp r => r | _ => .name ""))
-                     (subst args m.body ++ (if m.braceDelim then [.char 123 .bgroup] else [])) s2)
+                     (subst args m.body ++ (if m.braceDelim then [m.brace] else []))
+                     { s2 with input := popDone s2.input })
   /-- "Undefined control sequence" (§ 370). -/
   | undefined {s s1 : State} {t : Token} :
       Next s t s1 → meaningTok s1 t = .undefined →
@@ -1668,13 +1995,16 @@ inductive Expand (E : Engine) : State → State → Prop
         | .noexp r => sprintCs s2 r
         | .char c _ => [c]
         | .outParam _ => [])) s2)
+  -- source: tex.web § 296 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L6320
+  -- source: SaTeX `meaning_text` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
   | meaning {s s1 s2 : State} {t u : Token} :
       Next s t s1 → cmdOf s1 t = some (.convert .meaning) → Next s1 u s2 →
       Expand E s (pushToks .inserted (strToks (meaningText s2 (meaningTok s2 u))) s2)
+  -- source: tex.web § 472 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9276
+  -- source: SaTeX `scan_font_ident` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
   | fontname {s s1 s2 : State} {t : Token} {f : Nat} :
-      Next s t s1 → cmdOf s1 t = some (.convert .fontname) → Internal E s1 (.font f) s2 →
-      Expand E s (pushToks .inserted
-        (strToks (strCodes ((nth? s2.fonts f).map Prod.fst |>.getD "nullfont"))) s2)
+      Next s t s1 → cmdOf s1 t = some (.convert .fontname) → FontIdent E s1 f s2 →
+      Expand E s (pushToks .inserted (strToks (fontNameText s2 f)) s2)
   | jobname {s s1 : State} {t : Token} :
       Next s t s1 → cmdOf s1 t = some (.convert .jobname) →
       Expand E s (pushToks .inserted (strToks (strCodes s1.jobname)) s1)
@@ -1739,10 +2069,13 @@ inductive Expand (E : Engine) : State → State → Prop
       k.limit ≠ .ifCode → c.toNat ≤ k.limit.toNat →
       SkipToFi s1 s2 → Expand E s { s2 with cond := s2.cond.drop 1 }
   /-- `\input` (§ 537): push the file found. -/
+  -- source: tex.web § 537 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L10365
+  -- source: tex.web § 538 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L10400
+  -- source: SaTeX `locate_input` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
   | input {s s1 s2 : State} {t : Token} {n : List CharCode} {key : String} {lines : List (List CharCode)} :
       Next s t s1 → cmdOf s1 t = some .input → FileName E s1 n s2 →
       E.findFile (nameOf n) = some key → s2.vfs key = some lines →
-      Expand E s { s2 with input := .file { name := key, lines := lines } :: s2.input }
+      Expand E s { s2 with input := openFile s2 key lines :: s2.input }
   /-- A missing file in batch or nonstop mode is fatal (§ 530). -/
   | inputMissing {s s1 s2 : State} {t : Token} {n : List CharCode} :
       Next s t s1 → cmdOf s1 t = some .input → FileName E s1 n s2 →
@@ -1755,7 +2088,7 @@ inductive Expand (E : Engine) : State → State → Prop
       {lines : List (List CharCode)} :
       Next s t s1 → cmdOf s1 t = some .input → FileName E s1 n s2 →
       E.findFile (nameOf n) = none → s2.interaction ≥ 2 → s2.vfs key = some lines →
-      Expand E s { s2 with input := .file { name := key, lines := lines } :: s2.input }
+      Expand E s { s2 with input := openFile s2 key lines :: s2.input }
   | endinput {s s1 : State} {t : Token} :
       Next s t s1 → cmdOf s1 t = some .endinput →
       Expand E s { s1 with input := forceEofTop s1.input }
@@ -1796,6 +2129,9 @@ end
 /-- The next token, unexpandable (`main_control` after `get_x_token`). -/
 def Head (s : State) (t : Token) (s1 : State) : Prop := Next s t s1 ∧ expandableTok s1 t = false
 
+/-- … for a command that takes no prefix: none is pending (§ 1211–1212). -/
+def HeadNP (s : State) (t : Token) (s1 : State) : Prop := Head s t s1 ∧ s.pending.prefixes = 0
+
 /-- Prefix bits: 1 long, 2 outer, 4 global, 8 protected (§ 1211, etex.ch). -/
 def pfxGlobal (s : State) : Bool := Nat.testBit s.pending.prefixes 2
 
@@ -1814,15 +2150,14 @@ def assignmentMeaning : Meaning → Bool
   | .prim _ c => match c with
     | .defCmd _ _ | .letCmd _ | .gletCmd | .pfx _ | .shorthandDef _ _ | .advance | .multiply | .divide
     | .intPar _ | .dimPar _ | .gluePar _ _ | .toksPar _ | .codeTable _ | .fontDef
-    | .fontParam _ | .readCmd _ | .special _ | .interaction _ => true
+    | .fontParam _ | .readCmd _ | .special _ | .interaction _ | .alter _
+    | .toksApp _ _ _ | .letCharcode | .fontCopy _ | .famFont _ => true
     | .register k => k != .box
     | .mode n => n == "setbox"
     | _ => false
   | .reg k _ => k != .box
   | .font _ => true
   | _ => false
-
-def isSpacer : Meaning → Bool | .char _ .space => true | _ => false
 
 /-- `get_r_token` (§ 1215): the control sequence to define. -/
 inductive RToken : State → CsRef → State → Prop
@@ -1831,16 +2166,19 @@ inductive RToken : State → CsRef → State → Prop
   | space {s s1 s2 : State} {r : CsRef} : Next s Token.space s1 → RToken s1 r s2 → RToken s r s2
 
 /-- Parameter text (§ 474–476) up to the `{`: `n` arguments so far. -/
-inductive ParamText : State → Nat → List ParamItem → Bool → State → Prop
+inductive ParamText : State → Nat → List ParamItem → Option Token → State → Prop
+  -- source: tex.web § 474 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9336
+  -- source: tex.web § 476 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9357
+  -- source: SaTeX `make_macro` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
   | brace {s s1 : State} {n : Nat} {t : Token} :
-      Next s t s1 → t.isBgroup = true → ParamText s n [] false s1
-  | arg {s s1 s2 s3 : State} {n : Nat} {c : CharCode} {ps : List ParamItem} {b : Bool} :
+      Next s t s1 → t.isBgroup = true → ParamText s n [] none s1
+  | arg {s s1 s2 s3 : State} {n : Nat} {c : CharCode} {ps : List ParamItem} {b : Option Token} :
       Next s (.char c .param) s1 → Next s1 (.char (49 + n) .other) s2 → n < 9 →
       ParamText s2 (n + 1) ps b s3 → ParamText s n (.arg :: ps) b s3
   /-- `#{` (§ 476): the last argument is delimited by the brace. -/
   | hashBrace {s s1 s2 : State} {n : Nat} {c : CharCode} {t : Token} :
-      Next s (.char c .param) s1 → Next s1 t s2 → t.isBgroup = true → ParamText s n [] true s2
-  | tok {s s1 s2 : State} {n : Nat} {t : Token} {ps : List ParamItem} {b : Bool} :
+      Next s (.char c .param) s1 → Next s1 t s2 → t.isBgroup = true → ParamText s n [] (some t) s2
+  | tok {s s1 s2 : State} {n : Nat} {t : Token} {ps : List ParamItem} {b : Option Token} :
       Next s t s1 → t.isBgroup = false → t.isEgroup = false →
       (match t with | .char _ .param => False | _ => True) →
       ParamText s1 n ps b s2 → ParamText s n (.tok t.stored :: ps) b s2
@@ -1905,18 +2243,23 @@ inductive Value (E : Engine) : RegKind → State → Val → State → Prop
       Internal E (backInput t s1) (.toks ts) s2 → Value E .toks s (.toks ts) s2
   /-- … or takes a balanced text, unexpanded (§ 1226). -/
   | toksText {s s1 s2 : State} {t : Token} {ts : TokList} :
-      XNonRelax E s t s1 → t.isBgroup = true → BodyRaw s1 0 ts s2 → Value E .toks s (.toks ts) s2
+      XNonRelax E s t s1 → leftBraceTok s1 t = true → BodyRaw s1 0 ts s2 → Value E .toks s (.toks ts) s2
 
 /-- `trap_zero_glue` (§ 1229). -/
 def trapZero (g : Glue) : Glue := if g.width = 0 ∧ g.stretch = 0 ∧ g.shrink = 0 then {} else g
 
-/-- `\advance` (§ 1238): no overflow check, 32-bit wrap (SEM § 11). -/
+/-- `\advance` (§§ 1238–1239): no overflow check, 32-bit wrap (SEM § 11).
+Glue: the new spec `h` is normalized and kept; the old one's component wins
+only with a higher order and nonzero. -/
+-- source: tex.web § 1239 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23143
+-- source: SaTeX `arithmetic` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
 def advanceVal (a b : Val) : Val :=
   match a, b with
   | .int x, .int y => .int (wrap32 (x + y))
   | .glue g, .glue h =>
-    let st := addOrder false g.stretch g.stretchOrder h.stretch h.stretchOrder
-    let sh := addOrder false g.shrink g.shrinkOrder h.shrink h.shrinkOrder
+    let h := normGlue h
+    let st := addOrder false h.stretch h.stretchOrder g.stretch g.stretchOrder
+    let sh := addOrder false h.shrink h.shrinkOrder g.shrink g.shrinkOrder
     .glue (trapZero { width := wrap32 (g.width + h.width), stretch := wrap32 st.1, stretchOrder := st.2,
                       shrink := wrap32 sh.1, shrinkOrder := sh.2 })
   | v, _ => v
@@ -1962,41 +2305,83 @@ def depthAfter : Int → TokList → Int
   | d, [] => d
   | d, t :: ts => depthAfter (if t.isBgroup then d + 1 else if t.isEgroup then d - 1 else d) ts
 
-inductive ReadLines (s : State) : Int → List (List CharCode) → TokList → ReadStream → Prop
+inductive ReadLines (s : State) : Int → List (List CharCode) → TokList → ReadStream → Bool → Prop
+  -- source: tex.web § 483 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9465
+  -- source: tex.web § 486 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9507
+  -- source: SaTeX `read_line_into` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
   | line {d : Int} {l : List CharCode} {ls : List (List CharCode)} {ts : TokList} :
-      TokLine s.catOf .newLine (prepareLine s l) ts → depthAfter d ts = 0 →
-      ReadLines s d (l :: ls) ts (.normal ls)
-  | more {d : Int} {l : List CharCode} {ls : List (List CharCode)} {ts rest : TokList} {r : ReadStream} :
-      TokLine s.catOf .newLine (prepareLine s l) ts → depthAfter d ts ≠ 0 →
-      ReadLines s (depthAfter d ts) ls rest r → ReadLines s d (l :: ls) (ts ++ rest) r
-  /-- End of file: the stream closes, the empty line is read (§ 486). -/
+      TokLine s.catOf .newLine (prepareLine s l) ts →
+      ((cutUnmatched d ts).2 = true ∨ depthAfter d ts = 0) →
+      ReadLines s d (l :: ls) (cutUnmatched d ts).1 (.normal ls) false
+  | more {d : Int} {l : List CharCode} {ls : List (List CharCode)} {ts rest : TokList} {r : ReadStream}
+      {e : Bool} :
+      TokLine s.catOf .newLine (prepareLine s l) ts → (cutUnmatched d ts).2 = false →
+      depthAfter d ts ≠ 0 →
+      ReadLines s (depthAfter d ts) ls rest r e → ReadLines s d (l :: ls) (ts ++ rest) r e
+  /-- End of file: the stream closes, the empty line is read; inside a
+  group that is "File ended within \read" (§ 486). -/
   | eof {d : Int} {ts : TokList} :
-      TokLine s.catOf .newLine (prepareLine s []) ts → ReadLines s d [] ts .closed
+      TokLine s.catOf .newLine (prepareLine s []) ts → ReadLines s d [] ts .closed (decide (d ≠ 0))
 
 def streamLines : ReadStream → Option (List (List CharCode))
   | .closed => none
   | .justOpen ls => some ls
   | .normal ls => some ls
 
+/-- The token `write_out` puts after the text (§ 1371 `end_write_token`),
+read back with `get_token`. -/
+def endWriteToken : Token := .cs (.name "frozen\\endwrite")
+
+/-- Stream numbers of `\write` (§ 1350): negative is 17 (log only), above
+15 is 16 (terminal and log). -/
+-- source: tex.web § 1350 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L24682
+-- source: SaTeX `write_stream` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
+def streamNo (n : Int) : Nat := if n < 0 then 17 else if n > 15 then 16 else n.toNat
+
+/-- Where the text goes (§ 1370): an open stream, else the log (17) or
+the terminal and log (16). -/
+-- source: tex.web § 1370 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L24846
+-- source: SaTeX `write_text` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
+def writeStream (s : State) (n : Int) : Int :=
+  let j := streamNo n
+  if j < 16 ∧ (s.writeOpen j).isSome then j else if j = 17 then 17 else 16
+
+-- source: tex.web § 1374 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L24914
+-- source: SaTeX `write_open` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
+def openStream (s : State) (n : Int) (f : List CharCode) : State :=
+  { s with writeOpen := upd s.writeOpen (streamNo n) (some (if 46 ∈ f then nameOf f else nameOf f ++ ".tex")) }
+
 /-- `\write`, `\openout`, `\closeout`, now (`imm`) or as a whatsit (§§ 1350–1356, 1370–1374). -/
 inductive WriteCmd (E : Engine) : Bool → State → Token → State → Prop
-  | writeNow {s s1 s2 : State} {t : Token} {n : Int} {ts : TokList} :
-      cmdOf s t = some .write → ScanInt E s n s1 → ExpandedText E s1 ts s2 →
-      WriteCmd E true s t (logOut (if n = 18 then .shell (showToks s2 ts) else .write n (showToks s2 ts)) s2)
+  /-- `\immediate\write` (§ 1352, §§ 1370–1372): the text is read
+  unexpanded, then expanded inside an extra `{…}` that `end_write` must
+  follow. Mode 0 during the expansion and an unbalanced text are OPEN. -/
+  -- source: tex.web § 1352 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L24702
+  -- source: tex.web § 1370 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L24846
+  -- source: SaTeX `write_text` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
+  | writeNow {s s1 s2 s3 s4 : State} {t : Token} {n : Int} {raw ts : TokList} :
+      cmdOf s t = some .write → ScanInt E s n s1 → GeneralText E false s1 raw s2 →
+      ExpandedText E (pushToks .write ([.char 123 .bgroup] ++ raw ++ [.char 125 .egroup, endWriteToken]) s2) ts s3 →
+      Next s3 endWriteToken s4 →
+      WriteCmd E true s t (logOut (if n = 18 then .shell (showToks s4 ts)
+                                   else .write (writeStream s4 n) (showToks s4 ts)) s4)
   /-- A deferred `\write` is a whatsit; its text is expanded at `\shipout`
   (§ 1370). SaTeX keeps it unexpanded till then (`Pending`). -/
   | writeLater {s s1 s2 : State} {t : Token} {n : Int} {ts : TokList} :
       cmdOf s t = some .write → ScanInt E s n s1 → GeneralText E false s1 ts s2 →
       WriteCmd E false s t (appendItem .whatsit s2)
+  /-- § 1374: a name without extension gets `.tex`. -/
+  -- source: tex.web § 1374 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L24914
+  -- source: SaTeX `write_open` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
   | openNow {s s1 s2 s3 : State} {t : Token} {n : Int} {f : List CharCode} :
       cmdOf s t = some .openout → ScanInt E s n s1 → OptEquals E s1 s2 → FileName E s2 f s3 →
-      WriteCmd E true s t { s3 with writeOpen := upd s3.writeOpen n.toNat (some (nameOf f)) }
+      WriteCmd E true s t (openStream s3 n f)
   | openLater {s s1 s2 s3 : State} {t : Token} {n : Int} {f : List CharCode} :
       cmdOf s t = some .openout → ScanInt E s n s1 → OptEquals E s1 s2 → FileName E s2 f s3 →
       WriteCmd E false s t (appendItem .whatsit s3)
   | closeNow {s s1 : State} {t : Token} {n : Int} :
       cmdOf s t = some .closeout → ScanInt E s n s1 →
-      WriteCmd E true s t { s1 with writeOpen := upd s1.writeOpen n.toNat none }
+      WriteCmd E true s t { s1 with writeOpen := upd s1.writeOpen (streamNo n) none }
   | closeLater {s s1 : State} {t : Token} {n : Int} :
       cmdOf s t = some .closeout → ScanInt E s n s1 → WriteCmd E false s t (appendItem .whatsit s1)
 
@@ -2028,6 +2413,44 @@ def normalParagraph (s : State) : State :=
   let s := eqDefine s (.intPar "hangafter") (.int 1)
   eqDefine s (.special "parshape" 0) (.int 0)
 
+/-- `end_graf` (§ 1096): in a paragraph, the empty list goes, a nonempty
+one becomes the lines `is`, appended to the enclosing list. -/
+-- source: tex.web § 1096 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21177
+-- source: SaTeX `end_graf` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
+def endGraf (is : List Item) (s : State) : State :=
+  if s.mode = { kind := .horizontal, inner := false } then
+    let s1 := match s.nest with
+      | l :: _ => if l.items = [] then popNest s else is.foldr appendItem (popNest s)
+      | [] => s
+    normalParagraph { s1 with errorCount := 0 }
+  else s
+
+/-- `\fam := -1` on entering math (§ 1139, § 1145). -/
+-- source: tex.web § 1139 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21720
+-- source: SaTeX `math_shift_token` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
+def famReset (s : State) : State := eqDefine s (.intPar "fam") (.int (-1))
+
+/-- The mode of the list below the current one. -/
+def outerMode (s : State) : Mode :=
+  match s.nest with
+  | _ :: l :: _ => l.mode
+  | _ => {}
+
+/-- "Check that another `$` follows" (§ 1197). -/
+-- source: tex.web § 1197 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22470
+-- source: SaTeX `close_math` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
+def dollarCheck (s : State) (u : Token) : State :=
+  match meaningTok s u with
+  | .char _ .mathShift => s
+  | _ => raise "Display math should end with $$" (backInput u s)
+
+/-- The display goes into the enclosing list (§ 1199), then
+`resume_after_display` (§ 1200) without its optional space. -/
+-- source: tex.web § 1200 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22526
+-- source: SaTeX `close_math` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
+def resumeAfterDisplay (s : State) : State :=
+  pushNest { kind := .horizontal, inner := false } (unsave (appendItem .box s)).1
+
 /-- Names whose command is math-only, or not allowed in math (§ 1046),
 as `math_material` in src/engine/builtins.rs. -/
 def mathOnly : List String :=
@@ -2054,8 +2477,11 @@ inductive BoxSpec (E : Engine) : State → State → Prop
 
 /-- Where a finished box goes (§ 1075 `box_end`). -/
 inductive BoxEnd (E : Engine) : BoxContext → BoxVal → State → State → Prop
+  -- source: tex.web § 1075 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20873
+  -- source: SaTeX `box_end` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
   | shift {s : State} {d : Scaled} {b : BoxVal} :
-      BoxEnd E (.shift d) b s (if b = .void then s else appendItem .box s)
+      BoxEnd E (.shift d) b s (match b with
+        | .void => s | .hbox _ _ _ => appendItem .box s | .vbox _ _ _ => appendItem .vbox s)
   | setBox {s : State} {glob : Bool} {n : Nat} {b : BoxVal} :
       BoxEnd E (.setBox glob n) b s (define s glob (.reg .box n) (.box b))
   /-- **[over]** Leaders take the glue command that must follow (§ 1078);
@@ -2089,11 +2515,16 @@ inductive BeginBox (E : Engine) : BoxContext → State → Token → State → P
       cmdOf s t = some (.boxCmd "copy") → ScanInt E s n s1 → 0 ≤ n →
       BoxEnd E ctx (boxAt s1 n.toNat) s1 s2 → BeginBox E ctx s t s2
   /-- **[over]** `\lastbox` (§ 1080): the last box of the list, any size. -/
+  -- source: tex.web § 1080 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20962
+  -- source: SaTeX `begin_box` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
   | lastbox {s s1 : State} {ctx : BoxContext} {t : Token} {b : BoxVal} :
       cmdOf s t = some (.boxCmd "lastbox") → s.mode.kind ≠ .math →
-      BoxEnd E ctx (if tailItem s = some .box then b else .void)
+      (tailItem s = some .box → ∃ w h d, b = .hbox w h d) →
+      (tailItem s = some .vbox → ∃ w h d, b = .vbox w h d) →
+      BoxEnd E ctx (if tailItem s = some .box ∨ tailItem s = some .vbox then b else .void)
         (match s.nest with
-         | l :: rest => if tailItem s = some .box then { s with nest := { l with items := l.items.drop 1 } :: rest } else s
+         | l :: rest => if tailItem s = some .box ∨ tailItem s = some .vbox
+                        then { s with nest := { l with items := l.items.drop 1 } :: rest } else s
          | [] => s) s1 →
       BeginBox E ctx s t s1
   /-- **[over]** `\vsplit n to d` (§ 1082): any box, any remainder. -/
@@ -2104,14 +2535,27 @@ inductive BeginBox (E : Engine) : BoxContext → State → Token → State → P
       BoxEnd E ctx b
         { s3 with eqtb := upd s3.eqtb (.reg .box n.toNat) { s3.eqtb (.reg .box n.toNat) with val := .box r } } s4 →
       BeginBox E ctx s t s4
-  /-- `\hbox`, `\vbox`, `\vtop` (§ 1083): spec, `{`, a group of its own. -/
+  /-- `\hbox`, `\vbox`, `\vtop` (§ 1083): spec, `{`, a group of its own;
+  an `\hbox` in a list of vertical mode is an `adjusted_hbox_group`; a
+  vertical box starts with `normal_paragraph`. -/
+  -- source: tex.web § 1083 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21009
+  -- source: SaTeX `begin_box` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
   | open_ {s s1 s2 s3 : State} {ctx : BoxContext} {t b : Token} {n : String} {g : GroupCode} :
       cmdOf s t = some (.boxCmd n) → boxKind n = some g →
-      BoxSpec E s s1 → XNonRelax E s1 b s2 → b.isBgroup = true →
-      s3 = (let s4 := pushNest { kind := if g = .hbox then .horizontal else .vertical, inner := true }
-                        (newSaveLevel g (some ctx) s2)
-            insertEvery (if g = .hbox then "everyhbox" else "everyvbox") s4) →
+      BoxSpec E s s1 → XNonRelax E s1 b s2 → leftBraceTok s2 b = true →
+      s3 = (let g' := if g = .hbox ∧ (match ctx with | .shift _ => true | _ => false) = true ∧ s.mode.kind = .vertical then .adjustedHbox else g
+            let s4 := newSaveLevel g' (some ctx) s2
+            let s5 := if g = .hbox then s4 else normalParagraph s4
+            insertEvery (if g = .hbox then "everyhbox" else "everyvbox")
+              (pushNest { kind := if g = .hbox then .horizontal else .vertical, inner := true } s5)) →
       BeginBox E ctx s t s3
+
+-- source: tex.web § 1084 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21034
+-- source: SaTeX `scan_box` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
+def isRuleTok (s : State) (t : Token) : Bool :=
+  match meaningTok s t with
+  | .prim n (.material _ _) => n == "hrule" || n == "vrule"
+  | _ => false
 
 def isBoxCmd : Option Cmd → Bool
   | some (.boxCmd n) => n == "copy" || n == "lastbox" || n == "vsplit" || (boxKind n).isSome
@@ -2122,8 +2566,14 @@ def isBoxCmd : Option Cmd → Bool
 inductive ScanBox (E : Engine) : BoxContext → State → State → Prop
   | box {s s1 s2 : State} {ctx : BoxContext} {t : Token} :
       XNonRelax E s t s1 → isBoxCmd (cmdOf s1 t) = true → BeginBox E ctx s1 t s2 → ScanBox E ctx s s2
+  /-- A rule in a leaders context (§ 1084): `\leaders\hrule`. -/
+  -- source: tex.web § 1084 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21034
+  -- source: SaTeX `scan_box` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
+  | rule {s s1 s2 s3 : State} {t : Token} :
+      XNonRelax E s t s1 → isRuleTok s1 t = true → RuleSpec E s1 s2 →
+      BoxEnd E .leaders .void s2 s3 → ScanBox E .leaders s s3
   | missing {s s1 : State} {ctx : BoxContext} {t : Token} :
-      XNonRelax E s t s1 → isBoxCmd (cmdOf s1 t) = false →
+      XNonRelax E s t s1 → isBoxCmd (cmdOf s1 t) = false → ¬ (ctx = .leaders ∧ isRuleTok s1 t = true) →
       ScanBox E ctx s (raise "A <box> was supposed to be here" (backInput t s1))
 
 /-- A math delimiter (§ 1160 `scan_delimiter`), by grammar. -/
@@ -2141,14 +2591,16 @@ def charOfMeaning : Meaning → Option CharCode
 
 /-- `\let`'s right side (§ 1221): spaces, an optional `=`, one optional space. -/
 inductive LetRhs : State → Token → State → Prop
+  -- source: tex.web § 1221 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22838
+  -- source: SaTeX `primitive_let` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
   | plain {s s1 : State} {t : Token} :
-      Next s t s1 → t ≠ Token.space → t ≠ .char 61 .other → LetRhs s t s1
+      Next s t s1 → spacerTok s1 t = false → t ≠ .char 61 .other → LetRhs s t s1
   | eq {s s1 s2 : State} {t : Token} :
-      Next s (.char 61 .other) s1 → Next s1 t s2 → t ≠ Token.space → LetRhs s t s2
-  | eqSpace {s s1 s2 s3 : State} {t : Token} :
-      Next s (.char 61 .other) s1 → Next s1 Token.space s2 → Next s2 t s3 → LetRhs s t s3
-  | space {s s1 s2 : State} {t : Token} :
-      Next s Token.space s1 → LetRhs s1 t s2 → LetRhs s t s2
+      Next s (.char 61 .other) s1 → Next s1 t s2 → spacerTok s2 t = false → LetRhs s t s2
+  | eqSpace {s s1 s2 s3 : State} {t u : Token} :
+      Next s (.char 61 .other) s1 → Next s1 u s2 → spacerTok s2 u = true → Next s2 t s3 → LetRhs s t s3
+  | space {s s1 s2 : State} {t u : Token} :
+      Next s u s1 → spacerTok s1 u = true → LetRhs s1 t s2 → LetRhs s t s2
 
 /-- `n` dimensions (`\parshape`). -/
 inductive Dimens (E : Engine) : Nat → State → List Int → State → Prop
@@ -2197,8 +2649,15 @@ def boxDimEntry (s : State) (which : Nat) (d : Int) (n : Nat) : Entry :=
 /-- One step of the stomach (§ 1030 `main_control`, § 1211 `prefixed_command`). -/
 inductive Exec (E : Engine) : State → State → Prop
   | expand {s s1 : State} : Expand E s s1 → Exec E s s1
-  /-- The run read past its last file (§ 360): "*** (job aborted, no legal \end found)". -/
-  | noInput {s : State} : s.input = [] → Exec E s (fatalError "*** (job aborted, no legal \\end found)" s)
+  /-- The run read past its last file (§ 360): in batch and nonstop mode
+  "*** (job aborted, no legal \end found)". -/
+  -- source: tex.web § 360 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7522
+  -- source: SaTeX `end_input` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs
+  | noInput {s : State} : Drained s → s.interaction ≤ 1 →
+      Exec E s (fatalError "*** (job aborted, no legal \\end found)" s)
+  /-- **[over]** Otherwise TeX prompts with `*`: any line comes. -/
+  | noInputPrompt {s : State} {l : List CharCode} : Drained s → s.interaction ≥ 2 →
+      Exec E s { s with input := [.file { name := "", cur := prepareLine s l, line := 1 }] }
   /-- Prefixes (§ 1211): spaces and `\relax` between them are skipped. -/
   | prefix_ {s s1 : State} {t : Token} {p : Nat} :
       Head s t s1 → cmdOf s1 t = some (.pfx p) →
@@ -2206,33 +2665,37 @@ inductive Exec (E : Engine) : State → State → Prop
   | prefixSkip {s s1 : State} {t : Token} :
       Head s t s1 → s.pending.prefixes ≠ 0 → (isSpacer (meaningTok s1 t) ∨ isRelax (cmdOf s1 t)) → Exec E s s1
   /-- "You can't use a prefix with …" (§ 1212). -/
+  -- source: tex.web § 1212 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22751
+  -- source: SaTeX `drop_prefixes` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
   | prefixBad {s s1 : State} {t : Token} :
       Head s t s1 → s.pending.prefixes ≠ 0 → assignmentMeaning (meaningTok s1 t) = false →
       ¬ (isSpacer (meaningTok s1 t) ∨ isRelax (cmdOf s1 t)) →
       Exec E s (raise "You can't use a prefix with this" (backInput t
         { s1 with pending := { s1.pending with prefixes := 0 } }))
   | relax {s s1 : State} {t : Token} :
-      Head s t s1 → s.pending.prefixes = 0 → isRelax (cmdOf s1 t) = true → Exec E s s1
+      HeadNP s t s1 → s.pending.prefixes = 0 → isRelax (cmdOf s1 t) = true → Exec E s s1
   | ignorespaces {s s1 s2 : State} {t u : Token} :
-      Head s t s1 → cmdOf s1 t = some .ignorespaces → XNonBlank E s1 u s2 → Exec E s (backInput u s2)
+      HeadNP s t s1 → cmdOf s1 t = some .ignorespaces → XNonBlank E s1 u s2 → Exec E s (backInput u s2)
   | endcsname {s s1 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some .endcsname → Exec E s (raise "Extra \\endcsname" s1)
+      HeadNP s t s1 → cmdOf s1 t = some .endcsname → Exec E s (raise "Extra \\endcsname" s1)
   /-- `\def`, `\gdef` (§ 1218). -/
   | def_ {s s1 s2 s3 s4 : State} {t : Token} {glob : Bool} {r : CsRef} {ps : List ParamItem}
-      {b : Bool} {body : TokList} :
+      {b : Option Token} {body : TokList} :
       Head s t s1 → cmdOf s1 t = some (.defCmd glob false) → RToken s1 r s2 →
       ParamText s2 0 ps b s3 → DefBody (countArgs ps) s3 0 body s4 →
       Exec E s (finishAssign (define s4 (glob || pfxGlobal s4) (.meaning r) (.meaning (.call
         { long := Nat.testBit s4.pending.prefixes 0, outer := Nat.testBit s4.pending.prefixes 1,
-          prot := Nat.testBit s4.pending.prefixes 3, params := ps, braceDelim := b, body := body }))))
+          prot := Nat.testBit s4.pending.prefixes 3, params := ps, braceDelim := b.isSome,
+          brace := b.getD (.char 123 .bgroup), body := body }))))
   /-- `\edef`, `\xdef` (§ 1218, § 477). -/
   | edef {s s1 s2 s3 s4 : State} {t : Token} {glob : Bool} {r : CsRef} {ps : List ParamItem}
-      {b : Bool} {body : TokList} :
+      {b : Option Token} {body : TokList} :
       Head s t s1 → cmdOf s1 t = some (.defCmd glob true) → RToken s1 r s2 →
       ParamText s2 0 ps b s3 → DefBodyX E (countArgs ps) s3 0 body s4 →
       Exec E s (finishAssign (define s4 (glob || pfxGlobal s4) (.meaning r) (.meaning (.call
         { long := Nat.testBit s4.pending.prefixes 0, outer := Nat.testBit s4.pending.prefixes 1,
-          prot := Nat.testBit s4.pending.prefixes 3, params := ps, braceDelim := b, body := body }))))
+          prot := Nat.testBit s4.pending.prefixes 3, params := ps, braceDelim := b.isSome,
+          brace := b.getD (.char 123 .bgroup), body := body }))))
   /-- `\let` (§ 1221): one optional space after `=`. -/
   | let_ {s s1 s2 s3 s4 : State} {t u : Token} {r : CsRef} :
       Head s t s1 → cmdOf s1 t = some (.letCmd false) → RToken s1 r s2 →
@@ -2249,11 +2712,14 @@ inductive Exec (E : Engine) : State → State → Prop
       Exec E s (assignTo (backInput t1 (backInput t2 s4)) (.meaning r) (.meaning (meaningTok s4 t2)))
   /-- `\chardef`, `\mathchardef`, `\countdef`, … (§ 1224): the name is
   `\relax` while the number is read. -/
+  -- source: tex.web § 1224 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22902
+  -- source: tex.web § 436 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8653
+  -- source: SaTeX `font_def` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
   | shorthandDef {s s1 s2 s3 s4 : State} {t : Token} {k : RegKind} {cl : Nat} {r : CsRef} {n : Int} :
       Head s t s1 → cmdOf s1 t = some (.shorthandDef k cl) → RToken s1 r s2 →
       OptEquals E (define s2 (pfxGlobal s2) (.meaning r) (.meaning (.prim "relax" .relax))) s3 →
       ScanInt E s3 n s4 →
-      0 ≤ n → n.toNat ≤ (if cl = 1 then charMax E else if cl = 2 then 32768 else E.maxReg) →
+      0 ≤ n → n.toNat ≤ (if cl = 1 then charMax E else if cl = 2 then 32767 else E.maxReg) →   -- § 436
       Exec E s (assignTo s4 (.meaning r) (.meaning
         (if cl = 1 then .chardef n.toNat else if cl = 2 then .mathchardef n.toNat else .reg k n.toNat)))
   /-- `\count n = v` and relatives (§ 1224). -/
@@ -2266,9 +2732,7 @@ inductive Exec (E : Engine) : State → State → Prop
       OptEquals E s1 s2 → Value E k s2 v s3 → Exec E s (assignTo s3 (.reg k i) v)
   | intPar {s s1 s2 s3 : State} {t : Token} {n : String} {v : Val} :
       Head s t s1 → cmdOf s1 t = some (.intPar n) → OptEquals E s1 s2 → Value E .count s2 v s3 →
-      Exec E s (if n = "interactionmode"
-        then finishAssign { s3 with interaction := (match v with | .int i => i.toNat | _ => s3.interaction) }
-        else assignTo s3 (.intPar n) v)
+      Exec E s (assignTo s3 (.intPar n) v)
   | dimPar {s s1 s2 s3 : State} {t : Token} {n : String} {v : Val} :
       Head s t s1 → cmdOf s1 t = some (.dimPar n) → OptEquals E s1 s2 → Value E .dimen s2 v s3 →
       Exec E s (assignTo s3 (.dimPar n) v)
@@ -2291,63 +2755,88 @@ inductive Exec (E : Engine) : State → State → Prop
       Exec E s (match scaleVal k mul (s4.get l) n with
         | some v => assignTo s4 l v
         | none => finishAssign (raise "Arithmetic overflow" s4))
-  /-- `\catcode`, `\lccode`, … (§ 1232): an invalid code is an error and 0. -/
+  /-- `\catcode`, `\lccode`, … (§ 1232): an invalid code is an error and 0;
+  only `\delcode` takes negative values. -/
+  -- source: tex.web § 1232 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23040
+  -- source: SaTeX `assign_char_code` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
   | code {s s1 s2 s3 s4 : State} {t : Token} {tab : CodeTable} {c v : Int} :
       Head s t s1 → cmdOf s1 t = some (.codeTable tab) → ScanInt E s1 c s2 →
       0 ≤ c → c.toNat ≤ charMax E → OptEquals E s2 s3 → ScanInt E s3 v s4 →
-      Exec E s (if 0 ≤ v ∧ v ≤ codeMax E tab then assignTo s4 (.code tab c.toNat) (.int v)
+      Exec E s (if (0 ≤ v ∨ tab = .del) ∧ v ≤ codeMax E tab then assignTo s4 (.code tab c.toNat) (.int v)
                 else assignTo (raise "Invalid code" s4) (.code tab c.toNat) (.int 0))
-  /-- `\uppercase`, `\lowercase` (§§ 1285–1288). -/
+  /-- `\uppercase`, `\lowercase` (§§ 1285–1289): characters and active
+  characters (`t < cs_token_flag + single_base`). -/
+  -- source: tex.web § 1289 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23622
+  -- source: SaTeX `case_shift` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
   | caseShift {s s1 s2 : State} {t : Token} {up : Bool} {ts : TokList} :
-      Head s t s1 → cmdOf s1 t = some (.caseShift up) → GeneralText E false s1 ts s2 →
+      HeadNP s t s1 → cmdOf s1 t = some (.caseShift up) → GeneralText E false s1 ts s2 →
       Exec E s (backList (ts.map fun u => match u with
         | .char c k =>
           let m := s2.intAt (.code (if up then .uc else .lc) c)
           if m ≠ 0 then .char m.toNat k else u
+        | .cs (.active c) =>
+          let m := s2.intAt (.code (if up then .uc else .lc) c)
+          if m ≠ 0 then .cs (.active m.toNat) else u
         | v => v) s2)
-  /-- `\font\cs=name at d` (§§ 1257–1260); fonts with the same name and size
-  are shared. -/
+  /-- `\font\cs=name at d` (§§ 1257–1260); fonts with the same name and
+  actual size are shared (§ 1260); a font not found is an error (§ 561). -/
+  -- source: tex.web § 1257 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23346
+  -- source: tex.web § 1260 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23404
+  -- source: SaTeX `font_def` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
   | fontDef {s s1 s2 s3 s4 s5 : State} {t : Token} {r : CsRef} {n : List CharCode} {size : Scaled} :
       Head s t s1 → cmdOf s1 t = some .fontDef → RToken s1 r s2 →
       OptEquals E (define s2 (pfxGlobal s2) (.meaning r) (.meaning (.font 0))) s3 →
       FileName E s3 n s4 → FontSize E s4 size s5 →
-      Exec E s (let key := nameOf n ++ "@" ++ toString size
-        match indexOf? key (s5.fonts.map Prod.fst) with
+      Exec E s (let ds := E.designSize (nameOf n)
+        let sz := if size > 0 then size else tdiv (ds * -size) 1000   -- `xn_over_d`
+        let key := nameOf n ++ "@" ++ toString sz
+        match indexOf? key (s5.fonts.map fun ft => ft.name ++ "@" ++ toString ft.size) with
         | some i => assignTo s5 (.meaning r) (.meaning (.font i))
-        | none => match E.loadFont (nameOf n) size with
-          | some ps => assignTo { s5 with fonts := s5.fonts ++ [(key, ps)] } (.meaning r)
-                         (.meaning (.font s5.fonts.length))
-          | none => assignTo (logOut (.message (strCodes "font-not-loadable")) s5) (.meaning r)
+        | none => match E.loadFont (nameOf n) sz with
+          | some ps => assignTo { s5 with fonts := s5.fonts ++ [{ name := nameOf n, size := sz, dsize := ds, params := ps }] }
+                         (.meaning r) (.meaning (.font s5.fonts.length))
+          | none => assignTo (raise "Font not loadable: Metric (TFM) file not found" s5) (.meaning r)
                       (.meaning (.font 0)))
   /-- Selecting a font is a local assignment (§ 1217). -/
   | selectFont {s s1 : State} {t : Token} {f : Nat} :
       Head s t s1 → meaningTok s1 t = .font f → Exec E s (assignTo s1 .curFont (.int (Int.ofNat f)))
   /-- `\fontdimen n f = d` is global (§ 1253). -/
+  -- source: tex.web § 1253 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23319
+  -- source: SaTeX `scan_font_ident` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
   | fontdimen {s s1 s2 s3 s4 s5 : State} {t : Token} {n : Int} {f : Nat} {d : Int × Nat} :
       Head s t s1 → cmdOf s1 t = some (.fontParam "fontdimen") → ScanInt E s1 n s2 →
-      Internal E s2 (.font f) s3 → OptEquals E s3 s4 → ScanDimen E false false s4 d s5 →
-      Exec E s (finishAssign { s5 with fonts := updAt s5.fonts f (fun p => (p.1, upd p.2 n.toNat d.1)) })
-  /-- `\hyphenchar`, `\skewchar` and per-font codes: global (§ 1253). -/
+      FontIdent E s2 f s3 → OptEquals E s3 s4 → ScanDimen E false false s4 d s5 →
+      Exec E s (finishAssign { s5 with fonts := updAt s5.fonts f (fun p => { p with params := upd p.params n.toNat d.1 }) })
+  /-- `\hyphenchar`, `\skewchar` and per-font codes: global (§ 1253).
+  **[over]** the operands are read by grammar, the entry written is any. -/
+  -- source: tex.web § 1253 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23319
+  -- source: SaTeX `scan_font_ident` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
   | fontInt {s s1 s2 s3 s4 : State} {t : Token} {n : String} {f : Nat} {v : Int} :
       Head s t s1 → cmdOf s1 t = some (.fontParam n) → n ≠ "fontdimen" →
       Operands E s1 (E.opsOf n) s2 → OptEquals E s2 s3 → ScanInt E s3 v s4 →
       Exec E s (finishAssign (geqDefine s4 (.special n f) (.int v)))
   /-- `\openin n = name` (§ 1275). -/
+  -- source: tex.web § 1275 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23509
+  -- source: SaTeX `scan_int` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs
   | openin {s s1 s2 s3 s4 : State} {t : Token} {n : Int} {f : List CharCode} :
-      Head s t s1 → cmdOf s1 t = some .openin → ScanInt E s1 n s2 → OptEquals E s2 s3 →
+      HeadNP s t s1 → cmdOf s1 t = some .openin → ScanInt E s1 n s2 → OptEquals E s2 s3 →
       FileName E s3 f s4 →
-      Exec E s { s4 with readStreams := upd s4.readStreams n.toNat (openedStream E s4 f) }
+      Exec E s { (fourBitErr n s4) with readStreams := upd s4.readStreams (fourBit n) (openedStream E s4 f) }
   | closein {s s1 s2 : State} {t : Token} {n : Int} :
-      Head s t s1 → cmdOf s1 t = some .closein → ScanInt E s1 n s2 →
-      Exec E s { s2 with readStreams := upd s2.readStreams n.toNat .closed }
+      HeadNP s t s1 → cmdOf s1 t = some .closein → ScanInt E s1 n s2 →
+      Exec E s { (fourBitErr n s2) with readStreams := upd s2.readStreams (fourBit n) .closed }
   /-- `\read n to \cs` (§ 1225, §§ 482–486). -/
+  -- source: tex.web § 1225 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22927
+  -- source: tex.web § 482 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9444
+  -- source: SaTeX `read_line_into` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs
   | read {s s1 s2 s3 s4 : State} {t : Token} {n : Int} {b : Bool} {r : CsRef} {ls : List (List CharCode)}
-      {ts : TokList} {st : ReadStream} :
+      {ts : TokList} {st : ReadStream} {e : Bool} :
       Head s t s1 → cmdOf s1 t = some (.readCmd false) → ScanInt E s1 n s2 →
       Keyword E s2 "to".toList [] b s3 → RToken s3 r s4 →
       0 ≤ n → n < 16 → streamLines (s4.readStreams n.toNat) = some ls →
-      ReadLines s4 0 ls ts st →
-      Exec E s (assignTo { (if b then s4 else raise "Missing `to' inserted" s4) with
+      ReadLines s4 0 ls ts st e →
+      Exec E s (assignTo { (let s5 := if b then s4 else raise "Missing `to' inserted" s4
+                            if e then raise "File ended within \\read" s5 else s5) with
           readStreams := upd s4.readStreams n.toNat st } (.meaning r) (.meaning (.call { body := ts })))
   /-- `\read` from the terminal in batch or nonstop mode is fatal (§ 484). -/
   | readTerminalFatal {s s1 s2 s3 s4 : State} {t : Token} {n : Int} {b : Bool} {r : CsRef} :
@@ -2381,36 +2870,78 @@ inductive Exec (E : Engine) : State → State → Prop
       Keyword E s2 "to".toList [] b s3 → RToken s3 r s4 →
       (n < 0 ∨ n ≥ 16 ∨ streamLines (s4.readStreams n.toNat) = none) → s4.interaction ≤ 1 →
       Exec E s (fatalError "*** (cannot \\read from terminal in nonstop modes)" s4)
+  /-- **[over]** `\readline` from the terminal in scroll and errorstop mode:
+  any line. -/
+  -- source: tex.web § 484 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9485 (terminal), etex_man § 3.2
+  -- source: SaTeX `read_line_verbatim` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
+  | readlineTerminal {s s1 s2 s3 s4 : State} {t : Token} {n : Int} {b : Bool} {r : CsRef} {l : List CharCode} :
+      Head s t s1 → cmdOf s1 t = some (.readCmd true) → ScanInt E s1 n s2 →
+      Keyword E s2 "to".toList [] b s3 → RToken s3 r s4 →
+      (n < 0 ∨ n ≥ 16 ∨ streamLines (s4.readStreams n.toNat) = none) → s4.interaction ≥ 2 →
+      Exec E s (assignTo s4 (.meaning r) (.meaning (.call { body := strToks (prepareLine s4 l) })))
   | write {s s1 s2 : State} {t : Token} :
-      Head s t s1 → isExtension (cmdOf s1 t) = true → WriteCmd E false s1 t s2 → Exec E s s2
+      HeadNP s t s1 → isExtension (cmdOf s1 t) = true → WriteCmd E false s1 t s2 → Exec E s s2
   /-- `\immediate` (§ 1375): an extension after it runs now; anything
   else is read again. -/
   | immediate {s s1 s2 s3 : State} {t u : Token} :
-      Head s t s1 → cmdOf s1 t = some .immediate → XNext E s1 u s2 → isExtension (cmdOf s2 u) = true →
+      HeadNP s t s1 → cmdOf s1 t = some .immediate → XNext E s1 u s2 → isExtension (cmdOf s2 u) = true →
       WriteCmd E true s2 u s3 → Exec E s s3
   | immediateOther {s s1 s2 : State} {t u : Token} :
-      Head s t s1 → cmdOf s1 t = some .immediate → XNext E s1 u s2 → isExtension (cmdOf s2 u) = false →
+      HeadNP s t s1 → cmdOf s1 t = some .immediate → XNext E s1 u s2 → isExtension (cmdOf s2 u) = false →
       Exec E s (backInput u s2)
   /-- `\message`, `\errmessage` (§ 1279). -/
   | message {s s1 s2 : State} {t : Token} {err : Bool} {ts : TokList} :
-      Head s t s1 → cmdOf s1 t = some (.message err) → ExpandedText E s1 ts s2 →
+      HeadNP s t s1 → cmdOf s1 t = some (.message err) → ExpandedText E s1 ts s2 →
       Exec E s (if err then raise (nameOf (showToks s2 ts)) s2 else logOut (.message (showToks s2 ts)) s2)
-  /-- `\end` (§ 1054): in vertical mode the job ends. **[over]** TeX may
-  first run the output routine for pending material, which SaTeX never does. -/
+  /-- `\end` (§ 1054 `its_all_over`): the job ends when the lists are
+  empty and `\deadcycles` is 0. **[over]** The page and `\deadcycles` are
+  not modelled, so with an empty list either outcome may come. -/
+  -- source: tex.web § 1054 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20477
+  -- source: SaTeX `par` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
   | end_ {s s1 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some .endCmd → s1.mode = { kind := .vertical, inner := false } →
+      HeadNP s t s1 → cmdOf s1 t = some .endCmd → s1.mode = { kind := .vertical, inner := false } →
+      (s1.nest.head?.map ListState.items) = some [] →
       Exec E s { s1 with halted := true }
+  /-- **[over]** Otherwise `\end` goes back, an empty box, `\vfill` and a
+  penalty come, and the page builder may run the output routine: any state
+  that keeps the files, with `\end` read again. -/
+  | endEject {s s1 s2 : State} {t : Token} :
+      HeadNP s t s1 → cmdOf s1 t = some .endCmd → s1.mode = { kind := .vertical, inner := false } →
+      s2.vfs = s1.vfs → Exec E s (backInput t s2)
   | endInHorizontal {s s1 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some .endCmd → s1.mode.kind = .horizontal → s1.mode.inner = false →
+      HeadNP s t s1 → cmdOf s1 t = some .endCmd → s1.mode.kind = .horizontal → s1.mode.inner = false →
       Exec E s (pushToks .inserted [parToken] (backInput t s1))
   /-- `\show…` (§§ 1291–1298): the answer goes to the log. **[over]** its
   text is any text here. -/
   | showCmd {s s1 s2 : State} {t : Token} {n : String} {o : List CharCode} :
-      Head s t s1 → cmdOf s1 t = some (.showCmd n) → Operands E s1 (E.opsOf n) s2 →
+      HeadNP s t s1 → cmdOf s1 t = some (.showCmd n) → Operands E s1 (E.opsOf n) s2 →
       Exec E s (logOut (.message o) s2)
   /-- `\batchmode` … `\errorstopmode` (§ 1265): not saved by groups. -/
   | interaction {s s1 : State} {t : Token} {n : Nat} :
       Head s t s1 → cmdOf s1 t = some (.interaction n) → Exec E s (finishAssign { s1 with interaction := n })
+  /-- `alter_aux`, `alter_prev_graf`, `alter_page_so_far`, `alter_integer`
+  (§§ 1243–1246): global, never saved; `\spacefactor` only in horizontal,
+  `\prevdepth` only in vertical mode, else "You can't use" (§ 1243). The
+  value is checked: space factor 1–32767, `\prevgraf` ≥ 0, interaction 0–3
+  (etex.ch). The others are values of the page builder SaTeX does not
+  model; reading them is **[over]**, see `Internal.alter`. -/
+  -- source: tex.web § 1243 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23212
+  -- source: tex.web § 1244 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23232
+  -- source: tex.web § 1245 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23248
+  -- source: tex.web § 1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23255
+  -- source: SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs
+  | alter {s s1 s2 s3 : State} {t : Token} {n : String} {v : Val} :
+      Head s t s1 → cmdOf s1 t = some (.alter n) → alterModeOk n s1 = true →
+      OptEquals E s1 s2 → Value E (if alterDimen n then .dimen else .count) s2 v s3 →
+      Exec E s (finishAssign (match n, v with
+        | "interactionmode", .int i => if 0 ≤ i ∧ i ≤ 3 then { s3 with interaction := i.toNat }
+                                       else raise "Bad interaction mode" s3
+        | "spacefactor", .int i => if 0 < i ∧ i ≤ 32767 then s3 else raise "Bad space factor" s3
+        | "prevgraf", .int i => if 0 ≤ i then s3 else raise "Bad \\prevgraf" s3
+        | _, _ => s3))
+  | alterIllegal {s s1 : State} {t : Token} {n : String} :
+      Head s t s1 → cmdOf s1 t = some (.alter n) → alterModeOk n s1 = false →
+      Exec E s (raise "You can't use this here" s1)
   /-- `\parshape n d₁ l₁ …` (§ 1248). -/
   | parshape {s s1 s2 s3 s4 : State} {t : Token} {n : Int} {ds : List Int} :
       Head s t s1 → cmdOf s1 t = some (.special "parshape") → OptEquals E s1 s2 → ScanInt E s2 n s3 →
@@ -2454,9 +2985,12 @@ inductive Exec (E : Engine) : State → State → Prop
       Exec E s (finishAssign (define s3 (gl || pfxGlobal s3) (.reg .toks i)
         (.toks (if front then ts ++ s3.toksAt (.reg .toks i) else s3.toksAt (.reg .toks i) ++ ts))))
   /-- `\textfont n = f` and relatives (§ 1234). -/
+  -- source: tex.web § 1234 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23068
+  -- source: tex.web § 577 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L11227
+  -- source: SaTeX `scan_font_ident` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs
   | famFont {s s1 s2 s3 s4 : State} {t : Token} {size : Nat} {fam : Int} {f : Nat} :
       Head s t s1 → cmdOf s1 t = some (.famFont size) → ScanInt E s1 fam s2 → 0 ≤ fam →
-      fam.toNat < famCount E → OptEquals E s2 s3 → Internal E s3 (.font f) s4 →
+      fam.toNat < famCount E → OptEquals E s2 s3 → FontIdent E s3 f s4 →
       Exec E s (assignTo s4 (.famFont size fam.toNat) (.int (Int.ofNat f)))
   /-- LuaTeX `\letcharcode c = t`: the active character `c` means what `t`
   means (LuaTeX manual, "Macros"). -/
@@ -2468,7 +3002,7 @@ inductive Exec (E : Engine) : State → State → Prop
   LuaTeX manuals): a name for a copy of a font, letter-spaced by an integer
   for the last. The copy's number is any. -/
   | fontCopy {s s1 s2 s3 s4 : State} {t : Token} {sp : Bool} {r : CsRef} {f f' : Nat} {k : Int} :
-      Head s t s1 → cmdOf s1 t = some (.fontCopy sp) → RToken s1 r s2 → Internal E s2 (.font f) s3 →
+      Head s t s1 → cmdOf s1 t = some (.fontCopy sp) → RToken s1 r s2 → FontIdent E s2 f s3 →
       (if sp then ScanInt E s3 k s4 else s4 = s3) →
       Exec E s (assignTo s4 (.meaning r) (.meaning (.font f')))
   /-- **[over]** `\XeTeXinterchartoks a b = {…}`: stored where SaTeX reads
@@ -2477,251 +3011,310 @@ inductive Exec (E : Engine) : State → State → Prop
       Head s t s1 → cmdOf s1 t = some (.special "XeTeXinterchartoks") →
       ScanInt E s1 i s2 → ScanInt E s2 j s3 → Value E .toks s3 v s4 →
       Exec E s (finishAssign s4)
-  /-- `\setbox n = box` (§ 1241): a prefixed command; `\afterassignment`'s
-  token comes at once, before the box's text (§ 1269). -/
+  /-- `\setbox n = box` (§ 1241): a prefixed command. `scan_box` runs first;
+  `\afterassignment`'s token comes at `done:` (§ 1269), so inside a box
+  that `\hbox{` opened, before its `\everyhbox`. -/
+  -- source: tex.web § 1241 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23181
+  -- source: tex.web § 1269 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23473
+  -- source: SaTeX `scan_box` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
   | setbox {s s1 s2 s3 s4 : State} {t : Token} {n : Int} :
       Head s t s1 → cmdOf s1 t = some (.mode "setbox") → ScanInt E s1 n s2 → 0 ≤ n → n.toNat ≤ E.maxReg →
       OptEquals E s2 s3 →
-      ScanBox E (.setBox (isGlobal s3 (pfxGlobal s3)) n.toNat) (finishAssign s3) s4 →
-      Exec E s s4
+      ScanBox E (.setBox (isGlobal s3 (pfxGlobal s3)) n.toNat) s3 s4 →
+      Exec E s (finishAssign { s4 with pending := { s4.pending with
+        prefixes := s3.pending.prefixes, afterAssignment := s3.pending.afterAssignment } })
   /-- A box in a list (§ 1073 `box_context` 0). -/
   | box {s s1 s2 : State} {t : Token} :
-      Head s t s1 → isBoxCmd (cmdOf s1 t) = true → BeginBox E (.shift 0) s1 t s2 → Exec E s s2
+      HeadNP s t s1 → isBoxCmd (cmdOf s1 t) = true → BeginBox E (.shift 0) s1 t s2 → Exec E s s2
   /-- `\raise`, `\lower` (not in vertical mode), `\moveleft`, `\moveright`
   (only there) (§ 1073). -/
+  -- source: tex.web § 1073 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20853
+  -- source: SaTeX `box_end` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
   | shift {s s1 s2 s3 : State} {t : Token} {n : String} {d : Int × Nat} :
-      Head s t s1 → cmdOf s1 t = some (.mode n) →
+      HeadNP s t s1 → cmdOf s1 t = some (.mode n) →
       ((n = "raise" ∨ n = "lower") ∧ s1.mode.kind ≠ .vertical ∨
        (n = "moveleft" ∨ n = "moveright") ∧ s1.mode.kind = .vertical) →
       ScanDimen E false false s1 d s2 →
-      ScanBox E (.shift (if n = "lower" ∨ n = "moveright" then -d.1 else d.1)) s2 s3 → Exec E s s3
+      ScanBox E (.shift (if n = "raise" ∨ n = "moveleft" then -d.1 else d.1)) s2 s3 → Exec E s s3   -- § 1073
   | leaders {s s1 s2 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some (.mode "leaders") → ScanBox E .leaders s1 s2 → Exec E s s2
+      HeadNP s t s1 → cmdOf s1 t = some (.mode "leaders") → ScanBox E .leaders s1 s2 → Exec E s s2
   | shipout {s s1 s2 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some (.mode "shipout") → ScanBox E .shipout s1 s2 → Exec E s s2
-  /-- `\vcenter` in math (§ 1167). -/
+      HeadNP s t s1 → cmdOf s1 t = some (.mode "shipout") → ScanBox E .shipout s1 s2 → Exec E s s2
+  /-- `\vcenter` in math (§ 1167), with `normal_paragraph`. -/
+  -- source: tex.web § 1167 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22111
+  -- source: SaTeX `begin_box` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
   | vcenter {s s1 s2 s3 : State} {t b : Token} :
-      Head s t s1 → cmdOf s1 t = some (.boxCmd "vcenter") → s1.mode.kind = .math →
-      BoxSpec E s1 s2 → XNonRelax E s2 b s3 → b.isBgroup = true →
-      Exec E s (insertEvery "everyvbox" (pushNest { kind := .vertical, inner := true } (newSaveLevel .vcenter none s3)))
-  /-- `\insert n {`, `\vadjust {` (§ 1097). -/
+      HeadNP s t s1 → cmdOf s1 t = some (.boxCmd "vcenter") → s1.mode.kind = .math →
+      BoxSpec E s1 s2 → XNonRelax E (newSaveLevel .vcenter none s2) b s3 → leftBraceTok s3 b = true →
+      Exec E s (insertEvery "everyvbox" (pushNest { kind := .vertical, inner := true } (normalParagraph s3)))
+  /-- `\insert n {`, `\vadjust {` (§ 1099): the group opens, then the
+  brace, then `normal_paragraph`. -/
+  -- source: tex.web § 1099 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21197
+  -- source: SaTeX `group_closed` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
   | insert {s s1 s2 s3 : State} {t b : Token} {n : Int} :
-      Head s t s1 → cmdOf s1 t = some (.mode "insert") → ScanInt E s1 n s2 → XNonRelax E s2 b s3 →
-      b.isBgroup = true →
-      Exec E s (pushNest { kind := .vertical, inner := true } (newSaveLevel .insert none s3))
+      HeadNP s t s1 → cmdOf s1 t = some (.mode "insert") → ScanInt E s1 n s2 →
+      XNonRelax E (newSaveLevel .insert none s2) b s3 → leftBraceTok s3 b = true →
+      Exec E s (pushNest { kind := .vertical, inner := true } (normalParagraph s3))
   | vadjust {s s1 s2 : State} {t b : Token} :
-      Head s t s1 → cmdOf s1 t = some (.mode "vadjust") → s1.mode.kind ≠ .vertical →
-      XNonRelax E s1 b s2 → b.isBgroup = true →
-      Exec E s (pushNest { kind := .vertical, inner := true } (newSaveLevel .insert none s2))
-  /-- `\par` (§ 1094, § 1096): in a paragraph it ends it. **[over]** The
-  lines it breaks into are any boxes. -/
-  | parEnd {s s1 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some (.mode "par") → s1.mode = { kind := .horizontal, inner := false } →
-      Exec E s (normalParagraph (appendItem .box (popNest { s1 with errorCount := 0 })))
+      HeadNP s t s1 → cmdOf s1 t = some (.mode "vadjust") → s1.mode.kind ≠ .vertical →
+      XNonRelax E (newSaveLevel .insert none s1) b s2 → leftBraceTok s2 b = true →
+      Exec E s (pushNest { kind := .vertical, inner := true } (normalParagraph s2))
+  /-- `\par` (§ 1094, § 1096): in a paragraph it ends it (`end_graf`).
+  **[over]** The lines it breaks into are any items. -/
+  -- source: tex.web § 1094 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21147
+  -- source: tex.web § 1096 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21177
+  -- source: SaTeX `par` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
+  | parEnd {s s1 : State} {t : Token} {is : List Item} :
+      HeadNP s t s1 → cmdOf s1 t = some (.mode "par") → s1.mode = { kind := .horizontal, inner := false } →
+      Exec E s (endGraf is s1)
+  /-- In a vertical mode `normal_paragraph`; in restricted horizontal
+  mode nothing (§ 1094). -/
   | parOther {s s1 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some (.mode "par") → s1.mode.kind ≠ .math →
+      HeadNP s t s1 → cmdOf s1 t = some (.mode "par") → s1.mode.kind ≠ .math →
       s1.mode ≠ { kind := .horizontal, inner := false } →
-      Exec E s (normalParagraph s1)
+      Exec E s (if s1.mode.kind = .vertical then normalParagraph s1 else s1)
   /-- `\indent`, `\noindent`, `\quitvmode` (§§ 1088–1093). -/
   | startPar {s s1 : State} {t : Token} {n : String} :
-      Head s t s1 → cmdOf s1 t = some (.mode n) → (n = "indent" ∨ n = "noindent" ∨ n = "quitvmode") →
+      HeadNP s t s1 → cmdOf s1 t = some (.mode n) → (n = "indent" ∨ n = "noindent" ∨ n = "quitvmode") →
       Exec E s (if s1.mode.kind = .vertical then newGraf (n != "noindent") s1
                 else if n = "indent" then appendItem .box s1 else s1)
   /-- Horizontal material in a vertical mode starts a paragraph and is read
   again (§ 1090). -/
   | hmaterialInV {s s1 : State} {t : Token} :
-      Head s t s1 → (∃ h, cmdOf s1 t = some (.material true h)) → s1.mode.kind = .vertical →
+      HeadNP s t s1 → (∃ h, cmdOf s1 t = some (.material true h)) → s1.mode.kind = .vertical →
       Exec E s (newGraf true (backInput t s1))
   /-- Vertical material in a paragraph ends it first (§ 1094 `head_for_vmode`). -/
   | vmaterialInH {s s1 : State} {t : Token} :
-      Head s t s1 → (∃ h, cmdOf s1 t = some (.material false h)) →
+      HeadNP s t s1 → (∃ h, cmdOf s1 t = some (.material false h)) →
       s1.mode = { kind := .horizontal, inner := false } →
       Exec E s (pushToks .inserted [parToken] (backInput t s1))
   /-- … and in restricted horizontal mode closes the open group (§ 1064). -/
   | vmaterialInRestricted {s s1 : State} {t : Token} :
-      Head s t s1 → (∃ h, cmdOf s1 t = some (.material false h)) →
+      HeadNP s t s1 → (∃ h, cmdOf s1 t = some (.material false h)) →
       s1.mode = { kind := .horizontal, inner := true } →
       Exec E s (if topGroup s1 = .bottom then raise "Extra" s1
                 else raise "Missing } inserted" (pushToks .inserted (closerFor (topGroup s1)) (backInput t s1)))
   /-- Material in its own mode: operands by grammar. **[over]** The item it
   makes has any size (`\unhbox`, `\discretionary`, rules, glue). -/
   | material {s s1 s2 : State} {t : Token} {n k : String} {h : Bool} {i : Item} :
-      Head s t s1 → meaningTok s1 t = .prim n (.material h k) →
+      HeadNP s t s1 → meaningTok s1 t = .prim n (.material h k) →
       (if h then s1.mode.kind ≠ .vertical else s1.mode.kind = .vertical) →
       (s1.mode.kind = .math → n ∉ nonMath) →
       Operands E s1 (E.opsOf n) s2 → Exec E s (appendItem i s2)
   /-- Math-only commands outside math, non-math ones in it (§ 1046). -/
   | dollarMissing {s s1 : State} {t : Token} :
-      Head s t s1 →
+      HeadNP s t s1 →
       (s1.mode.kind ≠ .math ∧ nameOfMeaning (meaningTok s1 t) ∈ mathOnly ∨
        s1.mode.kind = .math ∧ nameOfMeaning (meaningTok s1 t) ∈ nonMath) →
       Exec E s (insertDollar t s1)
   /-- A character, in a vertical mode: a paragraph begins (§ 1090). -/
   | charV {s s1 : State} {t : Token} {c : CharCode} :
-      Head s t s1 → charOfMeaning (meaningTok s1 t) = some c → s1.mode.kind = .vertical →
+      HeadNP s t s1 → charOfMeaning (meaningTok s1 t) = some c → s1.mode.kind = .vertical →
       Exec E s (newGraf true (backInput t s1))
   /-- … in a paragraph it is appended (§ 1034 `main_loop`). -/
   | charH {s s1 : State} {t : Token} {c : CharCode} :
-      Head s t s1 → charOfMeaning (meaningTok s1 t) = some c → s1.mode.kind = .horizontal →
+      HeadNP s t s1 → charOfMeaning (meaningTok s1 t) = some c → s1.mode.kind = .horizontal →
       Exec E s (appendItem .char s1)
   /-- … in math, a `"8000` math code makes it active (§ 1151). -/
   | charMathActive {s s1 : State} {t : Token} {c : CharCode} :
-      Head s t s1 → charOfMeaning (meaningTok s1 t) = some c → s1.mode.kind = .math →
+      HeadNP s t s1 → charOfMeaning (meaningTok s1 t) = some c → s1.mode.kind = .math →
       s1.intAt (.code .math c) = 32768 → Exec E s (backInput (.cs (.active c)) s1)
   | charMath {s s1 : State} {t : Token} {c : CharCode} :
-      Head s t s1 → charOfMeaning (meaningTok s1 t) = some c → s1.mode.kind = .math →
+      HeadNP s t s1 → charOfMeaning (meaningTok s1 t) = some c → s1.mode.kind = .math →
       s1.intAt (.code .math c) ≠ 32768 → Exec E s (appendItem .other s1)
   /-- `\mathchardef`'d characters in math, `^`, `_` (§§ 1151–1176). -/
   | mathItem {s s1 : State} {t : Token} :
-      Head s t s1 → s1.mode.kind = .math →
+      HeadNP s t s1 → s1.mode.kind = .math →
       ((∃ n, meaningTok s1 t = .mathchardef n) ∨ (∃ c, meaningTok s1 t = .char c .sup) ∨
        (∃ c, meaningTok s1 t = .char c .sub)) →
       Exec E s (appendItem .other s1)
   | mathItemOutside {s s1 : State} {t : Token} :
-      Head s t s1 → s1.mode.kind ≠ .math →
+      HeadNP s t s1 → s1.mode.kind ≠ .math →
       ((∃ n, meaningTok s1 t = .mathchardef n) ∨ (∃ c, meaningTok s1 t = .char c .sup) ∨
        (∃ c, meaningTok s1 t = .char c .sub)) →
       Exec E s (insertDollar t s1)
   /-- A space: glue in a paragraph, nothing elsewhere (§ 1045). **[over]**
   the glue's size. -/
   | spaceH {s s1 : State} {t : Token} {g : Glue} :
-      Head s t s1 → isSpacer (meaningTok s1 t) = true → s1.mode.kind = .horizontal →
+      HeadNP s t s1 → isSpacer (meaningTok s1 t) = true → s1.mode.kind = .horizontal →
       s.pending.prefixes = 0 → Exec E s (appendItem (.glue g) s1)
   | spaceOther {s s1 : State} {t : Token} :
-      Head s t s1 → isSpacer (meaningTok s1 t) = true → s1.mode.kind ≠ .horizontal →
+      HeadNP s t s1 → isSpacer (meaningTok s1 t) = true → s1.mode.kind ≠ .horizontal →
       s.pending.prefixes = 0 → Exec E s s1
   /-- `{` (§ 1063); in math a math group (§ 1154). -/
   | bgroup {s s1 : State} {t : Token} {c : CharCode} :
-      Head s t s1 → meaningTok s1 t = .char c .bgroup →
+      HeadNP s t s1 → meaningTok s1 t = .char c .bgroup →
       Exec E s (if s1.mode.kind = .math then pushNest { kind := .math, inner := true } (newSaveLevel .math none s1)
                 else newSaveLevel .simple none s1)
   /-- `}` (§§ 1068–1069, 1085–1086), by the group it closes. -/
   | egroupSimple {s s1 : State} {t : Token} {c : CharCode} :
-      Head s t s1 → meaningTok s1 t = .char c .egroup → topGroup s1 = .simple →
+      HeadNP s t s1 → meaningTok s1 t = .char c .egroup → topGroup s1 = .simple →
       Exec E s (unsave s1).1
   | egroupBottom {s s1 : State} {t : Token} {c : CharCode} :
-      Head s t s1 → meaningTok s1 t = .char c .egroup → topGroup s1 = .bottom →
+      HeadNP s t s1 → meaningTok s1 t = .char c .egroup → topGroup s1 = .bottom →
       Exec E s (raise "Too many }'s" s1)
   | egroupExtra {s s1 : State} {t : Token} {c : CharCode} :
-      Head s t s1 → meaningTok s1 t = .char c .egroup →
+      HeadNP s t s1 → meaningTok s1 t = .char c .egroup →
       (topGroup s1 = .semiSimple ∨ topGroup s1 = .mathShift ∨ topGroup s1 = .mathLeft) →
       Exec E s (raise "Extra }, or forgotten \\endgroup" s1)
-  /-- A box group ends: the box goes where its context says (§ 1086).
-  **[over]** its size. -/
+  /-- A box group ends: the box goes where its context says (§ 1086); a
+  vertical box first ends its paragraph (§ 1085 `end_graf`). **[over]** its
+  size and the lines. -/
+  -- source: tex.web § 1085 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21051
+  -- source: tex.web § 1086 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21064
+  -- source: SaTeX `group_closed` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
   | egroupBox {s s1 s2 : State} {t : Token} {c : CharCode} {ctx : BoxContext} {g : GroupCode}
-      {b : BoxVal} :
-      Head s t s1 → meaningTok s1 t = .char c .egroup →
+      {b : BoxVal} {is : List Item} :
+      HeadNP s t s1 → meaningTok s1 t = .char c .egroup →
       (unsave s1).2 = some (g, some ctx) → (g = .hbox ∨ g = .adjustedHbox ∨ g = .vbox ∨ g = .vtop) →
       (match g, b with
        | .hbox, .hbox _ _ _ => True | .adjustedHbox, .hbox _ _ _ => True
        | .vbox, .vbox _ _ _ => True | .vtop, .vbox _ _ _ => True | _, _ => False) →
-      BoxEnd E ctx b (popNest (unsave s1).1) s2 → Exec E s s2
-  /-- Other list groups end: math, insert, vcenter (§§ 1100, 1168, 1186). -/
-  | egroupList {s s1 : State} {t : Token} {c : CharCode} :
-      Head s t s1 → meaningTok s1 t = .char c .egroup →
+      BoxEnd E ctx b (popNest (unsave (if g = .vbox ∨ g = .vtop then endGraf is s1 else s1)).1) s2 →
+      Exec E s s2
+  /-- Other list groups end: math, insert, vcenter (§§ 1100, 1168, 1186);
+  insert and vcenter first end their paragraph (`end_graf`). -/
+  -- source: tex.web § 1100 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21213
+  -- source: tex.web § 1168 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22117
+  -- source: SaTeX `group_closed` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
+  | egroupList {s s1 : State} {t : Token} {c : CharCode} {is : List Item} :
+      HeadNP s t s1 → meaningTok s1 t = .char c .egroup →
       (topGroup s1 = .math ∨ topGroup s1 = .insert ∨ topGroup s1 = .vcenter ∨
        topGroup s1 = .mathChoice ∨ topGroup s1 = .disc) →
-      Exec E s (appendItem .other (popNest (unsave s1).1))
+      Exec E s (appendItem .other (popNest (unsave
+        (if topGroup s1 = .insert ∨ topGroup s1 = .vcenter then endGraf is s1 else s1)).1))
   /-- **[over]** `\mathchoice` and `\discretionary` take four and three
   groups (§§ 1117, 1172); the count is not kept: another may follow. -/
   | egroupPart {s s1 s2 : State} {t b : Token} {c : CharCode} {g : GroupCode} {m : Mode} :
-      Head s t s1 → meaningTok s1 t = .char c .egroup → topGroup s1 = g →
+      HeadNP s t s1 → meaningTok s1 t = .char c .egroup → topGroup s1 = g →
       (g = .mathChoice ∨ g = .disc) → m = s1.mode →
-      XNonRelax E (popNest (unsave s1).1) b s2 → b.isBgroup = true →
+      XNonRelax E (popNest (unsave s1).1) b s2 → leftBraceTok s2 b = true →
       Exec E s (pushNest m (newSaveLevel g none s2))
   | mathChoice {s s1 s2 : State} {t b : Token} :
-      Head s t s1 → cmdOf s1 t = some (.mode "mathchoice") → s1.mode.kind = .math →
-      XNonRelax E s1 b s2 → b.isBgroup = true →
+      HeadNP s t s1 → cmdOf s1 t = some (.mode "mathchoice") → s1.mode.kind = .math →
+      XNonRelax E s1 b s2 → leftBraceTok s2 b = true →
       Exec E s (pushNest { kind := .math, inner := true } (newSaveLevel .mathChoice none s2))
   | mathStyle {s s1 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some (.mode "mathstyle") → s1.mode.kind = .math →
+      HeadNP s t s1 → cmdOf s1 t = some (.mode "mathstyle") → s1.mode.kind = .math →
       Exec E s (appendItem .other s1)
   /-- `\begingroup`, `\endgroup` (§§ 1063, 1069). -/
   | begingroup {s s1 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some .beginGroup → Exec E s (newSaveLevel .semiSimple none s1)
+      HeadNP s t s1 → cmdOf s1 t = some .beginGroup → Exec E s (newSaveLevel .semiSimple none s1)
   | endgroup {s s1 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some .endGroup → topGroup s1 = .semiSimple → Exec E s (unsave s1).1
+      HeadNP s t s1 → cmdOf s1 t = some .endGroup → topGroup s1 = .semiSimple → Exec E s (unsave s1).1
   | endgroupBottom {s s1 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some .endGroup → topGroup s1 = .bottom →
+      HeadNP s t s1 → cmdOf s1 t = some .endGroup → topGroup s1 = .bottom →
       Exec E s (raise "Extra \\endgroup" s1)
   | endgroupWrong {s s1 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some .endGroup → topGroup s1 ≠ .semiSimple → topGroup s1 ≠ .bottom →
+      HeadNP s t s1 → cmdOf s1 t = some .endGroup → topGroup s1 ≠ .semiSimple → topGroup s1 ≠ .bottom →
       Exec E s (raise "Missing } inserted" (pushToks .inserted (closerFor (topGroup s1)) (backInput t s1)))
   /-- `\aftergroup` (§ 1271): kept on the save stack. -/
   | aftergroup {s s1 s2 : State} {t u : Token} :
-      Head s t s1 → cmdOf s1 t = some .aftergroup → Next s1 u s2 →
+      HeadNP s t s1 → cmdOf s1 t = some .aftergroup → Next s1 u s2 →
       Exec E s (if s2.curLevel > 1 then { s2 with save := .insertToken u.stored :: s2.save } else s2)
   /-- `\afterassignment` (§ 1269): replaces the token kept. -/
   | afterassignment {s s1 s2 : State} {t u : Token} :
-      Head s t s1 → cmdOf s1 t = some .afterassignment → Next s1 u s2 →
+      HeadNP s t s1 → cmdOf s1 t = some .afterassignment → Next s1 u s2 →
       Exec E s { s2 with pending := { s2.pending with afterAssignment := some u.stored } }
   /-- `$` (§§ 1137–1140): math begins; `$$` in a paragraph is display
   math. -/
   | mathShiftV {s s1 : State} {t : Token} {c : CharCode} :
-      Head s t s1 → meaningTok s1 t = .char c .mathShift → s1.mode.kind = .vertical →
+      HeadNP s t s1 → meaningTok s1 t = .char c .mathShift → s1.mode.kind = .vertical →
       Exec E s (newGraf true (backInput t s1))
+  -- source: tex.web § 1138 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21702
+  -- source: tex.web § 1139 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21720
+  -- source: SaTeX `math_shift_token` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
   | mathInline {s s1 s2 : State} {t u : Token} {c : CharCode} :
-      Head s t s1 → meaningTok s1 t = .char c .mathShift → s1.mode.kind = .horizontal →
+      HeadNP s t s1 → meaningTok s1 t = .char c .mathShift → s1.mode.kind = .horizontal →
       Next s1 u s2 → (s1.mode.inner = true ∨ (match meaningTok s2 u with | .char _ .mathShift => False | _ => True)) →
       Exec E s (insertEvery "everymath" (pushNest { kind := .math, inner := true }
-        (newSaveLevel .mathShift none (backInput u s2))))
-  /-- **[over]** Display math ends the paragraph so far into any lines. -/
-  | mathDisplay {s s1 s2 : State} {t u : Token} {c d : CharCode} :
-      Head s t s1 → meaningTok s1 t = .char c .mathShift → s1.mode = { kind := .horizontal, inner := false } →
+        (famReset (newSaveLevel .mathShift none (backInput u s2)))))
+  /-- **[over]** Display math ends the paragraph so far into any lines
+  (§ 1145); `\predisplaysize`, `\displaywidth`, `\displayindent` are set
+  at the new level to values the lines decide, `\fam` to -1. -/
+  -- source: tex.web § 1145 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21755
+  -- source: SaTeX `math_shift_token` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
+  | mathDisplay {s s1 s2 : State} {t u : Token} {c d : CharCode} {is : List Item} {w l i : Scaled} :
+      HeadNP s t s1 → meaningTok s1 t = .char c .mathShift → s1.mode = { kind := .horizontal, inner := false } →
       Next s1 u s2 → meaningTok s2 u = .char d .mathShift →
       Exec E s (insertEvery "everydisplay" (pushNest { kind := .math, inner := false }
-        (newSaveLevel .mathShift none (appendItem .box (popNest s2)))))
+        (let s3 := famReset (newSaveLevel .mathShift none
+                    (match s2.nest with
+                     | p :: _ => if p.items = [] then popNest s2 else is.foldr appendItem (popNest s2)
+                     | [] => s2))
+         let s3 := eqDefine s3 (.dimPar "predisplaysize") (.int w)
+         let s3 := eqDefine s3 (.dimPar "displaywidth") (.int l)
+         eqDefine s3 (.dimPar "displayindent") (.int i))))
+  -- source: tex.web § 1194 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22404
+  -- source: SaTeX `close_math` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
   | mathEnd {s s1 : State} {t : Token} {c : CharCode} :
-      Head s t s1 → meaningTok s1 t = .char c .mathShift → s1.mode = { kind := .math, inner := true } →
-      topGroup s1 = .mathShift → Exec E s (appendItem .math (popNest (unsave s1).1))
-  /-- The end of display math (§§ 1194–1200): a second `$` is required, then
-  the paragraph resumes after an optional space. -/
+      HeadNP s t s1 → meaningTok s1 t = .char c .mathShift → s1.mode = { kind := .math, inner := true } →
+      topGroup s1 = .mathShift → (outerMode s1 ≠ { kind := .math, inner := false }) →
+      Exec E s (appendItem .math (popNest (unsave s1).1))
+  /-- The end of display math (§§ 1194–1200): the nest level goes, a second
+  `$` is required (§ 1197), then `resume_after_display` (§ 1200) unsaves,
+  resumes the paragraph and scans an optional space. -/
+  -- source: tex.web § 1194 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22404
+  -- source: tex.web § 1197 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22470
+  -- source: tex.web § 1200 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22526
+  -- source: SaTeX `close_math` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
   | displayEnd {s s1 s2 s3 : State} {t u : Token} {c : CharCode} :
-      Head s t s1 → meaningTok s1 t = .char c .mathShift → s1.mode = { kind := .math, inner := false } →
-      topGroup s1 = .mathShift → XNext E (unsave s1).1 u s2 →
-      s3 = (match meaningTok s2 u with
-            | .char _ .mathShift => s2
-            | _ => raise "Display math should end with $$" (backInput u s2)) →
-      Exec E s (pushNest { kind := .horizontal, inner := false } (appendItem .box (popNest s3)))
+      HeadNP s t s1 → meaningTok s1 t = .char c .mathShift → s1.mode = { kind := .math, inner := false } →
+      topGroup s1 = .mathShift → XNext E (popNest s1) u s2 →
+      OptSpace E (resumeAfterDisplay (dollarCheck s2 u)) s3 → Exec E s s3
+  /-- … an `\eqno` part ends (§ 1194, `mode = -m`): another `$` is
+  required, the number's group goes, then the display ends in the same
+  step. -/
+  -- source: tex.web § 1194 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22404
+  -- source: SaTeX `close_math` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
+  | eqnoEnd {s s1 s2 s3 : State} {t u : Token} {c : CharCode} :
+      HeadNP s t s1 → meaningTok s1 t = .char c .mathShift → s1.mode = { kind := .math, inner := true } →
+      topGroup s1 = .mathShift → outerMode s1 = { kind := .math, inner := false } →
+      XNext E (popNest s1) u s2 →
+      OptSpace E (resumeAfterDisplay (popNest (unsave (dollarCheck s2 u)).1)) s3 → Exec E s s3
   | mathShiftWrong {s s1 : State} {t : Token} {c : CharCode} :
-      Head s t s1 → meaningTok s1 t = .char c .mathShift → s1.mode.kind = .math →
+      HeadNP s t s1 → meaningTok s1 t = .char c .mathShift → s1.mode.kind = .math →
       topGroup s1 ≠ .mathShift →
       Exec E s (raise "Missing } inserted" (pushToks .inserted (closerFor (topGroup s1)) (backInput t s1)))
   /-- `\eqno`, `\leqno` in display math (§ 1140). **[over]** placement. -/
+  -- source: tex.web § 1140 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21725
+  -- source: tex.web § 1142 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21740
+  -- source: SaTeX `math_shift_token` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs
   | eqno {s s1 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some (.mode "eqno") → s1.mode = { kind := .math, inner := false } →
+      HeadNP s t s1 → cmdOf s1 t = some (.mode "eqno") → s1.mode = { kind := .math, inner := false } →
       topGroup s1 = .mathShift →
-      Exec E s (insertEvery "everymath" (pushNest { kind := .math, inner := true } (newSaveLevel .mathShift none s1)))
+      Exec E s (insertEvery "everymath" (pushNest { kind := .math, inner := true }
+        (famReset (newSaveLevel .mathShift none s1))))
   /-- `\left` (§ 1191): a delimiter, then a group of its own. -/
   | left {s s1 s2 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some (.mode "left") → s1.mode.kind = .math → Delim E s1 s2 →
+      HeadNP s t s1 → cmdOf s1 t = some (.mode "left") → s1.mode.kind = .math → Delim E s1 s2 →
       Exec E s (pushNest { kind := .math, inner := true } (newSaveLevel .mathLeft none s2))
   | right {s s1 s2 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some (.mode "right") → s1.mode.kind = .math →
+      HeadNP s t s1 → cmdOf s1 t = some (.mode "right") → s1.mode.kind = .math →
       topGroup s1 = .mathLeft → Delim E s1 s2 →
       Exec E s (appendItem .other (popNest (unsave s2).1))
   /-- e-TeX `\middle`: closes and reopens (etex.ch). -/
   | middle {s s1 s2 : State} {t : Token} :
-      Head s t s1 → cmdOf s1 t = some (.mode "middle") → s1.mode.kind = .math →
+      HeadNP s t s1 → cmdOf s1 t = some (.mode "middle") → s1.mode.kind = .math →
       topGroup s1 = .mathLeft → Delim E s1 s2 →
       Exec E s (pushNest { kind := .math, inner := true } (newSaveLevel .mathLeft none (popNest (unsave s2).1)))
   | rightExtra {s s1 s2 : State} {t : Token} {n : String} :
-      Head s t s1 → cmdOf s1 t = some (.mode n) → (n = "right" ∨ n = "middle") → s1.mode.kind = .math →
+      HeadNP s t s1 → cmdOf s1 t = some (.mode n) → (n = "right" ∨ n = "middle") → s1.mode.kind = .math →
       topGroup s1 = .mathShift → Delim E s1 s2 → Exec E s (raise "Extra \\right" s2)
   /-- **[over]** Alignments (§§ 768–812: `\halign`, `\valign`, `\noalign`,
   `\cr`, `\span`, `\omit`, `&`): templates are not modelled. The
   alignment may do anything but change the file system. -/
   | alignment {s s1 s2 : State} {t : Token} {n : String} :
-      Head s t s1 → (n ∈ ["halign", "valign", "noalign", "cr", "crcr", "span", "omit"]) →
+      HeadNP s t s1 → (n ∈ ["halign", "valign", "noalign", "cr", "crcr", "span", "omit"]) →
       nameOfMeaning (meaningTok s1 t) = n → s2.vfs = s1.vfs → Exec E s s2
   /-- `&` outside an alignment (§ 1128). -/
   | alignTab {s s1 : State} {t : Token} :
-      Head s t s1 → ((∃ c, meaningTok s1 t = .char c .alignTab) ∨ cmdOf s1 t = some .alignTab) →
+      HeadNP s t s1 → ((∃ c, meaningTok s1 t = .char c .alignTab) ∨ cmdOf s1 t = some .alignTab) →
       Exec E s (raise "Misplaced alignment tab character &" s1)
   /-- `#` in the stomach (§ 1045 `report_illegal_case`), and internal
   quantities used as commands. -/
   | illegal {s s1 : State} {t : Token} :
-      Head s t s1 →
+      HeadNP s t s1 →
       ((∃ c, meaningTok s1 t = .char c .param) ∨ cmdOf s1 t = some .alignMark ∨
        (∃ op, cmdOf s1 t = some (.lastItem op)) ∨ (∃ l, cmdOf s1 t = some (.expr l))) →
       Exec E s (raise "You can't use this here" s1)
@@ -2729,19 +3322,19 @@ inductive Exec (E : Engine) : State → State → Prop
   whatsit (§§ 1341–1380, pdfTeX/XeTeX manuals): operands by grammar.
   **[over]** an item of any kind may be appended. -/
   | operands {s s1 s2 : State} {t : Token} {ops : List Operand} {i : Option Item} :
-      Head s t s1 → cmdOf s1 t = some (.operands ops) →
+      HeadNP s t s1 → cmdOf s1 t = some (.operands ops) →
       (s1.mode.kind ≠ .math → nameOfMeaning (meaningTok s1 t) ∉ mathOnly) →
       Operands E s1 ops s2 →
       Exec E s (match i with | some it => appendItem it s2 | none => s2)
   /-- **[over]** Lua (`\latelua`, catcode tables, Lua-defined protected
   commands): SaTeX runs real Lua. Any assignment, any text read next. -/
   | lua {s s1 s2 s3 : State} {t : Token} {ts : TokList} :
-      Head s t s1 →
+      HeadNP s t s1 →
       ((∃ n, cmdOf s1 t = some (.lua n)) ∨ (∃ id, meaningTok s1 t = .luaCall id true)) →
       Operands E s1 (E.opsOf (nameOfMeaning (meaningTok s1 t))) s2 →
       s3.vfs = s2.vfs → s3.input = s2.input → Exec E s (pushToks .inserted ts s3)
   | setFontId {s s1 s2 : State} {t : Token} {f : Int} :
-      Head s t s1 → cmdOf s1 t = some .setFontId → ScanInt E s1 f s2 →
+      HeadNP s t s1 → cmdOf s1 t = some .setFontId → ScanInt E s1 f s2 →
       Exec E s (assignTo s2 .curFont (.int f))
 
 /-! ## The step relation -/

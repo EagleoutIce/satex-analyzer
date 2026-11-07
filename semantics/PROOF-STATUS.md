@@ -71,6 +71,7 @@ Every theorem was checked for hypotheses that never hold or assume the result.
 - `Itv.full false` is the 32-bit word, as `Num::full` (B7, D10).
 - `narrow_sound`, `ifNumTest_sound`, `ifNumNarrow_sound`, `ifNum_branch_sound` (B5).
 - The theorem's wording: budget per run, free `Read`/`Other`, unused lemmas, the hypotheses of `loopHead_sound` and `summaryHavoc_sound` (B1, B3, B4, B6).
+- Concrete.lean follows tex.web closer (audit A1–A55). No proof uses the changed rules. A macro call now pops used-up token lists first (§ 390, A43), so a tail-recursive loop keeps its input depth, which `Footprint` (B6) asks for. Core gained `Item.vbox`, `Cmd.alter`, `Macro.brace`, `FileLevel.eofSeen` and `Font`; each rule cites tex.web and the SaTeX code it maps to.
 
 ## Open
 
