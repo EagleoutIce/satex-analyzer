@@ -2,27 +2,46 @@
 
 > Written with AI assistance from Claude Code (Claude Opus 5.5; build fixes with Claude Sonnet 5.5), directed and reviewed by the author.
 
-File: `lean/Satex/Soundness.lean`, imported from `lean/Satex.lean`.
+Files: `lean/Satex/Soundness.lean` and `lean/Satex/Global.lean` (main theorem), imported from `lean/Satex.lean`.
 `lake build` succeeds (Lean 4.35.0, core only). No `sorry` in any file.
 `lean/Satex/Axioms.lean` checks with `#guard_msgs` that the main theorems use only `propext`, `Classical.choice` and `Quot.sound`. The build fails if that changes.
 
 ## The main theorem
 
-`satex_sound_and_terminating`: with one budget per run, every concrete run of a document is covered by an abstract run, no abstract run is infinite, and none is longer than its budget.
-The budget is one counter in the state that every abstract step draws from (as `limits.steps`). It is not per step and not per line (the Rust's line guard is not modelled).
-The budget cut moves to a state that covers everything, so the cut makes the run coarser, never unsound. Past the cut `bγ` is `True`: the theorem says nothing about the rest of the run.
+`satex_sound_and_terminating` (`lean/Satex/Global.lean`) has no hypothesis. The reader `read` and the run `OStep` are definitions.
 
-Its local obligation is split by family (`run_covered_families`). A step reads a command and its operands, then runs the command's effect.
-Two hypotheses remain, both named:
+The abstract run is over `Option GState`. `GState` is an `AState` with the pending prefixes and the `\afterassignment` token pinned exactly (audit C15). `none` is `lost`: the named havoc, γ = every state.
+`read` follows the next literal token on top of a token list (exhausted lists are popped, § 324) whose meaning is one exact meaning. It runs these transfers:
 
-- `hread : ReadCovers Read read`: the abstract reading (mouth and scanners) covers TeX's reading, state and command.
-- `hother : Covered AState.γ (AStep L read) Other`: the families that have no transfer in the model yet (list below).
+- a macro without parameters (§ 389): its body is pushed, used-up lists popped first (§ 390);
+- an undefined name (§ 370), `\relax` (§ 1045), a prefix (§ 1211);
+- `\begingroup` and `{` outside math (`AState.beginGroup`, § 1063);
+- `\endgroup` and `}` when the abstract save stack names the group (`atopGroup`): a simple or semi-simple group closes (`AState.endGroup`, §§ 281–283), the error cases change nothing γ sees;
+- `\aftergroup` (save entry, § 1271) with a pinned group level, `\afterassignment` (token kept, § 1269).
+
+Anything else gives `read = none` and the run goes to `lost`: a file on top of the input, a hole, digits or a one-of on top, an unknown or `may` meaning, a primitive matched by name (alignments, §1046), a box or list group's `}`, and every command not listed above, assignments included.
+
+The theorem says:
+
+1. every concrete run is covered by an `OStep` run, at most one abstract step per concrete step (`step_covered`, `ostep_covered`);
+2. the run reaches `lost` only where `read` answers `none`;
+3. with a budget at least the run's length, the budgeted run covers it without the cut (`budget_enough`, audit C14);
+4. with any budget the budgeted run covers it, has no infinite run and none longer than its budget;
+5. every abstract state has finitely many successors.
+
+`step_covered` is the work: for each state `read` follows, every `Exec` rule (and every `Expand` rule) that could fire is either the one the reader models, with its result covered, or refuted by the head token's meaning, the prefixes, the mode or the group code.
+
+Counter-model check: `Read`, `Other` and `hsplit` are gone. `read` and `OStep` are fixed, so neither `Read := ⊥` nor `Other := Concrete.Step E` can be chosen. A reader that always answered `none` would make the theorem trivial; this one answers `none` only in the cases listed above, and `step_covered` must hold in all others.
 
 What this does not say:
 
-- `Read` and `Other` are free, and so is `hsplit`. With `Other := Concrete.Step E`, `hsplit` is trivial and `hother` is the whole soundness obligation. With `Read := ⊥`, `hread` is trivial. So the theorem is the induction and the budget applied to two assumed coverings. No instantiation needs the proven effects.
-- `branch_sound`, `ifNum_branch_sound`, `scanDelim_sound`, `loopHead_sound`, `summaryHavoc_sound`, `weakAssign_sound` and `aval_widen_sound` are used by no global theorem. They are guarded in `Axioms.lean` only.
-- A step whose change is all in its reading (expansion, `\relax`, a decided test) is covered with the identity effect `ACmd.none`, so it needs no dummy assignment. Its whole obligation is then `hread`.
+- After the first command `read` does not follow, the run is `lost` and nothing more is claimed. A real document starts from a file, so today `lost` comes at the first token of a file. The theorem is free of assumptions but weak.
+- The proven assignment transfers (`assign_*_sound`, `define_sound`, `weakAssign_sound`) are not used: an assignment reads operands (`ScanInt`, `Value`, `RToken`, `LetRhs`), and `read` has no abstract scanner yet. `\let` with literal tokens is the cheapest next step.
+- `branch_sound`/`ifNum_branch_sound`: conditionals read their test (`ScanInt`, `\ifx` tokens); not followed. `scanDelim_sound`, `stripBraces_sound`, `substitute_sound`: macros with parameters need `scanUndelim_sound` (open) and reading across levels. `loopHead_sound`, `summaryHavoc_sound`, `aval_widen_sound`: no join or widening in `OStep` yet (one path per `read` result). These stay guarded in `Axioms.lean` only.
+- The old split (`run_covered_families`, `fam_covered`, `ReadCovers`) remains as a generic lemma; no main theorem uses it.
+- `State.forceEof`, `eofSeen`, `pseudo`, `text`, read streams and the nest beyond the mode kind are still free in γ (C15). `read` never follows a file, so it never needs them.
+- The termination conjunct is the budget's: it holds for any relation (C14). What is specific to the model: (2), (3) and (5).
+
 ## Proven
 
 | Area | Theorems |
@@ -39,7 +58,7 @@ What this does not say:
 | conditionals | `branch_sound` (item 6) takes the narrowing's soundness as hypothesis `hnarrow`. `\ifnum` over intervals discharges it: `narrow_sound` (`Itv.narrow`), `ifNumTest_sound`, `ifNumNarrow_sound`, `ifNum_branch_sound`. Other tests have no narrowing lemma. `compare_sound`, `astate_join_sound` (item 10, joinable states only) |
 | arguments | `scanDelim_sound` (item 7, over typed holes, digits and one-of tokens, delimiters across items: R2-1, R2-6), `dropAbs_sound` (leading tokens), `stripBraces_sound` (§ 400), `substitute_sound` (§ 390) |
 | loop head | `loopHead_post`, `loopHead_sound`, `loopHead_rounds` |
-| global | `run_covered`, `run_covered_families`, `fam_covered` (assignment, grouping and identity effects), `budget_star`, `sound_and_terminating`, `satex_sound_and_terminating` |
+| global | `run_covered`, `run_covered_families`, `fam_covered` (generic), `budget_star`, `sound_and_terminating`; Global: `anext_sound`, `anext_not_drained`, `gnext_sound`, `ameaning_sound`, `atopGroup_sound`, `unsaveAux_top`, `unsave_code`, `apopDone_sound`, `close_sound`, `step_covered`, `ostep_covered`, `budget_enough`, `satex_sound_and_terminating` (no hypothesis) |
 
 ## Audit (2026-11-04)
 
@@ -93,9 +112,9 @@ Concrete.lean and Core.lean follow tex.web for audit C1–C13. Each changed rule
 
 ## Open
 
-- `ReadCovers`: an abstract mouth and abstract scanners (`Next`, `ScanInt`, `ScanDimen`, `Internal`, `MatchParams` over `AInput`). Without it `scanDelim_sound` is not yet linked to `Expand.macro`.
+- `read` beyond literal token lists: an abstract tokenizer for files (`LineTok` over known catcodes) and abstract scanners (`ScanInt`, `ScanDimen`, `Internal`, `MatchParams`, `RToken`, `LetRhs` over `AInput`). Each one moves cases from `lost` into `step_covered`. Without them `scanDelim_sound` is not linked to `Expand.call`.
 - `scanUndelim_sound`: not proven. Fixed on the way: a hole of class `c` may hold only spaces, and a one-of's rest is its members' suffixes. Still open: a one-of member with an unbalanced `{` whose group ends in a later item (`groupBody` passes non-token items whole).
-- `expand_sound` (item 8): needs `ReadCovers` and `scanUndelim_sound`. It must also assume the restrictions of `expandWith`: a file on top of the input and a non-macro meaning leave the state unchanged, arguments are read from the top token list only (TeX reads across levels), and `#{` (`braceDelim`, §§ 473, 476) is ignored.
+- `expand_sound` (item 8): needs abstract `MatchParams` in `read` and `scanUndelim_sound`. It must also assume the restrictions of `expandWith`: a file on top of the input and a non-macro meaning leave the state unchanged, arguments are read from the top token list only (TeX reads across levels), and `#{` (`braceDelim`, §§ 473, 476) is ignored.
 - `many` save frames hold only restore entries. `\aftergroup` tokens inside repeated groups are not covered, and `closeFrom` on a `many` frame never returns them.
 - Glue and box values have no widening (`AVal.widen` takes their bounded hull). Their chains end only by the round count (`loopRounds_le`).
 - Families without a transfer (`Other`): expansion primitives other than macro calls, boxes and typesetting, files and streams, `\write`, `\afterassignment` (`finishAssign`), modes, the output routine.

@@ -6,12 +6,15 @@ build fails if that changes.
 Written with AI assistance from Claude Code (Claude Opus 5.5; build fixes with
 Claude Sonnet 5.5), directed and reviewed by the author.
 -/
-import Satex.Soundness
+import Satex.Global
 
 open Satex.Soundness
 
 /-- info: 'Satex.Soundness.satex_sound_and_terminating' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms satex_sound_and_terminating
+
+/-- info: 'Satex.Soundness.step_covered' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms step_covered
 
 /-- info: 'Satex.Soundness.run_covered_families' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms run_covered_families

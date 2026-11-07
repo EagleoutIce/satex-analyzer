@@ -2037,22 +2037,7 @@ theorem sound_and_terminating {A C : Type} (γ : A → C → Prop) (Step : C →
    wf_of_budget (BStep T) bμ (bstep_dec T),
    run_length_le_budget (BStep T) bμ (bstep_dec T)⟩
 
-/-- The main theorem for SaTeX's model, its local obligation split by
-family: the abstract reading of commands (`hread`) and the families without
-a transfer (`hother`). Both are hypotheses, and `Read`, `Other` are free:
-with `Other := Concrete.Step E` the whole obligation is `hother`, and with
-`Read := ⊥` `hread` is trivial. What is proven is the induction, the budget
-and the effects of `ACmd` (assign, begin, close, none). -/
-theorem satex_sound_and_terminating (E : Concrete.Engine) (L : Limits)
-    (Read : State → State → CCmd → Prop) (read : AState → List (AState × ACmd))
-    (hread : ReadCovers Read read) (Other : State → State → Prop)
-    (hother : Covered AState.γ (AStep L read) Other)
-    (hsplit : ∀ s s', Concrete.Step E s s' → (∃ s1 k, Read s s1 k ∧ Effect s1 k s') ∨ Other s s') :
-    (∀ s₀ s, Star (Concrete.Step E) s₀ s → ∀ x₀, bγ AState.γ x₀ s₀ →
-      ∃ x, Star (BStep (AStep L read)) x₀ x ∧ bγ AState.γ x s) ∧
-    WellFounded (fun y x => BStep (AStep L read) x y) ∧
-    (∀ n x y, StarN (BStep (AStep L read)) x n y → n + bμ y ≤ bμ x) :=
-  sound_and_terminating AState.γ (Concrete.Step E) (AStep L read) (fun a s s' ha h =>
-    covered_or (fam_covered L Read read hread) hother a s s' ha (hsplit s s' h))
+/- The main theorem for SaTeX's model is in `Satex.Global`: no free
+assumption, a fixed reader. -/
 
 end Satex.Soundness
