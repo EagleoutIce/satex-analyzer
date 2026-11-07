@@ -30,9 +30,13 @@ Its view ("Edit keys…") lists the same keys. A choice writes one at the cursor
 
 ## units
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/units-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/units-light.png" alt="Lengths: the units plugin in the playground" width="640"></picture>
+
 A length written in the source (`12pt`, `-2.5cm`) or a length register (`\textwidth`, its value when the run ended, a range when the run kept one). Hover shows it in each unit of `units`, in `em` and `ex` of the font of the text set just before when the run loaded that font, and in scaled points. The grid lists every unit but the literal's own. One action per unit rewrites the literal, and the open hover shows the new literal at once. TeX keeps a length in scaled points (sp), so the action says *exact* when TeX reads the new text as the same sp, else how many sp it is off. It writes the fewest decimals up to `decimals` that are exact, else rounds to `decimals`. The view is a converter: type a value in any unit, click a unit to write it.
 
 ## color
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/color-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/color-light.png" alt="Colors: the color plugin in the playground" width="640"></picture>
 
 A color name or an xcolor expression (`red!40!blue`). Completion lists the colors defined at the position, newest first, each with its swatch. Hover shows the value in each model the document can write: `HTML`, `rgb`, `RGB`, `cmyk`, `gray` and `hsb` with xcolor, `rgb`, `cmyk` and `gray` with the color package. An expression is mixed as xcolor mixes, in rgb. On a `\definecolor` an action converts the spec to another model.
 
@@ -59,6 +63,8 @@ On the name of a `\begin` or `\end` the run met. Its view, "Change environment�
 
 ## table
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/table-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/table-light.png" alt="Tables: the table plugin in the playground" width="640"></picture>
+
 A table is an environment whose code reaches `\@array`: `tabular`, `tabular*`, `tabularx`, `array` and the ones a document defines on them. A code lens above its `\begin` and a link in the hover open a grid dialog (`satex/dialog`). The dialog edits cells, adds, removes and moves rows and columns, sets each column's alignment (`l`, `c`, `r`, `p{…}`, siunitx `S`), the vertical rules and the rule before each row, and merges cells into a `\multicolumn`. `satex/dialogApply` writes it back. A row the dialog left as it was keeps its text, comments included. A new or edited row follows the table's style: indentation, spaces around `&`, padded columns, rules on the row's line.
 
 Two rewrites are code actions and buttons in the dialog:
@@ -71,6 +77,8 @@ The table, image and placement dialogs write through the snapshot printer of the
 A command or environment the edit adds that the run does not define loads its package before `\begin{document}`, and says so. The package is the installation's provider of the name (`\toprule` loads booktabs). A column letter the run lacks is one its `\@testpach` does not test and no `\newcolumntype` made. Its package is the dialog's (the type menu's `siunitx` for `S`), else the provider of `\@testpach` (array, for `m`, `b`, `>{…}`). A package another added one loads is left out: tabularx loads array.
 
 ## image
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/image-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/image-light.png" alt="Images: the image plugin in the playground" width="640"></picture>
 
 A figure is a file `\includegraphics` read. Its code lens and hover link open a dialog with the figure: a PNG or JPEG as it is, a PDF's first page as `pdftocairo` renders it where one is installed (the playground's server, VS Code), else its box. The engine's own size of the file (`natural`, in bp) scales the crop. The dialog crops with drag handles, rotates in 90° steps or by any angle, and sizes by `width`, `height`, `scale` and `keepaspectratio`. It writes graphicx options:
 
@@ -85,9 +93,13 @@ A key the dialog does not edit (`page`, `draft`) stays where it was, and so do a
 
 ## float
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/float-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/float-light.png" alt="Float placement: the float plugin in the playground" width="640"></picture>
+
 A float is an environment whose code reaches `\@float`: `figure`, `table` and those defined on them. On its `[placement]` the hover says what each letter lets LaTeX do, or what the class's default (`\fps@⟨env⟩`) does when none is written. Completion offers the letters not written yet, `H` too when the run loaded float.sty (`\@float@HH`). The dialog "Edit placement…" toggles each letter, keeps their order, and drops the brackets when none is left. `H` stands alone. An unknown letter is refused. The letters' meanings are a seed table: they are prose, not run data.
 
 ## tikz
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/tikz-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/tikz-light.png" alt="TikZ drawings: the tikz plugin in the playground" width="640"></picture>
 
 A `tikzpicture` the run met: a lens "Edit drawing…" on its `\begin` line and the view anywhere inside. The canvas shows the nodes the run made, where pgf put each, with its shape and size (`\pgf@sh@ns@⟨node⟩` and its saved anchors). Plain paths between coordinates show too.
 
@@ -122,6 +134,8 @@ On each frame of a document whose run defined `\includeonlyframes`: a lens "Comp
 
 ## page
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/page-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/page-light.png" alt="Page layout: the page plugin in the playground" width="640"></picture>
+
 The page geometry the run computed: `\paperwidth`, `\textwidth`, `\oddsidemargin`, `\topmargin`, `\headheight`, `\headsep`, `\footskip`, `\marginparwidth` and the rest of LaTeX's page model, as the run ended. A length the run left open is an interval. The dialog draws its middle and says so. "Page layout…" is a lens on `\documentclass` and on geometry's calls, a link in the hover of geometry's keys, and a view on a sectioning command or a blank line.
 
 The dialog draws the page to scale, both pages when the class is two-sided: the text block, header, footer and margin notes, each margin labelled in the chosen unit.
@@ -140,6 +154,8 @@ The next four are managers. Each opens on a name of its type, focused on that na
 
 ### glossary
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/glossary-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/glossary-light.png" alt="Glossary, index, bibliography: the glossary plugin in the playground" width="640"></picture>
+
 Every key a document call declared (`\newglossaryentry`, `\newacronym`, acro's `\DeclareAcronym`), taken from the run, not a list of commands. The fields are the key list's keys, else each argument named by the field the run stored its text in (`\glo@cfg@short`). The table holds the uses and every value the run stored, the plural and first forms too. Unused entries are marked. Delete is refused while an entry is used. "Replace uses and delete" moves the uses to another key first. A new entry is written like the first one of the same command in the document: its arguments, its key list in the printer's one form (`name=DAG, description=…`).
 
 ### bibliography
@@ -152,9 +168,13 @@ Every term an index line carried (`\index{graph!directed}`), by its top level, s
 
 ### theorem
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/theorem-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/theorem-light.png" alt="Theorems: the theorem plugin in the playground" width="640"></picture>
+
 Every environment a document call defined together with its number (`\the⟨env⟩`), with any package: the counter it owns, shares or is numbered within, and the commands its code has that the others lack (its style). Each instance shows its labels and the lines referencing them. Renaming rewrites the definition, both ends of each instance and the kinds that share its counter. Numbering writes the group the document's own calls of the same command use for a shared counter or a parent counter. A new kind copies the document's first call of its command. These forms send snapshots the view fills, and the snapshot printer writes them.
 
 ## forest
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/forest-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/forest-light.png" alt="Trees: the forest plugin in the playground" width="640"></picture>
 
 A `forest` environment the run met: a lens "Edit tree…" on its `\begin` line and the view anywhere inside. The dialog reads the bracket notation `[content, options [child] …]` and draws the tree. Where the run computed forest's packing for every node (`fRsT⟨id⟩/x` and `/y`), it draws the nodes there. A node's `name` shows on hover.
 

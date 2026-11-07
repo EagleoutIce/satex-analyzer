@@ -54,7 +54,7 @@ Macro bodies use the same lift as [meaning sets](#meaning-sets-what-a-control-se
 
 ## Category codes
 
-Every character has one of TeX's sixteen category codes ([The TeXbook, chapter 7](https://ctan.org/pkg/texbook#chapter-7)). Pages here link each "category N" to its row.
+Every character has one of TeX's sixteen category codes ([The TeXbook, chapter 7](https://ctan.org/pkg/texbook)). Pages here link each "category N" to its row.
 
 | Code | Category |
 |---|---|
@@ -608,7 +608,7 @@ The `limits:` settings in `satex.yaml` trade precision for a bounded search ([`s
 | [`limits.digit_lengths`](Configuration#configurable-limits-for-the-analysis) | 3 | How many digit counts a number of unknown digits is read apart into, one path each, when TeX reads it digit by digit (`\the\count` of 0..214: one, two, three digits). Past them the longer counts are one path whose count stays open. Higher is more precise where code compares or prints the count, and forks more for wide ranges (`\int_rand:n {16777215}`). |
 | [`limits.paths`](Configuration#configurable-limits-for-the-analysis) | 16 | How many alternative paths satex keeps at once. Past them the two oldest at one place are merged into one. Higher is more precise, slower and takes more memory. |
 | [`limits.meaning_splits`](Configuration#configurable-limits-for-the-analysis) | 4 | How often one command may split the run per meaning of a name that has several, such as `\x` defined differently in two branches. Past them, and with 0, the name reads as unknown. |
-| [`limits.widen_after`](Configuration#configurable-limits-for-the-analysis) | 3 | How many rounds a loop is followed exactly before values that still change become ranges (SEMANTICS [§ 14](Configuration#configurable-limits-for-the-analysis)). A `\loop` counting to an unknown bound has its counter as a range after these rounds. |
+| [`limits.widen_after`](Configuration#configurable-limits-for-the-analysis) | 3 | How many rounds a loop is followed exactly before values that still change become ranges ([SEMANTICS § 14](https://eagleoutice.github.io/satex-analyzer/SEMANTICS#14-where-satex-is-not-exact)). A `\loop` counting to an unknown bound has its counter as a range after these rounds. |
 | [`limits.recursion_depth`](Configuration#configurable-limits-for-the-analysis) | 100 | How deep a macro that calls itself while an `\if` is undecided is followed before the recursion is assumed to end there. |
 | [`limits.loop_heads`](Configuration#configurable-limits-for-the-analysis) | 512 | How many loops one run remembers with their merged states. Past them the oldest is forgotten, and summarized when it comes back. |
 | [`limits.call_summary_after`](Configuration#configurable-limits-for-the-analysis) | 2 | After this many runs of one call at one place, a call with unknown arguments reuses their merged result instead of running again. `\pgfmathparse{\x}` with an unknown `\x` is then one step. 0 never does. |
@@ -622,7 +622,7 @@ The `limits:` settings in `satex.yaml` trade precision for a bounded search ([`s
 A write through an index not pinned to one number (`\count#1=…`) must hold for every register it may name (`weaken_registers`, [`src/engine/exec.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs)):
 
 - A narrow interval (at most `limits.value_set` registers): each is joined with the value.
-- Otherwise every register of the kind is weakened, and unseen ones read as the whole range (`register_top`), no longer as zero.
+- Otherwise every register of the kind is weakened, and unseen ones read as their kind's top (`register_top`): a count the whole 32-bit word, a dimen ±`\maxdimen` (every dimension scan clamps there, [tex.web §§ 448](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8829), [460](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9056)), no longer as zero.
 
 ### Code tables behind an unknown character
 

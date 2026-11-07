@@ -79,11 +79,14 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C016 | [`undefined-environment`](#undefined-environment) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | `\begin` names an environment that is not defined | — |
 | C017 | [`undefined-glossary-entry`](#undefined-glossary-entry) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | a glossary or acronym entry is used but never declared | — |
 | C018 | [`unguarded-recursion`](#unguarded-recursion) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | a recursive macro has nothing that can stop it | — |
+| C052 | [`bibliography-entry-missing-field`](#bibliography-entry-missing-field) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a cited entry lacks a field its type requires | — |
 | C019 | [`build-missing-custom-dependency`](#build-missing-custom-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | the document writes glossary files, but latexmk has no rule to process them | — |
 | C020 | [`catcode-escapes-group`](#catcode-escapes-group) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a category code change is still in force at the end of the run | — |
 | C021 | [`conflicting-color-definition`](#conflicting-color-definition) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | the same color name is defined twice with different colors | — |
 | C022 | [`delimiter-not-followed`](#delimiter-not-followed) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | `\left`, `\right` or `\middle` is followed by a brace or a math shift | <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a> |
 | C023 | [`duplicate-bibliography-entry`](#duplicate-bibliography-entry) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | the same key is declared by two bibliography entries | — |
+| C050 | [`duplicate-bibliography-load`](#duplicate-bibliography-load) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | a database is loaded twice | — |
+| C051 | [`duplicate-bibliography-work`](#duplicate-bibliography-work) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | two bibliography entries name one work under different keys | — |
 | C024 | [`duplicate-label`](#duplicate-label) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | the same label is defined twice | — |
 | C025 | [`environment-mismatch`](#environment-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | `\end` names an environment other than the one that is open | <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a> |
 | C026 | [`expl-syntax-left-on`](#expl-syntax-left-on) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | `\ExplSyntaxOn` is never turned off | — |
@@ -95,7 +98,8 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C032 | [`unbalanced-brackets`](#unbalanced-brackets) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a file sets more of one bracket than of its partner | <a class="from" href="Chktex-Coverage" title="follows chktex warning 17">chktex 17</a> |
 | C033 | [`unbalanced-color-stack`](#unbalanced-color-stack) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | <span class="eng" title="only under pdftex, luatex">pdftex, luatex</span> | — | a `\pdfcolorstack` push is never popped, or a pop has nothing to pop | — |
 | C034 | [`unbalanced-pdf-content`](#unbalanced-pdf-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | <span class="eng" title="only under pdftex, luatex, xetex">pdftex, luatex, xetex</span> | — | a PDF literal opens marked content or a graphics state that is never closed | — |
-| C035 | [`undefined-citation`](#undefined-citation) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a citation names a key no bibliography entry declares | — |
+| C053 | [`undefined-bibliography-string`](#undefined-bibliography-string) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a `.bib` value uses a constant no `@string` defines | — |
+| C035 | [`undefined-citation`](#undefined-citation) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a citation names a key no bibliography entry declares | — |
 | C048 | [`undefined-cref-format`](#undefined-cref-format) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | cleveref has no name for a label's type, so `\cref` prints `??` | — |
 | C036 | [`undefined-optional-content`](#undefined-optional-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | marked content refers to an optional content group no resource names | — |
 | C037 | [`undefined-reference`](#undefined-reference) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | `\ref` names a label that is never defined | — |
@@ -157,6 +161,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | S042 | [`quote-punctuation`](#quote-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | punctuation stands inside the closing quotation mark | <a class="from" href="Chktex-Coverage" title="follows chktex warning 38">chktex 38</a> |
 | S043 | [`stray-space`](#stray-space) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | a macro body picked up a space from an unescaped line end | — |
 | S044 | [`table-rules`](#table-rules) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | a table is ruled with vertical rules or `\hline` | — |
+| S055 | [`uncited-bibliography-entry`](#uncited-bibliography-entry) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a database entry is never cited | — |
 | S045 | [`unit-in-cells`](#unit-in-cells) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | every number of a table column carries the same unit | — |
 | S046 | [`unreferenced-numbered-display`](#unreferenced-numbered-display) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a display that stepped a counter is never referenced, so its number is spent for nothing | — |
 | S047 | [`unused-bibitem`](#unused-bibitem) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | a `\bibitem` written in the document is never cited | — |
@@ -186,7 +191,7 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 `S` marks a safe fix, `U` an unsafe one. A rule with both has findings of each kind: the fix is safe where it cannot change what the document means and unsafe where it might. Each finding names its own kind.
 
 <div class="fold">
-<h3 class="fold-head">56 rules with quick fixes</h3>
+<h3 class="fold-head">60 rules with quick fixes</h3>
 
 * C001 [`already-defined`](#already-defined) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\newcommand` redefines an existing name
 * C002 [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a BibTeX command biblatex replaces stops the run
@@ -196,10 +201,13 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 * C015 [`undefined-control-sequence`](#undefined-control-sequence) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a control sequence is used that nothing defines
 * C016 [`undefined-environment`](#undefined-environment) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\begin` names an environment that is not defined
 * C022 [`delimiter-not-followed`](#delimiter-not-followed) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\left`, `\right` or `\middle` is followed by a brace or a math shift
+* C050 [`duplicate-bibliography-load`](#duplicate-bibliography-load) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> a database is loaded twice
+* C051 [`duplicate-bibliography-work`](#duplicate-bibliography-work) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> two bibliography entries name one work under different keys
 * C025 [`environment-mismatch`](#environment-mismatch) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\end` names an environment other than the one that is open
 * C029 [`ignored-verbatim-tail`](#ignored-verbatim-tail) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> text stands on the line that closes a verbatim body and never reaches the page
 * C030 [`math-script-braces`](#math-script-braces) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> `^` and `_` take one token, so what follows needs braces
 * C031 [`missing-dependency`](#missing-dependency) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> a TeX Live package the run reads from is not in the dependency file
+* C035 [`undefined-citation`](#undefined-citation) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a citation names a key no bibliography entry declares
 * C048 [`undefined-cref-format`](#undefined-cref-format) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> cleveref has no name for a label's type, so `\cref` prints `??`
 * C042 [`unintended-escape`](#unintended-escape) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a command is followed by an escaped punctuation mark, which is another command
 * S001 [`accent-on-dotted-letter`](#accent-on-dotted-letter) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> an accent sits on top of the dot of an `i` or a `j`
@@ -236,6 +244,7 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 * S041 [`quote-ligature`](#quote-ligature) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> three quotation marks in a row set a double and a single mark with nothing between them
 * S042 [`quote-punctuation`](#quote-punctuation) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> punctuation stands inside the closing quotation mark
 * S043 [`stray-space`](#stray-space) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> a macro body picked up a space from an unescaped line end
+* S055 [`uncited-bibliography-entry`](#uncited-bibliography-entry) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a database entry is never cited
 * S046 [`unreferenced-numbered-display`](#unreferenced-numbered-display) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a display that stepped a counter is never referenced, so its number is spent for nothing
 * S049 [`unused-definition`](#unused-definition) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a macro defined in the document is never used
 * S050 [`unused-label`](#unused-label) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a label is never referenced
@@ -252,7 +261,7 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 One group per category, each with its first rules. A group's button shows the rest.
 
 <div class="fold" id="category-correctness">
-<h3 class="fold-head"><b>correctness</b> (49 rules)</h3>
+<h3 class="fold-head"><b>correctness</b> (53 rules)</h3>
 
 ### already-defined
 
@@ -344,7 +353,7 @@ An engine error such as `Argument has an extra }` arises inside package code. Th
 
 When satex had to approximate on the way, the error may not be TeX's: it is a precision note, not a finding. An exact error after such a one may be its echo, as TeX's recovery left a state that may not be TeX's. The finding is then a warning that names the earlier error.
 
-See [The TeXbook, chapter 27](https://ctan.org/pkg/texbook#chapter-27).
+See [The TeXbook, chapter 27](https://ctan.org/pkg/texbook).
 
 ### invalid-directive
 
@@ -378,7 +387,7 @@ Every path of the run reads the document to its end without meeting TeX's `\end`
 
 Fix by ending the document with `\bye` (plain TeX) or `\end{document}` (LaTeX).
 
-See [The TeXbook, chapter 23](https://ctan.org/pkg/texbook#chapter-23).
+See [The TeXbook, chapter 23](https://ctan.org/pkg/texbook).
 
 ### missing-graphic
 
@@ -458,7 +467,7 @@ The name has no meaning at the point it is used, so a real run would stop with `
 
 Fix by loading the package that provides it, defining it before the use, or correcting the spelling.
 
-See [The TeXbook, chapter 27](https://ctan.org/pkg/texbook#chapter-27).
+See [The TeXbook, chapter 27](https://ctan.org/pkg/texbook).
 
 ### undefined-environment
 
@@ -494,6 +503,18 @@ The run saw the macro's expansion reach the macro again, could not see the recur
 
 Fix by adding the test that stops it, or by removing the self-reference.
 
+### bibliography-entry-missing-field
+
+<p class="badges"><code class="num" title="rule number">C052</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
+
+**a cited entry lacks a field its type requires**
+
+The style's data model requires fields per entry type: the `.bst`'s `output.check`s (BibTeX warns `empty journal in knuth84`), or biblatex's mandatory constraints (biber warns under `--validate-datamodel`). An entry with `crossref` or `xref` inherits fields and is not reported. Only cited entries are checked.
+
+Fix by adding the field.
+
+See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex), [biblatex §2.1](https://ctan.org/pkg/biblatex).
+
 ### build-missing-custom-dependency
 
 <p class="badges"><code class="num" title="rule number">C019</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
@@ -519,7 +540,7 @@ See [latexmk § CUSTOM DEPENDENCIES](https://ctan.org/pkg/latexmk), [glossaries 
 
 Fix by wrapping the change in `{…}` or `\begingroup…\endgroup`, or by restoring the old value explicitly. `satex query catcodes` shows the current table.
 
-See [The TeXbook, chapter 5](https://ctan.org/pkg/texbook#chapter-5).
+See [The TeXbook, chapter 5](https://ctan.org/pkg/texbook).
 
 ### conflicting-color-definition
 
@@ -556,6 +577,30 @@ See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://githu
 Two `\bibitem`s with one key make LaTeX warn `Label … multiply defined` and every citation resolves to the later one. Two `.bib` entries with one key make BibTeX stop with `Repeated entry`.
 
 Fix by renaming or deleting one of them.
+
+See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
+
+### duplicate-bibliography-load
+
+<p class="badges"><code class="num" title="rule number">C050</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span></p>
+
+**a database is loaded twice**
+
+A `.bib` file named twice (`\bibliography{a,a}`, `\addbibresource` twice, or `\bibliography` and `\addbibresource` both) is read twice. BibTeX reports every entry as a `Repeated entry`. biber warns about each duplicate key.
+
+Fix by dropping the second load.
+
+See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
+
+### duplicate-bibliography-work
+
+<p class="badges"><code class="num" title="rule number">C051</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
+
+**two bibliography entries name one work under different keys**
+
+Two entries with the same DOI, or the same title and year, are one work under two keys, in one database or in two. Citing both prints it twice in the bibliography.
+
+Fix by merging them: the entry with more fields stays, gains the fields only the other has, and the citations of the other key cite the kept one.
 
 See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
 
@@ -643,13 +688,13 @@ See [chktex 31](https://www.nongnu.org/chktex/).
 
 **`^` and `_` take one token, so what follows needs braces**
 
-`^` and `_` attach the single next token to the atom before them ([The TeXbook, chapter 16](https://ctan.org/pkg/texbook#chapter-16)). `x^12` sets the exponent 1 and then a 2 of its own size, and `(a+b)^2` puts the exponent on the closing parenthesis alone.
+`^` and `_` attach the single next token to the atom before them ([The TeXbook, chapter 16](https://ctan.org/pkg/texbook)). `x^12` sets the exponent 1 and then a 2 of its own size, and `(a+b)^2` puts the exponent on the closing parenthesis alone.
 
 The rule lexes the source with TeX's own mouth where the run really was in math mode, so a `^` under another catcode regime is not one, and `\left( … \right)^2` is one atom the script attaches to.
 
 Fix by putting the script between `{` and `}`.
 
-See [chktex 3](https://www.nongnu.org/chktex/), [chktex 25](https://www.nongnu.org/chktex/), [The TeXbook, chapter 16](https://ctan.org/pkg/texbook#chapter-16).
+See [chktex 3](https://www.nongnu.org/chktex/), [chktex 25](https://www.nongnu.org/chktex/), [The TeXbook, chapter 16](https://ctan.org/pkg/texbook).
 
 ### missing-dependency
 
@@ -673,7 +718,7 @@ This rule counts the brackets the run really set, so one a macro produced counts
 
 Fix by adding the bracket that is missing.
 
-See [chktex 17](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https://ctan.org/pkg/texbook#chapter-2).
+See [chktex 17](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https://ctan.org/pkg/texbook).
 
 ### unbalanced-color-stack
 
@@ -693,7 +738,7 @@ See [pdftex § 8.9.8](https://ctan.org/pkg/pdftex).
 
 **a PDF literal opens marked content or a graphics state that is never closed**
 
-`\pdfliteral` and `\special{pdf:…}` (what ocgx2, ocg-p and pdfbase use to write raw PDF) drop `q`/`Q` and `BMC`/`BDC`/`EMC` straight into the page's content stream. `q`/`Q` save and restore the graphics state: color, line width, the current transform. `BMC`/`BDC`/`EMC` bracket marked content, an optional content group among them. Both have to nest within the page ([PDF 32000, §§ 8.4.2, 14.6](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf)). One left open leaks its state into everything typeset after it. A viewer may also just reject the page.
+`\pdfliteral` and `\special{pdf:…}` (what ocgx2, ocg-p and pdfbase use to write raw PDF) drop `q`/`Q` and `BMC`/`BDC`/`EMC` straight into the page's content stream. `q`/`Q` save and restore the graphics state: color, line width, the current transform. `BMC`/`BDC`/`EMC` bracket marked content, an optional content group among them. Both have to nest within the page ([PDF 32000](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf), [§§ 8](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L316), [4](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L231), [2](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L131), [14](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L463), [6](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L279)). One left open leaks its state into everything typeset after it. A viewer may also just reject the page.
 
 satex does not break pages into content streams itself, so it checks the order the run executes the literals in.
 
@@ -701,15 +746,27 @@ Fix by closing what is opened in the same group, or by using one environment for
 
 See [PDF 32000 § 8.4.2](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf), [PDF 32000 § 14.6](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf).
 
+### undefined-bibliography-string
+
+<p class="badges"><code class="num" title="rule number">C053</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
+
+**a `.bib` value uses a constant no `@string` defines**
+
+A bare word in a field value is a constant: an `@string` of the databases, or one the style predefines (`jan`). Any other is undefined: BibTeX warns `I don't have a string` and writes nothing for it.
+
+Fix by defining the constant, or by writing the value in braces.
+
+See [btxdoc § The database files](https://ctan.org/pkg/bibtex).
+
 ### undefined-citation
 
-<p class="badges"><code class="num" title="rule number">C035</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C035</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
 
 **a citation names a key no bibliography entry declares**
 
 No `\bibitem` and no entry of the `.bib` databases `\bibliography` names declares this key, so LaTeX prints `?` and warns `Citation … undefined`. Citations are observed rather than listed: a citation command writes its key to the `.aux` for the bibliography program (`\citation{⟨key⟩}`) and reads the name the entry defines when the file is read back (`\b@⟨key⟩`). Any line written so is a citation. Without any bibliography every citation is undefined. Nothing is reported while a named database cannot be found, or while a file of the document was not read.
 
-Fix by adding the entry, or by correcting the key.
+Fix by adding the entry, or by correcting the key. The quick fix adds a stub entry to the first database, to fill in.
 
 See [source2e § ltbibl.dtx](https://ctan.org/pkg/source2e).
 
@@ -831,7 +888,7 @@ The rule looks for a control word followed with nothing between by `\.`, `\,`, `
 
 Fix by removing the backslash.
 
-See [chktex 21](https://www.nongnu.org/chktex/), [The TeXbook, chapter 9](https://ctan.org/pkg/texbook#chapter-9).
+See [chktex 21](https://www.nongnu.org/chktex/), [The TeXbook, chapter 9](https://ctan.org/pkg/texbook).
 
 ### assertion-proved
 
@@ -873,7 +930,7 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 </div>
 
 <div class="fold" id="category-style">
-<h3 class="fold-head"><b>style</b> (54 rules)</h3>
+<h3 class="fold-head"><b>style</b> (55 rules)</h3>
 
 ### accent-on-dotted-letter
 
@@ -881,13 +938,13 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 
 **an accent sits on top of the dot of an `i` or a `j`**
 
-An accent is placed over the whole character, so an `i` keeps its dot under it ([The TeXbook, chapter 9](https://ctan.org/pkg/texbook#chapter-9)). `\i` and `\j` are the dotless letters, and math has `\imath` and `\jmath` ([fntguide § 5](https://ctan.org/pkg/fntguide)).
+An accent is placed over the whole character, so an `i` keeps its dot under it ([The TeXbook, chapter 9](https://ctan.org/pkg/texbook)). `\i` and `\j` are the dotless letters, and math has `\imath` and `\jmath` ([fntguide § 5](https://ctan.org/pkg/fntguide)).
 
 The rule reads the character the `\accent` or `\mathaccent` primitive really took, and how far the argument reaches from the source, so `\^{}i` is left alone. In OT1 `\'i` is a composite for `\'\i` and in T1 the glyph `í`, so neither is reported.
 
 Fix by writing the dotless letter under the accent.
 
-See [chktex 7](https://www.nongnu.org/chktex/), [The TeXbook, chapter 9](https://ctan.org/pkg/texbook#chapter-9), [fntguide § 5](https://ctan.org/pkg/fntguide).
+See [chktex 7](https://www.nongnu.org/chktex/), [The TeXbook, chapter 9](https://ctan.org/pkg/texbook), [fntguide § 5](https://ctan.org/pkg/fntguide).
 
 ### command-terminated-space
 
@@ -895,13 +952,13 @@ See [chktex 7](https://www.nongnu.org/chktex/), [The TeXbook, chapter 9](https:/
 
 **a control word ate the space after it and the next word is set against what it produced**
 
-TeX reads a control word and then discards the spaces after it ([The TeXbook, chapter 3](https://ctan.org/pkg/texbook#chapter-3)), so `\TeX ok` sets `TEXok`.
+TeX reads a control word and then discards the spaces after it ([The TeXbook, chapter 3](https://ctan.org/pkg/texbook)), so `\TeX ok` sets `TEXok`.
 
 A space the source has after a control word and the run never turned into glue is one TeX swallowed. The rule reports it only where the command put a character on the page and the next word starts against it, so `\rm text` and `\noindent text` stay silent.
 
 Fix by writing `\TeX{} ok`, or `\TeX\ ok` where a space belongs. Where the joined word is meant (`\TeX book` for TeXbook), write `\TeX{}book`: no space is swallowed there, so the rule stays silent and the intent shows.
 
-See [chktex 1](https://www.nongnu.org/chktex/), [The TeXbook, chapter 3](https://ctan.org/pkg/texbook#chapter-3).
+See [chktex 1](https://www.nongnu.org/chktex/), [The TeXbook, chapter 3](https://ctan.org/pkg/texbook).
 
 ### dimension-times
 
@@ -909,13 +966,13 @@ See [chktex 1](https://www.nongnu.org/chktex/), [The TeXbook, chapter 3](https:/
 
 **the letter x stands between two numbers where a multiplication sign belongs**
 
-`640x480` sets the letter x between the numbers. The sign for a product is `\times`, a binary operator with the spacing of one ([The TeXbook, chapter 16](https://ctan.org/pkg/texbook#chapter-16)).
+`640x480` sets the letter x between the numbers. The sign for a product is `\times`, a binary operator with the spacing of one ([The TeXbook, chapter 16](https://ctan.org/pkg/texbook)).
 
 The rule reads the characters the run set, so it finds a dimension a macro assembled as well as one typed out. It names `\times` where the letter was already in math mode and `$\times$` where it was in text.
 
 Fix by writing the operator.
 
-See [chktex 29](https://www.nongnu.org/chktex/), [The TeXbook, chapter 16](https://ctan.org/pkg/texbook#chapter-16).
+See [chktex 29](https://www.nongnu.org/chktex/), [The TeXbook, chapter 16](https://ctan.org/pkg/texbook).
 
 ### double-space
 
@@ -923,13 +980,13 @@ See [chktex 29](https://www.nongnu.org/chktex/), [The TeXbook, chapter 16](https
 
 **two interword spaces reached the page, one of them from a tie**
 
-TeX reads a run of spaces as one space token ([The TeXbook, chapter 8](https://ctan.org/pkg/texbook#chapter-8)), so two spaces in the source set one on the page. satex reports only the spaces that really reached it.
+TeX reads a run of spaces as one space token ([The TeXbook, chapter 8](https://ctan.org/pkg/texbook)), so two spaces in the source set one on the page. satex reports only the spaces that really reached it.
 
 Two do when a tie stands beside an ordinary space, as in `Dr.~ Smith`, and when the run appended two glues in a row, as in `a {} b`. That second case is chktex's warning 30, off by default, so it comes as a note.
 
 Fix by deleting the ordinary space.
 
-See [chktex 39](https://www.nongnu.org/chktex/), [chktex 30](https://www.nongnu.org/chktex/), [The TeXbook, chapter 8](https://ctan.org/pkg/texbook#chapter-8).
+See [chktex 39](https://www.nongnu.org/chktex/), [chktex 30](https://www.nongnu.org/chktex/), [The TeXbook, chapter 8](https://ctan.org/pkg/texbook).
 
 ### ellipsis-dots
 
@@ -937,13 +994,13 @@ See [chktex 39](https://www.nongnu.org/chktex/), [chktex 30](https://www.nongnu.
 
 **three periods set three periods, not an ellipsis**
 
-Three `.` characters are set with the spacing of three periods, which is tighter than an ellipsis ([The TeXbook, chapter 18](https://ctan.org/pkg/texbook#chapter-18)). `\ldots` sets them on the baseline and `\cdots` at the height of a binary operator.
+Three `.` characters are set with the spacing of three periods, which is tighter than an ellipsis ([The TeXbook, chapter 18](https://ctan.org/pkg/texbook)). `\ldots` sets them on the baseline and `\cdots` at the height of a binary operator.
 
 The rule reads the periods that reached the page, so an ellipsis a command produced is already excluded. In math it names `\cdots` between the operators chktex lists.
 
 Fix by writing the command.
 
-See [chktex 11](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https://ctan.org/pkg/texbook#chapter-18).
+See [chktex 11](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https://ctan.org/pkg/texbook).
 
 ### et-al
 
@@ -993,7 +1050,7 @@ See [interface3 § Naming functions and variables](https://ctan.org/pkg/l3kernel
 
 Fix by moving the definition out of the group, or by prefixing it with `\global`.
 
-See [The TeXbook, chapter 5](https://ctan.org/pkg/texbook#chapter-5).
+See [The TeXbook, chapter 5](https://ctan.org/pkg/texbook).
 
 ### math-operator-name
 
@@ -1001,13 +1058,13 @@ See [The TeXbook, chapter 5](https://ctan.org/pkg/texbook#chapter-5).
 
 **an operator name is set in math italic instead of by its command**
 
-Letters in math mode are set in math italic, one variable per letter, with the spacing of a product ([The TeXbook, chapter 18](https://ctan.org/pkg/texbook#chapter-18)), so `$sin(x)$` sets a product of three variables.
+Letters in math mode are set in math italic, one variable per letter, with the spacing of a product ([The TeXbook, chapter 18](https://ctan.org/pkg/texbook)), so `$sin(x)$` sets a product of three variables.
 
 satex decides this from the run, not from a list of names: the name the letters spell has to be a command this document has whose body sets exactly those letters. So `\argmax` from `\DeclareMathOperator` is suggested too, and `\mathrm{sin}` is left alone.
 
 Fix by writing the command.
 
-See [chktex 35](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https://ctan.org/pkg/texbook#chapter-18).
+See [chktex 35](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https://ctan.org/pkg/texbook).
 
 ### missing-italic-correction
 
@@ -1015,13 +1072,13 @@ See [chktex 35](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https
 
 **a slanted letter runs into upright text with no `\/` between them**
 
-A slanted letter leans over the space after it, and `\/` adds the kern the font asks for ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4)).
+A slanted letter leans over the space after it, and `\/` adds the kern the font asks for ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook)).
 
 satex compares each character's `\f@shape` against the kernel's `\itdefault` and `\sldefault` ([fntguide § 2](https://ctan.org/pkg/fntguide)), and the character's italic correction in its own font says whether the kern is worth having. So `{\it …}`, `\emph{…}` and a shape a package selects are all seen alike, where chktex knows only a list of names.
 
 Fix by writing `\/` after the last slanted character.
 
-See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21365).
+See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21365).
 
 ### missing-nonbreaking-space
 
@@ -1029,13 +1086,13 @@ See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https:/
 
 **an ordinary space in front of a reference lets the line break before the number**
 
-A reference should not begin a line on its own, so a tie belongs in front of it. `~` is an interword space TeX may not break at ([The TeXbook, chapter 14](https://ctan.org/pkg/texbook#chapter-14)).
+A reference should not begin a line on its own, so a tie belongs in front of it. `~` is an interword space TeX may not break at ([The TeXbook, chapter 14](https://ctan.org/pkg/texbook)).
 
 The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20358)).
 
 Fix by writing `Figure~\ref{fig:one}`.
 
-See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook#chapter-14), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20358).
+See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20358).
 
 ### parenthesis-spacing
 
@@ -1059,13 +1116,13 @@ See [chktex 36](https://www.nongnu.org/chktex/), [chktex 37](https://www.nongnu.
 
 **a quotation mark points the wrong way, or a run of them mixes both directions**
 
-A backtick opens a quotation and an apostrophe closes it ([The TeXbook, chapter 2](https://ctan.org/pkg/texbook#chapter-2)). A mark the other way round sets the wrong glyph, and `` `' `` sets an empty quotation.
+A backtick opens a quotation and an apostrophe closes it ([The TeXbook, chapter 2](https://ctan.org/pkg/texbook)). A mark the other way round sets the wrong glyph, and `` `' `` sets an empty quotation.
 
 satex reads the direction from the characters around the mark in the typeset text. An apostrophe inside a word, an elision such as `'90s`, and a prime in math are left alone, and `` `{}` `` counts as two marks because the group stops the ligature.
 
 Fix by turning the mark the right way round.
 
-See [chktex 32](https://www.nongnu.org/chktex/), [chktex 33](https://www.nongnu.org/chktex/), [chktex 34](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https://ctan.org/pkg/texbook#chapter-2).
+See [chktex 32](https://www.nongnu.org/chktex/), [chktex 33](https://www.nongnu.org/chktex/), [chktex 34](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https://ctan.org/pkg/texbook).
 
 ### sentence-spacing
 
@@ -1115,7 +1172,7 @@ See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://githu
 
 **a repeated italic correction, or one in front of a period or comma**
 
-`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4)). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21365)), and one in front of a period or a comma (chktex 28).
+`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook)). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21365)), and one in front of a period or a comma (chktex 28).
 
 satex reads the characters the document set, so it sees through a closing brace: in `\textit{word\/}.` the next character set is the period.
 
@@ -1153,13 +1210,13 @@ See [chktex 20](https://www.nongnu.org/chktex/), [chktex 44](https://www.nongnu.
 
 **a run of hyphens sets a dash of the wrong length for what stands around it**
 
-TeX's text fonts turn `-` into a hyphen, `--` into an en-dash and `---` into an em-dash ([The TeXbook, chapter 2](https://ctan.org/pkg/texbook#chapter-2)).
+TeX's text fonts turn `-` into a hyphen, `--` into an en-dash and `---` into an em-dash ([The TeXbook, chapter 2](https://ctan.org/pkg/texbook)).
 
 The rule reads the characters the document set, following chktex's counts: one or three hyphens between letters, two between digits, three between spaces. `lints.wrong-dash` in `satex.yaml` changes them and its `except` list names spellings to leave alone. A source scan misses that `-{}-` sets two hyphens, the group having broken the ligature, and that every `-` in math is a minus sign.
 
 Fix by writing the run of hyphens the surrounding text calls for.
 
-See [chktex 8](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https://ctan.org/pkg/texbook#chapter-2).
+See [chktex 8](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https://ctan.org/pkg/texbook).
 
 ### wrong-quote-character
 
@@ -1167,13 +1224,13 @@ See [chktex 8](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https:/
 
 **a character that is not a quotation mark stands in for one**
 
-TeX sets a quotation from two backticks and two apostrophes, which the font's ligature program pairs into the marks ([The TeXbook, chapter 2](https://ctan.org/pkg/texbook#chapter-2)).
+TeX sets a quotation from two backticks and two apostrophes, which the font's ligature program pairs into the marks ([The TeXbook, chapter 2](https://ctan.org/pkg/texbook)).
 
 What a straight `"` sets depends on the encoding, so the rule reads `\encodingdefault`: OT1 has a right double quote there, T1 and TU the typewriter one. `´` is an acute accent, not the apostrophe `'`. A prime in math is never reported, and the rule is silent outside an English `\languagename`.
 
 Fix by opening with two backticks and closing with two apostrophes, or with `\enquote{…}` from csquotes.
 
-See [chktex 18](https://www.nongnu.org/chktex/), [chktex 19](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https://ctan.org/pkg/texbook#chapter-2).
+See [chktex 18](https://www.nongnu.org/chktex/), [chktex 19](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https://ctan.org/pkg/texbook).
 
 ### zero-italic-correction
 
@@ -1187,7 +1244,7 @@ Every character carries the font it was set in ([fntguide § 2](https://ctan.org
 
 Fix by deleting the `\/`.
 
-See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21365), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4).
+See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21365), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook).
 
 ### build-bibliography-unneeded
 
@@ -1273,7 +1330,7 @@ See [lmodern § Latin Modern](https://ctan.org/pkg/lm), [fntguide § 5](https://
 
 **the document sets quotation marks by hand instead of loading csquotes**
 
-`\enquote{…}` sets the marks the current language wants, nests an inner quotation inside an outer one, and keeps one spelling for the whole document ([csquotes](https://ctan.org/pkg/csquotes) [§ 3.1](https://ctan.org/pkg/csquotes)).
+`\enquote{…}` sets the marks the current language wants, nests an inner quotation inside an outer one, and keeps one spelling for the whole document ([csquotes](https://ctan.org/pkg/csquotes) [§§ 3](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L195), [1](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L95)).
 
 The rule fires where the run set quotation marks itself and csquotes is not loaded. Apostrophes inside a word and primes in math do not count.
 
@@ -1321,7 +1378,7 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 **a number and its unit are set by hand where siunitx would set them**
 
-`2ms` sets the number and the unit as one word, so the line may break between them and the unit is italic in math. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§ 5.4.3](https://www.bipm.org/en/publications/si-brochure)) asks for a non-breaking space and an upright unit, and [siunitx](https://ctan.org/pkg/siunitx) does both.
+`2ms` sets the number and the unit as one word, so the line may break between them and the unit is italic in math. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§§ 5](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L268), [4](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L231), [3](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L195)) asks for a non-breaking space and an upright unit, and [siunitx](https://ctan.org/pkg/siunitx) does both.
 
 The rule reads what the run typeset: a digit run followed by letters with no space token between them, where the unit is an SI symbol and the document set it itself.
 
@@ -1377,13 +1434,13 @@ See [siunitx § 4.6](https://ctan.org/pkg/siunitx).
 
 **punctuation sits on the wrong side of a formula**
 
-A formula is part of the sentence around it. Punctuation that ends the sentence goes after the closing delimiter of inline math, and inside a display, where it is set on the display's own line ([The TeXbook, chapter 18](https://ctan.org/pkg/texbook#chapter-18)).
+A formula is part of the sentence around it. Punctuation that ends the sentence goes after the closing delimiter of inline math, and inside a display, where it is set on the display's own line ([The TeXbook, chapter 18](https://ctan.org/pkg/texbook)).
 
 The rule reads the mode, so it treats every display alike, whether it came from `\[`, from `$$` or from an `equation` environment, where chktex follows only `\]` and `$$`.
 
 Fix by moving the punctuation to the other side of the delimiter.
 
-See [chktex 40](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https://ctan.org/pkg/texbook#chapter-18).
+See [chktex 40](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https://ctan.org/pkg/texbook).
 
 ### math-shift-dollars
 
@@ -1417,7 +1474,7 @@ See [microtype § 1](https://ctan.org/pkg/microtype), [pdftex § \pdfprotrudecha
 
 **a table column of numbers does not line them up at their decimal mark**
 
-A column of numbers is read by comparing them, which works when each digit stands under the digit of the same place: the units under the units, the decimal marks under each other. An `l` or `c` column sets numbers of different lengths ragged, and an `r` column lines up only numbers with as many decimals. [siunitx](https://ctan.org/pkg/siunitx)'s `S` column aligns them at the decimal mark ([§ 7.12](https://ctan.org/pkg/siunitx) of its manual). Its header, not a number, goes in braces: `{Time}`.
+A column of numbers is read by comparing them, which works when each digit stands under the digit of the same place: the units under the units, the decimal marks under each other. An `l` or `c` column sets numbers of different lengths ragged, and an `r` column lines up only numbers with as many decimals. [siunitx](https://ctan.org/pkg/siunitx)'s `S` column aligns them at the decimal mark ([§§ 7](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L290), [12](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L430) of its manual). Its header, not a number, goes in braces: `{Time}`.
 
 The rule reads the table's source: a column whose cells below the header are all numbers, three or more, set in a column that does not align them.
 
@@ -1429,13 +1486,13 @@ See [siunitx § 7.12](https://ctan.org/pkg/siunitx).
 
 **accented letters are built with `\accent` because the text is set in OT1**
 
-OT1, LaTeX's default text encoding, has no accented letters: it builds each one with the `\accent` primitive (ot1enc.def, [fntguide § 5](https://ctan.org/pkg/fntguide)). TeX does not hyphenate a word holding an `\accent` ([The TeXbook, appendix H](https://ctan.org/pkg/texbook#appendix-h)), and the PDF's text layer holds an accent and a letter instead of the character.
+OT1, LaTeX's default text encoding, has no accented letters: it builds each one with the `\accent` primitive (ot1enc.def, [fntguide § 5](https://ctan.org/pkg/fntguide)). TeX does not hyphenate a word holding an `\accent` ([The TeXbook, appendix H](https://ctan.org/pkg/texbook)), and the PDF's text layer holds an accent and a letter instead of the character.
 
 Every character carries the encoding it was set in, so a document whose default is T1 but which sets one stretch in OT1 is reported for that stretch alone.
 
 Fix by loading `\usepackage[T1]{fontenc}`.
 
-See [source2e § ot1enc.def](https://ctan.org/pkg/source2e), [fntguide § 5](https://ctan.org/pkg/fntguide), [The TeXbook, appendix H](https://ctan.org/pkg/texbook#appendix-h).
+See [source2e § ot1enc.def](https://ctan.org/pkg/source2e), [fntguide § 5](https://ctan.org/pkg/fntguide), [The TeXbook, appendix H](https://ctan.org/pkg/texbook).
 
 ### prefer-cleveref
 
@@ -1473,13 +1530,13 @@ See [chktex 41](https://www.nongnu.org/chktex/), [l2tabu § 1](https://ctan.org/
 
 **three quotation marks in a row set a double and a single mark with nothing between them**
 
-Three backticks in a row set a left double quote followed by a left single quote, glued together ([The TeXbook, chapter 2](https://ctan.org/pkg/texbook#chapter-2)). The reader cannot tell which quotation is the outer one.
+Three backticks in a row set a left double quote followed by a left single quote, glued together ([The TeXbook, chapter 2](https://ctan.org/pkg/texbook)). The reader cannot tell which quotation is the outer one.
 
 satex counts only marks TeX really joined, so a group between two of them already keeps them apart and the rule says nothing.
 
 Fix by putting a thin space `\,` between the double mark and the single one, with the double mark on the outside.
 
-See [chktex 23](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https://ctan.org/pkg/texbook#chapter-2).
+See [chktex 23](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https://ctan.org/pkg/texbook).
 
 ### quote-punctuation
 
@@ -1513,9 +1570,21 @@ See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f
 
 **a table is ruled with vertical rules or `\hline`**
 
-[booktabs](https://ctan.org/pkg/booktabs) gives a table three rules of different weights, `\toprule`, `\midrule` and `\bottomrule`, with space around them, and asks for no vertical rules at all ([§ 2](https://ctan.org/pkg/booktabs) of its manual): the columns are separated by their space, and `\hline` sets every rule alike and too close to the text. A table of fewer rows than `lints.table-rules.rows` (3) is left alone.
+[booktabs](https://ctan.org/pkg/booktabs) gives a table three rules of different weights, `\toprule`, `\midrule` and `\bottomrule`, with space around them, and asks for no vertical rules at all ([§ 2](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L131) of its manual): the columns are separated by their space, and `\hline` sets every rule alike and too close to the text. A table of fewer rows than `lints.table-rules.rows` (3) is left alone.
 
 See [booktabs § 2](https://ctan.org/pkg/booktabs).
+
+### uncited-bibliography-entry
+
+<p class="badges"><code class="num" title="rule number">S055</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
+
+**a database entry is never cited**
+
+An entry no `\cite` names is left out of the bibliography. That is what a shared database is for, so this is only a note. `\nocite{*}` cites everything.
+
+Fix by citing the entry, or by deleting it.
+
+See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
 
 ### unit-in-cells
 
@@ -1523,7 +1592,7 @@ See [booktabs § 2](https://ctan.org/pkg/booktabs).
 
 **every number of a table column carries the same unit**
 
-A unit repeated in every cell of a column says the same thing on each line and pushes the numbers out of alignment. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§ 5.4.1](https://www.bipm.org/en/publications/si-brochure)) heads such a column with the quantity and its unit, as `Time / ms`. With [siunitx](https://ctan.org/pkg/siunitx), `{Time / \unit{ms}}` over an `S` column of bare numbers.
+A unit repeated in every cell of a column says the same thing on each line and pushes the numbers out of alignment. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§§ 5](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L268), [4](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L231), [1](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L95)) heads such a column with the quantity and its unit, as `Time / ms`. With [siunitx](https://ctan.org/pkg/siunitx), `{Time / \unit{ms}}` over an `S` column of bare numbers.
 
 See [SI brochure § 5.4.1](https://www.bipm.org/en/publications/si-brochure), [siunitx § \unit](https://ctan.org/pkg/siunitx).
 

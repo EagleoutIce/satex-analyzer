@@ -738,6 +738,13 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
     #! category: widget
     enabled: true  # "Store in a box": move it to the preamble as a saved box, refused where it reads its position
       #! affects: output
+  history:  # a control sequence the run defined
+    #! category: widget
+    enabled: true  # its definition history: each redefinition and augment, newest first, \let copies linked, definitions on other paths
+      #! affects: output
+    entries: 50  # the events a history lists, newest first, and the calls of its final body it opens
+      #! affects: output
+      #! range: 1..10000
   glossary:  # declared keys: glossary entries, acronyms, abbreviations
     #! category: widget
     enabled: true  # a manager: search, edit fields, add like the document's own, delete or replace uses
@@ -764,6 +771,17 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
     enabled: true  # "Edit tree…": add, delete, rename and drag nodes, node and `for tree` options, indented outlines in
       #! affects: output
       #! example: `enabled: false`: no tree lens, action or dialog
+  pretty:  # a definition's replacement text, as a hover shows it
+    #! category: hover
+    enabled: true  # one statement per line, groups and conditionals indented, long key lists one key per line
+      #! affects: output
+      #! example: `enabled: false`: the body as one line
+    width: 60  # the characters a line holds before a statement or group breaks over lines
+      #! affects: output
+      #! range: 20..400
+    lines: 40  # the lines a hover shows of a body before it stops
+      #! affects: output
+      #! range: 1..1000
   units:  # dimensions: `12pt`, `\textwidth`, a value range
     #! category: hover
     enabled: true  # hover in every unit (each value writes itself) and a converter dialog
