@@ -10,6 +10,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `fix` **Maybe text reads clearly.** One case picker per undecided conditional, glue specs over the glue, numbers and parameters colored alike. [`852b202`](https://github.com/EagleoutIce/satex-analyzer/commit/852b202)
 - `fix` **A waiting widget says so** until it opens. [`3ad933f`](https://github.com/EagleoutIce/satex-analyzer/commit/3ad933f)
 - `fix` **Showcase shots line up.** One height, centered on small screens, the live window at full width, the stepper holding still. [`a49e585`](https://github.com/EagleoutIce/satex-analyzer/commit/a49e585) [`e8fff51`](https://github.com/EagleoutIce/satex-analyzer/commit/e8fff51) [`f267ad8`](https://github.com/EagleoutIce/satex-analyzer/commit/f267ad8) [`6893b28`](https://github.com/EagleoutIce/satex-analyzer/commit/6893b28) [`33b2859`](https://github.com/EagleoutIce/satex-analyzer/commit/33b2859)
 - `feat` **Landing page.** A title page on the first screen, the showcase on a 3D ring that turns with the page, the page layout widget in it. [`fcaada2`](https://github.com/EagleoutIce/satex-analyzer/commit/fcaada2) [`2add106`](https://github.com/EagleoutIce/satex-analyzer/commit/2add106) [`571844b`](https://github.com/EagleoutIce/satex-analyzer/commit/571844b) [`948b2fe`](https://github.com/EagleoutIce/satex-analyzer/commit/948b2fe) [`94af82a`](https://github.com/EagleoutIce/satex-analyzer/commit/94af82a) [`ee7b324`](https://github.com/EagleoutIce/satex-analyzer/commit/ee7b324) [`4813ead`](https://github.com/EagleoutIce/satex-analyzer/commit/4813ead)
@@ -36,6 +37,9 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `fix` **Colors complete only in color arguments**, with swatches on the right line. [`5e6ecba`](https://github.com/EagleoutIce/satex-analyzer/commit/5e6ecba) [`59e9afa`](https://github.com/EagleoutIce/satex-analyzer/commit/59e9afa) [`d05aa00`](https://github.com/EagleoutIce/satex-analyzer/commit/d05aa00)
 - `fix` **Lenses and widget marks** refresh after the run and survive stale positions. [`7def1e2`](https://github.com/EagleoutIce/satex-analyzer/commit/7def1e2) [`90187ce`](https://github.com/EagleoutIce/satex-analyzer/commit/90187ce) [`b1814c5`](https://github.com/EagleoutIce/satex-analyzer/commit/b1814c5) [`50e1339`](https://github.com/EagleoutIce/satex-analyzer/commit/50e1339)
 - `fix` **Hovers lead with the signature.** [`88ce1d0`](https://github.com/EagleoutIce/satex-analyzer/commit/88ce1d0) [`cbe1c54`](https://github.com/EagleoutIce/satex-analyzer/commit/cbe1c54)
+- `feat` **Drawing canvas: every node shape** pgf knows, libraries not loaded too, each drawn from a TeX sample, and arrows take clicks. [`6f563ba`](https://github.com/EagleoutIce/satex-analyzer/commit/6f563ba)
+- `feat` **Bibliography as a reference manager.** A list with search, type badges and filters beside a checked editor, `@string` constants, import from DOI, arXiv, RIS, CSL-JSON and Zotero, a dblp check, duplicate and missing-field lints. [`80dc7f3`](https://github.com/EagleoutIce/satex-analyzer/commit/80dc7f3)
+- `feat` **Definition history.** Every redefinition and augment of a command, newest first, with `\let` copies followed and definitions on other paths. Bodies on hover are pretty-printed, a toggle shows them raw. [`50cef71`](https://github.com/EagleoutIce/satex-analyzer/commit/50cef71)
 - `feat` **Drag the margins** in the page layout graphic. Under KOMA-Script the drag sets `DIV`. [`e7c66b0`](https://github.com/EagleoutIce/satex-analyzer/commit/e7c66b0)
 - `feat` **Table, image, placement, tree, color and TikZ widgets write only what changed.** Packages they need come from the installation, not a list. [`8a85ba6`](https://github.com/EagleoutIce/satex-analyzer/commit/8a85ba6) [`19c240b`](https://github.com/EagleoutIce/satex-analyzer/commit/19c240b) [`680109d`](https://github.com/EagleoutIce/satex-analyzer/commit/680109d)
 - `feat` **Page layout per class.** KOMA-Script keeps `DIV` and `BCOR`, memoir and the standard classes get geometry suggested. Edits keep every untouched byte. See [type plugins](doc/wiki/type-plugins.md). [`87b10d2`](https://github.com/EagleoutIce/satex-analyzer/commit/87b10d2)
@@ -72,6 +76,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **TeX behaviours checked against pdfTeX.** `\meaning` of a `\noexpand`ed macro, `\toks0=\bgroup`, the always global `\deadcycles`, `\ifx` of different parameter characters, `^^` after a control word and `\scantokens` now give what pdfTeX gives. [`edf5490`](https://github.com/EagleoutIce/satex-analyzer/commit/edf5490)
 - `fix` **A catcode set for an unknown character leaves braces alone.** `{`, `}` and `\` keep their category, a named and configurable assumption. [`8a2804c`](https://github.com/EagleoutIce/satex-analyzer/commit/8a2804c)
 - `fix` **Names built from unknown text stay few.** A family written once per record widens to one typed text instead of one path per record. See [domains](doc/wiki/domains.md). [`0231561`](https://github.com/EagleoutIce/satex-analyzer/commit/0231561)
 - `fix` **Class options no longer stale every package cache.** Only the class replays them. [`3f9142f`](https://github.com/EagleoutIce/satex-analyzer/commit/3f9142f)
@@ -108,7 +113,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site and docs
 
-- `feat` **Landing page.** The first cards show on the first screen, plugin groups show at a glance, lint rules get their own shot, quick fixes and settings join the ring. [`0f26102`](https://github.com/EagleoutIce/satex-analyzer/commit/0f26102) [`aa78dab`](https://github.com/EagleoutIce/satex-analyzer/commit/aa78dab)
+- `feat` **Command output on the docs pages** is highlighted, and its cards link to the docs. [`6c3b6de`](https://github.com/EagleoutIce/satex-analyzer/commit/6c3b6de)
+- `feat` **Landing page.** The first cards show on the first screen, plugin groups show at a glance, lint rules get their own shot, quick fixes and settings join the ring, the build runs as stacked `.aux` cards, before and after overlap. [`0f26102`](https://github.com/EagleoutIce/satex-analyzer/commit/0f26102) [`aa78dab`](https://github.com/EagleoutIce/satex-analyzer/commit/aa78dab) [`3cce155`](https://github.com/EagleoutIce/satex-analyzer/commit/3cce155) [`35b22af`](https://github.com/EagleoutIce/satex-analyzer/commit/35b22af)
 - `docs` **Wiki** on the type lattice, precision limits and why TeX is hard, regenerated from the code. See [why TeX is hard](doc/wiki/challenges.md). [`5083317`](https://github.com/EagleoutIce/satex-analyzer/commit/5083317) [`ea975ed`](https://github.com/EagleoutIce/satex-analyzer/commit/ea975ed) [`85e15a6`](https://github.com/EagleoutIce/satex-analyzer/commit/85e15a6)
 - `feat` **Hover cards** for control sequences. [`3b86d4b`](https://github.com/EagleoutIce/satex-analyzer/commit/3b86d4b)
 - `docs` **This changelog**, with a page on the site. [`0a4854c`](https://github.com/EagleoutIce/satex-analyzer/commit/0a4854c)
