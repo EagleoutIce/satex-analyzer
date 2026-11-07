@@ -1450,6 +1450,18 @@ button.draw-cat { border: 0; font: inherit; font-size: .68rem; cursor: pointer; 
 .claim-steps { position: relative; z-index: 2; display: grid; gap: .1rem; width: max-content; max-width: 100%; margin: .6rem auto 0; padding: .3rem; list-style: none; text-align: left; pointer-events: none;
   font: 400 .8rem system-ui, sans-serif; color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: var(--shadow); opacity: 0; transform: translateY(-.2rem); transition: opacity .3s var(--ease), transform .3s var(--ease); }
 .claim-rot > span.shows .claim-steps { opacity: 1; transform: none; }
+/* the runs: three .aux cards of one size, stacked down right, the newest in front; the stack takes one card's height plus the offsets */
+.claim-runs { --dx: 14px; --dy: 9px; position: relative; z-index: 2; width: min(19rem, 100%); height: calc(4.6rem + 2 * var(--dy)); margin: .6rem auto 0; text-align: left; pointer-events: none; }
+.claim-runs .rn { position: absolute; left: 0; top: 0; width: calc(100% - 2 * var(--dx)); height: 4.6rem; box-sizing: border-box; padding: .35rem .6rem; display: grid; gap: .15rem; align-content: start;
+  font: 400 .78rem system-ui, sans-serif; color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: var(--shadow);
+  opacity: 0; translate: calc(var(--i) * var(--dx)) calc(var(--i) * var(--dy) - .2rem); transition: opacity .3s var(--ease) calc(var(--i) * .35s), translate .3s var(--ease) calc(var(--i) * .35s); }
+.claim-rot > span.shows .claim-runs .rn { opacity: 1; translate: calc(var(--i) * var(--dx)) calc(var(--i) * var(--dy)); }
+.claim-runs .rn-head { display: flex; justify-content: space-between; font-size: .7rem; color: var(--muted); }
+.claim-runs .rn-line { display: flex; gap: .4rem; align-items: baseline; padding: 0 .3rem; border-radius: var(--r-ctl); font-family: var(--mono, ui-monospace, monospace); }
+.claim-runs .rn-line b { width: .7em; color: var(--muted); font-weight: 600; } .claim-runs .rn-line code { font-weight: 400; text-decoration: none !important; }
+.claim-runs .rn-add .rn-line { background: color-mix(in srgb, #2da44e 16%, transparent); } .claim-runs .rn-add .rn-line b { color: #2da44e; }
+.claim-runs .rn-same .rn-line code { color: var(--muted); font-style: italic; }
+.claim-runs .rn-note { font-size: .72rem; color: var(--muted); }
 /* the call and the trace's first row share one tint; a notch points from the card up at the call */
 .claim-rot code.claim-call, .claim-steps li:nth-child(2) .st-tk { background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: var(--r-tag); }
 .claim-rot code.claim-call { padding: 0 .15em; }

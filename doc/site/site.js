@@ -1757,7 +1757,11 @@
     // the drawing pad's answer: a stroke draws itself, then the best matches and their macros; the card links to /draw
     const HITS = [['ρ', '\\rho'], ['ϱ', '\\varrho'], ['℘', '\\wp']];
     const sketchPad = () => `<a class="claim-draw" href="draw/index.html" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 24 24"><path pathLength="1" d="M8 22V9C8 3 20 3 20 10c0 6-9 6-12 2"/></svg><ol>${HITS.map(([s, c], i) => `<li style="--i:${i}"><span class="dr-sym">${s}</span><code class="dr-cmd">${esc(c)}</code></li>`).join('')}</ol></a>`;
+    // the build's runs: the .aux after each, one card per run stacked with a slight offset, the newest in front
+    const RUNS = [['run 1', '+', '\\newlabel{sec:intro}{{1}{2}}', '\\ref{sec:intro} → ??'], ['run 2', ' ', '\\newlabel{sec:intro}{{1}{2}}', '\\ref{sec:intro} → 1'], ['run 3', '=', 'no change', 'two runs suffice']];
+    const runCards = () => `<div class="claim-runs" aria-hidden="true">${RUNS.map(([run, mark, text, note], i) => `<div class="rn rn-${mark === '+' ? 'add' : mark === '=' ? 'same' : 'keep'}" style="--i:${i}"><div class="rn-head"><span>main.aux</span><span>after ${run}</span></div><div class="rn-line"><b>${esc(mark)}</b><code>${esc(text)}</code></div><div class="rn-note">${esc(note)}</div></div>`).join('')}</div>`;
     const effect = () => {
+      if (effects[shown] === 'runs') { line.insertAdjacentHTML('beforeend', runCards()); return true; }
       if (effects[shown] === 'draw') { line.insertAdjacentHTML('beforeend', sketchPad()); return true; }
       if (effects[shown] === 'stepper') {
         // the trace hangs under the call it traces, its notch pointing at it, the call tinted as in the trace's first row
