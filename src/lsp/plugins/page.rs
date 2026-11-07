@@ -5,6 +5,7 @@
 //! lens on `\documentclass` and geometry's calls, a link on their keys' hover, and on a
 //! sectioning command or a blank line.
 
+use super::super::snapshot::{self, Arg, Node, Package};
 use super::{Cx, Group, Hit, TypePlugin, call_at, span};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::Ty;
@@ -182,19 +183,28 @@ fn sections<'a>(analysis: &'a Analysis, path: &str) -> impl Iterator<Item = &'a 
     analysis.facts.occurrences.iter().filter(move |o| o.kind == OccKind::Section && Some(o.span.file) == file)
 }
 
-/// Where a key list is written: the text there, and the template of what replaces it (`${options}`).
-fn target(doc: &Text, from: usize, to: usize, template: &str, note: Option<String>) -> Json {
-    json!({ "range": span(doc, from, to), "options": &doc.body()[from..to], "template": template, "note": note })
+/// The call at `at` as a snapshot node, its first argument a key list (`options`: the first
+/// `[…]`, an unwritten one when there is none).
+fn keyed(doc: &Text, at: usize, options: bool) -> Option<Json> {
+    serde_json::to_value(snapshot::read(doc, at, &[0], options)?).ok()
 }
 
-/// The options of a call: its first `[…]`, else an empty `[…]` written after its name.
-fn options_of(doc: &Text, call: &Call, name: &str) -> Json {
-    match call.1.iter().find(|g| g.open == '[') {
-        Some(g) => target(doc, g.inner.start, g.inner.end, "${options}", None),
-        None => {
-            let at = call.0 + name.len() + 1;
-            target(doc, at, at, "[${options}]", None)
-        }
+/// A new call before `\begin{document}`, its first argument an empty key list.
+fn new_call(doc: &Text, at: usize, name: &str, args: Vec<Arg>, note: Option<&str>) -> Json {
+    let mut n = serde_json::to_value(Node::new_call(name, args, span(doc, at, at).start)).unwrap_or_default();
+    n["note"] = json!(note);
+    n
+}
+
+/// The class family the run met: `koma` with typearea, `memoir` with memoir's layout macros, else `basic`.
+fn family(a: &Analysis) -> &'static str {
+    let defined = |n: &str| a.interner.lookup(n).is_some_and(|s| !matches!(a.env.meaning(s), Meaning::Undefined));
+    if loaded(a, "typearea") {
+        "koma"
+    } else if defined("checkandfixthelayout") {
+        "memoir"
+    } else {
+        "basic"
     }
 }
 
@@ -221,27 +231,23 @@ fn view(cx: &Cx, parts: &Parts) -> Json {
     let before_document = line_start(parts.begin);
     // geometry: its last `\geometry` in the preamble, else its `\usepackage`, else a new load
     let geometry = loaded(a, "geometry");
-    let set = calls(text, "geometry", 0, parts.begin).pop().and_then(|c| {
-        let g = c.1.iter().find(|g| g.open == '{')?;
-        Some(target(doc, g.inner.start, g.inner.end, "${options}", None))
-    });
-    let global = set.or_else(|| loads(text, parts.begin, "geometry").first().map(|c| options_of(doc, c, "usepackage")));
+    let set = calls(text, "geometry", 0, parts.begin).pop().and_then(|c| keyed(doc, c.0, false));
+    let global = set.or_else(|| loads(text, parts.begin, "geometry").first().and_then(|c| keyed(doc, c.0, true)));
     let global = global.unwrap_or_else(|| match geometry {
-        true => target(doc, before_document, before_document, "\\geometry{${options}}\n", None),
-        false => target(
+        true => new_call(doc, before_document, "geometry", vec![Arg::keys('{', Vec::new())], None),
+        false => new_call(
             doc,
             before_document,
-            before_document,
-            "\\usepackage[${options}]{geometry}\n",
-            Some("adds \\usepackage{geometry}".into()),
+            "usepackage",
+            vec![Arg::keys('[', Vec::new()), Arg::text('{', "geometry")],
+            Some("adds \\usepackage{geometry}"),
         ),
     });
     // typearea: its options where the run loaded it, the class's when the class did
     let koma = loaded(a, "typearea")
         .then(|| {
-            let own =
-                loads(text, parts.begin, "typearea").into_iter().next().map(|c| options_of(doc, &c, "usepackage"));
-            let mut t = own.or_else(|| parts.class.as_ref().map(|c| options_of(doc, c, "documentclass")))?;
+            let own = loads(text, parts.begin, "typearea").into_iter().next().and_then(|c| keyed(doc, c.0, true));
+            let mut t = own.or_else(|| parts.class.as_ref().and_then(|c| keyed(doc, c.0, true)))?;
             t["div"] = json!(count(a, "ta@div").filter(|d| *d > 3));
             t["bcor"] = json!(super::register_value(a, "ta@bcor").map(|v| v.lo));
             Some(t)
@@ -255,20 +261,20 @@ fn view(cx: &Cx, parts: &Parts) -> Json {
         .filter_map(|o| Some(json!({ "title": o.key, "level": o.detail, "at": at_line(o.span.line)? })))
         .collect();
     let end = span(doc, line_start(parts.end), line_start(parts.end)).start;
-    let load = (!geometry).then(
-        || json!({ "range": span(doc, before_document, before_document), "newText": "\\usepackage[pass]{geometry}\n" }),
-    );
+    // `\newgeometry` loads geometry with `pass` when the run has none: the layout elsewhere stays
+    let package = (!geometry).then(|| Package { name: "geometry".into(), options: "pass".into() });
     let unit = ["cm", "mm"].into_iter().find(|u| cfg.units.iter().any(|c| c == u)).unwrap_or("pt");
     json!({ "title": "Page layout", "sections": [{
         "kind": "page",
         "run": run,
         "twoside": twoside,
+        "family": family(a),
         "class": a.facts.loads.iter().find(|l| l.kind == crate::engine::builtins::LoadKind::Class).map(|l| &l.name),
         "papers": papers(a),
         "units": units,
         "unit": unit,
         "decimals": cfg.decimals,
-        "geometry": { "loaded": geometry, "global": global, "load": load },
+        "geometry": { "loaded": geometry, "global": global, "package": package },
         "koma": koma,
         "part": { "here": here, "marks": marks, "end": end },
         "header": header(cx, parts),
@@ -326,15 +332,14 @@ fn header(cx: &Cx, parts: &Parts) -> Json {
     let before_document = text[..parts.begin].rfind('\n').map_or(0, |n| n + 1);
     let Some((package, names)) = package else {
         return json!({ "package": null, "insert": span(doc, before_document, before_document).start,
-            "load": "\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n" });
+            "load": { "name": "fancyhdr" } });
     };
     let mut found: Vec<(usize, Json)> = Vec::new();
     for name in names.iter() {
-        for (at, groups, end) in calls_of(text, name, 0, parts.begin) {
-            let arg = |open: char| groups.iter().find(|g| g.open == open).map(|g| &text[g.inner.clone()]);
-            let (from, to) = super::lines_of(text, at, end);
-            let args: Vec<&str> = groups.iter().filter(|g| g.open == '{').map(|g| &text[g.inner.clone()]).collect();
-            found.push((at, json!({ "name": name, "opt": arg('['), "args": args, "range": span(doc, from, to) })));
+        for (at, ..) in calls_of(text, name, 0, parts.begin) {
+            found.extend(
+                snapshot::read(doc, at, &[], false).and_then(|n| serde_json::to_value(n).ok()).map(|n| (at, n)),
+            );
         }
     }
     found.sort_by_key(|(at, _)| *at);
@@ -347,7 +352,7 @@ fn header(cx: &Cx, parts: &Parts) -> Json {
         "package": package,
         "calls": found.into_iter().map(|(_, c)| c).collect::<Vec<_>>(),
         "insert": span(doc, insert, insert).start,
-        "style": (*package == "fancyhdr" && !fancy).then_some("\\pagestyle{fancy}\n"),
+        "style": *package == "fancyhdr" && !fancy,
         "rules": { "head": macro_text(a, "headrulewidth"), "foot": macro_text(a, "footrulewidth") },
     })
 }

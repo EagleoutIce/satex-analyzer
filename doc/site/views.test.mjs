@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 
 globalThis.self = globalThis;
 createRequire(import.meta.url)('./lengths.js');
+createRequire(import.meta.url)('./snapshot.js');
 createRequire(import.meta.url)('./views.js');
 const { parse, emit, mermaidIn, mermaidOut, importMermaid } = self.satexViews.drawing;
 
@@ -646,69 +647,84 @@ assert.equal(layers.length('1.5em', { em: 10 }).pt, 15);
 assert.deepEqual([layers.length('0cm'), layers.length('cm'), layers.length('-1pt')], [null, null, null]);
 assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layout', ['glue', 'geometry', 'grid']]]);
 
-// page layout: the run's lengths as body margins; Apply writes geometry's keys of what changed,
-// typearea's DIV and BCOR, \newgeometry around a part, fancyhdr's fields grouped by text
+// page layout: the run's lengths as body margins; Apply sends snapshots the server prints:
+// geometry's keys of what changed, typearea's DIV and BCOR, \newgeometry around a part, fancyhdr's fields grouped by text
 {
-  const P = self.satexViews.page;
+  const P = self.satexViews.page, S = self.satexSnapshot;
   const cm = 72.27 / 2.54 * 65536, two = [2 * cm, 2 * cm].map(Math.round);
   const at = (line) => ({ line, character: 0 }), here = { start: at(1), end: at(1) };
   const same = (v) => [v, v];
+  // a call as the server reads it (src/lsp/snapshot.rs `read`)
+  const read = (name, opts, req) => ({ kind: 'call', name, star: false, range: here, text: `\\${name}[${opts}]{${req}}`, line: false, drop: false,
+    args: [{ open: '[', inner: [0, 0], text: opts, keys: opts.split(',').map((o) => o.split('=')).map(([key, value]) => ({ key, value: value ?? null })) }, { open: '{', inner: [0, 0], text: req }] });
+  const pairs = (n) => S.list(n).map((k) => k.value == null ? k.key : `${k.key}=${k.value}`);
   const s = {
     run: { paperwidth: same(40258437), paperheight: same(52099153), textwidth: same(32799719), textheight: same(44640435), oddsidemargin: same(-1006927), evensidemargin: same(-1006927),
       topmargin: same(-3431759), headheight: same(786432), headsep: same(1638400), footskip: same(1966080), marginparwidth: same(4259840), marginparsep: same(720896) },
-    twoside: false, papers: [{ name: 'a4paper', w: 39158276, h: 55380990 }, { name: 'legalpaper', w: 40258437, h: 66331225 }, { name: 'letterpaper', w: 40258437, h: 52099153 }], units: [{ name: 'cm', sp: cm }, { name: 'pt', sp: 65536 }], unit: 'cm', decimals: 2,
-    geometry: { loaded: true, global: { range: here, options: 'margin=2cm', template: '${options}' }, load: null }, koma: null,
+    twoside: false, family: 'basic', papers: [{ name: 'a4paper', w: 39158276, h: 55380990 }, { name: 'legalpaper', w: 40258437, h: 66331225 }, { name: 'letterpaper', w: 40258437, h: 52099153 }], units: [{ name: 'cm', sp: cm }, { name: 'pt', sp: 65536 }], unit: 'cm', decimals: 2,
+    geometry: { loaded: true, global: read('usepackage', 'margin=2cm', 'geometry'), package: null }, koma: null,
     part: { here: at(3), marks: [{ title: 'One', level: 'section', at: at(5) }], end: at(7) },
-    header: { package: null, insert: at(2), load: '\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n' },
+    header: { package: null, insert: at(2), load: { name: 'fancyhdr' } },
   };
   const len = (sp) => `${+(sp / cm).toFixed(2)}cm`;
   const st0 = P.pageOf(s);
   assert.deepEqual([st0.left, st0.right, st0.top, st0.bottom].map((v) => Math.abs(v - two[0]) < 2), [true, true, true, true], 'margin=2cm on all sides');
   assert.equal(st0.paper, 'letterpaper', '21.59 x 27.94 cm is letter, not custom');
-  assert.deepEqual(P.pageEdits(s, st0, structuredClone(st0), len), [], 'nothing changed, nothing written');
-  // a wider left margin: the margin group written anew, the text narrower
+  assert.deepEqual(P.pageNodes(s, st0, structuredClone(st0), len), [], 'nothing changed, nothing sent');
+  // a wider left margin: the margin group set anew, the text narrower
   const wide = { ...structuredClone(st0), left: Math.round(3 * cm) };
-  assert.deepEqual(P.pageEdits(s, st0, wide, len), [{ range: here, newText: 'left=3cm, right=2cm, top=2cm, bottom=2cm' }]);
+  const [w] = P.pageNodes(s, st0, wide, len);
+  assert.deepEqual([w.range, pairs(w)], [here, ['left=3cm', 'right=2cm', 'top=2cm', 'bottom=2cm']]);
+  assert.deepEqual(pairs(s.geometry.global), ['margin=2cm'], 'the view keeps its snapshot as opened');
   // another paper: its name, the margins kept as written
   const a4 = { ...structuredClone(st0), paper: 'a4paper', pw: 39158276, ph: 55380990 };
-  assert.equal(P.pageEdits(s, st0, a4, len)[0].newText, 'margin=2cm, a4paper');
+  assert.deepEqual(pairs(P.pageNodes(s, st0, a4, len)[0]), ['margin=2cm', 'a4paper']);
   // these pages only: \newgeometry at the cursor, \restoregeometry before the section
   const part = { ...structuredClone(wide), scope: 'part', from: 'here', to: '0' };
-  assert.deepEqual(P.pageEdits(s, st0, part, len).map((e) => [e.range.start.line, e.newText]), [
-    [3, '\\newgeometry{left=3cm, right=2cm, top=2cm, bottom=2cm, headheight=0.42cm, headsep=0.88cm, footskip=1.05cm, marginparwidth=2.28cm, marginparsep=0.39cm}\n'], [5, '\\restoregeometry\n']]);
-  // without geometry: it is loaded with `pass`, the layout elsewhere kept
-  const bare = { ...s, geometry: { ...s.geometry, loaded: false, load: { range: here, newText: '\\usepackage[pass]{geometry}\n' } } };
-  assert.equal(P.pageEdits(bare, st0, { ...part, to: 'end' }, len).map((e) => e.newText).join('').split('\n').length, 3, 'a load and \\newgeometry, no \\restoregeometry');
-  // typearea: DIV and BCOR as class options, in their spacing
-  const koma = { ...s, koma: { range: here, options: 'DIV=10,BCOR=5mm', template: '${options}', div: 10, bcor: Math.round(cm / 2) } };
+  const [ng, rg] = P.pageNodes(s, st0, part, len);
+  assert.deepEqual([ng.name, ng.at, ng.range, pairs(ng), rg.name, rg.at, rg.args], ['newgeometry', at(3), null,
+    ['left=3cm', 'right=2cm', 'top=2cm', 'bottom=2cm', 'headheight=0.42cm', 'headsep=0.88cm', 'footskip=1.05cm', 'marginparwidth=2.28cm', 'marginparsep=0.39cm'], 'restoregeometry', at(5), []]);
+  // without geometry: the new calls load it with `pass`, the layout elsewhere kept
+  const pass = { name: 'geometry', options: 'pass' };
+  const bare = { ...s, geometry: { ...s.geometry, loaded: false, package: pass } };
+  assert.deepEqual(P.pageNodes(bare, st0, { ...part, to: 'end' }, len).map((n) => [n.name, n.package]), [['newgeometry', pass]], 'no \\restoregeometry');
+  // typearea: DIV and BCOR as class options, only what changed set
+  const koma = { ...s, family: 'koma', koma: { ...read('documentclass', 'DIV=10,BCOR=5mm', 'scrartcl'), div: 10, bcor: Math.round(cm / 2) } };
   const k0 = P.pageOf(koma);
   assert.equal(k0.mode, 'koma');
   assert.deepEqual([k0.paper, k0.div], ['letterpaper', 10], 'typearea keeps its DIV beside the detected paper');
-  assert.deepEqual(P.pageEdits(koma, k0, { ...structuredClone(k0), div: 12 }, len), [{ range: here, newText: 'DIV=12,BCOR=0.5cm' }]);
+  assert.deepEqual(P.pageNodes(koma, k0, { ...structuredClone(k0), div: 12 }, len).map(pairs), [['DIV=12', 'BCOR=5mm']]);
   const box = P.pageBox({ ...k0, div: 12, ran: null }, true);
   assert.ok(Math.abs(2 * (box.left - k0.bcor) - box.right) < 2, 'two-sided: the outer margin twice the inner');
   // fancyhdr: the fields its calls set, written back grouped by text
-  const call = (name, opt, args, line) => ({ name, opt, args, range: { start: at(line), end: at(line + 1) } });
+  const call = (name, opt, args, line) => ({ kind: 'call', name, range: { start: at(line), end: at(line + 1) }, text: '', args: [...(opt == null ? [] : [{ open: '[', text: opt }]), ...args.map((t) => ({ open: '{', text: t }))] });
   const h = { package: 'fancyhdr', insert: at(2), rules: { head: '0.4pt', foot: '0pt' },
     calls: [call('fancyhf', null, [''], 2), call('fancyhead', 'LE,RO', ['\\thepage'], 3), call('fancyfoot', 'C', ['draft'], 4)] };
   const m = P.headerOf(h, true);
   assert.deepEqual([m.head.EL, m.head.OR, m.head.OL, m.foot.EC, m.foot.OC], ['\\thepage', '\\thepage', '', 'draft', 'draft']);
-  assert.equal(P.headerText(m, true, true), '\\fancyhf{}\n\\fancyhead[LE,RO]{\\thepage}\n\\fancyfoot[CE,CO]{draft}');
-  assert.deepEqual(P.headerEdits(h, P.headerOf(h, true), true), [], 'untouched, nothing written');
+  assert.deepEqual(P.headerCalls(m, true, true), [['fancyhf', null, ['']], ['fancyhead', 'LE,RO', ['\\thepage']], ['fancyfoot', 'CE,CO', ['draft']]]);
+  assert.deepEqual(P.headerNodes(h, P.headerOf(h, true), true), [], 'untouched, nothing sent');
   const m2 = P.headerOf(h, true);
   m2.head.OL = 'Title'; m2.rules.head = '0pt';
-  assert.deepEqual(P.headerEdits(h, m2, true).map((e) => e.newText), ['\\fancyhf{}\n\\fancyhead[LE,RO]{\\thepage}\n\\fancyhead[LO]{Title}\n\\fancyfoot[CE,CO]{draft}\n\\renewcommand{\\headrulewidth}{0pt}\n', '', '']);
+  const shown = (n) => n.drop ? `-${n.name}` : `${n.name}${n.args.map((a) => a.open + a.text).join('')}@${n.at.line}`;
+  assert.deepEqual(P.headerNodes(h, m2, true).map(shown), ['-fancyhf', '-fancyhead', '-fancyfoot', 'fancyhf{@2', 'fancyhead[LE,RO{\\thepage@2', 'fancyhead[LO{Title@2', 'fancyfoot[CE,CO{draft@2', 'renewcommand{\\headrulewidth{0pt@2']);
   // scrlayer-scrpage: one call per field, the plain style's text kept
   const ks = { package: 'scrlayer-scrpage', insert: at(2), calls: [call('ohead', 'x', ['\\pagemark'], 2)] };
   const km = P.headerOf(ks, true);
   km.foot.Oc = 'draft';
-  assert.deepEqual(P.headerEdits(ks, km, true).map((e) => e.newText), ['\\ohead[x]{\\pagemark}\n\\cfoot{draft}\n']);
-  // none loaded: fancyhdr with \pagestyle{fancy} before the fields
-  const none = { package: null, insert: at(2), load: '\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n' };
+  assert.deepEqual(P.headerNodes(ks, km, true).map(shown), ['-ohead', 'ohead[x{\\pagemark@2', 'cfoot{draft@2']);
+  // none loaded: \pagestyle{fancy} before the fields, fancyhdr loaded by the server for them
+  const none = { package: null, insert: at(2), load: { name: 'fancyhdr' } };
   const nm = P.headerOf(none, false);
   Object.assign(nm, { package: 'fancyhdr' });
   nm.head.OR = '\\thepage';
-  assert.deepEqual(P.headerEdits(none, nm, false).map((e) => e.newText), ['\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n\\fancyhf{}\n\\fancyhead[R]{\\thepage}\n']);
+  const nn = P.headerNodes(none, nm, false);
+  assert.deepEqual(nn.map(shown), ['pagestyle{fancy@2', 'fancyhf{@2', 'fancyhead[R{\\thepage@2']);
+  assert.deepEqual(nn[1].package, { name: 'fancyhdr' });
+  // the snapshot helper: kept keys stay in place, a dropped group's keys go, bare keys stay bare
+  const g = read('geometry', 'left=1cm,top=2cm,a4paper', '');
+  S.setKeys(g, ['left', 'top', 'right'], [['top', '3cm'], ['right', '1cm']]);
+  assert.deepEqual(pairs(g), ['top=3cm', 'a4paper', 'right=1cm']);
   console.log('page model: ok');
 }
 

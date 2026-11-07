@@ -3,6 +3,7 @@ out/
 *.vsix
 bin/
 media/lengths.js
+media/snapshot.js
 media/views.js
 media/dialogs.js
 media/satex.schema.json

@@ -1951,7 +1951,8 @@
   RENDER.forest = forest;
 
   // page layout (page plugin): LaTeX's page model in sp as the run computed it, edited as body
-  // margins; written as geometry's keys, typearea's DIV and BCOR, or `\newgeometry` around a part
+  // margins; geometry's keys, typearea's DIV and BCOR, `\newgeometry` around a part, set in the
+  // server's snapshots (snapshot.js), which the server prints
   const ONE_IN = 4736286; // 1in in sp (TeXbook p. 57)
   /** geometry's keys by what they set: a changed group drops its keys and writes its own. */
   const GEOMETRY = {
@@ -1974,8 +1975,8 @@
     const left = ONE_IN + mid('hoffset') + mid('oddsidemargin'), top = ONE_IN + mid('voffset') + mid('topmargin') + mid('headheight') + mid('headsep');
     // a paper within a point of the run's (geometry's sizes in mm, the class's in pt), the one the source names first
     const fits = (s.papers ?? []).filter((p) => Math.abs(p.w - pw) < 65536 && Math.abs(p.h - ph) < 65536);
-    const written = [s.geometry?.global?.options, s.koma?.options].join(',');
-    const paper = (fits.find((p) => opts(written).some((o) => kv(o)[0] === p.name || kv(o)[1] === p.name)) ?? fits[0])?.name ?? '';
+    const written = [s.geometry?.global, s.koma].flatMap((n) => (n && self.satexSnapshot.list(n)) ?? []);
+    const paper = (fits.find((p) => written.some((k) => k.key === p.name || k.value === p.name)) ?? fits[0])?.name ?? '';
     const bcor = s.koma?.bcor ?? 0;
     return {
       mode: s.koma ? 'koma' : 'geometry', paper, pw, ph, left, right: pw - left - tw, top, bottom: ph - top - th,
@@ -2005,43 +2006,40 @@
   /** The groups whose lengths differ between two states. */
   const changedGroups = (a, b) => Object.entries({ paper: ['paper', 'pw', 'ph'], margins: ['left', 'right', 'top', 'bottom', 'div', 'bcor', 'mode'], head: ['headheight', 'headsep', 'footskip'], marginpar: ['mpwidth', 'mpsep'] })
     .filter(([, ks]) => ks.some((k) => typeof a[k] === 'number' ? Math.abs(a[k] - b[k]) > 1 : a[k] !== b[k])).map(([g]) => g);
-  /** A key list as written, the keys `drop` dropped, `keys` added, in the list's own spacing. */
-  function setKeys(written, drop, keys) {
-    const kept = opts(written).filter((o) => !drop.includes(kv(o)[0]));
-    return [...kept, ...keys.map(([k, v]) => v === '' ? k : `${k}=${v}`)].join(/,[^\S\n]/.test(written) || !written.includes(',') ? ', ' : ',');
-  }
-  /** geometry's keys of `groups` dropped (papers by name too) and written anew. */
-  const regroup = (s, written, groups, keys) => setKeys(written, groups.flatMap((g) => GEOMETRY[g]).concat(groups.includes('paper') ? (s.papers ?? []).map((p) => p.name) : []), groups.flatMap((g) => keys[g]));
-  /** The edits that write `st` over the view's `s` as it opened (`st0`): geometry or typearea for the whole document, `\newgeometry` around a part. */
-  function pageEdits(s, st0, st, len) {
-    const two = !!s.twoside, out = [];
-    const put = (t, options) => out.push({ range: t.range, newText: fill(t.template, { options }) });
+  /** geometry's keys of `groups` dropped (papers by name too) and set anew in `node`. */
+  const regroup = (s, node, groups, keys) => self.satexSnapshot.setKeys(node, groups.flatMap((g) => GEOMETRY[g]).concat(groups.includes('paper') ? (s.papers ?? []).map((p) => p.name) : []), groups.flatMap((g) => keys[g]));
+  /** The snapshots that write `st` over the view's `s` as it opened (`st0`): geometry or typearea for the whole document, `\newgeometry` around a part. */
+  function pageNodes(s, st0, st, len) {
+    const S = self.satexSnapshot, two = !!s.twoside, out = [];
     if (st.scope === 'part') {
       const at = (k) => k === 'here' ? s.part.here : k === 'end' ? null : s.part.marks[+k]?.at;
       const keys = geometryKeys(st, two, len), from = at(st.from), to = at(st.to);
-      const list = [...keys.margins, ...keys.head, ...keys.marginpar].map(([k, v]) => `${k}=${v}`).join(', ');
-      if (s.geometry.load) out.push(s.geometry.load);
-      out.push({ range: { start: from, end: from }, newText: `\\newgeometry{${list}}\n` });
-      if (to) out.push({ range: { start: to, end: to }, newText: '\\restoregeometry\n' });
+      out.push(S.call('newgeometry', [S.keys('{', [...keys.margins, ...keys.head, ...keys.marginpar])], from, s.geometry.package));
+      if (to) out.push(S.call('restoregeometry', [], to, s.geometry.package));
     } else {
       let groups = changedGroups(st0, st);
       const keys = geometryKeys(st, two, len);
       // typearea's margins are class options; the rest geometry's keys
       if (st.mode === 'koma' && s.koma && groups.includes('margins')) {
-        put(s.koma, setKeys(s.koma.options, ['DIV', 'BCOR'], [['DIV', String(st.div)], ['BCOR', len(st.bcor)]]));
+        const k = structuredClone(s.koma);
+        if (st.div !== st0.div) S.set(k, 'DIV', String(st.div));
+        if (Math.abs(st.bcor - st0.bcor) > 1) S.set(k, 'BCOR', len(st.bcor));
+        if (!S.same(k, s.koma)) out.push(k);
         groups = groups.filter((g) => g !== 'margins');
       }
-      if (groups.length) put(s.geometry.global, regroup(s, s.geometry.global.options, groups, keys));
+      if (groups.length) out.push(regroup(s, structuredClone(s.geometry.global), groups, keys));
     }
-    return out.concat(headerEdits(s.header, st.header, s.twoside));
+    return out.concat(headerNodes(s.header, st.header, s.twoside));
   }
 
   // header and footer: fancyhdr's `\fancyhead[LE,RO]{…}` fields or scrlayer-scrpage's `\ihead{…}`
   const SPOTS = { fancyhdr: ['L', 'C', 'R'], 'scrlayer-scrpage': ['i', 'c', 'o'] };
+  /** A call's snapshot as `{name, opt, args}`: its `[…]` and its `{…}` texts. */
+  const callOf = (c) => ({ name: c.name, opt: self.satexSnapshot.text(c, '[') ?? null, args: c.args.filter((a) => a.open === '{').map((a) => a.text) });
   /** The fields the header's calls set, in order: `{package, head: {OL: text}, foot, rules, …}`. */
   function headerOf(h, twoside) {
     const m = { package: h?.package ?? null, head: {}, foot: {}, opt: {}, rules: { head: h?.rules?.head ?? null, foot: h?.rules?.foot ?? null }, ruled: {} };
-    for (const c of h?.calls ?? []) {
+    for (const c of (h?.calls ?? []).map(callOf)) {
       if (c.name === 'renewcommand') { const k = c.args[0]?.trim().startsWith('\\head') ? 'head' : 'foot'; m.rules[k] = c.args[1]?.trim() ?? m.rules[k]; m.ruled[k] = true; continue; }
       if (m.package === 'scrlayer-scrpage') { const [spot, part] = [c.name[0], c.name.slice(1)]; m[part][`O${spot}`] = c.args[0] ?? ''; if (c.opt != null) m.opt[`${part}${spot}`] = c.opt; continue; }
       const parts = c.name === 'fancyhead' ? ['head'] : c.name === 'fancyfoot' ? ['foot'] : null;
@@ -2053,15 +2051,15 @@
     if (!twoside && m.package === 'fancyhdr') for (const part of ['head', 'foot']) for (const k of Object.keys(m[part])) if (k[0] === 'E') delete m[part][k];
     return m;
   }
-  /** The text of fields `m`: fancyhdr's selectors grouped by text, scrlayer-scrpage's one call per field. */
-  function headerText(m, twoside, clear) {
-    const lines = [];
+  /** The calls of fields `m` as `[name, opt, args]`: fancyhdr's selectors grouped by text, scrlayer-scrpage's one call per field. */
+  function headerCalls(m, twoside, clear) {
+    const out = [];
     if (m.package === 'scrlayer-scrpage') {
       for (const part of ['head', 'foot']) for (const spot of SPOTS[m.package]) {
         const t = m[part][`O${spot}`] ?? '', o = m.opt[`${part}${spot}`];
-        if (t || o != null) lines.push(`\\${spot}${part}${o != null ? `[${o}]` : ''}{${t}}`);
+        if (t || o != null) out.push([`${spot}${part}`, o ?? null, [t]]);
       }
-      return lines.join('\n');
+      return out;
     }
     for (const part of ['head', 'foot']) {
       const by = new Map();
@@ -2069,25 +2067,27 @@
         const t = m[part][side + spot] ?? '';
         if (t) by.set(t, [...(by.get(t) ?? []), twoside ? spot + side : spot]);
       }
-      for (const [t, sel] of by) lines.push(`\\fancy${part}[${sel.join(',')}]{${t}}`);
+      for (const [t, sel] of by) out.push([`fancy${part}`, sel.join(','), [t]]);
     }
-    if (lines.length || clear) lines.unshift('\\fancyhf{}');
-    return lines.join('\n');
+    if (out.length || clear) out.unshift(['fancyhf', null, ['']]);
+    return out;
   }
-  /** The edits from header `h` as written to fields `m`: the first call becomes the new block, the rest go. */
-  function headerEdits(h, m, twoside) {
+  /** The snapshots from header `h` as written to fields `m`: its calls dropped, the new ones where the first stood. */
+  function headerNodes(h, m, twoside) {
     if (!h || !m.package) return [];
-    const first = headerOf(h, twoside), rules = [];
-    for (const k of ['head', 'foot']) if (m.rules[k] && (m.ruled[k] || m.rules[k] !== first.rules[k])) rules.push(`\\renewcommand{\\${k}rulewidth}{${m.rules[k]}}`);
+    const S = self.satexSnapshot, first = headerOf(h, twoside), rules = [];
+    for (const k of ['head', 'foot']) if (m.rules[k] && (m.ruled[k] || m.rules[k] !== first.rules[k])) rules.push(['renewcommand', null, [`\\${k}rulewidth`, m.rules[k]]]);
     if (JSON.stringify({ ...m, ruled: 0 }) === JSON.stringify({ ...first, ruled: 0 })) return [];
     const calls = h.calls ?? [];
-    const text = [headerText(m, twoside, calls.length), ...(m.package === 'fancyhdr' ? rules : [])].filter(Boolean).join('\n');
-    const block = text ? text + '\n' : '';
-    if (!h.package) return [{ range: { start: h.insert, end: h.insert }, newText: h.load + block }];
-    if (!calls.length) return [{ range: { start: h.insert, end: h.insert }, newText: (h.style ?? '') + block }];
-    return calls.map((c, i) => ({ range: c.range, newText: i ? '' : (h.style ?? '') + block }));
+    const at = calls.length ? { line: calls[0].range.start.line, character: 0 } : h.insert;
+    const style = !h.package || h.style ? [['pagestyle', null, ['fancy']]] : [];
+    const all = [...style, ...headerCalls(m, twoside, calls.length), ...(m.package === 'fancyhdr' ? rules : [])];
+    const nodes = all.map(([name, opt, args]) => S.call(name, [...(opt != null ? [S.arg('[', opt)] : []), ...args.map((t) => S.arg('{', t))], at, h.load ?? null));
+    return [...calls.map(S.drop), ...nodes];
   }
 
+  /** What the class family means for the dialog (the page plugin's `family`, from the run). */
+  const FAMILY = { memoir: ' memoir lays out the page with its own commands: changes are written with geometry, which memoir accepts.' };
   function page(s, view, ctx) {
     const root = el('div', 'tv-page');
     const st0 = pageOf(s), two = !!s.twoside;
@@ -2186,7 +2186,7 @@
           const row = el('label', 'tv-field'); row.append(el('span', '', esc(label)), sel); return row;
         };
         where.append(pick('From', 'from', places), pick('Up to', 'to', [...places.filter(([k]) => line(k) > line(st.from)), ['end', 'the end of the document']]),
-          el('div', 'tv-text', ctx.markdown('Writes `\\newgeometry` there and `\\restoregeometry` before the end. Both start a new page. Places are chosen in the source: which page numbers they get, only typesetting tells.' + (s.geometry.load ? ' Adds `\\usepackage[pass]{geometry}`: the layout elsewhere stays.' : ''))));
+          el('div', 'tv-text', ctx.markdown('Writes `\\newgeometry` there and `\\restoregeometry` before the end. Both start a new page. Places are chosen in the source: which page numbers they get, only typesetting tells.' + (s.geometry.package ? ' Adds `\\usepackage[pass]{geometry}`: the layout elsewhere stays.' : ''))));
       }
       out.unshift(where);
       return out;
@@ -2258,14 +2258,14 @@
       svg.setAttribute('viewBox', [-fs, -fs, width + 2 * fs, Hh + 2 * fs].join(' '));
       svg.replaceChildren(...out);
     }
-    /** What Apply writes now. */
-    const edits = () => pageEdits(s, st0, st, len);
+    /** The snapshots Apply sends. */
+    const nodes = () => pageNodes(s, st0, st, len);
     function paint() {
       st.tw = st.pw - st.left - st.right; st.th = st.ph - st.top - st.bottom;
       sheet();
-      const e = edits();
-      status.textContent = e.length ? `${e.length} edit${e.length > 1 ? 's' : ''} to write` : 'no changes';
-      write.disabled = !e.length;
+      const e = nodes().length;
+      status.textContent = e ? 'changes to write' : 'no changes';
+      write.disabled = !e;
       for (const f of side.querySelectorAll('input[type=number]')) if (f !== document.activeElement && f.dataset.key) f.value = num(st[f.dataset.key]);
     }
     function draw() {
@@ -2273,8 +2273,13 @@
       side.replaceChildren(...(tab === 'margins' ? margins() : header()));
       paint();
     }
-    const { el: foot, apply: write } = footer(root, ctx, { status, apply: () => ctx.apply(edits()), H, tools: true });
-    const notes = el('div', 'tv-text', ctx.markdown(`The run's page${s.class ? ` with ${s.class}` : ''}${two ? ', two-sided' : ''}: the lengths as it ended.${st0.open.length ? ` It left ${st0.open.map((k) => `\\${k}`).join(', ')} open: the middle of each interval is drawn.` : ''}${s.geometry.global.note ? ` Apply ${s.geometry.global.note}.` : ''}`));
+    // the server prints the snapshots; its notes (a package loaded) stay in the status
+    const print = async () => {
+      const r = await ctx.print(nodes()).catch((e) => ({ notes: [String(e?.message ?? e)] }));
+      if (r?.edits?.length) ctx.apply(r.edits); else status.textContent = (r?.notes ?? []).join('; ') || 'no changes';
+    };
+    const { el: foot, apply: write } = footer(root, ctx, { status, apply: print, H, tools: true });
+    const notes = el('div', 'tv-text', ctx.markdown(`The run's page${s.class ? ` with ${s.class}` : ''}${two ? ', two-sided' : ''}: the lengths as it ended.${st0.open.length ? ` It left ${st0.open.map((k) => `\\${k}`).join(', ')} open: the middle of each interval is drawn.` : ''}${FAMILY[s.family] ?? ''}${s.geometry.global.note && s.family !== 'koma' ? ` geometry is not loaded: Apply ${s.geometry.global.note}, which sets each margin itself.` : ''}`));
     const main = el('div', 'tv-page-main');
     main.append(svg, side);
     root.append(bar, notes, main, foot);
@@ -2424,5 +2429,5 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
       (st.paired?.names?.length ? `<div class="ds-sec"><b>paired by a join</b><span>${st.paired.names.map(cs).join(' ')} · ${st.paired.arms} arms</span></div>` : '') +
       (cats ? `<div class="ds-sec"><b>catcodes ahead</b><span>${cats}</span></div>` : '');
   };
-  self.satexViews = { render, RENDER, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker }, forest: forestFns, page: { pageOf, pageBox, pageEdits, headerOf, headerText, headerEdits, setKeys }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  self.satexViews = { render, RENDER, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker }, forest: forestFns, page: { pageOf, pageBox, pageNodes, headerOf, headerCalls, headerNodes }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();

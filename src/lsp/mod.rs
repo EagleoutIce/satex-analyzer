@@ -36,6 +36,7 @@ mod graphic;
 mod handlers;
 pub mod knowledge;
 pub(crate) mod plugins;
+mod snapshot;
 pub use plugins::{INTEGRATIONS, plugin_features, works_in};
 mod tabular;
 mod type_at;
@@ -1834,6 +1835,7 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
             let result = with_doc(docs, &uri, |analysis, text| match ask {
                 Ask::Actions(_, range) => Ok(Json::Array(dialogs::actions(analysis, text, &path, uri.as_str(), range))),
                 Ask::Open(_, pos) => Ok(dialogs::dialog(analysis, text, &path, pos).unwrap_or(Json::Null)),
+                Ask::Apply(_, p) if p["kind"] == "snapshot" => snapshot::apply(analysis, text, &p),
                 Ask::Apply(_, p) => {
                     let range = serde_json::from_value(p["range"].clone()).map_err(|e| e.to_string())?;
                     let kind = p["kind"].as_str().unwrap_or_default();

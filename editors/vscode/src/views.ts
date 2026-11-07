@@ -56,13 +56,23 @@ export async function openView(context: vscode.ExtensionContext, client: Languag
     const view = all.find(v => v.plugin === plugin) ?? (plugin ? (await views(client, doc, undefined, plugin))[0] : all[0]);
     if (!view) { void vscode.window.showInformationMessage('satex: no view here'); return; }
     const p = panel(context, 'view', view.title);
-    p.webview.html = page(context, p.webview, ['lengths.js', 'views.js'], `
+    p.webview.html = page(context, p.webview, ['lengths.js', 'snapshot.js', 'views.js'], `
 const view = ${inlineJson(view)}, md = ${inlineJson(await rendered(view))};
 const title = Object.assign(document.createElement('h3'), { textContent: view.title }), box = document.createElement('div');
 document.body.append(title, box);
-satexViews.render(view, box, { apply: (edits) => vscode.postMessage({ edits }), markdown: (s) => md[s] || s.replace(/[&<>]/g, (c) => '&#' + c.charCodeAt(0) + ';') });`,
+const pending = new Map(); let next = 0;
+addEventListener('message', (e) => { pending.get(e.data.id)?.(e.data); });
+const print = (nodes) => new Promise((done, fail) => { const id = ++next; pending.set(id, (m) => { pending.delete(id); m.error ? fail(new Error(m.error)) : done(m.result); }); vscode.postMessage({ print: nodes, id }); });
+satexViews.render(view, box, { apply: (edits) => vscode.postMessage({ edits }), print, markdown: (s) => md[s] || s.replace(/[&<>]/g, (c) => '&#' + c.charCodeAt(0) + ';') });`,
     'h3 { margin: 0 0 .8rem; } .tv { max-width: 60rem; }');
-    p.webview.onDidReceiveMessage(async (m: { edits: Edits }) => { if (await apply(doc.uri, m.edits)) { p.dispose(); } });
+    // a view's edited snapshots, printed by the server (src/lsp/snapshot.rs)
+    p.webview.onDidReceiveMessage(async (m: { edits?: Edits; print?: unknown[]; id?: number }) => {
+        if (m.print) {
+            const reply = await client.sendRequest('satex/dialogApply', { textDocument: { uri: doc.uri.toString() }, kind: 'snapshot', nodes: m.print })
+                .then(result => ({ result }), (e: Error) => ({ error: e.message }));
+            void p.webview.postMessage({ id: m.id, ...reply });
+        } else if (m.edits && await apply(doc.uri, m.edits)) { p.dispose(); }
+    });
 }
 
 /** The managers (`satex/view` without a position): glossary, bibliography, index, theorems. */

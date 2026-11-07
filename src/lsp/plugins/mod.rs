@@ -705,37 +705,7 @@ pub(super) fn closing(text: &str, at: usize, open: char) -> Option<usize> {
     None
 }
 
-/// The `key=value` items of a key list written in `text[range]`: each key and the bytes of its
-/// value as written (braces kept), top-level commas only.
-pub(super) fn key_values(text: &str, range: std::ops::Range<usize>) -> Vec<(String, std::ops::Range<usize>)> {
-    let mut out = Vec::new();
-    let mut depth = 0;
-    let mut start = range.start;
-    let b = text.as_bytes();
-    for i in range.start..=range.end {
-        let c = if i == range.end { b',' } else { b[i] };
-        match c {
-            b'{' => depth += 1,
-            b'}' => depth -= 1,
-            b',' if depth == 0 => {
-                let item = &text[start..i];
-                if let Some(eq) = item.find('=') {
-                    let key = item[..eq].trim().to_string();
-                    let v = &item[eq + 1..];
-                    let lead = v.len() - v.trim_start().len();
-                    let from = start + eq + 1 + lead;
-                    let to = from + v.trim().len();
-                    if !key.is_empty() && !key.contains(['{', '}', '\\']) {
-                        out.push((key, from..to));
-                    }
-                }
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    out
-}
+pub(super) use super::snapshot::key_values;
 
 /// The bytes a key list item drops when it goes: from the comma before it to its value's end,
 /// else (the first item) up to and with the comma after it.

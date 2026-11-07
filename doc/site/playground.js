@@ -1840,6 +1840,8 @@
         fix({ title: t.view.title, edit: { changes: { [t.target]: [{ range: { start: p, end: p }, newText: text }] } } });
         if (t.manager) afterRun = () => manage(t.manager, null, t.target);
       },
+      // the server prints a view's edited snapshots (src/lsp/snapshot.rs)
+      print: (nodes) => lsp('satex/dialogApply', { textDocument: { uri: t.target }, kind: 'snapshot', nodes }),
       close: () => closeView(),
       guard: (dirty) => viewGuards.push(dirty),
     });

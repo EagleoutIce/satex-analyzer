@@ -3324,7 +3324,7 @@ fn page_plugin_reads_the_run_geometry() {
     let len = |k: &str| s["run"][k][0].as_i64().unwrap();
     let cm2 = satex::engine::value::parse_dimen("2cm").unwrap();
     assert!((len("paperwidth") - 2 * cm2 - len("textwidth")).abs() < 8, "{s}");
-    assert_eq!(s["geometry"]["global"]["options"], "margin=2cm", "{s}");
+    assert_eq!(s["geometry"]["global"]["args"][0]["keys"], json!([{ "key": "margin", "value": "2cm" }]), "{s}");
     assert_eq!(s["koma"], json!(null));
     assert!(s["papers"].as_array().unwrap().iter().any(|p| p["name"] == "a4paper"), "{s}");
     // a sectioning command and a blank line open it, other text not
@@ -3351,8 +3351,96 @@ fn page_plugin_reads_the_run_geometry() {
     let s = &s["sections"][0];
     assert_eq!(s["koma"]["div"], 10, "{s}");
     assert_eq!(s["koma"]["bcor"], satex::engine::value::parse_dimen("5mm").unwrap(), "{s}");
-    assert_eq!(s["koma"]["options"], "DIV=10,BCOR=5mm", "{s}");
+    assert_eq!(s["koma"]["args"][0]["text"], "DIV=10,BCOR=5mm", "{s}");
     assert_eq!(s["geometry"]["loaded"], false);
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// The page view's snapshots printed by the server: `\usepackage{geometry}` suggested and written
+/// for a basic class and memoir, typearea's `DIV` and `BCOR` kept as class options in a KOMA
+/// class, `\newgeometry` around a part loading geometry with `pass`, a stale snapshot refused.
+#[test]
+fn page_snapshots_print_per_class_family() {
+    let page = |server: &mut Server, uri: &str| {
+        let views = at(server, uri, "satex/view", 0, 2);
+        views.as_array().unwrap().iter().find(|v| v["plugin"] == "page").expect("a page view")["sections"][0].clone()
+    };
+    let print = |server: &mut Server, uri: &str, nodes: Value| {
+        let id = server.request(
+            "satex/dialogApply",
+            json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": nodes }),
+        );
+        server.response(id)["result"].clone()
+    };
+    let write =
+        |text: &str, uri: &str, out: &Value| applied(text, uri, &json!({ "changes": { uri: out["edits"] } }), &[]);
+    let set = |node: &Value, keys: Value| {
+        let mut n = node.clone();
+        let k = n["args"].as_array().unwrap().iter().position(|a| a["keys"].is_array()).unwrap();
+        n["args"][k]["keys"] = keys;
+        n
+    };
+    let body = "\\begin{document}\nText\n\n\\section{One}\nMore\n\\end{document}\n";
+    for class in ["article", "memoir"] {
+        let text = format!("\\documentclass{{{class}}}\n{body}");
+        let (mut server, uri, dir) = open_set(&format!("page-{class}"), &text, &[]);
+        let s = page(&mut server, &uri);
+        assert_eq!(s["family"], if class == "memoir" { "memoir" } else { "basic" }, "{s}");
+        assert_eq!((s["koma"].clone(), s["geometry"]["global"]["range"].clone()), (Value::Null, Value::Null), "{s}");
+        assert!(s["geometry"]["global"]["note"].as_str().is_some_and(|n| n.contains("geometry")), "suggested: {s}");
+        // untouched, nothing written
+        let out = print(&mut server, &uri, json!([s["geometry"]["global"]]));
+        assert_eq!(out["edits"], json!([]), "{out}");
+        let global = set(&s["geometry"]["global"], json!([{ "key": "margin", "value": "2cm" }, { "key": "a4paper" }]));
+        let out = print(&mut server, &uri, json!([global]));
+        let written = write(&text, &uri, &out);
+        assert!(written.contains("\\usepackage[margin=2cm, a4paper]{geometry}\n\\begin{document}"), "{written}");
+        // a part: \newgeometry at the section, \restoregeometry before the end, geometry loaded with `pass`
+        let new = |name: &str, line: u32, keys: Value| {
+            json!({ "kind": "call", "name": name, "args": if keys.is_null() { json!([]) } else { json!([{ "open": "{", "keys": keys }]) },
+                "at": { "line": line, "character": 0 }, "line": true, "package": s["geometry"]["package"] })
+        };
+        let nodes = json!([
+            new("newgeometry", 4, json!([{ "key": "left", "value": "3cm" }])),
+            new("restoregeometry", 6, Value::Null)
+        ]);
+        let written = write(&text, &uri, &print(&mut server, &uri, nodes));
+        assert!(written.contains("\\usepackage[pass]{geometry}\n\\begin{document}"), "{written}");
+        assert!(
+            written.contains("\n\\newgeometry{left=3cm}\n\\section{One}\nMore\n\\restoregeometry\n\\end{document}"),
+            "{written}"
+        );
+        // fancyhdr for header fields, loaded before \pagestyle
+        let fancy = |name: &str, args: Value| json!({ "kind": "call", "name": name, "args": args, "at": s["header"]["insert"], "line": true, "package": s["header"]["load"] });
+        let nodes = json!([
+            fancy("pagestyle", json!([{ "open": "{", "text": "fancy" }])),
+            fancy("fancyhead", json!([{ "open": "[", "text": "R" }, { "open": "{", "text": "\\thepage" }]))
+        ]);
+        let written = write(&text, &uri, &print(&mut server, &uri, nodes));
+        assert!(
+            written
+                .contains("\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n\\fancyhead[R]{\\thepage}\n\\begin{document}"),
+            "{written}"
+        );
+        server.shutdown();
+        std::fs::remove_dir_all(dir).ok();
+    }
+    let text = format!("\\documentclass[DIV=10,BCOR=5mm]{{scrartcl}}\n{body}");
+    let (mut server, uri, dir) = open_set("page-scrartcl", &text, &[]);
+    let s = page(&mut server, &uri);
+    assert_eq!(s["family"], "koma", "{s}");
+    let koma = set(&s["koma"], json!([{ "key": "DIV", "value": "12" }, { "key": "BCOR", "value": "5mm" }]));
+    let out = print(&mut server, &uri, json!([koma]));
+    assert_eq!(out["edits"].as_array().map(Vec::len), Some(1), "only DIV's value: {out}");
+    assert!(
+        write(&text, &uri, &out).starts_with("\\documentclass[DIV=12,BCOR=5mm]{scrartcl}\n\\begin{document}"),
+        "{out}"
+    );
+    // a snapshot of text that changed since is refused
+    let mut stale = koma.clone();
+    stale["text"] = json!("\\documentclass[DIV=9]{scrartcl}");
+    assert!(print(&mut server, &uri, json!([stale])).is_null());
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
