@@ -331,6 +331,10 @@ fn run(check: bool) -> Result<(), String> {
     for ((src, dst), template) in TEMPLATES.iter().zip(&templates) {
         let generated = render(template, &expanded).map_err(|e| format!("{src}: {e}"))?;
         let generated = linkify_citations(&generated);
+        let dead = dead_anchors(&generated);
+        if !dead.is_empty() {
+            return Err(format!("{src}: links to no heading of the page: {}", dead.join(", ")));
+        }
         let existing = fs::read_to_string(dst).unwrap_or_default();
         if existing == generated {
             continue;
@@ -734,6 +738,31 @@ fn render(template: &str, expanded: &HashMap<&str, Result<String, String>>) -> R
     }
     out.push_str(rest);
     Ok(out)
+}
+
+/// The in-page links (`](#x)`) of `page` no heading of it is the anchor of: an index entry without its section.
+fn dead_anchors(page: &str) -> Vec<String> {
+    let mut code = false;
+    let headings: HashSet<String> = page
+        .lines()
+        .filter(|l| {
+            code ^= l.starts_with("```");
+            !code
+        })
+        .filter_map(|l| l.trim_start_matches('#').strip_prefix(' ').filter(|_| l.starts_with('#')))
+        .map(satex::linter::cite::anchor)
+        .collect();
+    let explicit: HashSet<&str> =
+        page.match_indices("id=\"").filter_map(|(i, _)| page[i + 4..].split('"').next()).collect();
+    let mut dead: Vec<String> = page
+        .match_indices("](#")
+        .filter_map(|(i, _)| page[i + 3..].split(')').next())
+        .filter(|a| !headings.contains(*a) && !explicit.contains(a))
+        .map(str::to_string)
+        .collect();
+    dead.sort();
+    dead.dedup();
+    dead
 }
 
 fn still_wrong(wrong: &[String]) -> String {

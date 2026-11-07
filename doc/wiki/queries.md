@@ -240,7 +240,7 @@ arrow:-<
 arrow:->                                  
 arrow:->|                                 
 arrow:-Bar                                
-… 100 more lines omitted
+… 261 more lines omitted
 ```
 
 ## produces
@@ -376,6 +376,21 @@ index  step    name         detail                        file
 
 A `value` names its type in the [`Ty` lattice](Domains#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what the domain knows: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
 
+## type-plugins
+
+The editor's type plugins this run would offer: each plugin, its category, the types it triggers on and its features. See [type plugins](Type-plugins) for what each does.
+
+```text
+$ satex query type-plugins -f samples/paper.tex
+category     name             types                                       
+widget       color            color name                                  
+widget       environment      environment name                            
+widget       table            environment the run met                     
+widget       image            graphic file                                
+widget       float            environment the run met                     
+… 19 more lines omitted
+```
+
 ## typeset
 
 The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.
@@ -418,7 +433,7 @@ A name without its own redefinitions can still behave differently by context. `e
 
 `effective` writes a call: `\section*?[1]{2}` is `som` (optional star, optional argument, mandatory argument). `[default]` shows a default. `takes` is the least and most arguments a call reads.
 
-SaTeX finds a signature by running the command on probe input and watching what it reads (SEMANTICS [§ 13](https://ctan.org/pkg/usrguide), "What a command takes").
+SaTeX finds a signature by running the command on probe input and watching what it reads ([SEMANTICS § 13](https://eagleoutice.github.io/satex-analyzer/SEMANTICS#13-expl3), "What a command takes").
 
 ## Locations
 
