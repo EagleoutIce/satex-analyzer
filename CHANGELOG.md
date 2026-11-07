@@ -28,6 +28,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Editor plugins and widgets
 
+- `fix` **TikZ arrows draw only their tips**, so a dashed or short arrow keeps its look. [`e7c66b0`](https://github.com/EagleoutIce/satex-analyzer/commit/e7c66b0)
 - `fix` **TikZ arrows touch their nodes** in the drawing widget. [`0fe35b9`](https://github.com/EagleoutIce/satex-analyzer/commit/0fe35b9)
 - `fix` **Paper sizes known without geometry**, so letter is no longer custom. [`b0a236e`](https://github.com/EagleoutIce/satex-analyzer/commit/b0a236e)
 - `fix` **Requests never wait for a run**, and exit stops a running analysis. [`fc5dda3`](https://github.com/EagleoutIce/satex-analyzer/commit/fc5dda3) [`30b2124`](https://github.com/EagleoutIce/satex-analyzer/commit/30b2124) [`40ae0c9`](https://github.com/EagleoutIce/satex-analyzer/commit/40ae0c9)
@@ -35,7 +36,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `fix` **Colors complete only in color arguments**, with swatches on the right line. [`5e6ecba`](https://github.com/EagleoutIce/satex-analyzer/commit/5e6ecba) [`59e9afa`](https://github.com/EagleoutIce/satex-analyzer/commit/59e9afa) [`d05aa00`](https://github.com/EagleoutIce/satex-analyzer/commit/d05aa00)
 - `fix` **Lenses and widget marks** refresh after the run and survive stale positions. [`7def1e2`](https://github.com/EagleoutIce/satex-analyzer/commit/7def1e2) [`90187ce`](https://github.com/EagleoutIce/satex-analyzer/commit/90187ce) [`b1814c5`](https://github.com/EagleoutIce/satex-analyzer/commit/b1814c5) [`50e1339`](https://github.com/EagleoutIce/satex-analyzer/commit/50e1339)
 - `fix` **Hovers lead with the signature.** [`88ce1d0`](https://github.com/EagleoutIce/satex-analyzer/commit/88ce1d0) [`cbe1c54`](https://github.com/EagleoutIce/satex-analyzer/commit/cbe1c54)
-- `feat` **Table, image, placement, tree, color and TikZ widgets write only what changed.** Packages they need come from the installation, not a list. [`8a85ba6`](https://github.com/EagleoutIce/satex-analyzer/commit/8a85ba6) [`19c240b`](https://github.com/EagleoutIce/satex-analyzer/commit/19c240b)
+- `feat` **Drag the margins** in the page layout graphic. Under KOMA-Script the drag sets `DIV`. [`e7c66b0`](https://github.com/EagleoutIce/satex-analyzer/commit/e7c66b0)
+- `feat` **Table, image, placement, tree, color and TikZ widgets write only what changed.** Packages they need come from the installation, not a list. [`8a85ba6`](https://github.com/EagleoutIce/satex-analyzer/commit/8a85ba6) [`19c240b`](https://github.com/EagleoutIce/satex-analyzer/commit/19c240b) [`680109d`](https://github.com/EagleoutIce/satex-analyzer/commit/680109d)
 - `feat` **Page layout per class.** KOMA-Script keeps `DIV` and `BCOR`, memoir and the standard classes get geometry suggested. Edits keep every untouched byte. See [type plugins](doc/wiki/type-plugins.md). [`87b10d2`](https://github.com/EagleoutIce/satex-analyzer/commit/87b10d2)
 - `feat` **Index and bibliography managers** open from `\printindex`, `\cite` and their kin. Every length field takes any unit, like `2cm` or `0.5\linewidth`, the TikZ grid size too. See [type plugins](doc/wiki/type-plugins.md). [`b0a236e`](https://github.com/EagleoutIce/satex-analyzer/commit/b0a236e)
 - `feat` **Managers add, edit and search** glossaries, index terms, bibliographies (also `thebibliography`, with a convert to `.bib`) and theorems. See [type plugins](doc/wiki/type-plugins.md). [`11d5c56`](https://github.com/EagleoutIce/satex-analyzer/commit/11d5c56)
@@ -57,6 +59,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `fix` **A missing image names its folder.** It suggests `\graphicspath` and is no longer also reported as a missing package. [`957d348`](https://github.com/EagleoutIce/satex-analyzer/commit/957d348)
 - `fix` **Fewer false positives.** Own text only, stated definitions, aliases, zero-width spaces, code in parentheses. [`50b4dd7`](https://github.com/EagleoutIce/satex-analyzer/commit/50b4dd7) [`cd0354b`](https://github.com/EagleoutIce/satex-analyzer/commit/cd0354b) [`0909180`](https://github.com/EagleoutIce/satex-analyzer/commit/0909180) [`bedf0ef`](https://github.com/EagleoutIce/satex-analyzer/commit/bedf0ef)
 - `fix` **Possible findings are notes**, never certain errors. [`cde9439`](https://github.com/EagleoutIce/satex-analyzer/commit/cde9439) [`86359a0`](https://github.com/EagleoutIce/satex-analyzer/commit/86359a0) [`90f5393`](https://github.com/EagleoutIce/satex-analyzer/commit/90f5393)
 - `fix` **Typed references become `\cref`**, loading cleveref when needed. [`bbc52f0`](https://github.com/EagleoutIce/satex-analyzer/commit/bbc52f0) [`bc061f2`](https://github.com/EagleoutIce/satex-analyzer/commit/bc061f2)
@@ -104,6 +107,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site and docs
 
+- `feat` **Landing page.** The first cards show on the first screen, plugin groups show at a glance, lint rules get their own shot. [`0f26102`](https://github.com/EagleoutIce/satex-analyzer/commit/0f26102)
 - `docs` **Wiki** on the type lattice, precision limits and why TeX is hard, regenerated from the code. See [why TeX is hard](doc/wiki/challenges.md). [`5083317`](https://github.com/EagleoutIce/satex-analyzer/commit/5083317) [`ea975ed`](https://github.com/EagleoutIce/satex-analyzer/commit/ea975ed) [`85e15a6`](https://github.com/EagleoutIce/satex-analyzer/commit/85e15a6)
 - `feat` **Hover cards** for control sequences. [`3b86d4b`](https://github.com/EagleoutIce/satex-analyzer/commit/3b86d4b)
 - `docs` **This changelog**, with a page on the site. [`0a4854c`](https://github.com/EagleoutIce/satex-analyzer/commit/0a4854c)
