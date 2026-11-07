@@ -210,13 +210,19 @@ pub fn read(doc: &Text, at: usize, keyed: &[usize], options: bool) -> Option<Nod
     Some(node)
 }
 
-/// The environment at byte `at` with the body a plugin found at `body`: no argument read past it.
-pub fn env(doc: &Text, at: usize, body: std::ops::Range<usize>) -> Option<Node> {
-    let mut n = read(doc, at, &[], false)?;
-    n.args.retain(|a| a.inner.is_some_and(|(_, e)| at + e < body.start));
+/// The environment at byte `at` with the body a plugin found at `body`: no argument read past it;
+/// with `options` its `[…]` read as a key list (unwritten when absent).
+pub fn env(doc: &Text, at: usize, body: std::ops::Range<usize>, options: bool) -> Option<Node> {
+    let mut n = read(doc, at, if options { &[0] } else { &[] }, options)?;
+    n.args.retain(|a| a.inner.is_none_or(|(_, e)| at + e < body.start));
     n.body_at = Some((body.start - at, body.end - at));
     n.body = doc.body().get(body)?.to_string();
     Some(n)
+}
+
+/// The keys of `n`'s first key list.
+pub fn list(n: &Node) -> &[Key] {
+    n.args.iter().find_map(|a| a.keys.as_deref()).unwrap_or_default()
 }
 
 /// A new environment at `at` that loads `package` when the run lacks it.
@@ -240,7 +246,7 @@ fn value_text(v: &str, open: char) -> String {
         }
         depth == 0 && (c == b',' || c == b'=' || (open == '[' && c == b']'))
     });
-    if splits || v != v.trim() { format!("{{{v}}}") } else { v.to_string() }
+    if splits || v.is_empty() || v != v.trim() { format!("{{{v}}}") } else { v.to_string() }
 }
 
 fn item_text(k: &Key, open: char) -> String {
@@ -459,6 +465,12 @@ pub(super) fn defined(analysis: &Analysis, name: &str) -> bool {
         .is_some_and(|s| !matches!(analysis.env.meaning(s), crate::engine::tex::Meaning::Undefined))
 }
 
+/// Whether the run defined `\name` anywhere, in a group too (tikzpicture's `\node`).
+fn met(analysis: &Analysis, name: &str) -> bool {
+    defined(analysis, name)
+        || analysis.interner.lookup(name).is_some_and(|s| analysis.facts.defs.iter().any(|d| d.name == s))
+}
+
 /// The control sequences and environments `text` writes, in order.
 fn names(text: &str) -> Vec<&str> {
     let mut out: Vec<&str> = Vec::new();
@@ -478,7 +490,10 @@ fn names(text: &str) -> Vec<&str> {
 /// `text[from..to]` with the `edits` inside it made.
 pub(super) fn reads(text: &str, from: usize, to: usize, edits: &[Edit]) -> String {
     let mut out = text[from..to].to_string();
-    for (a, b, t) in edits.iter().rev().filter(|e| from <= e.0 && e.1 <= to) {
+    let mut inside: Vec<&Edit> = edits.iter().rev().filter(|e| from <= e.0 && e.1 <= to).collect();
+    // last first, so earlier offsets hold; edits at one place keep their order
+    inside.sort_by_key(|e| std::cmp::Reverse((e.0, e.1)));
+    for (a, b, t) in inside {
         out.replace_range(a - from..b - from, t);
     }
     out
@@ -500,9 +515,12 @@ pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<E
                 None => (String::new(), canonical(n)),
             };
             let new = n.range.is_none();
-            for name in names(&now).into_iter().filter(|m| !names(&was).contains(m) && !defined(analysis, m)) {
+            // a new node the run lacks: the names it writes are its package's to define
+            let unknown = new && n.package.is_some() && !defined(analysis, &n.name);
+            for name in names(&now).into_iter().filter(|m| !names(&was).contains(m) && !met(analysis, m)) {
                 match &n.package {
                     Some(p) if new && name == n.name => wanted.push(p.clone()),
+                    _ if unknown => {}
                     _ => asked.push((name.to_string(), new && name == n.name)),
                 }
             }
@@ -607,6 +625,17 @@ mod tests {
             let (d, n) = opened(call, keyed);
             assert_eq!(edits_of(&d, &n).unwrap(), Vec::new(), "{call}");
         }
+    }
+
+    /// A run removed before a changed value: `reads` makes both, the last first; an empty value is braced.
+    #[test]
+    fn reads_out_of_order_edits() {
+        let (d, mut n) = opened(LISTS[1].0, LISTS[1].1);
+        let keys = n.args[0].keys.as_mut().unwrap();
+        keys.remove(0);
+        keys[0].value = Some(String::new());
+        let edits = edits_of(&d, &n).unwrap();
+        assert_eq!(reads(d.body(), 9, 9 + n.text.len(), &edits), "\\documentclass[BCOR={},twoside]{scrartcl}");
     }
 
     #[test]
@@ -766,7 +795,7 @@ mod tests {
         let tree = "\\begin{forest}\n  [VP [DP] [V]] % s\n\\end{forest}";
         let d = doc(tree);
         let body = 9 + "\\begin{forest}".len()..9 + tree.len() - "\\end{forest}".len();
-        let mut n = env(&d, 9, body).unwrap();
+        let mut n = env(&d, 9, body, false).unwrap();
         assert!(n.args.is_empty(), "{n:?}");
         n.body = n.body.replace("[V]", "[V [x]]");
         assert_eq!(edits_of(&d, &n).unwrap().iter().map(|e| e.2.as_str()).collect::<Vec<_>>(), [" [x]"]);

@@ -243,7 +243,7 @@ assert.equal(back.dir, 'TD');
   po.set('every node/.style', 'draw');
   po.set('scale', '2');
   po.set('>', '');
-  assert.equal(po.text(), 'node distance=2cm, every node/.style={draw}, scale=2');
+  assert.deepEqual(po.keys(), [{ key: 'node distance', value: '2cm' }, { key: 'every node/.style', value: 'draw' }, { key: 'scale', value: '2' }]);
   // scaled: the text's coordinates written back as they were
   const sc = D.parse('\n  \\node (a) at (1,2) {A};\n');
   Object.assign(sc.items[0], { x: 3, y: 4, dirty: true });
@@ -282,12 +282,12 @@ assert.equal(back.dir, 'TD');
   assert.deepEqual(D.expandStyles(['arg'], bodies), ['arg']);
   assert.ok(D.expandStyles(['loop'], bodies).length < 10, 'a style naming itself stops');
   assert.deepEqual(['box/.style', 'every node/.append style', 'draw'].map((x) => x.match(D.STYLE_DEF)?.[1] ?? null), ['box', 'every node', null]);
-  // the picture's options: a style's keys go in braces, a style dropped leaves the rest
-  const po = D.picOptions('node distance=2cm, box/.style={draw, thick}');
+  // the picture's options as the snapshot's keys (unbraced values, bare keys null); a style dropped leaves the rest
+  const po = D.picOptions('node distance=2cm, box/.style={draw, thick}, transform shape');
   po.set('hot/.style', 'fill=red!20');
-  assert.equal(po.text(), 'node distance=2cm, box/.style={draw, thick}, hot/.style={fill=red!20}');
+  assert.deepEqual(po.keys().map((k) => [k.key, k.value]), [['node distance', '2cm'], ['box/.style', 'draw, thick'], ['transform shape', null], ['hot/.style', 'fill=red!20']]);
   po.set('box/.style', null);
-  assert.equal(po.text(), 'node distance=2cm, hot/.style={fill=red!20}');
+  assert.deepEqual(po.keys().map((k) => k.key), ['node distance', 'transform shape', 'hot/.style']);
 }
 console.log('drawing model: ok');
 

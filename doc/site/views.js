@@ -825,7 +825,8 @@
       list,
       get: (k) => list.find(([key]) => key === k)?.[1],
       set(k, v) { const i = list.findIndex(([key]) => key === k), o = v == null || v === '' ? null : `${k}=${/[,=]/.test(v) || /style$/.test(k) ? `{${v}}` : v}`; if (i < 0) { if (o) list.push([k, v, o]); } else if (o) list[i] = [k, v, o]; else list.splice(i, 1); },
-      text: () => list.map((e) => e[2]).join(', '),
+      // as the snapshot's key list (snapshot.js): a bare key's value null
+      keys: () => list.map(([key, v, o]) => ({ key, value: o.includes('=') ? v : null })),
     };
   };
   /** A key that defines a style: `box/.style`, `every node/.append style`. */
@@ -986,14 +987,14 @@
   function drawing(s, view, ctx) {
     const R = s.run ?? {}, keys = R.layer_keys ?? {};
     const state = parse(s.body, keys), run = new Map((s.nodes ?? []).map((n) => [n.name, n]));
-    const pic = picOptions(s.options);
+    const S = self.satexSnapshot, pic = picOptions(S.text(s.node, '[') ?? '');
     let picDirty = false;
     // the styles the picture's options define
     const picStyles = () => pic.list.map(([key, v]) => [key.match(STYLE_DEF), v]).filter(([m]) => m).map(([m, v]) => ({ name: m[1], body: v, key: m[0] }));
     // the picture's options as the canvas applies them
     let style, pathStyle, distance, k, font, tipDefault, onGrid;
-    // the document's styles (`\tikzset{box/.style={…}}`) as edited here: written on Apply
-    let docStyles = (R.keys ?? []).filter((x) => x.style).map((x) => ({ name: x.name, body: x.body ?? '', orig: x.body ?? '', range: x.style.range, entry: x.style.entry }));
+    // the document's styles (`\tikzset{box/.style={…}}`) as edited here, each a key of a defining call's snapshot (`R.defs`)
+    let docStyles = (R.keys ?? []).filter((x) => x.style).map((x) => ({ name: x.name, body: x.body ?? '', orig: x.body ?? '', ...x.style }));
     // a style's keys by name: the run's, the document's as edited, the picture's own
     const styleBody = () => new Map([...(R.keys ?? []).filter((x) => x.body != null).map((x) => [x.name, x.body]),
       ...docStyles.filter((d) => !d.deleted).map((d) => [d.name, d.body]), ...picStyles().map((p) => [p.name, p.body])]);
@@ -1517,8 +1518,7 @@
     const code = state.items.filter((i) => i.type === 'code' && i.code.trim());
     for (const it of code) { const m = it.code.match(PATH); if (m) { const pts = [...m[1].matchAll(/\(\s*(-?[\d.]+)\s*(?:cm)?\s*,\s*(-?[\d.]+)\s*(?:cm)?\s*\)/g)].map((p) => [+p[1], +p[2]]); if (pts.length === m[1].split('--').length) it.path = pts; } }
     if (code.length) kept.innerHTML = `<h4 class="tv-h">Kept as code (${code.length})</h4>` + code.map((i) => `<pre>${esc(i.code.length > 160 ? i.code.slice(0, 160) + '…' : i.code)}</pre>`).join('');
-    // the picture's options: written into \begin{tikzpicture}[…], applied as typed
-    const canPic = !!(s.head || s.wrap);
+    // the picture's options: its snapshot's `[…]`, applied as typed
     const settings = el('details', 'tv-mermaid', '<summary>Picture options</summary>');
     const picChanged = () => { picDirty = true; applyPic(); draw(); };
     const picSet = (l) => { pic.list.splice(0, pic.list.length, ...l.map((o) => [...kv(o), o])); picChanged(); };
@@ -1542,7 +1542,6 @@
     relRow.append(relBox, relAll);
     const picture = () => {
       settings.replaceChildren(settings.firstChild, relRow);
-      if (!canPic) return settings.append(el('div', 'tv-muted', 'The options span lines: edit them in the source.'));
       settings.append(props({ get: () => pic.list.map((e) => e[2]), set: picSet, skip: (o) => STYLE_DEF.test(kv(o)[0]), label: 'Add a picture option' }));
     };
     picture();
@@ -1592,7 +1591,7 @@
       // a new style: a name, where it goes, its keys from the selection's own keys if one is selected
       const add = el('div', 'tv-row tv-style-new');
       const nm = Object.assign(el('input', 'tv-input'), { placeholder: 'new style name', spellcheck: false, ariaLabel: 'new style name' });
-      const where = el('select', 'tv-input', `${canPic ? '<option value="picture">in this picture</option>' : ''}${R.load_at ? '<option value="document">in the preamble (\\tikzset)</option>' : ''}`);
+      const where = el('select', 'tv-input', `<option value="picture">in this picture</option>${R.load_at ? '<option value="document">in the preamble (\\tikzset)</option>' : ''}`);
       where.ariaLabel = 'where the style goes';
       const make = el('button', 'tv-button', target ? 'Create from selection' : 'Create');
       make.type = 'button';
@@ -1637,23 +1636,22 @@
       loss.textContent = lost.length ? `Not in the flowchart: ${lost.join(', ')}.` : '';
     }
     mer.append(text, loss, mrow);
-    /** The preamble's new lines (the matrix library, new document styles) and the document's styles edited in place. */
+    /** The defining calls with the document's styles edited, and new preamble calls: the libraries the drawing now needs (matrix, positioning for `right=of`), new styles. */
     const preamble = () => {
-      const made = docStyles.filter((d) => d.isNew && !d.deleted).map((d) => `${d.name}/.style={${d.body}}`);
-      // the libraries the drawing now needs: matrix, positioning for `right=of`
+      const out = structuredClone(R.defs ?? []), tikz = { name: 'tikz', options: '' };
+      for (const d of docStyles.filter((d) => d.def != null && (d.deleted || d.body !== d.orig))) d.deleted ? S.setKeys(out[d.def], [d.key], []) : S.set(out[d.def], d.key, d.body);
+      if (!R.load_at) return out;
       const need = [['matrix', live().some((i) => i.type === 'matrix')], ['positioning', own().some((n) => n.place && !n.place.centers)]].filter(([l, used]) => used && !(R.libraries ?? []).includes(l)).map(([l]) => l);
-      const text = (need.length ? `\\usetikzlibrary{${need.join(',')}}\n` : '') + (made.length ? `\\tikzset{${made.join(', ')}}\n` : '');
-      // a style deleted goes with its comma
-      const restyled = docStyles.filter((d) => !d.isNew && d.range && (d.deleted || d.body !== d.orig)).map((d) => (d.deleted ? { range: d.entry, newText: '' } : { range: d.range, newText: d.body }));
-      return { text: R.load_at ? text : '', restyled };
+      const made = docStyles.filter((d) => d.isNew && !d.deleted).map((d) => ({ key: `${d.name}/.style`, value: d.body }));
+      if (need.length) out.push(S.call('usetikzlibrary', [S.keys('{', need.map((l) => [l, '']))], R.load_at, tikz));
+      if (made.length) out.push(S.call('tikzset', [{ ...S.keys('{'), keys: made }], R.load_at, tikz));
+      return out;
     };
     const writeIt = () => {
-      const body = emit(state, k), o = pic.text() ? `[${pic.text()}]` : '', { text, restyled } = preamble();
-      const lib = text ? [{ range: { start: R.load_at, end: R.load_at }, newText: text }] : [];
-      // with tikz loaded by this edit too: the preamble's lines after it, in one insert
-      const pre = s.extra ? [{ ...s.extra, newText: s.extra.newText + text }] : lib;
-      if (s.wrap) return ctx.apply([{ range: s.range, newText: `\\begin{tikzpicture}${o}${body}\n\\end{tikzpicture}` }, ...pre, ...restyled]);
-      ctx.apply([picDirty && s.head ? { range: { start: s.head.start, end: s.range.end }, newText: o + body } : { range: s.range, newText: body }, ...lib, ...restyled]);
+      // the server prints the picture's snapshot with its body and options, tikz loaded when the run lacks it
+      const node = { ...structuredClone(s.node), body: emit(state, k) }, keys = pic.keys(), a = node.args.find((x) => x.keys);
+      if (picDirty && a) a.keys = keys; else if (picDirty && keys.length) node.args.unshift({ ...S.keys('['), keys });
+      return S.write(ctx, [node, ...preamble()], (m) => { status.textContent = m; });
     };
     const { el: foot, apply: write } = footer(root, ctx, { status, apply: writeIt, label: s.wrap ? 'Insert drawing' : 'Apply', H });
     // the canvas and, beside it, a panel that scrolls on its own: tools and footer stay in view

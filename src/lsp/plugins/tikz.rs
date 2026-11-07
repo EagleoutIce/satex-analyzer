@@ -7,9 +7,11 @@
 use super::{Cx, Hit, TypePlugin, rewrite};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{Ty, braced_groups};
+use crate::lsp::handlers::to_pos;
+use crate::lsp::snapshot::{self, Node};
 use crate::project::config::TypePlugins;
 use crate::text::Text;
-use lsp_types::{CodeAction, CodeLens, TextEdit};
+use lsp_types::{CodeAction, CodeLens};
 use serde_json::{Value as Json, json};
 
 pub(super) struct Tikz;
@@ -43,31 +45,36 @@ impl TypePlugin for Tikz {
     /// Outside a picture, on a blank line of the body: a picture to start from.
     fn actions(&self, cx: &Cx, _hit: &Hit) -> Vec<CodeAction> {
         let Some(new) = super::blank(cx, ENV, "tikz") else { return Vec::new() };
-        let note = if new.preamble.is_some() { " (adds \\usepackage{tikz})" } else { "" };
-        let mut edits = vec![TextEdit { range: new.at, new_text: wrap(TEMPLATE) }];
-        edits.extend(new.preamble);
-        vec![rewrite(cx, format!("Insert tikzpicture{note}"), edits)]
+        let node = Node { body: format!("  {TEMPLATE}"), ..snapshot::new_env(ENV, new.at.start, "tikz") };
+        let Ok((edits, notes)) = snapshot::printed(cx.analysis, cx.doc, &[node]) else { return Vec::new() };
+        let note: String = notes.iter().map(|n| format!(" ({n})")).collect();
+        vec![rewrite(cx, format!("Insert tikzpicture{note}"), snapshot::lsp_edits(cx.doc, edits))]
     }
 
     fn view(&self, cx: &Cx, _hit: &Hit) -> Option<Json> {
         let cfg = &cx.cfg().tikz;
-        let (title, drawing) = match super::body(cx.analysis, cx.doc, cx.path, cx.pos.line, ENV, true) {
-            Some(p) => (
-                "Edit drawing",
-                json!({ "range": p.range, "head": head(cx.doc, &p), "body": super::slice(cx.doc, p.range), "options": options(cx.doc, &p), "nodes": nodes(cx, &p) }),
-            ),
+        // the picture as a snapshot (`node`) the view sets the options and body of; the printer writes it
+        let (title, mut section, own) = match super::body(cx.analysis, cx.doc, cx.path, cx.pos.line, ENV, true) {
+            Some(p) => {
+                let doc = cx.doc;
+                let body = doc.offset(to_pos(doc, p.range.start))?..doc.offset(to_pos(doc, p.range.end))?;
+                let at = doc.body()[..body.start].rfind(&format!("\\begin{{{ENV}}}"))?;
+                let node = snapshot::env(doc, at, body.clone(), true);
+                (
+                    "Edit drawing",
+                    json!({ "body": super::slice(doc, p.range), "nodes": nodes(cx, &p), "node": node }),
+                    at..body.end,
+                )
+            }
             None => {
                 let new = super::blank(cx, ENV, "tikz")?;
                 let note = new.preamble.as_ref().map(|_| "adds `\\usepackage{tikz}` before `\\begin{document}`");
-                (
-                    "New drawing",
-                    json!({ "range": new.at, "body": "", "nodes": [], "wrap": true, "extra": new.preamble, "note": note }),
-                )
+                let node = snapshot::new_env(ENV, new.at.start, "tikz");
+                ("New drawing", json!({ "body": "", "nodes": [], "wrap": true, "note": note, "node": node }), 0..0)
             }
         };
-        let mut section = drawing;
         section["kind"] = json!("drawing");
-        section["run"] = facts(cx);
+        section["run"] = facts(cx, own);
         section["grid"] = json!(cfg.grid);
         section["spacing"] = json!(cfg.spacing);
         section["relative"] = json!(cfg.relative);
@@ -79,37 +86,10 @@ impl TypePlugin for Tikz {
     }
 }
 
-/// A picture's text around `body`.
-fn wrap(body: &str) -> String {
-    format!("\\begin{{{ENV}}}\n  {body}\\end{{{ENV}}}")
-}
-
-/// The text between `\begin{tikzpicture}` and the body: the options, if any.
-fn after_begin(doc: &Text, p: &super::Body) -> String {
-    let start = lsp_types::Position::new(p.lines.0.saturating_sub(1), 0);
-    let head = super::slice(doc, lsp_types::Range { start, end: p.range.start });
-    head.rsplit_once(&format!("\\begin{{{ENV}}}")).map_or(String::new(), |(_, o)| o.to_string())
-}
-
-/// The picture's options (`every node/.style`, `node distance`), which the canvas applies.
-fn options(doc: &Text, p: &super::Body) -> String {
-    let head = after_begin(doc, p);
-    let head = head.trim();
-    head.strip_prefix('[').and_then(|o| o.strip_suffix(']')).unwrap_or_default().trim().to_string()
-}
-
-/// Where the options stand, `[…]` or nothing, when on the line of `\begin`: the canvas rewrites them.
-fn head(doc: &Text, p: &super::Body) -> Option<lsp_types::Range> {
-    let head = after_begin(doc, p);
-    let units = head.encode_utf16().count() as u32;
-    let start = lsp_types::Position::new(p.range.start.line, p.range.start.character.checked_sub(units)?);
-    (!head.contains('\n')).then_some(lsp_types::Range { start, end: p.range.start })
-}
-
 /// What the run declared that a canvas offers: arrow tips (each with TeX's picture once drawn),
 /// colors, node shapes, layers in their order, the keys that put a scope on a layer, the TikZ
-/// libraries loaded and where `\usetikzlibrary` goes for one more.
-fn facts(cx: &Cx) -> Json {
+/// libraries loaded and where `\usetikzlibrary` goes for one more. `own`: the picture's bytes.
+fn facts(cx: &Cx, own: std::ops::Range<usize>) -> Json {
     let a = cx.analysis;
     use crate::queries::preview::{Stroke, arrow_specs, drawn};
     let tips: Vec<Json> = arrow_specs(a)
@@ -159,15 +139,16 @@ fn facts(cx: &Cx) -> Json {
     let load_at = crate::linter::shared::document_start(a)
         .filter(|s| Some(s.file) == file)
         .map(|s| lsp_types::Position::new(s.line.saturating_sub(1), 0));
-    json!({ "tips": tips, "colors": colors, "shapes": shapes, "libraries": libraries, "load_at": load_at, "layers": { "declared": declared, "order": order }, "layer_keys": keys, "keys": tikz_keys(cx, file) })
+    let (keys_of, defs) = tikz_keys(cx, file, own);
+    json!({ "tips": tips, "colors": colors, "shapes": shapes, "libraries": libraries, "load_at": load_at, "layers": { "declared": declared, "order": order }, "layer_keys": keys, "keys": keys_of, "defs": defs })
 }
 
 /// The `/tikz/` keys the run stored, as the property editor offers them: `name`, the value's
 /// `type` read off the key's handler and the setters its code reaches (`color`, `length`,
 /// `choice` with its `choices`, `bool`, `node`, `flag` for none, else `text`), its `default`. A
-/// style has its `body`; one this file defines (`\tikzset{name/.style={…}}`) also the `style`
-/// `range` of the body's braces and of its whole `entry`.
-fn tikz_keys(cx: &Cx, file: Option<crate::engine::tex::FileId>) -> Vec<Json> {
+/// style has its `body`; one this file defines outside the picture (`\tikzset{name/.style={…}}`)
+/// its `style`: the defining call's index in the snapshots returned, and its `key` as written.
+fn tikz_keys(cx: &Cx, file: Option<crate::engine::tex::FileId>, own: std::ops::Range<usize>) -> (Vec<Json>, Vec<Node>) {
     use crate::queries::preview::{Stroke, sets};
     let a = cx.analysis;
     let records = crate::queries::query::pgfkeys(a, Some("/tikz/"));
@@ -176,7 +157,7 @@ fn tikz_keys(cx: &Cx, file: Option<crate::engine::tex::FileId>) -> Vec<Json> {
     let path_of =
         |r: &crate::queries::query::Record| str_of(r, "key").strip_prefix("/tikz/").unwrap_or_default().to_string();
     let here = file.map(|f| a.file_name(f).to_string());
-    let mut out = Vec::new();
+    let (mut out, mut defs) = (Vec::new(), Vec::<Node>::new());
     for r in &records {
         let (name, kind, code) = (path_of(r), str_of(r, "kind"), str_of(r, "value"));
         // pgf's own internals, handlers and subkeys (a choice's, a family's) are no properties
@@ -223,65 +204,40 @@ fn tikz_keys(cx: &Cx, file: Option<crate::engine::tex::FileId>) -> Vec<Json> {
         // the document's own: made by a call in this file that writes `name/.style={…}` there
         let line = r.get("line").and_then(Json::as_u64).unwrap_or(1) as u32;
         let found = (kind == "style" && here.as_deref() == r.get("path").and_then(Json::as_str))
-            .then(|| style_at(cx.doc, &name, line))
-            .flatten();
-        if let Some((inner, entry)) = found {
-            key["body"] = json!(super::slice(cx.doc, inner).trim());
-            key["style"] = json!({ "range": inner, "entry": entry });
+            .then(|| style_def(cx.doc, &name, line))
+            .flatten()
+            .filter(|(at, ..)| !own.contains(at));
+        if let Some((_, node, k)) = found {
+            let def = defs.iter().position(|d| d.range == node.range).unwrap_or_else(|| {
+                defs.push(node);
+                defs.len() - 1
+            });
+            key["body"] = json!(snapshot::list(&defs[def]).iter().find(|x| x.key == k).and_then(|x| x.value.clone()));
+            key["style"] = json!({ "def": def, "key": k });
         }
         out.push(key);
     }
-    out
+    (out, defs)
 }
 
-/// In `doc` from `line` on, `name/.style={…}`: the range inside its braces and
-/// its whole entry with the comma that separates it from the next (or the previous) one.
-fn style_at(doc: &Text, name: &str, line: u32) -> Option<(lsp_types::Range, lsp_types::Range)> {
+/// The call around `line` in `doc` whose first key list defines `name/.style` (the run's line
+/// is the call's first or last): where it starts, read as a snapshot, and the key as written.
+fn style_def(doc: &Text, name: &str, line: u32) -> Option<(usize, Node, String)> {
     let text = doc.body();
     let from = doc.offset(crate::text::Pos::new(line, 1))?;
-    let lsp = |o: usize| super::super::handlers::to_lsp(doc, doc.pos(o));
-    let mut at = from;
-    loop {
-        let start = at + text[at..].find(name)?;
-        at = start + name.len();
-        let before = text[..start].chars().next_back();
-        let rest = &text[at..];
-        let Some(after) = rest.trim_start().strip_prefix("/.style") else { continue };
-        let Some(open) = after.trim_start().strip_prefix('=').map(str::trim_start).filter(|v| v.starts_with('{'))
-        else {
-            continue;
-        };
-        if before.is_some_and(|c| !matches!(c, '{' | ',' | '[') && !c.is_whitespace()) {
-            continue;
-        }
-        let open = text.len() - open.len();
-        let mut depth = 0;
-        let close = open
-            + text[open..]
-                .char_indices()
-                .find(|&(_, c)| {
-                    depth += match c {
-                        '{' => 1,
-                        '}' => -1,
-                        _ => 0,
-                    };
-                    depth == 0
-                })?
-                .0;
-        let tail = &text[close + 1..];
-        let comma = tail.len() - tail.trim_start().len();
-        let (s, e) = if tail[comma..].starts_with(',') {
-            let next = &tail[comma + 1..];
-            (start, close + 1 + comma + 1 + (next.len() - next.trim_start().len()))
-        } else {
-            let head = text[..start].trim_end();
-            (head.strip_suffix(',').map_or(start, |h| h.len()), close + 1)
-        };
-        return Some((
-            lsp_types::Range { start: lsp(open + 1), end: lsp(close) },
-            lsp_types::Range { start: lsp(s), end: lsp(e) },
-        ));
-    }
+    let to = doc.offset(crate::text::Pos::new(line + 1, 1)).unwrap_or(text.len());
+    let defines = |k: &&snapshot::Key| k.key.strip_suffix("/.style").is_some_and(|n| n.trim() == name);
+    // the places the name is written from the line on, then before its end; at each the innermost call holding it
+    let after = text[from..].match_indices(name).map(|(i, _)| from + i);
+    after.chain(text[..to].rmatch_indices(name).map(|(i, _)| i)).find_map(|at| {
+        let c = text[..at]
+            .rmatch_indices('\\')
+            .map(|(c, _)| c)
+            .find(|&c| super::call_at(text, c).is_some_and(|(.., end)| end > at))?;
+        let node = snapshot::read(doc, c, &[0], false)?;
+        let key = snapshot::list(&node).iter().find(defines)?.key.clone();
+        Some((c, node, key))
+    })
 }
 
 /// The nodes the run made in the picture: name, shape, and where pgf put each (cm) when the

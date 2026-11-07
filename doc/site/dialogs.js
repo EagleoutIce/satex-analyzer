@@ -1049,7 +1049,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
 
   function table(view, host) {
     const t = () => view.state;
-    const ctx = view.context ?? {};
+    const ctx = view.context ?? {}, has = (p) => (ctx.loaded ?? []).includes(p);
     const main = h('div', { class: 'sd-tab' });
     const side = h('div');
     let anchor = [0, 0], focus = [0, 0], editing = null;
@@ -1064,7 +1064,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const change = (fn, op) => { const ok = fn(t()); draw(); f.refresh(op); return ok; };
     const rect = () => T.normalize(t(), [anchor[0], anchor[1], focus[0], focus[1]]);
     const note = (m) => { msg.textContent = m; setTimeout(() => { if (msg.textContent === m) msg.textContent = ''; }, 4000); };
-    const pkg = (name) => ctx[name] ? '' : ` (adds \\usepackage{${name}})`;
+    const pkg = (name) => has(name) ? '' : ` (adds \\usepackage{${name}})`;
 
     // the toolbar: output style and rewrites; the selection's actions float beside it
     const seg = (mode, label, title) => h('button', { type: 'button', 'data-style': mode, title, onclick: () => change((s) => T.setStyle(s, mode)) }, label);
@@ -1094,7 +1094,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       pasteBox.hidden = true;
       // numbers become S columns when siunitx is loaded
       const s = t(), nums = s.cols.some((_, c) => s.rows.slice(T.header(s) || 1).every((r) => { const [i, at] = T.cellAt(r, c); return i >= 0 && at === c && (T.numeric(T.plain(r.cells[i].text)) || !r.cells[i].text.trim()); }));
-      if (ctx.siunitx && nums && /^[\s\d.,+\-]*$/.test(text) === false && !text.trim().startsWith('{')) f.refresh('siunitx');
+      if (has('siunitx') && nums && /^[\s\d.,+\-]*$/.test(text) === false && !text.trim().startsWith('{')) f.refresh('siunitx');
       note(`Imported ${s.rows.length} rows and ${s.cols.length} columns`);
     };
     // an import that replaces cells with text asks first, in place
@@ -1128,14 +1128,14 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         h('button', { type: 'button', title: 'Import CSV or TSV from the clipboard', onclick: paste }, 'Paste CSV/TSV'),
         h('button', { type: 'button', title: 'Import a CSV, TSV or JSON file. You can also drop it on the grid', onclick: () => fileIn.click() }, 'Load file…')),
       fileIn, ask, pasteBox,
-      h('p', { class: 'sd-muted' }, `Imported text is escaped for TeX (& % $ # _ { } ~ ^ \\). ${ctx.siunitx ? 'Numeric columns become siunitx S columns. ' : ''}Rules stay where they were.`),
+      h('p', { class: 'sd-muted' }, `Imported text is escaped for TeX (& % $ # _ { } ~ ^ \\). ${has('siunitx') ? 'Numeric columns become siunitx S columns. ' : ''}Rules stay where they were.`),
     );
 
     /** The rule before row `k` (after the last, `k === rows.length`): a compact select for the row's gutter. */
     function ruleSel(k) {
       const s = t(), items = k < s.rows.length ? s.rows[k].before : s.after;
       const main = items.find((x) => RULES.includes(x)) ?? '';
-      const choices = ['', '\\hline', ...(ctx.booktabs || items.some((x) => /rule/.test(x)) ? ['\\toprule', '\\midrule', '\\bottomrule'] : [])];
+      const choices = ['', '\\hline', ...(has('booktabs') || items.some((x) => /rule/.test(x)) ? ['\\toprule', '\\midrule', '\\bottomrule'] : [])];
       const where = k === s.rows.length ? 'below the last row' : `above row ${k + 1}`;
       const sel = h('select', { class: 'sd-rsel' + (main ? '' : ' none'), 'aria-label': `rule ${where}`, title: `the rule ${where}: ${main || 'none'}`, onchange: () => change(() => {
         const i = items.findIndex((x) => RULES.includes(x));
@@ -1162,7 +1162,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         return h(tag, { class: 'sd-vcol' + (s.seps[k]?.includes('|') ? ' on' : ''), title: 'Click to add or remove a vertical rule', onclick: () => change((s) => { s.seps[k] = s.seps[k].includes('|') ? s.seps[k].replace(/\|/g, '') : s.seps[k] + '|'; }) }, ins);
       };
       const head = h('tr', {}, h('th', { class: 'sd-rh' }), s.cols.flatMap((c, k) => {
-        const loaded = COLS.filter(([, , p]) => !p || ctx[p]), more = COLS.filter(([, , p]) => p && !ctx[p]);
+        const loaded = COLS.filter(([, , p]) => !p || has(p)), more = COLS.filter(([, , p]) => p && !has(p));
         const known = COLS.some(([a]) => a === c.align);
         const sel = h('select', { 'aria-label': `column ${k + 1} type`, title: 'the column type', onchange: () => change(() => {
           c.align = sel.value;

@@ -56,7 +56,7 @@ impl TypePlugin for Forest {
             Some(b) => {
                 let (doc, begin) = (cx.doc, format!("\\begin{{{ENV}}}"));
                 let body = cx.doc.offset(to_pos(doc, b.range.start))?..cx.doc.offset(to_pos(doc, b.range.end))?;
-                let node = snapshot::env(doc, doc.body()[..body.start].rfind(&begin)?, body);
+                let node = snapshot::env(doc, doc.body()[..body.start].rfind(&begin)?, body, false);
                 ("Edit tree", json!({ "body": super::slice(cx.doc, b.range), "nodes": nodes(cx, &b), "node": node }))
             }
             None => {

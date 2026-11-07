@@ -3843,6 +3843,8 @@ fn tables_and_figures_open_dialogs_that_write_them_back() {
             // the run's graphics driver, and that it reads `decodearray` (pdftex.def sets `\Gin@decode`)
             let ctx = &view["context"];
             assert_eq!((ctx["driver"].as_str(), ctx["decode"].as_bool()), (Some("pdftex.def"), Some(true)), "{view}");
+            // the packages the run loaded, which the dialog asks by name
+            assert!(ctx["loaded"].as_array().unwrap().contains(&json!("graphicx")), "{ctx}");
         }
         if line == figure + 1 {
             assert_eq!(view["state"]["viewport"], true, "{view}");
@@ -4227,7 +4229,8 @@ fn tikz_plugin_shows_the_runs_nodes() {
     };
     assert!(near(&node("b"), 3.0, 1.0) && near(&node("c2"), 2.0, -2.0), "{draw}");
     let actions = at(&mut server, &uri, "textDocument/codeAction", 9, 0);
-    assert!(actions.as_array().unwrap().iter().any(|a| a["title"] == "Insert tikzpicture"), "{actions}");
+    let titles: Vec<&Value> = actions.as_array().unwrap().iter().map(|a| &a["title"]).collect();
+    assert!(titles.iter().any(|t| **t == "Insert tikzpicture"), "{titles:?}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
@@ -4241,7 +4244,8 @@ fn tikz_plugin_places_relative_nodes() {
     let _ = at(&mut server, &uri, "textDocument/hover", 5, 3);
     let views = at(&mut server, &uri, "satex/view", 6, 3);
     let draw = &views.as_array().unwrap().iter().find(|v| v["plugin"] == "tikz").expect("a drawing")["sections"][0];
-    assert_eq!(draw["options"], "node distance=2.4cm, every node/.style={draw, rounded corners}", "{draw}");
+    let options = json!([{ "key": "node distance", "value": "2.4cm" }, { "key": "every node/.style", "value": "draw, rounded corners" }]);
+    assert_eq!(draw["node"]["args"][0]["keys"], options, "{draw}");
     let node = |name: &str| draw["nodes"].as_array().unwrap().iter().find(|n| n["name"] == name).cloned();
     let get = |name: &str| node(name).unwrap_or_else(|| panic!("{name}: {draw}"));
     let (tex, satex, out) = (get("tex"), get("satex"), get("out"));
@@ -4280,16 +4284,16 @@ fn tikz_plugin_offers_what_the_run_declared() {
     assert_eq!(run["load_at"]["line"], 5, "before \\begin{{document}}");
     assert!(run["colors"].as_array().unwrap().iter().any(|c| c["name"] == "red" && c["hex"] == "#ff0000"), "{run}");
     assert!(!run["colors"].as_array().unwrap().iter().any(|c| c["name"] == "."), "not the current color: {run}");
-    // the options' place: the canvas rewrites `[node distance=2cm]`
-    assert_eq!(draw["head"]["start"], json!({ "line": 6, "character": "\\begin{tikzpicture}".len() }));
-    assert_eq!(draw["head"]["end"], draw["range"]["start"]);
+    // the picture as a snapshot: its `[node distance=2cm]` a key list the canvas sets
+    assert_eq!(draw["node"]["range"]["start"]["line"], 6, "{draw}");
+    assert_eq!(draw["node"]["args"][0]["keys"], json!([{ "key": "node distance", "value": "2cm" }]), "{draw}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
 
 /// The property editor's keys come from the run: each `/tikz/` key with the value type its
 /// handler and code give, choices with their values; a style the document defines with its body
-/// and where that body and its whole entry stand.
+/// and the snapshot of the call that defines it.
 #[test]
 fn tikz_plugin_offers_the_runs_keys_and_styles() {
     let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\tikzset{box/.style={draw, rounded corners}, hot/.style={fill=red!20}}\n\\tikzset{pace/.is choice, pace/fast/.code={}, pace/slow/.code={}}\n\\begin{document}\n\\begin{tikzpicture}\n  \\node[box] (a) {A};\n\\end{tikzpicture}\n\\end{document}\n";
@@ -4309,18 +4313,51 @@ fn tikz_plugin_offers_the_runs_keys_and_styles() {
     assert_eq!(key("pace")["choices"], json!(["fast", "slow"]), "{}", key("pace"));
     assert!(!keys.iter().any(|k| k["name"].as_str().unwrap().contains(['@', '/'])), "no internals, no subkeys");
     assert_eq!(key("box")["body"], "draw, rounded corners");
-    let box_ = &key("box")["style"];
-    let at_line =
-        |r: &Value| (r["start"]["line"].as_u64(), r["start"]["character"].as_u64(), r["end"]["character"].as_u64());
-    let line = text.lines().nth(2).unwrap();
-    let col = |s: &str| line.find(s).map(|c| c as u64);
-    assert_eq!(at_line(&box_["range"]), (Some(2), col("draw"), col("}, hot")), "{box_}");
-    // the entry takes its comma and the space after it along
-    assert_eq!(at_line(&box_["entry"]), (Some(2), col("box"), col("hot")), "{box_}");
+    assert_eq!(key("box")["style"], json!({ "def": 0, "key": "box/.style" }));
+    assert_eq!(key("hot")["style"], json!({ "def": 0, "key": "hot/.style" }), "one snapshot per defining call");
     assert_eq!(key("hot")["body"], "fill=red!20");
-    assert_eq!(at_line(&key("hot")["style"]["entry"]), (Some(2), col(", hot"), col("}}").map(|c| c + 1)));
+    let def = &draw["run"]["defs"][0];
+    assert_eq!((def["name"].as_str(), def["range"]["start"]["line"].as_u64()), (Some("tikzset"), Some(2)), "{def}");
     assert!(key("thick")["style"].is_null(), "TikZ's own styles are no document styles");
     assert!(key("thick")["body"].as_str().unwrap().starts_with("line width"), "{}", key("thick"));
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// The canvas writes through the snapshot printer: the picture's options and body, a document
+/// style edited and one removed in its `\\tikzset`, a library and a style added before
+/// `\\begin{document}`. What the canvas did not touch stays byte for byte.
+#[test]
+fn tikz_plugin_prints_through_snapshots() {
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\tikzset{box/.style={draw}, % boxes\n  hot/.style={fill=red!20}}\n\\begin{document}\n\\begin{tikzpicture}[x=1cm, % wide\n  y=1cm]\n  \\node[box] (a) {A};\n\\end{tikzpicture}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("tikz-print", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 7, 3);
+    let views = at(&mut server, &uri, "satex/view", 7, 3);
+    let draw = &views.as_array().unwrap().iter().find(|v| v["plugin"] == "tikz").expect("a drawing")["sections"][0];
+    let run = &draw["run"];
+    // a style on the call's second line is found too
+    let hot = run["keys"].as_array().unwrap().iter().find(|k| k["name"] == "hot").cloned().unwrap_or_default();
+    assert_eq!(hot["style"], json!({ "def": 0, "key": "hot/.style" }), "{hot}");
+    let mut pic = draw["node"].clone();
+    pic["args"][0]["keys"] =
+        json!([{ "key": "x", "value": "2cm" }, { "key": "y", "value": "1cm" }, { "key": "scale", "value": null }]);
+    pic["body"] = json!(draw["body"].as_str().unwrap().replace("{A}", "{Alpha}"));
+    let mut def = run["defs"][0].clone();
+    def["args"][0]["keys"] = json!([{ "key": "hot/.style", "value": "fill=blue!20" }]);
+    let tikz = json!({ "name": "tikz", "options": "" });
+    let call = |name: &str, keys: Value| json!({ "kind": "call", "name": name, "args": [{ "open": "{", "keys": keys }], "at": run["load_at"], "line": true, "package": tikz });
+    let lib = call("usetikzlibrary", json!([{ "key": "positioning", "value": null }]));
+    let made = call("tikzset", json!([{ "key": "cold/.style", "value": "" }]));
+    let id = server.request(
+        "satex/dialogApply",
+        json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": [pic, def, lib, made] }),
+    );
+    let response = server.response(id);
+    let out = response["result"].clone();
+    let written = applied(text, &uri, &json!({ "changes": { uri.clone(): out["edits"] } }), &[]);
+    // the list's separator is its first one without the comment
+    let want = "\\documentclass{article}\n\\usepackage{tikz}\n\\tikzset{hot/.style={fill=blue!20}}\n\\usetikzlibrary{positioning}\n\\tikzset{cold/.style={}}\n\\begin{document}\n\\begin{tikzpicture}[x=2cm, % wide\n  y=1cm, \n  scale]\n  \\node[box] (a) {Alpha};\n\\end{tikzpicture}\n\\end{document}\n";
+    assert_eq!(written, want, "{response}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
@@ -4357,12 +4394,12 @@ fn tikz_plugin_new_drawing_and_off() {
     let (mut server, uri, dir) = open_set("tikz-new", text, &[]);
     let _ = at(&mut server, &uri, "textDocument/hover", 2, 1);
     let actions = at(&mut server, &uri, "textDocument/codeAction", 3, 0);
+    let titles: Vec<&Value> = actions.as_array().unwrap().iter().map(|a| &a["title"]).collect();
     let new = actions.as_array().unwrap().iter().find(|a| a["title"] == "Insert tikzpicture (adds \\usepackage{tikz})");
-    let edits = new.expect("a new picture")["edit"]["changes"][&uri].as_array().unwrap().clone();
-    assert!(edits[0]["newText"].as_str().unwrap().starts_with("\\begin{tikzpicture}"), "{edits:?}");
-    assert_eq!(
-        (edits[1]["range"]["start"]["line"].as_u64(), edits[1]["newText"].as_str()),
-        (Some(1), Some("\\usepackage{tikz}\n"))
+    let out = applied(text, &uri, &new.unwrap_or_else(|| panic!("{titles:?}"))["edit"], &[]);
+    assert!(
+        out.contains("\\usepackage{tikz}\n\\begin{document}\nText\n\\begin{tikzpicture}\n  \\node[draw] (a)"),
+        "{out}"
     );
     assert_eq!(at(&mut server, &uri, "satex/view", 3, 0)[0]["title"], "New drawing");
     assert_eq!(at(&mut server, &uri, "satex/view", 2, 1), json!([]), "not on a line with text");

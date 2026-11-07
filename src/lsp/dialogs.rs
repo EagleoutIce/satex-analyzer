@@ -325,16 +325,12 @@ fn percent(s: &str) -> String {
         .collect()
 }
 
-/// What the packages loaded allow: booktabs' rules, siunitx's, tabularx's and array's columns, multirow.
-fn context(analysis: &Analysis, doc: &Text) -> Json {
-    let mut ctx: serde_json::Map<String, Json> =
-        PACKAGES.iter().map(|p| (p.to_string(), json!(crate::linter::shared::loaded(analysis, p)))).collect();
-    ctx.insert("preamble".into(), json!(doc.body().contains("\\begin{document}")));
-    Json::Object(ctx)
+/// The packages the run loaded: the dialog offers what they allow (booktabs' rules, siunitx's columns).
+fn context(analysis: &Analysis) -> Json {
+    let loaded: std::collections::BTreeSet<&str> =
+        (analysis.facts.loads.iter()).filter(|l| l.kind.is_package()).map(|l| l.name.as_str()).collect();
+    json!({ "loaded": loaded })
 }
-
-/// The packages a table dialog offers features of.
-const PACKAGES: [&str; 5] = ["booktabs", "siunitx", "tabularx", "array", "multirow"];
 
 /// The figure's natural size in bp, as the engine reads the file.
 fn natural(file: Option<&str>, page: i64) -> Option<[f64; 2]> {
@@ -370,7 +366,7 @@ pub fn dialog(analysis: &Analysis, doc: &Text, path: &str, pos: Position) -> Opt
             json!({ "env": env, "spec": placement(&text[head..]).map(|(p, _)| p) })
         }
     };
-    let mut ctx = context(analysis, doc);
+    let mut ctx = context(analysis);
     if t.kind == Kind::Image {
         ctx["path"] = json!(t.detail);
         // the graphics driver the run loaded, and whether it reads `decodearray` (it sets `\Gin@decode`)
