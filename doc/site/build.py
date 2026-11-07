@@ -9,7 +9,7 @@ files` says the samples and the offered packages read, and its caches from `sate
     build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site-out
 """
 
-import argparse, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, tempfile, threading, time, tomllib, urllib.parse
+import argparse, contextlib, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, tempfile, threading, time, tomllib, urllib.parse
 from pathlib import Path
 
 import semantics as sem
@@ -69,6 +69,26 @@ def board(label, line, final=False):
         out += "".join(f"\x1b[K{l[:width]}\n" for l in BOARD["lines"].values()) + "\x1b[J"
         BOARD["drawn"] = len(BOARD["lines"])
         print(out, end="", file=sys.stderr, flush=True)
+
+
+@contextlib.contextmanager
+def stage(label):
+    """A step without a bar of its own: named when it starts, every 20 s while it runs, and when it ends,
+    so a long quiet step never looks hung."""
+    start, stop = time.monotonic(), threading.Event()
+    took = lambda: f"{int(time.monotonic() - start) // 60}m{int(time.monotonic() - start) % 60:02d}s"
+    print(f"playground: {label} …", file=sys.stderr, flush=True)
+
+    def beat():
+        while not stop.wait(20):
+            print(f"playground: {label} … still running, {took()}", file=sys.stderr, flush=True)
+    t = threading.Thread(target=beat, daemon=True)
+    t.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        print(f"playground: {label} done in {took()}", file=sys.stderr, flush=True)
 
 
 def parallel(label, jobs, f, workers=None):
@@ -1705,7 +1725,8 @@ def main():
     for key in ("intro", "install"):
         parts[key], found = sem.mark_cards(parts[key], PREVIEW_NAMES())
         names |= found
-    card_data = sem.cards(names, formal.rows, lean, refs, *scope_cards(args.satex.resolve(), work, names), {k.split(":", 1)[1]: v for k, v in PREVIEWS.items()}, sem.builtin_lines(ROOT), sem.example_defs(pending), source_fallback())
+    with stage("hover cards: satex scope --all per engine"):
+        card_data = sem.cards(names, formal.rows, lean, refs, *scope_cards(args.satex.resolve(), work, names), {k.split(":", 1)[1]: v for k, v in PREVIEWS.items()}, sem.builtin_lines(ROOT), sem.example_defs(pending), source_fallback())
     # satex's own comment directives: no package defines them
     card_data.update((k, v) for k, v in sem.directive_cards(ROOT).items() if k in card_data)
     assets["cards"] = emit(out, "cs-cards.json", json.dumps(card_data, ensure_ascii=False, separators=(",", ":")).encode())
@@ -1739,14 +1760,17 @@ def main():
         (out / "bench/data.json").write_text("[]\n")
     page("bench/index.html", "Benchmarks", fill((SITE / "bench.html").read_text(), {"root": "../", "repository": repo}), side=False)
     (out / ".nojekyll").write_text("")
-    sem.check_links(out, refs.used)
+    with stage("link check"):
+        sem.check_links(out, refs.used)
     prune_memo()
-    offline(out)
+    with stage("offline bundle list"):
+        offline(out)
     # the showcase's captures follow the UI they show: stale ones are taken again from this build
     if recapture(out):
         home()
     if args.precompress:
-        precompress(out)
+        with stage("gzip of the site"):
+            precompress(out)
 
 
 def showcase(out, live):
