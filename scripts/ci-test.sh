@@ -3,15 +3,16 @@
 #   scripts/ci-test.sh K/N      shard K of N (1-based)
 #   scripts/ci-test.sh compliance
 #   scripts/ci-test.sh lib
+#   scripts/ci-test.sh reds     the known-red tests, at most ${REDS_SECONDS:-1200} s
 #   scripts/ci-test.sh quick <filters>   the given modules, without the doc feature
 # Tests are dealt round-robin from the sorted list, the long ones of
 # tests/slow.txt first, so every shard gets a similar share of both.
 # A new test lands in a shard by itself.  The compliance ledger fails on
 # purpose while it has open entries, so it is a shard of its own, reported
 # non-blocking; being short, it also runs the unit tests (`lib`), blocking.
-# A shard fails on a failing test that tests/known-red.txt does not list;
-# the listed ones run and are reported, and one that passes is named so
-# the list shrinks.  A known-red test that tests/green-baseline.txt records
+# A shard fails on any failing test; the ones tests/known-red.txt lists run
+# only in `reds` (non-blocking, time-boxed: an open one may hang), where one
+# that passes is named so the list shrinks.  A known-red test that tests/green-baseline.txt records
 # as once green is flagged "REGRESSION": it broke, it was not always open.
 # Logs go to ${CI_LOG_DIR:-target}; passing document and budget tests append
 # their analysis steps to steps-<name>.txt there (scripts/regress.sh reads them).
@@ -58,6 +59,11 @@ if [[ "${1-}" == compliance ]]; then
     run --test it -- compliance_matrix::
     exit
 fi
+if [[ "${1-}" == reds ]]; then
+    mapfile -t reds < <(grep -v '^#' tests/known-red.txt | sed '/^$/d')
+    gated reds timeout "${REDS_SECONDS:-1200}" cargo test --locked --profile "$profile" --features doc --no-fail-fast --test it -- --exact "${reds[@]}"
+    exit
+fi
 if [[ "${1-}" == lib ]]; then
     set -x
     run --lib
@@ -71,9 +77,11 @@ mapfile -t tests < <(
     run --test it -- --list 2>/dev/null | sed -n 's/: test$//p' | LC_ALL=C sort |
         awk -v k="$k" -v n="$n" '
             FILENAME == "tests/slow.txt" { slow[$0] = 1; next }
+            FILENAME == "tests/known-red.txt" { red[$0] = 1; next }
+            $0 in red { next }
             /^compliance_matrix::/ { next }
             { c = ($0 in slow) ? "s" : "f"; if (i[c]++ % n + 1 == k) print }
-        ' tests/slow.txt -
+        ' tests/slow.txt tests/known-red.txt -
 )
 (( ${#tests[@]} > 0 )) || { echo "$0: shard $k/$n is empty" >&2; exit 1; }
 

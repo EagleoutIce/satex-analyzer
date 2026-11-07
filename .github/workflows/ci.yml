@@ -138,6 +138,15 @@ jobs:
           SATEX_REQUIRE_TEX: '1'
         run: bash scripts/ci-test.sh compliance
 
+      # The known-red tests: the shards leave them out (an open one may hang), here they run
+      # time-boxed and non-blocking, and one that passes now is named.
+      - name: Known reds (non-blocking)
+        if: matrix.shard == 'compliance'
+        continue-on-error: true
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: bash scripts/ci-test.sh reds
+
   # The newest TeX Live, reported but not blocking: the main jobs pin
   # TL2025-historic, and this shows how far satex is from the current kernel.
   newest-texlive:
