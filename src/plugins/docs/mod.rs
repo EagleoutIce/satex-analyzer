@@ -266,6 +266,17 @@ impl Index {
         self.fill(dirs).get(name).cloned()
     }
 
+    /// Whether someone asks again once a package is mined: a lookup then need not wait.
+    pub fn listened(&self) -> bool {
+        self.subscribers.lock().is_ok_and(|s| !s.is_empty())
+    }
+
+    /// The documented sources of `file`'s package, found once per directory.
+    pub fn dirs(&self, file: &Path) -> Option<Dirs> {
+        let mut state = self.state.lock().ok()?;
+        state.dirs.entry(file.parent()?.to_path_buf()).or_insert_with(|| Dirs::of(&self.config, file)).clone()
+    }
+
     pub fn knows(&self, name: &str) -> bool {
         let Ok(state) = self.state.lock() else { return false };
         state.slots.values().flatten().any(|e| e.contains_key(name))

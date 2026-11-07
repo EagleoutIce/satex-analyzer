@@ -22,6 +22,7 @@ use crate::analysis::machine::Analysis;
 use crate::linter::fix::Sources;
 use crate::queries::preview::Stroke;
 use crate::queries::query::{self, Filter, Query, Record};
+use crate::queries::said::Source;
 use crate::text::{Pos, Text};
 
 /// LSP position (0-based line, UTF-16 column) to satex's (1-based line,
@@ -581,21 +582,35 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
             markdown.push_str(&format!("{MORE_DEFINITIONS}\n\n"));
         }
         let text = |key: &str| record.get(key).and_then(Json::as_str);
-        let mined = text("path")
-            .filter(|_| analysis.settings.plugins.docs)
-            .and_then(|p| crate::plugins::docs::index(&analysis.settings.docs).lookup(std::path::Path::new(p), name));
-        let mined = mined.as_ref();
+        let at = text("path").zip(record.get("line").and_then(Json::as_u64)).map(|(p, l)| (p, l as usize));
+        let found = crate::queries::said::said(analysis, name, at, false);
         match text("when") {
             Some(w) => markdown.push_str(&format!("### `\\{name}`: {w}\n\n")),
             None => markdown.push_str(&format!("### `\\{name}`\n\n")),
         }
-        if let Some(does) = text("does") {
-            markdown.push_str(&format!("{does}\n\n"));
-        } else if let Some((m, does)) = mined.and_then(|m| Some((m, m.text.as_deref()?))) {
-            markdown.push_str(&format!("{does} {}\n\n", extracted_from_manual(m)));
+        let via = found.via.as_ref().map(|v| format!(" (as `{v}`)")).unwrap_or_default();
+        match (text("does"), &found.text) {
+            (Some(does), _) => markdown.push_str(&format!("{does}\n\n")),
+            (None, Some((does, Source::Satex))) => markdown.push_str(&format!("{does}\n\n")),
+            (None, Some((does, Source::Manual))) => {
+                let from = found.manual.as_ref().map(extracted_from_manual).unwrap_or_default();
+                markdown.push_str(&format!("{does}{via} {from}\n\n"));
+            }
+            // the comment above this definition follows with its arguments
+            (None, Some((does, Source::Comment))) if !via.is_empty() => {
+                markdown.push_str(&format!("{does}{via} {}\n\n", extracted("from the source comment")));
+            }
+            _ => {}
+        }
+        // the package that owns the name, where this definition is another's alias
+        let package = text("package").or_else(|| text("class"));
+        if let Some(owner) =
+            found.owner.as_deref().filter(|o| package.is_some_and(|p| p != *o) && record.get("chain").is_none())
+        {
+            markdown.push_str(&format!("Provided by `{owner}`. `{}` redefines it.\n\n", package.unwrap_or_default()));
         }
         // The manual's usage line, else the run's, its arguments named by role.
-        if let Some(usage) = mined.and_then(|m| m.usage.as_deref()) {
+        if let Some(usage) = found.usage.as_deref() {
             markdown.push_str(&format!("`{usage}`\n\n"));
         } else if let Some(usage) = text("usage").filter(|u| u.contains('⟨')) {
             markdown.push_str(&format!("`{usage}`\n\n"));
@@ -670,17 +685,15 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
             // No comment and no arguments: what it stands for says most (`\draw` is `\path [draw]`).
             markdown.push_str(&format!("Expands to `{body}`\n\n"));
         }
-        let said = text("does").is_some()
-            || mined.is_some_and(|m| m.text.is_some())
-            || doc.as_ref().is_some_and(|d| !d.text.is_empty());
-        if let (false, Some(file), Some(line)) = (said, text("file"), record.get("line").and_then(Json::as_u64)) {
-            markdown.push_str(&format!("No documentation found. Defined at `{file}:{line}`.\n\n"));
+        let spoke = text("does").is_some() || found.text.is_some() || doc.as_ref().is_some_and(|d| !d.text.is_empty());
+        if let (false, Some(file), Some(line)) = (spoke, text("file"), record.get("line").and_then(Json::as_u64)) {
+            markdown.push_str(&format!("{} Defined at `{file}:{line}`.\n\n", found.none()));
         }
         let mut foot = Vec::new();
         if let (Some(file), Some(line)) = (text("file"), record.get("line").and_then(Json::as_u64)) {
             foot.push(format!("`{file}:{line}`"));
         }
-        if let Some((doc, url)) = mined.and_then(|m| m.link.as_ref()) {
+        if let Some((doc, url)) = found.manual.as_ref().and_then(|m| m.link.as_ref()) {
             foot.push(format!("[{doc}]({url})"));
         } else if let (Some(doc), Some(url)) = (text("documentation"), text("reference")) {
             foot.push(format!("[{doc}]({url})"));

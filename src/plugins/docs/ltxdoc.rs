@@ -54,8 +54,8 @@ impl DocPlugin for Ltxdoc {
                         (cs[..len].to_string(), format!("\\{}{}", &cs[..len], render(&cs[len..], true)))
                     }
                 };
-                // Without a usage it is doc.sty's implementation `environment`, no user's manual.
-                if !name.is_empty() && args.contains('⟨') {
+                // Without a usage and a backslash it is doc.sty's implementation `environment`, no user's manual.
+                if !name.is_empty() && (args.contains('⟨') || head.trim_start().starts_with('\\')) {
                     out.push(entry(name, Some(args), description(after, None), Audience::User, at));
                 }
             }

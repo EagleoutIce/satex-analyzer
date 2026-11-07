@@ -2237,6 +2237,62 @@ fn hover_shows_the_mined_manual() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Hover documentation falls back along one chain (src/queries/said.rs): an alias speaks with
+/// the manual of what it copies, a name only another package's `\\let` touches with the manual
+/// that documents it (TikZ's `\\draw`, which tikz-timing aliases), a user macro with the comment
+/// above it, and a name nothing documents says which sources were tried.
+#[test]
+fn hover_documentation_falls_back_along_one_chain() {
+    let lines = [
+        "\\documentclass{article}",
+        "\\usepackage{xspace,tikz,tikz-timing}",
+        "% Prints a fancy dash.",
+        "\\newcommand\\fancydash{--}",
+        "\\let\\samedash\\fancydash",
+        "\\let\\myspace\\xspace",
+        "\\newcommand\\plain{x}",
+        "\\begin{document}",
+        "\\samedash \\myspace \\plain \\draw",
+        "\\end{document}",
+    ];
+    let (mut server, uri, _, dir) = open_loaded("said", &(lines.join("\n") + "\n"));
+    let mut until = |name: &str, wanted: &[&str]| {
+        let line = lines.iter().rposition(|l| l.contains(name)).unwrap();
+        let character = (lines[line].find(name).unwrap() + 2) as u32;
+        let mut last = String::new();
+        for _ in 0..300 {
+            last = hover_md(&at(&mut server, &uri, "textDocument/hover", line as u32, character));
+            if wanted.iter().all(|w| last.contains(w)) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("{name}: {wanted:?} not in\n{last}");
+    };
+    until("\\samedash", &["Prints a fancy dash. (as `\\fancydash`) *(from the source comment)*"]);
+    until(
+        "\\plain",
+        &["No documentation found (tried ", "the comment above its definition). Defined at `main.tex:7`."],
+    );
+    let pgf = std::process::Command::new("kpsewhich").args(["-var-value", "TEXMFDIST"]).output();
+    let pgf = pgf.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    if documented_sources_installed() {
+        until("\\myspace", &["(as `\\xspace`) *(from the [xspace manual]", "[texdoc xspace]"]);
+    }
+    if std::path::Path::new(&pgf).join("doc/generic/pgf/pgfmanual-en-tikz-actions.tex").is_file() {
+        until(
+            "\\draw",
+            &[
+                "abbreviation for `\\path[draw]`",
+                "*(from the [pgfmanual manual]",
+                "Provided by `tikz`. `tikz-timing` redefines it.",
+            ],
+        );
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Whether the installation ships the kernel's documented sources to mine.
 fn documented_sources_installed() -> bool {
     let out = std::process::Command::new("kpsewhich").args(["-var-value", "TEXMFDIST"]).output();

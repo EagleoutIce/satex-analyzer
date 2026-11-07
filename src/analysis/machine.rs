@@ -470,6 +470,9 @@ pub struct Analysis {
     /// What [`crate::queries::query::scope`] shows of each name: built once.
     #[serde(skip)]
     pub scope_rows: std::sync::OnceLock<crate::queries::query::ScopeRows>,
+    /// What [`crate::queries::said`] reads of the run: built once.
+    #[serde(skip)]
+    pub said: std::sync::OnceLock<crate::queries::said::Run>,
 }
 
 /// Collection sizes change slowly. Checking them on every token would
@@ -2545,6 +2548,7 @@ impl<'a> Machine<'a> {
                 probed_roles: Default::default(),
                 bib: Default::default(),
                 scope_rows: Default::default(),
+                said: Default::default(),
             },
             env,
             catcodes,

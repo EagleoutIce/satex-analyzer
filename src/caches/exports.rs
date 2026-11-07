@@ -265,6 +265,18 @@ impl Exports {
 }
 
 /// Names defined after one of `definers`, and files loaded.
+/// Whether the text of `file` defines `name` with one of `definers`: its names read once per process.
+pub fn defined_in(file: &Path, definers: &HashSet<&str>, name: &str) -> bool {
+    type Names = std::sync::Arc<HashSet<String>>;
+    static READ: std::sync::Mutex<Option<HashMap<PathBuf, Names>>> = std::sync::Mutex::new(None);
+    let Ok(mut read) = READ.lock() else { return false };
+    let names = read.get_or_insert_with(HashMap::default).entry(file.to_path_buf()).or_insert_with(|| {
+        let text = std::fs::read(file).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+        std::sync::Arc::new(scan(&text, definers).0.into_iter().collect())
+    });
+    names.contains(name)
+}
+
 fn scan(text: &str, definers: &HashSet<&str>) -> (Vec<String>, Vec<String>) {
     use crate::engine::tex::Tok;
     let (tokens, names) = tokenize(text);

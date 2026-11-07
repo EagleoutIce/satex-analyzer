@@ -4347,7 +4347,7 @@ fn internal_name(analysis: &Analysis, name: &str) -> bool {
 /// `package` field: the document's own project first, then the class and
 /// packages it loaded, then the kernel — `tier` is the sort key, `origin`
 /// what `package` shows.
-fn origin_of(analysis: &Analysis, package: Option<Sym>, file: FileId) -> (u8, Json) {
+pub(crate) fn origin_of(analysis: &Analysis, package: Option<Sym>, file: FileId) -> (u8, Json) {
     // A package the project ships is that package (`mypackage`), not the document.
     let ours = origin(analysis, file) == "document";
     match package {
@@ -4431,9 +4431,7 @@ pub fn scope_named(
         }
     }
     let shown = |row: &&ScopeRow| all || row.plain;
-    let row = |i: usize| {
-        crate::util::progress::built(&rows.defs[i], || def_row(analysis, &analysis.facts.defs[i], &rows.first))
-    };
+    let row = |i: usize| crate::util::progress::built(&rows.defs[i], || def_row(analysis, &analysis.facts.defs[i]));
     let defs = latest.values().filter_map(|&i| row(i).as_ref()).filter(shown);
     let rest = rows.rest.iter().filter(|r| named(&r.name)).filter(shown);
     let mut out: Vec<&ScopeRow> = defs.chain(rest).collect();
@@ -4459,16 +4457,10 @@ pub struct ScopeRow {
 #[derive(Clone)]
 pub struct ScopeRows {
     defs: Vec<std::sync::OnceLock<Option<ScopeRow>>>,
-    /// Each name's first definition the run made: its provider's.
-    first: HashMap<Sym, usize>,
     rest: Vec<ScopeRow>,
 }
 
-fn def_row(
-    analysis: &Analysis,
-    def: &crate::analysis::facts::Definition,
-    first: &HashMap<Sym, usize>,
-) -> Option<ScopeRow> {
+fn def_row(analysis: &Analysis, def: &crate::analysis::facts::Definition) -> Option<ScopeRow> {
     let name = analysis.interner.name(def.name);
     if unprintable_name(name) {
         return None;
@@ -4478,26 +4470,15 @@ fn def_row(
     record.insert("tag".into(), json!(def.tag));
     record.insert("effective".into(), json!(effective_of(analysis, def.name, def.mac.as_deref(), None)));
     let (tier, origin) = origin_of(analysis, def.package, def.span.file);
-    record.insert("package".into(), origin.clone());
-    // Who provides the name: the format when it defined it, else the
-    // package of its first definition; a later one only redefines it.
-    let provider = match (analysis.kernel_sites.contains_key(&def.name), first.get(&def.name)) {
-        (true, _) => json!("kernel"),
-        (false, Some(&i)) => origin_of(analysis, analysis.facts.defs[i].package, analysis.facts.defs[i].span.file).1,
-        (false, None) => origin,
-    };
-    record.insert("provider".into(), provider);
-    let file = analysis.files.get(usize::from(def.span.file)).map(|f| std::path::PathBuf::from(&f.path));
-    let (does, usage) = scope_does(analysis, name, &analysis.env.meaning(def.name), file);
-    // the comment block above a definition in the project's files documents it
+    record.insert("package".into(), origin);
+    let file = analysis.files.get(usize::from(def.span.file)).map(|f| f.path.as_str());
+    let said = super::said::said(analysis, name, file.map(|f| (f, def.span.line as usize)), true);
+    // the comment block above a definition in the project's files names its arguments
     let comment = source_comment(analysis, def.span);
-    let said = comment.as_ref().map_or(&[][..], |c| &c.params[..]);
-    record
-        .insert("usage".into(), json!(usage_of(analysis, def.name, def.mac.as_deref(), None, usage.as_deref(), said)));
-    let does = does.or_else(|| comment.as_ref().map(|c| c.text.clone()).filter(|t| !t.is_empty()));
-    if let Some(does) = does {
-        record.insert("does".into(), json!(does));
-    }
+    let params = comment.as_ref().map_or(&[][..], |c| &c.params[..]);
+    let usage = usage_of(analysis, def.name, def.mac.as_deref(), None, said.usage.as_deref(), params);
+    record.insert("usage".into(), json!(usage));
+    super::said::insert(&mut record, &said);
     Some(ScopeRow { name: name.to_string(), tier, record, plain: !internal_name(analysis, name) })
 }
 
@@ -4576,23 +4557,15 @@ fn scope_rows_from(analysis: &Analysis, prior: Option<(&Analysis, &ScopeRows)>) 
         record.insert("effective".into(), json!(effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), None)));
         record.insert("package".into(), json!("kernel"));
         record.insert("provider".into(), json!("kernel"));
-        // the file the format read its definition from, whose package documents it
-        let file = analysis.kernel_sites.get(&sym).and_then(|span| analysis.files.get(usize::from(span.file)));
-        let (does, usage) = scope_does(analysis, name, &meaning, file.map(|f| std::path::PathBuf::from(&f.path)));
+        let said = super::said::said(analysis, name, None, true);
         record.insert(
             "usage".into(),
-            json!(usage_of(analysis, sym, meaning.as_macro().map(|m| &**m), None, usage.as_deref(), &[])),
+            json!(usage_of(analysis, sym, meaning.as_macro().map(|m| &**m), None, said.usage.as_deref(), &[])),
         );
-        if let Some(does) = does {
-            record.insert("does".into(), json!(does));
-        }
+        super::said::insert(&mut record, &said);
         rest.push(ScopeRow { name: name.to_string(), tier: 2, record, plain });
     }
-    let mut first = HashMap::default();
-    for (i, d) in analysis.facts.defs.iter().enumerate() {
-        first.entry(d.name).or_insert(i);
-    }
-    ScopeRows { defs, first, rest }
+    ScopeRows { defs, rest }
 }
 
 /// How many arguments a command consumes, as a range: what its parameter
@@ -5169,7 +5142,7 @@ pub fn describe(name: &str) -> Option<&'static str> {
 /// What `name` with this meaning does: a kernel macro that took a
 /// primitive's name (`\end`) has a row of its own, `latex:end`; the
 /// primitive's row never describes it.
-fn describe_meaning(analysis: &Analysis, name: &str, meaning: &Meaning) -> Option<&'static str> {
+pub(crate) fn describe_meaning(analysis: &Analysis, name: &str, meaning: &Meaning) -> Option<&'static str> {
     if meaning.as_macro().is_none() {
         return describe(name);
     }
@@ -5178,36 +5151,6 @@ fn describe_meaning(analysis: &Analysis, name: &str, meaning: &Meaning) -> Optio
             .then(|| describe(name))
             .flatten()
     })
-}
-
-/// What [`scope`] says `name` does: its description, else what the manual
-/// of the package defining it (`file`, else the format) says, else what
-/// the run made it: `\theX` prints counter `X` where `\c@X` is one. And
-/// the usage line the manual gives.
-fn scope_does(
-    analysis: &Analysis,
-    name: &str,
-    meaning: &Meaning,
-    file: Option<std::path::PathBuf>,
-) -> (Option<String>, Option<String>) {
-    let file = file.or_else(|| crate::caches::distribution::tex_file(&analysis.distribution.roots, "latex.ltx"));
-    // A macro the format puts in a primitive's place (`\par`, `\-`): the
-    // format's source comments explain its code, not the command.
-    let primitive = crate::engine::builtins::primitive_names(analysis.plugins.engine).contains_key(name);
-    let mined = file
-        .filter(|_| analysis.settings.plugins.docs && meaning.as_macro().is_some() && !primitive)
-        .and_then(|f| crate::plugins::docs::index(&analysis.settings.docs).lookup_now(&f, name));
-    let usage = mined.as_ref().and_then(|m| m.usage.clone());
-    if let Some(does) = describe_meaning(analysis, name, meaning) {
-        return (Some(does.to_string()), usage);
-    }
-    let does = mined.and_then(|m| m.text).or_else(|| {
-        let counter = name.strip_prefix("the")?;
-        let reg = analysis.interner.lookup(&format!("c@{counter}"))?;
-        matches!(analysis.env.meaning(reg), Meaning::Register(crate::engine::tex::RegKind::Count, _))
-            .then(|| format!("The printed value of counter {counter}."))
-    });
-    (does, usage)
 }
 
 /// Adds the `documentation`/`reference` link and, when the name has one, the

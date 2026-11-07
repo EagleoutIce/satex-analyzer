@@ -643,7 +643,7 @@ def cards(names, rows, ctx, refs, scope, engines, templates, previews, builtins,
                 card["pkg"] = rec.get("provider") or rec["package"]
             if rec and rec.get("file"):
                 card["at"] = f'{rec["file"]}:{rec["line"]}'
-            card["doc"] = (rec or {}).get("does") or no_doc(card)
+            card["doc"] = said(rec or {}, card)
         elif rec or row:
             tag = rec.get("tag") if rec else None
             # the provider defined it first; the package in force may only redefine it
@@ -677,10 +677,8 @@ def cards(names, rows, ctx, refs, scope, engines, templates, previews, builtins,
                     card["sig"] = rec["usage"]
                 if rec.get("file"):
                     card["at"] = f'{rec["file"]}:{rec["line"]}'
-                if rec.get("does"):
-                    card["doc"] = rec["does"]
-                elif card["k"] != "primitive":
-                    card["doc"] = no_doc(card)
+                if rec.get("does") or card["k"] != "primitive":
+                    card["doc"] = said(rec, card)
         if row:
             _, rule, source, kind = row
             sem = {"kind": {"exact": "exact", "over": "over-approximated", "open": "no rule yet"}.get(kind, kind), "row": f"wiki/formal-semantics.html#{prim_id(row[0])}"}
@@ -737,9 +735,24 @@ def kernel_site(name):
     return _KERNEL.get(name)
 
 
-def no_doc(card):
-    """What a card says when no documentation source speaks for its name: where it is defined, never a guess."""
-    return f'No documentation found. Defined at `{card["at"]}`.' if card.get("at") else "No documentation found."
+def said(rec, card):
+    r"""A card's text from satex's record (src/queries/said.rs): the description and the source that gave it, else the
+    sources tried and where the name is defined, never a guess. `\draw` in the probe is tikz-timing's alias of TikZ's:
+
+    >>> rec = {"tag": "alias", "package": "tikz-timing", "provider": "tikz", "file": "tikz-timing.sty", "line": 1448,
+    ...        "does": "Draws.", "does_from": "the pgfmanual manual"}
+    >>> c = cards(["\\draw"], [], None, None, {"\\draw": rec}, {}, [], {}, {})["\\draw"]
+    >>> c["k"], c["pkg"], c["re"], c["doc"]
+    ('package alias', 'tikz', 'tikz-timing', 'Draws. (from the pgfmanual manual)')
+    >>> said({"tried": ["the tikz-timing manual"]}, {"at": "tikz-timing.sty:1448"})
+    'No documentation found (tried the tikz-timing manual). Defined at `tikz-timing.sty:1448`.'
+    """
+    if rec.get("does"):
+        source = f"from {rec['does_from']}" if rec.get("does_from") not in (None, "satex") else None
+        tail = [t for t in (source, rec.get("via") and f"as `{rec['via']}`") if t]
+        return rec["does"] + (f" ({', '.join(tail)})" if tail else "")
+    tried = f' (tried {", ".join(rec["tried"])})' if rec.get("tried") else ""
+    return f'No documentation found{tried}.' + (f' Defined at `{card["at"]}`.' if card.get("at") else "")
 
 
 # What a primitive is, by the semantics rule primitives.tsv gives it.

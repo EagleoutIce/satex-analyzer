@@ -119,3 +119,35 @@ fn descriptions_are_sentences_of_the_prose() {
         }
     }
 }
+
+/// The site's hover cards read `scope --all` of a document loading every package its pages name
+/// (doc/site/build.py `scope_cards`): `\draw` there is tikz-timing's `\let`, yet TikZ owns it and
+/// pgf's manual documents it.
+#[test]
+fn site_card_of_draw_names_tikz_and_its_manual() {
+    // the manual's source, which TeX Live's docker image leaves out
+    let dist =
+        std::process::Command::new("kpsewhich").args(["-var-value", "TEXMFDIST"]).output().expect("kpsewhich runs");
+    let manual = PathBuf::from(String::from_utf8_lossy(&dist.stdout).trim())
+        .join("doc/generic/pgf/pgfmanual-en-tikz-actions.tex");
+    if !manual.is_file() || !installed("tikz-timing.sty").is_file() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-site-draw-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = dir.join("probe.tex");
+    let text =
+        "\\documentclass{article}\n\\usepackage{tikz}\n\\usepackage{tikz-timing}\n\\begin{document}\n\\end{document}\n";
+    std::fs::write(&doc, text).unwrap();
+    let out = crate::support::satex()
+        .args(["--format", "json", "scope", "--all", "-f"])
+        .arg(&doc)
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap_or_default();
+    let draw = rows.iter().find(|r| r["name"] == "\\draw").expect("\\draw in scope");
+    assert_eq!(draw["provider"], "tikz", "{draw}");
+    assert!(draw["does"].as_str().is_some_and(|d| d.contains("\\path[draw]")), "{draw}");
+    assert_eq!(draw["does_from"], "the pgfmanual manual", "{draw}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

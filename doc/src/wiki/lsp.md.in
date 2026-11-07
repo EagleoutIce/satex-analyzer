@@ -59,13 +59,16 @@ Each argument also has a **type** ([`Ty`](domains.md#argument-types-the-ty-latti
 
 ### Where a card's text comes from
 
-A card says what documents the name, and nothing else:
+A card says what documents the name, and nothing else. One chain in `src/queries/said.rs` serves the editor's hover and the site's cards. The first source that speaks wins:
 
 1. The description table (`src/data/describe.tsv`) for primitives and the kernel's user commands.
-2. The package's documented sources: a `\DescribeMacro` paragraph, a `\begin{macro}` section, an l3doc `function` block. Only prose counts: a `\changes` note, a usage line or a fragment never stands in for a description.
-3. In the project's own files, the comment block right above a definition, or the comment that ends its line. `% #1: the text to box` names the argument.
+2. The manual of each package that defines the name, the first definer first: a `\DescribeMacro` paragraph, a `\begin{macro}` section, an l3doc `function` block, a pgf `command` block. Only prose counts: a `\changes` note, a usage line or a fragment never stands in for a description.
+3. For an alias (`\let\a\b`), the documentation of the name it copies. The card says `as \b`.
+4. The manual of any loaded package that documents the name, unless the format defines it.
+5. The kernel's manual for a name the format defines.
+6. The comment block right above the definition, or the comment that ends its line. `% #1: the text to box` names the argument.
 
-When none of them speaks, the card says `No documentation found. Defined at file:line`. The usage line names each argument by the documentation's syntax line, else by the type the run gives it, else by its place (`⟨arg2⟩`). A default is a hint (`[⟨number⟩ = 0]`), never the label. The `from` chip names the package that defines the name first, and a package that redefines it shows as `redefined by`.
+When none of them speaks, the card says `No documentation found`, the sources it tried and `Defined at file:line`. The usage line names each argument by the documentation's syntax line, else by the type the run gives it, else by its place (`⟨arg2⟩`). A default is a hint (`[⟨number⟩ = 0]`), never the label. The `from` chip names the package that owns the name: the format, else the first package that defines it. A package that redefines it shows as `redefined by`. A name another package only `\let`s (tikz-timing's `\draw`) belongs to the loaded package whose manual documents it and whose source defines it (TikZ).
 
 ```tex
 % Draws a frame around its argument.
