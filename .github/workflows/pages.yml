@@ -74,6 +74,8 @@ jobs:
         run: curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
 
       - uses: actions/checkout@v5
+      # The checkout belongs to another user than the container's root: git refuses it otherwise.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
