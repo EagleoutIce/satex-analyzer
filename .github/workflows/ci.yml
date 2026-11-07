@@ -324,7 +324,6 @@ jobs:
             distribution_guard:: \
             engine:: \
             engine_truth:: \
-            differential:: \
             engine_trace:: \
             format_flags:: \
             lua:: \
@@ -336,6 +335,15 @@ jobs:
             termination:: \
             tex_compliance:: \
             trace_range::
+
+      # What the typesetting sets depends on the package versions, and these runners install the latest
+      # ones: reported here, blocking on Linux, whose image pins TL2025-historic.
+      - name: Typesetting on the latest packages (non-blocking)
+        shell: bash
+        continue-on-error: true
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: "bash scripts/ci-test.sh quick differential::"
 
       - name: Compliance ledger (known-red, non-blocking)
         shell: bash
@@ -479,7 +487,6 @@ jobs:
             distribution_guard:: \
             engine:: \
             engine_truth:: \
-            differential:: \
             engine_trace:: \
             format_flags:: \
             lua:: \
@@ -491,6 +498,15 @@ jobs:
             termination:: \
             tex_compliance:: \
             trace_range::
+
+      # What the typesetting sets depends on the package versions, and these runners install the latest
+      # ones: reported here, blocking on Linux, whose image pins TL2025-historic.
+      - name: Typesetting on the latest packages (non-blocking)
+        shell: bash
+        continue-on-error: true
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: "bash scripts/ci-test.sh quick differential::"
 
       - name: Compliance ledger (known-red, non-blocking)
         shell: bash
