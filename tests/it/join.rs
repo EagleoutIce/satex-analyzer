@@ -1235,3 +1235,19 @@ fn a_family_given_a_text_per_record_keeps_the_paths_few() {
     let (few, many) = (peak(2), peak(6));
     assert!(many <= few, "{many} paths with 6 records, {few} with 2");
 }
+
+/// A command that starts a paragraph where the mode is joined (internal
+/// vertical or horizontal) parts by mode. Its arms part after the last
+/// `\fi`, so they never meet at it before reading the command again: one
+/// `\strut` per line is no loop, and nothing is summarized.
+#[test]
+fn a_mode_split_after_a_joined_fi_is_no_loop() {
+    let a = analyze(
+        r"\setbox1\hbox{\vrule height 8pt depth 3pt width 0pt}\def\strut{\relax\ifmmode\copy1\else\unhcopy1\fi}
+          \everypar{\relax}
+          \setbox0\vbox{\ifnum\pdfuniformdeviate2=0 x\fi
+            \strut\ignorespaces a\par\strut\ignorespaces b\par\strut\ignorespaces c\par\gdef\inbox{}}\gdef\after{}",
+    );
+    assert!(with_code(&a, "recursion-widened").is_empty(), "{:?}", with_code(&a, "recursion-widened"));
+    assert!(crate::support::defined(&a, "inbox") && crate::support::defined(&a, "after"));
+}
