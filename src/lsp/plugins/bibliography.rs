@@ -28,7 +28,13 @@ impl TypePlugin for Bibliography {
         &[Ty::Key(KeyKind::Cite)]
     }
     fn features(&self) -> &'static [&'static str] {
-        &["view", "manage", "lens"]
+        &["view", "manage", "lens", "hover"]
+    }
+    fn opened_by(&self) -> Option<(&'static [&'static str], &'static str)> {
+        Some((&["cite", "bibliography", "printbibliography", "addbibresource"], "Manage bibliography…"))
+    }
+    fn entry(&self, cx: &Cx, _hit: &Hit) -> Option<String> {
+        self.manage(cx).map(|_| super::open_link(cx, "Manage bibliography…", self.name()))
     }
     /// `thebibliography` (no `.bib` file): its manager, as on a `\bibitem`.
     fn lenses(&self, analysis: &Analysis, doc: &Text, path: &str) -> Vec<lsp_types::CodeLens> {

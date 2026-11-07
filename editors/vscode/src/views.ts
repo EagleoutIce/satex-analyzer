@@ -52,10 +52,11 @@ export async function openView(context: vscode.ExtensionContext, client: Languag
     const pos = manage ? undefined : at ? new vscode.Position(at.line, at.character) : editor?.selection.active;
     if (!client || !doc || (!pos && !manage)) { return; }
     const all = await views(client, doc, pos, plugin);
-    const view = all.find(v => v.plugin === plugin) ?? all[0];
+    // a command's lens has no view of its own at the cursor: the plugin's manager
+    const view = all.find(v => v.plugin === plugin) ?? (plugin ? (await views(client, doc, undefined, plugin))[0] : all[0]);
     if (!view) { void vscode.window.showInformationMessage('satex: no view here'); return; }
     const p = panel(context, 'view', view.title);
-    p.webview.html = page(context, p.webview, ['views.js'], `
+    p.webview.html = page(context, p.webview, ['lengths.js', 'views.js'], `
 const view = ${inlineJson(view)}, md = ${inlineJson(await rendered(view))};
 const title = Object.assign(document.createElement('h3'), { textContent: view.title }), box = document.createElement('div');
 document.body.append(title, box);

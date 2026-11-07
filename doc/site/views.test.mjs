@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
 
 globalThis.self = globalThis;
+createRequire(import.meta.url)('./lengths.js');
 createRequire(import.meta.url)('./views.js');
 const { parse, emit, mermaidIn, mermaidOut, importMermaid } = self.satexViews.drawing;
 
@@ -655,7 +656,7 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   const s = {
     run: { paperwidth: same(40258437), paperheight: same(52099153), textwidth: same(32799719), textheight: same(44640435), oddsidemargin: same(-1006927), evensidemargin: same(-1006927),
       topmargin: same(-3431759), headheight: same(786432), headsep: same(1638400), footskip: same(1966080), marginparwidth: same(4259840), marginparsep: same(720896) },
-    twoside: false, papers: [{ name: 'a4paper', w: 39158276, h: 55380990 }], units: [{ name: 'cm', sp: cm }, { name: 'pt', sp: 65536 }], unit: 'cm', decimals: 2,
+    twoside: false, papers: [{ name: 'a4paper', w: 39158276, h: 55380990 }, { name: 'legalpaper', w: 40258437, h: 66331225 }, { name: 'letterpaper', w: 40258437, h: 52099153 }], units: [{ name: 'cm', sp: cm }, { name: 'pt', sp: 65536 }], unit: 'cm', decimals: 2,
     geometry: { loaded: true, global: { range: here, options: 'margin=2cm', template: '${options}' }, load: null }, koma: null,
     part: { here: at(3), marks: [{ title: 'One', level: 'section', at: at(5) }], end: at(7) },
     header: { package: null, insert: at(2), load: '\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n' },
@@ -663,6 +664,7 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   const len = (sp) => `${+(sp / cm).toFixed(2)}cm`;
   const st0 = P.pageOf(s);
   assert.deepEqual([st0.left, st0.right, st0.top, st0.bottom].map((v) => Math.abs(v - two[0]) < 2), [true, true, true, true], 'margin=2cm on all sides');
+  assert.equal(st0.paper, 'letterpaper', '21.59 x 27.94 cm is letter, not custom');
   assert.deepEqual(P.pageEdits(s, st0, structuredClone(st0), len), [], 'nothing changed, nothing written');
   // a wider left margin: the margin group written anew, the text narrower
   const wide = { ...structuredClone(st0), left: Math.round(3 * cm) };
@@ -681,6 +683,7 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   const koma = { ...s, koma: { range: here, options: 'DIV=10,BCOR=5mm', template: '${options}', div: 10, bcor: Math.round(cm / 2) } };
   const k0 = P.pageOf(koma);
   assert.equal(k0.mode, 'koma');
+  assert.deepEqual([k0.paper, k0.div], ['letterpaper', 10], 'typearea keeps its DIV beside the detected paper');
   assert.deepEqual(P.pageEdits(koma, k0, { ...structuredClone(k0), div: 12 }, len), [{ range: here, newText: 'DIV=12,BCOR=0.5cm' }]);
   const box = P.pageBox({ ...k0, div: 12, ran: null }, true);
   assert.ok(Math.abs(2 * (box.left - k0.bcor) - box.right) < 2, 'two-sided: the outer margin twice the inner');
@@ -801,4 +804,25 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   assert.equal(check('a"!b', ['index']), '', 'a quoted ! is text');
   assert.equal(check('\\textbf{a|b}', ['index']), '', 'braces hide |');
   console.log('manager templates: ok');
+}
+
+// TeX lengths (lengths.js): any unit as typed, shown as written, one validator
+{
+  const L = self.satexLengths;
+  assert.deepEqual([L.parts('1.5in'), L.parts(' -.5 em '), L.parts('0.5\\linewidth'), L.parts('-\\textwidth'), L.parts('3')], [
+    { n: 1.5, unit: 'in' }, { n: -0.5, unit: 'em' }, { n: 0.5, unit: '\\linewidth' }, { n: -1, unit: '\\textwidth' }, { n: 3, unit: '' }]);
+  for (const bad of ['banana', 'cm', '1.5.2cm', '2 cm cm']) assert.equal(L.parts(bad), null, bad);
+  assert.equal(L.check('2cm') + L.check('12pt') + L.check('0.5\\linewidth') + L.check(''), '');
+  assert.equal(L.check('-3'), L.MESSAGE, 'a bare number is no TeX length');
+  const cm = 72.27 / 2.54 * 65536;
+  assert.equal(L.sp('2cm'), Math.round(2 * cm));
+  assert.equal(L.sp('1in'), Math.round(72.27 * 65536));
+  assert.equal(L.sp('12pt'), 12 * 65536);
+  assert.equal(L.sp('3', { dflt: 'cm' }), Math.round(3 * cm), 'a bare number takes the default unit');
+  assert.equal(L.sp('0.5\\linewidth', { names: { linewidth: 1000 } }), 500);
+  assert.equal(L.sp('0.5\\linewidth'), null, 'a command nothing resolves');
+  assert.equal(L.sp('2cm', { per: { cm: 100 } }), 200, 'the run\'s table wins');
+  assert.equal(L.show(Math.round(1.5 * 72.27 * 65536), 'in'), '1.5in');
+  assert.equal(L.show(Math.round(2 * cm), 'mm'), '20mm');
+  assert.ok(Math.abs(L.to('1in', 'cm') - 2.54) < 1e-9);
 }

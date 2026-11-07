@@ -477,9 +477,8 @@
     return cuts.length === 1 ? [o.slice(0, cuts[0]).trim(), o.slice(cuts[0] + 1).trim()] : null;
   };
   const fmt = (v) => String(+(+v).toFixed(3));
-  // TeX's units in cm (TeXbook p. 57); a bare number is pt, as pgf reads a length
-  const UNITS = { cm: 1, mm: 0.1, in: 2.54, pt: 2.54 / 72.27, bp: 2.54 / 72 };
-  const cm = (s) => { const m = s?.trim().match(/^(-?\d*\.?\d+)\s*(cm|mm|in|pt|bp)?$/); return m ? +m[1] * UNITS[m[2] ?? 'pt'] : null; };
+  // a length in cm; a bare number is pt, as pgf reads a length
+  const cm = (s) => self.satexLengths.to(s ?? '', 'cm');
   const SIDES = { right: [1, 0], left: [-1, 0], above: [0, 1], below: [0, -1] };
   /** The words of a direction: `[1, 1]` is `above right`. */
   const words = ([dx, dy]) => [dy > 0 ? 'above' : dy < 0 ? 'below' : '', dx > 0 ? 'right' : dx < 0 ? 'left' : ''].filter(Boolean).join(' ');
@@ -1114,22 +1113,22 @@
     arrows.onchange = () => { arrow = `-${arrows.value}`; };
     // the grid: presets, a custom step, snapping; each viewer's own
     const grid = el('span', 'tv-row tv-grid-pick');
-    const gsel = el('select', 'tv-input', ['0.25', '0.5', '1', 'off', 'custom'].map((v) => `<option value="${v}">${v === 'off' || v === 'custom' ? v : `${v} cm`}</option>`).join(''));
-    gsel.ariaLabel = 'grid';
-    const gnum = Object.assign(el('input', 'tv-input'), { type: 'number', step: 'any', min: '0.05', ariaLabel: 'grid step in cm', title: 'Grid step in cm' });
-    const gsnap = Object.assign(el('label', 'tv-muted', '<input type="checkbox"> snap'), { title: 'Snap drags to the grid' });
-    const showGrid = () => {
-      const v = pref.step ? String(pref.step) : 'off';
-      gsel.value = [...gsel.options].some((o) => o.value === v) ? v : 'custom';
-      gnum.hidden = gsel.value !== 'custom';
-      gnum.value = pref.step || '';
-      gsnap.firstChild.checked = pref.snap;
-    };
+    const L = self.satexLengths, gsnap = Object.assign(el('label', 'tv-muted', '<input type="checkbox"> snap'), { title: 'Snap drags to the grid' });
+    const gcm = (t) => L.to(t, 'cm', { dflt: 'cm' });
+    // the step as the viewer wrote it while it still means the step; empty is off
+    const stepText = () => !pref.step ? '' : pref.text && Math.abs(gcm(pref.text) - pref.step) < 1e-6 ? pref.text : `${+pref.step.toFixed(4)}cm`;
+    const gfield = L.field({
+      value: stepText(), label: 'grid step', bare: true, placeholder: 'off', list: 'tv-grid-presets',
+      ok: (t) => t.trim() && !(gcm(t) > 0) ? 'a step above zero (0.5cm, 1in, 12pt), empty for none' : '',
+      oncommit: (t) => { pref.step = t ? gcm(t) : 0; pref.text = t; saveGrid(); },
+    });
+    gfield.input.title = 'The grid step: any TeX length (a bare number is cm), empty for no grid';
+    const showGrid = () => { gfield.input.value = stepText(); gsnap.firstChild.checked = pref.snap; };
     const saveGrid = () => { try { localStorage.setItem(GRID_KEY, JSON.stringify(pref)); } catch { /* storage off */ } showGrid(); box = null; draw(true); };
-    gsel.onchange = () => { if (gsel.value === 'custom') { gnum.hidden = false; return gnum.focus(); } pref.step = gsel.value === 'off' ? 0 : +gsel.value; saveGrid(); };
-    gnum.onchange = () => { if (+gnum.value > 0) { pref.step = +gnum.value; saveGrid(); } };
     gsnap.firstChild.onchange = () => { pref.snap = gsnap.firstChild.checked; saveGrid(); };
-    grid.append(el('span', 'tv-muted', 'grid'), gsel, gnum, gsnap);
+    const presets = el('datalist', '', ['0.25cm', '0.5cm', '1cm', '1in'].map((v) => `<option value="${v}">`).join(''));
+    presets.id = 'tv-grid-presets';
+    grid.append(el('span', 'tv-muted', 'grid'), gfield, presets, gsnap);
     showGrid();
     const matrix = el('button', 'tv-button', 'Convert to matrix');
     matrix.type = 'button';
@@ -2111,16 +2110,27 @@
     const bar = el('div', 'tv-tools');
     bar.append(tabs, units);
     const touch = () => { H?.settle?.(); paint(); };
-    /** A length field: shown in the unit, an interval of the run as its range. */
+    // the lengths the run knows by name (`0.5\textwidth`)
+    const names = Object.fromEntries(Object.entries(s.run ?? {}).map(([k, v]) => [k, Math.round((v[0] + v[1]) / 2)]));
+    const L = self.satexLengths, opt = () => ({ dflt: unit, per, names });
+    // what each field was typed as: kept while it still means the field's value, so `1.5in` stays `1.5in`
+    const typed = {};
+    /** A length field: any TeX unit as typed, the dropdown's unit for a bare number and for the run's values; an interval of the run as its range. */
     const field = (label, key, title, f) => {
       const row = el('label', 'tv-field');
+      // the text size is derived: paper minus margins
+      const now = key === 'tw' ? st.pw - st.left - st.right : key === 'th' ? st.ph - st.top - st.bottom : st[key];
       const open = st.open.includes(title) && Math.abs(st[key] - st0[key]) <= 1 && s.run[title];
-      const input = Object.assign(el('input', 'tv-input'), { type: 'number', step: 'any', value: num(st[key]), ariaLabel: label });
-      input.dataset.key = key;
-      if (open) { input.placeholder = `${num(s.run[title][0])} … ${num(s.run[title][1])}`; input.title = `the run left \\${title} open: ${input.placeholder} ${unit}`; }
-      input.oninput = () => { const v = Number(input.value); if (input.value === '' || !Number.isFinite(v)) return; (f ?? ((sp) => { st[key] = sp; }))(Math.round(v * per[unit])); paint(); };
-      input.onchange = touch;
-      row.append(el('span', '', esc(label) + (open ? ' <i title="an interval: the run did not decide it">≈</i>' : '')), input);
+      const kept = typed[key] && Math.abs(L.sp(typed[key], opt()) - now) <= 1 ? typed[key] : null;
+      const w = L.field({
+        value: kept ?? L.show(now, unit, { per, decimals: s.decimals ?? 2 }), label, bare: true,
+        ok: (t) => t.trim() && L.sp(t, opt()) == null ? 'the page cannot measure that here: a number with a unit (2cm, 1.5in, 12pt)' : '',
+        onvalue: (t) => { const v = L.sp(t, opt()); if (t === '' || v == null) return; typed[key] = t; (f ?? ((sp) => { st[key] = sp; }))(v); paint(); },
+        oncommit: touch,
+      });
+      w.input.dataset.key = key;
+      if (open) { w.input.placeholder = `${num(s.run[title][0])} … ${num(s.run[title][1])}`; w.input.title = `the run left \\${title} open: ${w.input.placeholder} ${unit}`; }
+      row.append(el('span', '', esc(label) + (open ? ' <i title="an interval: the run did not decide it">≈</i>' : '')), w);
       return row;
     };
     const group = (title, ...rows) => { const g = el('div', 'tv-form'); g.append(el('h4', 'tv-h', esc(title)), ...rows); return g; };
@@ -2349,7 +2359,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-handle { fill: var(--tv-bg); stroke: var(--tv-accent); stroke-width: .03; cursor: crosshair; } .tv-anchor { fill: var(--tv-accent); opacity: .75; pointer-events: none; }
 .tv-hint { font-size: .26px; fill: var(--tv-accent) !important; }
 .tv-tools .tv-danger { margin-left: auto !important; }
-.tv-grid-pick { gap: .3rem; align-items: center; } .tv-grid-pick input[type=number] { width: 4.5rem; }
+.tv-grid-pick { gap: .3rem; align-items: center; } .tv-grid-pick .sd-len input { width: 6rem; font-size: .9rem; }
 .tv-inspect { display: grid; gap: .3rem; } .tv-inspector { grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: .3rem .8rem; }
 .tv-tip-preview { height: 1rem; width: 2.2rem; object-fit: cover; object-position: right; flex: none; border-radius: 4px; }
 .tv-inspector .tv-row { display: flex; gap: .3rem; align-items: center; min-width: 0; } .tv-inspector .tv-row select { flex: 1; min-width: 0; }

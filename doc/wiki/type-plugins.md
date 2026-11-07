@@ -113,7 +113,7 @@ A float is an environment whose code reaches `\@float`: `figure`, `table` and th
 
 A `tikzpicture` the run met: a lens "Edit drawing…" on its `\begin` line and the view anywhere inside. The canvas shows the nodes the run made, where pgf put each, with its shape and size (`\pgf@sh@ns@⟨node⟩` and its saved anchors). Plain paths between coordinates show too.
 
-- Tools: add a rectangle or circle node, move one by drag (snapped to `grid` cm), connect two with `->`, `<->` or `--`, delete, edit a label.
+- Tools: add a rectangle or circle node, move one by drag (snapped to the grid, a free length field, `0.5cm` or `1in`), connect two with `->`, `<->` or `--`, delete, edit a label.
 - It writes `\node[draw] (n1) at (x,y) {label};` and `\draw[->] (a) -- (b);`. Statements it did not change stay as they were.
 - Anything else stays code and shows read-only: a `\foreach`, a scope, a node placed relative to another. A node the run put elsewhere than its text says counts as code too. Nothing is dropped.
 - Mermaid: paste a flowchart (`graph TD`, `A[x] -->|y| B((z))`) to add its nodes, ranked by longest path, `spacing` cm apart. Export writes the picture's nodes and arrows as a flowchart.
@@ -138,7 +138,7 @@ The page geometry the run computed: `\paperwidth`, `\textwidth`, `\oddsidemargin
 
 The dialog draws the page to scale, both pages when the class is two-sided: the text block, header, footer and margin notes, each margin labelled in the chosen unit.
 
-- Margins: paper, margins (inner and outer when two-sided), text size, header, footer and margin notes. Apply writes geometry's keys of each group that changed and drops the keys of that group already written: `left=3cm, right=2cm, top=2cm, bottom=2cm`. A paper is written by the name geometry defines for it (`\Gm@a4paper`). The keys go into the last `\geometry{…}` of the preamble, else into `\usepackage[…]{geometry}`, else a new `\usepackage` before `\begin{document}`.
+- Margins: paper, margins (inner and outer when two-sided), text size, header, footer and margin notes. Apply writes geometry's keys of each group that changed and drops the keys of that group already written: `left=3cm, right=2cm, top=2cm, bottom=2cm`. A paper is written by the name geometry defines for it (`\Gm@a4paper`). The paper list is geometry's, read from the run. Without geometry the standard names are offered and the run's size picks the one it is (21.59 x 27.94 cm is `letterpaper`). Every length field takes any TeX unit as typed (`2cm`, `1.5in`, `12pt`, `0.5\textwidth`) and shows it as written. The unit menu only sets the unit of a bare number and of the run's values. The keys go into the last `\geometry{…}` of the preamble, else into `\usepackage[…]{geometry}`, else a new `\usepackage` before `\begin{document}`.
 - typearea: when the run loaded it (the KOMA classes do), `DIV` and `BCOR` are the default and go into the class's options. The text keeps one stripe inside and two outside (one-sided: the rest split evenly), one above and two below. Exact margins through geometry are the other choice.
 - These pages only: from the cursor or a sectioning command up to a later one or the end, it writes `\newgeometry{…}` and `\restoregeometry`. Both start a new page. The places are in the source: their page numbers are known only by typesetting. Without geometry it adds `\usepackage[pass]{geometry}`, which keeps the layout elsewhere.
 - Header and footer: the fields of the package the run loaded. fancyhdr: left, center and right, odd and even pages when two-sided, and `\headrulewidth` and `\footrulewidth`. It writes `\fancyhf{}` and one `\fancyhead[LE,RO]{…}` per text. scrlayer-scrpage: `\ihead`, `\chead`, `\ohead`, `\ifoot`, `\cfoot`, `\ofoot`, the optional `plain` text kept. The new block replaces the calls it read. Without either, "Load fancyhdr" adds it with `\pagestyle{fancy}`.
@@ -153,11 +153,11 @@ Every key a document call declared (`\newglossaryentry`, `\newacronym`, acro's `
 
 ### bibliography
 
-The entries of the databases the run read. Search by key, author, title, year or type, sort by each. Fields are edited in the `.bib` file. An entry is deleted only while nothing cites it. A new entry gets the fields the document's style reads of its type: a `.bst` function's fields, or biblatex's data model.
+The entries of the databases the run read. Search by key, author, title, year or type, sort by each. Fields are edited in the `.bib` file. The manager opens from a lens and the hover of `\cite`, `\bibliography`, `\printbibliography` and `\addbibresource`. An entry is deleted only while nothing cites it. A new entry gets the fields the document's style reads of its type: a `.bst` function's fields, or biblatex's data model.
 
 ### index
 
-Every term an index line carried (`\index{graph!directed}`), by its top level, sorted as makeindex sorts it, with the subentries and where each stands. Renaming a term rewrites it in every call.
+Every term an index line carried (`\index{graph!directed}`), by its top level, sorted as makeindex sorts it, with the subentries and where each stands. Renaming a term rewrites it in every call. The manager opens from a lens and the hover of `\index`, `\makeindex` and `\printindex`.
 
 ### theorem
 
@@ -179,7 +179,7 @@ On a blank line of the document body, "Insert forest tree" writes a small tree a
 
 An incremental plugin decides for one edit whether the last run still holds. It compares the text the run read with the new one, finds the one stretch they differ in, and asks the run's facts about it, never the text alone. Each mouth read of a line records where its comment began and which spaces it skipped (`Facts::lines`), merged over every read on every path. A plugin that says yes keeps the run: the rules run again, the diagnostics and their fixes, the outline, the lenses, inlays and colors are moved by the edit's offsets and published for the new version. Anything no plugin takes is analyzed again. `satex/caches` counts each reuse (`reused comment_edit 3`), the status bar shows it, and the server's log names it.
 
-- `comment_edit`: every read of the line had its comment begin before the edit, and the edit adds or removes no line end. TeX drops a comment's characters unread ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/71911d456eb7d2104062e99fed6010f6054c5be8/texk/web2c/tex.web#L7326)), so no read sees them. A `%` of category 12 (verbatim, `\catcode`) is no comment there and is not taken. A `%\satex@` directive and a magic comment (`% !TeX`) change a run, so an edit that makes, changes or removes one is not taken either. The rules read the new text, so a `satex-disable` comment or a comment marker counts at once.
+- `comment_edit`: every read of the line had its comment begin before the edit, and the edit adds or removes no line end. TeX drops a comment's characters unread ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7326)), so no read sees them. A `%` of category 12 (verbatim, `\catcode`) is no comment there and is not taken. A `%\satex@` directive and a magic comment (`% !TeX`) change a run, so an edit that makes, changes or removes one is not taken either. The rules read the new text, so a `satex-disable` comment or a comment marker counts at once.
 - `whitespace_edit`: copies of a space put into a run of it where every read skipped one in state N or S. The copies are read at the same moment under the same categories, so they are skipped too, and the line gets no new line end, so no `\par`. Or white space where no read got to: the line before it was never read to its end, and the run stopped at no limit. A user pattern (`lints.user-pattern`) may match spaces, so with one set only the second case is taken. A new line in the middle of the text is never taken: it moves every line after it.
 - `typing`: letters typed into a control word the run met undefined on every path, while the new name has no meaning or definition in the run. Its results stand, marked provisional, until typing pauses for `pause_ms`, then the run follows. This one is not claimed sound, only likely. The playground asks for its runs itself, so there it runs at once.
 
@@ -204,8 +204,8 @@ A plugin works *fully* in an integration that renders all its features, *partial
 | `forest` | lens, actions, view | full | full | full | partial | partial |
 | `savebox` | hover, actions | full | full | full | full | full |
 | `glossary` | view, manage | full | full | full | partial | partial |
-| `bibliography` | view, manage, lens | full | full | full | partial | partial |
-| `index` | view, manage | full | full | full | partial | partial |
+| `bibliography` | view, manage, lens, hover | full | full | full | partial | partial |
+| `index` | view, manage, lens, hover | full | full | full | partial | partial |
 | `theorem` | view, manage | full | full | full | partial | partial |
 | `overlay` | hover, complete | full | full | full | full | full |
 | `frame` | actions, view, lens | full | full | full | partial | partial |

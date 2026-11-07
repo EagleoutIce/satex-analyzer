@@ -3247,6 +3247,69 @@ fn units_plugin_converts_lengths() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// The index and bibliography managers open from the commands that belong to them: the hover of
+/// `\printindex`, `\index`, `\makeindex`, `\bibliography` and `\cite`, and a lens on each first call.
+#[test]
+fn managers_open_from_their_commands() {
+    let text = "\\documentclass{article}\n\\usepackage{makeidx}\n\\makeindex\n\\begin{document}\nSee\\index{graph} \\cite{k1}.\n\\printindex\n\\bibliography{refs}\n\\end{document}\n";
+    let bib = "@book{k1, author={A. Author}, title={T}, year={2020}}\n";
+    let (mut server, uri, dir) = open_with("managers", text, &[("refs.bib", bib)], &[]);
+    let linked = |server: &mut Server, line: usize, needle: &str, title: &str, plugin: &str| {
+        let md = hover_md(&at(server, &uri, "textDocument/hover", line as u32, col(text, line, needle, 1)));
+        assert!(md.contains(&format!("[{title}](command:satex.openView?")) && md.contains(plugin), "{needle}: {md}");
+    };
+    linked(&mut server, 2, "makeindex", "Manage index…", "index");
+    linked(&mut server, 4, "index", "Manage index…", "index");
+    linked(&mut server, 5, "printindex", "Manage index…", "index");
+    linked(&mut server, 4, "cite", "Manage bibliography…", "bibliography");
+    linked(&mut server, 6, "bibliography", "Manage bibliography…", "bibliography");
+    // the light bulb and the playground's hover button: a command that opens the manager
+    let acts = at(&mut server, &uri, "textDocument/codeAction", 5, col(text, 5, "printindex", 1));
+    assert!(
+        acts.as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["title"] == "Manage index…" && a["command"]["arguments"][2] == "index"),
+        "{acts}"
+    );
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].clone();
+    let on = |plugin: &str| -> Vec<u64> {
+        let mut l: Vec<u64> = lenses
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|l| l["command"]["arguments"][2] == plugin)
+            .map(|l| l["range"]["start"]["line"].as_u64().unwrap())
+            .collect();
+        l.sort_unstable();
+        l
+    };
+    assert_eq!(on("index"), [2, 4, 5], "{lenses}");
+    assert_eq!(on("bibliography"), [4, 6], "{lenses}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Without geometry the run's paper is still a named one: the papers geometry knows are offered.
+#[test]
+fn page_papers_without_geometry() {
+    let text = "\\documentclass{article}\n\\begin{document}\nText\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("page-papers", text, &[]);
+    let views = at(&mut server, &uri, "satex/view", 0, 2);
+    let s = views.as_array().unwrap().iter().find(|v| v["plugin"] == "page").expect("a page view").clone();
+    let names: Vec<&str> =
+        s["sections"][0]["papers"].as_array().unwrap().iter().filter_map(|p| p["name"].as_str()).collect();
+    for n in ["a4paper", "a5paper", "b5paper", "letterpaper", "legalpaper", "executivepaper"] {
+        assert!(names.contains(&n), "{n} in {names:?}");
+    }
+    let letter =
+        s["sections"][0]["papers"].as_array().unwrap().iter().find(|p| p["name"] == "letterpaper").unwrap().clone();
+    assert_eq!(letter["w"], s["sections"][0]["run"]["paperwidth"][0], "{s}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// Page layout: the view gets the page geometry the run computed, geometry's options as written,
 /// and with a KOMA class typearea's `DIV` and `BCOR`; lenses on the class and geometry, a link on its keys.
 #[test]

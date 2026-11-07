@@ -555,8 +555,6 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
   const keyOf = (o) => { const i = o.indexOf('='); return i < 0 ? [o.trim(), null] : [o.slice(0, i).trim(), o.slice(i + 1).trim().replace(/^\{([^]*)\}$/, '$1')]; };
   /** An option's text again: a value with a comma or `=` in braces, no value a bare key. */
   const keyText = (k, v) => v == null ? k : `${k}=${/[,=]/.test(v) && !/^\{[^]*\}$/.test(v) ? `{${v}}` : v}`;
-  /** A length as `[number, unit]`, else null. */
-  const SPLIT_LENGTH = /^(-?\d*\.?\d+)\s*(pt|cm|mm|in|bp|em|ex|sp|pc|dd|cc)?$/;
   /**
    * The property editor every widget shares: one row per option (`key | value | ↑ ↓ ×`) and "Add
    * property", completed from `keys` (`{name, type, choices?, default?}`, the run's). The value's
@@ -599,13 +597,10 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         return [s];
       }
       if (type === 'length') {
-        const m = (v ?? '').trim().match(SPLIT_LENGTH);
-        if (v != null && !m) return [text(v)];
-        const n = input(m?.[1] ?? '', { type: 'number', step: 'any', 'aria-label': `${k} number` }, () => emit());
-        const u = h('select', { class: 'tv-input sd-prop-unit', 'aria-label': `${k} unit` }, ['pt', 'cm', 'mm', 'em', 'ex', 'in', 'bp'].map((x) => h('option', { value: x, selected: x === (m?.[2] ?? 'pt') }, x)));
-        const emit = () => change(n.value === '' ? null : `${n.value}${u.value}`);
-        u.addEventListener('change', () => { emit(); commit(); });
-        return [n, u];
+        // an expression (`1cm+2pt`) already there stays plain text
+        if (v != null && v.trim() && self.satexLengths.check(v) && !/^[-+]?[\d.]+$/.test(v.trim())) return [text(v)];
+        const d = byName.get(k)?.default;
+        return [self.satexLengths.field({ value: v ?? '', label: `${k} value`, bare: true, placeholder: d != null ? `default: ${d}` : 'a length: 2cm, 1.5in, 0.5\\linewidth', onvalue: (t) => change(t || null), oncommit: commit })];
       }
       if (type === 'color') {
         const t = text(v, { list: `${uid}-c`, placeholder: 'a colour: red, blue!30' });
@@ -697,8 +692,6 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const parts = mathSplit(text);
     return parts.map((p, k) => k % 2 ? p : p.replace(/(\\.)|([%#&_$])|\^/gs, (m, cs, c) => cs ?? (c ? `\\${c}` : '\\^{}'))).join('');
   }
-  /** A length as TeX reads one: a factor and a unit or a length command (`2cm`, `-.5em`, `0.8\linewidth`, `\textwidth`). */
-  const LENGTH = /^\s*[-+]?(?:(?:\d+\.?\d*|\.\d+)\s*(?:pt|pc|in|bp|cm|mm|dd|cc|sp|em|ex|mu|px)|(?:(?:\d+\.?\d*|\.\d+)\s*)?\\[A-Za-z@]+)\s*$/;
   /** The checks a widget's field names (a server's field `check: [...]`); each says what is wrong, else ''. `taken`: the keys in use. */
   const CHECKS = {
     required: (v) => String(v).trim() ? '' : 'needed',
@@ -709,7 +702,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     // an index level: makeindex reads ! @ | as syntax unless `"` quotes them
     index: (v) => /(^|[^"])[!@|]/.test(String(v).replace(/\{[^{}]*\}/g, '')) ? 'makeindex reads ! @ | as levels, sort key and format: write "! "@ "|' : '',
     unique: (v, taken = []) => taken.includes(String(v).trim()) ? `${String(v).trim()} exists already` : '',
-    length: (v) => !String(v).trim() || LENGTH.test(v) ? '' : 'a length: a number and a unit (2cm, 0.5\\linewidth)',
+    length: (v) => self.satexLengths.check(v),
     integer: (v) => /^\s*-?\d+\s*$/.test(v) ? '' : 'a whole number',
     number: (v) => String(v).trim() && Number.isFinite(Number(v)) ? '' : 'a number',
     // a date (ISO, `2020-02-30` is none): the day it names exists

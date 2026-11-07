@@ -95,7 +95,7 @@ impl TypePlugin for Page {
 }
 
 /// A call as [`call_at`] reads it: its start, groups and end.
-type Call = (usize, Vec<Group>, usize);
+pub(super) type Call = (usize, Vec<Group>, usize);
 
 /// Where the main file's preamble and body are.
 struct Parts {
@@ -138,7 +138,7 @@ impl Parts {
 }
 
 /// The calls of `\name` in `text[from..to]` outside comments.
-fn calls(text: &str, name: &str, from: usize, to: usize) -> Vec<Call> {
+pub(super) fn calls(text: &str, name: &str, from: usize, to: usize) -> Vec<Call> {
     let cs = format!("\\{name}");
     let mut out = Vec::new();
     for (i, _) in text[from..to].match_indices(&cs) {
@@ -281,20 +281,37 @@ fn count(a: &Analysis, name: &str) -> Option<i64> {
     (v.lo == v.hi).then_some(v.lo)
 }
 
-/// The papers geometry defines (`\Gm@a4paper` is `\Gm@setsize{#1}(210,297){mm}`), in sp.
+/// The papers geometry defines (`\Gm@a4paper` is `\Gm@setsize{#1}(210,297){mm}`), in sp:
+/// from the run's macros, else from the installed `geometry.sty` (unloaded, the dialog may load it).
 fn papers(a: &Analysis) -> Vec<Json> {
-    let mut out = Vec::new();
-    for name in a.interner.names().iter() {
-        let Some(paper) = name.strip_prefix("Gm@") else { continue };
-        let Some(Meaning::Macro(m)) = a.interner.lookup(name).map(|s| a.env.meaning(s)) else { continue };
-        let body = crate::engine::tex::text_of(&m.replacement_text, &a.interner);
-        let Some(size) = body.split_once('(').and_then(|(_, r)| r.split_once(')')) else { continue };
-        let Some((w, h)) = size.0.split_once(',') else { continue };
-        let unit = size.1.trim().trim_start_matches('{').trim_end_matches('}');
+    let size = |paper: &str, body: &str| {
+        let (size, unit) = body.split_once('(')?.1.split_once(')')?;
+        let (w, h) = size.split_once(',')?;
+        let unit = unit.trim().trim_start_matches('{').split('}').next()?;
         let sp = |v: &str| crate::engine::value::parse_dimen(&format!("{}{unit}", v.trim()));
-        if let (Some(w), Some(h)) = (sp(w), sp(h)) {
-            out.push(json!({ "name": paper, "w": w, "h": h }));
-        }
+        Some(json!({ "name": paper, "w": sp(w)?, "h": sp(h)? }))
+    };
+    let mut out: Vec<Json> = a
+        .interner
+        .names()
+        .iter()
+        .filter_map(|name| {
+            let paper = name.strip_prefix("Gm@")?;
+            let Meaning::Macro(m) = a.env.meaning(a.interner.lookup(name)?) else { return None };
+            size(paper, &crate::engine::tex::text_of(&m.replacement_text, &a.interner))
+        })
+        .collect();
+    if out.is_empty() {
+        let sty = crate::caches::distribution::tex_file(&a.distribution.roots, "geometry.sty")
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_default();
+        out = sty
+            .lines()
+            .filter_map(|l| {
+                let (paper, body) = l.strip_prefix("\\@namedef{Gm@")?.split_once('}')?;
+                size(paper, body)
+            })
+            .collect();
     }
     out.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
     out

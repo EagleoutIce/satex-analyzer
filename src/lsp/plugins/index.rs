@@ -26,7 +26,13 @@ impl TypePlugin for Index {
         &[Ty::Key(KeyKind::Entry)]
     }
     fn features(&self) -> &'static [&'static str] {
-        &["view", "manage"]
+        &["view", "manage", "lens", "hover"]
+    }
+    fn opened_by(&self) -> Option<(&'static [&'static str], &'static str)> {
+        Some((&["index", "makeindex", "printindex"], "Manage index…"))
+    }
+    fn entry(&self, cx: &Cx, _hit: &Hit) -> Option<String> {
+        self.manage(cx).map(|_| super::open_link(cx, "Manage index…", self.name()))
     }
     fn enabled(&self, cfg: &TypePlugins) -> bool {
         cfg.index.enabled

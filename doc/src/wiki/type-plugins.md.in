@@ -87,7 +87,7 @@ A float is an environment whose code reaches `\@float`: `figure`, `table` and th
 
 A `tikzpicture` the run met: a lens "Edit drawing…" on its `\begin` line and the view anywhere inside. The canvas shows the nodes the run made, where pgf put each, with its shape and size (`\pgf@sh@ns@⟨node⟩` and its saved anchors). Plain paths between coordinates show too.
 
-- Tools: add a rectangle or circle node, move one by drag (snapped to `grid` cm), connect two with `->`, `<->` or `--`, delete, edit a label.
+- Tools: add a rectangle or circle node, move one by drag (snapped to the grid, a free length field, `0.5cm` or `1in`), connect two with `->`, `<->` or `--`, delete, edit a label.
 - It writes `\node[draw] (n1) at (x,y) {label};` and `\draw[->] (a) -- (b);`. Statements it did not change stay as they were.
 - Anything else stays code and shows read-only: a `\foreach`, a scope, a node placed relative to another. A node the run put elsewhere than its text says counts as code too. Nothing is dropped.
 - Mermaid: paste a flowchart (`graph TD`, `A[x] -->|y| B((z))`) to add its nodes, ranked by longest path, `spacing` cm apart. Export writes the picture's nodes and arrows as a flowchart.
@@ -112,7 +112,7 @@ The page geometry the run computed: `\paperwidth`, `\textwidth`, `\oddsidemargin
 
 The dialog draws the page to scale, both pages when the class is two-sided: the text block, header, footer and margin notes, each margin labelled in the chosen unit.
 
-- Margins: paper, margins (inner and outer when two-sided), text size, header, footer and margin notes. Apply writes geometry's keys of each group that changed and drops the keys of that group already written: `left=3cm, right=2cm, top=2cm, bottom=2cm`. A paper is written by the name geometry defines for it (`\Gm@a4paper`). The keys go into the last `\geometry{…}` of the preamble, else into `\usepackage[…]{geometry}`, else a new `\usepackage` before `\begin{document}`.
+- Margins: paper, margins (inner and outer when two-sided), text size, header, footer and margin notes. Apply writes geometry's keys of each group that changed and drops the keys of that group already written: `left=3cm, right=2cm, top=2cm, bottom=2cm`. A paper is written by the name geometry defines for it (`\Gm@a4paper`). The paper list is geometry's, read from the run. Without geometry the standard names are offered and the run's size picks the one it is (21.59 x 27.94 cm is `letterpaper`). Every length field takes any TeX unit as typed (`2cm`, `1.5in`, `12pt`, `0.5\textwidth`) and shows it as written. The unit menu only sets the unit of a bare number and of the run's values. The keys go into the last `\geometry{…}` of the preamble, else into `\usepackage[…]{geometry}`, else a new `\usepackage` before `\begin{document}`.
 - typearea: when the run loaded it (the KOMA classes do), `DIV` and `BCOR` are the default and go into the class's options. The text keeps one stripe inside and two outside (one-sided: the rest split evenly), one above and two below. Exact margins through geometry are the other choice.
 - These pages only: from the cursor or a sectioning command up to a later one or the end, it writes `\newgeometry{…}` and `\restoregeometry`. Both start a new page. The places are in the source: their page numbers are known only by typesetting. Without geometry it adds `\usepackage[pass]{geometry}`, which keeps the layout elsewhere.
 - Header and footer: the fields of the package the run loaded. fancyhdr: left, center and right, odd and even pages when two-sided, and `\headrulewidth` and `\footrulewidth`. It writes `\fancyhf{}` and one `\fancyhead[LE,RO]{…}` per text. scrlayer-scrpage: `\ihead`, `\chead`, `\ohead`, `\ifoot`, `\cfoot`, `\ofoot`, the optional `plain` text kept. The new block replaces the calls it read. Without either, "Load fancyhdr" adds it with `\pagestyle{fancy}`.
@@ -127,11 +127,11 @@ Every key a document call declared (`\newglossaryentry`, `\newacronym`, acro's `
 
 ### bibliography
 
-The entries of the databases the run read. Search by key, author, title, year or type, sort by each. Fields are edited in the `.bib` file. An entry is deleted only while nothing cites it. A new entry gets the fields the document's style reads of its type: a `.bst` function's fields, or biblatex's data model.
+The entries of the databases the run read. Search by key, author, title, year or type, sort by each. Fields are edited in the `.bib` file. The manager opens from a lens and the hover of `\cite`, `\bibliography`, `\printbibliography` and `\addbibresource`. An entry is deleted only while nothing cites it. A new entry gets the fields the document's style reads of its type: a `.bst` function's fields, or biblatex's data model.
 
 ### index
 
-Every term an index line carried (`\index{graph!directed}`), by its top level, sorted as makeindex sorts it, with the subentries and where each stands. Renaming a term rewrites it in every call.
+Every term an index line carried (`\index{graph!directed}`), by its top level, sorted as makeindex sorts it, with the subentries and where each stands. Renaming a term rewrites it in every call. The manager opens from a lens and the hover of `\index`, `\makeindex` and `\printindex`.
 
 ### theorem
 

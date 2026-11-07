@@ -93,6 +93,10 @@ pub(super) trait TypePlugin: Sync {
     fn view(&self, _cx: &Cx, _hit: &Hit) -> Option<Json> {
         None
     }
+    /// The commands whose hover and first call's lens offer its manager, and the offer's title.
+    fn opened_by(&self) -> Option<(&'static [&'static str], &'static str)> {
+        None
+    }
     /// A manager of the whole document's names of its kind, opened without a position (a sidebar).
     fn manage(&self, _cx: &Cx) -> Option<Json> {
         None
@@ -173,7 +177,12 @@ fn context<'a>(analysis: &'a Analysis, doc: &'a Text, path: &'a str, pos: Pos, a
 pub(super) fn hover(analysis: &Analysis, doc: &Text, path: &str, pos: Pos, at: &At) -> Option<String> {
     let cx = context(analysis, doc, path, pos, at);
     let card = triggered(&cx).find_map(|(p, h)| p.hover(&cx, h));
-    let links: Vec<String> = triggered(&cx).filter_map(|(p, h)| p.entry(&cx, h)).collect();
+    let mut links: Vec<String> = Vec::new();
+    for l in triggered(&cx).filter_map(|(p, h)| p.entry(&cx, h)) {
+        if !links.contains(&l) {
+            links.push(l);
+        }
+    }
     match (card, links.is_empty()) {
         (card, true) => card,
         (Some(card), false) => Some(format!("{card}\n\n{}", links.join(" · "))),
@@ -204,6 +213,18 @@ pub(super) fn actions(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> 
             if !out.iter().any(|o| o.title == a.title) {
                 out.push(a);
             }
+        }
+    }
+    // a manager's command under the cursor: its manager opens (a button on the hover, VS Code's light bulb)
+    if let Some((name, true)) = super::handlers::word_at(doc.line(pos.line), pos.col) {
+        for p in on(analysis) {
+            let Some((_, title)) = p.opened_by().filter(|(names, _)| names.contains(&name.as_str())) else { continue };
+            if p.manage(&cx).is_none() || out.iter().any(|o| o.title == title) {
+                continue;
+            }
+            let args = vec![json!(cx.uri().as_str()), json!(super::handlers::to_lsp(doc, pos)), json!(p.name())];
+            let command = Command { title: title.into(), command: "satex.openView".into(), arguments: Some(args) };
+            out.push(CodeAction { title: title.into(), command: Some(command), ..Default::default() });
         }
     }
     out
@@ -246,7 +267,27 @@ pub(super) fn inlays(analysis: &Analysis, doc: &Text, path: &str) -> Vec<InlayHi
 }
 
 pub(super) fn lenses(analysis: &Analysis, doc: &Text, path: &str) -> Vec<CodeLens> {
-    on(analysis).flat_map(|p| p.lenses(analysis, doc, path)).collect()
+    let mut out: Vec<CodeLens> = on(analysis).flat_map(|p| p.lenses(analysis, doc, path)).collect();
+    // a manager's commands: a lens on the first call of each, when the manager has something to show
+    for p in on(analysis) {
+        let Some((names, title)) = p.opened_by() else { continue };
+        if manager(analysis, doc, path, p.name()).is_none() {
+            continue;
+        }
+        let text = doc.body();
+        for name in names {
+            if let Some((at, ..)) = page::calls(text, name, 0, text.len()).first() {
+                out.push(lens(doc, path, doc.pos(*at).line, title, p.name()));
+            }
+        }
+    }
+    out
+}
+
+/// The link that opens `plugin`'s view at `cx`.
+pub(super) fn open_link(cx: &Cx, title: &str, plugin: &str) -> String {
+    let args = json!([cx.uri(), super::handlers::to_lsp(cx.doc, cx.pos), plugin]);
+    format!("[{title}](command:satex.openView?{})", units::encode(&args.to_string()))
 }
 
 /// The `\begin` and `\end` occurrences of each `name` environment the run met in `path`,
@@ -571,11 +612,29 @@ pub(super) fn color_presentations(
 /// What a plugin adds to a control sequence's hover, by the type of its meaning: a length
 /// register's value in every unit.
 pub(super) fn command_hover(analysis: &Analysis, doc: &Text, path: &str, pos: Pos, name: &str) -> Option<String> {
-    let sym = analysis.interner.lookup(crate::engine::tex::bare_name(name))?;
-    let ty = Ty::of_meaning(&analysis.env.meaning(sym))?;
-    let hit = Hit { typed: Some(name.to_string()), ..Hit::of(ty) };
-    let at = At { hits: vec![hit], place: None, item: super::type_at::Item { typed: name.to_string(), col: pos.col } };
-    hover(analysis, doc, path, pos, &at)
+    let bare = crate::engine::tex::bare_name(name);
+    let typed = analysis.interner.lookup(bare).and_then(|sym| {
+        let ty = Ty::of_meaning(&analysis.env.meaning(sym))?;
+        let hit = Hit { typed: Some(name.to_string()), ..Hit::of(ty) };
+        let at =
+            At { hits: vec![hit], place: None, item: super::type_at::Item { typed: name.to_string(), col: pos.col } };
+        hover(analysis, doc, path, pos, &at)
+    });
+    // the managers this command belongs to
+    let none =
+        At { hits: Vec::new(), place: None, item: super::type_at::Item { typed: name.to_string(), col: pos.col } };
+    let cx = context(analysis, doc, path, pos, &none);
+    let links: Vec<String> = on(analysis)
+        .filter_map(|p| {
+            let (_, title) = p.opened_by().filter(|(n, _)| n.contains(&bare))?;
+            p.manage(&cx).map(|_| open_link(&cx, title, p.name()))
+        })
+        .collect();
+    match (typed, links.is_empty()) {
+        (t, true) => t,
+        (Some(t), false) => Some(format!("{t}\n\n{}", links.join(" · "))),
+        (None, false) => Some(links.join(" · ")),
+    }
 }
 
 /// One argument of a call as written: its delimiter and the bytes inside it.

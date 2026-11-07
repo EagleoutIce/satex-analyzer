@@ -242,7 +242,7 @@
     ]
   },
   "scripts": {
-    "compile": "node -e \"for (const f of ['doc/site/views.js', 'doc/site/dialogs.js', 'satex.schema.json']) require('fs').copyFileSync('../../' + f, 'media/' + require('path').basename(f))\" && tsc --noEmit -p . && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --minify --sourcemap --outfile=out/extension.js",
+    "compile": "node -e \"for (const f of ['doc/site/lengths.js', 'doc/site/views.js', 'doc/site/dialogs.js', 'satex.schema.json']) require('fs').copyFileSync('../../' + f, 'media/' + require('path').basename(f))\" && tsc --noEmit -p . && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --minify --sourcemap --outfile=out/extension.js",
     "lint": "eslint src",
     "vscode:prepublish": "npm run compile",
     "package": "vsce package --no-dependencies",

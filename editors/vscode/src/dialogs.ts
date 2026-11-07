@@ -44,7 +44,7 @@ export async function openDialog(context: vscode.ExtensionContext, client: Langu
         const png = await pdfPage(file, context.globalStorageUri);
         image = png ? { url: web.asWebviewUri(png).toString(), kind: 'img' } : { url: null, kind: 'pdf' };
     }
-    web.html = page(context, web, ['dialogs.js'], `
+    web.html = page(context, web, ['lengths.js', 'dialogs.js'], `
 const pending = new Map(); let next = 0;
 addEventListener('message', (e) => { const m = e.data; if (m.type === 'open') self.satexDialogs.open(m.view, host(m.image)); else pending.get(m.id)?.(m); });
 const call = (msg) => new Promise((done, fail) => { const id = ++next; pending.set(id, (m) => { pending.delete(id); m.error ? fail(new Error(m.error)) : done(m.result); }); vscode.postMessage({ ...msg, id }); });
