@@ -15,7 +15,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Changelog has the release
-        run: grep -q "^## ${{ github.ref_name }} " CHANGELOG.md || { echo "CHANGELOG.md has no section for ${{ github.ref_name }}: run scripts/changelog.py release"; exit 1; }
+        run: |
+          grep -q "^## ${{ github.ref_name }} " CHANGELOG.md || { echo "CHANGELOG.md has no section for ${{ github.ref_name }}: run scripts/changelog.py release"; exit 1; }
       - name: Tag matches Cargo.toml
         run: |
           CRATE=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
