@@ -84,9 +84,11 @@ pub fn run(dir: &Path, port: u16, site: Option<&Path>, open: bool, dev: bool, ve
     let gui = Gui::new(dir, site, dev, listener.local_addr().map_err(|e| e.to_string())?.port(), verbose)?;
     let url = format!("http://127.0.0.1:{}/play/?token={}", gui.port, gui.token);
     let root = gui.root.as_deref().map(|r| format!(", root {r}")).unwrap_or_default();
-    println!("satex gui: {}{root} at\n  {url}\nCtrl+C stops", gui.dir.display());
+    // stdout may close (a closed terminal, `| head`): the server keeps serving
+    let _ = writeln!(std::io::stdout(), "satex gui: {}{root} at\n  {url}\nCtrl+C stops", gui.dir.display());
     if let Some(log) = &gui.log {
-        println!("The language server's messages go to {} (-v prints them here)", log.display());
+        let _ =
+            writeln!(std::io::stdout(), "The language server's messages go to {} (-v prints them here)", log.display());
     }
     if open {
         browse(&url);
@@ -302,7 +304,7 @@ impl Gui {
         let file = file.to_string();
         let mut said = lock(&self.said);
         if *said != file {
-            println!("satex gui: analyzing {file} …");
+            let _ = writeln!(std::io::stdout(), "satex gui: analyzing {file} …");
             *said = file;
         }
     }
