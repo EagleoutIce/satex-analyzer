@@ -9,7 +9,7 @@ use satex::analysis::machine::{Analysis, Machine};
 use satex::caches::format::SEMANTIC_VERSION;
 
 /// The semantic version and the digest it was checked in with.
-const GOLDEN: (u32, u64) = (1, 0xd758_66b5_2306_f2ec);
+const GOLDEN: (u32, u64) = (2, 0xd758_66b5_2306_f2ec);
 
 fn digest(analysis: &Analysis) -> u64 {
     let mut text = String::new();
