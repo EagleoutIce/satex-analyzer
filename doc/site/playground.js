@@ -2587,6 +2587,8 @@
   /** The settings a tile's plugin owns: those under its switch's parent. */
   const tileBase = (p) => p.key.replace(/\.enabled$/, '');
   const cfgMoreOpen = new Set();
+  /** The plugin group the plugins tab shows, else its group buttons. */
+  let cfgPluginGroup = null;
   let cfgTab = 'core', cfgYaml = false;
   const configLoad = () => (configKeys ??= fetch(`${base}${manifest.schema}`).then((r) => r.json()).then((s) => leaves(s.properties)).catch(() => []));
   const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -2642,7 +2644,15 @@
     };
     const shown = TILES.map((c) => ({ ...c, plugins: c.plugins.filter((p) => !q || hits.some((k) => pluginOf(k) === tileBase(p)) || configMatch({ key: p.name, about: p.about, affects: [] }, q)) }))
       .filter((c) => c.plugins.length);
-    const tiles = shown.length ? `<li class="cfg-group pt-settings">${self.satexTiles(shown, switches)}</li>` : '';
+    // first the groups as buttons; a group (or a search) opens its plugins as settings lists, one per plugin, as the core tab
+    const group = q ? null : shown.find((c) => c.name === cfgPluginGroup);
+    const tiles = !shown.length ? '' : !q && !group
+      ? `<li class="cfg-group"><ul class="pt-groups cfg-pt-groups">${shown.map((c) => `<li><button type="button" data-pgroup="${escape(c.name)}">${self.satexTileIcon(c.name)}<b>${escape(c.name)}</b><span class="pt-count">${c.plugins.length}</span><small>${inline(c.about)}</small></button></li>`).join('')}</ul></li>`
+      : (group ? `<li class="cfg-group"><button type="button" class="ghost small" data-pgroup="">← every group</button> <b>${escape(group.name)}</b> <span class="muted">${inline(group.about)}</span></li>` : '') +
+        (group ? [group] : shown).flatMap((c) => c.plugins).map((p) => {
+          const ks = keys.filter((k) => pluginOf(k) === tileBase(p) && (!q || hits.includes(k) || configMatch({ key: p.name, about: p.about, affects: [] }, q)));
+          return ks.length ? section(tileBase(p), p.name, p.about, ks, true) : '';
+        }).join('');
     const own = PLUGINS.filter((p) => !tiled.has(p.name)).map((p) => [p, hits.filter((k) => pluginOf(k) === p.name)]);
     const set = own.filter(([, ks]) => ks.length).map(([p, ks]) => section(p.name, p.name, p.about, ks, !!q || !closed.has(p.name)));
     const plain = own.filter(([p, ks]) => !ks.length && !q && p.about)
@@ -5242,7 +5252,10 @@
   /** Sub-filters per layer, from the data: [group, title, rows of [key, label, count]]. What the viewer switched off is kept as `layer|group|key`. */
   const PDF_FACETS = new Set(['keys', 'findings', 'envs', 'figures', 'glue', 'grid']);
   /** The grid's step (a TeX length) and how many steps lie between labels, kept per viewer. */
-  var pdfGrid = { step: '1cm', every: 5 }; // var: a check may render before this line ran
+  var pdfGrid = { step: '1cm', every: 5, font: '10pt' }; // var: a check may render before this line ran
+  // em and ex of the grid's font: em is its size, ex Computer Modern's x-height at it (cmr10's \fontdimen5, 4.30554pt at 10pt)
+  const EX_PER_EM = 0.430554;
+  function gridFont() { const f = self.satexLayers.length(pdfGrid.font ?? '10pt')?.pt ?? 10; return { em: f, ex: f * EX_PER_EM }; }
   try { Object.assign(pdfGrid, self.satexStore?.get('pdf-grid')); } catch {}
   var pdfHide = new Set(); // var: a check may render before this line ran
   try { pdfHide = new Set(JSON.parse(localStorage.getItem('satex-pdf-facets') ?? '[]').map((k) => k.replace(/^(defs|refs)\|/, 'keys|'))); } catch {}
@@ -5310,7 +5323,9 @@
       // the grid's fields hold what was typed: drawn once, never under the cursor
       if (layer === 'grid' && list.querySelector('[data-grid]')) continue;
       const internal = layer === 'envs' ? `<div class="pdf-sub-group"><label><input type="checkbox" data-internal${pdfInternal ? ' checked' : ''}>internal (class, packages)</label></div>` : '';
-      const html = layer === 'grid' ? `<div class="pdf-sub-group pdf-grid-set"><label>step <input type="text" data-grid="step" value="${escape(pdfGrid.step)}" list="pdf-grid-units" size="6" spellcheck="false" title="a TeX length: 1cm, 5mm, 10pt, .5in, 36bp, 2pc …"></label>` +
+      const html = layer === 'grid' ? `<div class="pdf-sub-group pdf-grid-set"><label>step <input type="text" data-grid="step" value="${escape(pdfGrid.step)}" list="pdf-grid-units" size="6" spellcheck="false" title="a TeX length: 1cm, 5mm, 10pt, .5in, 36bp, 2pc, 2em …"></label>` +
+        `<label title="what em and ex measure: the font size, and Computer Modern's x-height at it">font <input type="text" data-grid="font" value="${escape(pdfGrid.font ?? '10pt')}" list="pdf-grid-fonts" size="6" spellcheck="false"></label>` +
+        `<datalist id="pdf-grid-fonts">${['5pt', '7pt', '8pt', '9pt', '10pt', '10.95pt', '12pt', '14.4pt', '17.28pt', '20.74pt', '24.88pt'].map((v) => `<option value="${v}">`).join('')}</datalist>` +
         `<label>label every <input type="number" data-grid="every" value="${escape(pdfGrid.every)}" min="1" max="50"> steps</label>` +
         `<datalist id="pdf-grid-units">${['1cm', '5mm', '1mm', '10pt', '12pt', '1in', '.5in', '36bp', '1pc'].map((v) => `<option value="${v}">`).join('')}</datalist></div>` : pdfFacetGroups(layer).filter(([, , rows]) => rows.length).map(([g, title, rows]) => `<div class="pdf-sub-group"><span class="muted">${escape(title)}</span>${rows.map(([key, label, n]) => `<label><input type="checkbox" data-facet="${escape(`${layer}|${g}|${key}`)}"${pdfShown(layer, g, key) ? ' checked' : ''}>${escape(label)} <b class="count">${n}</b></label>`).join('')}</div>`).join('') + internal;
       $('pdf-layer-list').querySelector(`[data-fold="${layer}"]`).disabled = !html;
@@ -5340,7 +5355,7 @@
   const NEAR_PX = 110;
   var pdfNear = false;
   try { pdfNear = localStorage.getItem('satex-pdf-near') === 'on'; } catch {}
-  $('pdf-layer-list').insertAdjacentHTML('beforeend', `<label class="pdf-near" title="Draw the layers only around the mouse pointer, fading with distance"><input type="checkbox" data-near${pdfNear ? ' checked' : ''}>near the pointer</label>`);
+  $('pdf-layer-list').insertAdjacentHTML('beforeend', `<div class="layer-group pdf-near"><span class="layer-seg"><label class="layer" title="Draw the layers only around the mouse pointer, fading with distance"><input type="checkbox" role="switch" data-near${pdfNear ? ' checked' : ''}><i class="layer-swatch sw-near" aria-hidden="true"></i><span>near the pointer</span></label></span></div>`);
   let nearFrame = 0, nearAt = null;
   function pdfNearDraw() {
     nearFrame = 0;
@@ -5370,8 +5385,8 @@
     }
     if (e.target.dataset?.grid) {
       const k = e.target.dataset.grid, v = k === 'every' ? Math.round(+e.target.value) : e.target.value.trim();
-      const ok = k === 'every' ? v >= 1 && v <= 50 : !!self.satexLayers.length(v);
-      e.target.setCustomValidity(ok ? '' : k === 'every' ? 'a whole number from 1 to 50' : 'a TeX length above 0: 1cm, 5mm, 10pt, .5in …');
+      const ok = k === 'every' ? v >= 1 && v <= 50 : k === 'font' ? !!self.satexLayers.length(v) : !!self.satexLayers.length(v, gridFont());
+      e.target.setCustomValidity(ok ? '' : k === 'every' ? 'a whole number from 1 to 50' : 'a TeX length above 0: 1cm, 5mm, 10pt, .5in, 2em …');
       e.target.reportValidity();
       if (!ok) return;
       pdfGrid[k] = v;
@@ -5602,11 +5617,11 @@
       }
     }
     if (pdfOverlayOn.glue) {
-      for (const g of pdfGlue().filter((g) => pdfShown('glue', 'kind', g.kind))) box(g.page, `pdf-glue g-${g.kind}`, g.l, g.t, g.r, g.d, `${g.kind === 'fill' ? 'infinite glue' : 'glue'} ${g.spec} · ${g.file}:${g.line}`);
+      for (const g of pdfGlue().filter((g) => pdfShown('glue', 'kind', g.kind))) box(g.page, `pdf-glue g-${g.kind}`, g.l, g.t, g.r, g.d, `${g.kind === 'fill' ? 'infinite glue' : 'glue'} ${g.spec} · ${g.file}:${g.line}`, `<span class="pdf-glue-spec">${escape(g.spec)}</span>`);
     }
     if (pdfOverlayOn.grid) {
       // lines every step from the top left corner, stronger and labelled every `every` steps; fewer when they would crowd
-      const step = self.satexLayers.length(pdfGrid.step) ?? self.satexLayers.length('1cm'), every = Math.max(1, Math.round(pdfGrid.every) || 5);
+      const step = self.satexLayers.length(pdfGrid.step, gridFont()) ?? self.satexLayers.length('1cm'), every = Math.max(1, Math.round(pdfGrid.every) || 5);
       const s = step.pt * 72 / 72.27, num = (k) => `${+(k * step.num).toFixed(3)}${step.unit}`;
       for (const page of [...pdfBody.querySelectorAll('.pdf-page[data-page]')].map((p) => +p.dataset.page)) {
         const wh = size(page);
@@ -6365,6 +6380,7 @@
   $('lib-feedback').onclick = () => feedback('library');
   $('cfg-feedback').onclick = () => feedback('settings');
   document.addEventListener('click', (e) => { if (e.target.closest?.('[data-request-plugin]')) feedback(null); });
+  document.addEventListener('click', (e) => { const g = e.target.closest?.('[data-pgroup]'); if (g) { cfgPluginGroup = g.dataset.pgroup || null; configShow(); } });
 
   // ---------------------------------------------------------------- start
 

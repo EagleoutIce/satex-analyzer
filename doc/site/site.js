@@ -41,8 +41,10 @@
   self.siteTex = () => (self.siteTex.loaded ??= (async () => {
     const { language: { StreamLanguage }, stex: { stex }, highlight: hl } = await self.siteCM();
     const t = hl.tags;
+    // one tag per parameter number, so `#1` has one tint wherever it stands
+    const PARAMS = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(() => hl.Tag.define(t.variableName));
     const highlighter = hl.tagHighlighter([[t.tagName, 'cmd'], [t.bracket, 'br'], [t.keyword, 'kw'], [t.comment, 'com'], [t.atom, 'atom'],
-      [t.number, 'num'], [t.string, 'str'], [t.definition(t.variableName), 'def'], [t.special(t.variableName), 'arg'], [t.variableName, 'arg'], [t.operator, 'br'], [t.meta, 'magic'], [t.attributeValue, 'magicv'], [t.processingInstruction, 'dir']].map(([tag, c]) => ({ tag, class: `tok-${c}` })));
+      [t.number, 'num'], [t.string, 'str'], [t.definition(t.variableName), 'def'], [t.special(t.variableName), 'arg'], ...PARAMS.map((tag, i) => [tag, `p${i + 1}`]), [t.variableName, 'arg'], [t.operator, 'br'], [t.meta, 'magic'], [t.attributeValue, 'magicv'], [t.processingInstruction, 'dir']].map(([tag, c]) => ({ tag, class: `tok-${c}` })));
     // BibTeX (btxdoc § 2): `@type{key, field = value # value}`; `@string`, `@preamble` and `@comment`
     // are commands, not entries. A braced value is TeX: commands, braces and math in the TeX mode's classes.
     const COMMANDS = /^@(string|preamble|comment)\b/i;
@@ -103,6 +105,7 @@
     };
     const tex = {
       ...stex,
+      tokenTable: { ...stex.tokenTable, ...Object.fromEntries(PARAMS.map((tag, i) => [`param${i + 1}`, tag])) },
       startState: () => ({ ...stex.startState(), magic: false, verb: null, opening: null }),
       copyState: (st) => ({ ...stex.copyState(st), magic: st.magic, verb: st.verb, opening: st.opening }),
       token: (s, st) => {
@@ -118,6 +121,11 @@
         if (st.magic) { s.skipToEnd(); return 'attributeValue'; }
         if (s.sol() && s.match(MAGIC)) { st.magic = true; return 'meta'; }
         if (s.match(/^%\s*\\satex@[A-Za-z]+/)) return 'processingInstruction';
+        // a parameter `#1`…`#9` (`##1` inside a nested definition) keeps its number's tint wherever it stands
+        const param = s.match(/^#+([1-9])/);
+        if (param) return `param${param[1]}`;
+        // a number is a number wherever it stands: `\count3` and `by 400` alike
+        if (st.verb == null && s.match(/^[-+]?(?:\d+\.?\d*|\.\d+)/)) return 'number';
         return s.match(/^\\[^A-Za-z@\xc0-\uffff]/) ? 'tag' : stex.token(s, st);
       },
     };
@@ -839,11 +847,14 @@
   const switches = (r) => (r.causes ?? []).filter((c) => c.on != null).map((c) => {
     const name = c.test || c.parted || c.mark;
     // a conditional's test is true or false; other parted paths (a macro of several meanings) are named by the text each sets
-    const label = (i) => c.test || !c.arms ? ['true', 'false'][i] : `<code>${c.arms[i] ? esc(c.arms[i].replace(/ /g, '␣')) : 'empty'}</code>`;
+    const label = (i) => c.test || !c.arms ? ['true', 'false'][i] : c.arms[i] ? `“${c.arms[i]}”` : 'nothing';
     const arm = { both: 'show the text of every path', true: c.test || !c.arms ? `show the text when ${name} is true` : `show the paths where ${name} sets ${c.arms[0] ? `“${c.arms[0]}”` : 'nothing'}`,
       false: c.test || !c.arms ? `show the text when ${name} is false` : `show the paths where ${name} sets ${c.arms[1] ? `“${c.arms[1]}”` : 'nothing'}` };
+    // one case at a time: either arm, or every path
+    const now = armsPicked.get(c.on) ?? 'both';
     return `<span class="ts-switch" data-on="${esc(c.on)}" title="${esc(maybeTip(c))}. Pick a case to see its text"><span class="ts-switch-q">maybe</span><code>${esc(name)}</code>` +
-      ['both', 'true', 'false'].map((a, i) => `<button type="button" data-arm="${a}" aria-pressed="${a === 'both'}" title="${esc(arm[a])}">${i ? label(i - 1) : a}</button>`).join('') + '</span>';
+      `<select class="ts-pick" aria-label="the case of ${esc(name)}">` +
+      ['both', 'true', 'false'].map((a, i) => `<option value="${a}"${a === now ? ' selected' : ''} title="${esc(arm[a])}">${esc(i ? label(i - 1) : 'every path')}</option>`).join('') + '</select></span>';
   }).join('');
   const maybeTip = (c) => `may be typeset: depends on ${c.test || c.parted || c.mark} (line ${c.line}), which the run could not decide`;
   /** Each paragraph's environments opened since the last paragraph (`envOpen`) and closed after it (`envClose`). */
@@ -986,10 +997,11 @@
     let sheet = document.getElementById('ts-arms');
     if (!sheet) { sheet = document.createElement('style'); sheet.id = 'ts-arms'; document.head.append(sheet); }
     const q = (s) => JSON.stringify(String(s));
-    sheet.textContent = [...armsPicked].map(([id, a]) => `.ts-choice[data-on=${q(id)}] > .ts-arm-${a === 'true' ? 'false' : 'true'} { display: none; } ` +
-      `.ts-choice[data-on=${q(id)}] > .ts-arm::before { content: none; } .ts-switch[data-on=${q(id)}] button[data-arm=${q(a)}] { background: var(--accent); color: var(--bg); } ` +
-      `.ts-switch[data-on=${q(id)}] button[data-arm="both"] { background: none; color: inherit; }`).join('\n');
-    document.querySelectorAll(`.ts-switch[data-on=${q(on)}] button`).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.arm === arm)));
+    // the picked arm alone: no separator, no mark of the arm left out
+    sheet.textContent = [...armsPicked].map(([id, a]) => `.typeset .ts-choice[data-on=${q(id)}] > .ts-arm-${a === 'true' ? 'false' : 'true'} { display: none; } ` +
+      `.typeset .ts-choice[data-on=${q(id)}] > .ts-arm:is(*, :empty, :not(:empty))::before, .typeset .ts-choice[data-on=${q(id)}] > .ts-arm:is(*, :empty)::after { content: none; } ` +
+      `.typeset .ts-choice[data-on=${q(id)}] > .ts-arm { opacity: 1; }`).join('\n');
+    document.querySelectorAll(`.ts-switch[data-on=${q(on)}] select`).forEach((sel) => { sel.value = arm; });
   }
   /** The view's cards answer their steppers and diff switches; once per container. */
   function typesetWire(root) {
@@ -1005,14 +1017,17 @@
       if (diff) box.innerHTML = stepDiff(k > 1 ? stepWords(steps[k - 2]) : [], stepWords(steps[k - 1]));
     };
     root.addEventListener('click', (e) => {
-      const arm = e.target.closest?.('.ts-switch button');
-      if (arm) { e.stopPropagation(); pickArm(arm.closest('.ts-switch').dataset.on, arm.dataset.arm); return; }
+      if (e.target.closest?.('.ts-switch select')) { e.stopPropagation(); return; }
       const b = e.target.closest?.('.ts-stepper button');
       if (!b) return;
       e.stopPropagation();
       const card = b.closest('.ts-card');
       card.dataset.step = b.dataset.step;
       show(card);
+    });
+    root.addEventListener('change', (e) => {
+      const pick = e.target.closest?.('.ts-switch select');
+      if (pick) pickArm(pick.closest('.ts-switch').dataset.on, pick.value);
     });
     root.addEventListener('change', (e) => { const card = e.target.closest?.('.ts-diff-toggle') && e.target.closest('.ts-card'); if (card) show(card); });
     root.addEventListener('keydown', (e) => {
@@ -1124,6 +1139,7 @@
       `${p.demo ? `<a class="pt-demo" href="${new URL(`play/#${encodeURIComponent(p.demo)}`, SITE_ROOT).href}" title="open ${esc(p.demo)} in the playground">demo: ${esc(p.demo)}</a>` : ''}</p>` +
       `${switches?.more?.(p) ?? ''}</li>`).join('')}</ul></section>`).join('')}</div>`;
   self.satexTiles = pluginTiles;
+  self.satexTileIcon = (name) => `<svg class="pt-icon" viewBox="0 0 24 24" aria-hidden="true">${TILE_ICONS[name] ?? '<circle cx="12" cy="12" r="8"/>'}</svg>`;
   const tileBoxes = document.querySelectorAll('[data-plugin-tiles]');
   if (tileBoxes.length) fetch(new URL('type-plugins.json', SITE_ROOT)).then((r) => r.ok ? r.json() : []).catch(() => []).then((data) => {
     for (const box of tileBoxes) { box.innerHTML = data.length ? pluginTiles(data) : ''; box.hidden = !data.length; }

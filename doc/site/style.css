@@ -1592,7 +1592,11 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf .pdf-grid.g-coarse { background-size: var(--Gx) 100%, 100% var(--Gy), 0 0, 0 0; }
 .pdf .pdf-grid b { position: absolute; font: 500 .5rem/1 ui-monospace, Menlo, monospace; color: var(--c4); background: color-mix(in srgb, var(--bg) 80%, transparent); padding: 1px 2px; border-radius: 2px; }
 .pdf .pdf-grid b.gx { top: 0; transform: translateX(-50%); } .pdf .pdf-grid b.gy { left: 0; transform: translateY(-50%); }
-.pdf-grid-set input[type="text"] { width: 8ch; } .pdf-grid-set input[type="number"] { width: 5ch; } .pdf-grid-set input:invalid { outline: 1px solid var(--error); }
+/* the grid's fields look like every other field of the panel */
+.pdf-grid-set { gap: .3rem; } .pdf-grid-set input { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-ctl, 6px); padding: .1rem .4rem; box-sizing: border-box; height: 1.6rem; }
+.pdf-grid-set input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; } .pdf-grid-set input[type="text"] { width: 8ch; } .pdf-grid-set input[type="number"] { width: 6ch; } .pdf-grid-set input:invalid { border-color: var(--error); }
+.layer-sub-list:has(> .pdf-grid-set) { max-height: none; overflow: visible; }
+.sw-near { background: radial-gradient(circle, var(--accent) 0 35%, transparent 70%); }
 .sw-grid { background: linear-gradient(to right, var(--c4) 1px, transparent 1px) 0 0 / 4px 100%, linear-gradient(to bottom, var(--c4) 1px, transparent 1px) 0 0 / 100% 4px; }
 .pdf .pdf-bad { z-index: 1; border-radius: 2px; }
 .pdf .pdf-bad.b-over { outline: 1px solid #d92d20; background: #d92d2014; } .pdf .pdf-bad.b-under { outline: 1px dashed #b07400; background: #b0740014; }
@@ -1744,7 +1748,7 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 #play-pdf.pdf-is-slice .pdf-pages { box-shadow: inset 0 0 0 2px #b4530955; }
 #play-pdf.pdf-folded .pdf-views, #play-pdf.pdf-folded .pdf-tools > :not(#pdf-fold):not(#pdf-follow) { display: none; }
 #play-pdf.pdf-folded .pdf-layers { display: none; }
-.pdf-layer-list .pdf-near { display: flex; align-items: center; gap: .4rem; cursor: pointer; white-space: nowrap; border-top: 1px solid var(--border); padding-top: .3rem; margin-top: .1rem; }
+.pdf-layer-list .pdf-near { display: flex; border-top: 1px solid var(--border); padding-top: .4rem; margin-top: .2rem; }
 .pdf.pdf-near .pdf-ov { transition: opacity .12s; }
 .ts-slide-title { font-weight: 600; color: var(--fg); }
 @media (max-width: 699px) { .pdf-bar .pdf-layers summary span { display: none; } .pdf-bar .pdf-state { min-width: 3rem; } }
@@ -1968,7 +1972,8 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 .typeset .ts-choice > .ts-arm-false:empty::before { content: "|"; margin: 0 .3em; color: var(--muted); }
 .typeset .ts-switch { display: inline-flex; align-items: baseline; gap: .15rem; margin-right: .4rem; padding: 0 .3rem; border-radius: 4px; font: .66rem ui-monospace, Menlo, monospace; color: var(--c3, #c80); background: color-mix(in srgb, var(--c3, #c80) 12%, transparent); vertical-align: .1em; }
 .typeset .ts-switch code { font: inherit; margin-right: .2rem; } .typeset .ts-switch-q { margin-right: .25rem; font-style: italic; opacity: .8; } .typeset .ts-switch button { font: inherit; padding: 0 .3rem; border: 0; border-radius: 3px; background: none; color: inherit; cursor: pointer; }
-.typeset .ts-switch button[aria-pressed="true"] { background: color-mix(in srgb, var(--c3, #c80) 30%, transparent); color: var(--fg); }
+.typeset .ts-switch .ts-pick { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid color-mix(in srgb, var(--c3, #c80) 45%, var(--border)); border-radius: 3px; padding: 0 .15rem; cursor: pointer; }
+.typeset .ts-switch .ts-pick option { color: var(--fg); background: var(--panel); }
 .typeset:not(.show-maybe) :is(.ts-choice, .ts-switch) { display: none; }
 /* landing showcase: the playground's widgets as captured by showcase/capture.mjs, one image per theme, each in a
    window frame (CSS, so it follows the theme and costs no bytes). The big ones reach into the page margin, alternating sides */
@@ -2187,6 +2192,11 @@ header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(-
 .typeset.show-glue .ts-fill { display: inline-block; height: .3em; cursor: help; background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--c6) 70%, transparent) 0 1.5px, transparent 1.5px 4px) bottom / 100% 1px no-repeat; }
 .pdf .pdf-glue { z-index: 1; box-sizing: border-box; border: 1px solid #0e7c86b0; border-top: 0; cursor: help; }
 .pdf .pdf-glue.g-fill { border-style: dotted; }
+/* the glue's spec in small text over it, where it fits; the full one on hover */
+.pdf .pdf-glue { container-type: inline-size; } .pdf .pdf-glue-spec { position: absolute; left: 50%; bottom: 1px; translate: -50% 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 .55rem/1 system-ui, sans-serif; color: #0e7c86; pointer-events: none; }
+@container (max-width: 3rem) { .pdf .pdf-glue-spec { display: none; } }
+/* a macro's parameters, each its own tint, the same wherever it stands */
+.tok-p1 { color: var(--c1); } .tok-p2 { color: var(--c2); } .tok-p3 { color: var(--c3); } .tok-p4 { color: var(--c4); } .tok-p5 { color: var(--c5); } .tok-p6, .tok-p7, .tok-p8, .tok-p9 { color: var(--c6); }
 .pdf-layer-list .layer-seg { flex-wrap: nowrap; }
 .pdf-layer-list.layers { max-width: min(26rem, calc(100vw - 1.5rem)); }
 /* the image dialog: the file's format beside its name, a blocked tint's reason in view (dialogs.js) */
