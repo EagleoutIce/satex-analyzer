@@ -199,10 +199,10 @@ XeTeXlinebreakpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
 XeTeXlinebreakskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
 XeTeXmathaccent	Exec.operands	tex.web §§ 1151–1186	over
 XeTeXmathchar	Exec.operands	tex.web §§ 1151–1186	over
-XeTeXmathchardef	Exec.lua,Test.ifx (Engine.primId)	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+XeTeXmathchardef	Exec.lua,Test.ifx	XeTeX/LuaTeX manuals: any assignment, any text read next. `\ifx` compares it by `Engine.primId`	over
 XeTeXmathcharnum	Exec.operands	tex.web §§ 1151–1186	over
 XeTeXmathcharnumdef	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
-XeTeXmathcode	Exec.specialTable,Internal.specialTable,Test.ifx (Engine.primId)	XeTeX/LuaTeX manuals	exact
+XeTeXmathcode	Exec.specialTable,Internal.specialTable,Test.ifx	XeTeX/LuaTeX manuals. `\ifx` compares it by `Engine.primId`	exact
 XeTeXmathcodenum	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
 XeTeXpdffile	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
 XeTeXpdfpagecount	Internal.unknowable,Exec.illegal	pdfTeX manual	over
