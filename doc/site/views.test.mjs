@@ -851,3 +851,13 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   assert.equal(L.show(Math.round(2 * cm), 'mm'), '20mm');
   assert.ok(Math.abs(L.to('1in', 'cm') - 2.54) < 1e-9);
 }
+
+// a definition history's event as text: the augment's added text, the copy, the call holding an older text
+{
+  const { historyEvent } = self.satexViews.history;
+  const e = historyEvent({ by: '\\appto', file: 'main.tex', path: 'main.tex', line: 4, state: 'replaced', owner: 'document', change: { kind: 'appends', added: ' world', removed: '' } });
+  assert.deepEqual([e.by, e.at, e.change, e.when], ['\\appto', 'main.tex:4', 'appends ` world`', '']);
+  assert.equal(historyEvent({ change: { kind: 'replaces', added: '\\oldgreet !', removed: 'Hello world' } }).change, 'replaces `Hello world` by `\\oldgreet !`');
+  const copy = historyEvent({ by: '\\let', copies: { name: '\\greet', file: 'main.tex', line: 4, by: '\\appto' }, calls: [{ name: '\\oldgreet', holds: '\\greet', at: 'main.tex:4' }], when: ['\\ifnum true at main.tex:10'] });
+  assert.deepEqual([copy.copies, copy.calls, copy.when], [{ name: '\\greet', at: 'main.tex:4', by: '\\appto' }, [{ name: '\\oldgreet', note: 'holds \\greet of main.tex:4' }], '\\ifnum true at main.tex:10']);
+}

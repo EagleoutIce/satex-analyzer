@@ -5456,6 +5456,9 @@ fn record_for_def(analysis: &Analysis, def: &crate::analysis::facts::Definition,
     record.insert("context".into(), json!(def_context_label(analysis, &[(def.context.to_vec(), def.via)])));
     let (body, primitive) = body_of(analysis, def.name, def.mac.as_deref());
     record.insert("body".into(), body);
+    if let Some(pretty) = super::pretty::of(analysis, def.mac.as_deref()) {
+        record.insert("pretty".into(), json!(pretty));
+    }
     if let Some(texts) = site_alternatives(analysis, def.mac.as_deref()) {
         let one_of: Vec<Json> = texts.into_iter().map(|b| json!({ "line": def.span.line, "body": b })).collect();
         record.insert("one_of".into(), json!(one_of));
@@ -5709,6 +5712,9 @@ fn record_for_meaning(analysis: &Analysis, sym: Sym, window: Window, meaning: Me
     insert_call_shape(&mut record, analysis, sym, meaning.as_macro().map(|m| &**m), window.view(), false);
     let (body, primitive) = body_of(analysis, sym, meaning.as_macro().map(|m| &**m));
     record.insert("body".into(), body);
+    if let Some(pretty) = super::pretty::of(analysis, meaning.as_macro().map(|m| &**m)) {
+        record.insert("pretty".into(), json!(pretty));
+    }
     if primitive {
         record.remove("tag");
         record.insert("kind".into(), json!("primitive"));

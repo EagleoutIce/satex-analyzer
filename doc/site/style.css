@@ -235,6 +235,10 @@ button:disabled { opacity: .55; cursor: progress; }
 .xcard dt { color: var(--muted); font-size: .8rem; line-height: 1.9; }
 .xcard dd { margin: 0; min-width: 0; line-height: 1.7; }
 .xcard pre.x-body { margin: 0; padding: .3rem .55rem; font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.xcard .x-bodies { position: relative; } .xcard .x-bodies pre.x-body { padding-right: 3.4rem; } .xcard .x-bodies[data-shown="pretty"] .x-body-raw, .xcard .x-bodies[data-shown="raw"] .x-body-pretty { display: none; }
+.xcard .x-body-pretty { white-space: pre; overflow-x: auto; max-height: 22rem; }
+.xcard .x-pretty { position: absolute; top: .15rem; right: .2rem; z-index: 1; font: inherit; font-size: .68rem; padding: 0 .35rem; border-radius: 4px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); cursor: pointer; }
+.xcard .x-pretty[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .x-err { color: var(--error); }
 /* The hover card: a few lines, no table. */
 .xcard.brief { display: grid; gap: .25rem; max-width: 34rem; font-size: 13px; }

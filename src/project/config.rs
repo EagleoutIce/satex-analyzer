@@ -473,6 +473,8 @@ pub struct TypePlugins {
     pub index: Switch,
     pub theorem: Switch,
     pub savebox: Switch,
+    pub history: HistoryPlugin,
+    pub pretty: PrettyPlugin,
     pub overlay: Switch,
     pub frame: Switch,
     pub page: Switch,
@@ -527,6 +529,38 @@ impl Default for L3buildConfig {
             engines: Vec::new(),
             checks: false,
         }
+    }
+}
+
+/// `type_plugins.history:` a command's definition history.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HistoryPlugin {
+    pub enabled: bool,
+    /// The events a history lists, newest first, and the calls of its final body it opens.
+    pub entries: usize,
+}
+
+impl Default for HistoryPlugin {
+    fn default() -> Self {
+        Self { enabled: true, entries: 50 }
+    }
+}
+
+/// `type_plugins.pretty:` macro bodies on hover, one statement per line.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PrettyPlugin {
+    pub enabled: bool,
+    /// The characters a line holds before a statement or group breaks over lines.
+    pub width: usize,
+    /// The lines a hover shows of a body before it stops.
+    pub lines: usize,
+}
+
+impl Default for PrettyPlugin {
+    fn default() -> Self {
+        Self { enabled: true, width: 60, lines: 40 }
     }
 }
 

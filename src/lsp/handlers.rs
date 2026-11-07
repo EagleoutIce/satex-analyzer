@@ -651,6 +651,14 @@ pub(super) fn command_hover(analysis: &Analysis, name: &str, active: Option<Reco
             if !doc.example.is_empty() {
                 markdown.push_str(&format!("```tex\n{}\n```\n\n", doc.example.join("\n")));
             }
+        } else if let Some(pretty) = text("pretty").filter(|_| text("tag") != Some("primitive")) {
+            // a long body, one statement per line (`type_plugins.pretty`)
+            let most = analysis.settings.type_plugins.pretty.lines;
+            let lines: Vec<&str> = pretty.lines().collect();
+            let cut =
+                if lines.len() > most { format!("\n… {} more lines", lines.len() - most) } else { String::new() };
+            markdown
+                .push_str(&format!("Expands to\n```tex\n{}{cut}\n```\n\n", lines[..lines.len().min(most)].join("\n")));
         } else if let Some(body) = text("body").filter(|b| {
             // a primitive, or a name standing for itself, expands to nothing worth a line
             text("signature").is_none_or(str::is_empty)

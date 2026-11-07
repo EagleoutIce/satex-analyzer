@@ -1803,7 +1803,7 @@
     ]);
     const own = (actions ?? []).filter((a) => !a.diagnostics?.length && !a.data?.scope);
     // an action that only opens a dialog (`satex.openDialog`, VS Code's `satex.openView`) is a widget here
-    const opens = own.filter((a) => !a.edit && /^satex\.open(Dialog|View)$/.test(a.command?.command ?? ''));
+    const opens = own.filter((a) => !a.edit && /^satex\.open(Dialog|View)$/.test(a.command?.command ?? '') && !(views ?? []).some((v) => v.plugin === a.command.arguments?.[2]));
     tools = [...(views ?? []).map((view) => ({ view, target: doc.uri })), ...opens.map((open) => ({ open: open.command })), ...own.filter((a) => a.edit).map((action) => ({ action }))];
     // a title that names its action already (`Edit colour brand`) stands as it is
     const verb = (v) => /^Edit\b/.test(v.title) ? '' : VIEW_VERB[v.plugin] ?? 'Edit', title = (v) => verb(v) ? v.title.replace(/^\p{Lu}(?!\p{Lu})/u, (c) => c.toLowerCase()) : v.title;
@@ -1811,7 +1811,7 @@
     const seen = new Set();
     return tools.map((t, i) => [label(t), t.view ? t.view.plugin : t.open ? 'dialog' : 'rewrite', i, !t.action]).filter(([l, , , w]) => !w || !seen.has(l) && seen.add(l));
   }
-  const VIEW_VERB = { color: 'Pick', units: 'Convert', environment: '', tikz: '', keys: 'Edit' };
+  const VIEW_VERB = { color: 'Pick', units: 'Convert', environment: '', tikz: '', keys: 'Edit', history: '' };
   function runTool(i) {
     const t = tools[i];
     if (t?.action) return fix(t.action);
@@ -1844,6 +1844,8 @@
       print: (nodes) => lsp('satex/dialogApply', { textDocument: { uri: t.target }, kind: 'snapshot', nodes }),
       close: () => closeView(),
       guard: (dirty) => viewGuards.push(dirty),
+      // a history's final body, stepped through: the trace of one of its calls
+      trace: (name) => traceCall(name),
     });
     if (!dialog.open) dialog.showModal();
   }

@@ -564,6 +564,25 @@
     if (alts?.length) return alts.map((a) => `<div>${chainOf(a.chain)}</div>`).join('');
     return r.chain?.length ? chainOf(r.chain) : '';
   }
+  /** A record's body: pretty-printed when the server sent that form (`type_plugins.pretty`), a button
+   * showing the raw line; the choice holds for the cards after it. */
+  const RAW = 'satex-body-raw';
+  function bodyOf(r) {
+    if (r.body === '') return '<span class="muted">empty</span>';
+    const pre = (t, cls = '') => `<pre class="x-body${cls}"><code>${tex(t, true)}</code></pre>`;
+    if (!r.pretty) return pre(r.body);
+    const raw = (() => { try { return localStorage.getItem(RAW) === '1'; } catch { return false; } })();
+    return `<div class="x-bodies" data-shown="${raw ? 'raw' : 'pretty'}"><button type="button" class="x-pretty" aria-pressed="${!raw}" title="pretty print: one statement per line, groups and conditionals indented">pretty</button>` +
+      pre(r.pretty, ' x-body-pretty') + pre(r.body, ' x-body-raw') + '</div>';
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest?.('.x-pretty');
+    if (!b) return;
+    const box = b.closest('.x-bodies'), raw = box.dataset.shown === 'pretty';
+    box.dataset.shown = raw ? 'raw' : 'pretty';
+    b.setAttribute('aria-pressed', String(!raw));
+    try { localStorage.setItem(RAW, raw ? '1' : '0'); } catch { /* storage off: this card only */ }
+  });
   /** One explain record as a card: signature, body, by, defined at, context, uses, expands.
    * A hover is `brief`: what a name expands to stays in the Explain tab. */
   function explain(r, brief = false) {
@@ -584,7 +603,7 @@
     if (r.tag === 'register' && r.value != null) rows.push(['value', `<code>${esc(r.value)}</code> <span class="muted">when the run ends</span>`]);
     if (r.forms?.length) rows.push(['forms', r.forms.map((f) => `<code>${esc(f)}</code>`).join(' ')]);
     // a primitive has no body: its kind chip says so already
-    if (!primitive && r.body != null) rows.push(['body', r.body === '' ? '<span class="muted">empty</span>' : `<pre class="x-body"><code>${tex(r.body, true)}</code></pre>`]);
+    if (!primitive && r.body != null) rows.push(['body', bodyOf(r)]);
     if (r.by) rows.push(['by', csChip(r.by)]);
     // at a use paths reach with different definitions: each text it may hold, with the lines that define it
     if (r.one_of?.length) {

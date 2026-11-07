@@ -4343,6 +4343,31 @@
           "type": "object",
           "x-category": "widget"
         },
+        "history": {
+          "description": "a control sequence the run defined",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "its definition history: each redefinition and augment, newest first, \\let copies linked, definitions on other paths",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "entries": {
+              "default": 50,
+              "description": "the events a history lists, newest first, and the calls of its final body it opens",
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ]
+            }
+          },
+          "type": "object",
+          "x-category": "widget"
+        },
         "image": {
           "description": "figures: the files \\includegraphics reads",
           "properties": {
@@ -4450,6 +4475,42 @@
           },
           "type": "object",
           "x-category": "widget"
+        },
+        "pretty": {
+          "description": "a definition's replacement text, as a hover shows it",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "one statement per line, groups and conditionals indented, long key lists one key per line",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: the body as one line"
+            },
+            "lines": {
+              "default": 40,
+              "description": "the lines a hover shows of a body before it stops",
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ]
+            },
+            "width": {
+              "default": 60,
+              "description": "the characters a line holds before a statement or group breaks over lines",
+              "maximum": 400,
+              "minimum": 20,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ]
+            }
+          },
+          "type": "object",
+          "x-category": "hover"
         },
         "savebox": {
           "description": "a \\begin name of a picture, listing or other environment the run met",

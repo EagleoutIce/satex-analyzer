@@ -1078,3 +1078,55 @@ fn a_count_register_explains_with_its_value() {
     let analysis = analyze_kernel(r"\newcounter{shown}\setcounter{shown}{7}");
     assert_eq!(explain_one(&analysis, "c@shown").get("value"), Some(&json!(7)));
 }
+
+/// A body as `type_plugins.pretty` prints it, `width` wide.
+fn pretty(analysis: &Analysis, name: &str, width: usize) -> String {
+    let mac = analysis.env.meaning(analysis.interner.lookup(name).unwrap()).as_macro().cloned().unwrap();
+    satex::queries::pretty::print(&mac.replacement_text, &analysis.interner, &|s| analysis.env.meaning(s), width)
+}
+
+/// Real kernel and package macros: one statement per line, the arguments each meaning reads kept
+/// with it, conditionals and groups indented, a body that fits one line as it was.
+#[test]
+fn pretty_prints_kernel_and_package_bodies() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex("\\documentclass{article}\\usepackage{hyperref}\\begin{document}\\end{document}");
+    assert_eq!(
+        pretty(&analysis, "@ifnextchar", 30),
+        "\\let\\reserved@d=#1\n\\def\\reserved@a{#2}\n\\def\\reserved@b{#3}\n\\futurelet\\@let@token\\@ifnch"
+    );
+    assert_eq!(pretty(&analysis, "@testopt", 60), "\\kernel@ifnextchar[{#1}{#1[{#2}]}");
+    assert_eq!(
+        pretty(&analysis, "@protected@testopt", 60),
+        "\\ifx\\protect\\@typeset@protect\n  \\expandafter\\@testopt\n\\else\n  \\@x@protect#1\n\\fi"
+    );
+    // hyperref's: the long \edef's group opened over lines, the \csname kept with its \endcsname
+    let star = pretty(&analysis, "HyRef@StarSetRef", 60);
+    assert!(star.contains("\\edef\\x{\n  \\endgroup\n  \\noexpand\\HyRef@@StarSetRef\n  \\expandafter\\noexpand\\csname r@\\x\\endcsname{\\x}\n}"), "{star}");
+}
+
+/// Edge cases: braces and `#` in arguments, catcode-other braces, a key list, a very long body.
+#[test]
+fn pretty_prints_edge_cases() {
+    let analysis = analyze(concat!(
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 ",
+        "\\def\\set#1#2{\\def\\x##1{{#1}}}",
+        "\\def\\keys{\\set{alpha=1,beta={2,3},gamma=a long value here,delta=another long value}{x}}",
+        "\\edef\\other{\\string{x\\string}}\\def\\group{{x}}",
+        "\\def\\many{\\set{a}{b}\\set{c}{d}\\set{e}{f}\\set{g}{h}\\set{i}{j}\\set{k}{l}\\set{m}{n}}",
+    ));
+    // a key list too long for a line: one key per line, the braced value whole
+    assert_eq!(
+        pretty(&analysis, "keys", 40),
+        "\\set{\n  alpha=1,\n  beta={2,3},\n  gamma=a long value here,\n  delta=another long value\n}{x}"
+    );
+    // `#` parameters doubled inside, the inner group kept
+    assert_eq!(pretty(&analysis, "set", 20), "\\def\\x##1{{#1}}");
+    // a catcode-other `{` opens no group
+    assert_eq!(pretty(&analysis, "other", 2), "{x}");
+    assert_eq!(pretty(&analysis, "group", 2), "{\n  x\n}");
+    // a long body: one call with its two arguments per line
+    assert_eq!(pretty(&analysis, "many", 40).lines().count(), 7);
+}

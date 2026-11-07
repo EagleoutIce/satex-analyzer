@@ -13,6 +13,7 @@ mod float;
 mod forest;
 mod frame;
 mod glossary;
+mod history;
 mod image;
 pub(super) mod incremental;
 mod index;
@@ -141,6 +142,7 @@ pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
     &tikz::Tikz,
     &forest::Forest,
     &savebox::Savebox,
+    &history::History,
     &glossary::Glossary,
     &bibliography::Bibliography,
     &index::Index,
@@ -461,7 +463,12 @@ pub(super) fn hover_types(analysis: &Analysis, doc: &Text, path: &str, pos: Pos)
     let line = doc.line(pos.line);
     let at = crate::engine::source::byte_of_col(line, pos.col).min(line.len());
     let rest = line[at..].chars().take_while(|c| !super::type_at::ENDS.contains(*c)).count() as u32;
-    super::type_at::type_at(analysis, doc, path, Pos::new(pos.line, pos.col + rest))
+    let mut found = super::type_at::type_at(analysis, doc, path, Pos::new(pos.line, pos.col + rest));
+    // a control sequence's name: the name a definition made (type_at reads no names)
+    if let Some((name, true)) = super::handlers::word_at(line, pos.col) {
+        found.hits.push(Hit { typed: Some(name), ..Hit::of(Ty::Cs) });
+    }
+    found
 }
 
 /// The integrations, and what each renders of a feature kind: one letter per integration in this
@@ -614,10 +621,12 @@ pub(super) fn color_presentations(
 pub(super) fn command_hover(analysis: &Analysis, doc: &Text, path: &str, pos: Pos, name: &str) -> Option<String> {
     let bare = crate::engine::tex::bare_name(name);
     let typed = analysis.interner.lookup(bare).and_then(|sym| {
-        let ty = Ty::of_meaning(&analysis.env.meaning(sym))?;
-        let hit = Hit { typed: Some(name.to_string()), ..Hit::of(ty) };
-        let at =
-            At { hits: vec![hit], place: None, item: super::type_at::Item { typed: name.to_string(), col: pos.col } };
+        let hits = Ty::of_meaning(&analysis.env.meaning(sym))
+            .into_iter()
+            .chain([Ty::Cs])
+            .map(|ty| Hit { typed: Some(name.to_string()), ..Hit::of(ty) })
+            .collect();
+        let at = At { hits, place: None, item: super::type_at::Item { typed: name.to_string(), col: pos.col } };
         hover(analysis, doc, path, pos, &at)
     });
     // the managers this command belongs to

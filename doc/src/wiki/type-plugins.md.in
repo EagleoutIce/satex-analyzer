@@ -104,6 +104,14 @@ The view sends the picture as a snapshot: its options as a key list, its body as
 
 On the name of a `\begin` in the document's body. "Store in a box" moves the environment to the preamble as a saved box and writes `\usebox` in its place: `\newsavebox` and `\sbox`, or `lrbox` when its `\begin` made characters of what TeX's initial catcodes make commands (`&` in TikZ, everything in a listing). A body the run read in vertical mode goes into a `minipage` of `\textwidth`. Identical copies get a second action that stores one box for all of them. The hover says which applies. Content that reads where it stands is refused, with the reason: a label, reference or citation the run met in it, or a command whose code reads a counter or a reference (`\thepage`, `\footnote`).
 
+## history
+
+On a control sequence the run defined. Its view, "Definition history…", lists every event that changed the name's meaning, newest first: `\def`, `\let`, `\renewcommand`, `\appto`, `\g@addto@macro`, a patch, whatever the run recorded. Each event shows its place, the file or package that made it, its body and what it changed against the event before it (the text an augment appended). The list follows the path that ends with the meaning in force. Definitions on other paths come after it, each with the conditions it stands under: the other arm of an undecided conditional, a package loaded on one path only. A `\let` copy links to the definition it copied, and a call of a copy in a later body says whose text it holds (`\let\old\cmd` then `\def\cmd{\old x}`). Each name the final body calls opens its own history. "Trace a call" steps through a call of the name in the playground's trace. `entries` caps the events listed. The hover links the view, and VS Code offers it as a code action.
+
+## pretty
+
+A definition's replacement text, as a hover shows it: one statement per line, groups and `\if…\else…\fi` indented, a long key list one key per line. A body that fits `width` and holds no conditional stays one line. What a statement spans comes from the meanings the run ended with: a macro's parameter text or LaTeX argument spec, a primitive's syntax. The playground's card has a button for the raw line. `enabled: false` shows the raw line everywhere, `lines` caps the lines a hover shows.
+
 ## overlay
 
 On an overlay specification, text a command reads between `<` and `>` (`\only<2->{…}`, `\item<+->`). The frame is the innermost environment whose lines the run shipped pages at, one page per slide. Hover lists the slides on which the run set the material visibly: the braced group after the `>`, else the one before the `<` (`\only{…}<2>`), else the rest of the line. Text set off the page (`\uncover`'s covered text) does not count. Completion offers each step `k` and `k-` of the frame's slides.
