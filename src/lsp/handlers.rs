@@ -1055,18 +1055,7 @@ fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Opt
     Some(md)
 }
 
-/// The style file `file`: beside the document `path`, in `shipped`, on BSTINPUTS, else in the installation's styles.
-pub(super) fn style_file(analysis: &Analysis, path: &str, file: &str, shipped: Option<PathBuf>) -> Option<PathBuf> {
-    let dirs = crate::project::paths::effective(
-        "BSTINPUTS",
-        &analysis.project,
-        &analysis.settings.paths.bstinputs,
-        &analysis.project.root,
-    );
-    let beside = Path::new(path).parent().map(|d| d.join(file));
-    let found = beside.into_iter().chain(shipped).chain(dirs.dirs.iter().map(|d| d.join(file))).find(|p| p.is_file());
-    found.or_else(|| crate::caches::distribution::file_under(&analysis.distribution.roots, "bibtex/bst", file))
-}
+pub(super) use crate::plugins::bib::model::style_file;
 
 /// A package or class name in `\usepackage`, `\RequirePackage` or
 /// `\documentclass`: its file and `\Provides…` line, the options it offers

@@ -4678,40 +4678,118 @@ fn managers_switch_off() {
 const REFS: &str = "@book{knuth,\n  author = {Donald E. Knuth},\n  title = {The {\\TeX}book},\n  year = 1984,\n  publisher = {Addison-Wesley}\n}\n\n@article{lamport,\n  author = {Leslie Lamport},\n  title = {Time, Clocks},\n  journal = {CACM},\n  year = {1978}\n}\n";
 const CITES: &str = "\\documentclass{article}\n\\usepackage{makeidx}\n\\makeindex\n\\begin{document}\nText \\cite{knuth} \\index{graph} \\index{graph!directed} \\index{tree}.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
 
-/// The bibliography manager: the entries of the database the run read, cited where; a field
-/// edit writes the `.bib` file, an uncited entry deletes, a cited one refuses, a new entry has
-/// the fields the style reads of its type. The index manager: terms with subentries, rename.
+/// A bibliography manager's request (`satex/dialogApply` of kind snapshot with an object).
+fn bib_op(server: &mut Server, uri: &str, payload: Value) -> Value {
+    let id = server
+        .request("satex/dialogApply", json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": payload }));
+    let r = server.response(id);
+    assert!(r["error"].is_null(), "{r}");
+    r["result"].clone()
+}
+
+/// The bibliography manager as a reference manager: each entry's snapshot printed back (a
+/// value, a new field, a renamed key with its `\cite`s, a deletion), checks by the data
+/// model's datatypes, a type converted with its fields mapped, references imported (new from
+/// RIS, an update matched by title that keeps local values), a constant made and renamed.
+/// The index manager: terms with subentries, rename.
 #[test]
 fn bibliography_and_index_managers_round_trip() {
     let (mut server, uri, dir) = open_with("bibmgr", CITES, &[("refs.bib", REFS)], &[]);
     let _ = at(&mut server, &uri, "textDocument/hover", 4, 12);
     let view = manager(&mut server, &uri, "bibliography");
-    let knuth = record(&view, "knuth");
-    assert!(knuth["uses"].as_str().is_some_and(|u| u.contains("main.tex:5`")), "{knuth}");
-    assert!(knuth["actions"][0]["disabled"].is_string(), "{knuth}");
-    let bib_uri = knuth["fields"][0]["edit"]["changes"].as_object().unwrap().keys().next().unwrap().clone();
-    assert!(bib_uri.ends_with("refs.bib"), "{bib_uri}");
-    let year = field_of(knuth, "year");
-    assert_eq!(year["value"], "1984");
-    let out = applied(REFS, &bib_uri, &year["edit"], &[("value", "1986")]);
-    assert!(out.contains("year = 1986,"), "a bare number stays bare: {out}");
-    // an emptied field goes with its line, a new one follows the last
-    let out = applied(REFS, &bib_uri, &field_of(knuth, "year")["remove"], &[]);
-    assert!(out.contains("{The {\\TeX}book},\n  publisher"), "{out}");
-    let out = applied(REFS, &bib_uri, &knuth["more"]["edit"], &[("name", "address"), ("value", "Reading")]);
-    assert!(out.contains("publisher = {Addison-Wesley},\n  address = {Reading}\n}"), "{out}");
-    assert!(knuth["more"]["names"].to_string().contains("\"edition\""), "the style's book fields: {}", knuth["more"]);
-    let lamport = record(&view, "lamport");
-    assert_eq!(lamport["badge"], "uncited");
-    let out = applied(REFS, &bib_uri, &lamport["actions"][0]["edit"], &[]);
+    let refs = &view["sections"][0];
+    assert_eq!(refs["kind"], "references", "{view}");
+    let item = |key: &str| {
+        refs["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["key"] == key)
+            .cloned()
+            .unwrap_or_else(|| panic!("{key}: {refs}"))
+    };
+    let knuth = item("knuth");
+    assert!(knuth["places"].as_str().is_some_and(|u| u.contains("main.tex:5`")), "{knuth}");
+    assert_eq!((knuth["cited"].as_u64(), item("lamport")["cited"].as_u64()), (Some(1), Some(0)));
+    assert_eq!(knuth["author"], "Knuth");
+    assert!(
+        refs["checks"]["author"].to_string().contains("names") && refs["checks"]["pages"].to_string().contains("pages"),
+        "{}",
+        refs["checks"]
+    );
+    let article =
+        refs["types"].as_array().unwrap().iter().find(|t| t["name"] == "article").expect("article from plain.bst");
+    assert!(article["required"].to_string().contains("journal"), "{article}");
+    let file = knuth["file"].as_str().unwrap().to_string();
+    let print = |server: &mut Server, node: Value| {
+        bib_op(server, &uri, json!({ "bib": "print", "file": file, "nodes": [node] }))
+    };
+    let bib_uri = |r: &Value| {
+        r["edits"]["changes"].as_object().unwrap().keys().find(|k| k.ends_with("refs.bib")).cloned().unwrap()
+    };
+    // a value, a new field: printed into the entry as written
+    let mut node = knuth["node"].clone();
+    node["args"][1]["keys"][2]["value"] = json!("1986");
+    node["args"][1]["keys"].as_array_mut().unwrap().push(json!({ "key": "address", "value": "Reading" }));
+    let r = print(&mut server, node);
+    let out = applied(REFS, &bib_uri(&r), &r["edits"], &[]);
+    assert!(
+        out.contains("year = 1986,") && out.contains("publisher = {Addison-Wesley},\n  address = {Reading}\n}"),
+        "{out}"
+    );
+    // a renamed key rewrites its citations
+    let mut node = knuth["node"].clone();
+    node["args"][0]["text"] = json!("knuth84");
+    let r = print(&mut server, node);
+    assert!(applied(REFS, &bib_uri(&r), &r["edits"], &[]).starts_with("@book{knuth84,"));
+    assert!(applied(CITES, &uri, &r["edits"], &[]).contains("Text \\cite{knuth84} \\index"), "{r}");
+    // an uncited entry deletes
+    let mut node = item("lamport")["node"].clone();
+    node["drop"] = json!(true);
+    let r = print(&mut server, node);
+    let out = applied(REFS, &bib_uri(&r), &r["edits"], &[]);
     assert!(!out.contains("lamport") && out.contains("knuth"), "{out}");
-    let kinds = view["sections"][0]["add"]["kinds"].as_array().unwrap();
-    let article = kinds.iter().find(|k| k["name"] == "article").expect("article from plain.bst");
-    let fields: Vec<&str> = article["fields"].as_array().unwrap().iter().filter_map(|f| f["name"].as_str()).collect();
-    assert!(fields.contains(&"journal") && fields.contains(&"author"), "{fields:?}");
-    // an empty field is not written
-    let out = applied(REFS, &bib_uri, &article["edit"], &[("citekey", "new"), ("author", "A"), ("title", "T")]);
-    assert!(out.ends_with("@article{new,\n  author = {A},\n  title = {T}\n}\n"), "{out}");
+    // article to inproceedings: the journal is the booktitle now (each the one field the other requires)
+    let r = bib_op(&mut server, &uri, json!({ "bib": "convert", "key": "lamport", "to": "inproceedings" }));
+    let out = applied(REFS, &bib_uri(&r), &r["edits"], &[]);
+    assert!(
+        out.contains("@inproceedings{lamport,") && out.contains("booktitle = {CACM}") && !out.contains("journal"),
+        "{out}"
+    );
+    assert!(r["notes"].to_string().contains("journal becomes booktitle"), "{r}");
+    // import: a new reference from RIS with a made key; an update by title keeps local values unasked
+    let ris = "TY  - JOUR\nTI  - Literate Programming\nAU  - Knuth, Donald E.\nT2  - The Computer Journal\nPY  - 1984\nSP  - 97\nEP  - 111\nER  - \n";
+    let r = bib_op(&mut server, &uri, json!({ "bib": "import", "text": ris, "file": file, "keys": "new" }));
+    let row = &r["rows"][0];
+    assert_eq!((row["key"].as_str(), row["match"].is_null()), (Some("knuth1984literate"), true), "{r}");
+    let w = print(&mut server, row["node"].clone());
+    let out = applied(REFS, &bib_uri(&w), &w["edits"], &[]);
+    assert!(out.ends_with("}\n\n@article{knuth1984literate,\n  title = {Literate Programming},\n  author = {Knuth, Donald E.},\n  journal = {The Computer Journal},\n  year = 1984,\n  pages = {97--111}\n}\n"), "{out}");
+    let update = "@book{other, title = {The {\\TeX}book}, author = {Donald E. Knuth}, year = 1984, publisher = {AW}, isbn = {0-201-13447-0}}";
+    let r = bib_op(&mut server, &uri, json!({ "bib": "import", "text": update, "file": file, "keys": "keep" }));
+    let row = &r["rows"][0];
+    assert_eq!(row["match"], "knuth", "{r}");
+    let fields = row["fields"].as_array().unwrap();
+    assert!(fields.iter().any(|f| f["name"] == "isbn" && f["old"].is_null()), "{r}");
+    assert!(
+        fields.iter().any(|f| f["name"] == "publisher" && f["old"] == "Addison-Wesley"),
+        "the client asks before a local value goes: {r}"
+    );
+    // a constant made from a value, then renamed with its uses
+    let r =
+        bib_op(&mut server, &uri, json!({ "bib": "constant", "make": "Addison-Wesley", "name": "aw", "file": file }));
+    let out = applied(REFS, &bib_uri(&r), &r["edits"], &[]);
+    assert!(
+        out.starts_with("@string{aw = {Addison-Wesley}}\n@book{knuth,") && out.contains("publisher = aw\n"),
+        "{out}"
+    );
+    let with = "@string{aw = {Addison-Wesley}}\n".to_string() + REFS.replace("{Addison-Wesley}", "aw").as_str();
+    std::fs::write(dir.join("refs.bib"), &with).unwrap();
+    let r = bib_op(&mut server, &uri, json!({ "bib": "constant", "name": "aw", "rename": "addwes", "file": file }));
+    let out = applied(&with, &bib_uri(&r), &r["edits"], &[]);
+    assert!(out.starts_with("@string{addwes = {Addison-Wesley}}") && out.contains("publisher = addwes\n"), "{out}");
+    let refused = server.request("satex/dialogApply", json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": { "bib": "constant", "name": "aw", "delete": true } }));
+    assert!(server.response(refused)["error"].to_string().contains("used by knuth"));
     let index = manager(&mut server, &uri, "index");
     let graph = record(&index, "graph");
     assert!(graph["table"]["rows"].to_string().contains("directed"), "{graph}");

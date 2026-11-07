@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 
 use crate::analysis::machine::Analysis;
 
+pub mod convert;
+pub mod model;
+
 named_enum! {
     /// The tool that makes a biblatex document's `.bbl` when neither its
     /// `backend=` option nor `% !BIB program` names one.
@@ -38,6 +41,8 @@ pub struct Entry {
     pub fields: Vec<(String, String)>,
     /// The database it was read from, when known.
     pub file: String,
+    /// The fields written bare: a number, a constant or a `#` concatenation.
+    pub bare: Vec<String>,
 }
 
 /// A database as BibTeX finds it: `⟨name⟩.bib` beside the document, or the
@@ -95,7 +100,7 @@ pub fn entries(text: &str) -> Vec<Entry> {
         let key = body[..end].trim();
         if !key.is_empty() {
             let mut entry = Entry { key: key.to_string(), line, kind, ..Default::default() };
-            entry.fields = fields(&body[end..], if open == '(' { ')' } else { '}' });
+            (entry.fields, entry.bare) = fields(&body[end..], if open == '(' { ')' } else { '}' });
             for (name, value) in &entry.fields {
                 match name.as_str() {
                     "title" => entry.title = unbraced(value),
@@ -114,8 +119,8 @@ pub fn entries(text: &str) -> Vec<Entry> {
 /// The `name = value` fields of an entry's body, up to its `close`: a
 /// value in braces or quotes without them, or a bare word. Inner braces
 /// stay: `{\TeX}book` is not `\TeXbook`.
-fn fields(body: &str, close: char) -> Vec<(String, String)> {
-    let mut out = Vec::new();
+fn fields(body: &str, close: char) -> (Vec<(String, String)>, Vec<String>) {
+    let (mut out, mut bare) = (Vec::new(), Vec::new());
     let mut chars = body.char_indices().peekable();
     loop {
         while chars.next_if(|(_, c)| c.is_whitespace() || *c == ',').is_some() {}
@@ -137,6 +142,9 @@ fn fields(body: &str, close: char) -> Vec<(String, String)> {
         let quoted = chars.next_if(|(_, c)| *c == '"').is_some();
         let outer = usize::from(!quoted && chars.next_if(|(_, c)| *c == '{').is_some());
         depth += outer;
+        if !quoted && outer == 0 {
+            bare.push(name.to_ascii_lowercase());
+        }
         for (_, c) in chars.by_ref() {
             match c {
                 '}' if depth == outer && outer == 1 => break,
@@ -156,7 +164,7 @@ fn fields(body: &str, close: char) -> Vec<(String, String)> {
         let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
         out.push((name.to_ascii_lowercase(), value));
     }
-    out
+    (out, bare)
 }
 /// What the bibliography tool would hand the typesetting pass: a `.bbl`
 /// of the cited `entries`, written by satex itself and never read from a
@@ -170,7 +178,7 @@ pub fn virtual_bbl(entries: &[&Entry], datalist: Option<&str>, natbib: bool) -> 
 }
 
 /// The `Last, First and …` names of a field, as (family, given).
-fn names(value: &str) -> Vec<(String, String)> {
+pub(crate) fn names(value: &str) -> Vec<(String, String)> {
     value
         .split(" and ")
         .map(str::trim)
@@ -212,7 +220,7 @@ fn first_letter(s: &str) -> &str {
 }
 
 /// A TeX-safe field value: the characters TeX reads as syntax escaped.
-fn safe(value: &str) -> String {
+pub(crate) fn safe(value: &str) -> String {
     let mut out = String::new();
     let mut prev = ' ';
     for c in value.chars() {

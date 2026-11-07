@@ -167,6 +167,72 @@ fn an_unreadable_database_keeps_citations_unjudged() {
     cleanup("nodb");
 }
 
+/// The databases against the style: a file loaded twice, one work under two keys in two
+/// files, a cited entry lacking a field its type requires, a constant neither an `@string`
+/// nor the style (plain.bst's `jul`, `cacm`) defines, an entry never cited.
+#[test]
+fn the_databases_are_checked_against_the_style() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_in(
+        "bibdb",
+        r"\documentclass{article}
+\begin{document}
+\cite{knuth84,lamport78,twin}
+\bibliographystyle{plain}
+\bibliography{refs,more,refs}
+\end{document}",
+        &[
+            (
+                "refs.bib",
+                "@string{cacm = {Comm. ACM}}\n@article{knuth84,\n  author = {Donald E. Knuth},\n  title = {Literate Programming},\n  journal = {The Computer Journal},\n  year = 1984,\n  doi = {10.1093/comjnl/27.2.97}\n}\n\n@article{lamport78,\n  author = {Leslie Lamport},\n  title = {Time, Clocks},\n  journal = cacm # nosuch,\n  month = jul,\n}\n\n@misc{spare, title = {Never cited}}\n",
+            ),
+            (
+                "more.bib",
+                "@article{twin,\n  author = {D. E. Knuth},\n  title = {Literate programming},\n  journal = {Comput. J.},\n  year = {1984},\n  doi = {https://doi.org/10.1093/COMJNL/27.2.97}\n}\n",
+            ),
+        ],
+    );
+    let messages = |code: &str| findings(&analysis, code).into_iter().map(|(m, _)| m).collect::<Vec<_>>();
+    let twice = messages("duplicate-bibliography-load");
+    assert_eq!(twice.len(), 1, "{twice:?}");
+    assert!(twice[0].contains("refs.bib"), "{twice:?}");
+    let twins = messages("duplicate-bibliography-work");
+    assert_eq!(twins.len(), 1, "{twins:?}");
+    assert!(
+        twins[0].contains("`knuth84`") && twins[0].contains("`twin`") && twins[0].contains("the same DOI"),
+        "{twins:?}"
+    );
+    let missing = messages("bibliography-entry-missing-field");
+    assert_eq!(missing.len(), 1, "{missing:?}");
+    assert!(missing[0].contains("`lamport78`") && missing[0].contains("`year`"), "{missing:?}");
+    let undefined = messages("undefined-bibliography-string");
+    assert_eq!(undefined.len(), 1, "{undefined:?}");
+    assert!(
+        undefined[0].contains("`nosuch`") && !undefined[0].contains("`jul`") && !undefined[0].contains("`cacm`"),
+        "{undefined:?}"
+    );
+    let uncited = messages("uncited-bibliography-entry");
+    assert_eq!(uncited.len(), 1, "{uncited:?}");
+    assert!(uncited[0].contains("`spare`"), "{uncited:?}");
+    // the fixes: drop the second load, merge the twin into the richer entry
+    let records = satex::linter::lint(&analysis);
+    let fix = |code: &str| {
+        records.iter().find(|r| r["code"] == code).map(|r| format!("{} {}", r["fix"], r["edits"])).unwrap_or_default()
+    };
+    let load = fix("duplicate-bibliography-load");
+    assert!(load.contains("drop the second load") && load.contains("bibdb.tex"), "{load}");
+    let merge = fix("duplicate-bibliography-work");
+    assert!(
+        merge.contains("merge `twin` into `knuth84`")
+            && merge.contains("more.bib")
+            && merge.contains("\"replacement\":\"knuth84\""),
+        "{merge}"
+    );
+    cleanup("bibdb");
+}
+
 fn cleanup(name: &str) {
     let _ = std::fs::remove_dir_all(
         crate::support::tmp_root().join(format!("satex-observed-{name}-{}", std::process::id())),

@@ -33,6 +33,9 @@ pub struct Arg {
     pub text: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub drop: bool,
+    /// A `.bib` entry's fields written bare: a number, a constant or a `#` concatenation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bare: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
@@ -42,6 +45,8 @@ pub enum Kind {
     Call,
     Env,
     Text,
+    /// A `.bib` entry: its type the name, its key the first argument, its fields the second.
+    Entry,
 }
 
 /// The package a new node needs when the run does not define it.
@@ -114,7 +119,7 @@ struct Item {
 }
 
 /// The items of the key list `text[list]`: split at top-level commas, comments skipped.
-fn items(text: &str, list: std::ops::Range<usize>) -> Vec<Item> {
+fn items(text: &str, list: std::ops::Range<usize>, bib: bool) -> Vec<Item> {
     let trim = |s: usize, e: usize| {
         let v = &text[s..e];
         (s + v.len() - v.trim_start().len(), s + v.trim_end().len())
@@ -122,9 +127,11 @@ fn items(text: &str, list: std::ops::Range<usize>) -> Vec<Item> {
     let (mut out, mut depth, mut i) = (Vec::new(), 0i32, list.start);
     // the item's first code byte, the end of its last, its first top-level `=`
     let (mut first, mut end, mut eq): (Option<usize>, usize, Option<usize>) = (None, 0, None);
+    // a `.bib` value in quotes: commas inside it split nothing, `%` comments nothing
+    let mut quoted = false;
     loop {
         let c = text.as_bytes().get(i).copied().filter(|_| i < list.end);
-        if c.is_none() || (c == Some(b',') && depth == 0) {
+        if c.is_none() || (c == Some(b',') && depth == 0 && !quoted) {
             if let Some(from) = first.take() {
                 let key_end = trim(from, eq.unwrap_or(end)).1;
                 out.push(Item { from, to: end, key_end, value: eq.map(|q| trim(q + 1, end)) });
@@ -138,10 +145,11 @@ fn items(text: &str, list: std::ops::Range<usize>) -> Vec<Item> {
         }
         let c = c.unwrap_or_default();
         match c {
-            b'%' => {
+            b'%' if !bib => {
                 i = text[i..list.end].find('\n').map_or(list.end, |k| i + k);
                 continue;
             }
+            b'"' if bib && depth == 0 => quoted = !quoted,
             _ if c.is_ascii_whitespace() => {
                 i += 1;
                 continue;
@@ -161,7 +169,7 @@ fn items(text: &str, list: std::ops::Range<usize>) -> Vec<Item> {
 /// The `key=value` items of a key list written in `text[range]`: each key and the bytes of its
 /// value as written (braces kept), top-level commas only.
 pub(super) fn key_values(text: &str, range: std::ops::Range<usize>) -> Vec<(String, std::ops::Range<usize>)> {
-    items(text, range)
+    items(text, range, false)
         .into_iter()
         .filter_map(|i| Some((text[i.from..i.key_end].to_string(), i.value.map(|(s, e)| s..e)?)))
         .filter(|(k, _)| !k.is_empty() && !k.contains(['{', '}', '\\']))
@@ -170,10 +178,113 @@ pub(super) fn key_values(text: &str, range: std::ops::Range<usize>) -> Vec<(Stri
 
 pub(super) fn read_keys(text: &str, from: usize, to: usize) -> Vec<Key> {
     let value = |(s, e): (usize, usize)| unbraced(&text[s..e]).to_string();
-    items(text, from..to)
+    items(text, from..to, false)
         .into_iter()
         .map(|i| Key { key: text[i.from..i.key_end].to_string(), value: i.value.map(value) })
         .collect()
+}
+
+/// A `.bib` value as written, as its text: braces or quotes around it dropped, a bare one as it is.
+fn bib_decoded(written: &str) -> (String, bool) {
+    let w = written.trim();
+    match w.strip_prefix('"').and_then(|r| r.strip_suffix('"')) {
+        Some(inner) if !inner.contains('"') => (inner.to_string(), false),
+        _ if w.starts_with('{') && bib_close(w, 0) == Some(w.len() - 1) => (w[1..w.len() - 1].to_string(), false),
+        _ => (w.to_string(), true),
+    }
+}
+
+/// Whether `v` reads as a bare `.bib` value: numbers, constants, quoted or braced parts joined by `#`.
+pub fn bib_bare(v: &str) -> bool {
+    let mut depth = 0i32;
+    let mut parts = vec![String::new()];
+    for c in v.chars() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            '#' if depth == 0 => {
+                parts.push(String::new());
+                continue;
+            }
+            _ => {}
+        }
+        if let Some(p) = parts.last_mut() {
+            p.push(c);
+        }
+    }
+    let word = |p: &str| {
+        p.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+            && p.chars().all(|c| c.is_ascii_alphanumeric() || "_-:.+/'!?*&;".contains(c))
+    };
+    depth == 0
+        && parts.iter().map(|p| p.trim()).all(|p| {
+            !p.is_empty()
+                && (p.bytes().all(|b| b.is_ascii_digit())
+                    || word(p)
+                    || p.len() > 1 && p.starts_with('"') && p.ends_with('"') && !p[1..p.len() - 1].contains('"')
+                    || p.starts_with('{') && bib_close(p, 0) == Some(p.len() - 1))
+        })
+}
+
+/// A `.bib` value written for `k`: bare when marked so and it reads so, in quotes when it was, else braced.
+fn bib_value(k: &Key, bare: bool, quoted: bool) -> String {
+    let v = k.value.as_deref().unwrap_or_default();
+    match () {
+        _ if bare && bib_bare(v) => v.to_string(),
+        _ if quoted && !v.contains('"') => format!("\"{v}\""),
+        _ => format!("{{{v}}}"),
+    }
+}
+
+/// The byte closing the `.bib` entry opened at `at` (`{` or `(`): braces nest, `%` is text.
+fn bib_close(text: &str, at: usize) -> Option<usize> {
+    let paren = text[at..].starts_with('(');
+    let (mut depth, mut quoted) = (0i32, false);
+    for (i, c) in text[at + 1..].bytes().enumerate() {
+        match c {
+            b'{' => depth += 1,
+            b'}' if depth == 0 && !paren => return Some(at + 1 + i),
+            b'}' => depth -= 1,
+            b'"' if depth == 0 && paren => quoted = !quoted,
+            b')' if depth == 0 && paren && !quoted => return Some(at + 1 + i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The `.bib` entry whose `@` is at byte `at`: type, key and fields, each as written.
+pub fn entry(doc: &Text, at: usize) -> Option<Node> {
+    let text = doc.body();
+    let rest = &text[at..];
+    let open_at = at + rest.find(['{', '('])?;
+    let open = text[open_at..].chars().next()?;
+    let close = bib_close(text, open_at)?;
+    let name = text[at + 1..open_at].trim().to_string();
+    let comma = text[open_at..close].find(',').map_or(close, |i| open_at + i);
+    let key = text[open_at + 1..comma].trim();
+    let key_from = open_at + 1 + text[open_at + 1..comma].find(key).unwrap_or(0);
+    let (mut keys, mut bare) = (Vec::new(), Vec::new());
+    for i in items(text, comma + 1..close.max(comma + 1), true) {
+        let (value, plain) = i.value.map(|(s, e)| bib_decoded(&text[s..e])).unwrap_or_default();
+        let key = text[i.from..i.key_end].to_ascii_lowercase();
+        if plain {
+            bare.push(key.clone());
+        }
+        keys.push(Key { key, value: Some(value) });
+    }
+    let list = if comma < close { comma + 1..close } else { close..close };
+    Some(Node {
+        kind: Kind::Entry,
+        name,
+        args: vec![
+            Arg { open, inner: Some((key_from - at, key_from + key.len() - at)), text: key.into(), ..Arg::default() },
+            Arg { open, inner: Some((list.start - at, list.end - at)), keys: Some(keys), bare, ..Arg::default() },
+        ],
+        range: Some(span(doc, at, close + 1)),
+        text: text[at..close + 1].to_string(),
+        ..Node::default()
+    })
 }
 
 /// The call or environment at byte `at` of `doc`, read with the arguments of index in `keyed`
@@ -307,6 +418,23 @@ pub fn canonical(n: &Node) -> String {
         Kind::Call => format!("\\{}{star}{args}", n.name),
         Kind::Env => format!("\\begin{{{}}}{star}{args}\n{}\n\\end{{{}}}", n.name, n.body.trim_matches('\n'), n.name),
         Kind::Text => n.body.clone(),
+        Kind::Entry if n.name.eq_ignore_ascii_case("string") => {
+            let k = list(n).first();
+            format!(
+                "@string{{{} = {{{}}}}}\n",
+                k.map_or("", |k| k.key.as_str()),
+                k.and_then(|k| k.value.as_deref()).unwrap_or_default()
+            )
+        }
+        Kind::Entry => {
+            let key = n.args.first().map_or("", |a| a.text.as_str());
+            let bare = n.args.get(1).map(|a| a.bare.as_slice()).unwrap_or_default();
+            let fields: Vec<String> = list(n)
+                .iter()
+                .map(|k| format!(",\n  {} = {}", k.key, bib_value(k, bare.contains(&k.key), false)))
+                .collect();
+            format!("\n@{}{{{key}{}\n}}\n", n.name, fields.concat())
+        }
     };
     if n.line { out + "\n" } else { out }
 }
@@ -325,20 +453,38 @@ pub(super) type Edit = (usize, usize, String);
 
 /// The edits of a key list from `was` (in `text[list]`) to `keys`: values changed in place,
 /// removed runs cut with their separator, added keys after the last item in the list's style.
-fn key_edits(text: &str, list: std::ops::Range<usize>, open: char, keys: &[Key]) -> Vec<Edit> {
-    let was = items(text, list.clone());
+fn key_edits(text: &str, list: std::ops::Range<usize>, a: &Arg, bib: bool) -> Vec<Edit> {
+    let (open, keys) = (a.open, a.keys.as_deref().unwrap_or_default());
+    let bare = |k: &Key| a.bare.contains(&k.key);
+    let was = items(text, list.clone(), bib);
+    // a key as written; `.bib` field names in any case
+    let named = |item: &Item, k: &Key| match bib {
+        true => text[item.from..item.key_end].eq_ignore_ascii_case(&k.key),
+        false => text[item.from..item.key_end] == k.key,
+    };
+    let fresh = |k: &Key| match bib {
+        true => format!("{} = {}", k.key, bib_value(k, bare(k), false)),
+        false => item_text(k, open),
+    };
     let mut used = vec![false; keys.len()];
     let mut out = Vec::new();
     // each item written: the edited key it became, else none
     let mut kept: Vec<Option<usize>> = Vec::new();
     for item in &was {
-        let key = &text[item.from..item.key_end];
-        let m = (0..keys.len()).find(|&j| !used[j] && keys[j].key == key);
+        let m = (0..keys.len()).find(|&j| !used[j] && named(item, &keys[j]));
         if let Some(j) = m {
             used[j] = true;
-            let old = item.value.map(|(s, e)| unbraced(&text[s..e]).to_string());
+            let decoded = item.value.map(|(s, e)| bib_decoded(&text[s..e]));
+            let old = match bib {
+                true => decoded.as_ref().map(|d| d.0.clone()),
+                false => item.value.map(|(s, e)| unbraced(&text[s..e]).to_string()),
+            };
+            let same_form = !bib || decoded.as_ref().is_none_or(|d| d.1 == bare(&keys[j]));
             match (&keys[j].value, item.value) {
-                (new, _) if *new == old => {}
+                (new, _) if *new == old && same_form => {}
+                (Some(_), Some((s, e))) if bib => {
+                    out.push((s, e, bib_value(&keys[j], bare(&keys[j]), text[s..e].starts_with('"'))))
+                }
                 (Some(v), Some((s, e))) => out.push((s, e, value_text(v, open))),
                 (Some(v), None) => out.push((item.to, item.to, format!("={}", value_text(v, open)))),
                 (None, _) => out.push((item.key_end, item.to, String::new())),
@@ -346,9 +492,10 @@ fn key_edits(text: &str, list: std::ops::Range<usize>, open: char, keys: &[Key])
         }
         kept.push(m);
     }
-    let added: Vec<String> = (0..keys.len()).filter(|&j| !used[j]).map(|j| item_text(&keys[j], open)).collect();
+    let added: Vec<String> = (0..keys.len()).filter(|&j| !used[j]).map(|j| fresh(&keys[j])).collect();
     // the list's separator: what follows its first comma up to the next item, comments dropped
-    let sep = was.windows(2).next().map_or(", ".to_string(), |w| {
+    let lone = if bib { ",\n  " } else { ", " };
+    let sep = was.windows(2).next().map_or(lone.to_string(), |w| {
         let gap = &text[w[0].to..w[1].from];
         gap.split('\n').map(|l| l.split('%').next().unwrap_or_default()).collect::<Vec<_>>().join("\n")
     });
@@ -359,7 +506,7 @@ fn key_edits(text: &str, list: std::ops::Range<usize>, open: char, keys: &[Key])
             return Vec::new();
         }
         let (from, to) = was.first().map_or((list.start, list.end), |f| (f.from, was[was.len() - 1].to));
-        let all: Vec<String> = keys.iter().map(|k| item_text(k, open)).collect();
+        let all: Vec<String> = keys.iter().map(fresh).collect();
         return vec![(from, to, all.join(&sep))];
     }
     let mut k = 0;
@@ -398,7 +545,13 @@ fn node_edits(text: &str, at: usize, n: &Node) -> Vec<Edit> {
         };
     // an environment renamed: its `\begin` and `\end`
     let old = was.get(7..after - at - 1).filter(|_| n.kind == Kind::Env).unwrap_or(&n.name);
-    if old != n.name {
+    if n.kind == Kind::Entry {
+        // a type changed: the bytes between `@` and the delimiter
+        let open = was.find(['{', '(']).unwrap_or(1);
+        if was[1..open].trim() != n.name {
+            out.push((at + 1, at + open, n.name.clone()));
+        }
+    } else if old != n.name {
         out.push((at + 7, after - 1, n.name.clone()));
         out.push((at + was.len() - 1 - old.len(), at + was.len() - 1, n.name.clone()));
     }
@@ -414,10 +567,13 @@ fn node_edits(text: &str, at: usize, n: &Node) -> Vec<Edit> {
         match &a.keys {
             // a dropped argument, an emptied `[…]`, goes with its delimiters
             _ if a.drop => out.push((s - 1, e + 1, String::new())),
-            _ if a.open == '[' && a.empty() && a.keys.as_ref().map_or(s < e, |_| !items(text, s..e).is_empty()) => {
+            _ if a.open == '['
+                && a.empty()
+                && a.keys.as_ref().map_or(s < e, |_| !items(text, s..e, false).is_empty()) =>
+            {
                 out.push((s - 1, e + 1, String::new()))
             }
-            Some(keys) => out.extend(key_edits(text, s..e, a.open, keys)),
+            Some(_) => out.extend(key_edits(text, s..e, a, n.kind == Kind::Entry)),
             None if text[s..e] != a.text => out.push(tight(text, s, e, &a.text)),
             None => {}
         }
@@ -552,6 +708,11 @@ pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<E
     let (mut wanted, mut asked): (Vec<Package>, Vec<(String, bool)>) = Default::default();
     for n in nodes {
         let own = edits_of(doc, n)?;
+        // a `.bib` entry loads no package
+        if n.kind == Kind::Entry {
+            edits.extend(own);
+            continue;
+        }
         if !own.is_empty() && !n.drop {
             let (was, now) = match n.range.and_then(|r| doc.offset(to_pos(doc, r.start))) {
                 Some(at) => (n.text.clone(), reads(doc.body(), at, at + n.text.len(), &own)),
@@ -621,6 +782,10 @@ pub fn print(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<Json, St
 
 /// A `satex/dialogApply` of kind `snapshot`: the edits that write its `nodes`.
 pub fn apply(analysis: &Analysis, doc: &Text, params: &Json) -> Result<Json, String> {
+    // a bibliography manager's request (src/lsp/plugins/bibliography.rs `op`)
+    if params["nodes"].is_object() {
+        return super::plugins::bib_op(analysis, &params["nodes"]);
+    }
     let nodes: Vec<Node> = serde_json::from_value(params["nodes"].clone()).map_err(|e| e.to_string())?;
     print(analysis, doc, &nodes)
 }
@@ -886,5 +1051,76 @@ mod tests {
         own.args[0] = Arg::text('[', "HTML");
         own.args[1].text = "FF0000".into();
         assert_eq!(print_one(&d, &own), "% before\n\\color[HTML]{FF0000} x\nafter\n");
+    }
+
+    /// A `.bib` entry: a value edited keeps its delimiters (quotes, braces), a bare month
+    /// stays a constant, a quoted comma splits nothing, `%` is text; a field added follows
+    /// the last in the entry's indent, the type and key change in place.
+    #[test]
+    fn a_bib_entry_prints_through_the_printer() {
+        let bib = "@Article{knuth84,\n  author = \"Knuth, D. E.\",\n  title  = {Literate Programming},\n  url    = {http://x.org/a%20b},\n  month  = jan # \" 1\",\n  year   = 1984,\n}\n";
+        let d = Text::new(bib.to_string());
+        let n = entry(&d, 0).expect("an entry");
+        assert_eq!((n.name.as_str(), n.args[0].text.as_str()), ("Article", "knuth84"));
+        let keys = list(&n);
+        assert_eq!(
+            keys.iter().map(|k| k.key.as_str()).collect::<Vec<_>>(),
+            ["author", "title", "url", "month", "year"]
+        );
+        assert_eq!(keys[0].value.as_deref(), Some("Knuth, D. E."));
+        assert_eq!(keys[2].value.as_deref(), Some("http://x.org/a%20b"));
+        assert_eq!(n.args[1].bare, ["month", "year"]);
+        let printed = |n: &Node| {
+            let (edits, _) = printed_bib(&d, n);
+            write(bib, &edits)
+        };
+        assert_eq!(printed(&n), bib, "untouched");
+        let mut e = n.clone();
+        let fields = e.args[1].keys.as_mut().unwrap();
+        fields[0].value = Some("Knuth, Donald E.".into());
+        fields[1].value = Some("Literate {P}rogramming".into());
+        fields[4].value = Some("1986".into());
+        fields.remove(2);
+        fields.push(Key { key: "pages".into(), value: Some("97--111".into()) });
+        e.name = "inproceedings".into();
+        e.args[0].text = "knuth86".into();
+        assert_eq!(
+            printed(&e),
+            "@inproceedings{knuth86,\n  author = \"Knuth, Donald E.\",\n  title  = {Literate {P}rogramming},\n  month  = jan # \" 1\",\n  year   = 1986,\n  pages = {97--111},\n}\n"
+        );
+        // a value no longer bare is braced; a new entry prints whole
+        let mut e = n.clone();
+        e.args[1].keys.as_mut().unwrap()[4].value = Some("1984a".into());
+        assert!(printed(&e).contains("year   = {1984a},"), "{}", printed(&e));
+        let mut fresh = Node {
+            kind: Kind::Entry,
+            name: "misc".into(),
+            at: Some(span(&d, bib.len(), bib.len()).start),
+            ..Node::default()
+        };
+        fresh.args = vec![
+            Arg::text('{', "new"),
+            Arg {
+                bare: vec!["month".into()],
+                ..Arg::keys(
+                    '{',
+                    vec![
+                        Key { key: "title".into(), value: Some("T".into()) },
+                        Key { key: "month".into(), value: Some("feb".into()) },
+                    ],
+                )
+            },
+        ];
+        assert!(
+            printed(&fresh).ends_with("}\n\n@misc{new,\n  title = {T},\n  month = feb\n}\n"),
+            "{}",
+            printed(&fresh)
+        );
+    }
+
+    fn printed_bib(d: &Text, n: &Node) -> (Vec<Edit>, Vec<String>) {
+        let (mut edits, notes) = (edits_of(d, n).expect("edits"), Vec::new());
+        edits.sort();
+        (edits, notes)
     }
 }

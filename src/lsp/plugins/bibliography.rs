@@ -1,14 +1,19 @@
-//! Bibliography entries: every entry of the databases the run read, and every `\bibitem` of a
-//! `thebibliography` in the open file, searchable by key, field, text and where cited. Fields
-//! are edited, added and emptied away in the `.bib` file, a new entry has the fields the
-//! document's style reads of its type, an uncited entry can be deleted; a `thebibliography`
-//! edits in place and converts to a `.bib` file.
+//! Bibliography entries as a reference manager (`doc/site/bib.js`): every entry of the
+//! databases the run read with its snapshot, where it is cited and what the style's data model
+//! finds wrong with it; the `@string` constants; requests that import, convert, merge and
+//! rename (`op`). Every edit is printed by the snapshot printer. A `thebibliography` in the open
+//! file edits in place and converts to a `.bib` file.
 
-use super::{Cx, Hit, TypePlugin, call_at, closing, edit_of, key_values, lines_of, put, span, unbraced};
+use super::{Cx, Hit, TypePlugin, call_at, edit_of, lines_of, put, span};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{KeyKind, Ty};
 use crate::engine::builtins::OccKind;
+use crate::linter::bibdb::{Db, Load};
+use crate::linter::fix::Sources;
+use crate::lsp::handlers::{path_uri, to_lsp};
 use crate::lsp::snapshot;
+use crate::plugins::bib::Entry;
+use crate::plugins::bib::model::{self, Model};
 use crate::project::config::TypePlugins;
 use crate::text::Text;
 use serde_json::{Value as Json, json};
@@ -23,7 +28,7 @@ impl TypePlugin for Bibliography {
         "widget"
     }
     fn about(&self) -> &'static str {
-        "manage .bib entries or thebibliography's items: search, edit and add fields, add per type, delete uncited, convert to .bib"
+        "a reference manager: entries filtered by type and status, fields checked by the style's data model, types converted, @string constants, imports (DOI, arXiv, RIS, EndNote, CSL-JSON, Zotero) and dblp sync, thebibliography's items edited and converted to .bib"
     }
     fn types(&self) -> &'static [Ty] {
         &[Ty::Key(KeyKind::Cite)]
@@ -50,79 +55,192 @@ impl TypePlugin for Bibliography {
         Some(v)
     }
     fn manage(&self, cx: &Cx) -> Option<Json> {
-        let a = cx.analysis;
-        let occ = &a.facts.occurrences;
-        let mut files: Vec<(String, Text)> = Vec::new();
-        for o in occ.iter().filter(|o| o.kind == OccKind::Bibliography) {
-            let Some(path) = crate::plugins::bib::resolve(a, &o.key) else { continue };
-            let path = path.display().to_string();
-            if files.iter().any(|f| f.0 == path) {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
-            files.push((path, Text::new(text)));
-        }
+        let (loads, dbs) = crate::linter::bibdb::databases(cx.analysis, &Sources::default());
         let list = thebibliography(cx);
-        let mut items = Vec::new();
-        let mut seen_types: Vec<(String, Vec<String>)> = Vec::new();
-        let mut kinds = crate::lsp::bib::type_fields(a, cx.path);
-        for (path, bib) in &files {
-            for e in crate::plugins::bib::entries(bib.body()) {
-                match seen_types.iter_mut().find(|t| t.0 == e.kind) {
-                    Some(t) => t
-                        .1
-                        .extend(e.fields.iter().map(|f| f.0.clone()).filter(|f| !t.1.contains(f)).collect::<Vec<_>>()),
-                    None => seen_types.push((e.kind.clone(), e.fields.iter().map(|f| f.0.clone()).collect())),
-                }
-                let style = kinds.iter().find(|k| k.0 == e.kind).map(|k| k.1.as_slice()).unwrap_or_default();
-                items.push(record(path, bib, &e, &cites(cx, &e.key), style));
-            }
-        }
-        if let Some(l) = &list {
-            items.extend(l.items.iter().map(|i| bibitem(cx, l, i)));
-        }
-        if items.is_empty() && list.is_none() {
+        if dbs.is_empty() && list.is_none() {
             return None;
         }
-        // a new entry: the types and fields the style reads, else those the databases use
-        for (t, fs) in seen_types {
-            if !kinds.iter().any(|k| k.0 == t) {
-                kinds.push((t, fs));
-            }
+        let mut sections = Vec::new();
+        if !dbs.is_empty() {
+            sections.push(references(cx, &loads, &dbs));
         }
-        let taken: Vec<String> = items.iter().filter_map(|r| r["title"].as_str().map(String::from)).collect();
-        let key = || json!({ "name": "citekey", "value": "", "placeholder": "citation key", "check": ["required", "bibkey", "unique"], "taken": taken });
-        let mut add: Vec<Json> = Vec::new();
         if let Some(l) = &list {
-            // before `\end{thebibliography}`, on a line of its own
-            let at = l.end_tag;
-            let lead = if cx.doc.body()[..at].ends_with('\n') { "" } else { "\n" };
-            let text = format!("{lead}\\bibitem${{?label}}[${{label}}]${{/label}}{{${{citekey}}}} ${{text}}\n");
-            add.push(json!({ "name": "\\bibitem", "fields": [key(),
-                { "name": "label", "value": "", "placeholder": "label printed instead of the number (optional)", "check": ["balanced"] },
-                { "name": "text", "value": "", "placeholder": "Author. Title. Publisher, year.", "long": true, "check": ["required", "tex"] }],
-                "edit": edit_of(cx.path, vec![put(cx.doc, at, at, text)]) }));
-        }
-        if let Some((path, bib)) = files.first() {
-            let end = bib.body().len();
-            let sep = if bib.body().ends_with('\n') || bib.body().is_empty() { "\n" } else { "\n\n" };
-            add.extend(kinds.iter().map(|(t, fs)| {
-                // a field left empty is not written
-                let body: String = fs.iter().map(|f| format!("${{?{f}}},\n  {f} = {{${{{f}}}}}${{/{f}}}")).collect();
-                let mut form = vec![key()];
-                form.extend(fs.iter().map(|f| json!({ "name": f, "value": "", "placeholder": f, "check": ["balanced"] })));
-                json!({ "name": t, "fields": form, "edit": edit_of(path, vec![put(bib, end, end, format!("{sep}@{t}{{${{citekey}}{body}\n}}\n"))]) })
-            }));
-        }
-        let mut sections = vec![
-            json!({ "kind": "records", "placeholder": "search keys, fields, text, where cited", "sorts": ["key", "author", "year", "title", "cited"],
-                                         "items": items, "add": { "title": "Add entry", "kinds": add } }),
-        ];
-        if let Some(l) = &list {
+            sections.push(bibitems(cx, l));
             sections.extend(convert(cx, l));
         }
         Some(json!({ "title": "Bibliography", "sections": sections }))
     }
+}
+
+/// `thebibliography`'s items as records: each edits in place, a new one goes before `\end`.
+fn bibitems(cx: &Cx, l: &List) -> Json {
+    let items: Vec<Json> = l.items.iter().map(|i| bibitem(cx, l, i)).collect();
+    let taken: Vec<&str> = l.items.iter().map(|i| i.key.as_str()).collect();
+    let key = json!({ "name": "citekey", "value": "", "placeholder": "citation key", "check": ["required", "bibkey", "unique"], "taken": taken });
+    // before `\end{thebibliography}`, on a line of its own
+    let at = l.end_tag;
+    let lead = if cx.doc.body()[..at].ends_with('\n') { "" } else { "\n" };
+    let text = format!("{lead}\\bibitem${{?label}}[${{label}}]${{/label}}{{${{citekey}}}} ${{text}}\n");
+    let add = json!({ "name": "\\bibitem", "fields": [key,
+        { "name": "label", "value": "", "placeholder": "label printed instead of the number (optional)", "check": ["balanced"] },
+        { "name": "text", "value": "", "placeholder": "Author. Title. Publisher, year.", "long": true, "check": ["required", "tex"] }],
+        "edit": edit_of(cx.path, vec![put(cx.doc, at, at, text)]) });
+    json!({ "kind": "records", "placeholder": "search keys, fields, text, where cited", "sorts": ["key", "author", "year", "title", "cited"],
+            "items": items, "add": { "title": "Add entry", "kinds": [add] } })
+}
+
+/// The checks of a field's value by its datatype in the style's data model, and by the
+/// identifiers some fields hold (DOI, ISBN, ISSN): `dialogs.js` `CHECKS`.
+fn checks(model: &Model, field: &str) -> Vec<&'static str> {
+    let mut out = match model.datatype(field) {
+        "name" => vec!["balanced", "names"],
+        "date" => vec!["bibdate"],
+        "datepart" => vec!["datepart"],
+        "range" => vec!["pages"],
+        "integer" => vec!["integer"],
+        "uri" => vec!["url"],
+        "entrykey" => vec!["bibkeyref"],
+        "verbatim" => vec![],
+        _ => vec!["balanced"],
+    };
+    match field {
+        "doi" => out.push("doi"),
+        "isbn" => out.push("isbn"),
+        "issn" => out.push("issn"),
+        _ => {}
+    }
+    out
+}
+
+/// The databases as a reference manager shows them: each entry with its snapshot (edited and
+/// printed back), where it is cited and what is wrong with it; the `@string` constants with
+/// their uses; the style's types, fields and checks; the loads read twice.
+fn references(cx: &Cx, loads: &[Load], dbs: &[Db]) -> Json {
+    let model = model::of(cx.analysis, cx.path);
+    let twins = crate::linter::bibdb::twins(dbs);
+    let all: Vec<&Entry> = dbs.iter().flat_map(|d| &d.entries).collect();
+    let mut items = Vec::new();
+    for db in dbs {
+        for e in &db.entries {
+            let Some(node) = node_of(&db.text, e) else { continue };
+            let cited = cites(cx, &e.key);
+            let field = |n: &str| e.fields.iter().find(|f| f.0 == n).map(|f| f.1.clone());
+            let mut dups: Vec<Json> = twins
+                .iter()
+                .filter(|t| t.0.key == e.key || t.1.key == e.key)
+                .map(|(k, d, why)| json!({ "keep": k.key, "drop": d.key, "why": why }))
+                .collect();
+            if all.iter().filter(|x| x.key == e.key).count() > 1 {
+                dups.push(json!({ "why": "the same key" }));
+            }
+            let who = crate::plugins::bib::names(&e.author);
+            let author = match who.len() {
+                0 => field("editor").unwrap_or_default(),
+                1 => who[0].0.clone(),
+                2 => format!("{} and {}", who[0].0, who[1].0),
+                _ => format!("{} et al.", who[0].0),
+            };
+            let constants: Vec<String> = e
+                .fields
+                .iter()
+                .filter(|f| e.bare.contains(&f.0))
+                .flat_map(|f| crate::linter::bibdb::words(&f.1))
+                .collect();
+            items.push(json!({
+                "key": e.key, "type": e.kind, "file": db.path, "line": e.line, "uri": path_uri(&db.path).as_str(),
+                "author": author.replace(['{', '}'], ""), "year": e.year, "title": e.title,
+                "cited": cited.len(), "places": places(&cited),
+                "node": node,
+                "missing": crate::linter::bibdb::missing(e, &model),
+                "undefined": crate::linter::bibdb::undefined(e, dbs, &model),
+                "constants": constants,
+                "duplicates": dups,
+            }));
+        }
+    }
+    let mut constants = Vec::new();
+    for db in dbs {
+        for c in &db.constants {
+            let uses: Vec<&str> = all
+                .iter()
+                .filter(|e| {
+                    e.fields.iter().any(|f| {
+                        e.bare.contains(&f.0)
+                            && crate::linter::bibdb::words(&f.1).iter().any(|w| w.eq_ignore_ascii_case(&c.name))
+                    })
+                })
+                .map(|e| e.key.as_str())
+                .collect();
+            constants.push(json!({ "name": c.name, "value": c.value, "file": db.path, "line": c.line, "uses": uses }));
+        }
+    }
+    // a value written braced in several entries: a constant to make
+    let mut repeated: Vec<(String, String, Vec<&str>)> = Vec::new();
+    for e in &all {
+        for (n, v) in e
+            .fields
+            .iter()
+            .filter(|f| !e.bare.contains(&f.0) && matches!(model.datatype(&f.0), "literal" | "list") && f.1.len() > 3)
+        {
+            if matches!(n.as_str(), "title" | "abstract" | "note" | "keywords") {
+                continue;
+            }
+            match repeated.iter_mut().find(|r| r.1 == *v) {
+                Some(r) => r.2.push(&e.key),
+                None => repeated.push((n.clone(), v.clone(), vec![&e.key])),
+            }
+        }
+    }
+    repeated.retain(|r| r.2.len() > 1);
+    let repeated: Vec<Json> =
+        repeated.iter().map(|(f, v, keys)| json!({ "field": f, "value": v, "keys": keys })).collect();
+    let mut types: Vec<Json> = model
+        .types
+        .iter()
+        .map(|t| json!({ "name": t, "fields": model.fields_of(t), "required": model.required_of(t) }))
+        .collect();
+    for e in &all {
+        if !types.iter().any(|t| t["name"] == e.kind.as_str()) {
+            types.push(
+                json!({ "name": e.kind, "fields": e.fields.iter().map(|f| &f.0).collect::<Vec<_>>(), "required": [] }),
+            );
+        }
+    }
+    let mut fields: Vec<&str> = model.fields.iter().map(String::as_str).collect();
+    for e in &all {
+        for f in &e.fields {
+            if !fields.contains(&f.0.as_str()) {
+                fields.push(&f.0);
+            }
+        }
+    }
+    let checks: serde_json::Map<String, Json> =
+        fields.iter().map(|f| (f.to_string(), json!(checks(&model, f)))).collect();
+    // a database loaded twice: the lint's quick fix
+    let twice: Vec<Json> = loads
+        .iter()
+        .enumerate()
+        .filter(|(i, l)| l.path.is_some() && loads[..*i].iter().any(|f| f.path == l.path))
+        .map(|(_, l)| json!({ "name": l.name, "file": l.file, "line": l.span.line }))
+        .collect();
+    let style =
+        cx.analysis.facts.occurrences.iter().find(|o| o.kind == OccKind::BibStyle).map(|s| format!("{}.bst", s.key));
+    let biblatex = crate::linter::shared::loaded(cx.analysis, "biblatex");
+    json!({
+        "kind": "references",
+        "files": dbs.iter().map(|d| json!({ "path": d.path, "uri": path_uri(&d.path).as_str(), "name": d.path.rsplit('/').next() })).collect::<Vec<_>>(),
+        "style": style.unwrap_or_else(|| if biblatex { "biblatex".into() } else { "the databases".into() }),
+        "types": types, "fields": fields, "checks": checks,
+        "macros": model.macros.iter().map(|m| &m.0).collect::<Vec<_>>(),
+        "items": items, "constants": constants, "repeated": repeated, "twice": twice,
+    })
+}
+
+/// The snapshot of entry `e` in its database's text.
+fn node_of(text: &Text, e: &Entry) -> Option<snapshot::Node> {
+    let start = text.offset(crate::text::Pos::new(e.line, 1))?;
+    let at = start + text.body()[start..].find('@')?;
+    snapshot::entry(text, at)
 }
 
 /// Where each `key` is cited: file and line.
@@ -359,58 +477,323 @@ fn convert(cx: &Cx, l: &List) -> Vec<Json> {
     ]
 }
 
-fn record(path: &str, bib: &Text, e: &crate::plugins::bib::Entry, cites: &[(String, u32)], style: &[String]) -> Json {
-    let text = bib.body();
-    // the entry's bytes: from its `@` to the brace closing it
-    let start = bib.offset(crate::text::Pos::new(e.line, 1)).unwrap_or(0);
-    let at = text[start..].find('@').map(|i| start + i);
-    let open = at.and_then(|at| text[at..].find('{').map(|i| at + i));
-    let close = open.and_then(|o| closing(text, o, '{'));
-    let mut fields = Vec::new();
-    let mut actions = Vec::new();
-    let mut more = Json::Null;
-    if let (Some(at), Some(open), Some(close)) = (at, open, close) {
-        let comma = text[open..close].find(',').map_or(close, |i| open + i);
-        let list = comma + 1..close;
-        let kv = key_values(text, list.clone());
-        for (name, r) in &kv {
-            let written = &text[r.clone()];
-            let value = unbraced(written.trim_matches('"'));
-            // a number written bare stays bare
-            let bare = written.bytes().all(|c| c.is_ascii_digit());
-            let (template, check) =
-                if bare { ("${value}", json!(["integer"])) } else { ("{${value}}", json!(["balanced"])) };
-            let (from, to) = super::item_cut(text, list.clone(), r.clone());
-            fields.push(json!({ "name": name, "value": value, "long": value.len() > 40, "check": check,
-                                "edit": edit_of(path, vec![put(bib, r.start, r.end, template)]),
-                                "remove": edit_of(path, vec![put(bib, from, to, "")]) }));
+/// The linter's edits (lines and columns of characters) as a WorkspaceEdit's `changes`.
+fn changes(sources: &Sources, edits: &[crate::linter::fix::Edit], into: &mut serde_json::Map<String, Json>) {
+    for e in edits {
+        let Some(text) = sources.get(&e.path) else { continue };
+        let range = lsp_types::Range::new(to_lsp(&text, e.start), to_lsp(&text, e.end));
+        let edit = json!(lsp_types::TextEdit::new(range, e.replacement.clone()));
+        if let Some(a) = into.entry(path_uri(&e.path).as_str().to_string()).or_insert_with(|| json!([])).as_array_mut()
+        {
+            a.push(edit);
         }
-        // a new field after the last, in the file's indent
-        let after = kv.last().map_or(comma + 1, |(_, r)| r.end);
-        let rest = &text[after..close];
-        let (at_new, text_new) = match rest.trim_start().starts_with(',') {
-            true => (after + rest.find(',').unwrap_or(0) + 1, "\n  ${name} = {${value}},"),
-            false => (after, ",\n  ${name} = {${value}}"),
-        };
-        let present: Vec<&str> = kv.iter().map(|(n, _)| n.as_str()).collect();
-        let names: Vec<&String> = style.iter().filter(|f| !present.contains(&f.as_str())).collect();
-        more = json!({ "title": "Add field", "names": names, "check": "balanced", "edit": edit_of(path, vec![put(bib, at_new, at_new, text_new)]) });
-        let (from, to) = lines_of(text, at, close + 1);
-        let reason = (!cites.is_empty()).then(|| format!("cited {}", crate::cli::render::plural(cites.len(), "time")));
-        actions.push(json!({ "title": format!("Delete {}", e.key), "edit": edit_of(path, vec![put(bib, from, to, "")]), "disabled": reason, "danger": true }));
     }
-    let file = std::path::Path::new(path).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-    let all: Vec<&str> = e.fields.iter().map(|f| f.1.as_str()).collect();
-    json!({
-        "title": e.key,
-        "detail": format!("{} · {} · {}", e.author, e.year, e.kind),
-        "badge": cites.is_empty().then_some("uncited"),
-        "search": format!("{} {} {} {}", e.key, e.kind, all.join(" "), places(cites)),
-        "sort": { "key": e.key, "author": e.author, "year": e.year, "title": e.title, "cited": format!("{:06}", cites.len()) },
-        "fields": fields,
-        "more": more,
-        "uses": format!("In `{path}:{}`. {}", e.line, places(cites)),
-        "actions": actions,
-        "file": format!("{file}:{}", e.line),
-    })
+}
+
+/// `nodes` printed into the database `file`, the citations of a renamed key with them.
+fn print(
+    cx: (&Analysis, &Sources),
+    file: &str,
+    nodes: &[snapshot::Node],
+    into: &mut serde_json::Map<String, Json>,
+) -> Result<Vec<String>, String> {
+    let (analysis, sources) = cx;
+    let text = sources.get(file).ok_or_else(|| format!("{file} cannot be read"))?;
+    let (edits, notes) = snapshot::printed(analysis, &text, nodes)?;
+    let uri = path_uri(file).as_str().to_string();
+    let own = json!(snapshot::lsp_edits(&text, edits));
+    match into.get_mut(&uri).and_then(Json::as_array_mut) {
+        Some(a) => a.extend(own.as_array().cloned().unwrap_or_default()),
+        None => {
+            into.insert(uri, own);
+        }
+    }
+    for n in nodes.iter().filter(|n| n.kind == snapshot::Kind::Entry && n.range.is_some() && !n.drop) {
+        let was = snapshot::entry(&Text::new(n.text.clone()), 0).and_then(|o| o.args.first().map(|a| a.text.clone()));
+        let now = n.args.first().map(|a| a.text.as_str()).unwrap_or_default();
+        if let Some(was) = was.filter(|w| w != now) {
+            changes(sources, &crate::linter::bibdb::recite(analysis, sources, &was, now), into);
+        }
+    }
+    Ok(notes)
+}
+
+/// A manager's request beyond its fields (`satex/dialogApply` of kind `snapshot` with an
+/// object for `nodes`): `print` snapshots into a database, `import` references, `convert` an
+/// entry's type, `merge` two entries, edit a `constant`. Edits come back as a WorkspaceEdit.
+pub(in crate::lsp) fn op(analysis: &Analysis, p: &Json) -> Result<Json, String> {
+    let sources = Sources::default();
+    let (_, dbs) = crate::linter::bibdb::databases(analysis, &sources);
+    let file =
+        p["file"].as_str().map(String::from).or_else(|| dbs.first().map(|d| d.path.clone())).ok_or("no database")?;
+    let main = analysis.file_name(analysis.main_file).to_string();
+    let entry = |key: &str| {
+        dbs.iter().flat_map(|d| &d.entries).find(|e| e.key == key).ok_or_else(|| format!("no entry `{key}`"))
+    };
+    let mut out = serde_json::Map::new();
+    let mut notes = Vec::new();
+    match p["bib"].as_str().unwrap_or_default() {
+        "print" => {
+            let nodes: Vec<snapshot::Node> = serde_json::from_value(p["nodes"].clone()).map_err(|e| e.to_string())?;
+            notes = print((analysis, &sources), &file, &nodes, &mut out)?;
+        }
+        "import" => return import(analysis, &dbs, &file, p),
+        "convert" => {
+            let e = entry(p["key"].as_str().unwrap_or_default())?;
+            let to = p["to"].as_str().unwrap_or_default();
+            let model = model::of(analysis, &main);
+            let text = sources.get(&e.file).ok_or("the database cannot be read")?;
+            let mut node = node_of(&text, e).ok_or("the entry cannot be read")?;
+            notes = converted(&model, &mut node, to);
+            print((analysis, &sources), &e.file, &[node], &mut out)?;
+        }
+        "merge" => {
+            let (keep, drop) =
+                (entry(p["keep"].as_str().unwrap_or_default())?, entry(p["drop"].as_str().unwrap_or_default())?);
+            let edits = crate::linter::bibdb::merge(analysis, &sources, &dbs, keep, drop)
+                .ok_or("the entries cannot be merged")?;
+            changes(&sources, &edits, &mut out);
+        }
+        "constant" => notes = constant(analysis, &sources, &dbs, &file, p, &mut out)?,
+        other => return Err(format!("unknown bibliography request `{other}`")),
+    }
+    Ok(json!({ "edits": { "changes": out }, "notes": notes }))
+}
+
+/// `node`'s type changed to `to`: each field the new type does not read renamed to its alias
+/// there, or to the one field the new type requires in its place (`journal` to `booktitle`
+/// when that is the only one each requires the other lacks); the others kept and named.
+fn converted(model: &Model, node: &mut snapshot::Node, to: &str) -> Vec<String> {
+    let from = node.name.to_ascii_lowercase();
+    let takes = model.fields_of(to).to_vec();
+    let need = |t: &str| model.required_of(t).iter().flatten().cloned().collect::<Vec<String>>();
+    let (old, new) = (need(&from), need(to));
+    let gone: Vec<&String> = old.iter().filter(|f| !new.contains(f)).collect();
+    let wanted: Vec<&String> = new.iter().filter(|f| !old.contains(f)).collect();
+    let mut notes = Vec::new();
+    let Some(arg) = node.args.get_mut(1) else { return notes };
+    let keys = arg.keys.get_or_insert_with(Vec::new);
+    let present: Vec<String> = keys.iter().map(|k| k.key.clone()).collect();
+    for k in keys.iter_mut() {
+        if takes.is_empty() || takes.contains(&k.key) {
+            continue;
+        }
+        let alias = model.alias(&k.key).filter(|a| takes.iter().any(|t| t == a) && !present.iter().any(|p| p == a));
+        let paired = (gone.len() == 1 && wanted.len() == 1 && *gone[0] == k.key && !present.contains(wanted[0]))
+            .then(|| wanted[0].as_str());
+        match alias.or(paired) {
+            Some(n) => {
+                notes.push(format!("{} becomes {n}", k.key));
+                if let Some(b) = arg.bare.iter_mut().find(|b| **b == k.key) {
+                    *b = n.to_string();
+                }
+                k.key = n.to_string();
+            }
+            None => notes.push(format!("@{to} does not read {}: kept", k.key)),
+        }
+    }
+    node.name = to.to_string();
+    notes
+}
+
+/// Imported references against the databases: per reference its key, the entry it updates
+/// (by key, else by DOI or title) and its fields with the values they replace; a new one
+/// comes with its snapshot at the end of `file`. `into`: the entry a dblp answer updates.
+fn import(analysis: &Analysis, dbs: &[Db], file: &str, p: &Json) -> Result<Json, String> {
+    use crate::plugins::bib::convert;
+    let mut got = convert::parse(p["text"].as_str().unwrap_or_default());
+    if got.is_empty() {
+        return Err("no references found: BibTeX, RIS, EndNote, CSL-JSON, arXiv's Atom or dblp's JSON".into());
+    }
+    let all: Vec<&Entry> = dbs.iter().flat_map(|d| &d.entries).collect();
+    let base = p["into"].as_str().and_then(|k| all.iter().find(|e| e.key == k).copied());
+    if let Some(b) = base {
+        // the hit naming the same work, else none
+        let hit = got.iter().position(|h| convert::same(h, b)).ok_or("dblp found no record of this title")?;
+        got = vec![got.swap_remove(hit)];
+    }
+    let keep = p["keys"] == "keep";
+    let main = analysis.file_name(analysis.main_file).to_string();
+    let model = model::of(analysis, &main);
+    let known = |w: &str| {
+        dbs.iter()
+            .flat_map(|d| &d.constants)
+            .find(|c| c.name.eq_ignore_ascii_case(w))
+            .map(|c| c.name.clone())
+            .or_else(|| model.macros.iter().find(|m| m.0.eq_ignore_ascii_case(w)).map(|m| m.0.clone()))
+    };
+    let text = Sources::default().get(file).ok_or("the database cannot be read")?;
+    let end = span(&text, text.body().len(), text.body().len()).start;
+    let mut taken: Vec<String> = all.iter().map(|e| e.key.clone()).collect();
+    let mut rows = Vec::new();
+    for e in &got {
+        let matched = base.or_else(|| {
+            all.iter().find(|x| keep && x.key == e.key).or_else(|| all.iter().find(|x| convert::same(x, e))).copied()
+        });
+        let key = match matched {
+            Some(m) => m.key.clone(),
+            None if keep && !e.key.is_empty() && !taken.contains(&e.key) => e.key.clone(),
+            None => convert::key_for(e, &taken),
+        };
+        taken.push(key.clone());
+        let mut fields = Vec::new();
+        let (mut keys, mut bare) = (Vec::new(), Vec::new());
+        for (n, v) in &e.fields {
+            // the local entry's name for it (`journaltitle` for `journal`)
+            let name = matched.and_then(|m| model.alias(n).filter(|a| m.fields.iter().any(|f| f.0 == *a))).unwrap_or(n);
+            let constant = e.bare.contains(n).then(|| known(v)).flatten();
+            let plain = v.bytes().all(|b| b.is_ascii_digit()) && !v.is_empty();
+            let value = constant.clone().unwrap_or_else(|| v.clone());
+            let old = matched.and_then(|m| m.fields.iter().find(|f| f.0 == name)).map(|f| f.1.clone());
+            if old.as_deref() == Some(value.as_str()) {
+                continue;
+            }
+            if constant.is_some() || plain {
+                bare.push(name.to_string());
+            }
+            keys.push(snapshot::Key { key: name.to_string(), value: Some(value.clone()) });
+            fields.push(json!({ "name": name, "value": value, "bare": constant.is_some() || plain, "old": old }));
+        }
+        let node = match matched {
+            Some(m) => dbs.iter().find(|d| d.path == m.file).and_then(|d| node_of(&d.text, m)),
+            None => Some(snapshot::Node {
+                kind: snapshot::Kind::Entry,
+                name: e.kind.clone(),
+                args: vec![snapshot::Arg::text('{', &key), snapshot::Arg { bare, ..snapshot::Arg::keys('{', keys) }],
+                at: Some(end),
+                ..snapshot::Node::default()
+            }),
+        };
+        rows.push(json!({ "key": key, "type": e.kind, "title": e.title, "match": matched.map(|m| &m.key), "file": matched.map_or(file, |m| m.file.as_str()), "fields": fields, "node": node }));
+    }
+    Ok(json!({ "rows": rows }))
+}
+
+/// A `@string` constant renamed (`rename`), deleted when unused (`delete`), or made from a
+/// value several entries write (`make`, its `name`): the definition and every use.
+fn constant(
+    analysis: &Analysis,
+    sources: &Sources,
+    dbs: &[Db],
+    file: &str,
+    p: &Json,
+    out: &mut serde_json::Map<String, Json>,
+) -> Result<Vec<String>, String> {
+    let name = p["name"].as_str().unwrap_or_default();
+    let mut notes = Vec::new();
+    // per database, the entries whose values change
+    let mut nodes: Vec<(String, Vec<snapshot::Node>)> = Vec::new();
+    let mut edit = |db: &Db, e: &Entry, f: &dyn Fn(&mut snapshot::Arg) -> bool| {
+        let Some(mut n) = node_of(&db.text, e) else { return };
+        if n.args.get_mut(1).is_some_and(f) {
+            match nodes.iter_mut().find(|x| x.0 == db.path) {
+                Some(x) => x.1.push(n),
+                None => nodes.push((db.path.clone(), vec![n])),
+            }
+        }
+    };
+    let words_of = |v: &str| crate::linter::bibdb::words(v);
+    if let Some(value) = p["make"].as_str() {
+        if !snapshot::bib_bare(name) || name.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(format!("`{name}` is no constant name"));
+        }
+        for db in dbs {
+            for e in &db.entries {
+                edit(db, e, &|a: &mut snapshot::Arg| {
+                    let mut hit = false;
+                    for k in a.keys.iter_mut().flatten().filter(|k| k.value.as_deref() == Some(value)) {
+                        k.value = Some(name.to_string());
+                        if !a.bare.contains(&k.key) {
+                            a.bare.push(k.key.clone());
+                        }
+                        hit = true;
+                    }
+                    hit
+                });
+            }
+        }
+        // the definition after the database's last, else first
+        let db = dbs.iter().find(|d| d.path == file).ok_or("no database")?;
+        let at = match db.constants.last() {
+            Some(c) => db.text.offset(crate::text::Pos::new(c.line + 1, 1)).unwrap_or(0),
+            None => 0,
+        };
+        let def = snapshot::Node {
+            kind: snapshot::Kind::Entry,
+            name: "string".into(),
+            args: vec![
+                snapshot::Arg::text('{', ""),
+                snapshot::Arg::keys('{', vec![snapshot::Key { key: name.into(), value: Some(value.into()) }]),
+            ],
+            at: Some(span(&db.text, at, at).start),
+            ..snapshot::Node::default()
+        };
+        match nodes.iter_mut().find(|x| x.0 == db.path) {
+            Some(x) => x.1.push(def),
+            None => nodes.push((db.path.clone(), vec![def])),
+        }
+    } else {
+        let def = dbs
+            .iter()
+            .find_map(|d| d.constants.iter().find(|c| c.name == name).map(|c| (d, c)))
+            .ok_or_else(|| format!("no constant `{name}`"))?;
+        let used = |e: &Entry| {
+            e.fields
+                .iter()
+                .any(|f| e.bare.contains(&f.0) && words_of(&f.1).iter().any(|w| w.eq_ignore_ascii_case(name)))
+        };
+        let users: Vec<&str> =
+            dbs.iter().flat_map(|d| &d.entries).filter(|e| used(e)).map(|e| e.key.as_str()).collect();
+        let to = p["rename"].as_str();
+        if to.is_none() && !users.is_empty() {
+            return Err(format!("`{name}` is used by {}", users.join(", ")));
+        }
+        // the definition's name, or its lines
+        let (d, c) = def;
+        let line = d.text.offset(crate::text::Pos::new(c.line, 1)).unwrap_or(0);
+        let open = line + d.text.body()[line..].find(['{', '(']).unwrap_or(0) + 1;
+        let from = open + d.text.body()[open..].find(name).unwrap_or(0);
+        let edit_def = match to {
+            Some(to) => put(&d.text, from, from + name.len(), to),
+            None => {
+                let close = d.text.body()[open..].find('\n').map_or(d.text.body().len(), |i| open + i + 1);
+                put(&d.text, line, close, "")
+            }
+        };
+        if let Some(a) = out.entry(path_uri(&d.path).as_str().to_string()).or_insert_with(|| json!([])).as_array_mut() {
+            a.push(json!(edit_def));
+        }
+        if let Some(to) = to {
+            if !snapshot::bib_bare(to) {
+                return Err(format!("`{to}` is no constant name"));
+            }
+            for db in dbs {
+                for e in db.entries.iter().filter(|e| used(e)) {
+                    edit(db, e, &|a: &mut snapshot::Arg| {
+                        let bare = a.bare.clone();
+                        for k in a.keys.iter_mut().flatten().filter(|k| bare.contains(&k.key)) {
+                            let v = k.value.clone().unwrap_or_default();
+                            let parts: Vec<String> = v
+                                .split('#')
+                                .map(|p| {
+                                    if p.trim().eq_ignore_ascii_case(name) {
+                                        p.replace(p.trim(), to)
+                                    } else {
+                                        p.to_string()
+                                    }
+                                })
+                                .collect();
+                            k.value = Some(parts.join("#"));
+                        }
+                        true
+                    });
+                }
+            }
+            notes.push(format!("{} uses renamed", users.len()));
+        }
+    }
+    for (path, ns) in nodes {
+        notes.extend(print((analysis, sources), &path, &ns, out)?);
+    }
+    Ok(notes)
 }

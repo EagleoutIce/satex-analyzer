@@ -1629,6 +1629,7 @@ def main():
         "lengthsjs": emit(out, "lengths.js", (SITE / "lengths.js").read_bytes()),
         "snapshotjs": emit(out, "snapshot.js", (SITE / "snapshot.js").read_bytes()),
         "viewsjs": emit(out, "views.js", (SITE / "views.js").read_bytes()),
+        "bibjs": emit(out, "bib.js", (SITE / "bib.js").read_bytes()),
         "dialogsjs": emit(out, "dialogs.js", (SITE / "dialogs.js").read_bytes()),
         "layersjs": emit(out, "layers.js", (SITE / "layers.js").read_bytes()),
     }
@@ -1873,7 +1874,7 @@ def showcase(out, live):
 
 
 # what a showcase capture shows: the playground's code and style, besides its example and its entry
-SHOT_SOURCES = ("playground.js", "lengths.js", "snapshot.js", "views.js", "dialogs.js", "layers.js", "draw.js", "site.js", "style.css", "play.html", "showcase/capture.mjs")
+SHOT_SOURCES = ("playground.js", "lengths.js", "snapshot.js", "views.js", "bib.js", "dialogs.js", "layers.js", "draw.js", "site.js", "style.css", "play.html", "showcase/capture.mjs")
 
 
 def recapture(out):

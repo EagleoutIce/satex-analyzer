@@ -7,6 +7,7 @@
 //! lists them.
 
 mod bibliography;
+pub(super) use bibliography::op as bib_op;
 mod color;
 mod environment;
 mod float;

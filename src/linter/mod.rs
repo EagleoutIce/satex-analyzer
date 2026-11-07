@@ -2,6 +2,7 @@
 
 pub mod apply;
 pub mod assertions;
+pub mod bibdb;
 pub mod bibliography;
 pub mod build;
 pub mod chktex;
@@ -45,6 +46,7 @@ pub fn all() -> impl Iterator<Item = &'static Rule> {
         .iter()
         .chain(expl3::RULES)
         .chain(bibliography::RULES)
+        .chain(bibdb::RULES)
         .chain(pdf::RULES)
         .chain(packages::RULES)
         .chain(style::RULES)

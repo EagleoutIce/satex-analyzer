@@ -1,0 +1,17 @@
+TY  - JOUR
+DO  - 10.1145/3360588
+UR  - http://dx.doi.org/10.1145/3360588
+TI  - Improving bug detection via context-based code representation learning and attention-based neural networks
+T2  - Proceedings of the ACM on Programming Languages
+AU  - Li, Yi
+AU  - Wang, Shaohua
+AU  - Nguyen, Tien N.
+AU  - Van Nguyen, Son
+PY  - 2019
+DA  - 2019/10/10
+PB  - Association for Computing Machinery (ACM)
+SP  - 1-30
+IS  - OOPSLA
+VL  - 3
+SN  - 2475-1421
+ER  - 

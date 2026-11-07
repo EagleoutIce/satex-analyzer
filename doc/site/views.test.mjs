@@ -799,6 +799,53 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   console.log('apply lifecycle: ok');
 }
 
+// the bibliography manager's model (bib.js): bare values, filters, what to fetch, an import's choices
+{
+  createRequire(import.meta.url)('./bib.js');
+  const { hue, isBare, setField, matches, identify, chosen, joined } = self.satexBib;
+  assert.equal(hue('article'), hue('article'), 'a type keeps its colour');
+  assert.notEqual(hue('article'), hue('inproceedings'));
+  assert.ok(isBare('1984', []) && isBare('jan', ['jan']) && isBare('cacm # " 1"', ['cacm']) && isBare('JAN', ['jan']));
+  assert.ok(!isBare('Spring', ['jan']) && !isBare('"x"', []), 'a word no constant names is text');
+  const node = { args: [{ text: 'k' }, { keys: [{ key: 'year', value: '1984' }, { key: 'month', value: 'jan' }], bare: ['year', 'month'] }] };
+  setField(node, 'month', 'Spring', ['jan']);
+  assert.deepEqual(node.args[1].bare, ['year'], 'a text value is braced');
+  setField(node, 'month', 'feb', ['jan', 'feb']);
+  assert.deepEqual(node.args[1].bare, ['year', 'month']);
+  setField(node, 'year', '');
+  assert.deepEqual(node.args[1].keys.map((k) => k.key), ['month'], 'an emptied field goes');
+  setField(node, 'title', 'T');
+  assert.deepEqual(node.args[1].keys.at(-1), { key: 'title', value: 'T' });
+  const r = { key: 'knuth84', type: 'article', author: 'Knuth', year: '1984', title: 'Literate Programming', cited: 0, missing: [], duplicates: [], constants: [], undefined: [],
+    node: { args: [{}, { keys: [{ key: 'doi', value: '10.1093/x' }] }] } };
+  assert.ok(matches(r, 'knuth literate', []) && matches(r, '', ['type:article', 'uncited', 'doi']));
+  assert.ok(!matches(r, '', ['type:book']) && !matches(r, '', ['cited']) && !matches(r, 'lamport', []));
+  assert.ok(matches(r, '', ['type:book', 'type:article']), 'types: any of them');
+  assert.deepEqual(identify('https://arxiv.org/abs/1706.03762v7'), { doi: '10.48550/arXiv.1706.03762', what: 'arXiv 1706.03762' });
+  assert.equal(identify('doi:10.1145/3360588.').doi, '10.1145/3360588');
+  assert.equal(identify('https://doi.org/10.1145/3360588').doi, '10.1145/3360588');
+  assert.equal(identify('https://example.org/paper').url, 'https://example.org/paper');
+  assert.equal(identify('not a reference'), null);
+  // an update takes only the fields chosen; a new entry drops the unchosen and takes its key
+  const rows = [
+    { match: 'knuth', file: 'a.bib', node: { args: [{ text: 'knuth' }, { keys: [{ key: 'publisher', value: 'AW' }], bare: [] }] },
+      fields: [{ name: 'isbn', value: '0-201', old: null }, { name: 'publisher', value: 'Addison', old: 'AW' }] },
+    { match: null, file: 'b.bib', node: { args: [{ text: 'new' }, { keys: [{ key: 'title', value: 'T' }, { key: 'note', value: 'n' }], bare: [] }] },
+      fields: [{ name: 'title', value: 'T' }, { name: 'note', value: 'n' }] },
+  ];
+  const out = chosen(rows, [{ isbn: true, publisher: false }, { title: true, note: false }], { 1: 'mine' });
+  assert.deepEqual(out['a.bib'][0].args[1].keys, [{ key: 'publisher', value: 'AW' }, { key: 'isbn', value: '0-201' }], 'the local publisher stays');
+  assert.deepEqual([out['b.bib'][0].args[0].text, out['b.bib'][0].args[1].keys], ['mine', [{ key: 'title', value: 'T' }]]);
+  assert.deepEqual(joined([{ changes: { u: [1] } }, { changes: { u: [2], v: [3] } }]), { changes: { u: [1, 2], v: [3] } });
+  // the field checks bibliography fields name (dialogs.js)
+  const { check } = self.satexDialogs;
+  for (const [v, rule] of [['Doe, J. and Roe, R.', 'names'], ['2020-05', 'bibdate'], ['2020/2021', 'bibdate'], ['97--111', 'pages'], ['https://x.org', 'url'], ['10.1145/3360588', 'doi'], ['0-201-13447-0', 'isbn'], ['2475-1421', 'issn'], ['jan', 'datepart']])
+    assert.equal(check(v, [rule], []), '', `${rule}: ${v}`);
+  for (const [v, rule] of [['Doe and', 'names'], ['2020-02-30', 'bibdate'], ['May 2020', 'bibdate'], ['a b', 'pages'], ['www.x.org', 'url'], ['https://doi.org/10.1/x', 'doi'], ['0-201-13447-1', 'isbn'], ['2475-1422', 'issn']])
+    assert.notEqual(check(v, [rule], []), '', `${rule}: ${v}`);
+  assert.match(check('nokey', ['bibkeyref'], ['knuth']), /no entry nokey/);
+}
+
 // widget fields (dialogs.js): one escaper for plain text, one finder of TeX slips with its fix, one set of checks
 {
   const { texText, texIssue, texSafe, check } = self.satexDialogs;

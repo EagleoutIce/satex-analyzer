@@ -25,9 +25,10 @@ written so is a citation.  Without any bibliography every citation is
 undefined.  Nothing is reported while a named database cannot be found, or
 while a file of the document was not read.
 
-Fix by adding the entry, or by correcting the key.",
+Fix by adding the entry, or by correcting the key. The quick fix adds a stub
+entry to the first database, to fill in.",
         references: &[Ref { source: Source::Source2e, at: "ltbibl.dtx" }],
-        fixes: &[],
+        fixes: &[Applicability::Unsafe],
         engines: &[],
         run: undefined_citation,
     },
@@ -204,15 +205,34 @@ fn undefined_citation(report: &mut Report) {
             keys.push(o.key.clone());
         }
     }
+    // a stub per key at the end of the first database
+    let sources = report.edits().sources;
+    let first = crate::linter::bibdb::databases(analysis, sources).1.into_iter().next();
     for (span, (via, keys)) in missing {
         let named = keys.iter().map(|k| format!("`{k}`")).collect::<Vec<_>>().join(", ");
         let (entry, key) = if keys.len() > 1 { ("entries", "keys") } else { ("an entry", "key") };
-        report.add(
-            span,
-            &keys.join(","),
-            format!("no bibliography entry declares {named}{}", via.unwrap_or_default()),
-            Some(format!("add {entry} {named}, or correct the {key}")),
-        );
+        let message = format!("no bibliography entry declares {named}{}", via.unwrap_or_default());
+        let advice = format!("add {entry} {named}, or correct the {key}");
+        let stub = first.as_ref().filter(|db| sources.editable(analysis, &db.path)).map(|db| {
+            let end = db.text.end();
+            let lead = if db.text.body().ends_with('\n') || db.text.body().is_empty() { "" } else { "\n" };
+            let text: String = keys.iter().map(|k| format!("\n@misc{{{k},\n  title = {{TODO}}\n}}\n")).collect();
+            vec![crate::linter::fix::Edit {
+                path: db.path.clone(),
+                start: end,
+                end,
+                replacement: format!("{lead}{text}"),
+            }]
+        });
+        match stub {
+            Some(edits) => report.add_fix(
+                span,
+                &keys.join(","),
+                message,
+                Fix::new(format!("{advice}: add a stub"), Applicability::Unsafe, Some(edits)),
+            ),
+            None => report.add(span, &keys.join(","), message, Some(advice)),
+        }
     }
 }
 

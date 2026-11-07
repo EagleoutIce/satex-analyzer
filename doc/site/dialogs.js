@@ -708,6 +708,16 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     number: (v) => String(v).trim() && Number.isFinite(Number(v)) ? '' : 'a number',
     // a date (ISO, `2020-02-30` is none): the day it names exists
     date: (v) => { const d = String(v).match(/^\s*(\d{4}-\d{2}-\d{2})/)?.[1]; const t = d && new Date(`${d}T00:00:00Z`); return !d || t.getTime() === t.getTime() && t.toISOString().startsWith(d) ? '' : `${d} is no day`; },
+    // bibliography fields, by the data model's datatypes (src/lsp/plugins/bibliography.rs `checks`)
+    names: (v) => { const n = String(v).split(/\s+and(?=\s|$)/i); return n.some((x) => !x.trim()) ? 'a name is empty: names are joined by "and"' : n.find((x) => (x.replace(/\{[^{}]*\}/g, '').match(/,/g) ?? []).length > 2) ? 'a name has at most two commas: Last, Jr, First' : ''; },
+    bibdate: (v) => { const p = '\\d{4}(-\\d{2}(-\\d{2})?)?[?~%]?'; if (!new RegExp(`^\\s*(${p})?(/(${p}|\\.\\.)?)?\\s*$`).test(v) || !String(v).trim()) return 'a date: 2020, 2020-05, 2020-05-17, or a range 2020/2021'; for (const d of String(v).match(/\d{4}-\d{2}-\d{2}/g) ?? []) { const t = new Date(`${d}T00:00:00Z`); if (!(t.getTime() === t.getTime() && t.toISOString().startsWith(d))) return `${d} is no day`; } return ''; },
+    datepart: (v) => /^\s*(\d+|[A-Za-z][\w-]*)\s*$/.test(v) ? '' : 'a number, or a constant such as jan',
+    pages: (v) => /^\s*[\w.:]+(\s*(--?|–)\s*[\w.:]*)?(\s*,\s*[\w.:]+(\s*(--?|–)\s*[\w.:]*)?)*\s*$/.test(v) ? '' : 'pages: 12--34, 12, e123, or a list 1--4, 7',
+    url: (v) => /^\s*(https?|ftp):\/\/[^\s{}]+\s*$/.test(v) ? '' : 'a URL starts with https:// and has no spaces',
+    doi: (v) => /^\s*https?:\/\/(dx\.)?doi\.org\//i.test(v) ? 'the DOI alone: without https://doi.org/' : /^\s*10\.\d{4,9}\/\S+\s*$/.test(v) ? '' : 'a DOI: 10.1234/name',
+    isbn: (v) => { const d = String(v).replace(/[-\s]/g, '').toUpperCase(); const sum = d.length === 10 ? [...d].reduce((a, c, i) => a + (c === 'X' ? 10 : +c) * (10 - i), 0) % 11 : d.length === 13 ? [...d].reduce((a, c, i) => a + +c * (i % 2 ? 3 : 1), 0) % 10 : -1; return /^(\d{9}[\dX]|\d{13})$/.test(d) && sum === 0 ? '' : 'an ISBN: 10 or 13 digits whose check digit fits'; },
+    issn: (v) => { const d = String(v).replace(/[-\s]/g, '').toUpperCase(); return /^\d{7}[\dX]$/.test(d) && [...d].reduce((a, c, i) => a + (c === 'X' ? 10 : +c) * (8 - i), 0) % 11 === 0 ? '' : 'an ISSN: 1234-567X whose check digit fits'; },
+    bibkeyref: (v, taken = []) => { const k = String(v).split(',').map((x) => x.trim()).find((x) => x && !taken.includes(x)); return k ? `no entry ${k}` : ''; },
   };
   /** The first message of `rules` (names, `min:N`, `max:N`) on `value`, else ''. */
   function check(value, rules = [], taken = []) {

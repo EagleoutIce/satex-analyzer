@@ -117,3 +117,8 @@ C048 undefined-cref-format
 C049 unknown-code-language
 S053 clones
 S054 et-al
+C050 duplicate-bibliography-load
+C051 duplicate-bibliography-work
+C052 bibliography-entry-missing-field
+C053 undefined-bibliography-string
+S055 uncited-bibliography-entry
