@@ -20,7 +20,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 profile="${CARGO_PROFILE:-ci}"
-run() { cargo test --locked --profile "$profile" --features doc --no-fail-fast "$@"; }
+# The integration and unit test binaries: prebuilt ones when CI's build job handed them over
+# ($IT_BIN, $LIB_BIN), else built here.
+if [[ -n "${IT_BIN-}" ]]; then IT=("$IT_BIN"); else IT=(cargo test --locked --profile "$profile" --features doc --no-fail-fast --test it --); fi
+if [[ -n "${LIB_BIN-}" ]]; then LIB=("$LIB_BIN"); else LIB=(cargo test --locked --profile "$profile" --features doc --no-fail-fast --lib --); fi
+it() { "${IT[@]}" "$@"; }
+lib() { "${LIB[@]}" "$@"; }
 
 # Runs a test command; fails on a failing test tests/known-red.txt does not list.
 gated() {
@@ -56,17 +61,17 @@ if [[ "${1-}" == quick ]]; then
 fi
 if [[ "${1-}" == compliance ]]; then
     set -x
-    run --test it -- compliance_matrix::
+    it compliance_matrix::
     exit
 fi
 if [[ "${1-}" == reds ]]; then
     mapfile -t reds < <(grep -v '^#' tests/known-red.txt | sed '/^$/d')
-    gated reds timeout "${REDS_SECONDS:-1200}" cargo test --locked --profile "$profile" --features doc --no-fail-fast --test it -- --exact "${reds[@]}"
+    gated reds timeout "${REDS_SECONDS:-1200}" "${IT[@]}" --exact "${reds[@]}"
     exit
 fi
 if [[ "${1-}" == lib ]]; then
     set -x
-    run --lib
+    lib
     exit
 fi
 [[ "${1-}" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || { echo "usage: $0 <K/N|compliance>" >&2; exit 2; }
@@ -74,7 +79,7 @@ k=${BASH_REMATCH[1]} n=${BASH_REMATCH[2]}
 (( k <= n )) || { echo "$0: shard $k of $n" >&2; exit 2; }
 
 mapfile -t tests < <(
-    run --test it -- --list 2>/dev/null | sed -n 's/: test$//p' | LC_ALL=C sort |
+    it --list 2>/dev/null | sed -n 's/: test$//p' | LC_ALL=C sort |
         awk -v k="$k" -v n="$n" '
             FILENAME == "tests/slow.txt" { slow[$0] = 1; next }
             FILENAME == "tests/known-red.txt" { red[$0] = 1; next }
@@ -85,4 +90,4 @@ mapfile -t tests < <(
 )
 (( ${#tests[@]} > 0 )) || { echo "$0: shard $k/$n is empty" >&2; exit 1; }
 
-gated "shard-$k" run --test it -- --exact "${tests[@]}"
+gated "shard-$k" it --exact "${tests[@]}"
