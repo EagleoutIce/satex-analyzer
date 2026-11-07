@@ -22,6 +22,9 @@ cd "$(dirname "$0")/.."
 profile="${CARGO_PROFILE:-ci}"
 # The integration and unit test binaries: prebuilt ones when CI's build job handed them over
 # ($IT_BIN, $LIB_BIN), else built here.
+# A prebuilt binary runs without cargo, so without .cargo/config.toml's [env]: take its test-thread stack from
+# there (a kernel build nests deeper than the 2 MiB default holds).
+export RUST_MIN_STACK="${RUST_MIN_STACK:-$(sed -n 's/^RUST_MIN_STACK = "\(.*\)"/\1/p' .cargo/config.toml)}"
 if [[ -n "${IT_BIN-}" ]]; then IT=("$IT_BIN"); else IT=(cargo test --locked --profile "$profile" --features doc --no-fail-fast --test it --); fi
 if [[ -n "${LIB_BIN-}" ]]; then LIB=("$LIB_BIN"); else LIB=(cargo test --locked --profile "$profile" --features doc --no-fail-fast --lib --); fi
 it() { "${IT[@]}" "$@"; }
