@@ -458,6 +458,17 @@ pub fn providing_package(analysis: &Analysis, name: &str) -> Option<String> {
         .find_map(|(file, _)| file.strip_suffix(".sty").map(str::to_string))
 }
 
+/// The installed package that defines `name` itself, the most loaded of several
+/// ([`crate::caches::exports::Exports::provider`]).
+pub fn provider(analysis: &Analysis, name: &str) -> Option<String> {
+    exports(analysis)?.provider(name)?.strip_suffix(".sty").map(str::to_string)
+}
+
+/// Whether installed package `a` loads package `b`, itself or through what it loads.
+pub fn package_loads(analysis: &Analysis, a: &str, b: &str) -> bool {
+    exports(analysis).is_some_and(|e| e.reaches(&format!("{a}.sty"), &format!("{b}.sty")))
+}
+
 /// The load of the pgf or TikZ library that declares `name`, an arrow tip,
 /// shape or key a library error names: `\usetikzlibrary{arrows.meta}`.
 pub fn providing_library(analysis: &Analysis, name: &str) -> Option<String> {

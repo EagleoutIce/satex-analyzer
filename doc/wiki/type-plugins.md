@@ -67,6 +67,8 @@ The picker (`view`) has a saturation and brightness square, a hue strip, the spe
 - the first argument of an xcolor command (`\color`, `\textcolor`, `\colorbox`): `\color[HTML]{1F77B4}`
 - anywhere else (a TikZ key, a command without a model argument, or without xcolor): a `\definecolor{mycolor}{…}{…}` before `\begin{document}` and its name in place. Without any color package it adds `\usepackage{xcolor}` too.
 
+The server sends what it would write as snapshots: the command, the name in its place, a new `\definecolor`. The picker fills their arguments and the snapshot printer writes them.
+
 VS Code's own color picker goes through `textDocument/colorPresentation`, which writes the same.
 
 ## language
@@ -90,7 +92,9 @@ Two rewrites are code actions and buttons in the dialog:
 - booktabs: `\toprule` first, `\midrule` between, `\bottomrule` last, `\cmidrule(lr)` for `\cline`, no vertical rules
 - siunitx: a column whose cells below the header are all numbers becomes `S[table-format=I.D]`, its header cell braced.
 
-Either adds `\usepackage{booktabs}` or `\usepackage{siunitx}` before `\begin{document}` when the document does not load it, and says so.
+The table, image and placement dialogs write through the snapshot printer of the page dialog (below). The server reads the table as it is written, takes the dialog's text of it and writes only what differs: a changed cell, a column letter, a renamed environment (`tabular` to `tabularx` adds `{\linewidth}`). Every other byte stays. The answer's `text` is the table as written then.
+
+A command or environment the edit adds that the run does not define loads its package before `\begin{document}`, and says so. The package is the installation's provider of the name (`\toprule` loads booktabs). A column letter the run lacks is one its `\@testpach` does not test and no `\newcolumntype` made. Its package is the dialog's (the type menu's `siunitx` for `S`), else the provider of `\@testpach` (array, for `m`, `b`, `>{…}`). A package another added one loads is left out: tabularx loads array.
 
 ## image
 
@@ -103,7 +107,7 @@ A figure is a file `\includegraphics` read. Its code lens and hover link open a 
 
 *Crop to content* trims the margins of the rendered figure that look like its corners' background. Its padding may be negative, cutting into the content, as long as some is left. *Replace…* puts a new PNG, JPEG, PDF or EPS next to the figure (next to the document when the figure is the installation's) and writes its name. *Download* saves the figure's file.
 
-A key the dialog does not edit (`page`, `draft`) stays where it was, and so do a crop it cannot read and the units of an unchanged crop. A client without dialogs gets two code actions: rotate by 90° and fit to `\linewidth`.
+A key the dialog does not edit (`page`, `draft`) stays where it was, and so do a crop it cannot read and the units of an unchanged crop. A changed value is written in place. When the size moves before or after `angle`, the list is written again in its own separator. A client without dialogs gets two code actions: rotate by 90° and fit to `\linewidth`.
 
 ## float
 
@@ -176,7 +180,7 @@ A `forest` environment the run met: a lens "Edit tree…" on its `\begin` line a
 - Indented outline: paste lines indented by depth (`-`, `*`, `+` or `1.` markers dropped) to add them under the selected node or to replace the tree. Export writes the tree as such an outline.
 - It writes only what changed. An untouched node keeps its text, spacing and comments. A new or moved node takes the spacing of the sibling before it. Content with a comma or a bracket goes in braces.
 
-On a blank line of the document body, "Insert forest tree" writes a small tree and the view "New tree" starts one. Both add `\usepackage{forest}` when the run has no forest.
+On a blank line of the document body, "Insert forest tree" writes a small tree and the view "New tree" starts one. Both add `\usepackage{forest}` when the run has no forest. The view sends the environment as a snapshot with its new body, and the printer writes it.
 
 ## Incremental plugins
 

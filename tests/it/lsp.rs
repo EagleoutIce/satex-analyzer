@@ -3465,7 +3465,15 @@ fn color_plugin_with_xcolor() {
     let color = &views[0]["sections"][0];
     assert_eq!(color["kind"], "color", "{views}");
     assert_eq!(color["models"][0], "HTML");
-    assert_eq!(color["apply"]["edits"][0]["newText"], "[${model}]{${spec}}");
+    // the command's snapshot: the view fills `[model]{spec}`, the printer writes it
+    let mut own = color["apply"]["nodes"]["own"].clone();
+    assert_eq!(own["name"], "color", "{color}");
+    (own["args"][0]["text"], own["args"][1]["text"]) = (json!("HTML"), json!("FF0000"));
+    let id = server
+        .request("satex/dialogApply", json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": [own] }));
+    let out = server.response(id)["result"].clone();
+    let written = applied(text, &uri, &json!({ "changes": { &uri: out["edits"] } }), &[]);
+    assert!(written.contains("\n\\color[HTML]{FF0000} \\textcolor"), "{out}");
     let group = |name: &str| {
         color["defined"].as_array().unwrap().iter().find(|d| d["name"] == name).map(|d| d["group"].clone())
     };
@@ -3508,11 +3516,24 @@ fn color_plugin_without_xcolor_and_off() {
     let views = at(&mut server, &uri, "satex/view", 4, c);
     let color = &views[0]["sections"][0];
     assert_eq!(color["models"], json!(["rgb", "cmyk", "gray"]), "{views}");
-    let edits = color["apply"]["edits"].as_array().unwrap();
-    assert!(edits[0]["newText"].as_str().unwrap().starts_with("\\definecolor{${name}}"), "{edits:?}");
-    assert_eq!(edits[0]["range"]["start"]["line"], 3);
-    assert_eq!(edits[1]["newText"], "${name}");
+    // a definition before `\begin{document}` and the fresh name in place; color defines \definecolor
+    let nodes = &color["apply"]["nodes"];
     assert_eq!(color["apply"]["name"], "mycolor");
+    let mut define = nodes["define"].clone();
+    assert_eq!((define["name"].as_str(), define["at"]["line"].as_u64()), (Some("definecolor"), Some(3)), "{color}");
+    for (k, t) in ["mycolor", "rgb", "1,0,0"].into_iter().enumerate() {
+        define["args"][k]["text"] = json!(t);
+    }
+    let mut name = nodes["name"].clone();
+    name["body"] = json!("mycolor");
+    let id = server.request(
+        "satex/dialogApply",
+        json!({ "textDocument": { "uri": uri }, "kind": "snapshot", "nodes": [define, name] }),
+    );
+    let out = server.response(id)["result"].clone();
+    let written = applied(text, &uri, &json!({ "changes": { &uri: out["edits"] } }), &[]);
+    assert!(written.contains("\\definecolor{mycolor}{rgb}{1,0,0}\n\\begin{document}\n\\color{mycolor} x"), "{out}");
+    assert!(!written.contains("xcolor"), "color defines \\definecolor: {out}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
     let (mut server, uri, dir) = open_set("color-off", text, &["type_plugins.color.enabled=false"]);
@@ -3699,8 +3720,13 @@ fn a_float_placement_hovers_completes_and_writes() {
             json!({ "textDocument": { "uri": uri }, "kind": "float", "range": view["range"], "state": state }),
         )
     };
-    assert_eq!(apply("tb!")["edits"][0]["newText"], "\\begin{figure}[tb!]");
-    assert_eq!(apply("")["edits"][0]["newText"], "\\begin{figure}");
+    // the printer writes the brackets' letters only
+    let out = apply("tb!");
+    assert_eq!(
+        (out["text"].as_str(), out["edits"][0]["newText"].as_str()),
+        (Some("\\begin{figure}[tb!]"), Some("tb!"))
+    );
+    assert_eq!(apply("")["text"], "\\begin{figure}");
     assert!(apply("x").is_null(), "an unknown letter is refused");
 }
 
@@ -3724,9 +3750,11 @@ fn a_table_column_keeps_and_writes_its_injections() {
         "satex/dialogApply",
         json!({ "textDocument": { "uri": uri }, "kind": "table", "range": view["range"], "state": state }),
     );
-    let written = out["edits"][0]["newText"].as_str().unwrap_or_default();
+    let written = out["text"].as_str().unwrap_or_default();
     assert!(written.contains(">{\\bfseries}l") && written.contains(">{$}c<{$}}"), "{out}");
-    assert_eq!(out["edits"][1]["newText"], "\\usepackage{array}\n", "array is added: {out}");
+    let loads: Vec<&Value> =
+        out["edits"].as_array().unwrap().iter().filter(|e| e["newText"] == "\\usepackage{array}\n").collect();
+    assert_eq!(loads.len(), 1, "array is added, the run's \\@testpach lacks `>`: {out}");
 }
 
 /// A column made S however (the type menu, not the Numbers → S rewrite) braces its text cells, which
@@ -3742,14 +3770,21 @@ fn an_s_column_braces_its_text_and_loads_siunitx() {
     let view =
         ask("satex/dialog", json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": 2 } }));
     let mut state = view["state"].clone();
+    // the type menu names the letter's package: the run without siunitx cannot
     state["cols"][1]["align"] = json!("S");
+    state["cols"][1]["package"] = json!("siunitx");
     let out = ask(
         "satex/dialogApply",
         json!({ "textDocument": { "uri": uri }, "kind": "table", "range": view["range"], "state": state }),
     );
-    let written = out["edits"][0]["newText"].as_str().unwrap_or_default();
+    let written = out["text"].as_str().unwrap_or_default();
     assert!(written.contains("{lS}") && written.contains("{Score}") && written.contains("& 0.92"), "{out}");
-    let loads: Vec<&Value> = out["edits"].as_array().unwrap()[1..].iter().collect();
+    let loads: Vec<&Value> = out["edits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["newText"].as_str().unwrap().contains("usepackage"))
+        .collect();
     assert_eq!(loads.len(), 1, "{out}");
     assert_eq!(loads[0]["newText"], "\\usepackage{siunitx}\n", "{out}");
     assert_eq!(loads[0]["range"]["start"], json!({ "line": 1, "character": 0 }), "before \\begin{{document}}: {out}");
@@ -3798,7 +3833,11 @@ fn tables_and_figures_open_dialogs_that_write_them_back() {
             "satex/dialogApply",
             json!({ "textDocument": { "uri": uri }, "kind": view["kind"], "range": view["range"], "state": view["state"] }),
         );
-        assert_eq!(applied["edits"][0]["newText"].as_str().unwrap(), ranged(text, &view["range"]), "{view}");
+        assert_eq!(
+            (applied["edits"].clone(), applied["text"].as_str()),
+            (json!([]), Some(ranged(text, &view["range"]).as_str())),
+            "{view}"
+        );
         if view["kind"] == "image" {
             assert!(view["state"]["natural"].is_array(), "the engine's size of the file: {view}");
             // the run's graphics driver, and that it reads `decodearray` (pdftex.def sets `\Gin@decode`)
@@ -3819,12 +3858,11 @@ fn tables_and_figures_open_dialogs_that_write_them_back() {
         "satex/dialogApply",
         json!({ "textDocument": { "uri": uri }, "kind": "table", "range": view["range"], "state": state }),
     );
-    let new = applied["edits"][0]["newText"].as_str().unwrap();
+    let new = applied["text"].as_str().unwrap();
     assert!(new.starts_with("\\begin{tabularx}{\\linewidth}{|l|X|}") && new.ends_with("\\end{tabularx}"), "{applied}");
     assert!(new.contains("\\multirow{2}{*}{Ours} & 0.92"), "{new}");
-    let packages: Vec<&str> =
-        applied["edits"].as_array().unwrap()[1..].iter().filter_map(|e| e["newText"].as_str()).collect();
-    assert_eq!(packages, ["\\usepackage{tabularx}\n", "\\usepackage{multirow}\n"], "{applied}");
+    // the packages from the installation's index: \\tabularx and \\multirow are undefined in the run
+    assert_eq!(applied["edits"][0]["newText"], "\\usepackage{tabularx}\n\\usepackage{multirow}\n", "{applied}");
     assert_eq!(applied["state"]["env"], "tabularx", "{applied}");
     let at = |line: u64| json!({ "start": { "line": line, "character": 0 }, "end": { "line": line, "character": 0 } });
     let actions = ask(
@@ -3836,29 +3874,32 @@ fn tables_and_figures_open_dialogs_that_write_them_back() {
     assert!(titled("Edit table").is_some_and(|a| a["command"]["command"] == "satex.openDialog"), "{actions}");
     let booktabs = titled("Convert table to booktabs").expect("a booktabs rewrite");
     assert!(booktabs["title"].as_str().unwrap().contains("\\usepackage{booktabs}"), "{booktabs}");
-    let edits = booktabs["edit"]["changes"][&uri].as_array().unwrap().clone();
-    let new = edits[0]["newText"].as_str().unwrap();
+    let new = self::applied(text, &uri, &booktabs["edit"], &[]);
+    let new = &new[new.find("\\begin{tabular}").unwrap()..new.find("\\includegraphics").unwrap()];
     assert!(
         new.starts_with(
             "\\begin{tabular}{lc}\n  \\toprule\n  Method & Score \\\\ \\midrule\n  Ours & 0.92 \\\\ % best\n"
         ),
         "{new}"
     );
-    assert!(new.ends_with("  \\bottomrule\n\\end{tabular}"), "{new}");
-    assert_eq!(edits[1]["newText"], "\\usepackage{booktabs}\n");
+    assert!(new.ends_with("  \\bottomrule\n\\end{tabular}\n"), "{new}");
+    assert_eq!(booktabs["edit"]["changes"][&uri][0]["newText"], "\\usepackage{booktabs}\n");
     let siunitx = titled("Align numbers with siunitx").expect("an S column rewrite");
-    let new = siunitx["edit"]["changes"][&uri][0]["newText"].as_str().unwrap().to_string();
-    assert!(new.starts_with("\\begin{tabular}{|l|S[table-format=2.2]|}\n  \\hline\n  Method & {Score} \\\\"), "{new}");
+    let new = self::applied(text, &uri, &siunitx["edit"], &[]);
+    assert!(
+        new[new.find("\\begin{tabular}").unwrap()..]
+            .starts_with("\\begin{tabular}{|l|S[table-format=2.2]|}\n  \\hline\n  Method & {Score} \\\\"),
+        "{new}"
+    );
     let actions = ask(
         "textDocument/codeAction",
         json!({ "textDocument": { "uri": uri }, "range": at(figure), "context": { "diagnostics": [] } }),
     );
     let rotate =
         (actions.as_array().unwrap().iter()).find(|a| a["title"] == "Rotate image by 90°").expect("a rotation");
-    assert_eq!(
-        rotate["edit"]["changes"][&uri][0]["newText"],
-        "\\includegraphics[trim=1cm 2 3 4,clip,angle=180,width=3cm]{fig}"
-    );
+    let rotated = self::applied(text, &uri, &rotate["edit"], &[]);
+    assert!(rotated.contains("\n\\includegraphics[trim=1cm 2 3 4,clip,angle=180,width=3cm]{fig}\n"), "{rotate}");
+    assert_eq!(rotate["edit"]["changes"][&uri][0]["newText"], "180", "only the angle is written: {rotate}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -4138,8 +4179,9 @@ fn forest_plugin_new_tree_and_off() {
     let new =
         actions.as_array().unwrap().iter().find(|a| a["title"] == "Insert forest tree (adds \\usepackage{forest})");
     let edits = new.expect("a new tree")["edit"]["changes"][&uri].as_array().unwrap().clone();
-    assert!(edits[0]["newText"].as_str().unwrap().starts_with("\\begin{forest}"), "{edits:?}");
-    assert_eq!(edits[1]["newText"], "\\usepackage{forest}\n");
+    // printed: the load first, then the tree on the blank line
+    assert_eq!(edits[0]["newText"], "\\usepackage{forest}\n");
+    assert!(edits[1]["newText"].as_str().unwrap().starts_with("\\begin{forest}\n  [root"), "{edits:?}");
     let views = at(&mut server, &uri, "satex/view", 3, 0);
     assert!(views.as_array().unwrap().iter().any(|v| v["plugin"] == "forest" && v["title"] == "New tree"), "{views}");
     server.shutdown();

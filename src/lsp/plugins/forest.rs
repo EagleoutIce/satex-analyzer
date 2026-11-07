@@ -6,9 +6,11 @@
 use super::{Cx, Hit, TypePlugin, rewrite};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::Ty;
+use crate::lsp::handlers::to_pos;
+use crate::lsp::snapshot;
 use crate::project::config::TypePlugins;
 use crate::text::Text;
-use lsp_types::{CodeAction, CodeLens, TextEdit};
+use lsp_types::{CodeAction, CodeLens};
 use serde_json::{Value as Json, json};
 
 pub(super) struct Forest;
@@ -42,26 +44,26 @@ impl TypePlugin for Forest {
     /// Outside a tree, on a blank line of the body: a tree to start from.
     fn actions(&self, cx: &Cx, _hit: &Hit) -> Vec<CodeAction> {
         let Some(new) = super::blank(cx, ENV, ENV) else { return Vec::new() };
-        let note = if new.preamble.is_some() { " (adds \\usepackage{forest})" } else { "" };
-        let mut edits =
-            vec![TextEdit { range: new.at, new_text: format!("\\begin{{{ENV}}}\n  {TEMPLATE}\\end{{{ENV}}}") }];
-        edits.extend(new.preamble);
-        vec![rewrite(cx, format!("Insert forest tree{note}"), edits)]
+        let node = snapshot::Node { body: format!("  {TEMPLATE}"), ..snapshot::new_env(ENV, new.at.start, ENV) };
+        let Ok((edits, notes)) = snapshot::printed(cx.analysis, cx.doc, &[node]) else { return Vec::new() };
+        let note: String = notes.iter().map(|n| format!(" ({n})")).collect();
+        vec![rewrite(cx, format!("Insert forest tree{note}"), snapshot::lsp_edits(cx.doc, edits))]
     }
 
     fn view(&self, cx: &Cx, _hit: &Hit) -> Option<Json> {
+        // the environment as a snapshot (`node`) the view sets the body of; the printer writes it
         let (title, mut section) = match super::body(cx.analysis, cx.doc, cx.path, cx.pos.line, ENV, false) {
-            Some(b) => (
-                "Edit tree",
-                json!({ "range": b.range, "body": super::slice(cx.doc, b.range), "nodes": nodes(cx, &b) }),
-            ),
+            Some(b) => {
+                let (doc, begin) = (cx.doc, format!("\\begin{{{ENV}}}"));
+                let body = cx.doc.offset(to_pos(doc, b.range.start))?..cx.doc.offset(to_pos(doc, b.range.end))?;
+                let node = snapshot::env(doc, doc.body()[..body.start].rfind(&begin)?, body);
+                ("Edit tree", json!({ "body": super::slice(cx.doc, b.range), "nodes": nodes(cx, &b), "node": node }))
+            }
             None => {
                 let new = super::blank(cx, ENV, ENV)?;
                 let note = new.preamble.as_ref().map(|_| "adds `\\usepackage{forest}` before `\\begin{document}`");
-                (
-                    "New tree",
-                    json!({ "range": new.at, "body": "", "nodes": [], "wrap": true, "extra": new.preamble, "note": note }),
-                )
+                let node = snapshot::new_env(ENV, new.at.start, ENV);
+                ("New tree", json!({ "body": "", "nodes": [], "wrap": true, "note": note, "node": node }))
             }
         };
         section["kind"] = json!("forest");

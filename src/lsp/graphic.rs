@@ -78,37 +78,6 @@ pub fn num(x: f64) -> String {
     if s == "-0" { "0".into() } else { s.into() }
 }
 
-/// The key list `a=b, c` split at commas outside groups, values unbraced.
-pub fn keys(list: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    let (mut i, mut from) = (0, 0);
-    let mut push = |item: &str| {
-        let (k, v) = item.split_once('=').unwrap_or((item, ""));
-        let v = v.trim();
-        let v = match v.starts_with('{') && group_end(v, 0) == Some(v.len()) {
-            true => &v[1..v.len() - 1],
-            false => v,
-        };
-        if !k.trim().is_empty() {
-            out.push((k.trim().to_string(), v.to_string()));
-        }
-    };
-    while i < list.len() {
-        match list.as_bytes()[i] {
-            b'{' => i = group_end(list, i).unwrap_or(list.len()),
-            b'\\' => i += 2,
-            b',' => {
-                push(&list[from..i]);
-                i += 1;
-                from = i;
-            }
-            _ => i += 1,
-        }
-    }
-    push(&list[from.min(list.len())..]);
-    out
-}
-
 /// The `\includegraphics` at the start of `s` and the offset past it.
 pub fn parse(s: &str, natural: Option<[f64; 2]>) -> Option<(Image, usize)> {
     let rest = s.strip_prefix("\\includegraphics")?;
@@ -130,7 +99,8 @@ pub fn parse(s: &str, natural: Option<[f64; 2]>) -> Option<(Image, usize)> {
     let j = skip(i);
     let e = group_end(s, j).filter(|_| s[j..].starts_with('{'))?;
     let mut img = Image { file: s[j + 1..e - 1].to_string(), star, natural, ..Default::default() };
-    img.keys = opts.map(keys).unwrap_or_default();
+    let keys = opts.map(|o| super::snapshot::read_keys(o, 0, o.len())).unwrap_or_default();
+    img.keys = keys.into_iter().filter(|k| !k.key.is_empty()).map(|k| (k.key, k.value.unwrap_or_default())).collect();
     read(&mut img);
     Some((img, e))
 }
@@ -268,40 +238,17 @@ pub fn options(img: &Image) -> Vec<(String, String)> {
     out
 }
 
-/// The command written back.
-pub fn emit(img: &Image) -> String {
-    let opts = options(img);
-    let list: Vec<String> = opts
-        .iter()
-        .map(|(k, v)| match (v.is_empty(), v.contains([',', '='])) {
-            (true, _) => k.clone(),
-            (false, true) => format!("{k}={{{v}}}"),
-            (false, false) => format!("{k}={v}"),
-        })
-        .collect();
-    let star = if img.star { "*" } else { "" };
-    match list.is_empty() {
-        true => format!("\\includegraphics{star}{{{}}}", img.file),
-        false => format!("\\includegraphics{star}[{}]{{{}}}", list.join(", "), img.file),
-    }
-}
-
-/// The separator the user wrote between keys, kept when the options are unchanged.
-pub fn emit_like(img: &Image, written: &str) -> String {
-    match parse(written, img.natural) {
-        Some((old, _)) if options(&old) == options(img) && old.file == img.file && old.star == img.star => {
-            written.to_string()
-        }
-        _ => {
-            let sep = if written.contains(", ") || !written.contains(',') { ", " } else { "," };
-            emit(img).replace(", ", sep)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lsp::snapshot::{Arg, Key, Node, canonical};
+
+    /// The command as the printer writes it new.
+    fn emit(img: &Image) -> String {
+        let keys = options(img).into_iter().map(|(key, v)| Key { key, value: (!v.is_empty()).then_some(v) }).collect();
+        let args = vec![Arg::keys('[', keys), Arg::text('{', &img.file)];
+        canonical(&Node { name: "includegraphics".into(), star: img.star, args, ..Node::default() })
+    }
 
     fn round(s: &str, natural: Option<[f64; 2]>) -> Image {
         let (img, end) = parse(s, natural).unwrap();
@@ -318,10 +265,6 @@ mod tests {
         assert!(img.clip && !img.size_first);
         let img = round("\\includegraphics*[width=3cm,angle=45,page=2,draft]{a}", None);
         assert!(img.star && img.size_first);
-        assert_eq!(
-            emit_like(&img, "\\includegraphics*[width=3cm,angle=45,page=2,draft]{a}"),
-            "\\includegraphics*[width=3cm,angle=45,page=2,draft]{a}"
-        );
     }
 
     #[test]

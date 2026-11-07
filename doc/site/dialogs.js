@@ -2,7 +2,8 @@
 // dialog (full screen, detach into a movable panel, peek at the page under it, kept per name),
 // the table and image dialogs of `satex/dialog`, and a small store for what survives a reload.
 // `open(view, host)`: `view` is the server's `{kind, range, state, context}`; `host` writes and shows:
-//   host.apply(state, op?) -> Promise<{state?, edits, notes}>   (the server's `satex/dialogApply`, nothing written)
+//   host.apply(state, op?) -> Promise<{state?, edits, notes, text}>   (the server's `satex/dialogApply` through its
+//     snapshot printer, nothing written; `text`: the dialog's range as written then)
 //   host.commit(edits) -> void                                  (writes the edits)
 //   host.image(path) -> Promise<{url, kind: 'img'|'pdf'|null}>  (the figure's file, a PDF's first page as an image)
 //   host.parent: an element to render into (VS Code), else a modal <dialog>.
@@ -505,7 +506,7 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       ask: (op) => host.apply(view.state, op),
       commit: (edits) => { host.commit(edits); p.close(true); },
       told: (l) => {
-        if (l.result) tex.textContent = l.result.edits?.[0]?.newText ?? '';
+        if (l.result) tex.textContent = l.result.text ?? '';
         else if (!tex.textContent) tex.textContent = 'waiting for the analysis…';
         tex.classList.toggle('sd-stale', l.waiting);
         notes.textContent = l.error || (l.wanted ? 'waiting for the analysis… Apply writes when it answers' : [...(l.result?.notes ?? []), ...(render.lint?.() ?? [])].join('; '));
@@ -1165,6 +1166,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
         const known = COLS.some(([a]) => a === c.align);
         const sel = h('select', { 'aria-label': `column ${k + 1} type`, title: 'the column type', onchange: () => change(() => {
           c.align = sel.value;
+          // the menu's package: loaded when the run lacks the letter
+          c.package = COLS.find(([a]) => a === c.align)?.[2] ?? null;
           if (WIDTH.includes(c.align) && !c.arg) c.arg = '3cm';
           if (!WIDTH.includes(c.align) && c.align !== 'S') c.arg = '';
         }) },

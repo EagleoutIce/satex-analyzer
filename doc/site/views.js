@@ -371,7 +371,7 @@
           const b = el('button', 'tv-chip', `<i style="background:${d.css}"></i>${esc(d.name)}`);
           b.type = 'button';
           b.title = s.pick ? `write ${d.name} here` : d.name;
-          b.onclick = () => s.pick ? ctx.apply([{ range: s.pick, newText: d.name }]) : (hsb = toHsb(d.rgb), draw(), settle());
+          b.onclick = () => s.pick && s.apply ? writeName(d.name) : (hsb = toHsb(d.rgb), draw(), settle());
           return b;
         };
         for (const g of colorBand(s.defined)) {
@@ -390,22 +390,27 @@
         }
         box.append(el('h4', 'tv-h', 'Defined here'), list);
       }
-      const foot = el('div', 'tv-actions');
+      const foot = el('div', 'tv-actions'), said = el('span', 'tv-muted');
       if (hist) { foot.append(...hist.controls(), el('span', 'tv-muted tv-hint', esc(self.satexDialogs.HINT.replace(', Ctrl+Enter applies', '')))); hist.keys(box); ctx.guard?.(() => !!s.apply && hist.dirty); }
       if (s.apply) {
         const write = el('button', 'tv-button tv-primary');
         write.type = 'button';
         write.onclick = () => {
-          if (expr && s.pick) return ctx.apply([{ range: s.pick, newText: expr }]);
+          if (expr && s.pick) return writeName(expr);
           // a color some name already has: that name, never its value spelled out
           const same = model === 'name' ? closest(rgb(), s.defined) : named();
-          if (same && s.pick) return ctx.apply(same.name === s.name ? [] : [{ range: s.pick, newText: same.name }]);
-          const vars = { model, spec: SPEC[model](rgb()), name: s.apply.name ?? s.name };
-          ctx.apply(s.apply.edits.map((e) => ({ range: e.range, newText: fill(e.newText, vars) })));
+          if (same && s.pick) return same.name === s.name ? ctx.apply([]) : writeName(same.name);
+          // the snapshots filled: the command's `[model]{spec}`, else a definition and its name in place
+          const { own, define } = s.apply.nodes, spec = SPEC[model](rgb());
+          const args = (n, texts) => ({ ...n, args: n.args.map((a, i) => ({ ...a, text: texts[i] })) });
+          print(own ? [args(own, [model, spec])] : [args(define, [s.apply.name, model, spec]), { ...s.apply.nodes.name, body: s.apply.name }]);
         };
-        foot.append(write);
+        foot.append(write, said);
       }
       if (foot.children.length) box.append(foot);
+      const print = (nodes) => self.satexSnapshot.write(ctx, nodes, (m) => { said.textContent = m; });
+      /** `name` written in the slot, through the printer. */
+      function writeName(name) { print([{ ...s.apply.nodes.name, body: name }]); }
       /** The defined color the picked one equals, the color's own name first. */
       function named() {
         const h = hex(rgb());
@@ -1938,8 +1943,8 @@
       const bad = slip(t.root);
       if (bad) { sel = bad; draw(); status.textContent = `not written: ${bad.content}: ${texIssue(bad.content)}`; return side.querySelector('input')?.focus(); }
       settle(t);
-      const body = treeEmit(t);
-      ctx.apply([{ range: s.range, newText: s.wrap ? `\\begin{forest}${body}\\end{forest}` : body }, ...(s.extra ? [s.extra] : [])]);
+      // the server prints the environment's snapshot with its new body, forest loaded when the run lacks it
+      return self.satexSnapshot.write(ctx, [{ ...s.node, body: treeEmit(t) }], (m) => { status.textContent = m; });
     };
     const { el: foot, apply: write } = footer(root, ctx, { status, apply: writeIt, label: s.wrap ? 'Insert tree' : 'Apply', H, tools: true });
     root.append(svg, side, opts, out);
@@ -2274,10 +2279,7 @@
       paint();
     }
     // the server prints the snapshots; its notes (a package loaded) stay in the status
-    const print = async () => {
-      const r = await ctx.print(nodes()).catch((e) => ({ notes: [String(e?.message ?? e)] }));
-      if (r?.edits?.length) ctx.apply(r.edits); else status.textContent = (r?.notes ?? []).join('; ') || 'no changes';
-    };
+    const print = () => self.satexSnapshot.write(ctx, nodes(), (m) => { status.textContent = m; });
     const { el: foot, apply: write } = footer(root, ctx, { status, apply: print, H, tools: true });
     const notes = el('div', 'tv-text', ctx.markdown(`The run's page${s.class ? ` with ${s.class}` : ''}${two ? ', two-sided' : ''}: the lengths as it ended.${st0.open.length ? ` It left ${st0.open.map((k) => `\\${k}`).join(', ')} open: the middle of each interval is drawn.` : ''}${FAMILY[s.family] ?? ''}${s.geometry.global.note && s.family !== 'koma' ? ` geometry is not loaded: Apply ${s.geometry.global.note}, which sets each margin itself.` : ''}`));
     const main = el('div', 'tv-page-main');

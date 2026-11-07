@@ -8,6 +8,7 @@ use lsp_types::{CodeLens, Command, Position, Range};
 use serde_json::{Value as Json, json};
 
 use super::handlers::{to_lsp, to_pos};
+use super::snapshot::{self, Arg, Key, Package};
 use super::{graphic, tabular};
 use crate::analysis::machine::Analysis;
 use crate::engine::builtins::OccKind;
@@ -385,31 +386,34 @@ pub fn dialog(analysis: &Analysis, doc: &Text, path: &str, pos: Position) -> Opt
     Some(json!({ "kind": t.kind.name(), "range": lsp_range(doc, t.start, t.end), "state": state, "context": ctx }))
 }
 
-/// The packages a table's text needs, with the commands and the column letters that tell (array also for injections).
-const NEEDS: [(&str, &[&str], &[&str]); 5] = [
-    ("booktabs", &["\\toprule", "\\midrule", "\\bottomrule", "\\cmidrule", "\\addlinespace"], &[]),
-    ("siunitx", &[], &["S"]),
-    ("tabularx", &[], &["X"]),
-    ("array", &[], &["m", "b"]),
-    ("multirow", &["\\multirow"], &[]),
-];
-
-/// The packages `text` needs.
-fn packages(text: &str, table: Option<&tabular::Table>) -> Vec<&'static str> {
-    let col = |a: &&str| table.is_some_and(|t| t.cols.iter().any(|c| c.align == *a));
-    // array's `>{…}` and `<{…}`
-    let injects = table.is_some_and(|t| t.cols.iter().any(|c| !c.pre.is_empty() || !c.post.is_empty()));
-    NEEDS
-        .iter()
-        .filter(|(p, cmds, cols)| {
-            cmds.iter().any(|c| text.contains(c)) || cols.iter().any(col) || (*p == "array" && injects)
-        })
-        .map(|(p, ..)| *p)
-        .collect()
+/// The package a table's columns need that the run lacks: a letter (or `>`, `<`) neither its
+/// `\@testpach` tests nor a `\newcolumntype` made; the column's hint, else the installation's
+/// provider of `\@testpach`.
+fn columns(analysis: &Analysis, t: &tabular::Table) -> Option<Package> {
+    let pach = analysis.interner.lookup("@testpach").map(|s| match analysis.env.meaning(s) {
+        crate::engine::tex::Meaning::Macro(m) => {
+            crate::engine::tex::detokenize(&m.replacement_text, &analysis.interner)
+        }
+        _ => String::new(),
+    });
+    let tested = |c: char| {
+        [format!("#1{c}"), format!("\\@nextchar {c}")].iter().any(|t| pach.as_ref().is_some_and(|p| p.contains(t)))
+    };
+    let lacks = |c: char| !tested(c) && !snapshot::defined(analysis, &format!("NC@find@{c}"));
+    let wants = |c: &&tabular::Col| {
+        c.align.chars().next().is_some_and(lacks)
+            || (!c.pre.is_empty() && lacks('>'))
+            || (!c.post.is_empty() && lacks('<'))
+    };
+    t.cols.iter().find(wants)?;
+    let name = (t.cols.iter().filter(wants).find_map(|c| c.package.clone()))
+        .or_else(|| crate::linter::shared::provider(analysis, "@testpach"))?;
+    Some(Package { name, options: String::new() })
 }
 
-/// The edit a dialog's `state` makes of the text in `range`: `{edits, notes}`;
-/// with `op` (`booktabs`, `siunitx`) the table rewritten first, and its new `state`.
+/// The edits a dialog's `state` makes of the text in `range`, through the snapshot printer:
+/// `{edits, notes, text}` (`text`: the range as written then); with `op` (`booktabs`, `siunitx`)
+/// the table rewritten first, and its new `state`.
 pub fn apply(
     analysis: &Analysis,
     doc: &Text,
@@ -422,9 +426,9 @@ pub fn apply(
         doc.offset(to_pos(doc, range.start)).ok_or("range outside the text")?,
         doc.offset(to_pos(doc, range.end)).ok_or("range outside the text")?,
     );
-    let written = doc.body().get(start..end).ok_or("range outside the text")?;
-    let (mut notes, mut switched) = (Vec::new(), false);
-    let (text, table) = match kind {
+    let written = |keyed: &[usize], options| snapshot::read(doc, start, keyed, options).ok_or("no call here");
+    let mut notes = Vec::new();
+    let (node, table) = match kind {
         "table" => {
             let mut t: tabular::Table = serde_json::from_value(state.clone()).map_err(|e| e.to_string())?;
             match op {
@@ -434,40 +438,50 @@ pub fn apply(
             }
             // an S column's text cells braced, however the column became S
             tabular::protect_s(&mut t);
-            switched = tabular::to_tabularx(&mut t);
+            let switched = tabular::to_tabularx(&mut t);
             if switched {
                 notes.push("X columns: written as tabularx, \\linewidth wide".to_string());
             }
-            (tabular::emit(&t), Some(t))
+            let mut n = snapshot::retarget(&written(&[], false)?, &tabular::emit(&t)).ok_or("no table here")?;
+            n.package = columns(analysis, &t);
+            (n, (switched || op.is_some()).then_some(t))
         }
         "image" => {
             let img: graphic::Image = serde_json::from_value(state.clone()).map_err(|e| e.to_string())?;
-            (graphic::emit_like(&img, written), None)
+            let mut n = written(&[0], true)?;
+            let was = n.args[0].keys.clone().unwrap_or_default();
+            // a key written `key=` stays so while its value stays empty
+            let set = |(key, v): (String, String)| {
+                let value = (!v.is_empty() || was.iter().any(|w| w.key == key && w.value.is_some())).then_some(v);
+                Key { key, value }
+            };
+            n.args[0].keys = Some(graphic::options(&img).into_iter().map(set).collect());
+            if let Some(file) = n.args.iter_mut().find(|a| a.open == '{') {
+                file.text = img.file;
+            }
+            (n, None)
         }
         "float" => {
-            let env = state["env"].as_str().ok_or("no environment")?;
             let spec = state["spec"].as_str().unwrap_or_default().trim();
             let known: Vec<char> = letters(analysis).iter().map(|(c, _)| *c).collect();
             if let Some(c) = spec.chars().find(|c| !known.contains(c)) {
                 return Err(format!("`{c}` is no placement here: {}", known.iter().collect::<String>()));
             }
-            (if spec.is_empty() { format!("\\begin{{{env}}}") } else { format!("\\begin{{{env}}}[{spec}]") }, None)
+            let mut n = written(&[], false)?;
+            match n.args.first_mut().filter(|a| a.open == '[') {
+                Some(a) => a.text = spec.into(),
+                None => n.args.insert(0, Arg::text('[', spec)),
+            }
+            (n, None)
         }
         k => return Err(format!("no dialog `{k}`")),
     };
-    let mut edits = vec![json!({ "range": range, "newText": text })];
-    for p in packages(&text, table.as_ref()) {
-        match super::plugins::ensure_package(analysis, doc, p, "") {
-            Ok(Some(e)) => {
-                edits.push(json!(e));
-                notes.push(format!("adds \\usepackage{{{p}}} to the preamble"));
-            }
-            Ok(None) => {}
-            Err(why) => notes.push(why),
-        }
-    }
-    let state = table.filter(|_| op.is_some() || switched).map(|t| serde_json::to_value(t).unwrap_or_default());
-    Ok(json!({ "edits": edits, "notes": notes, "state": state }))
+    let (edits, more) = snapshot::printed(analysis, doc, &[node])?;
+    notes.extend(more);
+    let text = snapshot::reads(doc.body(), start, end, &edits);
+    let edits = snapshot::lsp_edits(doc, edits);
+    let state = table.map(|t| serde_json::to_value(t).unwrap_or_default());
+    Ok(json!({ "edits": edits, "notes": notes, "state": state, "text": text }))
 }
 
 /// Code actions on the tables and figures `range` touches: open the dialog,

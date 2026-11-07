@@ -30,5 +30,8 @@
   const drop = (node) => ({ ...node, drop: true });
   /** Whether two snapshots differ in what the printer writes. */
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-  self.satexSnapshot = { list, get, set, setKeys, text, keys, arg, call, drop, same };
+  /** `nodes` printed by the server (`ctx.print`) and written; else `say` gets its notes. */
+  const write = (ctx, nodes, say) => ctx.print(nodes).catch((e) => ({ notes: [String(e?.message ?? e)] }))
+    .then((r) => { if (r?.edits?.length) ctx.apply(r.edits); else say((r?.notes ?? []).join('; ') || 'no changes'); });
+  self.satexSnapshot = { list, get, set, setKeys, text, keys, arg, call, drop, same, write };
 })();

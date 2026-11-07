@@ -9,6 +9,8 @@ use super::{Cx, Hit, TypePlugin};
 use crate::analysis::facts::ColorDef;
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{KeyKind, Ty};
+use crate::lsp::handlers::to_pos;
+use crate::lsp::snapshot::{self, Arg, Kind, Node, Package};
 use crate::project::config::TypePlugins;
 use crate::text::{Pos, Text};
 use lsp_types::{ColorInformation, CompletionItem, CompletionItemKind, Position, Range, TextEdit};
@@ -148,35 +150,41 @@ fn slot(cx: &Cx, hit: &Hit) -> Option<Range> {
     (from >= 1 && (to as usize) <= line.chars().count() + 1).then(|| super::range(cx.doc, cx.pos.line, from, to))
 }
 
-/// What writing a color into `slot` takes, as edits whose text holds `${model}`, `${spec}` and
-/// `${name}` for the client to fill: with xcolor, the optional model argument of an xcolor command
-/// whose first argument the slot is; else a `\definecolor` before `\begin{document}` and its name.
+/// What writing a color into `slot` takes, as snapshots the view fills and the printer writes:
+/// `name`, the slot's text; with xcolor, `own`, the xcolor command whose first argument the slot
+/// is (its `[model]` and `{spec}`); else `define`, a `\definecolor{name}{model}{spec}` before
+/// `\begin{document}` (xcolor loaded when the run defines none) and `name`, the fresh name.
 fn writes(cx: &Cx, slot: Range) -> Json {
+    let doc = cx.doc;
+    let (from, to) = (doc.offset(to_pos(doc, slot.start)), doc.offset(to_pos(doc, slot.end)));
+    let typed = from.zip(to).and_then(|(a, b)| doc.body().get(a..b)).unwrap_or_default();
+    let name = Node {
+        kind: Kind::Text,
+        range: Some(slot),
+        text: typed.into(),
+        body: typed.into(),
+        body_at: Some((0, typed.len())),
+        ..Node::default()
+    };
     let x = xcolor(cx.analysis);
     let place = cx.at.place.as_ref();
     let own = place.filter(|p| p.open == '{' && p.nth() == 0 && x && by_color_package(cx.analysis, &p.cmd));
-    if let Some(p) = own {
-        // from the end of the command's name over `[…]{name}`
-        let start =
-            super::super::handlers::to_lsp(cx.doc, Pos::new(p.at.line, p.at.col + 1 + p.cmd.chars().count() as u32));
-        let end = Position { character: slot.end.character + 1, ..slot.end };
-        let closes = cx.doc.line(cx.pos.line).chars().nth(slot.end.character as usize) == Some('}');
-        if closes {
-            return json!({ "title": "Write here", "edits": [{ "range": Range { start, end }, "newText": "[${model}]{${spec}}" }] });
-        }
+    // the command with its `[model]` as text, its `{spec}` the slot's group, closing right after it
+    let own = own.and_then(|p| doc.offset(p.at)).and_then(|at| {
+        let mut n = snapshot::read(doc, at, &[], true)?;
+        n.args[0].keys = None;
+        (n.args.get(1)?.inner.map(|(_, e)| at + e) == to).then_some(n)
+    });
+    if let Some(own) = own {
+        return json!({ "title": "Write here", "nodes": { "name": name, "own": own } });
     }
     let fresh = fresh_name(cx.analysis, &cx.cfg().color.name);
-    let mut text = String::new();
-    if !x && !cx.analysis.facts.loads.iter().any(|l| l.name == "color") {
-        text.push_str("\\usepackage{xcolor}\n");
-    }
-    text.push_str("\\definecolor{${name}}{${model}}{${spec}}\n");
-    let at = preamble_end(cx.doc).map(|line| Position { line, character: 0 });
-    let mut edits = vec![json!({ "range": slot, "newText": "${name}" })];
-    if let Some(at) = at {
-        edits.insert(0, json!({ "range": Range { start: at, end: at }, "newText": text }));
-    }
-    json!({ "title": format!("Define {fresh}"), "name": fresh, "edits": edits })
+    let at = preamble_end(doc).map(|line| Position { line, character: 0 });
+    let define = at.map(|at| Node {
+        package: Some(Package { name: "xcolor".into(), options: String::new() }),
+        ..Node::new_call("definecolor", ["", "", ""].map(|t| Arg::text('{', t)).into(), at)
+    });
+    json!({ "title": format!("Define {fresh}"), "name": fresh, "nodes": { "name": name, "define": define } })
 }
 
 /// The LSP line of `\begin{document}`, where a definition goes before.
@@ -393,30 +401,36 @@ pub(super) fn presentations(
     let Some(slot) = slot(&cx, hit) else { return Vec::new() };
     let w = writes(&cx, slot);
     let rgb = [color.red, color.green, color.blue].map(f64::from);
-    let x = xcolor(analysis);
-    let (model, spec) = specs(rgb, x).into_iter().next().unwrap_or_default();
-    let fill = |t: &str| {
-        t.replace("${model}", model)
-            .replace("${spec}", &spec)
-            .replace("${name}", w["name"].as_str().unwrap_or_default())
+    let (model, spec) = specs(rgb, xcolor(analysis)).into_iter().next().unwrap_or_default();
+    // the snapshots filled as the picker fills them: the command's, else a definition and the name
+    let node = |k: &str, texts: &[&str]| {
+        let mut n: Node = serde_json::from_value(w["nodes"][k].clone()).ok()?;
+        n.args.iter_mut().zip(texts).for_each(|(a, t)| a.text = t.to_string());
+        Some(n)
     };
-    let mut edits: Vec<TextEdit> = (w["edits"].as_array().into_iter().flatten())
-        .filter_map(|e| {
-            Some(TextEdit {
-                range: serde_json::from_value(e["range"].clone()).ok()?,
-                new_text: fill(e["newText"].as_str()?),
-            })
-        })
-        .collect();
-    // the edit over the name is the presentation's own, the rest go along
-    let Some(main) = edits.iter().position(|e| e.range.start <= range.start && e.range.end >= range.end) else {
+    let name = w["name"].as_str().unwrap_or_default();
+    let nodes = match node("own", &[model, &spec]) {
+        Some(own) => vec![own],
+        None => vec![node("define", &[name, model, &spec]), node("name", &[]).map(|n| Node { body: name.into(), ..n })]
+            .into_iter()
+            .flatten()
+            .collect(),
+    };
+    let Ok((edits, _)) = snapshot::printed(analysis, doc, &nodes) else { return Vec::new() };
+    // the presentation's own edit: the slot's node (the last) from its first edit to its end, the rest go along
+    let byte = |p| doc.offset(to_pos(doc, p));
+    let Some(held) = nodes.last().and_then(|n| n.range).and_then(|r| Some(byte(r.start)?..byte(r.end)?)) else {
         return Vec::new();
     };
-    let own = edits.remove(main);
+    let (own, rest): (Vec<_>, Vec<_>) = edits.into_iter().partition(|e| held.start <= e.0 && e.1 <= held.end);
+    let Some(from) = own.iter().map(|e| e.0).min() else { return Vec::new() };
+    let to = held.end;
+    let own = TextEdit::new(super::span(doc, from, to), snapshot::reads(doc.body(), from, to, &own));
+    let rest = snapshot::lsp_edits(doc, rest);
     vec![lsp_types::ColorPresentation {
         label: own.new_text.clone(),
         text_edit: Some(own),
-        additional_text_edits: (!edits.is_empty()).then_some(edits),
+        additional_text_edits: (!rest.is_empty()).then_some(rest),
     }]
 }
 

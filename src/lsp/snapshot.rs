@@ -162,7 +162,7 @@ pub(super) fn key_values(text: &str, range: std::ops::Range<usize>) -> Vec<(Stri
         .collect()
 }
 
-fn read_keys(text: &str, from: usize, to: usize) -> Vec<Key> {
+pub(super) fn read_keys(text: &str, from: usize, to: usize) -> Vec<Key> {
     let value = |(s, e): (usize, usize)| unbraced(&text[s..e]).to_string();
     items(text, from..to)
         .into_iter()
@@ -208,6 +208,21 @@ pub fn read(doc: &Text, at: usize, keyed: &[usize], options: bool) -> Option<Nod
         node.args.insert(0, Arg::keys('[', Vec::new()));
     }
     Some(node)
+}
+
+/// The environment at byte `at` with the body a plugin found at `body`: no argument read past it.
+pub fn env(doc: &Text, at: usize, body: std::ops::Range<usize>) -> Option<Node> {
+    let mut n = read(doc, at, &[], false)?;
+    n.args.retain(|a| a.inner.is_some_and(|(_, e)| at + e < body.start));
+    n.body_at = Some((body.start - at, body.end - at));
+    n.body = doc.body().get(body)?.to_string();
+    Some(n)
+}
+
+/// A new environment at `at` that loads `package` when the run lacks it.
+pub fn new_env(name: &str, at: Position, package: &str) -> Node {
+    let package = Some(Package { name: package.into(), options: String::new() });
+    Node { kind: Kind::Env, name: name.into(), at: Some(at), package, ..Node::default() }
 }
 
 fn close(open: char) -> char {
@@ -259,7 +274,7 @@ pub fn canonical(n: &Node) -> String {
 }
 
 /// A byte edit: `from..to` becomes `text`.
-type Edit = (usize, usize, String);
+pub(super) type Edit = (usize, usize, String);
 
 /// The edits of a key list from `was` (in `text[list]`) to `keys`: values changed in place,
 /// removed runs cut with their separator, added keys after the last item in the list's style.
@@ -290,12 +305,15 @@ fn key_edits(text: &str, list: std::ops::Range<usize>, open: char, keys: &[Key])
         let gap = &text[w[0].to..w[1].from];
         gap.split('\n').map(|l| l.split('%').next().unwrap_or_default()).collect::<Vec<_>>().join("\n")
     });
-    if kept.iter().all(Option::is_none) {
+    // kept keys moved (graphicx reads them in order): the list written again in its separator
+    let moved = kept.iter().flatten().zip(kept.iter().flatten().skip(1)).any(|(a, b)| a > b);
+    if moved || kept.iter().all(Option::is_none) {
         if was.is_empty() && added.is_empty() {
             return Vec::new();
         }
         let (from, to) = was.first().map_or((list.start, list.end), |f| (f.from, was[was.len() - 1].to));
-        return vec![(from, to, added.join(&sep))];
+        let all: Vec<String> = keys.iter().map(|k| item_text(k, open)).collect();
+        return vec![(from, to, all.join(&sep))];
     }
     let mut k = 0;
     while k < was.len() {
@@ -324,11 +342,19 @@ fn key_edits(text: &str, list: std::ops::Range<usize>, open: char, keys: &[Key])
 /// The edits from node `n` as written at `at` (its `text`) to `n` as edited.
 fn node_edits(text: &str, at: usize, n: &Node) -> Vec<Edit> {
     let mut out = Vec::new();
+    let was = &text[at..at + n.text.len()];
     // where an unwritten argument goes: after the one before it, else after the name
-    let mut after = match n.kind {
-        Kind::Env => at + format!("\\begin{{{}}}", n.name).len(),
-        _ => at + 1 + n.name.len() + usize::from(n.star),
-    };
+    let mut after = at
+        + match n.kind {
+            Kind::Env => was.find('}').map_or(0, |k| k + 1),
+            _ => 1 + n.name.len() + usize::from(n.star),
+        };
+    // an environment renamed: its `\begin` and `\end`
+    let old = was.get(7..after - at - 1).filter(|_| n.kind == Kind::Env).unwrap_or(&n.name);
+    if old != n.name {
+        out.push((at + 7, after - 1, n.name.clone()));
+        out.push((at + was.len() - 1 - old.len(), at + was.len() - 1, n.name.clone()));
+    }
     for a in &n.args {
         let Some((s, e)) = a.inner.map(|(s, e)| (at + s, at + e)) else {
             if !a.empty() {
@@ -339,20 +365,51 @@ fn node_edits(text: &str, at: usize, n: &Node) -> Vec<Edit> {
         after = e + 1;
         match &a.keys {
             // an emptied `[…]` goes with its brackets
-            Some(keys) if a.open == '[' && keys.is_empty() && !items(text, s..e).is_empty() => {
+            _ if a.open == '[' && a.empty() && a.keys.as_ref().map_or(s < e, |_| !items(text, s..e).is_empty()) => {
                 out.push((s - 1, e + 1, String::new()))
             }
             Some(keys) => out.extend(key_edits(text, s..e, a.open, keys)),
-            None if text[s..e] != a.text => out.push((s, e, a.text.clone())),
+            None if text[s..e] != a.text => out.push(tight(text, s, e, &a.text)),
             None => {}
         }
     }
     if let Some((s, e)) = n.body_at
         && text[at + s..at + e] != n.body
     {
-        out.push((at + s, at + e, n.body.clone()));
+        out.push(tight(text, at + s, at + e, &n.body));
     }
     out
+}
+
+/// `text[s..e]` becoming `new`, cut to the bytes that differ: the rest stays untouched.
+fn tight(text: &str, s: usize, e: usize, new: &str) -> Edit {
+    let (old, n) = (&text[s..e], new.as_bytes());
+    let mut p = old.as_bytes().iter().zip(n).take_while(|(a, b)| a == b).count();
+    while !old.is_char_boundary(p) {
+        p -= 1;
+    }
+    let mut q = old.as_bytes()[p..].iter().rev().zip(n[p..].iter().rev()).take_while(|(a, b)| a == b).count();
+    while !old.is_char_boundary(old.len() - q) {
+        q -= 1;
+    }
+    (s + p, e - q, new[p..new.len() - q].to_string())
+}
+
+/// `node` as written, edited to read as `printed`, a text of the same call or environment:
+/// arguments matched from the last, those `printed` lacks emptied, its new ones unwritten.
+pub fn retarget(node: &Node, printed: &str) -> Option<Node> {
+    let fresh = read(&Text::new(printed.to_string()), 0, &[], false)?;
+    let mut out = Node { name: fresh.name, star: fresh.star, body: fresh.body, ..node.clone() };
+    let mut was = node.args.iter().rev().peekable();
+    let mut args: Vec<Arg> = Vec::new();
+    for a in fresh.args.iter().rev() {
+        let old = was.next_if(|o| o.open == a.open);
+        args.push(Arg { inner: old.and_then(|o| o.inner), ..a.clone() });
+    }
+    args.extend(was.map(|o| Arg { text: String::new(), keys: o.keys.as_ref().map(|_| Vec::new()), ..o.clone() }));
+    args.reverse();
+    out.args = args;
+    Some(out)
 }
 
 /// The byte edits that write `n`: none when untouched, its lines when dropped, its canonical
@@ -395,43 +452,105 @@ fn merged(mut edits: Vec<Edit>) -> Result<Vec<Edit>, String> {
 }
 
 /// Whether the run defines `\name` (an environment's `\name` too).
-fn defined(analysis: &Analysis, name: &str) -> bool {
+pub(super) fn defined(analysis: &Analysis, name: &str) -> bool {
     analysis
         .interner
         .lookup(name)
         .is_some_and(|s| !matches!(analysis.env.meaning(s), crate::engine::tex::Meaning::Undefined))
 }
 
-/// The edits that write `nodes`, each as edited, over the text they were read from:
-/// `{edits, notes}`. A new node the run does not define loads its `package`.
-pub fn print(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<Json, String> {
-    let (mut loads, mut edits, mut notes): (Vec<Edit>, Vec<Edit>, Vec<String>) = Default::default();
+/// The control sequences and environments `text` writes, in order.
+fn names(text: &str) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
+    for (i, _) in text.match_indices('\\') {
+        let rest = &text[i + 1..];
+        let mut name = &rest[..rest.find(|c: char| !c.is_ascii_alphabetic() && c != '@').unwrap_or(rest.len())];
+        if name == "begin" && rest[5..].starts_with('{') {
+            name = rest[6..].split('}').next().unwrap_or_default();
+        }
+        if !name.is_empty() && !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
+}
+
+/// `text[from..to]` with the `edits` inside it made.
+pub(super) fn reads(text: &str, from: usize, to: usize, edits: &[Edit]) -> String {
+    let mut out = text[from..to].to_string();
+    for (a, b, t) in edits.iter().rev().filter(|e| from <= e.0 && e.1 <= to) {
+        out.replace_range(a - from..b - from, t);
+    }
+    out
+}
+
+/// The edits that write `nodes`, each as edited, over the text they were read from, and notes.
+/// A name a written node adds that the run does not define loads its package: a new node's
+/// `package` hint for its own name, else the installation's provider. A written node's hint
+/// is loaded too (what the run cannot name, as a column letter).
+pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<Edit>, Vec<String>), String> {
+    let (mut edits, mut notes) = (Vec::new(), Vec::new());
+    // packages wanted in order, and names asked of the installation, by the node that wants them
+    let (mut wanted, mut asked): (Vec<Package>, Vec<(String, bool)>) = Default::default();
     for n in nodes {
         let own = edits_of(doc, n)?;
-        let quiet = own.is_empty();
+        if !own.is_empty() && !n.drop {
+            let (was, now) = match n.range.and_then(|r| doc.offset(to_pos(doc, r.start))) {
+                Some(at) => (n.text.clone(), reads(doc.body(), at, at + n.text.len(), &own)),
+                None => (String::new(), canonical(n)),
+            };
+            let new = n.range.is_none();
+            for name in names(&now).into_iter().filter(|m| !names(&was).contains(m) && !defined(analysis, m)) {
+                match &n.package {
+                    Some(p) if new && name == n.name => wanted.push(p.clone()),
+                    _ => asked.push((name.to_string(), new && name == n.name)),
+                }
+            }
+            wanted.extend(n.package.clone().filter(|_| !new));
+        }
         edits.extend(own);
-        if quiet || n.range.is_some() || n.kind == Kind::Text || defined(analysis, &n.name) {
+    }
+    for (name, own) in asked {
+        match crate::linter::shared::provider(analysis, &name) {
+            Some(p) => wanted.push(Package { name: p, options: String::new() }),
+            None if own => notes.push(format!("\\{name} is not defined in the run: load its package")),
+            None => {}
+        }
+    }
+    let mut loads: Vec<Edit> = Vec::new();
+    let mut done: Vec<String> = Vec::new();
+    let all: Vec<String> = wanted.iter().map(|p| p.name.clone()).collect();
+    for p in wanted {
+        // one another wanted package loads goes with it (tabularx loads array)
+        let by = |q: &String| crate::linter::shared::package_loads(analysis, q, &p.name);
+        if done.contains(&p.name) || all.iter().any(by) {
             continue;
         }
-        let Some(p) = &n.package else {
-            notes.push(format!("\\{} is not defined in the run: load its package", n.name));
-            continue;
-        };
+        done.push(p.name.clone());
         match ensure_package(analysis, doc, &p.name, &p.options) {
-            Ok(Some(e)) if !loads.iter().any(|l| l.2 == e.new_text) => {
+            Ok(Some(e)) => {
                 let at = doc.offset(to_pos(doc, e.range.start)).unwrap_or_default();
                 notes.push(format!("adds \\usepackage{{{}}}", p.name));
                 loads.push((at, at, e.new_text));
             }
-            Ok(_) => {}
+            Ok(None) => {}
             Err(why) => notes.push(why),
         }
     }
     // a load goes first where it shares a place
     loads.append(&mut edits);
-    let edits: Vec<Json> =
-        merged(loads)?.into_iter().map(|(a, b, t)| json!({ "range": span(doc, a, b), "newText": t })).collect();
-    Ok(json!({ "edits": edits, "notes": notes }))
+    Ok((merged(loads)?, notes))
+}
+
+/// Byte edits as LSP edits.
+pub fn lsp_edits(doc: &Text, edits: Vec<Edit>) -> Vec<lsp_types::TextEdit> {
+    edits.into_iter().map(|(a, b, t)| lsp_types::TextEdit::new(span(doc, a, b), t)).collect()
+}
+
+/// The edits that write `nodes` as LSP edits: `{edits, notes}`.
+pub fn print(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<Json, String> {
+    let (edits, notes) = printed(analysis, doc, nodes)?;
+    Ok(json!({ "edits": lsp_edits(doc, edits), "notes": notes }))
 }
 
 /// A `satex/dialogApply` of kind `snapshot`: the edits that write its `nodes`.
@@ -591,5 +710,85 @@ mod tests {
         let (d, mut n) = opened(LISTS[0].0, LISTS[0].1);
         n.drop = true;
         assert_eq!(print_one(&d, &n), "% before\nafter\n");
+    }
+
+    /// The table dialog's text through the printer: one cell changed writes that cell only; an X
+    /// column renames the environment and adds its width; the rest of the bytes stay.
+    #[test]
+    fn a_table_prints_only_its_change() {
+        use crate::lsp::tabular;
+        let table = "\\begin{tabular}[t]{|l|c|} % keep\n  a  &  b \\\\ \\hline\n  c & d \\\\ % note\n\\end{tabular}";
+        let (d, n) = opened(table, &[]);
+        let mut t = tabular::parse(table).unwrap();
+        assert!(edits_of(&d, &retarget(&n, &tabular::emit(&t)).unwrap()).unwrap().is_empty());
+        t.rows[1].cells[1].text = "e".into();
+        let edits = edits_of(&d, &retarget(&n, &tabular::emit(&t)).unwrap()).unwrap();
+        assert_eq!(edits.iter().map(|e| e.2.as_str()).collect::<Vec<_>>(), ["e"], "{edits:?}");
+        t.cols[1].align = "X".into();
+        assert!(tabular::to_tabularx(&mut t));
+        let out = print_one(&d, &retarget(&n, &tabular::emit(&t)).unwrap());
+        assert_eq!(
+            out,
+            "% before\n\\begin{tabularx}{\\linewidth}[t]{|l|X|} % keep\n  a  &  b \\\\ \\hline\n  c & e \\\\ % note\n\\end{tabularx}\nafter\n"
+        );
+    }
+
+    /// The float dialog: placement letters replaced, added after the name, dropped with their brackets.
+    #[test]
+    fn a_float_prints_its_placement() {
+        let fig = "\\begin{figure}[ht] % here\n\\centering x\n\\end{figure}";
+        let (d, mut n) = opened(fig, &[]);
+        n.args[0].text = "tb!".into();
+        assert_eq!(print_one(&d, &n), format!("% before\n{}\nafter\n", fig.replace("[ht]", "[tb!]")));
+        n.args[0].text = String::new();
+        assert_eq!(print_one(&d, &n), format!("% before\n{}\nafter\n", fig.replace("[ht]", "")));
+        let (d, mut n) = opened(&fig.replace("[ht]", ""), &[]);
+        n.args.insert(0, Arg::text('[', "p"));
+        assert_eq!(print_one(&d, &n), format!("% before\n{}\nafter\n", fig.replace("[ht]", "[p]")));
+    }
+
+    /// The image dialog: a value changed in place, its list's separator kept; moved keys (graphicx
+    /// reads them in order) rewrite the list in that separator.
+    #[test]
+    fn an_image_prints_its_keys() {
+        let img = "\\includegraphics[trim=1cm 2 3 4,clip,angle=90,width=3cm]{fig}";
+        let (d, mut n) = opened(img, &[0]);
+        n.args[0].keys.as_mut().unwrap()[2].value = Some("180".into());
+        assert_eq!(edits_of(&d, &n).unwrap().iter().map(|e| e.2.as_str()).collect::<Vec<_>>(), ["180"]);
+        n.args[0].keys.as_mut().unwrap().swap(2, 3);
+        assert!(print_one(&d, &n).contains("[trim=1cm 2 3 4,clip,width=3cm,angle=180]{fig}"));
+    }
+
+    /// The tree dialog: the environment's body set, its bracket tree no argument, only the
+    /// bytes that differ written.
+    #[test]
+    fn a_tree_prints_its_body() {
+        let tree = "\\begin{forest}\n  [VP [DP] [V]] % s\n\\end{forest}";
+        let d = doc(tree);
+        let body = 9 + "\\begin{forest}".len()..9 + tree.len() - "\\end{forest}".len();
+        let mut n = env(&d, 9, body).unwrap();
+        assert!(n.args.is_empty(), "{n:?}");
+        n.body = n.body.replace("[V]", "[V [x]]");
+        assert_eq!(edits_of(&d, &n).unwrap().iter().map(|e| e.2.as_str()).collect::<Vec<_>>(), [" [x]"]);
+        assert_eq!(print_one(&d, &n), format!("% before\n{}\nafter\n", tree.replace("[V]", "[V [x]]")));
+    }
+
+    /// The color picker: a name in its place as a text node, the command's `[model]` added.
+    #[test]
+    fn a_color_prints_in_place() {
+        let d = doc("\\color{brand} x");
+        let name = Node {
+            kind: Kind::Text,
+            range: Some(span(&d, 16, 21)),
+            text: "brand".into(),
+            body: "red!40".into(),
+            body_at: Some((0, 5)),
+            ..Node::default()
+        };
+        assert_eq!(print_one(&d, &name), "% before\n\\color{red!40} x\nafter\n");
+        let mut own = read(&d, 9, &[], true).unwrap();
+        own.args[0] = Arg::text('[', "HTML");
+        own.args[1].text = "FF0000".into();
+        assert_eq!(print_one(&d, &own), "% before\n\\color[HTML]{FF0000} x\nafter\n");
     }
 }

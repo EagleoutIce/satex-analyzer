@@ -245,6 +245,12 @@ impl Exports {
         Some(self.files[*best as usize].clone())
     }
 
+    /// Whether `file` loads `other`, directly or through what it loads.
+    pub fn reaches(&self, file: &str, other: &str) -> bool {
+        let at = |n: &str| self.files.iter().position(|f| f == n).map(|i| i as u32);
+        at(file).zip(at(other)).is_some_and(|(a, b)| a != b && self.reach(a).contains(&b))
+    }
+
     /// `file` and what it loads, transitively.
     fn reach(&self, file: u32) -> HashSet<u32> {
         let mut seen: HashSet<u32> = HashSet::default();

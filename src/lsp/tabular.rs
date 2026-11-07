@@ -15,6 +15,9 @@ pub struct Col {
     pub pre: String,
     #[serde(default)]
     pub post: String,
+    /// The package that gives the letter, for when the run lacks it (the dialog's menu says).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
 }
 
 /// A cell: its text, and for a `\multicolumn` the columns it spans and its spec.
@@ -666,6 +669,7 @@ pub fn siunitx(t: &mut Table) -> bool {
     for (k, format) in &cols {
         t.cols[*k].align = "S".into();
         t.cols[*k].arg = format.clone();
+        t.cols[*k].package = Some("siunitx".into());
     }
     protect_s(t);
     !cols.is_empty()
