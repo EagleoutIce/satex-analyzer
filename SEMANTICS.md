@@ -40,7 +40,7 @@ inserted and the token read again ([§ 373][tw-373]), an extra `\endcsname`,
 brace and the call ends in a runaway (§§ 395–396), and a runaway drops the
 call. Each is raised as the error TeX prints (`raised-error`, like
 `\errmessage`) and counted: the hundredth error in one paragraph ends the
-run, as it does in TeX's scroll and nonstop modes ([§ 82][tw-82]), and a
+run, as it does in every TeX mode but errorstopmode ([§ 82][tw-82]), and a
 paragraph's end clears the count (§ 1096).
 
 ## 2. Category codes
@@ -99,8 +99,9 @@ like any character of that category: in category 10 (after
 `\catcode13=10`, as `\ProvidesFile` does) it is a space token of character
 code 32 in state `M` and nothing in `N` or `S`. A comment character discards the rest
 of the line and moves to state `N`. State `S` is entered after any control
-word, including a one-letter one, and after the control space `\ `, but
-after no other control symbol. ([*TeXbook*][texbook] ch. 8, [tex.web §§ 303][tw-303]–[306][tw-306], [§ 240][tw-240].)
+word, including a one-letter one, and after a control symbol whose character
+has category 10 (the control space `\ `, or `\~` under expl3), but after no other
+control symbol. ([*TeXbook*][texbook] ch. 8, [tex.web § 303][tw-303], [§§ 343][tw-343]–[354][tw-354], [§ 240][tw-240].)
 
 A CRLF pair is one line ending, not two. **[abstraction]** TeX proper reads a
 file line by line and never sees the line terminator. `satex` reads a
@@ -115,7 +116,7 @@ sequence tokens when their names agree. Source position is not part of a
 token. ([*TeXbook*][texbook] ch. 7.)
 
 A category-10 character read from the input becomes a space token of character
-code 32 whatever the source character was. ([tex.web § 347][tw-347].)
+code 32 whatever the source character was. ([tex.web § 348][tw-348].)
 
 ## 5. Meanings
 
@@ -187,24 +188,32 @@ Expandable: macros, conditionals, `\csname`, `\expandafter`, `\noexpand`,
 `\fontname`, `\input`, `\endinput`, and the mark primitives `\topmark`,
 `\firstmark`, `\botmark`, `\splitfirstmark`, `\splitbotmark`. ε-TeX adds
 `\detokenize`, `\unexpanded`, `\scantokens`, `\unless` and `\eTeXrevision`,
-and pdfTeX adds `\expanded`. Everything else is executed by the stomach.
+ε-TeX's mark classes `\topmarks` … `\splitbotmarks` expand too. pdfTeX adds
+`\expanded` and its own convert commands (`\pdfstrcmp`, `\pdfescapestring`,
+`\pdffilesize`, `\pdfmdfivesum`, `\pdfcreationdate`, `\pdftexrevision`, …).
+Everything else is executed by the stomach.
 ([*TeX by Topic*][tex-by-topic], "Ordinary expansion", [*etex_man*][etex_man] § 3.)
 
 * `\expandafter⟨t1⟩⟨t2⟩` expands `⟨t2⟩` once and then puts `⟨t1⟩` back in
   front of the result.
 * `\noexpand⟨t⟩`, when expanded, puts `⟨t⟩` back behind a marker. The next
   read of it treats an expandable `⟨t⟩` as `\relax` (the stomach does nothing
-  with it) and `\ifx` gives it a meaning equal to no other token's, so
+  with it) and `\ifx` gives it a meaning equal to no other token's but
+  another `\noexpand`ed expandable token's, so
   `\expandafter\ifx\noexpand\a\a` is false for any macro `\a`, protected or
-  not. ([tex.web § 358][tw-358], [§ 367][tw-367].)
+  not, while two `\noexpand`ed macros compare equal. ([tex.web § 358][tw-358], [§ 367][tw-367], [§ 507][tw-507].)
 * `\read⟨n⟩to⟨cs⟩` appends the current `\endlinechar` to each line it
   reads and reads further lines until the braces balance. A read at the end
-  of the file gives `\par` and closes the stream, and only then is `\ifeof`
-  true. ([tex.web §§ 482][tw-482]–[486][tw-486].)
+  of the file gives what `\endlinechar` makes of an empty line (`\par` when
+  that character has category 5, nothing when `\endlinechar` is outside
+  0..255) and closes the stream, and only then is `\ifeof` true.
+  ([tex.web §§ 482][tw-482]–[486][tw-486].)
 * `\detokenize` and `\meaning` write a control sequence as the escape
   character and its name, followed by a space when the name has more than one
   character or its one character has category letter *now*, `\_ ` under
-  expl3's catcodes, `\_` outside them. ([tex.web § 262][tw-262].)
+  expl3's catcodes, `\_` outside them. An active character prints without
+  an escape, the null control sequence as `\csname\endcsname`, and no escape
+  is printed when `\escapechar` is outside 0..255. ([tex.web § 262][tw-262].)
 * `\csname⟨tokens⟩\endcsname` builds a control sequence from the expansion of
   `⟨tokens⟩`, which must be character tokens. Their category codes are
   irrelevant, only the character codes count. If the name was undefined it
@@ -295,12 +304,13 @@ skipping: grouping and conditional nesting are independent.
 skipping ends the skip with an inserted `\fi` ("Incomplete \if…").
 ([tex.web § 336][tw-336].)
 
-`\if` and `\ifcat` expand until two unexpandable tokens remain. An
-unexpandable control sequence counts as character code 256 for `\if` and
-category 16 for `\ifcat`, so all control sequences compare equal to each
-other. ([*TeX by Topic*][tex-by-topic].) A token behind `\noexpand` is not expanded, and
-an active character there counts as itself. Any other active character is
-taken by its meaning, as a control sequence is ([tex.web § 506][tw-506]).
+`\if` and `\ifcat` expand until two unexpandable tokens remain. A control
+sequence or active character whose meaning is a character token (`\let\bgroup={`)
+counts as that character's code and category, so `\ifcat\bgroup\egroup` is
+false. Any other unexpandable control sequence counts as character code 256
+for `\if` and category 16 for `\ifcat`, and those compare equal to each
+other. A token behind `\noexpand` is not expanded, and an active character
+there counts as itself. ([tex.web § 506][tw-506], [*TeX by Topic*][tex-by-topic].)
 
 A conditional is on the condition stack while its test is read. A conditional
 that the test itself starts and leaves open (`\if e\ifx AB x\else y\fi …`)
@@ -318,12 +328,13 @@ Decidable when the operands are known: `\iftrue`, `\iffalse`, `\ifx`,
 Mode-dependent: `\ifvmode`, `\ifhmode`, `\ifmmode`, `\ifinner` follow
 the mode ([tex.web §§ 211][tw-211], [1045][tw-1045]–[1200][tw-1200]). A run starts in vertical mode.
 horizontal material (a letter or other character, `\char`, a `\chardef`
-character, `\indent`, `\noindent`, `\unhbox`, `\vrule`, `\hskip` and the
-`\hfil` family, `\accent`, `\discretionary`, `\-`, control space,
-`\valign`, `$`) starts a paragraph in a vertical mode, inserting `\everypar`
-and reading the token again. `\par` ends it. Vertical material (`\vskip`,
-`\hrule`, `\unvbox`, `\halign`) in horizontal mode first reads a `\par`
-token. `\hbox`, `\vbox`, `\vtop`, `\vcenter`, `\insert`, `\vadjust`,
+character, `\unhbox`, `\vrule`, `\hskip` and the `\hfil` family, `\accent`,
+`\discretionary`, `\-`, control space, `\noboundary`, `\valign`, `$`) starts a
+paragraph in a vertical mode, inserting `\everypar` and reading the token
+again. `\indent` and `\noindent` start one too and are consumed
+([tex.web § 1088][tw-1088], [§ 1090][tw-1090]). `\par` ends it. Vertical material (`\vskip`,
+`\hrule`, `\unvbox`, `\halign`) in a paragraph first reads a `\par` token. In
+restricted horizontal mode it is an error instead ([tex.web § 1095][tw-1095]). `\hbox`, `\vbox`, `\vtop`, `\vcenter`, `\insert`, `\vadjust`,
 `\noalign`, the parts of `\discretionary` and `\mathchoice`, `$`, `$$`,
 `\eqno` and a `{` in math begin a list of their own in the mode that list
 has (with `\everyhbox`, `\everyvbox`, `\everymath`, `\everydisplay`), and
@@ -371,9 +382,9 @@ meaning is such a character, as `\bgroup` and `\egroup` are in plain TeX
 and `$$`…`$$`), by `\left`…`\right`, by a box constructor (`\hbox`, `\vbox`,
 `\vtop`, `\vcenter`), by an alignment entry, and by the output routine and
 inserts. Each records its kind on the save stack, and a closer of the wrong
-kind is an error: `}` ends only a simple group, `\endgroup` only a semi-simple
-one. ([tex.web § 269][tw-269] (`saved_group_code`), [§ 1063][tw-1063], [§ 1145][tw-1145], *The TeXbook*,
-ch. 24.)
+kind is an error: `}` ends every group but a `\begingroup`, `$` or `\left`
+one, `\endgroup` only a `\begingroup` one. ([tex.web § 269][tw-269] (the group codes,
+`cur_group` [§ 271][tw-271]), [§ 1063][tw-1063], [§ 1069][tw-1069], [§ 1085][tw-1085], [§ 1100][tw-1100], [§ 1145][tw-1145], *The TeXbook*, ch. 24.)
 
 Every non-global assignment is undone when the group closes.
 `\aftergroup⟨token⟩` keeps the token back and inserts it just after the group
@@ -389,8 +400,11 @@ the save stack grow. ([tex.web § 279][tw-279], [§ 283][tw-283], [*TeX by Topic
 
 Some assignments ignore grouping entirely: `\globaldefs` forces every
 assignment global when positive and makes `\global` a no-op when negative, and
-font assignments, `\hyphenation`, `\patterns` and the box dimensions
-`\ht`/`\dp`/`\wd` are always global. ([*TeX by Topic*][tex-by-topic], "Local and global
+`\fontdimen`, `\hyphenchar`, `\skewchar`, `\hyphenation`, `\patterns`, the box
+dimensions `\ht`/`\dp`/`\wd` and the special quantities `\spacefactor`,
+`\prevdepth`, `\prevgraf`, `\deadcycles`, `\insertpenalties`, the `\page…`
+dimensions and `\interactionmode` are always global. `\font\x=…` defines `\x`
+locally. ([tex.web §§ 1242][tw-1242]–[1253][tw-1253], [*TeX by Topic*][tex-by-topic], "Local and global
 assignments".)
 
 `\usepackage` and `\input` do **not** open a group: a package would be unable
@@ -400,9 +414,9 @@ category code change, which LaTeX undoes explicitly. ([*clsguide*][clsguide] § 
 ## 11. Base types
 
 TeX's internal quantities are ⟨number⟩, ⟨dimen⟩, ⟨glue⟩, ⟨muglue⟩ and
-⟨token list⟩. ([*TeXbook*][texbook] ch. 10, [tex.web § 449][tw-449].)
+⟨token list⟩. ([*TeXbook*][texbook] ch. 10, [tex.web § 410][tw-410].)
 
-* A dimension is a signed integer of scaled points, `1pt = 65536sp`, with
+* A scanned dimension is a signed integer of scaled points, `1pt = 65536sp`, with
   magnitude at most 2³⁰ − 1. ([*TeXbook*][texbook] ch. 10.)
 * Unit ratios, as exact fractions of a point: `pc` 12⁄1, `in` 7227⁄100,
   `bp` 7227⁄7200, `cm` 7227⁄254, `mm` 7227⁄2540, `dd` 1238⁄1157,
@@ -438,23 +452,26 @@ TeX's internal quantities are ⟨number⟩, ⟨dimen⟩, ⟨glue⟩, ⟨muglue�
 * Register arithmetic ([tex.web §§ 105][tw-105]–[106][tw-106], [1236][tw-1236]–[1240][tw-1240]) is on 32-bit
   integers. `\advance` of a count or a dimension has **no** overflow
   check and wraps (`2147483647+1` is −2³¹, a dimension may pass
-  `\maxdimen`, up to 2³¹−1sp). Glue widths and amounts wrap alike, and
-  of different orders the higher replaces the lower. `\multiply` is
+  `\maxdimen`, up to 2³¹−1sp). Glue widths and amounts wrap alike. Of
+  different orders, a zero stretch or shrink first takes order normal, and a
+  higher order replaces a nonzero lower one ([tex.web § 1239][tw-1239]). `\multiply` is
   `mult_integers` (bound 2³¹−1) for a count and `nx_plus_y` (bound
   `\maxdimen`) for a dimension and each glue amount, orders kept.
   `\divide` is `x_over_n`, truncating toward zero (−2³¹ ÷ −1 is −2³¹).
   "Arithmetic overflow" (a bound passed, a zero divisor) leaves the
   register unchanged. A glue assigned with all three amounts zero becomes
-  the zero glue of order normal (`trap_zero_glue`, [tex.web § 1229][tw-1229]).
+  the zero glue of order normal (`trap_zero_glue`, [tex.web § 1229][tw-1229]), except a
+  `\tabskip` while a preamble is scanned.
 * `scan_dimen` ([tex.web §§ 448][tw-448]–[461][tw-461]): the fraction is `round_decimals` of at most 17
   digits. An integer part of 2¹⁴pt or more, or a result of 2³⁰sp or more,
   is "Dimension too large" and `\maxdimen` (with its sign). `true` first
-  divides by `\mag` (`xn_over_d`, a `\mag` outside 1..32768 counts as
-  1000). An internal unit, `em`, `ex` or `px` scales by
+  divides by `\mag` (`xn_over_d`). A `\mag` outside 1..32768 raises "Illegal
+  magnification" and is set to 1000 globally ([tex.web § 288][tw-288]). An internal unit, `em`, `ex` or `px` scales by
   `nx_plus_y(n, v, xn_over_d(v, f, 2¹⁶))`, whose overflow is `\maxdimen`
   *before* the sign: `20000` times a unit of −1pt is `+\maxdimen`. `sp`
-  ignores the fraction. `fil`, `fill`, `filll` (more `l`s stay `filll`)
-  scale no unit.
+  ignores the fraction. `fil`, `fill`, `filll` scale no unit. More `l`s
+  stay `filll` and raise "Illegal unit of measure (replaced by filll)"
+  ([tex.web § 454][tw-454]).
 * `em` and `ex` are `\fontdimen6` and `\fontdimen5` of the current font
   ([tex.web § 455][tw-455]), known when its metrics are.
 * A number with no digits is 0 ("Missing number, treated as zero",
@@ -610,7 +627,7 @@ The probe input is `⟨p⟩`, what is known to be taken so far, followed by
 
 - where a parameter text was not matched ([tex.web § 398][tw-398], "doesn't match its
   definition"): required text such as the `x` of `\def\a x#1`, or a delimited
-  argument that ran out of input before its delimiter ([§ 392][tw-392]), or the `{` of
+  argument that ran out of input before its delimiter ([§ 338][tw-338]–[339][tw-339]), or the `{` of
   `#{`. This is learned wherever it happens, in the command's own parameter
   text, in a macro it calls in any position, behind `\@ifnextchar` or
   `\futurelet`. Consumption stops there: the argument was not read.
@@ -675,8 +692,7 @@ on, and it never invents a meaning.
   digits at `\futurelet`, an unknown character that may be active, or a
   conditional crossing a file end, is made by one primitive: it takes
   every arm the choice allows, each on a path of its own. With `arm_joins`
-  on (off by default while its cost on the kernel and on
-  `\DocumentMetadata` is bounded), inside a body read while expanding
+  on (the default), inside a body read while expanding
   (`\edef`, `\xdef`, `\message`, `\write`, `\expanded`) the unit of a
   path is one token of the scan, and what the
   body holds so far goes with the path. The arms part at the choice and
@@ -693,9 +709,9 @@ on, and it never invents a meaning.
   reads. With `arm_joins` off every choice is made that way. The arms' environments are then merged
   (§ 9), so a name defined in any arm exists afterwards and carries the
   control dependency that made it. Past `limits.choices` (8) choices on
-  one path, or past 64 runs of one command, a conditional's first arm is
-  read and what it gives is unknown (a scanned value is unknown, otherwise
-  unknown text), reported as Unsupported `undecided-condition`.
+  one path, or past 64 runs of one command, a conditional's arms are both
+  skipped to its `\fi`, what their code may do is done (`may_run`), and they
+  give unknown text, reported as Assumption `undecided-condition`.
 * **Undecided loops** are analyzed to a fixpoint. **[abstraction]** A
   command that branches this way is a *loop head* while its paths run. A
   path that comes back to the head at the same place (below) with nothing
@@ -708,14 +724,15 @@ on, and it never invents a meaning.
   number of passes. After `widen_after` rounds (3) every binding that still
   grows is **widened**: a meaning set to an unknown meaning (a switch to an
   undecided switch), a moving bound of an interval to the end of TeX's
-  range, other values to unknown. So every loop ends within `widen_after +
-  2` rounds. A head met deeper in its input each time is a recursion: after
-  `widen_after` deeper levels, deeper ones are not analyzed and the run
-  says so (Unsupported `undecided-loop`, limit `widen_after`).
+  range, other values to unknown. A head still growing after
+  `2 × widen_after` passes is summarized, so every loop ends within
+  `2 × widen_after + 1` rounds. A head met deeper in its input each time is
+  a recursion: past `limits.recursion_depth` (100) deeper levels it is
+  widened and the run says so (Imprecision `recursion-widened`).
 * **Numbers are intervals.** **[abstraction]** A count or dimension whose
   value is not known is still a number of its kind, in an interval
   `[lo, hi]` within TeX's 32-bit range and, when there are at most
-  `value_set` (5) of them, one of a set of values. A box dimension or a
+  `value_set` (8) of them, one of a set of values. A box dimension or a
   node size starts from ±`\maxdimen`. A register of unknown value, and
   widening, from the whole 32-bit range, which `\advance` can reach.
   `\advance`, `\multiply`, `\divide` and every step of `\numexpr` and
@@ -739,7 +756,7 @@ on, and it never invents a meaning.
   that take it (`\ifdim\wd0>5pt` leaves more than 5pt on the true arm).
   A `\glueexpr` with an unknown operand is unknown. Text of the number
   (`\the`, `\number`) is unknown digits. A number that is bounded (an
-  interval, or `\pdfuniformdeviate n`, which is in [0, n)) prints as one
+  interval, or `\pdfuniformdeviate n`, between 0 and n, n excluded) prints as one
   token of unknown digits typed with its bound, its `-` included when it
   may be negative. A scan that reads the token back keeps the bound, and
   so does a macro that takes it as an argument and puts it back into a
@@ -814,8 +831,8 @@ on, and it never invents a meaning.
   compiles". A loop
   taking bounded text apart ends as the text shrinks. One over unbounded
   text ends at its loop head. Unknown digits taken as one token (an
-  undelimited argument, the token `\futurelet` looks at) are one digit,
-  0 to 9, followed by unknown digits that may be none. Where `\futurelet`
+  undelimited argument, the token `\futurelet` looks at) are one digit or
+  `-` (a digit 0 to 9 when the bound excludes negatives), followed by unknown digits that may be none. Where `\futurelet`
   looks at those, the run splits into a path on which it sees one more
   digit and one on which it sees what follows. `\csname` of a name with
   one unknown digit in it is one of the ten names, holding one of their
@@ -823,7 +840,8 @@ on, and it never invents a meaning.
   of several meanings is decided when every pair of meanings decides it
   alike. `\let` copies such a set with the meaning. `\expandafter` of a
   name of unknown meaning, and `\edef` expanding it, give unknown text.
-  of one a join left one of several macros without parameters, a token
+  `\expandafter` of a name a join left one of several macros without
+  parameters gives a token
   that stands for one of their texts. Signs that come from such a name
   whose every text is signs make the number unknown and are read past.
   A box's size is its list's natural size ([tex.web §§ 649][tw-649], [668][tw-668]) while
@@ -901,7 +919,7 @@ on, and it never invents a meaning.
   still an `unbalanced-file` report. Under an undecided conditional each
   path ends its own file.
 
-Two limits are incompleteness rather than over-approximation, because a sound
+Three limits are incompleteness rather than over-approximation, because a sound
 analysis of them would not terminate. Neither is ever silent: each reports an
 imprecision diagnostic naming the construct and the limit it hit, and any
 finding that depends on such a point says so.
@@ -914,15 +932,16 @@ finding that depends on such a point says so.
   document macro nothing expanded are the names in its replacement text
   taken as its calls, and findings then say so. `unguarded-recursion` reports
   an observed recursion only when the run could not see it end.
-* **Recursion** is widened: a macro that re-enters itself more than
-  `max_expansions` times, or is expanded more than `max_site_expansions` times
-  at one call site, the shape of every TeX loop, stops being unfolded, and
+* **Recursion depth** is widened: a macro that re-enters itself deeper than
+  `limits.expansion_depth` (512), or is expanded more than
+  `limits.site_expansions` (16 384) times at one call site, the shape of every TeX loop, stops being unfolded, and
   its result becomes unknown.
 * **Budgets** bound tokens, graph size, fact counts, held tokens, the save
   stack, and the material one conditional may span. Reaching one stops the
-  analysis with a `budget-exhausted` diagnostic. As in TeX, running out of
-  capacity, expansion nested 300 deep inside scans, a token list longer than
-  the held-token bound, more than 15 open (pseudo) files, stops the run.
+  analysis with a `budget-exhausted` diagnostic. Running out of capacity
+  stops the run, as in TeX, and so do SaTeX's own bounds: expansion nested
+  300 deep inside scans (`MAX_NESTING`), a token list longer than the
+  held-token bound, more than 15 open (pseudo) files.
 
 **Termination** does not rest on any of these. One guard sees every step:
 each token read, each pass of the path driver, each replay. It charges the
@@ -939,7 +958,7 @@ Paths are bounded the same way, long before the steps are. The undecided
 choices each place makes (a conditional, a name of several meanings) are
 counted while one source line is read, over all paths and replays. Past
 `limits.site_forks` of them the expansion above the line is cut as the
-guard cuts it (`site-forks-cut`): what it assigned is unknown, and the line
+guard cuts it (`site-forks-widened`): what it assigned is unknown, and the line
 reads on after an unknown token. Every count and limit is in steps or
 choices, never in seconds, so the result does not depend on the machine.
 A drive whose paths were all dropped before the input ended (none of them
@@ -1049,7 +1068,6 @@ redefines the name gets its own meaning back.
 [texdimens]: https://ctan.org/pkg/texdimens
 [expl3-code]: https://github.com/latex3/latex3/tree/0838953eace80b804cd47e8a5ee7ff37f8b8b6e0/l3kernel
 [plain]: https://ctan.org/pkg/plain
-[etex.ch]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/etexdir/etex.ch
 [latex.ltx]: https://github.com/latex3/latex2e/tree/db6df6380f8660758d26b9666d0e70600a3d7be9/base
 
 <!-- tex.web modules. Re-pin with `python3 scripts/tex-web-links.py --update SEMANTICS.md`;
@@ -1114,14 +1132,29 @@ redefines the name gets its own meaning back.
 [tw-1110]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21332
 [tw-1145]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21755
 [tw-1200]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22526
-[tw-1211]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22720
-[tw-1217]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22811
 [tw-1221]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22838
 [tw-1229]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22996
 [tw-1236]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23078
 [tw-1240]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23160
 [tw-1257]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23346
 [tw-1260]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23404
+[tw-271]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L5898
+[tw-288]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L6129
+[tw-338]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7184
+[tw-343]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7267
+[tw-348]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7345
+[tw-354]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7401
+[tw-410]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8285
+[tw-454]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8946
+[tw-1069]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20735
+[tw-1085]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21051
+[tw-1088]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21089
+[tw-1090]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21102
+[tw-1095]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21162
+[tw-1100]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21213
+[tw-1239]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23143
+[tw-1242]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197
+[tw-1253]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23319
 
 <!-- etex.ch identifiers -->
 [ech-pseudo_input]: https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L4654

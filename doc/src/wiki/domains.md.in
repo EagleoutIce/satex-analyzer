@@ -24,8 +24,8 @@ One invariant holds everywhere: a construct is followed **exactly**, or its resu
 
 | Kind | Exact | Hull | Top |
 | --- | --- | --- | --- |
-| count (`\count`, `\numexpr`) | `Int(i64)` | `Num { lo, hi }` | `[-MAX_INT, MAX_INT]` |
-| dimension (`\dimen`, `\dimexpr`) | `Dimen(Scaled)` | `Num`, in sp | the word `[-2^31, 2^31-1]` stored (`Dim::ANY`): box sums and `\advance` pass `\maxdimen` (tex.web §§ 656, 1238), `[-MAX_DIMEN, MAX_DIMEN]` scanned (§ 461) |
+| count (`\count`, `\numexpr`) | `Int(i64)` | `Num { lo, hi }` | the word `[-2^31, 2^31-1]` |
+| dimension (`\dimen`, `\dimexpr`) | `Dimen(Scaled)` | `Num`, in sp | the word `[-2^31, 2^31-1]` stored (`Dim::ANY`): box sums and `\advance` pass `\maxdimen` (tex.web §§ 656, 1238), `[-MAX_DIMEN, MAX_DIMEN]` scanned (tex.web § 461) |
 | glue, muglue (`\skip`, `\muskip`) | `Glue` | `GlueHull`: one `Num` per component (tex.web § 150) | `GlueHull::full()` |
 | token list (`\toks`) | `Toks` | common start and end around one typed unknown token | `Unknown` |
 | color (`\color@⟨name⟩`) | `Color`, every component a point | `Colors`, one `Num` per component | the model's full range |
@@ -37,7 +37,7 @@ The bounded set is `OneOf` for every kind (below). Code that does not inspect th
 - **Tests.** `\ifnum` and `\ifdim` decide by the interval, `\ifpdfabsnum` by the interval of the absolute values.
 - **Not zero.** An interval around 0 may exclude 0 (`Num::nz`, a reduced product with the sign). A failed test against 0 sets it, and a join or widening keeps it only where both sides exclude 0. So `[-6,-1]` joined with `[1,6]` is never 0 for `\ifnum ...=0`, and a number told apart from 0 has no one-digit arm `0`.
 - **Typed digits then a one-of** (`\strip@pt`'s fraction): a scan splits the one-of per text where each is read in full or ends the digits. Other unknown text after them may be more digits, so the number reads on and is unknown.
-- **Token lists** past the set keep their frame: pgfmath's operand stacks with different tops join to one stack whose top is typed digits, so a delimited pop still finds its braces (tex.web § 1227).
+- **Token lists** past the set keep their frame: pgfmath's operand stacks with different tops join to one stack whose top is typed digits, so a delimited pop still finds its braces.
 
 ## The set lift: `OneOf`
 
@@ -117,7 +117,7 @@ A widened macro whose members all hold a token holds one too, so `\ifx` can stil
 
 `Modes` ([`src/engine/mode.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs)) is the set of TeX's six modes the run may be in (tex.web § 211). `\ifvmode`, `\ifhmode`, `\ifmmode` and `\ifinner` are decided when every mode agrees. Paths join by union.
 
-`Dim { lo, hi }` is one length: box sizes, added up as `hpack` (§ 649) and `vpack` (§ 668) do. An item `satex` cannot follow widens the size to `Dim::ANY`. It is never left out.
+`Dim { lo, hi }` is one length: box sizes, added up as `hpack` (tex.web § 649) and `vpack` (tex.web § 668) do. An item `satex` cannot follow widens the size to `Dim::ANY`. It is never left out.
 
 - **Join.** Each length joins to its hull. A word still being set on one path keeps its last character pending (it may kern or form a ligature with the next one, § 1034). If the paths differ there, each pending character is settled first: its box plus every kern the font may put after it, from any character or the boundary (`settled_for_join`). One that may form a ligature cannot be settled, and the sizes widen.
 - **Unknown digits.** A digit the run wrote as unknown is a box from the narrowest to the widest of its candidates, plus every kern the font may put on either side. One that may form a ligature is unmetered.
@@ -126,12 +126,12 @@ The list's tail (`Last`) is what `\lastskip`, `\lastkern`, `\lastpenalty` and `\
 
 | Tail item | Kept |
 | --- | --- |
-| glue | width as `Dim`, specification as `GlueHull`, whether it is mu glue (§ 424) |
+| glue | width as `Dim`, specification as `GlueHull`, whether it is mu glue (tex.web § 424) |
 | character | its box, and whether it is a ligature (exact where the font's lig/kern program was followed, §§ 1034-1040) |
 | rule, insert, adjust, whatsit, math, noad | its `\lastnodetype` (3, 4, 6, 9, 10, 15) |
 | mixed kinds | `Last::Unknown`, still holding the join of each reading (zero where of another kind) |
 
-A list also counts the items it holds at least, so an internal vertical list with items left never reads `-1` (§§ 1080, 1105).
+A list also counts the items it holds at least, so an internal vertical list with items left never reads `-1` (tex.web §§ 1080, 1105).
 
 ### Boxes
 
@@ -140,18 +140,18 @@ A box register holds width, height and depth as `Dim`s, read by `\wd`, `\ht`, `\
 | Material | How its size is followed |
 | --- | --- |
 | characters | TFM width, height, depth, kerns and ligatures. A font without metrics widens. |
-| `hpack` / `vpack` | height, depth (resp. width) start at zero (tex.web §§ 649, 668). `vpack` moves depth past `\boxmaxdepth` into the height. `\vtop` (§ 1087), `\vcenter` (§ 736). |
-| inline math | characters, `\mathchardef` atoms, italic corrections, class spacing (§§ 752-766), `\mathsurround` (§ 1196). Binary atoms, operators, fractions and lost groups widen. `\left`/`\middle`/`\right` (etex.ch). |
-| `\unhbox`, `\unvbox` | the natural size recorded at packing (§ 1110), the tail kept, an hbox's recorded items go back onto the list, so a paragraph breaks them |
-| `\write`, `\openout`, `\closeout` | nothing when `\immediate`, else a whatsit (§§ 1352, 1375) |
-| `\discretionary` | its unbroken text (§§ 651, 1119) |
+| `hpack` / `vpack` | height, depth (resp. width) start at zero (tex.web §§ 649, 668). `vpack` moves depth past `\boxmaxdepth` into the height. `\vtop` (tex.web § 1087), `\vcenter` (tex.web § 736). |
+| inline math | characters, `\mathchardef` atoms, italic corrections, class spacing (tex.web §§ 752-766), `\mathsurround` (tex.web § 1196). Binary atoms, operators, fractions and lost groups widen. `\left`/`\middle`/`\right` (etex.ch). |
+| `\unhbox`, `\unvbox` | the natural size recorded at packing (tex.web § 1110), the tail kept, an hbox's recorded items go back onto the list, so a paragraph breaks them |
+| `\write`, `\openout`, `\closeout` | nothing when `\immediate`, else a whatsit (tex.web §§ 1352, 1375) |
+| `\discretionary` | its unbroken text (tex.web §§ 651, 1119) |
 | unknown box | `Dim::ANY` for all sizes |
 
-- **Recorded lists.** An hbox records its items for `\unhbox`. A vertical list records its items (boxes, rules, interline glue, glue, kerns, penalties, whatsits, marks). With a record, `\vsplit` runs `vert_break` exactly (§§ 968-977). Without one, the split part is packed to the asked height and the rest is bounded.
-- **Forced breaks.** A vbox register knows whether it may hold one. `\vsplit` to `\maxdimen` of a list without one takes it whole (§§ 972-974).
-- **`\vadjust` breaks.** A paragraph keeps the forced breaks its `\vadjust` material carries, in order, each with whether a box came before it. Repeats share one run: any number of floats in one paragraph is one pair counted (up to 7 runs, past that the last run stands for the rest, a known limit). After the paragraph's lines they reach the page builder as that material (§ 889). The page builder decides whether one finds the page empty (§ 1000).
-- **Main vertical list.** Tracked from the empty page (§ 991): discardables on an empty page drop (§ 1000), the first box or line takes `\topskip` glue (§ 1001), `\pagetotal` is the length moved so far, without the glue and kerns still waiting (§§ 1003, 1004), page dimensions read back until material arrives (§§ 1004, 1245). A page whose first box follows a whatsit can break at its `\topskip` (§ 973), which LaTeX's `\clearpage` relies on.
-- **`\badness`** of a box packed to a size comes from its glue orders (§§ 658-667).
+- **Recorded lists.** An hbox records its items for `\unhbox`. A vertical list records its items (boxes, rules, interline glue, glue, kerns, penalties, whatsits, marks). With a record, `\vsplit` runs `vert_break` exactly (tex.web §§ 968-977). Without one, the split part is packed to the asked height and the rest is bounded.
+- **Forced breaks.** A vbox register knows whether it may hold one. `\vsplit` to `\maxdimen` of a list without one takes it whole (tex.web §§ 972-974).
+- **`\vadjust` breaks.** A paragraph keeps the forced breaks its `\vadjust` material carries, in order, each with whether a box came before it. Repeats share one run: any number of floats in one paragraph is one pair counted (up to 7 runs, past that the last run stands for the rest, a known limit). After the paragraph's lines they reach the page builder as that material (tex.web § 889). The page builder decides whether one finds the page empty (tex.web § 1000).
+- **Main vertical list.** Tracked from the empty page (tex.web § 991): discardables on an empty page drop (tex.web § 1000), the first box or line takes `\topskip` glue (tex.web § 1001), `\pagetotal` is the length moved so far, without the glue and kerns still waiting (tex.web §§ 1003, 1004), page dimensions read back until material arrives (tex.web §§ 1004, 1245). A page whose first box follows a whatsit can break at its `\topskip` (tex.web § 973), which LaTeX's `\clearpage` relies on.
+- **`\badness`** of a box packed to a size comes from its glue orders (tex.web §§ 658-667).
 
 ### Marks
 
@@ -164,13 +164,13 @@ A paragraph in a vertical box is broken as `line_break` does it (tex.web §§ 81
 | Case | Result |
 | --- | --- |
 | forced breaks (penalty ≤ -10000) | exact (tex.web §§ 851, 879) |
-| all items known, plain parameters | Knuth-Plass in all three passes (§ 863, `src/engine/linebreak.rs`): line count, sizes and `\prevgraf` exact |
-| fits with infinite stretch, or badness bound low enough | one line (§§ 817, 851-859) |
+| all items known, plain parameters | Knuth-Plass in all three passes (tex.web § 863, `src/engine/linebreak.rs`): line count, sizes and `\prevgraf` exact |
+| fits with infinite stretch, or badness bound low enough | one line (tex.web §§ 817, 851-859) |
 | otherwise | one line up to one per breakpoint, sizes between zero and the text's |
 
-- Line width is `\hsize`. With `\parshape` or `\hangindent` it is unknown (§§ 847-848).
-- At `\par`: final glue dropped, `\parfillskip` added (§ 816). Interline glue from `\baselineskip` or `\lineskip` (§ 679), both joined when either may apply. `\prevdepth` (§ 219), `\parskip` (§ 1091).
-- **Hyphenation** (§§ 919-965) uses the format's own `\patterns` and `\hyphenation` (`src/engine/hyph.rs`). Each found gap is a may-hyphen (`·` in the typeset view). A one-line paragraph gets none (§ 902). An unknown language or `\lccode` marks every gap. A ligature hyphenates by its letters (§ 898). Inside it the discretionary breaks to its first letters and the hyphen, then the rest (§§ 913-916).
+- Line width is `\hsize`. With `\parshape` or `\hangindent` it is unknown (tex.web §§ 847-848).
+- At `\par`: final glue dropped, `\parfillskip` added (tex.web § 816). Interline glue from `\baselineskip` or `\lineskip` (tex.web § 679), both joined when either may apply. `\prevdepth` (tex.web § 219), `\parskip` (tex.web § 1091).
+- **Hyphenation** (tex.web §§ 919-965) uses the format's own `\patterns` and `\hyphenation` (`src/engine/hyph.rs`). Each found gap is a may-hyphen (`·` in the typeset view). A one-line paragraph gets none (tex.web § 902). An unknown language or `\lccode` marks every gap. A ligature hyphenates by its letters (tex.web § 898). Inside it the discretionary breaks to its first letters and the hyphen, then the rest (tex.web §§ 913-916).
 - Line parameters are read at `\par`. If they changed after a line was set, the sizes widen.
 
 ## Unknown text: the `TextClass` lattice
@@ -218,13 +218,13 @@ typed digits     d, with an interval [lo, hi]
 | `UNKNOWN_HEX_OTHER` | `0`–`9`, `A`–`F`, `a`–`f`, category 12 |
 | `UNKNOWN_HEX_LETTER` | `A`–`F`, `a`–`f`, category 11 |
 
-`\the` never prints a leading zero (tex.web §§ 103-104). Reading the first digit of an unknown number splits into `-` (digits follow), `0` (nothing follows) and `1`–`9` (one digit fewer may follow), so a digit-stripping loop ends.
+`\the` never prints an integer with a leading zero (tex.web § 65). Reading the first digit of an unknown number splits into `-` (digits follow), `0` (nothing follows) and `1`–`9` (one digit fewer may follow), so a digit-stripping loop ends.
 
 - `\romannumeral` of an unknown number is typed text of class `o`. In a small interval it is one of its numerals.
 - At the end of a ⟨number⟩ scan, paths that differ only in numbers join to typed digits over the hull.
 - A number starting with a known digit has no sign: it lies in 0 to 2³¹-1 (tex.web § 445). A known last digit decides `\ifodd`.
-- `\the` of a dimension in a one-signed interval prints typed digits, a point, at most five digits and `pt`. Scanned back, it is an interval (§§ 448-458), so bounds survive `\pgf@sys@tonumber` and pgfmath's `round`, `floor`, `int`.
-- `\the` of an unknown glue prints its width, then a one-of token for the parts that may be nonzero: nothing, ` plus ⟨d⟩⟨unit⟩`, ` minus ⟨d⟩⟨unit⟩` or both (§ 178). A glue scan's `plus` and `minus` keywords split it per text, so `\vskip\the\skip@` never leaves part of it as typeset text.
+- `\the` of a dimension in a one-signed interval prints typed digits, a point, at most five digits and `pt`. Scanned back, it is an interval (tex.web §§ 448-458), so bounds survive `\pgf@sys@tonumber` and pgfmath's `round`, `floor`, `int`.
+- `\the` of an unknown glue prints its width, then a one-of token for the parts that may be nonzero: nothing, ` plus ⟨d⟩⟨unit⟩`, ` minus ⟨d⟩⟨unit⟩` or both (tex.web § 178). A glue scan's `plus` and `minus` keywords split it per text, so `\vskip\the\skip@` never leaves part of it as typeset text.
 
 ### One-of tokens
 
@@ -244,7 +244,7 @@ Typed text may carry a maximum token count (`LEN_MARK`, at most 20).
 | Source | Bound |
 | --- | --- |
 | `\the`/`\number` of a count | 11 (tex.web § 65) |
-| `\the` of a dimension | 14 (§ 103) |
+| `\the` of a dimension | 14 (tex.web § 103) |
 | a value in an interval | the digits of its larger end |
 | the rest after reading one token | one less, 0 is no text |
 | a join | the larger bound, a collapsed run sums them |
@@ -265,8 +265,8 @@ A loop pass that has strictly less left to read is not counted against `limits.w
 
 [`src/analysis/roles.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/roles.rs) types each argument of a command by what TeX read it as. The record numbers them by their place in the usage line, optional ones counted.
 A type stands for the texts an argument may hold, so a type is below another when every text it admits the other admits too.
-The order follows tex.web's scanners: `scan_int` (§ 440), `scan_dimen` (§ 448), `scan_glue` (§ 461), a register an assignment names (§ 1224), a box number (§ 1079), `get_r_token` (§ 1215).
-A register's name is text of its value's kind, because a scanner reads the register's value there (§ 413). A dimension is glue without stretch.
+The order follows tex.web's scanners: `scan_int` (tex.web § 440), `scan_dimen` (tex.web § 448), `scan_glue` (tex.web § 461), a register an assignment names (tex.web § 1224), a box number (tex.web § 1079), `get_r_token` (tex.web § 1215).
+A register's name is text of its value's kind, because a scanner reads the register's value there (tex.web § 413). A dimension is glue without stretch.
 
 {{types}}
 
@@ -332,15 +332,15 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 | State | How it arises |
 | --- | --- |
 | known text | `\immediate\openout` empties it, each `\write` appends a line. An `\immediate` `\write` token for one of several texts parts the path per text, so each writes it exactly. Other unknown parts are written as one character per class, which reads back as that class. |
-| deferred | a `\write`, `\openout` or `\closeout` without `\immediate` is a whatsit (`Whatsit`): its stream is read now, its text kept unexpanded (§ 1352). `\shipout`, a page without output routine (§ 1023) and the end of the run (§ 1054) run the whatsits in order, a text expanded in the environment then (§§ 1370, 1374), after the shipout hooks ran. A token for one of several texts writes each text, the files joined. |
+| deferred | a `\write`, `\openout` or `\closeout` without `\immediate` is a whatsit (`Whatsit`): its stream is read now, its text kept unexpanded (tex.web § 1352). `\shipout`, a page without output routine (tex.web § 1023) and the end of the run (tex.web § 1054) run the whatsits in order, a text expanded in the environment then (tex.web §§ 1370, 1374), after the shipout hooks ran. A token for one of several texts writes each text, the files joined. |
 | unknown text | a `\write` to a stream number not pinned adds a line of unknown text to every open file |
 | a set of texts | paths that wrote it differently: texts whose lines pair one by one join line by line (`join_written`), so each differing line keeps its values and the file is not kept once per combination of them. Texts that set different things stay apart, up to `limits.meaning_set`. A read parts the path per text. Past an `\input` of such a file every path has the same source progress (the file's length), so the paths join where they meet again. |
 
 - **Whatsits join** as a set of lists, one per alternative (`join_pending`). At shipout each list runs from the same files, and the files join. Past `limits.meaning_set` lists, one `Lost` whatsit: every open file may get any lines, and the opens and closes the lists held may happen.
 - **Join past the bound** (`either_text`): past `limits.meaning_set` texts, the nearest two join (`join_written`): two sharing the most lines (`nearness`). Texts of another shape stay apart. Lines align on what they set (command and first argument, a longest common subsequence). Equal lines stay. Paired lines keep their common start and end around one unknown character. Digits apart in as many places join digit by digit (a nonzero or any digit per place), so a page number keeps its length. Read back, such a digit is a digit (category 12), whatever its code's category. Lines that differ on both sides of a brace, with the same braces, keep them: each part between braces joins on its own (a label's page and value, `{2}{\z@}` against `{3}{\@ne}`, stay two braced parts). A stretch between of unequal length is one unknown line. An unknown line absorbs the one before it, so joins settle.
 - **The build's files** (`.aux`, `.toc`, `.bbl`, …) are the run's own, kept in an overlay. The build reruns until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`). A changed file sends the build round again only when the run read or looked for it. Every file a run wrote goes to the overlay, as TeX leaves it on disk, so the next run reads a part `.aux` the main `.aux` first names, not a missing file. The first run reads none of them, so the second run changing lines is expected. A file in which a later rerun changed an existing line again is widened: each text a later run writes joins into its nearest (`widen_text`, `nearness`), so the number of texts does not grow. A text an earlier run wrote too (the runs cycle, a page that flips) keeps its digits place by place. A new one (the runs grow, a counter written back) widens them to any digits, so the build settles a run sooner. Files an engine left on disk are read only with `load.build_files`.
-- **Reads** see the run's files first (§ 537), then the disk. A file neither written nor on disk is absent (§ 1275).
-- **`\openin` streams** hold the texts each may read and where in each it stands, an interval of lines. A join keeps both sides' texts and the hull of their places. Widened, a place that moved may be anywhere up to the text's end. `\ifeof` and `\read` part the path per place, each exact. Past `limits.value_set` places the stream is unknown. An unknown line stands for any number of lines, none too: `\read` of it gives unknown text and leaves the stream on it, after it, or one line further (closed past the end), and before unknown lines only `\ifeof` is undecided. A stream number in an interval parts the path per stream (§ 436).
+- **Reads** see the run's files first (tex.web § 537), then the disk. A file neither written nor on disk is absent (tex.web § 1275).
+- **`\openin` streams** hold the texts each may read and where in each it stands, an interval of lines. A join keeps both sides' texts and the hull of their places. Widened, a place that moved may be anywhere up to the text's end. `\ifeof` and `\read` part the path per place, each exact. Past `limits.value_set` places the stream is unknown. An unknown line stands for any number of lines, none too: `\read` of it gives unknown text and leaves the stream on it, after it, or one line further (closed past the end), and before unknown lines only `\ifeof` is undecided. A stream number in an interval parts the path per stream (tex.web § 435).
 
 ## Call summaries: what a call did twice
 
@@ -369,13 +369,13 @@ So a run spends at most `3 × limits.line_steps` per line, plus a constant. Ever
 Rules that keep cuts sound and convergent:
 
 - **Paths.** A path parked before a cut takes the same cut later. A `\csname` site that parted `limits.meaning_set` times on one line keeps the names as one family on one path.
-- **Loop entries.** A summary unwinds only to where its loop was entered. A head met after the entry's caller read on is a new entry (tex.web § 325), so a summary never closes its caller's groups.
+- **Loop entries.** A summary unwinds only to where its loop was entered. A head met after the entry's caller read on is a new entry, so a summary never closes its caller's groups.
 - **Page loops.** A head met again after an output routine fired, while an enclosing loop passed since, is a new entry of that loop's next pass. It is not counted, and its heads from earlier pages are dropped. Only the outermost loop joins and summarizes passes that ship pages, so the output routine's own tests are never summarized per page.
 - **What a pass wrote** is compared against the fork's binding, so a name set back (`\thepage` around `\protected@write`) is not widened. The body runs once more from the widened state before the cut, so names it opens arrive as a family.
 - **Loop exits in a scan** (`\edef`, `\expanded`): the cut continues on a path that already left the loop with the same text. Without one it reads one unknown token and skips to the scan's `}`. A `}` the scan's own text lacks comes from code below it (`\if_false: { \fi: }`, `\iow_wrap:nnnN`): the lists below are skipped to the first call whose text closes a group it never opened, its arguments unknown, and its text after that `}` runs. Never source. Scan cuts are per path.
 - **Endless loops** (`limits.cycle_after`) end a path only when another path covers it. Else it is summarized and goes on.
-- **Unwinding** drops token lists and closes the conditionals and groups their text opened (§§ 281-283), widening values a group restores. Levels left open become [stacks as intervals](#stacks-as-intervals).
-- **The output routine** is a unit: an open output group (§ 989), flushed with its conditionals when it ends (§ 1100).
+- **Unwinding** drops token lists and closes the conditionals and groups their text opened (tex.web §§ 281-283), widening values a group restores. Levels left open become [stacks as intervals](#stacks-as-intervals).
+- **The output routine** is a unit: an open output group (tex.web § 989), flushed with its conditionals when it ends (tex.web § 1100).
 
 ## The join, in general
 
@@ -434,7 +434,7 @@ Joining pending code into unknown text keeps what it may do (`may_run`): undefin
 - A scan library code opened that runs past the main file's end on a path that is kept says the analysis ended early (`analysis-ended-early`), not that the document lacks its end. A chapter's end, or a refuted path, hides no `missing-end`.
 - A cut keeps the lists holding the document's own text, and one in an output routine ends only the routine (tex.web § 1100).
 - A call dropped in text a cut left takes its arguments with it. A `\fi` there of a conditional open below may have been TeX's, so that level becomes `many`: closed or still open (`unbalanced-conditional`, an assumption).
-- A conditional's level ends with the file it began in. A skip of it that reaches that end past an approximation ends there too, with the levels its skipped text opened (`unbalanced-conditional`, an assumption). Without an approximation the skip reads on as TeX does (§ 336). Whether one came is counted per open conditional, by its level on the stack and its `\if…`, so a recursive call of the same code never vouches for the outer one. No count: unsure.
+- A conditional's level ends with the file it began in. A skip of it that reaches that end past an approximation ends there too, with the levels its skipped text opened (`unbalanced-conditional`, an assumption). Without an approximation the skip reads on as TeX does (tex.web § 336). Whether one came is counted per open conditional, by its level on the stack and its `\if…`, so a recursive call of the same code never vouches for the outer one. No count: unsure.
 
 ## Precision limits: where the domains stop being precise
 
