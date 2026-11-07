@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::support::installed;
-use satex::config::{Config, Load};
-use satex::lint::apply;
-use satex::machine::Machine;
-use satex::query::Record;
+use satex::analysis::machine::Machine;
+use satex::linter::apply;
+use satex::project::config::{Config, Load};
+use satex::queries::query::Record;
 
 struct Fixed {
     dir: PathBuf,
@@ -46,7 +46,7 @@ fn fix_files(name: &str, files: &[(&str, &str)], code: &str, unsafe_fixes: bool,
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     let analysis = Machine::analyze(&source, Some(&path), &cfg);
     let keep = select(code, all);
-    let records: Vec<Record> = satex::lint::lint(&analysis).into_iter().filter(|r| keep(r)).collect();
+    let records: Vec<Record> = satex::linter::lint(&analysis).into_iter().filter(|r| keep(r)).collect();
     assert!(!records.is_empty(), "{code} reports nothing");
     assert!(records.iter().any(|r| r.get("edits").is_some()), "{code} has no edits: {records:?}");
     let main = analysis.file_name(analysis.main_file).to_string();
@@ -62,7 +62,7 @@ fn fix(name: &str, source: &str, code: &str, unsafe_fixes: bool) -> Fixed {
 
 /// pdflatex accepts the fixed document, when it is installed.
 fn compiles(dir: &Path) {
-    if satex::paths::which("pdflatex").is_err() {
+    if satex::project::paths::which("pdflatex").is_err() {
         return;
     }
     let status = Command::new("pdflatex")
@@ -106,6 +106,9 @@ const BODY: &str = "\\begin{document}\nx\n\\end{document}\n";
 const PROSE: &str = "Running text that fills the line. ";
 
 fix_cases! {
+    /// A document every path reads to its end without TeX's `\end` gets the
+    /// ending of its kernel appended.
+    missing_end_document_is_appended("missing-end-document", "\\documentclass{article}\n\\begin{document}\nx\n", "missing-end", false, "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n");
     duplicate_package_drops_the_name_from_a_list("duplicate-list", format!(
         "\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage{{amsmath,graphicx,amssymb}}\n{BODY}"
     ), "duplicate-package", false, &format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage{{amsmath,amssymb}}\n{BODY}"));
@@ -133,7 +136,7 @@ fn reported(name: &str, source: &str, code: &str) -> usize {
     let path = dir.join("doc.tex");
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     let analysis = Machine::analyze(source, Some(&path), &cfg);
-    satex::lint::lint(&analysis).iter().filter(|r| r.get("code").and_then(|c| c.as_str()) == Some(code)).count()
+    satex::linter::lint(&analysis).iter().filter(|r| r.get("code").and_then(|c| c.as_str()) == Some(code)).count()
 }
 
 /// A package whose command the text of a macro the document runs calls is
@@ -199,7 +202,7 @@ fn option_clash_moves_the_options_to_the_first_load() {
     let keep = |r: &Record| {
         matches!(r["code"].as_str(), Some("option-clash" | "duplicate-package")) && r["origin"] == "document"
     };
-    let records: Vec<Record> = satex::lint::lint(&analysis).into_iter().filter(|r| keep(r)).collect();
+    let records: Vec<Record> = satex::linter::lint(&analysis).into_iter().filter(|r| keep(r)).collect();
     let outcome = apply::fixpoint(analysis.file_name(analysis.main_file), &cfg, records, &keep, true);
     apply::write(&outcome).unwrap();
     let fixed = Fixed { text: std::fs::read_to_string(&path).unwrap(), dir, remaining: outcome.remaining };
@@ -221,6 +224,9 @@ fix_cases! {
     dead_definition_before_a_def_is_a_safe_deletion("dead-definition", "\\documentclass{article}\n\\def\\x#1{[#1]}\n\\def\\x#1{(#1)}\n\\begin{document}\n\\x{a}\n\\end{document}\n", "dead-definition", false, "\\documentclass{article}\n\\def\\x#1{(#1)}\n\\begin{document}\n\\x{a}\n\\end{document}\n");
     unused_definition_deletes_the_whole_newcommand("unused-definition", "\\documentclass{article}\n\\newcommand*{\\unused}[2][d]{%\n  #1 and #2%\n}\n\\begin{document}\nx\n\\end{document}\n", "unused-definition", true, &format!("\\documentclass{{article}}\n{BODY}"));
     csname_becomes_the_etoolbox_command_for_its_role("csname", "\\documentclass{article}\n\\usepackage{etoolbox}\n\\expandafter\\def\\csname my@x\\endcsname{X}\n\\expandafter\\let\\csname my@y\\endcsname\\relax\n\\begin{document}\n\\csname my@x\\endcsname \\csname my@x\\endcsname\n\\end{document}\n", "primitive-tex-command", true, "\\documentclass{article}\n\\usepackage{etoolbox}\n\\csdef{my@x}{X}\n\\cslet{my@y}\\relax\n\\begin{document}\n\\csuse{my@x}\\csuse{my@x}%\n\\end{document}\n");
+    /// Prefixes the `\expandafter` chain reaches past stay in front of the
+    /// replacement: TeX expands after a prefix, so they apply as before.
+    csname_keeps_the_prefixes_of_its_definition("csname-prefixes", "\\documentclass{article}\n\\usepackage{etoolbox}\n\\expandafter\\protected\\expandafter\\def\\csname my@p\\endcsname{P}\n\\long\\expandafter\\def\\csname my@l\\endcsname#1{#1}\n\\begin{document}\n\\csuse{my@p}\\csuse{my@l}{x}\n\\end{document}\n", "primitive-tex-command", true, "\\documentclass{article}\n\\usepackage{etoolbox}\n\\protected\\csdef{my@p}{P}\n\\long\\csdef{my@l}#1{#1}\n\\begin{document}\n\\csuse{my@p}\\csuse{my@l}{x}\n\\end{document}\n");
     microtype_is_loaded_before_the_document("microtype", format!("\\documentclass{{article}}\n\\begin{{document}}\n{}\n\\end{{document}}\n", PROSE.repeat(150)), "microtype-available", true, &format!("\\documentclass{{article}}\n\\usepackage{{microtype}}\n\\begin{{document}}\n{}\n\\end{{document}}\n", PROSE.repeat(150)));
 }
 
@@ -236,7 +242,7 @@ fn ot1_accents_load_t1_and_latin_modern() {
         None,
         &Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() },
     );
-    if !satex::lint::lint(&analysis).iter().any(|r| r["code"] == "ot1-font-encoding") {
+    if !satex::linter::lint(&analysis).iter().any(|r| r["code"] == "ot1-font-encoding") {
         return;
     }
     let fixed = fix("ot1", source, "ot1-font-encoding", true);
@@ -278,7 +284,7 @@ fn edits_outside_the_project_are_never_offered() {
     let source = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\nx\n\\end{document}\n";
     let analysis = Machine::analyze(source, Some(&dir.join("doc.tex")), &cfg);
     let project = dir.canonicalize().unwrap();
-    for record in satex::lint::lint(&analysis) {
+    for record in satex::linter::lint(&analysis) {
         for edit in record.get("edits").and_then(|e| e.as_array()).into_iter().flatten() {
             let path = PathBuf::from(edit["path"].as_str().unwrap()).canonicalize().unwrap();
             assert!(path.starts_with(&project), "{record:?}");
@@ -297,7 +303,7 @@ fn lsp_positions_count_utf16_code_units() {
         "edits": [{ "path": path, "start": { "line": 1, "col": 3 }, "end": { "line": 1, "col": 12 }, "replacement": "" }],
     }))
     .unwrap();
-    let out: serde_json::Value = serde_json::from_str(&satex::render::lsp(&[record])).unwrap();
+    let out: serde_json::Value = serde_json::from_str(&satex::cli::render::lsp(&[record])).unwrap();
     let action = &out[0]["codeActions"][0];
     let edit = action["edit"]["changes"].as_object().unwrap().values().next().unwrap()[0].clone();
     // `é` is one UTF-16 unit, `𝄞` two.
@@ -308,13 +314,36 @@ fn lsp_positions_count_utf16_code_units() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `satex::lint::lint`'s findings of one `code`, against a fresh project
+/// Two safe fixes of one rule in a file also come as one action that applies
+/// both, for the rule and for the whole file.
+#[test]
+fn lsp_offers_one_action_for_all_fixes_of_a_rule() {
+    let dir = project("lsp-all", &[("doc.tex", "\\label{x}\n\\label{y}\n")]);
+    let path = dir.join("doc.tex").display().to_string();
+    let record = |line: u32| -> Record {
+        serde_json::from_value(serde_json::json!({
+            "code": "unused-label", "severity": "info", "message": "m", "fix": "delete", "path": path,
+            "file": "doc.tex", "line": line, "col": 1, "applicability": "safe",
+            "edits": [{ "path": path, "start": { "line": line, "col": 1 }, "end": { "line": line, "col": 10 }, "replacement": "" }],
+        }))
+        .unwrap()
+    };
+    let out: serde_json::Value = serde_json::from_str(&satex::cli::render::lsp(&[record(1), record(2)])).unwrap();
+    let actions = out[0]["codeActions"].as_array().unwrap();
+    let all = actions.iter().find(|a| a["data"]["scope"] == "rule").expect("a fix-all action");
+    let edits = all["edit"]["changes"].as_object().unwrap().values().next().unwrap().as_array().unwrap();
+    let file = actions.iter().filter(|a| a["data"]["scope"] == "all").count();
+    assert_eq!((actions.len(), edits.len(), file), (4, 2, 1));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `satex::linter::lint`'s findings of one `code`, against a fresh project
 /// holding `doc.tex`.  The caller removes the returned directory.
 fn lint_codes(name: &str, source: &str, code: &str) -> (Vec<Record>, PathBuf) {
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     let dir = project(name, &[("doc.tex", source)]);
     let analysis = Machine::analyze(source, Some(&dir.join("doc.tex")), &cfg);
-    let records = satex::lint::lint(&analysis).into_iter().filter(|r| r["code"] == code).collect();
+    let records = satex::linter::lint(&analysis).into_iter().filter(|r| r["code"] == code).collect();
     (records, dir)
 }
 
@@ -322,7 +351,7 @@ fix_cases! {
     stray_space_fires_and_is_fixed_by_appending_percent("stray-space", "\\documentclass{article}\n\\def\\x{a\n\\textbf{b}}\n\\begin{document}\n\\x\n\\end{document}\n", "stray-space", false, "\\documentclass{article}\n\\def\\x{a%\n\\textbf{b}}\n\\begin{document}\n\\x\n\\end{document}\n");
     /// A body whose `}` starts the next line gets that `}` moved up, and the
     /// blanks the line ends with go with the line end.
-    stray_space_before_a_closing_brace_moves_the_brace_up("stray-brace", "\\documentclass{article}\n\\def\\x{\\textbf{b}  \n  }\n\\begin{document}\n\\x\n\\end{document}\n", "stray-space", false, "\\documentclass{article}\n\\def\\x{\\textbf{b}}\n\\begin{document}\n\\x\n\\end{document}\n");
+    stray_space_before_a_closing_brace_moves_the_brace_up("stray-brace", "\\documentclass{article}\n\\def\\x{\\textbf{b}  \n  }\n\\begin{document}\n\\x z\n\\end{document}\n", "stray-space", false, "\\documentclass{article}\n\\def\\x{\\textbf{b}}\n\\begin{document}\n\\x z\n\\end{document}\n");
 }
 
 #[test]
@@ -341,7 +370,7 @@ fn stray_space_fires_when_a_line_end_is_missing_its_percent() {
     if !installed() {
         return;
     }
-    let source = "\\documentclass{article}\n\\newcommand{\\Weird}[3]{%\n  \\texttt{#1: #2}\n  \\typeout{#3}%\n}\n\\begin{document}\n\\Weird{key}{value}{magic}\n\\end{document}\n";
+    let source = "\\documentclass{article}\n\\newcommand{\\Weird}[3]{%\n  \\texttt{#1: #2}\n  \\typeout{#3}%\n}\n\\begin{document}\n\\Weird{key}{value}{magic} more\n\\end{document}\n";
     let (records, dir) = lint_codes("weird-bad", source, "stray-space");
     assert_eq!(records.len(), 1, "{records:?}");
     assert_eq!(records[0]["line"], 3);
@@ -361,6 +390,45 @@ fn stray_space_follows_the_mode_the_space_is_read_in() {
     let (records, dir) = lint_codes("stray-m", source, "stray-space");
     assert!(records.is_empty(), "{records:?}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A line end before `\end{center}` sets nothing: `\endtrivlist` takes the
+/// space away with `\unskip` (pdflatex's box is the same with a `%` there).
+/// The same line end before more text of the paragraph is a real space.
+#[test]
+fn stray_space_needs_material_after_it() {
+    if !installed() {
+        return;
+    }
+    let env = "\\newenvironment{nb}{%\n\\begin{center}\\fbox{x}}{%\n\\fbox{y}\n\\end{center}\n}\n";
+    let doc = |body: &str| format!("\\documentclass{{article}}\n{env}\\begin{{document}}\n{body}\n\\end{{document}}\n");
+    let (records, dir) = lint_codes("stray-center", &doc("Text \\begin{nb}\\end{nb} after."), "stray-space");
+    assert!(records.is_empty(), "{records:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+    let inline = env.replace("\\begin{center}", "").replace("\\end{center}\n", "");
+    let source = format!(
+        "\\documentclass{{article}}\n{inline}\\begin{{document}}\nText \\begin{{nb}}\\end{{nb}}after.\n\\end{{document}}\n"
+    );
+    let (records, dir) = lint_codes("stray-inline", &source, "stray-space");
+    let lines: Vec<_> = records.iter().map(|r| r["line"].as_u64().unwrap()).collect();
+    assert_eq!(lines, [4], "{records:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Primitives are plain TeX's own interface: a document run with plain
+/// TeX's format (`% !TeX program = tex`) gets no primitive-tex-command,
+/// a LaTeX document still does.
+#[test]
+fn primitive_tex_command_is_latex_advice() {
+    if !installed() {
+        return;
+    }
+    let plain = "% !TeX program = tex\n\\def\\x{a\\hskip 1pt b}\\x\n\\end\n";
+    crate::support::assert_lint(plain, "primitive-tex-command", 0);
+    let latex = "\\documentclass{article}\n\\begin{document}\na\\hskip 1pt b\n\\end{document}\n";
+    let found = satex::linter::lint(&crate::support::analyze_latex(latex));
+    let hskip = found.iter().filter(|r| r["code"] == "primitive-tex-command" && r["line"] == 3);
+    assert_eq!(hskip.count(), 1, "{found:?}");
 }
 
 #[test]
@@ -507,7 +575,7 @@ fn typography_fixes_introduce_nothing_new() {
         let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
         let analysis = Machine::analyze(&source, Some(&path), &cfg);
         let select = |record: &Record| record["origin"] == "document";
-        let records: Vec<Record> = satex::lint::lint(&analysis).into_iter().filter(|r| select(r)).collect();
+        let records: Vec<Record> = satex::linter::lint(&analysis).into_iter().filter(|r| select(r)).collect();
         let main = analysis.file_name(analysis.main_file).to_string();
         let outcome = apply::fixpoint(&main, &cfg, records, &select, true);
         assert!(
@@ -517,6 +585,48 @@ fn typography_fixes_introduce_nothing_new() {
         );
         let stuck: Vec<&Record> = outcome.remaining.iter().filter(|r| r.get("edits").is_some()).collect();
         assert!(stuck.is_empty(), "{name}: a fix left findings still offering an edit: {stuck:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// A kernel command a package redefines (amsmath's `\[`) is a use of it
+/// where the document writes it.
+#[test]
+fn a_redefined_kernel_command_in_use_keeps_its_package() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\[ x \\]\n\\end{document}\n";
+    assert_eq!(reported("unused-package-redefined", source, "unused-package"), 0);
+}
+
+/// A plain TeX document without `\bye` is told so and gets it appended; a
+/// chapter, no document of its own, is not.
+#[test]
+fn missing_bye_is_appended() {
+    if !installed() {
+        return;
+    }
+    let (records, dir) = lint_codes("missing-bye", "% !TeX program = tex\nHello.\n", "missing-end");
+    let replacement = records.first().and_then(|r| r["edits"][0]["replacement"].as_str().map(str::to_string));
+    assert_eq!(replacement.as_deref(), Some("\\bye\n"), "{records:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (records, dir) = lint_codes("missing-bye-chapter", "\\section{Two}\nText.\n", "missing-end");
+    assert!(records.is_empty(), "{records:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// ConTeXt's kernel is not read: how its documents end and which category
+/// codes they start with are not known, so neither is reported.
+#[test]
+fn a_context_document_is_not_held_to_latex_conventions() {
+    if !installed() {
+        return;
+    }
+    let source = "% !TeX program = context\n\\starttext\nHello\tthere.\n\\stoptext\n";
+    for code in ["missing-end", "catcode-escapes-group"] {
+        let (records, dir) = lint_codes(&format!("context-{code}"), source, code);
+        assert!(records.is_empty(), "{code}: {records:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

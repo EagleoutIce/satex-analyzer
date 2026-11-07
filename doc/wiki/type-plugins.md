@@ -1,0 +1,255 @@
+<!-- generated from doc/src/wiki/type-plugins.md.in by satex-doc; do not edit -->
+
+# Type plugins
+
+A type plugin adds editor features where text of a type stands. The type comes from the run, as the [type at the cursor](lsp.md#completion) finds it: what TeX read the text as, the kind of name a `\csname` formed from it, else the role of the argument. No plugin looks at a command's name or a text pattern. A new command that takes a color gets the color plugin without any setup.
+
+Each plugin has a block under `type_plugins:` in `satex.yaml`, grouped there by its category: `widget` (dialogs and lenses), `hover`, `completion`, `lint`, `incremental` (whether an edit needs a new run) and `build` (the build file a project is read with, its settings under `l3build:`). `enabled: false` takes all its features away. <div class="plugin-tiles" data-plugin-tiles></div>
+
+The tiles above group the plugins by category, each with its section below and, where an example of the playground shows it, a demo. They come from `satex query type-plugins --format json`, whose records add the category's `purpose` and `places`: how many lenses, swatches and inlay hints the plugin has for the document. The list below is what it prints, by category:
+
+```text
+$ satex query type-plugins -f samples/paper.tex
+category     name             types                                       
+widget       color            color name                                  
+widget       environment      environment name                            
+widget       table            environment the run met                     
+widget       image            graphic file                                
+widget       float            environment the run met                     
+widget       tikz             environment the run met                     
+widget       forest           environment the run met                     
+widget       savebox          environment name                            
+widget       history          control sequence                            
+widget       glossary         declared key                                
+widget       bibliography     citation key                                
+widget       index            index entry                                 
+widget       theorem          environment name                            
+widget       page             environment the run met                     
+hover        units            dimen, glue, dimen register, skip register  
+hover        overlay          overlay specification                       
+completion   keys             options, option key, pgf key, declared key  
+completion   language         code language                               
+completion   listing          environment the run met                     
+incremental  comment_edit                                                 
+incremental  whitespace_edit                                              
+incremental  typing                                                       
+build        frame            environment the run met                     
+build        l3build                                                      
+```
+
+## What each editor gets
+
+| Feature | LSP | Playground | VS Code | Other clients |
+| --- | --- | --- | --- | --- |
+| hover | `textDocument/hover` | hover card | hover | hover |
+| complete | `textDocument/completion` | completion | completion | completion |
+| actions | `textDocument/codeAction` at the cursor | the context menu's Refactor submenu | light bulb | code actions |
+| view | `satex/view` | a dialog, first in the context menu and as hover card buttons | a webview beside the editor (light bulb or `satex: Open Picker, Converter or Drawing Here`) | the actions and the hover instead |
+| lens | `textDocument/codeLens`, one handler over every plugin | a button above the line | a code lens | a code lens |
+| colors | `textDocument/documentColor`, `colorPresentation` | swatches, a click opens the picker | the native color picker | swatches where supported |
+| dialog (table, image, float) | `satex/dialog`, `satex/dialogApply` | a button above the line, a link in the hover | a code lens and a webview beside the editor (`satex: Edit Table or Image…`) | the code actions with their defaults |
+| manage | `satex/view` with `plugin`, no `position` | the `manage` command | `satex: Manage…` | the view at a name |
+
+## keys
+
+Key lists of pgfkeys, l3keys, kvoptions and xkeyval, and package options. Completion opens at `{`, `[`, `,` and `=` with nothing typed. A family (`/demo`) inserts `/demo/` and opens again on its keys (`family_continue`). Hover shows the key's handler kind, its initial or default value, where it was defined and the comment next to the definition. A key written twice in one list says which value wins: keyval runs the keys in order, so the later one.
+Its view ("Edit keys…") lists the same keys. A choice writes one at the cursor.
+
+## units
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/units-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/units-light.png" alt="Lengths: the units plugin in the playground" width="640"></picture>
+
+A length written in the source (`12pt`, `-2.5cm`) or a length register (`\textwidth`, its value when the run ended, a range when the run kept one). Hover shows it in each unit of `units`, in `em` and `ex` of the font of the text set just before when the run loaded that font, and in scaled points. The grid lists every unit but the literal's own. One action per unit rewrites the literal, and the open hover shows the new literal at once. TeX keeps a length in scaled points (sp), so the action says *exact* when TeX reads the new text as the same sp, else how many sp it is off. It writes the fewest decimals up to `decimals` that are exact, else rounds to `decimals`. The view is a converter: type a value in any unit, click a unit to write it.
+
+## color
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/color-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/color-light.png" alt="Colors: the color plugin in the playground" width="640"></picture>
+
+A color name or an xcolor expression (`red!40!blue`). Completion lists the colors defined at the position, newest first, each with its swatch. Hover shows the value in each model the document can write: `HTML`, `rgb`, `RGB`, `cmyk`, `gray` and `hsb` with xcolor, `rgb`, `cmyk` and `gray` with the color package. An expression is mixed as xcolor mixes, in rgb. On a `\definecolor` an action converts the spec to another model.
+
+The picker (`view`) has a saturation and brightness square, a hue strip, the spec in each model and the colors defined at the position. It writes what works at the position:
+
+- the first argument of an xcolor command (`\color`, `\textcolor`, `\colorbox`): `\color[HTML]{1F77B4}`
+- anywhere else (a TikZ key, a command without a model argument, or without xcolor): a `\definecolor{mycolor}{…}{…}` before `\begin{document}` and its name in place. Without any color package it adds `\usepackage{xcolor}` too.
+
+The server sends what it would write as snapshots: the command, the name in its place, a new `\definecolor`. The picker fills their arguments and the snapshot printer writes them.
+
+VS Code's own color picker goes through `textDocument/colorPresentation`, which writes the same.
+
+## language
+
+A code language (`Ty::Key(Language)`): a key's value listings forms its language driver `\lstlang@⟨language⟩$⟨dialect⟩` from (`language=`, `alsolanguage=`), or a lexer minted hands Pygments (`\begin{minted}{python}`, `\mintinline`, `\inputminted`, `\newminted`). After a key the run read a language for, completion offers the languages the run defined (`\lstdefinelanguage`) and those the language files in `\lstlanguagefiles` declare, each dialect as `[LaTeX]TeX`. In an argument it offers Pygments' lexers: `pygmentize -L lexers`, read once (the program is `pygmentize`, empty for none), else a seed list. The document's own languages come first. Each item's detail says where the language is defined, and so does hover. The rule `unknown-code-language` flags a listings value nothing defines: a warning where the run knew the language files, a note where it did not.
+
+## listing
+
+The body of an environment the run read verbatim, a listing. Outside its escapes only what the listing reads completes: the replacement sequences of its `literate=` key, each with what it becomes, offered on the sequence's first characters. Inside an escape TeX runs, so completion, hover and the rules work as anywhere in the document. The sequences and the escape delimiters (`escapeinside`, `escapechar`, `mathescape`) are the run's options in effect at the listing: those the listing's own options set, else those in effect when the run ended (`\lstset`).
+
+## environment
+
+On the name of a `\begin` or `\end` the run met. Its view, "Change environment…", lists the environments defined there that make the same kind of material, with their required arguments. The kind is the first kernel builder the environment's code reaches, the most specific first: an alignment preamble (`tabular`, `array`, `longtable`), a list (`itemize`), a trivlist (`center`), a float (`figure`, `table`). An environment that reaches none, as `document`, offers no change. Picking one changes this occurrence only, through the snapshot printer: both names, and the arguments, kept where both environments take them, added empty or dropped otherwise. Renaming an environment the project does not define is refused: it would change only its uses.
+
+## table
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/table-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/table-light.png" alt="Tables: the table plugin in the playground" width="640"></picture>
+
+A table is an environment whose code reaches `\@array`: `tabular`, `tabular*`, `tabularx`, `array` and the ones a document defines on them. A code lens above its `\begin` and a link in the hover open a grid dialog (`satex/dialog`). The dialog edits cells, adds, removes and moves rows and columns, sets each column's alignment (`l`, `c`, `r`, `p{…}`, siunitx `S`), the vertical rules and the rule before each row, and merges cells into a `\multicolumn`. `satex/dialogApply` writes it back. A row the dialog left as it was keeps its text, comments included. A new or edited row follows the table's style: indentation, spaces around `&`, padded columns, rules on the row's line.
+
+Two rewrites are code actions and buttons in the dialog:
+
+- booktabs: `\toprule` first, `\midrule` between, `\bottomrule` last, `\cmidrule(lr)` for `\cline`, no vertical rules
+- siunitx: a column whose cells below the header are all numbers becomes `S[table-format=I.D]`, its header cell braced.
+
+The table, image and placement dialogs write through the snapshot printer of the page dialog (below). The server reads the table as it is written, takes the dialog's text of it and writes only what differs: a changed cell, a column letter, a renamed environment (`tabular` to `tabularx` adds `{\linewidth}`). Every other byte stays. The answer's `text` is the table as written then.
+
+A command or environment the edit adds that the run does not define loads its package before `\begin{document}`, and says so. The package is the installation's provider of the name (`\toprule` loads booktabs). A column letter the run lacks is one its `\@testpach` does not test and no `\newcolumntype` made. Its package is the dialog's (the type menu's `siunitx` for `S`), else the provider of `\@testpach` (array, for `m`, `b`, `>{…}`). A package another added one loads is left out: tabularx loads array.
+
+## image
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/image-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/image-light.png" alt="Images: the image plugin in the playground" width="640"></picture>
+
+A figure is a file `\includegraphics` read. Its code lens and hover link open a dialog with the figure: a PNG or JPEG as it is, a PDF's first page as `pdftocairo` renders it where one is installed (the playground's server, VS Code), else its box. The engine's own size of the file (`natural`, in bp) scales the crop. The dialog crops with drag handles, rotates in 90° steps or by any angle, and sizes by `width`, `height`, `scale` and `keepaspectratio`. It writes graphicx options:
+
+- `trim=l b r t` in bp with `clip`, or `viewport=llx lly urx ury` where the figure had one
+- `angle` counterclockwise
+- graphicx reads the keys in order: `angle=90,width=3cm` makes the rotated figure 3cm wide, `width=3cm,angle=90` makes it 3cm high. The dialog's *size applies to* chooses the order.
+- `decodearray` for a tint, an inversion, or an array of its own. A PDF image maps each sample of a raster channel from [0, 1] to [Dmin, Dmax] (PDF reference [§§ 8](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L316), [9](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L333), [5](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L268), [2](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L131)). pdftex.def, luatex.def, xetex.def and dvipdfmx.def write it for PNG and JPEG files, and drop it for PDF and EPS figures, which are drawn, not sampled. The dialog offers it only where it applies: the run's driver defines `\Gin@decode`, and the file is a gray or RGB raster (a palette PNG would remap its indices). Grayscale cannot be written: each channel maps on its own. The preview applies the same map.
+
+*Crop to content* trims the margins of the rendered figure that look like its corners' background. Its padding may be negative, cutting into the content, as long as some is left. *Replace…* puts a new PNG, JPEG, PDF or EPS next to the figure (next to the document when the figure is the installation's) and writes its name. *Download* saves the figure's file.
+
+A key the dialog does not edit (`page`, `draft`) stays where it was, and so do a crop it cannot read and the units of an unchanged crop. A changed value is written in place. When the size moves before or after `angle`, the list is written again in its own separator. A client without dialogs gets two code actions: rotate by 90° and fit to `\linewidth`.
+
+## float
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/float-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/float-light.png" alt="Float placement: the float plugin in the playground" width="640"></picture>
+
+A float is an environment whose code reaches `\@float`: `figure`, `table` and those defined on them. On its `[placement]` the hover says what each letter lets LaTeX do, or what the class's default (`\fps@⟨env⟩`) does when none is written. Completion offers the letters not written yet, `H` too when the run loaded float.sty (`\@float@HH`). The dialog "Edit placement…" toggles each letter, keeps their order, and drops the brackets when none is left. `H` stands alone. An unknown letter is refused. The letters' meanings are a seed table: they are prose, not run data.
+
+## tikz
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/tikz-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/tikz-light.png" alt="TikZ drawings: the tikz plugin in the playground" width="640"></picture>
+
+A `tikzpicture` the run met: a lens "Edit drawing…" on its `\begin` line and the view anywhere inside. The canvas shows the nodes the run made, where pgf put each, with its shape and size (`\pgf@sh@ns@⟨node⟩` and its saved anchors). Plain paths between coordinates show too.
+
+- Tools: add a rectangle or circle node, move one by drag (snapped to the grid, a free length field, `0.5cm` or `1in`), connect two with `->`, `<->` or `--`, delete, edit a label.
+- It writes `\node[draw] (n1) at (x,y) {label};` and `\draw[->] (a) -- (b);`. Statements it did not change stay as they were.
+- Anything else stays code and shows read-only: a `\foreach`, a scope, a node placed relative to another. A node the run put elsewhere than its text says counts as code too. Nothing is dropped.
+- Mermaid: paste a flowchart (`graph TD`, `A[x] -->|y| B((z))`) to add its nodes, ranked by longest path, `spacing` cm apart. Export writes the picture's nodes and arrows as a flowchart.
+
+On a blank line of the document body, "Insert tikzpicture" writes a small picture and the view "New drawing" starts an empty one. Both add `\usepackage{tikz}` when the run has no tikz.
+
+The view sends the picture as a snapshot: its options as a key list, its body as text. Each document style comes with the snapshot of the `\tikzset` that defines it. Apply sets them, adds `\usetikzlibrary` and `\tikzset` calls before `\begin{document}` for new libraries and styles, and the printer writes them. Options over several lines are edited in place.
+
+## savebox
+
+On the name of a `\begin` in the document's body. "Store in a box" moves the environment to the preamble as a saved box and writes `\usebox` in its place: `\newsavebox` and `\sbox`, or `lrbox` when its `\begin` made characters of what TeX's initial catcodes make commands (`&` in TikZ, everything in a listing). A body the run read in vertical mode goes into a `minipage` of `\textwidth`. Identical copies get a second action that stores one box for all of them. The hover says which applies. Content that reads where it stands is refused, with the reason: a label, reference or citation the run met in it, or a command whose code reads a counter or a reference (`\thepage`, `\footnote`).
+
+## history
+
+On a control sequence the run defined. Its view, "Definition history…", lists every event that changed the name's meaning, newest first: `\def`, `\let`, `\renewcommand`, `\appto`, `\g@addto@macro`, a patch, whatever the run recorded. Each event shows its place, the file or package that made it, its body and what it changed against the event before it (the text an augment appended). The list follows the path that ends with the meaning in force. Definitions on other paths come after it, each with the conditions it stands under: the other arm of an undecided conditional, a package loaded on one path only. A `\let` copy links to the definition it copied, and a call of a copy in a later body says whose text it holds (`\let\old\cmd` then `\def\cmd{\old x}`). Each name the final body calls opens its own history. "Trace a call" steps through a call of the name in the playground's trace. `entries` caps the events listed. The hover links the view, and VS Code offers it as a code action.
+
+## pretty
+
+A definition's replacement text, as a hover shows it: one statement per line, groups and `\if…\else…\fi` indented, a long key list one key per line. A body that fits `width` and holds no conditional stays one line. What a statement spans comes from the meanings the run ended with: a macro's parameter text or LaTeX argument spec, a primitive's syntax. The playground's card has a button for the raw line. `enabled: false` shows the raw line everywhere, `lines` caps the lines a hover shows.
+
+## overlay
+
+On an overlay specification, text a command reads between `<` and `>` (`\only<2->{…}`, `\item<+->`). The frame is the innermost environment whose lines the run shipped pages at, one page per slide. Hover lists the slides on which the run set the material visibly: the braced group after the `>`, else the one before the `<` (`\only{…}<2>`), else the rest of the line. Text set off the page (`\uncover`'s covered text) does not count. Completion offers each step `k` and `k-` of the frame's slides.
+
+## frame
+
+On each frame of a document whose run defined `\includeonlyframes`: a lens "Compile only this frame", its view and a code action. They write `\includeonlyframes{label}` before `\begin{document}`, replacing an earlier one, and add `label=frame⟨n⟩` to the frame's options when it has no label. The view's `compile` field carries the setup as data for a client to compile with: `engine`, `label`, the frame's `lines` and the `edit`.
+
+## page
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/page-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/page-light.png" alt="Page layout: the page plugin in the playground" width="640"></picture>
+
+The page geometry the run computed: `\paperwidth`, `\textwidth`, `\oddsidemargin`, `\topmargin`, `\headheight`, `\headsep`, `\footskip`, `\marginparwidth` and the rest of LaTeX's page model, as the run ended. A length the run left open is an interval. The dialog draws its middle and says so. "Page layout…" is a lens on `\documentclass` and on geometry's calls, a link in the hover of geometry's keys, and a view on a sectioning command or a blank line.
+
+The dialog draws the page to scale, both pages when the class is two-sided: the text block, header, footer and margin notes, each margin labelled in the chosen unit.
+
+- Margins: paper, margins (inner and outer when two-sided), text size, header, footer and margin notes. Apply sets geometry's keys of each group that changed and drops the other keys of that group: `left=3cm, right=2cm, top=2cm, bottom=2cm`. A key already written keeps its place, its spacing and the comments around it. A paper is written by the name geometry defines for it (`\Gm@a4paper`). The paper list is geometry's, read from the run. Without geometry the standard names are offered and the run's size picks the one it is (21.59 x 27.94 cm is `letterpaper`). Every length field takes any TeX unit as typed (`2cm`, `1.5in`, `12pt`, `0.5\textwidth`) and shows it as written. The unit menu only sets the unit of a bare number and of the run's values. The keys go into the last `\geometry{…}` of the preamble, else into `\usepackage[…]{geometry}`, else a new `\usepackage` before `\begin{document}`.
+- typearea: when the run loaded it (the KOMA classes do), `DIV` and `BCOR` are the default and go into the class's options. The text keeps one stripe inside and two outside (one-sided: the rest split evenly), one above and two below. Exact margins through geometry are the other choice.
+- These pages only: from the cursor or a sectioning command up to a later one or the end, it writes `\newgeometry{…}` and `\restoregeometry`. Both start a new page. The places are in the source: their page numbers are known only by typesetting. Without geometry it adds `\usepackage[pass]{geometry}`, which keeps the layout elsewhere.
+- Class families, from the run: KOMA-Script when typearea is loaded, memoir when the run defines `\checkandfixthelayout`, else a basic class. memoir's layout is read from the run and written with geometry, which memoir accepts. Outside KOMA-Script the dialog suggests geometry: a note says that Apply loads it.
+- Header and footer: the fields of the package the run loaded. fancyhdr: left, center and right, odd and even pages when two-sided, and `\headrulewidth` and `\footrulewidth`. It writes `\fancyhf{}` and one `\fancyhead[LE,RO]{…}` per text. scrlayer-scrpage: `\ihead`, `\chead`, `\ohead`, `\ifoot`, `\cfoot`, `\ofoot`, the optional `plain` text kept. The new block replaces the calls it read. Without either, "Load fancyhdr" adds it with `\pagestyle{fancy}`.
+
+The dialog edits snapshots and never writes LaTeX itself. The server reads each call it shows into a snapshot: its name, its arguments, its key lists with keys and values, its text and range. The dialog changes values and adds or drops calls. Apply sends the snapshots back (`satex/dialogApply`, kind `snapshot`). One printer writes them as minimal edits. An untouched call stays as it is. A key list keeps its order and separator style, a removed key goes with its comma, and an added key follows the list's style. An empty value is written `{}`. A new call is written in one canonical form. A command the run does not define loads its package. A snapshot of text that changed since is refused.
+
+## Managers
+
+The next four are managers. Each opens on a name of its type, focused on that name, or without a position from a sidebar (`satex/view` with `plugin` and no `position`). A manager is one searchable, sortable list. A record opens to its fields, a table and its actions. A field edit writes the source back, so the run sees it at once.
+
+### glossary
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/glossary-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/glossary-light.png" alt="Glossary, index, bibliography: the glossary plugin in the playground" width="640"></picture>
+
+Every key a document call declared (`\newglossaryentry`, `\newacronym`, acro's `\DeclareAcronym`), taken from the run, not a list of commands. The fields are the key list's keys, else each argument named by the field the run stored its text in (`\glo@cfg@short`). The table holds the uses and every value the run stored, the plural and first forms too. Unused entries are marked. Delete is refused while an entry is used. "Replace uses and delete" moves the uses to another key first. A new entry is written like the first one of the same command in the document: its arguments, its key list in the printer's one form (`name=DAG, description=…`).
+
+### bibliography
+
+The entries of the databases the run read. Search by key, author, title, year or type, sort by each. Fields are edited in the `.bib` file. The manager opens from a lens and the hover of `\cite`, `\bibliography`, `\printbibliography` and `\addbibresource`. An entry is deleted only while nothing cites it. A new entry gets the fields the document's style reads of its type: a `.bst` function's fields, or biblatex's data model.
+
+### index
+
+Every term an index line carried (`\index{graph!directed}`), by its top level, sorted as makeindex sorts it, with the subentries and where each stands. Renaming a term rewrites it in every call. The manager opens from a lens and the hover of `\index`, `\makeindex` and `\printindex`.
+
+### theorem
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/theorem-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/theorem-light.png" alt="Theorems: the theorem plugin in the playground" width="640"></picture>
+
+Every environment a document call defined together with its number (`\the⟨env⟩`), with any package: the counter it owns, shares or is numbered within, and the commands its code has that the others lack (its style). Each instance shows its labels and the lines referencing them. Renaming rewrites the definition, both ends of each instance and the kinds that share its counter. Numbering writes the group the document's own calls of the same command use for a shared counter or a parent counter. A new kind copies the document's first call of its command. These forms send snapshots the view fills, and the snapshot printer writes them.
+
+## forest
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/forest-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/forest-light.png" alt="Trees: the forest plugin in the playground" width="640"></picture>
+
+A `forest` environment the run met: a lens "Edit tree…" on its `\begin` line and the view anywhere inside. The dialog reads the bracket notation `[content, options [child] …]` and draws the tree. Where the run computed forest's packing for every node (`fRsT⟨id⟩/x` and `/y`), it draws the nodes there. A node's `name` shows on hover.
+
+- Select a node to edit its content and its options. Add a child or a sibling, delete a node with its subtree, move it left or right.
+- Drag a node onto another: onto its middle it becomes the last child, onto its left or right third a sibling before or after it.
+- `for tree={…}` in the preamble edits as one field. The rest of the preamble and the code after the tree stay as they were.
+- Indented outline: paste lines indented by depth (`-`, `*`, `+` or `1.` markers dropped) to add them under the selected node or to replace the tree. Export writes the tree as such an outline.
+- It writes only what changed. An untouched node keeps its text, spacing and comments. A new or moved node takes the spacing of the sibling before it. Content with a comma or a bracket goes in braces.
+
+On a blank line of the document body, "Insert forest tree" writes a small tree and the view "New tree" starts one. Both add `\usepackage{forest}` when the run has no forest. The view sends the environment as a snapshot with its new body, and the printer writes it.
+
+## Incremental plugins
+
+An incremental plugin decides for one edit whether the last run still holds. It compares the text the run read with the new one, finds the one stretch they differ in, and asks the run's facts about it, never the text alone. Each mouth read of a line records where its comment began and which spaces it skipped (`Facts::lines`), merged over every read on every path. A plugin that says yes keeps the run: the rules run again, the diagnostics and their fixes, the outline, the lenses, inlays and colors are moved by the edit's offsets and published for the new version. Anything no plugin takes is analyzed again. `satex/caches` counts each reuse (`reused comment_edit 3`), the status bar shows it, and the server's log names it.
+
+- `comment_edit`: every read of the line had its comment begin before the edit, and the edit adds or removes no line end. TeX drops a comment's characters unread ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7326)), so no read sees them. A `%` of category 12 (verbatim, `\catcode`) is no comment there and is not taken. A `%\satex@` directive and a magic comment (`% !TeX`) change a run, so an edit that makes, changes or removes one is not taken either. The rules read the new text, so a `satex-disable` comment or a comment marker counts at once.
+- `whitespace_edit`: copies of a space put into a run of it where every read skipped one in state N or S. The copies are read at the same moment under the same categories, so they are skipped too, and the line gets no new line end, so no `\par`. Or white space where no read got to: the line before it was never read to its end, and the run stopped at no limit. A user pattern (`lints.user-pattern`) may match spaces, so with one set only the second case is taken. A new line in the middle of the text is never taken: it moves every line after it.
+- `typing`: letters typed into a control word the run met undefined on every path, while the new name has no meaning or definition in the run. Its results stand, marked provisional, until typing pauses for `pause_ms`, then the run follows. This one is not claimed sound, only likely. The playground asks for its runs itself, so there it runs at once.
+
+Writing a plugin: [Writing a type plugin](writing-type-plugins.md).
+
+## Where each plugin works
+
+A plugin works *fully* in an integration that renders all its features, *partially* when some are missing or degraded, and *none* when it renders none. TeXstudio reads the log only, so it shows findings and no plugin. In IntelliJ (through LSP4IJ) the plugin has no webview, and a code lens shows but its button does nothing, because `satex.openView` is a client command. A client without dialogs gets the code actions and hovers instead. Neovim and other clients vary: lenses, colors and inlay hints need client support. A `-` marks a plugin with no editor feature (`reuse`, `build`).
+
+| Plugin | Features | Playground | satex gui | VS Code | IntelliJ | Neovim / LSP |
+|---|---|---|---|---|---|---|
+| `keys` | hover, complete, view | full | full | full | partial | partial |
+| `units` | hover, complete, view | full | full | full | partial | partial |
+| `color` | hover, complete, view, colors | full | full | full | partial | partial |
+| `language` | hover, complete | full | full | full | full | full |
+| `listing` | complete | full | full | full | full | full |
+| `environment` | view | full | full | full | partial | partial |
+| `table` | lens, actions, dialog | full | full | full | partial | partial |
+| `image` | lens, actions, dialog | full | full | full | partial | partial |
+| `float` | lens, hover, complete, dialog | full | full | full | partial | partial |
+| `tikz` | lens, actions, view | full | full | full | partial | partial |
+| `forest` | lens, actions, view | full | full | full | partial | partial |
+| `savebox` | hover, actions | full | full | full | full | full |
+| `history` | actions, view | full | full | full | partial | partial |
+| `glossary` | view, manage | full | full | full | partial | partial |
+| `bibliography` | view, manage, lens, hover | full | full | full | partial | partial |
+| `index` | view, manage, lens, hover | full | full | full | partial | partial |
+| `theorem` | view, manage | full | full | full | partial | partial |
+| `overlay` | hover, complete | full | full | full | full | full |
+| `frame` | actions, view, lens | full | full | full | partial | partial |
+| `page` | lens, hover, view | full | full | full | partial | partial |
+| `comment_edit` | reuse | - | - | - | - | - |
+| `whitespace_edit` | reuse | - | - | - | - | - |
+| `typing` | reuse | - | - | - | - | - |
+| `l3build` | build | - | - | - | - | - |

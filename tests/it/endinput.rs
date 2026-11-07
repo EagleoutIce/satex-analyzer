@@ -8,10 +8,10 @@
 //! engine wrote.
 
 use crate::support::{PRELUDE, analyze_plain as analyze, diagnosed};
-use crate::support::{defined, installed, last_body as body, last_definition as definition};
-use satex::config::{Cache, Config, Engine, Load, Texmf};
-use satex::machine::{Analysis, Machine};
-use satex::plugin::Kernel;
+use crate::support::{installed, last_body as body, last_definition as definition};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::plugins::Kernel;
+use satex::project::config::{Cache, Config, Engine, Load, Texmf};
 
 /// A document on disk, so that `\input` reads real files.
 fn analyze_files(source: &str, main: &std::path::Path) -> Analysis {
@@ -22,7 +22,7 @@ fn analyze_files(source: &str, main: &std::path::Path) -> Analysis {
 
 /// Which of `names` are defined, as one string, so a failure names them all.
 fn state(analysis: &Analysis, names: &[&str]) -> String {
-    names.iter().map(|n| format!("{n}={}", u8::from(defined(analysis, n)))).collect::<Vec<_>>().join(" ")
+    names.iter().map(|n| format!("{n}={}", crate::support::presence(analysis, n))).collect::<Vec<_>>().join(" ")
 }
 
 /// A scratch directory of its own per test.
@@ -38,7 +38,7 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 /// not latex.ltx again (as `tests/it/package_cache.rs` does).
 fn latex(dir: &std::path::Path) -> Config {
     let cfg = Config {
-        cache: Cache { dir: Some(dir.join("cache")), ..Default::default() },
+        cache: Cache { dir: Some(dir.join("cache")), document: false, ..Default::default() },
         load: Load { classes: true, ..Default::default() },
         ..crate::support::config()
     };
@@ -99,6 +99,34 @@ fn a_file_ending_inside_skipped_text_inserts_fi() {
     let analysis = analyze_files(&source, &dir.join("main.tex"));
     assert_eq!(state(&analysis, &["a", "mend", "b", "skipped", "after"]), "a=0 mend=1 b=0 skipped=0 after=1");
     assert!(diagnosed(&analysis, "unterminated-conditional").is_empty());
+}
+
+/// A library conditional whose `\fi` a cut dropped (the call scanning
+/// for its delimiter ran into a `}` the cut left) may be closed or open,
+/// so a later `\else` may pair with it and skip, or not (`\b` maybe).
+/// Past that cut the levels the skipped text opens may be none: the skip
+/// ends with the file the conditional began in, never reading on.
+#[test]
+fn a_skip_past_a_cut_ends_with_the_file_its_conditional_began_in() {
+    if !installed() {
+        return;
+    }
+    let dir = scratch("cut-skip");
+    std::fs::write(
+        dir.join("lib.tex"),
+        "\\def\\empty{}\\def\\start#1{#1\\start\\empty}\\def\\stop#1\\stoppoint{}\n\
+         \\def\\lib{\\ifnum\\count1=0 \\start abcdef{\\stop x\\fi}\\stoppoint}\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("chapter.tex"), "\\lib \\def\\a{1}\\else \\iftrue \\def\\b{1}\n").unwrap();
+    let source = format!("{PRELUDE}\\input lib \\input chapter \\def\\after{{1}}\n\\fi\\def\\last{{1}}\n");
+    let analysis = analyze_files(&source, &dir.join("main.tex"));
+    let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&"argument-ends-in-unknown"), "the cut drops the call: {codes:?}");
+    assert_eq!(state(&analysis, &["a", "b", "after", "last"]), "a=1 b=? after=1 last=1");
+    let ended =
+        analysis.facts.diagnostics.iter().any(|d| d.code == "unbalanced-conditional" && d.message.contains("lib.tex"));
+    assert!(ended, "the assumption is reported: {codes:?}");
 }
 
 #[test]
@@ -263,7 +291,7 @@ fn endinput_under_an_undecided_condition_reads_on() {
     // certain.
     let source = "\\ifnum\\pdfuniformdeviate2=0 \\endinput\\fi\\def\\after{a}\n\\def\\two{2}\n";
     let analysis = analyze(source);
-    assert_eq!(state(&analysis, &["after", "two"]), "after=1 two=1");
+    assert_eq!(state(&analysis, &["after", "two"]), "after=1 two=?");
     let two = definition(&analysis, "two").expect("read on the path that did not end");
     assert!(!two.certain, "a line only one path reads is not certain");
 }
@@ -276,7 +304,7 @@ fn endinput_past_the_choice_limit_is_reported() {
     let cfg = Config {
         load: Load { packages: false, classes: false, inputs: false, format: false, ..Default::default() },
         texmf: Texmf { kpsewhich: false, ..Default::default() },
-        limits: satex::config::Limits { choices: 0, ..crate::support::config().limits },
+        limits: satex::project::config::Limits { choices: 0, ..crate::support::config().limits },
         ..crate::support::config()
     };
     let source = "\\ifnum\\pdfuniformdeviate2=0 \\endinput\\fi\\def\\after{a}\n\\def\\two{2}\n";
@@ -343,13 +371,13 @@ fn a_dtx_stops_at_an_endinput_line_and_keeps_one_mid_line() {
     // `\endinput` with code after it is ordinary source: it stays in the
     // view and the interpreter applies tex.web § 362 to it.
     let alone = "%    \\begin{macrocode}\n\\def\\a{1}\n\\endinput\n\\def\\b{2}\n%    \\end{macrocode}\n";
-    let view = satex::literate::code_view(alone, &satex::literate::Guards::AllButDriver);
+    let view = satex::project::literate::code_view(alone, &satex::project::literate::Guards::AllButDriver);
     assert!(view.contains("\\def\\a{1}"), "{view:?}");
     assert!(!view.contains("\\endinput"), "the line is not copied: {view:?}");
     assert!(!view.contains("\\def\\b{2}"), "nothing after it is copied: {view:?}");
 
     let inline = "%    \\begin{macrocode}\n\\def\\a{1}\\endinput\\def\\b{2}\n\\def\\c{3}\n%    \\end{macrocode}\n";
-    let view = satex::literate::code_view(inline, &satex::literate::Guards::AllButDriver);
+    let view = satex::project::literate::code_view(inline, &satex::project::literate::Guards::AllButDriver);
     assert!(view.contains("\\def\\a{1}\\endinput\\def\\b{2}"), "{view:?}");
     assert!(view.contains("\\def\\c{3}"), "the view keeps it, the interpreter ends the file: {view:?}");
 }

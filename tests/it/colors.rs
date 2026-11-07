@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use crate::support::installed;
-use satex::machine::Machine;
+use satex::analysis::machine::Machine;
 
 fn scratch(name: &str) -> PathBuf {
     let directory = crate::support::tmp_root().join("satex-colors").join(format!("{name}-{}", std::process::id()));
@@ -22,7 +22,7 @@ fn findings(name: &str, code: &str, preamble: &str, body: &str) -> Vec<String> {
     std::fs::write(&main, &document).unwrap();
     let cfg = crate::support::config();
     let analysis = Machine::analyze(&document, Some(&main), &cfg);
-    let out = satex::lint::lint(&analysis)
+    let out = satex::linter::lint(&analysis)
         .into_iter()
         .filter(|record| record["code"] == code)
         .map(|record| record["name"].as_str().unwrap_or_default().to_string())
@@ -53,6 +53,17 @@ fn a_colour_defined_and_used_raises_nothing() {
         "\\usepackage{xcolor}\n\\definecolor{myred}{RGB}{255,0,0}",
         "\\textcolor{myred}{x}",
     );
+    assert!(f.is_empty(), "{f:?}");
+}
+
+/// xcolor looks a mix (`green!50!blue`) up as a name before it parses it as an expression: that
+/// lookup is no use of an undefined color.
+#[test]
+fn a_colour_mix_is_no_undefined_colour() {
+    if !installed() {
+        return;
+    }
+    let f = findings("mix", "undefined-color", "\\usepackage{xcolor}", "\\textcolor{green!50!blue}{x}");
     assert!(f.is_empty(), "{f:?}");
 }
 
@@ -129,5 +140,72 @@ fn a_balanced_pdfcolorstack_raises_nothing() {
     }
     let f =
         findings("balanced", "unbalanced-color-stack", "", "\\pdfcolorstack 3 push {1 0 0 rg}\\pdfcolorstack 3 pop");
+    assert!(f.is_empty(), "{f:?}");
+}
+
+/// beamer's color themes look their colors up (`fg`, `itemize/enumerate body.fg`) without any of
+/// them being an error: no undefined color.
+#[test]
+fn beamers_color_lookups_are_no_undefined_colours() {
+    if !installed() {
+        return;
+    }
+    let directory = scratch("beamer");
+    let document = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{T}\n\\begin{itemize}\n\\item<1-> A\n\\end{itemize}\n\\end{frame}\n\\end{document}\n";
+    let main = directory.join("main.tex");
+    std::fs::write(&main, document).unwrap();
+    let analysis = Machine::analyze(document, Some(&main), &crate::support::config());
+    let found: Vec<String> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|record| record["code"] == "undefined-color")
+        .map(|record| record["name"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert!(found.is_empty(), "{found:?}");
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+/// A color named after a role and given an existing color's name is an alias on purpose, also
+/// through a package's wrapper whose internal name the document never wrote.
+#[test]
+fn a_colour_aliased_to_an_existing_name_is_no_duplicate() {
+    if !installed() {
+        return;
+    }
+    let f = findings(
+        "alias",
+        "duplicate-color-value",
+        "\\usepackage{xcolor}\n\\makeatletter\\newcommand*\\rolelet[2]{\\colorlet{my@role@#1}{#2}}\\makeatother\n\\colorlet{warning}{orange}\n\\rolelet{comments}{orange}",
+        "\\textcolor{warning}{x}",
+    );
+    assert!(f.is_empty(), "{f:?}");
+}
+
+/// A color whose components spell an existing color is a duplicate, named as the call wrote it.
+#[test]
+fn a_colour_with_the_components_of_another_is_a_duplicate() {
+    if !installed() {
+        return;
+    }
+    let f = findings(
+        "duplicate",
+        "duplicate-color-value",
+        "\\usepackage{xcolor}\n\\makeatletter\\newcommand*\\roledef[2]{\\definecolor{my@role@#1}{rgb}{#2}}\\makeatother\n\\definecolor{myred}{rgb}{1,0,0}\n\\roledef{alert}{1,0,0}",
+        "\\textcolor{myred}{x}",
+    );
+    assert_eq!(f, ["myred", "alert"]);
+}
+
+/// Recoloring a package's color (xcolor's `red`) is what the document means to do: no conflict.
+#[test]
+fn recolouring_a_package_colour_is_no_conflict() {
+    if !installed() {
+        return;
+    }
+    let f = findings(
+        "recolor",
+        "conflicting-color-definition",
+        "\\usepackage{xcolor}\n\\definecolor{red}{rgb}{0.8,0,0}",
+        "\\textcolor{red}{x}",
+    );
     assert!(f.is_empty(), "{f:?}");
 }

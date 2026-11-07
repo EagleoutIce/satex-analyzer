@@ -1,0 +1,954 @@
+# Every primitive name of src/engine/builtins.rs (initial_meanings, all engines) and its rule in
+# semantics/lean/Satex/Concrete.lean. kind: exact | over (over-approximates, see the rule) | open (no rule yet).
+# A name of a control symbol is written as it is, with "\ " for the control space.
+name	rule	source	kind
+\ 	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+-	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+/	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+TeXXeTstate	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+Uchar	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+Ucharcat	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+Udelcode	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
+Udelcodenum	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
+Udelimiter	Exec.operands	tex.web §§ 1151–1186	over
+Udelimiterover	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Udelimiterunder	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Uhextensible	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Uleft	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Umathaccent	Exec.operands	tex.web §§ 1151–1186	over
+Umathaxis	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbinbinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbinclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbininnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbinopenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbinopspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbinordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbinpunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathbinrelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathchar	Exec.operands	tex.web §§ 1151–1186	over
+Umathcharclass	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+Umathchardef	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Umathcharfam	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+Umathcharnum	Exec.operands	tex.web §§ 1151–1186	over
+Umathcharnumdef	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Umathcharslot	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+Umathclosebinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathcloseclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathcloseinnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathcloseopenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathcloseopspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathcloseordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathclosepunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathcloserelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathcode	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
+Umathcodenum	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
+Umathconnectoroverlapmin	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathfractiondelsize	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathfractiondenomdown	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathfractiondenomvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathfractionnumup	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathfractionnumvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathfractionrule	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinnerbinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinnerclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinnerinnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinneropenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinneropspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinnerordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinnerpunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathinnerrelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathlimitabovebgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathlimitabovekern	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathlimitabovevgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathlimitbelowbgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathlimitbelowkern	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathlimitbelowvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathnolimitsubfactor	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathnolimitsupfactor	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopbinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopenbinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopenclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopeninnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopenopenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopenopspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopenordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopenpunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopenrelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoperatorsize	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopinnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopopenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopopspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathopordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoppunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoprelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordbinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordinnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordopenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordopspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordpunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathordrelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoverbarkern	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoverbarrule	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoverbarvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoverdelimiterbgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathoverdelimitervgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctbinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctinnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctopenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctopspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctpunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathpunctrelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathquad	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathradicaldegreeafter	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathradicaldegreebefore	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathradicaldegreeraise	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathradicalkern	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathradicalrule	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathradicalvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelbinspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelclosespacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelinnerspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelopenspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelopspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelordspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelpunctspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathrelrelspacing	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathskewedfractionhgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathskewedfractionvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathspaceafterscript	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathstackdenomdown	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathstacknumup	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathstackvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsubshiftdown	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsubshiftdrop	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsubsupshiftdown	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsubsupvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsubtopmax	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsupbottommin	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsupshiftdrop	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsupshiftup	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathsupsubbottommax	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathunderbarkern	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathunderbarrule	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathunderbarvgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathunderdelimiterbgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umathunderdelimitervgap	Exec.mathParam,Internal.mathParam	LuaTeX manual, "Math parameter settings"	exact
+Umiddle	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Unosubscript	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Unosuperscript	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Uoverdelimiter	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Uradical	Exec.operands	tex.web §§ 1151–1186	over
+Uright	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Uroot	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Uskewed	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Uskewedwithdelims	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Ustack	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Ustartdisplaymath	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Ustartmath	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Ustopdisplaymath	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Ustopmath	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Usubscript	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Usuperscript	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+Uunderdelimiter	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+Uvextensible	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+XeTeXOTcountfeatures	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXOTcountlanguages	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXOTcountscripts	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXOTfeaturetag	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXOTlanguagetag	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXOTscripttag	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXcharclass	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
+XeTeXcharglyph	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXcountfeatures	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXcountglyphs	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXcountselectors	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXcountvariations	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXdashbreakstate	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+XeTeXdefaultencoding	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+XeTeXdelcode	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
+XeTeXdelcodenum	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
+XeTeXdelimiter	Exec.operands	tex.web §§ 1151–1186	over
+XeTeXfeaturecode	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXfeaturename	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+XeTeXfindfeaturebyname	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXfindselectorbyname	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXfindvariationbyname	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXfirstfontchar	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXfonttype	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXgenerateactualtext	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+XeTeXglyph	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+XeTeXglyphbounds	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXglyphindex	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXglyphname	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+XeTeXhyphenatablelength	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+XeTeXinputencoding	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+XeTeXinputnormalization	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+XeTeXinterchartokenstate	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+XeTeXinterchartoks	Exec.interchartoks	XeTeX manual, "\XeTeXinterchartoks"	over
+XeTeXinterwordspaceshaping	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+XeTeXisdefaultselector	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXisexclusivefeature	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXlastfontchar	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXlinebreaklocale	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+XeTeXlinebreakpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+XeTeXlinebreakskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+XeTeXmathaccent	Exec.operands	tex.web §§ 1151–1186	over
+XeTeXmathchar	Exec.operands	tex.web §§ 1151–1186	over
+XeTeXmathchardef	Exec.lua,Test.ifx	XeTeX/LuaTeX manuals: any assignment, any text read next. `\ifx` compares it by `Engine.primId`	over
+XeTeXmathcharnum	Exec.operands	tex.web §§ 1151–1186	over
+XeTeXmathcharnumdef	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+XeTeXmathcode	Exec.specialTable,Internal.specialTable,Test.ifx	XeTeX/LuaTeX manuals. `\ifx` compares it by `Engine.primId`	exact
+XeTeXmathcodenum	Exec.specialTable,Internal.specialTable	XeTeX/LuaTeX manuals	exact
+XeTeXpdffile	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+XeTeXpdfpagecount	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+XeTeXpicfile	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+XeTeXprotrudechars	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+XeTeXradical	Exec.operands	tex.web §§ 1151–1186	over
+XeTeXrevision	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+XeTeXselectorcode	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXselectorname	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+XeTeXtracingfonts	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+XeTeXupwardsmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+XeTeXuseglyphmetrics	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+XeTeXvariation	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXvariationdefault	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXvariationmax	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXvariationmin	Internal.unknowable,Exec.illegal	XeTeX manual	over
+XeTeXvariationname	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+XeTeXversion	Internal.constant,Exec.illegal	XeTeX manual	exact
+above	Exec.operands	tex.web §§ 1151–1186	over
+abovedisplayshortskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+abovedisplayskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+abovewithdelims	Exec.operands	tex.web §§ 1151–1186	over
+accent	Exec.material,Exec.hmaterialInV	tex.web §§ 1122–1125	over
+adjdemerits	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+adjustspacing	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+advance	Exec.advance	tex.web §§ 1236–1240 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23078; SaTeX `arithmetic` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+afterassignment	Exec.afterassignment	tex.web § 1269 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23473; SaTeX `drop_prefixes` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+aftergroup	Exec.aftergroup	tex.web § 1271 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23490; SaTeX `pop_group` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/env.rs	exact
+alignmark	Exec.illegal	LuaTeX manual, "Macros"; tex.web § 1045	exact
+aligntab	Exec.alignTab	LuaTeX manual, "Macros"; tex.web § 1128	exact
+atop	Exec.operands	tex.web §§ 1151–1186	over
+atopwithdelims	Exec.operands	tex.web §§ 1151–1186	over
+attribute	Exec.specialTable,Internal.specialTable	LuaTeX manual	exact
+attributedef	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+automaticdiscretionary	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121; LuaTeX manual	over
+automatichyphenmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+automatichyphenpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+badness	Internal.unknowable,Exec.illegal	tex.web §§ 416–424	over
+baselineskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+batchmode	Exec.interaction	tex.web § 1265	exact
+beginL	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+beginR	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+begincsname	Expand.begincsname	LuaTeX manual, "Macros"	exact
+begingroup	Exec.begingroup	tex.web § 1063	exact
+belowdisplayshortskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+belowdisplayskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+binoppenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+bodydir	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+bodydirection	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+botmark	Expand.marks	tex.web § 386	over
+botmarks	Expand.marksClass	etex_man § 3.12	over
+boundary	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+box	Exec.box,BeginBox.box	tex.web § 1079	exact
+boxdir	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+boxdirection	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+boxmaxdepth	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+breakafterdirmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+brokenpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+catcode	Exec.code,Internal.code	tex.web § 1232	exact
+catcodetable	Exec.lua	LuaTeX manual, "Lua related primitives", "Catcode tables"	over
+char	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+chardef	Exec.shorthandDef	tex.web § 1224	exact
+cleaders	Exec.leaders,ScanBox.rule,BoxEnd.leaders	tex.web § 1078	over
+clearmarks	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+closein	Exec.closein	tex.web § 1275	exact
+closeout	Exec.write,Exec.immediate,WriteCmd.openNow,WriteCmd.closeNow	tex.web §§ 1351–1374	over
+clubpenalties	Exec.penalties,Internal.penalties	etex_man § 3.13	exact
+clubpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+compoundhyphenmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+copy	Exec.box,BeginBox.copy	tex.web §§ 1079–1086	exact
+copyfont	Exec.fontCopy	pdfTeX/LuaTeX manuals	over
+count	Exec.register,Internal.register	tex.web §§ 413, 1224	exact
+countdef	Exec.shorthandDef	tex.web § 1224	exact
+cr	Exec.alignment	tex.web §§ 768–812	over
+crampeddisplaystyle	Exec.mathStyle	tex.web § 1169; LuaTeX manual, "Math styles"	exact
+crampedscriptscriptstyle	Exec.mathStyle	tex.web § 1169; LuaTeX manual, "Math styles"	exact
+crampedscriptstyle	Exec.mathStyle	tex.web § 1169; LuaTeX manual, "Math styles"	exact
+crampedtextstyle	Exec.mathStyle	tex.web § 1169; LuaTeX manual, "Math styles"	exact
+crcr	Exec.alignment	tex.web §§ 768–812	over
+creationdate	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+csname	Expand.csname	tex.web § 372	exact
+csstring	Expand.convertOther	LuaTeX manual, "\csstring"	over
+currentgrouplevel	Internal.groupLevel,Exec.illegal	etex_man § 3	exact
+currentgrouptype	Internal.groupType,Exec.illegal	etex_man § 3	exact
+currentifbranch	Internal.ifBranch,Exec.illegal	etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L3408; SaTeX `last_item` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs	exact
+currentiflevel	Internal.ifLevel,Exec.illegal	etex_man § 3	exact
+currentiftype	Internal.ifType,Exec.illegal	pdftex.web https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/pdftexdir/pdftex.web#L38626; SaTeX `if_type` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+day	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+deadcycles	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
+def	Exec.def_	tex.web § 1218	exact
+defaulthyphenchar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+defaultskewchar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+deferred	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+delcode	Exec.code,Internal.code	tex.web § 1232 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23040; SaTeX `assign_char_code` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+delimiter	Exec.operands	tex.web §§ 1151–1186	over
+delimiterfactor	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+delimitershortfall	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+detokenize	Expand.detokenize	etex_man § 3.4	exact
+dimen	Exec.register,Internal.register	tex.web §§ 413, 1224	exact
+dimendef	Exec.shorthandDef	tex.web § 1224	exact
+dimexpr	Internal.expr,ScanExpr.ok,ScanExpr.overflow	etex_man § 3.5	exact
+directlua	Expand.lua	LuaTeX manual, "Lua related primitives"	over
+discretionary	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+discretionaryligaturemode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+displayindent	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+displaylimits	Exec.operands	tex.web §§ 1151–1186	over
+displaystyle	Exec.mathStyle	tex.web § 1169	exact
+displaywidowpenalties	Exec.penalties,Internal.penalties	etex_man § 3.13	exact
+displaywidowpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+displaywidth	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+divide	Exec.scale	tex.web §§ 1236–1240	exact
+doublehyphendemerits	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+dp	Exec.boxDim,Internal.boxDim	tex.web §§ 420, 1247	exact
+draftmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+dump	Exec.end_,Exec.endInHorizontal	tex.web § 1054	over
+dviextension	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+dvifeedback	Expand.convertOther	LuaTeX manual	over
+dvivariable	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+eTeXVersion	Internal.etexVersion,Exec.illegal	etex_man § 3; LuaTeX manual	exact
+eTeXglueshrinkorder	Internal.glueComp,Exec.illegal	etex_man § 3; LuaTeX manual	exact
+eTeXgluestretchorder	Internal.glueComp,Exec.illegal	etex_man § 3; LuaTeX manual	exact
+eTeXminorversion	Internal.constant,Exec.illegal	etex_man § 3; LuaTeX manual	exact
+eTeXrevision	Expand.etexRevision	etex_man § 3.1	exact
+eTeXversion	Internal.etexVersion,Exec.illegal	etex_man § 3	exact
+edef	Exec.edef	tex.web § 1218	exact
+efcode	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
+elapsedtime	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+else	Expand.elseOr	tex.web § 510	exact
+emergencystretch	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+end	Exec.end_,Exec.endEject,Exec.endInHorizontal	tex.web § 1054 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20477; SaTeX `par` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs	over
+endL	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+endR	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+endcsname	Exec.endcsname	tex.web § 1135	exact
+endgroup	Exec.endgroup,Exec.endgroupBottom,Exec.endgroupWrong	tex.web § 1069	exact
+endinput	Expand.endinput,Next.endFile	tex.web § 378 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7807; tex.web § 362 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L7563; SaTeX `take_pending_eof` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs	exact
+endlinechar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+endlocalcontrol	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+eqno	Exec.eqno,Exec.eqnoEnd	tex.web § 1140	over
+errhelp	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
+errmessage	Exec.message	tex.web § 1279	exact
+errorcontextlines	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+errorstopmode	Exec.interaction	tex.web § 1265	exact
+escapechar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+etoksapp	Exec.toksApp	LuaTeX manual, "Token lists"	exact
+etokspre	Exec.toksApp	LuaTeX manual, "Token lists"	exact
+everycr	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
+everydisplay	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
+everyeof	Exec.toksPar,Internal.toksPar	etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L933; SaTeX `end_input_frame` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/analysis/machine.rs	exact
+everyhbox	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
+everyjob	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
+everymath	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
+everypar	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
+everyvbox	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
+exceptionpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+exhyphenchar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+exhyphenpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+expandafter	Expand.expandafterX	tex.web § 368	exact
+expanded	Expand.expanded	pdfTeX manual, "\expanded"	exact
+expandglyphsinfont	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+explicitdiscretionary	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121; LuaTeX manual	over
+explicithyphenpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+fam	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+fi	Expand.fi	tex.web § 510	exact
+filedump	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+filemoddate	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+filesize	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+finalhyphendemerits	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+firstmark	Expand.marks	tex.web § 386	over
+firstmarks	Expand.marksClass	etex_man § 3.12	over
+firstvalidlanguage	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+fixupboxesmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+floatingpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+font	Exec.fontDef,Internal.curFont	tex.web §§ 1257–1260 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23346; SaTeX `font_def` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+fontchardp	Internal.unknowable,Exec.illegal	etex_man § 3	over
+fontcharht	Internal.unknowable,Exec.illegal	etex_man § 3	over
+fontcharic	Internal.unknowable,Exec.illegal	etex_man § 3	over
+fontcharwd	Internal.unknowable,Exec.illegal	etex_man § 3	over
+fontdimen	Exec.fontdimen,Internal.fontdimen	tex.web §§ 578, 1253	exact
+fontid	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+fontname	Expand.fontname	tex.web § 472 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9276; SaTeX `scan_font_ident` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs	exact
+formatname	Expand.convertOther	LuaTeX manual	over
+futurelet	Exec.futurelet	tex.web § 1221	exact
+gdef	Exec.def_	tex.web § 1218	exact
+gleaders	Exec.leaders,BoxEnd.leaders	tex.web § 1078; LuaTeX manual	over
+glet	Exec.glet	LuaTeX manual, "Macros"	exact
+global	Exec.prefix_	tex.web § 1211	exact
+globaldefs	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+glueexpr	Internal.expr,ScanExpr.ok,ScanExpr.overflow	etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L5169; SaTeX `scan_expr` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs	exact
+glueshrink	Internal.glueComp,Exec.illegal	etex.ch (scan_normal_glue) https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L5169; SaTeX `last_item` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs	exact
+glueshrinkorder	Internal.glueComp,Exec.illegal	etex.ch (scan_normal_glue) https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L5169; SaTeX `last_item` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs	exact
+gluestretch	Internal.glueComp,Exec.illegal	etex.ch (scan_normal_glue) https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L5169; SaTeX `last_item` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs	exact
+gluestretchorder	Internal.glueComp,Exec.illegal	etex.ch (scan_normal_glue) https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L5169; SaTeX `last_item` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs	exact
+gluetomu	Internal.glueToMu,Exec.illegal	etex_man § 3	exact
+glyphdimensionsmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+gtoksapp	Exec.toksApp	LuaTeX manual, "Token lists"	exact
+gtokspre	Exec.toksApp	LuaTeX manual, "Token lists"	exact
+halign	Exec.alignment	tex.web §§ 768–812	over
+hangafter	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+hangindent	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+hbadness	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+hbox	Exec.box,BeginBox.open_	tex.web §§ 1079–1086	over
+hfil	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+hfill	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+hfilneg	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+hfuzz	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+hjcode	Exec.specialTable,Internal.specialTable	LuaTeX manual	exact
+hoffset	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+holdinginserts	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+hpack	Exec.box,BeginBox.open_	tex.web §§ 1079–1086; LuaTeX manual, "Boxes"	over
+hrule	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+hsize	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+hskip	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+hss	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+ht	Exec.boxDim,Internal.boxDim	tex.web §§ 420, 1247	exact
+hyphenation	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+hyphenationbounds	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+hyphenationmin	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228; LuaTeX manual	exact
+hyphenchar	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
+hyphenpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+hyphenpenaltymode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+if	Expand.ifTrue,Expand.ifFalse,Test.chars	tex.web §§ 501–508	exact
+ifabsdim	Expand.ifTrue,Expand.ifFalse,Test.dim	pdfTeX manual, "\ifpdfabsdim"	exact
+ifabsnum	Expand.ifTrue,Expand.ifFalse,Test.num	pdfTeX manual, "\ifpdfabsnum"	exact
+ifcase	Expand.ifcase	tex.web § 509	exact
+ifcat	Expand.ifTrue,Expand.ifFalse,Test.cats	tex.web §§ 501–508	exact
+ifcondition	Expand.ifTrue,Expand.ifFalse,Test.condition	LuaTeX manual, "Conditions"	over
+ifcsname	Expand.ifTrue,Expand.ifFalse,Test.csname	etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L4771; SaTeX `scan_csname_text` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+ifdefined	Expand.ifTrue,Expand.ifFalse,Test.defined	etex_man § 3.6	exact
+ifdim	Expand.ifTrue,Expand.ifFalse,Test.dim	tex.web §§ 501–508	exact
+ifeof	Expand.ifTrue,Expand.ifFalse,Test.eof	tex.web §§ 501–508	exact
+iffalse	Expand.ifTrue,Expand.ifFalse,Test.iffalse	tex.web §§ 501–508	exact
+iffontchar	Expand.ifTrue,Expand.ifFalse,Test.fontchar	etex_man § 3.10	over
+ifhbox	Expand.ifTrue,Expand.ifFalse,Test.box	tex.web §§ 501–508	exact
+ifhmode	Expand.ifTrue,Expand.ifFalse,Test.hmode	tex.web §§ 501–508	exact
+ifincsname	Expand.ifTrue,Expand.ifFalse,Test.incsname	pdfTeX manual, "\ifincsname"	exact
+ifinner	Expand.ifTrue,Expand.ifFalse,Test.inner	tex.web §§ 501–508	exact
+ifmmode	Expand.ifTrue,Expand.ifFalse,Test.mmode	tex.web §§ 501–508	exact
+ifnum	Expand.ifTrue,Expand.ifFalse,Test.num	tex.web §§ 501–508	exact
+ifodd	Expand.ifTrue,Expand.ifFalse,Test.odd	tex.web §§ 501–508	exact
+ifpdfabsdim	Expand.ifTrue,Expand.ifFalse,Test.dim	pdfTeX manual, "\ifpdfabsdim"	exact
+ifpdfabsnum	Expand.ifTrue,Expand.ifFalse,Test.num	pdfTeX manual, "\ifpdfabsnum"	exact
+ifpdfprimitive	Expand.ifTrue,Expand.ifFalse,Test.primitive	pdfTeX manual, "\ifpdfprimitive"	exact
+ifprimitive	Expand.ifTrue,Expand.ifFalse,Test.primitive	pdfTeX manual, "\ifpdfprimitive"	exact
+iftrue	Expand.ifTrue,Expand.ifFalse,Test.iftrue	tex.web §§ 501–508	exact
+ifvbox	Expand.ifTrue,Expand.ifFalse,Test.box	tex.web §§ 501–508	exact
+ifvmode	Expand.ifTrue,Expand.ifFalse,Test.vmode	tex.web §§ 501–508	exact
+ifvoid	Expand.ifTrue,Expand.ifFalse,Test.box	tex.web §§ 501–508	exact
+ifx	Expand.ifTrue,Expand.ifFalse,Test.ifx	tex.web § 507 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9840; SaTeX `Primitive` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	exact
+ignoreligaturesinfont	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+ignoreprimitiveerror	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+ignorespaces	Exec.ignorespaces	tex.web § 1045 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20377; SaTeX `execute_command` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+immediate	Exec.immediate	tex.web § 1375	exact
+immediateassigned	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+immediateassignment	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+indent	Exec.startPar	tex.web §§ 1088–1093; pdfTeX manual	exact
+initcatcodetable	Exec.lua	LuaTeX manual, "Lua related primitives", "Catcode tables"	over
+input	Expand.input,Expand.inputMissing,Expand.inputPrompt,FileName.braced	tex.web § 526 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L10201; tex.web § 516 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L10017; tex.ch (TeX Live) https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.ch#L4808; SaTeX `read_file_name_quoted` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+inputlineno	Internal.inputLineNo,Exec.illegal	tex.web §§ 416–424	exact
+insert	Exec.insert,Exec.egroupList	tex.web § 1099 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21197; tex.web § 1100 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21213; SaTeX `group_closed` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs	exact
+insertht	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+insertpenalties	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
+interactionmode	Exec.alter,Internal.interactionMode	etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L3752; tex.web § 1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23255	exact
+interlinepenalties	Exec.penalties,Internal.penalties	etex_man § 3.13	exact
+interlinepenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+jobname	Expand.jobname	tex.web § 470	exact
+kern	Exec.operands	tex.web §§ 1057–1061, 1105	over
+knaccode	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
+knbccode	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
+knbscode	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
+language	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+lastbox	Exec.box,BeginBox.lastbox	tex.web §§ 1079–1086	over
+lastkern	Internal.lastKern,Exec.illegal	tex.web §§ 416–424	exact
+lastlinefit	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+lastnamedcs	Expand.lastnamedcs	LuaTeX manual, "Macros"	exact
+lastnodetype	Internal.lastNodeType,Exec.illegal	etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L1262; SaTeX `last_item` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/commands.rs	exact
+lastpenalty	Internal.lastPenalty,Exec.illegal	tex.web §§ 416–424	exact
+lastsavedboxresourceindex	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+lastsavedimageresourceindex	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+lastsavedimageresourcepages	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+lastskip	Internal.lastSkip,Exec.illegal	tex.web §§ 416–424	exact
+lastxpos	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+lastypos	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+latelua	Exec.lua	LuaTeX manual, "Lua related primitives", "Catcode tables"	over
+lateluafunction	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+lccode	Exec.code,Internal.code	tex.web § 1232	exact
+leaders	Exec.leaders,ScanBox.rule,BoxEnd.leaders	tex.web § 1078	over
+left	Exec.left	tex.web §§ 1191–1192; etex.ch	exact
+leftghost	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121; LuaTeX manual	over
+lefthyphenmin	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+leftmarginkern	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+leftskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+leqno	Exec.eqno,Exec.eqnoEnd	tex.web § 1140	over
+let	Exec.let_	tex.web § 1221	exact
+letcharcode	Exec.letCharcode	LuaTeX manual, "Macros"	exact
+letterspacefont	Exec.fontCopy	pdfTeX/LuaTeX manuals	over
+limits	Exec.operands	tex.web §§ 1151–1186	over
+linedir	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+linedirection	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+linepenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+lineskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+lineskiplimit	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+localbrokenpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+localinterlinepenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+localleftbox	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+localrightbox	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+long	Exec.prefix_,Exec.prefixLong	tex.web § 1211 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22720; tex.web § 1213 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22759; SaTeX `drop_prefixes` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+looseness	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+lower	Exec.shift	tex.web § 1073 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20853; SaTeX `box_end` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs	exact
+lowercase	Exec.caseShift	tex.web § 1289 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23622; SaTeX `case_shift` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+lpcode	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
+luabytecode	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+luabytecodecall	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+luacopyinputnodes	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+luadef	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+luaescapestring	Expand.lua	LuaTeX manual, "Lua related primitives"	over
+luafunction	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+luafunctioncall	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+luatexbanner	Expand.convertOther	LuaTeX manual	over
+luatexrevision	Expand.convertOther	LuaTeX manual	over
+luatexversion	Internal.constant,Exec.illegal	LuaTeX manual	exact
+mag	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mark	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+marks	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+mathaccent	Exec.operands	tex.web §§ 1151–1186	over
+mathbin	Exec.operands	tex.web §§ 1151–1186	over
+mathchar	Exec.operands	tex.web §§ 1151–1186	over
+mathchardef	Exec.shorthandDef	tex.web § 1224 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22902; tex.web § 436 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8653	exact
+mathchoice	Exec.mathChoice,Exec.egroupPart	tex.web §§ 1172–1174	over
+mathclose	Exec.operands	tex.web §§ 1151–1186	over
+mathcode	Exec.code,Internal.code	tex.web § 1232	exact
+mathdefaultsmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathdelimitersmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathdir	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+mathdirection	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathdisplayskipmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathemptydisplaymode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+matheqdirmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+matheqnogapstep	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathflattenmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathinner	Exec.operands	tex.web §§ 1151–1186	over
+mathitalicsmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathnolimitsmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathop	Exec.operands	tex.web §§ 1151–1186	over
+mathopen	Exec.operands	tex.web §§ 1151–1186	over
+mathoption	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+mathord	Exec.operands	tex.web §§ 1151–1186	over
+mathpenaltiesmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathpunct	Exec.operands	tex.web §§ 1151–1186	over
+mathrel	Exec.operands	tex.web §§ 1151–1186	over
+mathrulesfam	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathrulesmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathrulethicknessmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathscriptboxmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathscriptcharmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathscriptsmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathstyle	Internal.unknowable,Exec.illegal	LuaTeX manual	over
+mathsurround	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+mathsurroundmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+mathsurroundskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+maxdeadcycles	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+maxdepth	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+mdfivesum	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+meaning	Expand.meaning	tex.web § 296 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L6320; etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L3052; SaTeX `meaning_text` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+medmuskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+message	Exec.message	tex.web § 1279	exact
+middle	Exec.middle,Exec.rightExtra	tex.web §§ 1191–1192; etex.ch	exact
+mkern	Exec.operands	tex.web §§ 1057–1061, 1105	over
+month	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+moveleft	Exec.shift	tex.web § 1073 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20853; SaTeX `box_end` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs	exact
+moveright	Exec.shift	tex.web § 1073 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20853; SaTeX `box_end` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs	exact
+mskip	Exec.operands	tex.web §§ 1057–1061, 1105	over
+muexpr	Internal.expr,ScanExpr.ok,ScanExpr.overflow	etex_man § 3.5	exact
+multiply	Exec.scale	tex.web §§ 1236–1240	exact
+muskip	Exec.register,Internal.register	tex.web § 413 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8345; tex.web § 1224 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22902; tex.web § 1236 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23078; SaTeX `scan_register_value` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+muskipdef	Exec.shorthandDef	tex.web § 1224	exact
+mutoglue	Internal.muToGlue,Exec.illegal	etex_man § 3	exact
+newlinechar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+noalign	Exec.alignment	tex.web § 785	over
+noboundary	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+noexpand	Expand.noexpandX,Expand.noexpandN	tex.web §§ 358, 367	exact
+nohrule	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121; LuaTeX manual	over
+noindent	Exec.startPar	tex.web §§ 1088–1093; pdfTeX manual	exact
+nokerns	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+noligs	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+nolimits	Exec.operands	tex.web §§ 1151–1186	over
+nonscript	Exec.operands	tex.web §§ 1151–1186	over
+nonstopmode	Exec.interaction	tex.web § 1265	exact
+normaldeviate	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+nospaces	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+novrule	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121; LuaTeX manual	over
+nulldelimiterspace	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+nullfont	Exec.selectFont	tex.web § 1217	exact
+number	Expand.number	tex.web § 470	exact
+numexpr	Internal.expr,ScanExpr.ok,ScanExpr.overflow	etex_man § 3.5	exact
+omit	Exec.alignment	tex.web §§ 768–812	over
+openin	Exec.openin	tex.web § 1275	exact
+openout	Exec.write,Exec.immediate,WriteCmd.openNow,WriteCmd.closeNow	tex.web §§ 1351–1374	over
+or	Expand.elseOr	tex.web § 510	exact
+outer	Exec.prefix_,Exec.prefixLong	tex.web § 1211 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22720; tex.web § 1213 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22759; SaTeX `drop_prefixes` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+output	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
+outputbox	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+outputmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+outputpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+over	Exec.operands	tex.web §§ 1151–1186	over
+overfullrule	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+overline	Exec.operands	tex.web §§ 1151–1186	over
+overwithdelims	Exec.operands	tex.web §§ 1151–1186	over
+pagebottomoffset	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pagedepth	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
+pagedir	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+pagedirection	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pagediscards	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+pagefilllstretch	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
+pagefillstretch	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
+pagefilstretch	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
+pagegoal	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
+pageheight	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pageleftoffset	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pagerightoffset	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pageshrink	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
+pagestretch	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
+pagetopoffset	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pagetotal	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
+pagewidth	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+par	Exec.parEnd,Exec.parOther	tex.web §§ 1094–1096 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L21147; SaTeX `end_graf` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs	over
+pardir	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+pardirection	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+parfillskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+parindent	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+parshape	Exec.parshape,Internal.parshape	tex.web §§ 423, 1248	exact
+parshapedimen	Internal.parshapeDimen,Exec.illegal	etex_man § 3	exact
+parshapeindent	Internal.parshapeLength,Exec.illegal	etex_man § 3	exact
+parshapelength	Internal.parshapeLength,Exec.illegal	etex_man § 3	exact
+parskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+partokencontext	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+partokenname	Exec.showCmd	tex.web §§ 1291–1298; etex_man § 3.11	over
+patterns	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pausing	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfadjustinterwordglue	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfadjustspacing	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfannot	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfappendkern	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfcatalog	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfcolorstack	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfcolorstackinit	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfcompresslevel	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfcopyfont	Exec.fontCopy	pdfTeX/LuaTeX manuals	over
+pdfcreationdate	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfdecimaldigits	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfdest	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfdestmargin	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pdfdraftmode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfeachlinedepth	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pdfeachlineheight	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pdfelapsedtime	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+pdfendlink	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfendthread	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfescapehex	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfescapename	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfescapestring	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfextension	Exec.operands	pdfTeX manual, "Primitives"	over
+pdffakespace	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdffeedback	Expand.convertOther	LuaTeX manual	over
+pdffiledump	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdffilemoddate	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdffilesize	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdffirstlineheight	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pdffontattr	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdffontexpand	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdffontname	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdffontobjnum	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdffontsize	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfforcepagebox	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfgamma	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfgentounicode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfglyphtounicode	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfhorigin	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pdfignoreddimen	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pdfimageapplygamma	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfimagegamma	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfimagehicolor	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfimageresolution	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfincludechars	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfinclusioncopyfonts	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfinclusionerrorlevel	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfinfo	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfinfoomitdate	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfinsertht	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfinterwordspaceoff	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfinterwordspaceon	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdflastannot	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+pdflastlinedepth	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pdflastlink	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+pdflastmatch	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdflastobj	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+pdflastxform	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+pdflastximage	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+pdflastximagecolordepth	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+pdflastximagepages	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+pdflastxpos	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+pdflastypos	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+pdflinkmargin	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pdfliteral	Exec.operands	pdfTeX manual, "Primitives"	over
+pdfmajorversion	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfmapfile	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfmapline	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfmatch	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfmdfivesum	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfminorversion	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfmovechars	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfnames	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfnobuiltintounicode	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfnoligatures	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfnormaldeviate	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfobj	Exec.operands	pdfTeX manual, "Primitives"	over
+pdfobjcompresslevel	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfomitcharset	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfomitinfodict	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfomitprocset	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfoptionalwaysusepdfpagebox	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfoptionpdfinclusionerrorlevel	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfoptionpdfminorversion	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfoutline	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfoutput	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfpageattr	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
+pdfpagebox	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfpageheight	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pdfpageref	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfpageresources	Exec.operands	pdfTeX manual, "Primitives"	over
+pdfpagesattr	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
+pdfpagewidth	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pdfpkmode	Exec.toksPar,Internal.toksPar	tex.web §§ 230, 1226	exact
+pdfpkresolution	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfprependkern	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfprimitive	Expand.primitive	pdfTeX manual, "\pdfprimitive"	exact
+pdfprotrudechars	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfptexuseunderscore	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfpxdimen	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pdfrandomseed	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+pdfrefobj	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfrefxform	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfrefximage	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfresettimer	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfrestore	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfretval	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+pdfrunninglinkoff	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfrunninglinkon	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfsave	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfsavepos	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfsetmatrix	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfsetrandomseed	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfshellescape	Internal.constant,Exec.illegal	pdfTeX manual	exact
+pdfstartlink	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfstartthread	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfstrcmp	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfsuppressptexinfo	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfsuppresswarningdupdest	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfsuppresswarningdupmap	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfsuppresswarningpagegroup	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdftexbanner	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdftexrevision	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdftexversion	Internal.constant,Exec.illegal	pdfTeX manual	exact
+pdfthread	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfthreadmargin	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pdftracingfonts	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdftrailer	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdftrailerid	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfunescapehex	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfuniformdeviate	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfuniqueresname	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pdfvariable	Exec.operands	pdfTeX manual, "Primitives"	over
+pdfvorigin	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+pdfxform	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfxformname	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+pdfximage	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+pdfximagebbox	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+penalty	Exec.operands	tex.web §§ 1057–1061, 1105	over
+postdisplaypenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+postexhyphenchar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+posthyphenchar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+prebinoppenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+predisplaydirection	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+predisplaygapfactor	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+predisplaypenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+predisplaysize	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+preexhyphenchar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+prehyphenchar	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+prerelpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+pretolerance	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+prevdepth	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
+prevgraf	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
+primitive	Expand.primitive	pdfTeX manual, "\pdfprimitive"	exact
+protected	Exec.prefix_,Exec.prefixLong	etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L2754; SaTeX `drop_prefixes` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+protrudechars	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+protrusionboundary	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+pxdimen	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+quitvmode	Exec.startPar	tex.web §§ 1088–1093; pdfTeX manual	exact
+radical	Exec.operands	tex.web §§ 1151–1186	over
+raise	Exec.shift	tex.web § 1073 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L20853; SaTeX `box_end` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs	exact
+randomseed	Internal.unknowable,Exec.illegal	pdfTeX manual	over
+read	Exec.read,Exec.readTerminalFatal,Exec.readTerminal	tex.web §§ 482–486, 1225 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L9444; SaTeX `read_line_into` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+readline	Exec.readline,Exec.readlineEof,Exec.readlineTerminalFatal,Exec.readlineTerminal	etex_man § 3.2	exact
+relax	Exec.relax	tex.web § 1045	exact
+relpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+resettimer	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+right	Exec.right,Exec.rightExtra	tex.web §§ 1191–1192; etex.ch	exact
+rightghost	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121; LuaTeX manual	over
+righthyphenmin	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+rightmarginkern	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+rightskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+romannumeral	Expand.romannumeral	tex.web §§ 69, 470	exact
+rpcode	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
+saveboxresource	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+savecatcodetable	Exec.lua	LuaTeX manual, "Lua related primitives", "Catcode tables"	over
+saveimageresource	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+savepos	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+savinghyphcodes	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+savingvdiscards	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+scantextokens	Expand.scantokens	LuaTeX manual, "\scantextokens"	exact
+scantokens	Expand.scantokens	etex.ch https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/etexdir/etex.ch#L4613; SaTeX `execute_command` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+scriptfont	Exec.famFont,Internal.famFont	tex.web §§ 415, 1234	exact
+scriptscriptfont	Exec.famFont,Internal.famFont	tex.web §§ 415, 1234	exact
+scriptscriptstyle	Exec.mathStyle	tex.web § 1169	exact
+scriptspace	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+scriptstyle	Exec.mathStyle	tex.web § 1169	exact
+scrollmode	Exec.interaction	tex.web § 1265	exact
+setbox	Exec.setbox	tex.web § 1241 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23181; tex.web § 1269 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23473; SaTeX `scan_box` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs	exact
+setfontid	Exec.setFontId	LuaTeX manual, "\setfontid"	exact
+setlanguage	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+setrandomseed	Exec.operands	pdfTeX/XeTeX/LuaTeX manuals; tex.web §§ 1341–1380	over
+sfcode	Exec.code,Internal.code	tex.web § 1232	exact
+shapemode	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+shbscode	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
+shellescape	Internal.constant,Exec.illegal	pdfTeX manual	exact
+shipout	Exec.shipout,BoxEnd.shipout	tex.web § 1073	over
+show	Exec.showCmd	tex.web §§ 1291–1298; etex_man § 3.11	over
+showbox	Exec.showCmd	tex.web §§ 1291–1298; etex_man § 3.11	over
+showboxbreadth	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+showboxdepth	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+showgroups	Exec.showCmd	tex.web §§ 1291–1298; etex_man § 3.11	over
+showifs	Exec.showCmd	tex.web §§ 1291–1298; etex_man § 3.11	over
+showlists	Exec.showCmd	tex.web §§ 1291–1298; etex_man § 3.11	over
+showstream	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+showthe	Exec.showCmd	tex.web §§ 1291–1298; etex_man § 3.11	over
+showtokens	Exec.showCmd	tex.web §§ 1291–1298; etex_man § 3.11	over
+skewchar	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
+skip	Exec.register,Internal.register	tex.web § 413 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8345; tex.web § 1224 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22902; tex.web § 1236 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23078; SaTeX `scan_register_value` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+skipdef	Exec.shorthandDef	tex.web § 1224	exact
+spacefactor	Exec.alter,Exec.alterIllegal,Internal.alter,Internal.alterImproper	tex.web §§ 1242–1246 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23197; SaTeX `Owned::List` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/builtins.rs	over
+spaceskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+span	Exec.alignment	tex.web §§ 768–812	over
+special	Exec.operands	pdfTeX manual, "Primitives"	over
+splitbotmark	Expand.marks	tex.web § 386	over
+splitbotmarks	Expand.marksClass	etex_man § 3.12	over
+splitdiscards	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+splitfirstmark	Expand.marks	tex.web § 386	over
+splitfirstmarks	Expand.marksClass	etex_man § 3.12	over
+splitmaxdepth	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+splittopskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+stbscode	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
+strcmp	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+string	Expand.string	tex.web § 470	exact
+suppressfontnotfounderror	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+suppressifcsnameerror	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+suppresslongerror	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+suppressmathparerror	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+suppressoutererror	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+suppressprimitiveerror	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+synctex	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tabskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+tagcode	Exec.fontInt,Internal.fontInt	tex.web § 1253; pdfTeX manual	over
+textdir	Exec.lua	XeTeX/LuaTeX manuals: any assignment, any text read next	over
+textdirection	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+textfont	Exec.famFont,Internal.famFont	tex.web §§ 415, 1234	exact
+textstyle	Exec.mathStyle	tex.web § 1169	exact
+the	Expand.the	tex.web § 465	exact
+thickmuskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+thinmuskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+time	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+toks	Exec.register,Internal.register,ScanInt.missing	tex.web § 413 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8345; tex.web § 415 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L8391; tex.web § 1224 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22902; SaTeX `scan_int_from` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/scan.rs	exact
+toksapp	Exec.toksApp	LuaTeX manual, "Token lists"	exact
+toksdef	Exec.shorthandDef	tex.web § 1224	exact
+tokspre	Exec.toksApp	LuaTeX manual, "Token lists"	exact
+tolerance	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+topmark	Expand.marks	tex.web § 386	over
+topmarks	Expand.marksClass	etex_man § 3.12	over
+topskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+tpack	Exec.box,BeginBox.open_	tex.web §§ 1079–1086; LuaTeX manual, "Boxes"	over
+tracingassigns	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracingcommands	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracingfonts	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracinggroups	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracingifs	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracinglostchars	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracingmacros	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracingnesting	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracingonline	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracingoutput	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracingpages	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracingparagraphs	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracingrestores	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracingscantokens	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracingstacklevels	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+tracingstats	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+uccode	Exec.code,Internal.code	tex.web § 1232	exact
+uchyph	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+underline	Exec.operands	tex.web §§ 1151–1186	over
+unexpanded	Expand.the	etex_man § 3.4	exact
+unhbox	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+unhcopy	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+uniformdeviate	Expand.convertOther	pdfTeX/XeTeX/LuaTeX manuals	over
+unkern	Exec.operands	tex.web §§ 1057–1061, 1105	over
+unless	CondHead.unless_	etex_man § 3.7	exact
+unpenalty	Exec.operands	tex.web §§ 1057–1061, 1105	over
+unskip	Exec.operands	tex.web §§ 1057–1061, 1105	over
+unvbox	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+unvcopy	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+uppercase	Exec.caseShift	tex.web § 1289 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L23622; SaTeX `case_shift` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	exact
+useboxresource	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+useimageresource	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+vadjust	Exec.vadjust	tex.web §§ 1097–1100	exact
+valign	Exec.alignment	tex.web §§ 768–812	over
+variablefam	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+vbadness	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+vbox	Exec.box,BeginBox.open_	tex.web §§ 1079–1086	over
+vcenter	Exec.vcenter,Exec.egroupList	tex.web § 1167 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L22111; SaTeX `begin_box` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/mode.rs	exact
+vfil	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+vfill	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+vfilneg	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+vfuzz	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+voffset	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+vpack	Exec.box,BeginBox.open_	tex.web §§ 1079–1086; LuaTeX manual, "Boxes"	over
+vrule	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+vsize	Exec.dimPar,Internal.dimPar	tex.web §§ 247, 1228	exact
+vskip	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+vsplit	Exec.box,BeginBox.vsplit	tex.web §§ 1079–1086	over
+vss	Exec.material,Exec.hmaterialInV,Exec.vmaterialInH,Exec.vmaterialInRestricted	tex.web §§ 1056–1121	over
+vtop	Exec.box,BeginBox.open_	tex.web §§ 1079–1086	over
+wd	Exec.boxDim,Internal.boxDim	tex.web §§ 420, 1247	exact
+widowpenalties	Exec.penalties,Internal.penalties	etex_man § 3.13	exact
+widowpenalty	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact
+wordboundary	Exec.operands	LuaTeX manual; tex.web §§ 1151–1186, 1341–1380	over
+write	Exec.write,Exec.immediate,WriteCmd.writeNow,WriteCmd.writeLater	tex.web §§ 1350–1374 https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L24682; SaTeX `write_text` https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/exec.rs	over
+xdef	Exec.edef	tex.web § 1218	exact
+xleaders	Exec.leaders,ScanBox.rule,BoxEnd.leaders	tex.web § 1078	over
+xspaceskip	Exec.gluePar,Internal.gluePar	tex.web §§ 224, 1228	exact
+xtoksapp	Exec.toksApp	LuaTeX manual, "Token lists"	exact
+xtokspre	Exec.toksApp	LuaTeX manual, "Token lists"	exact
+year	Exec.intPar,Internal.intPar	tex.web §§ 236, 1228	exact

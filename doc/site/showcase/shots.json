@@ -1,0 +1,817 @@
+{
+ "width": 1200,
+ "shots": [
+  {
+   "name": "live",
+   "live": true,
+   "file": "results.tex",
+   "title": "Try it here",
+   "caption": "Edit this document. Hover a length or the [ht] to see what they mean. The typeset text on the right follows as you type.",
+   "status": "Computed when this page was built. SaTeX starts in your browser when the window comes into view (about 10 MB, loaded once).",
+   "text": "\\documentclass{article}\n\\begin{document}\n\\section{Results}\nRuns took 10-12 s when warm.\n\\vspace{12pt}\n\\begin{figure}[ht]\n  \\centering\n  \\rule{0.6\\linewidth}{2cm}\n  \\caption{The warm cache.}\n\\end{figure}\n\\end{document}\n"
+  },
+  {
+   "name": "image",
+   "file": "figure.tex",
+   "title": "Images",
+   "caption": "Crop, rotate and tint a figure with the mouse. The \\includegraphics options change with it.",
+   "steps": [
+    {
+     "eval": "const c = document.createElement('canvas'); c.width = 960; c.height = 600; const g = c.getContext('2d'); let k = g.createLinearGradient(0, 0, 0, 600); k.addColorStop(0, '#1d3b8f'); k.addColorStop(.55, '#f08a5d'); k.addColorStop(1, '#f9d77e'); g.fillStyle = k; g.fillRect(0, 0, 960, 600); g.fillStyle = '#ffe9a8'; g.beginPath(); g.arc(640, 330, 70, 0, 7); g.fill(); for (const [y, col, a] of [[380, '#6b3a6e', 90], [430, '#3f2552', 60], [490, '#22163a', 40]]) { g.fillStyle = col; g.beginPath(); g.moveTo(0, 600); for (let x = 0; x <= 960; x += 20) g.lineTo(x, y - a * Math.abs(Math.sin(x / 140 + y))); g.lineTo(960, 600); g.fill(); } const f = new File([await new Promise((r) => c.toBlob(r, 'image/png'))], 'dusk.png', { type: 'image/png' }); const t = new DataTransfer(); t.items.add(f); const i = document.getElementById('play-files'); i.files = t.files; i.dispatchEvent(new Event('change'));",
+     "wait": 2000
+    },
+    {
+     "eval": "[...document.querySelectorAll('#play-tabs [role=tab]')].find((b) => b.textContent.includes('figure.tex'))?.click(); await new Promise((r) => setTimeout(r, 500)); const v = document.querySelector('.cm-editor').satexView, s = v.state.doc.toString(), i = s.indexOf('{example-image}'); if (i >= 0) v.dispatch({ changes: { from: i + 1, to: i + 14, insert: 'dusk.png' } });",
+     "wait": 1500
+    },
+    {
+     "until": "document.querySelector('.cm-editor').satexView.state.doc.toString().includes('{dusk.png}') && document.getElementById('lsp-status').textContent !== 'checking…'"
+    },
+    {
+     "wait": 2500
+    },
+    {
+     "open": true
+    },
+    {
+     "wait": 1500
+    },
+    {
+     "eval": "const d = document.querySelector('dialog.sd-dialog[open]'), at = (n) => [...d.querySelectorAll('input')].find((i) => (i.closest('label')?.textContent ?? i.previousElementSibling?.textContent ?? '').trim() === n); for (const [n, x] of [['left', 150], ['right', 60], ['top', 40], ['bottom', 30]]) { const i = at(n); if (!i) continue; i.value = x; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); }"
+    },
+    {
+     "wait": 1200
+    }
+   ],
+   "crop": "dialog.sd-dialog[open]",
+   "big": true,
+   "viewport": [
+    960,
+    640
+   ],
+   "open": [
+    "image",
+    "\\includegraphics",
+    2
+   ],
+   "video": [
+    {
+     "drag": [
+      "document.querySelector('dialog.sd-dialog[open] .sd-h[data-d=se]')",
+      "(() => { const r = document.querySelector('dialog.sd-dialog[open] .sd-h[data-d=se]').getBoundingClientRect(); return [r.x + r.width / 2 + -110, r.y + r.height / 2 + -70]; })()"
+     ],
+     "over": 1100,
+     "wait": 700
+    },
+    {
+     "drag": [
+      "document.querySelector('dialog.sd-dialog[open] .sd-h[data-d=se]')",
+      "(() => { const r = document.querySelector('dialog.sd-dialog[open] .sd-h[data-d=se]').getBoundingClientRect(); return [r.x + r.width / 2 + 110, r.y + r.height / 2 + 70]; })()"
+     ],
+     "over": 1100,
+     "wait": 300
+    }
+   ]
+  },
+  {
+   "name": "tikz",
+   "file": "spacing.tex",
+   "title": "TikZ drawings",
+   "caption": "Drag nodes on a grid, give them properties and styles, or paste a Mermaid flowchart. The TikZ code changes with it.",
+   "steps": [
+    {
+     "eval": "satexWidget('tikz', ...__at('\\\\node[draw] (run)', 2))",
+     "until": "document.getElementById('play-view').open"
+    },
+    {
+     "wait": 1000
+    },
+    {
+     "click": "[...document.querySelectorAll('#play-view .tv-node')].find((g) => g.textContent.includes('findings'))",
+     "wait": 600
+    }
+   ],
+   "crop": "#play-view",
+   "text": "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}\n  \\node[draw] (src) at (0,0) {main.tex};\n  \\node[draw] (run) at (3,0) {SaTeX run};\n  \\node[draw] (find) at (6,1) {findings};\n  \\node[draw] (text) at (6,-1) {typeset text};\n  \\draw[->] (src) -- (run);\n  \\draw[->] (run) -- (find);\n  \\draw[->] (run) -- (text);\n\\end{tikzpicture}\n\\end{document}\n",
+   "big": true,
+   "open": [
+    "tikz",
+    "\\node (a)",
+    2
+   ],
+   "viewport": [
+    1400,
+    860
+   ],
+   "video": [
+    {
+     "drag": [
+      "[...document.querySelectorAll('#play-view .tv-node')].find((g) => g.textContent.includes('findings'))",
+      "(() => { const r = [...document.querySelectorAll('#play-view .tv-node')].find((g) => g.textContent.includes('findings')).getBoundingClientRect(); return [r.x + r.width / 2 + -80, r.y + r.height / 2 + -25]; })()"
+     ],
+     "over": 1200,
+     "wait": 800
+    },
+    {
+     "drag": [
+      "[...document.querySelectorAll('#play-view .tv-node')].find((g) => g.textContent.includes('findings'))",
+      "(() => { const r = [...document.querySelectorAll('#play-view .tv-node')].find((g) => g.textContent.includes('findings')).getBoundingClientRect(); return [r.x + r.width / 2 + 80, r.y + r.height / 2 + 25]; })()"
+     ],
+     "over": 1200,
+     "wait": 300
+    }
+   ]
+  },
+  {
+   "name": "table",
+   "file": "paper.tex",
+   "title": "Tables",
+   "caption": "Edit a table like a spreadsheet. Booktabs rules are one click away, and the package is loaded when needed.",
+   "steps": [
+    {
+     "open": true,
+     "until": "document.querySelector('dialog.sd-dialog[open] .sd-tex')"
+    },
+    {
+     "eval": "[...document.querySelectorAll('dialog.sd-dialog[open] button')].find((b) => b.textContent === 'booktabs').click()",
+     "until": "/toprule/.test(document.querySelector('dialog.sd-dialog[open] .sd-tex')?.textContent)"
+    },
+    {
+     "wait": 1200
+    }
+   ],
+   "crop": "dialog.sd-dialog[open]",
+   "big": true,
+   "viewport": [
+    1000,
+    700
+   ],
+   "open": [
+    "table",
+    "\\begin{tabular}",
+    2
+   ],
+   "video": [
+    {
+     "wait": 300
+    },
+    {
+     "click": "[...document.querySelectorAll('dialog.sd-dialog[open] .sd-ins')].find((b) => /between 2 and 3/.test(b.title)) ?? document.querySelector('dialog.sd-dialog[open] .sd-ins')",
+     "wait": 500
+    },
+    {
+     "type": "Prior\t0.81\n",
+     "wait": 1600
+    },
+    {
+     "click": "document.querySelector('dialog.sd-dialog[open] [aria-label=undo]')",
+     "wait": 350
+    },
+    {
+     "click": "document.querySelector('dialog.sd-dialog[open] [aria-label=undo]')",
+     "wait": 350
+    },
+    {
+     "click": "document.querySelector('dialog.sd-dialog[open] [aria-label=undo]')",
+     "wait": 800
+    }
+   ]
+  },
+  {
+   "name": "pdf",
+   "server": true,
+   "file": "spacing.tex",
+   "title": "Compile and view the PDF",
+   "big": true,
+   "caption": "Compile with your own TeX. The PDF opens next to the source with findings and boxes drawn on the page, and a click on the page jumps to its line.",
+   "open": [
+    "panel",
+    "play-pdf"
+   ],
+   "text": "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\section{Results}\nThe loss falls with each run.\nThe office files need\nthree passes, see pages 10-12.\n\\begin{equation}\n  \\sum_{k=1}^{n} k^2 \\leq n^3\n\\end{equation}\n\\end{document}\n",
+   "viewport": [
+    960,
+    600
+   ],
+   "steps": [
+    {
+     "eval": "const t = document.getElementById('play-treetoggle'); if (t.getAttribute('aria-expanded') === 'true') t.click();",
+     "wait": 400
+    },
+    {
+     "eval": "document.querySelector('[data-panel=play-pdf]').click(); const r = document.querySelector('#pdf-auto-list input[value=\"1000\"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true }));"
+    },
+    {
+     "eval": "document.getElementById('pdf-compile').click()",
+     "until": "document.querySelector('#pdf-body .pdf-page img')?.complete",
+     "ms": 120000
+    },
+    {
+     "eval": "for (const k of ['findings', 'figures', 'geometry']) { const i = document.querySelector(`#pdf-layer-list input[data-layer=${k}]`); if (i && !i.checked) { i.checked = true; i.dispatchEvent(new Event('change', { bubbles: true })); } }",
+     "wait": 1500
+    },
+    {
+     "eval": "const f = document.getElementById('pdf-zoom-fit'); if (f.getAttribute('aria-pressed') !== 'true') f.click();",
+     "wait": 1200
+    }
+   ],
+   "video": [
+    {
+     "eval": "__xy('falls with', 4)",
+     "wait": 1400
+    },
+    {
+     "eval": "const v = document.querySelector('.cm-editor').satexView; v.dispatch({ selection: { anchor: v.state.doc.toString().indexOf('each run.') + 9 } }); const at = v.state.doc.toString().indexOf('each run.') + 9; for (const c of ' It halves with caching.') { v.dispatch({ changes: { from: v.state.selection.main.head, insert: c }, selection: { anchor: v.state.selection.main.head + 1 } }); await new Promise((r) => setTimeout(r, 60)); }",
+     "wait": 500
+    },
+    {
+     "until": "!document.getElementById('play-pdf').classList.contains('pdf-running')",
+     "wait": 3500,
+     "ms": 60000
+    },
+    {
+     "click": "(() => { const r = document.querySelector('#pdf-body .pdf-page img').getBoundingClientRect(); return [r.x + r.width * .35, r.y + r.height * .2]; })()",
+     "wait": 1500
+    }
+   ],
+   "crop": [
+    ".cm-editor",
+    "#play-pdf"
+   ],
+   "hold": 1200
+  },
+  {
+   "name": "trace",
+   "file": "expand.tex",
+   "title": "Debugger",
+   "big": true,
+   "caption": "See each expansion step of a macro and every name it reads.",
+   "open": [
+    "trace",
+    "\\greet{ab}"
+   ],
+   "viewport": [
+    1200,
+    900
+   ],
+   "steps": [
+    {
+     "open": true,
+     "until": "document.querySelector('#play-trace [data-move=next]')",
+     "ms": 90000,
+     "wait": 800
+    }
+   ],
+   "video": [
+    {
+     "click": "document.querySelector('#play-trace [data-move=next]')",
+     "wait": 1100
+    },
+    {
+     "click": "document.querySelector('#play-trace [data-move=next]')",
+     "wait": 1100
+    },
+    {
+     "click": "document.querySelector('#play-trace [data-move=next]')",
+     "wait": 1100
+    },
+    {
+     "click": "document.querySelector('#play-trace [data-move=next]')",
+     "wait": 1100
+    },
+    {
+     "click": "document.querySelector('#play-trace [data-move=prev]')",
+     "wait": 500
+    },
+    {
+     "click": "document.querySelector('#play-trace [data-move=prev]')",
+     "wait": 500
+    },
+    {
+     "click": "document.querySelector('#play-trace [data-move=prev]')",
+     "wait": 500
+    },
+    {
+     "click": "document.querySelector('#play-trace [data-move=prev]')",
+     "wait": 700
+    }
+   ],
+   "crop": "#play-trace"
+  },
+  {
+   "name": "refactor",
+   "file": "paper.tex",
+   "title": "Refactorings",
+   "wide": true,
+   "caption": "Right-click a table to switch it to booktabs or to align its numbers with siunitx.",
+   "steps": [
+    {
+     "eval": "const v = document.querySelector('.cm-editor').satexView, i = __at('begin{table}')[2]; v.dispatch({ selection: { anchor: i } }); await new Promise((r) => setTimeout(r, 200)); v.scrollDOM.scrollTop += v.coordsAtPos(i).top - 140; await new Promise((r) => setTimeout(r, 300)); __xy('begin{tabular}', 2);",
+     "wait": 4000
+    },
+    {
+     "eval": "clearInterval(self.__mark); self.__mark = setInterval(() => { for (const l of document.querySelectorAll('.cm-line')) l.style.background = /\\\\hline/.test(l.textContent) ? 'color-mix(in srgb, #b42318 18%, transparent)' : ''; }, 100);",
+     "wait": 400
+    },
+    {
+     "eval": "0",
+     "wait": 300,
+     "snap": "before"
+    },
+    {
+     "eval": "clearInterval(self.__mark); for (const l of document.querySelectorAll('.cm-line')) l.style.background = '';",
+     "wait": 300
+    },
+    {
+     "eval": "const v = document.querySelector('.cm-editor').satexView; v.focus(); __xy(\"begin{tabular}\", 2); v.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', code: 'F10', keyCode: 121, shiftKey: true, bubbles: true, cancelable: true })); for (let k = 0; k < 100 && document.getElementById('play-ctx').hidden; k++) await new Promise((r) => setTimeout(r, 200));",
+     "until": "!document.getElementById('play-ctx').hidden && /Refactor/.test(document.getElementById('play-ctx').textContent)",
+     "ms": 90000
+    },
+    {
+     "hover": "[...document.querySelectorAll('#play-ctx > li')].find((l) => l.textContent.startsWith('Refactor'))"
+    },
+    {
+     "click": "[...document.querySelectorAll('#play-ctx .ctx-nested li')].find((l) => /booktabs/.test(l.textContent))"
+    },
+    {
+     "until": "document.querySelector('.cm-editor').satexView.state.doc.toString().includes('\\\\toprule')",
+     "wait": 1500
+    },
+    {
+     "eval": "clearInterval(self.__mark); self.__mark = setInterval(() => { for (const l of document.querySelectorAll('.cm-line')) l.style.background = /\\\\(top|mid|bottom)rule/.test(l.textContent) ? 'color-mix(in srgb, #1a7f37 20%, transparent)' : ''; }, 100);",
+     "wait": 400
+    }
+   ],
+   "crop": "=lines('\\\\begin{table}', '\\\\end{table}')",
+   "pad": 8,
+   "keepMouse": true,
+   "viewport": [
+    1000,
+    760
+   ],
+   "beforeCrop": "=lines('\\\\begin{table}', '\\\\end{table}')"
+  },
+  {
+   "name": "page",
+   "file": "spacing.tex",
+   "title": "Page layout",
+   "caption": "Margins, paper and header to scale, as the run computed them. Apply writes geometry's options, or typearea's for KOMA-Script.",
+   "open": [
+    "page",
+    "\\documentclass",
+    1
+   ],
+   "crop": "#play-view",
+   "viewport": [
+    1000,
+    860
+   ],
+   "steps": [
+    {
+     "open": true,
+     "until": "document.getElementById('play-view')?.open && document.querySelector('#play-view .tv-page, #play-view svg')",
+     "ms": 90000,
+     "wait": 900
+    }
+   ]
+  },
+  {
+   "name": "handref",
+   "file": "proofs.tex",
+   "title": "Quick fixes",
+   "caption": "Wrote “Section 1” by hand? The fix writes \\Cref to the label, loads cleveref if needed, and the number stays right.",
+   "steps": [
+    {
+     "until": "[...document.querySelectorAll('#lsp-diagnostics li')].some((l) => /hand-written-reference|typed by hand/.test(l.textContent + (l.dataset.code ?? '') + (l.title ?? '')))",
+     "ms": 60000
+    },
+    {
+     "eval": "clearInterval(self.__mark); self.__mark = setInterval(() => { for (const l of document.querySelectorAll('.cm-line')) l.style.background = /Section 1/.test(l.textContent) ? 'color-mix(in srgb, #b42318 22%, transparent)' : ''; }, 100);",
+     "wait": 300
+    },
+    {
+     "wait": 500,
+     "snap": "before",
+     "eval": "0"
+    },
+    {
+     "eval": "const v = document.querySelector('.cm-editor').satexView; v.focus(); __xy(\"Section 1\", 3); v.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', code: 'F10', keyCode: 121, shiftKey: true, bubbles: true, cancelable: true })); for (let k = 0; k < 100 && document.getElementById('play-ctx').hidden; k++) await new Promise((r) => setTimeout(r, 200));",
+     "until": "!document.getElementById('play-ctx').hidden && /Fix/.test(document.getElementById('play-ctx').textContent)",
+     "ms": 90000
+    },
+    {
+     "hover": "[...document.querySelectorAll('#play-ctx > li')].find((l) => l.textContent.startsWith('Fix'))"
+    },
+    {
+     "click": "[...document.querySelectorAll('#play-ctx .ctx-nested li')].find((l) => /ref/.test(l.textContent))"
+    },
+    {
+     "until": "/\\\\[cC]ref\\{/.test(document.querySelector('.cm-editor').satexView.state.doc.toString())",
+     "wait": 1500
+    },
+    {
+     "eval": "clearInterval(self.__mark); self.__mark = setInterval(() => { for (const l of document.querySelectorAll('.cm-line')) l.style.background = /\\\\[cC]ref\\{/.test(l.textContent) ? 'color-mix(in srgb, #067647 22%, transparent)' : ''; }, 100);",
+     "wait": 400
+    }
+   ],
+   "crop": "=lines('\\\\begin{lemma}', '\\\\end{document}')",
+   "pad": 8,
+   "keepMouse": true,
+   "viewport": [
+    1000,
+    760
+   ],
+   "beforeCrop": "=lines('\\\\begin{lemma}', '\\\\end{document}')"
+  },
+  {
+   "name": "runaway",
+   "server": true,
+   "file": "runaway.tex",
+   "title": "Where an error starts",
+   "wide": true,
+   "tags": [
+    "pdflatex",
+    "SaTeX"
+   ],
+   "caption": "pdflatex only says the file ended. SaTeX shows line 5, where the brace of \\textbf is never closed.",
+   "open": [
+    "panel",
+    "play-findings"
+   ],
+   "viewport": [
+    1100,
+    800
+   ],
+   "steps": [
+    {
+     "eval": "document.querySelector('[data-panel=play-pdf]').click(); document.getElementById('pdf-compile').click()",
+     "until": "document.querySelector('#pdf-views [role=tab]')",
+     "ms": 120000,
+     "wait": 1500
+    },
+    {
+     "eval": "[...document.querySelectorAll('#pdf-views [role=tab]')].find((t) => /log/i.test(t.textContent))?.click()",
+     "wait": 1200
+    },
+    {
+     "snap": "before",
+     "eval": "0",
+     "wait": 300
+    },
+    {
+     "eval": "document.querySelector('[data-panel=play-findings]').click()"
+    },
+    {
+     "hover": "__xy('\\\\textbf{Note', 2)"
+    },
+    {
+     "until": "document.querySelector('.tip-card:not([hidden])')",
+     "wait": 900
+    }
+   ],
+   "beforeCrop": "#play-pdf",
+   "crop": [
+    ".cm-editor .cm-content",
+    ".tip-card:not([hidden])"
+   ],
+   "pad": 8,
+   "keepMouse": true
+  },
+  {
+   "name": "clone",
+   "file": "clones.tex",
+   "title": "Lint rules",
+   "wide": true,
+   "caption": "Rules find what compiles but goes wrong: repeated blocks, wrong dashes, hand-written references. Each finding names its rule and how to fix it.",
+   "open": [
+    "panel",
+    "play-findings"
+   ],
+   "viewport": [
+    1200,
+    600
+   ],
+   "steps": [
+    {
+     "until": "[...document.querySelectorAll('#lsp-diagnostics li')].some((l) => /clones|S053|differ only/i.test(l.textContent + (l.dataset.code ?? '') + (l.title ?? '')))",
+     "ms": 60000
+    },
+    {
+     "until": "document.querySelector('#play-findings') && getComputedStyle(document.querySelector('#play-findings')).display !== 'none' && document.querySelectorAll('#lsp-diagnostics li:not(.cat-group)').length >= 2",
+     "wait": 800,
+     "snap": "back",
+     "eval": "document.querySelector('[data-panel=play-findings]')?.click()"
+    },
+    {
+     "hover": "__xy('\\\\begin{figure}', 3)"
+    },
+    {
+     "until": "document.querySelector('.tip-card:not([hidden])')",
+     "wait": 900
+    }
+   ],
+   "crop": [
+    "=lines('\\\\begin{figure}', '\\\\end{document}')",
+    ".tip-card:not([hidden])"
+   ],
+   "pad": 8,
+   "keepMouse": true,
+   "text": "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{figure}[ht]\\centering\\includegraphics[width=.8\\linewidth]{example-image-a}\\caption{Alpha results}\\label{fig:a}\\end{figure}\n\\begin{figure}[ht]\\centering\\includegraphics[width=.7\\linewidth]{example-image-b}\\caption{Beta results}\\label{fig:b}\\end{figure}\nRuns took 10-12 s, see figure 1.\n\\end{document}\n",
+   "stack": true,
+   "beforeCrop": "#play-findings"
+  },
+  {
+   "name": "color",
+   "file": "colors.tex",
+   "title": "Colors",
+   "caption": "See every color your document defines, in every model xcolor knows.",
+   "steps": [
+    {
+     "open": true
+    },
+    {
+     "wait": 800
+    }
+   ],
+   "crop": "#play-view",
+   "open": [
+    "color",
+    "\\textcolor{brand}",
+    12
+   ],
+   "viewport": [
+    640,
+    760
+   ]
+  },
+  {
+   "name": "typeset",
+   "file": "spacing.tex",
+   "title": "Typeset view",
+   "caption": "Read what each paragraph sets, math included, without compiling.",
+   "steps": [
+    {
+     "eval": "document.querySelector('[data-panel=play-typeset]').click()"
+    },
+    {
+     "until": "/Results/.test(document.querySelector('#typeset-body')?.textContent)"
+    },
+    {
+     "wait": 800
+    }
+   ],
+   "crop": [
+    "#play-typeset .ts-switches",
+    "#typeset-body > *"
+   ],
+   "text": "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\section{Results}\nThe loss $\\mathcal{L}(\\theta) = \\sum_i (y_i - z_i)^2$ falls with each run.\nThe office files need three passes, see pages 10-12.\n\\begin{equation}\n  \\sum_{k=1}^{n} k^2 \\leq n^3\n\\end{equation}\n\\end{document}\n",
+   "pad": 6,
+   "settle": 2500,
+   "open": [
+    "panel",
+    "play-typeset"
+   ]
+  },
+  {
+   "name": "findings",
+   "file": "spacing.tex",
+   "title": "Findings",
+   "caption": "Every finding names its rule, tells you why it matters and cites its sources.",
+   "steps": [
+    {
+     "eval": "document.querySelector('[data-panel=play-findings]')?.click()"
+    },
+    {
+     "until": "document.querySelector('#lsp-diagnostics li:not(.cat-group)')"
+    },
+    {
+     "click": "document.querySelector('#lsp-diagnostics li:not(.cat-group)')"
+    },
+    {
+     "wait": 1000
+    }
+   ],
+   "crop": "#play-findings",
+   "text": "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\section{Results}\nThe loss $\\mathcal{L}(\\theta) = \\sum_i (y_i - z_i)^2$ falls with each run.\nThe office files need three passes, see pages 10-12.\n\\begin{equation}\n  \\sum_{k=1}^{n} k^2 \\leq n^3\n\\end{equation}\n\\end{document}\n",
+   "open": [
+    "panel",
+    "play-findings"
+   ]
+  },
+  {
+   "name": "explain",
+   "file": "colors.tex",
+   "title": "Explanations",
+   "caption": "Find out where a command comes from, what it takes and what it expands to.",
+   "steps": [
+    {
+     "eval": "document.querySelector('[data-panel=play-explain]').click(); __xy('\\\\textcolor{brand}', 3)",
+     "until": "/textcolor/.test(document.querySelector('#explain-body')?.textContent) && !/knows no/.test(document.querySelector('#explain-body')?.textContent)"
+    },
+    {
+     "wait": 1000
+    }
+   ],
+   "crop": "#explain-body > *",
+   "pad": 8,
+   "open": [
+    "panel",
+    "play-explain"
+   ]
+  },
+  {
+   "name": "units",
+   "file": "units.tex",
+   "title": "Lengths",
+   "caption": "Hover a length to see it in every unit and as a share of the text width.",
+   "steps": [
+    {
+     "wait": 4000
+    },
+    {
+     "hover": "__xy('\\\\vspace{12pt}', 9)"
+    },
+    {
+     "until": "document.querySelector('.tip-card:not([hidden])')"
+    },
+    {
+     "wait": 800
+    }
+   ],
+   "crop": ".tip-card:not([hidden])",
+   "pad": 0,
+   "keepMouse": true,
+   "settle": 300,
+   "open": [
+    "units",
+    "\\vspace{12pt}",
+    9
+   ],
+   "viewport": [
+    1080,
+    760
+   ]
+  },
+  {
+   "name": "float",
+   "file": "paper.tex",
+   "title": "Float placement",
+   "caption": "Toggle each placement letter and see what LaTeX does with it.",
+   "steps": [
+    {
+     "open": true
+    },
+    {
+     "until": "/figure\\}\\[/.test(document.querySelector('dialog.sd-dialog[open] .sd-tex')?.textContent)"
+    },
+    {
+     "wait": 800
+    }
+   ],
+   "crop": "dialog.sd-dialog[open]",
+   "viewport": [
+    900,
+    520
+   ],
+   "open": [
+    "float",
+    "\\begin{figure}[ht]",
+    15
+   ]
+  },
+  {
+   "name": "glossary",
+   "file": "thesis.tex",
+   "title": "Glossary, index, bibliography",
+   "caption": "Browse the entries your document defines, with their fields and every use.",
+   "steps": [
+    {
+     "open": true
+    },
+    {
+     "wait": 800
+    },
+    {
+     "click": "[...document.querySelectorAll('#play-view *')].find((e) => !e.children.length && e.textContent.trim() === 'satex')"
+    },
+    {
+     "wait": 1000
+    }
+   ],
+   "crop": "#play-view",
+   "open": [
+    "manager",
+    "glossary"
+   ],
+   "viewport": [
+    640,
+    760
+   ]
+  },
+  {
+   "name": "forest",
+   "file": "proofs.tex",
+   "title": "Trees",
+   "caption": "Drag the branches of a forest tree into a new order. The bracket notation follows.",
+   "open": [
+    "forest",
+    "\\begin{forest}",
+    3
+   ],
+   "steps": [
+    {
+     "open": true
+    },
+    {
+     "wait": 1200
+    }
+   ],
+   "crop": "#play-view",
+   "viewport": [
+    640,
+    760
+   ]
+  },
+  {
+   "name": "theorem",
+   "file": "proofs.tex",
+   "title": "Theorems",
+   "caption": "See every theorem kind, its counter and each use. Rename a kind and SaTeX rewrites every environment.",
+   "open": [
+    "manager",
+    "theorem"
+   ],
+   "steps": [
+    {
+     "open": true
+    },
+    {
+     "wait": 1000
+    }
+   ],
+   "crop": "#play-view",
+   "viewport": [
+    640,
+    760
+   ]
+  },
+  {
+   "name": "library",
+   "file": "colors.tex",
+   "title": "Library",
+   "caption": "Search every macro your packages define, with its arguments and what it sets.",
+   "open": [
+    "library",
+    "color"
+   ],
+   "steps": [
+    {
+     "open": true,
+     "until": "document.getElementById('play-library').open && document.querySelector('#play-library .cs-ref')",
+     "ms": 90000
+    },
+    {
+     "wait": 1500
+    }
+   ],
+   "crop": "#play-library",
+   "viewport": [
+    640,
+    760
+   ]
+  },
+  {
+   "name": "settings",
+   "file": "colors.tex",
+   "title": "Settings",
+   "caption": "Switch rules and plugins on or off. Each setting explains itself and shows its YAML.",
+   "open": [
+    "settings"
+   ],
+   "steps": [
+    {
+     "open": true,
+     "until": "document.getElementById('play-config').open"
+    },
+    {
+     "eval": "document.querySelector('#cfg-tabs [data-tab=core]').click()",
+     "until": "document.querySelector('#cfg-tabs [data-tab=core]').getAttribute('aria-pressed') === 'true'",
+     "wait": 1500,
+     "snap": "back"
+    },
+    {
+     "eval": "document.querySelector('#cfg-tabs [data-tab=plugins]').click()",
+     "until": "document.querySelector('#cfg-tabs [data-tab=plugins]').getAttribute('aria-pressed') === 'true'",
+     "wait": 1500
+    }
+   ],
+   "crop": "#play-config",
+   "viewport": [
+    640,
+    760
+   ],
+   "stack": true
+  }
+ ],
+ "video": 1000
+}

@@ -2,6 +2,6 @@
 # texmf.bundle alone stands for the installation: no kpsewhich, no system paths.
 texmf: {bundle: /texmf.bundle, kpsewhich: false, fallback: false}
 project: {ignore_other_configs: true}
-limits: {memory: 2GiB, threads: 1}
+limits: {memory: 2GiB, threads: 1, probe_steps: 200000}
 # Notes about the build, not the document: noise in short snippets.
 lint_off: [microtype-available, preamble-cost]

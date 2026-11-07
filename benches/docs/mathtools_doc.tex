@@ -1,0 +1,11 @@
+% Exercises: mathtools (\DeclarePairedDelimiter, dcases, \coloneqq, \mathclap, \shortintertext), bm, physics-free macros.
+\documentclass{article}
+\usepackage{mathtools,amssymb,bm}
+\DeclarePairedDelimiter\abs\lvert\rvert\DeclarePairedDelimiter\norm\lVert\rVert
+\DeclareMathOperator*{\argmin}{arg\,min}
+\newcommand{\R}{\mathbb R}
+\begin{document}
+\begin{align}x&\coloneqq\abs{y}+\norm*{\frac{a}{b}}\\ \argmin_{x\in\R}f(x)&=\sum_{\mathclap{1\le i\le n}}a_i\\
+f(x)&=\begin{dcases}x^2&x\ge0\\-x&\text{otherwise}\end{dcases}\shortintertext{and}\bm{v}&=\bm{A}\bm{w}\end{align}
+$\begin{bmatrix*}[r]1&-2\\3&4\end{bmatrix*}$, $\xrightarrow[below]{above}$, $\underbrace{a+b}_{c}$
+\end{document}

@@ -1,0 +1,7 @@
+[
+  {"id": "knuth1984literate", "type": "article-journal", "title": "Literate Programming", "container-title": "The Computer Journal",
+   "page": "97-111", "volume": "27", "issue": "2", "DOI": "10.1093/comjnl/27.2.97",
+   "author": [{"family": "Knuth", "given": "Donald E."}], "issued": {"date-parts": [[1984]]}},
+  {"id": "doe2020typesetting", "type": "paper-conference", "title": "Typesetting & layout: 50% faster", "container-title": "Proceedings of a Workshop",
+   "author": [{"family": "Doe", "given": "Jane"}, {"literal": "The Typesetting Group"}], "issued": {"date-parts": [[2020, 5]]}}
+]

@@ -4,9 +4,9 @@ use crate::support::{analyze_kernel, analyze_plain as analyze};
 use serde_json::{Value as Json, json};
 
 use crate::support::{analyze_latex, installed};
-use satex::config::{Config, Load};
-use satex::machine::{Analysis, Machine};
-use satex::query::{self, Record};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Load};
+use satex::queries::query::{self, Record};
 
 fn explain_one(analysis: &Analysis, name: &str) -> Record {
     query::explain(analysis, &[name.to_string()], false)
@@ -50,7 +50,7 @@ fn effective_signature_with_an_optional_argument() {
     // is used here instead of redefining a kernel command.
     let analysis = analyze_kernel(r"\newcommand{\quote}[2][see]{#1:#2}");
     let record = explain_one(&analysis, "quote");
-    assert_eq!(str_field(&record, "effective"), Some(r"\quote[see]{1}"));
+    assert_eq!(str_field(&record, "effective"), Some(r"\quote[see]{2}"));
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn a_default_shows_when_it_is_substituted() {
     );
     let record = explain_one(&analysis, "myopt");
     assert_eq!(str_field(&record, "signature"), Some("O{dflt}m"));
-    assert_eq!(str_field(&record, "effective"), Some(r"\myopt[dflt]{1}"));
+    assert_eq!(str_field(&record, "effective"), Some(r"\myopt[dflt]{2}"));
 }
 
 #[test]
@@ -217,7 +217,7 @@ fn section_is_star_optional_mandatory() {
 fn document_command_signature_from_the_probe() {
     let analysis = analyze_kernel(r"\NewDocumentCommand\qx{s O{d} m}{#3}");
     let record = explain_one(&analysis, "qx");
-    assert_eq!(str_field(&record, "effective"), Some(r"\qx*?[d]{1}"));
+    assert_eq!(str_field(&record, "effective"), Some(r"\qx*?[d]{2}"));
 }
 
 #[test]
@@ -371,7 +371,7 @@ fn explain_shows_one_record_when_preamble_and_document_agree() {
 
 fn expl3_mismatches(source: &str) -> Vec<String> {
     let analysis = analyze_kernel(source);
-    satex::lint::lint(&analysis)
+    satex::linter::lint(&analysis)
         .into_iter()
         .filter(|r| r.get("code").and_then(Json::as_str) == Some("expl3-signature-mismatch"))
         .filter_map(|r| r.get("name").and_then(Json::as_str).map(str::to_string))
@@ -418,8 +418,8 @@ fn a_trailing_delimiter_runs_to_its_text() {
 fn a_tail_call_adds_what_it_reads_after_the_parameter_text() {
     let analysis = analyze_kernel(r"\newcommand\qtail[2][d]{#1#2}\def\qhead key: #1\;{#1\qtail}");
     let record = explain_one(&analysis, "qhead");
-    assert_eq!(str_field(&record, "signature"), Some(r"key: u{\;}O{d}m"));
-    assert_eq!(str_field(&record, "effective"), Some(r"\qhead key: {1}\;[d]{2}"));
+    assert_eq!(str_field(&record, "signature"), Some(r"‹key: ›u{\;}O{d}m"));
+    assert_eq!(str_field(&record, "effective"), Some(r"\qhead key: {1}\;[d]{3}"));
 }
 
 /// `(name, effective, signature)` for each, from one analysis.
@@ -448,16 +448,16 @@ fn parameter_texts_are_learned_from_what_fails_to_match() {
             (
                 "Weird",
                 r"\Weird key: {1}, value: {2}, magic: {3}\;super {4}\; ",
-                r"key: u{, value: }u{, magic: }u{\;super }u{\; }",
+                r"‹key: ›u{, value: }u{, magic: }u{\;super }u{\; }",
             ),
-            ("lead", r"\lead x{1}", "xm"),
+            ("lead", r"\lead x{1}", "‹x›m"),
             ("infix", r"\infix{1}-{2}", "u{-}m"),
             ("trail", r"\trail{1}.", "u{.}"),
             ("ld", r"\ld{1}\par ", r"u{\par }"),
             ("od", r"\od{1};", "u{;}"),
-            ("pd", r"\pd<{1}>", "<u{>}"),
-            ("ctrlw", r"\ctrlw\foo {1}", r"\foo m"),
-            ("ctrls", r"\ctrls\;{1}", r"\;m"),
+            ("pd", r"\pd<{1}>", "‹<›u{>}"),
+            ("ctrlw", r"\ctrlw\foo {1}", r"‹\foo ›m"),
+            ("ctrls", r"\ctrls\;{1}", r"‹\;›m"),
         ],
     );
 }
@@ -487,7 +487,7 @@ fn delimited_macros_called_anywhere_are_followed() {
             ("st", r"\st*?{1}", "sm"),
             ("rs", r"\rs*?{1}", "sm"),
             // Required, not optional: the call without `[` does not match.
-            ("req", r"\req[{1}]{2}", "[u{]}m"),
+            ("req", r"\req[{1}]{2}", "‹[›u{]}m"),
         ],
     );
 }
@@ -508,17 +508,26 @@ fn document_commands_of_every_argument_type() {
     assert_calls(
         &analysis,
         &[
-            ("na", r"\na*?+?[1][df]{2}", "st+oO{df}m"),
+            ("na", r"\na*?+?[1][df]{3}", "st+oO{df}m"),
             ("nb", r"\nb(1)<rr>{3}", "r()R<>{rr}m"),
             ("nc", r"\nc|1|?(dd)?{3}", "d||D(){dd}m"),
             ("nd", r"\nd{1}^{2}?_{3}?", "me{^}e{_}"),
             ("nv", r"\nv{1}", "m"),
             ("nh", r"\nh{1}{2}[3]", "mmo"),
             ("menv", r"\menv[1]{2}", "om"),
-            ("oenv", r"\oenv[q]{1}", "O{q}m"),
-            ("drc", r"\drc[x]{1}", "O{x}m"),
+            ("oenv", r"\oenv[q]{2}", "O{q}m"),
+            ("drc", r"\drc[x]{2}", "O{x}m"),
         ],
     );
+}
+
+/// A definer reads a parameter text, not arguments: The TeXbook's syntax,
+/// not nine optionals a probe made up.
+#[test]
+fn a_definer_shows_its_parameter_text() {
+    let analysis = analyze(r"\catcode`\{=1 \catcode`\}=2 ");
+    let record = explain_one(&analysis, "def");
+    assert_eq!(str_field(&record, "effective"), Some(r"\def⟨control sequence⟩⟨parameter text⟩{⟨replacement text⟩}"));
 }
 
 #[test]
@@ -624,7 +633,7 @@ fn item_context_meanings_show_with_no_document_uses_at_all() {
     // The smallest document there is uses `\item` nowhere, so there is
     // nothing to read a real use's context off of; the distinct meanings
     // still show, found by really entering every environment worth trying
-    // in a sandbox and calling `\item` there (src/probe.rs).
+    // in a sandbox and calling `\item` there (src/analysis/probe.rs).
     if !installed() {
         return;
     }
@@ -650,11 +659,48 @@ fn item_context_meanings_show_with_no_document_uses_at_all() {
     // `itemize`, `enumerate` and `description` are all built on `\trivlist`,
     // which sets up what `\item` needs before it is ever called there.
     for name in ["itemize", "enumerate", "description"] {
-        let found = records.iter().find(|r| str_field(r, "context").is_some_and(|c| c.contains(name)));
-        if let Some(record) = found {
-            assert!(str_field(record, "error").is_none(), "\\item in {name} should not error: {record:?}");
-        }
+        // the probe must find each list: a missing one would leave nothing to check
+        let record = records
+            .iter()
+            .find(|r| str_field(r, "context").is_some_and(|c| c.contains(name)))
+            .unwrap_or_else(|| panic!("the probe found no {name} meaning: {records:?}"));
+        assert!(str_field(record, "error").is_none(), "\\item in {name} should not error: {record:?}");
     }
+}
+
+/// Uses that all went through decide: the probe's call in text mode is no
+/// meaning of a math alphabet the document only uses in math.
+#[test]
+fn a_command_used_only_where_it_works_carries_no_probed_error() {
+    if !installed() {
+        return;
+    }
+    let analysis = Machine::analyze(
+        "\\documentclass{article}\n\\begin{document}\n\\begin{equation}\\mathcal{A}\\end{equation}\n\\[\\mathcal{B}\\]\n\\end{document}\n",
+        None,
+        &crate::support::config(),
+    );
+    let (records, _) =
+        query::explain(&analysis, &["mathcal".to_string()], false).unwrap_or_else(|e| panic!("did not explain: {e}"));
+    assert!(records.iter().all(|r| str_field(r, "error").is_none()), "{records:?}");
+}
+
+/// Only an argument the command reads on to a release check is a date: the
+/// default of `\newcommand`'s optional argument is none.
+#[test]
+fn a_definitions_default_is_no_release_date() {
+    if !installed() {
+        return;
+    }
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let analysis = Machine::analyze(
+        "\\documentclass{article}\n\\newcommand{\\foo}[1][x]{#1}\n\\begin{document}\\foo\\end{document}",
+        None,
+        &cfg,
+    );
+    let newcommand = explain_one(&analysis, "newcommand");
+    let types = newcommand.get("types").map(ToString::to_string).unwrap_or_default();
+    assert!(!types.contains("date"), "{newcommand:?}");
 }
 
 /// The bare probe hands `.` to `\end`'s argument, so `\end{.}` mismatches
@@ -785,7 +831,7 @@ fn a_list_tex_inserts_charges_nothing_to_the_macro_that_set_it_off() {
 }
 
 /// A macro no use typed takes the types its body's assignments and
-/// scanners give its parameters ([`satex::roles`]).
+/// scanners give its parameters ([`satex::analysis::roles`]).
 #[test]
 fn a_body_types_the_parameters_it_assigns() {
     let analysis = analyze(
@@ -823,7 +869,8 @@ fn types_count_optional_arguments_and_type_a_control_sequence() {
     for (name, ty) in [("usepackage", "package (.sty)"), ("documentclass", "class (.cls)")] {
         let records = query::explain(&analysis, &[name.to_string()], false).unwrap().0;
         assert!(
-            records.iter().any(|r| r.get("types") == Some(&json!(["#1 options".to_string(), format!("#2 {ty}")]))),
+            records.iter().any(|r| r.get("types")
+                == Some(&json!(["#1 options".to_string(), format!("#2 {ty}"), "#3 date, at least".to_string()]))),
             "{name}: {records:?}"
         );
     }
@@ -864,17 +911,17 @@ fn description_for_a_primitive_and_a_kernel_macro() {
 
 #[test]
 fn every_builtin_primitive_has_a_description() {
-    use satex::config::Engine::{LuaTeX, PdfTeX, Tex, XeTeX};
+    use satex::project::config::Engine::{LuaTeX, PdfTeX, Tex, XeTeX};
     let mut missing: Vec<&str> = [Tex, PdfTeX, LuaTeX, XeTeX]
         .into_iter()
-        .flat_map(|e| satex::builtins::primitive_names(e).keys().map(String::as_str))
-        .filter(|n| satex::query::describe(n).is_none())
+        .flat_map(|e| satex::engine::builtins::primitive_names(e).keys().map(String::as_str))
+        .filter(|n| satex::queries::query::describe(n).is_none())
         .collect();
     missing.sort_unstable();
     missing.dedup();
     assert!(
         missing.is_empty(),
-        "{} primitives lack a line in src/describe.tsv:\n{}",
+        "{} primitives lack a line in src/data/describe.tsv:\n{}",
         missing.len(),
         missing.join("\n")
     );
@@ -891,6 +938,34 @@ fn expands_splits_always_from_conditional_arms() {
     };
     assert_eq!(names("expands"), vec![r"\p", r"\ifx"]);
     assert_eq!(names("may_expand"), vec![r"\q"]);
+}
+
+/// What a macro's expansion gives where TeX reads a quantity.
+#[test]
+fn a_macro_yields_the_quantity_its_body_gives() {
+    let analysis =
+        analyze(r"\countdef\n=10 \dimendef\d=11 \def\v{\the\n}\def\w{\the\d}\def\x{3pt}\def\y{12}\def\z{a}\v\w\x\y\z");
+    let yields = |name| str_field(&explain_one(&analysis, name), "yields").map(str::to_string);
+    let got: Vec<Option<String>> = ["v", "w", "x", "y", "z"].into_iter().map(yields).collect();
+    let want: Vec<Option<String>> =
+        ["number", "dimen", "dimen", "number"].iter().map(|t| Some(t.to_string())).chain([None]).collect();
+    assert_eq!(got, want);
+}
+
+/// A number the run did not know (`\year` with the clock unknown) is no
+/// command a macro expands.
+#[test]
+fn expands_lists_no_unknown_value() {
+    let analysis = analyze("%\\satex@configure{clock=unknown}\n\\def\\y{\\ifnum\\year>0 \\the\\year\\fi}\\y");
+    let record = explain_one(&analysis, "y");
+    let all: Vec<&str> = ["expands", "may_expand"]
+        .iter()
+        .filter_map(|f| record.get(*f).and_then(Json::as_array))
+        .flatten()
+        .filter_map(Json::as_str)
+        .collect();
+    assert!(all.iter().all(|n| !n.contains("unknown")), "{all:?}");
+    assert!(all.contains(&r"\the"), "{all:?}");
 }
 
 /// What a command's calls leave defined: the public name after the call's
@@ -917,4 +992,143 @@ fn kernel_end_and_primitive_def_read_as_themselves() {
     let def = explain_one(&analysis, "def");
     assert!(str_field(&def, "syntax").is_some_and(|s| s.contains("⟨parameter text⟩")), "{def:?}");
     assert_eq!(str_field(&def, "signature"), None);
+}
+
+/// The comment block above a definition documents it and its arguments,
+/// wherever the definition is explained.
+#[test]
+fn a_definition_carries_its_source_comment() {
+    let dir = crate::support::scratch_dir(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/explain-comment"),
+    );
+    let file = dir.join("a.tex");
+    std::fs::write(&file, "% Greets someone.\n% #1 is the name to greet\n\\def\\foo#1{Hello #1}\n\\foo{World}\n")
+        .unwrap();
+    let out = crate::support::satex()
+        .args(["explain", "-f", file.to_str().unwrap(), "\\foo", "--no-packages", "--no-classes"])
+        .output()
+        .expect("satex runs");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("Greets someone."), "{text}");
+    assert!(text.contains("⟨arg1⟩ is the name to greet"), "{text}");
+}
+
+fn chain_of(record: &Record) -> Vec<(String, String)> {
+    let steps = record.get("chain").and_then(Json::as_array).cloned().unwrap_or_default();
+    steps
+        .iter()
+        .map(|s| {
+            let text = |k: &str| s.get(k).and_then(Json::as_str).unwrap_or_default().to_string();
+            (text("role"), text("package"))
+        })
+        .collect()
+}
+
+#[test]
+fn a_package_overwriting_a_package_shows_the_whole_chain() {
+    if !installed() {
+        return;
+    }
+    let analysis =
+        analyze_latex("\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\nx\n\\end{document}\n");
+    let record = explain_one(&analysis, "ref");
+    let chain = chain_of(&record);
+    let packages: Vec<&str> = chain.iter().map(|(_, p)| p.as_str()).collect();
+    assert_eq!(packages.first(), Some(&"kernel"), "{chain:?}");
+    // hyperref's own `\let\ref` is a scoped copy in `\pdfstringdef`, no definition
+    assert_eq!(packages, ["kernel", "nameref"], "{chain:?}");
+    assert_eq!(chain.last().map(|(r, _)| r.as_str()), Some("in force"));
+}
+
+#[test]
+fn redefining_a_kernel_name_in_the_document_is_kernel_then_document() {
+    if !installed() {
+        return;
+    }
+    let analysis =
+        analyze_latex("\\documentclass{article}\n\\renewcommand\\emph[1]{X}\n\\begin{document}\n\\end{document}\n");
+    let chain = chain_of(&explain_one(&analysis, "emph"));
+    assert_eq!(chain.first().map(|(_, p)| p.as_str()), Some("kernel"), "{chain:?}");
+    assert_eq!(chain.last().map(|(r, _)| r.as_str()), Some("in force"), "{chain:?}");
+    let record = explain_one(&analysis, "emph");
+    let steps = record["chain"].as_array().unwrap();
+    assert_eq!(steps.last().unwrap()["package"], Json::Null, "the document is no package");
+}
+
+#[test]
+fn a_let_saved_original_is_named_on_the_step_it_saved() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex(
+        "\\documentclass{article}\n\\makeatletter\n\\let\\my@emph\\emph\n\\renewcommand\\emph[1]{Y\\my@emph{#1}}\n\\makeatother\n\\begin{document}\n\\end{document}\n",
+    );
+    let record = explain_one(&analysis, "emph");
+    let steps = record["chain"].as_array().expect("a chain");
+    assert_eq!(steps[0]["saved"], json!([r"\my@emph"]), "{steps:?}");
+}
+
+#[test]
+fn a_name_defined_once_has_no_chain() {
+    let analysis = analyze(r"\def\once{x}");
+    assert!(explain_one(&analysis, "once").get("chain").is_none());
+}
+
+/// A counter's card carries the value the run ended with: what a float placement's `topnumber` allows.
+#[test]
+fn a_count_register_explains_with_its_value() {
+    let analysis = analyze_kernel(r"\newcounter{shown}\setcounter{shown}{7}");
+    assert_eq!(explain_one(&analysis, "c@shown").get("value"), Some(&json!(7)));
+}
+
+/// A body as `type_plugins.pretty` prints it, `width` wide.
+fn pretty(analysis: &Analysis, name: &str, width: usize) -> String {
+    let mac = analysis.env.meaning(analysis.interner.lookup(name).unwrap()).as_macro().cloned().unwrap();
+    satex::queries::pretty::print(&mac.replacement_text, &analysis.interner, &|s| analysis.env.meaning(s), width)
+}
+
+/// Real kernel and package macros: one statement per line, the arguments each meaning reads kept
+/// with it, conditionals and groups indented, a body that fits one line as it was.
+#[test]
+fn pretty_prints_kernel_and_package_bodies() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex("\\documentclass{article}\\usepackage{hyperref}\\begin{document}\\end{document}");
+    assert_eq!(
+        pretty(&analysis, "@ifnextchar", 30),
+        "\\let\\reserved@d=#1\n\\def\\reserved@a{#2}\n\\def\\reserved@b{#3}\n\\futurelet\\@let@token\\@ifnch"
+    );
+    assert_eq!(pretty(&analysis, "@testopt", 60), "\\kernel@ifnextchar[{#1}{#1[{#2}]}");
+    assert_eq!(
+        pretty(&analysis, "@protected@testopt", 60),
+        "\\ifx\\protect\\@typeset@protect\n  \\expandafter\\@testopt\n\\else\n  \\@x@protect#1\n\\fi"
+    );
+    // hyperref's: the long \edef's group opened over lines, the \csname kept with its \endcsname
+    let star = pretty(&analysis, "HyRef@StarSetRef", 60);
+    assert!(star.contains("\\edef\\x{\n  \\endgroup\n  \\noexpand\\HyRef@@StarSetRef\n  \\expandafter\\noexpand\\csname r@\\x\\endcsname{\\x}\n}"), "{star}");
+}
+
+/// Edge cases: braces and `#` in arguments, catcode-other braces, a key list, a very long body.
+#[test]
+fn pretty_prints_edge_cases() {
+    let analysis = analyze(concat!(
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 ",
+        "\\def\\set#1#2{\\def\\x##1{{#1}}}",
+        "\\def\\keys{\\set{alpha=1,beta={2,3},gamma=a long value here,delta=another long value}{x}}",
+        "\\edef\\other{\\string{x\\string}}\\def\\group{{x}}",
+        "\\def\\many{\\set{a}{b}\\set{c}{d}\\set{e}{f}\\set{g}{h}\\set{i}{j}\\set{k}{l}\\set{m}{n}}",
+    ));
+    // a key list too long for a line: one key per line, the braced value whole
+    assert_eq!(
+        pretty(&analysis, "keys", 40),
+        "\\set{\n  alpha=1,\n  beta={2,3},\n  gamma=a long value here,\n  delta=another long value\n}{x}"
+    );
+    // `#` parameters doubled inside, the inner group kept
+    assert_eq!(pretty(&analysis, "set", 20), "\\def\\x##1{{#1}}");
+    // a catcode-other `{` opens no group
+    assert_eq!(pretty(&analysis, "other", 2), "{x}");
+    assert_eq!(pretty(&analysis, "group", 2), "{\n  x\n}");
+    // a long body: one call with its two arguments per line
+    assert_eq!(pretty(&analysis, "many", 40).lines().count(), 7);
 }

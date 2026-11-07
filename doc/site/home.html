@@ -3,19 +3,115 @@
     <img class="ink word" src="{{mark}}" alt="">
     <span class="tag"><img class="ink l1" src="{{line1}}" alt=""><img class="ink l2" src="{{line2}}" alt=""></span>
   </a>
-  <p class="lead">{{description}}</p>
-  <p class="actions"><a class="button" href="play/index.html">Try it in the browser</a> <a class="button ghost" href="#install">Install</a> <a class="button ghost" href="#about">About</a> <a class="button ghost" href="guide.html">Guide</a></p>
+  <p class="claim"><span class="claim-lead">SaTeX interprets TeX abstractly, on every path at once. Without compiling, it tells you</span><span class="claim-rot" aria-live="polite"><span data-knows class="on" data-effect="complete">which <code>\macros</code> exist at each line, on every path</span><span data-knows data-effect="origin">where each command comes from and which line loads it<template><li><code>\ref</code><span>defined by the kernel, latex.ltx</span></li><li><code>\ref</code><span>changed by hyperref.sty</span></li><li><code>\usepackage{hyperref}</code><span>line 4 loads it</span></li></template></span><span data-knows>which dash a range like 10<u data-fix="–">-</u>12 needs</span><span data-knows>the names <code>\csname</code> builds and what they expand to<template><li><code>\csname r@sec:intro\endcsname</code><span>the label</span></li><li><code>\r@sec:intro</code> → <code>{1}{2}</code><span>section 1, page 2</span></li><li><code>\ref{sec:intro}</code> → <code>1</code><span>after one more run</span></li></template></span><span data-knows data-effect="stepper">each expansion step of <code>\twice{ab}</code></span><span data-knows data-effect="branch">where branches you never compiled break</span><span data-knows data-effect="catcodes">the category code of each character in <code>\a@b{$x^2$&amp;#1}</code></span><span data-knows data-effect="options">which options packages read and what they change<template><li><code>\usepackage[colorlinks]{hyperref}</code><span>read by hyperref</span></li><li><b><code>\ifHy@colorlinks</code> → <code>\iftrue</code></b><span>links in color</span></li><li><b><code>\@pdfborder</code> → <code>0 0 0</code></b><span>no boxes</span></li></template></span><span data-knows data-effect="ligatures">the text each paragraph sets, down to its ligatures</span><span data-knows data-effect="runs">what the <code>.aux</code> holds and how many runs the build needs<template><li><code>run 1</code><span>writes <code>\newlabel{sec:intro}</code></span></li><li><code>run 2</code><span>reads it: <code>\ref{sec:intro}</code> → 1</span></li><li><b><code>2 runs</code></b><span>a third changes nothing</span></li></template></span><span data-knows data-effect="draw">the macros that set a symbol you <a href="draw/index.html">sketch</a></span><span data-knows data-effect="diff">why it compiled yesterday and not today 🙃</span><span data-knows data-effect="peek">that the author of <a href="https://github.com/EagleoutIce/tikzpingus">TikZpingus</a> approves 🐧</span></span></p>
+  <p class="claim-dots" role="tablist" aria-label="what SaTeX tells you"></p>
+  <p class="actions"><a class="button" href="play/index.html">Try it in the browser</a> <a class="button ghost" href="#install">Install</a> <a class="button ghost" href="#compare">Comparison</a> <a class="button ghost" href="guide.html">Guide</a></p>
 </section>
-<section class="panel" id="examples">
+
+<section class="band showcase" id="showcase">
+  <p class="sub">Click a table, a figure, a color or a length and edit it in place. SaTeX writes the change back as plain LaTeX.</p>
+  <div class="shots">{{showcase}}</div>
+</section>
+
+<section class="band alt" id="examples">
   <h2>Examples</h2>
+  <p class="sub">Hover a command to see what it does, or an underline to see what is wrong. Next to each file is what it typesets, all from SaTeX's analysis. The last tab is yours to type in.</p>
   <div class="examples">{{examples}}</div>
-  <p class="muted">Analyzed at build time with satex <span title="{{versiontitle}}">{{version}}</span>.</p>
+  <p class="muted small">Analyzed at build time with SaTeX <span title="{{versiontitle}}">{{version}}</span>.</p>
 </section>
-<section class="panel" id="about">
+
+<section class="band" id="plugins">
+  <h2>Editor plugins</h2>
+  <p class="sub">Every editor feature is a plugin. It reacts to what the run computed, such as a color, a length, a table or a figure, never to a command's name. Switch any of them off in <code>satex.yaml</code> or in the playground's settings.</p>
+  <ul class="pt-groups" data-plugin-groups hidden></ul>
+  <details class="plugins-fold" data-fold="plugins"><summary>Show every plugin</summary><div class="plugin-tiles" data-plugin-tiles hidden></div></details>
+</section>
+
+<section class="band alt" id="run">
+  <h2>Why interpret the code</h2>
+  <p class="sub">TeX decides what a line means while it runs. Catcodes change, names get built, definitions come and go. A tool that only reads the text has to guess. SaTeX runs the kernel, the class and every package as TeX would, on every path at once, and joins the paths soundly where it cannot decide.</p>
+  <div class="contrast" role="tablist" aria-label="examples of what a run knows">
+    <button type="button" role="tab" aria-selected="true" data-case="0">A name built by <code>\csname</code></button>
+    <button type="button" role="tab" aria-selected="false" data-case="1">An expl3 variant</button>
+    <button type="button" role="tab" aria-selected="false" data-case="2">A catcode change</button>
+  </div>
+  <div class="cases">
+    <figure class="case" data-case="0">
+      <pre><code>\expandafter\newcommand\csname note@\romannumeral 2\endcsname{…}
+\csname note@ii\endcsname</code></pre>
+      <div class="views"><div class="view by-text"><b>From the text</b>A name nobody wrote: unknown, so no definition, no usage, no error.</div>
+        <div class="view by-run"><b>From the run</b><code>\note@ii</code> is defined at line 1 and used at line 2, with its body and arguments.</div></div>
+    </figure>
+    <figure class="case" data-case="1" hidden>
+      <pre><code>\cs_new:Npn \my_show:n #1 { … }
+\cs_generate_variant:Nn \my_show:n { V }
+\my_show:V \l_tmpa_tl</code></pre>
+      <div class="views"><div class="view by-text"><b>From the text</b><code>\my_show:V</code> appears nowhere as a definition, which is a known blind spot of surface analysis.</div>
+        <div class="view by-run"><b>From the run</b>The variant is defined by expl3 itself, expands <code>\l_tmpa_tl</code> and calls <code>\my_show:n</code>.</div></div>
+    </figure>
+    <figure class="case" data-case="2" hidden>
+      <pre><code>\catcode`\|=\ifdraft 14 \else 12 \fi
+a | b \gdef\Maybe{}</code></pre>
+      <div class="views"><div class="view by-text"><b>From the text</b><code>|</code> is a character. <code>\Maybe</code> is defined.</div>
+        <div class="view by-run"><b>From the run</b>On one path <code>|</code> starts a comment and <code>\Maybe</code> is never defined: both paths are kept.</div></div>
+    </figure>
+  </div>
+</section>
+
+<section class="band" id="compare">
+  <h2>Comparison</h2>
+  <p class="sub">The other tools are good at what they do. SaTeX runs the code abstractly, so it can check what the others infer from names and text.</p>
+  <div class="table-wrap"><table class="compare">
+    <thead><tr><th scope="col"></th><th scope="col">SaTeX</th><th scope="col"><a href="https://github.com/witiko/expltools">explcheck</a></th><th scope="col"><a href="https://github.com/latex-lsp/texlab">TeXLab</a></th><th scope="col"><a href="https://github.com/astoff/digestif">digestif</a></th><th scope="col"><a href="https://www.nongnu.org/chktex/">ChkTeX</a></th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Source of its knowledge</th><td class="yes">executing the code (abstract interpretation)</td><td>the text, expl3 naming conventions, flow analysis</td><td>the text and a command database</td><td>package sources and hand-written tag files</td><td>regular expressions</td></tr>
+      <tr><th scope="row">Names made at run time<small><code>\csname</code>, variants, keys</small></th><td class="yes">seen as the run makes them</td><td class="no">not seen<sup><a href="#ref-dynamic">1</a></sup></td><td class="no">not seen</td><td class="no">not seen</td><td class="no">not seen</td></tr>
+      <tr><th scope="row">Languages</th><td class="yes">expl3, LaTeX2e and plain TeX in one run, on pdfTeX, XeTeX or LuaTeX (with its Lua). ConTeXt and Texinfo are experimental</td><td>expl3</td><td>LaTeX</td><td>LaTeX, ConTeXt, plain TeX, Texinfo</td><td>LaTeX</td></tr>
+      <tr><th scope="row">Values<small>catcodes, registers, lengths, token lists</small></th><td class="yes">tracked, unknown ones as typed ranges</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
+      <tr><th scope="row">Conditionals it cannot decide</th><td class="yes">follows both arms and joins them</td><td>marks edges as maybe</td><td>—</td><td>—</td><td>—</td></tr>
+      <tr><th scope="row">Reruns<small><code>.aux</code>, <code>.toc</code>, <code>.bbl</code></small></th><td class="yes">repeats the runs like latexmk, in memory</td><td>—</td><td>reads the files a build left</td><td>—</td><td>—</td></tr>
+      <tr><th scope="row">Interfaces</th><td class="yes">CLI, LSP, VS Code, Neovim, IntelliJ (in part), a desktop app (<code>satex gui</code>), browser playground</td><td>CLI, CI</td><td class="yes">LSP</td><td class="yes">LSP</td><td>CLI, used by editors</td></tr>
+      <tr><th scope="row">Style and convention checks</th><td>over 100 lint rules, expl3 conventions confirmed by the run</td><td class="yes">a coded catalog of expl3 warnings and errors</td><td>—</td><td>—</td><td class="yes">many typographic checks</td></tr>
+      <tr><th scope="row">Build and PDF</th><td>builds with latexmk and explains the log</td><td>—</td><td class="yes">build, forward and inverse search</td><td>—</td><td>—</td></tr>
+      <tr><th scope="row">Fixes</th><td class="yes">quick fixes and refactorings (load a missing package, a macro for repeated code, <code>\cref</code> for typed references), widgets that edit tables, figures, colors, TikZ drawings and the page layout and write back only what changed</td><td>—</td><td>formatting (latexindent)</td><td>—</td><td>—</td></tr>
+      <tr><th scope="row">Scope</th><td class="no">the files a document loads</td><td class="yes">all of TeX Live, with a public report</td><td class="yes">any file</td><td class="yes">any file</td><td class="yes">any file</td></tr>
+      <tr><th scope="row">Speed</th><td class="no">seconds per document with warm caches, a long thesis can take minutes</td><td class="yes">fast: reads the text, runs nothing</td><td class="yes">as you type: reads the text</td><td class="yes">as you type: reads the text</td><td class="yes">milliseconds: line by line</td></tr>
+    </tbody>
+  </table></div>
+  <ol class="refs">
+    <li id="ref-dynamic">V. Novotný: “[the analyzer] cannot detect function definitions or calls that arise only through dynamic expansion and are not obvious from the surface text of the program”, <a href="https://witiko.github.io/Expl3-Linter-11.5/">Static analysis of expl3 programs (11½)</a>. The series is a careful account of what a text-based approach can do: <a href="https://witiko.github.io/Expl3-Linter-3/">related work</a>, <a href="https://witiko.github.io/Expl3-Linter-2.5/">TeX language servers</a>.</li>
+  </ol>
+</section>
+
+<section class="band alt" id="about">
   <h2>About</h2>
   {{intro}}
 </section>
-<section class="panel" id="install">
+
+<section class="band" id="install">
   <h2>Install</h2>
-  {{install}}
+  <p class="sub">SaTeX works where you write. One language server serves every editor that speaks LSP. TeXstudio reads its findings from the log.</p>
+  <ul class="editors">
+    <li><b>VS Code</b><span class="ed-gets">full LSP</span><p>Install <code>eagleoutice.satex</code> from the Marketplace.</p><a href="wiki/vscode.html">Setup →</a></li>
+    <li><b>JetBrains IDEs</b><span class="ed-gets">full LSP</span><p>Through LSP4IJ. The plugin installs from disk for now.</p><a href="wiki/intellij.html">Setup →</a></li>
+    <li><b>Neovim</b><span class="ed-gets">full LSP</span><p><code>vim.lsp.config</code> or <code>lspconfig</code>, a few lines.</p><a href="wiki/lsp.html#neovim-lspconfig">Setup →</a></li>
+    <li><b>Any LSP client</b><span class="ed-gets">full LSP</span><p>Start <code>satex lsp</code> on standard input and output.</p><a href="wiki/lsp.html#vs-code-generic-client">Setup →</a></li>
+    <li><b>TeXstudio</b><span class="ed-gets">findings in the log</span><p><code>satex lint --format texlog</code> after each build.</p><a href="wiki/lsp.html#texstudio">Setup →</a></li>
+    <li><b>Command line</b><span class="ed-gets">lint, explain, trace</span><p><code>satex lint -f main.tex</code> in a terminal or in CI.</p><a href="wiki/cli.html">Commands →</a></li>
+    <li><b>Browser</b><span class="ed-gets">everything, no install</span><p>The playground runs SaTeX in the page.</p><a href="play/index.html">Open →</a></li>
+    <li><b><code>satex gui</code></b><span class="ed-gets">everything, on your files</span><p>The playground on your project, with your TeX. Edits are saved.</p><a href="wiki/cli.html#the-playground-on-your-machine">Setup →</a></li>
+  </ul>
+  <div class="install-tabs" role="tablist" aria-label="ways to install">
+    <button type="button" role="tab" aria-selected="true" data-way="0">VS Code</button>
+    <button type="button" role="tab" aria-selected="false" data-way="1">Binary</button>
+    <button type="button" role="tab" aria-selected="false" data-way="2">Cargo</button>
+  </div>
+  <div class="ways">
+    <div class="way" data-way="0"><p>Install <b>SaTeX</b> from the Visual Studio Marketplace (<code>eagleoutice.satex</code>): findings in the Problems view, hover, completion, traces and quick fixes.</p></div>
+    <div class="way" data-way="1" hidden><p>Download the binary for your platform from the <a href="{{repository}}/releases">latest release</a> and put <code>satex</code> on your <code>PATH</code>.</p></div>
+    <div class="way" data-way="2" hidden><pre><code>cargo install satex-analyzer
+satex lint -f main.tex</code></pre></div>
+  </div>
+  <p>Installed, <code>satex gui</code> opens <a href="play/index.html">the playground</a> on your own project, with the TeX installed on your computer.</p>
+  <details class="more"><summary>Shell completion, building from source, the language server</summary>{{install}}</details>
 </section>

@@ -4,15 +4,15 @@
 
 use crate::support::{PRELUDE, broken_gaps, names};
 use crate::support::{body, installed};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
 
 fn analyze(source: &str) -> Analysis {
-    let cfg = satex::config::Config { arm_joins: true, ..crate::support::bare() };
+    let cfg = satex::project::config::Config { arm_joins: true, ..crate::support::bare() };
     Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg)
 }
 
 fn analyze_latex(source: &str) -> Analysis {
-    let cfg = satex::config::Config { arm_joins: true, ..crate::support::config() };
+    let cfg = satex::project::config::Config { arm_joins: true, ..crate::support::config() };
     Machine::analyze(source, None, &cfg)
 }
 
@@ -121,6 +121,42 @@ fn csname_over_undecided_tests_defines_every_name() {
     assert!(with_code(&analysis, "undecided-condition").is_empty(), "{:?}", broken_gaps(&analysis));
     let defined = names(&analysis);
     for name in ["preacpost", "preadpost", "prebcpost", "prebdpost", "after"] {
+        assert!(defined.contains(&name.to_string()), "{name}: {defined:?}");
+    }
+}
+
+/// A one-of token a read splits holds the text it took on that path,
+/// wherever its copies went: a `\csname` of one copy decides a test of
+/// another.
+#[test]
+fn split_one_of_narrows_its_copies_on_the_path() {
+    let analysis = analyze(
+        r"\edef\x{\ifnum\pdfuniformdeviate2=0 a\else b\fi}\edef\y{\x}\def\a{}
+          \expandafter\ifx\csname\x\endcsname\a \expandafter\ifx\y a\def\same{}\else\def\apart{}\fi\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"same".to_string()) && !defined.contains(&"apart".to_string()), "{defined:?}");
+}
+
+/// Two choices of the same texts are independent, made in two places,
+/// twice in one, or in passes a loop joins: a split of one narrows
+/// neither the other nor its copies.
+#[test]
+fn split_one_of_leaves_other_choices_of_the_same_texts() {
+    let analysis = analyze(
+        r"\edef\x{\ifnum\pdfuniformdeviate2=0 a\else b\fi}\edef\y{\ifnum\pdfuniformdeviate2=0 a\else b\fi}
+          \expandafter\ifx\x a\expandafter\ifx\y a\def\ya{}\else\def\yb{}\fi\fi
+          \def\m#1{\expandafter\ifx\x#1\def\ms{}\else\def\md{}\fi}\count1=0
+          \def\pass{\edef\x{\ifnum\pdfuniformdeviate2=0 a\else b\fi}\ifnum\count1=0 \let\z\x\fi
+            \advance\count1 1 \ifnum\count1<2 \expandafter\pass\fi}
+          \pass\expandafter\m\z
+          \def\n#1{\expandafter\ifx\x#1\def\ns{}\else\def\nd{}\fi}\count1=0
+          \def\more{\edef\x{\ifnum\pdfuniformdeviate2=0 a\else b\fi}\ifnum\count1=0 \let\w\x\fi
+            \advance\count1 1 \ifnum\pdfuniformdeviate2=0 \expandafter\more\fi}
+          \more\expandafter\n\w",
+    );
+    let defined = names(&analysis);
+    for name in ["ya", "yb", "ms", "md", "ns", "nd"] {
         assert!(defined.contains(&name.to_string()), "{name}: {defined:?}");
     }
 }
@@ -243,7 +279,7 @@ fn ifx_of_a_joined_text_is_decided_per_member() {
 /// passes, never cut: what follows the loop still runs.
 #[test]
 fn a_loop_past_its_passes_is_widened_not_cut() {
-    let cfg = satex::config::Config { arm_joins: true, ..crate::support::bare() };
+    let cfg = satex::project::config::Config { arm_joins: true, ..crate::support::bare() };
     let analysis = Machine::analyze(
         &format!(
             "{PRELUDE}\\def\\a{{\\advance\\count1 1 \\ifnum\\count1<\\count2 \\expandafter\\a\\fi}}\\count2=\\pdfuniformdeviate 100000 \\a\\def\\after{{}}"
@@ -267,6 +303,57 @@ fn paths_join_at_document() {
     assert_eq!(joined.len(), 1, "{joined:?}");
     assert!(joined[0].contains("2 paths") && joined[0].contains(r"\m"), "{joined:?}");
     assert!(body(&analysis, "z").contains("one of:"), "{}", body(&analysis, "z"));
+}
+
+/// A path at a join point waits for the others only while one may still
+/// reach it. One arm reaches `\document`, the other passes by: the waiting
+/// path runs on behind the other and meets it, so the text after is read
+/// about once, not once per path. It waited to the end before, and what it
+/// did after the join point was lost (`\z` held `b` only).
+#[test]
+fn a_join_point_another_path_passed_waits_no_longer() {
+    let run = |join: &str| {
+        let analysis = analyze(&format!(
+            r"\def\document{{\relax}}\def\a{{\def\m{{a}}{join}}}\def\b{{\def\m{{b}}}}
+              \ifnum\pdfuniformdeviate2=0 \expandafter\a\else\expandafter\b\fi{}\edef\z{{\m}}",
+            r"\def\t{x}\edef\u{\t\t}".repeat(40)
+        ));
+        assert!(body(&analysis, "z").contains("one of:"), "{}", body(&analysis, "z"));
+        analysis.steps
+    };
+    let (waits, plain) = (run(r"\document"), run(""));
+    assert!(waits <= plain + plain / 4, "{waits} steps with a join point, {plain} without");
+}
+
+/// A path waits at a join point to the end when the running path never
+/// stands in its mode past it (here in a paragraph): it still runs on
+/// from there once the others ended, so what it does after is kept.
+#[test]
+fn a_path_waiting_to_the_end_still_runs_on() {
+    let analysis = analyze(
+        r"\def\document{\relax}\def\a{\def\m{a}\document x}\def\b{\def\m{b}x}
+          \ifnum\pdfuniformdeviate2=0 \expandafter\a\else\expandafter\b\fi\edef\z{\m}",
+    );
+    assert!(body(&analysis, "z").contains("one of:"), "{}", body(&analysis, "z"));
+    // `explain` (and so hover) lists each path's text.
+    let (records, _) = satex::queries::query::explain(&analysis, &["z".into()], false).unwrap();
+    let one_of = records.iter().find_map(|r| r.get("one_of")?.as_array().cloned()).unwrap_or_default();
+    let bodies: Vec<&str> = one_of.iter().filter_map(|o| o.get("body")?.as_str()).collect();
+    assert!(bodies.contains(&"a") && bodies.contains(&"b"), "{records:?}");
+    // One path running a site again: its last text.
+    let one = analyze(r"\def\set#1{\edef\z{#1}}\set a\set b");
+    assert_eq!(body(&one, "z"), "b");
+}
+
+/// Paths that end apart (pending code that differs) still end in one
+/// join: what every one of them did is kept, never only the last one's.
+#[test]
+fn paths_ending_apart_keep_every_effect() {
+    for pending in [r"\afterassignment\relax", r"\begingroup\aftergroup\relax", "{"] {
+        let analysis = analyze(&format!(r"\ifnum\pdfuniformdeviate2=0 \def\m{{a}}{pending}\else\def\m{{b}}\fi"));
+        let may = analysis.interner.lookup("m").and_then(|m| analysis.env.slot(m)?.may.clone());
+        assert_eq!(may.map_or(0, |may| may.len()), 2, "{pending}");
+    }
 }
 
 /// The same in LaTeX: a preamble that defines a macro per arm of an
@@ -334,7 +421,7 @@ fn certain_error_drops_its_path() {
         crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-join-lib-{}", std::process::id())));
     std::fs::write(lib.join("arm.tex"), arm).unwrap();
     let source = format!(r"\input {}/arm.tex \edef\z{{\m}}", crate::support::tex_path(&lib));
-    let mut cfg = satex::config::Config { arm_joins: true, ..crate::support::bare() };
+    let mut cfg = satex::project::config::Config { arm_joins: true, ..crate::support::bare() };
     cfg.load.inputs = true;
     let analysis = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
     assert_eq!(body(&analysis, "z"), "b");
@@ -348,6 +435,68 @@ fn certain_error_drops_its_path() {
     let kept = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
     assert!(body(&kept, "z").contains("one of:"), "{}", body(&kept, "z"));
     assert!(with_code(&kept, "assumed-compiles").is_empty());
+}
+
+/// `analysis.assume_compiles` refutes nothing once nothing compiles
+/// (errors kept): a library conditional's `\else` skip crossing into the
+/// document past an approximation is then followed both ways, never
+/// ended as refuted.
+#[test]
+fn a_crossing_skip_is_refuted_only_while_the_document_may_compile() {
+    let lib = crate::support::scratch_dir(
+        crate::support::tmp_root().join(format!("satex-join-cross-{}", std::process::id())),
+    );
+    std::fs::write(lib.join("opener.tex"), r"\def\opener{\iftrue}").unwrap();
+    // Every arm raises an error: nothing compiles, so errors are kept.
+    let bad = r"\ifnum\pdfuniformdeviate2=0 \undefinedcs\else\undefinedtoo\fi ";
+    std::fs::write(lib.join("bad.tex"), bad).unwrap();
+    let run = |error: &str| {
+        let source = format!(
+            r"\input {}/opener.tex {error}\opener\lccode\pdfuniformdeviate 200=65 \else\def\a{{}}\fi\def\after{{}}",
+            crate::support::tex_path(&lib)
+        );
+        let mut cfg = satex::project::config::Config { arm_joins: true, ..crate::support::bare() };
+        cfg.load.inputs = true;
+        let analysis = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
+        with_code(&analysis, "conditional-crosses-file")
+    };
+    let refuted = run("");
+    assert!(refuted.iter().any(|d| d.ends_with("it ends there")), "{refuted:?}");
+    let kept = run(&format!(r"\input {}/bad.tex ", crate::support::tex_path(&lib)));
+    assert!(kept.iter().any(|d| d.contains("both its end there and the skip on")), "{kept:?}");
+}
+
+/// Rows about `\argcs` other than the drop's own note.
+fn raised_on_arm(analysis: &Analysis) -> Vec<String> {
+    let rows = analysis.facts.diagnostics.iter().filter(|d| d.code != "assumed-compiles");
+    rows.filter(|d| d.message.contains("argcs")).map(|d| format!("{}: {}", d.code, d.message)).collect()
+}
+
+/// What a library arm refuted under `analysis.assume_compiles` raised is
+/// retracted with it: only the drop is said. Where every arm raises it,
+/// no path is refuted and the rows stay; so they do without the
+/// assumption.
+#[test]
+fn a_refuted_path_retracts_what_it_raised() {
+    let lib = crate::support::scratch_dir(
+        crate::support::tmp_root().join(format!("satex-join-retract-{}", std::process::id())),
+    );
+    let run = |arm: &str, compiles: bool| {
+        std::fs::write(lib.join("arm.tex"), arm).unwrap();
+        let source = format!(r"\input {}/arm.tex \edef\z{{\m}}", crate::support::tex_path(&lib));
+        let mut cfg = satex::project::config::Config { arm_joins: true, ..crate::support::bare() };
+        cfg.load.inputs = true;
+        cfg.analysis.assume_compiles = compiles;
+        Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg)
+    };
+    let one = r"\def\argcs#1{}\ifnum\pdfuniformdeviate2=0 \def\m{a}\argcs\par\else\def\m{b}\fi ";
+    let dropped = run(one, true);
+    assert_eq!(with_code(&dropped, "assumed-compiles").len(), 1);
+    assert_eq!(raised_on_arm(&dropped), Vec::<String>::new());
+    assert!(!raised_on_arm(&run(one, false)).is_empty(), "kept without the assumption");
+    let both = r"\def\argcs#1{}\ifnum\pdfuniformdeviate2=0 \def\m{a}\argcs\par\else\def\m{b}\argcs\par\fi ";
+    let kept = run(both, true);
+    assert!(!raised_on_arm(&kept).is_empty(), "no arm compiles: {:?}", with_code(&kept, "assumed-compiles"));
 }
 
 /// Once the running path raises a certain error too, nothing compiles: the
@@ -371,9 +520,9 @@ fn a_dropped_path_rejoins_once_nothing_compiles() {
 /// Before, every head was kept and a large picture took all of memory.
 #[test]
 fn loop_heads_left_behind_are_retired() {
-    let cfg = satex::config::Config {
-        engine: Some(satex::config::Engine::PdfTeX),
-        kernel: Some(satex::plugin::Kernel::None),
+    let cfg = satex::project::config::Config {
+        engine: Some(satex::project::config::Engine::PdfTeX),
+        kernel: Some(satex::plugins::Kernel::None),
         ..crate::support::config()
     };
     let calls = r"\l".repeat(200);
@@ -394,9 +543,9 @@ fn loop_heads_left_behind_are_retired() {
 /// loop unfolded until a limit.
 #[test]
 fn alternating_heads_of_a_tail_loop_meet_again() {
-    let mut cfg = satex::config::Config {
-        engine: Some(satex::config::Engine::PdfTeX),
-        kernel: Some(satex::plugin::Kernel::None),
+    let mut cfg = satex::project::config::Config {
+        engine: Some(satex::project::config::Engine::PdfTeX),
+        kernel: Some(satex::plugins::Kernel::None),
         ..crate::support::config()
     };
     cfg.limits.steps = 2_000_000;
@@ -473,6 +622,41 @@ fn if_and_ifcat_decide_typed_digits() {
         assert!(defined.contains(&yes.to_string()) && !defined.contains(&no.to_string()), "{yes}: {defined:?}");
     }
     assert!(with_code(&analysis, "undecided-condition").is_empty());
+}
+
+/// A name joined to a character and a primitive is that character behind
+/// `\noexpand` where it means it (tex.web § 506): `\if` and `\ifcat` test
+/// each meaning, never a control sequence for all.
+#[test]
+fn noexpand_of_a_name_joined_to_a_character_tests_each_meaning() {
+    let analysis = analyze(&format!(
+        r"{PICK2}\let\x=a\else\let\x=\relax\fi
+          \ifcat\noexpand\x a\def\cat{{}}\else\def\nocat{{}}\fi
+          \if\noexpand\x a\def\same{{}}\else\def\notsame{{}}\fi"
+    ));
+    let defined = names(&analysis);
+    for name in ["cat", "nocat", "same", "notsame"] {
+        assert!(defined.contains(&name.to_string()), "{name}: {defined:?}");
+    }
+}
+
+/// A name joined to a glue parameter and to a macro of dimension text,
+/// first in a dimension scan: each path reads its own member, the
+/// parameter whole (tex.web § 449), never as an integer wanting a unit.
+#[test]
+fn a_name_joined_to_a_register_and_a_macro_scans_as_each_dimension() {
+    let analysis = analyze(&format!(
+        r"\baselineskip=12pt {PICK2}\let\h=\baselineskip\else\def\h{{2pt-1sp}}\fi
+          \dimen5=\dimexpr 1pt+\h\relax
+          \ifdim\dimen5>5pt \def\tall{{}}\else\def\short{{}}\fi"
+    ));
+    for code in ["illegal-unit", "missing-number"] {
+        assert!(with_code(&analysis, code).is_empty(), "{code}: {:?}", with_code(&analysis, code));
+    }
+    let defined = names(&analysis);
+    for name in ["tall", "short"] {
+        assert!(defined.contains(&name.to_string()), "{name}: {defined:?}");
+    }
 }
 
 /// One-of texts whose first tokens all agree decide `\if`, `\ifcat`
@@ -661,7 +845,7 @@ fn disjoint_intervals_join_to_an_interval_set() {
     assert!(!defined.contains(&"middle".to_string()), "{defined:?}");
     assert!(defined.contains(&"below".to_string()) && !defined.contains(&"above".to_string()), "{defined:?}");
     // One member keeps only the hull, which holds values between them.
-    let mut cfg = satex::config::Config { arm_joins: true, ..crate::support::bare() };
+    let mut cfg = satex::project::config::Config { arm_joins: true, ..crate::support::bare() };
     cfg.limits.interval_set = 1;
     let hull = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
     assert!(names(&hull).contains(&"middle".to_string()), "{:?}", names(&hull));
@@ -681,4 +865,389 @@ fn a_walk_over_joined_digits_meets_its_marker() {
     );
     let bad = crate::support::diagnosed(&analysis, "undefined-control-sequence");
     assert!(!bad.iter().any(|m| m.contains("BADSTOP")), "{bad:?}");
+}
+
+/// A widened conditional whose arms read past their `\fi`
+/// (`\expandafter\firstoftwo\else\expandafter\secondoftwo\fi{A}{B}`): `{A}`
+/// and `{B}` are what the arms read, never code run after the `\fi`, so
+/// neither sets `\a` for sure.
+#[test]
+fn a_widened_arm_reads_its_arguments_past_the_fi() {
+    let mut cfg = crate::support::bare();
+    cfg.limits.choices = 0;
+    let source = r"\long\def\firstoftwo#1#2{#1}\long\def\secondoftwo#1#2{#2}
+\def\test{\ifodd\pdfuniformdeviate2 \relax\fi\ifodd\pdfuniformdeviate2 \expandafter\firstoftwo\else\expandafter\secondoftwo\fi{\gdef\a{1}}{\gdef\a{2}}}
+\iftrue\test\fi
+\gdef\after{}";
+    let analysis = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
+    assert!(!with_code(&analysis, "undecided-condition").is_empty(), "the conditional was not widened");
+    let a = body(&analysis, "a");
+    assert!(!["1", "2"].contains(&a.as_str()), "an argument ran as code after the \\fi: \\a is {a}");
+    assert!(names(&analysis).contains(&"after".to_string()));
+    assert!(with_code(&analysis, "extra-fi").is_empty(), "{:?}", with_code(&analysis, "extra-fi"));
+}
+
+/// `\vskip` where the mode is horizontal or internal vertical (an undecided
+/// `\leavevmode` joined at its `\fi`) and LaTeX's `\par` is a macro: the
+/// horizontal path reads `\par` first, the paths differ and each reads the
+/// glue, so `\z@` is never left over as an assignment.
+#[test]
+fn vertical_glue_in_a_joined_mode_reads_its_glue() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex(
+        r"\documentclass{article}
+\makeatletter
+\def\maybe{\ifodd\pdfuniformdeviate 2 \leavevmode\fi}
+\begin{document}
+\vbox{\maybe\vskip\z@}
+\end{document}",
+    );
+    assert!(with_code(&analysis, "missing-number").is_empty(), "{:?}", with_code(&analysis, "missing-number"));
+}
+
+/// `\vskip\the\skip@` with an unknown glue: the tail `\the` prints is one of
+/// the texts TeX may print, which the glue scan reads whole, so vertical
+/// mode stays vertical (hyperref's `\Hy@RestoreLastskip`).
+#[test]
+fn a_printed_glue_is_read_back_whole() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex(
+        r"\documentclass{article}
+\makeatletter
+\begin{document}
+\par\skip@=-\lastskip
+\edef\x{\vskip\the\skip@\relax}\x
+\ifhmode\gdef\Horizontal{}\fi
+\end{document}",
+    );
+    assert!(!names(&analysis).contains(&"Horizontal".to_string()), "part of the glue was typeset");
+}
+
+// Files written apart: the texts a file may hold are read one per path,
+// and the paths join once each read its text.
+
+/// [`analyze`], reading the files `\input` names.
+fn analyze_files(source: &str) -> Analysis {
+    let mut cfg = satex::project::config::Config { arm_joins: true, ..crate::support::bare() };
+    cfg.load.inputs = true;
+    Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg)
+}
+
+/// Writes `\a` on one path and `\b` and `\c` on the other to `name`,
+/// so the file holds one of two texts of different lengths.
+fn two_texts(name: &str, short_first: bool) -> String {
+    let (short, long) =
+        (r"\immediate\write1{\gdef\noexpand\a{}}", r"\immediate\write1{\gdef\noexpand\b{}\gdef\noexpand\c{}}");
+    let (x, y) = if short_first { (short, long) } else { (long, short) };
+    format!(
+        r"\def\run{{\immediate\openout1={name} \ifnum\pdfuniformdeviate2=0 {x}\else {y}\fi \immediate\closeout1 }}\run "
+    )
+}
+
+/// Two undecided tests after `text`: one path parts in two at a time.
+const TWO_TESTS: &str = r"\def\run{\ifnum\pdfuniformdeviate2=0 \count1=1 \else \count1=2 \fi
+  \ifnum\pdfuniformdeviate2=0 \count2=1 \else \count2=2 \fi}\run \gdef\reached{}";
+
+/// A file of two texts of different lengths, `\input`: each path reads its
+/// text, and past the file they stand at the same place with the same
+/// progress, so they join and the tests after it part one path.
+/// Variants: the longer text first.
+#[test]
+fn paths_that_read_different_texts_of_a_file_join_after_it() {
+    for short_first in [true, false] {
+        let analysis =
+            analyze_files(&format!(r"{}\input twotexts.tex {TWO_TESTS}", two_texts("twotexts.tex", short_first)));
+        let defined = names(&analysis);
+        let all = ["a", "b", "c", "reached"].iter().all(|n| defined.contains(&n.to_string()));
+        assert!(all, "short first {short_first}: {defined:?}");
+        assert!(analysis.peak_paths <= 2, "short first {short_first}: {} paths", analysis.peak_paths);
+    }
+}
+
+/// Writes `linea` on one path and `long` names on the other to `lines.tex`,
+/// then reads it in a loop with `reader` (`\read` or `\readline`).
+fn read_loop(long: usize, long_first: bool, reader: &str) -> (String, Vec<String>) {
+    let name = |n: usize| format!("line{}", char::from(b'a' + n as u8));
+    let line = |n: usize| format!(r"\immediate\write1{{{}}}", name(n));
+    let (short, long_text) = (line(0), (1..=long).map(line).collect::<String>());
+    let (x, y) = if long_first { (&long_text, &short) } else { (&short, &long_text) };
+    let write = format!(
+        r"\def\run{{\immediate\openout1=lines.tex \ifnum\pdfuniformdeviate2=0 {x}\else {y}\fi \immediate\closeout1 }}\run "
+    );
+    // Each line names a macro to define, read without a line end.
+    let read = format!(
+        r"\openin1=lines.tex \endlinechar=-1 \def\next{{\ifeof1 \else \{reader}1 to\l
+          \expandafter\gdef\csname\l\endcsname{{}}\expandafter\next\fi}}\next \closein1 \endlinechar=13 "
+    );
+    (format!("{write}{read}{TWO_TESTS}"), (0..=long).map(name).collect())
+}
+
+/// A `\read` loop over a file of one line on one path and three on the
+/// other ends on both, every line read, and the paths join after it.
+/// Variants: the longer text first, `\readline`, a text longer than the
+/// passes a loop runs before it widens.
+#[test]
+fn a_read_loop_over_a_file_of_two_lengths_ends_on_both_paths() {
+    for (long, long_first, reader) in
+        [(3, false, "read"), (3, true, "read"), (3, false, "readline"), (6, false, "read")]
+    {
+        let (source, lines) = read_loop(long, long_first, reader);
+        let analysis = analyze_files(&source);
+        let defined = names(&analysis);
+        let case = format!("{long} lines, long first {long_first}, {reader}");
+        assert!(
+            lines.iter().chain([&"reached".to_string()]).all(|n| defined.contains(n)),
+            "{case}: {defined:?} {:?}",
+            analysis.facts.diagnostics.iter().map(|d| format!("{} {}", d.code, d.message)).collect::<Vec<_>>()
+        );
+        assert!(
+            with_code(&analysis, "terminal-read").is_empty(),
+            "{case}: {:?}",
+            with_code(&analysis, "terminal-read")
+        );
+        assert!(analysis.peak_paths <= 2, "{case}: {} paths", analysis.peak_paths);
+    }
+}
+
+/// A stream the paths stand at different places of: read once more than
+/// the shorter text holds, outside a loop, the shorter path reads the empty
+/// line past its end and `\ifeof` is true there only.
+#[test]
+fn a_stream_read_past_its_end_on_one_path_is_at_end_there_only() {
+    let (source, _) = read_loop(2, false, "read");
+    let write = &source[..source.find(r"\openin").expect("the read")];
+    let read = r"\openin1=lines.tex \read1 to\l \read1 to\l \ifeof1 \gdef\ended{} \else \gdef\open{} \fi";
+    let analysis = analyze_files(&format!("{write}{read}"));
+    let defined = names(&analysis);
+    assert!(["ended", "open"].iter().all(|n| defined.contains(&n.to_string())), "{defined:?}");
+    assert!(with_code(&analysis, "terminal-read").is_empty(), "{:?}", with_code(&analysis, "terminal-read"));
+}
+
+/// scrlayer-notecolumn's `.slnc` loop, called twice: each pass reads a
+/// line, may stop, and stops at `\ifeof`; a call starts only before the
+/// end. TeX never reads the terminal. The flag and the stream's place
+/// must not be joined apart into a path that reads a closed stream as a
+/// certain fatal error. Variants: two lines, and six (the paths crowd).
+#[test]
+fn a_read_loop_flag_stays_with_its_stream_place() {
+    for lines in [2, 6] {
+        let write = (0..lines).map(|n| format!(r"\immediate\write1{{l{n}}}")).collect::<String>();
+        let source = format!(
+            r"\immediate\openout1=flag.tex {write}\immediate\closeout1 \nonstopmode \openin1=flag.tex
+              \def\body{{\read1 to\l \let\go\body \ifnum\pdfuniformdeviate2=0 \let\go\relax\fi
+                \ifeof1 \let\go\relax\fi \go}}
+              \def\readto{{\ifeof1 \else \expandafter\body\fi}}\readto \readto \gdef\reached{{}}"
+        );
+        let analysis = analyze_files(&source);
+        let certain: Vec<_> = analysis
+            .facts
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "terminal-read-fatal" && d.severity == satex::analysis::facts::Severity::Warning)
+            .collect();
+        assert!(certain.is_empty(), "{lines} lines: {:?}", with_code(&analysis, "terminal-read-fatal"));
+        assert!(names(&analysis).contains(&"reached".to_string()), "{lines} lines: {:?}", names(&analysis));
+    }
+}
+
+/// A written line of unknown digits reads back as typed digits, by `\read`
+/// in a loop and by `\input`: the number stays a number.
+#[test]
+fn a_written_unknown_line_reads_back_typed() {
+    let write = r"\count3=\pdfuniformdeviate 100 \immediate\openout1=unknown.tex
+      \immediate\write1{\noexpand\count4=\the\count3 \relax}\immediate\closeout1 ";
+    let read = r"\openin1=unknown.tex \def\next{\ifeof1 \else \read1 to\l \l \expandafter\next\fi}\next \closein1
+      \ifnum\count4<100 \gdef\fits{}\fi \count4=-1 \input unknown.tex \ifnum\count4>-1 \gdef\again{}\fi";
+    let analysis = analyze_files(&format!("{write}{read}"));
+    let defined = names(&analysis);
+    assert!(defined.contains(&"fits".to_string()) && defined.contains(&"again".to_string()), "{defined:?}");
+    assert!(with_code(&analysis, "missing-number").is_empty(), "{:?}", with_code(&analysis, "missing-number"));
+}
+
+/// A word still set on one path (`2`, which may kern with what follows)
+/// and ended on the other (`3\relax`) joins with each pending character
+/// settled against any next one: cmr10's digits kern with nothing, so
+/// the box keeps its width and the test after it is decided.
+#[test]
+fn a_word_set_on_one_path_and_ended_on_the_other_keeps_its_width() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex(
+        r"\documentclass{article}
+\begin{document}
+\setbox2\hbox{2.}
+\setbox0\hbox{\ifodd\pdfrandomseed 2\else 3\relax\fi.}
+\ifdim\wd0=\wd2 \gdef\Same{}\else\gdef\Apart{}\fi
+\end{document}",
+    );
+    let names = names(&analysis);
+    assert!(names.contains(&"Same".to_string()) && !names.contains(&"Apart".to_string()), "{names:?}");
+}
+
+/// Settling keeps every kern the pending character may get: `AV` kerns
+/// (14.17pt) where `B\relax V` does not (14.58pt), so a box under 14.2pt
+/// stays possible.
+#[test]
+fn a_settled_word_keeps_the_kern_it_may_get() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex(
+        r"\documentclass{article}
+\begin{document}
+\setbox0\hbox{\ifodd\pdfrandomseed A\else B\relax\fi V}
+\ifdim\wd0<14.2pt \gdef\Kerned{}\fi
+\ifdim\wd0>14.5pt \gdef\Plain{}\fi
+\end{document}",
+    );
+    let names = names(&analysis);
+    assert!(names.contains(&"Kerned".to_string()) && names.contains(&"Plain".to_string()), "{names:?}");
+}
+
+/// A pending character that may form a ligature is not settled: `fi` is
+/// one 5.56pt ligature, narrower than `f` and `i` side by side, so a box
+/// under 5.6pt stays possible.
+#[test]
+fn a_word_that_may_ligature_is_not_settled() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex(
+        r"\documentclass{article}
+\begin{document}
+\setbox0\hbox{\ifodd\pdfrandomseed f\else x\relax\fi i}
+\ifdim\wd0<5.6pt \gdef\Ligature{}\fi
+\ifdim\wd0>8pt \gdef\Wide{}\fi
+\end{document}",
+    );
+    let names = names(&analysis);
+    assert!(names.contains(&"Ligature".to_string()) && names.contains(&"Wide".to_string()), "{names:?}");
+}
+
+/// A name read back from a family a name of unknown text was given a
+/// conditional (xkeyval's state saved under `\romannumeral` of its depth):
+/// one of the family's meanings or `\relax`, so it may open the conditional
+/// its `\fi` closes, never runs as unknown code.
+#[test]
+fn a_name_read_from_a_family_keeps_the_meanings_it_was_given() {
+    let analysis = analyze(
+        r"\count255=\pdfuniformdeviate 100000 \relax
+          \expandafter\let\csname probe@\romannumeral\count255\endcsname\iftrue
+          \expandafter\let\expandafter\probeif\csname probe@\romannumeral\count255\endcsname
+          \probeif \def\inarm{}\fi",
+    );
+    assert!(with_code(&analysis, "unknown-text-run").is_empty(), "{:?}", with_code(&analysis, "unknown-text-run"));
+    assert!(names(&analysis).contains(&"inarm".to_string()));
+}
+
+/// A list of names an undecided loop appends to (a float queue), past
+/// the exact set a join keeps: joined, it still holds only the names it
+/// may, so running it with `\elt` runs `\elt` on them, never unknown code.
+#[test]
+fn lists_of_names_through_an_undecided_loop_keep_their_names() {
+    let analysis = analyze(
+        r"\chardef\bA=1 \chardef\bB=2 \def\F{}\let\elt\relax
+          \def\loop{\ifnum\pdfuniformdeviate2=0
+            \ifnum\pdfuniformdeviate2=0 \xdef\F{\F\elt\bA}\else\xdef\F{\F\elt\bB}\fi
+            \expandafter\loop\fi}\loop
+          \def\elt#1{\global\let\got#1}\F",
+    );
+    assert!(with_code(&analysis, "unknown-text-run").is_empty(), "{:?}", with_code(&analysis, "unknown-text-run"));
+    assert!(crate::support::maybe_defined(&analysis, "got"));
+}
+
+/// Two lists a join left paired, as a float on the top list or deferred
+/// but never both: one `\xdef` of both holds the float once on every arm.
+#[test]
+fn paired_lists_copied_together_keep_their_pairing() {
+    let analysis = analyze(
+        r"\chardef\bA=1 \def\T{}\def\D{\elt\bA}
+          \ifnum\pdfuniformdeviate2=0 \def\T{\elt\bA}\def\D{}\fi
+          \let\elt\relax \xdef\F{\T\D}",
+    );
+    assert_eq!(crate::support::last_body(&analysis, "F"), r"\elt \bA ");
+}
+
+/// A name one arm defines is only maybe defined after the join, so a check
+/// that a run reached a marker fails when only some paths did.
+#[test]
+fn a_marker_one_arm_defines_is_not_surely_defined() {
+    let analysis = analyze(r"\ifnum\pdfuniformdeviate2=0 \gdef\reached{}\fi");
+    assert!(!crate::support::defined(&analysis, "reached") && !crate::support::undefined(&analysis, "reached"));
+}
+
+/// Library code that reads two lists a join decorrelated may meet a state
+/// no run has: an error raised there is possible, never certain.
+#[test]
+fn an_error_after_a_split_of_joined_lists_is_not_certain() {
+    let dir = crate::support::scratch_dir(
+        crate::support::tmp_root().join(format!("satex-joined-error-{}", std::process::id())),
+    );
+    let tree = crate::support::mini_texmf(&dir);
+    std::fs::write(
+        tree.join("tex/latex/demo/lists.sty"),
+        "\\chardef\\bA=1 \\def\\T{}\\def\\D{\\elt\\bA}\n\
+         \\ifnum\\pdfuniformdeviate2=0 \\def\\T{\\elt\\bA}\\def\\D{}\\fi\n\
+         \\let\\elt\\relax \\xdef\\F{\\T\\D}\\def\\one{\\elt\\bA}\n\
+         \\ifx\\F\\one\\else\\errmessage{lost}\\fi\n",
+    )
+    .expect("lists.sty");
+    let source = "\\usepackage{lists}\n";
+    let path = dir.join("doc.tex");
+    std::fs::write(&path, source).expect("doc.tex");
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::mini_config(&tree, &dir.join("cache")));
+    let certain: Vec<_> = analysis.facts.raised.iter().filter(|r| r.certain).map(|r| r.text.clone()).collect();
+    assert!(certain.is_empty(), "{certain:?}");
+}
+
+/// A loop whose first passes leave a name alone: the passes not run may
+/// still define it, so after the loop it is maybe defined, never undefined.
+#[test]
+fn a_loop_defines_late_what_its_first_passes_do_not() {
+    let a = analyze(
+        "\\def\\loop#1\\repeat{\\def\\body{#1}\\iterate}\
+         \\def\\iterate{\\body\\let\\next\\iterate\\else\\let\\next\\relax\\fi\\next}\
+         \\count1=0 \\loop\\advance\\count1 1 \\ifnum\\count1>3 \\gdef\\late{}\\fi\
+         \\ifnum\\count1<\\pdfuniformdeviate100 \\repeat",
+    );
+    assert!(crate::support::maybe_defined(&a, "late"), "\\late is never defined after the loop");
+}
+
+/// Names of unknown text given a text per record (a note per line read):
+/// the family's texts widen to their hull, so the paths a read of the
+/// family parts into do not grow with the number of records.
+#[test]
+fn a_family_given_a_text_per_record_keeps_the_paths_few() {
+    let peak = |records: usize| {
+        let name = r"\csname rec@\romannumeral\count255\endcsname";
+        let mut source = String::from(r"\long\def\addto#1#2{\toks0\expandafter{#1#2}\xdef#1{\the\toks0}}");
+        for r in 0..records {
+            source += &format!("\\count255=\\pdfuniformdeviate 100000 \\expandafter\\addto{name}{{\\def\\r{{{r}}}}}\n");
+        }
+        source += &format!("{name}{name}");
+        analyze(&source).peak_paths
+    };
+    let (few, many) = (peak(2), peak(6));
+    assert!(many <= few, "{many} paths with 6 records, {few} with 2");
+}
+
+/// A command that starts a paragraph where the mode is joined (internal
+/// vertical or horizontal) parts by mode. Its arms part after the last
+/// `\fi`, so they never meet at it before reading the command again: one
+/// `\strut` per line is no loop, and nothing is summarized.
+#[test]
+fn a_mode_split_after_a_joined_fi_is_no_loop() {
+    let a = analyze(
+        r"\setbox1\hbox{\vrule height 8pt depth 3pt width 0pt}\def\strut{\relax\ifmmode\copy1\else\unhcopy1\fi}
+          \everypar{\relax}
+          \setbox0\vbox{\ifnum\pdfuniformdeviate2=0 x\fi
+            \strut\ignorespaces a\par\strut\ignorespaces b\par\strut\ignorespaces c\par\gdef\inbox{}}\gdef\after{}",
+    );
+    assert!(with_code(&a, "recursion-widened").is_empty(), "{:?}", with_code(&a, "recursion-widened"));
+    assert!(crate::support::defined(&a, "inbox") && crate::support::defined(&a, "after"));
 }

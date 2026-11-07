@@ -1,14 +1,14 @@
 //! `satex completions install` and the `--version` hint, in a scratch HOME.
 
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
 /// Runs satex with `home/bin` as the whole `PATH`: the shells installed are
 /// the ones a test puts there.
 fn run(home: &Path, shell: &str, args: &[&str]) -> Output {
     let bin = home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    Command::new(env!("CARGO_BIN_EXE_satex"))
+    crate::support::satex()
         .args(args)
         .env("PATH", &bin)
         .env("HOME", home)
@@ -68,4 +68,18 @@ fn installed(home: &Path, shell: &str) {
     std::fs::create_dir_all(home.join("bin")).unwrap();
     std::fs::write(&path, "#!/bin/sh\n").unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// `satex completions json` exports clap's command tree: the console and
+/// the docs' command lines show each flag's help from it.
+#[test]
+fn the_command_tree_names_each_flag_with_its_help() {
+    let out = crate::support::satex().args(["completions", "json"]).output().expect("satex runs");
+    let tree: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    let lint = tree["command"]["subcommands"].as_array().unwrap().iter().find(|c| c["name"] == "lint").expect("lint");
+    let fix = lint["args"].as_array().unwrap().iter().find(|a| a["long"] == "fix").expect("--fix");
+    assert!(fix["help"].as_str().is_some_and(|h| !h.is_empty()), "{fix}");
+    let format = tree["command"]["args"].as_array().unwrap().iter().find(|a| a["long"] == "format").expect("--format");
+    assert!(format["possible_values"].as_array().unwrap().iter().any(|v| v == "json"), "{format}");
+    assert!(format["defaults"].as_array().unwrap().iter().any(|v| v == "text"), "{format}");
 }

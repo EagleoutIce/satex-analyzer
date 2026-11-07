@@ -4,14 +4,10 @@
 //! on `lint`, say) must fail clearly rather than silently falling back to
 //! text.
 
-use std::process::{Command, Output};
-
-fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_satex")
-}
+use std::process::Output;
 
 fn run(args: &[&str]) -> Output {
-    Command::new(bin())
+    crate::support::satex()
         .args(args)
         .args(["--set", "limits.seconds=0"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -103,4 +99,19 @@ fn newcommand_takes_a_star_before_its_name() {
     let rows: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
     let signature = rows[0]["signature"].as_str().unwrap_or_default();
     assert!(signature.starts_with('s'), "{rows}");
+}
+
+/// The format's environments (`itemize`, `\endtabular`'s pair) are no run's
+/// `\newenvironment`, but `scope` still names them environments: `\X` and
+/// `\endX` both macros.
+#[test]
+fn scope_names_the_format_s_environments() {
+    let output = run(&["scope", "-f", SAMPLE, "--format", "json"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let tag = |name: &str| rows.iter().find(|r| r["name"] == name).map(|r| r["tag"].clone());
+    for name in ["\\itemize", "\\enditemize", "\\tabular"] {
+        assert_eq!(tag(name), Some(serde_json::json!("environment")), "{name}");
+    }
+    assert_ne!(tag("\\input"), Some(serde_json::json!("environment")));
 }

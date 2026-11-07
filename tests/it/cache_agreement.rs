@@ -6,8 +6,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::support::installed;
-use satex::config::{Cache, Config};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Cache, Config};
 
 /// A project directory with its own empty cache: nothing this test reads
 /// was built by another.
@@ -27,7 +27,10 @@ fn seeded(name: &str) -> PathBuf {
 }
 
 fn config(dir: &Path) -> Config {
-    Config { cache: Cache { dir: Some(dir.join("cache")), ..Default::default() }, ..crate::support::config() }
+    Config {
+        cache: Cache { dir: Some(dir.join("cache")), document: false, ..Default::default() },
+        ..crate::support::config()
+    }
 }
 
 fn analyze(dir: &Path, source: &str, cfg: &Config) -> Analysis {
@@ -113,7 +116,9 @@ fn a_run_that_builds_the_caches_and_one_that_reads_them_agree() {
     // compare two cold runs.
     let warm = run(&dir, PACKAGES);
     let served = |package: &str| {
-        warm.package_caches.iter().any(|(name, .., state)| name == package && satex::machine::cache_served(state))
+        warm.package_caches
+            .iter()
+            .any(|(name, .., state)| name == package && satex::analysis::machine::cache_served(state))
     };
     assert!(served("xcolor"), "xcolor was replayed: {:?}", warm.package_caches);
     assert!(served("etoolbox"), "etoolbox was replayed: {:?}", warm.package_caches);
@@ -292,8 +297,57 @@ fn a_package_and_a_document_in_one_project_share_the_kernel_cache() {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|n| n.starts_with("format-"))
         .collect();
-    let caches = names.iter().filter(|n| n.ends_with(".postcard")).count();
-    let locks = names.iter().filter(|n| n.ends_with(".lock")).count();
-    assert_eq!(caches, 1, "{names:?}");
-    assert_eq!(locks, 1, "a lock per cache and no more: {names:?}");
+    let caches: Vec<&str> = names.iter().filter_map(|n| n.strip_suffix(".postcard")).collect();
+    assert_eq!(caches.len(), 1, "{names:?}");
+    // The store lock and the build lock name their cache.
+    let stem = |n: &str| n.strip_suffix(".building.lock").or_else(|| n.strip_suffix(".lock")).map(str::to_string);
+    let orphans: Vec<&String> =
+        names.iter().filter(|n| stem(n).is_some_and(|s| !caches.contains(&s.as_str()))).collect();
+    assert!(orphans.is_empty(), "locks of no cache: {orphans:?}");
+}
+
+/// Reads what the main vertical list holds after the class: whether the
+/// kernel and the class were read or replayed, a job reads the same.
+const LISTS: &str = "\\documentclass{article}\n\
+\\ifnum\\lastnodetype=-1 \\gdef\\listmark{empty}\\else\\gdef\\listmark{items}\\fi\n\
+\\begin{document}x\\end{document}\n";
+
+/// A format holds no lists (tex.web § 1299), and a replayed load leaves
+/// them as reading it did: no cache makes `\lastnodetype` more decided.
+#[test]
+fn the_lists_a_job_reads_are_the_same_whether_the_kernel_was_read_or_loaded() {
+    if !installed() {
+        return;
+    }
+    let dir = project("lists");
+    let marks = |a: &Analysis| {
+        let mark = a.interner.lookup("listmark");
+        a.facts.defs.iter().filter(|d| Some(d.name) == mark).map(|d| (d.span.line, d.span.col)).collect::<Vec<_>>()
+    };
+    let uncached =
+        analyze(&dir, LISTS, &Config { cache: Cache { enabled: false, ..Default::default() }, ..config(&dir) });
+    let stored = run(&dir, LISTS);
+    let loaded = run(&dir, LISTS);
+    assert!(loaded.format.as_ref().is_some_and(|f| f.cached), "the third run installed the cached kernel");
+    assert!(!marks(&uncached).is_empty(), "the mark is defined");
+    assert_eq!(marks(&uncached), marks(&stored), "interpreting the kernel into the cache");
+    assert_eq!(marks(&uncached), marks(&loaded), "installing the kernel and replaying the class");
+    same_rows(&uncached, &loaded, "the lists a job reads");
+}
+
+/// `\DocumentMetadata` loads the PDF management and tagging code, whose
+/// conditionals fork at a few hot sites.
+const METADATA: &str = "\\DocumentMetadata{lang=en}\n\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
+
+/// The fork counts that widen a hot site are kept per load, so a load read
+/// and the same load replayed in part widen at the same choices.
+#[test]
+fn a_tagged_document_reads_the_same_with_its_loads_replayed() {
+    if !installed() {
+        return;
+    }
+    let dir = seeded("metadata");
+    let cold = run(&dir, METADATA);
+    let warm = run(&dir, METADATA);
+    same_rows(&cold, &warm, "a tagged document");
 }

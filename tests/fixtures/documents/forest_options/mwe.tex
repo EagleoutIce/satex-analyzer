@@ -1,0 +1,39 @@
+\documentclass{article}
+\usepackage{forest}
+\forestset{mytree/.style={for tree={draw, rounded corners, s sep=2mm}}}
+\begin{document}
+\begin{forest}
+for tree={draw, s sep=5mm, l sep=8mm, font=\small}
+[root [a [a1] [a2]] [b]]
+\end{forest}
+
+\begin{forest}
+[S [NP, edge={red, thick} [D] [N]] [VP, edge=dashed [V] [NP, edge label={node[midway,left]{obj}}]]]
+\end{forest}
+
+\begin{forest}
+for tree={grow'=east, anchor=west, child anchor=west, parent anchor=east}
+[root [left] [right [deep]]]
+\end{forest}
+
+\begin{forest}
+[S [NP, tier=word [John]] [VP [V, tier=word [loves]] [NP, tier=word [Mary]]]]
+\end{forest}
+
+\begin{forest}
+delay={where content={}{shape=coordinate}{}}
+[{} [a] [{} [b] [c]]]
+\end{forest}
+
+\begin{forest}
+before typesetting nodes={for tree={if n children=0{font=\itshape}{}}}
+[root [x] [y [z]]]
+\end{forest}
+
+\begin{forest}
+mytree
+[1 [2 [4] [5]] [3]]
+\end{forest}
+
+\gdef\SatexReachedEnd{}
+\end{document}

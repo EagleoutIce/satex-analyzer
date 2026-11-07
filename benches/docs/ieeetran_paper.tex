@@ -1,0 +1,14 @@
+% Exercises: IEEEtran conference mode, IEEEauthorblockN, abstract/IEEEkeywords, bibtex.
+\documentclass[conference]{IEEEtran}
+\usepackage{amsmath,graphicx}
+\begin{document}
+\title{An IEEE Style Paper}
+\author{\IEEEauthorblockN{Ann Author}\IEEEauthorblockA{Example University\\a@example.org}}
+\maketitle
+\begin{abstract}We show a thing.\end{abstract}
+\begin{IEEEkeywords}examples, benchmarks\end{IEEEkeywords}
+\section{Introduction}Literate programming~\cite{knuth84} and \cite{lamport94,dijkstra68}.
+\section{Model}\begin{equation}E=mc^2\label{eq:e}\end{equation}Equation~\eqref{eq:e} is famous.
+\begin{figure}[t]\centering\rule{3cm}{2cm}\caption{A figure.}\end{figure}
+\bibliographystyle{IEEEtran}\bibliography{refs}
+\end{document}

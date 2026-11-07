@@ -1,0 +1,9 @@
+\documentclass{article}
+\newcounter{shipped}
+\AddToHook{shipout/before}{\stepcounter{shipped}}
+\begin{document}
+\makeatletter
+\protected@write\@auxout{\let\theshipped\relax}{\string\gdef\string\X{\theshipped}}
+\ifdefined\X \ifnum\X=1 \gdef\SatexReachedEnd{}\fi \else \gdef\SatexReachedEnd{}\fi
+A
+\end{document}

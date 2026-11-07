@@ -5,10 +5,10 @@
 //! (`\pdfelapsedtime`) `\R` must cover what etex printed, and the loop must
 //! end by widening, not at a limit.
 
-use satex::config::{Config, Engine};
-use satex::facts::Severity;
-use satex::machine::{Analysis, Machine};
-use satex::plugin::Kernel;
+use satex::analysis::facts::Severity;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::plugins::Kernel;
+use satex::project::config::{Config, Engine};
 
 pub(crate) const PRE: &str =
     "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\countdef\\n=10 \\n=0 \\countdef\\m=11\n";
@@ -33,7 +33,7 @@ fn results(analysis: &Analysis) -> Vec<String> {
         .iter()
         .filter(|d| analysis.interner.name(d.name) == "R")
         .filter_map(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         .collect()
 }
 

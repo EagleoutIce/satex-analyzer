@@ -1,0 +1,20 @@
+% Exercises: plain TeX: macros, \halign, \output, \openout-free page layout, counters, loops, \csname.
+\input plain
+\newcount\n \newcount\total
+\def\row#1{#1&\the\numexpr#1*#1\relax&\the\numexpr#1*#1*#1\relax\cr}
+\font\big=cmbx12 scaled 1440
+\headline={\hfil\rm Plain \folio\hfil}
+{\big A plain TeX document}\bigskip
+\beginsection Section one
+
+Some text with $x^2+y^2=z^2$ and \TeX. Display: $$\sum_{i=1}^n i = {n(n+1)\over2}$$
+\halign{\hfil#\quad&\hfil#\quad&\hfil#\cr $n$&$n^2$&$n^3$\cr\noalign{\smallskip}
+\row1\row2\row3\row4\row5\row6\row7\row8\row9\row{10}}
+\n=0 \total=0
+\def\next{\advance\n by 1 \advance\total by \n \ifnum\n<100 \expandafter\next\fi}\next
+The sum is \the\total.
+\beginsection Section two
+
+\item{$\bullet$} alpha\par\item{$\bullet$} beta\par\item{$\bullet$} gamma\par
+\vfill\eject
+\bye

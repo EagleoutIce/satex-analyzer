@@ -11,16 +11,16 @@
 //! Failing rows are the to-do list: never ignore them.
 
 use crate::support::PRELUDE;
-use satex::config::Config;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::Config;
 
 /// `\i` counts passes, `\n` is the unknown bound.
 const HEAD: &str = r"\countdef\i=200 \countdef\n=201 \n=\N \i=0 ";
 
 fn cfg(assume_compiles: bool) -> Config {
     let mut cfg = Config {
-        engine: Some(satex::config::Engine::PdfTeX),
-        kernel: Some(satex::plugin::Kernel::None),
+        engine: Some(satex::project::config::Engine::PdfTeX),
+        kernel: Some(satex::plugins::Kernel::None),
         ..crate::support::config()
     };
     cfg.limits.steps = 5_000_000;
@@ -390,6 +390,32 @@ fn parameters_fonts_streams() {
 #[test]
 fn modes_and_nesting() {
     run_rows(NESTING);
+}
+
+/// expl3 variables under the real kernel. The bound is unknown and
+/// `\\l_tmpa_tl` grows each pass, so no exact fixpoint exists: the loop is
+/// summarized (`recursion-widened`), which must still cover etex and stay
+/// exact for what the loop leaves alone.
+#[test]
+fn expl3_variables() {
+    // etex (latex format, \N=3): \l_tmpa_tl=abxxx, \g_tmpa_int=6, the others untouched.
+    // `\g_tmpa_int` may be negative: `\advance` wraps (tex.web § 1238) for a large `\N`.
+    let probe = r"\ExplSyntaxOn
+\tl_set:Nn \l_tmpa_tl {ab} \tl_set:Nn \l_tmpb_tl {keep} \int_gset:Nn \g_tmpb_int {5}
+\int_step_inline:nn {\N} { \tl_put_right:Nn \l_tmpa_tl {x} \int_gadd:Nn \g_tmpa_int {2} }
+\tl_if_eq:NnT \l_tmpa_tl {abxxx} {\def\okA{}} \tl_if_eq:NnF \l_tmpb_tl {keep} {\def\badA{}}
+\int_compare:nNnT \g_tmpa_int = {6} {\def\okB{}} \int_compare:nNnF \g_tmpb_int = {5} {\def\badB{}}
+\ExplSyntaxOff";
+    let mut cfg = crate::support::config();
+    cfg.load = satex::project::config::Load { packages: false, classes: false, ..Default::default() };
+    let analysis = Machine::analyze(&probe.replace(r"\N", r"\pdfelapsedtime"), None, &cfg);
+    let summarized = |d: &satex::analysis::facts::Diagnostic| d.code == "recursion-widened";
+    assert!(analysis.facts.diagnostics.iter().any(summarized), "the loop is summarized");
+    let mut analysis = analysis;
+    analysis.facts.diagnostics.retain(|d| !summarized(d));
+    if let Some(why) = problems(&analysis, probe) {
+        panic!("{why}");
+    }
 }
 
 /// Type refinement from use. Each probe makes `\x` one of several texts

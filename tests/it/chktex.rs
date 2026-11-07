@@ -2,15 +2,15 @@
 //! full mapping.  Both rules exercised here work at the macro-expansion
 //! level, so no TeX installation is needed to run them.
 
-use satex::config::{Config, Load, Texmf};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Load, Texmf};
 
 fn analyze(source: &str) -> Analysis {
     Machine::analyze(source, None, &crate::support::bare())
 }
 
 fn findings(analysis: &Analysis, code: &str) -> Vec<String> {
-    satex::lint::lint(analysis)
+    satex::linter::lint(analysis)
         .into_iter()
         .filter(|record| record["code"] == code)
         .filter_map(|record| record["message"].as_str().map(str::to_string))
@@ -78,7 +78,7 @@ fn finding_rows(rows: &[FindingRow], read: impl Fn(&str) -> Option<Analysis>) {
 /// `\end{…}` is latex.ltx's, so these run the kernel: its `\@checkend`
 /// raises `\begin{x} on input line n ended by \end{y}`.
 fn latex(source: &str) -> Option<Analysis> {
-    satex::paths::which("kpsewhich").ok()?;
+    satex::project::paths::which("kpsewhich").ok()?;
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     Some(Machine::analyze(source, None, &cfg))
 }
@@ -128,7 +128,7 @@ fn a_mismatch_after_an_error_names_the_error() {
         return;
     };
     let rows: Vec<_> =
-        satex::lint::lint(&analysis).into_iter().filter(|r| r["code"] == "environment-mismatch").collect();
+        satex::linter::lint(&analysis).into_iter().filter(|r| r["code"] == "environment-mismatch").collect();
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0]["severity"], "info", "{rows:?}");
     assert!(rows[0]["message"].as_str().is_some_and(|m| m.contains("may follow from the error at")), "{rows:?}");
@@ -328,7 +328,7 @@ fn an_italic_correction_a_closing_brace_hides_the_period_from_is_reported() {
 /// The accent rules read the source to see how far the accent's argument
 /// reaches, so these run against a file on disk.
 fn latex_file(name: &str, source: &str) -> Option<Analysis> {
-    satex::paths::which("kpsewhich").ok()?;
+    satex::project::paths::which("kpsewhich").ok()?;
     let dir = crate::support::tmp_root().join(format!("satex-chktex-{}", std::process::id()));
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join(name);
@@ -387,7 +387,7 @@ impl Drop for OnDisk {
 /// A one-file project in a fresh directory, analyzed.  `kernel` runs the
 /// real LaTeX2e kernel and gives `None` without a TeX installation.
 fn on_disk(name: &str, source: &str, kernel: bool) -> Option<OnDisk> {
-    if kernel && satex::paths::which("kpsewhich").is_err() {
+    if kernel && satex::project::paths::which("kpsewhich").is_err() {
         return None;
     }
     let dir = crate::support::tmp_root().join(format!("satex-chktex-{name}-{}", std::process::id()));
@@ -745,7 +745,7 @@ math_none! {
 }
 
 // chktex warnings 1, 2, 12, 13, 24, 26, 30, 36, 37, 39 and 42: the spacing
-// rules in `src/lint/spacing.rs`.
+// rules in `src/linter/spacing.rs`.
 
 // chktex warning 1: `Command terminated with space.`
 #[test]
@@ -794,13 +794,13 @@ fn a_reference_that_opens_a_paragraph_is_not_reported() {
     assert!(findings(&doc.analysis, "space-before-command").is_empty());
 }
 
-fn cleveref_records(name: &str, body: &str) -> Vec<satex::query::Record> {
+fn cleveref_records(name: &str, body: &str) -> Vec<satex::queries::query::Record> {
     let source = format!("\\documentclass{{article}}\n{body}");
     let Some(doc) = on_disk(name, &source, true) else { return Vec::new() };
-    satex::lint::lint(&doc.analysis).into_iter().filter(|r| r["code"] == "prefer-cleveref").collect()
+    satex::linter::lint(&doc.analysis).into_iter().filter(|r| r["code"] == "prefer-cleveref").collect()
 }
 
-fn replacements(record: &satex::query::Record) -> Vec<String> {
+fn replacements(record: &satex::queries::query::Record) -> Vec<String> {
     let edits = record.get("edits").and_then(|e| e.as_array()).cloned().unwrap_or_default();
     edits.iter().filter_map(|e| e["replacement"].as_str().map(str::to_string)).collect()
 }
@@ -829,7 +829,8 @@ fn a_hand_written_name_loads_cleveref_after_hyperref_when_it_is_missing() {
     let found = cleveref_records("cleveref-missing", body);
     assert_eq!(found.len(), 1, "{found:?}");
     let message = found[0]["message"].as_str().unwrap();
-    assert!(message.contains("load cleveref (after hyperref)") && message.contains(r"\Cref{sec:x}"), "{message}");
+    let fix = found[0]["fix"].as_str().unwrap();
+    assert!(fix.contains("load cleveref (after hyperref)") && message.contains(r"\Cref{sec:x}"), "{message} / {fix}");
     // The fix loads it on a line after hyperref's.
     assert_eq!(replacements(&found[0]), ["\n\\usepackage{cleveref}", r"\Cref{sec:x}"], "{found:?}");
     assert_eq!(found[0]["edits"][0]["start"]["line"], 2, "{found:?}");
@@ -869,7 +870,7 @@ fn a_plain_document_is_told_to_load_cleveref_for_a_named_reference() {
     let body = "\\begin{document}\n\\section{A}\\label{sec:a}\nSection~\\ref{sec:a}.\nWe see~\\ref{sec:a} and in~\\ref{sec:a}.\n\\end{document}\n";
     let found = cleveref_records("cleveref-plain", body);
     assert_eq!(found.len(), 1, "{found:?}");
-    assert!(found[0]["message"].as_str().unwrap().contains("load cleveref"), "{found:?}");
+    assert!(found[0]["fix"].as_str().unwrap().contains("load cleveref"), "{found:?}");
     // No `\usepackage` to follow: the load goes before `\begin{document}`.
     assert_eq!(replacements(&found[0]), ["\\usepackage{cleveref}\n", r"\Cref{sec:a}"], "{found:?}");
     assert_eq!(found[0]["edits"][0]["start"]["line"], 2, "{found:?}");
@@ -921,6 +922,30 @@ fn an_abbreviation_after_a_line_break_is_named_alone() {
     let analysis = analyze(r"\begin{document}\parbox{3cm}{per cell\\e.g. toolx and so on}\end{document}");
     let found = findings(&analysis, "sentence-spacing");
     assert!(found.iter().any(|f| f.contains("`e.g.`")) && !found.iter().any(|f| f.contains("celle")), "{found:?}");
+}
+
+/// A lowercase word on the next line, or inside another command's group, is no evidence that the
+/// sentence runs on: `inch.` ends its sentence.
+#[test]
+fn a_period_before_a_new_line_or_group_is_no_abbreviation() {
+    let Some(analysis) = latex(
+        "\\documentclass{article}\n\\usepackage{xcolor}\n\\begin{document}\n\\hspace*{1in}Indented by an inch.\n\\textcolor{brown}{henlo}!\n\nThe end. {and} so.\n\\end{document}\n",
+    ) else {
+        return;
+    };
+    let found = findings(&analysis, "sentence-spacing");
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// `conventions.ties.abbreviations`: a listed abbreviation wants a word space before a capital too.
+#[test]
+fn a_listed_abbreviation_before_a_capital_is_reported() {
+    let source = r"\begin{document}Ask Dr. Smith here.\end{document}";
+    assert!(findings(&analyze(source), "sentence-spacing").is_empty());
+    let mut cfg = crate::support::bare();
+    cfg.conventions.ties.abbreviations = vec!["Dr.".into()];
+    let found = findings(&Machine::analyze(source, None, &cfg), "sentence-spacing");
+    assert!(found.len() == 1 && found[0].contains("`Dr.`"), "{found:?}");
 }
 
 // chktex warning 13: `Intersentence spacing ('\@') should perhaps be used.`
@@ -1188,7 +1213,7 @@ fn a_bracket_after_a_macro_argument_is_counted() {
 /// so and deletes nothing.
 #[test]
 fn an_unused_label_may_be_used_in_a_file_not_read() {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let dir = crate::support::tmp_root().join(format!("satex-chktex-unread-{}", std::process::id()));
@@ -1199,7 +1224,7 @@ fn an_unused_label_may_be_used_in_a_file_not_read() {
     std::fs::write(&path, source).expect("doc");
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     let doc = OnDisk { analysis: Machine::analyze(source, Some(&path), &cfg), dir };
-    let rows: Vec<_> = satex::lint::lint(&doc.analysis).into_iter().filter(|r| r["code"] == "unused-label").collect();
+    let rows: Vec<_> = satex::linter::lint(&doc.analysis).into_iter().filter(|r| r["code"] == "unused-label").collect();
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert!(rows[0]["message"].as_str().is_some_and(|m| m.contains("may be referenced later")), "{rows:?}");
     assert!(rows[0].get("edits").is_none(), "{rows:?}");
@@ -1255,13 +1280,14 @@ fn an_open_bracket_is_still_reported_after_lookahead_macros() {
 
 /// `on_disk` with more files beside `doc.tex`.
 fn with_files(name: &str, source: &str, files: &[(&str, &str)]) -> Option<OnDisk> {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return None;
     }
     let dir = crate::support::tmp_root().join(format!("satex-chktex-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).ok()?;
     for (file, text) in files {
+        std::fs::create_dir_all(dir.join(file).parent()?).ok()?;
         std::fs::write(dir.join(file), text).ok()?;
     }
     let path = dir.join("doc.tex");
@@ -1310,9 +1336,28 @@ fn a_graphic_epstopdf_converts_is_not_missing() {
     assert!(found.iter().all(|f| !f.contains("logo")), "{found:?}");
 }
 
+/// An image in a project folder graphics does not search: one `missing-graphic` that names
+/// the folder for `\\graphicspath`, no second finding that it is not installed.
+#[test]
+fn a_graphic_in_a_project_folder_suggests_its_graphicspath() {
+    let source = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\includegraphics{pic}\n\\end{document}\n";
+    let doc = with_files("graphicspath", source, &[("img/pic.png", "png")]).expect("kpsewhich and the fixture");
+    let lint = satex::linter::lint(&doc.analysis);
+    let of = |code: &str| {
+        lint.iter()
+            .filter(|r| r["code"] == code && serde_json::to_string(r).unwrap_or_default().contains("pic"))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let missing = of("missing-graphic");
+    assert_eq!(missing.len(), 1, "{lint:?}");
+    assert!(serde_json::to_string(&missing[0]).unwrap_or_default().contains("\\\\graphicspath{{img/}}"), "{missing:?}");
+    assert!(of("unresolved-file").is_empty(), "graphics' own error is not a missing package: {lint:?}");
+}
+
 #[test]
 fn a_frozen_path_gets_no_findings() {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let dir = crate::support::tmp_root().join(format!("satex-chktex-frozen-{}", std::process::id()));
@@ -1339,7 +1384,7 @@ fn a_frozen_path_gets_no_findings() {
 /// go unless `project.freeze_other_repositories` is off.
 #[test]
 fn a_git_submodule_is_frozen() {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1401,7 +1446,7 @@ fn a_package_error_the_document_causes_is_shown_at_the_cause() {
     ) else {
         return;
     };
-    let rows: Vec<_> = satex::lint::lint(&analysis)
+    let rows: Vec<_> = satex::linter::lint(&analysis)
         .into_iter()
         .filter(|r| r["code"] == "caused-library-error" && r["origin"] == "document")
         .collect();
@@ -1437,7 +1482,7 @@ fn an_error_only_an_approximation_raises_is_a_note() {
     ) else {
         return;
     };
-    let rows: Vec<_> = satex::lint::lint(&analysis)
+    let rows: Vec<_> = satex::linter::lint(&analysis)
         .into_iter()
         .filter(|r| r["code"] == "caused-library-error" && r["category"] != "precision")
         .collect();
@@ -1462,7 +1507,7 @@ fn a_clean_document_causes_no_package_error() {
 
 /// Each finding of `code` as `line:col message`.
 fn placed(analysis: &Analysis, code: &str) -> Vec<String> {
-    satex::lint::lint(analysis)
+    satex::linter::lint(analysis)
         .into_iter()
         .filter(|r| r["code"] == code)
         .map(|r| format!("{}:{} {}", r["line"], r["col"], r["message"].as_str().unwrap_or_default()))
@@ -1528,7 +1573,7 @@ fn a_reference_ahead_of_its_label_is_defined() {
 /// its second run.
 #[test]
 fn a_label_in_an_input_file_defines_the_key_a_later_reference_names() {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let dir = crate::support::scratch_dir(crate::support::tmp_root().join("satex-chktex-ref-ahead"));
@@ -1542,7 +1587,8 @@ fn a_label_in_an_input_file_defines_the_key_a_later_reference_names() {
     let _ = std::fs::remove_dir_all(&dir);
     let found = placed(&analysis, "undefined-reference");
     assert!(found.is_empty(), "{found:?}");
-    let label = |o: &&satex::facts::Occurrence| o.kind == satex::builtins::OccKind::Label && o.key == "sec:a";
+    let label =
+        |o: &&satex::analysis::facts::Occurrence| o.kind == satex::engine::builtins::OccKind::Label && o.key == "sec:a";
     assert_eq!(analysis.facts.occurrences.iter().filter(label).count(), 1);
 }
 
@@ -1629,7 +1675,7 @@ See \ref{nb:A}, \ref{nb:B}, \ref{nb:C}.
 /// analysis's gap: a precision note, not a warning.
 #[test]
 fn a_reference_into_an_unread_part_is_a_precision_note() {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let dir = crate::support::tmp_root().join(format!("satex-chktex-unread-{}", std::process::id()));
@@ -1641,7 +1687,7 @@ fn a_reference_into_an_unread_part_is_a_precision_note() {
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     let analysis = Machine::analyze(source, Some(&path), &cfg);
     let rows: Vec<_> =
-        satex::lint::lint(&analysis).into_iter().filter(|r| r["code"] == "undefined-reference").collect();
+        satex::linter::lint(&analysis).into_iter().filter(|r| r["code"] == "undefined-reference").collect();
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0]["category"], "precision", "{rows:?}");
     assert!(rows[0]["message"].as_str().unwrap_or_default().contains("never read"), "{rows:?}");
@@ -1664,4 +1710,32 @@ A word(with a gap) and ( spaced ) text.
     let found = placed(&analysis, "parenthesis-spacing");
     assert!(found.iter().all(|f| f.starts_with("5:")), "{found:?}");
     assert_eq!(found.len(), 3, "{found:?}");
+}
+
+/// `\T1\textquotedbl` is a name code builds around text the document wrote (the encoding it
+/// chose): the character it sets is the definition's, so no quotation rule reads it as the
+/// document's own, and none stands in the document's `\usepackage` options.
+#[test]
+fn a_symbol_named_by_document_text_is_not_the_documents_character() {
+    if satex::project::paths::which("kpsewhich").is_err() {
+        return;
+    }
+    let root = crate::support::tmp_root().join(format!("satex-chktex-symbol-{}", std::process::id()));
+    let (dir, lib) = (root.join("doc"), root.join("lib"));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(
+        lib.join("qsym.sty"),
+        "\\ProvidesPackage{qsym}\n\\expandafter\\chardef\\csname Xqsym\\endcsname=34\n\\newcommand\\qsym[1]{\\csname #1qsym\\endcsname}\n",
+    )
+    .unwrap();
+    let source = "\\documentclass{article}\n\\usepackage{qsym}\n\\begin{document}\nHe said \\qsym{X}hello\\qsym{X}.\n\\end{document}\n";
+    let path = dir.join("main.tex");
+    std::fs::write(&path, source).unwrap();
+    let mut cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    cfg.search_paths = vec![lib];
+    let analysis = Machine::analyze(source, Some(&path), &cfg);
+    let _ = std::fs::remove_dir_all(&root);
+    let found = findings(&analysis, "wrong-quote-character");
+    assert!(found.is_empty(), "{found:?}");
 }

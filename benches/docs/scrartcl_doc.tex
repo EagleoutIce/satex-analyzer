@@ -1,0 +1,12 @@
+% Exercises: KOMA-Script scrartcl, typearea, scrlayer-scrpage, \KOMAoptions, addmargin.
+\documentclass[a4paper,11pt,parskip=half]{scrartcl}
+\usepackage{scrlayer-scrpage}\pagestyle{scrheadings}\ihead{Head}\cfoot{\pagemark}
+\addtokomafont{section}{\sffamily}
+\begin{document}
+\title{KOMA Article}\author{K. Oma}\maketitle
+\begin{abstract}Abstract text.\end{abstract}
+\section{Section}Text\footnote{note}.
+\begin{addmargin}[1em]{1em}Indented block.\end{addmargin}
+\subsection{Sub}\KOMAoptions{fontsize=12pt}More text.
+\minisec{Mini}Tiny heading.
+\end{document}

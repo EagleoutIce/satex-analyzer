@@ -1,0 +1,21 @@
+% Exercises: thesis-like book: \include'd chapters, \includeonly-free, bibtex, appendix, ToC/LoF/LoT, glossary-free, cross-chapter refs.
+\documentclass[a4paper,11pt,twoside,openright]{book}
+\usepackage[T1]{fontenc}\usepackage{lmodern,amsmath,amsthm,graphicx,booktabs,fancyhdr,geometry,caption}
+\usepackage[authoryear]{natbib}\usepackage{hyperref}
+\usepackage{cleveref}
+\newtheorem{theorem}{Theorem}[chapter]\newtheorem{definition}[theorem]{Definition}
+\pagestyle{fancy}
+\begin{document}
+\frontmatter
+\begin{titlepage}\centering\Huge A Thesis\\[1cm]\Large T. Hesis\\Example University\end{titlepage}
+\chapter*{Abstract}Abstract of the thesis.
+\tableofcontents\listoffigures\listoftables
+\mainmatter
+\include{chap1}
+\include{chap2}
+\include{chap3}
+\appendix
+\include{appx}
+\backmatter
+\bibliographystyle{plainnat}\bibliography{refs}
+\end{document}

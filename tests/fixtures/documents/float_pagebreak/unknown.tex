@@ -1,0 +1,13 @@
+% Floats of unknown height around a forced break, three of them in the
+% line that breaks: where each goes (here, top, bottom, deferred) must
+% not multiply the paths, and no float is lost.
+\documentclass{article}
+\newcommand\fig{\begin{figure}[htbp]\centering
+  \rule{1cm}{\pdfuniformdeviate 500pt}\caption{A float}\end{figure}}
+\begin{document}
+Text before \fig\fig\fig more text.\hfill\pagebreak
+Text after.
+\fig
+Final text.
+\gdef\SatexReachedEnd{}
+\end{document}

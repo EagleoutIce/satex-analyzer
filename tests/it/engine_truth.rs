@@ -6,9 +6,9 @@
 
 use crate::support::PRELUDE;
 use crate::support::defined;
-use satex::config::{Config, Engine};
-use satex::machine::{Analysis, Machine};
-use satex::plugin::Kernel;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::plugins::Kernel;
+use satex::project::config::{Config, Engine};
 
 fn run(source: &str, path: Option<&std::path::Path>, engine: Option<Engine>) -> Analysis {
     let cfg = Config { engine, kernel: Some(Kernel::None), ..crate::support::config() };
@@ -21,7 +21,7 @@ fn run(source: &str, path: Option<&std::path::Path>, engine: Option<Engine>) -> 
 
 fn body(analysis: &Analysis, name: &str) -> String {
     let def = analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == name).unwrap();
-    satex::tex::detokenize(&def.mac.as_ref().unwrap().replacement_text, &analysis.interner)
+    satex::engine::tex::detokenize(&def.mac.as_ref().unwrap().replacement_text, &analysis.interner)
 }
 
 #[test]
@@ -33,7 +33,7 @@ fn a_magic_comment_engine_has_only_its_own_primitives() {
     );
     let analysis = run(&source, None, None);
     assert_eq!(analysis.plugins.engine, Engine::XeTeX);
-    assert!(!defined(&analysis, "bad"));
+    assert!(crate::support::undefined(&analysis, "bad"));
     assert!(defined(&analysis, "good"));
 }
 
@@ -64,10 +64,10 @@ fn a_name_from_unknown_text_keeps_its_prefix_and_suffix() {
 \\ifcsname MT@inh@3@x\\endcsname\\def\\maybe{{}}\\fi\n"
     );
     let analysis = run(&source, None, Some(Engine::PdfTeX));
-    assert!(!defined(&analysis, "bad"), "an unrelated name is still undefined");
+    assert!(crate::support::undefined(&analysis, "bad"), "an unrelated name is still undefined");
     assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "unknown-name"));
     // Undecided: `\maybe` is defined on one path only.
-    assert!(defined(&analysis, "maybe"));
+    assert!(crate::support::maybe_defined(&analysis, "maybe") && !defined(&analysis, "maybe"));
 }
 
 #[test]
@@ -124,7 +124,7 @@ luacmd('size', function()\n  local size = filesize(scan_string())\n  if size the
 #[test]
 fn an_installed_font_answers_its_opentype_scripts() {
     // xetex: `3:1145457748:0` (`DFLT` first; past the list, 0).
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let source = format!(
@@ -665,8 +665,8 @@ fn a_stream_number_outside_the_four_bit_range_names_stream_zero() {
     );
     std::fs::write(&main, &source).unwrap();
     let analysis = run(&source, Some(&main), Some(Engine::PdfTeX));
-    assert!(!defined(&analysis, "a"), "\\ifeof99 asks about stream 0, which is open");
-    assert!(!defined(&analysis, "b"), "stream 0 is open");
+    assert!(crate::support::undefined(&analysis, "a"), "\\ifeof99 asks about stream 0, which is open");
+    assert!(crate::support::undefined(&analysis, "b"), "stream 0 is open");
     assert!(defined(&analysis, "c"), "\\closein99 closed stream 0");
 }
 

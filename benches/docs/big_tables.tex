@@ -1,0 +1,1448 @@
+% Exercises (scaling): 60 float tables of 12 rows plus a 600-row longtable: booktabs, longtable, siunitx, array, \listoftables.
+\documentclass[10pt]{article}
+\usepackage{booktabs,longtable,array,siunitx}
+\begin{document}
+\listoftables
+\begin{table}[ht]\centering\caption{Table 1}\label{tab:1}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&1&2&1\\
+R2&2&3&4\\
+R3&3&4&9\\
+R4&4&5&16\\
+R5&5&6&25\\
+R6&6&7&36\\
+R7&7&8&49\\
+R8&8&9&64\\
+R9&9&10&81\\
+R10&10&11&100\\
+R11&11&12&121\\
+R12&12&13&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:1} lists data.
+\begin{table}[ht]\centering\caption{Table 2}\label{tab:2}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&2&3&1\\
+R2&4&4&4\\
+R3&6&5&9\\
+R4&8&6&16\\
+R5&10&7&25\\
+R6&12&8&36\\
+R7&14&9&49\\
+R8&16&10&64\\
+R9&18&11&81\\
+R10&20&12&100\\
+R11&22&13&121\\
+R12&24&14&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:2} lists data.
+\begin{table}[ht]\centering\caption{Table 3}\label{tab:3}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&3&4&1\\
+R2&6&5&4\\
+R3&9&6&9\\
+R4&12&7&16\\
+R5&15&8&25\\
+R6&18&9&36\\
+R7&21&10&49\\
+R8&24&11&64\\
+R9&27&12&81\\
+R10&30&13&100\\
+R11&33&14&121\\
+R12&36&15&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:3} lists data.
+\begin{table}[ht]\centering\caption{Table 4}\label{tab:4}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&4&5&1\\
+R2&8&6&4\\
+R3&12&7&9\\
+R4&16&8&16\\
+R5&20&9&25\\
+R6&24&10&36\\
+R7&28&11&49\\
+R8&32&12&64\\
+R9&36&13&81\\
+R10&40&14&100\\
+R11&44&15&121\\
+R12&48&16&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:4} lists data.
+\begin{table}[ht]\centering\caption{Table 5}\label{tab:5}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&5&6&1\\
+R2&10&7&4\\
+R3&15&8&9\\
+R4&20&9&16\\
+R5&25&10&25\\
+R6&30&11&36\\
+R7&35&12&49\\
+R8&40&13&64\\
+R9&45&14&81\\
+R10&50&15&100\\
+R11&55&16&121\\
+R12&60&17&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:5} lists data.
+\begin{table}[ht]\centering\caption{Table 6}\label{tab:6}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&6&7&1\\
+R2&12&8&4\\
+R3&18&9&9\\
+R4&24&10&16\\
+R5&30&11&25\\
+R6&36&12&36\\
+R7&42&13&49\\
+R8&48&14&64\\
+R9&54&15&81\\
+R10&60&16&100\\
+R11&66&17&121\\
+R12&72&18&144\\
+\bottomrule\end{tabular}\end{table}\clearpage Table~\ref{tab:6} lists data.
+\begin{table}[ht]\centering\caption{Table 7}\label{tab:7}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&7&8&1\\
+R2&14&9&4\\
+R3&21&10&9\\
+R4&28&11&16\\
+R5&35&12&25\\
+R6&42&13&36\\
+R7&49&14&49\\
+R8&56&15&64\\
+R9&63&16&81\\
+R10&70&17&100\\
+R11&77&18&121\\
+R12&84&19&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:7} lists data.
+\begin{table}[ht]\centering\caption{Table 8}\label{tab:8}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&8&9&1\\
+R2&16&10&4\\
+R3&24&11&9\\
+R4&32&12&16\\
+R5&40&13&25\\
+R6&48&14&36\\
+R7&56&15&49\\
+R8&64&16&64\\
+R9&72&17&81\\
+R10&80&18&100\\
+R11&88&19&121\\
+R12&96&20&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:8} lists data.
+\begin{table}[ht]\centering\caption{Table 9}\label{tab:9}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&9&10&1\\
+R2&18&11&4\\
+R3&27&12&9\\
+R4&36&13&16\\
+R5&45&14&25\\
+R6&54&15&36\\
+R7&63&16&49\\
+R8&72&17&64\\
+R9&81&18&81\\
+R10&90&19&100\\
+R11&99&20&121\\
+R12&108&21&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:9} lists data.
+\begin{table}[ht]\centering\caption{Table 10}\label{tab:10}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&10&11&1\\
+R2&20&12&4\\
+R3&30&13&9\\
+R4&40&14&16\\
+R5&50&15&25\\
+R6&60&16&36\\
+R7&70&17&49\\
+R8&80&18&64\\
+R9&90&19&81\\
+R10&100&20&100\\
+R11&110&21&121\\
+R12&120&22&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:10} lists data.
+\begin{table}[ht]\centering\caption{Table 11}\label{tab:11}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&11&12&1\\
+R2&22&13&4\\
+R3&33&14&9\\
+R4&44&15&16\\
+R5&55&16&25\\
+R6&66&17&36\\
+R7&77&18&49\\
+R8&88&19&64\\
+R9&99&20&81\\
+R10&110&21&100\\
+R11&121&22&121\\
+R12&132&23&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:11} lists data.
+\begin{table}[ht]\centering\caption{Table 12}\label{tab:12}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&12&13&1\\
+R2&24&14&4\\
+R3&36&15&9\\
+R4&48&16&16\\
+R5&60&17&25\\
+R6&72&18&36\\
+R7&84&19&49\\
+R8&96&20&64\\
+R9&108&21&81\\
+R10&120&22&100\\
+R11&132&23&121\\
+R12&144&24&144\\
+\bottomrule\end{tabular}\end{table}\clearpage Table~\ref{tab:12} lists data.
+\begin{table}[ht]\centering\caption{Table 13}\label{tab:13}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&13&14&1\\
+R2&26&15&4\\
+R3&39&16&9\\
+R4&52&17&16\\
+R5&65&18&25\\
+R6&78&19&36\\
+R7&91&20&49\\
+R8&104&21&64\\
+R9&117&22&81\\
+R10&130&23&100\\
+R11&143&24&121\\
+R12&156&25&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:13} lists data.
+\begin{table}[ht]\centering\caption{Table 14}\label{tab:14}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&14&15&1\\
+R2&28&16&4\\
+R3&42&17&9\\
+R4&56&18&16\\
+R5&70&19&25\\
+R6&84&20&36\\
+R7&98&21&49\\
+R8&112&22&64\\
+R9&126&23&81\\
+R10&140&24&100\\
+R11&154&25&121\\
+R12&168&26&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:14} lists data.
+\begin{table}[ht]\centering\caption{Table 15}\label{tab:15}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&15&16&1\\
+R2&30&17&4\\
+R3&45&18&9\\
+R4&60&19&16\\
+R5&75&20&25\\
+R6&90&21&36\\
+R7&105&22&49\\
+R8&120&23&64\\
+R9&135&24&81\\
+R10&150&25&100\\
+R11&165&26&121\\
+R12&180&27&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:15} lists data.
+\begin{table}[ht]\centering\caption{Table 16}\label{tab:16}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&16&17&1\\
+R2&32&18&4\\
+R3&48&19&9\\
+R4&64&20&16\\
+R5&80&21&25\\
+R6&96&22&36\\
+R7&112&23&49\\
+R8&128&24&64\\
+R9&144&25&81\\
+R10&160&26&100\\
+R11&176&27&121\\
+R12&192&28&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:16} lists data.
+\begin{table}[ht]\centering\caption{Table 17}\label{tab:17}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&17&18&1\\
+R2&34&19&4\\
+R3&51&20&9\\
+R4&68&21&16\\
+R5&85&22&25\\
+R6&102&23&36\\
+R7&119&24&49\\
+R8&136&25&64\\
+R9&153&26&81\\
+R10&170&27&100\\
+R11&187&28&121\\
+R12&204&29&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:17} lists data.
+\begin{table}[ht]\centering\caption{Table 18}\label{tab:18}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&18&19&1\\
+R2&36&20&4\\
+R3&54&21&9\\
+R4&72&22&16\\
+R5&90&23&25\\
+R6&108&24&36\\
+R7&126&25&49\\
+R8&144&26&64\\
+R9&162&27&81\\
+R10&180&28&100\\
+R11&198&29&121\\
+R12&216&30&144\\
+\bottomrule\end{tabular}\end{table}\clearpage Table~\ref{tab:18} lists data.
+\begin{table}[ht]\centering\caption{Table 19}\label{tab:19}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&19&20&1\\
+R2&38&21&4\\
+R3&57&22&9\\
+R4&76&23&16\\
+R5&95&24&25\\
+R6&114&25&36\\
+R7&133&26&49\\
+R8&152&27&64\\
+R9&171&28&81\\
+R10&190&29&100\\
+R11&209&30&121\\
+R12&228&31&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:19} lists data.
+\begin{table}[ht]\centering\caption{Table 20}\label{tab:20}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&20&21&1\\
+R2&40&22&4\\
+R3&60&23&9\\
+R4&80&24&16\\
+R5&100&25&25\\
+R6&120&26&36\\
+R7&140&27&49\\
+R8&160&28&64\\
+R9&180&29&81\\
+R10&200&30&100\\
+R11&220&31&121\\
+R12&240&32&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:20} lists data.
+\begin{table}[ht]\centering\caption{Table 21}\label{tab:21}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&21&22&1\\
+R2&42&23&4\\
+R3&63&24&9\\
+R4&84&25&16\\
+R5&105&26&25\\
+R6&126&27&36\\
+R7&147&28&49\\
+R8&168&29&64\\
+R9&189&30&81\\
+R10&210&31&100\\
+R11&231&32&121\\
+R12&252&33&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:21} lists data.
+\begin{table}[ht]\centering\caption{Table 22}\label{tab:22}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&22&23&1\\
+R2&44&24&4\\
+R3&66&25&9\\
+R4&88&26&16\\
+R5&110&27&25\\
+R6&132&28&36\\
+R7&154&29&49\\
+R8&176&30&64\\
+R9&198&31&81\\
+R10&220&32&100\\
+R11&242&33&121\\
+R12&264&34&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:22} lists data.
+\begin{table}[ht]\centering\caption{Table 23}\label{tab:23}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&23&24&1\\
+R2&46&25&4\\
+R3&69&26&9\\
+R4&92&27&16\\
+R5&115&28&25\\
+R6&138&29&36\\
+R7&161&30&49\\
+R8&184&31&64\\
+R9&207&32&81\\
+R10&230&33&100\\
+R11&253&34&121\\
+R12&276&35&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:23} lists data.
+\begin{table}[ht]\centering\caption{Table 24}\label{tab:24}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&24&25&1\\
+R2&48&26&4\\
+R3&72&27&9\\
+R4&96&28&16\\
+R5&120&29&25\\
+R6&144&30&36\\
+R7&168&31&49\\
+R8&192&32&64\\
+R9&216&33&81\\
+R10&240&34&100\\
+R11&264&35&121\\
+R12&288&36&144\\
+\bottomrule\end{tabular}\end{table}\clearpage Table~\ref{tab:24} lists data.
+\begin{table}[ht]\centering\caption{Table 25}\label{tab:25}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&25&26&1\\
+R2&50&27&4\\
+R3&75&28&9\\
+R4&100&29&16\\
+R5&125&30&25\\
+R6&150&31&36\\
+R7&175&32&49\\
+R8&200&33&64\\
+R9&225&34&81\\
+R10&250&35&100\\
+R11&275&36&121\\
+R12&300&37&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:25} lists data.
+\begin{table}[ht]\centering\caption{Table 26}\label{tab:26}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&26&27&1\\
+R2&52&28&4\\
+R3&78&29&9\\
+R4&104&30&16\\
+R5&130&31&25\\
+R6&156&32&36\\
+R7&182&33&49\\
+R8&208&34&64\\
+R9&234&35&81\\
+R10&260&36&100\\
+R11&286&37&121\\
+R12&312&38&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:26} lists data.
+\begin{table}[ht]\centering\caption{Table 27}\label{tab:27}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&27&28&1\\
+R2&54&29&4\\
+R3&81&30&9\\
+R4&108&31&16\\
+R5&135&32&25\\
+R6&162&33&36\\
+R7&189&34&49\\
+R8&216&35&64\\
+R9&243&36&81\\
+R10&270&37&100\\
+R11&297&38&121\\
+R12&324&39&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:27} lists data.
+\begin{table}[ht]\centering\caption{Table 28}\label{tab:28}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&28&29&1\\
+R2&56&30&4\\
+R3&84&31&9\\
+R4&112&32&16\\
+R5&140&33&25\\
+R6&168&34&36\\
+R7&196&35&49\\
+R8&224&36&64\\
+R9&252&37&81\\
+R10&280&38&100\\
+R11&308&39&121\\
+R12&336&40&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:28} lists data.
+\begin{table}[ht]\centering\caption{Table 29}\label{tab:29}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&29&30&1\\
+R2&58&31&4\\
+R3&87&32&9\\
+R4&116&33&16\\
+R5&145&34&25\\
+R6&174&35&36\\
+R7&203&36&49\\
+R8&232&37&64\\
+R9&261&38&81\\
+R10&290&39&100\\
+R11&319&40&121\\
+R12&348&41&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:29} lists data.
+\begin{table}[ht]\centering\caption{Table 30}\label{tab:30}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&30&31&1\\
+R2&60&32&4\\
+R3&90&33&9\\
+R4&120&34&16\\
+R5&150&35&25\\
+R6&180&36&36\\
+R7&210&37&49\\
+R8&240&38&64\\
+R9&270&39&81\\
+R10&300&40&100\\
+R11&330&41&121\\
+R12&360&42&144\\
+\bottomrule\end{tabular}\end{table}\clearpage Table~\ref{tab:30} lists data.
+\begin{table}[ht]\centering\caption{Table 31}\label{tab:31}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&31&32&1\\
+R2&62&33&4\\
+R3&93&34&9\\
+R4&124&35&16\\
+R5&155&36&25\\
+R6&186&37&36\\
+R7&217&38&49\\
+R8&248&39&64\\
+R9&279&40&81\\
+R10&310&41&100\\
+R11&341&42&121\\
+R12&372&43&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:31} lists data.
+\begin{table}[ht]\centering\caption{Table 32}\label{tab:32}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&32&33&1\\
+R2&64&34&4\\
+R3&96&35&9\\
+R4&128&36&16\\
+R5&160&37&25\\
+R6&192&38&36\\
+R7&224&39&49\\
+R8&256&40&64\\
+R9&288&41&81\\
+R10&320&42&100\\
+R11&352&43&121\\
+R12&384&44&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:32} lists data.
+\begin{table}[ht]\centering\caption{Table 33}\label{tab:33}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&33&34&1\\
+R2&66&35&4\\
+R3&99&36&9\\
+R4&132&37&16\\
+R5&165&38&25\\
+R6&198&39&36\\
+R7&231&40&49\\
+R8&264&41&64\\
+R9&297&42&81\\
+R10&330&43&100\\
+R11&363&44&121\\
+R12&396&45&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:33} lists data.
+\begin{table}[ht]\centering\caption{Table 34}\label{tab:34}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&34&35&1\\
+R2&68&36&4\\
+R3&102&37&9\\
+R4&136&38&16\\
+R5&170&39&25\\
+R6&204&40&36\\
+R7&238&41&49\\
+R8&272&42&64\\
+R9&306&43&81\\
+R10&340&44&100\\
+R11&374&45&121\\
+R12&408&46&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:34} lists data.
+\begin{table}[ht]\centering\caption{Table 35}\label{tab:35}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&35&36&1\\
+R2&70&37&4\\
+R3&105&38&9\\
+R4&140&39&16\\
+R5&175&40&25\\
+R6&210&41&36\\
+R7&245&42&49\\
+R8&280&43&64\\
+R9&315&44&81\\
+R10&350&45&100\\
+R11&385&46&121\\
+R12&420&47&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:35} lists data.
+\begin{table}[ht]\centering\caption{Table 36}\label{tab:36}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&36&37&1\\
+R2&72&38&4\\
+R3&108&39&9\\
+R4&144&40&16\\
+R5&180&41&25\\
+R6&216&42&36\\
+R7&252&43&49\\
+R8&288&44&64\\
+R9&324&45&81\\
+R10&360&46&100\\
+R11&396&47&121\\
+R12&432&48&144\\
+\bottomrule\end{tabular}\end{table}\clearpage Table~\ref{tab:36} lists data.
+\begin{table}[ht]\centering\caption{Table 37}\label{tab:37}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&37&38&1\\
+R2&74&39&4\\
+R3&111&40&9\\
+R4&148&41&16\\
+R5&185&42&25\\
+R6&222&43&36\\
+R7&259&44&49\\
+R8&296&45&64\\
+R9&333&46&81\\
+R10&370&47&100\\
+R11&407&48&121\\
+R12&444&49&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:37} lists data.
+\begin{table}[ht]\centering\caption{Table 38}\label{tab:38}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&38&39&1\\
+R2&76&40&4\\
+R3&114&41&9\\
+R4&152&42&16\\
+R5&190&43&25\\
+R6&228&44&36\\
+R7&266&45&49\\
+R8&304&46&64\\
+R9&342&47&81\\
+R10&380&48&100\\
+R11&418&49&121\\
+R12&456&50&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:38} lists data.
+\begin{table}[ht]\centering\caption{Table 39}\label{tab:39}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&39&40&1\\
+R2&78&41&4\\
+R3&117&42&9\\
+R4&156&43&16\\
+R5&195&44&25\\
+R6&234&45&36\\
+R7&273&46&49\\
+R8&312&47&64\\
+R9&351&48&81\\
+R10&390&49&100\\
+R11&429&50&121\\
+R12&468&51&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:39} lists data.
+\begin{table}[ht]\centering\caption{Table 40}\label{tab:40}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&40&41&1\\
+R2&80&42&4\\
+R3&120&43&9\\
+R4&160&44&16\\
+R5&200&45&25\\
+R6&240&46&36\\
+R7&280&47&49\\
+R8&320&48&64\\
+R9&360&49&81\\
+R10&400&50&100\\
+R11&440&51&121\\
+R12&480&52&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:40} lists data.
+\begin{table}[ht]\centering\caption{Table 41}\label{tab:41}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&41&42&1\\
+R2&82&43&4\\
+R3&123&44&9\\
+R4&164&45&16\\
+R5&205&46&25\\
+R6&246&47&36\\
+R7&287&48&49\\
+R8&328&49&64\\
+R9&369&50&81\\
+R10&410&51&100\\
+R11&451&52&121\\
+R12&492&53&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:41} lists data.
+\begin{table}[ht]\centering\caption{Table 42}\label{tab:42}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&42&43&1\\
+R2&84&44&4\\
+R3&126&45&9\\
+R4&168&46&16\\
+R5&210&47&25\\
+R6&252&48&36\\
+R7&294&49&49\\
+R8&336&50&64\\
+R9&378&51&81\\
+R10&420&52&100\\
+R11&462&53&121\\
+R12&504&54&144\\
+\bottomrule\end{tabular}\end{table}\clearpage Table~\ref{tab:42} lists data.
+\begin{table}[ht]\centering\caption{Table 43}\label{tab:43}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&43&44&1\\
+R2&86&45&4\\
+R3&129&46&9\\
+R4&172&47&16\\
+R5&215&48&25\\
+R6&258&49&36\\
+R7&301&50&49\\
+R8&344&51&64\\
+R9&387&52&81\\
+R10&430&53&100\\
+R11&473&54&121\\
+R12&516&55&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:43} lists data.
+\begin{table}[ht]\centering\caption{Table 44}\label{tab:44}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&44&45&1\\
+R2&88&46&4\\
+R3&132&47&9\\
+R4&176&48&16\\
+R5&220&49&25\\
+R6&264&50&36\\
+R7&308&51&49\\
+R8&352&52&64\\
+R9&396&53&81\\
+R10&440&54&100\\
+R11&484&55&121\\
+R12&528&56&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:44} lists data.
+\begin{table}[ht]\centering\caption{Table 45}\label{tab:45}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&45&46&1\\
+R2&90&47&4\\
+R3&135&48&9\\
+R4&180&49&16\\
+R5&225&50&25\\
+R6&270&51&36\\
+R7&315&52&49\\
+R8&360&53&64\\
+R9&405&54&81\\
+R10&450&55&100\\
+R11&495&56&121\\
+R12&540&57&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:45} lists data.
+\begin{table}[ht]\centering\caption{Table 46}\label{tab:46}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&46&47&1\\
+R2&92&48&4\\
+R3&138&49&9\\
+R4&184&50&16\\
+R5&230&51&25\\
+R6&276&52&36\\
+R7&322&53&49\\
+R8&368&54&64\\
+R9&414&55&81\\
+R10&460&56&100\\
+R11&506&57&121\\
+R12&552&58&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:46} lists data.
+\begin{table}[ht]\centering\caption{Table 47}\label{tab:47}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&47&48&1\\
+R2&94&49&4\\
+R3&141&50&9\\
+R4&188&51&16\\
+R5&235&52&25\\
+R6&282&53&36\\
+R7&329&54&49\\
+R8&376&55&64\\
+R9&423&56&81\\
+R10&470&57&100\\
+R11&517&58&121\\
+R12&564&59&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:47} lists data.
+\begin{table}[ht]\centering\caption{Table 48}\label{tab:48}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&48&49&1\\
+R2&96&50&4\\
+R3&144&51&9\\
+R4&192&52&16\\
+R5&240&53&25\\
+R6&288&54&36\\
+R7&336&55&49\\
+R8&384&56&64\\
+R9&432&57&81\\
+R10&480&58&100\\
+R11&528&59&121\\
+R12&576&60&144\\
+\bottomrule\end{tabular}\end{table}\clearpage Table~\ref{tab:48} lists data.
+\begin{table}[ht]\centering\caption{Table 49}\label{tab:49}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&49&50&1\\
+R2&98&51&4\\
+R3&147&52&9\\
+R4&196&53&16\\
+R5&245&54&25\\
+R6&294&55&36\\
+R7&343&56&49\\
+R8&392&57&64\\
+R9&441&58&81\\
+R10&490&59&100\\
+R11&539&60&121\\
+R12&588&61&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:49} lists data.
+\begin{table}[ht]\centering\caption{Table 50}\label{tab:50}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&50&51&1\\
+R2&100&52&4\\
+R3&150&53&9\\
+R4&200&54&16\\
+R5&250&55&25\\
+R6&300&56&36\\
+R7&350&57&49\\
+R8&400&58&64\\
+R9&450&59&81\\
+R10&500&60&100\\
+R11&550&61&121\\
+R12&600&62&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:50} lists data.
+\begin{table}[ht]\centering\caption{Table 51}\label{tab:51}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&51&52&1\\
+R2&102&53&4\\
+R3&153&54&9\\
+R4&204&55&16\\
+R5&255&56&25\\
+R6&306&57&36\\
+R7&357&58&49\\
+R8&408&59&64\\
+R9&459&60&81\\
+R10&510&61&100\\
+R11&561&62&121\\
+R12&612&63&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:51} lists data.
+\begin{table}[ht]\centering\caption{Table 52}\label{tab:52}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&52&53&1\\
+R2&104&54&4\\
+R3&156&55&9\\
+R4&208&56&16\\
+R5&260&57&25\\
+R6&312&58&36\\
+R7&364&59&49\\
+R8&416&60&64\\
+R9&468&61&81\\
+R10&520&62&100\\
+R11&572&63&121\\
+R12&624&64&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:52} lists data.
+\begin{table}[ht]\centering\caption{Table 53}\label{tab:53}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&53&54&1\\
+R2&106&55&4\\
+R3&159&56&9\\
+R4&212&57&16\\
+R5&265&58&25\\
+R6&318&59&36\\
+R7&371&60&49\\
+R8&424&61&64\\
+R9&477&62&81\\
+R10&530&63&100\\
+R11&583&64&121\\
+R12&636&65&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:53} lists data.
+\begin{table}[ht]\centering\caption{Table 54}\label{tab:54}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&54&55&1\\
+R2&108&56&4\\
+R3&162&57&9\\
+R4&216&58&16\\
+R5&270&59&25\\
+R6&324&60&36\\
+R7&378&61&49\\
+R8&432&62&64\\
+R9&486&63&81\\
+R10&540&64&100\\
+R11&594&65&121\\
+R12&648&66&144\\
+\bottomrule\end{tabular}\end{table}\clearpage Table~\ref{tab:54} lists data.
+\begin{table}[ht]\centering\caption{Table 55}\label{tab:55}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&55&56&1\\
+R2&110&57&4\\
+R3&165&58&9\\
+R4&220&59&16\\
+R5&275&60&25\\
+R6&330&61&36\\
+R7&385&62&49\\
+R8&440&63&64\\
+R9&495&64&81\\
+R10&550&65&100\\
+R11&605&66&121\\
+R12&660&67&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:55} lists data.
+\begin{table}[ht]\centering\caption{Table 56}\label{tab:56}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&56&57&1\\
+R2&112&58&4\\
+R3&168&59&9\\
+R4&224&60&16\\
+R5&280&61&25\\
+R6&336&62&36\\
+R7&392&63&49\\
+R8&448&64&64\\
+R9&504&65&81\\
+R10&560&66&100\\
+R11&616&67&121\\
+R12&672&68&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:56} lists data.
+\begin{table}[ht]\centering\caption{Table 57}\label{tab:57}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&57&58&1\\
+R2&114&59&4\\
+R3&171&60&9\\
+R4&228&61&16\\
+R5&285&62&25\\
+R6&342&63&36\\
+R7&399&64&49\\
+R8&456&65&64\\
+R9&513&66&81\\
+R10&570&67&100\\
+R11&627&68&121\\
+R12&684&69&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:57} lists data.
+\begin{table}[ht]\centering\caption{Table 58}\label{tab:58}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&58&59&1\\
+R2&116&60&4\\
+R3&174&61&9\\
+R4&232&62&16\\
+R5&290&63&25\\
+R6&348&64&36\\
+R7&406&65&49\\
+R8&464&66&64\\
+R9&522&67&81\\
+R10&580&68&100\\
+R11&638&69&121\\
+R12&696&70&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:58} lists data.
+\begin{table}[ht]\centering\caption{Table 59}\label{tab:59}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&59&60&1\\
+R2&118&61&4\\
+R3&177&62&9\\
+R4&236&63&16\\
+R5&295&64&25\\
+R6&354&65&36\\
+R7&413&66&49\\
+R8&472&67&64\\
+R9&531&68&81\\
+R10&590&69&100\\
+R11&649&70&121\\
+R12&708&71&144\\
+\bottomrule\end{tabular}\end{table} Table~\ref{tab:59} lists data.
+\begin{table}[ht]\centering\caption{Table 60}\label{tab:60}\begin{tabular}{lrrr}\toprule Row&A&B&C\\\midrule
+R1&60&61&1\\
+R2&120&62&4\\
+R3&180&63&9\\
+R4&240&64&16\\
+R5&300&65&25\\
+R6&360&66&36\\
+R7&420&67&49\\
+R8&480&68&64\\
+R9&540&69&81\\
+R10&600&70&100\\
+R11&660&71&121\\
+R12&720&72&144\\
+\bottomrule\end{tabular}\end{table}\clearpage Table~\ref{tab:60} lists data.
+\begin{longtable}{rrl}\caption{Long}\\\toprule N&Square&Text\\\midrule\endfirsthead\midrule\endhead\bottomrule\endfoot
+1&1&text 1\\
+2&4&text 2\\
+3&9&text 3\\
+4&16&text 4\\
+5&25&text 5\\
+6&36&text 6\\
+7&49&text 7\\
+8&64&text 8\\
+9&81&text 9\\
+10&100&text 10\\
+11&121&text 11\\
+12&144&text 12\\
+13&169&text 13\\
+14&196&text 14\\
+15&225&text 15\\
+16&256&text 16\\
+17&289&text 17\\
+18&324&text 18\\
+19&361&text 19\\
+20&400&text 20\\
+21&441&text 21\\
+22&484&text 22\\
+23&529&text 23\\
+24&576&text 24\\
+25&625&text 25\\
+26&676&text 26\\
+27&729&text 27\\
+28&784&text 28\\
+29&841&text 29\\
+30&900&text 30\\
+31&961&text 31\\
+32&1024&text 32\\
+33&1089&text 33\\
+34&1156&text 34\\
+35&1225&text 35\\
+36&1296&text 36\\
+37&1369&text 37\\
+38&1444&text 38\\
+39&1521&text 39\\
+40&1600&text 40\\
+41&1681&text 41\\
+42&1764&text 42\\
+43&1849&text 43\\
+44&1936&text 44\\
+45&2025&text 45\\
+46&2116&text 46\\
+47&2209&text 47\\
+48&2304&text 48\\
+49&2401&text 49\\
+50&2500&text 50\\
+51&2601&text 51\\
+52&2704&text 52\\
+53&2809&text 53\\
+54&2916&text 54\\
+55&3025&text 55\\
+56&3136&text 56\\
+57&3249&text 57\\
+58&3364&text 58\\
+59&3481&text 59\\
+60&3600&text 60\\
+61&3721&text 61\\
+62&3844&text 62\\
+63&3969&text 63\\
+64&4096&text 64\\
+65&4225&text 65\\
+66&4356&text 66\\
+67&4489&text 67\\
+68&4624&text 68\\
+69&4761&text 69\\
+70&4900&text 70\\
+71&5041&text 71\\
+72&5184&text 72\\
+73&5329&text 73\\
+74&5476&text 74\\
+75&5625&text 75\\
+76&5776&text 76\\
+77&5929&text 77\\
+78&6084&text 78\\
+79&6241&text 79\\
+80&6400&text 80\\
+81&6561&text 81\\
+82&6724&text 82\\
+83&6889&text 83\\
+84&7056&text 84\\
+85&7225&text 85\\
+86&7396&text 86\\
+87&7569&text 87\\
+88&7744&text 88\\
+89&7921&text 89\\
+90&8100&text 90\\
+91&8281&text 91\\
+92&8464&text 92\\
+93&8649&text 93\\
+94&8836&text 94\\
+95&9025&text 95\\
+96&9216&text 96\\
+97&9409&text 97\\
+98&9604&text 98\\
+99&9801&text 99\\
+100&10000&text 100\\
+101&10201&text 101\\
+102&10404&text 102\\
+103&10609&text 103\\
+104&10816&text 104\\
+105&11025&text 105\\
+106&11236&text 106\\
+107&11449&text 107\\
+108&11664&text 108\\
+109&11881&text 109\\
+110&12100&text 110\\
+111&12321&text 111\\
+112&12544&text 112\\
+113&12769&text 113\\
+114&12996&text 114\\
+115&13225&text 115\\
+116&13456&text 116\\
+117&13689&text 117\\
+118&13924&text 118\\
+119&14161&text 119\\
+120&14400&text 120\\
+121&14641&text 121\\
+122&14884&text 122\\
+123&15129&text 123\\
+124&15376&text 124\\
+125&15625&text 125\\
+126&15876&text 126\\
+127&16129&text 127\\
+128&16384&text 128\\
+129&16641&text 129\\
+130&16900&text 130\\
+131&17161&text 131\\
+132&17424&text 132\\
+133&17689&text 133\\
+134&17956&text 134\\
+135&18225&text 135\\
+136&18496&text 136\\
+137&18769&text 137\\
+138&19044&text 138\\
+139&19321&text 139\\
+140&19600&text 140\\
+141&19881&text 141\\
+142&20164&text 142\\
+143&20449&text 143\\
+144&20736&text 144\\
+145&21025&text 145\\
+146&21316&text 146\\
+147&21609&text 147\\
+148&21904&text 148\\
+149&22201&text 149\\
+150&22500&text 150\\
+151&22801&text 151\\
+152&23104&text 152\\
+153&23409&text 153\\
+154&23716&text 154\\
+155&24025&text 155\\
+156&24336&text 156\\
+157&24649&text 157\\
+158&24964&text 158\\
+159&25281&text 159\\
+160&25600&text 160\\
+161&25921&text 161\\
+162&26244&text 162\\
+163&26569&text 163\\
+164&26896&text 164\\
+165&27225&text 165\\
+166&27556&text 166\\
+167&27889&text 167\\
+168&28224&text 168\\
+169&28561&text 169\\
+170&28900&text 170\\
+171&29241&text 171\\
+172&29584&text 172\\
+173&29929&text 173\\
+174&30276&text 174\\
+175&30625&text 175\\
+176&30976&text 176\\
+177&31329&text 177\\
+178&31684&text 178\\
+179&32041&text 179\\
+180&32400&text 180\\
+181&32761&text 181\\
+182&33124&text 182\\
+183&33489&text 183\\
+184&33856&text 184\\
+185&34225&text 185\\
+186&34596&text 186\\
+187&34969&text 187\\
+188&35344&text 188\\
+189&35721&text 189\\
+190&36100&text 190\\
+191&36481&text 191\\
+192&36864&text 192\\
+193&37249&text 193\\
+194&37636&text 194\\
+195&38025&text 195\\
+196&38416&text 196\\
+197&38809&text 197\\
+198&39204&text 198\\
+199&39601&text 199\\
+200&40000&text 200\\
+201&40401&text 201\\
+202&40804&text 202\\
+203&41209&text 203\\
+204&41616&text 204\\
+205&42025&text 205\\
+206&42436&text 206\\
+207&42849&text 207\\
+208&43264&text 208\\
+209&43681&text 209\\
+210&44100&text 210\\
+211&44521&text 211\\
+212&44944&text 212\\
+213&45369&text 213\\
+214&45796&text 214\\
+215&46225&text 215\\
+216&46656&text 216\\
+217&47089&text 217\\
+218&47524&text 218\\
+219&47961&text 219\\
+220&48400&text 220\\
+221&48841&text 221\\
+222&49284&text 222\\
+223&49729&text 223\\
+224&50176&text 224\\
+225&50625&text 225\\
+226&51076&text 226\\
+227&51529&text 227\\
+228&51984&text 228\\
+229&52441&text 229\\
+230&52900&text 230\\
+231&53361&text 231\\
+232&53824&text 232\\
+233&54289&text 233\\
+234&54756&text 234\\
+235&55225&text 235\\
+236&55696&text 236\\
+237&56169&text 237\\
+238&56644&text 238\\
+239&57121&text 239\\
+240&57600&text 240\\
+241&58081&text 241\\
+242&58564&text 242\\
+243&59049&text 243\\
+244&59536&text 244\\
+245&60025&text 245\\
+246&60516&text 246\\
+247&61009&text 247\\
+248&61504&text 248\\
+249&62001&text 249\\
+250&62500&text 250\\
+251&63001&text 251\\
+252&63504&text 252\\
+253&64009&text 253\\
+254&64516&text 254\\
+255&65025&text 255\\
+256&65536&text 256\\
+257&66049&text 257\\
+258&66564&text 258\\
+259&67081&text 259\\
+260&67600&text 260\\
+261&68121&text 261\\
+262&68644&text 262\\
+263&69169&text 263\\
+264&69696&text 264\\
+265&70225&text 265\\
+266&70756&text 266\\
+267&71289&text 267\\
+268&71824&text 268\\
+269&72361&text 269\\
+270&72900&text 270\\
+271&73441&text 271\\
+272&73984&text 272\\
+273&74529&text 273\\
+274&75076&text 274\\
+275&75625&text 275\\
+276&76176&text 276\\
+277&76729&text 277\\
+278&77284&text 278\\
+279&77841&text 279\\
+280&78400&text 280\\
+281&78961&text 281\\
+282&79524&text 282\\
+283&80089&text 283\\
+284&80656&text 284\\
+285&81225&text 285\\
+286&81796&text 286\\
+287&82369&text 287\\
+288&82944&text 288\\
+289&83521&text 289\\
+290&84100&text 290\\
+291&84681&text 291\\
+292&85264&text 292\\
+293&85849&text 293\\
+294&86436&text 294\\
+295&87025&text 295\\
+296&87616&text 296\\
+297&88209&text 297\\
+298&88804&text 298\\
+299&89401&text 299\\
+300&90000&text 300\\
+301&90601&text 301\\
+302&91204&text 302\\
+303&91809&text 303\\
+304&92416&text 304\\
+305&93025&text 305\\
+306&93636&text 306\\
+307&94249&text 307\\
+308&94864&text 308\\
+309&95481&text 309\\
+310&96100&text 310\\
+311&96721&text 311\\
+312&97344&text 312\\
+313&97969&text 313\\
+314&98596&text 314\\
+315&99225&text 315\\
+316&99856&text 316\\
+317&100489&text 317\\
+318&101124&text 318\\
+319&101761&text 319\\
+320&102400&text 320\\
+321&103041&text 321\\
+322&103684&text 322\\
+323&104329&text 323\\
+324&104976&text 324\\
+325&105625&text 325\\
+326&106276&text 326\\
+327&106929&text 327\\
+328&107584&text 328\\
+329&108241&text 329\\
+330&108900&text 330\\
+331&109561&text 331\\
+332&110224&text 332\\
+333&110889&text 333\\
+334&111556&text 334\\
+335&112225&text 335\\
+336&112896&text 336\\
+337&113569&text 337\\
+338&114244&text 338\\
+339&114921&text 339\\
+340&115600&text 340\\
+341&116281&text 341\\
+342&116964&text 342\\
+343&117649&text 343\\
+344&118336&text 344\\
+345&119025&text 345\\
+346&119716&text 346\\
+347&120409&text 347\\
+348&121104&text 348\\
+349&121801&text 349\\
+350&122500&text 350\\
+351&123201&text 351\\
+352&123904&text 352\\
+353&124609&text 353\\
+354&125316&text 354\\
+355&126025&text 355\\
+356&126736&text 356\\
+357&127449&text 357\\
+358&128164&text 358\\
+359&128881&text 359\\
+360&129600&text 360\\
+361&130321&text 361\\
+362&131044&text 362\\
+363&131769&text 363\\
+364&132496&text 364\\
+365&133225&text 365\\
+366&133956&text 366\\
+367&134689&text 367\\
+368&135424&text 368\\
+369&136161&text 369\\
+370&136900&text 370\\
+371&137641&text 371\\
+372&138384&text 372\\
+373&139129&text 373\\
+374&139876&text 374\\
+375&140625&text 375\\
+376&141376&text 376\\
+377&142129&text 377\\
+378&142884&text 378\\
+379&143641&text 379\\
+380&144400&text 380\\
+381&145161&text 381\\
+382&145924&text 382\\
+383&146689&text 383\\
+384&147456&text 384\\
+385&148225&text 385\\
+386&148996&text 386\\
+387&149769&text 387\\
+388&150544&text 388\\
+389&151321&text 389\\
+390&152100&text 390\\
+391&152881&text 391\\
+392&153664&text 392\\
+393&154449&text 393\\
+394&155236&text 394\\
+395&156025&text 395\\
+396&156816&text 396\\
+397&157609&text 397\\
+398&158404&text 398\\
+399&159201&text 399\\
+400&160000&text 400\\
+401&160801&text 401\\
+402&161604&text 402\\
+403&162409&text 403\\
+404&163216&text 404\\
+405&164025&text 405\\
+406&164836&text 406\\
+407&165649&text 407\\
+408&166464&text 408\\
+409&167281&text 409\\
+410&168100&text 410\\
+411&168921&text 411\\
+412&169744&text 412\\
+413&170569&text 413\\
+414&171396&text 414\\
+415&172225&text 415\\
+416&173056&text 416\\
+417&173889&text 417\\
+418&174724&text 418\\
+419&175561&text 419\\
+420&176400&text 420\\
+421&177241&text 421\\
+422&178084&text 422\\
+423&178929&text 423\\
+424&179776&text 424\\
+425&180625&text 425\\
+426&181476&text 426\\
+427&182329&text 427\\
+428&183184&text 428\\
+429&184041&text 429\\
+430&184900&text 430\\
+431&185761&text 431\\
+432&186624&text 432\\
+433&187489&text 433\\
+434&188356&text 434\\
+435&189225&text 435\\
+436&190096&text 436\\
+437&190969&text 437\\
+438&191844&text 438\\
+439&192721&text 439\\
+440&193600&text 440\\
+441&194481&text 441\\
+442&195364&text 442\\
+443&196249&text 443\\
+444&197136&text 444\\
+445&198025&text 445\\
+446&198916&text 446\\
+447&199809&text 447\\
+448&200704&text 448\\
+449&201601&text 449\\
+450&202500&text 450\\
+451&203401&text 451\\
+452&204304&text 452\\
+453&205209&text 453\\
+454&206116&text 454\\
+455&207025&text 455\\
+456&207936&text 456\\
+457&208849&text 457\\
+458&209764&text 458\\
+459&210681&text 459\\
+460&211600&text 460\\
+461&212521&text 461\\
+462&213444&text 462\\
+463&214369&text 463\\
+464&215296&text 464\\
+465&216225&text 465\\
+466&217156&text 466\\
+467&218089&text 467\\
+468&219024&text 468\\
+469&219961&text 469\\
+470&220900&text 470\\
+471&221841&text 471\\
+472&222784&text 472\\
+473&223729&text 473\\
+474&224676&text 474\\
+475&225625&text 475\\
+476&226576&text 476\\
+477&227529&text 477\\
+478&228484&text 478\\
+479&229441&text 479\\
+480&230400&text 480\\
+481&231361&text 481\\
+482&232324&text 482\\
+483&233289&text 483\\
+484&234256&text 484\\
+485&235225&text 485\\
+486&236196&text 486\\
+487&237169&text 487\\
+488&238144&text 488\\
+489&239121&text 489\\
+490&240100&text 490\\
+491&241081&text 491\\
+492&242064&text 492\\
+493&243049&text 493\\
+494&244036&text 494\\
+495&245025&text 495\\
+496&246016&text 496\\
+497&247009&text 497\\
+498&248004&text 498\\
+499&249001&text 499\\
+500&250000&text 500\\
+501&251001&text 501\\
+502&252004&text 502\\
+503&253009&text 503\\
+504&254016&text 504\\
+505&255025&text 505\\
+506&256036&text 506\\
+507&257049&text 507\\
+508&258064&text 508\\
+509&259081&text 509\\
+510&260100&text 510\\
+511&261121&text 511\\
+512&262144&text 512\\
+513&263169&text 513\\
+514&264196&text 514\\
+515&265225&text 515\\
+516&266256&text 516\\
+517&267289&text 517\\
+518&268324&text 518\\
+519&269361&text 519\\
+520&270400&text 520\\
+521&271441&text 521\\
+522&272484&text 522\\
+523&273529&text 523\\
+524&274576&text 524\\
+525&275625&text 525\\
+526&276676&text 526\\
+527&277729&text 527\\
+528&278784&text 528\\
+529&279841&text 529\\
+530&280900&text 530\\
+531&281961&text 531\\
+532&283024&text 532\\
+533&284089&text 533\\
+534&285156&text 534\\
+535&286225&text 535\\
+536&287296&text 536\\
+537&288369&text 537\\
+538&289444&text 538\\
+539&290521&text 539\\
+540&291600&text 540\\
+541&292681&text 541\\
+542&293764&text 542\\
+543&294849&text 543\\
+544&295936&text 544\\
+545&297025&text 545\\
+546&298116&text 546\\
+547&299209&text 547\\
+548&300304&text 548\\
+549&301401&text 549\\
+550&302500&text 550\\
+551&303601&text 551\\
+552&304704&text 552\\
+553&305809&text 553\\
+554&306916&text 554\\
+555&308025&text 555\\
+556&309136&text 556\\
+557&310249&text 557\\
+558&311364&text 558\\
+559&312481&text 559\\
+560&313600&text 560\\
+561&314721&text 561\\
+562&315844&text 562\\
+563&316969&text 563\\
+564&318096&text 564\\
+565&319225&text 565\\
+566&320356&text 566\\
+567&321489&text 567\\
+568&322624&text 568\\
+569&323761&text 569\\
+570&324900&text 570\\
+571&326041&text 571\\
+572&327184&text 572\\
+573&328329&text 573\\
+574&329476&text 574\\
+575&330625&text 575\\
+576&331776&text 576\\
+577&332929&text 577\\
+578&334084&text 578\\
+579&335241&text 579\\
+580&336400&text 580\\
+581&337561&text 581\\
+582&338724&text 582\\
+583&339889&text 583\\
+584&341056&text 584\\
+585&342225&text 585\\
+586&343396&text 586\\
+587&344569&text 587\\
+588&345744&text 588\\
+589&346921&text 589\\
+590&348100&text 590\\
+591&349281&text 591\\
+592&350464&text 592\\
+593&351649&text 593\\
+594&352836&text 594\\
+595&354025&text 595\\
+596&355216&text 596\\
+597&356409&text 597\\
+598&357604&text 598\\
+599&358801&text 599\\
+600&360000&text 600\\
+\end{longtable}
+\end{document}

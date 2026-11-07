@@ -1,10 +1,10 @@
 //! LaTeX2e as documented: what the kernel's own interfaces do.
 
 use crate::support::analyze_latex as analyze;
-use crate::support::{assert_body, broken_gaps, codes, marks};
+use crate::support::{assert_body, broken_gaps, codes, marks, maybe_defined, undefined};
 use crate::support::{defined, installed, last_body as body};
-use satex::builtins::OccKind;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::engine::builtins::OccKind;
 
 /// Tests that the last body of `\key` after the document is `want`.
 macro_rules! body_cases {
@@ -145,7 +145,7 @@ fn an_undefined_name_past_an_approximation_is_a_possible_error() {
 \undefinedbaz
 \end{document}",
     );
-    let mut found: Vec<String> = satex::lint::lint(&analysis)
+    let mut found: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-control-sequence"))
         .map(|f| {
@@ -163,6 +163,83 @@ fn an_undefined_name_past_an_approximation_is_a_possible_error() {
     );
 }
 
+/// A misspelled command suggests the defined name nearest to it: a swapped
+/// pair of letters, a letter too many, a different case.
+#[test]
+fn a_misspelled_command_suggests_the_nearest_name() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\newcommand\mymacro{x}
+\begin{document}
+\sectoin{A} \mymacor \Textbf{b} \qwertzuiop
+\end{document}",
+    );
+    let mut found: Vec<String> = satex::linter::lint(&analysis)
+        .iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-control-sequence"))
+        .map(|f| format!("{} {}", f["message"].as_str().unwrap_or_default(), f["fix"].as_str().unwrap_or_default()))
+        .collect();
+    found.sort();
+    assert_eq!(
+        found,
+        [
+            "`\\Textbf` is never defined in this run did you mean `\\textbf`?",
+            "`\\mymacor` is never defined in this run did you mean `\\mymacro`?",
+            "`\\qwertzuiop` is never defined in this run define `\\qwertzuiop` or load the package that provides it",
+            "`\\sectoin` is never defined in this run did you mean `\\section`?",
+        ]
+    );
+}
+
+/// expl3's `\int_mod:nn` of an unknown number that may be 0 stays below the
+/// divisor: on the path where the test found it 0, `x - (0/d)*d` is 0.
+#[test]
+fn a_remainder_of_an_unknown_stays_below_its_divisor() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\begin{document}
+\tl_set:Ne \l_tmpa_tl {\int_eval:n{\int_rand:n{65535}/16}}
+\int_compare:nNnTF {\int_mod:nn{\l_tmpa_tl}{16}} < {16} {in}{out}
+\end{document}",
+    );
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
+    let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
+    assert!(texts.contains(&"in"), "{texts:?}");
+}
+
+/// An arrow tip a TikZ library declares, used without it: the error names
+/// the library that declares it and the fix loads it.
+#[test]
+fn an_unknown_arrow_tip_names_its_library() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{tikz}
+\begin{document}
+\tikz\draw[-Kite] (0,0) -- (1,1);
+\end{document}",
+    );
+    let found: Vec<String> = satex::linter::lint(&analysis)
+        .iter()
+        .filter(|f| f.get("message").and_then(|m| m.as_str()).is_some_and(|m| m.contains("'Kite'")))
+        .map(|f| f["fix"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(found, ["add `\\usetikzlibrary{arrows.meta}`, which declares it"]);
+}
+
 /// A name read with `{` a letter is TeX's error where the category codes
 /// are known, but not where a cut made the analysis assume them back
 /// (`region-catcodes`): there it is reported as possible only.
@@ -178,7 +255,7 @@ fn a_name_read_under_assumed_category_codes_is_no_certain_error() {
         let mut cfg = crate::support::config();
         cfg.limits.line_steps = line_steps;
         let analysis = Machine::analyze(&source, None, &cfg);
-        satex::lint::lint(&analysis)
+        satex::linter::lint(&analysis)
             .iter()
             .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-control-sequence"))
             .map(|f| {
@@ -210,7 +287,7 @@ a \tikzmarknode{n-1-left}{x} b \tikzmarknode{n-1-left}{y}
 \section{B}\label{sec:a}
 \end{document}",
     );
-    let found: Vec<(String, String)> = satex::lint::lint(&analysis)
+    let found: Vec<(String, String)> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("duplicate-label"))
         .map(|f| {
@@ -585,6 +662,31 @@ fn metadata_is_recorded() {
     );
 }
 
+/// satex renders `\title` as a PDF string itself, which no TeX run does.
+/// algorithm2e's `\nl` there steps a counter under hyperref's `\let`, and
+/// the rendering recurses until cut. None of that reaches the run: the
+/// later `\stepcounter` is the kernel's, no limit is hit, the end is read.
+#[test]
+fn rendering_the_title_leaves_the_run_as_it_was() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{hyperref}
+\usepackage{algorithm2e}
+\title{A\nl B}
+\newcounter{other}
+\stepcounter{other}
+\begin{document}
+x
+\end{document}",
+    );
+    let found = codes(&analysis);
+    assert!(!found.iter().any(|c| c == "missing-end"), "{found:?}");
+    assert!(analysis.limits.is_empty(), "{:?}", broken_gaps(&analysis));
+}
+
 #[test]
 fn the_sample_document_keeps_what_it_already_analyzed() {
     // A regression net for tests/fixtures/project/paper.tex: these are things satex reads
@@ -603,7 +705,7 @@ fn the_sample_document_keeps_what_it_already_analyzed() {
         analysis
             .interner
             .lookup(name)
-            .is_some_and(|sym| !matches!(analysis.env.meaning(sym), satex::tex::Meaning::Undefined))
+            .is_some_and(|sym| !matches!(analysis.env.meaning(sym), satex::engine::tex::Meaning::Undefined))
     };
     // Kernel and class commands the document uses.
     for name in ["textbf", "emph", "section", "label", "ref", "item", "title", "author", "caption"] {
@@ -614,7 +716,7 @@ fn the_sample_document_keeps_what_it_already_analyzed() {
         .facts
         .occurrences
         .iter()
-        .filter(|o| o.kind == satex::builtins::OccKind::Label)
+        .filter(|o| o.kind == satex::engine::builtins::OccKind::Label)
         .map(|o| o.key.as_str())
         .collect();
     for key in ["sec:intro", "sec:method", "fig:main", "tab:results"] {
@@ -626,11 +728,12 @@ fn the_sample_document_keeps_what_it_already_analyzed() {
     }
     // A document that compiles has nothing undefined and no dangling
     // reference: both were false findings once, so both are pinned.
-    let findings = satex::lint::lint(&analysis);
-    let code_of =
-        |record: &satex::query::Record| record.get("code").and_then(|c| c.as_str()).unwrap_or_default().to_string();
+    let findings = satex::linter::lint(&analysis);
+    let code_of = |record: &satex::queries::query::Record| {
+        record.get("code").and_then(|c| c.as_str()).unwrap_or_default().to_string()
+    };
     for code in ["undefined-control-sequence", "undefined-reference"] {
-        let from_document = |record: &satex::query::Record| {
+        let from_document = |record: &satex::queries::query::Record| {
             record.get("file").and_then(|f| f.as_str()).unwrap_or_default() == "paper.tex"
         };
         let raised: Vec<String> = findings
@@ -644,7 +747,7 @@ fn the_sample_document_keeps_what_it_already_analyzed() {
 
 /// Severities of the `raised-error` findings in the document.
 fn raised(analysis: &Analysis) -> Vec<String> {
-    satex::lint::lint(analysis)
+    satex::linter::lint(analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("raised-error"))
         .filter_map(|f| f.get("severity").and_then(|s| s.as_str()).map(str::to_string))
@@ -710,7 +813,7 @@ fn an_unused_command_is_reported_once_not_with_its_implementation() {
 \newcommand\fe[1][x]{#1}
 \begin{document}x\end{document}",
     );
-    let mut names: Vec<String> = satex::lint::lint(&analysis)
+    let mut names: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("unused-definition"))
         .filter(|f| f.get("origin").and_then(|o| o.as_str()) == Some("document"))
@@ -745,7 +848,7 @@ fn a_definition_read_through_an_alias_or_a_package_is_used() {
 \includegraphics{example-image}
 \end{document}",
     );
-    let mut names: Vec<String> = satex::lint::lint(&analysis)
+    let mut names: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| matches!(f.get("code").and_then(|c| c.as_str()), Some("unused-definition" | "dead-definition")))
         .filter(|f| f.get("origin").and_then(|o| o.as_str()) == Some("document"))
@@ -773,7 +876,7 @@ fn italic_correction_follows_the_typeset_order() {
 \makeatletter\textit{\@title}\makeatother
 \end{document}",
     );
-    let places: Vec<(u64, u64)> = satex::lint::lint(&analysis)
+    let places: Vec<(u64, u64)> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("missing-italic-correction"))
         .map(|f| (f["line"].as_u64().unwrap_or(0), f["col"].as_u64().unwrap_or(0)))
@@ -803,8 +906,12 @@ Hidden \textbf{text} here.
 \end{document}",
     );
     assert!(defined(&analysis, "after"));
-    let gaps: Vec<_> =
-        analysis.facts.diagnostics.iter().filter(|d| d.severity == satex::facts::Severity::Unsupported).collect();
+    let gaps: Vec<_> = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported)
+        .collect();
     assert!(gaps.is_empty(), "{:?}", gaps.iter().map(|d| d.code).collect::<Vec<_>>());
 }
 
@@ -828,7 +935,7 @@ fn verbatim_bodies_are_read_line_by_line_with_an_active_end_of_line() {
     );
     // tex.web § 49: the active end of line prints as `^^M`, not raw.
     assert_eq!(body(&analysis, "r"), "a^^Mb");
-    assert!(!defined(&analysis, "bad"));
+    assert!(undefined(&analysis, "bad"));
     assert!(defined(&analysis, "after"));
 }
 
@@ -935,9 +1042,10 @@ fn unkern_in_inline_math_widens_its_size() {
 \ifdim\skip1=0pt \def\zero{}\else\def\nonzero{}\fi
 \end{document}",
     );
-    assert!(defined(&analysis, "exact"));
+    assert!(maybe_defined(&analysis, "exact"));
+    // `\nonzero` is undefined on every path, so every path set `\zero`
     assert!(defined(&analysis, "zero"));
-    assert!(!defined(&analysis, "nonzero"));
+    assert!(undefined(&analysis, "nonzero"));
 }
 
 /// An inline formula's size with scripts: a braced one-character script, a
@@ -1034,7 +1142,7 @@ fn unsupported(analysis: &Analysis) -> Vec<String> {
         .facts
         .diagnostics
         .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported)
         .map(|d| {
             let file = analysis.files.get(d.span.file as usize).map(|f| f.path.as_str()).unwrap_or("?");
             format!("{} at {file}:{}", d.code, d.span.line)
@@ -1051,7 +1159,7 @@ fn last_body(analysis: &Analysis, name: &str) -> String {
         .rev()
         .find(|d| analysis.interner.name(d.name) == name && d.mac.is_some())
         .and_then(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         .unwrap_or_default()
 }
 
@@ -1186,6 +1294,135 @@ x
     assert_eq!(unsupported(&analysis), Vec::<String>::new());
 }
 
+/// `\DocumentMetadata` is the entry point of the PDF-management and tagging
+/// code, so it is in every new document.  It loads pdfmanagement, tagpdf and
+/// the latex-lab testphase files, and satex has to come out the other side
+/// with a bounded run and a bounded report instead of one gap counted into
+/// the millions.
+mod document_metadata {
+    use satex::analysis::facts::Severity;
+    use satex::analysis::machine::{Analysis, Machine};
+    use satex::project::config::Config;
+
+    /// The bound one gap at one place is counted to.
+    fn bound() -> u32 {
+        Config::default().limits.repeat_failures
+    }
+
+    fn analyze_with(options: &str, cfg: &Config) -> Analysis {
+        let source = format!(
+            "\\DocumentMetadata{{{options}}}\n\\documentclass{{article}}\n\\begin{{document}}\nx\n\\end{{document}}\n"
+        );
+        Machine::analyze(&source, None, cfg)
+    }
+
+    fn analyze_document(options: &str) -> Analysis {
+        analyze_with(options, &crate::support::config())
+    }
+
+    fn unsupported(analysis: &Analysis) -> Vec<(&str, u32)> {
+        analysis
+            .facts
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Unsupported)
+            .map(|d| (d.code, d.count))
+            .collect()
+    }
+
+    /// No gap at one place may be reported more than `repeat_failures`
+    /// times, and the run may not end in `budget-exhausted`.  The document
+    /// still leaves gaps, so the codes are not asserted away; what is
+    /// asserted is that each is bounded and the run finished.
+    fn stays_bounded(options: &str, steps: u64) {
+        // the budget is the work a warm run executes: the first run fills the package cache, its own
+        let name: String = options.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+        let cfg = crate::support::warm_config(&format!("metadata-{name}"));
+        analyze_with(options, &cfg);
+        let analysis = analyze_with(options, &cfg);
+        let bound = bound();
+        let over: Vec<_> = unsupported(&analysis).into_iter().filter(|&(_, n)| n > bound).collect();
+        assert_eq!(over, Vec::new(), "gaps past the bound of {bound} for `{options}`");
+        let exhausted: Vec<_> =
+            unsupported(&analysis).into_iter().filter(|&(code, _)| code == "budget-exhausted").collect();
+        let why: Vec<&str> = analysis
+            .facts
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "budget-exhausted" || d.code == "limit-reached")
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(exhausted, Vec::new(), "the run ran out of budget on `{options}`: {why:?}");
+        assert!(!analysis.exhausted, "the run was exhausted on `{options}`");
+        // Measured: 20 million tokens with the bound, 240 million without,
+        // out of the 900 million the default budget allows. Steps served from
+        // the package cache are not executed, so they are not counted.
+        let work = analysis.steps - analysis.served_steps;
+        assert!(work < steps, "{work} steps executed ({} in all) for `{options}`", analysis.steps);
+    }
+
+    /// Well above what the bounded run needs and well below what the
+    /// unbounded one took.
+    const BOUNDED_STEPS: u64 = 50_000_000;
+
+    /// tikz, graphicx and hyperref together (epstopdf's `\InputIfFileExists`
+    /// loop, pgfmath's dimension comparisons) end without running out of budget.
+    #[test]
+    fn a_tikz_hyperref_document_does_not_exhaust_the_budget() {
+        if !super::installed() {
+            return;
+        }
+        let source = "\\documentclass[9pt]{article}\n\\usepackage{tikz,graphicx,etoolbox}\n\\usepackage{hyperref}\n\\usetikzlibrary{decorations.pathmorphing,shadows,arrows.meta}\n\\begin{document}\n\\section{One}\\label{sec:one}\n\\begin{tikzpicture}\\node[draw,circle] (a) {x};\\node[draw] (b) at (2,1) {y};\\draw[->] (a) -- (b);\\end{tikzpicture}\n\\end{document}\n";
+        let analysis = crate::support::analyze_latex(source);
+        let exhausted: Vec<_> =
+            unsupported(&analysis).into_iter().filter(|&(code, _)| code == "budget-exhausted").collect();
+        assert_eq!(exhausted, Vec::new());
+        assert!(!analysis.exhausted);
+    }
+
+    /// The options real documents carry: `pdfversion` picks the PDF the
+    /// backend writes, `testphase` loads the latex-lab code, `tagging`
+    /// turns the structure tree on.
+    #[test]
+    fn the_common_options_stay_bounded() {
+        if !super::installed() {
+            return;
+        }
+        stays_bounded("pdfversion=2.0", BOUNDED_STEPS);
+        stays_bounded("lang=en,pdfversion=1.7,testphase={phase-III}", BOUNDED_STEPS);
+        stays_bounded("tagging=on", BOUNDED_STEPS);
+    }
+
+    /// The worst one gap at one place is counted.
+    fn worst(analysis: &Analysis) -> u32 {
+        unsupported(analysis).into_iter().map(|(_, n)| n).max().unwrap_or(0)
+    }
+
+    /// The gap the bound once held down (one counted into the hundreds of
+    /// thousands at `expl3-code.tex` line 12363 under the latex-lab
+    /// testphase code) is gone: the arms of a choice inside an expanding
+    /// body join where they meet, so no path repeats it. Without the
+    /// bound the report is the same as with it.
+    #[test]
+    fn lifting_the_bound_leaves_the_report_as_it_is() {
+        if !super::installed() {
+            return;
+        }
+        const OPTIONS: &str = "lang=en,pdfversion=1.7,testphase={phase-III}";
+        let mut lifted = crate::support::config();
+        lifted.limits.repeat_failures = 0;
+        // both runs get the default budget, so only the bound differs; what the run costs is
+        // the_common_options_stay_bounded's to check
+        let (unbounded, bounded) = (analyze_with(OPTIONS, &lifted), analyze_document(OPTIONS));
+        assert!(worst(&unbounded) <= bound(), "without the bound one gap was counted {} times", worst(&unbounded));
+        // the bound adds its own `repeated-failure` notes; every gap besides them is the same
+        fn gaps(a: &Analysis) -> Vec<(&str, u32)> {
+            unsupported(a).into_iter().filter(|&(code, _)| code != "repeated-failure").collect()
+        }
+        assert_eq!(gaps(&unbounded), gaps(&bounded), "lifting the bound changed the report");
+    }
+}
+
 /// `\int_rand:n` over a range wider than `\c__kernel_randint_max_int`
 /// (131071) goes through expl3's wide path, where `\tex_uniformdeviate:D`
 /// hands `\__fp_randint_split_o:Nw` text satex cannot know and its
@@ -1206,12 +1443,12 @@ fn a_wide_int_rand_leaves_bounded_gaps() {
 x
 \end{document}",
     );
-    let bound = satex::config::Config::default().limits.repeat_failures;
+    let bound = satex::project::config::Config::default().limits.repeat_failures;
     let over: Vec<_> = analysis
         .facts
         .diagnostics
         .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported && d.code != "repeated-failure")
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported && d.code != "repeated-failure")
         .filter(|d| d.count > bound)
         .map(|d| (d.code, d.count))
         .collect();
@@ -1240,7 +1477,7 @@ x
         .facts
         .diagnostics
         .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported)
         .map(|d| (d.code, d.count))
         .collect();
     assert_eq!(found, Vec::new());
@@ -1272,7 +1509,7 @@ x
         .facts
         .diagnostics
         .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported)
         .map(|d| (d.code, d.count))
         .collect();
     assert_eq!(found, Vec::new());
@@ -1311,7 +1548,7 @@ x
         .facts
         .diagnostics
         .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported)
         .map(|d| (d.code, d.count))
         .collect();
     assert_eq!(found, Vec::new());
@@ -1324,7 +1561,7 @@ fn document_gaps(analysis: &Analysis) -> Vec<String> {
         .facts
         .diagnostics
         .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported && d.span.file == analysis.main_file)
+        .filter(|d| d.severity == satex::analysis::facts::Severity::Unsupported && d.span.file == analysis.main_file)
         .map(|d| format!("{}: {}", d.code, d.message))
         .collect()
 }
@@ -1360,7 +1597,7 @@ fn different_aftergroup_tokens_join_into_one_of_them() {
         r"\documentclass{article}
 \def\one{\gdef\seen{1}}\def\two{\gdef\seen{2}}\def\three{\gdef\seen{3}}
 \begin{document}
-{\ifcase\numexpr\lastskip/65536\relax \aftergroup\one\or\aftergroup\two\else\aftergroup\three\fi}
+{\ifcase\pdfuniformdeviate 3 \aftergroup\one\or\aftergroup\two\else\aftergroup\three\fi}
 \label{after}
 \end{document}",
     );
@@ -1369,7 +1606,7 @@ fn different_aftergroup_tokens_join_into_one_of_them() {
         .defs
         .iter()
         .filter(|d| analysis.interner.name(d.name) == "seen")
-        .filter_map(|d| d.mac.as_ref().map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner)))
+        .filter_map(|d| d.mac.as_ref().map(|m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner)))
         .collect();
     for n in ["1", "2", "3"] {
         assert!(bodies.contains(&n.to_string()), "{bodies:?}");
@@ -1461,7 +1698,7 @@ fn a_class_or_package_option_is_not_a_citation_key() {
     );
     assert_eq!(keys(&analysis, OccKind::Cite), vec!["knuth".to_string()]);
     // No bibliography: `knuth` is undefined, as LaTeX warns, and no option is.
-    let undefined: Vec<String> = satex::lint::lint(&analysis)
+    let undefined: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f["code"] == "undefined-citation")
         .map(|f| f["name"].as_str().unwrap_or_default().to_string())
@@ -1743,7 +1980,7 @@ fn unknown_clock_keeps_the_date_digit_shaped() {
         return;
     }
     let mut cfg = crate::support::config();
-    cfg.clock = satex::config::Clock::Unknown;
+    cfg.clock = satex::project::config::Clock::Unknown;
     let analysis = Machine::analyze(
         r"\documentclass{article}
 \usepackage[calc,en-US]{datetime2}
@@ -1760,7 +1997,7 @@ x\label{after}
     assert_eq!(keys(&analysis, OccKind::Label), vec!["after"]);
     let year = body(&analysis, "year@");
     assert_eq!(year.chars().count(), 4, "{year:?}");
-    assert!(year.chars().all(|c| c == satex::tex::UNKNOWN_DIGIT), "{year:?}");
+    assert!(year.chars().all(|c| c == satex::engine::tex::UNKNOWN_DIGIT), "{year:?}");
     let gaps = broken_gaps(&analysis);
     for code in ["extra-fi", "extra-else", "budget-exhausted", "line-budget-cut", "repeated-failure"] {
         assert!(!gaps.iter().any(|g| g.starts_with(code)), "{gaps:?}");
@@ -1801,6 +2038,146 @@ x\label{after}
     ] {
         assert!(!gaps.iter().any(|g| g.starts_with(code)), "{gaps:?}");
     }
+}
+
+/// An error the document makes is recovered as TeX recovers it: a flag
+/// raised without `\flag_new:n` makes `\cs:w \relax` (tex.web § 373:
+/// `\endcsname` is inserted and the run goes on), then an extra
+/// `\endcsname` (§ 1135, ignored), over and over. The hundredth error is
+/// reported (TeX would stop there, § 82) and satex reads on. No widening, no repeated-failure
+/// cut, no budget cascade into `\begin{document}`.
+#[test]
+fn an_error_in_the_document_is_recovered_like_tex() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\int_step_inline:nn{\pdfuniformdeviate 9}{\flag_raise:n{test}}
+\flag_clear:n{test}
+\ExplSyntaxOff
+\begin{document}x\end{document}",
+    );
+    let count = |code: &str| {
+        analysis.facts.diagnostics.iter().filter(|d| d.code == code).map(|d| u64::from(d.count)).sum::<u64>()
+    };
+    assert!(count("missing-endcsname") >= 51 && count("extra-endcsname") >= 50, "{:?}", analysis.facts.diagnostics);
+    assert!(count("too-many-errors") >= 1, "the hundredth error is reported");
+    for code in ["repeated-failure", "limit-reached", "budget-exhausted", "line-budget-cut", "unbalanced-argument"] {
+        assert_eq!(count(code), 0, "{code}");
+    }
+    let raised = |text: &str| analysis.facts.raised.iter().any(|r| r.text == text);
+    assert!(raised("Missing \\endcsname inserted") && raised("That makes 100 errors; please try again"));
+    assert!(analysis.steps < 5_000_000, "{} steps", analysis.steps);
+}
+
+/// A resized picture whose styles are set up next to forest, fontawesome
+/// and hyperref: a file name the hooks expand holds unknown text, and
+/// expl3's quote loop over it once ate the marker an outer scan needed
+/// (unbalanced-argument, extra-right-brace at expl3-code.tex:2549, then
+/// missing-endcsname and unbalanced-group by the dozen). Four gaps remain.
+#[test]
+fn resized_picture_with_styles_keeps_file_name_scans() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r#"\documentclass{article}
+\usepackage{graphicx,xcolor}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,calc,shapes.geometric,backgrounds}
+\usepackage{tikz}
+\usepackage{forest}
+\usepackage{commalists-tools}
+\usepackage{fontawesome}
+\usepackage{hyperref}
+\usepackage{csquotes}
+\usetikzlibrary{decorations.pathmorphing,shadows,arrows.meta}
+\pgfdeclarelayer{background}\pgfdeclarelayer{foreground}\pgfdeclarelayer{middle}
+\pgfdeclarelayer{very-background}
+\pgfsetlayers{very-background,background,main,middle,foreground}
+
+\tikzset{
+   Soft/.style={line join=round,line cap=round},
+   All Soft/.style={every path/.append style={Soft}},
+   Blob/.style={
+      draw=black,
+      circle,
+      outer sep=2pt,
+      minimum size=1.8em
+   },
+   Blobs/.style={
+      every node/.append style={Blob}
+   },
+   Use/.style={Blob},
+   RectRounding/.style={rounded corners=3pt},
+   RawRect/.style={
+      draw=black,
+      rectangle,
+      RectRounding,
+      minimum size=1.8em,
+      inner sep=5pt,
+      fill=white,
+   },
+   Rect/.style={
+      draw=black,
+      rectangle,
+      RectRounding,
+      outer sep=2pt,
+      minimum size=1.8em
+   },
+   Def/.style={Rect},
+   Rects/.style={
+      every node/.append style={Rect,minimum width=#1}
+   },
+   Rects/.default={1.5em},
+   Link/.style={
+      draw,
+      Soft,
+      rounded corners=2.5pt,
+      -Kite
+   },
+   Links/.style={
+      every path/.append style={Link}
+   },
+   % for dataflow graphs
+   comm/.style={rectangle,draw=gray,text width=9mm,align=center,minimum height=5mm,font=\ttfamily,fill=white,fill opacity=1,drop shadow={fill=lightgray!50}},
+   d/.style={comm,rounded corners=2pt}, % variable def
+   u/.style={comm,rounded corners=2.5mm}, % variable use % rounded rectangle breaks anchors
+   v/.style={comm,signal, signal to=east and west, gray, text=black, inner sep=-4pt, text width=5mm,fill=lightgray!22!white}, % values
+   e/.style={comm,rounded corners=2.5mm,densely dotted,thick,fill=white}, % exit point
+   F/.style={comm,draw=gray,rounded corners=2pt,fill=white,inner xsep=.5em},
+   fc/.style={comm,double,rounded corners=2pt},
+   w-back/.style={fill=white,inner sep=1pt},
+   T/.style={font=\footnotesize\ttfamily,text=gray},
+   code/.style={font=\ttfamily},
+   dfidn/.style={
+      circle,darkgray,fill opacity=.925,xshift=-1mm,yshift=.15mm,fill=white,draw,minimum size=1.8em,scale=.8,inner sep=-1pt
+   },
+   klabel/.style={font=\scriptsize\sffamily, inner sep=1pt,text=black,above,execute at begin node={\strut}},
+   olabel/.style={midway,fill=white,fill opacity=.75,text opacity=1,rounded corners=2pt,inner sep=1pt,font=\tiny\sffamily},
+}
+\newsavebox\DataFlow
+\setbox\DataFlow=\hbox{\resizebox*!{1.25cm}{\begin{tikzpicture}
+   \node[d] (0) at (0,0) {};
+   \node[u,right=4mm] (1) at (0.east) {};
+   \node[v,above=4mm] (2) at (0.north) {~~~~};
+   \node[u,below=4mm] (3) at (0.south) {};
+   \draw[Link,-Kite] (3) -- (0);
+   \draw[Link,-Kite] (0) -- (1);
+   \draw[Link,dotted] (1) to[bend right] (2);
+\end{tikzpicture}}}
+\newsavebox\ControlFlow
+\setbox\ControlFlow=\hbox{\resizebox*!{1.25cm}{\color{lightgray!80!gray}\begin{tikzpicture}[Link/.style={draw,line cap=round,gray,thick},comm/.append style={very thick}]
+\node[d] (0) at (0,0) {};
+\end{tikzpicture}}}
+\begin{document}
+x\label{after}
+\end{document}"#,
+    );
+    assert_eq!(keys(&analysis, OccKind::Label), vec!["after"]);
+    assert!(broken_gaps(&analysis).is_empty(), "{:?}", broken_gaps(&analysis));
 }
 
 /// The same for a cloud around two lines.
@@ -1918,6 +2295,28 @@ fn tikz_pictures_with_unknown_borders_do_not_exhaust_the_budget() {
     assert!(!analysis.exhausted);
 }
 
+/// The scale factor of `\resizebox` is a `\strip@pt` of an unknown quotient:
+/// number text with no `+`, no `--` and at most one `.`, which the delimited
+/// scans of graphics' `\GPT@NormalizeNumber` decide instead of failing on.
+#[test]
+fn a_resized_box_of_unknown_width_normalizes_its_scale() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}\usepackage{graphicx}\begin{document}
+\resizebox{\textwidth}{!}{\rule{\pdfuniformdeviate 100pt}{1pt}}
+\resizebox{\textwidth}{!}{$N$}
+x\label{after}\end{document}",
+    );
+    let count = |code: &str| analysis.facts.diagnostics.iter().filter(|d| d.code == code).count();
+    for code in ["repeated-failure", "limit-reached", "argument-ends-in-unknown"] {
+        assert_eq!(count(code), 0, "{code}: {:?}", analysis.facts.diagnostics);
+    }
+    assert_eq!(keys(&analysis, OccKind::Label), vec!["after".to_string()]);
+    assert!(analysis.steps < 2_500_000, "{} steps", analysis.steps);
+}
+
 /// `\strip@pt` of a dimension of unknown sign: `\the` prints a `-` or a
 /// digit first, never the `.` that `\rem@pt`'s argument ends at, so no
 /// path reads an empty integer part and TeX's "Missing number" (pdflatex
@@ -1946,7 +2345,7 @@ fn an_eps_image_converted_through_the_shell_has_its_bounding_box() {
     if !installed() {
         return;
     }
-    use satex::config::ShellEscape;
+    use satex::project::config::ShellEscape;
     let dir = crate::support::scratch_dir(std::env::temp_dir().join(format!("satex-eps-{}", std::process::id())));
     let eps = "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 10 -20 295 61\n%%HiResBoundingBox: 10.2 -19.5 294.8819 60.7874\n\
                %%EndComments\nnewpath 10 -20 moveto 284 0 rlineto 0 80 rlineto closepath fill\nshowpage\n%%EOF\n";
@@ -2347,6 +2746,32 @@ fn a_kern_at_a_hyphenation_point_keeps_the_lines_known() {
     }
 }
 
+/// tex.web §§ 898, 903-918: a word's ligatures hyphenate by their letters.
+/// Inside "ff" or "ffi" the discretionary's pre-break text is "f-", its
+/// post-break text the rest, and it replaces the ligature. Values as
+/// `pdflatex` prints; before, "effects" lost its hyphens (a wrong height)
+/// and "flowr" left the paragraph undecided.
+#[test]
+fn a_ligature_in_a_word_hyphenates_by_its_letters() {
+    if !installed() {
+        return;
+    }
+    let src = r"\documentclass{article}
+\begin{document}
+\pretolerance=-1 \tolerance=100 \parfillskip=0pt plus 1fil
+\setbox0\hbox{ef-}\setbox0\vbox{\hsize=\wd0 \parindent0pt \hskip0pt effect\par\xdef\Ma{\the\prevgraf}}
+\setbox0\hbox{suf-}\setbox0\vbox{\hsize=\wd0 \parindent0pt \hskip0pt sufficient\par\xdef\Mb{\the\prevgraf}}
+\setbox0\vbox{\hsize=1pt \tolerance=10000 \hyphenpenalty=0 \parindent0pt \hskip0pt sufficient official\par\xdef\Mc{\the\prevgraf}}
+\setbox0\vbox{\hsize=100pt Different effects of sufficient official offices affect efficient staffing differently.}\xdef\Md{\the\ht0/\the\dp0}
+\setbox0\vbox{\hsize=90pt Some words about finding assertions, driven by \emph{flowr} and the official staff.}\xdef\Me{\the\ht0/\the\dp0}
+\end{document}";
+    let analysis = analyze(src);
+    let want = [("Ma", "2"), ("Mb", "2"), ("Mc", "7"), ("Md", "42.94444pt/1.94444pt"), ("Me", "42.94444pt/0.0pt")];
+    for (name, want) in want {
+        assert_eq!(body(&analysis, name), want, "{name}");
+    }
+}
+
 /// microtype's `\leftprotrusion` after `\item` measures an en dash
 /// ligature first in the item: the margin kern it reads is known, so the
 /// paragraph surely starts there and the characters after it do not each
@@ -2707,6 +3132,22 @@ fn a_paragraph_with_inline_math_keeps_its_height() {
     assert_eq!(got, want);
 }
 
+/// Each inline formula of `cases` boxed alone has the width/height/depth it names.
+fn math_sizes(cases: &[(&str, &str)]) {
+    let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
+    for (i, (f, _)) in cases.iter().enumerate() {
+        src.push_str(&format!(
+            "\\setbox0\\hbox{{${f}$}}\\xdef\\S{}{{\\the\\wd0/\\the\\ht0/\\the\\dp0}}\n",
+            (b'a' + i as u8) as char
+        ));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    for (i, (f, want)) in cases.iter().enumerate() {
+        assert_eq!(body(&analysis, &format!("S{}", (b'a' + i as u8) as char)), *want, "{f}");
+    }
+}
+
 /// tex.web §§ 719, 756-758: scripts of any length and depth are set in the
 /// script and scriptscript fonts, shifted by the parameters of the size
 /// they sit in. Widths, heights and depths as `pdflatex` prints.
@@ -2727,24 +3168,37 @@ fn inline_math_with_scripts_has_its_size() {
         (r"x^{\alpha\beta}", "16.30817pt/8.49002pt/0.0pt"),
         (r"A_{i}^{j}", "11.71358pt/9.43745pt/2.78741pt"),
     ];
-    let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
-    for (i, (f, _)) in cases.iter().enumerate() {
-        src.push_str(&format!(
-            "\\setbox0\\hbox{{${f}$}}\\xdef\\S{}{{\\the\\wd0/\\the\\ht0/\\the\\dp0}}\n",
-            (b'a' + i as u8) as char
-        ));
+    math_sizes(&cases);
+}
+
+/// tex.web §§ 743-748, 1151, 1153: a fraction of characters sets its parts one size down,
+/// shifted by the size's parameters; a character of math code "8000 (`'`) is its active
+/// character; an implicit `{` (`\bgroup`) opens a script group. Sizes as `pdflatex` prints.
+#[test]
+fn inline_math_with_fractions_and_primes_has_its_size() {
+    if !installed() {
+        return;
     }
-    src.push_str("\\end{document}");
-    let analysis = analyze(&src);
-    for (i, (f, want)) in cases.iter().enumerate() {
-        assert_eq!(body(&analysis, &format!("S{}", (b'a' + i as u8) as char)), *want, "{f}");
-    }
+    let cases = [
+        (r"\frac{1}{2}", "6.38612pt/8.44843pt/3.44841pt"),
+        (r"{x\atop y}", "6.93472pt/7.45119pt/4.80951pt"),
+        (r"a{12\over x}b", "19.9498pt/8.44843pt/3.44841pt"),
+        (r"\frac{ab}{c}", "10.2543pt/8.79842pt/3.44841pt"),
+        (r"{A\over B}", "8.78299pt/8.72066pt/3.44841pt"),
+        (r"{f\over x}", "7.08408pt/9.32217pt/3.44841pt"),
+        (r"x^{\frac12}", "12.0181pt/9.53845pt/0.0pt"),
+        (r"\frac{1}{2}+\frac{x}{y}", "25.54298pt/8.44843pt/4.80951pt"),
+        (r"V'", "10.86111pt/7.51782pt/0.0pt"),
+        (r"x''", "10.82639pt/7.51782pt/0.0pt"),
+        (r"x^\bgroup\prime\egroup", "8.52083pt/7.51782pt/0.0pt"),
+    ];
+    math_sizes(&cases);
 }
 
 /// `\unhbox` of any hbox adds its list's natural width (tex.web § 1110),
 /// whatever it was packed to, and an `\unskip` after it takes away the
-/// glue the list ended in: tikz's `align` lines in an `\halign`. Widths
-/// as `pdflatex` prints.
+/// glue the list ended in: tikz's `align` lines in an `\halign`. The space
+/// factor stays the one before it. Widths as `pdflatex` prints.
 #[test]
 fn an_unhboxed_list_keeps_its_natural_width() {
     if !installed() {
@@ -2758,6 +3212,8 @@ fn an_unhboxed_list_keeps_its_natural_width() {
         (r"\setbox1\hbox{word}\setbox0\hbox{\unhbox1}", "21.4167pt"),
         (r"\setbox1\hbox to 50pt{a\hfil b}\setbox0\hbox{\unhbox1}", "10.55559pt"),
         (r"\setbox1\hbox{Ab }\setbox0\hbox{x\unhbox1\unskip}", "18.33339pt"),
+        (r"\setbox0\hbox{x.\setbox1\hbox{a}\unhbox1\relax\space b}", "23.05562pt"),
+        (r"\setbox0\hbox{x\setbox1\hbox{a.}\unhbox1\relax\space b}", "21.9445pt"),
     ];
     let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
     for (i, (f, _)) in cases.iter().enumerate() {
@@ -2771,6 +3227,39 @@ fn an_unhboxed_list_keeps_its_natural_width() {
         .map(|(i, (f, _))| (f.to_string(), body(&analysis, &format!("W{}", (b'a' + i as u8) as char))))
         .collect();
     let want: Vec<(String, String)> = cases.iter().map(|(f, w)| (f.to_string(), w.to_string())).collect();
+    assert_eq!(got, want);
+}
+
+/// `\unhbox` puts the box's items back (tex.web § 1110), so a paragraph
+/// breaks them as TeX does: an enumitem inline list boxes each item, and a
+/// tikz node of text width set it. Height/depth as `pdflatex` prints.
+#[test]
+fn an_unhboxed_list_breaks_into_lines() {
+    if !installed() {
+        return;
+    }
+    let words = r"Some words \setbox1\hbox{in the box of words and other text}\unhbox1, finding more words that wrap.";
+    let list = r"Some words in \begin{inlenum}\item reading all the input files \item writing the output and the summary report\end{inlenum}.";
+    let cases = [
+        (120, r"\setbox1\hbox{in}Some words \unhbox1, finding.", "6.94444pt/1.94444pt"),
+        (150, words, "30.94444pt/1.94444pt"),
+        (250, words, "18.94444pt/1.94444pt"),
+        (200, list, "31.5pt/1.94444pt"),
+        (300, list, "19.5pt/1.94444pt"),
+    ];
+    let mut src = String::from(
+        "\\documentclass{article}\n\\usepackage[inline]{enumitem}\n\\newlist{inlenum}{enumerate*}{1}\n\
+         \\setlist[inlenum]{label=\\emph{\\roman*)},itemjoin={{, }},itemjoin*={{, and }}}\n\\begin{document}\n",
+    );
+    for (i, (hsize, f, _)) in cases.iter().enumerate() {
+        let name = (b'a' + i as u8) as char;
+        src.push_str(&format!("\\setbox0\\vbox{{\\hsize={hsize}pt {f}}}\\xdef\\H{name}{{\\the\\ht0/\\the\\dp0}}\n"));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    let got: Vec<String> =
+        (0..cases.len()).map(|i| body(&analysis, &format!("H{}", (b'a' + i as u8) as char))).collect();
+    let want: Vec<String> = cases.iter().map(|(_, _, w)| w.to_string()).collect();
     assert_eq!(got, want);
 }
 
@@ -2845,7 +3334,7 @@ fn lint_text_puts_correctness_first_grouped_by_rule() {
         record("astyle", "style", 2),
         record("bug", "correctness", 3),
     ];
-    let text = satex::render::lint(&records, satex::render::Links::default(), true);
+    let text = satex::cli::render::lint(&records, satex::cli::render::Links::default(), true);
     let at = |s: &str| text.find(s).unwrap_or_else(|| panic!("{s} missing in {text}"));
     assert!(at("bug") < at("astyle") && at("astyle") < at("zstyle"), "{text}");
 }
@@ -2943,7 +3432,7 @@ fn the_build_reruns_only_for_what_it_read() {
         "\\documentclass{article}\\begin{document}\\ref{s}\\makeatletter\\@ifundefined{r@s}{\\gdef\\U{}}{\\gdef\\D{}}\\makeatother\\section{S}\\label{s}\\end{document}\n",
     );
     assert_eq!(referenced.build_runs, 2);
-    assert!(defined(&referenced, "D") && !defined(&referenced, "U"));
+    assert!(defined(&referenced, "D") && undefined(&referenced, "U"));
     // A `.lof` line defining a macro: read back, it matters only where the
     // run expanded that macro.
     let lof = |used: &str| {
@@ -2953,11 +3442,48 @@ fn the_build_reruns_only_for_what_it_read() {
     };
     assert_eq!(run("seen.tex", &lof("Seen")).build_runs, 2);
     assert_eq!(run("unseen.tex", &lof("Unseen")).build_runs, 1);
+    // A line whose value every run changes (a counter written back, a page
+    // that moves) is widened when it changes again after the second run:
+    // four runs, not the limit.
+    let counting = run(
+        "count.tex",
+        "\\def\\N{0}\\openin2=\\jobname.lof \\ifeof2 \\else\\closein2 \\input\\jobname.lof \\fi\\immediate\\openout1=\\jobname.lof \\immediate\\write1{\\string\\gdef\\string\\N{\\number\\numexpr\\N+1\\relax}}\\edef\\X{\\N}\n",
+    );
+    assert_eq!(counting.build_runs, 4);
+    // A line only the first run wrote shifts the rest: the join aligns on
+    // what each line sets, so the line between the moving ones stays exact.
+    let shifted = run(
+        "shift.tex",
+        "\\def\\N{0}\\openin2=\\jobname.lof \\ifeof2 \\else\\closein2 \\input\\jobname.lof \\fi\\immediate\\openout1=\\jobname.lof \\immediate\\write1{\\string\\gdef\\string\\N{\\number\\numexpr\\N+1\\relax}}\\ifnum\\N=0 \\immediate\\write1{\\string\\gdef\\string\\E{}}\\fi\\immediate\\write1{\\string\\gdef\\string\\K{7}}\\immediate\\write1{\\string\\gdef\\string\\P{\\N}}\\edef\\X{\\N\\P}\n",
+    );
+    assert_eq!(crate::support::body(&shifted, "K"), "7");
     // A `.gls` no `.tex` is named after is a source the document wrote, not
     // a build's: it is read as it is on disk.
     std::fs::write(dir.join("entries.gls"), "\\gdef\\G{}\n").unwrap();
     assert!(defined(&run("source.tex", "\\input{entries.gls}\n"), "G"));
     std::fs::remove_dir_all(dir).ok();
+}
+
+/// A build file named only in another (a part `.aux` the main `.aux`
+/// names) is on disk after the run that wrote it, though no run read it
+/// yet: the next run reads it, so two runs settle, as with LaTeX.
+#[test]
+fn a_build_file_another_names_is_read_in_the_next_run() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-named-file-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = "\\documentclass{article}\\def\\Y{0}\\InputIfFileExists{\\jobname.lof}{}{}\n\
+        \\immediate\\openout1=\\jobname.lof \\immediate\\write1{\\string\\InputIfFileExists{\\jobname.lot}{}{}}\\immediate\\closeout1\n\
+        \\immediate\\openout3=\\jobname.lot \\immediate\\write3{\\string\\gdef\\string\\Y{1}}\\immediate\\closeout3\n\
+        \\edef\\X{\\Y}\\begin{document}\\end{document}\n";
+    let path = dir.join("named.tex");
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    std::fs::remove_dir_all(dir).ok();
+    assert_eq!(crate::support::body(&analysis, "X"), "1");
+    assert_eq!(analysis.build_runs, 2);
 }
 
 /// The bibliography goes into the typeset pass: the build makes its own
@@ -2979,14 +3505,14 @@ fn the_build_makes_a_bbl_from_the_cited_entries() {
     let path = dir.join("doc.tex");
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
-    assert!(defined(&analysis, "Found") && !defined(&analysis, "Missing"), "{:?}", analysis.build_runs);
-    assert!(defined(&analysis, "Unset") && !defined(&analysis, "Set"));
+    assert!(defined(&analysis, "Found") && undefined(&analysis, "Missing"), "{:?}", analysis.build_runs);
+    assert!(defined(&analysis, "Unset") && undefined(&analysis, "Set"));
     // biblatex reads biber's format: its toggle says the file was found.
     let source = "\\documentclass{article}\\usepackage[style=authoryear]{biblatex}\\addbibresource{refs.bib}\\begin{document}\\cite{k1}\\printbibliography\\makeatletter\\iftoggle{blx@bbldone}{\\gdef\\Found{}}{\\gdef\\Missing{}}\\makeatother\\end{document}\n";
     let path = dir.join("blx.tex");
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
-    assert!(defined(&analysis, "Found") && !defined(&analysis, "Missing"), "{:?}", analysis.build_runs);
+    assert!(defined(&analysis, "Found") && undefined(&analysis, "Missing"), "{:?}", analysis.build_runs);
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -3007,7 +3533,48 @@ fn the_aux_of_two_paths_holds_what_either_wrote() {
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
     std::fs::remove_dir_all(dir).ok();
-    assert!(defined(&analysis, "GotA") && defined(&analysis, "GotB"));
+    assert!(maybe_defined(&analysis, "GotA") && maybe_defined(&analysis, "GotB"));
+}
+
+/// Paths that wrote the `.aux` with different numbers of lines leave
+/// two texts; the rerun reads each on its own path, also through the
+/// 8-bit engine's byte decoding.
+#[test]
+fn the_aux_texts_of_two_paths_are_read_apart() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-aux-texts-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("texts.tex");
+    let source = "\\documentclass{article}\\makeatletter\\providecommand\\foo{C}\n\\begin{document}\n\
+        \\if A\\foo\\gdef\\GotA{}\\fi \\if B\\foo\\gdef\\GotB{}\\fi\n\
+        \\ifodd\\pdfuniformdeviate9 \\immediate\\write\\@auxout{\\string\\gdef\\string\\foo{A}}\\else\
+        \\immediate\\write\\@auxout{\\string\\gdef\\string\\foo{B}}\\immediate\\write\\@auxout{\\relax}\\fi\n\\end{document}\n";
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    std::fs::remove_dir_all(dir).ok();
+    assert!(maybe_defined(&analysis, "GotA") && maybe_defined(&analysis, "GotB"));
+}
+
+/// Paths that read different `.aux` texts join inside a verbatim group,
+/// where one saved a category twice: leaving the group puts back the
+/// first save, so the space is a space again (tex.web § 282).
+#[test]
+fn a_category_saved_twice_in_a_group_comes_back_as_first_saved() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-saved-twice-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("twice.tex");
+    let source = "\\documentclass{article}\\usepackage{verbatim}\n\\newenvironment{va}{\\verbatim}{\\endverbatim}\n\
+        \\begin{document}\n\\begin{va}\nx\n\\end{va}\n\\ifnum\\catcode32=10 \\else\\gdef\\Leaked{}\\fi\n\
+        \\ifodd\\pdfuniformdeviate9 \\expandafter\\enddocument\\fi\n\\section{A}\\label{a}\n\\end{document}\n";
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    std::fs::remove_dir_all(dir).ok();
+    assert!(undefined(&analysis, "Leaked"));
 }
 
 /// `\romannumeral` of a number in a small interval is one of its numerals
@@ -3019,7 +3586,7 @@ fn a_roman_numeral_of_a_small_interval_names_each_value() {
     }
     let source = "\\documentclass{article}\\count255=\\pdfuniformdeviate 2 \\advance\\count255 1 \\expandafter\\gdef\\csname R\\romannumeral\\count255\\endcsname{}\\begin{document}x\\end{document}\n";
     let a = analyze(source);
-    assert!(defined(&a, "Ri") && defined(&a, "Rii"));
+    assert!(maybe_defined(&a, "Ri") && maybe_defined(&a, "Rii"));
 }
 
 /// A join left `\Val` one of two texts. Library code that splits it at a
@@ -3068,8 +3635,8 @@ fn ifx_splits_a_body_a_join_left() {
     let path = dir.join("main.tex");
     std::fs::write(&path, source).unwrap();
     let a = Machine::analyze(source, Some(&path), &crate::support::config());
-    assert!(defined(&a, "E") && defined(&a, "N"));
-    assert!(!defined(&a, "Never"));
+    assert!(maybe_defined(&a, "E") && maybe_defined(&a, "N"));
+    assert!(undefined(&a, "Never"));
     std::fs::remove_dir_all(root).ok();
 }
 
@@ -3101,7 +3668,7 @@ fn an_output_routine_never_closes_its_callers_conditional() {
     std::fs::remove_dir_all(root).ok();
 }
 
-/// What TeX reads each argument as ([`satex::roles::Ty`]), seen in the run
+/// What TeX reads each argument as ([`satex::analysis::roles::Ty`]), seen in the run
 /// and handed on through wrappers.
 mod types {
     use super::*;
@@ -3118,8 +3685,8 @@ mod types {
         std::fs::write(&path, &source).unwrap();
         let a = Machine::analyze(&source, Some(&path), &crate::support::config());
         let shown = |cmd: &&str| {
-            let roles = satex::roles::roles(&a, cmd);
-            satex::roles::arg_types(&roles).iter().map(|(arg, t)| format!("#{} {t}", arg + 1)).collect()
+            let roles = satex::analysis::roles::roles(&a, cmd);
+            satex::analysis::roles::arg_types(&roles).iter().map(|(arg, t)| format!("#{} {t}", arg + 1)).collect()
         };
         let found = cmds.iter().map(shown).collect();
         std::fs::remove_dir_all(dir).ok();
@@ -3190,11 +3757,11 @@ mod types {
 
     #[test]
     fn the_lattice_orders_registers_below_their_values() {
-        use satex::roles::Ty;
-        use satex::tex::RegKind;
+        use satex::analysis::roles::Ty;
+        use satex::engine::tex::RegKind;
         assert_eq!(Ty::Reg(RegKind::Dimen).join(Ty::Reg(RegKind::Skip)), Ty::Glue);
         assert_eq!(Ty::Box.join(Ty::Dimen), Ty::Quantity);
-        assert_eq!(Ty::Named(RegKind::Count).join(Ty::Key(satex::roles::KeyKind::Any)), Ty::Name);
+        assert_eq!(Ty::Named(RegKind::Count).join(Ty::Key(satex::analysis::roles::KeyKind::Any)), Ty::Name);
         assert_eq!(Ty::Cs.join(Ty::Number), Ty::Top);
         assert!(Ty::Dimen.leq(Ty::Glue) && !Ty::Glue.leq(Ty::Dimen));
         assert_eq!(Ty::Bottom.join(Ty::Box), Ty::Box);
@@ -3320,6 +3887,35 @@ fn a_split_to_maxdimen_takes_a_list_without_forced_breaks() {
     assert_ne!(body(&a, "F"), "v");
 }
 
+/// tex.web §§ 890, 970-979: a list whose characters TeX does not know
+/// holds no forced break, so it splits off whole to `\maxdimen`, marks or
+/// a nested box's penalty notwithstanding; lines that a penalty of -10000
+/// parts, or a smaller target, leave a rest.
+#[test]
+fn a_split_of_unknown_text_to_maxdimen_leaves_a_void_rest() {
+    if !installed() {
+        return;
+    }
+    let spaced = r"\t{} ".repeat(80);
+    let a = analyze(&format!(
+        r"\documentclass{{article}}\begin{{document}}\splitmaxdepth=\maxdimen \edef\t{{\pdfuniformdeviate 100000}}
+\setbox2\vbox{{\t\par}}\setbox3\vsplit2 to\maxdimen \xdef\A{{\ifvoid2 v\else n\fi}}
+\setbox2\vbox{{\interlinepenalty=-10000 {spaced}\par}}\setbox3\vsplit2 to\maxdimen \xdef\B{{\ifvoid2 v\else n\fi}}
+\setbox2\vbox{{\t\penalty-10000\t\par}}\setbox3\vsplit2 to\maxdimen \xdef\C{{\ifvoid2 v\else n\fi}}
+\setbox1\vbox{{\t\par}}\setbox2\vbox{{\unvcopy1\vskip5pt\unvcopy1}}\setbox3\vsplit2 to 10pt \xdef\D{{\ifvoid2 v\else n\fi}}
+\setbox2\vbox{{\unvcopy1\mark{{a}}\unvcopy1}}\setbox3\vsplit2 to\maxdimen \xdef\M{{\ifvoid2 v\else n\fi}}
+\setbox2\vbox{{\unvcopy1\vbox{{\penalty-10000}}\unvcopy1}}\setbox3\vsplit2 to\maxdimen \xdef\N{{\ifvoid2 v\else n\fi}}
+\setbox2\vbox{{\unvcopy1\penalty-10000\unvcopy1}}\setbox3\vsplit2 to\maxdimen \xdef\F{{\ifvoid2 v\else n\fi}}
+\end{{document}}"
+    ));
+    let got: Vec<String> = ["A", "B", "C", "D", "M", "N", "F"].iter().map(|n| body(&a, n)).collect();
+    // pdflatex: v n v n v v n; satex may not know the n cases.
+    assert_eq!([&got[0], &got[2], &got[4], &got[5]], ["v"; 4]);
+    for k in [1, 3, 6] {
+        assert_ne!(got[k], "v", "{k}");
+    }
+}
+
 /// A float page: its marks pass (latex.ltx `\__mark_prepare_and_extract:nn`)
 /// leaves the main list empty, so a second `\clearpage` ships nothing.
 #[test]
@@ -3426,7 +4022,7 @@ fn bibtex_commands_under_biblatex_migrate() {
     let path = dir.join("main.tex");
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
-    let found = satex::lint::lint(&analysis);
+    let found = satex::linter::lint(&analysis);
     let migrated: Vec<_> = found.iter().filter(|f| f["code"] == "bibtex-command-under-biblatex").collect();
     let names: Vec<&str> = migrated.iter().filter_map(|f| f["name"].as_str()).collect();
     assert_eq!(names, ["bibliographystyle", "bibliography"], "{found:?}");
@@ -3451,7 +4047,7 @@ fn bibtex_commands_under_biblatex_migrate() {
 #[test]
 fn a_new_declaration_that_redefines_a_command_is_reported() {
     let named = |source: &str| -> Vec<String> {
-        satex::lint::lint(&analyze(source))
+        satex::linter::lint(&analyze(source))
             .iter()
             .filter(|f| f["code"] == "new-redefines")
             .map(|f| f["name"].as_str().unwrap_or_default().to_string())
@@ -3460,6 +4056,9 @@ fn a_new_declaration_that_redefines_a_command_is_reported() {
     let broken = "\\documentclass{article}\n\\newif\n\\begin{document}\nx\n\\end{document}\n";
     assert_eq!(named(broken), ["begin"]);
     assert!(named("\\documentclass{article}\n\\newif\\iffancy\n\\begin{document}\nx\n\\end{document}\n").is_empty());
+    // `\csname` leaves `\relax`, which `\@ifundefined` reads as undefined
+    let by_name = "\\documentclass{article}\n\\expandafter\\newcommand\\csname note\\endcsname{x}\n\\begin{document}\nx\n\\end{document}\n";
+    assert!(named(by_name).is_empty());
 }
 
 /// A heading written to the table of contents is a sectioning unit, a part
@@ -3483,9 +4082,111 @@ fn alignment_cells_are_placed_text() {
         return;
     }
     let analysis = crate::support::analyze_plain("\\catcode`\\&=4 x\n\n\\halign{#&#\\cr a&b\\cr c&d\\cr}\ny\n\\end\n");
-    let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
     let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
     assert_eq!(texts, ["x", "abcd", "y"]);
+}
+
+/// The keys layer's facts: each definition and use of a key is an occurrence
+/// with its role (and a use with the kind defining its target); the Typeset
+/// view places each in its paragraph, a `\label` opening a theorem in the
+/// theorem and one after a float's caption in the caption. A glossary entry
+/// the preamble declares stands nowhere; a graphic's file name is no key.
+#[test]
+fn every_key_has_a_role_and_its_paragraph() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{graphicx}
+\usepackage{amsthm}
+\usepackage{glossaries}
+\newtheorem{lemma}{Lemma}
+\newglossaryentry{tex}{name=TeX,description={a system}}
+\begin{document}
+\section{One}\label{sec:one}
+\begin{lemma}\label{lem:a}
+Lemma text on \gls{tex}.
+\end{lemma}
+See Lemma~\ref{lem:a}.
+\begin{figure}
+\includegraphics{example-image}
+\caption{Cap}
+\label{fig:x}
+\end{figure}
+\end{document}",
+    );
+    use satex::queries::query::{Filter, Query, run};
+    let text =
+        |r: &satex::queries::query::Record, k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let occ = run(&analysis, Query::Occurrences, &Filter::Always);
+    let mut roles: Vec<[String; 4]> = occ
+        .iter()
+        .filter(|r| r.contains_key("role"))
+        .map(|r| [text(r, "kind"), text(r, "key"), text(r, "role"), text(r, "target")])
+        .collect();
+    roles.sort();
+    roles.dedup();
+    let want = [
+        ["key", "tex", "def", ""],
+        ["key-use", "tex", "use", "key"],
+        ["label", "fig:x", "def", ""],
+        ["label", "lem:a", "def", ""],
+        ["label", "sec:one", "def", ""],
+        ["ref", "lem:a", "use", "label"],
+    ];
+    assert_eq!(roles, want.map(|r| r.map(String::from)));
+    // each key with the paragraph it stands in
+    let mut placed: Vec<(String, String)> = run(&analysis, Query::Typeset, &Filter::Always)
+        .iter()
+        .flat_map(|r| {
+            let detail = text(r, "detail");
+            let keys = r.get("keys").and_then(|k| k.as_array()).cloned().unwrap_or_default();
+            keys.into_iter().filter(|k| k.get("role").is_some_and(|r| !r.is_null())).map(move |k| {
+                (
+                    k["key"].as_str().unwrap_or_default().to_string(),
+                    detail.split_whitespace().take(2).collect::<Vec<_>>().join(" "),
+                )
+            })
+        })
+        .collect();
+    placed.sort();
+    let want = [
+        ("fig:x", "Figure 1:"),
+        ("lem:a", "Lemma 1."),
+        ("lem:a", "See Lemma"),
+        ("sec:one", "1 One"),
+        ("tex", "Lemma 1."),
+    ];
+    assert_eq!(placed, want.map(|(k, p)| (k.to_string(), p.to_string())));
+}
+
+/// The typeset record of text in `center` names the environment, though the
+/// kernel defines it, and says its lines are centered; text outside is justified.
+#[test]
+fn typeset_names_kernel_environments_and_alignment() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\n\\begin{document}\nplain\n\\begin{center}\nhenlo\n\\end{center}\n\\end{document}\n",
+    );
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
+    let of = |text: &str| rows.iter().find(|r| r.get("detail").and_then(|d| d.as_str()) == Some(text)).cloned();
+    let (plain, centered) = (of("plain").expect("plain"), of("henlo").expect("henlo"));
+    assert_eq!(centered.get("env").and_then(|e| e.as_str()), Some("center"));
+    assert_eq!(centered.get("just").and_then(|e| e.as_str()), Some("center"));
+    assert_eq!(plain.get("just").and_then(|e| e.as_str()), Some("justified"));
+    assert!(plain.get("env").is_none());
 }
 
 /// A paragraph inside a box or alignment that goes into an outer paragraph
@@ -3494,7 +4195,11 @@ fn alignment_cells_are_placed_text() {
 fn nested_lists_do_not_end_the_outer_paragraph() {
     for inner in ["\\vbox{a}", "\\valign{#\\cr a\\cr}"] {
         let analysis = crate::support::analyze_plain(&format!("x {inner} y\n\nz\n\\end\n"));
-        let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+        let rows = satex::queries::query::run(
+            &analysis,
+            satex::queries::query::Query::Typeset,
+            &satex::queries::query::Filter::Always,
+        );
         let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
         assert_eq!(texts, ["x a y", "z"], "{inner}");
     }
@@ -3510,10 +4215,251 @@ fn package_options_follow_the_declare_option_handler() {
     }
     let analysis = analyze("\\documentclass{article}\n\\usepackage{biblatex}\n\\begin{document}\nx\n\\end{document}\n");
     let options: Vec<String> =
-        satex::query::package_options(&analysis, "biblatex").into_iter().map(|(k, _)| k).collect();
+        satex::queries::query::package_options(&analysis, "biblatex").into_iter().map(|(k, _)| k).collect();
     for wanted in ["style", "backend", "sorting", "maxnames"] {
         assert!(options.iter().any(|o| o == wanted), "{wanted} not in {options:?}");
     }
     // An entry's own options are no package options.
     assert!(!options.iter().any(|o| o == "uniquepart"), "{options:?}");
+}
+
+/// A name an expl3 module function makes or sets is a variable of that
+/// module's kind, from the run: `\tl_new:N` and `\seq_new:N` type their
+/// argument, a string is a token list below it.
+#[test]
+fn expl3_variables_are_typed_by_the_function_that_made_them() {
+    if !installed() {
+        return;
+    }
+    use satex::analysis::roles::{Ty, VarKind};
+    let a = analyze(
+        "\\documentclass{article}\\ExplSyntaxOn\n\\tl_new:N \\l_my_tl\n\\seq_new:N \\l_my_seq\n\\str_new:N \\l_my_str\n\\ExplSyntaxOff\n\\begin{document}x\\end{document}\n",
+    );
+    let at = |line: u32| a.facts.types.iter().find(|(s, _)| s.line == line).map(|(_, t)| *t);
+    assert_eq!(at(2), Some(Ty::Var(VarKind::Tl)));
+    assert_eq!(at(3), Some(Ty::Var(VarKind::Seq)));
+    assert_eq!(at(4), Some(Ty::Var(VarKind::Str)));
+    assert!(Ty::Var(VarKind::Str).leq(Ty::Var(VarKind::Tl)) && Ty::Var(VarKind::Tl).leq(Ty::Cs));
+}
+
+/// expl3's naming conventions, checked against what the run did: a local
+/// name set globally, a `_tl` name set as a sequence, a constant set again.
+/// A string set as a token list, a global set globally and declarations
+/// are fine.
+#[test]
+fn expl3_conventions_are_checked_against_the_run() {
+    if !installed() {
+        return;
+    }
+    let a = analyze(
+        "\\documentclass{article}\\ExplSyntaxOn\n\
+         \\tl_new:N \\l_bad_scope_tl \\tl_gset:Nn \\l_bad_scope_tl {x}\n\
+         \\seq_new:N \\l_bad_type_tl \\seq_set_split:Nnn \\l_bad_type_tl {,} {a,b}\n\
+         \\tl_const:Nn \\c_bad_const_tl {x} \\tl_set:Nn \\c_bad_const_tl {y}\n\
+         \\str_new:N \\l_ok_str \\tl_set:Nn \\l_ok_str {x} \\tl_new:N \\g_ok_tl \\tl_gset:Nn \\g_ok_tl {x}\n\
+         \\ExplSyntaxOff\n\\begin{document}x\\end{document}\n",
+    );
+    let found = satex::linter::lint(&a);
+    let named = |code: &str| -> Vec<String> {
+        found.iter().filter(|r| r["code"] == code).map(|r| r["name"].as_str().unwrap_or_default().to_string()).collect()
+    };
+    assert_eq!(named("expl3-scope"), vec!["\\l_bad_scope_tl"]);
+    assert_eq!(named("expl3-type"), vec!["\\l_bad_type_tl"]);
+    assert_eq!(named("expl3-constant-set"), vec!["\\c_bad_const_tl"]);
+}
+
+/// hyperref's page anchor runs `\pdfstringdef` on an unknown `\thepage`
+/// inside a group that redefines `\@protected@testopt`. The paths that
+/// parted in there saved it in that group alike, so its end puts back the
+/// kernel's macro. Joined with the inner value instead, every optional-
+/// argument command re-entered itself up to `limits.expansion_depth`.
+#[test]
+fn a_group_both_paths_saved_in_restores_the_saved_meaning() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{hyperref}
+\begin{document}
+\setcounter{page}{\pdfuniformdeviate 5}
+a\clearpage
+\makeatletter
+\edef\after{\meaning\@protected@testopt}
+\end{document}",
+    );
+    assert_eq!(
+        body(&analysis, "after"),
+        r"macro:#1->\ifx \protect \@typeset@protect \expandafter \@testopt \else \@x@protect #1\fi "
+    );
+}
+
+/// mwe's `example-image` ships with the installation: kpathsea finds it,
+/// so `\includegraphics` raises no `missing-graphic`, and its box is the
+/// PDF page's size (pdflatex: 321.19922pt by 240.8994pt).
+#[test]
+fn an_installed_image_is_found_and_sized() {
+    if !installed() {
+        return;
+    }
+    let source = r"\documentclass{article}
+\usepackage{graphicx}
+\begin{document}
+\setbox0\hbox{\includegraphics{example-image}}\xdef\size{\the\wd0,\the\ht0}
+\end{document}";
+    crate::support::assert_lint(source, "missing-graphic", 0);
+    assert_eq!(body(&analyze(source), "size"), "321.19922pt,240.8994pt");
+}
+
+/// `\draw` outside a `tikzpicture`: undefined there, defined only inside the picture.
+#[test]
+fn a_picture_command_outside_its_picture_says_where_it_is_defined() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}\n\\draw[-]\n\\end{document}\n",
+    );
+    let found: Vec<String> = satex::linter::lint(&analysis)
+        .iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-control-sequence"))
+        .map(|f| f["message"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(found, ["`\\draw` is undefined here: the run defines it only inside `tikzpicture` (line 4)"]);
+}
+
+/// LuaLaTeX's kernel leaves `para/end` a set of meanings, which the format
+/// cache keeps: a `\par` ends in vertical mode, so the next one does not
+/// fork on the mode.
+#[test]
+fn a_blank_preamble_line_keeps_the_mode_known() {
+    if !installed() {
+        return;
+    }
+    let source = "% !TeX program = lualatex\n\\def\\probe{}\n\n\\probe\n\n\\probe\n\\documentclass{article}\n\\begin{document}\n\\end{document}\n";
+    let analysis = analyze(source);
+    let probe = analysis.interner.lookup("probe").expect("interned");
+    let modes: Vec<_> = analysis.facts.expansions.iter().filter(|e| e.name == probe).map(|e| e.mode).collect();
+    assert!(!modes.is_empty());
+    assert!(modes.iter().all(|m| *m == satex::engine::mode::Modes::VERTICAL), "{modes:?}");
+}
+
+/// LuaLaTeX's `\everyjob` sets `\c_sys_shell_escape_int` from Lua's
+/// `status.shell_escape`: known, it is a `\chardef` on every path, so the
+/// allocation counter and the registers allocated after it stay known.
+#[test]
+fn a_lualatex_register_allocation_stays_known() {
+    if !installed() {
+        return;
+    }
+    let source = "% !TeX program = lualatex\n\\documentclass{article}\n\\newcount\\probecount\n\\probecount=7\n\\edef\\probe{\\the\\probecount}\n\\begin{document}\n\\end{document}\n";
+    assert_eq!(body(&analyze(source), "probe"), "7");
+}
+
+/// Text the preamble sets is the document's error where it stands: `\everypar`'s `\@nodocument`
+/// raises `Missing \begin{document}` at the text, and a `#` in any mode is "You can't use `macro
+/// parameter character #'" (tex.web § 1045), as pdflatex reports both.
+#[test]
+fn text_in_the_preamble_is_an_error_where_it_stands() {
+    if !installed() {
+        return;
+    }
+    let lines = |analysis: &Analysis| -> Vec<(u32, String)> {
+        satex::linter::lint(analysis)
+            .iter()
+            .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("raised-error"))
+            .filter_map(|f| Some((f.get("line")?.as_u64()? as u32, f.get("message")?.as_str()?.to_string())))
+            .collect()
+    };
+    let text =
+        analyze("\\documentclass{article}\n\\usepackage{amsmath}\nhello\n\\begin{document}\nx\n\\end{document}\n");
+    let found = lines(&text);
+    assert!(found.iter().any(|(l, m)| *l == 3 && m.contains("Missing \\begin{document}")), "{found:?}");
+    let param = analyze("\\documentclass{article}\n\\begin{document}\n#x\n\\end{document}\n");
+    let found = lines(&param);
+    assert!(
+        found.iter().any(|(l, m)| *l == 3 && m.contains("macro parameter character #' in vertical mode")),
+        "{found:?}"
+    );
+}
+
+/// A dead definition is two statements the file reads one after the other.
+/// A default set inside a function that a key handler may override, and two
+/// macros that each set a name, run per call: neither is dead.
+#[test]
+fn a_definition_inside_a_macro_body_is_never_dead() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\tl_new:N \l_my_group_tl
+\keys_define:nn { my } { group .tl_set:N = \l_my_group_tl }
+\cs_new_protected:Npn \my_prepare:n #1
+  {
+    \tl_set:Nn \l_my_group_tl { default }
+    \keys_set:nn { my } {#1}
+    \tl_use:N \l_my_group_tl
+  }
+\NewDocumentCommand \Prep { m } { \my_prepare:n {#1} }
+\ExplSyntaxOff
+\newcommand\seta{\def\x{a}}\newcommand\setb{\def\x{b}}
+\def\y{a}\def\y{b}
+\begin{document}
+\Prep{group=a} \seta\setb\x \y
+\end{document}",
+    );
+    // The default is read whenever no key overrides it: no unused name either.
+    let names: Vec<String> = satex::linter::lint(&analysis)
+        .iter()
+        .filter(|f| matches!(f.get("code").and_then(|c| c.as_str()), Some("dead-definition" | "unused-definition")))
+        .filter_map(|f| Some(format!("{} {}", f.get("code")?.as_str()?, f.get("name")?.as_str()?)))
+        .collect();
+    assert_eq!(names, [r"dead-definition \y"]);
+}
+
+/// `\providecommand` gives a fallback that an optional input replaces on purpose.
+#[test]
+fn a_provided_fallback_is_never_dead() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\providecommand\measured{?}
+\renewcommand\measured{42}
+\begin{document}
+\measured
+\end{document}",
+    );
+    let dead: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("dead-definition"))
+        .collect();
+    assert!(dead.is_empty(), "{dead:?}");
+}
+
+/// A here-float the output routine puts on its own list (`\box\@currbox` in `\@addtocurcol`)
+/// reaches the page with that list: its caption is typeset, not lost to the next box built.
+#[test]
+fn a_here_float_set_by_the_output_routine_keeps_its_caption() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\begin{figure}[ht]\centering X\caption{Alpha}\end{figure}
+\begin{figure}[ht]\centering Y\caption{Beta}\end{figure}
+\end{document}",
+    );
+    use satex::queries::query::{Filter, Query, run};
+    let marked: Vec<String> = run(&analysis, Query::Typeset, &Filter::Always)
+        .iter()
+        .filter_map(|r| r.get("marked").and_then(|v| v.as_str()).map(str::to_string))
+        .collect();
+    for want in ["X", "Figure 1: Alpha", "Y", "Figure 2: Beta"] {
+        assert!(marked.iter().any(|m| m == want), "{want} missing in {marked:?}");
+    }
 }

@@ -1,0 +1,34 @@
+% Floats of unknown height, as a thesis class places them: etoolbox
+% patches \@xfloat, wide floats, five floats in one paragraph, and a
+% \clearpage. Each float takes a box from \@freelist and the output
+% routine gives it back: no float is lost, every \@currbox is a box.
+\documentclass{article}
+\usepackage{etoolbox}
+\makeatletter
+\apptocmd\@xfloat{\relax}{}{}
+\makeatother
+\newcommand\fig[1]{\begin{figure}[#1]\centering
+  \rule{1cm}{\pdfuniformdeviate 300pt}\caption{A float}\end{figure}}
+\newcommand\wfig[1]{\begin{figure*}[#1]\centering
+  \rule{1cm}{\pdfuniformdeviate 300pt}\caption{A wide float}\end{figure*}}
+\begin{document}
+Text one.
+\wfig{h!}
+Text two.
+\fig{htbp}
+\fig{h!}
+Text three.
+\fig{htbp}
+\wfig{tbp}
+Text four.
+
+\fig{htbp}
+
+More text.
+\clearpage
+After the page.
+
+\fig{htbp}
+\fig{h!}
+\gdef\SatexReachedEnd{}
+\end{document}

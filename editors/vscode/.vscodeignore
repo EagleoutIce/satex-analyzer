@@ -8,3 +8,4 @@ node_modules/**/*.md
 node_modules/**/*.map
 node_modules/**
 scripts/**
+out/test/**

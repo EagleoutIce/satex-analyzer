@@ -1,0 +1,19 @@
+% Exercises: expl3 programming layer: \ExplSyntaxOn, clists, seqs, props, regex, \NewDocumentCommand, l3keys, loops.
+\documentclass{article}
+\usepackage{expl3,xparse}
+\ExplSyntaxOn
+\seq_new:N \l_bench_seq
+\prop_new:N \l_bench_prop
+\int_new:N \l_bench_int
+\keys_define:nn { bench } { width .dim_set:N = \l_tmpa_dim, name .tl_set:N = \l_bench_name_tl, flag .bool_set:N = \l_bench_flag_bool }
+\NewDocumentCommand \benchlist { m }
+ { \clist_map_inline:nn {#1} { \seq_put_right:Nn \l_bench_seq {##1} } \seq_map_inline:Nn \l_bench_seq { [##1] } }
+\NewDocumentCommand \benchkeys { m } { \keys_set:nn { bench } {#1} \l_bench_name_tl \bool_if:NT \l_bench_flag_bool { ! } }
+\NewDocumentCommand \fibo { m }
+ { \int_step_inline:nn {#1} { \int_set:Nn \l_bench_int { \int_eval:n { ##1 * ##1 } } \int_use:N \l_bench_int \c_space_tl } }
+\NewDocumentCommand \rx { m } { \tl_set:Nn \l_tmpa_tl {#1} \regex_replace_all:nnN { a } { A } \l_tmpa_tl \tl_use:N \l_tmpa_tl }
+\ExplSyntaxOff
+\begin{document}
+\benchlist{a,b,c,d}. \benchkeys{name=hello,flag,width=3cm}. \fibo{20}. \rx{banana}.
+\ExplSyntaxOn \prop_put:Nnn \l_bench_prop {k}{v} \prop_item:Nn \l_bench_prop {k} \fp_to_decimal:n { sin(1)+cos(1) } \ExplSyntaxOff
+\end{document}

@@ -1,0 +1,15 @@
+\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,patterns}
+\makeatletter
+\catcode`\!=13
+\def!{\@ifnextchar!{\textbf}{\relax}}
+\makeatother
+\newcommand\countdown[1]{#1 \ifnum#1>0 \countdown{\numexpr#1-1\relax}\fi}
+\begin{document}
+\countdown{3}
+\begin{tikzpicture}
+\draw[-{Stealth[length=3mm]}] (0,0) -- (2,0);
+\fill[pattern=dots] (0,1) rectangle (1,2);
+\end{tikzpicture}
+\end{document}

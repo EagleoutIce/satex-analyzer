@@ -4,8 +4,8 @@
 //! Document budgets run on a warm kernel cache and count analysis steps:
 //! the kernel (`kernel_build` measures it once) and package loads are out.
 
-use satex::config::{Cache, Load};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Cache, Load};
 use std::path::PathBuf;
 
 const SLACK: u64 = 120;
@@ -17,6 +17,7 @@ fn fresh(name: &str) -> PathBuf {
 
 fn within(what: &str, steps: u64, measured: u64) {
     eprintln!("budget {what}: {steps} (measured {measured})");
+    crate::support::record_steps(&format!("budgets::{}", what.replace(' ', "_")), steps);
     assert!(steps * 100 <= measured * SLACK, "{what}: {steps} steps, measured {measured}, fail at +20%");
 }
 
@@ -29,8 +30,9 @@ fn run(name: &str, source: &str) -> Analysis {
 }
 
 fn run_at(name: &str, source: &str, path: Option<&std::path::Path>) -> Analysis {
-    let cfg = satex::config::Config {
-        cache: Cache { dir: Some(fresh(name)), ..Default::default() },
+    let cfg = satex::project::config::Config {
+        // package caches only: a stored whole run would serve the work these budgets measure
+        cache: Cache { dir: Some(fresh(name)), document: false, ..Default::default() },
         load: Load { packages: true, classes: true, ..Default::default() },
         ..crate::support::config()
     };
@@ -65,9 +67,17 @@ const ROUNDED: u64 = 1667940;
 const CLOUD: u64 = 1953470;
 const PARAGRAPH: u64 = 1456856;
 const DATETIME: u64 = 1734775;
+/// Target 5773865; measured 14815177 on 2026-11-04, see plan.
+const METADATA: u64 = 14_815_177;
+/// What `\DocumentMetadata` cost in all on 2026-10-03, nearly all of it
+/// tagpdf's loading: a load that runs unknown values (`\int_rand:n`) is
+/// analysis too, so its loading has a budget of its own.
+/// Target 8_400_000; measured 87_207_865 on 2026-11-04, see plan.
+const METADATA_LOADING: u64 = 87_207_865;
 const FLAG: u64 = 852156;
 const NOTEBOOK: u64 = 3669404;
 const OVERFULL: u64 = 2287795;
+const PGFMATH_TYPED: u64 = 1328927;
 const GRAPHIC: u64 = 1181589;
 const REGEX_SCAN: u64 = 10924212;
 
@@ -77,7 +87,7 @@ fn kernel_build() {
         return;
     }
     let dir = fresh("kernel");
-    let cfg = satex::config::Config {
+    let cfg = satex::project::config::Config {
         cache: Cache { dir: Some(dir.clone()), rebuild: true, ..Default::default() },
         ..crate::support::config()
     };
@@ -97,7 +107,7 @@ fn a_kernel_build_over_the_seconds_limit_stops_with_the_limit_named() {
         return;
     }
     let dir = fresh("kernel-seconds");
-    let mut cfg = satex::config::Config {
+    let mut cfg = satex::project::config::Config {
         cache: Cache { dir: Some(dir.clone()), rebuild: true, ..Default::default() },
         ..crate::support::config()
     };
@@ -164,6 +174,69 @@ fn datetime2_hyperref_title() {
     );
 }
 
+/// pgfmath parses of a bounded number and of `rand`, whose digits it takes
+/// apart one by one (`\pgfmathrand@@`): the paths a digit split makes stay
+/// few, and a number nothing bounds is not split at all.
+#[test]
+fn pgfmath_parse_of_typed_numbers() {
+    let analysis = budget(
+        "pgfmath-typed",
+        "\\documentclass{article}\\usepackage{pgfmath}\\newcount\\k\\loop\\pgfmathparse{rand}\\pgfmathparse{\\pdfuniformdeviate 1000 + 1}\\advance\\k1 \\ifnum\\k<20 \\repeat\\begin{document}x\\end{document}",
+        PGFMATH_TYPED,
+    );
+    if let Some(analysis) = analysis {
+        without("pgfmath-typed", &analysis, &["limit-reached", "repeated-failure"]);
+    }
+}
+
+/// The steps a warm run runs: the second of two in one cache directory,
+/// less what the package caches replayed.
+fn warm_steps(name: &str, source: &str) -> Option<u64> {
+    if !crate::support::installed() {
+        return None;
+    }
+    let cfg = crate::support::warm_config(name);
+    let cold = Machine::analyze(source, None, &cfg);
+    let warm = Machine::analyze(source, None, &cfg);
+    eprintln!("budget {name}: {} steps, {} served, cold {}", warm.steps, warm.served_steps, cold.steps);
+    without(name, &warm, &["line-budget-cut", "budget-exhausted"]);
+    // a gap may repeat, but never past the bound: a run that pays for each repeat is the budget's real cost
+    let bound = cfg.limits.repeat_failures;
+    let over: Vec<_> = warm.facts.diagnostics.iter().filter(|d| d.count > bound).map(|d| (d.code, d.count)).collect();
+    assert_eq!(over, Vec::new(), "{name}: gaps past the bound of {bound}");
+    Some(warm.steps - warm.served_steps)
+}
+
+/// What a warm run of a short document may run, its loads replayed. A
+/// replay leaves the lists as the read did, so what the loads put on the
+/// main vertical list is worked through again: the cold run's cost.
+const WARM_TAGPDF: u64 = 1_510_000;
+const WARM_METADATA: u64 = 19_340_000;
+
+#[test]
+fn document_metadata_warm() {
+    let source = "\\DocumentMetadata{lang=en}\n\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
+    if let Some(steps) = warm_steps("metadata-warm", source) {
+        within("metadata warm", steps, WARM_METADATA);
+    }
+}
+
+#[test]
+fn tagpdf_warm() {
+    let source = "\\documentclass{article}\n\\usepackage{tagpdf}\n\\begin{document}\nx\n\\end{document}\n";
+    if let Some(steps) = warm_steps("tagpdf-warm", source) {
+        within("tagpdf warm", steps, WARM_TAGPDF);
+    }
+}
+
+#[test]
+fn document_metadata() {
+    let source = "\\DocumentMetadata{}\\documentclass{article}\\begin{document}x\\end{document}";
+    if let Some(analysis) = budget("metadata", source, METADATA) {
+        within("metadata loading", analysis.load_steps, METADATA_LOADING);
+    }
+}
+
 #[test]
 fn expl3_flag_unknown_times() {
     // A flag raised an unknown number of times in the preamble: the height
@@ -211,7 +284,7 @@ fn a_growing_document_stays_under_its_memory_limit() {
         "\\catcode`\\{{=1 \\catcode`\\}}=2 \\catcode`\\#=6\n\\def\\b{{{seed}}}\n\\def\\l{{\\advance\\count1 1 \\expandafter\\edef\\csname m\\the\\count1\\endcsname{{\\b}}\\l}}\\l\n"
     );
     std::fs::write(dir.join("grow.tex"), source).expect("write document");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_satex"))
+    let output = crate::support::satex()
         .args(["lint", "--no-config", "--stats", "-f", "grow.tex", "--max-memory", "64M"])
         .args(["--set", "load.format=false", "--set", "limits.seconds=0"])
         .current_dir(&dir)
@@ -257,7 +330,7 @@ fn a_dropped_error_path_does_not_weigh_on_later_joins() {
     let dropped =
         run_at("dropped-error", &doc(&format!("\\usepackage{{{}}}", crate::support::tex_path(&sty))), Some(&main));
     let codes = |a: &Analysis| {
-        use satex::facts::Severity::{Unsupported, Warning};
+        use satex::analysis::facts::Severity::{Unsupported, Warning};
         let faults = a.facts.diagnostics.iter().filter(|d| matches!(d.severity, Unsupported | Warning));
         let mut codes: Vec<&str> = faults.map(|d| d.code).collect();
         codes.sort_unstable();
@@ -280,7 +353,7 @@ fn stats_hotspots_show_the_loop_line() {
     let dir = fresh("hotspots");
     let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6\n\\count1=0\n\\def\\l{\\advance\\count1 1 \\ifnum\\count1<500 \\expandafter\\l\\fi}\\l\n";
     std::fs::write(dir.join("loop.tex"), source).expect("write document");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_satex"))
+    let output = crate::support::satex()
         .args(["lint", "--no-config", "--stats", "-f", "loop.tex", "--set", "load.format=false"])
         .current_dir(&dir)
         .output()
@@ -334,8 +407,8 @@ fn notebook_cell_with_an_inline_listing() {
 #[test]
 fn a_seconds_limit_stops_the_run() {
     use satex::{
-        config::{Config, Engine},
-        plugin::Kernel,
+        plugins::Kernel,
+        project::config::{Config, Engine},
     };
     let mut cfg = Config { engine: Some(Engine::PdfTeX), kernel: Some(Kernel::None), ..crate::support::config() };
     (cfg.limits.steps, cfg.limits.line_steps, cfg.limits.site_expansions) = (u64::MAX, 0, u32::MAX);
@@ -370,9 +443,9 @@ fn expl3_regex_scan_of_lines() {
 /// expanded most and the document lines whose reading they followed.
 #[test]
 fn timings_name_the_costly_line_and_macro() {
-    let cfg = satex::config::Config { timings: true, ..crate::support::bare() };
+    let cfg = satex::project::config::Config { timings: true, ..crate::support::bare() };
     let source = format!("{}\\def\\x#1{{#1#1#1#1}}\n\\x{{\\x{{\\x{{\\relax}}}}}}\n\\relax\n", crate::support::PRELUDE);
-    let analysis = satex::machine::Machine::analyze(&source, None, &cfg);
+    let analysis = satex::analysis::machine::Machine::analyze(&source, None, &cfg);
     let sites = analysis.timings.top_sites(1);
     assert_eq!(sites.first().map(|((_, line), _)| *line), Some(2), "{sites:?}");
     let calls = analysis.timings.top_calls(1);

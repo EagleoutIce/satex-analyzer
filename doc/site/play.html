@@ -8,9 +8,17 @@
       </div>
       <span class="actions">
         <select id="play-kernel" aria-label="kernel" title="the TeX engine and format"></select>
+        <button id="lib-open" class="pill feature" type="button" aria-haspopup="dialog" aria-label="Library" title="every name in force at the end of the document: search them, see how each is used, try one">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 4.5C6.8 3.4 5 3 2.5 3v9.5c2.5 0 4.3.4 5.5 1.5 1.2-1.1 3-1.5 5.5-1.5V3C11 3 9.2 3.4 8 4.5zM8 4.5V14"/></svg><span class="label">Library</span><b id="lib-count" class="count"></b></button>
+        <button id="try-open" class="pill feature" type="button" aria-haspopup="dialog" aria-label="Try" title="type a few lines and see what they set, read right after \begin{document} of this document">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5h9M8 3.5v9.5M6 13h4"/></svg><span class="label">Try</span></button>
+        <button id="draw-open" class="pill feature" type="button" aria-haspopup="dialog" aria-label="Draw a symbol" title="draw a symbol, get the commands that set it">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 2.5l3 3L6 13H3v-3zM9 4l3 3"/></svg><span class="label">Draw</span></button>
+        <button id="cfg-open" class="pill feature" type="button" aria-haspopup="dialog" aria-label="Settings" title="the satex.yaml settings of the playground's runs: the date \year reads, limits, lints…">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.03 6.66 L14.70 6.85 L14.70 9.15 L13.03 9.34 L12.50 10.61 L13.55 11.93 L11.93 13.55 L10.61 12.50 L9.34 13.03 L9.15 14.70 L6.85 14.70 L6.66 13.03 L5.39 12.50 L4.07 13.55 L2.45 11.93 L3.50 10.61 L2.97 9.34 L1.30 9.15 L1.30 6.85 L2.97 6.66 L3.50 5.39 L2.45 4.07 L4.07 2.45 L5.39 3.50 L6.66 2.97 L6.85 1.30 L9.15 1.30 L9.34 2.97 L10.61 3.50 L11.93 2.45 L13.55 4.07 L12.50 5.39Z"/><circle cx="8" cy="8" r="2.1"/></svg><span class="label">Settings</span></button>
         <button id="play-link" class="pill" type="button" aria-label="Copy link" title="a link that restores the project's files, the open file, the command and the kernel">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 9a3 3 0 0 0 4.2.2l2-2a3 3 0 0 0-4.2-4.2l-.8.8"/><path d="M9 7a3 3 0 0 0-4.2-.2l-2 2a3 3 0 0 0 4.2 4.2l.8-.8"/></svg><span class="label">Copy link</span></button>
-        <button id="play-issue" class="pill" type="button" aria-label="Report an issue" title="open a GitHub issue form in a new tab, filled with the satex version, the kernel and this file. Nothing is sent until you submit it there">
+        <button id="play-issue" class="pill" type="button" aria-label="Report an issue" title="open a GitHub issue form in a new tab, filled with the SaTeX version, the kernel and this file. Nothing is sent until you submit it there">
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.8v3.9M8 11v.1"/></svg><span class="label">Report an issue</span></button>
       </span>
     </div>
@@ -22,14 +30,14 @@
             <span id="play-upmenu" class="ctx" role="menu" hidden><button role="menuitem" data-pick="new">New file…</button><button role="menuitem" data-pick="files">Upload files or .zip…</button><button role="menuitem" data-pick="folder">Upload folder…</button></span></span></div>
         <div id="play-files-tree" role="tree" aria-label="the project's files"></div>
         <details open class="sect tree-sect" id="play-outline"><summary>Outline <b id="outline-count"></b></summary>
-          <div id="outline-body" class="outline"><p class="muted">The document's parts, labels and bibliography, once it is checked.</p></div></details>
-        <details class="sect tree-sect" id="play-exsect"><summary>Examples</summary><div id="play-examples" role="list"></div></details>
+          <div id="outline-body" class="outline grow"><p class="muted">Parts, labels and bibliography of the document, after each check.</p></div></details>
+        <details class="sect tree-sect" id="play-exsect"><summary>Examples</summary><div id="play-examples" class="grow" role="list"></div></details>
       </nav>
       <div class="treegrip" id="play-treegrip" role="separator" aria-orientation="vertical" aria-label="resize the files" title="drag to resize"></div>
       <div id="play-editor" class="editor"><textarea id="play-source" spellcheck="false" aria-label="LaTeX source"></textarea></div>
     </div>
     <div class="term" id="play-term">
-      <button id="play-termtoggle" class="term-bar" type="button" aria-expanded="true" aria-controls="play-termbody" title="show or hide the satex console">
+      <button id="play-termtoggle" class="term-bar" type="button" aria-expanded="true" aria-controls="play-termbody" title="show or hide the SaTeX console">
         <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg><span class="term-title">satex</span><span class="term-sub muted">console: runs the satex command on the project</span></button>
       <div id="play-termbody">
       <div id="play-out" class="term-out" hidden>
@@ -38,47 +46,126 @@
         <div id="play-output" class="output"></div>
       </div>
       <label class="ask cmd"><span>$ satex</span><input id="play-args" value="lint" spellcheck="false" autocomplete="off" aria-label="satex command" aria-controls="play-complete"
-        title="lint, explain \cmd, query …, rename NAME, fix [rule]. Tab completes, Enter runs, Up and Down go through earlier commands."><span class="hint">Tab completes · Enter runs · ↑ history</span><button id="play-run" class="runbtn" type="button" disabled title="run the satex command in the console below (Enter there, Ctrl+Enter in the editor). It checks the project, it does not run your document">Loading…</button><ul id="play-complete" class="complete" role="listbox" hidden></ul></label>
+        title="lint, explain \cmd, query …, rename NAME, fix [rule]. Tab completes, Enter runs, Up and Down go through earlier commands."><span class="hint">Tab completes · Enter runs · ↑ history</span><button id="play-run" class="runbtn" type="button" disabled title="run the SaTeX command in the console below (Enter there, Ctrl+Enter in the editor). It checks the project, it does not run your document">Loading…</button><ul id="play-complete" class="complete" role="listbox" hidden></ul></label>
       </div>
     </div>
     <input id="play-files" type="file" multiple hidden><input id="play-folder" type="file" webkitdirectory multiple hidden>
   </section>
   <div class="divider" id="play-divider" role="separator" aria-orientation="vertical" aria-label="resize panes: drag to the edge to fold a pane, click to bring it back" aria-valuemin="0" aria-valuemax="100" tabindex="0" title="drag to resize, to an edge to fold; click a folded one to unfold; double-click: half"></div>
   <section class="pane side-pane">
-    <details open class="sect" id="play-findings"><summary>Findings <b id="lsp-count"></b> <span class="muted" id="lsp-status"></span></summary>
+    <div class="tabs side-tabs" role="tablist" aria-label="panels">
+      <button type="button" id="phone-editor" class="phone-only" aria-pressed="true">Editor</button>
+      <button type="button" role="tab" data-panel="play-findings" aria-controls="play-findings">Findings <b id="lsp-count" class="count"></b></button>
+      <button type="button" role="tab" data-panel="play-explain" aria-controls="play-explain">Explain</button>
+      <button type="button" role="tab" data-panel="play-typeset" aria-controls="play-typeset">Typeset</button>
+      <button type="button" role="tab" data-panel="play-pdf" aria-controls="play-pdf">PDF</button>
+      <button type="button" role="tab" data-panel="play-written" aria-controls="play-written" title="the files the run reads and the build writes, by kind">Files <b id="written-count" class="count"></b></button>
+      <button type="button" id="side-split" class="split-toggle" aria-pressed="false" aria-label="PDF beside" title="show the PDF beside the open panel">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M8 2.5v11"/></svg><span>PDF beside</span></button>
+    </div>
+    <div class="panels">
+    <section class="sect" id="play-findings" role="tabpanel"><div class="sect-bar"><span class="muted" id="lsp-status"></span><span class="fix-bar"><label class="ts-toggle" title="Fix all also applies the unsafe fixes, as satex fix --unsafe-fixes: check the result"><input type="checkbox" id="fix-unsafe" role="switch" aria-label="fix all applies unsafe fixes too"><span>unsafe too</span></label><span id="fix-all"></span></span></div>
       <div id="play-refs" class="refs" hidden></div>
-      <ul id="lsp-diagnostics" class="diagnostics grow" aria-live="polite"></ul></details>
-    <details open class="sect" id="play-explain"><summary>Explain macro <code id="explain-name"></code></summary>
-      <div id="explain-body" class="hover grow"><p class="muted">Put the cursor on a command.</p></div></details>
-    <details class="sect" id="play-typeset"><summary>Typeset
-      <span class="ts-switches"><label class="ts-toggle" title="Show the text set in boxes that never reach the page"><span data-short="boxed">show boxed text</span><input type="checkbox" id="typeset-boxes" role="switch" aria-label="show boxed text"></label>
-      <label class="ts-toggle" title="Show the keys of labels, references and citations where they stand"><span data-short="keys">show keys</span><input type="checkbox" id="typeset-keys" role="switch" aria-label="show keys"></label></span></summary>
-      <div id="typeset-body" class="typeset grow"><p class="muted">What the paragraphs of the open file set, once it is checked.</p></div></details>
+      <ul id="lsp-diagnostics" class="diagnostics grow" aria-live="polite"></ul></section>
+    <section class="sect" id="play-explain" role="tabpanel" hidden>
+      <p id="explain-off" class="explain-off muted" hidden>cursor not on a command</p>
+      <div id="explain-body" class="hover grow"><p class="muted">The command at the cursor, explained.</p></div></section>
+    <section class="sect" id="play-typeset" role="tabpanel" hidden><div class="sect-bar ts-switches">
+      <div class="layers" id="typeset-layers"></div>
+      <span class="ts-scope" role="group" aria-label="which paragraphs" title="Show all paragraphs, or only the ones the cursor or the selection touches"><button type="button" data-scope="all" aria-pressed="true">all</button><button type="button" data-scope="here" aria-pressed="false"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="3.2"/><path d="M6 0.5v2.3M6 9.2v2.3M0.5 6h2.3M9.2 6h2.3"/></svg> at cursor</button></span></div>
+      <div id="typeset-body" class="typeset grow"><p class="muted">Paragraphs of the open file, set after each check.</p></div></section>
+    <section class="sect" id="play-pdf" role="tabpanel" hidden><div class="sect-bar pdf-bar"><span class="pdf-split"><button type="button" id="pdf-compile" class="small" disabled title="Build the project with this machine's TeX and show the PDF (Ctrl+S)">Compile</button><details class="pdf-menu" id="pdf-more"><summary class="small" title="Automatic compile" aria-label="more ways to compile">&#x25BE;</summary><div class="pdf-menu-list"><div class="pdf-auto-list" id="pdf-auto-list" role="radiogroup" aria-label="compile again once the edits rest"><span class="muted">Compile again after edits rest for</span></div></div></details></span><span class="pdf-state muted" id="pdf-status" role="status"></span><span class="pdf-views" id="pdf-views" role="tablist" aria-label="what the build gives"></span><span class="pdf-tools"><button type="button" id="pdf-back" class="small ghost" hidden title="Back to where the last link was followed (Alt+Left)">Back</button><button type="button" id="pdf-follow" class="small ghost" aria-pressed="true" title="The page follows the editor's cursor: on" aria-label="follow the editor's cursor"><span aria-hidden="true">&#x2316;</span> Follow</button><button type="button" id="pdf-zoom-out" class="small ghost icon" title="Smaller pages (Ctrl and wheel on a page)">&minus;</button><span class="muted" id="pdf-zoom-level"></span><button type="button" id="pdf-zoom-in" class="small ghost icon" title="Larger pages">+</button><button type="button" id="pdf-zoom-fit" class="small ghost icon" title="Fit the page width (click again: fit the whole page)" aria-label="fit width" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 5V1.5H5M9 1.5h3.5V5M12.5 9v3.5H9M5 12.5H1.5V9"/></svg></button><details class="pdf-layers" id="pdf-layers"><summary title="What to draw over the pages" aria-label="layers">&#x25A4; <span>layers</span></summary><div class="pdf-layer-list layers" id="pdf-layer-list"></div></details><a class="button small ghost icon pdf-zip" id="pdf-zip" hidden download title="Every file of this build in one zip: the sources as compiled, the PDF, the log, .aux, .synctex.gz …">&#x2193;</a><button type="button" id="pdf-fold" class="small ghost" aria-pressed="false" title="Fold this bar to one line" aria-label="fold the bar"><span class="fold-chev" aria-hidden="true"></span><span class="fold-label">Fold</span></button></span></div>
+      <div id="pdf-body" class="pdf grow"><p class="muted">Compile shows the PDF here. Click the page to find its source, move the cursor to find it on the page. Links and references work as in a PDF viewer.</p></div></section>
+    <section class="sect" id="play-written" role="tabpanel" hidden>
+      <div id="written-body" class="written grow"><p class="muted">Files the build writes (.aux, .toc …), as satex computes them, and the files the run reads. Unknown parts are marked.</p></div></section>
+    </div>
+    <dialog id="play-library" class="cache-dialog lib-dialog" aria-labelledby="lib-title">
+      <header><h3 id="lib-title">Library</h3><button type="button" class="ghost small hd-request" data-request-plugin>Request a plugin…</button><button type="button" class="ghost small icon hd-feedback" id="lib-feedback" title="Send feedback on the library" aria-label="feedback on the library"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.5h5M5.5 8.5h3"/></svg></button><button type="button" class="ghost small" id="lib-close" aria-label="close">✕</button></header>
+      <div class="lib grow">
+        <div class="lib-bar"><label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+          <input type="search" id="lib-search" placeholder="Search names: \section, tikz, skip…" aria-label="search the names in force"></label>
+          <label class="search lib-from"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11l-4.2 5v4l-2.6 1.2V8.5z"/></svg>
+            <input type="search" id="lib-from" placeholder="every package" aria-label="from which package" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="lib-from-list" autocomplete="off" spellcheck="false">
+            <ul id="lib-from-list" class="complete" role="listbox" hidden></ul></label>
+          <label class="ts-toggle" title="Also list internal names: with @, expl3 internals"><span data-short="internal">internal</span><input type="checkbox" id="lib-internal" role="switch" aria-label="internal names"></label></div>
+        <div id="lib-kinds" class="lib-kinds" role="group" aria-label="which kind of name"></div>
+        <ul id="lib-list" class="lib-list"><li class="muted">Names in force, after each check.</li></ul>
+      </div></dialog>
+    <dialog id="play-try" class="cache-dialog try-dialog" aria-labelledby="try-title">
+      <header><h3 id="try-title">Try</h3><button type="button" class="ghost small" id="try-close" aria-label="close">✕</button></header>
+      <p class="muted cache-note" id="try-note">Read right after <code>\begin{document}</code> of this document. The file stays as it is.</p>
+      <div class="try-box"><textarea id="lib-text" rows="3" spellcheck="false" aria-label="text to try" placeholder="\textbf{bold} 10--12 \hfill right"></textarea>
+        <button type="button" id="lib-run" class="runbtn" title="Ctrl+Enter">Typeset</button></div>
+      <div class="try-bar"><label class="ts-toggle"><span>typeset as you type</span><input type="checkbox" id="try-auto" role="switch" checked></label>
+        <select id="try-engine" class="dropdown" aria-label="where Try reads the text"><option value="">in this document</option><option value="article">LaTeX article</option><option value="plain">plain TeX</option></select><span id="try-status" class="muted"></span></div>
+      <div id="lib-out" class="try-out"></div></dialog>
+    <dialog id="play-config" class="cache-dialog" aria-labelledby="cfg-title">
+      <header><h3 id="cfg-title">Settings</h3><button type="button" class="ghost small icon hd-feedback" id="cfg-feedback" title="Send feedback on the settings" aria-label="feedback on the settings"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.5h5M5.5 8.5h3"/></svg></button><button type="button" class="ghost small" id="cfg-close" aria-label="close">✕</button></header>
+      <p class="muted cache-note">Here you configure how SaTeX analyzes the documents in the playground. These are the same settings a <code>satex.yaml</code> holds. A change applies to every run here and travels with the link you share.</p>
+      <div class="lib-bar cfg-bar"><span id="cfg-tabs" class="lib-kinds" role="group" aria-label="which settings"><button type="button" class="lib-kind" data-tab="core" aria-pressed="true">Core</button><button type="button" class="lib-kind" data-tab="plugins" aria-pressed="false">Plugins</button><button type="button" class="lib-kind" data-tab="yaml" aria-pressed="false">YAML</button></span>
+        <label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+        <input type="search" id="cfg-search" placeholder="Search settings: clock, limits, @changed…" aria-label="search the settings"></label></div>
+      <div id="cfg-filters" class="lib-kinds cfg-filters" role="group" aria-label="filters"></div>
+      <ul id="cfg-list" class="cache-scroll cfg-list"></ul>
+      <div id="cfg-yaml-ed" class="cfg-yed" aria-label="the changed settings as satex.yaml" hidden></div>
+      <textarea id="cfg-yaml" class="cfg-yaml" spellcheck="false" aria-label="the changed settings as satex.yaml" hidden></textarea>
+      <footer><span id="cfg-total" class="muted"></span><label class="ts-toggle" title="hide each setting's description and example until its row is clicked"><span>compact</span><input type="checkbox" id="cfg-compact" role="switch"></label><label class="ts-toggle" title="dev mode: a trace shows the abstract domains at each step (paths, stacks, bindings), and the editor menu offers “Inspect state here”"><span>dev mode</span><input type="checkbox" id="cfg-dev" role="switch"></label><button type="button" class="small ghost" id="cfg-reset">Reset all</button><button type="button" class="small ghost" id="cfg-reset-view" title="Forget the kept view: panels, tabs, cursor places, zoom, dialog places. Edits and settings stay.">Reset view</button></footer></dialog>
+    <dialog id="play-replace" class="cache-dialog ask-dialog" aria-labelledby="replace-title">
+      <header><h3 id="replace-title">Replace the open project?</h3></header>
+      <p class="cache-note" id="replace-text"></p>
+      <form method="dialog" class="ask-foot"><button value="tab" class="small ghost">Open in a new tab</button><button value="cancel" class="small ghost">Cancel</button><button value="replace" class="small">Replace</button></form></dialog>
+    <dialog id="play-draw" class="cache-dialog draw-dialog" aria-labelledby="draw-title">
+      <header><h3 id="draw-title">Draw a symbol</h3><button type="button" class="ghost small" id="draw-close" aria-label="close">✕</button></header>
+      <div class="draw-top">
+        <span class="draw-tools"><button type="button" class="pill" id="draw-clear" title="Clear the drawing" aria-label="Clear the drawing"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5l4 4-6.5 6.5H4l-1.5-1.5a1.4 1.4 0 0 1 0-2z"/><path d="M6 6l4 4M7 13.5h6.5"/></svg></button>
+          <button type="button" class="pill" id="draw-help" title="How it matches, and credits" aria-label="How it matches, and credits"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M6.3 6.2a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1v.4M8 11.4v.1"/></svg></button></span>
+        <label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg><input type="search" id="draw-search" placeholder="search: skull, arrow, ∫, @math…" aria-label="search the symbols by name or description"></label>
+      </div>
+      <div id="draw-filters" class="lib-kinds draw-filters" role="group" aria-label="which symbols">
+        <button type="button" class="lib-kind" data-f="from" data-v="all" aria-pressed="true">every package</button><button type="button" class="lib-kind" data-f="from" data-v="loaded" aria-pressed="false">this document</button>
+        <span class="sep"></span><button type="button" class="lib-kind" data-f="kind" data-v="" aria-pressed="true">all</button><button type="button" class="lib-kind" data-f="kind" data-v="symbol" aria-pressed="false">symbols</button><button type="button" class="lib-kind" data-f="kind" data-v="letter" aria-pressed="false">letters</button>
+        <span class="sep"></span><button type="button" class="lib-kind" data-f="mode" data-v="" aria-pressed="true">all</button><button type="button" class="lib-kind" data-f="mode" data-v="math" aria-pressed="false">math</button><button type="button" class="lib-kind" data-f="mode" data-v="text" aria-pressed="false">text</button></div>
+      <div class="draw-box"><div class="draw-pad"><canvas id="draw-pad" width="256" height="256" aria-label="drawing area"></canvas><p id="draw-total" class="muted draw-total draw-meta"></p></div>
+        <div class="draw-results"><ol id="draw-list" class="draw-list" aria-live="polite"></ol></div></div>
+      <template id="draw-about">Draw a symbol to find it. Inspired by <a href="https://detexify.kirelabs.org" target="_blank" rel="noopener">Detexify</a>.
+        See also the <a href="https://ctan.org/pkg/comprehensive" target="_blank" rel="noopener">Comprehensive LaTeX Symbol List</a>.</template></dialog>
+    <dialog id="play-view" class="cache-dialog view-dialog" aria-labelledby="view-title">
+      <header><h3 id="view-title"></h3><button type="button" class="ghost small icon hd-feedback" id="view-feedback" title="Send feedback on this widget" aria-label="feedback on this widget"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.5h5M5.5 8.5h3"/></svg></button><button type="button" class="ghost small" id="view-close" aria-label="close">✕</button></header>
+      <div id="view-body" class="view-body"></div></dialog>
     <dialog id="play-cache" class="cache-dialog" aria-labelledby="cache-title">
       <header><h3 id="cache-title">Caches</h3><button type="button" class="ghost small" id="cache-close" aria-label="close">✕</button></header>
       <p class="muted cache-note">Analysis results kept in this browser. A dropped entry is rebuilt when needed.</p>
       <input type="search" id="cache-filter" autofocus placeholder="Search caches, or a \command they define…" aria-label="search caches">
       <div class="cache-scroll"><table class="cache-table">
-        <thead><tr><th data-sort="kind" scope="col">Kind</th><th data-sort="name" scope="col">Name</th><th scope="col">In this document</th><th scope="col" class="num">Loads</th><th data-sort="size" scope="col" class="num" aria-sort="descending">Size</th><th scope="col"><span class="sr">drop</span></th></tr></thead>
+        <thead><tr><th data-sort="kind" scope="col">Kind</th><th data-sort="name" scope="col">Name</th><th scope="col">In this document <span class="use-legend" title="how each entry comes into the open document"><span class="use-yes use-always">always</span><span class="use-yes use-direct">directly</span><span class="use-yes use-indirect">indirectly</span></span></th><th scope="col" class="num">Loads</th><th data-sort="size" scope="col" class="num" aria-sort="descending">Size</th><th scope="col"><span class="sr">drop</span></th></tr></thead>
         <tbody id="cache-list"></tbody>
       </table></div>
       <footer><span id="cache-total" class="muted"></span><button type="button" class="small ghost" id="cache-clear">Clear all</button></footer>
     </dialog>
     <dialog id="play-trace" class="cache-dialog" aria-labelledby="trace-title">
-      <header><h3 id="trace-title">Trace</h3><label class="ts-toggle" title="Also show the steps inside library files: packages, classes and the kernel"><span>include library code</span><input type="checkbox" id="trace-internal" role="switch"></label><button type="button" class="ghost small" id="trace-close" aria-label="close">✕</button></header>
+      <header><h3 id="trace-title">Trace</h3><label class="ts-toggle" title="Also show the steps inside library files: packages, classes and the kernel"><span>show package and kernel steps</span><input type="checkbox" id="trace-internal" role="switch"></label><button type="button" class="ghost small" id="trace-close" aria-label="close">✕</button></header>
       <p class="muted cache-note" id="trace-note"></p>
       <div class="cache-scroll" id="trace-body"></div>
-      <footer><span id="trace-total" class="muted"></span><span class="muted">Click a step to open its place.</span></footer>
+      <footer><span id="trace-total" class="muted"></span><span class="muted">Click a step to open its place.</span><span class="tr-export" title="the whole trace, each step with its state in dev mode">export <button type="button" class="ghost small" id="trace-json">JSON</button><button type="button" class="ghost small" id="trace-csv">CSV</button></span></footer>
     </dialog>
-    <div class="statusbar" aria-live="polite"><span class="actbox" tabindex="0" title=""><progress id="play-progress" max="1" value="0" aria-label="loading"></progress><span id="play-status">Fetching satex and the TeX bundle…</span><dl id="act-detail" class="stat-pop" hidden></dl></span>
+    <div class="statusbar" aria-live="polite"><span class="actbox" tabindex="0" title=""><span id="play-progress" class="sx-progress sx-busy" role="progressbar" aria-label="what the page is doing" aria-valuemin="0" aria-valuemax="100" hidden><span class="sx-fill"></span></span><span id="play-status">Fetching SaTeX and the TeX bundle…</span><button type="button" id="play-stop" class="small ghost" title="Stop the run under way. The findings of the last finished run stay" hidden>Stop</button><dl id="act-detail" class="stat-pop" hidden></dl></span>
       <span id="play-pills" class="pills"></span>
-      <button type="button" class="stat-btn" id="cache-open" aria-haspopup="dialog" title="what satex keeps between checks and visits"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/></svg>caches <b id="cache-count"></b></button>
+      <span id="offline" class="muted" hidden><span id="offline-text"></span> <button type="button" class="stat-btn" id="offline-btn"></button></span>
+      <button type="button" class="stat-btn" id="cache-open" aria-haspopup="dialog" title="what SaTeX keeps between checks and visits"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/></svg>caches <b id="cache-count"></b></button>
       <span class="statdetail"><button id="t-time" class="stat-time" type="button" aria-expanded="false" aria-controls="t-detail" title="timings and size of the last run" hidden><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.2 1.5"/></svg><span id="t-time-text"></span></button>
-        <dl id="t-detail" class="stat-pop" hidden><dt>init</dt><dd id="t-init"></dd><dt>fetched</dt><dd id="t-load"></dd><dt>caches</dt><dd id="t-cache"></dd><dt>check</dt><dd id="t-check"></dd><dt>last run</dt><dd id="t-stats"></dd></dl></span></div>
+        <div id="t-detail" class="stat-pop run-pop" hidden><div id="t-run" class="rp-nums"></div><div id="t-slow" class="rp-slow"></div><div id="t-heat" class="rp-slow"></div><div id="t-rules" class="rp-slow"></div><div id="t-limits" class="rp-limits"></div>
+          <dl class="rp-times"><dt>check</dt><dd id="t-check"></dd><dt>command</dt><dd id="t-stats"></dd><dt>caches</dt><dd id="t-cache"></dd><dt>fetched</dt><dd id="t-load"></dd><dt>init</dt><dd id="t-init"></dd></dl></div></span></div>
   </section>
 </div>
 <ul id="play-ctx" class="ctx" role="menu" hidden></ul>
 <div id="play-toast" class="toast" role="status"></div>
 <div id="play-drop" class="drop" hidden>Drop files, a folder or a .zip</div>
 <script id="satex-play" type="application/json">{{manifest}}</script>
+<script src="{{root}}{{drawjs}}" defer></script>
+<script src="{{root}}{{lengthsjs}}" defer></script>
+<script src="{{root}}{{snapshotjs}}" defer></script>
+<script src="{{root}}{{viewsjs}}" defer></script>
+<script src="{{root}}{{bibjs}}" defer></script>
+<script src="{{root}}{{dialogsjs}}" defer></script>
+<script src="{{root}}{{layersjs}}" defer></script>
 <script src="{{root}}{{playjs}}" defer></script>

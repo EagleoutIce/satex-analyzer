@@ -3,8 +3,8 @@
 //! quiet.
 
 use crate::support::installed;
-use satex::config::{Config, Load};
-use satex::machine::Machine;
+use satex::analysis::machine::Machine;
+use satex::project::config::{Config, Load};
 
 /// `code: message` and the group of every table finding on a document with `body`.
 fn found(name: &str, body: &str) -> Vec<(String, Option<String>)> {
@@ -16,7 +16,7 @@ fn found(name: &str, body: &str) -> Vec<(String, Option<String>)> {
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     let analysis = Machine::analyze(&document, Some(&main), &cfg);
     let codes = ["numbers-not-aligned", "inconsistent-precision", "unit-in-cells", "table-rules"];
-    let out = satex::lint::lint(&analysis)
+    let out = satex::linter::lint(&analysis)
         .into_iter()
         .filter(|r| codes.contains(&r["code"].as_str().unwrap_or_default()))
         .map(|r| {

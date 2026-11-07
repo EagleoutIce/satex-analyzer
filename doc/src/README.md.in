@@ -15,7 +15,7 @@ The first runs of `satex` are slow because it reads, interprets and caches the (
 
 ----
 
-_SaTeX_ is actively developed by *Florian Sihler* (contact me at: <florian.sihler@uni-ulm.de>) under the [MIT License](LICENSE). Contributions are welcome (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+_SaTeX_ is actively developed by [Florian Sihler](https://eagleoutice.github.io/portfolio/) (contact me at: <florian.sihler@uni-ulm.de>) under the [MIT License](LICENSE). Contributions are welcome (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 The development and initial Rust codebase is strongly assisted by Claude Code (from architecture descriptions, TeX semantics and [flowR](https://flowr-analysis.github.io/flowr/)). It is still *work in progress*.
 Please avoid AI-only contributions. The humans who submit code are responsible for it.
@@ -24,7 +24,7 @@ Please avoid AI-only contributions. The humans who submit code are responsible f
 
 ## Install
 
-Prebuilt binaries for Linux and macOS (x86-64 and ARM64) and Windows (x86-64) are attached to every [release](../../releases). With Rust installed, `cargo install satex-analyzer` installs the `satex` command. `cargo install --git https://github.com/EagleoutIce/satex-analyzer` installs the latest version from the repository. To build from source:
+Prebuilt binaries for Linux and macOS (x86-64 and ARM64) and Windows (x86-64) are attached to every [release](../../releases). The [changelog](CHANGELOG.md) lists what changed. With Rust installed, `cargo install satex-analyzer` installs the `satex` command. `cargo install --git https://github.com/EagleoutIce/satex-analyzer` installs the latest version from the repository. To build from source:
 
 ```sh
 cargo build --release
@@ -204,6 +204,8 @@ Every command prints text by default. You can use `--format json`, `csv` or `mar
 ## Editor integration
 
 `satex lsp` runs a Language Server: diagnostics, hover, definitions, references, completion, document symbols and quick fixes, all backed by the commands above. Stdio by default, `--port`/`--host` for TCP. See the [LSP wiki page](doc/wiki/lsp.md) for the protocol details and Neovim/VS Code setup.
+
+`satex gui [DIR]` opens the browser playground on a project of your computer: its files, the TeX packages installed there, the native language server and your TeX for the PDF. Edits are saved to the files. See [the playground on your machine](doc/wiki/cli.md#the-playground-on-your-machine).
 
 ## Configuration
 

@@ -3,13 +3,24 @@
 
 use std::path::PathBuf;
 
-use crate::support::{defined, installed};
-use satex::builtins::OccKind;
-use satex::facts::Severity;
-use satex::machine::{Analysis, Machine};
+use crate::support::{defined, installed, undefined};
+use satex::analysis::facts::Severity;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::engine::builtins::OccKind;
 
 /// Steps a fixture may take.
 const STEP_BUDGET: u64 = 20_000_000;
+/// Target 20M; measured 43.2M on 2026-11-04 (rerun-checked), see plan.
+const NOTEBOOK_A4_STEPS: u64 = 53_952_069;
+/// Target 20M; measured 44.2M on 2026-11-04 (rerun-checked), see plan.
+const FLOAT_AFTER_TITLE_STEPS: u64 = 55_299_093;
+/// Target 20M; measured 32.5M on 2026-11-04 (rerun-checked), see plan.
+const NOTECOLUMN_MA_STEPS: u64 = 40_597_274;
+
+/// Target 20M; measured 32.7M on 2026-11-04 (seven forest trees, about 4.7M each).
+const FOREST_OPTIONS_STEPS: u64 = 40_919_660;
+/// Target 20M; measured 22.9M on 2026-11-04 (six forest trees).
+const FOREST_NAMES_STEPS: u64 = 28_658_778;
 
 /// Diagnostics that mean the run was cut short.
 const CUT_CODES: [&str; 3] = ["limit-reached", "budget-exhausted", "analysis-ended-early"];
@@ -27,6 +38,11 @@ fn check(id: &str, main: &str, also: &[&str]) -> Option<Analysis> {
 /// `check`, where the diagnostics coded `allowed` are what the fixture
 /// should raise, not failures.
 fn check_allowing(id: &str, main: &str, also: &[&str], allowed: &[&str]) -> Option<Analysis> {
+    check_within(id, main, also, allowed, STEP_BUDGET)
+}
+
+/// `check_allowing`, with a step budget of the fixture's own.
+fn check_within(id: &str, main: &str, also: &[&str], allowed: &[&str], budget: u64) -> Option<Analysis> {
     if !installed() {
         return None;
     }
@@ -40,8 +56,12 @@ fn check_allowing(id: &str, main: &str, also: &[&str], allowed: &[&str]) -> Opti
     crate::support::seed_kernel(&cfg);
     let analysis = Machine::analyze(&source, Some(&path), &cfg);
     let mut failures = Vec::new();
+    // every path reaches the end: one that ended early leaves the marker only maybe defined
     if !defined(&analysis, "SatexReachedEnd") {
-        failures.push("\\SatexReachedEnd is undefined: the end was not reached".to_string());
+        failures.push(format!(
+            "\\SatexReachedEnd is {}: the end was not reached on every path",
+            crate::support::presence(&analysis, "SatexReachedEnd")
+        ));
     }
     for name in afters(&source) {
         if !defined(&analysis, &name) {
@@ -68,10 +88,11 @@ fn check_allowing(id: &str, main: &str, also: &[&str], allowed: &[&str]) -> Opti
     }
     let steps = analysis.steps - analysis.load_steps;
     eprintln!("{id}/{main}: {steps} analysis steps, {} loading", analysis.load_steps);
-    if steps >= STEP_BUDGET {
-        failures.push(format!("{steps} analysis steps ({} loading), budget {STEP_BUDGET}", analysis.load_steps));
+    crate::support::record_steps(&format!("documents::{id}/{main}"), steps);
+    if steps >= budget {
+        failures.push(format!("{steps} analysis steps ({} loading), budget {budget}", analysis.load_steps));
     }
-    let own = |s: &satex::tex::Span| {
+    let own = |s: &satex::engine::tex::Span| {
         analysis.files.get(s.file as usize).is_some_and(|f| std::path::Path::new(&f.path).starts_with(&root))
     };
     let bad: Vec<_> = analysis
@@ -158,25 +179,86 @@ macro_rules! peak_fixtures {
 }
 
 fixtures! {
+    /// Floats of unknown height before a forced break: `\@xnext` reads the
+    /// first `\@elt` of a list that is one of several, past the fork budget.
+    three_floats_before_a_pagebreak_end_cleanly("float_three_pagebreak", "main.tex");
+    /// A random count parsed by pgfmath: each digit place of the printed
+    /// number is read on its own path, and paths at different places never
+    /// join while the read runs (explore.rs `digits_apart`).
+    pgfmath_parses_a_random_count_below_twenty("pgfmath_count_small", "main.tex");
+    pgfmath_parses_a_random_count_of_five_digits("pgfmath_count_wide", "main.tex");
+    pgfmath_parses_a_signed_random_count_and_adds("pgfmath_count_signed", "main.tex");
     tikz_figure_with_math_nodes_t3("tikz_t3", "main.tex");
     tikz_figure_with_fit_node_in_resizebox_b("tikz_fit_b", "main.tex");
     tikz_picture_in_resizebox_v2("tikz_resizebox_v2", "main.tex");
     includegraphics_of_pdf_banner("includegraphics", "main.tex", "title-banner-image.pdf");
     tikz_notebook_environment_from_input_file("notebook", "main.tex");
+    expl3_hex_string_to_utf16_conversion_h4("expl3_hex_h4", "main.tex");
+    expl3_hex_string_with_empty_target_encoding_h6("expl3_hex_h6", "main.tex");
+    notecolumn_loop_over_slnc_file("thesis_slnc", "mwe.tex", "mwe.slnc");
     /// A math label `$A_1$` sizes a node exactly; the frame around the
     /// bounding box then parses known numbers.
     tikz_frame_around_math_label("tikz_math_label", "main.tex");
     tikz_custom_shape_and_saveboxes_ma("tikz_shapes_ma", "mwe.tex");
+    tikz_styles_forest_and_dataflow_savebox("forest_savebox", "mwe.tex");
     tcolorbox_with_tikz_overlay_fse("tcolorbox_fse", "mwe.tex");
     /// A breakable box at the top of the page: tcolorbox reads the page room
     /// (tcbbreakable.code.tex, `\tcb@comp@h@page`), and pgf draws the frame.
     tcolorbox_breakable_without_overlay("tcolorbox_breakable_plain", "mwe.tex");
     /// A `\ref` to a label not yet written, inside tikz nodes: `??` is exact text.
     tikz_node_with_a_ref("tikz_node_with_ref", "mwe.tex");
+    /// `\Cref` of a macro that is one of two labels: each `\csname r@..`
+    /// is one of their names, never `\relax`, so cleveref's stack pops.
+    cleveref_ref_to_one_of_two_labels("cleveref_one_of_labels", "main.tex");
+    /// Three notecolumn notes read back from the `.slnc` file the first
+    /// build run wrote: the read loop takes each line exactly, so no note
+    /// text runs as code inside it.
+    notecolumn_notes_read_back("notecolumn_read_back", "main.tex");
+    /// An arrow tip toward a point with an unknown coordinate.
+    tikz_arrow_to_an_unknown_point("tikz_arrow_to_unknown_point", "mwe.tex");
     /// An undefined name in a node's formula: the node's size must stay known.
     tikz_node_with_an_undefined_name_in_math("tikz_node_undefined_in_math", "mwe.tex");
     /// PNG images scaled to keep their aspect ratio inside beamer columns.
     beamer_raster_images_scaled_to_their_aspect("beamer_raster_images", "mwe.tex");
+    /// A deferred `\protected@write` is expanded at `\shipout` (tex.web
+    /// § 1370): a counter the shipout hook steps is written as it is then.
+    deferred_write_expands_at_shipout("deferred_write_at_shipout", "mwe.tex");
+}
+
+fixtures! {
+    /// The edges library: `forked edges`, `folder` and a directory tree.
+    forest_edges_library("forest_libraries", "mwe.tex");
+    forest_linguistics_library("forest_linguistics", "mwe.tex");
+    /// A math node with a superscript (`V$'$`) beside a sibling and above children: its box
+    /// leaves the packing unknown, pgfmath errs in library code (open root R1).
+    forest_math_node_with_superscript("forest_math_content", "mwe.tex");
+}
+
+/// forest as documents use it: `for tree`, `s sep`, `l sep`, `edge`, `grow'`, `tier`,
+/// `delay`, `before typesetting nodes`, a `\forestset` style. Seven trees.
+#[test]
+fn forest_options_and_stages() {
+    check_within("forest_options", "mwe.tex", &[], &[], FOREST_OPTIONS_STEPS);
+}
+
+/// `name`, relative nodes (`!u`, `!r1`), `tikz` per node, `\Forest`, `.wrap pgfmath arg`.
+#[test]
+fn forest_names_and_relative_nodes() {
+    check_within("forest_names", "mwe.tex", &[], &[], FOREST_NAMES_STEPS);
+}
+
+/// Math nodes (`\frac`, a subscript): the tree typesets its contents and nothing else, as
+/// pdftotext reads `x2 1 2 yi`. Unknown packing typesets stray `pt` text (open root R1).
+#[test]
+fn forest_math_nodes_typeset_only_their_contents() {
+    let Some(analysis) = check("forest_math_nodes", "mwe.tex", &[]) else { return };
+    let rows = satex::queries::query::run(
+        &analysis,
+        satex::queries::query::Query::Typeset,
+        &satex::queries::query::Filter::Always,
+    );
+    let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
+    assert!(texts.iter().all(|t| !t.contains("pt")), "{texts:?}");
 }
 
 /// Capabilities: unknown inputs, typesetting feedback, package interpreters.
@@ -190,11 +272,45 @@ fn tcolorbox_with_a_footnote_in_a_list_item_ends() {
     assert_eq!(count(&analysis, "fault-contained"), 0);
 }
 
+/// Capabilities: unknown inputs, global state, typesetting feedback.
+/// A breakable box of unknown height closes every group it opens, so a
+/// node's saved anchors stay local (fse: later figures summarized on them).
+#[test]
+fn tcolorbox_of_unknown_height_keeps_its_anchors_local() {
+    let Some(analysis) = check("tcolorbox_unknown_height_anchors", "mwe.tex", &[]) else { return };
+    assert!(undefined(&analysis, "southwest"), "\\southwest leaked out of the box's groups");
+}
+
+/// Mutations of the box above: known height, a nested box, and anchors
+/// read by pictures before and after it. None leaves \southwest defined.
+fn box_anchors_stay_local(main: &str) {
+    let Some(analysis) = check("tcolorbox_anchor_variants", main, &[]) else { return };
+    assert!(undefined(&analysis, "southwest"), "\\southwest leaked out of the groups ({main})");
+}
+
+#[test]
+fn tcolorbox_of_known_height_keeps_its_anchors_local() {
+    box_anchors_stay_local("known.tex");
+}
+
+#[test]
+fn nested_tcolorbox_of_unknown_height_keeps_its_anchors_local() {
+    box_anchors_stay_local("nested.tex");
+}
+
+#[test]
+fn pictures_around_a_tcolorbox_keep_their_anchors_local() {
+    box_anchors_stay_local("before_after.tex");
+}
+
 fixtures! {
     tikz_bent_path_on_background_layer("tikz_bend_pingus", "mwe.tex");
+    tikz_bend_to_a_point_of_unknown_width_closes_the_picture("tikz_bend_unknown_width", "main.tex");
+    notecolumn_slnc_at_cleardoublepage_koma("notecolumn_slnc_koma", "mwe.tex", "mwe.slnc");
     input_path_extended_with_etoolbox_appto("input_path_appto", "main.tex");
     resizebox_tikz_scopes_keep_font_known("fontenc_after_preamble", "main.tex");
     notecolumn_read_loop_at_frontmatter_clearpage("notecolumn_read_loop", "mwe.tex", "mwe.slnc");
+    notecolumn_clear_with_unknown_page_height("notecolumn_unknown_height", "mwe.tex");
 }
 
 // Gobblers must stop at their real end: text after them is never lost.
@@ -205,6 +321,7 @@ fixtures! {
     gobble_environ_body_stops_at_its_end("gobble_environ", "main.tex");
     gobble_verbatim_stops_at_its_delimiter("gobble_verbatim", "main.tex");
     gobble_with_unknown_catcodes_and_comments_never_reads_past_the_end("gobble_unknown", "main.tex");
+    gobble_verbatim_of_unknown_environment_name_stops_at_its_end("gobble_unknown_name", "main.tex");
     gobble_lstinline_with_unknown_delimiter_stops_at_its_end("gobble_unknown_delim", "main.tex");
 }
 
@@ -230,6 +347,23 @@ fixtures! {
     pdfcomment_markup_in_math_with_aux_positions("pdfcomment_math_aux", "main.tex");
     pgfmath_seed_from_unknown_random_seed("pgfmath_random_seed", "mwe.tex");
     pgfmath_operator_on_unknown_integer_and_rounded_strut_node("pgfmath_unknown_operand", "mwe.tex");
+}
+
+/// xinttrig's `\xintdeffloatfunc @Arg` nests expansion about 80 levels
+/// deep, far inside TeX's limits: no nesting may be given up.
+#[test]
+fn xintexpr_loads_without_giving_up_nesting() {
+    check("xintexpr_deep_nesting", "main.tex", &[]);
+    if !installed() {
+        return;
+    }
+    let root = dir("xintexpr_deep_nesting");
+    let path = root.join("main.tex");
+    let source = std::fs::read_to_string(&path).expect("fixture source");
+    let cfg = crate::support::discover(&root);
+    let analysis = Machine::analyze(&source, Some(&path), &cfg);
+    let widened: Vec<_> = analysis.facts.diagnostics.iter().filter(|d| d.code == "nesting-widened").collect();
+    assert!(widened.is_empty(), "{}", widened.iter().map(|d| d.message.as_str()).collect::<Vec<_>>().join("\n"));
 }
 
 fixtures! {
@@ -285,6 +419,33 @@ peak_fixtures! {
     pgfmath_of_unknown_integer_stays_a_number("pgfmath_unknown_seed", "main.tex");
 }
 
+peak_fixtures! {
+    /// A float and a `\pagebreak` in one line: all three forced breaks reach the page.
+    float_and_pagebreak_in_one_line_place_the_float("float_pagebreak", "known.tex");
+    /// Floats of unknown height around a forced break join where they are placed.
+    floats_of_unknown_height_around_a_pagebreak_keep_few_paths("float_pagebreak", "unknown.tex");
+}
+
+/// The fixture's raised errors: LaTeX's own (`Float(s) lost`) are no diagnostics.
+fn raised(a: &Analysis) -> Vec<&str> {
+    a.facts.raised.iter().map(|r| r.text.as_str()).collect()
+}
+
+/// Seven floats in one paragraph: all fourteen forced breaks reach the page.
+#[test]
+fn floats_in_one_paragraph_all_reach_the_page() {
+    let Some(a) = check("float_queue", "known.tex", &[]) else { return };
+    assert!(raised(&a).is_empty(), "{:?}", raised(&a));
+}
+
+/// Floats of unknown height, a patched `\@xfloat`, wide floats and a
+/// `\clearpage`: every `\@currbox` is a box and no float is lost.
+#[test]
+fn floats_of_unknown_height_keep_their_boxes() {
+    let Some(a) = check("float_queue", "main.tex", &[]) else { return };
+    assert!(raised(&a).is_empty(), "{:?}", raised(&a));
+}
+
 #[test]
 fn repeated_undecided_ifx_stays_within_the_path_limit() {
     let Some(a) = check("crowd_ifx_unknown", "main.tex", &[]) else { return };
@@ -298,15 +459,13 @@ fn rule_of_unknown_height_before_clearpage() {
     assert!(count(&a, "recursion-widened") <= 1, "{}", count(&a, "recursion-widened"));
 }
 
-/// `\catcode<unknown>=11` from a summarized loop may reach `\ { }`: the
-/// reader splits there, and on the path where they kept their categories
-/// the `\include` still reads its file. Where `}` became a letter, its
-/// argument never closes. Both `\u` and `\z` loop forever in TeX
-/// (pdflatex never gets past them), so each is reported as an
-/// `endless-loop` before it is summarized.
+/// `\catcode<unknown>=11` from a summarized loop is assumed to miss
+/// `\ { }` (`unknown-char-catcode`), so the `\include` reads its file.
+/// Both `\u` and `\z` loop forever in TeX (pdflatex never gets past
+/// them), so each is reported as an `endless-loop` before it is summarized.
 #[test]
 fn include_after_unknown_char_catcode_loop_is_read() {
-    check_allowing("catcode_loop_include", "main.tex", &["ch1"], &["endless-loop", "runaway-argument"]);
+    check_allowing("catcode_loop_include", "main.tex", &["ch1"], &["endless-loop"]);
 }
 
 /// A recursion cut inside a group that set `\escapechar` before it began:
@@ -319,7 +478,7 @@ fn cut_widens_only_what_the_recursion_wrote() {
     let path = dir("cut_keeps_earlier_writes").join("mwe.tex");
     let source = std::fs::read_to_string(&path).expect("fixture source");
     let a = Machine::analyze(&source, Some(&path), &crate::support::discover(&dir("cut_keeps_earlier_writes")));
-    assert!(defined(&a, "SatexReachedEnd") && !defined(&a, "EscapeWidened"));
+    assert!(defined(&a, "SatexReachedEnd") && undefined(&a, "EscapeWidened"));
 }
 
 /// `\def\z{\z}\z` loops forever in TeX (tex.web § 390), so it is
@@ -330,12 +489,20 @@ fn include_after_endless_macro_is_read() {
     check_allowing("include_after_loop", "main.tex", &["ch1"], &["endless-loop"]);
 }
 
+/// `\catcode<unknown>=11` from a summarized loop is assumed to miss the
+/// structural characters (`unknown-char-catcode`): `{` and `}` keep their
+/// categories, so no `}` closes a group a letter `{` never opened.
+#[test]
+fn unknown_char_catcode_keeps_braces() {
+    check_allowing("catcode_loop_braces", "main.tex", &[], &["endless-loop"]);
+}
+
 /// A loop summarized inside `\begingroup\let\protect\string ... \endgroup`:
 /// the group closes, `\protect` is back, and the `\include` reads its file.
 #[test]
 fn group_around_summarized_loop_closes_before_include() {
     let Some(a) = check("group_cut_include", "main.tex", &["ch1"]) else { return };
-    assert!(!defined(&a, "ProtectLeaked"));
+    assert!(undefined(&a, "ProtectLeaked"));
 }
 
 /// A recursion cut while its levels stand in groups opened and
@@ -349,7 +516,7 @@ fn cut_recursion_closes_macro_groups() {
     let path = dir("loop_macro_groups").join("mwe.tex");
     let source = std::fs::read_to_string(&path).expect("fixture source");
     let a = Machine::analyze(&source, Some(&path), &crate::support::discover(&dir("loop_macro_groups")));
-    assert!(defined(&a, "SatexReachedEnd") && !defined(&a, "Leaked"));
+    assert!(defined(&a, "SatexReachedEnd") && undefined(&a, "Leaked"));
 }
 
 /// A branch met once shallow and then deeper in one call is no loop pass:
@@ -365,6 +532,8 @@ fixtures! {
     /// Capabilities: typesetting feedback, unknown inputs, termination.
     /// A rounded node around a broken paragraph: no limit, no fork explosion.
     rounded_node_around_a_broken_paragraph_ends("rounded_node_broken_paragraph", "mwe.tex");
+    /// pgfmath on a node of unknown width: summarized, never exploding.
+    rounded_node_of_unknown_width_ends("rounded_node_unknown_width", "mwe.tex");
     /// Capabilities: termination, engine.
     /// A loop over a data file read with `\read`: each data line has its own
     /// step budget, so cheap lines that add up past one budget are never cut.
@@ -392,6 +561,16 @@ fixtures! {
     tikz_halign_node_with_rounded_corners("tikz_halign_node_rounded", "main.tex");
 }
 
+/// Twenty nodes of unknown height in a `\foreach`: calls met again with
+/// unknown operands are summarized, at most once each.
+#[test]
+fn tikz_loop_of_unknown_height_nodes_converges() {
+    let start = std::time::Instant::now();
+    let Some(a) = check("call_summary_tikz_loop", "main.tex", &[]) else { return };
+    assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
+    assert!(count(&a, "call-summarized") <= 20, "{}", count(&a, "call-summarized"));
+}
+
 /// Nodes of a set text width whose text is inline math, in a picture saved
 /// in a box: the paragraphs keep their height (tex.web §§ 866, 1196), so
 /// no anchor of the picture is unknown and no path parts on one.
@@ -399,6 +578,24 @@ fixtures! {
 fn inline_math_nodes_in_a_saved_box_stay_known() {
     let Some(a) = check("inline_math_nodes_in_a_saved_box", "main.tex", &[]) else { return };
     assert_eq!(a.peak_paths, 1, "paths parted");
+}
+
+/// An enumitem inline list in a node of text width: each item is boxed
+/// and unboxed, and `\unhbox` puts its items back (tex.web § 1110), so
+/// the paragraph keeps its height and the fit node no path parts on.
+#[test]
+fn inline_list_in_a_framed_node_stays_known() {
+    let Some(a) = check("inline_list_in_a_framed_node", "main.tex", &[]) else { return };
+    assert!(a.peak_paths <= 2, "{} paths", a.peak_paths);
+}
+
+/// Two nodes of text width with siunitx quantities and words whose
+/// ligatures the hyphenating pass breaks by their letters (tex.web § 898):
+/// the paragraphs keep their height, no path parts on the anchors.
+#[test]
+fn ligature_words_in_framed_nodes_stay_known() {
+    let Some(a) = check("ligature_words_in_framed_nodes", "main.tex", &[]) else { return };
+    assert!(a.peak_paths <= 2, "{} paths", a.peak_paths);
 }
 
 /// The same with sub- and superscripts, nested and in pairs: the formulas
@@ -420,7 +617,10 @@ fn centered_picture_in_a_saved_parbox_has_its_exact_size() {
     assert_eq!(a.peak_paths, 1, "paths parted");
 }
 
-peak_fixtures! {}
+peak_fixtures! {
+    /// `\pgfmathparse` of an unknown integer three times: a typed result.
+    pgfmath_of_unknown_integer_three_times("call_summary_pgfmath_thrice", "main.tex");
+}
 
 fixtures! {
     /// Notebook-like cells of `obeylines` text with inline code in nodes.
@@ -446,6 +646,42 @@ fixtures! {
     date_today_with_siunitx_units("date_today_siunitx", "main.tex");
 }
 
+/// Rounding never stalls: pgfmath's `round`, `floor` and `int`, and
+/// `\pgfprocessround` on a rounded-corner path, over a dimension of any
+/// sign and over one in an interval. Each costs at most a million steps
+/// over the same preamble, keeps at most 3 paths, and a bounded operand
+/// gives a bounded result (`\the` of a dimension in an interval keeps it
+/// through text, tex.web §§ 103, 448).
+#[test]
+fn rounding_an_unknown_dimension_ends_bounded() {
+    let Some(control) = check("round_unknown_dimension", "control.tex", &[]) else { return };
+    for main in ["math_unknown.tex", "math_interval.tex", "round_unknown.tex", "round_interval.tex"] {
+        let a = check("round_unknown_dimension", main, &[]).expect("analysis");
+        assert!(a.peak_paths <= 3, "{main}: {} paths", a.peak_paths);
+        assert!(a.steps <= control.steps + 1_000_000, "{main}: {} steps over {}", a.steps, control.steps);
+        assert!(a.limits.is_empty(), "{main}: limits hit");
+        for name in ["NegativeRound", "NegativeFloor", "NegativeInt", "HugeRound"] {
+            assert!(undefined(&a, name), "{main}: \\{name} is defined: the result is not bounded");
+        }
+    }
+}
+
+/// Capabilities: typesetting feedback, global state, termination.
+/// `\clearnotecolumns` loops over `\clearpage` while a note may be left:
+/// the paths must not grow with the number of notes in the `.slnc` file.
+#[test]
+fn notecolumn_clear_loop_paths_do_not_grow_with_notes() {
+    let few = check("notecolumn_clear_paths", "few.tex", &[]);
+    let many = check("notecolumn_clear_paths", "many.tex", &[]);
+    let (Some(few), Some(many)) = (few, many) else { return };
+    assert!(
+        many.peak_paths <= few.peak_paths + 2,
+        "peak paths {} with 60 notes, {} with 6",
+        many.peak_paths,
+        few.peak_paths
+    );
+}
+
 /// ba: a float with a minipage caption in one `\include`d part, hyperref
 /// loaded: the output routine the part's `\clearpage` runs places the float,
 /// and the next part is still read (pdflatex reads both).
@@ -469,10 +705,78 @@ fn a_node_of_unknown_minimum_height_parses_its_other_lengths() {
     check("tikz_node_unknown_minimum_height", "main.tex", &[]);
 }
 
+/// A count in an interval, printed and added to: the printed number never
+/// starts with `0` unless it is 0, so pgfmath takes no octal path.
+#[test]
+fn adding_to_a_bounded_count_raises_nothing() {
+    check("pgfmath_bounded_count_plus_one", "main.tex", &[]);
+}
+
+/// Two hex numbers of 24-bit random numbers, read digit by digit: past
+/// `limits.digit_lengths` the longer digit counts are one path, so the
+/// paths stay few and no separator is lost (no caused library error).
+#[test]
+fn hex_of_two_wide_random_numbers_raises_nothing() {
+    let Some(a) = check("expl3_two_wide_rand_hex", "main.tex", &[]) else { return };
+    let caused: Vec<_> = satex::linter::lint(&a).into_iter().filter(|r| r["code"] == "caused-library-error").collect();
+    assert!(caused.is_empty(), "{caused:?}");
+}
+
+/// `<id>/doc/<main>` with `<id>/lib` searched for packages: library code
+/// outside the project.
+fn analyze_with_library(id: &str, main: &str) -> Option<Analysis> {
+    if !installed() {
+        return None;
+    }
+    let root = dir(id).join("doc");
+    let path = root.join(main);
+    let mut cfg = crate::support::discover(&root);
+    cfg.search_paths = vec![dir(id).join("lib")];
+    cfg.cache.dir = Some(crate::support::scratch_dir(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch").join(format!("documents-{id}")),
+    ));
+    crate::support::seed_kernel(&cfg);
+    Some(Machine::analyze(&std::fs::read_to_string(&path).expect("fixture source"), Some(&path), &cfg))
+}
+
+/// A library `\edef` left open on one arm of a random choice reads to the
+/// end of an `\input` file, as TeX does on that run: the scan's end is
+/// reported, and the text after the `\input` is read on every path.
+#[test]
+fn library_body_past_the_end_of_an_input_is_reported() {
+    let Some(a) = analyze_with_library("library_body_past_input_end", "mwe.tex") else { return };
+    assert!(defined(&a, "SatexReachedEnd") && defined(&a, "AfterInput"));
+    assert!(count(&a, "file-ended") > 0);
+}
+
+/// The document's own call of a library macro that misses its delimiter
+/// runs away on one arm: the document's error, kept and reported.
+#[test]
+fn document_call_past_the_end_of_the_file_stays_an_error() {
+    let Some(a) = analyze_with_library("library_body_past_input_end", "delim.tex") else { return };
+    assert_eq!(count(&a, "runaway-argument"), 1);
+}
+
 /// pgfmath parses a result of unknown width again: no false error.
 #[test]
 fn reparsing_a_pgfmath_result_of_unknown_width_raises_nothing() {
     check("pgfmath_reparse_unknown_width", "main.tex", &[]);
+}
+
+/// A float after the thesis title page: the output routine stays bounded.
+#[test]
+fn a_float_after_the_title_page_stays_bounded() {
+    check_within("thesis_notebook_a4", "float_after_title.tex", &[], &[], FLOAT_AFTER_TITLE_STEPS);
+}
+
+#[test]
+fn thesis_class_with_notebook_figure_a4() {
+    check_within("thesis_notebook_a4", "main.tex", &[], &[], NOTEBOOK_A4_STEPS);
+}
+
+#[test]
+fn notecolumn_slnc_on_master_thesis_title_page() {
+    check_within("notecolumn_slnc_ma", "mwe.tex", &["mwe.slnc"], &[], NOTECOLUMN_MA_STEPS);
 }
 
 /// expl3's map depth counter in an interval: each value names the map
@@ -480,5 +784,5 @@ fn reparsing_a_pgfmath_result_of_unknown_width_raises_nothing() {
 #[test]
 fn a_map_at_an_unknown_depth_keeps_its_items() {
     let Some(a) = check("expl3_map_unknown_depth", "main.tex", &[]) else { return };
-    assert!(crate::support::defined(&a, "X"), "the map body never ran");
+    assert!(crate::support::defined(&a, "X"), "the map body ran on every path: {}", crate::support::presence(&a, "X"));
 }

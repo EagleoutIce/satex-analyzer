@@ -17,9 +17,9 @@
 
 # GitHub line-anchored blobs (`#L1234`) and CTAN mirrors occasionally answer
 # slowly or rate-limit; retry a few times before failing the run.
-max_retries = 3
-retry_wait_time = 5
-timeout = 60
+max_retries = 2
+retry_wait_time = 2
+timeout = 20
 
 # CTAN answers a burst from one CI runner with timeouts, never with a status,
 # so requests to it go one at a time. A timeout says nothing about the link
@@ -49,10 +49,14 @@ exclude_all_private = false
 exclude = [
   "^https://raw\\.githubusercontent\\.com/EagleoutIce/satex-analyzer/main/",
   "^file://.*/doc/(wiki/)?[A-Z][A-Za-z-]*(#.*)?$",
+  # wiki-style page links in the root pages (README, SEMANTICS): pages of the wiki, not files
+  "^file://[^#]*/[A-Z][A-Za-z-]*(#.*)?$",
   "^file://.*/releases$",
+  # commits and pull requests of the changelog: a branch's hashes change until it is merged
+  "^https://github\\.com/EagleoutIce/satex-analyzer/(commit|pull)/",
   "^https://doi\\.org/10\\.1145/",
 ]
 
 [hosts."ctan.org"]
-concurrency = 1
-request_interval = "1s"
+concurrency = 4
+request_interval = "250ms"

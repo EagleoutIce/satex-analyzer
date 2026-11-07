@@ -1,0 +1,9 @@
+\documentclass{article}
+\newif\ifshort
+\newcommand{\twice}[1]{#1#1}
+\newcommand{\greet}[1]{\begingroup
+  \ifshort Hi\else Hello, \twice{#1}\fi
+  \endgroup}
+\begin{document}
+\greet{ab}
+\end{document}

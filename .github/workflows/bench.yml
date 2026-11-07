@@ -1,0 +1,89 @@
+name: Bench
+
+# Wall time, memory, steps and forks of the benchmark documents (benches/docs.txt),
+# one entry per release in doc/site/bench/data.json, shown on the site's
+# Benchmarks page.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Label of the entry (default: the tag, or "unreleased")'
+        required: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: bench
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    container: texlive/texlive:latest
+    outputs:
+      version: ${{ steps.bench.outputs.version }}
+    steps:
+      - name: Install the build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential git ca-certificates python3 gh
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: bench
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - run: cargo build --locked --release --bin satex
+
+      - name: Benchmark
+        id: bench
+        env:
+          VERSION: ${{ inputs.version || github.event.release.tag_name || 'unreleased' }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "version=${VERSION#v}" >> "$GITHUB_OUTPUT"
+          python3 scripts/bench.py --satex target/release/satex --version "${VERSION#v}" --commit "$(git rev-parse --short HEAD)" --data bench-data.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench
+          path: bench-data.json
+
+  # The data lives on main beside the site, which rebuilds on the push.
+  publish:
+    needs: bench
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          name: bench
+      - name: Append the entry
+        run: |
+          python3 scripts/bench.py --merge bench-data.json
+          rm bench-data.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add doc/site/bench/data.json
+          git diff --cached --quiet || git commit -m "perf(bench): results for ${{ needs.bench.outputs.version }}"
+          git push
+          gh workflow run pages.yml --ref main
+        env:
+          GH_TOKEN: ${{ github.token }}

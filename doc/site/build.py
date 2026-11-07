@@ -9,15 +9,30 @@ files` says the samples and the offered packages read, and its caches from `sate
     build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site-out
 """
 
-import argparse, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, threading, time, tomllib
+import argparse, contextlib, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, tempfile, threading, time, tomllib, urllib.parse
 from pathlib import Path
+
+import semantics as sem
 
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "doc" / "site"
 
 
+def proc(cmd, **kw):
+    """`subprocess.run`, with a satex run holding one of the JOBS slots: every step's pool may be
+    as wide as it likes, never more than JOBS satex processes run at once. Its seconds go to RUNS."""
+    if not (SATEX and cmd and str(cmd[0]) == str(SATEX)):
+        return subprocess.run(cmd, **kw)
+    with SLOTS:
+        start = time.monotonic()
+        try:
+            return subprocess.run(cmd, **kw)
+        finally:
+            RUNS.append((time.monotonic() - start, " ".join(map(str, cmd[1:]))))
+
+
 def run(*cmd, **kw):
-    return subprocess.run(cmd, check=True, text=True, capture_output=True, **kw).stdout
+    return proc(cmd, check=True, text=True, capture_output=True, **kw).stdout
 
 
 def digest(data):
@@ -35,9 +50,48 @@ def available_memory():
 # How many satex runs go at once: each takes a core and up to 2 GB of the memory free now;
 # SATEX_SITE_JOBS overrides.
 JOBS = int(os.environ.get("SATEX_SITE_JOBS") or max(1, min(os.cpu_count() or 2, available_memory() // 2**31)))
+SLOTS, RUNS = threading.BoundedSemaphore(JOBS), []  # see proc()
 
 
-def parallel(label, jobs, f):
+BOARD = {"lines": {}, "drawn": 0, "lock": threading.Lock()}  # the steps running side by side, a bar each
+
+
+def board(label, line, final=False):
+    """Redraw every running step's bar in place, one line each; a finished step's line stays above them."""
+    width = shutil.get_terminal_size().columns - 1
+    with BOARD["lock"]:
+        out = f"\x1b[{BOARD['drawn']}F" if BOARD["drawn"] else "\r"
+        if final:
+            BOARD["lines"].pop(label, None)
+            out += f"\x1b[K{line[:width]}\n"
+        else:
+            BOARD["lines"][label] = line
+        out += "".join(f"\x1b[K{l[:width]}\n" for l in BOARD["lines"].values()) + "\x1b[J"
+        BOARD["drawn"] = len(BOARD["lines"])
+        print(out, end="", file=sys.stderr, flush=True)
+
+
+@contextlib.contextmanager
+def stage(label):
+    """A step without a bar of its own: named when it starts, every 20 s while it runs, and when it ends,
+    so a long quiet step never looks hung."""
+    start, stop = time.monotonic(), threading.Event()
+    took = lambda: f"{int(time.monotonic() - start) // 60}m{int(time.monotonic() - start) % 60:02d}s"
+    print(f"playground: {label} …", file=sys.stderr, flush=True)
+
+    def beat():
+        while not stop.wait(20):
+            print(f"playground: {label} … still running, {took()}", file=sys.stderr, flush=True)
+    t = threading.Thread(target=beat, daemon=True)
+    t.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        print(f"playground: {label} done in {took()}", file=sys.stderr, flush=True)
+
+
+def parallel(label, jobs, f, workers=None):
     """`f` of each job, in order, JOBS at a time. A terminal gets a bar naming the running jobs;
     a log gets a line per tenth."""
     jobs, out, done, running, lock = list(jobs), {}, 0, {}, threading.Lock()
@@ -53,8 +107,7 @@ def parallel(label, jobs, f):
             names = sorted(running.values())
             if names and done < len(jobs):
                 line += " · " + ", ".join(names[:3]) + (f" +{len(names) - 3}" if len(names) > 3 else "")
-            print(f"\r\x1b[K{line[:shutil.get_terminal_size().columns - 1]}", end="\n" if done == len(jobs) else "",
-                  file=sys.stderr, flush=True)
+            board(label, line, final=done == len(jobs))
         elif done == len(jobs) or done % max(1, len(jobs) // 10) == 0:
             print(line, file=sys.stderr, flush=True)
 
@@ -79,7 +132,7 @@ def parallel(label, jobs, f):
 
     if tty:
         threading.Thread(target=tick, daemon=True).start()
-    with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
+    with concurrent.futures.ThreadPoolExecutor(workers or JOBS) as pool:
         futures = {pool.submit(tracked, i): i for i in range(len(jobs))}
         for finished in concurrent.futures.as_completed(futures):
             out[futures[finished]] = finished.result()
@@ -92,21 +145,51 @@ def parallel(label, jobs, f):
 # flags, the project config and the installation (its ls-R files). A listing
 # does not depend on the satex build, so a rebuild reuses it; --fresh drops it.
 LISTINGS = {}
+LISTINGS_FILE = None  # where they are kept between builds: written after each step, so a stopped build keeps what it listed
+
+
+def save_listings():
+    if LISTINGS_FILE:
+        tmp = LISTINGS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(LISTINGS))
+        tmp.replace(LISTINGS_FILE)
 # The satex binary's digest, its cache key (what the analysis is: reporting code
 # aside) and whether to ignore remembered results (--fresh): set by main().
 BINARY, KEY, FRESH, SATEX = "", "", False, None
+MEMO_USED = set()  # the memo files this build asked for
+
+
+def prune_memo():
+    """Drop the memo files this build superseded: those of a label it asked for under other parts.
+    A label it did not ask for (a step it reused whole) keeps its files."""
+    for d in {p.parent for p in MEMO_USED}:
+        asked = {p.name.rsplit("-", 1)[0] for p in MEMO_USED if p.parent == d}
+        for p in d.glob("*.pkl"):
+            if p not in MEMO_USED and p.name.rsplit("-", 1)[0] in asked:
+                p.unlink(missing_ok=True)
 
 
 def memo(work, label, parts, make):
     """`make()`, remembered in WORK/memo under `label` while `parts` (what it depends on) stay the
     same: a build that changes only the page's code reuses every satex run."""
     path = work / "memo" / f"{label}-{digest(json.dumps(parts, default=str).encode())}.pkl"
+    MEMO_USED.add(path)
     if path.exists() and not FRESH:
         return pickle.loads(path.read_bytes())
     value = make()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(pickle.dumps(value))
     return value
+
+
+def binary_digest(satex):
+    """The binary's digest without the build time and commit it names (`satex --version`):
+    relinking the same code keeps every run keyed on it."""
+    data = satex.read_bytes()
+    about = json.loads(subprocess.run([str(satex), "--format", "json", "--version"], capture_output=True, text=True).stdout or "{}")
+    for stamp in filter(None, (about.get("built"), about.get("commit"))):
+        data = data.replace(stamp.encode(), b"")
+    return digest(data)
 
 
 def tree_digest(root):
@@ -120,21 +203,101 @@ def installation_stamp():
     return ";".join(f"{p}:{os.stat(p).st_mtime_ns}" for p in sorted(lsr))
 
 
-def files_read(satex, flags, doc, cwd, env, config=b""):
-    """The paths `satex query files` lists for `doc`, reused while nothing it depends on changed."""
-    key = digest(json.dumps([flags, doc.read_bytes().decode(errors="replace"), config.decode(errors="replace"),
+def files_read(satex, flags, doc, cwd, env, config=b"", absent=False):
+    """The paths `satex query files` lists for `doc` (read, or found by `\\openin`), reused while nothing
+    it depends on changed; with `absent`, the names it looked for and did not find instead."""
+    # the paths it lists are absolute: another checkout's listing names another checkout's files
+    key = digest(json.dumps([flags, str(doc), str(cwd), doc.read_bytes().decode(errors="replace"), config.decode(errors="replace"),
                              LISTINGS.get("@stamp", "")]).encode())
     if key not in LISTINGS:
-        done = subprocess.run([str(satex), *flags, "query", "files", "-f", str(doc), "--format", "json"],
+        done = proc([str(satex), *flags, "query", "files", "-f", str(doc), "--format", "json"],
                               cwd=cwd, env=env, capture_output=True, text=True)
-        LISTINGS[key] = [entry["path"] for entry in json.loads(done.stdout or "[]")]
-    return LISTINGS[key]
+        LISTINGS[key] = [entry.get("path") or f"?{entry['file']}" for entry in json.loads(done.stdout or "[]")
+                         if "path" in entry or entry.get("kind") == "absent"]
+    return [e[1:] for e in LISTINGS[key] if e.startswith("?")] if absent else [e for e in LISTINGS[key] if not e.startswith("?")]
+
+
+def kpsewhich(names, cwd):
+    """Where TeX Live has each of `names`: name -> path, for those it has."""
+    # a name spelled from unknown text holds marker characters no file name has
+    names = [n for n in names if n and n.isprintable()]
+    found = subprocess.run(["kpsewhich", *names], cwd=cwd, capture_output=True, text=True).stdout.split() if names else []
+    return {Path(p).name: Path(p).resolve() for p in found}
+
+
+MINIFY, SCRATCH = True, None
+ESBUILD = None
+
+
+def esbuild():
+    """The esbuild binary already installed (ESBUILD, PATH or the VS Code extension's node_modules), or None."""
+    global ESBUILD
+    if ESBUILD is None:
+        found = os.environ.get("ESBUILD") or shutil.which("esbuild")
+        local = ROOT / "editors/vscode/node_modules/.bin/esbuild"
+        ESBUILD = found or (str(local) if local.is_file() else "")
+        if not ESBUILD:
+            print("minify: no esbuild found, scripts and styles stay as written", file=sys.stderr)
+    return ESBUILD or None
+
+
+def minify_js(code, name):
+    """(minified code, source map) of a script, or (code, None) without esbuild. The map embeds the source."""
+    tool = esbuild()
+    if not tool:
+        return code, None
+    with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+        src, dst = Path(tmp) / name, Path(tmp) / "o.js"
+        src.write_bytes(code)
+        subprocess.run([tool, "--minify", "--sourcemap=external", "--legal-comments=none", "--log-level=error", f"--outfile={dst}", str(src)],
+                       capture_output=True, check=True)
+        out = dst.read_bytes()
+        out = re.sub(rb"\n?//# sourceMappingURL=[^\n]*\n?$", b"", out)
+        return out, (Path(str(dst) + ".map")).read_bytes()
+
+
+def minify_css(code):
+    tool = esbuild()
+    if not tool:
+        return code
+    return subprocess.run([tool, "--minify", "--loader=css", "--log-level=error"], input=code, capture_output=True, check=True).stdout
+
+
+HTML_TOKEN = re.compile(r"(<(pre|textarea|script|style|code)\b.*?</\2\s*>|<!--.*?-->|<[a-zA-Z/!](?:\"[^\"]*\"|'[^']*'|[^>\"'])*>)", re.S | re.I)
+
+
+def minify_html(text):
+    """Whitespace runs between tags become one space, comments go. Attributes, <pre>, <code>, <textarea>, <script> and <style> stay as written."""
+    if not MINIFY:
+        return text
+    parts = HTML_TOKEN.split(text)
+    out = []
+    for i in range(0, len(parts), 3):
+        out.append(re.sub(r"\s+", " ", parts[i]))
+        if i + 1 < len(parts):
+            out.append("" if parts[i + 1].startswith("<!--") else parts[i + 1])
+    return "".join(out)
+
+
+def minify_script(code):
+    """A script embedded in a manifest: minified, no map."""
+    return minify_js(code.encode(), "worker.js")[0].decode() if MINIFY else code
 
 
 def emit(out, name, data):
-    """Writes `data` under a content-addressed name, so it can be cached forever."""
+    """Writes `data` under a content-addressed name, so it can be cached forever.
+    Scripts and styles are minified first, the hash is of the shipped bytes, a script gets a source map beside it."""
     stem, ext = name.split(".", 1)
+    smap = None
+    if MINIFY and ext == "js":
+        data, smap = minify_js(data, Path(name).name)
+    elif MINIFY and ext == "css":
+        data = minify_css(data)
     path = f"{stem}-{digest(data)}.{ext}"
+    if smap:
+        data += f"\n//# sourceMappingURL={Path(path).name}.map\n".encode()
+        (out / path).parent.mkdir(parents=True, exist_ok=True)
+        (out / f"{path}.map").write_bytes(smap)
     (out / path).parent.mkdir(parents=True, exist_ok=True)
     (out / path).write_bytes(data)
     return path
@@ -148,8 +311,6 @@ def emit_local(out, name, data):
     return path
 
 
-# ---------------------------------------------------------------- pages
-
 def version(cargo):
     """The crate's version, starred when the build is not that release: a later or changed tree."""
     tag = subprocess.run(["git", "describe", "--tags", "--dirty"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
@@ -161,7 +322,7 @@ def version(cargo):
 def pages():
     """Repository Markdown -> site path: the README is the guide, wiki pages live under wiki/."""
     table = {"README.md": "guide.html", "SEMANTICS.md": "SEMANTICS.html",
-             "doc/chktex-coverage.md": "chktex-coverage.html", "doc/developing.md": "developing.html"}
+             "doc/chktex-coverage.md": "chktex-coverage.html", "doc/developing.md": "developing.html", "doc/credits.md": "credits.html", "CHANGELOG.md": "changelog.html"}
     for md in sorted((ROOT / "doc/wiki").glob("*.md")):
         if not md.name.startswith("_"):
             table[f"doc/wiki/{md.name}"] = f"wiki/{md.stem}.html"
@@ -188,8 +349,35 @@ def sidebar(table):
     return re.sub(r"\[([^\]]*)\]\(([^)\s]+)\)", target, text)
 
 
+def chapters(table):
+    """The Semantics section of the sidebar in reading order: (title, site page) of its top-level entries."""
+    text = (ROOT / "doc/wiki/_Sidebar.md").read_text()
+    block = text.split("[📖 Semantics]", 1)[1].split("\n\n", 1)[0]
+    by_name = wiki(table)
+    return [(m[1], by_name[m[2].split("#")[0].lower()]) for m in re.finditer(r"^- \[([^\]]+)\]\(([^)]+)\)", block, flags=re.M)]
+
+
+def chapter_nav(dst, order):
+    """The strip above and below a chapter of the semantics: where it stands, the previous and the next one."""
+    pages_ = [d for _, d in order]
+    if dst not in pages_:
+        return ""
+    i, root = pages_.index(dst), "../" * dst.count("/")
+    link = lambda j, arrow: f'<a href="{root}{order[j][1]}">{arrow}</a>' if 0 <= j < len(order) else ""
+    return (f'<nav class="chapters" aria-label="chapters of the semantics"><span>Chapter {i + 1} of {len(order)}</span>'
+            f'{link(i - 1, "&larr; " + html.escape(order[i - 1][0].split(":")[0]) if i else "")}'
+            f'{link(i + 1, html.escape(order[i + 1][0].split(":")[0]) + " &rarr;" if i + 1 < len(order) else "")}</nav>')
+
+
+MERMAID = ('<script type="module">import m from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";'
+           'm.initialize({ startOnLoad: false, theme: "neutral", flowchart: { nodeSpacing: 14, rankSpacing: 26, padding: 6, curve: "basis", useMaxWidth: false } }); m.run();</script>')
+
+
 def markdown(text):
-    return run("pandoc", "-f", "gfm", "-t", "html5", "--syntax-highlighting=none", "--wrap=none", input=text)
+    """The page's HTML; a Mermaid block becomes a diagram drawn in the browser."""
+    body = run("pandoc", "-f", "gfm", "-t", "html5", "--syntax-highlighting=none", "--wrap=none", input=text)
+    body, charts = re.subn(r'<pre class="mermaid"><code>(.*?)</code></pre>', r'<pre class="mermaid">\1</pre>', body, flags=re.S)
+    return body + MERMAID if charts else body
 
 
 def rewrite(body, source, table, homepage, repo, out, root):
@@ -253,8 +441,6 @@ def install(text):
     return section(text, "Install") + "\n\n" + section(text, "Editor integration")
 
 
-# ---------------------------------------------------------------- logo
-
 def logo(work):
     """doc/logo/logo.tex, typeset and converted to SVG without its white page.
     Pages: 3 the wordmark, 4 and 5 the tagline's lines (shown side by side, as page 2), 6 the plain name."""
@@ -274,27 +460,40 @@ def logo(work):
     return svgs
 
 
-# ---------------------------------------------------------------- playground
-
 EXAMPLES = SITE / "examples"
 
 
 def roots(samples):
-    return sorted(p.name for p in samples.glob("*.tex") if "\\documentclass" in p.read_text(errors="replace"))
+    # a LaTeX document, or one whose magic comment names its engine (a plain TeX file)
+    root = lambda t: "\\documentclass" in t or re.search(r"^%\s*!T[eE]X\s+(?:TS-)?program\s*=", t, re.M)
+    return sorted(p.name for p in samples.glob("*.tex") if root(p.read_text(errors="replace")))
 
 
 def sources():
     """The documents the playground offers: the site's examples, then the repository's samples."""
-    return [EXAMPLES / n for n in roots(EXAMPLES)] + [ROOT / "samples" / n for n in roots(ROOT / "samples")]
+    out = [EXAMPLES / n for n in roots(EXAMPLES)] + [ROOT / "samples" / n for n in roots(ROOT / "samples")]
+    # the playground keys its documents by name
+    twice = sorted({d.name for d in out if [e.name for e in out].count(d.name) > 1})
+    if twice:
+        sys.exit(f"build.py: an example and a sample share a name: {', '.join(twice)}")
+    return out
 
 
 # The kernels the playground offers: a name, a label, the flags that select it.
 # pdfTeX comes with the page; each other one is a bundle of its own, fetched when chosen.
 KERNELS = [("pdftex", "pdfTeX", ["--set", "engine=pdftex"]), ("xetex", "XeTeX", ["--set", "engine=xetex"]),
-           ("plain", "plain TeX", ["--set", "engine=tex", "--set", "kernel=plain"])]
+           ("plain", "plain TeX", ["--set", "engine=tex", "--set", "kernel=plain"]),
+           ("luatex", "LuaTeX", ["--set", "engine=luatex"])]
+# Engines offered on another kernel's bundle, never built or run on their own: (id, label, the kernel they use).
+# satex has no ConTeXt kernel to read, so ConTeXt runs on LuaTeX's.
+ALIASES = [("context", "ConTeXt", "luatex")]
+# Kernels that are offered but flagged, with the badge and the plain statement shown in the menu.
+EXPERIMENTAL = {"luatex": ("experimental", "Experimental. LaTeX documents run on the LuaTeX engine model. Lua code (\\directlua, luacode) is not executed, only modelled, "
+                           "and fontspec and other LuaTeX-only packages may report spurious findings."),
+                "context": ("experimental", "Experimental. Runs on the LuaTeX bundle. satex does not interpret the ConTeXt kernel: it recognizes \\starttext documents "
+                            "and models the LuaTeX primitives, so ConTeXt commands are unknown and findings may be spurious or missing.")}
 # Listed, not offered: why each one is missing.
-UNAVAILABLE = [("LuaTeX", "Not available yet: the LuaTeX kernel is cut short at the format budget, so it is never cached. "
-                "Every check rebuilds it: 7 s natively, about half a minute in the browser.")]
+UNAVAILABLE = []
 
 
 SAMPLE = "hello.tex"  # the document the playground opens with: the first download holds what it reads
@@ -303,6 +502,12 @@ SAMPLE = "hello.tex"  # the document the playground opens with: the first downlo
 def file_of(name):
     """The file a package (`name`) or class (`name.cls`) is."""
     return name if name.endswith(".cls") else f"{name}.sty"
+
+
+def first_download():
+    """packages.txt's first section: fetched with the first download, not on demand."""
+    section = re.search(r"^# with the first download.*\n((?:[^#\n].*\n)+)", (SITE / "packages.txt").read_text(), re.M)
+    return section.group(1).split() if section else []
 
 
 def probe_doc(probes, name):
@@ -332,11 +537,15 @@ def bundle(satex, work):
     def listed(job):
         flags, doc, cwd = job
         read = {(cwd / e).resolve() for e in files_read(satex, flags, doc, cwd, env) if (cwd / e).resolve().is_relative_to(dist)}
+        # a file it looked for that TeX Live has goes with it too: without it the playground's run takes another path
+        read |= {p for p in kpsewhich(files_read(satex, flags, doc, cwd, env, absent=True), work).values() if p.is_relative_to(dist)}
         # What another option would read instead (`[11pt]`: size11.clo for size10.clo, `\Large\bfseries`:
         # cmbx12.tfm for cmr10.tfm): the files of the same kind beside each one read. Classes, packages
         # and documents load by name.
         option = lambda p: (p.relative_to(dist).parts[0] == "tex" and p.suffix not in (".sty", ".cls", ".tex", ".ltx")) or p.suffix in (".tfm", ".vf")
-        return read | {q for p in read if option(p) for q in p.parent.glob(f"*{p.suffix}")}
+        # A package's own images (mwe's example-image): \includegraphics finds them on the tree's ls-R.
+        images = {q for p in read if p.suffix == ".sty" for q in p.parent.iterdir() if q.suffix in (".pdf", ".png", ".jpg")}
+        return read | images | {q for p in read if option(p) for q in p.parent.glob(f"*{p.suffix}")}
 
     absent = {}
     reads = {}  # (kernel, document or package) -> the distribution files it reads
@@ -350,7 +559,9 @@ def bundle(satex, work):
         return listed((flags, it, ROOT) if isinstance(it, Path) else (flags, probe_doc(probes, it), probes))
 
     def take(jobs, label):
-        for (kernel, _, it), paths in zip(jobs, parallel(label, jobs, listing)):
+        done = parallel(label, jobs, listing)
+        save_listings()
+        for (kernel, _, it), paths in zip(jobs, done):
             if isinstance(it, Path):
                 reads[(kernel, it.name)] = paths
             elif file_of(it) in {p.name for p in paths}:
@@ -360,21 +571,38 @@ def bundle(satex, work):
 
     # The listed packages go beside the examples; the packages an example reads besides go after.
     listed_names = installed(package_names())
-    take([(kernel, flags, doc) for kernel, _, flags in KERNELS for doc in docs] + probe(listed_names), "the files the examples and packages read")
+    take([(kernel, flags, doc) for kernel, _, flags in KERNELS for doc in docs] + probe(listed_names), "[4/4] files read by examples and packages")
     more = installed(list(dict.fromkeys(sorted(f"{p.stem}.cls" if p.suffix == ".cls" else p.stem
                                                for (_, it), paths in list(reads.items()) if it in {d.name for d in docs}
                                                for p in paths if p.suffix in (".sty", ".cls")))))
     more = [n for n in more if n not in listed_names]
-    take(probe(more), "the files the packages the examples load read")
+    take(probe(more), "[4/4] files read by their packages")
+    # tikz's libraries are named in \usetikzlibrary, so every one is in its bundle, not only those a probe reads
+    libraries = {q for p in dist.glob("tex/*/pgf") for q in p.rglob("*") if re.fullmatch(r"(?:tikz|pgf)library.*\.code\.tex", q.name)}
+    for key in reads:
+        if key[1] == "tikz":
+            reads[key] = reads[key] | libraries
     every = listed_names + more
     for kernel, names in absent.items():
         print(f"playground: {len(names)} packages not offered under {kernel} (they do not load there)", file=sys.stderr)
-    for path in set().union(*reads.values()):  # the build tree: every file any of them reads
+    # the code points the typeset text reads encodings through (`query.rs` `encoding_slots`)
+    unicode = Path(run("kpsewhich", "tuenc.def").strip())
+    for path in set().union(*reads.values()) | ({unicode.resolve()} if unicode.is_file() else set()):  # the build tree: every file any of them reads
         target = tree / path.relative_to(dist)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
     if (dist.parent / "release-texlive.txt").is_file():  # names the TeX Live year
         shutil.copy2(dist.parent / "release-texlive.txt", tree / "release-texlive.txt")
+    # Files no listing finds (an engine or Lua reads them): bundle-extra.txt names them by tree and glob.
+    extra = {}  # path in the bundle -> file
+    for line in re.sub(r"#.*", "", (SITE / "bundle-extra.txt").read_text()).splitlines():
+        if line.split():
+            var, pattern = line.split(maxsplit=1)
+            root = Path(run("kpsewhich", "-var-value", var).strip()).resolve()
+            extra.update({path.relative_to(root).as_posix(): path for path in sorted(root.glob(pattern.strip())) if path.is_file()})
+    for rel, path in extra.items():
+        (tree / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, tree / rel)
     config = (SITE / "playground.yaml").read_text().replace("/texmf.bundle", str(tree))
     shutil.copytree(ROOT / "samples", project, ignore=shutil.ignore_patterns("satex.yaml"))
     for doc in docs[:len(roots(EXAMPLES))]:
@@ -384,15 +612,35 @@ def bundle(satex, work):
             shutil.copy2(doc.parent / companion, project / companion)
     (project / "satex.yaml").write_text(config)
     (probes / "satex.yaml").write_text(config)
+    # The check: each example, run over the bundle tree as the playground runs it, looks for no file TeX Live has
+    # and the tree lacks (the playground's Files view calls what it looks for "absent in TeX Live too").
+    looked = parallel("[4/4] examples over the bundle", [d for d in docs if d.suffix == ".tex"],
+                      lambda d: files_read(satex, KERNELS[0][2], project / d.name, project, env, config=config.encode(), absent=True))
+    # a gap is a warning, never a failed build: the playground then says the file is not in the playground
+    lacking = sorted({f"{d.name}: {n}" for d, names in zip([d for d in docs if d.suffix == ".tex"], looked) for n in kpsewhich(names, work)})
+    if lacking:
+        print(f"playground: warning: examples look for TeX Live files the bundle lacks: {', '.join(lacking)}", file=sys.stderr)
 
     # Kernels: the sample's files and the cache entries of running it. A kernel's
     # cache directory stays from the last build: satex rebuilds what this binary cannot use, and
     # `cache export` writes only the valid entries.
     def kernel_caches(kernel, flags):
-        kenv = dict(os.environ, SATEX_CACHE=str(work / f"cache-{kernel}"))
-        subprocess.run([str(satex), *flags, "lint", "-f", SAMPLE], cwd=project, env=kenv, capture_output=True, check=False)
+        # The kernel's archive holds the format and what the sample loads, nothing else: the shared
+        # directory gathers every package any run met, which would ship with the first download.
+        shared, alone = work / f"cache-{kernel}", work / f"cache-{kernel}-sample"
+        shutil.rmtree(alone, ignore_errors=True)
+        alone.mkdir(parents=True)
+        shared.mkdir(parents=True, exist_ok=True)
+        for f in shared.glob("format-*"):
+            shutil.copy2(f, alone / f.name)
+        kenv = dict(os.environ, SATEX_CACHE=str(alone))
+        proc([str(satex), *flags, "lint", "-f", SAMPLE], cwd=project, env=kenv, capture_output=True, check=False)
         archive = work / f"satex-cache-{kernel}.bin"
         run(str(satex), "cache", "export", str(archive), env=kenv)
+        # a format built here keeps the shared directory warm for the next build
+        for f in alone.glob("format-*"):
+            if not (shared / f.name).exists():
+                shutil.copy2(f, shared / f.name)
         return archive
 
     # Packages: the files a probe document reads. The cache entries are those the examples' runs, from a
@@ -401,17 +649,20 @@ def bundle(satex, work):
     def fresh(kernel, flags):
         """One cache archive per package or class held by the entries running every example made,
         from a copy of the kernel's caches (`satex cache export --only`)."""
-        return memo(work, f"fresh-{kernel}", [KEY, kernel, flags, tree_digest(project)], lambda: fresh_run(kernel, flags))
+        return memo(work, f"fresh-{kernel}", [KEY, kernel, flags, tree_digest(project), first_download()], lambda: fresh_run(kernel, flags))
 
     def fresh_run(kernel, flags):
         cache = work / f"cache-docs-{kernel}"
         shutil.rmtree(cache, ignore_errors=True)
         shutil.copytree(work / f"cache-{kernel}", cache, copy_function=os.link, ignore=shutil.ignore_patterns("*.lock"))
         penv = dict(os.environ, SATEX_CACHE=str(cache))
-        # the kernels' runs go at once (`ran`), so each takes its share of the jobs
-        with concurrent.futures.ThreadPoolExecutor(max(1, JOBS // len(KERNELS))) as inner:
-            list(inner.map(lambda d: subprocess.run([str(satex), *flags, "lint", "-f", d.name], cwd=project, env=penv,
-                                                    capture_output=True, check=False), docs))
+        # the first download's packages get entries even when no example loads them: a probe document's.
+        # Not its classes: a KOMA class's entries are about 9 MiB gz each, too much for the first download.
+        first = [probe_doc(probes, n) for n in installed(first_download()) if kernel != "plain" and not n.endswith(".cls")]
+        # all kernels' runs share the JOBS slots (proc), so a kernel done early leaves no core idle
+        with concurrent.futures.ThreadPoolExecutor(JOBS) as inner:
+            list(inner.map(lambda job: proc([str(satex), *flags, "lint", "-f", job[1].name], cwd=job[0], env=penv,
+                                            capture_output=True, check=False), [(project, d) for d in docs] + [(probes, d) for d in first]))
         out = work / f"export-{kernel}.bin"
         held = set(json.loads(run(str(satex), "--format", "json", "cache", "export", str(out), env=penv))["holds"].values())
         archives = {}
@@ -423,7 +674,7 @@ def bundle(satex, work):
         return archives
 
     # Per kernel, its caches and then the packages' from a copy of them: kernels need not wait for each other.
-    both = parallel("kernel and package caches", KERNELS, lambda k: (kernel_caches(k[0], k[2]), fresh(k[0], k[2])))
+    both = parallel("[4/4] kernel and package caches", KERNELS, lambda k: (kernel_caches(k[0], k[2]), fresh(k[0], k[2])))
     archives = [a for a, _ in both]
     ran = {k: r for (k, _, _), (_, r) in zip(KERNELS, both)}
     tables, have, names = [], set(), {d.name for d in docs}
@@ -473,6 +724,8 @@ def bundle(satex, work):
             tables[0][f"/work/{path.name}"] = path.read_bytes()
     # The tree's file list (kpathsea's ls-R) names every file a bundle holds, fetched or not: completion
     # offers each package, and loading one the page has not fetched is a missing file it then fetches.
+    for rel, path in extra.items():
+        tables[0][f"/texmf.bundle/{rel}"] = path.read_bytes()
     held = sorted({p for files in [*tables, *(f for _, _, f, _ in packages)] for p in files if p.startswith("/texmf.bundle/")})
     listing = {}
     for p in held:
@@ -482,7 +735,240 @@ def bundle(satex, work):
     if (tree / "release-texlive.txt").is_file():
         tables[0]["/texmf.bundle/release-texlive.txt"] = (tree / "release-texlive.txt").read_bytes()
     tables[0]["/work/satex.yaml"] = config.replace(str(tree), "/texmf.bundle").encode()
+    tables[0]["/cache/previews.json"] = previews(satex, work, tree)
     return tables, packages, [p.name for p in docs], project
+
+
+def previews(satex, work, tree):
+    """Completion's and the drawing canvas's pictures of the arrow tips, patterns and node shapes the bundled TikZ libraries declare,
+    drawn by TeX here (`satex query previews`): the browser has no TeX to draw them."""
+    libs = sorted(p.name.removeprefix("tikzlibrary").removesuffix(".code.tex") for p in tree.rglob("tikzlibrary*.code.tex"))
+    data = memo(work, "previews", [BINARY, libs], lambda: previews_run(satex, work, libs))
+    PREVIEWS.update(json.loads(data))
+    return data
+
+
+# The pictures of arrow tips, patterns and node shapes (`kind:name` -> SVG), for the playground's completion and the wiki's hover cards.
+PREVIEWS = {}
+
+
+def PREVIEW_NAMES():
+    """The names (without their kind) that have a picture."""
+    return {k.split(":", 1)[1] for k in PREVIEWS}
+
+
+def previews_run(satex, work, libs):
+    doc = work / "previews" / "previews.tex"
+    doc.parent.mkdir(parents=True, exist_ok=True)
+    doc.write_text("\\documentclass{article}\n\\usepackage{tikz}\n" + "".join(f"\\usetikzlibrary{{{l}}}\n" for l in libs)
+                   + "\\begin{document}\n\\end{document}\n")
+    env = dict(os.environ, SATEX_CACHE=str(work / "cache-previews"))
+    rows = json.loads(run(str(satex), "--format", "json", "query", "previews", "-f", str(doc), cwd=doc.parent, env=env))
+    return json.dumps({r["name"]: r["svg"] for r in rows if r["svg"]}).encode()
+
+
+def providers(satex, work, missing):
+    """The packages that define the control sequences `missing`, by `satex query`'s `providers`: the installed files whose
+    text defines each name through a definer the run saw: `name.sty` for a package, `name.cls` for a class."""
+    if not missing:
+        return set()
+    doc = work / "cards" / "providers.tex"
+    doc.write_text("\\documentclass{article}\n\\begin{document}\n\\end{document}\n")
+    request = json.dumps({"file": doc.name, "queries": [{"type": "providers", "names": sorted(missing)}]})
+    env = dict(os.environ, SATEX_CACHE=str(work / "cache-pdftex"))
+    done = proc([str(satex), *KERNELS[0][2], "query", "--request", "-", "-f", doc.name], input=request, cwd=doc.parent,
+                          env=env, capture_output=True, text=True)
+    try:
+        rows = json.loads(done.stdout)[0]["records"]
+    except (json.JSONDecodeError, IndexError, KeyError):
+        return set()
+    return {r["package"] for r in rows}
+
+
+def scope_cards(satex, work, names):
+    """What `satex scope --all` knows of the control sequences the pages name, for their hover cards: the records
+    by name from a document loading the packages the pages use, and each engine's primitives. Memoized."""
+    found = re.compile(r"\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^{}#\\]*)\}")
+    texts = [p.read_text() for p in [ROOT / "README.md", ROOT / "SEMANTICS.md", *(ROOT / "doc/wiki").glob("*.md")]]
+    wanted = sorted({n.strip() for t in texts for g in found.findall(t) for n in g.split(",") if re.fullmatch(r"[A-Za-z][\w-]*", n.strip())})
+    wanted = [n for n in wanted if subprocess.run(["kpsewhich", f"{n}.sty"], capture_output=True, text=True).stdout.strip()]
+    tmp = work / "cards"
+    tmp.mkdir(exist_ok=True)
+
+    def scope(kernel, flags, text, extra=(), name=None):
+        # own file per run: runs go in parallel
+        doc = tmp / f"{name or kernel}.tex"
+        doc.write_text(text)
+        env = dict(os.environ, SATEX_CACHE=str(work / f"cache-{kernel}"))
+        done = proc([str(satex), *flags, "--format", "json", "scope", "--all", *extra, "-f", doc.name], cwd=tmp, env=env, capture_output=True, text=True)
+        try:
+            return json.loads(done.stdout)
+        except json.JSONDecodeError:
+            return []
+
+    def probe(text):
+        doc = tmp / "shapes.tex"
+        doc.write_text(text)
+        done = proc([str(satex), *KERNELS[0][2], "--format", "json", "query", "diagnostics", "-f", doc.name], cwd=tmp,
+                              env=dict(os.environ, SATEX_CACHE=str(work / "cache-pdftex")), capture_output=True, text=True)
+        try:
+            return json.loads(done.stdout)
+        except json.JSONDecodeError:
+            return []
+
+    def make():
+        text = "\\documentclass{article}\n" + "".join(f"\\usepackage{{{n}}}\n" for n in wanted) + "\\begin{document}\n\\end{document}\n"
+        records = {r["name"]: r for r in scope("pdftex", KERNELS[0][2], text)}
+        # a name no loaded package defines: the installed packages that define it, each loaded alone
+        # a class (beamer's \mode, \uncover) is the document's class, a package is loaded by article
+        head = lambda n: f"\\documentclass{{{n[:-4]}}}\n" if n.endswith(".cls") else f"\\documentclass{{article}}\n\\usepackage{{{n.removesuffix('.sty')}}}\n"
+        alone = sorted(providers(satex, work, [x for x in names if x not in records and re.fullmatch(r"\\[A-Za-z@]+", x)]))
+        runs = parallel("hover cards: packages alone", alone, lambda n: scope("pdftex", KERNELS[0][2], head(n) + "\\begin{document}\n\\end{document}\n", name=f"alone-{n}"))
+        for more in runs:
+            for r in more:
+                if r["name"] in names:
+                    records.setdefault(r["name"], r)
+        # the usage lines by a probe of each card's name, its arguments named by role (`scope` reads parameter texts only)
+        doc = tmp / "pdftex.tex"
+        doc.write_text(text)
+        asked = sorted(n for n in names if n in records and records[n].get("tag") != "primitive")
+        env = dict(os.environ, SATEX_CACHE=str(work / "cache-pdftex"))
+        done = proc([str(satex), *KERNELS[0][2], "--format", "json", "explain", *asked, "-f", doc.name], cwd=tmp, env=env,
+                              capture_output=True, text=True) if asked else None
+        try:
+            seen = set()
+            for r in json.loads(done.stdout) if done else []:
+                # the first record is the meaning in force
+                # the manual's names (`scope`'s usage) win over the probe's places
+                if r.get("usage") and r["name"] in records and r["name"] not in seen and "⟨" not in records[r["name"]].get("usage", ""):
+                    records[r["name"]]["usage"] = r["usage"]
+                seen.add(r["name"])
+        except json.JSONDecodeError:
+            pass
+        kernels = [k for k in KERNELS if k[0] != "plain"]
+        prims = parallel("hover cards: primitives per engine", kernels, lambda k: scope(k[0], k[2], "\\documentclass{article}\n\\begin{document}\n\\end{document}\n", ["--filter", "tag=primitive"], name=f"prims-{k[0]}"))
+        engines = {label: {r["name"] for r in got} for (kernel, label, flags), got in zip(kernels, prims)}
+        return records, engines, templates(scope, probe, names)
+    return memo(work, "cards-scope-keyed3", [BINARY, wanted, sorted(names)], make)
+
+
+# Declarations whose names are made from a key: the probe declares one key, a record naming it is a template for any key.
+KEYED = ["\\newcounter{KEY}", "\\newglossaryentry{KEY}{name={n},description={d}}", "\\newlabel{KEY}{{1}{1}}", "\\bibcite{KEY}{1}", "\\newif\\ifKEY"]
+
+
+def templates(scope, probe, names):
+    """[(regex, record, declaration)]: the names the run of each `KEYED` declaration defines, with the key a hole. `scope` lists the
+    named definitions. A name a `\\csname` makes (`\\r@key`) is no definition there, so each shape `\\x@key` among `names` is asserted
+    defined after the declaration in a probe, and kept where the assertion holds."""
+    key = "qzk"
+    uses = KEYED
+    text = "\\documentclass{article}\n\\usepackage{glossaries}\n\\begin{document}\n" + "".join(u.replace("KEY", key) + "\n" for u in uses) + "\\end{document}\n"
+    out = []
+    for r in scope("pdftex", KERNELS[0][2], text):
+        if r.get("package") == "document" and key in r["name"] and 4 <= r["line"] < 4 + len(uses):
+            rx = re.compile("[A-Za-z@]+".join(map(re.escape, r["name"].split(key))))
+            out.append((rx, r, uses[r["line"] - 4].replace("KEY", "⟨key⟩")))
+    shapes = sorted({re.sub(r"[A-Za-z]+$", key, n) for n in names if re.fullmatch(r"\\[A-Za-z]@[A-Za-z]+", n)})
+    for u in KEYED:
+        body = "".join(f"\\@ifundefined{{{x[1:]}}}{{\\count@=0 }}{{\\count@=1 }}\n%\\satex@assert{{\\count@ = 1}}\n" for x in shapes)
+        for d in probe("\\documentclass{article}\n\\makeatletter\n" + u.replace("KEY", key) + "\n" + body + "\\begin{document}\n\\end{document}\n"):
+            if d.get("code") == "assert-holds" and d["line"] >= 5 and d["line"] % 2 == 1:
+                x = shapes[(d["line"] - 5) // 2]
+                out.append((re.compile("[A-Za-z]+".join(map(re.escape, x.split(key)))), {"tag": "macro"}, u.replace("KEY", "⟨key⟩")))
+    return out
+
+
+def source_fallback():
+    """name -> card for a name no run defines, from the installed sources of what the text around it names: the files of
+    the packages and formats its page mentions (`word.sty`, `.ltx`, `.cls`), the files it cites, `latex.ltx`, and satex's own
+    sources. A definer there gives its place. A name only ever a macro's delimiter in `latex.ltx` says so. A string in satex's sources says that."""
+    pages = [ROOT / "README.md", ROOT / "SEMANTICS.md", *(ROOT / "doc/wiki").glob("*.md")]
+    texts = {p: p.read_text() for p in pages}
+    kernel = Path(subprocess.run(["kpsewhich", "latex.ltx"], capture_output=True, text=True).stdout.strip())
+    seen = {}
+
+    def defined(path):
+        if path not in seen:
+            text = path.read_text(errors="replace")
+            seen[path] = {}
+            for n, k, at in sem.definitions(text):
+                seen[path].setdefault(n, (k, text.count("\n", 0, at) + 1))
+        return seen[path]
+
+    def card(name):
+        around = [t for t in texts.values() if re.search(re.escape(name) + r"(?![\w@])", t)]
+        words = sorted({w for t in around for w in re.findall(r"[a-z][a-z0-9-]{2,}", t)})
+        found = [Path(l) for i in range(0, len(words), 400) for ext in ("sty", "ltx", "cls")
+                 for l in subprocess.run(["kpsewhich", *(f"{w}.{ext}" for w in words[i:i + 400])], capture_output=True, text=True).stdout.split()]
+        cited = [ROOT / m for t in around for m in re.findall(r"[\w/.-]+\.tex", t) if (ROOT / m).is_file()]
+        for path in [kernel]:
+            if (hit := defined(path).get(name)):
+                at = f"{path.relative_to(ROOT) if path.is_relative_to(ROOT) else path.name}:{hit[1]}"
+                return {"k": hit[0], "at": at, "doc": f"No documentation found. Defined at `{at}`."}
+        text = kernel.read_text(errors="replace")
+        use = re.search(r"#\d" + re.escape(name) + r"(?![\w@])", text)
+        if use and not re.search(r"\\(?:[gex]?def|let)\s*" + re.escape(name) + r"(?![\w@])", text):
+            line = text.count("\n", 0, use.start()) + 1
+            return {"k": "delimiter", "at": f"latex.ltx:{line}", "doc": f"A delimiter: the kernel ends macro parameters with it (`latex.ltx:{line}`) and never defines it."}
+        for path in [*found, *cited]:
+            if (hit := defined(path).get(name)):
+                at = f"{path.relative_to(ROOT) if path.is_relative_to(ROOT) else path.name}:{hit[1]}"
+                return {"k": hit[0], "at": at, "doc": f"No documentation found. Defined at `{at}`."}
+        write = re.search(r"\\string" + re.escape(name) + r"(?![\w@])", text)
+        if write:
+            line = text.count("\n", 0, write.start()) + 1
+            return {"k": "file entry", "at": f"latex.ltx:{line}", "doc": f"Not a macro: the kernel writes `{name}` into a file (`latex.ltx:{line}`) and never defines it. The program that reads the file does."}
+        for path in sorted((ROOT / "src").rglob("*.rs")):
+            src = path.read_text()
+            if (at := src.find('"' + name.replace("\\", "\\\\") + '"')) >= 0:
+                line = src.count("\n", 0, at) + 1
+                above = [l.strip().removeprefix("///").strip() for l in src[:at].splitlines()[:-1][-8:] if l.strip().startswith("///")]
+                return {"k": "marker", "at": f"{path.relative_to(ROOT)}:{line}", "doc": f"A marker satex looks for in a source, never run: {' '.join(above)}"}
+        return None
+    return card
+
+
+def mine(satex, work, names):
+    """The manuals' records for the packages `names`, mined from the installation (a `satex query`'s `docs` each)."""
+    probes, flags = work / "manuals", KERNELS[0][2]
+    probes.mkdir(exist_ok=True)
+    env = dict(os.environ, SATEX_CACHE=str(work / "cache-install"))
+
+    def mined(name):
+        doc = probe_doc(probes, name)
+        request = json.dumps({"file": doc.name, "queries": [{"type": "docs"}]})
+        done = proc([str(satex), *flags, "query", "--request", "-", "-f", doc.name], input=request, cwd=probes, env=env,
+                              capture_output=True, text=True)
+        try:
+            return json.loads(done.stdout)[0]["records"]
+        except (json.JSONDecodeError, IndexError, KeyError):
+            return []
+    # beside the bundle's own steps: half the workers each
+    return memo(work, "manuals", [BINARY, names], lambda: [r for rs in parallel("[4/4] package manuals", names, mined) for r in rs])
+
+
+def manuals(satex, work, tables, packages, offered, records):
+    """What the bundled packages' manuals say about their commands (`satex query`'s `docs`), mined here
+    because the bundle has no documented sources: a `.satex-docs` file in each package's documentation
+    directory, in the bundle (a kernel's or a package's) that holds the file it was mined for. `records`
+    were mined for the `offered` packages, the rest are mined now. Returns the stems of the packages with a manual."""
+    dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
+    # the installation itself, not the bundle's tree: its packages' documented sources are beside them
+    rest = sorted({name for _, name, _, _ in packages if not name.endswith(".cls")} - set(offered))
+    records = records + (mine(satex, work, rest) if rest else [])
+    by_file = {}
+    for r in records:
+        by_file.setdefault(str(Path(r.pop("package_file")).resolve()), {}).setdefault(r.pop("dir"), {})[r["name"]] = r
+    documented = set()
+    for files in [*tables, *(f for _, _, f, _ in packages)]:
+        for held in [p for p in files if p.startswith("/texmf.bundle/") and p.endswith((".sty", ".cls"))]:
+            native = str(dist / held.removeprefix("/texmf.bundle/"))
+            for d, rows in by_file.get(native, {}).items():
+                if Path(d).resolve().is_relative_to(dist):
+                    target = f"/texmf.bundle/{Path(d).resolve().relative_to(dist).as_posix()}/{Path(native).stem}.satex-docs"
+                    files[target] = json.dumps(list(rows.values()), ensure_ascii=False).encode()
+                    documented.add(Path(native).stem)
+    return documented
 
 
 def package_names():
@@ -573,7 +1059,7 @@ def explained(satex, project, env, name, names, dist):
 
 
 def explained_run(satex, project, env, name, names, dist):
-    done = subprocess.run([str(satex), "explain", *sorted(names), "--format", "json", "-f", name], cwd=project, env=env,
+    done = proc([str(satex), "explain", *sorted(names), "--format", "json", "-f", name], cwd=project, env=env,
                           capture_output=True, text=True)
     by = {}
     for r in json.loads(done.stdout or "[]"):
@@ -598,73 +1084,130 @@ def findings(satex, project, env, name, source):
 
 
 def findings_run(satex, project, env, name, source):
-    lsp = json.loads(subprocess.run([str(satex), "lint", "--format", "lsp", "-f", name], cwd=project, env=env,
+    lsp = json.loads(proc([str(satex), "lint", "--format", "lsp", "-f", name], cwd=project, env=env,
                                     capture_output=True, text=True).stdout or "[]")
-    rows = json.loads(subprocess.run([str(satex), "lint", "--format", "json", "-f", name], cwd=project, env=env,
+    rows = json.loads(proc([str(satex), "lint", "--format", "json", "-f", name], cwd=project, env=env,
                                      capture_output=True, text=True).stdout or "[]")
     lines = source.splitlines()
     text = lambda p: lines[p["line"] - 1] if p["line"] - 1 < len(lines) else ""
     out = []
     for d in (d for f in lsp for d in f.get("diagnostics", [])):
         start, end = d["range"]["start"], d["range"]["end"]
-        row = next((r for r in rows if r["code"] == d["code"] and r["message"] == d["message"]), {})
+        # the language server's code is the rule's number, its name in `data.rule`
+        code = (d.get("data") or {}).get("rule") or d["code"]
+        row = next((r for r in rows if r["code"] == code and r["message"] == d["message"]), {})
         edits = [{"from": text(e["start"])[e["start"]["col"] - 1:e["end"]["col"] - 1] if e["start"]["line"] == e["end"]["line"] else "",
                   "to": e["replacement"]} for e in row.get("edits", []) if e.get("path", name) == name]
         sev = ["", "error", "warning", "info", "info"][d.get("severity", 3)]
         data = d.get("data", {})
-        out.append({"code": d["code"], "message": d["message"], "severity": sev, "rank": ["error", "warning", "info"].index(sev),
+        out.append({"code": code, "number": d["code"], "message": d["message"], "severity": sev, "rank": ["error", "warning", "info"].index(sev),
                     "start": (start["line"], start["character"]), "end": (end["line"], end["character"]),
                     "fix": data.get("fix", ""), "applicability": data.get("applicability", "unsafe"), "edits": edits,
-                    "typo": bool(TYPOGRAPHIC.search(d["code"])) and start["line"] == end["line"] and end["character"] - start["character"] <= 3})
+                    "typo": bool(TYPOGRAPHIC.search(code)) and start["line"] == end["line"] and end["character"] - start["character"] <= 3})
     return sorted(out, key=lambda d: (d["rank"], d["start"]))
 
 
+def typeset(satex, project, env, name, source):
+    """The paragraphs the example sets (`satex query typeset`), as the playground's Typeset panel shows them."""
+    def make():
+        # a plain TeX file (its magic comment names `tex`) runs on the plain kernel, as the playground runs it
+        plain = re.search(r"^%\s*!T[eE]X\s+(?:TS-)?program\s*=\s*tex\b", source, re.M)
+        flags = next(f for k, _, f in KERNELS if k == "plain") if plain else []
+        done = proc([str(satex), *flags, "query", "typeset", "--format", "json", "-f", name], cwd=project, env=env, capture_output=True, text=True)
+        try:
+            rows = json.loads(done.stdout or "[]")
+        except json.JSONDecodeError:
+            return []
+        keep = ("line", "marked", "detail", "keys", "fonts", "align", "ligatures", "heading", "cut")
+        # the project's own files: an \\input chapter's text too, not a package's
+        own = lambda path: not Path(path).is_absolute() or Path(path).resolve().is_relative_to(project.resolve())
+        return [{k: r[k] for k in keep if k in r} for r in rows if r.get("kind") == "paragraph" and own(str(r.get("path", "")))]
+    return memo(work_of(env), "typeset", [BINARY, name, source, tree_digest(project), inspect.getsource(typeset)], make)
+
+
 def examples(satex, work, project):
-    """Each example as a tab, analyzed at build time: its findings underlined in the source
-    and listed beside it, and what `satex explain` says of every command it uses, shown on
-    hover. The panel starts with the command `commands()` names, else the example's own."""
+    """Each example as a tab, analyzed at build time: its findings underlined in the source with
+    a marker at the line's end, what it typesets beside it, and what `satex explain` says of every
+    command it uses, shown on hover. A last tab is the reader's own text, analyzed in the page.
+    Also the showcase's live windows as they stand before the page's engine starts: name -> (source HTML, data)."""
     env = dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))
     dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
 
-    def one(job):
-        i, name = job
-        source = (EXAMPLES / name).read_text()
+    def rendered(project, name, source):
+        """The source as HTML, its findings underlined and marked at the line's end, and the data site.js reads."""
         lints = findings(satex, project, env, name, source)
         used = {m.group() for line in source.splitlines() for m in TOKEN.finditer(line) if m.lastgroup == "cmd"}
         cs = explained(satex, project, env, name, used, dist)
         called = {x for rs in cs.values() for r in rs for x in r.get("expands", []) + [r.get("by")] if x and x not in cs}
         cs |= explained(satex, project, env, name, called, dist)
-        argv = commands()[name].split()
-        order = [m.group() for line in source.splitlines() for m in TOKEN.finditer(line) if m.group() in cs and m.group() != "\\documentclass"]
-        own = [n for n in order if any(r.get("path") == name for r in cs[n])]
-        initial = argv[1] if argv[0] == "explain" and len(argv) > 1 else (own or order or [""])[0]
-        data = json.dumps({"cs": cs, "lints": lints, "initial": initial}).replace("</", "<\\/")
-        lines = "\n".join(f'<span class="ln" data-l="{n + 1}">{tex_html(l, n, lints)}</span>' for n, l in enumerate(source.splitlines()))
-        items = "".join(f'<li class="f-{d["severity"]}" data-k="{k}"><span class="sev sev-{d["severity"]}">{d["severity"]}</span> '
-                        f'<b>{d["start"][0] + 1}:{d["start"][1] + 1}</b> <code>{html.escape(d["code"])}</code> {re.sub(r"`([^`]+)`", r"<code>\1</code>", html.escape(d["message"]))}</li>'
-                        for k, d in enumerate(lints))
-        found = f'<h4>Findings <b>{len(lints)}</b></h4><ul class="diagnostics">{items}</ul>' if lints else '<h4>Findings</h4><p class="muted">none</p>'
+        data = json.dumps({"name": name, "source": source, "cs": cs, "lints": lints, "ts": typeset(satex, project, env, name, source)}).replace("</", "<\\/")
+        # a finding's marker at the end of the line it starts on: its severity and rule
+        # a finding's marker at the end of its line: its rule's number, the name on hover; one rule met on
+        # lines in a row is one marker on the first, with how often
+        marks = {}
+        for k, d in enumerate(lints):
+            n = d["start"][0]
+            run = next((m for m in marks.get(n - 1, []) if m[0] == d["code"]), None)
+            if run:
+                run[1].append(k)
+                marks.setdefault(n, []).append(run)
+            else:
+                marks.setdefault(n, []).append([d["code"], [k], d, n])
+        def ends(n):
+            out = []
+            for code, ks, d, first in marks.get(n, []):
+                if first != n:
+                    continue
+                times = f" ×{len(ks)}" if len(ks) > 1 else ""
+                out.append(f'<span class="eol f-{d["severity"]}" data-lint="{" ".join(map(str, ks))}" title="{html.escape(code)}{times}">{html.escape(d.get("number") or code)}{times}</span>')
+            return "".join(out)
+        return "\n".join(f'<span class="ln" data-l="{n + 1}">{tex_html(l, n, lints)}{ends(n)}</span>' for n, l in enumerate(source.splitlines())), data
+
+    def one(job):
+        i, name = job
+        lines, data = rendered(project, name, (EXAMPLES / name).read_text())
         sel = "true" if i == 0 else "false"
         tab = (f'<button role="tab" aria-selected="{sel}" aria-controls="ex-{i}" id="ex-tab-{i}">{html.escape(name)}</button>')
         return tab, (
             f'<figure class="example" role="tabpanel" id="ex-{i}" aria-labelledby="ex-tab-{i}"{"" if i == 0 else " hidden"}>\n'
-            f'<figcaption><span class="muted">Hover a command to explain it, an underline to see its finding.</span>'
-            f'<a class="button ghost small" href="play/index.html#{name}">open in the playground →</a></figcaption>\n'
+            f'<figcaption><span class="muted live-status" aria-live="polite">Click into the source to edit it.</span>'
+            f'<span class="ex-acts"><button type="button" class="ghost small ex-reset" hidden>reset</button>'
+            f'<a class="button ghost small" href="play/index.html#{name}">open in the playground →</a></span></figcaption>\n'
             f'<pre class="src"><code>{lines}</code></pre>\n'
-            f'<div class="ex-side"><div class="ex-findings">{found}</div>'
-            f'<div class="ex-explain"><h4>Explain <code class="xname"></code></h4><div class="xbody"><p class="muted">Hover a command.</p></div></div></div>\n'
+            f'<div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div>\n'
             f'<script type="application/json" class="ex-data">{data}</script></figure>')
-    tabs, panels = zip(*parallel("the examples", list(enumerate(roots(EXAMPLES))), one))
-    return f'<div class="tabs" role="tablist">{"".join(tabs)}</div>' + "\n".join(panels)
+    shown = [l.strip() for l in (EXAMPLES / "landing.txt").read_text().splitlines() if l.strip() and not l.startswith("#")]
+    jobs = list(enumerate(n for n in shown if n in roots(EXAMPLES)))
+    tabs, panels = zip(*parallel("[4/4] examples", jobs, one))
+    own = len(jobs)
+    tab = f'<button role="tab" aria-selected="false" aria-controls="ex-{own}" id="ex-tab-{own}">your own</button>'
+    panel = (f'<figure class="example live" role="tabpanel" id="ex-{own}" aria-labelledby="ex-tab-{own}" hidden>\n'
+             f'<figcaption><span class="muted live-status" aria-live="polite">Type LaTeX, even a tikzpicture: SaTeX reads it again as you type, in this page (about 10&nbsp;MB, loaded once).</span>'
+             f'<a class="button ghost small" href="play/index.html">open the playground →</a></figcaption>\n'
+             f'<div class="src live-src"></div>\n<div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div></figure>')
+    def live(s):
+        # its own directory: the text is the showcase's, no example's
+        project = work / "showcase-live"
+        project.mkdir(exist_ok=True)
+        (project / s["file"]).write_text(s["text"])
+        return s["name"], rendered(project, s["file"], s["text"])
+    spec = [s for s in json.loads((SITE / "showcase/shots.json").read_text())["shots"] if s.get("live")]
+    return f'<div class="tabs" role="tablist">{"".join(tabs)}{tab}</div>' + "\n".join([*panels, panel]), dict(map(live, spec))
 
 
 def playground(satex, wasm, work, out):
     offered = package_names()
+    # mining the manuals needs no bundle: it runs beside the caches and the rest
+    side = concurrent.futures.ThreadPoolExecutor(1)
+    mining = side.submit(mine, satex, work, sorted(n for n in offered if not n.endswith(".cls")))
     sources_ = [(d.name, d.read_bytes()) for d in sources()] + [(c, (d.parent / c).read_bytes()) for d in sources() for c in projects()[d.name]]
     tables, packages, samples, project = memo(
         work, "bundle", [KEY, LISTINGS.get("@stamp"), offered, sources_, tree_digest(ROOT / "samples"), (SITE / "playground.yaml").read_text(),
                          inspect.getsource(bundle)],
         lambda: bundle(satex, work))
+    PREVIEWS.update(json.loads(tables[0].get("/cache/previews.json") or b"{}"))
+    documented = manuals(satex, work, tables, packages, offered, mining.result())
+    side.shutdown()
     # `cargo playground` builds the wasm meanwhile and names it done here.
     ready = os.environ.get("SATEX_WASM_READY")
     while ready and not Path(ready).exists():
@@ -676,23 +1219,31 @@ def playground(satex, wasm, work, out):
     for (kernel, label, flags), files in zip(KERNELS, tables):
         packed = gzip.compress(b"".join(files.values()), 9, mtime=0)
         kernels.append({"id": kernel, "label": label, "args": flags, "size": len(packed),
+                        **({"badge": EXPERIMENTAL[kernel][0], "note": EXPERIMENTAL[kernel][1]} if kernel in EXPERIMENTAL else {}),
                         "bundle": emit_local(out, f"play/{kernel}.bin.gz", packed),
                         "files": [[path, len(data)] for path, data in files.items()]})
+    for engine, label, uses in ALIASES:
+        base = next(k for k in kernels if k["id"] == uses)
+        kernels.append({**base, "engine": engine, "label": label,
+                        **({"badge": EXPERIMENTAL[engine][0], "note": EXPERIMENTAL[engine][1]} if engine in EXPERIMENTAL else {})})
     extra = []
     for kernel, name, files, needs in packages:
         packed = gzip.compress(b"".join(files.values()), 9, mtime=0)
         extra.append({"id": f"{kernel}/{name}", "name": name.removesuffix(".cls"), "kernel": kernel, "needs": needs, "label": name,
                       "size": len(packed), "bundle": emit_local(out, f"play/pkg/{kernel}-{name}.bin.gz", packed),
+                      "manual": name.removesuffix(".cls") in documented,
                       "files": [[path, len(data)] for path, data in files.items()]})
     def facts():
         """What satex says about itself: its queries, which of them name their file, its rules, its completions."""
-        queries = [line.split()[0] for line in run(str(satex), "query", "--list").splitlines()[1:] if line.strip()]
+        listed = json.loads(run(str(satex), "query", "--list", "--format", "json"))
+        queries = [q["name"] for q in listed]
+        about = {q["name"]: q["about"] for q in listed}
         env = dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))
         sample = (EXAMPLES / roots(EXAMPLES)[0]).name
 
         def per_file(query):
             """Whether the query's rows name their file: the playground then shows the open file's rows only."""
-            done = subprocess.run([str(satex), "query", query, "--filter", f"file={sample}", "--format", "json", "-f", sample],
+            done = proc([str(satex), "query", query, "--filter", f"file={sample}", "--format", "json", "-f", sample],
                                   cwd=project, env=env, capture_output=True, text=True)
             try:
                 return done.returncode == 0 and len(json.loads(done.stdout or "[]")) > 0
@@ -700,31 +1251,335 @@ def playground(satex, wasm, work, out):
                 return False
         rules = {r["code"]: {**r, **json.loads(run(str(satex), "lint", "--explain", r["code"], "--format", "json"))}
                  for r in json.loads(run(str(satex), "lint", "--rules", "--format", "json"))}
-        return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json"))
-    queries, filtered, rules, completion = memo(work, "facts", [BINARY, tree_digest(project)], facts)
+        # each example's type plugins: where a plugin shows on it (`places`) makes it the plugin's demo
+        plugged = {ex: json.loads(run(str(satex), "query", "type-plugins", "--format", "json", "-f", ex, cwd=project, env=env)) for ex in roots(EXAMPLES)}
+        return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json")), about, plugged
+    queries, filtered, rules, completion, query_about, plugged = memo(work, "facts", [BINARY, tree_digest(project), inspect.getsource(facts)], facts)
+    table, files = memo(work, "symbols", [BINARY, ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(emoji), inspect.getsource(symbols), inspect.getsource(comprehensive), inspect.getsource(categories), GLYPH],
+                        lambda: symbols(satex, project, dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))))
+    # every rule's card on any page (site.js), from the same records the playground's findings show
+    (out / "rules.json").write_text(json.dumps(rules))
+    tiles = plugin_tiles(plugged)
+    (out / "type-plugins.json").write_text(json.dumps(tiles))
     manifest = {
         "js": emit_local(out, "play/satex.js", (wasm / "satex.js").read_bytes()),
         "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
-        "kernels": kernels, "packages": extra, "unavailable": UNAVAILABLE, "queries": queries, "filtered": filtered, "rules": rules,
+        "kernels": kernels, "packages": extra, "preload": first_download(), "unavailable": UNAVAILABLE, "queries": queries, "queryAbout": query_about, "filtered": filtered, "rules": rules,
         "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
-        "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(),
+        "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(), "plugins": plugins(), "typePlugins": tiles,
+        "symbols": emit(out, "play/symbols.json", json.dumps({**table, "glyphs": emit(out, "play/glyphs.bin.gz", gzip.compress(table["glyphs"], 9, mtime=0)),
+                                                                "fonts": [emit(out, f"play/fonts/{f.name}", f.read_bytes()) for f in files]}).encode()),
+        "schema": emit(out, "play/satex.schema.json", (ROOT / "satex.schema.json").read_bytes()),
     }
     sizes = {k["id"]: f"{k['size'] / 2**20:.1f} MiB gz, {len(k['files'])} files" for k in kernels}
     print(f"playground: wasm {len(wasm_bytes) / 2**20:.1f} MiB, {sizes}; {len(extra)} package bundles on demand, "
           f"{sum(p['size'] for p in extra) / 2**20:.1f} MiB gz in all", file=sys.stderr)
-    return manifest, examples(satex, work, project)
+    return manifest, *examples(satex, work, project)
 
 
-# ---------------------------------------------------------------- site
+# Icon packages whose own files map each command to a character of their own font.
+ICON_PACKAGES = ["fontawesome", "fontawesome5", "fontawesome6", "fontawesome7", "academicons"]
+
+
+def icons(dist, package):
+    r"""[command, codepoint, font file, icon name] of each icon `package` defines, read off its own files: fontawesome5's
+    and later's `\__fontawesome_def_icon:nnnnn`, else a `\def\faX{\faicon{name}}` with the name's `\symbol{"…}`.
+    The font is the package's own OpenType or TrueType file, the brands one for a brands icon."""
+    sty = run("kpsewhich", f"{package}.sty").strip()
+    if not sty:
+        return []
+    texts = "\n".join(p.read_text(errors="replace") for p in Path(sty).parent.iterdir() if p.suffix in (".sty", ".def", ".tex"))
+    fonts = sorted(p for d in ("opentype", "truetype") for p in (dist / "fonts" / d / "public" / package).glob("*.[ot]tf"))
+    if not fonts:
+        return []
+    def font(part):
+        brands = part.startswith("brands")
+        # a brand's one face, else the solid one: the package's default style
+        return next((f for f in fonts if ("Brands" in f.name) == brands and (brands or "Solid" in f.name)), fonts[0])
+    out = [[cmd, int(code, 16), font(part), name] for cmd, name, part, code in
+           re.findall(r'\\__fontawesome_def_icon:nnnnn\{(\\\w+)\}\{([\w-]+)\}\{(\w+)\}\{\d+\}\{"([0-9A-Fa-f]+)\}', texts)]
+    codes = dict(re.findall(r'\\csname \w+@([\w-]+)\\endcsname\{+(?:\\\w+)?\\symbol\{"([0-9A-Fa-f]+)\}', texts))
+    out += [[cmd, int(codes[name], 16), fonts[0], name] for cmd, name in re.findall(r'\\def(\\\w+)\{+\\\w+icon\{([\w-]+)\}\}', texts) if name in codes]
+    return out
+
+
+def emoji(dist):
+    r"""[codepoint, name, description] of each emoji of the `emoji` package that is one character (a variation selector aside):
+    `\emoji{name}` sets it, drawn here in the monochrome Noto Emoji font. Empty without the package or the font."""
+    table, font = run("kpsewhich", "emoji-table.def").strip(), dist / "fonts/truetype/google/noto-emoji/NotoEmoji-Regular.ttf"
+    if not table or not font.is_file():
+        return []
+    found = re.findall(r"\\__emoji_def:nnnnn \{([^}]*)\} \{([^}]*)\} \{([^}]*)\} \{([^}]*)\}", Path(table).read_text(errors="replace"))
+    out = []
+    for chars, name, aliases, about in found:
+        codes = [int(c, 16) for c in re.findall(r"\^+([0-9a-fA-F]+)", chars) if int(c, 16) != 0xFE0F]
+        if len(codes) == 1:
+            out.append([codes[0], name, " ".join([about.replace("~", " ").lower(), *re.split(r",\s*", aliases)]).strip()])
+    return out
+
+
+def plugins():
+    """satex's plugins, each folder of src/plugins with the first sentence of its module docs: the
+    playground's Settings lists them with the keys each one reads."""
+    out = []
+    for path in sorted((ROOT / "src/plugins").iterdir()):
+        source = path / "mod.rs" if path.is_dir() else path
+        if source.suffix != ".rs" or source.stem == "mod" and not path.is_dir() or not source.is_file():
+            continue
+        doc = " ".join(l.removeprefix("//!").strip() for l in source.read_text().splitlines() if l.startswith("//!"))
+        out.append({"name": path.stem, "about": re.split(r"(?<=\.)\s", doc, maxsplit=1)[0] if doc else ""})
+    return out
+
+
+def plugin_tiles(plugged):
+    """The type plugins' tiles (site.js `pluginTiles`): `satex query type-plugins` by category, each plugin with
+    its switch and default from the schema, its section of the wiki page and, as its demo, the example whose
+    run gives it the most places."""
+    records = next(iter(plugged.values()), [])
+    text = (ROOT / "doc/wiki/type-plugins.md").read_text()
+    heads = [(m.start(), m[1].strip()) for m in re.finditer(r"^#{2,3} (.+)$", text, re.M)]
+    spans = [(start, end, head) for (start, head), (end, _) in zip(heads, heads[1:] + [(len(text), "")])]
+    slug = lambda h: re.sub(r"\s", "-", re.sub(r"[^\w\s-]", "", h.lower()))
+    def docs(name):
+        head = next((h for _, _, h in spans if h == name), None) or next((h for a, b, h in spans if f"`{name}`" in text[a:b]), None)
+        return "wiki/type-plugins.html" + (f"#{slug(head)}" if head else "")
+    schema = json.loads((ROOT / "satex.schema.json").read_text())["properties"]
+    def switch(name):
+        key = f"type_plugins.{name}" if name in schema["type_plugins"]["properties"] else name
+        node = {"properties": schema}
+        for part in key.split("."):
+            node = node.get("properties", {}).get(part, {})
+        return f"{key}.enabled", node.get("properties", {}).get("enabled", {}).get("default", True)
+    def demo(name):
+        places = {ex: next((r.get("places", 0) for r in rs if r["name"] == name), 0) for ex, rs in plugged.items()}
+        best = max(places, key=places.get, default=None)
+        return best if best and places[best] else None
+    out = []
+    for r in records:
+        if not out or out[-1]["name"] != r["category"]:
+            out.append({"name": r["category"], "about": r.get("purpose") or "", "plugins": []})
+        key, default = switch(r["name"])
+        out[-1]["plugins"].append({"name": r["name"], "about": r["about"], "types": r["types"], "features": r["features"], "works_in": r.get("works_in", {}),
+                                   "key": key, "default": default, "docs": docs(r["name"]), "demo": demo(r["name"])})
+    return out
+
+
+GLYPH = 32
+
+
+def comprehensive(dist):
+    r"""The Comprehensive LaTeX Symbol List's inventory, read off its typeset PDF, which shows every symbol
+    whatever font or package sets it: [command, package, kind, table title, glyph] of each row of its
+    tables, the glyph a bitmap, the bytes width and height then the pixels, 1 bit each (at most GLYPH wide) cut from the page's
+    cell left of the monospaced command. The tables' packages are those of the list of tables (`AMS` is
+    what the list's introduction says it is), none for the kernel's own. A package that is not installed
+    leaves its rows out; a command is kept with its arguments unless they are the examples `{A}`."""
+    pdf = dist / "doc/latex/comprehensive/symbols-a4.pdf"
+    source = dist / "doc/latex/comprehensive/source/symbols.tex"
+    if not pdf.is_file() or not shutil.which("pdftohtml") or not shutil.which("pdftoppm"):
+        return []
+    import io
+    import numpy
+    from PIL import Image
+    xml = run("pdftohtml", "-xml", "-i", "-stdout", str(pdf))
+    fonts = {i: re.sub(r"^\w+\+", "", name) for i, name in re.findall(r'<fontspec id="(\d+)"[^>]* family="([^"]+)"', xml)}
+    pages = []
+    for chunk in xml.split('<page number="')[1:]:
+        its = [{"top": int(t), "left": int(l), "w": int(w), "h": int(h), "font": fonts[f], "txt": html.unescape(re.sub(r"</?[a-z][^>]*>", "", x))}
+               for t, l, w, h, f, x in re.findall(r'<text top="(-?\d+)" left="(-?\d+)" width="(\d+)" height="(\d+)" font="(\d+)">(.*?)</text>', chunk)]
+        pages.append((int(chunk[:chunk.index('"')]), its))
+    size = re.search(r'<page number="1" position="absolute" top="0" left="0" height="(\d+)" width="(\d+)"', xml)
+    height, width = int(size[1]), int(size[2])
+    ams = re.search(r"means to use the \\AMS\{\} packages, viz\.\\ \\pkgname\{(\w+)\}", source.read_text(errors="replace")) if source.is_file() else None
+    # the list of tables: each table's packages and title
+    toc = {}
+    for _, its in pages:
+        for it in its:
+            m = re.match(r"Table (\d+):", it["txt"])
+            if m and it["left"] < 140 and "SFRM" in it["font"]:
+                line = [x for x in its if abs(x["top"] - it["top"]) <= 3 and 150 < x["left"] < 770]
+                pkgs = [x["txt"].strip() for x in line if "SFRM" not in x["font"] and re.fullmatch(r"[\w-]+", x["txt"].strip())]
+                title = " ".join([it["txt"][len(m[0]):]] + [x["txt"] for x in line if "SFRM" in x["font"]])
+                title = re.sub(r"(\s*\.)+\s*\d*\s*$", "", re.sub(r"L A TEX 2\S*", "LaTeX2e", title)).strip()
+                toc.setdefault(int(m[1]), ([ams[1] if p == "AMS" and ams else p for p in pkgs], title))
+    wanted = sorted({p for ps, _ in toc.values() for p in ps})
+    have = {Path(p).stem for p in subprocess.run(["kpsewhich", *[f"{w}.sty" for w in wanted]], capture_output=True, text=True).stdout.split()}
+    scale = 3
+
+    def page(number, its, chapter, table):
+        """The rows of one page as [table, kind, command, example, glyph], and the table its end is in."""
+        caps = sorted((it["top"], int(its[i + 1]["txt"].split(":")[0])) for i, it in enumerate(its[:-1])
+                      if it["txt"] == "Table" and "CSC" in it["font"] and re.match(r"\d+:", its[i + 1]["txt"]))
+        cells = [it for it in its if re.search(r"TT|Mono", it["font"]) and it["top"] > 130]
+        for it in its:
+            m = re.fullmatch(r"Chapter (\d+)\.", it["txt"])
+            if m and it["top"] < 130:
+                chapter = int(m[1])
+        out, shot = [], None
+        for c in cells:
+            tab = table
+            for top, n in caps:
+                if c["top"] >= top - 2:
+                    tab = n
+            m = re.match(r"\\(?:[A-Za-z@]+|.)((?:\{[^{}]*\}|\[[^\]]*\])*)", c["txt"])
+            name = (m[0] if m[1] not in ("", "{A}", "{}") else m[0][:len(m[0]) - len(m[1])]) if m else c["txt"] if len(c["txt"]) <= 3 and c["txt"].strip() else None
+            if not name or tab not in toc or chapter < 2:
+                continue
+            # prose mentioning a command is no table row: a word right before it
+            if any(abs(d["top"] - c["top"]) < 8 and 0 <= c["left"] - d["left"] - d["w"] < 5 and re.search(r"[A-Za-z]{3}", d["txt"]) and d not in cells for d in its):
+                continue
+            column = sorted((d for d in cells if abs(d["left"] - c["left"]) <= 6), key=lambda d: d["top"])
+            i = column.index(c)
+            mid = lambda a, b: (a["top"] + a["h"] / 2 + b["top"] + b["h"] / 2) / 2
+            y0 = mid(column[i - 1], c) if i else c["top"] - 40
+            y1 = mid(c, column[i + 1]) if i + 1 < len(column) else c["top"] + c["h"] + 40
+            row = [d["left"] + d["w"] for d in cells if d is not c and d["left"] + d["w"] <= c["left"] + 2 and d["top"] < y1 and d["top"] + d["h"] > y0]
+            x0 = max(row, default=c["left"] - 260)
+            if shot is None:
+                shot = numpy.asarray(Image.open(io.BytesIO(subprocess.run(
+                    ["pdftoppm", "-gray", "-f", str(number), "-l", str(number), "-scale-to-x", str(width * scale), "-scale-to-y", str(height * scale), str(pdf)],
+                    capture_output=True).stdout)).convert("L"))
+            cell = shot[int(max(y0, 0) * scale):int(y1 * scale), int(max(x0, 0) * scale):int((c["left"] - 3) * scale)]
+            # any colour off the page's white is ink: a flag's yellow stripe as much as its black
+            ink = cell < 240
+            cols = numpy.flatnonzero(ink.any(0))
+            if not len(cols):
+                continue
+            # the leftmost piece of ink: a symbol, not the second column of `\Big` versions or a description
+            end = next((k for k in range(1, len(cols)) if cols[k] - cols[k - 1] > 9 * scale), len(cols))
+            ink = ink[:, cols[0]:cols[end - 1] + 1]
+            rows = numpy.flatnonzero(ink.any(1))
+            if ink.sum() < 4:
+                continue
+            ink = ink[rows[0]:rows[-1] + 1]
+            k = GLYPH / max(ink.shape)
+            img = Image.fromarray((ink * 255).astype("uint8")).resize((max(1, round(ink.shape[1] * k)), max(1, round(ink.shape[0] * k))), Image.LANCZOS)
+            mask = numpy.asarray(img) > 90
+            # a sliver or a speck is a cut that missed the symbol: no glyph beats a blank one
+            if mask.sum() < 12 or (min(mask.shape) <= 2 and mask.sum() < max(mask.shape)):
+                continue
+            out.append([tab, ("text", "math")[chapter == 3] if chapter in (2, 3) else "other", name, c["txt"],
+                        bytes(mask.shape[::-1]) + numpy.packbits(mask).tobytes()])
+        return out, (caps[-1][1] if caps else table), chapter
+
+    state, found = (None, 0), []
+    for number, its in pages:
+        if number >= 14:
+            out, *state = page(number, its, state[1], state[0])
+            found += out
+    seen, result = set(), []
+    for tab, kind, name, example, glyph in found:
+        pkgs, title = toc[tab]
+        for pkg in [p for p in pkgs if p in have] or ([] if pkgs else ["kernel"]):
+            if (name, pkg) not in seen:
+                seen.add((name, pkg))
+                result.append([name, pkg, kind, title, glyph])
+    return result
+
+
+def categories(listing):
+    """The symbol list's table titles as categories, without the packages they name (`lilyglyphs Named
+    Noteheads`: Named Noteheads): the titles, and each name's category as an index into them, from the first table showing it."""
+    pkgs = {pkg for _, pkg, *_ in listing}
+    # a package's name leads in lowercase (`lilyglyphs Clefs`) or stands between slashes
+    clean = lambda t: re.sub(r"^(?:[a-z][\w-]*\s+)+", "", " ".join(w for w in t.split() if w not in pkgs and w != "/")).strip(" ,")
+    titles, kinds = [], {}
+    for name, _, _, title, _ in listing:
+        t = clean(title)
+        if t and name not in kinds:
+            if t not in titles:
+                titles.append(t)
+            kinds[name] = titles.index(t)
+    return titles, kinds
+
+
+def established(dist, packages):
+    """How much each of `packages` is relied on, 0 to 1: the log of how many files of the installation's
+    packages and classes load it, against the most loaded one."""
+    names, loads = set(packages), {}
+    pattern = re.compile(rb"\\(?:RequirePackage|usepackage)(?:\[[^\]]*\])?\{([^}]*)\}")
+    for path in (dist / "tex").rglob("*"):
+        if path.suffix in (".sty", ".cls") and path.is_file():
+            for group in set(pattern.findall(path.read_bytes())):
+                for name in group.decode(errors="replace").split(","):
+                    if name.strip() in names:
+                        loads[name.strip()] = loads.get(name.strip(), 0) + 1
+    top = math.log1p(max(loads.values(), default=1))
+    return {p: round(math.log1p(loads.get(p, 0)) / top, 2) for p in packages}
+
+
+def symbols(satex, project, env):
+    """The symbols the playground's drawing pad matches against, each drawn in the font that sets it:
+    unicode-math's table of the installation in unicode-math's default font, and the icon packages'
+    commands in their own fonts, then what the symbol list shows beside them. Rows are
+    `[codepoint, name, class, description, font, package]`; a font is an index into `fonts`, a package the
+    one to load for the name (`satex` `providers`, else the table's own package). A symbol no font here
+    sets has font -1 and a seventh field, its index into `glyphs`: the bitmaps (see `comprehensive`) one after the other."""
+    dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
+    fonts, rows = [], []
+    def font(path):
+        if path not in fonts:
+            fonts.append(path)
+        return fonts.index(path)
+    table = run("kpsewhich", "unicode-math-table.tex").strip()
+    xetex = run("kpsewhich", "unicode-math-xetex.sty").strip()
+    default = re.search(r"\\setmathfont\{([^}]+\.otf)\}", Path(xetex).read_text()) if xetex else None
+    math_font = default and run("kpsewhich", default[1]).strip()
+    if table and math_font:
+        found = re.findall(r'\\UnicodeMathSymbol\{"([0-9A-Fa-f]+)\}\{(\\[A-Za-z]+)\s*\}\{\\math(\w+)\}\{([^}]*)\}', Path(table).read_text())
+        math = [[int(c, 16), name, cls, about] for c, name, cls, about in found]
+        # the kernel's `\alpha` is math italic, as TeX sets a small Greek letter (`\mitalpha`), a capital
+        # `\Gamma` upright (`\mupGamma`)
+        names = {n for _, n, *_ in math}
+        italic = {n[4:]: c for c, n, cls, _ in math if n.startswith("\\mit") and cls == "alpha"}
+        math += [[italic.get(n[4:], c) if "small" in about else c, "\\" + n[4:], cls, about] for c, n, cls, about in list(math)
+                 if n.startswith("\\mup") and cls == "alpha" and "\\" + n[4:] not in names]
+        request = json.dumps({"file": SAMPLE, "queries": [{"type": "providers", "names": sorted({n for _, n, *_ in math})}]})
+        done = proc([str(satex), "query", "--request", "-", "-f", SAMPLE], input=request, cwd=project, env=env, capture_output=True, text=True)
+        try:
+            provider = {r["name"]: r["package"] for r in json.loads(done.stdout)[0]["records"]}
+        except (json.JSONDecodeError, IndexError, KeyError):
+            provider = {}
+        f = font(Path(math_font))
+        rows += [[c, name, cls, about, f, provider.get(name, "unicode-math")] for c, name, cls, about in math]
+        # the plain text characters, which no list of commands shows: `?` is typed as it is, the special ones as TeX spells them
+        spelled = {"#": r"\#", "$": r"\$", "%": r"\%", "&": r"\&", "_": r"\_", "{": r"\{", "}": r"\}", "~": r"\textasciitilde", "^": r"\textasciicircum", "\\": r"\textbackslash"}
+        rows += [[ord(c), spelled.get(c, c), "text", unicodedata.name(c).lower(), f, "kernel"] for c in map(chr, range(33, 127))]
+    for package in ICON_PACKAGES:
+        # the icon's own name (`skull-crossbones`) is what a search finds it by
+        rows += [[code, cmd, "icon", name.replace("-", " "), font(path), package] for cmd, code, path, name in icons(dist, package)]
+    # the emoji package's, a set of its own that the drawing pad leaves out unless asked (draw.js `DRAW.off`)
+    noto = dist / "fonts/truetype/google/noto-emoji/NotoEmoji-Regular.ttf"
+    rows += [[code, f"\\emoji{{{name}}}", "icon", about, font(noto), "emoji"] for code, name, about in emoji(dist)]
+    # the symbol list's rows: a command a font already sets only gains the packages the list gives it; the
+    # rest (text characters and commands, accents, other fonts' symbols) are drawn from the list's own page
+    known, taken, glyphs = {}, {(r[1], r[5]) for r in rows}, {}
+    for r in rows:
+        known.setdefault(r[1], r)
+    # a cell of these tables shows a sample (an accent on letters, `\arg` as a word), not a symbol to draw
+    sample = re.compile(r"(?<!Musical )Accents|Log-like|Alphabets")
+    listing = comprehensive(dist)
+    titles, kinds = categories(listing)
+    for name, pkg, kind, title, bitmap in listing:
+        if (name, pkg) in taken or sample.search(title):
+            continue
+        taken.add((name, pkg))
+        base = known.get(name)
+        rows.append([*base[:5], pkg] if base and base[4] >= 0 else [0, name, kind, title, -1, pkg, glyphs.setdefault(bitmap, len(glyphs))])
+    return {"fonts": [p.name for p in fonts], "rows": rows, "glyphs": b"".join(glyphs), "categories": titles, "kinds": kinds,
+            "weight": {**established(dist, sorted({r[5] for r in rows})), "kernel": 1, "unicode-math": 1}}, fonts
+
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--satex", type=Path, required=True, help="the native satex binary")
-    ap.add_argument("--wasm", type=Path, required=True, help="directory with the Emscripten satex.js and satex.wasm")
+    ap.add_argument("--wasm", type=Path, default=Path("."), help="directory with the Emscripten satex.js and satex.wasm")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--work", type=Path, help="scratch directory (default: OUT/../site-work)")
     ap.add_argument("--precompress", action="store_true",
                     help="write a .gz beside each compressible file, for a server that serves those as GitHub Pages compresses")
+    ap.add_argument("--no-minify", action="store_true", help="ship scripts, styles and pages as written (no source maps), for debugging")
+    ap.add_argument("--docs-only", action="store_true", help="only the documentation pages (the wiki, the semantics and the hover cards): no playground, home, draw or bench pages")
     ap.add_argument("--fresh", action="store_true", help="redo every satex run instead of reusing WORK/listings.json and WORK/memo")
     ap.add_argument("--keep-listings", action="store_true",
                     help="reuse the files each package was listed to read across satex builds (a development loop: "
@@ -734,21 +1589,22 @@ def main():
     # start more of them, so the process ends at once instead of unwinding the main thread only.
     for stop in (signal.SIGINT, signal.SIGTERM):
         signal.signal(stop, lambda number, _: os._exit(128 + number))
-    global BINARY, KEY, FRESH, SATEX, SITE, EXAMPLES
-    SATEX = args.satex.resolve()
-    BINARY, FRESH = digest(args.satex.resolve().read_bytes()), args.fresh
-    KEY = json.loads(subprocess.run([str(args.satex), "cache", "--format", "json"], capture_output=True, text=True).stdout or "{}").get("key") or BINARY
+    global MINIFY, SCRATCH, BINARY, KEY, FRESH, SATEX, SITE, EXAMPLES, LISTINGS_FILE
+    SATEX, MINIFY = args.satex.resolve(), not args.no_minify
+    BINARY, FRESH = binary_digest(args.satex.resolve()), args.fresh
+    KEY = BINARY if args.docs_only else json.loads(proc([str(args.satex), "cache", "--format", "json"], capture_output=True, text=True).stdout or "{}").get("key") or BINARY
     out, work = args.out.resolve(), (args.work or args.out.resolve().parent / "site-work").resolve()
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
     work.mkdir(parents=True, exist_ok=True)
+    SCRATCH = work
     # One state of the site's sources for the whole build: an edit made while it runs reaches the next one,
     # never half of this one (a page from after the edit with a script from before it).
     snapshot = work / "site-src"
     shutil.rmtree(snapshot, ignore_errors=True)
     shutil.copytree(SITE, snapshot, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     SITE, EXAMPLES = snapshot, snapshot / "examples"
-    listings = work / "listings.json"
+    listings = LISTINGS_FILE = work / "listings.json"
     stamp = installation_stamp() + ("" if args.keep_listings else ";" + KEY)
     if listings.exists() and not args.fresh:
         LISTINGS.update(json.loads(listings.read_text()))
@@ -766,10 +1622,29 @@ def main():
     assets |= {
         "css": emit(out, "style.css", (SITE / "style.css").read_bytes()),
         "sitejs": emit(out, "site.js", (SITE / "site.js").read_bytes()),
+        "clijs": emit(out, "cli.js", (SITE / "cli.js").read_bytes()),
+        "cmjs": emit(out, "codemirror.js", (SITE / "codemirror.js").read_bytes()),
         "playjs": emit(out, "play/playground.js", (SITE / "playground.js").read_bytes()),
+        "drawjs": emit(out, "draw.js", (SITE / "draw.js").read_bytes()),
+        "lengthsjs": emit(out, "lengths.js", (SITE / "lengths.js").read_bytes()),
+        "snapshotjs": emit(out, "snapshot.js", (SITE / "snapshot.js").read_bytes()),
+        "viewsjs": emit(out, "views.js", (SITE / "views.js").read_bytes()),
+        "bibjs": emit(out, "bib.js", (SITE / "bib.js").read_bytes()),
+        "dialogsjs": emit(out, "dialogs.js", (SITE / "dialogs.js").read_bytes()),
+        "layersjs": emit(out, "layers.js", (SITE / "layers.js").read_bytes()),
     }
     table = pages()
     nav = sidebar(table)
+    order = chapters(table)
+    # The Lean model: names and types from the environment, memoized while the sources stay the same.
+    lean_src = ROOT / "semantics/lean"
+    lean_files = sorted(lean_src.rglob("*.lean"), key=str) + [SITE / "export.lean"]
+    lean_files = [p for p in lean_files if ".lake" not in p.parts]
+    decls = memo(work, "lean-decls", [digest(b"".join(p.read_bytes() for p in lean_files))], lambda: sem.export(lean_src, SITE / "export.lean"))
+    commit = run("git", "-C", str(ROOT), "rev-parse", "HEAD").strip()
+    sem_ids = {m[1]: m[1] + "-" + re.sub(r"\s", "-", re.sub(r"[^\w\s-]", "", m[2].replace("`", "").lower())) for m in re.finditer(r"^## (\d+)\. (.+)$", (ROOT / "SEMANTICS.md").read_text(), flags=re.M)}
+    lean_env, refs, lean, lean_pages, _ = sem.build(ROOT, repo, commit, decls, sem_ids)
+    lean_table = {f"semantics/lean/Satex/{s}.lean": f"lean/{s.lower()}.html" for s in sem.LEAN}
     stamp = os.environ.get("SOURCE_DATE_EPOCH")
     built = (datetime.datetime.fromtimestamp(int(stamp), datetime.UTC) if stamp else datetime.datetime.now(datetime.UTC)).date().isoformat()
 
@@ -784,32 +1659,322 @@ def main():
                   "class": kind or ("doc" if side else "home"), "date": built, "crate": cargo["name"], **assets}
         text = fill(template, values)
         (out / dst).parent.mkdir(parents=True, exist_ok=True)
-        (out / dst).write_text(text)
+        (out / dst).write_text(minify_html(text))
+
+    def commit_ranges(body):
+        """An entry's commit links, those next to each other in the history merged into one range link."""
+        order = subprocess.run(["git", "rev-list", "--reverse", "--abbrev-commit", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.split()
+        place = {h[:7]: i for i, h in enumerate(order)}
+        link = re.compile(r'<a href="([^"]*/commit/)([0-9a-f]{7,})"><code>[0-9a-f]+</code></a>')
+        def merge(m):
+            found = link.findall(m[0])
+            base = found[0][0]
+            hashes = sorted({h[:7] for _, h in found}, key=lambda h: place.get(h, -1))
+            runs = []
+            for h in hashes:
+                if runs and h in place and runs[-1][-1] in place and place[h] == place[runs[-1][-1]] + 1:
+                    runs[-1].append(h)
+                else:
+                    runs.append([h])
+            def chip(run):
+                if len(run) == 1:
+                    return f'<a href="{base}{run[0]}"><code>{run[0]}</code></a>'
+                compare = base.replace("/commit/", f"/compare/{run[0]}~1...{run[-1]}")
+                return f'<a href="{compare}" title="{len(run)} commits"><code>{run[0]}…{run[-1]}</code></a>'
+            return " ".join(chip(r) for r in runs)
+        return re.sub(r'(?:<a href="[^"]*/commit/[0-9a-f]{7,}"><code>[0-9a-f]+</code></a>\s*)+', merge, body)
 
     def docs():
+        done = []
         for src, dst in table.items():
             text = strip_banner((ROOT / src).read_text())
-            body = rewrite(markdown(text), src, table, homepage, repo, out, "../" * dst.count("/"))
-            page(dst, title_of(text), body)
+            body = rewrite(markdown(text), src, table | lean_table, homepage, repo, out, "../" * dst.count("/"))
+            if dst == "changelog.html":
+                body = re.sub(r"<li>(?:<p>)?<code>(feat|fix|perf|docs|build)</code>", lambda m: f'<li><span class="badge b-{m[1]}">{m[1]}</span>', body)
+                body = commit_ranges(body)
+            if dst == "wiki/formal-semantics.html":
+                body = formal(body)
+            nav_html = chapter_nav(dst, order)
+            body = body.replace("</h1>", "</h1>" + nav_html, 1) + nav_html if nav_html else body
+            done.append((dst, title_of(text), body))
+        return done
+
+    def formal(body):
+        """The formal page: its two placeholders filled from semantics/mapping.md and primitives.tsv."""
+        lean.prefix, lean.here, lean.used = "../lean/", None, {}
+        mapped = sem.mapping((ROOT / "semantics/mapping.md").read_text().split("\n", 1)[1], lean, refs, lambda t: rewrite(markdown(t), "semantics/mapping.md", table | lean_table, homepage, repo, out, "../"))
+        prims, rows = sem.primitives((ROOT / "semantics/primitives.tsv").read_text(), lean, refs, sem.builtin_lines(ROOT))
+        formal.rows = rows
+        index = {n: sem.hover(d) for n, d in lean.used.items()}
+        return body.replace("<!--satex-site:mapping-->", mapped).replace("<!--satex-site:primitives-->", prims) + \
+            f'<script type="application/json" id="lean-decls">{json.dumps(index, ensure_ascii=False).replace("</", "<\\/")}</script>'
 
     # The pages beside the playground's satex runs: they need none of them.
     with concurrent.futures.ThreadPoolExecutor(1) as side:
         pages_done = side.submit(docs)
-        manifest, shown = playground(args.satex.resolve(), args.wasm.resolve(), work, out)
-        pages_done.result()
-    listings.write_text(json.dumps(LISTINGS))
-    manifest["worker"] = (SITE / "worker.js").read_text()
+        manifest, shown, live = ({"symbols": ""}, "", {}) if args.docs_only else playground(args.satex.resolve(), args.wasm.resolve(), work, out)
+        written = pages_done.result()
+    save_listings()
+    manifest["worker"] = minify_script((SITE / "worker.js").read_text())
     readme = (ROOT / "README.md").read_text()
     md = lambda text: rewrite(markdown(text), "README.md", table, homepage, repo, out, "")
     parts = {"intro": md(intro(readme)), "install": md(install(readme)), "examples": shown,
              "manifest": json.dumps(manifest).replace("</", "<\\/"), "root": "../"}
-    home = fill((SITE / "home.html").read_text(), {**assets, **parts, "version": release, "versiontitle": release_title, "repository": repo,
-                                                       "description": html.escape(cargo["description"])})
-    page("index.html", "satex", home, side=False)
+    # Hover cards: every code span naming a control sequence, on every page; the data of those names in one JSON.
+    names, pending = set(), []
+    for dst, title, body in written:
+        body, found = sem.mark_cards(body, PREVIEW_NAMES())
+        names |= found
+        pending.append((dst, title, body))
+    for key in ("intro", "install"):
+        parts[key], found = sem.mark_cards(parts[key], PREVIEW_NAMES())
+        names |= found
+    with stage("hover cards: satex scope --all per engine"):
+        card_data = sem.cards(names, formal.rows, lean, refs, *scope_cards(args.satex.resolve(), work, names), {k.split(":", 1)[1]: v for k, v in PREVIEWS.items()}, sem.builtin_lines(ROOT), sem.example_defs(pending), source_fallback())
+    # satex's own comment directives: no package defines them
+    card_data.update((k, v) for k, v in sem.directive_cards(ROOT).items() if k in card_data)
+    assets["cards"] = emit(out, "cs-cards.json", json.dumps(card_data, ensure_ascii=False, separators=(",", ":")).encode())
+    # the command line's help on every page's `satex …` lines (cli.js), from clap's command tree
+    assets["cli"] = emit(out, "cli.json", run(str(args.satex.resolve()), "completions", "json").encode())
+    print(f"cards: {len(card_data)} of {len(names)} control sequences named in code spans", file=sys.stderr)
+    left = {k: v.get("k", "") for k, v in card_data.items() if v.get("k") == "undefined" or v.get("at", "").startswith(("the example", "the text", "the pattern"))}
+    print(f"cards: {sum(v == 'undefined' for v in left.values())} names without a definition, {len(left) - sum(v == 'undefined' for v in left.values())} defined by an example: "
+          + " ".join(sorted(k for k, v in left.items() if v == "undefined")), file=sys.stderr)
+    for dst, title, body in pending:
+        page(dst, title, body)
+    for stem, body in lean_pages.items():
+        page(f"lean/{stem.lower()}.html", f"{stem}.lean", body)
+    if args.docs_only:
+        sem.check_links(out, refs.used)
+        return
+    def home():
+        parts["showcase"] = showcase(out, live)
+        page("index.html", "Static Analysis for (La)TeX and Friends", fill((SITE / "home.html").read_text(), {
+            **assets, **parts, "version": release, "versiontitle": release_title, "repository": repo, "description": html.escape(cargo["description"])}), side=False)
+    home()
     page("play/index.html", "Playground", fill((SITE / "play.html").read_text(), {**assets, **parts}), side=False, kind="play")
+    # Draw alone, to embed: its own page without the site's chrome
+    (out / "draw").mkdir(exist_ok=True)
+    (out / "draw/index.html").write_text(minify_html(fill((SITE / "draw.html").read_text(), {**assets, "root": "../", "symbols": manifest["symbols"]})))
+    data = SITE / "bench/data.json"
+    (out / "bench").mkdir(exist_ok=True)
+    if data.exists():
+        shutil.copy2(data, out / "bench/data.json")
+    else:
+        (out / "bench/data.json").write_text("[]\n")
+    page("bench/index.html", "Benchmarks", fill((SITE / "bench.html").read_text(), {"root": "../", "repository": repo}), side=False)
     (out / ".nojekyll").write_text("")
+    with stage("link check"):
+        sem.check_links(out, refs.used)
+    prune_memo()
+    with stage("offline bundle list"):
+        offline(out)
+    # the showcase's captures follow the UI they show: stale ones are taken again from this build
+    if recapture(out):
+        home()
     if args.precompress:
-        precompress(out)
+        with stage("gzip of the site"):
+            precompress(out)
+
+
+def showcase(out, live):
+    """The landing page's showcase: per entry of showcase/shots.json its light and dark images
+    (showcase/capture.mjs takes them from a built playground), sized so the page never shifts, in a
+    window frame; a `before` image beside them, a looping video over them where the capture made one.
+    The small entries go into one card grid after the rest."""
+    spec, src = json.loads((SITE / "showcase/shots.json").read_text()), SITE / "showcase/img"
+    (out / "showcase").mkdir(exist_ok=True)
+    size = lambda f: tuple(int.from_bytes(f.read_bytes()[o:o + 4], "big") for o in (16, 20))
+
+    # git holds only the sources (a PNG still, a WebM video); the smaller formats are derived here once per
+    # source, kept in the work directory, so a capture never commits five files
+    derived_dir = SCRATCH / "showcase-derived"
+    derived_dir.mkdir(parents=True, exist_ok=True)
+    recipes = {
+        "avif": lambda i, o: ["avifenc", "-q", "60", "-s", "4", "-j", "1", str(i), str(o)],
+        "webp": lambda i, o: ["magick", str(i), "-quality", "80", "-define", "webp:method=6", str(o)],
+        "mp4": lambda i, o: ["ffmpeg", "-y", "-loglevel", "error", "-i", str(i), "-c:v", "libx264", "-crf", "27", "-preset", "slow",
+                             "-profile:v", "high", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", str(o)],
+    }
+
+    def derive(source, ext):
+        """`source` in format `ext`, made once per source content; None without the encoder."""
+        target = derived_dir / f"{digest(source.read_bytes())}.{ext}"
+        if not target.exists():
+            cmd = recipes[ext](source, target)
+            if not shutil.which(cmd[0]) or subprocess.run(cmd, capture_output=True).returncode or not target.exists():
+                return None
+        return target
+
+    def pictures(stem, alt):
+        pics = []
+        for scheme in ("light", "dark"):
+            still, video = src / f"{stem}-{scheme}.png", src / f"{stem}-{scheme}.webm"
+            width, height = size(still)
+            shutil.copy2(still, out / "showcase" / still.name)
+            sources = ""
+            for ext, kind in (("avif", "image/avif"), ("webp", "image/webp")):
+                if made := derive(still, ext):
+                    shutil.copy2(made, out / "showcase" / f"{stem}-{scheme}.{ext}")
+                    sources += f'<source type="{kind}" srcset="showcase/{stem}-{scheme}.{ext}">'
+            if video.exists():
+                shutil.copy2(video, out / "showcase" / video.name)
+                if made := derive(video, "mp4"):
+                    shutil.copy2(made, out / "showcase" / f"{stem}-{scheme}.mp4")
+            pics.append(f'<picture class="shot-{scheme}">{sources}'
+                        f'<img src="showcase/{stem}-{scheme}.png" width="{width}" height="{height}" alt="{alt if scheme == "light" else ""}" loading="lazy" decoding="async"></picture>')
+            # the video plays over its poster, the still: site.js loads it near the viewport, never under reduced motion
+            if (src / f"{stem}-{scheme}.webm").exists():
+                pics.append(f'<video class="shot-video shot-{scheme}" width="{width}" height="{height}" muted playsinline preload="none" aria-hidden="true" '
+                            f'data-src="showcase/{stem}-{scheme}"></video>')
+        return "".join(pics)
+
+    # the capture as cut out, no title bar around it
+    def window(stem, alt):
+        return f'<div class="shot-win">{pictures(stem, alt)}</div>'
+
+    # TikZ is written with its italic k, as its manual does
+    tikz = lambda text: text.replace("TikZ", "Ti<i class=\"tk\">k</i>Z")
+    figures, cards = [], []
+    for s in spec["shots"]:
+        name, alt = s["name"], html.escape(f'{s["title"]}: {s["caption"]}')
+        if s.get("live"):
+            # a live editor in the same frame: until site.js starts the engine in view, the build's run of
+            # its text stands there, findings underlined and the typeset text beside
+            lines, data = live[name]
+            figures.append(f'<figure class="shot shot-big shot-live" id="shot-{name}" data-name="{html.escape(s["file"])}"><div class="shot-stage"><div class="shot-win">'
+                           f'<div class="live-grid"><pre class="src live-src live-poster"><code>{lines}</code></pre><div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div></div>'
+                           f'<p class="muted live-status" aria-live="polite">{html.escape(s["status"])}</p></div></div>'
+                           f'<script type="application/json" class="ex-data">{data}</script>'
+                           f'<figcaption><h3>{tikz(html.escape(s["title"]))}</h3><p>{tikz(html.escape(s["caption"]))}</p>'
+                           f'<a class="shot-try" href="play/index.html">The full playground →</a></figcaption></figure>')
+            continue
+        if not all((src / f"{name}-{scheme}.png").exists() for scheme in ("light", "dark")):
+            continue
+        # the link opens the example and, once its run is in, the widget the shot shows (playground.js `satexOpen`)
+        w = s.get("open")
+        hash = s["file"] + "".join(f"&{k}={urllib.parse.quote(str(v), safe='')}" for k, v in zip(("widget", "at", "k"), w or []))
+        try_it = f"play/index.html#{hash}"
+        tags = s.get("tags", ["Before", "After"])
+        # two captures of one dialog, the first behind the second and offset: its two pages at once
+        if s.get("stack") and (src / f"{name}-back-light.png").exists():
+            stage = f'<div class="shot-stack">{window(f"{name}-back", "")}{window(name, alt)}</div>'
+        else:
+            stage = (f'<div class="shot-pair"><div><span class="shot-tag">{tags[0]}</span>{window(f"{name}-before", "")}</div>'
+                     f'<div><span class="shot-tag">{tags[1]}</span>{window(name, alt)}</div></div>'
+                     if (src / f"{name}-before-light.png").exists() else window(name, alt))
+        (figures if s.get("big") or s.get("wide") else cards).append(
+            f'<figure class="shot{" shot-big" if s.get("big") or s.get("wide") else ""}{" shot-wide" if s.get("wide") else ""}"><a class="shot-stage" href="{html.escape(try_it)}" tabindex="-1">{stage}</a>'
+            f'<figcaption><h3>{html.escape(s["title"])}</h3><p>{html.escape(s["caption"])}</p>'
+            f'<a class="shot-try" href="{html.escape(try_it)}">Try it in {html.escape(s["file"])} →</a></figcaption></figure>')
+    # the small entries: one row that scrolls sideways, a card at a time (site.js steps it)
+    nav = lambda d, label, arrow: f'<button type="button" class="cards-nav cards-{d}" aria-label="{label}" disabled>{arrow}</button>'
+    return "\n".join(figures + [f'<div class="cards-wrap"><div class="cards" tabindex="0" role="region" aria-label="More of what SaTeX shows, {len(cards)} cards: scroll sideways">{"".join(cards)}</div>'
+                                 f'{nav("prev", "previous cards", "‹")}{nav("next", "next cards", "›")}</div>'])
+
+
+# what a showcase capture shows: the playground's code and style, besides its example and its entry
+SHOT_SOURCES = ("playground.js", "lengths.js", "snapshot.js", "views.js", "bib.js", "dialogs.js", "layers.js", "draw.js", "site.js", "style.css", "play.html", "showcase/capture.mjs")
+
+
+def recapture(out):
+    """Takes again, from the built site in `out`, every showcase capture whose inputs changed since it was taken
+    (showcase/img/keys.json); the rest stay. Without Chromium or the encoders the last captures stay, with a warning.
+    SATEX_SHOTS=off skips it. Whether any capture is new."""
+    if os.environ.get("SATEX_SHOTS") == "off":
+        return False
+    # the captures land in the repository, where the next build finds them, and in this build's snapshot
+    spec, img = json.loads((SITE / "showcase/shots.json").read_text()), ROOT / "doc/site/showcase/img"
+    keys_file = img / "keys.json"
+    keys = json.loads(keys_file.read_text()) if keys_file.exists() else {}
+    ui = b"".join((SITE / f).read_bytes() for f in SHOT_SOURCES)
+    source = lambda s: next((d / s["file"] for d in (EXAMPLES, ROOT / "samples") if (d / s["file"]).exists()), None)
+    key = lambda s: digest(ui + json.dumps(s, sort_keys=True).encode() + source(s).read_bytes())
+    # an entry whose example is not there yet (a feature still to come) waits
+    due = {s["name"]: key(s) for s in spec["shots"] if not s.get("live") and source(s)}
+    # entries that need the local compile server (`cargo playground`) keep their last images: the static server here has none
+    needs_server = [n for n, k in due.items() if keys.get(n) != k and next(s for s in spec["shots"] if s["name"] == n).get("server")]
+    due = {n: k for n, k in due.items() if next(s for s in spec["shots"] if s["name"] == n).get("server") is None}
+    # a capture that failed on these inputs waits for them to change: no retry on every build
+    due = {n: k for n, k in due.items() if keys.get(n) not in (k, f"failed {k}") or keys[n] == k and not all((img / f"{n}-{c}.png").exists() for c in ("light", "dark"))}
+    if needs_server:
+        print(f"showcase: kept {', '.join(needs_server)}: they compile through the local playground server, which a build does not run; retake with ONLY={','.join(needs_server)} node doc/site/showcase/capture.mjs http://127.0.0.1:8000/ while cargo playground serves", file=sys.stderr)
+    if not due:
+        return False
+    chrome = os.environ.get("CHROME") or next(iter(sorted(Path.home().glob(".cache/ms-playwright/chromium-*/chrome-linux64/chrome"), reverse=True)), None)
+    missing = [t for t in ("node", "magick", "pngquant", "ffmpeg") if not shutil.which(t)] + ([] if chrome else ["chromium"])
+    if missing:
+        print(f"showcase: {len(due)} captures out of date, kept: no {', '.join(missing)}", file=sys.stderr)
+        return False
+    import http.server, functools
+    http.server.SimpleHTTPRequestHandler.extensions_map[".wasm"] = "application/wasm"
+    quiet = type("Quiet", (http.server.SimpleHTTPRequestHandler,), {"log_message": lambda *a: None})
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(quiet, directory=str(out)))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    began = time.monotonic()
+    # browsers by what the machine has free now: about 3 GB each with the engine, a few idle cores each, three at most
+    idle = (os.cpu_count() or 2) - os.getloadavg()[0]
+    slots = max(1, min(3, available_memory() // (3 * 2**30), int(idle) // 4))
+    names, url = list(due), f"http://127.0.0.1:{server.server_address[1]}/"
+    print(f"showcase: retaking {len(names)} shots in {slots} browsers (load {os.getloadavg()[0]:.1f}) whose page code, example or entry changed: {', '.join(names)}", file=sys.stderr)
+    finished = [0]
+
+    def run(part):
+        t0 = time.monotonic()
+        out = subprocess.run(["node", str(SITE / "showcase/capture.mjs"), url, str(img)],
+                             env=dict(os.environ, ONLY=",".join(part), CHROME=str(chrome)), capture_output=True, text=True).stdout
+        finished[0] += 1
+        got = sorted(set(re.findall(r"^ok +\S+ (light|dark)", out, re.M)))
+        print(f"showcase: [{finished[0]}/{len(names)}] {part[0]}: {' and '.join(got) or 'failed'} in {time.monotonic() - t0:.0f} s", file=sys.stderr)
+        return out
+    try:
+        with concurrent.futures.ThreadPoolExecutor(slots) as pool:
+            outputs = list(pool.map(run, [[n] for n in names]))
+    finally:
+        server.shutdown()
+    done = type("Done", (), {"stdout": "\n".join(outputs)})
+    ok = re.findall(r"^ok +(\S+) (light|dark)", done.stdout, re.M)
+    taken = [n for n in due if (n, "light") in ok and (n, "dark") in ok]
+    keys.update((n, due[n] if n in taken else f"failed {due[n]}") for n in due)
+    # only the sources go into git, and a shot whose still barely changed keeps its files (no churn in the history)
+    def alike(a, b):
+        try:
+            from PIL import Image, ImageChops, ImageStat
+            x, y = Image.open(a).convert("RGB"), Image.open(b).convert("RGB")
+            return x.size == y.size and max(ImageStat.Stat(ImageChops.difference(x, y)).mean) < 1.5
+        except Exception:
+            return False
+    repo = SITE / "showcase/img"
+    same = lambda png: (repo / png.name).exists() and (png.resolve() == (repo / png.name).resolve() or alike(png, repo / png.name))
+    for f in sorted(img.iterdir()):
+        if f.name.split("-")[0] not in taken or f.suffix not in (".png", ".webm"):
+            continue
+        # a video goes with its still: kept when the still is
+        if same(f.with_suffix(".png")):
+            continue
+        shutil.copy2(f, repo / f.name)
+    keys_file.write_text(json.dumps(keys, indent=1, sort_keys=True) + "\n")
+    failed = [line for line in done.stdout.splitlines() if line.startswith("FAIL")]
+    print(f"showcase: {len(taken)} of {len(due)} captures taken again in {time.monotonic() - began:.0f} s" + "".join(f"\n  {f}" for f in failed), file=sys.stderr)
+    return bool(taken)
+
+
+def offline(out):
+    """`play/offline.json` (what the service worker keeps: `core` to start, `more` in the background, with sizes)
+    and `play/sw.js`, versioned by what they list."""
+    page = (out / "play/index.html").read_text()
+    manifest = json.loads(re.search(r'id="satex-play" type="application/json">(.*?)</script>', page, re.S).group(1).replace("<\\/", "</"))
+    symbols = json.loads((out / manifest["symbols"]).read_text())
+    core = sorted({m for m in re.findall(r"(?:\.\./)+([\w./-]+-[0-9a-f]{12}\.[\w.]+)", page)} | {
+        manifest["js"], manifest["wasm"], manifest["schema"], manifest["symbols"], manifest["kernels"][0]["bundle"], symbols["glyphs"], *symbols["fonts"], "rules.json"})
+    first = set(manifest.get("preload") or [])
+    packages = sorted(manifest["packages"], key=lambda p: (p["id"] not in first, p["id"]))
+    more = [[e["bundle"], e["size"]] for e in [*manifest["kernels"][1:], *packages]]
+    listing = {"core": core, "more": more}
+    version = digest(json.dumps(listing).encode() + page.encode() + (SITE / "sw.js").read_bytes())
+    (out / "play/offline.json").write_text(json.dumps({"version": version, **listing}))
+    (out / "play/sw.js").write_text(minify_script((SITE / "sw.js").read_text().replace("__VERSION__", version)))
+    print(f"playground: offline {len(core)} files to start, {len(more)} bundles, {sum(m[1] for m in more) / 2**20:.0f} MiB gz more", file=sys.stderr)
 
 
 COMPRESSIBLE = {".html", ".js", ".css", ".json", ".svg", ".wasm", ".txt", ".xml", ".map"}
@@ -819,11 +1984,20 @@ def precompress(out):
     """`name.gz` beside each compressible file where it is smaller: what a server
     that compresses on the fly, as GitHub Pages does, would send."""
     for path in out.rglob("*"):
-        if path.is_file() and path.suffix in COMPRESSIBLE and path.stat().st_size > 1024:
-            packed = gzip.compress(path.read_bytes(), compresslevel=9, mtime=0)
-            if len(packed) < path.stat().st_size:
-                path.with_name(path.name + ".gz").write_bytes(packed)
+        # a file another build removed meanwhile is skipped, never a failed build
+        try:
+            if path.is_file() and path.suffix in COMPRESSIBLE and path.stat().st_size > 1024:
+                packed = gzip.compress(path.read_bytes(), compresslevel=9, mtime=0)
+                if len(packed) < path.stat().st_size:
+                    path.with_name(path.name + ".gz").write_bytes(packed)
+        except FileNotFoundError:
+            continue
 
 
 if __name__ == "__main__":
+    began = time.monotonic()
     main()
+    # where the time went: the satex runs' seconds against the build's, and the slowest runs
+    took = sum(t for t, _ in RUNS)
+    print(f"playground: {len(RUNS)} satex runs, {took:.0f} s of {JOBS} slots' time in {time.monotonic() - began:.0f} s; slowest: "
+          + "; ".join(f"{t:.0f} s {c[:90]}" for t, c in sorted(RUNS, reverse=True)[:5]), file=sys.stderr)

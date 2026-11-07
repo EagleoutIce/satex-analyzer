@@ -1,0 +1,24 @@
+% Exercises: plain article, sections, lists, footnotes, verbatim, quotes, simple macros.
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern,geometry,enumitem,xcolor,graphicx}
+\newcommand{\term}[1]{\emph{#1}}
+\newcommand{\pkg}[1]{\texttt{#1}}
+\title{A Basic Article}\author{A. Author}\date{}
+\begin{document}
+\maketitle
+\begin{abstract}A short abstract with \term{emphasis} and a footnote.\footnote{Footnotes work.}\end{abstract}
+\tableofcontents
+\section{Introduction}\label{sec:intro}
+Text with \textbf{bold}, \textit{italic}, \texttt{mono} and \textcolor{blue}{color}. See Section~\ref{sec:lists} on page~\pageref{sec:lists}.
+\section{Lists}\label{sec:lists}
+\begin{itemize}[leftmargin=*]\item one \item two \begin{enumerate}[label=(\alph*)]\item inner a \item inner b\end{enumerate}\end{itemize}
+\begin{description}\item[Alpha] first \item[Beta] second\end{description}
+\subsection{Quotes}
+\begin{quote}A quotation.\end{quote}
+\begin{verbatim}
+verbatim \text { here }
+\end{verbatim}
+\section{Spacing}
+\end{document}

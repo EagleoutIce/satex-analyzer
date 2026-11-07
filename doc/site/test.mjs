@@ -58,9 +58,14 @@ const fetchFor = async (eng, kernel, files) => {
   await eng.bundles(base, entries, base.startsWith('file:') ? await Promise.all(entries.map((e) => bytes(e.bundle))) : undefined);
   return entries;
 };
+// a sample's magic comment names its engine, as the page's `engineOf` reads it: plain TeX runs on its own kernel
+const kernelOf = (text) => /^%\s*!T[eE]X\s+(?:TS-)?program\s*=\s*tex\b/m.test(text) ? manifest.kernels.find((k) => k.id === 'plain') : manifest.kernels[0];
+const kernelsLoaded = new Set([manifest.kernels[0].id]);
 for (const name of manifest.samples) {
-  await fetchFor(engine, manifest.kernels[0], [name, ...(manifest.projects?.[name] ?? [])]);
-  const run = await engine.run(['-v', 'lint', '-f', name], { [`/work/${name}`]: new TextEncoder().encode(samples[name]) });
+  const kernel = kernelOf(samples[name]);
+  if (!kernelsLoaded.has(kernel.id)) { kernelsLoaded.add(kernel.id); await engine.bundle(base, kernel, base.startsWith('file:') ? await bytes(kernel.bundle) : undefined); }
+  await fetchFor(engine, kernel, [name, ...(manifest.projects?.[name] ?? [])]);
+  const run = await engine.run([...kernel.args, '-v', 'lint', '-f', name], { [`/work/${name}`]: new TextEncoder().encode(samples[name]) });
   const out = run.lines.filter((l) => l[0] === 'out').map((l) => l[1]);
   const summary = out.find((l) => /\d+ errors?, \d+ warnings?/.test(l));
   // what the bundles hold must come from them; the project's own packages are analysed here
@@ -129,7 +134,7 @@ check(`${sampled.length} of ${offered.length} packages on demand resolve`, offer
     const entries = await fetchFor(second, kernel, [name, ...(manifest.projects?.[name] ?? [])]);
     const run = await second.run([...kernel.args, 'lint', '--format', 'lsp', '-f', name]);
     const found = JSON.parse(run.lines.filter((l) => l[0] === 'out').map((l) => l[1]).join('\n') || '[]')
-      .flatMap((f) => (f.diagnostics ?? []).map((d) => `${d.code}@${d.range.start.line + 1}`)).sort().join();
+      .flatMap((f) => (f.diagnostics ?? []).map((d) => `${d.data?.rule ?? d.code}@${d.range.start.line + 1}`)).sort().join();
     check(`${name} opens with its ${entries.length} bundles only`, found === built[i], `${entries.reduce((n, e) => n + e.size, 0)} bytes, ${Math.round(performance.now() - t)} ms; ${found === built[i] ? found.split(',').filter(Boolean).length + ' findings' : `got [${found}] want [${built[i]}]`}`);
   }
 }
@@ -147,7 +152,7 @@ t = performance.now();
 await lsp('initialize', { capabilities: {} }, 1);
 const published = (await lsp('textDocument/didOpen', { textDocument: { uri, languageId: 'latex', version: 1, text: source } }))
   .find((m) => m.method === 'textDocument/publishDiagnostics' && m.params.uri === uri);
-const codes = published?.params.diagnostics.map((d) => d.code) ?? [];
+const codes = published?.params.diagnostics.map((d) => d.data?.rule ?? d.code) ?? [];
 source = source.replace('\\end{document}', '\\gre\n\\end{document}');
 await edit(2, source);
 const line = source.split('\n').findIndex((l) => l === '\\gre');
@@ -165,7 +170,7 @@ check('hover shows a usage line, no raw signature', /⟨arg1⟩/.test(card) && !
 const unsaved = samples[manifest.sample].replace('\\begin{document}', '\\def\\foo{}\n\\begin{document}');
 const pub = (await edit(3, unsaved))
   .find((m) => m.method === 'textDocument/publishDiagnostics' && m.params.uri === uri);
-const lspFound = (pub?.params.diagnostics ?? []).map((d) => `${d.code}/${['', 'error', 'warning', 'info', 'info'][d.severity]}`);
+const lspFound = (pub?.params.diagnostics ?? []).map((d) => `${d.data?.rule ?? d.code}/${['', 'error', 'warning', 'info', 'info'][d.severity]}`);
 const lintRun = await engine.run(['lint', '--format', 'json', '-f', manifest.sample], { [`/work/${manifest.sample}`]: new TextEncoder().encode(unsaved) });
 const lintFound = JSON.parse(lintRun.lines.filter((l) => l[0] === 'out').map((l) => l[1]).join('\n') || '[]').map((r) => `${r.code}/${r.severity}`);
 check('unused-definition shown as by lint', lspFound.includes('unused-definition/info') && lspFound.sort().join() === lintFound.sort().join(), `lsp [${lspFound}] lint [${lintFound}]`);
@@ -189,7 +194,7 @@ const wide = (await edit(4, source.replace('\\begin{document}', `${redefined}\n\
 const rline = source.replace('\\begin{document}', `${redefined}\n\\begin{document}`).split('\n').findIndex((l) => l === redefined);
 const marks = (wide?.params.diagnostics ?? []).filter((d) => d.range.start.line === rline);
 check('finding underlines the whole call', marks.some((d) => d.range.end.line === rline && d.range.end.character - d.range.start.character === redefined.length),
-  marks.map((d) => `${d.code} ${d.range.start.character}-${d.range.end.character}`).join(', ') || 'no finding on the line');
+  marks.map((d) => `${d.data?.rule ?? d.code} ${d.range.start.character}-${d.range.end.character}`).join(', ') || 'no finding on the line');
 // a source cited in running text is a link
 const cited = Object.entries(manifest.rules).find(([, r]) => /\[tex\.web § \d+\]\(https:\/\/[^)]*tex\.web#L\d+\)/.test(r.explanation ?? ''));
 check('tex.web reference in an explanation is a link', !!cited, cited?.[0] ?? 'no explanation links one');
@@ -201,6 +206,17 @@ check('TeXbook links carry their chapter', books.length > 3 && books.every((u) =
 const landing = await text('index.html');
 check('landing examples are highlighted without JS', /<span class="ln"[^>]*>.*?<span class="tok-cmd[ "]/.test(landing));
 check('landing shows no static command output', !/<pre class="output"|\$ satex explain/.test(landing));
+// the showcase: every image sized (no layout shift) and served, in both themes
+const shotImgs = [...landing.matchAll(/<img src="(showcase\/[^"]+)" width="\d+" height="\d+"/g)].map((m) => m[1]);
+const shotMissing = [];
+for (const src of shotImgs.flatMap((s) => [s, s.replace(/png$/, 'webp'), s.replace(/png$/, 'avif')])) if (!(base.startsWith('file:') ? existsSync(fileURLToPath(base + src)) : (await fetch(base + src).catch(() => ({}))).ok)) shotMissing.push(src);
+check('landing showcase images are sized and served', shotImgs.length >= 4 && shotImgs.length % 2 === 0 && !shotMissing.length, shotMissing.join(' '));
+// its videos are sized, lazy (no source until site.js loads one) and served in both formats; each try-it link names its widget
+const shotVideos = [...landing.matchAll(/<video class="shot-video[^"]*" width="\d+" height="\d+" muted playsinline preload="none"[^>]* data-src="([^"]+)"><\/video>/g)].map((m) => m[1]);
+const videoMissing = [];
+for (const src of shotVideos.flatMap((s) => [`${s}.webm`, `${s}.mp4`])) if (!(base.startsWith('file:') ? existsSync(fileURLToPath(base + src)) : (await fetch(base + src).catch(() => ({}))).ok)) videoMissing.push(src);
+check('landing showcase videos are sized, lazy and served', shotVideos.length >= 2 && !videoMissing.length, videoMissing.join(' '));
+check('landing try-it links open their widget', [...landing.matchAll(/class="shot-try" href="play\/index\.html#([^"]+)"/g)].filter((m) => /&amp;widget=/.test(m[1])).length >= 6);
 // every command of every example comes with what satex explain says of it
 const exData = [...landing.matchAll(/<script type="application\/json" class="ex-data">(.*?)<\/script>/gs)].map((m) => JSON.parse(m[1]));
 const exCommands = [...landing.matchAll(/data-cs="([^"]*)"/g)].map((m) => m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"'));
@@ -212,7 +228,6 @@ check('explain records charge no hook to \\twice', !(exData.flatMap((d) => d.cs[
 await browser();
 process.exit(failed ? 1 : 0);
 
-// ---------------------------------------------------------------- the page in a browser
 
 function chromium() {
   if (process.env.CHROME) return process.env.CHROME;
@@ -224,24 +239,31 @@ function chromium() {
 async function browser() {
   const chrome = chromium();
   if (!chrome) return console.log('skip: no Chromium for the browser checks (set CHROME)');
-  const port = 9300 + Math.floor(Math.random() * 600);
   const profile = mkdtempSync(join(tmpdir(), 'satex-test-'));
-  const proc = spawn(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
-    '--allow-file-access-from-files', '--window-size=1440,1000', 'about:blank'], { stdio: 'ignore' });
+  // the DevTools protocol over a pipe (fds 3 and 4, messages ending in NUL): no port to open or find
+  const proc = spawn(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--remote-debugging-pipe', `--user-data-dir=${profile}`,
+    '--allow-file-access-from-files', '--window-size=1440,1000', 'about:blank'], { stdio: ['ignore', 'ignore', process.env.CHROME_LOG ? 'inherit' : 'ignore', 'pipe', 'pipe'] });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   try {
-    let target;
-    for (let i = 0; i < 100 && !target; i++) { await sleep(200); try { target = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find((x) => x.type === 'page'); } catch {} }
-    const ws = new WebSocket(target.webSocketDebuggerUrl);
-    await new Promise((r) => { ws.onopen = r; });
-    let id = 0;
-    const replies = new Map(), errors = [];
+    let id = 0, session, rest = '';
+    const replies = new Map(), errors = [], logs = [];
+    const ws = { close: () => proc.stdio[3].end() };
+    const raw = (method, params = {}, sessionId = session) => new Promise((r) => { replies.set(++id, r); proc.stdio[3].write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0'); });
+    proc.stdio[4].on('data', (chunk) => {
+      const parts = (rest + chunk.toString()).split('\0');
+      rest = parts.pop();
+      for (const part of parts) if (part) ws.onmessage({ data: part });
+    });
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data);
       if (m.id) replies.get(m.id)?.(m);
+      else if (m.method === 'Runtime.consoleAPICalled' && /warning|error/.test(m.params.type)) logs.push(m.params.args.map((x) => x.description ?? x.value).join(' ').slice(0, 200));
       else if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.exception?.description ?? m.params.exceptionDetails.text);
     };
-    const send = (method, params = {}) => new Promise((r) => { replies.set(++id, r); ws.send(JSON.stringify({ id, method, params })); });
+    let page;
+    for (let i = 0; i < 100 && !page; i++) { await sleep(100); page = (await raw('Target.getTargets', {}, null)).result?.targetInfos?.find((t) => t.type === 'page'); }
+    session = (await raw('Target.attachToTarget', { targetId: page.targetId, flatten: true }, null)).result.sessionId;
+    const send = (method, params = {}) => raw(method, params);
     const js = async (expr) => {
       const r = await send('Runtime.evaluate', { expression: `(async () => { ${expr} })()`, awaitPromise: true, returnByValue: true });
       if (r.result?.exceptionDetails) throw new Error(`${expr.slice(0, 80)}: ${r.result.exceptionDetails.exception?.description}`);
@@ -253,7 +275,7 @@ async function browser() {
     };
     const mouse = async (x, y, opts = {}) => { for (const t of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type: t, x, y, button: 'left', clickCount: 1, ...opts }); };
     /** The screen point of `needle` (its `at`-th character) in the editor's text. */
-    const spot = async (needle, at = 1) => (await settled(needle, at)) ?? (await shot('spot-miss'), Promise.reject(new Error(`no ${needle} in the editor of ${await js(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent`)}: ${await js(`return [...document.querySelectorAll('.cm-line')].map((l) => l.textContent).join(' | ').slice(0, 200)`)}`)));
+    const spot = async (needle, at = 1) => (await settled(needle, at)) ?? (await shot('spot-miss'), Promise.reject(new Error(`no ${needle} in the editor of ${await js(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent`)}: ${await js(`return document.querySelectorAll('.cm-line').length + ' lines: ' + [...document.querySelectorAll('.cm-line')].map((l) => l.textContent).join(' | ').slice(0, 200) + ' / content: ' + (document.querySelector('.cm-content')?.textContent ?? '').slice(0, 100)`)}`)));
     // the editor renders a file's lines a moment after its tab is chosen
     const settled = async (needle, at) => { for (let i = 0; i < 25; i++, await sleep(200)) { const p = await place(needle, at); if (p) return p; } return null; };
     const place = (needle, at = 1) => js(`for (const l of document.querySelectorAll('.cm-line')) { const i = l.textContent.indexOf(${JSON.stringify(needle)}); if (i < 0) continue;
@@ -287,8 +309,8 @@ async function browser() {
     let at = await center(`${hello} [data-cs="\\\\greet"]`);
     const before = await js(layout);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
-    check('landing command hover card', await until(`const t = document.querySelector('.tip:not([hidden])'); return t && /greet/.test(t.querySelector('.x-name')?.textContent) && t.querySelector('.sig .arg[title]')`, 5000),
-      await js(`return document.querySelector('.tip')?.textContent.slice(0, 120) ?? 'no card'`));
+    check('landing command hover card', await until(`const t = document.querySelector('.tip-card:not([hidden])'); return t && /greet/.test(t.querySelector('.x-name')?.textContent) && t.querySelector('.sig .arg[title]')`, 5000),
+      await js(`return document.querySelector('.tip-card')?.textContent.slice(0, 120) ?? 'no card'`));
     await shot('landing-command-hover');
     const after = await js(layout);
     check('landing hover moves nothing', before === after, before === after ? '' : `${before} -> ${after}`);
@@ -298,17 +320,23 @@ async function browser() {
       const line = document.querySelector('${hello} [data-lint~="' + k + '"]').closest('.ln'); return [...line.querySelectorAll('[data-lint~="' + k + '"]')].map((e) => e.textContent).join('') === line.textContent`));
     at = await center(`${hello} [data-lint].f-error`);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
-    check('landing finding hover', await until(`return /already defined/.test(document.querySelector('.tip:not([hidden]) .tip-lint')?.textContent ?? '')`, 5000));
+    check('landing finding hover', await until(`return /already defined/.test(document.querySelector('.tip-card:not([hidden]) .tip-lint')?.textContent ?? '')`, 5000));
     await shot('landing-finding-hover');
     check('landing finding hover moves nothing', before === await js(layout));
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 });
-    // the macros example: an explain panel, signature chips with explanations, no raw JSON
+    // the macros example: a click on a command pins its full card, signature chips explained; beside it, what it typesets
     await js(`[...document.querySelectorAll('.examples [role=tab]')].find((t) => /macros/.test(t.textContent)).click()`);
-    const panel = await js(`const f = document.querySelector('.example:not([hidden])'); return [f.querySelector('.ex-explain .xname').textContent, f.querySelector('.ex-explain').textContent,
-      [...f.querySelectorAll('.ex-explain .sig .arg')].map((a) => a.title)]`);
+    at = await center('.example:not([hidden]) [data-cs="\\\\twice"]');
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
+    await mouse(...at);
+    await until(`return document.querySelector('.tip-card:not([hidden])')?.dataset.pin === '1'`, 5000);
+    const panel = await js(`const t = document.querySelector('.tip-card'); return [t.querySelector('.x-name')?.textContent, t.textContent, [...t.querySelectorAll('.sig .arg')].map((a) => a.title)]`);
     await shot('landing-macros');
-    check('macros example explains \\twice', panel[0] === '\\twice' && /#1#1/.test(panel[1]) && panel[2].length === 1 && /mandatory/.test(panel[2][0]), JSON.stringify(panel).slice(0, 200));
-    check('no raw JSON on the landing page', await js(`return ![...document.querySelectorAll('.ex-explain, .ex-findings')].some((e) => /[{\\[]"|"max"|"min"/.test(e.textContent))`));
+    check('macros example: a click pins the card of \\twice', panel[0] === '\\twice' && /#1#1/.test(panel[1]) && panel[2].length === 1 && /mandatory/.test(panel[2][0]), JSON.stringify(panel).slice(0, 200));
+    check('examples show what they typeset', await js(`return [...document.querySelectorAll('.example:not(.live) .ex-side')].every((s) => s.querySelector('.ts'))`));
+    check('no raw JSON on the landing page', await js(`return ![...document.querySelectorAll('.ex-side, .tip-card')].some((e) => /[{\\[]"|"max"|"min"/.test(e.textContent))`));
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 2, y: 2, button: 'left', clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 2, y: 2, button: 'left', clickCount: 1 });
     await js(`[...document.querySelectorAll('.examples [role=tab]')].find((t) => /spacing/.test(t.textContent)).click()`);
     check('typographic findings marked', await js(`const t = [...document.querySelectorAll('.example:not([hidden]) .lint.typo')]; return t.length >= 2 && t.some((e) => e.textContent === '-')`));
 
@@ -324,6 +352,565 @@ async function browser() {
     check('ready without a run', await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 240000),
       await js(`return document.getElementById('play-status').textContent`));
     await shot('play-ready');
+    // ---- the wishes of the playground round: each checked in the built page
+    const wishes = async () => {
+      const root = mkdtempSync(join(tmpdir(), 'satex-fresh-'));
+      const editorText = `document.querySelector('.cm-content').textContent`;
+      const quiet = `document.getElementById('lsp-status').textContent !== 'checking…' && !document.getElementById('play-status').classList.contains('busy')`;
+      /** A folder with one main.tex becomes the project; resolves once its first analysis is shown. */
+      const open = async (name, text) => {
+        const d = join(root, name);
+        mkdirSync(d, { recursive: true });
+        writeFileSync(join(d, 'main.tex'), text);
+        await upload('play-folder', [d]);
+        await until(`return ${editorText} === ${JSON.stringify(text.replace(/\n/g, ''))}`, 30000);
+        await sleep(500);
+        return until(`return ${quiet}`, 120000);
+      };
+      check('the editor is CodeMirror', await until(`return !!document.querySelector('.cm-content')`, 60000), logs.slice(-3).join(' | '));
+      // SECTION=name: only the wish sections whose name holds it
+      const section = async (name, f) => { if (process.env.SECTION && !name.includes(process.env.SECTION)) return; try { await f(); } catch (e) { check(`${name}`, false, e.message.slice(0, 300)); } };
+      const findings = `[...document.querySelectorAll('#lsp-diagnostics li')].map((li) => li.textContent)`;
+      const unresolved = (names) => `${findings}.filter((t) => /unresolved-file|not in this installation/.test(t))`;
+      // 2: a missing package is fetched, however deep the next one lies
+      await open('pgf', '\\documentclass{article}\n\\usepackage{pgfmath}\n\\begin{document}\n$\\pgfmathparse{2+3}$\n\\end{document}\n');
+      const pgf = await until(`return /pgfmath/.test(document.getElementById('play-status').dataset.packages ?? '') && ${quiet} && ${unresolved()}.length === 0`, 120000);
+      check('pgfmath is fetched on demand and resolves', pgf, await js(`return (document.getElementById('play-status').dataset.packages ?? '') + ' | ' + ${findings}.join(' / ').slice(0, 300)`));
+      await shot('w2-pgfmath');
+      // 3: the written files: a card per file, its runs, the second run's .aux against the first's
+      await open('written', '\\documentclass{article}\n\\makeatletter\n\\AtBeginDocument{\\immediate\\write\\@mainaux{\\@percentchar\\space seen \\@ifundefined{r@sec:a}{no}{yes}}}\n\\makeatother\n\\begin{document}\n\\tableofcontents\n\\section{Intro}\\label{sec:a}\nSee \\ref{sec:a}.\n\\end{document}\n');
+      await js(`document.querySelector('.side-tabs [data-panel=play-written]').click()`);
+      const wrote = await until(`return [...document.querySelectorAll('#written-body .wf-head code')].map((c) => c.textContent).join() === 'main.aux,main.toc'`, 30000);
+      const runs = await js(`return [...document.querySelectorAll('#written-body .wf')[0]?.querySelectorAll('[data-view]') ?? []].map((b) => b.textContent)`);
+      await js(`document.querySelector('#written-body .wf [data-view="1"]')?.click()`);
+      const diff = await js(`const w = document.querySelector('#written-body .wf'); if (!w) return [[], []]; return [[...w.querySelectorAll('.wf-del')].map((e) => e.textContent), [...w.querySelectorAll('.wf-add')].map((e) => e.textContent)]`);
+      check('written files: a card each, 2 runs, the diff shows the changed line', wrote && runs.join() === 'run 1,run 2' && diff[0].join() === '% seen no' && diff[1].join() === '% seen yes',
+        JSON.stringify({ runs, diff, text: await js(`return document.getElementById('written-body').textContent.slice(0, 200)`) }));
+            await shot('w3-written');
+      // 1: the run pop-up
+      await js(`document.getElementById('t-time').click()`);
+      await sleep(400);
+      const pop = await js(`const p = document.getElementById('t-detail'), r = p.getBoundingClientRect();
+        return { shown: !p.hidden, tiles: p.querySelectorAll('.rp-nums > span').length, bars: p.querySelectorAll('.rp-bar').length, over: p.scrollWidth > p.clientWidth + 1 || r.right > innerWidth || r.left < 0, w: Math.round(r.width) }`);
+      check('run pop-up: tiles, slow files, no overflow', pop.shown && pop.tiles >= 5 && pop.bars >= 1 && !pop.over, JSON.stringify(pop));
+      await shot('w1-runpop-light');
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+      await sleep(300);
+      await shot('w1-runpop-dark');
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
+      await js(`document.getElementById('t-time').click()`);
+      // 9: a click on the switch itself, with the mouse
+      const sw = await js(`document.querySelector('.side-tabs [data-panel=play-typeset]').click(); const b = document.getElementById('typeset-keys'); b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2, b.checked, !document.getElementById('play-typeset').hidden]`);
+      await mouse(sw[0], sw[1]);
+      await sleep(150);
+      const after = await js(`return [document.getElementById('typeset-keys').checked, !document.getElementById('play-typeset').hidden]`);
+      check('the switch flips on a real click, the panel stays', after[0] !== sw[2] && after[1] === sw[3], JSON.stringify([sw, after]));
+      await mouse(sw[0], sw[1]);
+      // 5: the cache store is bounded and stamped
+      const idb = await js(`const db = await new Promise((ok, no) => { const r = indexedDB.open('satex-playground'); r.onsuccess = () => ok(r.result); r.onerror = no; });
+        const n = (s) => new Promise((ok) => { const q = db.transaction(s).objectStore(s).count(); q.onsuccess = () => ok(q.result); });
+        return { stores: [...db.objectStoreNames], cache: await n('cache'), used: await n('used') }`);
+      check('cache entries carry a last-used stamp', idb.stores.includes('used') && idb.used > 0 && idb.used <= idb.cache, JSON.stringify(idb));
+      await section('8', async () => {
+      // 8: two tooltips never overlap: the latest hovered wins
+      await open('hover', '\\documentclass{article}\n\\begin{document}\nText \\emph{x}\n\\end{document}\n');
+      // one card for both: what it shows says which hover won
+      const visible = `[...document.querySelectorAll('.tip-card')].filter((t) => !t.hidden && t.getBoundingClientRect().width > 0).map((t) => t.querySelector(':scope > .hover') ? 'editor' : 'chip')`;
+      const ed = await spot('\\emph', 3);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: ed[0], y: ed[1] });
+      const cm = await until(`return ${visible}.includes('editor')`, 10000);
+      await js(`document.getElementById('lib-open').click()`);
+      await until(`return document.querySelectorAll('#lib-list .cs-ref').length > 3`, 60000);
+      const chip = await js(`const e = document.querySelector('#lib-list .cs-ref'); e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return [b.x + 4, b.y + b.height / 2]`);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: chip[0], y: chip[1] });
+      await until(`return ${visible}.includes('chip')`, 10000);
+      const one = await js(`return ${visible}`);
+      check('chip card hides the editor hover', cm && one.length === 1 && one[0] === 'chip', JSON.stringify(one));
+      await shot('w8-latest-hover');
+      await js(`document.getElementById('play-library').close()`);
+      const ed2 = await spot('\\emph', 3);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: ed2[0], y: ed2[1] });
+      await until(`return ${visible}.includes('editor')`, 10000);
+      const two = await js(`return ${visible}`);
+      check('editor hover hides the chip card', two.length === 1 && two[0] === 'editor', JSON.stringify(two));
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      });
+      await section('typeset', async () => {
+      // the Typeset panel: a table as a grid, its \hline a rule; a reference's key where the \ref stands, never inside a word
+      await open('table', '\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:a}\nSee Section~\\ref{sec:a} for the hyphenation of everything \\makebox[2cm]{boxed}.\n\n\\begin{tabular}{lc}\nMethod & Score \\\\ \\hline\nOurs & 0.92 \\\\\nBase & 1.5 \\\\\n\\end{tabular}\n\\end{document}\n');
+      await js(`document.querySelector('.side-tabs [data-panel=play-typeset]').click(); const k = document.getElementById('typeset-keys'); if (!k.checked) k.click()`);
+      await until(`return !!document.querySelector('#typeset-body .ts-table')`, 30000);
+      const ts = await js(`const t = document.querySelector('#typeset-body .ts-table');
+        const rows = [...t.querySelectorAll('.ts-tr')].filter((r) => r.textContent.trim()).map((r) => [...r.querySelectorAll('.ts-td')].map((c) => c.textContent.trim()));
+        const chips = [...document.querySelectorAll('#typeset-body .ts-key-ref')].map((k) => [k.previousSibling?.textContent ?? '', k.nextSibling?.textContent ?? '']);
+        return { rows, ruled: t.querySelectorAll('.ts-ruled').length, chips }`);
+      await shot('typeset-table');
+      check('a table is a grid: rows, cells, the hline a rule', JSON.stringify(ts.rows) === JSON.stringify([['Method', 'Score'], ['Ours', '0.92'], ['Base', '1.5']]) && ts.ruled === 1, JSON.stringify(ts));
+      check('a reference key stands where the \\ref does', ts.chips.length === 1 && !ts.chips.some(([a, b]) => /\w$/.test(a) && /^\w/.test(b)), JSON.stringify(ts.chips));
+      // a paragraph sets its words on full lines: a box in it (a label, a \hbox to the width) never squeezes the text into a column
+      const narrow = await js(`return [...document.querySelectorAll('#typeset-body .ts-text')].filter((t) => t.textContent.trim().length > 12)
+        .filter((t) => t.getBoundingClientRect().width < 8 * parseFloat(getComputedStyle(t).fontSize)).map((t) => t.textContent.trim().slice(0, 30))`);
+      check('typeset paragraphs keep the width of the pane', narrow.length === 0, JSON.stringify(narrow));
+      // once the run has ended no view of the open file is dimmed: a view is stale only while a newer analysis is pending
+      const dim = await until(`return !document.querySelector('#status.busy, .busy') && !document.querySelector('#typeset-body.stale, #explain-body.stale, #findings-list.stale, #play-list.stale')`, 15000);
+      check('no view is dimmed after the run ends', dim, await js(`return [...document.querySelectorAll('.stale')].map((e) => e.id || e.className).join(' ')`));
+      });
+      await section('outline', async () => {
+      // a label belongs to the section it stands in, though the run reports labels after every section
+      await open('outline', '\\documentclass{article}\n\\begin{document}\n\\section{Alpha}\\label{sec:alpha}\nText~\\cite{k}.\n\n\\subsection{Beta}\nMore.\n\\end{document}\n');
+      await until(`return document.querySelectorAll('#outline-body .o-sec').length >= 2`, 30000);
+      const owners = await js(`return [...document.querySelectorAll('#outline-body .o-sec')].map((li) => [li.querySelector('.o-go')?.textContent ?? '', [...li.querySelectorAll('.o-label')].map((l) => l.textContent)])`);
+      const alpha = owners.find(([h]) => h.includes('Alpha')), beta = owners.find(([h]) => h.includes('Beta'));
+      check('a label sits under the section it follows', alpha?.[1].includes('sec:alpha') && !beta?.[1].includes('sec:alpha'), JSON.stringify(owners));
+      });
+      await section('draw', async () => {
+      // drawn shapes, strokes of points in [-1, 1]² (y down), among every package's math symbols: each finds its command
+      // among the first three, and a mirrored twin never ranks above it
+      await open('draw', '\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n');
+      const line = (a, b, n = 16) => Array.from({ length: n + 1 }, (_, i) => [a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n]);
+      const path = (ps) => ps.slice(1).flatMap((p, i) => line(ps[i], p, 8).slice(i ? 1 : 0));
+      const ring = (f, n = 64) => Array.from({ length: n + 1 }, (_, i) => f(i / n * 2 * Math.PI));
+      const shapes = {
+        Rightarrow: [line([-1, -0.3], [0.6, -0.3]), line([-1, 0.3], [0.6, 0.3]), path([[0.3, -0.7], [1, 0], [0.3, 0.7]])],
+        rightarrow: [line([-1, 0], [1, 0]), path([[0.5, -0.45], [1, 0], [0.5, 0.45]])],
+        leftarrow: [line([1, 0], [-1, 0]), path([[-0.5, -0.45], [-1, 0], [-0.5, 0.45]])],
+        int: [path([[0.45, -0.8], [0.3, -1], [0.12, -0.95], [0.04, -0.7], [0, 0], [-0.04, 0.7], [-0.12, 0.95], [-0.3, 1], [-0.45, 0.8]])],
+        sum: [path([[0.7, -1], [-0.7, -1], [0.15, 0], [-0.7, 1], [0.7, 1]])],
+        infty: [ring((t) => [Math.cos(t) / (1 + Math.sin(t) ** 2), 0.9 * Math.sin(t) * Math.cos(t) / (1 + Math.sin(t) ** 2)])],
+        leq: [path([[0.8, -0.9], [-0.8, -0.35], [0.8, 0.2]]), line([-0.8, 0.65], [0.8, 0.65])],
+        circ: [ring((t) => [Math.cos(t), Math.sin(t)])],
+        plus: [line([-1, 0], [1, 0]), line([0, -1], [0, 1])],
+        times: [line([-1, -1], [1, 1]), line([1, -1], [-1, 1])],
+      };
+      const expected = { Rightarrow: /\\Rightarrow\b/, rightarrow: /\\(rightarrow|to)\b/, leftarrow: /\\(leftarrow|gets)\b/, int: /\\int\b/, sum: /\\sum\b/,
+        infty: /\\infty\b/, leq: /\\(leq|le)\b/, circ: /\\(circ|bigcirc|mdlgwhtcircle|mdwhtcircle|lgwhtcircle)\b/, plus: /\\(plus|mathplus)\b|^\+/, times: /\\times\b/ };
+      const twins = { Rightarrow: /\\Leftarrow\b/, rightarrow: /\\leftarrow\b/, leftarrow: /\\rightarrow\b/ };
+      await js(`document.getElementById('draw-open').click(); document.querySelector('[data-f=from][data-v=all]').click(); document.querySelector('[data-f=mode][data-v=math]').click()`);
+      const got = {};
+      for (const [name, strokes] of Object.entries(shapes)) {
+        await js(`document.getElementById('draw-clear').click()`);
+        const b = await js(`const r = document.getElementById('draw-pad').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2, r.width * 0.32]`);
+        for (const stroke of strokes) {
+          const at = ([x, y]) => ({ x: b[0] + x * b[2], y: b[1] + y * b[2] });
+          await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...at(stroke[0]), button: 'left', buttons: 1, clickCount: 1 });
+          for (const p of stroke) await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at(p), button: 'left', buttons: 1 });
+          await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at(stroke.at(-1)), button: 'left', buttons: 0, clickCount: 1 });
+        }
+        // the match of the whole drawing: one per stroke ended, the last one shown
+        await until(`return document.querySelectorAll('#draw-list li .draw-glyph').length > 2`, 60000);
+        // the matcher refines in a worker: the answer stands once it is done
+        await until(`return !document.querySelector('#draw-list.refining')`, 60000);
+        await sleep(300);
+        got[name] = await js(`return [...document.querySelectorAll('#draw-list > li')].map((li) => li.querySelector('.draw-glyph').textContent + ' ' + li.querySelector('.draw-what').textContent)`);
+        await shot(`draw-${name}`);
+      }
+      const rank = (name, re) => got[name].findIndex((t) => re.test(t));
+      const top1 = Object.keys(shapes).filter((n) => rank(n, expected[n]) === 0), top3 = Object.keys(shapes).filter((n) => rank(n, expected[n]) >= 0 && rank(n, expected[n]) < 3);
+      console.log(`draw precision: top-1 ${top1.length}/${Object.keys(shapes).length} (${top1.join(' ')}), top-3 ${top3.length}/${Object.keys(shapes).length}`);
+      // the measured bar (top-3 8 of 10 on 2026-10-31): a drop below it is a regression of the matcher
+      check('drawn shapes find their command among the first three', top3.length >= 8, JSON.stringify(Object.fromEntries(Object.entries(got).map(([n, t]) => [n, t.slice(0, 3)]))));
+      check('a mirrored twin never ranks above the drawn arrow', Object.entries(twins).every(([n, re]) => rank(n, re) < 0 || rank(n, re) > rank(n, expected[n])),
+        JSON.stringify(Object.fromEntries(Object.keys(twins).map((n) => [n, [rank(n, expected[n]), rank(n, twins[n])]]))));
+      await js(`document.getElementById('play-draw').close()`);
+      });
+      await section('lib', async () => {
+      // the library: each environment once by its name, Try wraps it in \\begin…\\end and typesets it
+      await js(`document.getElementById('lib-open').click()`);
+      await until(`return document.querySelectorAll('#lib-list .cs-ref').length > 3`, 60000);
+      await js(`document.querySelector('.lib-kind[data-kind=environment]').click()`);
+      const env = await js(`return { names: [...document.querySelectorAll('#lib-list .cs-ref')].map((e) => e.textContent), count: +document.querySelector('.lib-kind[data-kind=environment] b').textContent }`);
+      check('library lists each environment once, by name', env.names.includes('itemize') && env.count === env.names.length && new Set(env.names).size === env.names.length
+        && !env.names.some((n) => n.startsWith('\\') || env.names.includes(n.replace(/^end/, '')) && n !== n.replace(/^end/, '')), JSON.stringify(env).slice(0, 300));
+      await js(`const s = document.getElementById('lib-search'); s.value = 'itemize'; s.dispatchEvent(new Event('input')); document.querySelector('#lib-list .lib-try-it').click()`);
+      const tried = await js(`const t = document.getElementById('lib-text'); t.setRangeText('\\\\item one', t.selectionStart, t.selectionStart, 'end'); document.getElementById('lib-run').click(); return t.value`);
+      const out = await until(`return /one/.test(document.querySelector('#lib-out .typeset')?.textContent ?? '')`, 60000);
+      check('Try wraps an environment and typesets it', out && /^\\begin\{itemize\}\n\s*\\item one\n\\end\{itemize\}$/.test(tried), JSON.stringify(tried));
+      await shot('w-lib-env-try');
+      await js(`document.getElementById('play-library').close()`);
+      });
+      await section('hover', async () => {
+      // chip cards: every ⟨argN⟩ explains itself, a type's path stops below `any`, the card never covers the editor's hover
+      await open('chips', '\\documentclass{article}\n\\newcommand{\\twice}[1]{#1#1}\n\\begin{document}\n\\twice{a}\n\\setlength{\\parindent}{1em}\n\\end{document}\n');
+      const tipOf = async (needle) => {
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+        await sleep(300);
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...Object.fromEntries((await spot(needle, 3)).map((v, i) => [i ? 'y' : 'x', v])) });
+        await until(`return !!document.querySelector('.tip-card .arg[data-tip]')`, 15000);
+        const chips = await js(`return [...document.querySelectorAll('.tip-card .arg[data-tip]')].map((c) => { const b = c.getBoundingClientRect(); return [b.x + 4, b.y + b.height / 2, !!c.querySelector('a.ty')]; })`);
+        const c = chips.find((x) => x[2]) ?? chips[0];
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c[0], y: c[1] });
+        await until(`return !document.querySelector('.tip-note')?.hidden`, 5000);
+        return js(`const t = document.querySelector('.tip-note'), a = t.getBoundingClientRect(), b = document.querySelector('.tip-card').getBoundingClientRect();
+          return { what: t.querySelector('.ty-what')?.textContent ?? '', chain: t.querySelector('.ty-chain')?.textContent ?? '', over: a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom }`);
+      };
+      const plain = await tipOf('\\twice{a}');
+      await shot('w-hover-untyped');
+      check('an untyped ⟨arg1⟩ shows its card, beside the hover', /1\. argument/.test(plain.what) && !plain.over, JSON.stringify(plain));
+      const typed = await tipOf('\\setlength');
+      await shot('w-hover-typed');
+      check('a type card: its path without any, beside the hover', typed.chain && !/\bany\b/.test(typed.chain) && !typed.over, JSON.stringify(typed));
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      });
+      await section('6, 7', async () => {
+      // 6, 7: completion at once, even right after an edit; tikz keys; argument counts
+      await open('comp', '\\documentclass{article}\n\\usepackage{tikz}\n\\newcommand{\\x}[]{x}\n\\begin{document}\n\\begin{tikzpicture}[]\n\\draw (0,0) -- (1,1);\n\\end{tikzpicture}\n\n\\end{document}\n');
+      const popup = `[...document.querySelectorAll('.cm-tooltip-autocomplete li')].map((l) => l.textContent)`;
+      const at1 = await spot('\\begin{tikzpicture}[', 20);
+      await mouse(...at1);
+      await send('Input.insertText', { text: 'th' });
+      const tk = await until(`return ${popup}.some((t) => /^thick/.test(t))`, 15000);
+      check('tikzpicture options complete to tikz keys', tk, await js(`return ${popup}.slice(0, 8).join(' ')`));
+      await shot('w7-tikz-keys');
+      await key('Escape');
+      const at2 = await spot('\\newcommand{\\x}[', 16);
+      await mouse(...at2);
+      await key(' ', 2, 'Space');
+      const cnt = await until(`return ${popup}.filter((t) => /^[0-9]/.test(t)).length >= 5`, 15000);
+      check('\\newcommand[ offers argument counts', cnt, await js(`return ${popup}.slice(0, 10).join(' ')`));
+      await shot('w7-newcommand-count');
+      await key('Escape');
+      const at3 = await spot('\\end{tikzpicture}', 17);
+      await mouse(...at3);
+      await send('Input.insertText', { text: '\n' });
+      // timed in the page, frame by frame: the polling here is coarser than the bound
+      await js(`window.__seen = 0; const t0 = performance.now(), f = () => { if (${popup}.some((t) => /^pgfmath/.test(t))) window.__seen = Math.round(performance.now() - t0); else requestAnimationFrame(f); }; requestAnimationFrame(f)`);
+      await send('Input.insertText', { text: '\\pgfm' });
+      const fast = await until(`return window.__seen > 0`, 15000);
+      const took = await js(`return window.__seen`);
+      check('typing \\pgfm shows candidates within 300 ms of the keystroke', fast && took < 300, `${took} ms, ${await js(`return ${popup}.slice(0, 5).join(' ')`)}`);
+      await shot('w6-fast-complete');
+      await key('Escape');
+      });
+      await section('11, 12', async () => {
+      // 11, 12: the trace of \begin has steps; the library switch re-renders without a query
+      await js(`window.__q = 0; const o = Worker.prototype.postMessage; Worker.prototype.postMessage = function (m, ...r) { if (m?.type === 'lsp' && JSON.stringify(m).includes('satex/query')) window.__q++; return o.call(this, m, ...r); }`);
+      await open('trace', '\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\pgfmathparse{sign(42)}\n\\pgfmathresult\n\\end{document}\n');
+      const traceAt = async (needle, at) => {
+        const p = await spot(needle, at);
+        await mouse(...p);
+        await js(`document.querySelectorAll('#play-ctx li').forEach((l) => l.remove())`);
+        await mouse(...p, { button: 'right', buttons: 2 });
+        await until(`return [...document.querySelectorAll('#play-ctx li')].some((l) => /Trace/.test(l.textContent))`, 30000);
+        await js(`[...document.querySelectorAll('#play-ctx li')].find((l) => /Trace/.test(l.textContent)).click()`);
+        return until(`return !!document.querySelector('#trace-body .tr-now') || /no step|failed|not used/.test(document.getElementById('trace-body').textContent)`, 120000);
+      };
+      await traceAt('\\begin{document}', 3);
+      const steps = await js(`return [document.getElementById('trace-total').textContent, document.getElementById('trace-body').textContent.slice(0, 160)]`);
+      check('the trace of \\begin has steps', /\d+ steps?/.test(steps[0]) && !/no step/.test(steps[1]), JSON.stringify(steps));
+      await shot('w11-trace-begin');
+      const q0 = await js(`return window.__q`), n0 = steps[0];
+      await js(`document.getElementById('trace-internal').click()`);
+      await sleep(1500);
+      const n1 = await js(`return document.getElementById('trace-total').textContent`);
+      check('library switch re-renders without a new query', await js(`return window.__q`) === q0 && n1 !== n0, `${n0} -> ${n1}, ${q0} queries`);
+      await js(`document.getElementById('trace-internal').click()`);
+      await js(`document.getElementById('trace-close').click()`);
+      });
+      await section('leapyear', async () => {
+      await js(`document.getElementById('play-exsect').open = true; [...document.querySelectorAll('#play-examples *')].find((e) => e.children.length === 0 && e.textContent.trim().startsWith('leapyear'))?.click()`);
+      await until(`return /leapyear/.test(document.querySelector('.tabs [aria-selected=true]')?.textContent ?? '')`, 30000);
+      await until(`return ${quiet}`, 120000);
+      const p = await spot('\\ckleapyear{2000}', 3);
+      await mouse(...p, { button: 'right', buttons: 2 });
+      await until(`return [...document.querySelectorAll('#play-ctx li')].some((l) => /Trace/.test(l.textContent))`, 30000);
+      await js(`[...document.querySelectorAll('#play-ctx li')].find((l) => /Trace/.test(l.textContent)).click()`);
+      await until(`return !!document.querySelector('#trace-body .tr-now')`, 120000);
+      await js(`document.querySelectorAll('#trace-body details').forEach((d) => (d.open = true))`);
+      const text = await js(`return document.getElementById('trace-body').textContent`);
+      check('the leap-year trace shows the values assigned', /= 2000/.test(text) && /2000 → 500/.test(text), text.slice(0, 300));
+      await shot('w-leapyear-trace');
+      await js(`document.getElementById('play-trace').close()`);
+      });
+      await section('trace viewer', async () => {
+      // the trace dialog: library groups, the how-row, the stepper's token stream, breadcrumb, cards, forks, progress
+      const body = `document.getElementById('trace-body')`;
+      const traceOf = async (needle, at, live = null) => {
+        const p = await spot(needle, at);
+        await mouse(...p);
+        await js(`document.querySelectorAll('#play-ctx li').forEach((l) => l.remove())`); // no stale menu
+        await mouse(...p, { button: 'right', buttons: 2 });
+        if (!await until(`return [...document.querySelectorAll('#play-ctx li')].some((l) => /Trace/.test(l.textContent))`, 30000)) {
+          await shot(`trv-noctx`);
+          throw new Error(`no Trace in the menu at ${needle}: ${await js(`return document.getElementById('play-ctx')?.textContent.slice(0, 200)`)}`);
+        }
+        await js(`[...document.querySelectorAll('#play-ctx li')].find((l) => /Trace/.test(l.textContent)).click()`);
+        if (live) await live();
+        return until(`return !!document.querySelector('#trace-body .tr-now') || /no step|failed|not used/.test(${body}.textContent)`, 120000);
+      };
+      const setLib = (on) => js(`const b = document.getElementById('trace-internal'); if (b.checked !== ${on}) b.click()`);
+      await open('trv', '\\documentclass{article}\n\\usepackage{tikz}\n\\newcommand{\\twice}[1]{#1#1}\n\\newcommand{\\pick}{\\ifnum\\pdfuniformdeviate 10>5 late\\else early\\fi}\n\\begin{document}\n\\pgfmathparse{sign(42)}\n\\pgfmathresult\n\\twice{ab}\n\\pick\\relax\n\\end{document}\n');
+      // 7: live progress while the run goes
+      let seen = [];
+      const watch = async () => { for (let k = 0; k < 12; k++) { seen.push(await js(`return document.getElementById('trace-live')?.textContent ?? ''`)); await sleep(250); } };
+      await setLib(false);
+      await traceOf('\\pgfmathresult', 3, watch);
+      seen = seen.filter(Boolean);
+      check('trace shows live progress: phase and elapsed', seen.some((t) => /^Tracing: .+ · \d+\.\d\d s$/.test(t)) && new Set(seen).size > 1, JSON.stringify(seen.slice(0, 4)));
+      // 1: library work folds into one named line; the switch opens it without a query
+      const groups = await js(`return [...document.querySelectorAll('#trace-body .tr-group')].map((g) => [g.tagName, g.textContent])`);
+      const libRows = await js(`return [...document.querySelectorAll('#trace-body .tr-tree .tr-at')].filter((a) => !/main\\.tex/.test(a.textContent)).length`);
+      check('switch off: library work is one line per trigger, none of its steps', groups.some(([t, x]) => t === 'DIV' && /^paragraph starts \(everypar hook, \d+ steps\)$/.test(x)) && libRows === 0, JSON.stringify([groups, libRows]));
+      await shot('trv1-folded');
+      const q0 = await js(`return window.__q ?? 0`);
+      await setLib(true);
+      await sleep(800);
+      const opened = await js(`const g = document.querySelector('#trace-body details.tr-group'); if (!g) return null; g.open = true; await new Promise((r) => setTimeout(r, 200)); return g.querySelectorAll('li[data-i]').length`);
+      check('switch on: the group opens to its steps, no new query', opened > 0 && (await js(`return window.__q ?? 0`)) === q0, `${opened} kids`);
+      await shot('trv1-open');
+      await setLib(false);
+      await js(`document.getElementById('trace-close').click()`);
+      // 2, 3, 4: \\twice{ab} on one row; the stepper's ends; chips by catcode; the breadcrumb
+      await traceOf('\\twice{ab}', 3);
+      const how = await js(`const h = document.querySelector('#trace-body .tr-tree .tr-how'), res = h?.querySelector('.tr-res'), c = res?.querySelector('code');
+        return h && [h.textContent, Math.abs(res.getBoundingClientRect().top - c.getBoundingClientRect().top) < 4]`);
+      check('\\twice{ab}: body, binding, result on one row, the arrow with its result', how && /body #1#1/.test(how[0]) && /#1 = ab/.test(how[0]) && /→ abab/.test(how[0]) && how[1], JSON.stringify(how));
+      const ends = await js(`const d = (m) => document.querySelector('[data-move=' + m + ']').disabled; return [d('prev'), d('next')]`);
+      check('stepper: back disabled at the first step', ends[0] === true, JSON.stringify(ends));
+      const ins = await js(`return [...document.querySelectorAll('#trace-stream .tr-ins')].map((t) => t.textContent).join('')`);
+      check('stream: what the step put back highlighted', ins === 'abab', ins);
+      const few = await js(`return document.querySelectorAll('.tr-legend .tr-key').length`);
+      await js(`document.querySelector('.tr-legend-btn').click()`);
+      const all = await js(`return [document.querySelectorAll('.tr-legend .tr-key').length, document.querySelector('.tr-legend').textContent]`);
+      check('catcode legend: the categories in the stream, all behind the toggle, by name', few < 17 && all[0] === 17 && /11 letter/.test(all[1]), JSON.stringify([few, all]));
+      await shot('trv2-twice');
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+      await sleep(300);
+      await shot('trv2-twice-dark');
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
+      for (let k = 0; k < 400 && !(await js(`return document.querySelector('[data-move=next]').disabled`)); k++) await js(`document.querySelector('[data-move=next]').click()`);
+      check('stepper: next and over disabled at the last step', await js(`return document.querySelector('[data-move=next]').disabled && document.querySelector('[data-move=over]').disabled`));
+      await setLib(true);
+      await until(`return !!document.querySelector('#trace-body .tr-now')`, 5000);
+      await js(`document.getElementById('trace-close').click()`);
+      await traceOf('\\pgfmathresult', 3);
+      for (let k = 0; k < 60 && (await js(`return document.querySelectorAll('.tr-crumbs .tr-crumb').length`)) < 3; k++) await js(`document.querySelector('[data-move=next]').click()`);
+      const crumbs = await js(`return [...document.querySelectorAll('.tr-crumbs .tr-crumb')].map((c) => [c.textContent, c.classList.contains('on')])`);
+      check('breadcrumb: the enclosing calls, the current one marked', crumbs.length >= 2 && crumbs.at(-1)[1] && crumbs.slice(0, -1).every((c) => !c[1]), JSON.stringify(crumbs));
+      await shot('trv4-crumbs');
+      const toks = await js(`return [...document.querySelectorAll('#trace-stream .tr-chips .tr-tok:not(.tr-ins)')].map((a) => [a.textContent, a.title, a.getAttribute('href')])`);
+      check('chips carry their catcode number', await js(`return [...document.querySelectorAll('#trace-stream a.tr-tok')].every((a) => a.querySelector('.tr-cc')?.textContent === a.getAttribute('href').split('-').pop())`));
+      await shot('trv3-chips');
+      check('stream: the input ahead as chips, each with its catcode and wiki link', toks.length > 3 && toks.every(([x, t, h]) => /^\\/.test(x) ? !h : /\(\d+\)$|catcode \d+/.test(t) && /wiki\/domains\.html#catcode-\d+$/.test(h)), JSON.stringify(toks.slice(0, 4)));
+      // 5: every name hoverable, its meaning at the step; click pins; the state panel
+      const cs = await js(`const e = document.querySelector('#trace-stream .tr-chips .tr-cs'); if (!e) return null; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return [b.x + 3, b.y + b.height / 2, e.dataset.cs]`)
+        ?? await js(`const e = document.querySelector('#trace-now .tr-cs'); e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return [b.x + 3, b.y + b.height / 2, e.dataset.cs]`);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cs[0], y: cs[1] });
+      const tip = await until(`const t = document.querySelector('.tip-card'); return t && !t.hidden && /meaning at /.test(t.textContent)`, 60000);
+      check('a name in the trace shows its meaning at the step', tip, `${cs[2]}: ${await js(`return document.querySelector('.tip-card')?.textContent.slice(0, 160)`)}`);
+      await mouse(cs[0], cs[1]);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      await sleep(400);
+      check('a click pins the card', await js(`const t = document.querySelector('.tip-card'); return !t.hidden && t.dataset.pin === '1'`));
+      await shot('trv5-pinned');
+      await js(`document.querySelector('#trace-now').click()`);
+      // a name the step's input does not hold: one query of the run stopped at the step
+      const head = await js(`const e = document.querySelector('#trace-now .tr-now-head .tr-cs'); const b = e.getBoundingClientRect(); return [b.x + 3, b.y + b.height / 2, e.dataset.cs, !!document.querySelector('.tr-means li[data-n="' + CSS.escape(e.dataset.cs) + '"]')]`);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: head[0], y: head[1] });
+      const lazy = await until(`const t = document.querySelector('.tip-card'); return t && !t.hidden && t.textContent.includes(${JSON.stringify(head[2])}) && /meaning at step/.test(t.textContent)`, 120000);
+      check('a name not queued at the step: its meaning from the run stopped there', lazy && !head[3], `${head[2]}: ${await js(`return document.querySelector('.tip-card')?.textContent.slice(0, 120)`)}`);
+      await shot('trv5-lazy');
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      await js(`const s = document.querySelector('.tr-state'); s.open = true; s.scrollIntoView()`);
+      await js(`document.querySelector('.tr-allnames').click()`);
+      const every = await until(`return document.querySelectorAll('.tr-every li[data-n]').length > 100`, 120000);
+      await js(`const f = document.querySelector('.tr-filter'); f.value = 'twice'; f.dispatchEvent(new Event('input', { bubbles: true }))`);
+      const filtered = await js(`return [...document.querySelectorAll('.tr-every li[data-n]:not([hidden])')].map((l) => l.dataset.n)`);
+      check('state panel: all names at the step, searchable', every && filtered.includes('\\twice') && filtered.every((n) => /twice/.test(n)), JSON.stringify(filtered.slice(0, 5)));
+      await shot('trv5-state');
+      await setLib(false);
+      await js(`document.getElementById('trace-close').click()`);
+      // 6: an undecided \\ifnum: the joined view and each fork, the stepper following
+      await traceOf('\\pick\\relax', 2);
+      const forks = await js(`return [...document.querySelectorAll('#trace-fork option')].map((o) => o.value)`);
+      const n0 = await js(`return document.getElementById('trace-total').textContent`);
+      await js(`const s = document.getElementById('trace-fork'); s.value = s.options[1].value; s.dispatchEvent(new Event('change', { bubbles: true }))`);
+      await until(`return !!document.querySelector('#trace-body .tr-now')`, 5000);
+      const n1 = await js(`return [document.getElementById('trace-total').textContent, document.getElementById('trace-fork').value]`);
+      check('forks: joined plus each fork, the stepper follows', forks.length >= 3 && forks[0] === '' && n1[1] === forks[1] && n1[0] !== n0, JSON.stringify([forks, n0, n1]));
+      await js(`document.querySelector('#trace-body .tr-all').open = true; document.querySelectorAll('#trace-body .tr-tree details').forEach((d) => d.open = true)`);
+      await sleep(300);
+      await shot('trv6-fork');
+      await js(`const s = document.getElementById('trace-fork'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true }))`);
+      await until(`return !!document.querySelector('#trace-body .tr-now')`, 5000);
+      await js(`document.querySelector('#trace-body .tr-all').open = true; document.querySelectorAll('#trace-body .tr-tree details').forEach((d) => d.open = true)`);
+      await sleep(300);
+      await shot('trv6-joined');
+      await js(`document.getElementById('trace-close').click()`);
+      // 8: a missing package does not end the run before the traced call
+      await open('trmiss', '\\documentclass{article}\n\\usepackage{nosuchpackage}\n\\begin{document}\nHi\n\\end{document}\n');
+      await traceOf('\\begin{document}', 3);
+      const miss = await js(`return [document.getElementById('trace-total').textContent, ${body}.textContent.slice(0, 120)]`);
+      check('trace with a missing package has steps', /\d+ steps?/.test(miss[0]) && !/no step/.test(miss[1]), JSON.stringify(miss));
+      await js(`document.getElementById('trace-close').click()`);
+      });
+      await section('10', async () => {
+      // 10: user macros with delimited parameters read naturally: literal text as ‹…›, no stray letters
+      await open('weird', '\\documentclass{article}\n\\def\\Weird key: #1, value: #2, magic: #3\;{#1#2#3}\n\\def\\WeirdMore key: #1, value: #2, magic: #3\;super #4\; {}\n\\begin{document}\n\\Weird key: a, value: b, magic: c\;\n\\end{document}\n');
+      const wp = await spot('\\Weird key', 3);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: wp[0], y: wp[1] });
+      await until(`return !!document.querySelector('.tip-card .hover')`, 10000);
+      const chips = await js(`return [[...document.querySelectorAll('.tip-card .sig .arg')].map((a) => a.textContent), document.querySelector('.tip-card .hover')?.textContent.slice(0, 300)]`);
+      check('hover signature of \\Weird: literal text and natural chips', chips[0].length >= 3 && chips[0].some((t) => /key/.test(t)) && !chips[0].some((t) => /^(pp|U)$/.test(t)), JSON.stringify(chips));
+      await shot('w10-weird-hover');
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      });
+      await section('examples', async () => {
+      // the examples beside pdflatex's verdict: each with the finding satex computes for it
+      await send('Page.navigate', { url: base + 'index.html' });
+      await until(`return document.querySelectorAll('.examples [role=tab]').length > 3`, 30000);
+      for (const [name, code] of [['csname.tex', 'undefined-control-sequence'], ['option-clash.tex', 'option-clash'], ['rerun.tex', 'undefined-reference']]) {
+        const got = await js(`const t = [...document.querySelectorAll('.examples [role=tab]')].find((t) => t.textContent === '${name}'); if (!t) return null; t.click();
+          const f = document.getElementById(t.getAttribute('aria-controls')); return { codes: [...f.querySelectorAll('.eol')].map((c) => c.title.split(' ')[0]), pdflatex: /% pdflatex/.test(f.querySelector('pre.src').textContent) }`);
+        check(`example ${name}: pdflatex's verdict and satex's ${code}`, got?.pdflatex && got.codes.includes(code), JSON.stringify(got));
+      }
+      });
+      await section('live', async () => {
+      // the landing page's last tab: no engine until it opens, then the editor, typeset text and underlined findings, again after an edit
+      for (const [w, h, dark] of [[1440, 900, false], [1440, 900, true], [375, 800, false], [375, 800, true]]) {
+        await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: w < 500 });
+        await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: dark ? 'dark' : 'light' }] });
+        await send('Page.navigate', { url: base + 'index.html' });
+        await until(`return !!document.querySelector('.example.live')`, 30000);
+        await sleep(800);
+        const early = await js(`return performance.getEntriesByType('resource').filter((r) => /\\.wasm|\\.bin\\.gz/.test(r.name)).length`);
+        await js(`const t = document.getElementById(document.querySelector('.example.live').getAttribute('aria-labelledby')); t.scrollIntoView({ block: 'start' }); t.click()`);
+        const done = await until(`return /Analyzed in/.test(document.querySelector('.example.live .live-status').textContent)`, 120000);
+        await until(`return document.querySelectorAll('.example.live .cm-lintRange').length > 0`, 10000);
+        const got = await js(`const f = document.querySelector('.example.live'); return { text: f.querySelector('.live-ts').textContent.slice(0, 120), found: f.querySelectorAll('.cm-lintRange').length,
+          colored: f.querySelectorAll('.cm-content .tok-cmd').length, over: document.documentElement.scrollWidth > innerWidth }`);
+        check(`own tab at ${w}px${dark ? ' dark' : ''}: loads when opened, an editor, typesets with findings`, !early && done && /Hello, world!/.test(got.text) && got.found > 0 && got.colored > 3 && !got.over, JSON.stringify({ early, ...got }));
+        await shot(`w-live-${w}${dark ? '-dark' : ''}`);
+      }
+      const pe = await spot('\\end{document}', 0);
+      await mouse(...pe);
+      await send('Input.insertText', { text: 'A new line -- here.\n' });
+      check('own tab follows an edit', await until(`return /new line/.test(document.querySelector('.example.live .live-ts').textContent)`, 30000));
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
+      await send('Emulation.clearDeviceMetricsOverride');
+      });
+      await section('docs', async () => {
+      // documentation pages: the contents list heading names only, nothing overflows at 1440 and 1024 px
+      for (const [page, w] of [['guide.html', 1440], ['guide.html', 1024], ['wiki/domains.html', 1440], ['wiki/domains.html', 1024]]) {
+        await send('Emulation.setDeviceMetricsOverride', { width: w, height: 900, deviceScaleFactor: 1, mobile: false });
+        await send('Page.navigate', { url: base + page });
+        await until(`return document.querySelectorAll('#toc a').length > 3`, 30000);
+        const got = await js(`return { toc: [...document.querySelectorAll('#toc a')].map((a) => a.textContent), over: document.documentElement.scrollWidth > innerWidth }`);
+        check(`${page} at ${w}px: contents by heading name, no overflow`, !got.toc.some((t) => /#|: /.test(t)) && !got.over, JSON.stringify(got).slice(0, 200));
+        await shot(`w-docs-${page.replace(/\W+/g, '-')}-${w}`);
+      }
+      await send('Emulation.clearDeviceMetricsOverride');
+      });
+      await section('4', async () => {
+      // 4: the landing hero
+      for (const [w, h, name] of [[1440, 900, 'w4-hero-1440'], [375, 800, 'w4-hero-375']]) {
+        await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: w < 500 });
+        await send('Page.navigate', { url: base + 'index.html' });
+        // one line types each claim in turn: a dot per claim, labelled with it
+        await until(`return document.querySelectorAll('.claim-dots button').length > 1`, 30000);
+        const hero = await js(`const rot = document.querySelector('.claim-rot').getBoundingClientRect(), claim = document.querySelector('.claim').getBoundingClientRect();
+          return { dots: document.querySelectorAll('.claim-dots button').length, claims: new Set([...document.querySelectorAll('.claim-dots button')].map((d) => d.getAttribute('aria-label'))).size, lead: !!document.querySelector('.hero .lead, .lead'), overflow: document.documentElement.scrollWidth > innerWidth, rotBelow: rot.top >= claim.top + 10, text: document.querySelector('.claim-rot .on')?.textContent }`);
+        check(`hero at ${w}px: rotating claim on its own line, dots, no overflow, no tagline`, hero.dots > 1 && hero.dots === hero.claims && !hero.lead && !hero.overflow && hero.rotBelow, JSON.stringify(hero));
+        await js(`document.querySelectorAll('.claim-dots button')[2].click()`);
+        await sleep(3000);
+        const jumped = await js(`const d = document.querySelectorAll('.claim-dots button'), t = [...document.querySelector('[data-knows]').childNodes].filter((n) => !n.classList?.contains('claim-complete')).map((n) => n.textContent).join('');
+          return d[2].getAttribute('aria-selected') === 'true' && t.length > 3 && d[2].getAttribute('aria-label').startsWith(t) ? 2 : t`);
+        check(`hero at ${w}px: a dot jumps to its claim`, jumped === 2, String(jumped));
+        await shot(name);
+        await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+        await sleep(300);
+        await shot(`${name}-dark`);
+        await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
+      }
+      await send('Emulation.clearDeviceMetricsOverride');
+      });
+      await section('drawpage', async () => {
+      // Draw alone (draw/index.html): no site chrome, fits 320 px, a drawn circle finds candidates, ?theme=dark holds
+      await send('Emulation.setDeviceMetricsOverride', { width: 320, height: 700, deviceScaleFactor: 1, mobile: true });
+      await send('Page.navigate', { url: base + 'draw/index.html?theme=dark' });
+      await until(`return !!self.satexDraw && !!document.getElementById('draw-pad')`, 30000);
+      const b = await js(`const r = document.getElementById('draw-pad').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2, r.width * 0.3]`);
+      const ring = [...Array(49)].map((_, i) => [b[0] + Math.cos(i / 48 * 2 * Math.PI) * b[2], b[1] + Math.sin(i / 48 * 2 * Math.PI) * b[2]]);
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: ring[0][0], y: ring[0][1], button: 'left', buttons: 1, clickCount: 1 });
+      for (const [x, y] of ring) await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left', buttons: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: ring.at(-1)[0], y: ring.at(-1)[1], button: 'left', buttons: 0, clickCount: 1 });
+      const found = await until(`return document.querySelectorAll('#draw-list li .draw-glyph').length > 2`, 60000);
+      const page = await js(`return { header: !!document.querySelector('header.top'), dark: document.documentElement.dataset.theme, over: document.documentElement.scrollWidth > innerWidth }`);
+      await shot('draw-page-320');
+      check('Draw alone: candidates at 320 px, no chrome, the theme from the link', found && !page.header && page.dark === 'dark' && !page.over, JSON.stringify(page));
+      await send('Emulation.clearDeviceMetricsOverride');
+      await send('Page.navigate', { url: base + 'play/index.html' });
+      await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 180000);
+      });
+      await section('lenses', async () => {
+      // the plugins' lenses show by default: the paper's tabular (its root reads an input) and the drawing
+      const lenses = `[...document.querySelectorAll('.cm-lens')].map((b) => b.textContent)`;
+      for (const [file, lens] of [['paper.tex', 'Edit table…'], ['spacing.tex', 'Edit drawing…']]) {
+        await send('Page.navigate', { url: base + 'play/index.html#' + file });
+        const seen = await until(`return ${lenses}.includes(${JSON.stringify(lens)})`, 180000);
+        await shot(`lens-${file}`);
+        check(`${file} shows "${lens}"`, seen, JSON.stringify(await js(`return ${lenses}`)));
+      }
+      await send('Page.navigate', { url: base + 'play/index.html' });
+      await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 180000);
+      });
+      await section('settings', async () => {
+      // a satex.yaml key set in the settings dialog reaches the run: `clock` fixes what \\year reads
+      await open('clock', '\\documentclass{article}\n\\begin{document}\nYear \\the\\year.\n\\end{document}\n');
+      await js(`document.getElementById('cfg-open').click()`);
+      await until(`return !!document.querySelector('#cfg-list [data-cfg="clock"]')`, 30000);
+      await js(`const i = document.querySelector('#cfg-list [data-cfg="clock"]'); i.value = '1999-06-01T00:00:00'; i.dispatchEvent(new Event('change', { bubbles: true })); document.getElementById('play-config').close()`);
+      await js(`document.querySelector('.side-tabs [data-panel=play-typeset]').click()`);
+      const year = await until(`return /Year 1999/.test(document.getElementById('typeset-body').textContent)`, 120000);
+      check('the clock setting changes \\the\\year', year, await js(`return document.getElementById('typeset-body').textContent.slice(0, 120)`));
+      await js(`document.getElementById('cfg-open').click(); document.getElementById('cfg-reset').click(); document.getElementById('play-config').close()`);
+      });
+      await section('plugin tiles', async () => {
+      // the Plugins tab: a tile per category of type plugins, each plugin with its switch, which reaches the settings
+      await js(`document.getElementById('cfg-open').click(); document.querySelector('#cfg-tabs [data-tab=plugins]').click()`);
+      const tiles = await until(`return document.querySelectorAll('#cfg-list .pt-tile').length > 1 && !!document.querySelector('#cfg-list .pt-tile [data-cfg="type_plugins.image.enabled"]')`, 30000);
+      check('the Plugins tab shows a tile per category with switches', tiles, JSON.stringify(await js(`return [...document.querySelectorAll('#cfg-list .pt-tile h3')].map((h) => h.textContent)`)));
+      await js(`const i = document.querySelector('#cfg-list [data-cfg="type_plugins.image.enabled"]'); i.checked = false; i.dispatchEvent(new Event('change', { bubbles: true }))`);
+      check('a tile switch turns its plugin off', await until(`return JSON.parse(localStorage.getItem('satex-config') ?? '{}')['type_plugins.image.enabled'] === false`, 30000));
+      await js(`document.getElementById('cfg-reset').click(); document.getElementById('play-config').close()`);
+      });
+      await section('pdflinks', async () => {
+      // the compiled PDF's links (only with the compile server of `cargo playground`): areas over the pages,
+      // an internal one scrolls to its target and moves the editor there, Back returns, a URL opens a new tab
+      if (!await js(`return fetch('/__satex/compile').then((r) => r.ok && r.json()).then((j) => !!j?.compile).catch(() => false)`)) return console.log('skip: no compile server for the PDF links');
+      await open('links', '\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\\section{Intro}\\label{a}\nSee \\ref{b} and \\url{https://example.org}.\n\\newpage\n\\section{Two}\\label{b}\nBack to \\ref{a}.\n\\end{document}\n');
+      await js(`document.querySelector('.side-tabs [data-panel=play-pdf]').click(); document.getElementById('pdf-compile').click()`);
+      const built = await until(`return document.querySelectorAll('.pdf-page').length === 2 && document.querySelectorAll('.pdf-page img').length === [...document.querySelectorAll('.pdf-page img')].filter((i) => i.naturalWidth).length`, 180000);
+      const links = await js(`return [...document.querySelectorAll('.pdf-link')].map((a) => [a.closest('.pdf-page').dataset.page, a.getAttribute('href'), a.target, a.title])`);
+      check('the PDF has its links: two internal, one URL in a new tab', built && links.length === 3 && links.some(([p, h, t]) => p === '1' && h === 'https://example.org' && t === '_blank')
+        && links.filter(([, h, , t]) => h === '#' && /^to page \d$/.test(t)).length === 2, JSON.stringify(links));
+      const line = `document.querySelector('.cm-activeLine')?.textContent`;
+      await js(`document.querySelector('.pdf-page[data-page="1"] .pdf-link[title="to page 2"]').click()`);
+      const went = await until(`return /^\\\\section\\{Two\\}/.test(${line}) && !document.getElementById('pdf-back').hidden && document.querySelector('.pdf-page[data-page="2"] .pdf-target')`, 10000);
+      await shot('pdf-link');
+      await js(`document.getElementById('pdf-back').click()`);
+      const back = await until(`return document.getElementById('pdf-back').hidden && document.querySelector('.pdf-pages').scrollTop < 20`, 10000);
+      check('an internal link scrolls to its target and moves the editor, Back returns', went && back, await js(`return ${line} + ' | ' + document.querySelector('.pdf-pages').scrollTop`));
+      // the link stays on its words at another zoom
+      const onWord = `const a = document.querySelector('.pdf-link[href^=http]').getBoundingClientRect(), img = document.querySelector('.pdf-page[data-page="1"] img').getBoundingClientRect(); return [(a.left - img.left) / img.width, (a.top - img.top) / img.height].map((v) => v.toFixed(3)).join()`;
+      const at1 = await js(onWord);
+      await js(`document.getElementById('pdf-zoom-in').click()`);
+      await sleep(300);
+      check('links hold their place at every zoom', at1 === await js(onWord), at1);
+      await js(`document.getElementById('pdf-zoom-out').click()`);
+      });
+      await section('settings', async () => {
+      // a stored setting satex refuses never holds the start up: the page starts with the defaults
+      await send('Page.navigate', { url: base + 'play/index.html' });
+      await until(`return !!document.getElementById('play-status')`, 30000);
+      await js(`localStorage.setItem('satex-config', JSON.stringify({ clock: 'unk' }))`);
+      await send('Page.reload');
+      const started = await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 180000);
+      check('an invalid stored setting does not block the start', started && await js(`return localStorage.getItem('satex-config') === '{}' && /Reset 1 setting \\(clock: unk\\)/.test(document.getElementById('play-toast').textContent)`),
+        await js(`return document.getElementById('play-status').textContent + ' | ' + document.getElementById('play-toast').textContent`));
+      });
+    };
+    if (process.env.NEW_ONLY) { await wishes(); check('no page errors', !errors.length, errors.join(' | ').slice(0, 300)); ws.close(); return; }
     check('Run sits in the console bar', await js(`return !!document.getElementById('play-run').closest('.ask')`));
     check('the engine selector shows its name only', await js(`const k = document.getElementById('play-kernel'); return k.selectedOptions[0].textContent === 'pdfTeX'`),
       await js(`return document.getElementById('play-kernel').selectedOptions[0].textContent`));
@@ -439,16 +1026,16 @@ async function browser() {
     // hover card: a usage line, a footer, no raw signature
     let p = await spot('\\newcommand', 3);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p[0], y: p[1] });
-    const hoverText = await until(`return document.querySelector('.cm-tooltip-hover .hover')`, 20000) && await js(`return document.querySelector('.cm-tooltip-hover .hover').textContent`);
-    check('hover card', /⟨arg1⟩/.test(hoverText) && !/signature/.test(hoverText) && await js(`return !!document.querySelector('.cm-tooltip-hover .foot')`), hoverText.slice(0, 100));
-    check('hover usage colored by argument kind', await js(`const u = [...document.querySelectorAll('.cm-tooltip-hover code.usage .arg')].map((a) => a.className.split('-').pop());
-      return ['flag', 'mand', 'opt'].every((k) => u.includes(k)) && !document.querySelector('.cm-tooltip-hover .arg .arg')`), await js(`return document.querySelector('.cm-tooltip-hover code.usage')?.innerHTML.slice(0, 300) ?? 'no usage'`));
+    const hoverText = await until(`return document.querySelector('.tip-card .hover')`, 20000) && await js(`return document.querySelector('.tip-card .hover').textContent`);
+    check('hover card', /⟨arg1⟩/.test(hoverText) && !/signature/.test(hoverText) && await js(`return !!document.querySelector('.tip-card .foot')`), hoverText.slice(0, 100));
+    check('hover usage colored by argument kind', await js(`const u = [...document.querySelectorAll('.tip-card code.usage .arg')].map((a) => a.className.split('-').pop());
+      return ['flag', 'mand', 'opt'].every((k) => u.includes(k)) && !document.querySelector('.tip-card .arg .arg')`), await js(`return document.querySelector('.tip-card code.usage')?.innerHTML.slice(0, 300) ?? 'no usage'`));
     await shot('play-hover-newcommand');
 
-    // the Explain macro panel follows the mouse, no click
+    // the Explain panel follows the mouse, no click
     p = await spot('\\greet{', 2);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p[0], y: p[1] });
-    check('explain panel follows the mouse', await until(`return document.getElementById('explain-name').textContent === '\\\\greet' && /greet/.test(document.getElementById('explain-body').textContent)`, 20000),
+    check('explain panel follows the mouse', await until(`return /greet/.test(document.getElementById('explain-body').textContent)`, 20000),
       await js(`return document.getElementById('play-explain').textContent.slice(0, 120)`));
 
     check('explain panel shows the full record', await until(`return /greet/.test(document.querySelector('#explain-body .xcard .x-name')?.textContent ?? '') && /Hello, #1!/.test(document.getElementById('explain-body').textContent)`, 30000));
@@ -489,8 +1076,8 @@ async function browser() {
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p[0] + 40, y: p[1] + 200 });
     await sleep(200);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p[0], y: p[1] });
-    const fresh = await until(`return /salute/.test(document.querySelector('.cm-tooltip-hover .hover')?.textContent ?? '')`, 20000);
-    check('hover after rename', renamed && fresh, await js(`return document.querySelector('.cm-tooltip-hover .hover')?.textContent?.slice(0, 80) ?? 'no card'`));
+    const fresh = await until(`return /salute/.test(document.querySelector('.tip-card .hover')?.textContent ?? '')`, 20000);
+    check('hover after rename', renamed && fresh, await js(`return document.querySelector('.tip-card .hover')?.textContent?.slice(0, 80) ?? 'no card'`));
     check('rename applies', await until(`return /\\\\salute\\{/.test(document.querySelector('.cm-content').textContent) && !/\\\\greet/.test(document.querySelector('.cm-content').textContent)`, 10000));
 
     // a finding satex lowered below its rule's default shows its own severity alone
@@ -510,6 +1097,14 @@ async function browser() {
     const detail = await until(`return [...document.querySelectorAll('.cm-tooltip-autocomplete li')].some((li) => /salute/.test(li.textContent) && li.querySelector('.cm-completionDetail .arg-mand'))`, 20000);
     await shot('play-completion');
     check('completion usage colored by argument kind', detail, await js(`return document.querySelector('.cm-tooltip-autocomplete')?.textContent.slice(0, 120) ?? 'no completion'`));
+    // the library lists the names in force and finds one; a scratch text is read in the document's state
+    await js(`document.getElementById('lib-open').click()`);
+    const listed = await until(`const s = document.getElementById('lib-search'); s.value = 'textbf'; s.dispatchEvent(new Event('input'));
+      return [...document.querySelectorAll('#lib-list .cs-ref')].some((c) => c.textContent === '\\\\textbf')`, 60000);
+    check('the library finds a name in force', listed, await js(`return document.getElementById('lib-list').textContent.slice(0, 160)`));
+    await js(`document.getElementById('lib-text').value = '\\\\textbf{tried} 10--12'; document.getElementById('lib-run').click()`);
+    const tried = await until(`const o = document.getElementById('lib-out').textContent; return /tried/.test(o) && /10–12/.test(o)`, 120000);
+    check('a tried text is typeset, ligatures and all', tried, await js(`const o = document.getElementById('lib-out'); return o.textContent.slice(0, 200)`));
     await key('Escape');
     for (let i = 0; i < 6; i++) await key('Backspace');
 
@@ -532,11 +1127,20 @@ async function browser() {
       await js(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent + ' / ' + document.getElementById('play-toast').textContent`));
 
     // projects: an example's files in the tree, its root marked; an \input file is analyzed with the root
+    // the open example is edited: its edits are kept (drafts), the switch asks nothing
     await js(`document.querySelector('#play-examples [data-example="thesis.tex"]').click()`);
+    check('an edited example switches unasked, its edits kept', await js(`await new Promise((r) => setTimeout(r, 500)); return !document.getElementById('play-replace').open && /"texts"/.test(localStorage.getItem('satex-drafts') ?? '')`));
     check('an example is a project', await until(`return [...document.querySelectorAll('#play-files-tree .file')].map((f) => f.dataset.name).join() === 'chapter.tex,refs.bib,thesis.tex'
       && !!document.querySelector('#play-files-tree .root[data-name="thesis.tex"]') && !document.querySelector('#play-tabs .ro')`, 20000),
       await js(`return [...document.querySelectorAll('#play-files-tree .file')].map((f) => f.dataset.name).join()`));
     check('an input file is analyzed with its root', await until(`return !!document.querySelector('#play-files-tree [data-name="chapter.tex"] .tcount')`, 60000));
+    // switching files replaces the whole text: no decoration range (linked names, marks) may stretch over the new one
+    await mouse(...await spot('\\begin{', 8));
+    const stale = await until(`return document.querySelectorAll('.cm-linked').length === 2`, 20000);
+    await js(`document.querySelector('#play-tabs [data-name="chapter.tex"]').click()`);
+    check('a file switch leaves no stale decorations', stale && await until(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent === 'chapter.tex'`, 5000)
+      && await js(`return document.querySelectorAll('.cm-linked, .cm-refmark, .cm-flash, .cm-hold, .cm-deflink').length`) === 0);
+    await js(`document.querySelector('#play-tabs [data-name="thesis.tex"]').click()`);
     await shot('play-project');
     // renaming a file renames the root's \input of it
     await until(`return !!document.querySelector('#play-files-tree [data-name="chapter.tex"] [data-act=rename]')`, 10000);
@@ -554,7 +1158,7 @@ async function browser() {
     check('new file', await until(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent === 'notes.tex' && !!document.querySelector('#play-files-tree [data-name="notes.tex"]')`, 5000));
     await js(`const del = () => document.querySelector('#play-files-tree [data-name="notes.tex"] [data-act=delete]'); del().click(); del().click()`);
     check('delete', await until(`return !document.querySelector('#play-files-tree [data-name="notes.tex"]') && !document.querySelector('#play-tabs [data-name="notes.tex"]')`, 5000));
-    await js(`document.querySelector('#play-examples [data-example="${manifest.sample}"]').click()`);
+    await js(`document.querySelector('#play-examples [data-example="${manifest.sample}"]').click(); await new Promise((r) => setTimeout(r, 300)); document.querySelector('#play-replace[open] button[value=replace]')?.click()`);
     await until(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent === '${manifest.sample}'`, 10000);
 
     // uploads: one file joins the project; a folder becomes the project
@@ -606,6 +1210,20 @@ async function browser() {
       return [...document.querySelectorAll('#cache-list .cache-hit')].some((h) => /\\\\microtypesetup\\b/.test(h.textContent))`, 20000);
     check('caches are found by a command they define', found, await js(`return document.getElementById('cache-list').textContent.slice(0, 160)`));
     await js(`document.getElementById('cache-close').click()`);
+
+    // several at once, with what they need, in one batch; a package nobody offers stays a finding
+    const many = join(dir, 'many');
+    mkdirSync(many);
+    writeFileSync(join(many, 'main.tex'), '\\documentclass{article}\n\\usepackage{siunitx,booktabs}\n\\usepackage{tcolorbox}\n\\usepackage{nosuchpackage}\n\\begin{document}\n\\SI{1}{m}\n\\end{document}\n');
+    await upload('play-folder', [many]);
+    const unresolvedNames = `[...document.querySelectorAll('#lsp-diagnostics li')].filter((li) => /unresolved-file/.test(li.textContent)).map((li) => li.textContent)`;
+    check('packages load on demand in one batch', await until(`const p = document.getElementById('play-status').dataset.packages ?? '';
+      return ['siunitx', 'booktabs', 'tcolorbox', 'tikz'].every((n) => new RegExp('/' + n + '\\\\b').test(p)) && document.getElementById('lsp-status').textContent !== 'checking…'
+      && ${unresolvedNames}.length > 0 && ${unresolvedNames}.every((t) => t.includes('nosuchpackage'))`, 180000),
+      await js(`return document.getElementById('play-status').dataset.packages + ' | ' + ${unresolvedNames}.join(' / ').slice(0, 300)`));
+    // a switch in a section header flips when the switch itself is clicked, not only its text
+    const flipped = await js(`const b = document.getElementById('typeset-keys'), was = b.checked; b.click(); const now = b.checked; b.click(); return now !== was && b.checked === was`);
+    check('a header switch flips on its own click', flipped);
     check('no page errors', !errors.length, errors.join(' | ').slice(0, 300));
     ws.close();
   } catch (e) {

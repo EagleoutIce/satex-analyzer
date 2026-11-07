@@ -4,9 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::support::installed;
-use satex::config::Engine;
-use satex::facts::LoadStatus;
-use satex::machine::Machine;
+use satex::analysis::facts::LoadStatus;
+use satex::analysis::machine::Machine;
+use satex::project::config::Engine;
 
 /// A bundle in a fresh directory: `build.lua`, a `.dtx` with its `.ins`
 /// under `src/`, a document and a test.
@@ -41,7 +41,7 @@ fn bundle(name: &str) -> PathBuf {
     dir
 }
 
-fn analyze(path: &Path) -> satex::machine::Analysis {
+fn analyze(path: &Path) -> satex::analysis::machine::Analysis {
     let source = std::fs::read_to_string(path).unwrap();
     let cfg = crate::support::config();
     Machine::analyze(&source, Some(path), &cfg)
@@ -80,11 +80,11 @@ fn documents_are_typeset_with_typesetexe_and_tests_checked_with_the_first_engine
 
 #[test]
 fn defaults_come_from_l3build_itself() {
-    if satex::paths::which("texlua").is_err() || !installed() {
+    if satex::project::paths::which("texlua").is_err() || !installed() {
         return;
     }
     let dir = bundle("defaults");
-    let config = satex::plugin::l3build::L3build::read(&dir).expect("build.lua");
+    let config = satex::plugins::l3build::L3build::read(&dir).expect("build.lua");
     assert_eq!(config.how, "texlua");
     // l3build-variables.lua: `unpackfiles = unpackfiles or {"*.ins"}`.
     assert_eq!(config.list("unpackfiles"), vec!["*.ins".to_string()]);
@@ -96,7 +96,7 @@ fn defaults_come_from_l3build_itself() {
 /// writing is refused, so reading a bundle never changes a file.
 #[test]
 fn build_lua_cannot_write_a_file() {
-    if !installed() || satex::paths::which("texlua").is_err() {
+    if !installed() || satex::project::paths::which("texlua").is_err() {
         return;
     }
     let dir = bundle("sandbox");

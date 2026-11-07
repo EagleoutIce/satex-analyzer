@@ -8,63 +8,35 @@
 
 {{queries}}
 
-## definitions
-
-Every name the document or its packages define. `origin` is `document` for files in the main file's directory tree, `library` otherwise. `package` names the package or class.
-
-{{run(6): satex query definitions -f samples/paper.tex --filter 'tag=macro and arity>0'}}
-
-## expansions
-
-Every macro call, with how many times it was expanded.
-
-{{run(6): satex query expansions -f samples/paper.tex --filter 'name=\newcommand'}}
-
-## dependencies
-
-The files, packages and classes the document reads, and what loaded each. Lua modules loaded by `\directlua` chunks appear with kind `lua`. `texlive` names each file's TeX Live package (see [configuration](configuration.md#tex-live-packages-depp)).
-
-{{run(6): satex query dependencies -f samples/paper.tex --filter 'kind=package'}}
-
-## occurrences
-
-Package and class identification banners, passed options, and other one-off events.
-
-{{run(6): satex query occurrences -f samples/paper.tex --filter 'kind=identification'}}
-
-## recursion
-
-Macros that call themselves, directly or through another macro.
-
-{{run(6): satex query recursion -f samples/paper.tex}}
-
 ## calls
 
 The call graph: which control sequences a macro's replacement text invokes.
 
 {{run(6): satex query calls -f samples/paper.tex --filter 'name=\maketitle'}}
 
+## catcodes
+
+Explicit category code assignments (`\catcode`) the document makes. `doc/src/wiki/queries/demo.tex` makes `!` active:
+
+{{run: satex query catcodes -f doc/src/wiki/queries/demo.tex}}
+
+## definitions
+
+Every name the document or its packages define. `origin` is `document` for files in the main file's directory tree, `library` otherwise. `package` names the package or class.
+
+{{run(6): satex query definitions -f samples/paper.tex --filter 'tag=macro and arity>0'}}
+
+## dependencies
+
+The files, packages and classes the document reads, and what loaded each. Lua modules loaded by `\directlua` chunks appear with kind `lua`. `texlive` names each file's TeX Live package (see [configuration](configuration.md#plugins)).
+
+{{run(6): satex query dependencies -f samples/paper.tex --filter 'kind=package'}}
+
 ## dependency-graph
 
 The dependency graph as records. `satex dependencies` renders it as DOT or JSON.
 
-{{run(6): satex query dependency-graph -f samples/paper.tex}}
-
-## trace
-
-Every step: which macro expanded, which primitive ran, what changed. Use `satex trace`. `satex query trace` is empty unless `trace: true` is set.
-
-{{run(6): satex trace -f samples/paper.tex}}
-
-`--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile; `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown; `--include-internal` adds packages, classes and the kernel. `--format compact` prints at most 8 text lines instead: what each top-level call of the main file expands to, and each conditional's outcome. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
-
-{{run(6): satex trace -f samples/paper.tex --lines 10:11}}
-
-## files
-
-Every file read while analyzing the document, in the order it was opened.
-
-{{run(6): satex query files -f samples/paper.tex}}
+{{run(6): satex query dependency-graph -f samples/paper.tex --filter 'file=paper.tex'}}
 
 ## diagnostics
 
@@ -78,41 +50,29 @@ The detected TeX installation: provider, version, and the texmf trees searched.
 
 {{run(6): satex query distribution -f samples/paper.tex}}
 
-## catcodes
+## expansions
 
-Explicit category code assignments (`\catcode`) the document makes. `samples/paper.tex` does not change any, so this query returns nothing for it:
+Every macro call, with how many times it was expanded.
 
-{{run: satex query catcodes -f samples/paper.tex}}
+{{run(6): satex query expansions -f samples/paper.tex --filter 'name=\newcommand'}}
 
-## side-effects
+## files
 
-Definitions and assignments a macro makes as a side effect of being called, rather than through `\def` or `\newcommand` directly at that point.
+Every file read while analyzing the document, in the order it was opened.
 
-{{run(6): satex query side-effects -f samples/paper.tex}}
-
-## project
-
-The document class, engine, and build configuration SaTeX detected or was told to assume.
-
-{{run(6): satex query project -f samples/paper.tex}}
-
-## plugins
-
-The provider, platform, engine, output target, and build system plugins chose for this run, and why.
-
-{{run(6): satex query plugins -f samples/paper.tex}}
-
-## pgfkeys
-
-The pgfkeys keys defined at the end of the run and what each does (`initial`, `code`, `code args`, `is family`, `is choice`, `is if`). `--prefix PATH` narrows to one path, e.g. `/tikz/pingu`.
-
-{{run(6): satex query pgfkeys -f samples/keys.tex}}
+{{run(6): satex query files -f samples/paper.tex}}
 
 ## gaps
 
-What the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `gaps.log` use the same list.
+Lists the places the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `gaps.log` use the same list.
 
-{{run(6): satex query gaps -f samples/mypackage.sty}}
+{{run(6): satex query gaps -f doc/src/wiki/challenges/06-unknown.tex}}
+
+## occurrences
+
+Package and class identification banners, passed options, and other one-off events.
+
+{{run(6): satex query occurrences -f samples/paper.tex --filter 'kind=identification'}}
 
 ## options
 
@@ -124,11 +84,23 @@ This needs call arguments recorded (`record_arguments`). `query options` and `--
 
 {{run(6): satex query options --for mybanner -f samples/mypackage.sty}}
 
-## typeset
+## pgfkeys
 
-The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. The [challenges](Challenges) compare it with what pdflatex sets.
+The pgfkeys keys defined at the end of the run and what each does (`initial`, `code`, `code args`, `is family`, `is choice`, `is if`). `--prefix PATH` narrows to one path, e.g. `/tikz/pingu`.
 
-{{run(6): satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex}}
+{{run(6): satex query pgfkeys -f samples/keys.tex}}
+
+## plugins
+
+The provider, platform, engine, output target, and build system plugins chose for this run, and why.
+
+{{run(6): satex query plugins -f samples/paper.tex}}
+
+## previews
+
+The arrow tips and fill patterns the run declared, each drawn by TeX (`latex` and `dvisvgm`) as SVG. The names are `arrow:SPEC` and `pattern:NAME`. The pictures are kept in `previews.json` in the cache directory, where completion reads them. `doc/src/wiki/queries/demo.tex` loads the `arrows.meta` and `patterns` libraries:
+
+{{run(6): satex query previews -f doc/src/wiki/queries/demo.tex}}
 
 ## produces
 
@@ -145,6 +117,69 @@ Only the places that stand behind an expansion, for a text the document never wr
 `satex explain NAME…` shows what a control sequence means: where it is defined, what it takes, what it does. Without `-f` it explains against the smallest LaTeX document.
 
 {{run(10): satex explain '\itshape'}}
+
+## project
+
+The document class, engine, and build configuration SaTeX detected or was told to assume.
+
+The rows below list what the project walk found, without what `.gitignore` excludes.
+`unreachable` lists the inputs, packages, classes and bibliographies no root reads.
+Without `-f`, each root document is analyzed on its own.
+
+{{run(6): satex query project -f samples/paper.tex}}
+
+## recursion
+
+Macros that call themselves, directly or through another macro.
+
+`doc/src/wiki/queries/demo.tex` defines `\countdown`, which calls itself:
+
+{{run(6): satex query recursion -f doc/src/wiki/queries/demo.tex --filter 'name=\countdown'}}
+
+## side-effects
+
+Definitions and assignments a macro makes as a side effect of being called, rather than through `\def` or `\newcommand` directly at that point.
+
+{{run(6): satex query side-effects -f samples/paper.tex --filter 'file=paper.tex'}}
+
+## trace
+
+Every step: which macro expanded, which primitive ran, what changed. Use `satex trace`. `satex query trace` is empty unless `trace: true` is set.
+
+{{run(6): satex trace -f samples/paper.tex}}
+
+`--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile, and `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown. `--include-internal` adds packages, classes and the kernel. `--format compact` prints at most 8 text lines instead: what each top-level call of the main file expands to, and each conditional's outcome. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
+
+{{run(6): satex trace -f samples/paper.tex --lines 10:11}}
+
+### Dev mode: the state at each step
+
+`--state` (or `trace_state: true`) gives each step the abstract state it ran in, to track down where a result lost precision. It costs nothing while off. With `--format json` each record has a `state` object. With `--format csv` it is one JSON cell in the `state` column. A text table leaves it out.
+
+| Key | What it holds |
+| --- | --- |
+| `paths` | `live` paths, `forks` made so far, the `peak`, and `apart`: why the waiting paths do not join (progress, stacks, tags), as `SATEX_WHY_APART` prints it |
+| `choices` | the undecided choices this path took: the command, its place, `arm` of `arms`, and `joined` when the choice splits a joined meaning set |
+| `mode` | the modes the path may be in |
+| `conditionals`, `groups` | the conditional and group stacks, innermost first. `many` marks a widened entry |
+| `input` | the input stack, top first: a file and position, a token list and the macro it expands, a `\scantokens` text |
+| `bindings` | the step's own name and the names ahead, then the paired ones: `meaning`, the meaning set `may` a join left (`maybe_undefined` when one member is undefined), `certain`, `global`, and a register's `value` |
+| `paired` | the names a join kept paired across its arms, and how many arms |
+| `catcodes` | the catcode of each non-alphanumeric character in the file text ahead |
+
+A `value` names its type in the [`Ty` lattice](Domains#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what the domain knows: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
+
+## type-plugins
+
+The editor's type plugins this run would offer: each plugin, its category, the types it triggers on and its features. See [type plugins](Type-plugins) for what each does.
+
+{{run(6): satex query type-plugins -f samples/paper.tex}}
+
+## typeset
+
+The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.
+
+{{run(6): satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex}}
 
 ## Several definitions
 
@@ -183,11 +218,11 @@ SaTeX finds a signature by running the command on probe input and watching what 
 
 `--at WHERE` asks for the meaning at one place instead of the default preamble/document view (a suffix on the name would be ambiguous, since `@` is a letter in LaTeX's internal names):
 
-* `--at preamble` — the meaning right before `\begin{document}`.
-* `--at document` — the meaning at the end of the run.
-* `--at 302` — the meaning at line 302 of the main file.
-* `--at somefile.tex:302` — the meaning at line 302 of `somefile.tex`, a file the run read.
-* `--at after:enumitem` — the meaning right after the `enumitem` package finished contributing what it defines.
+* `--at preamble`: the meaning right before `\begin{document}`.
+* `--at document`: the meaning at the end of the run.
+* `--at 302`: the meaning at line 302 of the main file.
+* `--at somefile.tex:302`: the meaning at line 302 of `somefile.tex`, a file the run read.
+* `--at after:enumitem`: the meaning right after the `enumitem` package finished contributing what it defines.
 
 In a [request](#json-requests), an `explain` entry takes the same place as `"at"`.
 
@@ -215,15 +250,17 @@ The criterion is a name, `--at [FILE:]LINE:COL[-LINE[:COL]]` (a range, to the en
 
 `satex query --request FILE` (`-` for stdin) runs several queries on one analysis and prints one JSON answer per query. The request is a JSON object:
 
-* `file` — the document to analyze. Falls back to `-f` when omitted.
-* `config` — optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load.packages": false}`.
-* `queries` — an array of query objects, each with a `type`: any name from the query list above (`definitions`, `pgfkeys`, `gaps`, …, with `text`/`prefix`/`name`/`filter` as that query takes them), or `explain`, `controls`, `slice`, or `options`, with their own arguments:
+* `file`: the document to analyze. Falls back to `-f` when omitted.
+* `config`: optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load.packages": false}`.
+* `queries`: an array of query objects, each with a `type`: any name from the query list above (`definitions`, `pgfkeys`, `gaps`, …, with `text`/`prefix`/`name`/`filter` as that query takes them), or `explain`, `controls`, `slice`, `options`, `providers`, or `docs`, with their own arguments:
   * `explain`: `names` (array), `all` (bool).
   * `controls`: `names` (array), `all` (bool).
   * `slice`: `names` (array), `at` (`"[FILE:]LINE:COL"`), `forward` (bool).
   * `options`: `name`.
+  * `providers`: `names` (array). For each name, the installed package or class that defines it while loading the fewest files.
+  * `docs`: no arguments. What the manuals of the packages and classes the run read say about their commands, one record per command with the directory it was mined from.
 
-Each answer is `{"type": …, "records": […]}`, or `{"type": …, "error": …}` for a query that named something wrong — one bad query in the batch does not stop the rest of it.
+Each answer is `{"type": …, "records": […]}`, or `{"type": …, "error": …}` for a query that named something wrong. One bad query in the batch does not stop the rest of it.
 
 {{file: doc/src/wiki/request-example.json}}
 

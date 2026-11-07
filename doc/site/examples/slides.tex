@@ -1,0 +1,17 @@
+\documentclass{beamer}
+\usetheme{default}
+\title{Overlays}
+\begin{document}
+\begin{frame}{Steps}
+  \begin{itemize}
+    \item<1-> First point
+    \item<2-> Second point
+    \item<3-> Third point
+  \end{itemize}
+  \only<2>{Only on slide two.}
+  \uncover<3>{Revealed on slide three.}
+\end{frame}
+\begin{frame}{Pause}
+  One \pause two \pause three
+\end{frame}
+\end{document}

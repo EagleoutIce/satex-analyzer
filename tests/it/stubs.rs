@@ -1,10 +1,10 @@
 //! `stubs:` in `satex.yaml`: an effect summary in place of a macro's
 //! internals, said once as an `assumption`.
 
-use satex::builtins::OccKind;
-use satex::config::{Config, Load, Stub, StubKind, StubResult, StubSets};
-use satex::facts::Severity;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::facts::Severity;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::engine::builtins::OccKind;
+use satex::project::config::{Config, Load, Stub, StubKind, StubResult, StubSets};
 use std::path::PathBuf;
 
 const PACKAGE: &str = "\\ProvidesPackage{stubpkg}\n\\newcommand\\stubnum[1]{\\number 1#1}\n\
@@ -31,7 +31,6 @@ fn run(name: &str, stubs: Vec<(&str, Stub)>, source: &str) -> Option<Analysis> {
         search_paths: vec![dir.clone()],
         ..crate::support::config()
     };
-    cfg.cache.dir = Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/stubs-cache"));
     cfg.stubs = stubs.into_iter().map(|(n, s)| (n.to_string(), s)).collect();
     let source = format!(
         "\\documentclass{{article}}\\usepackage{{graphicx,stubpkg}}\n\\begin{{document}}\n{source}\n\\end{{document}}\n"

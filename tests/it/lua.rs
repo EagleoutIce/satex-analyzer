@@ -2,11 +2,11 @@
 //! what it prints of literals is read back, the modules it loads are
 //! dependencies, and catcode tables switch the regime.
 
-use crate::support::{analyze_latex, defined};
-use satex::builtins::{LoadKind, OccKind};
-use satex::config::{Config, Engine};
-use satex::machine::{Analysis, Machine};
-use satex::plugin::Kernel;
+use crate::support::{analyze_latex, defined, undefined};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::engine::builtins::{LoadKind, OccKind};
+use satex::plugins::Kernel;
+use satex::project::config::{Config, Engine};
 
 /// The LuaTeX primitives and nothing else.
 fn primitives(source: &str) -> Analysis {
@@ -42,7 +42,7 @@ fn an_extension_reads_its_general_texts() {
 #[test]
 fn a_conditional_print_is_a_gap_not_a_guess() {
     let analysis = primitives("\\directlua{if os.clock() > 1 then tex.print(\"\\\\def\\\\a{}\") end}");
-    assert!(!defined(&analysis, "a"));
+    assert!(undefined(&analysis, "a"));
     assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
 }
 
@@ -95,7 +95,7 @@ fn luaescapestring_escapes_for_a_lua_string() {
 
 #[test]
 fn luacode_environments_keep_the_stream_in_step() {
-    if satex::paths::which("kpsewhich").is_err() {
+    if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
     let source = "% !TeX program = lualatex\n\\documentclass{article}\n\\usepackage{luacode}\n\
@@ -125,7 +125,7 @@ fn scantextokens_has_no_end_of_line_or_file() {
         "\\everyeof{E}\\endlinechar`X \\newlinechar`| \\edef\\a{\\scantextokens{ab|cd}}\\edef\\b{\\scantokens{ab|cd}}\\endlinechar13 \\edef\\out{\\a|\\b}",
     );
     let out = analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == "out").unwrap();
-    let text = satex::tex::detokenize(&out.mac.as_ref().unwrap().replacement_text, &analysis.interner);
+    let text = satex::engine::tex::detokenize(&out.mac.as_ref().unwrap().replacement_text, &analysis.interner);
     assert_eq!(text, "abXcd|abXcdXE");
 }
 
@@ -143,14 +143,17 @@ fn the_token_library_defines_what_lua_runs() {
          \\edef\\out{\\texfilesize{a}b}",
     );
     let meaning = |name: &str| analysis.env.meaning(analysis.interner.lookup(name).expect("interned"));
-    assert!(matches!(meaning("direct"), satex::tex::Meaning::Macro(_)));
+    assert!(matches!(meaning("direct"), satex::engine::tex::Meaning::Macro(_)));
     assert!(matches!(
         meaning("texfilesize"),
-        satex::tex::Meaning::Primitive(satex::builtins::Primitive::LuaCall { id: 1, .. })
+        satex::engine::tex::Meaning::Primitive(satex::engine::builtins::Primitive::LuaCall { id: 1, .. })
     ));
-    assert!(!matches!(meaning("relax"), satex::tex::Meaning::Primitive(satex::builtins::Primitive::LuaCall { .. })));
+    assert!(!matches!(
+        meaning("relax"),
+        satex::engine::tex::Meaning::Primitive(satex::engine::builtins::Primitive::LuaCall { .. })
+    ));
     let out = analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == "out").unwrap();
-    let text = satex::tex::detokenize(&out.mac.as_ref().unwrap().replacement_text, &analysis.interner);
+    let text = satex::engine::tex::detokenize(&out.mac.as_ref().unwrap().replacement_text, &analysis.interner);
     assert_eq!(text, "b");
 }
 
@@ -161,14 +164,14 @@ fn a_chunk_runs_loops_tables_and_string_format() {
          tex.sprint('\\string\\\\def\\string\\\\squares{' .. table.concat(t, ',') .. '}')}",
     );
     let out = analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == "squares").expect("defined");
-    let text = satex::tex::detokenize(&out.mac.as_ref().unwrap().replacement_text, &analysis.interner);
+    let text = satex::engine::tex::detokenize(&out.mac.as_ref().unwrap().replacement_text, &analysis.interner);
     assert_eq!(text, "1,4,9");
 }
 
 #[test]
 fn a_test_of_an_unknown_value_is_unknown() {
-    // `status.shell_escape` is not known: neither branch is taken for sure.
-    let analysis = primitives("\\directlua{if status.shell_escape then tex.print('a') else tex.print('b') end}");
+    // `status.cs_count` is not known: neither branch is taken for sure.
+    let analysis = primitives("\\directlua{if status.cs_count then tex.print('a') else tex.print('b') end}");
     assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
     let analysis = primitives("\\directlua{local t = type(os.name) if t then tex.sprint(t) end}\\edef\\out{x}");
     assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
@@ -182,7 +185,7 @@ fn a_test_of_an_unknown_value_is_unknown() {
     assert!(defined(&primitives(&source("1 > 0")), "a"));
     for test in ["os.clock() + 1", "os.clock() == 0", "type(os.clock()) == 'number'", "not os.clock()"] {
         let analysis = primitives(&source(test));
-        assert!(!defined(&analysis, "a") && !defined(&analysis, "b"), "{test}");
+        assert!(undefined(&analysis, "a") && undefined(&analysis, "b"), "{test}");
         assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"), "{test}");
     }
 }
@@ -195,7 +198,7 @@ fn a_library_function_satex_lacks_is_not_an_error_pcall_catches() {
             "\\directlua{{if pcall({call}) then tex.print('\\string\\\\gdef\\string\\\\a{{}}') else tex.print('\\string\\\\gdef\\string\\\\b{{}}') end}}"
         );
         let analysis = primitives(&source);
-        assert!(!defined(&analysis, "a") && !defined(&analysis, "b"), "{call}");
+        assert!(undefined(&analysis, "a") && undefined(&analysis, "b"), "{call}");
         assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"), "{call}");
     }
     // A field LuaTeX does not have is nil, as there.
@@ -206,11 +209,13 @@ fn a_library_function_satex_lacks_is_not_an_error_pcall_catches() {
 
 #[test]
 fn an_upper_case_magic_comment_selects_the_engine() {
-    // TeXworks and TeXShop read `% !TEX program` and `% !TEX TS-program` alike.
+    // TeXworks and TeXShop read `% !TEX program` and `% !TEX TS-program` alike. Which engine a
+    // comment names is a reading of the source, settled before any kernel runs, so the test
+    // reads it there: a full run would build a XeTeX kernel only to ask this.
     for magic in ["% !TEX program = xelatex", "% !TeX TS-program = XeLaTeX"] {
         let source = format!("{magic}\n\\relax\n");
-        let analysis = analyze_latex(&source);
-        assert_eq!(analysis.plugins.engine, Engine::XeTeX, "{magic}");
+        let engine = satex::plugins::Plugins::sniff_engine(&crate::support::config(), &source);
+        assert_eq!(engine, Engine::XeTeX, "{magic}");
     }
 }
 
@@ -243,4 +248,16 @@ fn a_case_code_past_255_is_valid_under_luatex() {
     assert!(defined(&analysis, "still"));
     let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
     assert!(!codes.contains(&"invalid-code"), "{codes:?}");
+}
+
+/// `lua.run: false`: no chunk runs, so what it prints is unknown.
+#[test]
+fn lua_run_off_leaves_the_output_unknown() {
+    let source = "\\directlua{tex.print('\\string\\\\gdef\\string\\\\a{}')}";
+    assert!(defined(&primitives(source), "a"));
+    let mut cfg = Config { engine: Some(Engine::LuaTeX), kernel: Some(Kernel::None), ..crate::support::config() };
+    cfg.lua.run = false;
+    let analysis = Machine::analyze(&format!("\\catcode`\\{{=1 \\catcode`\\}}=2 {source}"), None, &cfg);
+    assert!(undefined(&analysis, "a"));
+    assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
 }

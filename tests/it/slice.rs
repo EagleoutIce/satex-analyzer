@@ -13,9 +13,9 @@ use std::process::Command;
 
 use crate::support::bare;
 use crate::support::installed;
-use satex::config::{Config, Load, Texmf};
-use satex::machine::{Analysis, Machine};
-use satex::query::{self, At, Direction, Record};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Load, Texmf};
+use satex::queries::query::{self, At, Direction, Record};
 
 /// No format, no packages: the primitives are enough for documents whose
 /// answer is decidable by hand.
@@ -327,22 +327,22 @@ fn a_position_in_a_file_the_run_never_read_names_nothing() {
 
 #[test]
 fn a_position_parses_with_and_without_a_file() {
-    assert_eq!(satex::cmd::parse_place("3:7"), Ok(At::here(3, 7)));
+    assert_eq!(satex::cli::parse_place("3:7"), Ok(At::here(3, 7)));
     assert_eq!(
-        satex::cmd::parse_place("part.tex:3:7"),
+        satex::cli::parse_place("part.tex:3:7"),
         Ok(At { file: Some("part.tex".into()), line: 3, col: 7, end: None })
     );
     assert_eq!(
-        satex::cmd::parse_place("/a/b/part.tex:3:7"),
+        satex::cli::parse_place("/a/b/part.tex:3:7"),
         Ok(At { file: Some("/a/b/part.tex".into()), line: 3, col: 7, end: None })
     );
     assert_eq!(
-        satex::cmd::parse_place("part-a.tex:45:1-48"),
+        satex::cli::parse_place("part-a.tex:45:1-48"),
         Ok(At { file: Some("part-a.tex".into()), line: 45, col: 1, end: Some((48, u32::MAX)) })
     );
-    assert_eq!(satex::cmd::parse_place("4:2-5:3").map(|at| at.end), Ok(Some((5, 3))));
-    assert!(satex::cmd::parse_place("3").is_err());
-    assert!(satex::cmd::parse_place("part.tex:x:7").is_err());
+    assert_eq!(satex::cli::parse_place("4:2-5:3").map(|at| at.end), Ok(Some((5, 3))));
+    assert!(satex::cli::parse_place("3").is_err());
+    assert!(satex::cli::parse_place("part.tex:x:7").is_err());
 }
 
 #[test]
@@ -466,7 +466,9 @@ fn a_reconstruction_puts_an_input_file_before_the_lines_that_use_it() {
     let analysis = Machine::analyze(&source, Some(&main), &cfg);
     let records = slice_at(&analysis, &["\\shared"], None, Direction::Backward);
     let text = query::reconstruct(&analysis, &records, &source);
-    let definition = text.find("\\def\\shared").expect("the definition is kept");
+    // A file kept whole is read by its own `\input` line.
+    let definition = (text.find("\\def\\shared").or_else(|| text.find("\\input{part}")))
+        .unwrap_or_else(|| panic!("the definition is kept:\n{text}"));
     let use_site = text.find("\n\\shared").expect("the use is kept");
     assert!(definition < use_site, "the definition has to come first:\n{text}");
     let _ = std::fs::remove_dir_all(&directory);
@@ -563,8 +565,10 @@ fn a_macro_from_a_package_is_sliced_back_to_the_package() {
         marks(&records)
     );
     let text = query::reconstruct(&analysis, &records, source);
+    // A standalone slice carries the package whole, as `filecontents*`.
+    let body = text.rsplit("\\end{filecontents*}").next().unwrap_or_default();
     assert!(
-        text.contains("\\usepackage{slicepkg}") && !text.contains("\\newcommand{\\frompackage}"),
+        body.contains("\\usepackage{slicepkg}") && !body.contains("\\newcommand{\\frompackage}"),
         "the reconstruction loads the package rather than copying lines out of it:\n{text}"
     );
     let _ = std::fs::remove_dir_all(&directory);
@@ -572,8 +576,8 @@ fn a_macro_from_a_package_is_sliced_back_to_the_package() {
 
 #[test]
 fn place_range_start_column_optional() {
-    let at = satex::cmd::parse_place("45-48").unwrap();
+    let at = satex::cli::parse_place("45-48").unwrap();
     assert_eq!((at.line, at.col, at.end), (45, 1, Some((48, u32::MAX))));
-    let at = satex::cmd::parse_place("p.tex:45-48").unwrap();
+    let at = satex::cli::parse_place("p.tex:45-48").unwrap();
     assert_eq!((at.file.as_deref(), at.line, at.col), (Some("p.tex"), 45, 1));
 }

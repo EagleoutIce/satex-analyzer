@@ -3,9 +3,9 @@
 //! expansion, paths kept) rather than following one and losing the rest.
 
 use crate::support::definition;
-use satex::config::{Config, Engine, Load, Texmf};
-use satex::machine::{Analysis, Machine};
-use satex::plugin::Kernel;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::plugins::Kernel;
+use satex::project::config::{Config, Engine, Load, Texmf};
 
 /// A scratch directory of its own per test.
 fn scratch(tag: &str) -> std::path::PathBuf {

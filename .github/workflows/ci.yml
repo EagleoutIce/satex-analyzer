@@ -71,26 +71,19 @@ jobs:
           fi
           tee -a "$GITHUB_OUTPUT" < changes
 
-  # Quick tier: every push and pull request, current TeX Live only.
-  quick-linux:
-    name: Test ubuntu-latest (${{ matrix.shard }})
+  # Builds once what every Linux shard needs: the test binaries and the kernel caches. The shards
+  # restore both from GitHub's cache and only run tests, no compiler, no kernel interpreted again.
+  build-linux:
+    name: Build the tests and kernels
     needs: changes
     if: (github.event_name == 'push' || github.event_name == 'pull_request') && needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
-    # Shards take 15 to 30 minutes on a busy runner; the limit is there to
-    # stop a hang, not a slow day.
     timeout-minutes: 45
-    # The TeX Live image already holds a full installation, which the
-    # engine-dependent tests need; installing one with apt takes minutes.
-    container: texlive/texlive:latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: ['1/8', '2/8', '3/8', '4/8', '5/8', '6/8', '7/8', '8/8', compliance]
+    container: texlive/texlive:TL2025-historic
     steps:
       # Lua and LPeg are compiled from C; the TeX Live image has no compiler.
       - name: Install a C toolchain
-        run: apt-get update && apt-get install -y --no-install-recommends build-essential
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential poppler-utils jq
 
       - uses: actions/checkout@v5
 
@@ -98,9 +91,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          # One cache for every shard: they build the same dependencies.
           shared-key: quick-linux
-          save-if: ${{ matrix.shard == '1/8' && github.ref == 'refs/heads/main' }}
           cache-on-failure: true
 
       # Fails in seconds if the image ever stops shipping TeX, which would
@@ -108,17 +99,115 @@ jobs:
       - name: The distribution is really there
         run: kpsewhich latex.ltx
 
-      - name: Test
-        if: matrix.shard != 'compliance'
+      # The binaries under fixed names: the shards run them where they were built (same image, same
+      # workspace path), so the paths compiled into them hold there too.
+      - name: Build
+        run: |
+          cargo build --locked --profile ci --features doc --bin satex --bin satex-doc
+          cargo test --locked --profile ci --features doc --no-run --test it --lib --message-format=json \
+            | jq -r 'select(.profile.test == true and .executable != null) | "\(.target.kind[0]) \(.executable)"' > bins.txt
+          cat bins.txt
+          cp "$(awk '$1 == "test" {print $2}' bins.txt)" target/ci/it-bin
+          cp "$(awk '$1 == "lib" {print $2}' bins.txt)" target/ci/lib-bin
+
+      - name: Save the binaries
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            target/ci/satex
+            target/ci/satex-doc
+            target/ci/it-bin
+            target/ci/lib-bin
+          key: tests-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # A kernel cache is keyed on the source it was built by (build.rs's digest of src/), so the
+      # cache key is the same digest's inputs: a change outside them reuses the kernels.
+      - name: Restore the kernels
+        id: kernels
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            target/scratch/test-cache
+            target/scratch/test-kernel
+          key: kernels-TL2025-${{ hashFiles('src/**', 'build.rs', 'Cargo.lock', 'Cargo.toml') }}
+
+      - name: Build the kernels
+        if: steps.kernels.outputs.cache-hit != 'true'
         env:
           SATEX_REQUIRE_TEX: '1'
+        run: target/ci/it-bin --exact warm::the_suite_s_kernels_build
+
+      - name: Save the kernels
+        if: steps.kernels.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            target/scratch/test-cache
+            target/scratch/test-kernel
+          key: ${{ steps.kernels.outputs.cache-primary-key }}
+
+  # Quick tier: every push and pull request, current TeX Live only.
+  quick-linux:
+    name: Test ubuntu-latest (${{ matrix.shard }})
+    needs: [changes, build-linux]
+    if: (github.event_name == 'push' || github.event_name == 'pull_request') && needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    # A shard runs prebuilt tests on prebuilt kernels: minutes. The limit stops a hang.
+    timeout-minutes: 30
+    # The TeX Live image already holds a full installation, which the
+    # engine-dependent tests need; installing one with apt takes minutes.
+    container: texlive/texlive:TL2025-historic
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['1/8', '2/8', '3/8', '4/8', '5/8', '6/8', '7/8', '8/8', compliance]
+    env:
+      SATEX_REQUIRE_TEX: '1'
+      IT_BIN: ${{ github.workspace }}/target/ci/it-bin
+      LIB_BIN: ${{ github.workspace }}/target/ci/lib-bin
+    steps:
+      # The differential tests read pdflatex's output with pdftotext.
+      - name: Install poppler
+        run: apt-get update && apt-get install -y --no-install-recommends poppler-utils
+
+      - uses: actions/checkout@v5
+
+      - name: Restore the binaries
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            target/ci/satex
+            target/ci/satex-doc
+            target/ci/it-bin
+            target/ci/lib-bin
+          key: tests-${{ github.run_id }}-${{ github.run_attempt }}
+          fail-on-cache-miss: true
+
+      - name: Restore the kernels
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            target/scratch/test-cache
+            target/scratch/test-kernel
+          key: kernels-TL2025-${{ hashFiles('src/**', 'build.rs', 'Cargo.lock', 'Cargo.toml') }}
+
+      # Tests write beside the build: CARGO_TARGET_TMPDIR names this directory.
+      - name: Prepare
+        run: mkdir -p target/ci/tmp
+
+      - name: Test
+        if: matrix.shard != 'compliance'
         run: bash scripts/ci-test.sh ${{ matrix.shard }}
 
       - name: Unit tests
         if: matrix.shard == 'compliance'
-        env:
-          SATEX_REQUIRE_TEX: '1'
         run: bash scripts/ci-test.sh lib
+
+      # The wiki, README and schema are generated from doc/src and the code:
+      # a change that leaves a generated page behind fails here, never later.
+      - name: Generated docs are up to date
+        if: matrix.shard == 'compliance'
+        run: target/ci/satex-doc --check
 
       # The known-divergence ledger: fails on purpose while any of its ~61
       # entries is open.  Reported here as its own shard, non-blocking, so
@@ -126,9 +215,39 @@ jobs:
       - name: Compliance ledger (known-red, non-blocking)
         if: matrix.shard == 'compliance'
         continue-on-error: true
+        run: bash scripts/ci-test.sh compliance
+
+      # The known-red tests: the shards leave them out (an open one may hang), here they run
+      # time-boxed and non-blocking, and one that passes now is named.
+      - name: Known reds (non-blocking)
+        if: matrix.shard == 'compliance'
+        continue-on-error: true
+        run: bash scripts/ci-test.sh reds
+
+  # The newest TeX Live, reported but not blocking: the main jobs pin
+  # TL2025-historic, and this shows how far satex is from the current kernel.
+  newest-texlive:
+    name: Test newest TeX Live (non-blocking)
+    needs: changes
+    if: (github.event_name == 'push' || github.event_name == 'pull_request') && needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    container: texlive/texlive:latest
+    steps:
+      - name: Install a C toolchain
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential poppler-utils
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: quick-linux
+          save-if: false
+          cache-on-failure: true
+      - name: Test
         env:
           SATEX_REQUIRE_TEX: '1'
-        run: bash scripts/ci-test.sh compliance
+        run: "bash scripts/ci-test.sh quick latex:: documents:: termination::"
 
   quick-other:
     name: Test ${{ matrix.os }}
@@ -156,6 +275,7 @@ jobs:
             scheme-basic
             pgf
             beamer
+            booktabs
             microtype
             luacode
             luatexbase
@@ -200,11 +320,10 @@ jobs:
           SATEX_REQUIRE_TEX: '1'
         run: |
           cargo test --locked --profile ci --no-fail-fast --lib
-          cargo test --locked --profile ci --no-fail-fast --test it -- \
+          bash scripts/ci-test.sh quick \
             distribution_guard:: \
             engine:: \
             engine_truth:: \
-            differential:: \
             engine_trace:: \
             format_flags:: \
             lua:: \
@@ -216,6 +335,15 @@ jobs:
             termination:: \
             tex_compliance:: \
             trace_range::
+
+      # What the typesetting sets depends on the package versions, and these runners install the latest
+      # ones: reported here, blocking on Linux, whose image pins TL2025-historic.
+      - name: Typesetting on the latest packages (non-blocking)
+        shell: bash
+        continue-on-error: true
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: "bash scripts/ci-test.sh quick differential::"
 
       - name: Compliance ledger (known-red, non-blocking)
         shell: bash
@@ -257,7 +385,7 @@ jobs:
         tl: [current, TL2022, TL2019]
         include:
           - tl: current
-            container: texlive/texlive:latest
+            container: texlive/texlive:TL2025-historic
           - tl: TL2022
             container: texlive/texlive:TL2022-historic
           - tl: TL2019
@@ -265,7 +393,7 @@ jobs:
         shard: ['1/8', '2/8', '3/8', '4/8', '5/8', '6/8', '7/8', '8/8', compliance]
     steps:
       - name: Install a C toolchain
-        run: apt-get update && apt-get install -y --no-install-recommends build-essential
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential poppler-utils
 
       - uses: actions/checkout@v5
 
@@ -355,11 +483,10 @@ jobs:
           SATEX_REQUIRE_TEX: '1'
         run: |
           cargo test --locked --profile ci --no-fail-fast --lib
-          cargo test --locked --profile ci --no-fail-fast --test it -- \
+          bash scripts/ci-test.sh quick \
             distribution_guard:: \
             engine:: \
             engine_truth:: \
-            differential:: \
             engine_trace:: \
             format_flags:: \
             lua:: \
@@ -371,6 +498,15 @@ jobs:
             termination:: \
             tex_compliance:: \
             trace_range::
+
+      # What the typesetting sets depends on the package versions, and these runners install the latest
+      # ones: reported here, blocking on Linux, whose image pins TL2025-historic.
+      - name: Typesetting on the latest packages (non-blocking)
+        shell: bash
+        continue-on-error: true
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: "bash scripts/ci-test.sh quick differential::"
 
       - name: Compliance ledger (known-red, non-blocking)
         shell: bash
@@ -415,35 +551,79 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
+  # Not blocking: lists the user-visible commits CHANGELOG.md's Unreleased
+  # section does not cover yet (scripts/changelog.py draft shows them).
+  changelog:
+    name: Changelog covers the commits
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: python3 scripts/changelog.py check
+
   link-check:
     name: Check documentation links
     needs: changes
     if: needs.changes.outputs.links == 'true'
     runs-on: ubuntu-latest
-    # Usually two minutes, but slow hosts plus lychee's retries have taken
-    # fourteen.
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
-
-      - name: Lychee
-        uses: lycheeverse/lychee-action@v2
-        env:
-          # Raises GitHub's anonymous API rate limit, which the many
-          # github.com/.../blob/<sha>/...#L<line> citations would otherwise hit.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Links into this repository's `main` are checked against the
-          # checkout, and CTAN's mirror redirector against one fixed mirror
-          # (see lychee.toml).
-          args: >-
-            --config lychee.toml
-            --no-progress
-            --remap 'https://github\.com/EagleoutIce/satex-analyzer/blob/main/([^#]*)(#.*)? file://${{ github.workspace }}/$1'
-            --remap '^https://mirrors\.ctan\.org/(.*)$ https://ctan.net/$1'
-            *.md
-            doc/**/*.md
-          fail: true
+          fetch-depth: 0
+
+      # Links that answered stay checked for a day; saved even when the web check ran out of time,
+      # so the next run goes on where this one stopped.
+      - name: Link cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .lycheecache
+          key: lychee-${{ github.sha }}
+          restore-keys: lychee-
+
+      - name: Install lychee
+        run: curl -sSfL https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-gnu.tar.gz | tar -xz --strip-components=1 -C "$RUNNER_TEMP" && echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      # Links into this repository (a `main` blob link is checked against the checkout, see
+      # lychee.toml): every page, offline, in seconds.
+      - name: Repository links
+        run: |
+          lychee --config lychee.toml --offline --no-progress \
+            --remap "https://github\.com/EagleoutIce/satex-analyzer/blob/main/([^#]*)(#.*)? file://$PWD/\$1" \
+            *.md doc/**/*.md
+
+      # Web links: a pull request checks the pages it changes, main and a manual run every page.
+      # Ten minutes at most: a host that throttles the runner says nothing about the link, so
+      # running out of time warns and never fails.
+      - name: Web links
+        env:
+          # Raises GitHub's anonymous rate limit for the many github.com citations.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          pages=(*.md doc/**/*.md)
+          if [[ -n "$BASE" ]]; then
+            mapfile -t changed < <(git diff --name-only "$BASE"...HEAD -- '*.md')
+            pages=($(comm -12 <(printf '%s\n' "${pages[@]}" | sort) <(printf '%s\n' "${changed[@]}" | sort)))
+          fi
+          if (( ${#pages[@]} == 0 )); then echo "no page changed"; exit 0; fi
+          echo "checking ${#pages[@]} pages"
+          status=0
+          timeout -s INT 600 lychee --config lychee.toml --cache --max-cache-age 1d --no-progress \
+            --remap "https://github\.com/EagleoutIce/satex-analyzer/blob/main/([^#]*)(#.*)? file://$PWD/\$1" \
+            --remap '^https://mirrors\.ctan\.org/(.*)$ https://ctan.net/$1' \
+            "${pages[@]}" || status=$?
+          if (( status == 124 )); then echo "::warning::the web link check ran out of its ten minutes: the rest is checked next run"; exit 0; fi
+          exit $status
+
+      - name: Save the link cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .lycheecache
+          key: lychee-${{ github.sha }}
 
   # A `tex.web § N` / `etex.ch \`identifier\`` citation names a module number
   # or an identifier, never a line, so this re-resolves every one against the

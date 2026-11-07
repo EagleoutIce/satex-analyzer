@@ -1,0 +1,10 @@
+% Exercises: microtype protrusion/expansion, lmodern, babel, csquotes, hyphenation over long paragraphs.
+\documentclass[a4paper]{article}
+\usepackage[T1]{fontenc}\usepackage{lmodern}\usepackage[english]{babel}\usepackage{csquotes}
+\usepackage[activate={true,nocompatibility},final,tracking=true,kerning=true,spacing=true]{microtype}
+\usepackage{lipsum}
+\begin{document}
+\section{Typography}\lipsum[1-8]
+\enquote{Quoted} text and \textsc{small caps} with \textls{tracking}. \blockquote{Block quote.}
+\lipsum[9-12]
+\end{document}

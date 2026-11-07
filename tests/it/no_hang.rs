@@ -1,6 +1,6 @@
 //! Every subcommand finishes on a copy of the sample paper (tests/fixtures/project) within a bounded time.
 
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 /// Far above what the sample needs, far below a hang.
@@ -15,7 +15,7 @@ fn finishes(args: &[&str]) {
 fn finishes_within(args: &[&str], limit: Duration) {
     let cache = crate::support::tmp_root().join(format!("satex-no-hang-{}", std::process::id()));
     let start = Instant::now();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let mut child = crate::support::satex()
         .args(args)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .env("SATEX_CACHE", &cache)
@@ -40,7 +40,7 @@ fn no_subcommand_hangs() {
     let file = ["-f", "tests/fixtures/project/paper.tex", "--set", "limits.seconds=0"];
     finishes_within(&[&["cache", "build"][..], &file[..]].concat(), KERNEL_LIMIT);
     let queries = String::from_utf8(
-        Command::new(env!("CARGO_BIN_EXE_satex"))
+        crate::support::satex()
             .args(["query", "--list", "--format", "csv"])
             .output()
             .expect("satex lists its queries")

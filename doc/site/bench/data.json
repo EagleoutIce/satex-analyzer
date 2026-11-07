@@ -1,0 +1,4959 @@
+[
+ {
+  "version": "0.1.0",
+  "date": "2026-09-25",
+  "commit": "5570f80",
+  "runs": [
+   {
+    "doc": "samples/paper.tex",
+    "kernel": "tex",
+    "wall": 0.155,
+    "peak": 24,
+    "steps": 683,
+    "forks": null,
+    "end": true,
+    "findings": 36,
+    "code": 0
+   },
+   {
+    "doc": "samples/paper.tex",
+    "kernel": "pdftex",
+    "wall": 1.645,
+    "peak": 275,
+    "steps": 10300000,
+    "forks": null,
+    "end": true,
+    "findings": 10,
+    "code": 0
+   },
+   {
+    "doc": "samples/paper.tex",
+    "kernel": "xetex",
+    "wall": 1.409,
+    "peak": 496,
+    "steps": 9900000,
+    "forks": null,
+    "end": true,
+    "findings": 12,
+    "code": 0
+   },
+   {
+    "doc": "samples/paper.tex",
+    "kernel": "luatex",
+    "wall": 3.355,
+    "peak": 542,
+    "steps": 7100000,
+    "forks": null,
+    "end": true,
+    "findings": 3,
+    "code": 0
+   },
+   {
+    "doc": "samples/keys.tex",
+    "kernel": "tex",
+    "wall": 0.094,
+    "peak": 24,
+    "steps": 309,
+    "forks": null,
+    "end": true,
+    "findings": 12,
+    "code": 0
+   },
+   {
+    "doc": "samples/keys.tex",
+    "kernel": "pdftex",
+    "wall": 0.381,
+    "peak": 187,
+    "steps": 1300000,
+    "forks": null,
+    "end": true,
+    "findings": 17,
+    "code": 0
+   },
+   {
+    "doc": "samples/keys.tex",
+    "kernel": "xetex",
+    "wall": 0.685,
+    "peak": 410,
+    "steps": 1300000,
+    "forks": null,
+    "end": true,
+    "findings": 16,
+    "code": 0
+   },
+   {
+    "doc": "samples/keys.tex",
+    "kernel": "luatex",
+    "wall": 2.593,
+    "peak": 436,
+    "steps": 1300000,
+    "forks": null,
+    "end": true,
+    "findings": 17,
+    "code": 0
+   },
+   {
+    "doc": "doc/site/examples/chapter.tex",
+    "kernel": "tex",
+    "wall": 0.09,
+    "peak": 24,
+    "steps": 399,
+    "forks": null,
+    "end": true,
+    "findings": 13,
+    "code": 0
+   },
+   {
+    "doc": "doc/site/examples/chapter.tex",
+    "kernel": "pdftex",
+    "wall": 0.315,
+    "peak": 181,
+    "steps": 207700,
+    "forks": null,
+    "end": true,
+    "findings": 19,
+    "code": 0
+   },
+   {
+    "doc": "doc/site/examples/chapter.tex",
+    "kernel": "xetex",
+    "wall": 0.525,
+    "peak": 400,
+    "steps": 221000,
+    "forks": null,
+    "end": true,
+    "findings": 19,
+    "code": 0
+   },
+   {
+    "doc": "doc/site/examples/chapter.tex",
+    "kernel": "luatex",
+    "wall": 2.494,
+    "peak": 443,
+    "steps": 210600,
+    "forks": null,
+    "end": true,
+    "findings": 19,
+    "code": 0
+   },
+   {
+    "doc": "doc/site/examples/leapyear.tex",
+    "kernel": "tex",
+    "wall": 49.164,
+    "peak": 39,
+    "steps": 900000000,
+    "forks": null,
+    "end": false,
+    "findings": 9,
+    "code": 0
+   },
+   {
+    "doc": "doc/site/examples/leapyear.tex",
+    "kernel": "pdftex",
+    "wall": 48.217,
+    "peak": 39,
+    "steps": 900000000,
+    "forks": null,
+    "end": false,
+    "findings": 9,
+    "code": 0
+   },
+   {
+    "doc": "doc/site/examples/leapyear.tex",
+    "kernel": "xetex",
+    "wall": 48.16,
+    "peak": 38,
+    "steps": 900000000,
+    "forks": null,
+    "end": false,
+    "findings": 9,
+    "code": 0
+   },
+   {
+    "doc": "doc/site/examples/leapyear.tex",
+    "kernel": "luatex",
+    "wall": 50.722,
+    "peak": 41,
+    "steps": 900000000,
+    "forks": null,
+    "end": false,
+    "findings": 9,
+    "code": 0
+   },
+   {
+    "doc": "tests/fixtures/documents/call_summary_cells/main.tex",
+    "kernel": "tex",
+    "wall": 0.068,
+    "peak": 24,
+    "steps": 158,
+    "forks": null,
+    "end": true,
+    "findings": 12,
+    "code": 0
+   },
+   {
+    "doc": "tests/fixtures/documents/call_summary_cells/main.tex",
+    "kernel": "pdftex",
+    "wall": 0.779,
+    "peak": 308,
+    "steps": 13200000,
+    "forks": null,
+    "end": true,
+    "findings": 12,
+    "code": 0
+   },
+   {
+    "doc": "tests/fixtures/documents/call_summary_cells/main.tex",
+    "kernel": "luatex",
+    "wall": 2.679,
+    "peak": 523,
+    "steps": 7700000,
+    "forks": null,
+    "end": true,
+    "findings": 8,
+    "code": 0
+   },
+   {
+    "doc": "tests/fixtures/documents/tikz_fit_b/main.tex",
+    "kernel": "tex",
+    "wall": 0.063,
+    "peak": 24,
+    "steps": 1100,
+    "forks": null,
+    "end": true,
+    "findings": 36,
+    "code": 0
+   },
+   {
+    "doc": "tests/fixtures/documents/tikz_fit_b/main.tex",
+    "kernel": "pdftex",
+    "wall": 1.168,
+    "peak": 331,
+    "steps": 17700000,
+    "forks": null,
+    "end": true,
+    "findings": 39,
+    "code": 0
+   },
+   {
+    "doc": "tests/fixtures/documents/tikz_fit_b/main.tex",
+    "kernel": "luatex",
+    "wall": 4.097,
+    "peak": 534,
+    "steps": 18600000,
+    "forks": null,
+    "end": true,
+    "findings": 40,
+    "code": 0
+   },
+   {
+    "doc": "tests/fixtures/documents/tikz_shapes_ma/mwe.tex",
+    "kernel": "tex",
+    "wall": 0.061,
+    "peak": 24,
+    "steps": 1600,
+    "forks": null,
+    "end": true,
+    "findings": 65,
+    "code": 0
+   },
+   {
+    "doc": "tests/fixtures/documents/tikz_shapes_ma/mwe.tex",
+    "kernel": "pdftex",
+    "wall": 1.877,
+    "peak": 295,
+    "steps": 32400000,
+    "forks": null,
+    "end": true,
+    "findings": 83,
+    "code": 0
+   },
+   {
+    "doc": "tests/fixtures/documents/tikz_shapes_ma/mwe.tex",
+    "kernel": "xetex",
+    "wall": 1.909,
+    "peak": 543,
+    "steps": 32000000,
+    "forks": null,
+    "end": true,
+    "findings": 82,
+    "code": 0
+   },
+   {
+    "doc": "tests/fixtures/documents/tikz_shapes_ma/mwe.tex",
+    "kernel": "luatex",
+    "wall": 4.619,
+    "peak": 584,
+    "steps": 34100000,
+    "forks": null,
+    "end": true,
+    "findings": 115,
+    "code": 0
+   },
+   {
+    "doc": "tests/fixtures/documents/forest_savebox/mwe.tex",
+    "kernel": "tex",
+    "wall": 0.066,
+    "peak": 24,
+    "steps": 3300,
+    "forks": null,
+    "end": true,
+    "findings": 59,
+    "code": 0
+   },
+   {
+    "doc": "tests/fixtures/documents/forest_savebox/mwe.tex",
+    "kernel": "pdftex",
+    "wall": 2.296,
+    "peak": 372,
+    "steps": 42200000,
+    "forks": null,
+    "end": true,
+    "findings": 61,
+    "code": 0
+   },
+   {
+    "doc": "tests/fixtures/documents/forest_savebox/mwe.tex",
+    "kernel": "xetex",
+    "wall": 3.034,
+    "peak": 672,
+    "steps": 52900000,
+    "forks": null,
+    "end": true,
+    "findings": 61,
+    "code": 0
+   },
+   {
+    "doc": "tests/fixtures/documents/forest_savebox/mwe.tex",
+    "kernel": "luatex",
+    "wall": 6.775,
+    "peak": 683,
+    "steps": 52900000,
+    "forks": null,
+    "end": true,
+    "findings": 71,
+    "code": 0
+   },
+   {
+    "doc": "benches/docs/pgfmath_loop.tex",
+    "kernel": "tex",
+    "wall": 0.065,
+    "peak": 24,
+    "steps": 26000,
+    "forks": null,
+    "end": true,
+    "findings": 11,
+    "code": 0
+   },
+   {
+    "doc": "benches/docs/pgfmath_loop.tex",
+    "kernel": "pdftex",
+    "wall": 0.757,
+    "peak": 230,
+    "steps": 12600000,
+    "forks": null,
+    "end": true,
+    "findings": 5,
+    "code": 0
+   },
+   {
+    "doc": "benches/docs/pgfmath_loop.tex",
+    "kernel": "xetex",
+    "wall": 1.09,
+    "peak": 444,
+    "steps": 12500000,
+    "forks": null,
+    "end": true,
+    "findings": 6,
+    "code": 0
+   },
+   {
+    "doc": "benches/docs/pgfmath_loop.tex",
+    "kernel": "luatex",
+    "wall": 4.749,
+    "peak": 471,
+    "steps": 12500000,
+    "forks": null,
+    "end": true,
+    "findings": 7,
+    "code": 0
+   },
+   {
+    "doc": "benches/docs/tikz_loop.tex",
+    "kernel": "tex",
+    "wall": 0.157,
+    "peak": 24,
+    "steps": 175,
+    "forks": null,
+    "end": true,
+    "findings": 20,
+    "code": 0
+   },
+   {
+    "doc": "benches/docs/tikz_loop.tex",
+    "kernel": "pdftex",
+    "wall": 8.594,
+    "peak": 351,
+    "steps": 57500000,
+    "forks": null,
+    "end": true,
+    "findings": 2513,
+    "code": 0
+   },
+   {
+    "doc": "benches/docs/tikz_loop.tex",
+    "kernel": "xetex",
+    "wall": 8.684,
+    "peak": 518,
+    "steps": 57200000,
+    "forks": null,
+    "end": true,
+    "findings": 1506,
+    "code": 0
+   },
+   {
+    "doc": "benches/docs/tikz_loop.tex",
+    "kernel": "luatex",
+    "wall": 17.882,
+    "peak": 607,
+    "steps": 101800000,
+    "forks": null,
+    "end": true,
+    "findings": 2647,
+    "code": 0
+   },
+   {
+    "doc": "benches/docs/macro_loop.tex",
+    "kernel": "tex",
+    "wall": 1.44,
+    "peak": 44,
+    "steps": 44200000,
+    "forks": null,
+    "end": true,
+    "findings": 3,
+    "code": 0
+   },
+   {
+    "doc": "benches/docs/macro_loop.tex",
+    "kernel": "pdftex",
+    "wall": 1.431,
+    "peak": 44,
+    "steps": 44200000,
+    "forks": null,
+    "end": true,
+    "findings": 3,
+    "code": 0
+   },
+   {
+    "doc": "benches/docs/macro_loop.tex",
+    "kernel": "xetex",
+    "wall": 1.406,
+    "peak": 44,
+    "steps": 44200000,
+    "forks": null,
+    "end": true,
+    "findings": 3,
+    "code": 0
+   },
+   {
+    "doc": "benches/docs/macro_loop.tex",
+    "kernel": "luatex",
+    "wall": 1.465,
+    "peak": 44,
+    "steps": 44200000,
+    "forks": null,
+    "end": true,
+    "findings": 3,
+    "code": 0
+   }
+  ]
+ },
+ {
+  "version": "0.1.1-dev",
+  "date": "2026-11-04",
+  "commit": "2a79cfa",
+  "runs": [
+   {
+    "doc": "samples/paper.tex",
+    "kernel": "tex",
+    "wall": 0.043,
+    "peak": 36,
+    "steps": 697,
+    "forks": 0,
+    "end": true,
+    "findings": 48,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": false,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 4,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 1,
+      "warning": 8
+     },
+     "edges": 6,
+     "exhausted": false,
+     "expansions": 60,
+     "files": 3,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 169,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 36,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 9.62,
+      "document": 1.38,
+      "format": 9.51,
+      "hooks": 0.15,
+      "lint": 13.4
+     },
+     "rules": 109,
+     "seconds": 0.036,
+     "steps": 697,
+     "vertices": 21
+    }
+   },
+   {
+    "doc": "samples/paper.tex",
+    "kernel": "pdftex",
+    "wall": 4.016,
+    "peak": 516,
+    "steps": 11307071,
+    "forks": 123,
+    "end": true,
+    "findings": 11,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 7,
+      "packages_reused": 30
+     },
+     "definitions": 15220,
+     "diagnostics": {
+      "assumption": 11,
+      "imprecision": 40,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 93318,
+     "exhausted": false,
+     "expansions": 23773,
+     "files": 294,
+     "forks": 123,
+     "joined_slots": 30984,
+     "limits_hit": 0,
+     "lines": 33487,
+     "load_steps": 8555124,
+     "loop_heads": 82,
+     "peak_mib": 516,
+     "peak_paths": 5,
+     "phases_ms": {
+      "discovery": 10.45,
+      "document": 3250.27,
+      "format": 101.44,
+      "hooks": 0.23,
+      "lint": 516.54
+     },
+     "rules": 109,
+     "seconds": 3.931,
+     "steps": 11307071,
+     "vertices": 40112
+    }
+   },
+   {
+    "doc": "samples/paper.tex",
+    "kernel": "xetex",
+    "wall": 6.755,
+    "peak": 876,
+    "steps": 10739120,
+    "forks": 131,
+    "end": true,
+    "findings": 11,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 5,
+      "packages_reused": 30
+     },
+     "definitions": 14732,
+     "diagnostics": {
+      "assumption": 11,
+      "imprecision": 41,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 89032,
+     "exhausted": false,
+     "expansions": 22649,
+     "files": 304,
+     "forks": 131,
+     "joined_slots": 28948,
+     "limits_hit": 0,
+     "lines": 30896,
+     "load_steps": 8214876,
+     "loop_heads": 82,
+     "peak_mib": 876,
+     "peak_paths": 5,
+     "phases_ms": {
+      "discovery": 8.61,
+      "document": 5713.6,
+      "format": 293.37,
+      "hooks": 0.25,
+      "lint": 520.39
+     },
+     "rules": 109,
+     "seconds": 6.641,
+     "steps": 10739120,
+     "vertices": 38558
+    }
+   },
+   {
+    "doc": "samples/paper.tex",
+    "kernel": "luatex",
+    "wall": 12.975,
+    "peak": 492,
+    "steps": 7762176,
+    "forks": 33890,
+    "end": true,
+    "findings": 7,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": false,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 11947,
+     "diagnostics": {
+      "assumption": 56,
+      "imprecision": 110,
+      "info": 1,
+      "unsupported": 30,
+      "warning": 0
+     },
+     "edges": 551141,
+     "exhausted": false,
+     "expansions": 16051,
+     "files": 105,
+     "forks": 33890,
+     "joined_slots": 15519,
+     "limits_hit": 0,
+     "lines": 148824,
+     "load_steps": 7034835,
+     "loop_heads": 117,
+     "peak_mib": 492,
+     "peak_paths": 40,
+     "phases_ms": {
+      "discovery": 11.25,
+      "document": 1510.4,
+      "format": 11267.33,
+      "hooks": 0.26,
+      "lint": 41.87
+     },
+     "rules": 109,
+     "seconds": 12.864,
+     "steps": 7762176,
+     "vertices": 263828
+    }
+   },
+   {
+    "doc": "samples/keys.tex",
+    "kernel": "tex",
+    "wall": 0.033,
+    "peak": 36,
+    "steps": 312,
+    "forks": 0,
+    "end": true,
+    "findings": 15,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": false,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 3,
+     "diagnostics": {
+      "assumption": 0,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 1,
+      "warning": 0
+     },
+     "edges": 3,
+     "exhausted": false,
+     "expansions": 12,
+     "files": 2,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 134,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 36,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 10.41,
+      "document": 0.87,
+      "format": 8.85,
+      "hooks": 0.23,
+      "lint": 4.63
+     },
+     "rules": 109,
+     "seconds": 0.027,
+     "steps": 312,
+     "vertices": 13
+    }
+   },
+   {
+    "doc": "samples/keys.tex",
+    "kernel": "pdftex",
+    "wall": 0.563,
+    "peak": 309,
+    "steps": 1386545,
+    "forks": 0,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 2
+     },
+     "definitions": 1706,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 14055,
+     "exhausted": false,
+     "expansions": 4977,
+     "files": 240,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 1603,
+     "load_steps": 405766,
+     "loop_heads": 0,
+     "peak_mib": 309,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 10.4,
+      "document": 388.99,
+      "format": 104.37,
+      "hooks": 0.21,
+      "lint": 10.97
+     },
+     "rules": 109,
+     "seconds": 0.538,
+     "steps": 1386545,
+     "vertices": 6694
+    }
+   },
+   {
+    "doc": "samples/keys.tex",
+    "kernel": "xetex",
+    "wall": 1.141,
+    "peak": 646,
+    "steps": 1384573,
+    "forks": 0,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 2
+     },
+     "definitions": 1707,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 14100,
+     "exhausted": false,
+     "expansions": 4943,
+     "files": 251,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 1611,
+     "load_steps": 410623,
+     "loop_heads": 0,
+     "peak_mib": 646,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 10.42,
+      "document": 681.37,
+      "format": 302.86,
+      "hooks": 0.21,
+      "lint": 16.83
+     },
+     "rules": 109,
+     "seconds": 1.08,
+     "steps": 1384573,
+     "vertices": 6697
+    }
+   },
+   {
+    "doc": "samples/keys.tex",
+    "kernel": "luatex",
+    "wall": 12.094,
+    "peak": 839,
+    "steps": 1476755,
+    "forks": 33884,
+    "end": true,
+    "findings": 2,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": false,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 1917,
+     "diagnostics": {
+      "assumption": 57,
+      "imprecision": 110,
+      "info": 1,
+      "unsupported": 28,
+      "warning": 0
+     },
+     "edges": 502382,
+     "exhausted": false,
+     "expansions": 5460,
+     "files": 73,
+     "forks": 33884,
+     "joined_slots": 16414,
+     "limits_hit": 0,
+     "lines": 120971,
+     "load_steps": 493215,
+     "loop_heads": 117,
+     "peak_mib": 839,
+     "peak_paths": 40,
+     "phases_ms": {
+      "discovery": 10.44,
+      "document": 1017.5,
+      "format": 10844.79,
+      "hooks": 0.18,
+      "lint": 32.17
+     },
+     "rules": 109,
+     "seconds": 11.994,
+     "steps": 1476755,
+     "vertices": 241601
+    }
+   },
+   {
+    "doc": "doc/site/examples/chapter.tex",
+    "kernel": "tex",
+    "wall": 0.033,
+    "peak": 35,
+    "steps": 400,
+    "forks": 0,
+    "end": true,
+    "findings": 17,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": false,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 1,
+     "diagnostics": {
+      "assumption": 0,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 1,
+      "warning": 0
+     },
+     "edges": 2,
+     "exhausted": false,
+     "expansions": 22,
+     "files": 2,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 130,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 35,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 9.71,
+      "document": 0.68,
+      "format": 7.74,
+      "hooks": 0.14,
+      "lint": 6.84
+     },
+     "rules": 109,
+     "seconds": 0.028,
+     "steps": 400,
+     "vertices": 10
+    }
+   },
+   {
+    "doc": "doc/site/examples/chapter.tex",
+    "kernel": "pdftex",
+    "wall": 0.798,
+    "peak": 261,
+    "steps": 211104,
+    "forks": 0,
+    "end": true,
+    "findings": 20,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 163,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 4196,
+     "exhausted": false,
+     "expansions": 1174,
+     "files": 235,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 28,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 261,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 10.91,
+      "document": 121.21,
+      "format": 125.95,
+      "hooks": 0.19,
+      "lint": 481.4
+     },
+     "rules": 109,
+     "seconds": 0.747,
+     "steps": 211104,
+     "vertices": 999
+    }
+   },
+   {
+    "doc": "doc/site/examples/chapter.tex",
+    "kernel": "xetex",
+    "wall": 1.075,
+    "peak": 458,
+    "steps": 224419,
+    "forks": 0,
+    "end": true,
+    "findings": 20,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 157,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 4160,
+     "exhausted": false,
+     "expansions": 1167,
+     "files": 246,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 28,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 458,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 10.7,
+      "document": 124.92,
+      "format": 328.02,
+      "hooks": 0.15,
+      "lint": 520.31
+     },
+     "rules": 109,
+     "seconds": 1.002,
+     "steps": 224419,
+     "vertices": 988
+    }
+   },
+   {
+    "doc": "doc/site/examples/chapter.tex",
+    "kernel": "luatex",
+    "wall": 1.839,
+    "peak": 436,
+    "steps": 318480,
+    "forks": 6426,
+    "end": true,
+    "findings": 19,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 204,
+     "diagnostics": {
+      "assumption": 5,
+      "imprecision": 1039,
+      "info": 1,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 5215,
+     "exhausted": false,
+     "expansions": 2355,
+     "files": 66,
+     "forks": 6426,
+     "joined_slots": 168,
+     "limits_hit": 0,
+     "lines": 28,
+     "load_steps": 0,
+     "loop_heads": 5,
+     "peak_mib": 436,
+     "peak_paths": 4,
+     "phases_ms": {
+      "discovery": 10.47,
+      "document": 1068.1,
+      "format": 195.86,
+      "hooks": 0.31,
+      "lint": 489.44
+     },
+     "rules": 109,
+     "seconds": 1.783,
+     "steps": 318480,
+     "vertices": 1522
+    }
+   },
+   {
+    "doc": "doc/site/examples/leapyear.tex",
+    "kernel": "tex",
+    "wall": 0.074,
+    "peak": 57,
+    "steps": 1977,
+    "forks": 8,
+    "end": true,
+    "findings": 0,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 4,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 181,
+     "exhausted": false,
+     "expansions": 85,
+     "files": 50,
+     "forks": 8,
+     "joined_slots": 17,
+     "limits_hit": 0,
+     "lines": 40,
+     "load_steps": 0,
+     "loop_heads": 3,
+     "peak_mib": 57,
+     "peak_paths": 4,
+     "phases_ms": {
+      "discovery": 9.26,
+      "document": 35.42,
+      "format": 5.48,
+      "hooks": 0.21,
+      "lint": 0.83
+     },
+     "rules": 109,
+     "seconds": 0.054,
+     "steps": 1977,
+     "vertices": 53
+    }
+   },
+   {
+    "doc": "doc/site/examples/leapyear.tex",
+    "kernel": "pdftex",
+    "wall": 0.081,
+    "peak": 57,
+    "steps": 1977,
+    "forks": 8,
+    "end": true,
+    "findings": 0,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 4,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 181,
+     "exhausted": false,
+     "expansions": 85,
+     "files": 50,
+     "forks": 8,
+     "joined_slots": 17,
+     "limits_hit": 0,
+     "lines": 40,
+     "load_steps": 0,
+     "loop_heads": 3,
+     "peak_mib": 57,
+     "peak_paths": 4,
+     "phases_ms": {
+      "discovery": 9.84,
+      "document": 41.4,
+      "format": 6.65,
+      "hooks": 0.19,
+      "lint": 0.69
+     },
+     "rules": 109,
+     "seconds": 0.061,
+     "steps": 1977,
+     "vertices": 53
+    }
+   },
+   {
+    "doc": "doc/site/examples/leapyear.tex",
+    "kernel": "xetex",
+    "wall": 0.081,
+    "peak": 56,
+    "steps": 1977,
+    "forks": 8,
+    "end": true,
+    "findings": 0,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 4,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 181,
+     "exhausted": false,
+     "expansions": 85,
+     "files": 50,
+     "forks": 8,
+     "joined_slots": 17,
+     "limits_hit": 0,
+     "lines": 40,
+     "load_steps": 0,
+     "loop_heads": 3,
+     "peak_mib": 56,
+     "peak_paths": 4,
+     "phases_ms": {
+      "discovery": 10.78,
+      "document": 39.64,
+      "format": 6.25,
+      "hooks": 0.2,
+      "lint": 0.72
+     },
+     "rules": 109,
+     "seconds": 0.06,
+     "steps": 1977,
+     "vertices": 53
+    }
+   },
+   {
+    "doc": "doc/site/examples/leapyear.tex",
+    "kernel": "luatex",
+    "wall": 0.09,
+    "peak": 57,
+    "steps": 1977,
+    "forks": 8,
+    "end": true,
+    "findings": 0,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 4,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 181,
+     "exhausted": false,
+     "expansions": 85,
+     "files": 50,
+     "forks": 8,
+     "joined_slots": 17,
+     "limits_hit": 0,
+     "lines": 40,
+     "load_steps": 0,
+     "loop_heads": 3,
+     "peak_mib": 57,
+     "peak_paths": 4,
+     "phases_ms": {
+      "discovery": 13.12,
+      "document": 44.23,
+      "format": 6.57,
+      "hooks": 0.22,
+      "lint": 0.76
+     },
+     "rules": 109,
+     "seconds": 0.068,
+     "steps": 1977,
+     "vertices": 53
+    }
+   },
+   {
+    "doc": "tests/fixtures/documents/call_summary_cells/main.tex",
+    "kernel": "tex",
+    "wall": 0.033,
+    "peak": 36,
+    "steps": 161,
+    "forks": 0,
+    "end": true,
+    "findings": 14,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": false,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 0,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 1,
+      "warning": 0
+     },
+     "edges": 0,
+     "exhausted": false,
+     "expansions": 15,
+     "files": 2,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 124,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 36,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 10.78,
+      "document": 0.76,
+      "format": 8.05,
+      "hooks": 0.17,
+      "lint": 5.47
+     },
+     "rules": 109,
+     "seconds": 0.028,
+     "steps": 161,
+     "vertices": 7
+    }
+   },
+   {
+    "doc": "tests/fixtures/documents/call_summary_cells/main.tex",
+    "kernel": "pdftex",
+    "wall": 2.939,
+    "peak": 624,
+    "steps": 10552837,
+    "forks": 0,
+    "end": true,
+    "findings": 3,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 16
+     },
+     "definitions": 16258,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 118896,
+     "exhausted": false,
+     "expansions": 27044,
+     "files": 317,
+     "forks": 0,
+     "joined_slots": 4,
+     "limits_hit": 0,
+     "lines": 39383,
+     "load_steps": 7166586,
+     "loop_heads": 2,
+     "peak_mib": 624,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 10.14,
+      "document": 2622.02,
+      "format": 111.49,
+      "hooks": 0.29,
+      "lint": 63.31
+     },
+     "rules": 109,
+     "seconds": 2.874,
+     "steps": 10552837,
+     "vertices": 48733
+    }
+   },
+   {
+    "doc": "tests/fixtures/documents/call_summary_cells/main.tex",
+    "kernel": "luatex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "tests/fixtures/documents/tikz_fit_b/main.tex",
+    "kernel": "tex",
+    "wall": 0.04,
+    "peak": 35,
+    "steps": 1065,
+    "forks": 0,
+    "end": true,
+    "findings": 51,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": false,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 0,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 1,
+      "warning": 0
+     },
+     "edges": 0,
+     "exhausted": false,
+     "expansions": 47,
+     "files": 2,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 156,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 35,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 9.51,
+      "document": 2.25,
+      "format": 7.98,
+      "hooks": 0.18,
+      "lint": 12.05
+     },
+     "rules": 109,
+     "seconds": 0.035,
+     "steps": 1065,
+     "vertices": 7
+    }
+   },
+   {
+    "doc": "tests/fixtures/documents/tikz_fit_b/main.tex",
+    "kernel": "pdftex",
+    "wall": 3.756,
+    "peak": 626,
+    "steps": 12270042,
+    "forks": 0,
+    "end": true,
+    "findings": 2,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 15
+     },
+     "definitions": 15026,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 96446,
+     "exhausted": false,
+     "expansions": 25856,
+     "files": 314,
+     "forks": 0,
+     "joined_slots": 4,
+     "limits_hit": 0,
+     "lines": 37273,
+     "load_steps": 6591342,
+     "loop_heads": 2,
+     "peak_mib": 626,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 11.72,
+      "document": 3424.78,
+      "format": 111.51,
+      "hooks": 0.24,
+      "lint": 68.51
+     },
+     "rules": 109,
+     "seconds": 3.7,
+     "steps": 12270042,
+     "vertices": 45440
+    }
+   },
+   {
+    "doc": "tests/fixtures/documents/tikz_fit_b/main.tex",
+    "kernel": "luatex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "tests/fixtures/documents/tikz_shapes_ma/mwe.tex",
+    "kernel": "tex",
+    "wall": 0.069,
+    "peak": 35,
+    "steps": 1478,
+    "forks": 0,
+    "end": true,
+    "findings": 80,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": false,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 0,
+     "diagnostics": {
+      "assumption": 28,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 1,
+      "warning": 2
+     },
+     "edges": 29,
+     "exhausted": false,
+     "expansions": 105,
+     "files": 2,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 200,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 35,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 18.11,
+      "document": 2.48,
+      "format": 12.74,
+      "hooks": 0.32,
+      "lint": 25.41
+     },
+     "rules": 109,
+     "seconds": 0.062,
+     "steps": 1478,
+     "vertices": 39
+    }
+   },
+   {
+    "doc": "tests/fixtures/documents/tikz_shapes_ma/mwe.tex",
+    "kernel": "pdftex",
+    "wall": 8.471,
+    "peak": 667,
+    "steps": 24959809,
+    "forks": 0,
+    "end": true,
+    "findings": 5,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 15
+     },
+     "definitions": 20111,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 202111,
+     "exhausted": false,
+     "expansions": 29639,
+     "files": 324,
+     "forks": 0,
+     "joined_slots": 4,
+     "limits_hit": 0,
+     "lines": 46488,
+     "load_steps": 6678814,
+     "loop_heads": 2,
+     "peak_mib": 667,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 15.84,
+      "document": 7908.75,
+      "format": 173.24,
+      "hooks": 0.32,
+      "lint": 126.15
+     },
+     "rules": 109,
+     "seconds": 8.385,
+     "steps": 24959809,
+     "vertices": 55050
+    }
+   },
+   {
+    "doc": "tests/fixtures/documents/tikz_shapes_ma/mwe.tex",
+    "kernel": "xetex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "tests/fixtures/documents/tikz_shapes_ma/mwe.tex",
+    "kernel": "luatex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "tests/fixtures/documents/forest_savebox/mwe.tex",
+    "kernel": "tex",
+    "wall": 0.062,
+    "peak": 39,
+    "steps": 3293,
+    "forks": 0,
+    "end": true,
+    "findings": 101,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": false,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 0,
+     "diagnostics": {
+      "assumption": 0,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 1,
+      "warning": 6
+     },
+     "edges": 0,
+     "exhausted": false,
+     "expansions": 71,
+     "files": 2,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 242,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 39,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 11.83,
+      "document": 6.81,
+      "format": 8.56,
+      "hooks": 0.24,
+      "lint": 24.55
+     },
+     "rules": 109,
+     "seconds": 0.055,
+     "steps": 3293,
+     "vertices": 11
+    }
+   },
+   {
+    "doc": "tests/fixtures/documents/forest_savebox/mwe.tex",
+    "kernel": "pdftex",
+    "wall": 9.212,
+    "peak": 836,
+    "steps": 39332012,
+    "forks": 15,
+    "end": true,
+    "findings": 4,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 10,
+      "packages_reused": 56
+     },
+     "definitions": 46547,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 1,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 281228,
+     "exhausted": false,
+     "expansions": 61734,
+     "files": 394,
+     "forks": 15,
+     "joined_slots": 63,
+     "limits_hit": 0,
+     "lines": 95132,
+     "load_steps": 28873630,
+     "loop_heads": 3,
+     "peak_mib": 836,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 10.92,
+      "document": 8667.07,
+      "format": 128.68,
+      "hooks": 0.35,
+      "lint": 163.97
+     },
+     "rules": 109,
+     "seconds": 9.104,
+     "steps": 39332012,
+     "vertices": 124793
+    }
+   },
+   {
+    "doc": "tests/fixtures/documents/forest_savebox/mwe.tex",
+    "kernel": "xetex",
+    "wall": 17.653,
+    "peak": 1224,
+    "steps": 50715077,
+    "forks": 12,
+    "end": true,
+    "findings": 4,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 14,
+      "packages_reused": 57
+     },
+     "definitions": 49138,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 304498,
+     "exhausted": false,
+     "expansions": 64755,
+     "files": 409,
+     "forks": 12,
+     "joined_slots": 56,
+     "limits_hit": 0,
+     "lines": 97617,
+     "load_steps": 40396135,
+     "loop_heads": 3,
+     "peak_mib": 1224,
+     "peak_paths": 2,
+     "phases_ms": {
+      "discovery": 14.47,
+      "document": 16673.48,
+      "format": 416.9,
+      "hooks": 0.5,
+      "lint": 183.63
+     },
+     "rules": 109,
+     "seconds": 17.492,
+     "steps": 50715077,
+     "vertices": 133045
+    }
+   },
+   {
+    "doc": "tests/fixtures/documents/forest_savebox/mwe.tex",
+    "kernel": "luatex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/pgfmath_loop.tex",
+    "kernel": "tex",
+    "wall": 0.077,
+    "peak": 35,
+    "steps": 135,
+    "forks": 0,
+    "end": true,
+    "findings": 11,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": false,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 0,
+     "diagnostics": {
+      "assumption": 0,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 2,
+      "warning": 0
+     },
+     "edges": 5,
+     "exhausted": false,
+     "expansions": 17,
+     "files": 2,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 129,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 35,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 21.28,
+      "document": 2.19,
+      "format": 24.59,
+      "hooks": 0.47,
+      "lint": 9.64
+     },
+     "rules": 109,
+     "seconds": 0.064,
+     "steps": 135,
+     "vertices": 14
+    }
+   },
+   {
+    "doc": "benches/docs/pgfmath_loop.tex",
+    "kernel": "pdftex",
+    "wall": 8.273,
+    "peak": 493,
+    "steps": 13064298,
+    "forks": 6,
+    "end": true,
+    "findings": 3,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 4
+     },
+     "definitions": 6405,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 39773,
+     "exhausted": false,
+     "expansions": 11673,
+     "files": 260,
+     "forks": 6,
+     "joined_slots": 503,
+     "limits_hit": 0,
+     "lines": 10198,
+     "load_steps": 1489988,
+     "loop_heads": 2,
+     "peak_mib": 493,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 24.96,
+      "document": 7526.95,
+      "format": 250.26,
+      "hooks": 0.49,
+      "lint": 114.61
+     },
+     "rules": 109,
+     "seconds": 8.126,
+     "steps": 13064298,
+     "vertices": 20797
+    }
+   },
+   {
+    "doc": "benches/docs/pgfmath_loop.tex",
+    "kernel": "xetex",
+    "wall": 9.499,
+    "peak": 917,
+    "steps": 13039961,
+    "forks": 0,
+    "end": true,
+    "findings": 3,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 4
+     },
+     "definitions": 6403,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 39780,
+     "exhausted": false,
+     "expansions": 11631,
+     "files": 271,
+     "forks": 0,
+     "joined_slots": 4,
+     "limits_hit": 0,
+     "lines": 10206,
+     "load_steps": 1484003,
+     "loop_heads": 2,
+     "peak_mib": 917,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 22.52,
+      "document": 8263.47,
+      "format": 569.11,
+      "hooks": 0.49,
+      "lint": 85.42
+     },
+     "rules": 109,
+     "seconds": 9.301,
+     "steps": 13039961,
+     "vertices": 20789
+    }
+   },
+   {
+    "doc": "benches/docs/pgfmath_loop.tex",
+    "kernel": "luatex",
+    "wall": 9.816,
+    "peak": 699,
+    "steps": 13431103,
+    "forks": 86,
+    "end": true,
+    "findings": 4,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 1,
+      "packages_reused": 3
+     },
+     "definitions": 6577,
+     "diagnostics": {
+      "assumption": 19,
+      "imprecision": 6,
+      "info": 1,
+      "unsupported": 2,
+      "warning": 0
+     },
+     "edges": 41067,
+     "exhausted": false,
+     "expansions": 11944,
+     "files": 93,
+     "forks": 86,
+     "joined_slots": 2484,
+     "limits_hit": 0,
+     "lines": 10198,
+     "load_steps": 1739224,
+     "loop_heads": 7,
+     "peak_mib": 699,
+     "peak_paths": 4,
+     "phases_ms": {
+      "discovery": 24.93,
+      "document": 8867.26,
+      "format": 426.13,
+      "hooks": 0.59,
+      "lint": 93.61
+     },
+     "rules": 109,
+     "seconds": 9.696,
+     "steps": 13431103,
+     "vertices": 21116
+    }
+   },
+   {
+    "doc": "benches/docs/tikz_loop.tex",
+    "kernel": "tex",
+    "wall": 0.079,
+    "peak": 35,
+    "steps": 174,
+    "forks": 0,
+    "end": true,
+    "findings": 26,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": false,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 0,
+     "diagnostics": {
+      "assumption": 0,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 1,
+      "warning": 0
+     },
+     "edges": 0,
+     "exhausted": false,
+     "expansions": 23,
+     "files": 2,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 129,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 35,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 24.6,
+      "document": 1.71,
+      "format": 22.51,
+      "hooks": 0.34,
+      "lint": 9.48
+     },
+     "rules": 109,
+     "seconds": 0.064,
+     "steps": 174,
+     "vertices": 7
+    }
+   },
+   {
+    "doc": "benches/docs/tikz_loop.tex",
+    "kernel": "pdftex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/tikz_loop.tex",
+    "kernel": "xetex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/tikz_loop.tex",
+    "kernel": "luatex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/macro_loop.tex",
+    "kernel": "tex",
+    "wall": 0.281,
+    "peak": 60,
+    "steps": 52162,
+    "forks": 0,
+    "end": true,
+    "findings": 3,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 686,
+     "diagnostics": {
+      "assumption": 0,
+      "imprecision": 2,
+      "info": 0,
+      "unsupported": 1,
+      "warning": 101
+     },
+     "edges": 2214,
+     "exhausted": false,
+     "expansions": 1154,
+     "files": 50,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 5720,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 60,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 31.84,
+      "document": 139.07,
+      "format": 21.22,
+      "hooks": 0.64,
+      "lint": 6.58
+     },
+     "rules": 109,
+     "seconds": 0.206,
+     "steps": 52162,
+     "vertices": 1446
+    }
+   },
+   {
+    "doc": "benches/docs/macro_loop.tex",
+    "kernel": "pdftex",
+    "wall": 6.097,
+    "peak": 80,
+    "steps": 44669344,
+    "forks": 0,
+    "end": true,
+    "findings": 3,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 687,
+     "diagnostics": {
+      "assumption": 0,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 2215,
+     "exhausted": false,
+     "expansions": 1157,
+     "files": 50,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 5720,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 80,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 24.35,
+      "document": 5991.26,
+      "format": 10.38,
+      "hooks": 0.4,
+      "lint": 4.84
+     },
+     "rules": 109,
+     "seconds": 6.039,
+     "steps": 44669344,
+     "vertices": 1445
+    }
+   },
+   {
+    "doc": "benches/docs/macro_loop.tex",
+    "kernel": "xetex",
+    "wall": 5.701,
+    "peak": 82,
+    "steps": 44669344,
+    "forks": 0,
+    "end": true,
+    "findings": 3,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 687,
+     "diagnostics": {
+      "assumption": 0,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 2215,
+     "exhausted": false,
+     "expansions": 1157,
+     "files": 50,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 5720,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 82,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 28.42,
+      "document": 5605.68,
+      "format": 15.0,
+      "hooks": 0.4,
+      "lint": 4.42
+     },
+     "rules": 109,
+     "seconds": 5.659,
+     "steps": 44669344,
+     "vertices": 1445
+    }
+   },
+   {
+    "doc": "benches/docs/macro_loop.tex",
+    "kernel": "luatex",
+    "wall": 6.047,
+    "peak": 81,
+    "steps": 44669344,
+    "forks": 0,
+    "end": true,
+    "findings": 3,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 687,
+     "diagnostics": {
+      "assumption": 0,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 2215,
+     "exhausted": false,
+     "expansions": 1157,
+     "files": 50,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 5720,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 81,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 13.32,
+      "document": 5962.39,
+      "format": 12.05,
+      "hooks": 0.8,
+      "lint": 7.64
+     },
+     "rules": 109,
+     "seconds": 6.002,
+     "steps": 44669344,
+     "vertices": 1445
+    }
+   },
+   {
+    "doc": "benches/docs/acmart_paper.tex",
+    "kernel": "pdftex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/acmart_paper.tex",
+    "kernel": "xetex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/algorithm2e_doc.tex",
+    "kernel": "pdftex",
+    "wall": 5.526,
+    "peak": 510,
+    "steps": 3362350,
+    "forks": 18,
+    "end": true,
+    "findings": 0,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 8
+     },
+     "definitions": 4256,
+     "diagnostics": {
+      "assumption": 22,
+      "imprecision": 122,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 32027,
+     "exhausted": false,
+     "expansions": 9213,
+     "files": 259,
+     "forks": 18,
+     "joined_slots": 189578,
+     "limits_hit": 0,
+     "lines": 6115,
+     "load_steps": 1562941,
+     "loop_heads": 115,
+     "peak_mib": 510,
+     "peak_paths": 6,
+     "phases_ms": {
+      "discovery": 27.11,
+      "document": 4182.82,
+      "format": 249.12,
+      "hooks": 0.39,
+      "lint": 856.02
+     },
+     "rules": 109,
+     "seconds": 5.417,
+     "steps": 3362350,
+     "vertices": 13275
+    }
+   },
+   {
+    "doc": "benches/docs/algorithmicx_doc.tex",
+    "kernel": "pdftex",
+    "wall": 2.714,
+    "peak": 450,
+    "steps": 2847078,
+    "forks": 0,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 8
+     },
+     "definitions": 3564,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 35068,
+     "exhausted": false,
+     "expansions": 7963,
+     "files": 256,
+     "forks": 0,
+     "joined_slots": 4,
+     "limits_hit": 0,
+     "lines": 3415,
+     "load_steps": 1324947,
+     "loop_heads": 2,
+     "peak_mib": 450,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 20.68,
+      "document": 2231.05,
+      "format": 198.65,
+      "hooks": 0.3,
+      "lint": 35.44
+     },
+     "rules": 109,
+     "seconds": 2.608,
+     "steps": 2847078,
+     "vertices": 11418
+    }
+   },
+   {
+    "doc": "benches/docs/amsmath_amsthm.tex",
+    "kernel": "pdftex",
+    "wall": 2.991,
+    "peak": 497,
+    "steps": 2714437,
+    "forks": 222,
+    "end": true,
+    "findings": 7,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 1,
+      "packages_reused": 9
+     },
+     "definitions": 4668,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 17,
+      "warning": 0
+     },
+     "edges": 32927,
+     "exhausted": false,
+     "expansions": 9844,
+     "files": 258,
+     "forks": 222,
+     "joined_slots": 1768,
+     "limits_hit": 0,
+     "lines": 5900,
+     "load_steps": 1255389,
+     "loop_heads": 6,
+     "peak_mib": 497,
+     "peak_paths": 5,
+     "phases_ms": {
+      "discovery": 19.2,
+      "document": 2480.24,
+      "format": 207.52,
+      "hooks": 0.42,
+      "lint": 34.83
+     },
+     "rules": 109,
+     "seconds": 2.876,
+     "steps": 2714437,
+     "vertices": 13500
+    }
+   },
+   {
+    "doc": "benches/docs/article_basic.tex",
+    "kernel": "pdftex",
+    "wall": 3.951,
+    "peak": 417,
+    "steps": 4811737,
+    "forks": 252,
+    "end": true,
+    "findings": 5,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 1,
+      "packages_reused": 13
+     },
+     "definitions": 5815,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 43868,
+     "exhausted": false,
+     "expansions": 12695,
+     "files": 297,
+     "forks": 252,
+     "joined_slots": 403,
+     "limits_hit": 0,
+     "lines": 10918,
+     "load_steps": 2370749,
+     "loop_heads": 3,
+     "peak_mib": 417,
+     "peak_paths": 4,
+     "phases_ms": {
+      "discovery": 29.98,
+      "document": 3409.16,
+      "format": 218.55,
+      "hooks": 0.29,
+      "lint": 47.11
+     },
+     "rules": 109,
+     "seconds": 3.809,
+     "steps": 4811737,
+     "vertices": 17523
+    }
+   },
+   {
+    "doc": "benches/docs/beamer_overlays.tex",
+    "kernel": "pdftex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/biblatex_biber.tex",
+    "kernel": "pdftex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/big_article.tex",
+    "kernel": "pdftex",
+    "wall": 34.923,
+    "peak": 719,
+    "steps": 14303459,
+    "forks": 13641,
+    "end": true,
+    "findings": 7,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 7,
+      "packages_reused": 33
+     },
+     "definitions": 20300,
+     "diagnostics": {
+      "assumption": 47,
+      "imprecision": 1084,
+      "info": 0,
+      "unsupported": 9,
+      "warning": 3
+     },
+     "edges": 103157,
+     "exhausted": false,
+     "expansions": 29666,
+     "files": 314,
+     "forks": 13641,
+     "joined_slots": 128099,
+     "limits_hit": 0,
+     "lines": 31370,
+     "load_steps": 10568352,
+     "loop_heads": 22,
+     "peak_mib": 719,
+     "peak_paths": 15,
+     "phases_ms": {
+      "discovery": 33.0,
+      "document": 34109.07,
+      "format": 278.0,
+      "hooks": 0.59,
+      "lint": 171.75
+     },
+     "rules": 109,
+     "seconds": 34.751,
+     "steps": 14303459,
+     "vertices": 53766
+    }
+   },
+   {
+    "doc": "benches/docs/big_article.tex",
+    "kernel": "xetex",
+    "wall": 43.776,
+    "peak": 1149,
+    "steps": 14035384,
+    "forks": 14677,
+    "end": true,
+    "findings": 6,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 5,
+      "packages_reused": 34
+     },
+     "definitions": 20234,
+     "diagnostics": {
+      "assumption": 48,
+      "imprecision": 1233,
+      "info": 0,
+      "unsupported": 9,
+      "warning": 3
+     },
+     "edges": 103382,
+     "exhausted": false,
+     "expansions": 29687,
+     "files": 329,
+     "forks": 14677,
+     "joined_slots": 127070,
+     "limits_hit": 0,
+     "lines": 31484,
+     "load_steps": 10186199,
+     "loop_heads": 23,
+     "peak_mib": 1149,
+     "peak_paths": 15,
+     "phases_ms": {
+      "discovery": 21.47,
+      "document": 42599.86,
+      "format": 550.8,
+      "hooks": 0.51,
+      "lint": 148.69
+     },
+     "rules": 109,
+     "seconds": 43.597,
+     "steps": 14035384,
+     "vertices": 53809
+    }
+   },
+   {
+    "doc": "benches/docs/big_article.tex",
+    "kernel": "luatex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/big_book.tex",
+    "kernel": "pdftex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/big_book.tex",
+    "kernel": "xetex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/big_book.tex",
+    "kernel": "luatex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/big_refs.tex",
+    "kernel": "pdftex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/big_refs.tex",
+    "kernel": "xetex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/big_tables.tex",
+    "kernel": "pdftex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/book_frontmatter.tex",
+    "kernel": "pdftex",
+    "wall": 2.131,
+    "peak": 444,
+    "steps": 2646828,
+    "forks": 54,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 2
+     },
+     "definitions": 1802,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 42,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 29801,
+     "exhausted": false,
+     "expansions": 6737,
+     "files": 251,
+     "forks": 54,
+     "joined_slots": 14187,
+     "limits_hit": 0,
+     "lines": 1805,
+     "load_steps": 169742,
+     "loop_heads": 6,
+     "peak_mib": 444,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 12.06,
+      "document": 1737.01,
+      "format": 139.83,
+      "hooks": 0.24,
+      "lint": 27.35
+     },
+     "rules": 109,
+     "seconds": 2.033,
+     "steps": 2646828,
+     "vertices": 8451
+    }
+   },
+   {
+    "doc": "benches/docs/booktabs_siunitx.tex",
+    "kernel": "pdftex",
+    "wall": 7.013,
+    "peak": 489,
+    "steps": 11567812,
+    "forks": 0,
+    "end": true,
+    "findings": 2,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 14
+     },
+     "definitions": 8490,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 68373,
+     "exhausted": false,
+     "expansions": 16771,
+     "files": 255,
+     "forks": 0,
+     "joined_slots": 4,
+     "limits_hit": 0,
+     "lines": 19836,
+     "load_steps": 7566797,
+     "loop_heads": 2,
+     "peak_mib": 489,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 24.55,
+      "document": 6395.88,
+      "format": 295.03,
+      "hooks": 0.48,
+      "lint": 63.39
+     },
+     "rules": 109,
+     "seconds": 6.908,
+     "steps": 11567812,
+     "vertices": 27869
+    }
+   },
+   {
+    "doc": "benches/docs/booktabs_siunitx.tex",
+    "kernel": "xetex",
+    "wall": 14.666,
+    "peak": 944,
+    "steps": 11309934,
+    "forks": 34,
+    "end": true,
+    "findings": 2,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 14
+     },
+     "definitions": 8245,
+     "diagnostics": {
+      "assumption": 30,
+      "imprecision": 91,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 67521,
+     "exhausted": false,
+     "expansions": 16128,
+     "files": 265,
+     "forks": 34,
+     "joined_slots": 158875,
+     "limits_hit": 0,
+     "lines": 17668,
+     "load_steps": 7288842,
+     "loop_heads": 88,
+     "peak_mib": 944,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 17.78,
+      "document": 13389.12,
+      "format": 625.81,
+      "hooks": 0.54,
+      "lint": 207.23
+     },
+     "rules": 109,
+     "seconds": 14.496,
+     "steps": 11309934,
+     "vertices": 26985
+    }
+   },
+   {
+    "doc": "benches/docs/booktabs_siunitx.tex",
+    "kernel": "luatex",
+    "wall": 22.296,
+    "peak": 797,
+    "steps": 19816064,
+    "forks": 1321,
+    "end": true,
+    "findings": 2,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 9,
+      "packages_reused": 9
+     },
+     "definitions": 8611,
+     "diagnostics": {
+      "assumption": 296,
+      "imprecision": 4,
+      "info": 1,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 71158,
+     "exhausted": false,
+     "expansions": 15883,
+     "files": 88,
+     "forks": 1321,
+     "joined_slots": 16561,
+     "limits_hit": 0,
+     "lines": 19558,
+     "load_steps": 15257272,
+     "loop_heads": 7,
+     "peak_mib": 797,
+     "peak_paths": 4,
+     "phases_ms": {
+      "discovery": 19.33,
+      "document": 21240.16,
+      "format": 341.22,
+      "hooks": 0.73,
+      "lint": 82.97
+     },
+     "rules": 109,
+     "seconds": 22.065,
+     "steps": 19816064,
+     "vertices": 27575
+    }
+   },
+   {
+    "doc": "benches/docs/circuitikz_doc.tex",
+    "kernel": "pdftex",
+    "wall": 31.784,
+    "peak": 892,
+    "steps": 45256007,
+    "forks": 0,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 5,
+      "packages_reused": 27
+     },
+     "definitions": 40657,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 323944,
+     "exhausted": false,
+     "expansions": 44492,
+     "files": 355,
+     "forks": 0,
+     "joined_slots": 4,
+     "limits_hit": 0,
+     "lines": 81420,
+     "load_steps": 28516059,
+     "loop_heads": 2,
+     "peak_mib": 892,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 17.53,
+      "document": 30588.03,
+      "format": 208.09,
+      "hooks": 0.77,
+      "lint": 257.01
+     },
+     "rules": 109,
+     "seconds": 31.513,
+     "steps": 45256007,
+     "vertices": 118944
+    }
+   },
+   {
+    "doc": "benches/docs/circuitikz_doc.tex",
+    "kernel": "xetex",
+    "wall": 42.203,
+    "peak": 1383,
+    "steps": 44772856,
+    "forks": 892,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 5,
+      "packages_reused": 26
+     },
+     "definitions": 40257,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 16,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 321676,
+     "exhausted": false,
+     "expansions": 43393,
+     "files": 364,
+     "forks": 892,
+     "joined_slots": 1051,
+     "limits_hit": 0,
+     "lines": 78700,
+     "load_steps": 28270869,
+     "loop_heads": 2,
+     "peak_mib": 1383,
+     "peak_paths": 2,
+     "phases_ms": {
+      "discovery": 21.96,
+      "document": 40681.66,
+      "format": 470.74,
+      "hooks": 0.41,
+      "lint": 217.49
+     },
+     "rules": 109,
+     "seconds": 41.934,
+     "steps": 44772856,
+     "vertices": 117715
+    }
+   },
+   {
+    "doc": "benches/docs/circuitikz_doc.tex",
+    "kernel": "luatex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/elsarticle_paper.tex",
+    "kernel": "pdftex",
+    "wall": 8.31,
+    "peak": 493,
+    "steps": 4892315,
+    "forks": 68,
+    "end": true,
+    "findings": 4,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 19
+     },
+     "definitions": 6333,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 36800,
+     "exhausted": false,
+     "expansions": 13939,
+     "files": 281,
+     "forks": 68,
+     "joined_slots": 125,
+     "limits_hit": 0,
+     "lines": 13062,
+     "load_steps": 3682502,
+     "loop_heads": 2,
+     "peak_mib": 493,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 17.42,
+      "document": 7835.28,
+      "format": 171.16,
+      "hooks": 0.33,
+      "lint": 45.93
+     },
+     "rules": 109,
+     "seconds": 8.204,
+     "steps": 4892315,
+     "vertices": 18024
+    }
+   },
+   {
+    "doc": "benches/docs/elsarticle_paper.tex",
+    "kernel": "xetex",
+    "wall": 7.38,
+    "peak": 905,
+    "steps": 3572926,
+    "forks": 68,
+    "end": true,
+    "findings": 3,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 1,
+      "packages_reused": 10
+     },
+     "definitions": 4901,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 29734,
+     "exhausted": false,
+     "expansions": 10496,
+     "files": 282,
+     "forks": 68,
+     "joined_slots": 125,
+     "limits_hit": 0,
+     "lines": 6870,
+     "load_steps": 2532444,
+     "loop_heads": 2,
+     "peak_mib": 905,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 14.55,
+      "document": 6712.41,
+      "format": 432.75,
+      "hooks": 0.21,
+      "lint": 27.07
+     },
+     "rules": 109,
+     "seconds": 7.298,
+     "steps": 3572926,
+     "vertices": 14311
+    }
+   },
+   {
+    "doc": "benches/docs/elsarticle_paper.tex",
+    "kernel": "luatex",
+    "wall": 52.562,
+    "peak": 763,
+    "steps": 27953202,
+    "forks": 4210,
+    "end": true,
+    "findings": 5,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 5,
+      "packages_reused": 8
+     },
+     "definitions": 6727,
+     "diagnostics": {
+      "assumption": 795,
+      "imprecision": 60,
+      "info": 1,
+      "unsupported": 18,
+      "warning": 0
+     },
+     "edges": 46692,
+     "exhausted": false,
+     "expansions": 13691,
+     "files": 111,
+     "forks": 4210,
+     "joined_slots": 63367,
+     "limits_hit": 0,
+     "lines": 15577,
+     "load_steps": 24772160,
+     "loop_heads": 8,
+     "peak_mib": 763,
+     "peak_paths": 6,
+     "phases_ms": {
+      "discovery": 31.53,
+      "document": 51759.07,
+      "format": 310.07,
+      "hooks": 0.73,
+      "lint": 40.83
+     },
+     "rules": 109,
+     "seconds": 52.442,
+     "steps": 27953202,
+     "vertices": 20037
+    }
+   },
+   {
+    "doc": "benches/docs/expl3_doc.tex",
+    "kernel": "pdftex",
+    "wall": 1.797,
+    "peak": 387,
+    "steps": 1517049,
+    "forks": 0,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 3
+     },
+     "definitions": 1826,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 16468,
+     "exhausted": false,
+     "expansions": 7099,
+     "files": 239,
+     "forks": 0,
+     "joined_slots": 4,
+     "limits_hit": 0,
+     "lines": 1155,
+     "load_steps": 394174,
+     "loop_heads": 2,
+     "peak_mib": 387,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 0.25,
+      "document": 526.03,
+      "format": 182.4,
+      "hooks": 0.27,
+      "lint": 24.76
+     },
+     "rules": 109,
+     "seconds": 1.701,
+     "steps": 1517049,
+     "vertices": 8197
+    }
+   },
+   {
+    "doc": "benches/docs/expl3_doc.tex",
+    "kernel": "xetex",
+    "wall": 4.089,
+    "peak": 849,
+    "steps": 1513454,
+    "forks": 0,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 3
+     },
+     "definitions": 1827,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 16517,
+     "exhausted": false,
+     "expansions": 7061,
+     "files": 250,
+     "forks": 0,
+     "joined_slots": 4,
+     "limits_hit": 0,
+     "lines": 1155,
+     "load_steps": 399483,
+     "loop_heads": 2,
+     "peak_mib": 849,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 0.56,
+      "document": 1172.72,
+      "format": 528.41,
+      "hooks": 0.28,
+      "lint": 50.99
+     },
+     "rules": 109,
+     "seconds": 3.931,
+     "steps": 1513454,
+     "vertices": 8196
+    }
+   },
+   {
+    "doc": "benches/docs/expl3_doc.tex",
+    "kernel": "luatex",
+    "wall": 3.625,
+    "peak": 569,
+    "steps": 1789996,
+    "forks": 176,
+    "end": true,
+    "findings": 6,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 1,
+      "packages_reused": 2
+     },
+     "definitions": 1872,
+     "diagnostics": {
+      "assumption": 12,
+      "imprecision": 11,
+      "info": 1,
+      "unsupported": 0,
+      "warning": 19
+     },
+     "edges": 16495,
+     "exhausted": false,
+     "expansions": 6804,
+     "files": 72,
+     "forks": 176,
+     "joined_slots": 1447,
+     "limits_hit": 0,
+     "lines": 1350,
+     "load_steps": 649353,
+     "loop_heads": 7,
+     "peak_mib": 569,
+     "peak_paths": 4,
+     "phases_ms": {
+      "discovery": 0.6,
+      "document": 1385.35,
+      "format": 282.7,
+      "hooks": 0.45,
+      "lint": 24.24
+     },
+     "rules": 109,
+     "seconds": 3.556,
+     "steps": 1789996,
+     "vertices": 8039
+    }
+   },
+   {
+    "doc": "benches/docs/figures_subcaption.tex",
+    "kernel": "pdftex",
+    "wall": 1.838,
+    "peak": 478,
+    "steps": 3578633,
+    "forks": 16,
+    "end": true,
+    "findings": 3,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 10
+     },
+     "definitions": 5294,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 39322,
+     "exhausted": false,
+     "expansions": 10624,
+     "files": 254,
+     "forks": 16,
+     "joined_slots": 36,
+     "limits_hit": 0,
+     "lines": 9261,
+     "load_steps": 1777476,
+     "loop_heads": 2,
+     "peak_mib": 478,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 10.37,
+      "document": 1619.91,
+      "format": 105.69,
+      "hooks": 0.22,
+      "lint": 15.52
+     },
+     "rules": 109,
+     "seconds": 1.795,
+     "steps": 3578633,
+     "vertices": 15140
+    }
+   },
+   {
+    "doc": "benches/docs/figures_subcaption.tex",
+    "kernel": "xetex",
+    "wall": 5.882,
+    "peak": 948,
+    "steps": 3478500,
+    "forks": 299,
+    "end": true,
+    "findings": 5,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 9
+     },
+     "definitions": 4886,
+     "diagnostics": {
+      "assumption": 31,
+      "imprecision": 143,
+      "info": 0,
+      "unsupported": 6,
+      "warning": 1
+     },
+     "edges": 37012,
+     "exhausted": false,
+     "expansions": 9566,
+     "files": 262,
+     "forks": 299,
+     "joined_slots": 216615,
+     "limits_hit": 0,
+     "lines": 6581,
+     "load_steps": 1671593,
+     "loop_heads": 94,
+     "peak_mib": 948,
+     "peak_paths": 8,
+     "phases_ms": {
+      "discovery": 10.15,
+      "document": 4899.02,
+      "format": 271.98,
+      "hooks": 0.2,
+      "lint": 513.4
+     },
+     "rules": 109,
+     "seconds": 5.811,
+     "steps": 3478500,
+     "vertices": 13829
+    }
+   },
+   {
+    "doc": "benches/docs/figures_subcaption.tex",
+    "kernel": "luatex",
+    "wall": 24.008,
+    "peak": 791,
+    "steps": 10242373,
+    "forks": 1633,
+    "end": true,
+    "findings": 4,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 1,
+      "packages_reused": 9
+     },
+     "definitions": 5970,
+     "diagnostics": {
+      "assumption": 303,
+      "imprecision": 90,
+      "info": 1,
+      "unsupported": 34,
+      "warning": 0
+     },
+     "edges": 46665,
+     "exhausted": false,
+     "expansions": 11025,
+     "files": 83,
+     "forks": 1633,
+     "joined_slots": 128928,
+     "limits_hit": 0,
+     "lines": 9314,
+     "load_steps": 2005642,
+     "loop_heads": 30,
+     "peak_mib": 791,
+     "peak_paths": 9,
+     "phases_ms": {
+      "discovery": 10.29,
+      "document": 23203.79,
+      "format": 139.54,
+      "hooks": 0.51,
+      "lint": 439.8
+     },
+     "rules": 109,
+     "seconds": 23.944,
+     "steps": 10242373,
+     "vertices": 15582
+    }
+   },
+   {
+    "doc": "benches/docs/fontspec_luatex.tex",
+    "kernel": "luatex",
+    "wall": 19.687,
+    "peak": 936,
+    "steps": 40308470,
+    "forks": 4107,
+    "end": true,
+    "findings": 4,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 3,
+      "packages_reused": 4
+     },
+     "definitions": 8798,
+     "diagnostics": {
+      "assumption": 721,
+      "imprecision": 160,
+      "info": 1,
+      "unsupported": 34,
+      "warning": 15
+     },
+     "edges": 71885,
+     "exhausted": false,
+     "expansions": 15584,
+     "files": 90,
+     "forks": 4107,
+     "joined_slots": 71102,
+     "limits_hit": 0,
+     "lines": 17998,
+     "load_steps": 36408782,
+     "loop_heads": 28,
+     "peak_mib": 936,
+     "peak_paths": 11,
+     "phases_ms": {
+      "discovery": 10.46,
+      "document": 19276.96,
+      "format": 143.84,
+      "hooks": 0.26,
+      "lint": 28.71
+     },
+     "rules": 109,
+     "seconds": 19.617,
+     "steps": 40308470,
+     "vertices": 31389
+    }
+   },
+   {
+    "doc": "benches/docs/fontspec_xetex.tex",
+    "kernel": "xetex",
+    "wall": 3.076,
+    "peak": 995,
+    "steps": 16013136,
+    "forks": 10,
+    "end": true,
+    "findings": 2,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 5
+     },
+     "definitions": 4974,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 45428,
+     "exhausted": false,
+     "expansions": 10937,
+     "files": 261,
+     "forks": 10,
+     "joined_slots": 19,
+     "limits_hit": 0,
+     "lines": 5596,
+     "load_steps": 11949294,
+     "loop_heads": 2,
+     "peak_mib": 995,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 10.45,
+      "document": 2562.97,
+      "format": 298.8,
+      "hooks": 0.25,
+      "lint": 19.56
+     },
+     "rules": 109,
+     "seconds": 3.01,
+     "steps": 16013136,
+     "vertices": 18350
+    }
+   },
+   {
+    "doc": "benches/docs/forest_doc.tex",
+    "kernel": "pdftex",
+    "wall": 31.463,
+    "peak": 825,
+    "steps": 55812345,
+    "forks": 0,
+    "end": true,
+    "findings": 0,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 3,
+      "packages_reused": 25
+     },
+     "definitions": 33239,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 219420,
+     "exhausted": false,
+     "expansions": 37827,
+     "files": 338,
+     "forks": 0,
+     "joined_slots": 4,
+     "limits_hit": 0,
+     "lines": 48436,
+     "load_steps": 15899423,
+     "loop_heads": 2,
+     "peak_mib": 825,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 9.38,
+      "document": 30905.25,
+      "format": 86.87,
+      "hooks": 0.42,
+      "lint": 171.92
+     },
+     "rules": 109,
+     "seconds": 31.353,
+     "steps": 55812345,
+     "vertices": 85535
+    }
+   },
+   {
+    "doc": "benches/docs/forest_doc.tex",
+    "kernel": "xetex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/forest_doc.tex",
+    "kernel": "luatex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/glossaries_doc.tex",
+    "kernel": "pdftex",
+    "wall": 3.598,
+    "peak": 687,
+    "steps": 17862710,
+    "forks": 8,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 3,
+      "packages_reused": 21
+     },
+     "definitions": 12184,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 85579,
+     "exhausted": false,
+     "expansions": 17867,
+     "files": 265,
+     "forks": 8,
+     "joined_slots": 18,
+     "limits_hit": 0,
+     "lines": 32187,
+     "load_steps": 16199959,
+     "loop_heads": 2,
+     "peak_mib": 687,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 13.8,
+      "document": 3245.59,
+      "format": 129.09,
+      "hooks": 0.32,
+      "lint": 36.15
+     },
+     "rules": 109,
+     "seconds": 3.524,
+     "steps": 17862710,
+     "vertices": 36218
+    }
+   },
+   {
+    "doc": "benches/docs/glossaries_doc.tex",
+    "kernel": "xetex",
+    "wall": 6.246,
+    "peak": 1180,
+    "steps": 17289498,
+    "forks": 8,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 3,
+      "packages_reused": 21
+     },
+     "definitions": 12189,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 85602,
+     "exhausted": false,
+     "expansions": 17784,
+     "files": 276,
+     "forks": 8,
+     "joined_slots": 18,
+     "limits_hit": 0,
+     "lines": 32195,
+     "load_steps": 15624087,
+     "loop_heads": 2,
+     "peak_mib": 1180,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 11.69,
+      "document": 5552.69,
+      "format": 335.91,
+      "hooks": 0.26,
+      "lint": 42.77
+     },
+     "rules": 109,
+     "seconds": 6.135,
+     "steps": 17289498,
+     "vertices": 36181
+    }
+   },
+   {
+    "doc": "benches/docs/glossaries_doc.tex",
+    "kernel": "luatex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/hyperref_cleveref.tex",
+    "kernel": "pdftex",
+    "wall": 5.163,
+    "peak": 662,
+    "steps": 11712094,
+    "forks": 97,
+    "end": true,
+    "findings": 3,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 7,
+      "packages_reused": 28
+     },
+     "definitions": 15907,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 2,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 96956,
+     "exhausted": false,
+     "expansions": 25564,
+     "files": 281,
+     "forks": 97,
+     "joined_slots": 331,
+     "limits_hit": 0,
+     "lines": 36912,
+     "load_steps": 7789789,
+     "loop_heads": 3,
+     "peak_mib": 662,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 14.18,
+      "document": 4752.1,
+      "format": 153.81,
+      "hooks": 0.34,
+      "lint": 49.94
+     },
+     "rules": 109,
+     "seconds": 5.075,
+     "steps": 11712094,
+     "vertices": 43341
+    }
+   },
+   {
+    "doc": "benches/docs/hyperref_cleveref.tex",
+    "kernel": "xetex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/hyperref_cleveref.tex",
+    "kernel": "luatex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/ieeetran_paper.tex",
+    "kernel": "pdftex",
+    "wall": 7.327,
+    "peak": 529,
+    "steps": 4063372,
+    "forks": 74,
+    "end": true,
+    "findings": 3,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 1,
+      "packages_reused": 11
+     },
+     "definitions": 5407,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 35469,
+     "exhausted": false,
+     "expansions": 11786,
+     "files": 259,
+     "forks": 74,
+     "joined_slots": 842,
+     "limits_hit": 0,
+     "lines": 14459,
+     "load_steps": 2470604,
+     "loop_heads": 6,
+     "peak_mib": 529,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 24.96,
+      "document": 6749.11,
+      "format": 266.33,
+      "hooks": 0.3,
+      "lint": 48.01
+     },
+     "rules": 109,
+     "seconds": 7.206,
+     "steps": 4063372,
+     "vertices": 15839
+    }
+   },
+   {
+    "doc": "benches/docs/ieeetran_paper.tex",
+    "kernel": "xetex",
+    "wall": 11.905,
+    "peak": 1014,
+    "steps": 4290913,
+    "forks": 178,
+    "end": true,
+    "findings": 2,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 1,
+      "packages_reused": 10
+     },
+     "definitions": 5346,
+     "diagnostics": {
+      "assumption": 2,
+      "imprecision": 2,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 34665,
+     "exhausted": false,
+     "expansions": 11116,
+     "files": 267,
+     "forks": 178,
+     "joined_slots": 161817,
+     "limits_hit": 0,
+     "lines": 11774,
+     "load_steps": 2649801,
+     "loop_heads": 13,
+     "peak_mib": 1014,
+     "peak_paths": 4,
+     "phases_ms": {
+      "discovery": 17.0,
+      "document": 10857.46,
+      "format": 561.54,
+      "hooks": 0.3,
+      "lint": 50.08
+     },
+     "rules": 109,
+     "seconds": 11.771,
+     "steps": 4290913,
+     "vertices": 14872
+    }
+   },
+   {
+    "doc": "benches/docs/listings_doc.tex",
+    "kernel": "pdftex",
+    "wall": 3.436,
+    "peak": 510,
+    "steps": 5212022,
+    "forks": 14,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 3
+     },
+     "definitions": 5369,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 61846,
+     "exhausted": false,
+     "expansions": 12848,
+     "files": 254,
+     "forks": 14,
+     "joined_slots": 21,
+     "limits_hit": 0,
+     "lines": 16443,
+     "load_steps": 1948838,
+     "loop_heads": 2,
+     "peak_mib": 510,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 22.81,
+      "document": 2807.98,
+      "format": 194.72,
+      "hooks": 0.64,
+      "lint": 47.41
+     },
+     "rules": 109,
+     "seconds": 3.267,
+     "steps": 5212022,
+     "vertices": 18690
+    }
+   },
+   {
+    "doc": "benches/docs/llncs_paper.tex",
+    "kernel": "pdftex",
+    "wall": 3.41,
+    "peak": 439,
+    "steps": 1899016,
+    "forks": 182,
+    "end": true,
+    "findings": 0,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 4
+     },
+     "definitions": 2872,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 23461,
+     "exhausted": false,
+     "expansions": 7299,
+     "files": 255,
+     "forks": 182,
+     "joined_slots": 1023,
+     "limits_hit": 0,
+     "lines": 4131,
+     "load_steps": 806183,
+     "loop_heads": 6,
+     "peak_mib": 439,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 19.7,
+      "document": 2938.23,
+      "format": 199.01,
+      "hooks": 0.28,
+      "lint": 34.6
+     },
+     "rules": 109,
+     "seconds": 3.314,
+     "steps": 1899016,
+     "vertices": 9696
+    }
+   },
+   {
+    "doc": "benches/docs/makeidx_doc.tex",
+    "kernel": "pdftex",
+    "wall": 1.583,
+    "peak": 428,
+    "steps": 1203874,
+    "forks": 8,
+    "end": true,
+    "findings": 2,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 2
+     },
+     "definitions": 1374,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 13328,
+     "exhausted": false,
+     "expansions": 5031,
+     "files": 240,
+     "forks": 8,
+     "joined_slots": 22,
+     "limits_hit": 0,
+     "lines": 1640,
+     "load_steps": 158388,
+     "loop_heads": 2,
+     "peak_mib": 428,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 29.61,
+      "document": 1092.41,
+      "format": 210.77,
+      "hooks": 0.45,
+      "lint": 22.51
+     },
+     "rules": 109,
+     "seconds": 1.497,
+     "steps": 1203874,
+     "vertices": 6259
+    }
+   },
+   {
+    "doc": "benches/docs/math_heavy_20p.tex",
+    "kernel": "pdftex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/math_heavy_20p.tex",
+    "kernel": "xetex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/mathtools_doc.tex",
+    "kernel": "pdftex",
+    "wall": 7.556,
+    "peak": 490,
+    "steps": 4080842,
+    "forks": 108,
+    "end": true,
+    "findings": 6,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 17
+     },
+     "definitions": 6199,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 6,
+      "info": 0,
+      "unsupported": 17,
+      "warning": 0
+     },
+     "edges": 35582,
+     "exhausted": false,
+     "expansions": 11521,
+     "files": 275,
+     "forks": 108,
+     "joined_slots": 1438,
+     "limits_hit": 0,
+     "lines": 9890,
+     "load_steps": 2550954,
+     "loop_heads": 6,
+     "peak_mib": 490,
+     "peak_paths": 5,
+     "phases_ms": {
+      "discovery": 18.81,
+      "document": 3209.87,
+      "format": 171.83,
+      "hooks": 0.28,
+      "lint": 3903.08
+     },
+     "rules": 109,
+     "seconds": 7.401,
+     "steps": 4080842,
+     "vertices": 16945
+    }
+   },
+   {
+    "doc": "benches/docs/memoir_doc.tex",
+    "kernel": "pdftex",
+    "wall": 10.461,
+    "peak": 561,
+    "steps": 9679918,
+    "forks": 192,
+    "end": true,
+    "findings": 2,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 7,
+      "packages_reused": 21
+     },
+     "definitions": 9062,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 41,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 70216,
+     "exhausted": false,
+     "expansions": 18676,
+     "files": 273,
+     "forks": 192,
+     "joined_slots": 6409,
+     "limits_hit": 0,
+     "lines": 20035,
+     "load_steps": 6572728,
+     "loop_heads": 6,
+     "peak_mib": 561,
+     "peak_paths": 4,
+     "phases_ms": {
+      "discovery": 28.09,
+      "document": 9626.72,
+      "format": 279.85,
+      "hooks": 0.63,
+      "lint": 80.43
+     },
+     "rules": 109,
+     "seconds": 10.285,
+     "steps": 9679918,
+     "vertices": 29506
+    }
+   },
+   {
+    "doc": "benches/docs/microtype_doc.tex",
+    "kernel": "pdftex",
+    "wall": 8.341,
+    "peak": 496,
+    "steps": 10609848,
+    "forks": 8,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 1,
+      "packages_reused": 11
+     },
+     "definitions": 7932,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 64802,
+     "exhausted": false,
+     "expansions": 16984,
+     "files": 277,
+     "forks": 8,
+     "joined_slots": 18,
+     "limits_hit": 0,
+     "lines": 14472,
+     "load_steps": 6226070,
+     "loop_heads": 2,
+     "peak_mib": 496,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 31.88,
+      "document": 7597.2,
+      "format": 308.43,
+      "hooks": 0.42,
+      "lint": 78.98
+     },
+     "rules": 109,
+     "seconds": 8.172,
+     "steps": 10609848,
+     "vertices": 25836
+    }
+   },
+   {
+    "doc": "benches/docs/natbib_bibtex.tex",
+    "kernel": "pdftex",
+    "wall": 3.335,
+    "peak": 474,
+    "steps": 1510395,
+    "forks": 86,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 2
+     },
+     "definitions": 1922,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 17094,
+     "exhausted": false,
+     "expansions": 6240,
+     "files": 242,
+     "forks": 86,
+     "joined_slots": 150,
+     "limits_hit": 0,
+     "lines": 2923,
+     "load_steps": 399625,
+     "loop_heads": 2,
+     "peak_mib": 474,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 22.99,
+      "document": 2766.91,
+      "format": 249.45,
+      "hooks": 0.51,
+      "lint": 31.31
+     },
+     "rules": 109,
+     "seconds": 3.228,
+     "steps": 1510395,
+     "vertices": 7834
+    }
+   },
+   {
+    "doc": "benches/docs/pgfplots_doc.tex",
+    "kernel": "pdftex",
+    "wall": 23.935,
+    "peak": 975,
+    "steps": 68438941,
+    "forks": 134,
+    "end": true,
+    "findings": 0,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 16
+     },
+     "definitions": 41014,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 2,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 260672,
+     "exhausted": false,
+     "expansions": 46377,
+     "files": 353,
+     "forks": 134,
+     "joined_slots": 209,
+     "limits_hit": 0,
+     "lines": 37163,
+     "load_steps": 16480681,
+     "loop_heads": 5,
+     "peak_mib": 975,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 8.4,
+      "document": 23541.37,
+      "format": 114.3,
+      "hooks": 0.28,
+      "lint": 95.07
+     },
+     "rules": 109,
+     "seconds": 23.861,
+     "steps": 68438941,
+     "vertices": 87069
+    }
+   },
+   {
+    "doc": "benches/docs/pgfplots_doc.tex",
+    "kernel": "xetex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/pgfplots_doc.tex",
+    "kernel": "luatex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/plain_tex_doc.tex",
+    "kernel": "tex",
+    "wall": 0.085,
+    "peak": 60,
+    "steps": 51561,
+    "forks": 0,
+    "end": true,
+    "findings": 5,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 686,
+     "diagnostics": {
+      "assumption": 0,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 2
+     },
+     "edges": 2421,
+     "exhausted": false,
+     "expansions": 1260,
+     "files": 51,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 5732,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 60,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 9.18,
+      "document": 47.86,
+      "format": 5.69,
+      "hooks": 0.16,
+      "lint": 2.54
+     },
+     "rules": 109,
+     "seconds": 0.068,
+     "steps": 51561,
+     "vertices": 1538
+    }
+   },
+   {
+    "doc": "benches/docs/plain_tex_doc.tex",
+    "kernel": "pdftex",
+    "wall": 0.076,
+    "peak": 60,
+    "steps": 51704,
+    "forks": 0,
+    "end": true,
+    "findings": 5,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 686,
+     "diagnostics": {
+      "assumption": 0,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 2
+     },
+     "edges": 2421,
+     "exhausted": false,
+     "expansions": 1258,
+     "files": 51,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 5732,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 60,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 9.26,
+      "document": 39.02,
+      "format": 6.54,
+      "hooks": 0.16,
+      "lint": 2.6
+     },
+     "rules": 109,
+     "seconds": 0.06,
+     "steps": 51704,
+     "vertices": 1538
+    }
+   },
+   {
+    "doc": "benches/docs/plain_tex_doc.tex",
+    "kernel": "xetex",
+    "wall": 0.068,
+    "peak": 61,
+    "steps": 51704,
+    "forks": 0,
+    "end": true,
+    "findings": 5,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 686,
+     "diagnostics": {
+      "assumption": 0,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 2
+     },
+     "edges": 2421,
+     "exhausted": false,
+     "expansions": 1258,
+     "files": 51,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 5732,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 61,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 8.27,
+      "document": 32.56,
+      "format": 5.47,
+      "hooks": 0.16,
+      "lint": 2.58
+     },
+     "rules": 109,
+     "seconds": 0.052,
+     "steps": 51704,
+     "vertices": 1538
+    }
+   },
+   {
+    "doc": "benches/docs/plain_tex_doc.tex",
+    "kernel": "luatex",
+    "wall": 0.081,
+    "peak": 60,
+    "steps": 51704,
+    "forks": 0,
+    "end": true,
+    "findings": 5,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 0
+     },
+     "definitions": 686,
+     "diagnostics": {
+      "assumption": 0,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 2
+     },
+     "edges": 2421,
+     "exhausted": false,
+     "expansions": 1258,
+     "files": 51,
+     "forks": 0,
+     "joined_slots": 0,
+     "limits_hit": 0,
+     "lines": 5732,
+     "load_steps": 0,
+     "loop_heads": 0,
+     "peak_mib": 60,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 9.24,
+      "document": 40.6,
+      "format": 7.01,
+      "hooks": 0.19,
+      "lint": 2.77
+     },
+     "rules": 109,
+     "seconds": 0.063,
+     "steps": 51704,
+     "vertices": 1538
+    }
+   },
+   {
+    "doc": "benches/docs/report_chapters.tex",
+    "kernel": "pdftex",
+    "wall": 1.366,
+    "peak": 512,
+    "steps": 3096216,
+    "forks": 74,
+    "end": true,
+    "findings": 2,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 8
+     },
+     "definitions": 3906,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 38370,
+     "exhausted": false,
+     "expansions": 9637,
+     "files": 262,
+     "forks": 74,
+     "joined_slots": 288,
+     "limits_hit": 0,
+     "lines": 6574,
+     "load_steps": 1010589,
+     "loop_heads": 2,
+     "peak_mib": 512,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 10.2,
+      "document": 1163.82,
+      "format": 98.16,
+      "hooks": 0.18,
+      "lint": 17.1
+     },
+     "rules": 109,
+     "seconds": 1.322,
+     "steps": 3096216,
+     "vertices": 12934
+    }
+   },
+   {
+    "doc": "benches/docs/report_chapters.tex",
+    "kernel": "xetex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/report_chapters.tex",
+    "kernel": "luatex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/scrartcl_doc.tex",
+    "kernel": "pdftex",
+    "wall": 3.28,
+    "peak": 549,
+    "steps": 40205466,
+    "forks": 92,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 10
+     },
+     "definitions": 10134,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 68127,
+     "exhausted": false,
+     "expansions": 16518,
+     "files": 263,
+     "forks": 92,
+     "joined_slots": 149,
+     "limits_hit": 0,
+     "lines": 21508,
+     "load_steps": 36094009,
+     "loop_heads": 3,
+     "peak_mib": 549,
+     "peak_paths": 4,
+     "phases_ms": {
+      "discovery": 12.1,
+      "document": 2993.61,
+      "format": 126.08,
+      "hooks": 0.26,
+      "lint": 36.26
+     },
+     "rules": 109,
+     "seconds": 3.22,
+     "steps": 40205466,
+     "vertices": 28407
+    }
+   },
+   {
+    "doc": "benches/docs/scrartcl_doc.tex",
+    "kernel": "xetex",
+    "wall": 5.813,
+    "peak": 921,
+    "steps": 40143499,
+    "forks": 92,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 10
+     },
+     "definitions": 10151,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 68603,
+     "exhausted": false,
+     "expansions": 16631,
+     "files": 278,
+     "forks": 92,
+     "joined_slots": 154,
+     "limits_hit": 0,
+     "lines": 21516,
+     "load_steps": 35982608,
+     "loop_heads": 3,
+     "peak_mib": 921,
+     "peak_paths": 4,
+     "phases_ms": {
+      "discovery": 12.26,
+      "document": 5190.04,
+      "format": 354.62,
+      "hooks": 0.25,
+      "lint": 46.56
+     },
+     "rules": 109,
+     "seconds": 5.717,
+     "steps": 40143499,
+     "vertices": 28553
+    }
+   },
+   {
+    "doc": "benches/docs/scrartcl_doc.tex",
+    "kernel": "luatex",
+    "wall": 18.21,
+    "peak": 906,
+    "steps": 53957581,
+    "forks": 1764,
+    "end": true,
+    "findings": 2,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 8
+     },
+     "definitions": 10487,
+     "diagnostics": {
+      "assumption": 305,
+      "imprecision": 159,
+      "info": 1,
+      "unsupported": 2,
+      "warning": 0
+     },
+     "edges": 75309,
+     "exhausted": false,
+     "expansions": 17000,
+     "files": 92,
+     "forks": 1764,
+     "joined_slots": 28571,
+     "limits_hit": 0,
+     "lines": 26474,
+     "load_steps": 37877260,
+     "loop_heads": 20,
+     "peak_mib": 906,
+     "peak_paths": 9,
+     "phases_ms": {
+      "discovery": 11.86,
+      "document": 17768.56,
+      "format": 161.24,
+      "hooks": 0.48,
+      "lint": 41.45
+     },
+     "rules": 109,
+     "seconds": 18.127,
+     "steps": 53957581,
+     "vertices": 28746
+    }
+   },
+   {
+    "doc": "benches/docs/scrbook_doc.tex",
+    "kernel": "pdftex",
+    "wall": 8.141,
+    "peak": 840,
+    "steps": 42307493,
+    "forks": 126,
+    "end": true,
+    "findings": 2,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 8
+     },
+     "definitions": 8845,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 42,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 73242,
+     "exhausted": false,
+     "expansions": 16010,
+     "files": 256,
+     "forks": 126,
+     "joined_slots": 10603,
+     "limits_hit": 0,
+     "lines": 18331,
+     "load_steps": 37231437,
+     "loop_heads": 6,
+     "peak_mib": 840,
+     "peak_paths": 5,
+     "phases_ms": {
+      "discovery": 11.82,
+      "document": 7860.13,
+      "format": 113.28,
+      "hooks": 0.21,
+      "lint": 34.09
+     },
+     "rules": 109,
+     "seconds": 8.08,
+     "steps": 42307493,
+     "vertices": 25965
+    }
+   },
+   {
+    "doc": "benches/docs/tabularx_longtable.tex",
+    "kernel": "pdftex",
+    "wall": 2.244,
+    "peak": 452,
+    "steps": 2669651,
+    "forks": 672,
+    "end": true,
+    "findings": 5,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 4
+     },
+     "definitions": 2205,
+     "diagnostics": {
+      "assumption": 13,
+      "imprecision": 46,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 32597,
+     "exhausted": false,
+     "expansions": 7050,
+     "files": 240,
+     "forks": 672,
+     "joined_slots": 91300,
+     "limits_hit": 0,
+     "lines": 3039,
+     "load_steps": 324417,
+     "loop_heads": 16,
+     "peak_mib": 452,
+     "peak_paths": 7,
+     "phases_ms": {
+      "discovery": 18.34,
+      "document": 1826.77,
+      "format": 190.8,
+      "hooks": 0.28,
+      "lint": 25.68
+     },
+     "rules": 109,
+     "seconds": 2.153,
+     "steps": 2669651,
+     "vertices": 9825
+    }
+   },
+   {
+    "doc": "benches/docs/tagpdf_doc.tex",
+    "kernel": "pdftex",
+    "wall": 39.95,
+    "peak": 782,
+    "steps": 97452233,
+    "forks": 4572,
+    "end": true,
+    "findings": 4,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 3,
+      "packages_reused": 28
+     },
+     "definitions": 12981,
+     "diagnostics": {
+      "assumption": 854,
+      "imprecision": 8642,
+      "info": 0,
+      "unsupported": 39,
+      "warning": 1
+     },
+     "edges": 78152,
+     "exhausted": false,
+     "expansions": 18606,
+     "files": 300,
+     "forks": 4572,
+     "joined_slots": 87094,
+     "limits_hit": 0,
+     "lines": 23285,
+     "load_steps": 87209875,
+     "loop_heads": 230,
+     "peak_mib": 782,
+     "peak_paths": 20,
+     "phases_ms": {
+      "discovery": 25.5,
+      "document": 39333.5,
+      "format": 238.77,
+      "hooks": 0.53,
+      "lint": 63.21
+     },
+     "rules": 109,
+     "seconds": 39.81,
+     "steps": 97452233,
+     "vertices": 35506
+    }
+   },
+   {
+    "doc": "benches/docs/tcolorbox_doc.tex",
+    "kernel": "pdftex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   },
+   {
+    "doc": "benches/docs/tikz_diagrams.tex",
+    "kernel": "pdftex",
+    "wall": 7.313,
+    "peak": 620,
+    "steps": 16926398,
+    "forks": 0,
+    "end": true,
+    "findings": 1,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 2,
+      "packages_reused": 15
+     },
+     "definitions": 17274,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 0,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 152518,
+     "exhausted": false,
+     "expansions": 30409,
+     "files": 322,
+     "forks": 0,
+     "joined_slots": 4,
+     "limits_hit": 0,
+     "lines": 46749,
+     "load_steps": 6690237,
+     "loop_heads": 2,
+     "peak_mib": 620,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 12.98,
+      "document": 6821.44,
+      "format": 134.12,
+      "hooks": 0.33,
+      "lint": 95.62
+     },
+     "rules": 109,
+     "seconds": 7.201,
+     "steps": 16926398,
+     "vertices": 54799
+    }
+   },
+   {
+    "doc": "benches/docs/varioref_doc.tex",
+    "kernel": "pdftex",
+    "wall": 5.449,
+    "peak": 571,
+    "steps": 10475802,
+    "forks": 75,
+    "end": true,
+    "findings": 4,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 6,
+      "packages_reused": 22
+     },
+     "definitions": 13300,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 2,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 87285,
+     "exhausted": false,
+     "expansions": 21476,
+     "files": 268,
+     "forks": 75,
+     "joined_slots": 325,
+     "limits_hit": 0,
+     "lines": 33981,
+     "load_steps": 6915701,
+     "loop_heads": 3,
+     "peak_mib": 571,
+     "peak_paths": 3,
+     "phases_ms": {
+      "discovery": 16.77,
+      "document": 4965.85,
+      "format": 159.28,
+      "hooks": 0.46,
+      "lint": 58.57
+     },
+     "rules": 109,
+     "seconds": 5.335,
+     "steps": 10475802,
+     "vertices": 37784
+    }
+   },
+   {
+    "doc": "benches/docs/wrapfig_doc.tex",
+    "kernel": "pdftex",
+    "wall": 2.979,
+    "peak": 465,
+    "steps": 4229226,
+    "forks": 0,
+    "end": true,
+    "findings": 2,
+    "code": 0,
+    "stats": {
+     "cache": {
+      "discovery": true,
+      "kernel": true,
+      "packages_rebuilt": 0,
+      "packages_reused": 10
+     },
+     "definitions": 4000,
+     "diagnostics": {
+      "assumption": 1,
+      "imprecision": 8,
+      "info": 0,
+      "unsupported": 0,
+      "warning": 0
+     },
+     "edges": 26112,
+     "exhausted": false,
+     "expansions": 9011,
+     "files": 251,
+     "forks": 0,
+     "joined_slots": 4,
+     "limits_hit": 0,
+     "lines": 5509,
+     "load_steps": 2864216,
+     "loop_heads": 2,
+     "peak_mib": 465,
+     "peak_paths": 1,
+     "phases_ms": {
+      "discovery": 22.55,
+      "document": 2533.09,
+      "format": 175.54,
+      "hooks": 0.42,
+      "lint": 39.12
+     },
+     "rules": 109,
+     "seconds": 2.866,
+     "steps": 4229226,
+     "vertices": 12655
+    }
+   },
+   {
+    "doc": "benches/docs/thesis/main.tex",
+    "kernel": "pdftex",
+    "wall": 60,
+    "end": false,
+    "timeout": true
+   }
+  ]
+ }
+]

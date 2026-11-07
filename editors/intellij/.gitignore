@@ -1,0 +1,7 @@
+.gradle/
+build/
+.intellijPlatform/
+chain.crt
+private.pem
+*.pem
+*.crt

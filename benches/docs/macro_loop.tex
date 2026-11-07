@@ -1,0 +1,8 @@
+\input plain
+\newcount\n \n=0
+\def\fib#1{\ifnum#1<2 #1\else\the\numexpr\fib{\numexpr#1-1\relax}+\fib{\numexpr#1-2\relax}\relax\fi}
+\loop
+  \edef\x{\csname y\the\n\endcsname \fib{12}}
+  \advance\n by 1
+\ifnum\n<500 \repeat
+\bye

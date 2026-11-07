@@ -1,8 +1,8 @@
 //! Mutation testing: find blind spots in the analysis.
 
 use crate::support::bare as config;
-use satex::config::{Config, Load, Texmf};
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Load, Texmf};
 
 const CORPUS: [&str; 5] = [
     r"\NeedsTeXFormat{LaTeX2e}
@@ -153,7 +153,7 @@ fn fingerprint(analysis: &Analysis) -> Vec<String> {
             ) + " = "
                 + &d.mac
                     .as_ref()
-                    .map_or(String::new(), |m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+                    .map_or(String::new(), |m| satex::engine::tex::detokenize(&m.replacement_text, &analysis.interner))
         })
         .collect();
     out.extend(analysis.facts.occurrences.iter().map(|o| format!("occ {} {}", o.kind.as_str(), o.key)));

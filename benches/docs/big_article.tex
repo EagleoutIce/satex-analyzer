@@ -1,0 +1,14 @@
+% Exercises (scaling): ~150 pages from a loop: 60 sections with lipsum, lists, equations, per-section labels and refs.
+\documentclass[11pt]{article}
+\usepackage{lipsum,pgffor,amsmath,enumitem,hyperref}
+\begin{document}
+\tableofcontents
+\foreach \s in {1,...,60}{%
+ \section{Section \s}\label{sec:\s}
+ \lipsum[1-4]
+ \subsection{Items \s}\begin{enumerate}\foreach \i in {1,...,6}{\item Item \i\ of section \s, see Section~\ref{sec:\s}.}\end{enumerate}
+ \begin{equation}\sum_{i=1}^{\s}i^{2}=\frac{\s(\s+1)(2\s+1)}{6}\label{eq:\s}\end{equation}
+ \lipsum[5-8]
+ \subsection{Refs \s}Equation~\eqref{eq:\s} on page~\pageref{eq:\s}, Section~\ref{sec:1}.\footnote{Footnote in section \s.}
+}
+\end{document}

@@ -3,10 +3,10 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::support::{defined, installed};
-use satex::config::{Cache, Config};
-use satex::facts::LoadStatus;
-use satex::machine::{Analysis, Machine};
+use crate::support::{defined, installed, undefined};
+use satex::analysis::facts::LoadStatus;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Cache, Config};
 
 fn project(name: &str) -> PathBuf {
     let dir = crate::support::tmp_root().join(format!("satex-package-cache-{name}-{}", std::process::id()));
@@ -49,8 +49,10 @@ fn analyze(dir: &Path, source: &str, cfg: &Config) -> Analysis {
 /// directory starts from one shared kernel cache, and keeps its own package
 /// caches.
 fn latex(dir: &Path) -> Config {
-    let cfg =
-        Config { cache: Cache { dir: Some(dir.join("cache")), ..Default::default() }, ..crate::support::config() };
+    let cfg = Config {
+        cache: Cache { dir: Some(dir.join("cache")), document: false, ..Default::default() },
+        ..crate::support::config()
+    };
     crate::support::seed_kernel(&cfg);
     cfg
 }
@@ -67,7 +69,7 @@ fn preamble(lines: &str) -> String {
 fn served(analysis: &Analysis, package: &str) -> Option<bool> {
     analysis.package_caches.iter().rev().find(|(name, ..)| name == package).and_then(|(.., state)| {
         match state.as_str() {
-            state if satex::machine::cache_served(state) => Some(true),
+            state if satex::analysis::machine::cache_served(state) => Some(true),
             state if state.ends_with("stored") => Some(false),
             _ => None,
         }
@@ -87,8 +89,116 @@ fn facts(analysis: &Analysis) -> Vec<String> {
             .map(|e| format!("{} {:?} {} {}", analysis.interner.name(e.name), e.span, e.meaning.as_str(), e.count)),
     );
     out.push(format!("{} vertices, {} edges", analysis.graph.len(), analysis.graph.edge_count()));
-    out.push(serde_json::to_string(&satex::lint::lint(analysis)).unwrap_or_default());
+    let text = &analysis.facts.text;
+    out.push(format!("typeset {:?} pars {:?} open {:?}", text.chars, text.pars, text.open));
+    out.push(serde_json::to_string(&satex::linter::lint(analysis)).unwrap_or_default());
     out
+}
+
+/// Every [`satex::analysis::facts::Facts`] field, by name, rendered with names for symbols.
+fn every_fact(a: &Analysis) -> Vec<(&'static str, Vec<String>)> {
+    let f = &a.facts;
+    let n = |s: satex::engine::tex::Sym| a.interner.name(s).to_string();
+    let o = |s: Option<satex::engine::tex::Sym>| s.map(n);
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+    let t = &f.text;
+    vec![
+        (
+            "defs",
+            f.defs
+                .iter()
+                .map(|d| {
+                    format!("{} {} {} {:?} {} {} {}", n(d.name), n(d.by), d.tag, d.span, d.global, d.certain, d.depth)
+                })
+                .collect(),
+        ),
+        ("written_files", f.written_files.iter().cloned().collect()),
+        ("absent", f.absent.iter().cloned().collect()),
+        ("shapes", sorted(f.shapes.iter().map(|(k, v)| format!("{} {v}", n(*k))).collect())),
+        ("types", sorted(f.types.iter().map(|(k, v)| format!("{k:?} {v:?}")).collect())),
+        ("length_fonts", sorted(f.length_fonts.iter().map(|(k, v)| format!("{k:?} {v:?}")).collect())),
+        ("vars", f.vars.iter().map(|v| format!("{} {:?} {} {:?}", n(v.name), v.kind, n(v.by), v.span)).collect()),
+        ("letters", f.letters.iter().map(|l| format!("{l:?}")).collect()),
+        (
+            "expansions",
+            f.expansions
+                .iter()
+                .map(|e| format!("{} {:?} {} {} {:?}", n(e.name), e.span, e.meaning.as_str(), e.count, o(e.within)))
+                .collect(),
+        ),
+        (
+            "loads",
+            f.loads.iter().map(|l| format!("{} {} {:?} {:?}", l.name, l.status.as_str(), l.path, l.span)).collect(),
+        ),
+        (
+            "occurrences",
+            f.occurrences
+                .iter()
+                .map(|x| format!("{:?} {} {:?} {:?} {}", x.kind, x.key, x.detail, x.span, x.certain))
+                .collect(),
+        ),
+        ("literals", f.literals.iter().map(|l| format!("{l:?}")).collect()),
+        (
+            "diagnostics",
+            f.diagnostics.iter().map(|d| format!("{} {:?} {} {}", d.code, d.span, d.message, d.count)).collect(),
+        ),
+        ("csnames", sorted(f.csnames.iter().map(|(k, v)| format!("{k:?} {v:?}")).collect())),
+        ("slots", sorted(f.slots.iter().map(|(k, v)| format!("{k:?} {v}")).collect())),
+        ("groups", f.groups.iter().map(|g| format!("{g:?}")).collect()),
+        ("raised", f.raised.iter().map(|r| format!("{} {} {:?} {}", n(r.name), r.text, r.span, r.certain)).collect()),
+        ("spaces", sorted(f.spaces.iter().map(|(k, v)| format!("{k:?} {v:?}")).collect())),
+        ("kept_spaces", sorted(f.kept_spaces.iter().map(|k| format!("{k:?}")).collect())),
+        (
+            "conditionals",
+            f.conditionals
+                .iter()
+                .map(|c| format!("{} {:?} {:?} {:?} {:?} {}", n(c.name), c.at, c.arms, c.fi, c.taken, c.undecided))
+                .collect(),
+        ),
+        (
+            "quantities",
+            f.quantities
+                .iter()
+                .map(|q| format!("{} {} {:?} {:?} {}", q.number, q.unit, q.span, o(q.via), q.certain))
+                .collect(),
+        ),
+        (
+            "colors",
+            f.colors
+                .iter()
+                .map(|c| format!("{} {:?} {:?} {:?} {}", c.name, c.span, o(c.via), o(c.package), c.certain))
+                .collect(),
+        ),
+        (
+            "color_uses",
+            f.color_uses
+                .iter()
+                .map(|c| format!("{} {:?} {} {:?} {}", c.name, c.role, c.defined, c.span, c.certain))
+                .collect(),
+        ),
+        (
+            "color_stack",
+            f.color_stack.iter().map(|c| format!("{:?} {:?} {:?} {}", c.stack, c.op, c.span, c.certain)).collect(),
+        ),
+        ("text", vec![format!("{:?} {:?} {:?} {:?} {:?} {:?}", t.chars, t.at, t.pars, t.open, t.kept, t.closed)]),
+        ("lines", sorted(f.lines.iter().map(|(k, v)| format!("{k:?} {v:?}")).collect())),
+    ]
+}
+
+/// Each field a read and a replayed run disagree on.
+fn differing_facts(read: &Analysis, replayed: &Analysis) -> Vec<String> {
+    every_fact(read)
+        .into_iter()
+        .zip(every_fact(replayed))
+        .filter(|((_, x), (_, y))| x != y)
+        .map(|((name, x), (_, y))| {
+            let at = x.iter().zip(&y).take_while(|(p, q)| p == q).count();
+            format!("{name}: {} / {}: {:?} / {:?}", x.len(), y.len(), x.get(at), y.get(at))
+        })
+        .collect()
 }
 
 fn definitions(analysis: &Analysis) -> Vec<(String, u32)> {
@@ -144,7 +254,7 @@ fn same_facts(a: &Analysis, b: &Analysis) {
             eprintln!("warm only {e}");
         }
         let lints = |a: &Analysis| -> std::collections::BTreeSet<String> {
-            satex::lint::lint(a)
+            satex::linter::lint(a)
                 .iter()
                 .map(|r| format!("{} {} {} {}", r["code"], r["file"], r["line"], r["message"]))
                 .collect()
@@ -184,6 +294,233 @@ fn same_facts(a: &Analysis, b: &Analysis) {
     }
 }
 
+/// A package of the user's own directory records what the user's files do
+/// (expl3 variables, letters, argument types, groups): its replay reports
+/// every such fact reading it did.
+#[test]
+fn an_own_package_replays_every_fact_reading_it_records() {
+    if !installed() {
+        return;
+    }
+    let dir = project("own-facts");
+    std::fs::write(
+        dir.join("facty.sty"),
+        "\\ProvidesPackage{facty}[2020/01/01 v1]\n\\makeatletter\n\\newcount\\factycount \\factycount=3\n\
+         \\newdimen\\factydim \\factydim=2em\n\\begingroup\n\\def\\factyx{}\n\\endgroup\n\
+         \\expandafter\\def\\csname r@facty\\endcsname{}\n\\IfFileExists{facty-absent.tex}{}{}\n\
+         \\ExplSyntaxOn\n\\tl_new:N \\g_facty_tl\n\\tl_gset:Nn \\g_facty_tl {a}\n\\ExplSyntaxOff\n\\makeatother\n",
+    )
+    .expect("facty.sty");
+    let document = "\\documentclass{article}\n\\usepackage{facty}\n\\begin{document}x\\end{document}\n";
+    let read = run(&dir, document);
+    let replayed = run(&dir, document);
+    assert_eq!(served(&read, "facty"), Some(false), "{:?}", read.package_caches);
+    assert_eq!(served(&replayed, "facty"), Some(true), "{:?}", replayed.package_caches);
+    assert!(read.facts.vars.iter().any(|v| read.interner.name(v.name).contains("g_facty_tl")));
+    assert_eq!(differing_facts(&read, &replayed), Vec::<String>::new());
+}
+
+/// A replayed load that set nothing on the main vertical list keeps its tail: `\\lastkern`
+/// after it reads the kern before it, served or read.
+#[test]
+fn a_replayed_load_that_appends_nothing_keeps_the_main_list_tail() {
+    if !installed() {
+        return;
+    }
+    let dir = project("main-tail");
+    std::fs::write(dir.join("quiet.sty"), "\\ProvidesPackage{quiet}[2020/01/01 v1]\n\\def\\quietmacro{}\n")
+        .expect("quiet.sty");
+    let document = "\\documentclass{article}\n\\kern3pt\n\\usepackage{quiet}\n\\edef\\R{\\the\\lastkern}\n\\begin{document}x\\end{document}\n";
+    let read = run(&dir, document);
+    let replayed = run(&dir, document);
+    assert_eq!(served(&replayed, "quiet"), Some(true), "{:?}", replayed.package_caches);
+    for analysis in [&read, &replayed] {
+        assert_eq!(crate::support::last_body(analysis, "R").replace(' ', ""), "3.0pt");
+    }
+}
+
+/// A register the package allocates and assigns, then assigns again past a
+/// line the preamble decides: a run that serves the front and records the
+/// rest keys it as it stands, so the next run serves all of it and reports
+/// what reading it does.
+#[test]
+fn a_register_assigned_in_the_served_front_keys_the_recorded_rest_as_it_stands() {
+    if !installed() {
+        return;
+    }
+    let dir = project("served-front");
+    std::fs::write(
+        dir.join("fronty.sty"),
+        "\\ProvidesPackage{fronty}[2020/01/01 v1]\n\\newdimen\\frontydim\n\\frontydim=3pt\n\\relax\n\
+         \\ifdefined\\userflag\\def\\frontyflagged{}\\fi\n\\frontydim=5pt\n\\relax\n",
+    )
+    .expect("fronty.sty");
+    let plain = "\\documentclass{article}\n\\usepackage{fronty}\n\\begin{document}x\\end{document}\n";
+    let flagged = plain.replacen("\\usepackage", "\\def\\userflag{}\n\\usepackage", 1);
+    run(&dir, plain);
+    let resumed = run(&dir, &flagged);
+    assert_eq!(served(&resumed, "fronty"), Some(false), "{:?}", resumed.package_caches);
+    let replayed = run(&dir, &flagged);
+    let state = replayed.package_caches.iter().rfind(|(name, ..)| name == "fronty").map(|(.., s)| s.as_str());
+    assert_eq!(state, Some("cached"), "{:?}", replayed.package_caches);
+    assert_eq!(differing_facts(&run_cold(&dir, &flagged), &replayed), Vec::<String>::new());
+}
+
+/// tagpdf replays whole: the random ids (`\\int_rand:n`) its namespaces
+/// get fork, and their paths leave fewer finished input levels below the
+/// file than it opened on. The replay reports what reading it did.
+#[test]
+fn tagpdf_replays_whole_and_reports_the_same() {
+    if !installed() {
+        return;
+    }
+    let dir = project("tagpdf");
+    let document = "\\documentclass{article}\n\\usepackage{tagpdf}\n\\begin{document}\nx\n\\end{document}\n";
+    let first = run(&dir, document);
+    let second = run(&dir, document);
+    assert_eq!(served(&second, "tagpdf"), Some(true), "{:?}", second.package_caches);
+    assert!(second.served_steps * 10 > second.load_steps * 9, "{} of {}", second.served_steps, second.load_steps);
+    assert_eq!(first.steps, second.steps);
+    same_facts(&first, &second);
+}
+
+/// Runs 2 and 3 of `document` on one cache rebuild nothing: every key a
+/// cache entry has is what the next run sees again. The project and run 3.
+fn rebuilds_nothing_warm(name: &str, document: &str) -> Option<(PathBuf, Analysis)> {
+    if !installed() {
+        return None;
+    }
+    let dir = project(name);
+    run(&dir, document);
+    let mut last = None;
+    for warm in [2, 3] {
+        let analysis = run(&dir, document);
+        let report = analysis.cache_report();
+        let rebuilt: Vec<_> = report.iter().filter(|l| l.contains("rebuilt")).collect();
+        assert!(rebuilt.is_empty(), "run {warm}: {rebuilt:?}");
+        last = Some(analysis);
+    }
+    Some((dir, last?))
+}
+
+#[test]
+fn document_metadata_rebuilds_nothing_warm() {
+    rebuilds_nothing_warm(
+        "warm-metadata",
+        "\\DocumentMetadata{pdfversion=2.0}\\documentclass{article}\\begin{document}x\\end{document}\n",
+    );
+}
+
+/// beamer's `\mode<presentation>` reads its theme files ahead: they are
+/// stored all the same.
+#[test]
+fn beamer_rebuilds_nothing_warm() {
+    rebuilds_nothing_warm("warm-beamer", BEAMER);
+}
+
+const BEAMER: &str = "\\documentclass{beamer}\\begin{document}\\begin{frame}x\\end{frame}\\end{document}\n";
+
+/// The replay decides hyperref's `\ifnum\lastnodetype=1` in
+/// `\Hy@SaveLastskip` as reading it does.
+#[test]
+fn beamer_replays_what_reading_it_reports() {
+    if let Some((dir, replayed)) = rebuilds_nothing_warm("replay-beamer", BEAMER) {
+        assert_eq!(differing_facts(&run_cold(&dir, BEAMER), &replayed), Vec::<String>::new());
+    }
+}
+
+/// Lines a lookahead reads ahead, as beamer's `\mode` does (the last one of
+/// a package it loads too), start at rest once the tokens are given back:
+/// the package is stored, and its replay reports what reading it did.
+#[test]
+fn a_package_read_ahead_by_a_lookahead_is_stored_and_replays_the_same() {
+    if !installed() {
+        return;
+    }
+    let dir = project("lookahead");
+    let mode = "\\def\\peekmode{\\@ifstar\\relax\\peekat}\\def\\peekat<#1>{\\@ifnextchar\\bgroup\\@firstofone\\relax}";
+    let peeky = format!(
+        "\\ProvidesPackage{{peeky}}\n{mode}\n\\peekmode<a>\n\n\\def\\peekx{{x}}\n\\RequirePackage{{peekin}}\n\n\
+         \\def\\peeky{{\\peekx\\peekz}}\n\\peekmode\n<b>\n"
+    );
+    std::fs::write(dir.join("peeky.sty"), peeky).expect("peeky.sty");
+    std::fs::write(dir.join("peekin.sty"), "\\ProvidesPackage{peekin}\n\\def\\peekz{z}\n\\peekmode\n<c>\n")
+        .expect("peekin.sty");
+    let document = "\\documentclass{article}\n\\usepackage{peeky}\n\\begin{document}\\peeky\\end{document}\n";
+    let read = run(&dir, document);
+    let replayed = run(&dir, document);
+    let report = replayed.cache_report();
+    assert!(!report.iter().any(|l| l.contains("peek") && l.contains("rebuilt")), "{report:?}");
+    assert_eq!(served(&replayed, "peeky"), Some(true), "{:?}", replayed.package_caches);
+    assert_eq!(differing_facts(&read, &replayed), Vec::<String>::new());
+    same_facts(&read, &replayed);
+}
+
+#[test]
+fn tikz_rebuilds_nothing_warm() {
+    rebuilds_nothing_warm(
+        "warm-tikz",
+        "\\documentclass{article}\\usepackage{tikz}\\begin{document}\\tikz\\draw(0,0)--(1,1);\\end{document}\n",
+    );
+}
+
+#[test]
+fn hyperref_rebuilds_nothing_warm() {
+    rebuilds_nothing_warm(
+        "warm-hyperref",
+        "\\documentclass{article}\\usepackage{hyperref}\\begin{document}\\section{A}\\label{a}\\ref{a}\\end{document}\n",
+    );
+}
+
+#[test]
+fn biblatex_rebuilds_nothing_warm() {
+    rebuilds_nothing_warm(
+        "warm-biblatex",
+        "\\documentclass{article}\\usepackage{biblatex}\\begin{document}\\cite{a}\\printbibliography\\end{document}\n",
+    );
+}
+
+/// expl3's `\seq_map_inline:Nn` gsets `\__seq_map_<level>:w`, whose
+/// `\csname` asks whether the name exists only to make it `\relax`. A package
+/// recorded where earlier maps left those functions is served where none
+/// did, and the replay reports what reading it does.
+#[test]
+fn a_map_function_some_earlier_package_left_does_not_key_the_cache() {
+    if !installed() {
+        return;
+    }
+    let nested = |name: &str| {
+        format!(
+            "\\ProvidesExplPackage{{{name}}}{{2020/01/01}}{{1}}{{t}}\n\\seq_new:N \\g_{name}_seq\n\
+             \\seq_gput_right:Nn \\g_{name}_seq {{a}}\n\
+             \\seq_map_inline:Nn \\g_{name}_seq {{ \\seq_map_inline:Nn \\g_{name}_seq {{\n\
+             \\seq_map_inline:Nn \\g_{name}_seq {{ \\cs_gset:cpn {{{name}_##1####1########1}} {{}} }} }} }}\n\
+             \\cs_new:Npn \\{name}done {{}}\n"
+        )
+    };
+    let dir = project("mapped");
+    std::fs::write(dir.join("mapper.sty"), nested("mapper")).expect("mapper.sty");
+    // What an earlier map leaves: the map functions of its levels.
+    let made: String =
+        (1..=3).map(|level| format!("\\expandafter\\gdef\\csname __seq_map_{level}:w\\endcsname#1{{}}\n")).collect();
+    let both =
+        format!("\\documentclass{{article}}\n{made}\\usepackage{{mapper}}\n\\begin{{document}}x\\end{{document}}\n");
+    let alone = "\\documentclass{article}\n\\usepackage{mapper}\n\\begin{document}x\\end{document}\n";
+    run(&dir, &both);
+    let replayed = run(&dir, alone);
+    assert_eq!(served(&replayed, "mapper"), Some(true), "{:?}", replayed.package_caches);
+    assert!(defined(&replayed, "mapperdone"));
+    for entry in std::fs::read_dir(dir.join("cache")).expect("cache directory").flatten() {
+        if entry.file_name().to_string_lossy().starts_with("package-mapper-") {
+            std::fs::remove_file(entry.path()).expect("mapper's cache");
+        }
+    }
+    let read = run(&dir, alone);
+    assert_eq!(served(&read, "mapper"), Some(false), "{:?}", read.package_caches);
+    assert_eq!(differing_facts(&read, &replayed), Vec::<String>::new());
+    same_facts(&read, &replayed);
+}
+
 #[test]
 fn a_second_run_replays_the_package_and_reports_the_same() {
     let dir = project("replay");
@@ -202,7 +539,7 @@ fn a_second_run_replays_the_package_and_reports_the_same() {
     // TeX's "Undefined control sequence" in the package is its expansion.
     let undefined = |a: &Analysis| {
         a.facts.expansions.iter().any(|e| {
-            e.meaning == satex::facts::MeaningKind::Undefined
+            e.meaning == satex::analysis::facts::MeaningKind::Undefined
                 && a.file_name(e.span.file).ends_with("outer.sty")
                 && e.span.line == 7
         })
@@ -232,13 +569,13 @@ fn a_replayed_package_reports_the_tokens_and_time_it_stands_for() {
     let _first = analyze(&dir, DOCUMENT, &timed(&dir));
     let second = analyze(&dir, DOCUMENT, &timed(&dir));
     assert_eq!(served(&second, "outer"), Some(true), "the second run replays outer.sty from its cache");
-    let root = satex::query::summary(&second);
+    let root = satex::queries::query::summary(&second);
     let outer = root.children.iter().find(|n| n.name == "outer.sty").expect("outer.sty in the tree");
     assert!(outer.cached, "the replayed file is marked cached");
     assert!(outer.tokens > 0, "outer.sty reports the tokens its cache stands for, got {}", outer.tokens);
     // `inner.sty` has a cache entry of its own, replayed between outer's segments.
     assert_eq!(served(&second, "inner"), Some(true), "{:?}", second.package_caches);
-    let text = satex::render::timings(&second, satex::render::Links(false));
+    let text = satex::cli::render::timings(&second, satex::cli::render::Links(false));
     assert!(text.contains("inner"), "inner.sty is named:\n{text}");
 }
 
@@ -260,6 +597,44 @@ fn a_changed_package_file_is_read_again() {
         again.package_caches
     );
     assert!(defined(&again, "added"));
+}
+
+/// A package loaded from a file `\input` by a class, and one from a file the
+/// document `\input`s: each has its own entry, the class resumes after the
+/// input, a second run serves all three and reports what reading does, and
+/// an edit to the package reads only it again.
+#[test]
+fn a_package_loaded_from_an_input_file_is_cached() {
+    if !installed() {
+        return;
+    }
+    let dir = project("via-input");
+    let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).expect(name);
+    write(
+        "viaclass.cls",
+        "\\ProvidesClass{viaclass}\n\\LoadClass{article}\n\\input{viasetup.tex}\n\\def\\afterinput{}\n",
+    );
+    write("viasetup.tex", "\\RequirePackage{vialocal}\n\\def\\setupdone{}\n");
+    write("vialocal.sty", "\\ProvidesPackage{vialocal}\n\\def\\localmacro{L}\n\\newcount\\localcount\n");
+    write("viadoc.tex", "\\RequirePackage{viaother}\n");
+    write("viaother.sty", "\\ProvidesPackage{viaother}\n\\def\\othermacro{O}\n");
+    let document =
+        "\\documentclass{viaclass}\n\\input{viadoc.tex}\n\\begin{document}\\localmacro\\othermacro\\end{document}\n";
+    let read = run(&dir, document);
+    let replayed = run(&dir, document);
+    for name in ["vialocal", "viaother", "viaclass"] {
+        assert_eq!(served(&read, name), Some(false), "{name}: {:?}", read.package_caches);
+        assert_eq!(served(&replayed, name), Some(true), "{name}: {:?}", replayed.package_caches);
+    }
+    assert!(defined(&replayed, "afterinput") && defined(&replayed, "setupdone"));
+    assert_eq!(differing_facts(&read, &replayed), Vec::<String>::new());
+    same_facts(&read, &replayed);
+    write("vialocal.sty", "\\ProvidesPackage{vialocal}\n\\def\\localmacro{M}\n\\def\\added{}\n");
+    let edited = run(&dir, document);
+    assert_eq!(served(&edited, "vialocal"), Some(false), "{:?}", edited.package_caches);
+    assert_eq!(served(&edited, "viaother"), Some(true), "{:?}", edited.package_caches);
+    assert!(defined(&edited, "added") && undefined(&edited, "localcount"));
+    same_facts(&run_cold(&dir, document), &edited);
 }
 
 /// An edit that keeps the size and the modification time (a save within
@@ -295,7 +670,7 @@ fn a_name_the_package_no_longer_defines_is_undefined() {
         let named = |r: &serde_json::Map<String, serde_json::Value>| {
             r["message"].as_str().is_some_and(|m| m.contains("`\\innermacro`"))
         };
-        satex::lint::lint(a).iter().any(|r| r["code"] == "undefined-control-sequence" && named(r))
+        satex::linter::lint(a).iter().any(|r| r["code"] == "undefined-control-sequence" && named(r))
     };
     let warm = run(&dir, source);
     assert!(!undefined(&warm));
@@ -303,7 +678,7 @@ fn a_name_the_package_no_longer_defines_is_undefined() {
     std::fs::write(&path, text.replacen("innermacro", "innermacrx", 1)).expect("inner.sty");
     std::fs::File::options().write(true).open(&path).and_then(|f| f.set_modified(modified)).expect("set mtime");
     let again = run(&dir, source);
-    assert!(!defined(&again, "innermacro"));
+    assert!(crate::support::undefined(&again, "innermacro"));
     assert!(undefined(&again), "{:?}", again.package_caches);
 }
 
@@ -320,11 +695,30 @@ fn the_same_package_after_a_different_preamble_is_served_and_reports_what_readin
 }
 
 #[test]
+fn a_replay_keeps_the_primitive_copies_made_before_the_load() {
+    // Recorded where `\mydraft` is no copy of `\pdfdraftmode`: replayed
+    // where it is one, the copy stays and the test on it stays decided.
+    let dir = project("aliases");
+    std::fs::write(dir.join("few.sty"), "\\ProvidesPackage{few}\n\\def\\fewmacro{x}\n").expect("few.sty");
+    let document = |preamble: &str, body: &str| {
+        format!(
+            "\\documentclass{{article}}\n{preamble}\\usepackage{{few}}\n\\begin{{document}}{body}\\end{{document}}\n"
+        )
+    };
+    run(&dir, &document("", ""));
+    let warm = run(&dir, &document("\\let\\mydraft\\pdfdraftmode\n", "\\ifnum\\mydraft=0 \\else\\notdefined\\fi"));
+    assert_eq!(served(&warm, "few"), Some(true), "{:?}", warm.package_caches);
+    // Lost, it forks: two paths join that "differed in \mydraft".
+    let wrong: Vec<_> = warm.facts.diagnostics.iter().filter(|d| d.message.contains("draft")).collect();
+    assert!(wrong.is_empty(), "{wrong:?}");
+}
+
+#[test]
 fn a_prior_definition_the_package_tests_makes_it_miss() {
     let dir = project("tested");
     run(&dir, DOCUMENT);
     let warm = run(&dir, &preamble("\\def\\userflag{}"));
-    assert_ne!(served(&warm, "outer"), Some(true), "{:?}", warm.package_caches);
+    assert_eq!(served(&warm, "outer"), Some(false), "{:?}", warm.package_caches);
     assert!(defined(&warm, "flagged"));
 }
 
@@ -334,7 +728,7 @@ fn other_options_make_it_miss() {
     run(&dir, "\\documentclass{article}\n\\usepackage{withopts}\n\\begin{document}\\end{document}\n");
     let other = "\\documentclass{article}\n\\usepackage[draft]{withopts}\n\\begin{document}\\end{document}\n";
     let warm = run(&dir, other);
-    assert_ne!(served(&warm, "withopts"), Some(true), "{:?}", warm.package_caches);
+    assert_eq!(served(&warm, "withopts"), Some(false), "{:?}", warm.package_caches);
     assert!(defined(&warm, "isdraft"));
     let cold = run_cold(&dir, other);
     same_facts(&cold, &warm);
@@ -389,14 +783,14 @@ fn two_projects_sharing_a_cache_do_not_shadow_each_others_package() {
 
     let from_a = analyze(&a, DOCUMENT, &cfg_for(&a));
     assert!(defined(&from_a, "onlyinA"), "a's own package was read: {:?}", from_a.package_caches);
-    assert!(!defined(&from_a, "onlyinB"), "a must not see b's package");
+    assert!(undefined(&from_a, "onlyinB"), "a must not see b's package");
 
     let from_b = analyze(&b, DOCUMENT, &cfg_for(&b));
     assert!(defined(&from_b, "onlyinB"), "b must read its own outer.sty, not a's cache: {:?}", from_b.package_caches);
-    assert!(!defined(&from_b, "onlyinA"), "b must not see a's package");
-    assert_ne!(
+    assert!(undefined(&from_b, "onlyinA"), "b must not see a's package");
+    assert_eq!(
         served(&from_b, "outer"),
-        Some(true),
+        Some(false),
         "a's cache for the same name must not be served to b: {:?}",
         from_b.package_caches
     );
@@ -406,12 +800,12 @@ fn two_projects_sharing_a_cache_do_not_shadow_each_others_package() {
     let a_again = analyze(&a, DOCUMENT, &cfg_for(&a));
     assert_eq!(served(&a_again, "outer"), Some(true), "{:?}", a_again.package_caches);
     assert!(defined(&a_again, "onlyinA"));
-    assert!(!defined(&a_again, "onlyinB"));
+    assert!(undefined(&a_again, "onlyinB"));
 
     let b_again = analyze(&b, DOCUMENT, &cfg_for(&b));
     assert_eq!(served(&b_again, "outer"), Some(true), "{:?}", b_again.package_caches);
     assert!(defined(&b_again, "onlyinB"));
-    assert!(!defined(&b_again, "onlyinA"));
+    assert!(undefined(&b_again, "onlyinA"));
 }
 
 #[test]
@@ -424,7 +818,7 @@ fn cache_build_builds_what_is_missing_and_refresh_rebuilds() {
     let states = |refresh| -> Vec<String> {
         let mut lines = Vec::new();
         let prepared =
-            satex::cmd::cache::build::prepare(&cfg, refresh, &[], &[], None, &mut |line| lines.push(line.to_string()))
+            satex::cli::cache::build::prepare(&cfg, refresh, &[], &[], None, &mut |line| lines.push(line.to_string()))
                 .expect("prepared");
         assert!(lines[0].starts_with("plan:"), "the plan comes first: {lines:?}");
         assert!(lines.iter().any(|l| l.starts_with("[2/2] outer")), "then each item: {lines:?}");
@@ -459,7 +853,7 @@ fn run_latex(dir: &Path, source: &str, auto: bool) -> Analysis {
 fn register_of(analysis: &Analysis, name: &str) -> Option<u16> {
     let sym = analysis.interner.lookup(name)?;
     match analysis.env.meaning(sym) {
-        satex::tex::Meaning::Register(_, index) => Some(index),
+        satex::engine::tex::Meaning::Register(_, index) => Some(index),
         _ => None,
     }
 }
@@ -509,7 +903,8 @@ const BASE: &[&str] = &[
 ];
 
 /// Warm the caches with `base`, then run `edited` and check which packages
-/// are served whole from their cache, and that the run reports exactly what
+/// are served whole from their cache and which are read and stored again (a miss
+/// must show as stored: a package missing from the report would pass a weaker check), and that the run reports exactly what
 /// a run that reads every package does.
 fn after_edit(name: &str, base: &[String], edited: &[String], hit: &[&str], miss: &[&str]) {
     if !installed() {
@@ -524,9 +919,9 @@ fn after_edit(name: &str, base: &[String], edited: &[String], hit: &[&str], miss
         assert_eq!(served(&warm, package), Some(true), "{package} is served after {name}: {:?}", warm.package_caches);
     }
     for package in miss {
-        assert_ne!(
+        assert_eq!(
             served(&warm, package),
-            Some(true),
+            Some(false),
             "{package} is read again after {name}: {:?}",
             warm.package_caches
         );
@@ -603,11 +998,57 @@ fn text_of(analysis: &Analysis, name: &str) -> Option<String> {
     Some(
         text.iter()
             .filter_map(|t| match t.tok {
-                satex::tex::Tok::Chr(c, _) => Some(c),
+                satex::engine::tex::Tok::Chr(c, _) => Some(c),
                 _ => None,
             })
             .collect(),
     )
+}
+
+/// The site's examples report the same, their packages read or replayed.
+#[test]
+fn the_examples_report_the_same_cold_and_warm() {
+    if !installed() {
+        return;
+    }
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/site/examples");
+    for name in ["thesis", "spacing", "option-clash"] {
+        let dir = project(&format!("example-{name}"));
+        for entry in std::fs::read_dir(&examples).expect("examples").flatten() {
+            std::fs::copy(entry.path(), dir.join(entry.file_name())).expect("example file");
+        }
+        let source = std::fs::read_to_string(dir.join(format!("{name}.tex"))).expect("example");
+        let path = dir.join(format!("{name}.tex"));
+        let cfg = latex(&dir);
+        Machine::analyze(&source, Some(&path), &cfg);
+        let warm = Machine::analyze(&source, Some(&path), &cfg);
+        let mut read = cfg.clone();
+        (read.cache.index.auto, read.cache.index.refresh) = (false, true);
+        let cold = Machine::analyze(&source, Some(&path), &read);
+        same_facts(&cold, &warm);
+    }
+}
+
+/// A group that wrote a name locally, then globally, then locally again
+/// leaves the global meaning (tex.web § 283): the replay restores it too.
+#[test]
+fn a_global_definition_between_local_ones_in_a_group_is_replayed() {
+    if !installed() {
+        return;
+    }
+    let dir = project("group-global");
+    std::fs::write(
+        dir.join("grouped.sty"),
+        "\\ProvidesPackage{grouped}\n\\begingroup\n\\let\\groupedname\\relax\n\\gdef\\groupedname{G}\n\
+         \\def\\groupedname{L}\n\\endgroup\n",
+    )
+    .expect("grouped.sty");
+    let doc = "\\documentclass{article}\n\\usepackage{grouped}\n\\begin{document}\\groupedname\\end{document}\n";
+    let cold = run(&dir, doc);
+    let warm = run(&dir, doc);
+    assert_eq!(served(&warm, "grouped"), Some(true), "{:?}", warm.package_caches);
+    assert_eq!(text_of(&warm, "groupedname").as_deref(), Some("G"));
+    same_facts(&cold, &warm);
 }
 
 /// A package that appends to a list with `\xdef\list{\list,…}` copies the
@@ -663,8 +1104,8 @@ fn a_list_the_package_inspects_before_appending_makes_it_miss() {
     run_latex(&dir, &doc("a"), true);
     let source = doc("b");
     let warm = run_latex(&dir, &source, true);
-    assert_ne!(served(&warm, "inspector"), Some(true), "{:?}", warm.package_caches);
-    assert!(!defined(&warm, "wasa"));
+    assert_eq!(served(&warm, "inspector"), Some(false), "{:?}", warm.package_caches);
+    assert!(undefined(&warm, "wasa"));
     assert_eq!(text_of(&warm, "biglist").as_deref(), Some("b,inspector"));
     same_facts(&run_cold(&dir, &source), &warm);
 }
@@ -699,7 +1140,7 @@ fn a_case_mismatched_load_reports_the_disk_name_in_the_lint() {
     };
     assert_eq!(analysis.interner.name(on_disk), "Mismatch.sty");
 
-    let findings = satex::lint::lint(&analysis);
+    let findings = satex::linter::lint(&analysis);
     let finding = findings
         .iter()
         .find(|r| r.get("code").and_then(|c| c.as_str()) == Some("unresolved-file"))
@@ -754,8 +1195,9 @@ fn a_case_mismatch_survives_a_package_cache_round_trip() {
 }
 
 /// A cache is keyed by what changes the interpretation only: a run that
-/// reports, lints or traces differently, has other resource limits, or
-/// names the engine it would pick anyway reads the same cache.
+/// reports, lints or traces differently, keeps call arguments (the
+/// language server does), has other resource limits, or names the engine
+/// it would pick anyway reads the same cache.
 #[test]
 fn settings_that_do_not_change_the_interpretation_share_a_cache() {
     let dir = project("key");
@@ -764,10 +1206,11 @@ fn settings_that_do_not_change_the_interpretation_share_a_cache() {
     let mut other = latex(&dir);
     other.verbose = 2;
     other.lint_off = vec!["unused-label".into()];
-    other.profile = Some(satex::config::Profile::Document);
+    other.profile = Some(satex::project::config::Profile::Document);
     other.engine = Some(first.plugins.engine);
     other.limits.memory = bytesize::ByteSize::gib(3);
     other.limits.degrade_at_percent = 90;
+    other.record_arguments = true;
     let second = analyze(&dir, DOCUMENT, &other);
     assert_eq!(served(&second, "outer"), Some(true), "{:?}", second.package_caches);
 }
@@ -960,7 +1403,7 @@ fn a_class_assigning_register_values_is_reused_whole() {
 #[test]
 fn caches_built_against_one_tree_are_reused_from_a_copy_and_an_edit_rebuilds_them() {
     let dir = crate::support::scratch_dir(
-        crate::support::tmp_root().join(format!("satex-package-cache-moved-{}", std::process::id())),
+        crate::support::tmp_root().join(format!("satex-package-cache-tree-copy-{}", std::process::id())),
     );
     let (first, cache, doc) = (dir.join("a"), dir.join("cache"), dir.join("doc"));
     let tree_a = crate::support::mini_texmf(&first);
@@ -1050,12 +1493,12 @@ impl Portable {
 
     fn export(&self, cfg: &Config) {
         let mut out = Vec::new();
-        satex::cmd::cache::export(cfg, &self.archive, (&[], &[]), false, &mut out).expect("export");
+        satex::cli::cache::export(cfg, &self.archive, (&[], &[]), false, &mut out).expect("export");
     }
 
     fn import(&self, cfg: &Config) -> String {
         let mut out = Vec::new();
-        satex::cmd::cache::import(cfg, &self.archive, false, &mut out).expect("import");
+        satex::cli::cache::import(cfg, &self.archive, false, &mut out).expect("import");
         String::from_utf8_lossy(&out).into_owned()
     }
 }
@@ -1166,10 +1609,10 @@ fn a_kernel_is_named_by_its_release_not_its_path() {
     );
     let kernel = dir.join("latex.ltx");
     std::fs::write(&kernel, "\\edef\\fmtversion{2031-06-01}\n").expect("kernel");
-    assert_eq!(satex::format::release_name(&kernel), "2031");
+    assert_eq!(satex::caches::format::release_name(&kernel), "2031");
     let bare = dir.join("other.ltx");
     std::fs::write(&bare, "\\relax\n").expect("kernel");
-    assert_eq!(satex::format::release_name(&bare), satex::format::tree_name(&bare));
+    assert_eq!(satex::caches::format::release_name(&bare), satex::caches::format::tree_name(&bare));
 }
 
 /// No state from an interrupted run: every package cache entry of `a`.
@@ -1282,7 +1725,7 @@ fn a_changed_package_of_a_class_rebuilds_only_that_package() {
     std::fs::write(dir.join("pa.sty"), "\\ProvidesPackage{pa}\n\\def\\pamacro{changed}\n").unwrap();
     let again = run_latex(&dir, WITH_CLASS, true);
     assert_eq!(served(&again, "pb"), Some(true), "{:?}", again.package_caches);
-    assert_ne!(served(&again, "pa"), Some(true), "{:?}", again.package_caches);
+    assert_eq!(served(&again, "pa"), Some(false), "{:?}", again.package_caches);
     same_facts(&run_cold(&dir, WITH_CLASS), &again);
 }
 
@@ -1295,7 +1738,7 @@ fn an_export_can_be_limited_to_a_package() {
         let (only, without): (Vec<String>, Vec<String>) =
             (only.iter().map(|s| s.to_string()).collect(), without.iter().map(|s| s.to_string()).collect());
         let mut out = Vec::new();
-        satex::cmd::cache::export(&cfg, &p.archive, (&only, &without), true, &mut out).expect("export");
+        satex::cli::cache::export(&cfg, &p.archive, (&only, &without), true, &mut out).expect("export");
         let said: serde_json::Value = serde_json::from_slice(&out).expect("json");
         (said["entries"].as_u64().unwrap(), said["holds"].as_object().unwrap().keys().cloned().collect::<Vec<_>>())
     };
@@ -1320,11 +1763,34 @@ fn a_package_loaded_on_the_last_line_is_read_cold_and_warm() {
     run_latex(&dir, "\\relax\n", true);
     for run in ["cold", "warm"] {
         let analysis = run_latex(&dir, WITH_CLASS, true);
-        let undefined: Vec<_> = satex::lint::lint(&analysis)
+        let undefined: Vec<_> = satex::linter::lint(&analysis)
             .into_iter()
             .filter(|r| r["code"] == "undefined-control-sequence")
             .map(|r| r["message"].to_string())
             .collect();
         assert!(undefined.is_empty(), "{run}: {undefined:?}");
     }
+}
+
+/// A name partly built from unknown text may be any name of its shape, so a
+/// package that asks whether such a name is defined must not be served the
+/// answer a run without that name gave.
+#[test]
+fn a_package_read_after_a_name_of_unknown_spelling_is_not_served_the_plain_answer() {
+    if !installed() {
+        return;
+    }
+    let package = "\\ProvidesPackage{wp}\n\\ifdefined\\wpx\\def\\wpseen{}\\fi\n\\relax\n";
+    let (dir, fresh) = (project("wild"), project("wild-fresh"));
+    for d in [&dir, &fresh] {
+        std::fs::write(d.join("wp.sty"), package).expect("wp.sty");
+    }
+    let plain = "\\documentclass{article}\\usepackage{wp}\\begin{document}x\\end{document}\n";
+    let wild = "\\documentclass{article}\\expandafter\\def\\csname wp\\romannumeral\\pdfuniformdeviate 30\\endcsname{}\n\
+                \\usepackage{wp}\\begin{document}x\\end{document}\n";
+    let _ = run(&dir, plain);
+    let warm = run(&dir, wild);
+    let cold = run(&fresh, wild);
+    assert!(!defined(&cold, "wpseen") && !undefined(&cold, "wpseen"), "a fresh read leaves it open");
+    assert!(!defined(&warm, "wpseen") && !undefined(&warm, "wpseen"), "{:?}", warm.package_caches);
 }

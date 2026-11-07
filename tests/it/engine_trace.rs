@@ -3,7 +3,7 @@
 //! `\tracingassigns=1` (with `\tracingonline=1` so nothing is held back for
 //! the terminal) make `pdftex -ini -etex` write its own account of every
 //! macro expansion, primitive execution and assignment to its log.  This
-//! parses that log and checks it against [`satex::machine::Analysis::trace`]
+//! parses that log and checks it against [`satex::analysis::machine::Analysis::trace`]
 //! for the same document.
 //!
 //! satex over-approximates: an undecided `\if…\fi` runs both arms, and a
@@ -42,9 +42,9 @@
 
 use regex::Regex;
 
-use satex::config::{Config, Engine};
-use satex::machine::{Machine, Step};
-use satex::plugin::Kernel;
+use satex::analysis::machine::{Machine, Step};
+use satex::plugins::Kernel;
+use satex::project::config::{Config, Engine};
 
 /// Catcodes and tracing switches every probe shares: without a format,
 /// INITEX's catcodes are in force (tex.web § 232), so `{`, `}` and `#` are
@@ -151,7 +151,7 @@ fn is_subsequence<T: PartialEq>(needle: &[T], haystack: &[T]) -> bool {
 
 #[test]
 fn satex_trace_contains_every_step_a_real_engine_took() {
-    if satex::paths::which("pdftex").is_err() {
+    if satex::project::paths::which("pdftex").is_err() {
         eprintln!("no pdftex found; skipping the engine-trace suite");
         return;
     }
@@ -171,7 +171,7 @@ fn satex_trace_contains_every_step_a_real_engine_took() {
         };
         let analysis = Machine::analyze(&source, None, &cfg);
 
-        let cs = |sym: satex::tex::Sym| analysis.interner.cs(sym);
+        let cs = |sym: satex::engine::tex::Sym| analysis.interner.cs(sym);
         let satex_executed: Vec<String> =
             analysis.trace.iter().filter(|e| e.kind == Step::Execute).map(|e| cs(e.name)).collect();
         let satex_defined_or_assigned: Vec<String> = analysis
@@ -186,7 +186,8 @@ fn satex_trace_contains_every_step_a_real_engine_took() {
             .trace
             .iter()
             .filter(|e| e.kind == Step::Branch)
-            .map(|e| (cs(e.name), e.detail.as_deref().unwrap_or("").to_string()))
+            // the outcome after what a numeric test compared (`1 = 1: true`)
+            .map(|e| (cs(e.name), e.detail.as_deref().unwrap_or("").rsplit(": ").next().unwrap_or("").to_string()))
             .collect();
         let (satex_opens, satex_closes) = analysis.trace.iter().fold((0u32, 0u32), |(o, c), e| match e.kind {
             Step::OpenGroup => (o + 1, c),

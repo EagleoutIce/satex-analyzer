@@ -1,0 +1,14 @@
+% Exercises: elsarticle (preprint), frontmatter, author/address, highlights, numbered bibliography.
+\documentclass[preprint,12pt]{elsarticle}
+\begin{document}
+\begin{frontmatter}
+\title{An Elsevier Style Paper}
+\author[a]{Ann Author}\ead{a@example.org}\address[a]{Example University}
+\begin{abstract}We show a thing.\end{abstract}
+\begin{keyword}examples \sep benchmarks\end{keyword}
+\end{frontmatter}
+\section{Introduction}\label{s:i}Related work~\cite{knuth84,mittelbach04}.
+\section{Method}See Section~\ref{s:i}.
+\begin{table}\caption{T}\centering\begin{tabular}{ll}a&b\\c&d\end{tabular}\end{table}
+\bibliographystyle{elsarticle-num}\bibliography{refs}
+\end{document}

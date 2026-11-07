@@ -62,6 +62,9 @@ esac
 
 NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
 
+# Unreleased becomes the new version in CHANGELOG.md (fails when it is empty)
+python3 scripts/changelog.py release "v${NEW_VERSION}"
+
 # Get commits since last tag
 LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 
@@ -78,7 +81,13 @@ mkdir -p doc/release-notes
 cat > "doc/release-notes/${NEW_VERSION}.md" <<EOF
 # $TITLE
 
+$(python3 scripts/changelog.py notes "v${NEW_VERSION}")
+
+<details><summary>All commits</summary>
+
 $COMMITS
+
+</details>
 EOF
 
 # Update Cargo.toml
@@ -94,6 +103,7 @@ echo ""
 echo "Files changed:"
 echo "  - Cargo.toml (version: $CURRENT_VERSION -> $NEW_VERSION)"
 echo "  - Cargo.lock (updated)"
+echo "  - CHANGELOG.md (Unreleased -> v${NEW_VERSION})"
 echo "  - doc/release-notes/${NEW_VERSION}.md (created)"
 echo ""
 echo "Next steps:"

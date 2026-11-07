@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 
 use crate::support::analyze_latex as analyze;
 use crate::support::installed;
-use satex::builtins::OccKind;
-use satex::config::Config;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::machine::{Analysis, Machine};
+use satex::engine::builtins::OccKind;
+use satex::project::config::Config;
 
 /// A document written to a directory of its own, beside the files it names;
 /// the lints read those files too, so the directory outlives the analysis.
@@ -50,7 +50,7 @@ fn places(analysis: &Analysis, kind: OccKind) -> Vec<(String, u32, u32)> {
 }
 
 fn findings(analysis: &Analysis, code: &str) -> Vec<(String, Option<String>)> {
-    satex::lint::lint(analysis)
+    satex::linter::lint(analysis)
         .into_iter()
         .filter(|record| record["code"] == code)
         .map(|record| {
@@ -125,6 +125,30 @@ fn citations_are_checked_against_the_bibitems_and_the_database() {
     cleanup("cite");
 }
 
+/// The unknown keys of one `\\cite` are one finding at that `\\cite`
+/// naming each of them: none hides another, and none is put at a name
+/// `\\cite` built from a key.
+#[test]
+fn every_unknown_key_of_one_cite_is_named() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_in(
+        "cites",
+        r"\documentclass{article}
+\begin{document}
+\cite{a,zz,b} \cite{qq,zz} \cite{zz}
+\bibliography{refs}
+\end{document}",
+        &[("refs.bib", "@book{a, title={A}}\n@book{b, title={B}}\n")],
+    );
+    let undefined: Vec<String> = findings(&analysis, "undefined-citation").into_iter().map(|(m, _)| m).collect();
+    assert_eq!(undefined.len(), 3, "{undefined:?}");
+    assert!(undefined.iter().all(|m| !m.contains("via")), "{undefined:?}");
+    assert!(undefined.iter().any(|m| m.contains("`qq`, `zz`")), "{undefined:?}");
+    cleanup("cites");
+}
+
 #[test]
 fn an_unreadable_database_keeps_citations_unjudged() {
     if !installed() {
@@ -141,6 +165,72 @@ fn an_unreadable_database_keeps_citations_unjudged() {
     );
     assert!(findings(&analysis, "undefined-citation").is_empty());
     cleanup("nodb");
+}
+
+/// The databases against the style: a file loaded twice, one work under two keys in two
+/// files, a cited entry lacking a field its type requires, a constant neither an `@string`
+/// nor the style (plain.bst's `jul`, `cacm`) defines, an entry never cited.
+#[test]
+fn the_databases_are_checked_against_the_style() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_in(
+        "bibdb",
+        r"\documentclass{article}
+\begin{document}
+\cite{knuth84,lamport78,twin}
+\bibliographystyle{plain}
+\bibliography{refs,more,refs}
+\end{document}",
+        &[
+            (
+                "refs.bib",
+                "@string{cacm = {Comm. ACM}}\n@article{knuth84,\n  author = {Donald E. Knuth},\n  title = {Literate Programming},\n  journal = {The Computer Journal},\n  year = 1984,\n  doi = {10.1093/comjnl/27.2.97}\n}\n\n@article{lamport78,\n  author = {Leslie Lamport},\n  title = {Time, Clocks},\n  journal = cacm # nosuch,\n  month = jul,\n}\n\n@misc{spare, title = {Never cited}}\n",
+            ),
+            (
+                "more.bib",
+                "@article{twin,\n  author = {D. E. Knuth},\n  title = {Literate programming},\n  journal = {Comput. J.},\n  year = {1984},\n  doi = {https://doi.org/10.1093/COMJNL/27.2.97}\n}\n",
+            ),
+        ],
+    );
+    let messages = |code: &str| findings(&analysis, code).into_iter().map(|(m, _)| m).collect::<Vec<_>>();
+    let twice = messages("duplicate-bibliography-load");
+    assert_eq!(twice.len(), 1, "{twice:?}");
+    assert!(twice[0].contains("refs.bib"), "{twice:?}");
+    let twins = messages("duplicate-bibliography-work");
+    assert_eq!(twins.len(), 1, "{twins:?}");
+    assert!(
+        twins[0].contains("`knuth84`") && twins[0].contains("`twin`") && twins[0].contains("the same DOI"),
+        "{twins:?}"
+    );
+    let missing = messages("bibliography-entry-missing-field");
+    assert_eq!(missing.len(), 1, "{missing:?}");
+    assert!(missing[0].contains("`lamport78`") && missing[0].contains("`year`"), "{missing:?}");
+    let undefined = messages("undefined-bibliography-string");
+    assert_eq!(undefined.len(), 1, "{undefined:?}");
+    assert!(
+        undefined[0].contains("`nosuch`") && !undefined[0].contains("`jul`") && !undefined[0].contains("`cacm`"),
+        "{undefined:?}"
+    );
+    let uncited = messages("uncited-bibliography-entry");
+    assert_eq!(uncited.len(), 1, "{uncited:?}");
+    assert!(uncited[0].contains("`spare`"), "{uncited:?}");
+    // the fixes: drop the second load, merge the twin into the richer entry
+    let records = satex::linter::lint(&analysis);
+    let fix = |code: &str| {
+        records.iter().find(|r| r["code"] == code).map(|r| format!("{} {}", r["fix"], r["edits"])).unwrap_or_default()
+    };
+    let load = fix("duplicate-bibliography-load");
+    assert!(load.contains("drop the second load") && load.contains("bibdb.tex"), "{load}");
+    let merge = fix("duplicate-bibliography-work");
+    assert!(
+        merge.contains("merge `twin` into `knuth84`")
+            && merge.contains("more.bib")
+            && merge.contains("\"replacement\":\"knuth84\""),
+        "{merge}"
+    );
+    cleanup("bibdb");
 }
 
 fn cleanup(name: &str) {
@@ -163,7 +253,7 @@ fn csname_is_matched_to_the_interface_for_what_it_was_formed_for() {
 \csname foo\endcsname
 \end{document}";
     let fixes = |analysis: &Analysis| -> Vec<Option<String>> {
-        satex::lint::lint(analysis)
+        satex::linter::lint(analysis)
             .into_iter()
             .filter(|r| r["code"] == "primitive-tex-command" && r["name"] == "\\csname")
             .filter(|r| r["origin"] == "document")
@@ -256,7 +346,7 @@ fn the_page_is_empty_after_a_forced_page_break() {
 \end{document}",
     );
     assert!(crate::support::defined(&analysis, "PageEmpty"));
-    assert!(!crate::support::defined(&analysis, "PageTouched"), "the page room is not known");
+    assert!(crate::support::undefined(&analysis, "PageTouched"), "the page room is not known");
 }
 
 /// tex.web § 370: an undefined name is an error and adds nothing, so the
@@ -270,7 +360,7 @@ fn an_undefined_name_in_math_sets_nothing() {
 \end{document}",
     );
     assert!(crate::support::defined(&analysis, "WdZero"));
-    assert!(!crate::support::defined(&analysis, "WdOther"), "the width is not known");
+    assert!(crate::support::undefined(&analysis, "WdOther"), "the width is not known");
 }
 
 #[test]
@@ -292,7 +382,7 @@ fn microtype_is_recommended_only_for_justified_text_where_the_engine_supports_it
     ] {
         assert!(findings(&analyze(&quiet), "microtype-available").is_empty(), "{quiet}");
     }
-    let xetex = Config { engine: Some(satex::config::Engine::XeTeX), ..crate::support::config() };
+    let xetex = Config { engine: Some(satex::project::config::Engine::XeTeX), ..crate::support::config() };
     assert!(findings(&Machine::analyze(&source, None, &xetex), "microtype-available").is_empty());
 }
 
@@ -392,6 +482,39 @@ fn marked_content_left_open_is_reported_where_it_opens() {
         "{unbalanced:?}"
     );
     assert!(findings(&analysis, "undefined-optional-content").is_empty(), "no resources were observed");
+}
+
+/// Code the run skipped may write any `q` or `Q`: thirty TikZ nodes of
+/// random width, whose pgfmath parse the run widens or skips in part,
+/// leave the balance of `\end{tikzpicture}`'s `Q` unknown.
+#[test]
+fn literals_around_skipped_code_have_unknown_balance() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{positioning}
+\begin{document}
+\begin{tikzpicture}
+\foreach \i [count=\n from 0] in {1,...,30} {
+  \pgfmathsetmacro{\w}{1+\pdfuniformdeviate 5}
+  \pgfmathparse{\w*2+\i}
+  \colorlet{c\i}{blue!\pgfmathresult!red}
+  \ifnum\i=1
+    \node[draw, text width=\w cm, fill=c\i] (n\i) {Node \i};
+  \else
+    \node[draw, text width=\w cm, fill=c\i, right=of n\n] (n\i) {Node \i};
+  \fi
+}
+\end{tikzpicture}
+\end{document}",
+    );
+    let skipped =
+        ["undecided-condition", "site-forks-widened", "recursion-widened", "region-skipped", "fault-contained"];
+    assert!(skipped.iter().any(|c| !crate::support::diagnosed(&analysis, c).is_empty()));
+    assert!(findings(&analysis, "unbalanced-pdf-content").is_empty());
 }
 
 /// One macro's `EMC` closes the `BDC` at every call site, not only the
@@ -504,7 +627,7 @@ fn the_special_form_is_named_in_its_own_finding() {
 
 /// The interpreter can record the same content-stream operator twice under
 /// the same graph node (once directly, once by way of an `expanded` site):
-/// [`payloads`] in `src/lint/pdf.rs` keeps only the first.  Reverting that
+/// [`payloads`] in `src/linter/pdf.rs` keeps only the first.  Reverting that
 /// dedup makes this test fail with two findings instead of one.
 #[test]
 fn a_literal_recorded_twice_under_the_same_node_is_reported_once() {
@@ -525,7 +648,7 @@ fn a_literal_recorded_twice_under_the_same_node_is_reported_once() {
         .cloned()
         .expect("the run recorded the \\pdfliteral");
     let mut duplicate = duplicate;
-    duplicate.expanded = Some(satex::tex::Span::default());
+    duplicate.expanded = Some(satex::engine::tex::Span::default());
     analysis.facts.occurrences.push(duplicate);
     let unbalanced = findings(&analysis, "unbalanced-pdf-content");
     assert_eq!(unbalanced.len(), 1, "{unbalanced:?}");
@@ -533,7 +656,7 @@ fn a_literal_recorded_twice_under_the_same_node_is_reported_once() {
 
 #[test]
 fn content_stream_operators_skip_strings_and_dictionaries() {
-    use satex::plugin::pdf::{Operator, operators};
+    use satex::plugins::pdf::{Operator, operators};
     let ops = operators("q (a Q in a string) Tj /Span << /ActualText (EMC) >> BDC /OC /l1 BDC EMC EMC Q % Q\n");
     let names: Vec<&str> = ops.iter().map(Operator::name).collect();
     assert_eq!(names, ["q", "BDC", "BDC", "EMC", "EMC", "Q"]);
@@ -542,7 +665,7 @@ fn content_stream_operators_skip_strings_and_dictionaries() {
 
 #[test]
 fn bib_entries_skip_strings_and_comments() {
-    let entries = satex::plugin::bib::entries(
+    let entries = satex::plugins::bib::entries(
         "@comment{x}\n@String{a = b}\n@Article{one,\n title={@ not an entry}}\n@book ( two , )\n",
     );
     let keys: Vec<(&str, u32)> = entries.iter().map(|e| (e.key.as_str(), e.line)).collect();
@@ -660,8 +783,8 @@ fn a_bbl_file_has_no_findings_of_its_own() {
             ),
         ],
     );
-    let all = satex::lint::lint(&analysis);
-    let place = |r: &satex::query::Record| r["file"].as_str().unwrap_or_default().to_string();
+    let all = satex::linter::lint(&analysis);
+    let place = |r: &satex::queries::query::Record| r["file"].as_str().unwrap_or_default().to_string();
     assert!(!all.iter().any(|r| place(r).ends_with(".bbl")), "{all:?}");
     assert!(all.iter().any(|r| place(r).ends_with("bbl.tex")), "{all:?}");
     cleanup("bbl");

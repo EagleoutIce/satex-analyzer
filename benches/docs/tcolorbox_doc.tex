@@ -1,0 +1,12 @@
+% Exercises: tcolorbox (skins, breakable, many libraries, newtcolorbox, theorems), nested boxes.
+\documentclass{article}
+\usepackage[most]{tcolorbox}\usepackage{lipsum}
+\newtcolorbox{note}[1][]{colback=yellow!10,colframe=orange!70!black,title=Note,#1}
+\newtcbtheorem{thm}{Theorem}{colback=blue!5,colframe=blue!50!black,fonttitle=\bfseries}{th}
+\begin{document}
+\begin{tcolorbox}[title=Box,colback=red!5]Content \begin{note}Nested\end{note}\end{tcolorbox}
+\begin{thm}{Pythagoras}{pyth}$a^2+b^2=c^2$\end{thm} See Theorem~\ref{th:pyth}.
+\begin{tcolorbox}[breakable,enhanced,title=Long box,sharp corners,drop shadow]\lipsum[1-5]\end{tcolorbox}
+\tcbset{colback=white}\tcbox[on line]{inline}
+\begin{tcblisting}{listing side text}\textbf{bold}\end{tcblisting}
+\end{document}

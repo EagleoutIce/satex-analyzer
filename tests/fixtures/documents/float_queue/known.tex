@@ -1,0 +1,11 @@
+% Seven floats of known height in one paragraph: their \vadjust material
+% brings fourteen forced breaks to the page, and each fires the output
+% routine, so every float leaves \@currlist before the \clearpage.
+\documentclass{article}
+\newcommand\fig[1]{\begin{figure}[#1]\centering\rule{1cm}{100pt}\caption{A float}\end{figure}}
+\begin{document}
+Text \fig{p}\fig{p}\fig{p}\fig{htbp}\fig{p}\fig{h!}\fig{p} more text.
+\clearpage
+After the page.
+\gdef\SatexReachedEnd{}
+\end{document}

@@ -1,0 +1,9 @@
+% Exercises: fontspec under xelatex (main/sans/mono fonts, features, unicode text, \newfontfamily).
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{lmroman10-regular.otf}[BoldFont=lmroman10-bold.otf,ItalicFont=lmroman10-italic.otf,BoldItalicFont=lmroman10-bolditalic.otf,Ligatures=TeX]\setsansfont{lmsans10-regular.otf}[BoldFont=lmsans10-bold.otf]\setmonofont{lmmono10-regular.otf}
+\newfontfamily\scfont{lmromancaps10-regular.otf}
+\begin{document}
+\section{Fonts}Unicode: \textit{caf\'e na\"ive} \textbf{bold}, {\sffamily sans}, \texttt{mono}, {\scfont Small caps}.
+\addfontfeature{Numbers=OldStyle}0123456789 --- ``quotes''
+\end{document}

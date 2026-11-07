@@ -2,9 +2,9 @@
 //! what is asked, what is not, and the commands that would be run.
 
 use crate::support::installed;
-use satex::config::Config;
-use satex::plugin::packages::{Manager, Unasked, tree_writable};
-use satex::plugin::{Platform, Provider};
+use satex::plugins::packages::{Manager, Unasked, tree_writable};
+use satex::plugins::{Platform, Provider};
+use satex::project::config::Config;
 
 #[test]
 fn a_lint_run_asks_nothing_until_the_switch_is_on() {
@@ -17,7 +17,7 @@ fn a_lint_run_asks_nothing_until_the_switch_is_on() {
 #[test]
 fn tectonic_has_nothing_to_install_and_nothing_missing() {
     let cfg = Config {
-        plugins: satex::config::PluginSwitches { packages: true, ..Default::default() },
+        plugins: satex::project::config::PluginSwitches { packages: true, ..Default::default() },
         ..crate::support::config()
     };
     assert_eq!(Manager::requested(&cfg, Some(Provider::Tectonic)).err(), Some(Unasked::Bundled));
@@ -32,7 +32,7 @@ fn an_explicit_request_needs_a_manager_on_the_machine() {
 
 #[test]
 fn the_command_is_the_managers_own() {
-    if !installed() || satex::paths::which("tlmgr").is_err() {
+    if !installed() || satex::project::paths::which("tlmgr").is_err() {
         return;
     }
     let cfg = Config::default();

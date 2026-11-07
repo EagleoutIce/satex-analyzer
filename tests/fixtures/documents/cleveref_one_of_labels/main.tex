@@ -1,0 +1,11 @@
+\documentclass{article}
+\usepackage{hyperref}
+\usepackage[capitalise,noabbrev,nameinlink]{cleveref}
+\begin{document}
+As shown later (cf.~\Cref{later}), it works.
+\section{First}\label{first}
+\section{Later}\label{later}
+\ifnum\pdfuniformdeviate 2=0 \def\which{first}\else\def\which{later}\fi
+See \Cref{\which}.
+\gdef\SatexReachedEnd{}
+\end{document}

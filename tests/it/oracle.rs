@@ -53,7 +53,7 @@ fn programs() -> Vec<(String, String)> {
 
 #[test]
 fn every_program_covers_every_tex_run() {
-    if satex::paths::which("pdftex").is_err() {
+    if satex::project::paths::which("pdftex").is_err() {
         return;
     }
     let cfg = crate::support::bare();

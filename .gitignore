@@ -2,3 +2,7 @@
 /site-out/
 /site-work/
 __pycache__/
+# showcase: git keeps the sources (PNG, WebM); build.py derives these
+doc/site/showcase/img/*.avif
+doc/site/showcase/img/*.webp
+doc/site/showcase/img/*.mp4

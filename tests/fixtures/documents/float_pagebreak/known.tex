@@ -1,0 +1,10 @@
+% A float and a \pagebreak in one line: the float's two forced breaks and
+% the \pagebreak's reach the page in order, so the float is placed and
+% none is lost (pdflatex: no error).
+\documentclass{article}
+\begin{document}
+Text \begin{figure}[htbp]\centering\rule{1cm}{100pt}\caption{A float}\end{figure}
+more text.\pagebreak
+Text after.
+\gdef\SatexReachedEnd{}
+\end{document}

@@ -28,7 +28,7 @@ struct Run {
 fn run(args: &[&str]) -> Run {
     let cache = crate::support::tmp_root().join(format!("satex-no-install-{}-{}", std::process::id(), fastrand()));
     let full: Vec<&str> = args.iter().chain(NO_INSTALL.iter()).copied().collect();
-    let child = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let child = crate::support::satex()
         .args(&full)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .env("SATEX_CACHE", &cache)
@@ -164,7 +164,7 @@ fn version_reports_an_installation_when_kpsewhich_is_allowed() {
         eprintln!("skipping: no kpsewhich on this machine");
         return;
     }
-    let child = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let child = crate::support::satex()
         .args(["--version"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .env("SATEX_CACHE", crate::support::tmp_root().join(format!("satex-has-install-{}", std::process::id())))

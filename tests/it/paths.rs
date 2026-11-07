@@ -1,15 +1,14 @@
 //! kpathsea search-path variables (TEXINPUTS etc.): the fixtures satex reads
-//! them from, in the order `src/paths.rs` tries them — environment,
+//! them from, in the order `src/project/paths.rs` tries them — environment,
 //! `latexmkrc`, Makefile, `satex.yaml` (`--set` included).  Also the paths a
 //! document writes itself, like the `../template/` a class is kept in.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::support::{defined, installed};
-use satex::config::{Config, Load};
-use satex::facts::Severity;
-use satex::machine::{Analysis, Machine};
+use satex::analysis::facts::Severity;
+use satex::analysis::machine::{Analysis, Machine};
+use satex::project::config::{Config, Load};
 
 /// A project directory with `libs/sub/foolocal.sty`, reachable only through
 /// a `//`-recursive search of `libs`.
@@ -82,7 +81,7 @@ fn set_paths_texinputs_reaches_a_configured_directory() {
 fn environment_variable_outranks_latexmkrc() {
     let dir = fixture("env");
     std::fs::write(dir.join("latexmkrc"), "ensure_path('TEXINPUTS', './other//');\n").unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let output = crate::support::satex()
         .args(["--version", "--format", "json"])
         .current_dir(&dir)
         .env("TEXINPUTS", "./libs//")
@@ -150,9 +149,10 @@ fn a_class_named_by_a_relative_path_is_read_and_defines_its_commands() {
         "a.tex",
         "\\documentclass{../template/mycls}\n\\begin{document}\n\\ifexam\\clearpage\\fi\nx\n\\end{document}\n",
     );
-    let wanted = dir.join("doc").join("../template/mycls.cls").display().to_string();
+    let wanted = dir.join("doc").join("../template/mycls.cls");
     let read: Vec<&str> = analysis.files.iter().map(|f| f.path.as_str()).collect();
-    assert!(read.contains(&wanted.as_str()), "read {wanted}, not {read:?}");
+    // compared as paths: Windows spells one file with `\` and `/`
+    assert!(read.iter().any(|r| std::path::Path::new(r) == wanted), "read {}, not {read:?}", wanted.display());
     assert!(defined(&analysis, "ifexam"), "the class defines \\ifexam");
     assert_eq!(gaps(&analysis), Vec::new(), "the class is read, so \\fi has its \\if");
     let _ = std::fs::remove_dir_all(&dir);
@@ -247,8 +247,10 @@ fn aux_fixture(name: &str, build_file: &str, text: &str) -> (PathBuf, Analysis) 
     let source = "\\documentclass{article}\n\\begin{document}hi\\end{document}\n";
     std::fs::write(&doc, source).unwrap();
     // The build's own `.aux` on disk, which these tests look for.
-    let cfg =
-        Config { load: satex::config::Load { build_files: true, ..Default::default() }, ..crate::support::config() };
+    let cfg = Config {
+        load: satex::project::config::Load { build_files: true, ..Default::default() },
+        ..crate::support::config()
+    };
     let analysis = Machine::analyze(source, Some(&doc), &cfg);
     (dir, analysis)
 }

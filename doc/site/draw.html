@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Draw a symbol · satex</title>
+<link rel="icon" href="{{root}}{{favicon}}" type="image/svg+xml">
+<link rel="stylesheet" href="{{root}}{{css}}">
+<script>{ let t = new URLSearchParams(location.search).get('theme'); if (t !== 'dark' && t !== 'light') try { t = localStorage.getItem('satex-theme'); } catch {} if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; }</script>
+<script src="{{root}}{{sitejs}}" defer></script>
+<script src="{{root}}{{drawjs}}" defer></script>
+</head>
+<body class="draw-page">
+<main id="draw" class="draw-solo">
+  <div class="draw-top">
+    <span class="draw-tools"><button type="button" class="pill" id="draw-clear" title="Clear the drawing" aria-label="Clear the drawing"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5l4 4-6.5 6.5H4l-1.5-1.5a1.4 1.4 0 0 1 0-2z"/><path d="M6 6l4 4M7 13.5h6.5"/></svg></button>
+      <button type="button" class="pill" id="draw-help" title="How it matches, and credits" aria-label="How it matches, and credits"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M6.3 6.2a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1v.4M8 11.4v.1"/></svg></button>
+      <button type="button" class="pill" id="draw-theme" title="Switch between day and night" aria-label="Switch between day and night"><svg viewBox="0 0 16 16" aria-hidden="true"></svg></button></span>
+    <label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg><input type="search" id="draw-search" placeholder="search: skull, arrow, ∫, @math…" aria-label="search the symbols by name or description"></label>
+  </div>
+  <div id="draw-filters" class="lib-kinds draw-filters" role="group" aria-label="which symbols">
+    <button type="button" class="lib-kind" data-f="kind" data-v="" aria-pressed="true">all</button><button type="button" class="lib-kind" data-f="kind" data-v="symbol" aria-pressed="false">symbols</button><button type="button" class="lib-kind" data-f="kind" data-v="letter" aria-pressed="false">letters</button>
+    <span class="sep"></span><button type="button" class="lib-kind" data-f="mode" data-v="" aria-pressed="true">all</button><button type="button" class="lib-kind" data-f="mode" data-v="math" aria-pressed="false">math</button><button type="button" class="lib-kind" data-f="mode" data-v="text" aria-pressed="false">text</button></div>
+  <div class="draw-box"><div class="draw-pad"><canvas id="draw-pad" width="256" height="256" aria-label="drawing area"></canvas><p id="draw-total" class="muted draw-total draw-meta"></p></div>
+    <div class="draw-results"><ol id="draw-list" class="draw-list" aria-live="polite"></ol></div></div>
+  <template id="draw-about">Draw a symbol to find it. Inspired by <a href="https://detexify.kirelabs.org" target="_blank" rel="noopener">Detexify</a>.
+    See also the <a href="https://ctan.org/pkg/comprehensive" target="_blank" rel="noopener">Comprehensive LaTeX Symbol List</a>.
+    Part of <a href="{{root}}index.html" target="_blank" rel="noopener">SaTeX</a>.</template>
+</main>
+<script>
+  // the clipboard API where the page may use it, else a selected textarea (an insecure context, a refused permission)
+  const copy = (text) => {
+    const fallback = () => {
+      const t = Object.assign(document.createElement('textarea'), { value: text });
+      t.style.cssText = 'position:fixed;opacity:0';
+      document.body.append(t);
+      t.select();
+      document.execCommand('copy');
+      t.remove();
+    };
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(fallback);
+    else fallback();
+  };
+  // the snippet that embeds this page elsewhere, its own address without the query; an embedded pad offers none of itself
+  addEventListener('DOMContentLoaded', () => {
+    if (parent === self) self.satexEmbedButton?.(document.querySelector('.draw-tools'), `<iframe src="${location.origin}${location.pathname}" title="Draw a symbol" width="720" height="560" style="border:0"></iframe>`);
+  });
+  // a pick copies the command (or its \usepackage) and tells a page that embeds this one
+  addEventListener('DOMContentLoaded', () => self.satexDraw({
+    root: document.getElementById('draw'), base: '{{root}}', symbols: '{{symbols}}', label: 'Copy', document: false,
+    pick: (text, pkg) => {
+      copy(text);
+      if (parent !== self) parent.postMessage({ type: 'satex-draw', text, package: pkg }, '*');
+    },
+  }).load());
+</script>
+</body>
+</html>
