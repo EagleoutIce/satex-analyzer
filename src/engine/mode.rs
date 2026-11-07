@@ -234,12 +234,12 @@ impl Dim {
     pub const ANY: Dim = Dim { lo: crate::engine::value::WORD_MIN, hi: crate::engine::value::WORD_MAX };
 
     pub const fn exact(v: Scaled) -> Dim {
-        Dim { lo: v, hi: v }
+        Dim::bounded(v, v)
     }
 
     /// A length whose sum left the word wraps, which is not modeled: any
     /// length then.
-    fn bounded(lo: Scaled, hi: Scaled) -> Dim {
+    const fn bounded(lo: Scaled, hi: Scaled) -> Dim {
         if lo < Dim::ANY.lo || hi > Dim::ANY.hi || lo > hi { Dim::ANY } else { Dim { lo, hi } }
     }
 
@@ -257,11 +257,11 @@ impl Dim {
     }
 
     pub fn extended_by(self, other: Dim) -> Dim {
-        Dim::bounded(self.lo + other.lo, self.hi + other.hi)
+        Dim::bounded(self.lo.saturating_add(other.lo), self.hi.saturating_add(other.hi))
     }
 
     pub fn reduced_by(self, other: Dim) -> Dim {
-        Dim::bounded(self.lo - other.hi, self.hi - other.lo)
+        Dim::bounded(self.lo.saturating_sub(other.hi), self.hi.saturating_sub(other.lo))
     }
 
     /// tex.web § 649: the largest height on the list.
@@ -2874,7 +2874,7 @@ impl Machine<'_> {
                 if let Some(g) = glue.glue() {
                     crate::analysis::observe::glue(self, g, self.mode.meets(Modes::ANY_VERTICAL));
                 }
-                self.append_item(Item::Glue(Dim { lo: glue.width.lo, hi: glue.width.hi }, Some(glue)));
+                self.append_item(Item::Glue(Dim::range(glue.width.lo, glue.width.hi), Some(glue)));
             }
             // tex.web § 1060: `fil`, `fill`, `ss` and `fil_neg` glue.
             Material::Fil(code) => {
@@ -6621,4 +6621,22 @@ fn kern_hull(metrics: &crate::engine::tfm::Metrics, c: u32, size: Scaled, before
         Some(LigKern::Kern(k)) => Some((a.min(k), b.max(k))),
         None => Some((a, b)),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Dim;
+
+    /// TeX keeps a length in a 32-bit word (tex.web § 461 checks only a scan); satex holds it in an
+    /// i64 interval. A sum past the word is "any length" (the sound over-approximation), never a
+    /// panic: an unknown glue width can reach the i64 ends, and a box adding two of them up once
+    /// crashed `hpack` with an overflow on the newest TeX Live.
+    #[test]
+    fn lengths_past_the_word_are_any_and_sums_saturate() {
+        let huge = Dim::exact(i64::MAX);
+        assert!(huge.is_any());
+        assert!(Dim { lo: i64::MAX, hi: i64::MAX }.extended_by(Dim { lo: i64::MAX, hi: i64::MAX }).is_any());
+        assert!(Dim { lo: i64::MIN, hi: i64::MIN }.reduced_by(Dim { lo: i64::MAX, hi: i64::MAX }).is_any());
+        assert_eq!(Dim::exact(3).extended_by(Dim::exact(4)), Dim::exact(7));
+    }
 }
