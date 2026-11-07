@@ -20,15 +20,25 @@ fn the_suite_s_kernels_build() {
         (Engine::LuaTeX, Kernel::Latex),
         (Engine::PdfTeX, Kernel::Plain),
     ];
-    for (engine, kernel) in kernels {
-        let mut cfg = crate::support::config();
-        cfg.engine = Some(engine);
-        cfg.kernel = Some(kernel);
-        let analysis = Machine::analyze("\\relax\n", None, &cfg);
-        assert!(analysis.format.is_some(), "{engine:?} {kernel:?}: no kernel format");
-    }
-    // the kernel `seed_kernel` copies into each budget's own cache directory
-    let mut seeded = crate::support::config();
-    seeded.cache.dir = Some(crate::support::test_cache().join("seed"));
-    crate::support::seed_kernel(&seeded);
+    // each kernel on its own thread: they share no cache file, so CI's build job waits for the slowest, not the sum
+    std::thread::scope(|scope| {
+        for (engine, kernel) in kernels {
+            std::thread::Builder::new()
+                .stack_size(64 << 20)
+                .spawn_scoped(scope, move || {
+                    let mut cfg = crate::support::config();
+                    cfg.engine = Some(engine);
+                    cfg.kernel = Some(kernel);
+                    let analysis = Machine::analyze("\\relax\n", None, &cfg);
+                    assert!(analysis.format.is_some(), "{engine:?} {kernel:?}: no kernel format");
+                })
+                .expect("a kernel thread");
+        }
+        // the kernel `seed_kernel` copies into each budget's own cache directory, built alongside
+        scope.spawn(|| {
+            let mut seeded = crate::support::config();
+            seeded.cache.dir = Some(crate::support::test_cache().join("seed"));
+            crate::support::seed_kernel(&seeded);
+        });
+    });
 }
