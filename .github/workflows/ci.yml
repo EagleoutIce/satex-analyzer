@@ -568,7 +568,7 @@ jobs:
           restore-keys: lychee-
 
       - name: Install lychee
-        run: curl -sSfL https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C "$RUNNER_TEMP" && echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+        run: curl -sSfL https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-gnu.tar.gz | tar -xz --strip-components=1 -C "$RUNNER_TEMP" && echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       # Links into this repository (a `main` blob link is checked against the checkout, see
       # lychee.toml): every page, offline, in seconds.
