@@ -352,6 +352,30 @@
    "beforeCrop": "=lines('\\\\begin{table}', '\\\\end{table}')"
   },
   {
+   "name": "page",
+   "file": "spacing.tex",
+   "title": "Page layout",
+   "caption": "Margins, paper and header to scale, as the run computed them. Apply writes geometry's options, or typearea's for KOMA-Script.",
+   "open": [
+    "page",
+    "\\documentclass",
+    1
+   ],
+   "crop": "#play-view",
+   "viewport": [
+    1000,
+    860
+   ],
+   "steps": [
+    {
+     "open": true,
+     "until": "document.getElementById('play-view')?.open && document.querySelector('#play-view .tv-page, #play-view svg')",
+     "ms": 90000,
+     "wait": 900
+    }
+   ]
+  },
+  {
    "name": "handref",
    "file": "proofs.tex",
    "title": "Quick fixes",
@@ -495,30 +519,6 @@
    "text": "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{figure}[ht]\\centering\\includegraphics[width=.8\\linewidth]{example-image-a}\\caption{Alpha results}\\label{fig:a}\\end{figure}\n\\begin{figure}[ht]\\centering\\includegraphics[width=.7\\linewidth]{example-image-b}\\caption{Beta results}\\label{fig:b}\\end{figure}\nRuns took 10-12 s, see figure 1.\n\\end{document}\n",
    "stack": true,
    "beforeCrop": "#play-findings"
-  },
-  {
-   "name": "page",
-   "file": "spacing.tex",
-   "title": "Page layout",
-   "caption": "Margins, paper and header to scale, as the run computed them. Apply writes geometry's options, or typearea's for KOMA-Script.",
-   "open": [
-    "page",
-    "\\documentclass",
-    1
-   ],
-   "crop": "#play-view",
-   "viewport": [
-    1000,
-    860
-   ],
-   "steps": [
-    {
-     "open": true,
-     "until": "document.getElementById('play-view')?.open && document.querySelector('#play-view .tv-page, #play-view svg')",
-     "ms": 90000,
-     "wait": 900
-    }
-   ]
   },
   {
    "name": "color",
