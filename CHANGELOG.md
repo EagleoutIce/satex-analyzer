@@ -6,10 +6,13 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
-<!-- reviewed: 228b584 -->
+<!-- reviewed: fb0b56a -->
 
 ### Playground
 
+- `fix` **A waiting widget says so** until it opens. [`68d6b12`](https://github.com/EagleoutIce/satex-analyzer/commit/68d6b12)
+- `fix` **Showcase shots line up.** One height, centered on small screens, the live window at full width, the stepper holding still. [`277a20b`](https://github.com/EagleoutIce/satex-analyzer/commit/277a20b) [`f71d533`](https://github.com/EagleoutIce/satex-analyzer/commit/f71d533) [`cc672e7`](https://github.com/EagleoutIce/satex-analyzer/commit/cc672e7) [`2729c23`](https://github.com/EagleoutIce/satex-analyzer/commit/2729c23) [`ed81f95`](https://github.com/EagleoutIce/satex-analyzer/commit/ed81f95)
+- `feat` **Landing page.** A title page on the first screen, the showcase on a 3D ring that turns with the page, the page layout widget in it. [`75f2976`](https://github.com/EagleoutIce/satex-analyzer/commit/75f2976) [`1a8bccf`](https://github.com/EagleoutIce/satex-analyzer/commit/1a8bccf) [`329c0e0`](https://github.com/EagleoutIce/satex-analyzer/commit/329c0e0) [`b545667`](https://github.com/EagleoutIce/satex-analyzer/commit/b545667) [`472d3f0`](https://github.com/EagleoutIce/satex-analyzer/commit/472d3f0) [`5cbeeab`](https://github.com/EagleoutIce/satex-analyzer/commit/5cbeeab) [`88bd5c8`](https://github.com/EagleoutIce/satex-analyzer/commit/88bd5c8)
 - `fix` **`satex gui` analyzes the open file first** and nothing unasked, and no longer freezes after a big compile. [`260c995`](https://github.com/EagleoutIce/satex-analyzer/commit/260c995)
 - `fix` **Never stuck.** Dead workers, busy caches and bad stored state no longer stall the start. Stuck runs recover. [`5a702f4`](https://github.com/EagleoutIce/satex-analyzer/commit/5a702f4) [`82d7c20`](https://github.com/EagleoutIce/satex-analyzer/commit/82d7c20) [`c0ff841`](https://github.com/EagleoutIce/satex-analyzer/commit/c0ff841) [`5e722f1`](https://github.com/EagleoutIce/satex-analyzer/commit/5e722f1)
 - `fix` **Everything reruns after a package download.** Widgets wait for the analysis. [`de3795e`](https://github.com/EagleoutIce/satex-analyzer/commit/de3795e) [`062f2be`](https://github.com/EagleoutIce/satex-analyzer/commit/062f2be)
@@ -25,6 +28,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Editor plugins and widgets
 
+- `fix` **TikZ arrows touch their nodes** in the drawing widget. [`21f7fcb`](https://github.com/EagleoutIce/satex-analyzer/commit/21f7fcb)
 - `fix` **Requests never wait for a run**, and exit stops a running analysis. [`fc5dda3`](https://github.com/EagleoutIce/satex-analyzer/commit/fc5dda3) [`30b2124`](https://github.com/EagleoutIce/satex-analyzer/commit/30b2124) [`40ae0c9`](https://github.com/EagleoutIce/satex-analyzer/commit/40ae0c9)
 - `fix` **Dialogs never drop an edit**, ask before discarding and undo in one step. [`17e9816`](https://github.com/EagleoutIce/satex-analyzer/commit/17e9816) [`0fa22f1`](https://github.com/EagleoutIce/satex-analyzer/commit/0fa22f1)
 - `fix` **Colors complete only in color arguments**, with swatches on the right line. [`5e6ecba`](https://github.com/EagleoutIce/satex-analyzer/commit/5e6ecba) [`59e9afa`](https://github.com/EagleoutIce/satex-analyzer/commit/59e9afa) [`d05aa00`](https://github.com/EagleoutIce/satex-analyzer/commit/d05aa00)
@@ -61,6 +65,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **Class options no longer stale every package cache.** Only the class replays them. [`ec6db30`](https://github.com/EagleoutIce/satex-analyzer/commit/ec6db30)
 - `fix` **No false errors in KOMA notecolumn.** Read flags stay with their stream, and reading a register no longer makes every register unknown. [`0eb1ce6`](https://github.com/EagleoutIce/satex-analyzer/commit/0eb1ce6) [`d08536a`](https://github.com/EagleoutIce/satex-analyzer/commit/d08536a)
 - `fix` **Here-float captions** stay in the typeset text. See [deferred material](doc/wiki/domains.md#files-written-in-the-run). [`2b8137f`](https://github.com/EagleoutIce/satex-analyzer/commit/2b8137f)
 - `fix` **Numbers stay typed.** Digits narrow their register, digit places never join, scans split by digit count. See [typed unknown text](doc/wiki/domains.md#unknown-text-the-textclass-lattice). [`b01d4bd`](https://github.com/EagleoutIce/satex-analyzer/commit/b01d4bd) [`5f1e403`](https://github.com/EagleoutIce/satex-analyzer/commit/5f1e403) [`5352e4f`](https://github.com/EagleoutIce/satex-analyzer/commit/5352e4f) [`3e67c8a`](https://github.com/EagleoutIce/satex-analyzer/commit/3e67c8a)
