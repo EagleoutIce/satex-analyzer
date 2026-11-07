@@ -84,5 +84,6 @@ mod tex_compliance;
 mod tex_semantics;
 mod trace_range;
 mod units;
+mod warm;
 mod write_set;
 mod xref;
