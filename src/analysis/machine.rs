@@ -600,6 +600,12 @@ impl Analysis {
 
     /// One line per limit that cut the run: which, where first, and how to
     /// raise it.
+    /// A budget that depends on the machine stopped the run: it read part of the
+    /// document, or left the build's passes unsettled.
+    pub fn stopped(&self) -> bool {
+        self.exhausted || self.limits.iter().any(|l| matches!(l.key, "seconds" | "memory"))
+    }
+
     pub fn limit_notes(&self) -> Vec<String> {
         self.limits
             .iter()

@@ -8,6 +8,11 @@ export function isOurs(d: vscode.Diagnostic): boolean {
 /** The source a finding carries while a newer analysis runs: the Problems view says it may change. */
 export const STALE = 'satex · analyzing…';
 
+/** Whether a newer analysis runs once `work` is heard: a hover's trial run neither starts nor ends one. */
+export function analyzingAfter(work: Work, was: boolean): boolean {
+    return work.phase === 'probe' ? was : Boolean(work.text);
+}
+
 /** What the server does now (`satex/status`): `text` empty when idle. */
 export interface Work {
     text: string;

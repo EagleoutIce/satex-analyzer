@@ -18,6 +18,10 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `fix` **An editor never offers to turn off `clones`.** Copied code is a finding to act on, not the project's style. [`1cdd3cc`](https://github.com/EagleoutIce/satex-analyzer/commit/1cdd3cc)
 - `fix` **Prose rules skip what undefined commands leave behind.** A TeX file opened without its preamble no longer gets spacing findings on `\node (a)at(b)` or inside an undefined environment. [`5d61ec1`](https://github.com/EagleoutIce/satex-analyzer/commit/5d61ec1)
 
+### VS Code
+
+- `fix` **Findings stay while an analysis runs.** The Problems view keeps the last complete result until the new one is ready, then swaps once. `satex.findings.whileAnalyzing` is now `keep` or `mark`. A run a budget stopped never replaces findings, its own join them, marked as unfinished.
+
 ### Playground
 
 - `perf` **Package caches replay in every document.** A package loaded at `\begin{document}`, like graphics' epstopdf-base, was rebuilt in the browser for every example. [`1fbd322`](https://github.com/EagleoutIce/satex-analyzer/commit/1fbd322)

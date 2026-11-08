@@ -5464,3 +5464,126 @@ fn every_plugin_has_integration_support() {
     assert_eq!(works_in(&["hover"]).iter().find(|(k, _)| *k == "intellij").unwrap().1, "full");
     assert_eq!(works_in(&["view"]).iter().find(|(k, _)| *k == "intellij").unwrap().1, "partial");
 }
+
+/// Each `textDocument/publishDiagnostics` of `uri` until the one of `version` and a quiet while
+/// after it, as `(rule, message, source)` per finding.
+fn publishes(server: &mut Server, uri: &str, version: i64) -> Vec<Vec<(String, String, String)>> {
+    const QUIET: Duration = Duration::from_secs(2);
+    let mut sequence = Vec::new();
+    let mut reached = false;
+    loop {
+        let msg = match server.messages.recv_timeout(if reached { QUIET } else { SILENCE }) {
+            Ok(Some(msg)) => msg,
+            Err(mpsc::RecvTimeoutError::Timeout) if reached => return sequence,
+            other => panic!("the server ended or went silent: {other:?}"),
+        };
+        if msg["method"] != "textDocument/publishDiagnostics" || msg["params"]["uri"] != uri {
+            continue;
+        }
+        reached |= msg["params"]["version"] == version;
+        let text = |d: &Value, k: &str| d[k].as_str().unwrap_or_default().to_string();
+        let findings = msg["params"]["diagnostics"].as_array().unwrap();
+        let rule = |d: &Value| d["data"]["rule"].as_str().unwrap_or_default().to_string();
+        sequence.push(findings.iter().map(|d| (rule(d), text(d, "message"), text(d, "source"))).collect());
+    }
+}
+
+/// A finding of `sequence` that leaves a publish and comes back in a later one, if any.
+fn returning(sequence: &[Vec<(String, String, String)>]) -> Option<String> {
+    let has = |set: &[(String, String, String)], f: &(String, String, String)| {
+        set.iter().any(|g| (&g.0, &g.1) == (&f.0, &f.1))
+    };
+    sequence.iter().enumerate().find_map(|(i, set)| {
+        set.iter().find_map(|f| {
+            let gone = sequence[i + 1..].iter().position(|later| !has(later, f))? + i + 1;
+            sequence[gone + 1..].iter().any(|later| has(later, f)).then(|| f.1.clone())
+        })
+    })
+}
+
+/// Intuition: the build runs like latexmk, so `\ref{later}` is undefined on pass 1 and fine on
+/// pass 2. The editor only ever hears about the settled pass, and a rerun keeps what stays true.
+/// Bug pinned: a finding flickering across a document's passes (gone, then back) in the publishes.
+#[test]
+fn a_multi_pass_document_never_drops_a_finding_it_publishes_again() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\section{One}\nSee \\ref{later} and \\ref{never}.\n\\section{Two}\\label{later}\n";
+    let end = "\\end{document}\n";
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-passes-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.tex"), format!("{text}{end}")).unwrap();
+    let mut server = serve(&dir, true);
+    let uri = fixture_uri(&dir.join("main.tex"));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": format!("{text}{end}") } }),
+    );
+    let mut sequence = publishes(&mut server, &uri, 1);
+    assert_eq!(sequence.len(), 1, "one analysis, one publish: {sequence:?}");
+    let messages = || sequence[0].iter().map(|f| f.1.as_str());
+    assert!(messages().clone().any(|m| m.contains("{never}")), "{sequence:?}");
+    assert!(!messages().clone().any(|m| m.contains("{later}")), "a forward reference of pass 1: {sequence:?}");
+    // Before the end, so the positions stay: only the rerun can move a finding.
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": format!("{text}More words.\n{end}") }] }),
+    );
+    sequence.extend(publishes(&mut server, &uri, 2));
+    assert_eq!(returning(&sequence), None, "{sequence:?}");
+    assert!(sequence.iter().all(|set| set.iter().any(|f| f.1.contains("{never}"))), "{sequence:?}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Intuition: a run that a budget stopped read part of the document, so it knows nothing about the
+/// rest. What the whole run before it found stays, marked as unfinished, and the views stay those
+/// of the whole run. The next whole run replaces it all.
+/// Bug pinned: a stopped run's short list replaced the findings, which came back on the next edit.
+#[test]
+fn a_stopped_run_keeps_the_findings_of_the_last_whole_one() {
+    const FACTS: usize = 200;
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-stopped-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let body = |before: &str| format!("{before}\\nope\n\\def\\kept{{}}\n\\bye\n");
+    std::fs::write(dir.join("main.tex"), body("")).unwrap();
+    let facts = format!("limits.facts={FACTS}");
+    let flags = [
+        "--no-packages",
+        "--no-classes",
+        "--set",
+        "load.format=false",
+        "--set",
+        "texmf.kpsewhich=false",
+        "--set",
+        &facts,
+    ];
+    let mut server = Server::start_with(&crate::support::test_cache(), &dir, &flags);
+    let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+    server.response(id);
+    server.notify("initialized", json!({}));
+    let (uri, first) = open_file(&mut server, &dir, "main.tex");
+    assert!(first["params"]["diagnostics"].to_string().contains("nope"), "{first}");
+    let change = |server: &mut Server, version: i64, text: String| {
+        let edit = json!({ "textDocument": { "uri": uri, "version": version }, "contentChanges": [{ "text": text }] });
+        server.notify("textDocument/didChange", edit);
+    };
+    let found = |p: &[(String, String, String)]| p.iter().any(|f| f.1.contains("nope"));
+    // Past the budget before it reaches `\nope`.
+    let long: String = (0..FACTS).map(|i| format!("\\def\\a{i}{{}}\\a{i}\n")).collect();
+    change(&mut server, 2, body(&long));
+    let stopped = publishes(&mut server, &uri, 2);
+    let last = stopped.last().unwrap();
+    assert!(found(last), "the whole run's finding stays: {stopped:?}");
+    assert!(last.iter().all(|f| f.2 == "satex · unfinished run"), "never as final: {stopped:?}");
+    // `\kept` stands past the stop: only the whole run knows it.
+    let line = long.lines().count() + 1;
+    let at = json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": "\\def\\k".len() } });
+    let id = server.request("textDocument/definition", at);
+    let definition = server.response(id);
+    assert!(!definition["result"].is_null(), "the views answer from the whole run: {definition}");
+    change(&mut server, 3, body(""));
+    let whole = publishes(&mut server, &uri, 3);
+    let last = whole.last().unwrap();
+    assert!(found(last) && last.iter().all(|f| f.2 == "satex"), "a whole run replaces it: {whole:?}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -956,8 +956,12 @@ impl Engine {
     }
 
     /// `analysis` of `text`, the one `uri`'s requests are answered from.
+    /// A run a budget stopped read part of the document: the last whole run keeps answering.
     fn install(&mut self, uri: &Uri, analysis: &Rc<Analysis>, text: &str, changed: bool) {
         let Some(doc) = self.docs.get_mut(uri) else { return };
+        if analysis.stopped() && doc.analysis.as_ref().is_some_and(|a| !a.stopped()) {
+            return;
+        }
         doc.analysis = Some(analysis.clone());
         (doc.analyzed, doc.shift) = (Some(text.to_string()), None);
         self.runs.retain(|_, run| Rc::strong_count(&run.analysis) > 1);
@@ -1002,11 +1006,16 @@ impl Engine {
                 p.diagnostics = serde_json::from_value(moved).unwrap_or_default();
                 self.actions.get_mut(&own).into_iter().flatten().for_each(|a| shift.apply(a));
             }
+            if analysis.stopped() {
+                keep_unfinished(p, self.published.get(&p.uri).map(|(_, last)| last));
+            }
             p.version = version_of(versions, &p.uri);
             self.published.insert(p.uri.clone(), (Rc::downgrade(analysis), p.clone()));
         }
         self.send_diagnostics(published);
-        self.ask_style(candidates);
+        if !analysis.stopped() {
+            self.ask_style(candidates);
+        }
     }
 
     /// Keeps `uri`'s last run across the edits since, when an incremental plugin
@@ -1113,6 +1122,7 @@ impl Engine {
                 let versions: Vec<(PathBuf, i32)> = self.docs.values().map(|d| (d.path.clone(), d.version)).collect();
                 for p in &mut published {
                     p.version = version_of(&versions, &p.uri);
+                    self.published.insert(p.uri.clone(), (Rc::downgrade(&analysis), p.clone()));
                 }
                 self.send_diagnostics(published);
             }
@@ -1893,6 +1903,23 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
 fn version_of(versions: &[(PathBuf, i32)], uri: &Uri) -> Option<i32> {
     let path = handlers::uri_to_path(uri)?;
     versions.iter().find(|(p, _)| crate::project::paths::same_file(p, &path)).map(|(_, v)| *v)
+}
+
+/// The source of findings a budget-stopped run stands behind: they may still change.
+const UNFINISHED: &str = "satex · unfinished run";
+
+/// What a budget-stopped run publishes: its findings and those `last` showed, which the part it
+/// did not read may still hold. Only a whole run replaces them.
+fn keep_unfinished(new: &mut PublishDiagnosticsParams, last: Option<&PublishDiagnosticsParams>) {
+    let same = |a: &lsp_types::Diagnostic, b: &lsp_types::Diagnostic| {
+        (a.range, &a.code, &a.message) == (b.range, &b.code, &b.message)
+    };
+    let kept: Vec<_> = (last.iter().flat_map(|l| &l.diagnostics))
+        .filter(|old| !new.diagnostics.iter().any(|d| same(d, old)))
+        .cloned()
+        .collect();
+    new.diagnostics.extend(kept);
+    new.diagnostics.iter_mut().for_each(|d| d.source = Some(UNFINISHED.into()));
 }
 
 /// The diagnostics of `analysis` to publish, by file, with an empty list

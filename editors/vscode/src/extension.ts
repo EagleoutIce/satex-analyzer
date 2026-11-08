@@ -7,7 +7,7 @@ import { LanguageClient, State, StreamInfo } from 'vscode-languageclient/node';
 import { openDialog } from './dialogs';
 import { peers, uninstallCommand, yields } from './peers';
 import { Actions } from './sidebar';
-import { STALE, Status, Work } from './status';
+import { analyzingAfter, STALE, Status, Work } from './status';
 import { Steps, TraceEvent } from './steps';
 import { library } from './library';
 import { settings } from './settings';
@@ -216,13 +216,13 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     binaryPath = binary;
     const bar = (status ??= new Status());
-    // The findings live in the Problems view. While a newer analysis runs they
-    // are hidden (`satex.findings.whileAnalyzing`: `hide`) or marked as old (`mark`).
+    // The findings stay in the Problems view until a complete run replaces them. A run in progress never
+    // takes them away. `satex.findings.whileAnalyzing`: `mark` makes them say that they may change meanwhile.
     const published = new Map<string, [vscode.Uri, vscode.Diagnostic[]]>();
     let analyzing = false;
+    const marking = () => vscode.workspace.getConfiguration('satex').get<string>('findings.whileAnalyzing') === 'mark';
     const shown = (diagnostics: vscode.Diagnostic[]): vscode.Diagnostic[] => {
-        if (!analyzing) { return diagnostics; }
-        if (vscode.workspace.getConfiguration('satex').get<string>('findings.whileAnalyzing', 'hide') === 'hide') { return []; }
+        if (!analyzing || !marking()) { return diagnostics; }
         return diagnostics.map(d => Object.assign(new vscode.Diagnostic(d.range, d.message, d.severity),
             { code: d.code, tags: d.tags, relatedInformation: d.relatedInformation, data: (d as { data?: unknown }).data, source: STALE }));
     };
@@ -247,10 +247,10 @@ export function activate(context: vscode.ExtensionContext): void {
         });
     const working = (work: Work) => {
         bar.working(work);
-        // A hover's trial run changes no finding.
-        const now = Boolean(work.text) && work.phase !== 'probe';
+        const now = analyzingAfter(work, analyzing);
         if (now === analyzing) { return; }
         analyzing = now;
+        if (!marking()) { return; }
         for (const [uri, diagnostics] of published.values()) { client?.diagnostics?.set(uri, shown(diagnostics)); }
     };
     context.subscriptions.push(

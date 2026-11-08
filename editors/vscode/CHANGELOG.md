@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Findings stay in the Problems view while an analysis runs: the last complete result stands until the new one is ready. `satex.findings.whileAnalyzing` is now `keep` (default) or `mark`.
 - Code lenses (Edit table…, Edit image…, Edit placement…, Edit drawing…) show without an edit: the server asks the editor to refresh them once its first run is in.
 - Another installed copy of SaTeX is detected: a warning offers to uninstall it. A clashing command no longer stops the activation, and a window has one status item.
 - Every playground widget opens beside the editor: `satex: Open Widget…`, the Library and the project Settings are new. A dialog's Cancel closes its panel, its image can be saved elsewhere or replaced.

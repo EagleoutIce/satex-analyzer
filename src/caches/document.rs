@@ -120,7 +120,7 @@ impl Recording {
     /// the order its decoding inserted, so both runs see the same.
     pub(crate) fn store(self, analysis: &mut Analysis) {
         let mut reads = crate::project::overlay::recorded();
-        if analysis.exhausted || analysis.limits.iter().any(|l| matches!(l.key, "seconds" | "memory")) {
+        if analysis.stopped() {
             return;
         }
         // Every file it opened, those a package cache served included.
