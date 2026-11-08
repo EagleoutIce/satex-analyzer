@@ -10,6 +10,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **A number parser over an unknown value stops walking its digits.** A macro's runs on known values teach what it leaves; a run that keeps forking ends with that effect, each value of its type, named `call-learned-effect` (`analysis.assume_call_learned_effect`, `limits.call_learn_after`, `limits.call_learn_forks`). `\\pgfmathparse` needs no rule or stub. Rounded nodes and arrows of unknown size end clean.
 - `fix` **A penalty in a formula keeps the formula's size.** siunitx 3.6 sets `\nobreak` inside math, so every `\qty` had an unknown width, and pictures around one raised false pgfmath errors. [`da70671`](https://github.com/EagleoutIce/satex-analyzer/commit/da70671)
 - `fix` **No crash when every arm of a choice is refuted.** The run counted its fork off twice. [`bf50fd5`](https://github.com/EagleoutIce/satex-analyzer/commit/bf50fd5)
 

@@ -542,6 +542,9 @@ analysis:
   assume_unknown_char_catcode: true  # assume a \catcode of a character satex could not pin down never changes a structural one
     #! affects: precision, soundness
     #! example: off: `\catcode\count@=11` after a summarized loop may make `{` a letter, one path each way
+  assume_call_learned_effect: true  # assume a call that keeps forking on unknown values leaves what other runs of its definition left, values widened to their type
+    #! affects: precision, soundness, speed
+    #! example: off: `\pgfmathparse{\the\wd0}` walks the printed width digit by digit
 
 # shell_escape: restricted # which programs \write18 may run: none, restricted or full. Unset: what the build files ask for
 #! affects: precision, soundness
@@ -966,6 +969,12 @@ limits:
   call_summary_after: 2  # after this many runs of one call, a call with unknown arguments reuses their result instead of running. 0 = never
     #! affects: precision, speed
     #! example: `\pgfmathparse{\x}` with unknown `\x` reuses what earlier calls did
+  call_learn_after: 2  # after this many runs on different arguments, what a macro leaves is known to its calls that fork on unknown values. 0 = never
+    #! affects: precision, speed
+    #! example: two `\pgfmathparse` on numbers teach that `\pgfmathresult` holds a number
+  call_learn_forks: 2  # how many undecided choices a call with a learned effect may meet before it ends with that effect
+    #! affects: precision, speed
+    #! example: 1 ends `\pgfmathparse{\the\wd0}` at its first undecided digit
   may_run_depth: 3  # how many macro levels deep satex follows code a join made unknown to find what it may assign
     #! affects: precision, speed
     #! example: `\def\a{\b}` reached in skipped code: what `\b` assigns is made unknown too

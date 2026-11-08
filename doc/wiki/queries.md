@@ -96,7 +96,7 @@ variable-definition  \pkgcls@targetdate                                         
 use                  @                                                             paper.tex  @ paper.tex:1:1
 use                  11pt                                                          paper.tex  @ paper.tex:1:1
 macro-call           \value                                                        paper.tex  @ paper.tex:0:0
-… 547 more lines omitted
+… 539 more lines omitted
 ```
 
 ## diagnostics
@@ -109,9 +109,9 @@ severity     code                          count  message              file
 assumption   forced-page-breaks            1      the page may fill …  paper.tex       @ paper.tex:56:13
 imprecision  call-summarized               1      a call with unknow…  latex.ltx       @ latex.ltx:21098:3
 imprecision  recursion-widened             1      \ifdim decides a l…  latex.ltx       @ latex.ltx:21105:3
-imprecision  recursion-widened             3      \�unknown name:one …  latex.ltx       @ latex.ltx:21510:13
-assumption   unknown-text-run              9      \@elt of unknown m…  latex.ltx       @ latex.ltx:1219:52
-… 5 more lines omitted
+imprecision  recursion-widened             1      \@failedlist decid…  latex.ltx       @ latex.ltx:21102:22
+imprecision  recursion-widened             1      \ifdim decides a l…  latex.ltx       @ latex.ltx:20584:3
+… 13 more lines omitted
 ```
 
 ## distribution
@@ -156,7 +156,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    texsys.aux                                
 4    input    expl3.ltx                                 
-… 308 more lines omitted
+… 307 more lines omitted
 ```
 
 ## gaps
@@ -265,6 +265,7 @@ Only the places that stand behind an expansion, for a text the document never wr
 ```text
 $ satex query produces -f samples/paper.tex --text Introduction --filter 'kind!=source'
 kind        tag      name                                              detail    file       
+macro body  macro    \r@sec:intro                                      {1}{1}{…  paper.aux  @ paper.aux:6:11
 occurrence  section  Introduction                                      Introdu…  paper.tex  @ paper.tex:33:1
 occurrence  write    \@writefiletoccontentslinesectionnumberline1Int…  \@write…  latex.ltx  @ latex.ltx:9552:34
 occurrence  write    \newlabelsec:intro11Introductionsection.1         \newlab…  latex.ltx  @ latex.ltx:9552:34
@@ -347,7 +348,7 @@ index   step         name                        detail                    file
 10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
 10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
 10272   define       \ifdraft                    iffalse                   paper.tex      @ paper.tex:3:7
-… 210 more lines omitted
+… 184 more lines omitted
 ```
 
 `--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile, and `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown. `--include-internal` adds packages, classes and the kernel. `--format compact` prints at most 8 text lines instead: what each top-level call of the main file expands to, and each conditional's outcome. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
@@ -485,7 +486,7 @@ $ satex slice -f samples/paper.tex --where 'kind=begin-environment and key=figur
 
 \RequirePackage{xcolor}
 
-… 85 more lines omitted
+… 89 more lines omitted
 ```
 
 `--out DIR` writes the slice as a standalone project: the main file plus the local packages, classes, graphics and bibliographies it needs, paths preserved.

@@ -100,6 +100,12 @@ pub struct Limits {
     /// arguments reuses their merged result instead of running again.
     /// `\pgfmathparse{\x}` with an unknown `\x` is then one step. 0 never does.
     pub call_summary_after: u16,
+    /// How many runs on different arguments teach what a definition's
+    /// calls leave, with `analysis.assume_call_learned_effect`. 0 never.
+    pub call_learn_after: u16,
+    /// How many undecided choices a run of a definition that was taught
+    /// may meet before it ends with the learned effect.
+    pub call_learn_forks: u32,
     /// How deep code a join made unknown is followed into the macros it
     /// calls to find what it may assign. Past it the run reports a gap.
     pub may_run_depth: u8,
@@ -210,6 +216,8 @@ impl Limits {
             "recursion_depth" => self.recursion_depth.into(),
             "loop_heads" => self.loop_heads.into(),
             "call_summary_after" => self.call_summary_after.into(),
+            "call_learn_after" => self.call_learn_after.into(),
+            "call_learn_forks" => self.call_learn_forks.into(),
             "may_run_depth" => self.may_run_depth.into(),
             "cycle_after" => self.cycle_after.into(),
             "degrade_at_percent" => self.degrade_at_percent.into(),
@@ -283,6 +291,8 @@ impl Default for Limits {
             recursion_depth: 100,
             loop_heads: 512,
             call_summary_after: 2,
+            call_learn_after: 2,
+            call_learn_forks: 2,
             may_run_depth: 3,
             cycle_after: 2,
             meaning_set: 8,
@@ -1566,6 +1576,11 @@ pub struct AnalysisConfig {
     /// space, end of line, active). Reported as `unknown-char-catcode`.
     /// `false` lets it reach them: the reader splits a path per category.
     pub assume_unknown_char_catcode: bool,
+    /// Assumes a call whose run keeps forking on unknown values leaves what
+    /// runs of its definition on other values left, each value widened to
+    /// its type, and raises nothing. Reported as `call-learned-effect`.
+    /// `false` walks every such call.
+    pub assume_call_learned_effect: bool,
 }
 
 impl Default for AnalysisConfig {
@@ -1578,6 +1593,7 @@ impl Default for AnalysisConfig {
             assume_forced_page_breaks: true,
             assume_messages_output_only: true,
             assume_unknown_char_catcode: true,
+            assume_call_learned_effect: true,
         }
     }
 }

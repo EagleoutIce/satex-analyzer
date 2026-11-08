@@ -2361,6 +2361,8 @@ struct GuardSeen {
     line: GuardKey,
     level: u8,
     cut: bool,
+    /// The cut ends this running call with its learned effect.
+    call_cut: Option<usize>,
 }
 
 /// The stretch since the run last read source further than before: where
@@ -4644,7 +4646,9 @@ will look undefined",
                 if !(self.reading_command && self.step_depth == 1) {
                     return None;
                 }
-                self.resync();
+                if !self.guard_seen.call_cut.take().is_some_and(|at| self.end_learned_call(at)) {
+                    self.resync();
+                }
             }
             if !self.call_recs.is_empty() {
                 self.end_call_recs();
@@ -8400,6 +8404,7 @@ will look undefined",
     /// down to the file, and categories changed since are their old or new
     /// one; changes the skipped rest would make are assumed not made.
     fn resync(&mut self) {
+        self.guard_seen.call_cut = None;
         self.leak_call_recs();
         let output = self.output_active();
         // Groups the skipped expansion opened stand for any number of them
@@ -10100,7 +10105,7 @@ will look undefined",
         }
         crate::push_shared(&mut self.within, (sym, node));
         let before = self.input.len();
-        self.record_call(call_key, unknown_operands, &arguments);
+        self.record_call(call_key, &m, unknown_operands, &arguments);
         self.push_parts(body, sym);
         if self.input.len() == before {
             Rc::make_mut(&mut self.within).pop();

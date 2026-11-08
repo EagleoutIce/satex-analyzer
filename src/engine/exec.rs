@@ -524,21 +524,9 @@ impl Machine<'_> {
                 }
             }
             P::Mode(cmd) => self.mode_command(cmd, by, span),
-            // tex.web § 1045: the next non-blank token after expansion is
-            // read as a command.
             P::IgnoreSpaces => {
-                while let Some(token) = self.next_x_token() {
-                    if !matches!(self.category_of(token), Some(Catcode::Space)) {
-                        // tex.web § 1045 goes on with the token as read: a
-                        // `\noexpand`ed one stays `\relax`.
-                        if self.read_noexpanded(token) {
-                            self.unread_noexpanded(token)
-                        } else {
-                            self.unread(token)
-                        }
-                        break;
-                    }
-                }
+                self.peek_ends_calls();
+                self.ignore_spaces();
             }
             // The value a penalty, kern or glue item scans (tex.web § 1057,
             // § 1060, § 1103); `\mkern` and `\mskip` in math units.
@@ -1277,7 +1265,24 @@ impl Machine<'_> {
     /// where its integer part is 0, so a straddling interval's typed
     /// integer part reaches below `-1` ([`Machine::digit_arms`]' `-` arm
     /// spells `-0`).
-    fn printed_dimen(&mut self, num: Option<Num>, span: Span) -> Vec<Token> {
+    /// tex.web § 1045: the next non-blank token after expansion is read as
+    /// a command.
+    pub(crate) fn ignore_spaces(&mut self) {
+        while let Some(token) = self.next_x_token() {
+            if !matches!(self.category_of(token), Some(Catcode::Space)) {
+                // tex.web § 1045 goes on with the token as read: a
+                // `\\noexpand`ed one stays `\\relax`.
+                if self.read_noexpanded(token) {
+                    self.unread_noexpanded(token)
+                } else {
+                    self.unread(token)
+                }
+                break;
+            }
+        }
+    }
+
+    pub(crate) fn printed_dimen(&mut self, num: Option<Num>, span: Span) -> Vec<Token> {
         let unit = crate::engine::value::UNIT;
         let n = num.unwrap_or(Num::range(-crate::engine::value::MAX_DIMEN, crate::engine::value::MAX_DIMEN));
         let mut tokens = match n.hi < 0 {

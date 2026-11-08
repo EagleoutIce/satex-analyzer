@@ -3,6 +3,17 @@
   "properties": {
     "analysis": {
       "properties": {
+        "assume_call_learned_effect": {
+          "default": true,
+          "description": "assume a call that keeps forking on unknown values leaves what other runs of its definition left, values widened to their type",
+          "type": "boolean",
+          "x-affects": [
+            "precision",
+            "soundness",
+            "speed"
+          ],
+          "x-example": "off: `\\pgfmathparse{\\the\\wd0}` walks the printed width digit by digit"
+        },
         "assume_compiles": {
           "default": true,
           "description": "assume the document compiles: drop a path where package code raises a TeX error. Your own errors are always kept",
@@ -2438,6 +2449,28 @@
           ],
           "x-example": "`cache_size: 500MiB` keeps fewer packages ready"
         },
+        "call_learn_after": {
+          "default": 2,
+          "description": "after this many runs on different arguments, what a macro leaves is known to its calls that fork on unknown values. 0 = never",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "two `\\pgfmathparse` on numbers teach that `\\pgfmathresult` holds a number"
+        },
+        "call_learn_forks": {
+          "default": 2,
+          "description": "how many undecided choices a call with a learned effect may meet before it ends with that effect",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "1 ends `\\pgfmathparse{\\the\\wd0}` at its first undecided digit"
+        },
         "call_summary_after": {
           "default": 2,
           "description": "after this many runs of one call, a call with unknown arguments reuses their result instead of running. 0 = never",
@@ -2797,7 +2830,7 @@
           "x-example": "a 1000-page thesis with TikZ may need more"
         },
         "text_names": {
-          "default": 8,
+          "default": 64,
           "description": "how many control sequences unknown text names (a widened float list keeps its boxes), past them any",
           "minimum": 0,
           "type": "integer",
@@ -4064,7 +4097,7 @@
         "precision",
         "soundness"
       ],
-      "x-example": "`shell_escape: full`\n`\\write18{date > now.tex}` runs, so `\\input{now}` reads its output"
+      "x-example": "`shell_escape: full`\n`\\write18{date > now.tex}` runs, so `\\input{now}` reads its output\n`stubs: { \\includegraphics: { args: \"som\", result: box } }`"
     },
     "slice": {
       "description": "what satex slice leaves out",

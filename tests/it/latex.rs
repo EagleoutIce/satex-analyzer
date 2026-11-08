@@ -4633,3 +4633,106 @@ fn a_package_stays_cacheable_past_a_line_that_joined_paths() {
     assert_eq!(state.as_deref(), Some("cached"));
     std::fs::remove_dir_all(root).ok();
 }
+
+/// A digit walker named after no package, the shape of every number parser:
+/// a group, a loop over the characters of its argument, one result out of
+/// the group.
+const WALKER: &str = r"\documentclass{article}
+\makeatletter
+\def\walk#1{\begingroup\count@=0 \edef\walkin{#1}\expandafter\walk@\walkin\relax}
+\def\walk@#1{\ifx#1\relax\expandafter\walk@end\else
+  \ifnum`#1<`0 \else\ifnum`#1>`9 \else\multiply\count@ by 10 \advance\count@ by `#1 \advance\count@ by -`0 \fi\fi
+  \expandafter\walk@\fi}
+\def\walk@end{\edef\x{\endgroup\def\noexpand\walkresult{\the\count@}}\x}
+\makeatother
+\setbox0\hbox{\the\pdfrandomseed}
+\begin{document}
+";
+
+fn learned(analysis: &Analysis) -> usize {
+    analysis.facts.diagnostics.iter().filter(|d| d.code == "call-learned-effect").count()
+}
+
+/// Two runs on known digits teach the walker's effect: over a box's printed
+/// width it leaves a number without walking the digits (the walk forked per
+/// digit, the bug behind every parser red), reported as the named assumption.
+/// Known operands still run the real code, before and after: their results
+/// are exact. The width reaches the walker only through `\the`, no argument
+/// holds it as unknown text.
+#[test]
+fn a_walker_over_an_unknown_number_leaves_what_its_runs_left() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(&format!(
+        r"{WALKER}\relax\walk{{12}}\typeout{{mark \walkresult}}\walk{{345}}\typeout{{mark \walkresult}}
+\walk{{\the\wd0}}\dimen2=\walkresult pt\gdef\AfterWalk{{}}
+\walk{{678}}\typeout{{mark \walkresult}}
+\end{{document}}"
+    ));
+    assert_eq!(marks(&analysis), ["mark 12", "mark 345", "mark 678"]);
+    assert_eq!(learned(&analysis), 1);
+    // The arms up to the cut, which all leave one effect.
+    let arms = 1 << crate::support::config().limits.call_learn_forks;
+    assert!(analysis.peak_paths <= arms, "{} paths", analysis.peak_paths);
+    let wrong: Vec<_> = analysis.facts.diagnostics.iter().filter(|d| d.code == "missing-number").collect();
+    assert!(wrong.is_empty(), "{wrong:?}");
+}
+
+/// With no run to learn from there is nothing to assume: the call walks.
+#[test]
+fn a_walker_without_known_runs_learns_nothing() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(&format!("{WALKER}\\walk{{\\the\\wd0}}\n\\end{{document}}"));
+    assert_eq!(learned(&analysis), 0);
+}
+
+/// One argument twice proves nothing about other arguments: runs must differ
+/// to teach, so a name a run derives from its argument is not taken for fixed.
+#[test]
+fn runs_on_one_argument_teach_nothing() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(&format!("{WALKER}\\relax\\walk{{12}}\\walk{{12}}\\walk{{\\the\\wd0}}\n\\end{{document}}"));
+    assert_eq!(learned(&analysis), 0);
+}
+
+/// A macro that writes text has no type its value could widen to: its real
+/// run forks and keeps both arms, however many runs came before. The learned
+/// effect here would have been the one arm the known runs took, unsound.
+#[test]
+fn a_choice_of_text_is_not_learned() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\def\choose#1{\ifnum#1>0 \def\a{x}\else\def\a{y}\fi\ifnum#1>5 \def\b{x}\else\def\b{y}\fi}
+\setbox0\hbox{\the\pdfrandomseed}
+\begin{document}
+\choose{1}\choose{2}\choose{\wd0}
+\def\x{x}\def\y{y}\ifx\a\x\gdef\TookX{}\fi\ifx\a\y\gdef\TookY{}\fi
+\end{document}",
+    );
+    assert_eq!(learned(&analysis), 0);
+    for name in ["TookX", "TookY"] {
+        assert!(!undefined(&analysis, name), "{name} lost an arm");
+    }
+}
+
+/// The assumption is the user's to switch off: then the walker walks, and
+/// nothing reports an effect no run of this call had.
+#[test]
+fn a_learned_effect_can_be_switched_off() {
+    if !installed() {
+        return;
+    }
+    let source =
+        format!("{WALKER}\\relax\\walk{{12}}\\walk{{345}}\\walk{{678}}\\walk{{\\the\\wd0}}\n\\end{{document}}");
+    let mut cfg = crate::support::config();
+    cfg.analysis.assume_call_learned_effect = false;
+    assert_eq!(learned(&Machine::analyze(&source, None, &cfg)), 0);
+}

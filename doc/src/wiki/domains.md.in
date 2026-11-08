@@ -356,6 +356,20 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 | relate | a name every run left as the same text of its own arguments' typed numbers (slices spelling one whole count as it) gets that text of this call's numbers, not the widened join. `\pgfmath@bgroup@strip` of a new number thus keeps it whole and typed. |
 | never | runs that read on in the file, change a catcode, leave a group, conditional or mode, add to a list, write different names, accumulate (`x` then `x…`), update a name they read (a stack push), or leave code rather than data. Such a key always runs the real body. |
 
+### Learned effects: what a definition's runs teach
+
+A parser's walk over an unknown number forks at each digit, and no digit model ends that. Its runs on other values already show what it leaves, and each is a run of the real code. So a run of a definition that keeps forking stops walking and leaves what those runs left. A call whose operands are known forks nowhere, so it always runs for real. An unknown operand reached through a register, a macro or `\the` is found where it first decides something, with no look at the arguments.
+
+| Step | Rule |
+| --- | --- |
+| key | the definition's code, not its name or site: `\let` copies share it |
+| learn | every run the main loop expands is recorded until `limits.call_learn_after` (2) runs on different arguments have ended. A run may close the group around its call, and may end in `\ignorespaces`. |
+| refuse | for good: a run that reads on, changes a catcode, leaves a conditional or the mode, adds to a list, writes a name it was handed or nothing at all, or runs that disagree on the names or the group. Runs teach only what has a type to widen to: each name holds a number or a flag, or stayed the same, and one holds a number. |
+| cut | at the `limits.call_learn_forks`th (2) undecided choice of a run: the outermost running call with a learned effect ends there (`learned_cut`). Its text goes, what it opened closes, what it wrote in the closed groups goes back. |
+| apply | number text becomes a printed number (`printed_dimen`), a register any value, a flag the runs disagree on either meaning. What all runs left the same stays. |
+
+This is the named assumption `call-learned-effect` (`analysis.assume_call_learned_effect`): the call writes what its runs wrote, and raises nothing on the unknown value. With no run learned, the call walks as before. Sampling the type's values instead would need a machine snapshot and a run per sample at each call. The runs a document makes anyway cost nothing.
+
 ### The line guard: termination
 
 One check bounds every run, whatever the precision: `Machine::check_budget` charges every step (token read, driver pass, replay) to the source line being read, summed over all paths. A replayed package charges no line.

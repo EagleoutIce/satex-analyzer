@@ -3,6 +3,11 @@
 //! instead of running
 //! (`limits.call_summary_after` of them; 0 never summarizes).
 //! Forced convergence for parsers that walk unknown text a token at a time.
+//!
+//! A definition's runs also teach what any later call of it leaves
+//! (`limits.call_learn_after` runs on different arguments): a run that keeps
+//! forking (`limits.call_learn_forks`) ends there with their effect, each
+//! value widened to its type (`analysis.assume_call_learned_effect`).
 
 use std::rc::Rc;
 
@@ -36,6 +41,14 @@ pub(crate) struct CallRec {
     /// Where the list below the call's text stood: a run ends cleanly
     /// only on that list as the call left it.
     below: Option<FrameMark>,
+    /// It records a run of this site, not only of the definition.
+    site: bool,
+    /// Open groups, many counted as one.
+    depth: usize,
+    /// The undecided choices met in this run.
+    forks: u32,
+    /// What it runs: a definition's runs teach, by code, not by name.
+    code: Rc<crate::engine::tex::MacroDef>,
 }
 
 /// One recorded run: the names it wrote, as it left them, and the names
@@ -45,6 +58,11 @@ struct Run {
     writes: Vec<(Sym, Option<Binding>)>,
     reads: Vec<Sym>,
     args: Rc<[Vec<Token>]>,
+    /// It closed the group around its call (`\\endgroup` of a `\\begingroup`
+    /// its caller opened).
+    closes: bool,
+    /// It ended in `\\ignorespaces`.
+    peeks: bool,
 }
 
 /// Where a list stands: its text (held, so its place is never another
@@ -92,6 +110,28 @@ pub(crate) struct CallRuns {
     reported: bool,
     /// Runs of it being recorded now.
     active: usize,
+    /// The code a learned entry is keyed by the place of: held, so that
+    /// place stays its own.
+    code: Option<Rc<crate::engine::tex::MacroDef>>,
+}
+
+/// A conditional's meaning a flag switches between.
+fn flag(m: &Meaning) -> bool {
+    use crate::engine::builtins::{Cond, Primitive as P};
+    matches!(m, Meaning::Primitive(P::If(Cond::True | Cond::False)))
+}
+
+/// What a learned effect leaves in a name.
+enum Written {
+    Number,
+    Register,
+    Flag,
+    Same,
+}
+
+/// Where a definition's learned runs lie among the sites' runs.
+fn learned_key(code: &Rc<crate::engine::tex::MacroDef>) -> CallKey {
+    (NodeId::default(), Span::default(), Rc::as_ptr(code) as u64)
 }
 
 impl Machine<'_> {
@@ -124,12 +164,24 @@ impl Machine<'_> {
         if self.step_depth == 1 { usize::from(self.limits.call_summary_after) } else { 0 }
     }
 
-    /// As a call's body is pushed: record the run while runs are missing.
-    pub(crate) fn record_call(&mut self, key: CallKey, unknown: bool, args: &[Vec<Token>]) {
+    /// As a call's body is pushed: record the run while runs are missing,
+    /// and every run of a definition that may yet teach or use its effect.
+    pub(crate) fn record_call(
+        &mut self,
+        key: CallKey,
+        code: &Rc<crate::engine::tex::MacroDef>,
+        unknown: bool,
+        args: &[Vec<Token>],
+    ) {
         let needed = self.summary_after();
+        let learn =
+            self.step_depth == 1 && self.learns() && !self.call_runs.get(&learned_key(code)).is_some_and(|r| r.leaky);
         let runs = self.call_runs.entry(key).or_default();
-        if !runs.leaky && runs.runs.len() + runs.active < needed {
+        let site = !runs.leaky && runs.runs.len() + runs.active < needed;
+        if site {
             runs.active += 1;
+        }
+        if site || learn {
             if self.call_recs.is_empty() {
                 self.env.log_reads(false);
                 self.env.log_reads(true);
@@ -151,6 +203,10 @@ impl Machine<'_> {
                 unknown,
                 args: args.into(),
                 below: self.input.last().map(frame_mark),
+                site,
+                depth: self.env.depth(),
+                forks: 0,
+                code: code.clone(),
             };
             crate::push_shared(&mut self.call_recs, rec);
         }
@@ -278,24 +334,43 @@ impl Machine<'_> {
     /// A read is about to take a token from frame `self.input.len() - 1`:
     /// every call recorded above it is over.
     pub(crate) fn end_call_recs(&mut self) {
+        self.end_calls(false);
+    }
+
+    /// `\\ignorespaces` is about to read on: a call that ends in it is over
+    /// and left the look-ahead to do again.
+    pub(crate) fn peek_ends_calls(&mut self) {
+        if !self.call_recs.is_empty() {
+            self.end_used_up_lists();
+            self.end_calls(true);
+        }
+    }
+
+    fn end_calls(&mut self, peeks: bool) {
         let needed = usize::from(self.limits.call_summary_after);
         while let Some(rec) = self.call_recs.last()
             && self.input.len() <= rec.base
         {
             let rec = Rc::make_mut(&mut self.call_recs).pop().expect("one");
-            let main = self.reading_command && self.step_depth == 1;
+            let main = (peeks || self.reading_command) && self.step_depth == 1;
             // Nothing below the call's text was read or given back to: a
             // look-ahead past its end leaves its run unfinished.
             let intact = self.input.len() == rec.base && self.input.last().map(frame_mark) == rec.below;
-            let clean = main
+            let whole = main
                 && intact
                 && !rec.leaky
                 && self.env.recent_len() >= rec.recent
-                && self.env.group_level() == rec.groups
                 && self.conds.len() == rec.conds
                 && self.mode == rec.mode
                 && self.natural == rec.natural
                 && self.material == rec.material;
+            let closes = self.env.group_level() + 1 == rec.groups;
+            let balanced = self.env.group_level() == rec.groups;
+            self.learn_run(&rec, whole && (balanced || closes), closes, peeks);
+            if !rec.site {
+                continue;
+            }
+            let clean = whole && balanced && !peeks;
             let entry = self.call_runs.entry(rec.key).or_default();
             entry.active = entry.active.saturating_sub(1);
             if !clean {
@@ -325,11 +400,214 @@ impl Machine<'_> {
                 entry.runs.clear();
                 continue;
             }
-            self.call_runs.get_mut(&rec.key).expect("entry").runs.push(Run { writes, reads, args: rec.args });
+            let run = Run { writes, reads, args: rec.args, closes: false, peeks: false };
+            self.call_runs.get_mut(&rec.key).expect("entry").runs.push(run);
         }
         if self.call_recs.is_empty() {
             self.env.log_reads(false);
         }
+    }
+
+    /// A run of `rec`'s definition ended: it teaches what the definition
+    /// does, unless it forked (that run was not on values). A run that did
+    /// more than a learned effect carries, or whose runs disagree, stops the
+    /// definition's learning for good.
+    fn learn_run(&mut self, rec: &CallRec, whole: bool, closes: bool, peeks: bool) {
+        let key = learned_key(&rec.code);
+        if !self.learns() {
+            return;
+        }
+        let k = usize::from(self.limits.call_learn_after);
+        let entry = self.call_runs.entry(key).or_default();
+        entry.code.get_or_insert_with(|| rec.code.clone());
+        if entry.leaky || entry.runs.len() >= k || rec.forks > 0 {
+            return;
+        }
+        let same_args = |a: &[Vec<Token>], b: &[Vec<Token>]| {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.iter().map(|t| t.tok).eq(y.iter().map(|t| t.tok)))
+        };
+        if whole && entry.runs.iter().any(|r| same_args(&r.args, &rec.args)) {
+            return;
+        }
+        let writes: Vec<_> =
+            (self.env.recent_since(rec.recent).into_iter()).map(|sym| (sym, self.env.slot_at(sym.0))).collect();
+        // A name it was handed: the next call writes another.
+        let handed = writes.iter().any(|w| rec.args.iter().flatten().any(|t| t.cs() == Some(w.0)));
+        let entry = self.call_runs.get_mut(&key).expect("entry");
+        if !whole || handed || writes.is_empty() {
+            entry.leaky = true;
+            entry.runs.clear();
+            return;
+        }
+        entry.runs.push(Run { writes, reads: Vec::new(), args: rec.args.clone(), closes, peeks });
+        if entry.runs.len() == k {
+            let runs = std::mem::take(&mut entry.runs);
+            let names = |r: &Run| r.writes.iter().map(|w| w.0).collect::<Vec<_>>();
+            let alike = runs
+                .windows(2)
+                .all(|w| names(&w[0]) == names(&w[1]) && (w[0].closes, w[0].peeks) == (w[1].closes, w[1].peeks))
+                && self.typed_effect(&runs);
+            let entry = self.call_runs.get_mut(&key).expect("entry");
+            entry.leaky = !alike;
+            if alike {
+                entry.runs = runs;
+            }
+        }
+    }
+
+    /// Whether runs teach here: never while the kernel is built, whose
+    /// cache holds no run.
+    fn learns(&self) -> bool {
+        self.limits.call_learn_after > 0 && self.cfg.analysis.assume_call_learned_effect && self.budget.is_none()
+    }
+
+    /// An undecided choice is about to be made: the outermost running call
+    /// that forked `limits.call_learn_forks` times and whose definition has
+    /// a learned effect ends with that effect. `true` when it will; the
+    /// run unwinds to the main loop ([`Machine::end_learned_call`]).
+    pub(crate) fn learned_cut(&mut self) -> bool {
+        if self.call_recs.is_empty() || !self.learns() {
+            return false;
+        }
+        for rec in Rc::make_mut(&mut self.call_recs) {
+            rec.forks += 1;
+        }
+        let k = usize::from(self.limits.call_learn_after);
+        let after = self.limits.call_learn_forks;
+        let at = self.call_recs.iter().position(|rec| {
+            let learned = self.call_runs.get(&learned_key(&rec.code)).filter(|r| !r.leaky && r.runs.len() >= k);
+            !rec.leaky
+                && rec.forks >= after
+                && learned.is_some()
+                && !self.input.iter().skip(rec.base).any(|f| matches!(f, super::Frame::Boundary))
+        });
+        self.guard_seen.call_cut = at;
+        self.guard_seen.cut |= at.is_some();
+        at.is_some()
+    }
+
+    /// The main loop, after a [`Machine::learned_cut`]: the call's text goes,
+    /// what it opened closes, and what its definition's runs left stands.
+    /// `false` when a load forgot those runs meanwhile.
+    pub(super) fn end_learned_call(&mut self, at: usize) -> bool {
+        let Some(rec) = self.call_recs.get(at).cloned() else { return false };
+        let key = learned_key(&rec.code);
+        if !self.call_runs.get(&key).is_some_and(|r| !r.runs.is_empty()) {
+            return false;
+        }
+        self.guard_seen.cut = false;
+        let span = self.position_span();
+        Rc::make_mut(&mut self.call_recs).truncate(at);
+        while self.input.len() > rec.base {
+            self.pop_frame();
+        }
+        self.mark_cut_scans();
+        let runs = std::mem::take(&mut self.call_runs.get_mut(&key).expect("checked").runs);
+        let keep = rec.depth.saturating_sub(usize::from(runs[0].closes));
+        self.close_since((rec.conds, self.env.group_id_at(keep), u64::MAX), false);
+        (self.mode, self.natural, self.material) = (rec.mode, rec.natural, rec.material);
+        let peeks = runs[0].peeks;
+        self.apply_learned(&runs, span);
+        let entry = self.call_runs.get_mut(&key).expect("checked");
+        entry.runs = runs;
+        let reported = std::mem::replace(&mut entry.reported, true);
+        self.approximated = true;
+        if !reported {
+            self.diagnose(
+                Severity::Assumption,
+                "call-learned-effect",
+                span,
+                "a call whose run forks on unknown values is assumed to leave what its runs on other values left: each value of its type (`analysis.assume_call_learned_effect`)".to_string(),
+            );
+        }
+        if peeks {
+            self.ignore_spaces();
+        }
+        true
+    }
+
+    /// The type all of `runs` left `sym` a value of.
+    fn written_type(&self, runs: &[Run], sym: Sym) -> Option<Written> {
+        fn of(r: &Run, sym: Sym) -> Option<&Binding> {
+            r.writes.iter().find(|w| w.0 == sym).and_then(|w| w.1.as_ref())
+        }
+        let all = |test: &dyn Fn(&Binding) -> bool| {
+            runs.iter().all(|r| of(r, sym).is_some_and(|b| b.may.is_none() && test(b)))
+        };
+        if all(
+            &|b| matches!(&b.meaning, Meaning::Macro(d) if d.parameter_text.arity == 0 && self.spells_number(&d.replacement_text)),
+        ) {
+            Some(Written::Number)
+        } else if all(&|b| matches!(b.value, crate::engine::value::Value::Num { .. })) {
+            Some(Written::Register)
+        } else if runs
+            .windows(2)
+            .all(|w| crate::engine::env::same_slot(&of(&w[0], sym).cloned(), &of(&w[1], sym).cloned()))
+        {
+            Some(Written::Same)
+        } else if all(&|b| flag(&b.meaning)) {
+            Some(Written::Flag)
+        } else {
+            None
+        }
+    }
+
+    /// Runs teach only what has a type to widen to: every name they wrote
+    /// has one, or stayed the same, and one holds a number.
+    fn typed_effect(&self, runs: &[Run]) -> bool {
+        let types: Option<Vec<_>> = runs[0].writes.iter().map(|w| self.written_type(runs, w.0)).collect();
+        types.is_some_and(|t| t.iter().any(|t| matches!(t, Written::Number | Written::Register)))
+    }
+
+    /// Each name the runs wrote gets its type: number text a printed number,
+    /// a register any value, a flag the runs disagree on either meaning.
+    /// What every run left the same stays as it is.
+    fn apply_learned(&mut self, runs: &[Run], span: Span) {
+        use crate::engine::builtins::{Cond, Primitive as P};
+        let typed_syms = self.typed_syms();
+        for w in &runs[0].writes {
+            let Some(first) = w.1.clone() else { continue };
+            let kind = self.written_type(runs, w.0);
+            let mut b = match kind {
+                Some(Written::Number) => {
+                    let text = self.printed_dimen(None, span);
+                    let Meaning::Macro(d) = &first.meaning else { continue };
+                    let d = crate::engine::tex::MacroDef { replacement_text: Rc::from(text), ..(**d).clone() };
+                    Binding { meaning: Meaning::Macro(Rc::new(d)), ..first.clone() }
+                }
+                Some(Written::Flag) => {
+                    let [t, f] = [Cond::True, Cond::False]
+                        .map(|c| Binding { meaning: Meaning::Primitive(P::If(c)), ..first.clone() });
+                    let Some(b) = crate::engine::env::join_slot(Some(t), Some(f), self.env.sets) else { continue };
+                    b
+                }
+                _ => first,
+            };
+            b.certain = false;
+            let global = b.global;
+            self.mint();
+            self.env.set(w.0, b, global);
+            if matches!(kind, Some(Written::Register)) {
+                let typed = crate::engine::env::typed!(self, typed_syms);
+                self.env.widen(&[w.0], None, &typed);
+            }
+        }
+        self.mint();
+    }
+
+    /// Text that spells a number: digits, a sign, a point, typed digits.
+    fn spells_number(&self, text: &[Token]) -> bool {
+        !text.is_empty()
+            && text.iter().all(|t| match t.tok {
+                crate::engine::tex::Tok::Chr(c, _) => c.is_ascii_digit() || c == '.' || c == '-',
+                crate::engine::tex::Tok::Cs(s) => {
+                    self.is_unknown_digits(s)
+                        || self
+                            .typed_text_of(*t)
+                            .is_some_and(|(class, _)| class == crate::engine::tex::TextClass::DIGIT)
+                }
+                crate::engine::tex::Tok::Param(_) => false,
+            })
     }
 
     /// A binding that holds unknown text, which a parser walks a token at

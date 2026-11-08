@@ -55,7 +55,7 @@ plugins: 48 in 11 kinds
   build system        5  latexmk, make, tectonic, arara, l3build
   tools               7  biber, bibtex, makeindex, xindy, makeglossaries, dvips, ps2pdf
   magic comments      3  % !TeX, % !BIB, % arara:
-… 16 more lines omitted
+… 17 more lines omitted
 ```
 
 <details>
@@ -527,7 +527,7 @@ $ satex scope -f samples/paper.tex --at 20:1
 tag          name                           effecti…  does      file                
 macro        \Weird                         \Weird …            paper.tex           @ paper.tex:16:1
 macro        \WeirdMore                     \WeirdM…            paper.tex           @ paper.tex:14:1
-… 10266 more lines omitted
+… 10265 more lines omitted
 ```
 
 </details>
@@ -559,7 +559,7 @@ cache
   source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
   holds 197802 definitions
   state cached
-… 2 more lines omitted
+… 3 more lines omitted
 ```
 
 </details>
@@ -642,7 +642,7 @@ index   step         name                        detail                    file
 8412    open-file    \article                    /usr/local/texlive/YYYY…  paper.tex      @ paper.tex:1:1
 10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
 10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
-… 211 more lines omitted
+… 185 more lines omitted
 ```
 
 </details>

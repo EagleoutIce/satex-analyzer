@@ -314,6 +314,9 @@ impl Machine<'_> {
         if arms < 2 {
             return (arms == 1).then_some(0);
         }
+        if !self.cutting() && self.learned_cut() {
+            return None;
+        }
         let i = self.choices.len();
         let scripted = i < self.script.len();
         // Memory is no reason here: it differs between runs, and the hard stop takes it.

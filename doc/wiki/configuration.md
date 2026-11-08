@@ -559,6 +559,9 @@ analysis:
   assume_unknown_char_catcode: true  # assume a \catcode of a character satex could not pin down never changes a structural one
     #! affects: precision, soundness
     #! example: off: `\catcode\count@=11` after a summarized loop may make `{` a letter, one path each way
+  assume_call_learned_effect: true  # assume a call that keeps forking on unknown values leaves what other runs of its definition left, values widened to their type
+    #! affects: precision, soundness, speed
+    #! example: off: `\pgfmathparse{\the\wd0}` walks the printed width digit by digit
 
 # shell_escape: restricted # which programs \write18 may run: none, restricted or full. Unset: what the build files ask for
 #! affects: precision, soundness
@@ -566,6 +569,7 @@ analysis:
 #! example: `\write18{date > now.tex}` runs, so `\input{now}` reads its output
 # Your own effect summaries, for a macro you do not want followed: none by
 # default, SaTeX runs the real code. Each is said once per run as an `assumption`.
+#! example: `stubs: { \includegraphics: { args: "som", result: box } }`
 stubs: {}
 
 interaction: nonstopmode  # the engine's -interaction: batchmode … errorstopmode
@@ -982,6 +986,12 @@ limits:
   call_summary_after: 2  # after this many runs of one call, a call with unknown arguments reuses their result instead of running. 0 = never
     #! affects: precision, speed
     #! example: `\pgfmathparse{\x}` with unknown `\x` reuses what earlier calls did
+  call_learn_after: 2  # after this many runs on different arguments, what a macro leaves is known to its calls that fork on unknown values. 0 = never
+    #! affects: precision, speed
+    #! example: two `\pgfmathparse` on numbers teach that `\pgfmathresult` holds a number
+  call_learn_forks: 2  # how many undecided choices a call with a learned effect may meet before it ends with that effect
+    #! affects: precision, speed
+    #! example: 1 ends `\pgfmathparse{\the\wd0}` at its first undecided digit
   may_run_depth: 3  # how many macro levels deep satex follows code a join made unknown to find what it may assign
     #! affects: precision, speed
     #! example: `\def\a{\b}` reached in skipped code: what `\b` assigns is made unknown too
@@ -995,7 +1005,7 @@ limits:
     #! affects: precision, memory
     #! example: `\ifdraft\def\a{1}\def\b{1}\else\def\a{2}\def\b{2}\fi`: a and b stay paired
   join_names: 64  # how many names a merge keeps paired at most, the rest are merged on their own
-  text_names: 8  # how many control sequences unknown text names (a widened float list keeps its boxes), past them any
+  text_names: 64  # how many control sequences unknown text names (a widened float list keeps its boxes), past them any
     #! affects: precision, memory
     #! example: higher: more names keep their pairing after an `\if`
   value_set: 8  # how many exact values a number or length keeps after branches merge before only its range is kept
@@ -1172,7 +1182,7 @@ A rule's own settings live under `lints.⟨code⟩`.
 
 ## The clock
 
-`clock` sets `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/a553f86ad9f31c0a70b94c0245ab8247ff8b8c56/texk/web2c/tex.web#L5240)).
+`clock` sets `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/4387e30b6c5e9f45b192476533bfaf12cd0764d9/texk/web2c/tex.web#L5240)).
 
 | Value | Meaning |
 | --- | --- |
@@ -1206,6 +1216,8 @@ analysis:
 `analysis.assume_messages_output_only` (default `true`): Assumes formatting a message for the terminal or log (expl3's `\iow_wrap:nnnN`) changes nothing but the text it writes. A message over unknown text then writes unknown text, on one path, reported as an `assumption`. `false` wraps it for real, a path per way it may wrap.
 
 `analysis.assume_unknown_char_catcode` (default `true`): Assumes a `\catcode` through a character satex could not pin down (a summarized loop's counter) never names a structural character, one of category neither letter nor other (`\ { } % $ & # ^ _`, space, end of line, active). Reported as `unknown-char-catcode`. `false` lets it reach them: the reader splits a path per category.
+
+`analysis.assume_call_learned_effect` (default `true`): Assumes a call whose run keeps forking on unknown values leaves what runs of its definition on other values left, each value widened to its type, and raises nothing. Reported as `call-learned-effect`. `false` walks every such call.
 
 ## Stubs
 
