@@ -140,7 +140,7 @@ const box = async (crop, pad) => {
     if (!rs.length) return null;
     const l = Math.min(...rs.map((r) => r.left)) - ${pad}, t = Math.min(...rs.map((r) => r.top)) - ${pad}, r = Math.max(...rs.map((r) => r.right)) + ${pad}, b = Math.max(...rs.map((r) => r.bottom)) + ${pad};
     const x = Math.max(0, l), y = Math.max(0, t);
-    return { x, y, width: Math.min(innerWidth, r) - x, height: Math.min(innerHeight, b) - y, scale: 1, cut: l < -.5 || t < -.5 || r > innerWidth + .5 || b > innerHeight + .5 };`);
+    return { x, y, width: Math.min(innerWidth, r) - x, height: Math.min(innerHeight, b) - y, scale: 1, cut: l + ${pad} < -.5 || t + ${pad} < -.5 || r - ${pad} > innerWidth + .5 || b - ${pad} > innerHeight + .5 };`);
   if (b?.cut) throw new Error(`the viewport cuts ${crop}: make the entry's viewport larger`);
   if (b) delete b.cut;
   return b;
