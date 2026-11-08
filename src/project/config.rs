@@ -288,7 +288,7 @@ impl Default for Limits {
             meaning_set: 8,
             join_arms: 32,
             join_names: 64,
-            text_names: 8,
+            text_names: 64,
             value_set: 8,
             interval_set: 4,
             degrade_at_percent: 100,

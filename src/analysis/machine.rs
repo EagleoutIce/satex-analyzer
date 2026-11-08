@@ -8081,7 +8081,7 @@ will look undefined",
     /// refuted, whatever error it raised before. It is dropped while another
     /// path goes on, kept with TeX's recovery if it is the last, and each drop
     /// is reported (`assumed-compiles`). Whether so.
-    fn refute_library_fault(&mut self, text: &str, opener: Span) -> bool {
+    pub(crate) fn refute_library_fault(&mut self, text: &str, opener: Span) -> bool {
         let refuted = self.may_refute(opener) && self.took_unknown_arm();
         if refuted {
             self.dropping = Some(text.to_string());
@@ -11858,6 +11858,18 @@ will look undefined",
                             i += 1;
                         }
                         self.unread_rest(t, &[*expected], t.span);
+                        continue;
+                    }
+                    // Typed text that may hold the literal (a hull of a list of
+                    // names, or text of no known class) begins with it, and
+                    // stands for its own rest.
+                    if let Some(t) = t
+                        && t.tok != *expected
+                        && let Some((class, ..)) = self.typed_shape(t)
+                        && (class == TextClass::WIDE || self.token_class(t, false).may_be(*expected))
+                    {
+                        self.unread(t);
+                        i += 1;
                         continue;
                     }
                     // After unknown text the literal may be inside it: what

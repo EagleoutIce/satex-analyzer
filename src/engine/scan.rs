@@ -832,12 +832,13 @@ impl Machine<'_> {
             || "the end of the input".into(),
             |t| crate::engine::tex::detokenize(&[t], &self.out.interner),
         );
-        self.diagnose(
-            crate::analysis::facts::Severity::Warning,
-            "missing-number",
-            span,
-            format!("missing number before `{seen}`, treated as zero"),
-        );
+        let message = format!("missing number before `{seen}`, treated as zero");
+        // A name no path defined, where package code wants a number, on an arm
+        // over unknown text: a run that compiles never takes that arm.
+        if at.and_then(|t| t.cs()).is_some_and(|sym| matches!(self.env.meaning(sym), Meaning::Undefined)) {
+            self.refute_library_fault(&message, span);
+        }
+        self.diagnose(crate::analysis::facts::Severity::Warning, "missing-number", span, message);
         self.misread(at);
         Some(0)
     }
