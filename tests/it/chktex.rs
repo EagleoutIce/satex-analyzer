@@ -1001,6 +1001,106 @@ fn a_parenthesis_in_math_is_not_reported() {
     assert!(findings(&doc.analysis, "parenthesis-spacing").is_empty());
 }
 
+/// An undefined command tells nobody what its arguments and the rest of its
+/// statement mean, so the letters TeX sets for them are not the author's prose.
+/// Pins the false `parenthesis-spacing` on `\node (@)at(x) {y};` and on
+/// `\LC{(x y )}` in a file whose editor run lacked the preamble, as it stands
+/// with and without a class. The sentence before them is still reported.
+#[test]
+fn an_undefined_commands_statement_is_not_prose() {
+    for (i, class) in ["", "\\documentclass{article}\n"].iter().enumerate() {
+        let source = format!(
+            "{class}\\begin{{document}}\nPlain (bad )text with \\emph{{known}} words .\n\n\\node (a)at(b) {{c}};\n\\LC{{(x y )}}\n\\end{{document}}\n"
+        );
+        let Some(doc) = on_disk(&format!("undefined-command-prose-{i}"), &source, true) else { return };
+        let found = findings(&doc.analysis, "parenthesis-spacing");
+        assert_eq!(found.len(), 1, "only the sentence: {found:?}");
+        assert_eq!(findings(&doc.analysis, "space-before-punctuation").len(), 1);
+    }
+}
+
+/// The body of an undefined environment is code whatever it spells, up to its
+/// own `\end`, with a nested one of the same name counted. Pins the same false
+/// findings inside `\begin{tikzpicture}` and `\begin{frame}` without their
+/// packages. The prose after the `\end` is reported again.
+#[test]
+fn an_undefined_environments_body_is_not_prose() {
+    let source = "\\begin{document}\n\\begin{foo}\nhello (x )y .\n\\begin{foo} in(ner ) .\\end{foo}\nouter (z )w .\n\\end{foo}\nPlain (bad )text .\n\\end{document}\n";
+    let Some(doc) = on_disk("undefined-environment-prose", source, true) else { return };
+    assert_eq!(findings(&doc.analysis, "parenthesis-spacing").len(), 1);
+    assert_eq!(findings(&doc.analysis, "space-before-punctuation").len(), 1);
+}
+
+/// Every prose rule skips unknown code as verbatim does: dashes, quotes, ties,
+/// slanted letters. Pins the `wrong-dash`, `double-space`, and
+/// `missing-italic-correction` findings the same file got inside an undefined
+/// environment, while a tie and a slanted word outside it are still reported.
+#[test]
+fn every_prose_rule_skips_an_undefined_environment() {
+    let sentence = format!("{PROGRAM_TEXT} and Dr.~ Smith and {{\\em f}} before");
+    let source = |body: &str| format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
+    let Some(open) = on_disk("unknown-rules-open", &source(&sentence), true) else { return };
+    let inner = format!("\\begin{{foo}}\n{sentence}\n\\end{{foo}}");
+    let Some(hidden) = on_disk("unknown-rules-hidden", &source(&inner), true) else { return };
+    let spoken = ["double-space", "missing-italic-correction"];
+    for rule in spoken {
+        assert!(!findings(&open.analysis, rule).is_empty(), "{rule} outside");
+    }
+    for rule in TYPOGRAPHY.into_iter().chain(spoken).chain(["unbalanced-brackets"]) {
+        let found = findings(&hidden.analysis, rule);
+        assert!(found.is_empty(), "{rule} inside: {found:?}");
+    }
+}
+
+/// An undefined command's reach ends with its statement: at the `;`, at the `}`
+/// closing the group it stands in, at the line's end. Pins that the extent does
+/// not swallow the prose around it, which would hide real findings. A multi-line
+/// argument, and an argument carried on by the next line, stay inside.
+#[test]
+fn an_undefined_commands_reach_ends_with_its_statement() {
+    let reported: &[&str] = &[
+        "\\foo{a}; Plain (bad )text.",
+        "\\emph{\\foo (a )} Plain (bad )text.",
+        "\\foo (a )\nPlain (bad )text.",
+        "Gr\u{f6}\u{df}e \\foo{(a )}; Plain (bad )text.",
+        "\\foo{a\n(b )\nc}\nPlain (bad )text.",
+        "\\foo{a}%\n{(b )}\nPlain (bad )text.",
+        "\\foo[a,\n(b )]{c}\nPlain (bad )text.",
+    ];
+    for (i, body) in reported.iter().enumerate() {
+        let source = format!("\\begin{{document}}\n{body}\n\\end{{document}}\n");
+        let Some(doc) = on_disk(&format!("undefined-reach-{i}"), &source, true) else { return };
+        let found = findings(&doc.analysis, "parenthesis-spacing");
+        assert_eq!(found.len(), 1, "{body}: {found:?}");
+    }
+}
+
+/// An undefined environment no `\end` in its file closes, as in a macro's body,
+/// reaches as far as an undefined command. Pins that it does not hide the rest
+/// of the file.
+#[test]
+fn an_undefined_environment_without_its_end_reaches_as_a_command() {
+    let source = "\\newcommand\\x{\\begin{foo}}\n\\begin{document}\n\\x\nPlain (bad )text.\n\\end{document}\n";
+    let Some(doc) = on_disk("undefined-environment-open", source, true) else { return };
+    assert_eq!(findings(&doc.analysis, "parenthesis-spacing").len(), 1);
+}
+
+/// A chapter has no class of its own, but its sentences are prose whichever run
+/// reads it. Pins that the unknown-code rule leaves a part read through its root
+/// linted: a known `\emph` starts no unknown code, and an undefined command in
+/// the part hides its own line only.
+#[test]
+fn a_chapter_without_a_class_is_still_prose() {
+    let root = "\\documentclass{article}\n\\begin{document}\n\\input{chapter}\n\\end{document}\n";
+    let Some(doc) = on_disk("chapter-prose", root, true) else { return };
+    let part = "Plain (bad )text with \\emph{known} words .\n\\foo (a )\nMore (bad )text.\n";
+    std::fs::write(doc.dir.join("chapter.tex"), part).expect("chapter");
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let analysis = Machine::analyze(root, Some(&doc.dir.join("doc.tex")), &cfg);
+    assert_eq!(findings(&analysis, "parenthesis-spacing").len(), 2);
+    assert_eq!(findings(&analysis, "space-before-punctuation").len(), 1);
+}
+
 // chktex warning 4: an italic correction that sets a kern of zero, which
 // satex decides from the font the character was really set in.
 #[test]

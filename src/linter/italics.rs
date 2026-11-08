@@ -368,7 +368,7 @@ fn missing_italic_correction(report: &mut Report) {
     let mut findings = Vec::new();
     // Neighbors as TeX set them, not as the source lists them: a title set
     // once upright and once in italics is two runs of characters.
-    for a in view.ours() {
+    for a in view.prose() {
         let b = a + 1;
         let (Some(from), Some(to)) = (view.span(a), view.span(b)) else { continue };
         // The `\/` goes into the source right after the letter, so only a

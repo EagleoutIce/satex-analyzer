@@ -28,9 +28,11 @@ pub struct View<'a> {
     text: &'a crate::analysis::facts::Text,
     states: &'a [FontState],
     offsets: Vec<u32>,
-    /// One per character: whether the run read it verbatim.  Empty when
-    /// the run read nothing verbatim.
-    verbatim: Vec<bool>,
+    /// One per character: whether it is program text
+    /// ([`crate::linter::verbatim::code`]).  Empty when none is.
+    code: Vec<bool>,
+    /// The source positions [`View::code_at`] holds for.
+    code_at: crate::linter::verbatim::Bodies,
     /// One per file: whether the author wrote it.
     document: Vec<bool>,
     /// Which character the run set at a source position, the first one
@@ -61,11 +63,13 @@ impl<'a> View<'a> {
         let document = (0..analysis.files.len())
             .map(|f| crate::queries::query::origin(analysis, f as FileId) == "document")
             .collect();
+        let code_at = crate::linter::verbatim::code(analysis, sources);
         View {
             text,
             states: &analysis.font_states,
             offsets,
-            verbatim: verbatim_of(text, analysis, sources),
+            code: code_of(text, analysis, &code_at),
+            code_at,
             document,
             at_span: OnceCell::new(),
         }
@@ -129,10 +133,16 @@ impl<'a> View<'a> {
         self.spot(index).is_some_and(|spot| spot.certain)
     }
 
-    /// Whether the run read the character verbatim, in a verbatim body or
-    /// after a `\verb` on its line, so it is program text and not prose.
-    pub fn verbatim(&self, index: usize) -> bool {
-        self.verbatim.get(index).copied().unwrap_or(false)
+    /// Whether the character is program text and not prose: the run read
+    /// it verbatim, in a verbatim body or after a `\verb` on its line, or
+    /// an undefined command or environment left it behind.
+    pub fn code(&self, index: usize) -> bool {
+        self.code.get(index).copied().unwrap_or(false)
+    }
+
+    /// [`View::code`] for a source position, which need not have set anything.
+    pub fn code_at(&self, span: Span) -> bool {
+        self.code_at.holds(span.file, span.line, span.col)
     }
 
     pub fn modes(&self, index: usize) -> Modes {
@@ -161,10 +171,10 @@ impl<'a> View<'a> {
         self.span(index).is_some_and(|span| self.document(span.file))
     }
 
-    /// [`View::is_ours`], and the run read it as prose rather than
-    /// verbatim: the characters a typographic rule may report.
+    /// [`View::is_ours`], and no [`View::code`]: the characters a
+    /// typographic rule may report.
     pub fn is_prose(&self, index: usize) -> bool {
-        self.is_ours(index) && !self.verbatim(index)
+        self.is_ours(index) && !self.code(index)
     }
 
     /// [`View::is_prose`], and outside mathematics.
@@ -257,14 +267,14 @@ impl<'a> View<'a> {
     }
 }
 
-/// Which of `text`'s characters the run read verbatim, empty when none of
-/// them was, so a document without verbatim pays one scan of the facts.
-fn verbatim_of(text: &crate::analysis::facts::Text, analysis: &Analysis, sources: &Sources) -> Vec<bool> {
-    if text.at.is_empty() {
-        return Vec::new();
-    }
-    let bodies = crate::linter::verbatim::map(analysis, sources);
-    if bodies.is_empty() {
+/// Which of `text`'s characters are [`View::code`], empty when none of
+/// them is, so a document without any pays one scan of the facts.
+fn code_of(
+    text: &crate::analysis::facts::Text,
+    analysis: &Analysis,
+    bodies: &crate::linter::verbatim::Bodies,
+) -> Vec<bool> {
+    if text.at.is_empty() || bodies.is_empty() {
         return Vec::new();
     }
     let mut out: Vec<bool> =

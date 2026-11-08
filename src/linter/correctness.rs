@@ -755,10 +755,7 @@ fn caused_library_errors(report: &mut Report) {
 /// The kernel's own error (latex.ltx `\begin`): `LaTeX Error: Environment
 /// ⟨name⟩ undefined.`
 fn undefined_environments(report: &mut Report) {
-    let found = kernel_errors(report, |text| {
-        let rest = &text[text.find("LaTeX Error: Environment ")? + "LaTeX Error: Environment ".len()..];
-        Some(rest[..rest.find(" undefined")?].to_string())
-    });
+    let found = kernel_errors(report, |text| Some(crate::linter::verbatim::undefined_environment(text)?.to_string()));
     for (span, name, doubt) in found {
         let message = format!("LaTeX Error: Environment {name} undefined");
         if let Some(cause) = doubt {

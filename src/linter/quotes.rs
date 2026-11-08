@@ -227,7 +227,7 @@ fn marks(view: &View) -> Vec<Mark> {
     while i < view.len() {
         let Some(c) = view.char_at(i) else { break };
         // A quotation character the run read verbatim is program text.
-        if !view.text_mode(i) || view.verbatim(i) {
+        if !view.text_mode(i) || view.code(i) {
             i += 1;
             continue;
         }
@@ -235,7 +235,7 @@ fn marks(view: &View) -> Vec<Mark> {
             '`' | '\'' => {
                 let (mut left, mut right) = (c == '`', c == '\'');
                 let mut end = i + 1;
-                while end < view.len() && view.joined(end) && view.text_mode(end) && !view.verbatim(end) {
+                while end < view.len() && view.joined(end) && view.text_mode(end) && !view.code(end) {
                     match view.char_at(end) {
                         Some('`') => left = true,
                         Some('\'') => right = true,

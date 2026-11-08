@@ -91,7 +91,7 @@ fn wrong_dash(report: &mut Report) {
     let mut i = 0;
     while i < view.len() {
         // A hyphen the run read verbatim is program text, not a dash.
-        if view.verbatim(i) {
+        if view.code(i) {
             i += 1;
             continue;
         }

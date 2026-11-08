@@ -173,7 +173,10 @@ ordinary English, so those findings come as notes.
 
 Code shown as text is not prose.  The rule skips text in the typewriter
 family (`\\ttdefault`) and a call: a `(` right after a name, around a list of
-single words or nothing, as in `plot(x, y)` or `c(1, 2, 3)`.
+single words or nothing, as in `plot(x, y)` or `c(1, 2, 3)`.  What an
+undefined command or environment leaves behind is unknown code as well, so
+every prose rule skips it: the command's arguments and the rest of its
+statement or line, an environment's body up to its `\\end`.
 
 Fix by moving the space to the other side of the parenthesis.",
         references: &[Ref { source: Source::Chktex, at: "36" }, Ref { source: Source::Chktex, at: "37" }],
@@ -528,7 +531,9 @@ fn double_space(report: &mut Report) {
         if expansion.package.is_some() || span.col == 0 || !view.document(span.file) {
             continue;
         }
-        if !analysis.settings.conventions.ties.hard.contains(&analysis.interner.cs(expansion.name)) {
+        if !analysis.settings.conventions.ties.hard.contains(&analysis.interner.cs(expansion.name))
+            || view.code_at(span)
+        {
             continue;
         }
         let Some((path, source)) = edits.text(span.file) else { continue };

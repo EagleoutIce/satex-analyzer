@@ -8,12 +8,17 @@
 //! Text read this way is program text, not prose, so every rule about
 //! typography has to leave it alone.  [`crate::linter::text::View::verbatim`]
 //! is how a rule asks, and it is built once per lint run.
+//!
+//! What an undefined command or environment leaves on the page is program
+//! text too: [`code`] adds it, so the rules skip both the same way.
 
 use crate::fixed::{HashMap, HashSet};
 use std::rc::Rc;
 
+use crate::analysis::facts::MeaningKind;
 use crate::analysis::machine::Analysis;
 use crate::engine::builtins::OccKind;
+use crate::engine::source::{byte_of_col, col_of_byte};
 use crate::engine::tex::{FileId, Span};
 use crate::linter::fix::{Sources, Text};
 
@@ -224,4 +229,112 @@ pub fn map(analysis: &Analysis, sources: &Sources) -> Bodies {
         true => Bodies::of(&verbatims(analysis, &files(analysis, sources))),
         false => Bodies::default(),
     }
+}
+
+/// `name` from the kernel's message that `\begin{name}` is undefined.
+pub fn undefined_environment(message: &str) -> Option<&str> {
+    let rest = &message[message.find("LaTeX Error: Environment ")? + "LaTeX Error: Environment ".len()..];
+    Some(&rest[..rest.find(" undefined")?])
+}
+
+/// [`map`], and what undefined commands and environments leave behind.
+/// Nobody knows what TeX should make of those characters, so they are
+/// unknown code and not the author's prose.
+pub fn code(analysis: &Analysis, sources: &Sources) -> Bodies {
+    let mut out = match any(analysis) {
+        true => verbatims(analysis, &files(analysis, sources)),
+        false => Verbatims::default(),
+    };
+    let commands = (analysis.facts.expansions.iter())
+        .filter(|e| matches!(e.meaning, MeaningKind::Undefined | MeaningKind::UndefinedApproximated))
+        .map(|e| (e.span, None));
+    let environments = (analysis.facts.occurrences.iter())
+        .filter(|o| o.kind == OccKind::Message)
+        .filter_map(|o| Some((o.span, Some(undefined_environment(&o.key)?))));
+    let mut seen = HashSet::default();
+    for (span, name) in commands.chain(environments) {
+        if !seen.insert((span, name)) || crate::queries::query::origin(analysis, span.file) != "document" {
+            continue;
+        }
+        let Some(text) = sources.get(analysis.file_name(span.file)) else { continue };
+        let reach =
+            name.and_then(|name| environment_end(&text, name, span)).unwrap_or_else(|| statement_end(&text, span));
+        out.inline.push((span.file, span.line, span.col, if reach.0 == span.line { reach.1 } else { u32::MAX }));
+        if reach.0 > span.line {
+            out.bodies.push(Verbatim {
+                file: span.file,
+                name: String::new(),
+                from: span.line,
+                to: reach.0,
+                after: reach.1,
+            });
+        }
+    }
+    Bodies::of(&out)
+}
+
+/// Each character of `text` from `at` on, with its line and byte offset in
+/// it. A comment is skipped, and so is what a `\` escapes. `None` marks a line's end.
+fn walk(text: &Text, at: Span) -> impl Iterator<Item = (u32, usize, Option<char>)> + '_ {
+    (at.line..=text.line_count() as u32).flat_map(move |line| {
+        let body = text.line(line);
+        let start = if line == at.line { byte_of_col(body, at.col.max(1)) } else { 0 };
+        let mut chars = body[start..].char_indices().map(|(byte, c)| (byte + start, c));
+        let mut out = Vec::new();
+        while let Some((byte, c)) = chars.next().filter(|(_, c)| *c != '%') {
+            out.push((line, byte, Some(c)));
+            if c == '\\' {
+                chars.next();
+            }
+        }
+        out.push((line, body.len(), None));
+        out
+    })
+}
+
+/// Where the `\end{name}` closing the `\begin{name}` at `at` ends, nested
+/// ones counted. `None` when the file holds none, as in a macro's body.
+fn environment_end(text: &Text, name: &str, at: Span) -> Option<(u32, u32)> {
+    let (begin, end) = (format!("\\begin{{{name}}}"), format!("\\end{{{name}}}"));
+    let mut depth = 0u32;
+    for (line, byte, c) in walk(text, at) {
+        let rest = &text.line(line)[byte..];
+        if c == Some('\\') && rest.starts_with(&begin) {
+            depth += 1;
+        } else if c == Some('\\') && rest.starts_with(&end) {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some((line, col_of_byte(text.line(line), byte + end.len())));
+            }
+        }
+    }
+    None
+}
+
+/// Where the statement of the undefined command at `at` ends: past its
+/// braced and bracketed arguments, however many lines they take, at the
+/// first `;` outside them, the `}` closing the group it stands in, or the
+/// line's end. A line opening with `{` or `[` carries on the arguments.
+fn statement_end(text: &Text, at: Span) -> (u32, u32) {
+    let (mut braces, mut brackets) = (0u32, 0u32);
+    let mut last = at.line;
+    for (line, byte, c) in walk(text, at) {
+        last = line;
+        match c {
+            Some('{') => braces += 1,
+            Some('}') if braces == 0 => return (line, col_of_byte(text.line(line), byte)),
+            Some('}') => braces -= 1,
+            Some('[') if braces == 0 => brackets += 1,
+            Some(']') if braces == 0 => brackets = brackets.saturating_sub(1),
+            Some(';') if braces == 0 && brackets == 0 => return (line, col_of_byte(text.line(line), byte + 1)),
+            None if braces == 0 => {
+                let next = text.line(line + 1).trim_start();
+                if !next.starts_with(['{', '[']) && (brackets == 0 || next.is_empty()) {
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    (last, u32::MAX)
 }
