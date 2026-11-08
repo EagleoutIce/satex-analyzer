@@ -908,9 +908,16 @@ impl Machine<'_> {
                     paths.shelved.push(Shelved { config: Config::new(state, env, !going), error, at, counts, rows });
                     self.restore_path(start);
                     self.env.rewind(&fork);
-                    self.env.unfork(fork);
+                    // A fork this run parted is `paths.fork` too, which the shelved path keeps.
+                    if !own || paths.fork.is_none() {
+                        self.env.unfork(fork);
+                    }
                     self.undo_counters(counters);
                     return Next::None;
+                }
+                // An earlier refuted run parted it: it is `paths.fork` too, unforked once.
+                if own {
+                    paths.fork = None;
                 }
                 self.env.unfork(fork);
                 return match (self.infeasible, going) {
