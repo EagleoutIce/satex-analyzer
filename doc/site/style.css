@@ -1252,6 +1252,13 @@ ol.refs { font-size: .8rem; color: var(--muted); margin: var(--s16) 0 0; padding
 .draw-top .search input { padding: .4rem .9rem .4rem 2rem; border: 1px solid var(--border); border-radius: 999px; background: var(--sunk); color: var(--fg); font-size: .9rem; transition: border-color var(--quick), background-color var(--quick); }
 .draw-top .search input:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); background: var(--panel); }
 .draw-pad .draw-meta { flex: none; margin: 0; }
+/* the popup's pad: --draw-w (kept as ?drawpad=) sets its width, centred in the box; full width where the box stacks */
+.draw-dialog .draw-pad { width: var(--draw-w, min(19.2rem, 46vw)); max-width: 60%; }
+.draw-cv { position: relative; width: 100%; }
+.draw-grip { position: absolute; right: 2px; bottom: 2px; width: 1.1rem; height: 1.1rem; padding: 0; border: 0; border-radius: 4px; background: linear-gradient(135deg, transparent 45%, var(--muted) 45% 55%, transparent 55% 70%, var(--muted) 70% 80%, transparent 80%); cursor: nwse-resize; touch-action: none; opacity: .7; }
+.draw-grip:hover, .draw-grip:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 52rem) { .draw-dialog .draw-pad { width: min(var(--draw-w, 100%), 100%); max-width: none; align-self: center; } }
+
 
 .tr-bar { position: sticky; top: 0; z-index: 2; background: var(--panel); padding: .3rem 0; } #trace-step { font-variant-numeric: tabular-nums; min-width: 9ch; }
 .loc-file { color: var(--muted); font-weight: 400; margin-right: .1rem; }
@@ -1862,8 +1869,6 @@ a.cmd-edit:hover, a.cmd-edit:focus-visible { background: color-mix(in srgb, var(
   .phone-only[aria-pressed=true]::after { transform: none; }
   .play-split[data-view=editor] .side-tabs [role=tab]::after { transform: scaleX(0); }
   .play-split[data-view=editor] .side-tabs [role=tab][aria-selected=true] { color: var(--muted); }
-  /* the draw pad stays small so the results show */
-  .draw-pad { width: min(100%, 7.5rem); align-self: flex-start; }
   /* the caches: a card per entry */
   .cache-table thead { display: none; }
   .cache-table, .cache-table tbody { display: block; }

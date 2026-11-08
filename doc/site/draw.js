@@ -74,6 +74,7 @@ self.satexDraw = (
     batch: 300,
     again: 120,
     more: 30,
+    pad: [96, 16],
   };
   const $ = (id) => root.querySelector(`#${id}`);
   const pad = $('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true });
@@ -87,9 +88,46 @@ self.satexDraw = (
     mode: query.get('mode') ?? '',
     shape: query.get('shape') ?? '',
     zoom: Number(query.get('zoom')) || DRAW.zoom,
+    pad: Number(query.get('drawpad')) || 0,
   };
   const zoomApply = () => root.style.setProperty('--draw-zoom', String(Math.min(3, Math.max(0.5, drawFilter.zoom))));
   zoomApply();
+  // the popup's pad: a width in px (`?drawpad=240`, so Copy link keeps it), centred in its box, resized by the grip
+  const grip = $('draw-size');
+  if (grip) {
+    const box = pad.closest('.draw-box'), [lo, step] = DRAW.pad, stacked = () => getComputedStyle(box).flexDirection === 'column';
+    const room = () => { const s = getComputedStyle(box); return box.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight); };
+    const hi = () => Math.max(lo, Math.floor(stacked() ? room() : room() * 0.6));
+    const sync = () => {
+      const w = Math.round(pad.getBoundingClientRect().width) || drawFilter.pad;
+      grip.setAttribute('aria-valuemin', String(lo)); grip.setAttribute('aria-valuemax', String(hi())); grip.setAttribute('aria-valuenow', String(w));
+    };
+    const keep = () => {
+      const q = new URLSearchParams(location.search);
+      if (drawFilter.pad) q.set('drawpad', String(drawFilter.pad)); else q.delete('drawpad');
+      history.replaceState(null, '', `${location.pathname}${q.size ? `?${q}` : ''}${location.hash}`);
+    };
+    const set = (w) => {
+      drawFilter.pad = w ? Math.round(Math.min(hi(), Math.max(lo, w))) : 0;
+      if (drawFilter.pad) root.style.setProperty('--draw-w', `${drawFilter.pad}px`); else root.style.removeProperty('--draw-w');
+      sync(); keep();
+    };
+    if (drawFilter.pad) root.style.setProperty('--draw-w', `${Math.max(lo, drawFilter.pad)}px`);
+    grip.onfocus = sync;
+    grip.ondblclick = () => set(0);
+    grip.onpointerdown = (e) => {
+      e.preventDefault(); grip.setPointerCapture(e.pointerId);
+      const w0 = pad.getBoundingClientRect().width, x0 = e.clientX, y0 = e.clientY, k = stacked() ? 2 : 1;
+      grip.onpointermove = (m) => { const dx = (m.clientX - x0) * k, dy = m.clientY - y0; set(w0 + (Math.abs(dx) >= Math.abs(dy) ? dx : dy)); };
+      grip.onpointerup = grip.onpointercancel = () => { grip.onpointermove = grip.onpointerup = grip.onpointercancel = null; };
+    };
+    grip.onkeydown = (e) => {
+      const w = pad.getBoundingClientRect().width, n = step * (e.shiftKey ? 3 : 1);
+      const to = { ArrowRight: w + n, ArrowUp: w + n, ArrowLeft: w - n, ArrowDown: w - n, Home: lo, End: hi() }[e.key];
+      if (to == null && e.key !== 'Enter') return;
+      e.preventDefault(); set(e.key === 'Enter' ? 0 : to);
+    };
+  }
   let chosen = {};
   try {
     chosen = JSON.parse(localStorage.getItem('satex-draw-pkgs') ?? '{}');
