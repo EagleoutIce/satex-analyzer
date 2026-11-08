@@ -2245,7 +2245,7 @@
         group('Margin notes', field('Width', 'mpwidth', 'marginparwidth'), field('Sep', 'mpsep', 'marginparsep')));
       // the whole document, or from a place to another with \newgeometry … \restoregeometry
       const scope = el('div', 'tv-tabs');
-      for (const [k, label] of [['all', 'Whole document'], ['part', 'These pages only']]) {
+      for (const [k, label] of [['all', 'Whole document'], ['part', 'Part of it']]) {
         const b = el('button', `tv-tab${st.scope === k ? ' on' : ''}`, esc(label)); b.type = 'button';
         b.disabled = k === 'part' && !(s.part?.here || s.part?.marks?.length);
         b.onclick = () => { st.scope = k; touch(); draw(); };

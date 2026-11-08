@@ -741,7 +741,7 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   // another paper: its name, the margins kept as written
   const a4 = { ...structuredClone(st0), paper: 'a4paper', pw: 39158276, ph: 55380990 };
   assert.deepEqual(pairs(P.pageNodes(s, st0, a4, len)[0]), ['margin=2cm', 'a4paper']);
-  // these pages only: \newgeometry at the cursor, \restoregeometry before the section
+  // a part of it: \newgeometry at the cursor, \restoregeometry before the section
   const part = { ...structuredClone(wide), scope: 'part', from: 'here', to: '0' };
   const [ng, rg] = P.pageNodes(s, st0, part, len);
   assert.deepEqual([ng.name, ng.at, ng.range, pairs(ng), rg.name, rg.at, rg.args], ['newgeometry', at(3), null,

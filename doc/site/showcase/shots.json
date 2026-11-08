@@ -355,7 +355,7 @@
    "name": "page",
    "file": "spacing.tex",
    "title": "Page layout",
-   "caption": "Margins, paper and header to scale, as the run computed them. Apply writes geometry's options, or typearea's for KOMA-Script.",
+   "caption": "Margins, paper and header to scale, as the run computed them. Works with geometry and typearea.",
    "open": [
     "page",
     "\\documentclass",
