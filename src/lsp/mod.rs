@@ -986,7 +986,7 @@ impl Engine {
         let orphan = self.orphans.contains(&canonical(path));
         let (mut published, candidates) = self.serving(|engine| {
             let records = engine.unsilenced(handlers::findings(analysis));
-            let candidates = crate::linter::style_candidates(&records, &analysis.settings.style_prompt);
+            let candidates = crate::linter::style_candidates(&records, &analysis.settings.lints.style_prompt);
             (publish(&mut engine.actions, analysis, &records, path, &open), candidates)
         });
         let own = handlers::path_uri(&path.display().to_string());

@@ -29,7 +29,7 @@ A comment in the document silences findings. Without codes it silences every rul
 
 They apply to every output format and to `--fix`. An unknown code is reported as `unknown-suppress-code`.
 
-`satex lint --style` lists the rules the project breaks so often that they may be its style, as an editor asks about them (`style_prompt` in `satex.yaml`).
+`satex lint --style` lists the rules the project breaks so often that they may be its style, as an editor asks about them (`lints.style-prompt` in `satex.yaml`).
 
 ## Assertions
 

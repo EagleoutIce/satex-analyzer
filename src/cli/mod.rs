@@ -108,7 +108,7 @@ pub enum Command {
         #[arg(long, help_heading = "Selection")]
         no_group: bool,
         /// List the rules the project breaks so often they may be its style
-        /// (`style_prompt` in satex.yaml), instead of the findings.
+        /// (`lints.style-prompt` in satex.yaml), instead of the findings.
         #[arg(long, help_heading = "Rules")]
         style: bool,
         /// Apply the safe fixes to the project's files, lint again until

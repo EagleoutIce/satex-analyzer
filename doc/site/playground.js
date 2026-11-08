@@ -288,7 +288,7 @@
       if (!button.dataset.a) return;
       lsp('workspace/executeCommand', { command: 'satex/style', arguments: [{ code: candidate.code, answer: button.dataset.a }] }).catch((err) => toast(`not recorded: ${err.message}`));
       // the settings keep the answer, so it holds after a restart and in a shared link
-      const key = `${button.dataset.a === 'off' ? 'lint_off' : 'style_prompt.keep'}+`, had = configSet[key] ?? [];
+      const key = `${button.dataset.a === 'off' ? 'lint_off' : 'lints.style-prompt.keep'}+`, had = configSet[key] ?? [];
       if (!had.includes(candidate.code)) configKeep({ ...configSet, [key]: [...had, candidate.code] });
     };
     toastBox.before(ask);

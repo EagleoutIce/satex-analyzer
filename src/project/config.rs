@@ -346,7 +346,7 @@ impl Default for PluginSwitches {
     }
 }
 
-/// `style_prompt:` in `satex.yaml`: when an editor asks whether a rule
+/// `lints.style-prompt:` in `satex.yaml`: when an editor asks whether a rule
 /// that fires often in the project is its style, to turn that rule off.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -371,7 +371,7 @@ impl Default for StylePrompt {
 pub enum StyleChoice {
     /// The rule goes into `lint_off`.
     Off,
-    /// The rule goes into `style_prompt.keep`.
+    /// The rule goes into `lints.style-prompt.keep`.
     Keep,
 }
 
@@ -381,8 +381,8 @@ pub fn record_style_choice(dir: &Path, code: &str, choice: StyleChoice) -> Resul
     let path = dir.join(FILE_NAME);
     let text = std::fs::read_to_string(&path).unwrap_or_default();
     let text = match choice {
-        StyleChoice::Off => with_listed(&text, None, "lint_off", code),
-        StyleChoice::Keep => with_listed(&text, Some("style_prompt"), "keep", code),
+        StyleChoice::Off => with_listed(&text, &[], "lint_off", code),
+        StyleChoice::Keep => with_listed(&text, &["lints", "style-prompt"], "keep", code),
     }
     .ok_or_else(|| format!("{}: no flow list to add `{code}` to", path.display()))?;
     std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -390,32 +390,44 @@ pub fn record_style_choice(dir: &Path, code: &str, choice: StyleChoice) -> Resul
 }
 
 /// `text` with `item` in the flow list of `key` (or `key+`), under the
-/// top-level mapping `section` when one is named. A missing list is
-/// added as `key+`, so it extends what other layers set. `None` when the
-/// key is there but not as a one-line `[…]` list.
-fn with_listed(text: &str, section: Option<&str>, key: &str, item: &str) -> Option<String> {
+/// nested mappings `path` (outermost first, maybe empty). A missing
+/// mapping or list is added, the list as `key+`, so it extends what other
+/// layers set. `None` when the key is there but not as a one-line `[…]`
+/// list, or a mapping on the path is written inline.
+fn with_listed(text: &str, path: &[&str], key: &str, item: &str) -> Option<String> {
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    let header = section.map(|s| lines.iter().position(|l| l.trim_end() == format!("{s}:")));
-    let (from, indent) = match header {
-        None => (0, String::new()),
-        Some(None) => {
-            lines.push(format!("{}:", section.unwrap_or_default()));
-            (lines.len(), "  ".to_string())
-        }
-        Some(Some(at)) => {
-            let child = lines[at + 1..].iter().find(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'));
-            let indent = child.filter(|l| l.starts_with(' ')).map_or("  ", |l| &l[..l.len() - l.trim_start().len()]);
-            (at + 1, indent.to_string())
-        }
+    let (mut from, mut end, mut indent) = (0, lines.len(), String::new());
+    // `name:` at `indent`, its value empty or a comment.
+    let header = |l: &str, name: &str, indent: &str| {
+        l.strip_prefix(indent).and_then(|r| r.strip_prefix(name)).and_then(|r| r.strip_prefix(':')).map(|r| {
+            let r = r.trim();
+            r.is_empty() || r.starts_with('#')
+        })
     };
-    let inside = |l: &String| l.starts_with(&indent) && (indent.is_empty() || !l[indent.len()..].starts_with(' '));
-    let mut end = from;
-    while end < lines.len() && (section.is_none() || lines[end].trim().is_empty() || lines[end].starts_with(&indent)) {
-        end += 1;
+    let deeper = |l: &str, indent: &str| l.trim().is_empty() || l.starts_with(&format!("{indent} "));
+    for name in path {
+        match (from..end).find(|&i| lines[i].strip_prefix(&indent).is_some_and(|r| r.starts_with(&format!("{name}:"))))
+        {
+            Some(at) if header(&lines[at], name, &indent) == Some(true) => {
+                let sub_end = (at + 1..end).find(|&i| !deeper(&lines[i], &indent)).unwrap_or(end);
+                let child =
+                    lines[at + 1..sub_end].iter().find(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'));
+                let child = child.map_or(format!("{indent}  "), |l| l[..l.len() - l.trim_start().len()].to_string());
+                (from, end, indent) = (at + 1, sub_end, child);
+            }
+            Some(_) => return None,
+            None => {
+                lines.insert(end, format!("{indent}{name}:"));
+                (from, end, indent) = (end + 1, end + 1, format!("{indent}  "));
+            }
+        }
+    }
+    while end > from && lines[end - 1].trim().is_empty() {
+        end -= 1;
     }
     let found = (from..end).find(|&i| {
         let rest = lines[i].strip_prefix(&indent).unwrap_or_default();
-        inside(&lines[i]) && (rest.starts_with(&format!("{key}:")) || rest.starts_with(&format!("{key}+:")))
+        !rest.starts_with(' ') && (rest.starts_with(&format!("{key}:")) || rest.starts_with(&format!("{key}+:")))
     });
     match found {
         Some(i) => {
@@ -1815,9 +1827,6 @@ pub struct Config {
     /// Where package documentation is looked for and which conventions are read.
     #[serde(default)]
     pub docs: DocsConfig,
-    /// When an editor asks whether a frequent finding is the project's style.
-    #[serde(default)]
-    pub style_prompt: StylePrompt,
     /// What `satex slice` leaves out.
     #[serde(default)]
     pub slice: SliceConfig,
@@ -1883,7 +1892,6 @@ impl Default for Config {
             lua: Default::default(),
             lsp: LspConfig::default(),
             docs: DocsConfig::default(),
-            style_prompt: StylePrompt::default(),
             slice: SliceConfig::default(),
             playground: PlaygroundConfig::default(),
             type_plugins: TypePlugins::default(),
@@ -2159,6 +2167,8 @@ pub struct Lints {
     pub ellipsis_dots: EllipsisDots,
     pub table_rules: TableRules,
     pub clones: Clones,
+    /// When an editor asks whether a frequent finding is the project's style.
+    pub style_prompt: StylePrompt,
 }
 
 /// `lints.clones:` in `satex.yaml`: which repeated blocks of the source are worth a macro.
@@ -2454,6 +2464,7 @@ const LEGACY_KEYS: &[(&str, &[&str])] = &[
     ("log_gaps", &["gaps", "log"]),
     ("report_gaps", &["gaps", "report"]),
     ("gaps_log", &["gaps", "file"]),
+    ("style_prompt", &["lints", "style-prompt"]),
 ];
 
 /// Rewrites every legacy key [`LEGACY_KEYS`] names, and the old `cache:

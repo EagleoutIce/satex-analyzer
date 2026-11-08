@@ -1,5 +1,5 @@
 //! Rules a project breaks so often that they may be its style
-//! (`style_prompt` in satex.yaml), and the answer written to its satex.yaml.
+//! (`lints.style-prompt` in satex.yaml), and the answer written to its satex.yaml.
 
 use satex::project::config::{Config, StyleChoice, StylePrompt, record_style_choice};
 
@@ -76,11 +76,54 @@ fn yes_without_a_satex_yaml_makes_one_that_extends_the_defaults() {
 
 #[test]
 fn never_ask_keeps_the_rule() {
-    let dir = project("keep", Some("style_prompt:\n  min_findings: 5\nlint_off: []\n"));
+    let dir = project("keep", Some("lints:\n  style-prompt:\n    min_findings: 5\nlint_off: []\n"));
     record_style_choice(&dir, "primitive-tex-command", StyleChoice::Keep).unwrap();
     let cfg = merged(&dir);
-    assert_eq!(cfg.style_prompt.keep, ["primitive-tex-command"]);
-    assert_eq!(cfg.style_prompt.min_findings, 5);
+    assert_eq!(cfg.lints.style_prompt.keep, ["primitive-tex-command"]);
+    assert_eq!(cfg.lints.style_prompt.min_findings, 5);
     assert!(cfg.lint_off.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The answer is written under `lints:` then `style-prompt:`, whatever
+/// is already there: no `lints:`, a `lints:` with other keys, a second
+/// answer. Pinned: the writer once knew only one section level, so the
+/// nested key either landed at the top (unknown to the schema) or
+/// duplicated `lints:`, which is no YAML.
+#[test]
+fn keep_is_written_nested_under_lints() {
+    let sample = "lints:  # mine\n  clones:\n    enabled: false\n  style-prompt:\n    keep+: [clones]\n# tail\n";
+    for (tag, yaml, want) in [
+        ("fresh", None, vec!["lints:\n  style-prompt:\n    keep+: [a]\n"]),
+        (
+            "other",
+            Some("lints:  # mine\n  clones:\n    enabled: false\nlint_off: []\n"),
+            vec!["# mine\n  clones:", "  style-prompt:\n    keep+: [a]\nlint_off"],
+        ),
+        ("again", Some(sample), vec!["    keep+: [clones, a]\n# tail"]),
+    ] {
+        let dir = project(tag, yaml);
+        record_style_choice(&dir, "a", StyleChoice::Keep).unwrap();
+        let text = std::fs::read_to_string(dir.join("satex.yaml")).unwrap();
+        for w in want {
+            assert!(text.contains(w), "{tag}: {text}");
+        }
+        let cfg = merged(&dir);
+        assert!(cfg.lints.style_prompt.keep.contains(&"a".to_string()), "{tag}");
+        assert_eq!(cfg.lints.clones.enabled, tag == "fresh", "{tag}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// A satex.yaml from v0.2.0 has `style_prompt:` at the top. It still loads
+/// into `lints.style-prompt`, merged with a nested one. Pinned: moving the
+/// key must not turn old files into an unknown-key error. The nested
+/// `keep+: [clones]` form parses too.
+#[test]
+fn the_old_top_level_style_prompt_still_loads() {
+    let dir = project("old", Some("style_prompt:\n  min_findings: 5\nlints:\n  style-prompt:\n    keep+: [clones]\n"));
+    let cfg = merged(&dir);
+    assert_eq!(cfg.lints.style_prompt.min_findings, 5);
+    assert_eq!(cfg.lints.style_prompt.keep, ["clones"]);
     let _ = std::fs::remove_dir_all(&dir);
 }

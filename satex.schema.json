@@ -3097,6 +3097,57 @@
           },
           "type": "object"
         },
+        "style-prompt": {
+          "description": "an editor asks whether a rule the project breaks often is its style",
+          "properties": {
+            "categories": {
+              "default": [
+                "style"
+              ],
+              "description": "rule categories the editor may ask about",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`categories: [style, performance]`"
+            },
+            "enabled": {
+              "default": true,
+              "description": "false: never ask",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`false`: no prompt, even for 100 findings of one rule"
+            },
+            "keep": {
+              "default": [],
+              "description": "rules the project keeps and is never asked about again",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`keep: [primitive-tex-command]`"
+            },
+            "min_findings": {
+              "default": 10,
+              "description": "how many findings of one rule in your own files before the editor asks. Higher asks less often",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`3`: twelve `\\hskip` already prompt to turn off primitive-tex-command"
+            }
+          },
+          "type": "object"
+        },
         "table-rules": {
           "properties": {
             "rows": {
@@ -4041,57 +4092,6 @@
     },
     "stubs": {
       "properties": {},
-      "type": "object"
-    },
-    "style_prompt": {
-      "description": "an editor asks whether a rule the project breaks often is its style",
-      "properties": {
-        "categories": {
-          "default": [
-            "style"
-          ],
-          "description": "rule categories the editor may ask about",
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
-          "x-affects": [
-            "output"
-          ],
-          "x-example": "`categories: [style, performance]`"
-        },
-        "enabled": {
-          "default": true,
-          "description": "false: never ask",
-          "type": "boolean",
-          "x-affects": [
-            "output"
-          ],
-          "x-example": "`false`: no prompt, even for 100 findings of one rule"
-        },
-        "keep": {
-          "default": [],
-          "description": "rules the project keeps and is never asked about again",
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
-          "x-affects": [
-            "output"
-          ],
-          "x-example": "`keep: [primitive-tex-command]`"
-        },
-        "min_findings": {
-          "default": 10,
-          "description": "how many findings of one rule in your own files before the editor asks. Higher asks less often",
-          "minimum": 0,
-          "type": "integer",
-          "x-affects": [
-            "output"
-          ],
-          "x-example": "`3`: twelve `\\hskip` already prompt to turn off primitive-tex-command"
-        }
-      },
       "type": "object"
     },
     "texlive": {

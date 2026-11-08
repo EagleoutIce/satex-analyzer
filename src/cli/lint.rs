@@ -90,7 +90,7 @@ pub fn run(
         .filter(|r| select(r))
         .collect();
     if style {
-        return Ok(Output::Records(lint::style_candidates(&records, &context.analysis.settings.style_prompt)));
+        return Ok(Output::Records(lint::style_candidates(&records, &context.analysis.settings.lints.style_prompt)));
     }
     if !fixing.fix && !fixing.diff {
         return Ok(Output::Lint(records));

@@ -2360,7 +2360,7 @@ fn show_first_opens_the_first_finding_and_asks_again() {
 /// With `style_prompt.enabled` off, nothing is asked.
 #[test]
 fn no_style_prompt_when_it_is_off() {
-    let (mut server, dir) = open_styled("style-off", &["--set", "style_prompt.enabled=false"]);
+    let (mut server, dir) = open_styled("style-off", &["--set", "lints.style-prompt.enabled=false"]);
     let id = server.request("workspace/symbol", json!({ "query": "" }));
     loop {
         let msg = server.read();
@@ -2376,7 +2376,7 @@ fn no_style_prompt_when_it_is_off() {
 /// A hover over a finding shows its rule's card.
 #[test]
 fn a_hover_over_a_finding_shows_its_rule() {
-    let (mut server, dir) = open_styled("rule-card", &["--set", "style_prompt.enabled=false"]);
+    let (mut server, dir) = open_styled("rule-card", &["--set", "lints.style-prompt.enabled=false"]);
     let uri = fixture_uri(&dir.join("main.tex"));
     let line = crate::style_prompt::hskips(1).lines().position(|l| l.contains("hskip")).unwrap() as u32;
     let id = server.request(

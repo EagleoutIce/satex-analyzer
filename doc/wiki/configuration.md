@@ -91,19 +91,6 @@ lint_off: [analysis-imprecision, assertion-proved]  # rules that never report, b
   #! affects: output
   #! example: `lint_off+: [unused-label]`
   #! example: unused labels are no longer reported
-style_prompt:  # an editor asks whether a rule the project breaks often is its style
-  enabled: true  # false: never ask
-    #! affects: output
-    #! example: `false`: no prompt, even for 100 findings of one rule
-  min_findings: 10  # how many findings of one rule in your own files before the editor asks. Higher asks less often
-    #! affects: output
-    #! example: `3`: twelve `\hskip` already prompt to turn off primitive-tex-command
-  categories: [style]  # rule categories the editor may ask about
-    #! affects: output
-    #! example: `categories: [style, performance]`
-  keep: []  # rules the project keeps and is never asked about again
-    #! affects: output
-    #! example: `keep: [primitive-tex-command]`
 project:
   frozen: []  # globs of files that are read and analyzed but get no findings and no fixes, relative to this file
     #! affects: output
@@ -386,6 +373,19 @@ lints:
       #! affects: output, speed
     partners: 32  # later places with the same window one place is compared with
       #! affects: output, speed
+  style-prompt:  # an editor asks whether a rule the project breaks often is its style
+    enabled: true  # false: never ask
+      #! affects: output
+      #! example: `false`: no prompt, even for 100 findings of one rule
+    min_findings: 10  # how many findings of one rule in your own files before the editor asks. Higher asks less often
+      #! affects: output
+      #! example: `3`: twelve `\hskip` already prompt to turn off primitive-tex-command
+    categories: [style]  # rule categories the editor may ask about
+      #! affects: output
+      #! example: `categories: [style, performance]`
+    keep: []  # rules the project keeps and is never asked about again
+      #! affects: output
+      #! example: `keep: [primitive-tex-command]`
 # profile: package          # the kind of input whose defaults apply: document, package, class, literate or plain. Detected when unset
 #! affects: output, precision
 #! option: document: an ordinary LaTeX document, a .tex file with a body
