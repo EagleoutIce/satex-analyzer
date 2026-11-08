@@ -757,8 +757,10 @@ pub fn style_candidates(records: &[Record], prompt: &crate::project::config::Sty
     }
     let text = |r: &Record, key: &str| r.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string();
     let mut by_rule: std::collections::BTreeMap<String, (Vec<String>, serde_json::Value)> = Default::default();
+    // Copied code is a finding to act on, whatever the project is used to: never its style.
+    let asked = |code: &str| code != "clones" && !prompt.keep.iter().any(|k| k == code);
     for r in records.iter().filter(|r| text(r, "origin") == "document") {
-        if prompt.categories.contains(&text(r, "category")) && !prompt.keep.contains(&text(r, "code")) {
+        if prompt.categories.contains(&text(r, "category")) && asked(&text(r, "code")) {
             let first = || json!({ "path": r.get("path"), "line": r.get("line"), "col": r.get("col") });
             by_rule.entry(text(r, "code")).or_insert_with(|| (Vec::new(), first())).0.push(text(r, "name"));
         }

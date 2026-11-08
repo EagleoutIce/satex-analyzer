@@ -218,3 +218,14 @@ fn a_thesis_sized_source_is_searched_fast() {
     assert!(!groups.is_empty());
     assert!(took < std::time::Duration::from_secs(1), "{} bytes took {took:?}", source.len());
 }
+
+/// Copied figures are worth acting on: the lint reports them, but an editor
+/// never offers to turn `clones` off as the project's style.
+#[test]
+fn clones_are_never_offered_as_style() {
+    let (_project, analysis) = analyze("style", &document("", FIGURES), &config(Clones::default()));
+    let records = satex::linter::lint(&analysis);
+    assert!(records.iter().any(|r| r["code"] == "clones"), "the copies are reported");
+    let prompt = satex::project::config::StylePrompt { min_findings: 1, ..Default::default() };
+    assert!(satex::linter::style_candidates(&records, &prompt).iter().all(|c| c["code"] != "clones"));
+}
