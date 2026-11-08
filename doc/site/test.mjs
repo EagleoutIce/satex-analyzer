@@ -125,8 +125,9 @@ check(`${sampled.length} of ${offered.length} packages on demand resolve`, offer
   const second = (await load(null, manifest.worker))(await load(manifest.js));
   const { samples: texts } = await second.init(base, manifest, base.startsWith('file:') ? { wasm: await bytes(manifest.wasm), bundle: await bytes(manifest.kernels[0].bundle) } : {});
   const home = await text('index.html');
-  const tabs = [...home.matchAll(/<button role="tab"[^>]*id="ex-tab-\d+">([^<]+)<\/button>/g)].map((m) => m[1]);
-  const built = [...home.matchAll(/<script type="application\/json" class="ex-data">(.*?)<\/script>/gs)].map((m) => JSON.parse(m[1]).lints.map((d) => `${d.code}@${d.start[0] + 1}`).sort().join());
+  const tabs = [...home.matchAll(/<button role="tab"[^>]*id="ex-tab-\d+">([^<]+)<\/button>/g)].map((m) => m[1]).filter((n) => n.endsWith('.tex'));
+  // each example panel's own data, not the live showcase's before them
+  const built = [...home.matchAll(/id="ex-\d+"[^]*?<script type="application\/json" class="ex-data">(.*?)<\/script>/gs)].map((m) => JSON.parse(m[1]).lints.map((d) => `${d.code}@${d.start[0] + 1}`).sort().join());
   const kernel = manifest.kernels[0];
   fetchedHere.clear();
   for (const [i, name] of tabs.entries()) {
@@ -150,8 +151,9 @@ const edit = async (version, text) => [
 ];
 t = performance.now();
 await lsp('initialize', { capabilities: {} }, 1);
-const published = (await lsp('textDocument/didOpen', { textDocument: { uri, languageId: 'latex', version: 1, text: source } }))
-  .find((m) => m.method === 'textDocument/publishDiagnostics' && m.params.uri === uri);
+// the open file's findings come with the analysis the page asks for, as after an edit
+const published = [...await lsp('textDocument/didOpen', { textDocument: { uri, languageId: 'latex', version: 1, text: source } }), ...await lsp('satex/analyze', {})]
+  .findLast((m) => m.method === 'textDocument/publishDiagnostics' && m.params.uri === uri);
 const codes = published?.params.diagnostics.map((d) => d.data?.rule ?? d.code) ?? [];
 source = source.replace('\\end{document}', '\\gre\n\\end{document}');
 await edit(2, source);
@@ -199,10 +201,11 @@ check('finding underlines the whole call', marks.some((d) => d.range.end.line ==
 const cited = Object.entries(manifest.rules).find(([, r]) => /\[tex\.web § \d+\]\(https:\/\/[^)]*tex\.web#L\d+\)/.test(r.explanation ?? ''));
 check('tex.web reference in an explanation is a link', !!cited, cited?.[0] ?? 'no explanation links one');
 
-// every TeXbook link names its chapter, on the rules page, in explanations and in references
-const books = [...(await text('wiki/lints.html')).matchAll(/href="([^"]*texbook[^"]*)"/g)].map((m) => m[1])
-  .concat(Object.values(manifest.rules).flatMap((r) => [...(r.explanation ?? '').matchAll(/\]\((https:[^)]*texbook[^)]*)\)/g)].map((m) => m[1]).concat((r.references ?? []).map((x) => x.url ?? '').filter((u) => /texbook/.test(u)))));
-check('TeXbook links carry their chapter', books.length > 3 && books.every((u) => /#(?:chapter|appendix)-\w+$/.test(u)), books.filter((u) => !/#(?:chapter|appendix)-\w+$/.test(u)).slice(0, 3).join(' '));
+// every TeXbook link names its chapter in its text, on the rules page, in explanations and in references
+const books = [...(await text('wiki/lints.html')).matchAll(/<a href="[^"]*texbook[^"]*">([^<]*)<\/a>/g)].map((m) => m[1])
+  .concat(Object.values(manifest.rules).flatMap((r) => [...(r.explanation ?? '').matchAll(/\[([^\]]*)\]\(https:[^)]*texbook[^)]*\)/g)].map((m) => m[1])
+    .concat((r.references ?? []).filter((x) => /texbook/.test(x.url ?? '')).map((x) => x.cite ?? ''))));
+check('TeXbook links carry their chapter', books.length > 3 && books.every((t) => /chapter|appendix/.test(t)), books.filter((t) => !/chapter|appendix/.test(t)).slice(0, 3).join(' | '));
 const landing = await text('index.html');
 check('landing examples are highlighted without JS', /<span class="ln"[^>]*>.*?<span class="tok-cmd[ "]/.test(landing));
 check('landing shows no static command output', !/<pre class="output"|\$ satex explain/.test(landing));
@@ -314,11 +317,16 @@ async function browser() {
     const after = await js(layout);
     check('landing hover moves nothing', before === after, before === after ? '' : `${before} -> ${after}`);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 });
-    // the first landing example with an error: findings are wavy underlines, with the message on hover
-    const faulty = '#' + await js(`for (const t of document.querySelectorAll('.examples [role=tab]')) { const p = document.getElementById(t.getAttribute('aria-controls')); if (p?.querySelector('[data-lint].f-error')) { t.click(); return p.id; } } return 'none'`);
+    // the first landing example with a finding: findings are wavy underlines, with the message on hover
+    let faulty = '#none';
+    for (const id of await js(`return [...document.querySelectorAll('.examples [role=tab]')].map((t) => t.id)`)) {
+      await js(`document.getElementById('${id}').click()`);
+      const panel = await js(`return document.getElementById('${id}').getAttribute('aria-controls')`);
+      if (await until(`return !!document.querySelector('#${panel} .lint[data-lint]')`, 3000)) { faulty = '#' + panel; break; }
+    }
     check('wavy underlines', await js(`const l = [...document.querySelectorAll('${faulty} .lint')]; return l.length > 0 && l.every((e) => getComputedStyle(e).textDecorationStyle === 'wavy')`));
     const steady = await js(layout);
-    at = await center(`${faulty} [data-lint].f-error`);
+    at = await center(`${faulty} .lint[data-lint]`);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
     check('landing finding hover', await until(`return (document.querySelector('.tip-card:not([hidden]) .tip-lint')?.textContent ?? '').trim().length > 0`, 5000));
     await shot('landing-finding-hover');
