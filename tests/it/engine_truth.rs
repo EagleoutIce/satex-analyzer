@@ -400,7 +400,10 @@ fn an_unknown_dimension_prints_as_digits_point_digits_pt() {
     let r = body(&analysis, "r");
     assert!(r.contains('.') && r.ends_with("pt"), "{r}");
     assert!(body(&analysis, "two").ends_with("pt"));
-    assert!(!body(&analysis, "one").contains('.'));
+    // `#1` holds no `.` token (a typed digits token's name spells `lo..hi`).
+    let one = analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == "one").unwrap();
+    let point = |t: &satex::engine::tex::Token| matches!(t.tok, satex::engine::tex::Tok::Chr('.', _));
+    assert!(!one.mac.as_ref().unwrap().replacement_text.iter().any(point));
     assert!(defined(&analysis, "after"));
     let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
     assert!(

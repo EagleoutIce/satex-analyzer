@@ -2318,6 +2318,26 @@ fn tikz_pictures_with_unknown_borders_do_not_exhaust_the_budget() {
     assert!(!analysis.exhausted);
 }
 
+/// `\GPT@NormalizeNumber` of an unknown width: splits off the fraction,
+/// reverses it, zaps zeros and reverses it again. Real TeX ends each
+/// scan at its `\@nil`. Bug: a wide rest after `\GPT@ZapMinusMinus`, then
+/// a copy of a rest tested non-empty still read empty, so `\GPT@Reverse`
+/// took `\@nil` for a digit and ran into the end of the `\edef`.
+#[test]
+fn normalizing_an_unknown_width_ends_every_scan() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}\usepackage{graphicx}\makeatletter\begin{document}
+\setbox0\hbox{\the\pdfrandomseed}\edef\x{\strip@pt\wd0}\GPT@NormalizeNumber\x
+x\label{after}\end{document}",
+    );
+    let count = |code: &str| analysis.facts.diagnostics.iter().filter(|d| d.code == code).count();
+    assert_eq!(count("argument-ends-in-unknown"), 0, "{:?}", analysis.facts.diagnostics);
+    assert_eq!(keys(&analysis, OccKind::Label), vec!["after".to_string()]);
+}
+
 /// The scale factor of `\resizebox` is a `\strip@pt` of an unknown quotient:
 /// number text with no `+`, no `--` and at most one `.`, which the delimited
 /// scans of graphics' `\GPT@NormalizeNumber` decide instead of failing on.

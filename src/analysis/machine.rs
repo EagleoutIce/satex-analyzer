@@ -1454,6 +1454,9 @@ pub(crate) struct Scratch {
     /// again (a recursion that peels it) forks as one loop head per pair.
     pub(crate) arg_site: Option<Span>,
     pub(crate) split_rests: HashSet<(Span, Tok)>,
+    /// The marks of one-of arguments used more than once
+    /// ([`Machine::mark_one_choice`]).
+    pub(crate) one_choice: HashSet<(Span, Tok)>,
     /// Where a region's effect summary stands for the unknown text it left
     /// (a recursion cut: its widened fixpoint holds every deeper level's
     /// writes), so running that text adds nothing. Elsewhere unknown text
@@ -9848,7 +9851,8 @@ will look undefined",
         let at = m.replacement_text.first().map_or(span, |t| t.span);
         let site = self.scratch.arg_site.replace(at);
         let outer_reading = self.reading.replace(span);
-        let arguments = self.read_arguments(&m);
+        let mut arguments = self.read_arguments(&m);
+        self.mark_one_choice(&m, &mut arguments);
         self.reading = outer_reading;
         self.scratch.arg_site = site;
         crate::analysis::observe::between_angles(self, &m.parameter_text, &arguments);
@@ -10537,7 +10541,10 @@ will look undefined",
                         }) {
                             return self.read_undelimited();
                         }
-                        return vec![t];
+                        self.longest_digits(t);
+                        let Some((_, text)) = arms.last() else { return vec![t] };
+                        self.unread_all(text);
+                        return self.read_undelimited();
                     }
                     if j - i > 1 {
                         let whole_num = self.typed_digits_of(whole).unwrap_or(num);
@@ -10557,27 +10564,7 @@ will look undefined",
                     self.unread_all(&digits);
                     return self.read_undelimited();
                 }
-                // Digits of any length (a 32-bit value nothing bounds): a split
-                // keeps nothing of their bound, so they stay one argument, an
-                // assumption said once below.
-                let unbounded = crate::engine::scan::unbounded_digits(num);
-                let arms = if unbounded { Vec::new() } else { self.digit_arms(sym, num, t.span) };
-                if let [(_, text)] = &arms[..] {
-                    let text = text.clone();
-                    self.unread_all(&text);
-                    return self.read_undelimited();
-                }
-                if !unbounded
-                    && self.split(sym, t.span, arms.len(), |m, arm| {
-                        let (part, text) = &arms[arm];
-                        let live = m.refine_value(
-                            sym,
-                            crate::engine::value::Value::from_num(crate::engine::value::Quantity::Int, *part),
-                        );
-                        m.unread_all(text);
-                        live
-                    })
-                {
+                if self.part_digits(t, num) {
                     return self.read_undelimited();
                 }
                 self.diagnose(
@@ -10591,11 +10578,19 @@ will look undefined",
             // The rest of unknown text, perhaps none: a path where it is
             // empty, one where it is not ([`Machine::one_token`] reads that).
             Some(t) if let Some((class, false)) = self.typed_text_of(t) => {
-                // Read whole, the token is gone: progress, not a scan given up.
-                if !self.split_rest(t, class) {
-                    return vec![self.unknown_text(Unk::Of(&[&[t]]), t.span)];
+                if self.split_rest(t, class) {
+                    return self.read_undelimited();
                 }
-                self.read_undelimited()
+                // Digits of a bounded length: the longest spelling, read on.
+                if class == TextClass::DIGIT && self.text_len(t).is_some() {
+                    self.longest_digits(t);
+                    let full = self.unknown_text(Unk::Class(class, true, self.text_len(t), &[]), t.span);
+                    self.narrow_pending(t, &[full], false);
+                    self.unread(full);
+                    return self.read_undelimited();
+                }
+                // Read whole, the token is gone: progress, not a scan given up.
+                vec![self.unknown_text(Unk::Of(&[&[t]]), t.span)]
             }
             // One of several texts: the argument is that text's first token.
             Some(t) if self.one_of_matters(t) => match self.split_one_of(t) {
@@ -10635,6 +10630,72 @@ will look undefined",
                 }
             }
         }
+    }
+
+    /// Typed digits `t` in `num` as TeX reads them, put back on a path per
+    /// sign and length ([`Machine::digit_arms`]). `false` for digits of any
+    /// length (a 32-bit value nothing bounds: a split keeps nothing of their
+    /// bound), or where no more paths may part.
+    pub(crate) fn part_digits(&mut self, t: Token, num: crate::engine::value::Num) -> bool {
+        let Some(sym) = t.cs().filter(|_| !crate::engine::scan::unbounded_digits(num)) else { return false };
+        let arms = self.digit_arms(sym, num, t.span);
+        if let [(_, text)] = &arms[..] {
+            self.unread_all(text);
+            return true;
+        }
+        if self.split(sym, t.span, arms.len(), |m, arm| {
+            let (part, text) = &arms[arm];
+            let live =
+                m.refine_value(sym, crate::engine::value::Value::from_num(crate::engine::value::Quantity::Int, *part));
+            m.unread_all(text);
+            live
+        }) {
+            return true;
+        }
+        match arms.last() {
+            Some((_, text)) if text.iter().all(|x| x.tok != t.tok) => {
+                self.longest_digits(t);
+                self.unread_all(text);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// No more paths may part over digits `t` a read takes apart: it takes
+    /// the longest spelling, one place per read, and says so.
+    fn longest_digits(&mut self, t: Token) {
+        self.diagnose(
+            Severity::Assumption,
+            "digits-read-longest",
+            t.span,
+            "no more paths may part over unknown digits read one by one: they are taken to have the most digits they may".into(),
+        );
+    }
+
+    /// Typed digits `t` in `num`, some negative, put back on a path each:
+    /// `-` and their magnitude, or `t` without its negative part.
+    pub(crate) fn part_sign(&mut self, t: Token, num: crate::engine::value::Num) -> bool {
+        use crate::engine::value::{Num, Quantity, Value};
+        let Some(sym) = t.cs() else { return false };
+        let minus = |m: &mut Self| {
+            let mut text = m.text_tokens("-", t.span);
+            text.extend(m.digits_in(crate::engine::scan::magnitude(num), t.span));
+            m.unread_all(&text);
+        };
+        if num.hi < 0 {
+            minus(self);
+            return true;
+        }
+        self.split(sym, t.span, 2, |m, arm| {
+            if arm == 0 {
+                minus(m);
+                return true;
+            }
+            let live = m.refine_value(sym, Value::from_num(Quantity::Int, Num::range(0, num.hi)));
+            m.unread(t);
+            live
+        })
     }
 
     /// Unknown digits taken as one token (an undelimited argument, the
@@ -10756,15 +10817,15 @@ will look undefined",
         out
     }
 
-    /// What a test taught one arm of a typed rest `from`: its copies in
-    /// the lists waiting above the nearest file become `to`, or go where
-    /// it was empty. A copy is the same token from the same place.
-    pub(crate) fn narrow_pending(&mut self, from: Token, to: Option<Token>) {
+    /// What a test or read taught one arm of unknown `from` (a typed rest,
+    /// one of several texts): its copies in the lists waiting above the
+    /// nearest file, or in the call read now where `one_call`, become `to`.
+    /// A copy is the same token from the same place.
+    pub(crate) fn narrow_pending(&mut self, from: Token, to: &[Token], one_call: bool) {
         let same = |t: &Token| t.tok == from.tok && t.span == from.span;
         let swap = |toks: &[Token]| -> Vec<Token> {
-            toks.iter().filter_map(|t| if same(t) { to } else { Some(*t) }).collect()
+            toks.iter().flat_map(|t| if same(t) { to } else { std::slice::from_ref(t) }).copied().collect()
         };
-        let mut dropped = 0;
         for frame in self.input.iter_mut().rev() {
             match frame {
                 Frame::Tokens { toks, pos, .. } => {
@@ -10773,16 +10834,40 @@ will look undefined",
                         new.extend(swap(&toks[*pos..]));
                         *toks = Rc::from(new);
                     }
+                    if one_call {
+                        break;
+                    }
                 }
                 Frame::Returned(tokens) => {
                     let before = tokens.len();
                     *tokens = swap(tokens);
-                    dropped += before - tokens.len();
+                    self.held_tokens = (self.held_tokens + tokens.len()).saturating_sub(before);
                 }
                 _ => break,
             }
         }
-        self.held_tokens = self.held_tokens.saturating_sub(dropped);
+    }
+
+    /// An argument that is one one-of token, used more than once, is one
+    /// choice: its copies carry one mark ([`Machine::narrow_one_of_copies`]).
+    fn mark_one_choice(&mut self, m: &MacroDef, arguments: &mut [Vec<Token>]) {
+        for (k, argument) in arguments.iter_mut().enumerate() {
+            let [t] = &mut argument[..] else { continue };
+            let mut uses = m.replacement_text.iter().filter(|x| x.tok == Tok::Param(k as u8 + 1));
+            if let (Some(first), Some(_), true) = (uses.next(), uses.next(), self.one_of_members(*t).is_some()) {
+                t.span = first.span;
+                self.scratch.one_choice.insert((t.span, t.tok));
+            }
+        }
+    }
+
+    /// A path took `text` of one-of `t`. Copies of one argument waiting in
+    /// the call read now took it too. Other tokens of the same texts may be
+    /// other choices ([`Machine::one_of`] names a token by its texts).
+    pub(crate) fn narrow_one_of_copies(&mut self, t: Token, text: &[Token]) {
+        if self.scratch.one_choice.contains(&(t.span, t.tok)) {
+            self.narrow_pending(t, text, true);
+        }
     }
 
     /// The token lists waiting to be read above the nearest file, in
@@ -11110,13 +11195,15 @@ will look undefined",
             // argument there once and read the rest as delimiter-free. Typed
             // text counts only where its class may hold a brace or `first`.
             let first = &delimiter[..1.min(delimiter.len())];
+            let digits_pass = self.digits_pass(t, delimiter);
             // In a group no delimiter matches (tex.web § 392). Typed text
             // (balanced) that cannot hold all of the delimiter can only straddle
             // it ([`straddles`]), so it is read on as it is: its most tokens.
             let short = match (depth, self.typed_shape(t)) {
                 // one at a time: two close ones may hold it between them
                 (0, Some(_))
-                    if self.may_hold(t, delimiter) == Some(true)
+                    if !digits_pass
+                        && self.may_hold(t, delimiter) == Some(true)
                         && !self.hides_delimiter(&[t], delimiter)
                         && straddled.last().is_none_or(|&q| out.len() - q >= delimiter.len()) =>
                 {
@@ -11125,6 +11212,7 @@ will look undefined",
                 _ => None,
             };
             let unknown_text = short.is_none()
+                && !digits_pass
                 && (self.is_unknown_text(t, first) || (t.cs().is_some() && self.may_hold(t, first) == Some(true)))
                 && (depth == 0 || self.may_hold(t, &[]) != Some(false));
             // A rest this call site put back itself: its fork is keyed by
@@ -11433,7 +11521,8 @@ will look undefined",
                 }
                 Some(_) if depth > 0 => {}
                 Some((class, len, one)) => {
-                    for (j, _) in starts {
+                    let passes = self.digits_pass(x, delimiter);
+                    for (j, _) in starts.filter(|&(j, _)| !passes || j > 0) {
                         // `q` delimiter tokens from the text of `x`.
                         for q in 0..=n - j {
                             if q > 0 && !class.may_be(delimiter[j + q - 1]) || len.is_some_and(|l| q > l) {
@@ -11672,7 +11761,32 @@ will look undefined",
         while i < text.items.len() {
             match &text.items[i] {
                 ParamItem::Lit(expected) => {
-                    let t = self.next_token();
+                    let mut t = self.next_token();
+                    // Typed digits: TeX meets their first place or `-`, a
+                    // path per arm. Where none may part, a `-` begins the
+                    // negative ones, their magnitude follows.
+                    if let Some(d) = t.filter(|d| d.tok != *expected)
+                        && let Some(num) = d.cs().and_then(|sym| self.typed_digits_of(sym))
+                    {
+                        if num.lo >= 0 || *expected != Tok::Chr('-', Catcode::Other) {
+                            self.unread(d);
+                            t = self.read_undelimited().first().copied();
+                        } else if self.part_sign(d, num) {
+                            t = self.next_token();
+                        } else {
+                            self.diagnose(
+                                Severity::Imprecision,
+                                "unforked-argument-end",
+                                d.span,
+                                "a `-` required where no more paths may part: the number is taken to be negative"
+                                    .into(),
+                            );
+                            let rest = self.digits_in(crate::engine::scan::magnitude(num), d.span);
+                            self.unread_all(&rest);
+                            i += 1;
+                            continue;
+                        }
+                    }
                     // Unknown text may begin with the delimiter (the rest is
                     // read next) or be empty; one of several texts forks.
                     if let Some(t) = t
@@ -12651,6 +12765,7 @@ will look undefined",
         let groups: Vec<Vec<usize>> = (0..texts.len()).map(|i| vec![i]).collect();
         self.split_one_of_groups(t, site, &groups, |m, arm| {
             m.joined_arm();
+            m.narrow_one_of_copies(t, &texts[arm]);
             m.unread_all(&texts[arm]);
             true
         })
@@ -14179,6 +14294,9 @@ impl Machine<'_> {
                 let (c, k, s) = match (t.tok, self.typed_shape(*t)) {
                     (_, Some((c, s, named))) => {
                         cs.extend(named);
+                        // Digits that may be negative may spell a `-`.
+                        let negative = t.cs().and_then(|sym| self.typed_digits_of(sym)).is_some_and(|n| n.lo < 0);
+                        let c = if negative { c.union(TextClass::SIGN) } else { c };
                         (c, self.text_len(*t), s)
                     }
                     // A one-of list of names: its names.
@@ -14282,11 +14400,20 @@ impl Machine<'_> {
         }
     }
 
+    /// Digits `t` spell `-?[0-9]*`: a delimiter of two tokens or more, no
+    /// digit among them, neither lies in them nor begins in them (`--`).
+    /// It may end in them, after its start.
+    fn digits_pass(&self, t: Token, delimiter: &[Tok]) -> bool {
+        delimiter.len() > 1
+            && !delimiter.iter().any(|d| matches!(d, Tok::Chr(c, _) if c.is_ascii_digit()))
+            && t.cs().is_some_and(|sym| self.is_unknown_digits(sym))
+    }
+
     /// Whether typed text `t` after `prev` may hold part of `delimiter`:
     /// its start, or the rest of a start `prev` may end. `Some(None)`:
     /// the scan begins at `t`; `None`: what came before is not known.
     fn typed_may_hold(&self, t: Token, prev: Option<Option<Token>>, delimiter: &[Tok]) -> bool {
-        if self.may_hold(t, &delimiter[..1.min(delimiter.len())]) != Some(false) {
+        if !self.digits_pass(t, delimiter) && self.may_hold(t, &delimiter[..1.min(delimiter.len())]) != Some(false) {
             return true;
         }
         let continues = match prev {

@@ -1680,6 +1680,64 @@ fn the_of_a_dimension_of_at_least_1pt_does_not_begin_with_0() {
     assert!(defined.contains(&"other".to_string()) && !defined.contains(&"zero".to_string()), "{defined:?}");
 }
 
+/// A dimension in (-1pt, 1pt) may print `-0.` (tex.web § 103): the `-`
+/// arm of its typed integer part spells `0` too.
+#[test]
+fn the_of_a_small_negative_dimension_may_print_minus_0() {
+    let analysis = analyze(
+        r"\dimen1=\pdfuniformdeviate 131072sp \advance\dimen1 -65536sp \edef\t{\the\dimen1}
+          \def\a#1#2#3\end{\if-\noexpand#1\if0\noexpand#2\def\negzero{}\fi\fi}\expandafter\a\t\end",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"negzero".to_string()), "{defined:?}");
+}
+
+/// A printed dimension spells `-?[0-9]+.[0-9]+pt`, so a delimiter of two
+/// `-` never lies in it (graphics' `\GPT@ZapMinusMinus`). Bug: `-` was
+/// taken for a member of every digit token, the scan cut the number at a
+/// `--` it cannot hold and read `\one` short with a wide rest in `\two`.
+#[test]
+fn a_two_token_delimiter_passes_printed_digits() {
+    let analysis = analyze(
+        r"\def\z#1--#2\nil{\def\one{#1}\def\two{#2}}\def\nil{\nil}
+          \setbox0\hbox{\the\pdfrandomseed}\edef\p{\the\wd0}\expandafter\z\p--\nil",
+    );
+    assert_eq!(body(&analysis, "two"), "");
+    assert!(body(&analysis, "one").ends_with("pt"), "{}", body(&analysis, "one"));
+}
+
+/// One read of a text that is one of several settles it for the copies
+/// still waiting to be read: a test found `#1` not empty, so the call it
+/// guards never meets `\nil` as its first argument. Bug: the copy held
+/// every text again, and a false arm took the delimiter for an argument
+/// (graphics' `\GPT@Reverse` over a fraction's rest).
+#[test]
+fn a_test_on_one_of_several_texts_holds_for_its_copies() {
+    let analysis = analyze(
+        r"\def\empty{}\def\nil{\nil}\edef\y{\ifnum\pdfuniformdeviate 2=0 a\fi}
+          \def\c#1\nil{\ifx\empty#1\empty\else\d#1\nil\fi}
+          \def\d#1#2\nil{\ifx\nil#1\def\bad{}\fi}
+          \expandafter\c\y\nil",
+    );
+    let defined = names(&analysis);
+    assert!(!defined.contains(&"bad".to_string()), "{defined:?}");
+}
+
+/// Two choices the same code made spell one token: reading one settles
+/// nothing of the other, so `a` then nothing stays a possible run. Pins
+/// that narrowing copies ([`Machine::narrow_one_of_copies`]) leaves a
+/// token made twice alone.
+#[test]
+fn a_choice_made_twice_is_two_choices() {
+    let analysis = analyze(
+        r"\def\nil{}\def\empty{}\def\x{\ifnum\pdfuniformdeviate 2=0 a\fi}\edef\p{\x\x}
+          \def\e#1#2\nil{\if a#1\ifx\empty#2\empty\def\onlyone{}\fi\fi}
+          \expandafter\e\p\nil\nil",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"onlyone".to_string()), "{defined:?}");
+}
+
 /// `\the` prints integer digits without a leading zero (tex.web §§ 103,
 /// 104): after a sign or alone, a `0` is the whole integer part, so a
 /// dimension's `0` is followed by `.` and a count's `0` by nothing.

@@ -751,8 +751,19 @@ impl Machine<'_> {
                 self.unread_all(&[Token::new(Tok::Cs(by), span), Token::new(Tok::Cs(name), span), held]);
                 return;
             }
-            // Bounded typed digits stay whole: their meaning is their
-            // first character, and the read after it splits them by length.
+            // Bounded typed digits that may begin with `-` part here: a path
+            // for `-` and their magnitude, one for digits alone. Those stay
+            // whole: their meaning is a digit, and the read after it splits
+            // them by length. No more paths: it stands for a digit or `-`.
+            if let (Some(held), Some(more)) = (a, b)
+                && let Some(num) = more.cs().and_then(|sym| self.typed_digits_of(sym))
+                && num.lo < 0
+                && !crate::engine::scan::unbounded_digits(num)
+                && self.part_sign(more, num)
+            {
+                self.unread_all(&[Token::new(Tok::Cs(by), span), Token::new(Tok::Cs(name), span), held]);
+                return;
+            }
             let b = b.map(|t| match t.cs().and_then(|sym| self.typed_digits_of(sym)) {
                 Some(num) if !crate::engine::scan::unbounded_digits(num) => t,
                 _ => self.one_token(t, false).unwrap_or(t),
@@ -1198,35 +1209,20 @@ impl Machine<'_> {
         let value = self.internal_quantity(sym, span);
         // Glue prints its `plus` and `minus` parts where they may be nonzero (tex.web § 178).
         let zero = Num::exact(0);
-        let parts = match &value {
-            Some(Value::GlueNum { hull, .. }) => (hull.stretch != zero, hull.shrink != zero),
-            _ => (true, true),
+        let (parts, width) = match &value {
+            Some(Value::GlueNum { hull, .. }) => ((hull.stretch != zero, hull.shrink != zero), Some(hull.width)),
+            _ => ((true, true), None),
         };
         match value {
             Some(Value::Toks(toks)) => toks.to_vec(),
-            // An unknown dimension still prints as `⟨digits⟩.⟨digits⟩pt`
-            // (tex.web § 103), which `\def\getpt#1pt{…}` splits at. The digits
-            // are unknown text holding no delimiter.
+            // An unknown dimension prints as `⟨digits⟩.⟨digits⟩pt` (tex.web
+            // § 103), which `\def\getpt#1pt{…}` splits at.
             Some(Value::Unknown | Value::GlueNum { .. }) | None
                 if matches!(level, Some(RegKind::Dimen | RegKind::Skip | RegKind::MuSkip)) =>
             {
                 let unit = if level == Some(RegKind::MuSkip) { "mu" } else { "pt" };
-                let num = if level == Some(RegKind::Dimen) { self.abs.take() } else { None };
-                // A known sign: the integer part typed with its interval,
-                // which a scan reads back (tex.web § 103).
-                let mut tokens = match num {
-                    Some(n) if n.lo >= 0 || n.hi < 0 => {
-                        let (lo, hi) = if n.lo >= 0 { (n.lo, n.hi) } else { (-n.hi, -n.lo) };
-                        let mut t = if n.lo < 0 { self.text_tokens("-", span) } else { Vec::new() };
-                        let unit = crate::engine::value::UNIT;
-                        t.extend(self.digits_in(Num::range(lo / unit, hi / unit), span));
-                        t
-                    }
-                    _ => self.unknown_number(num, crate::engine::value::UNIT, span),
-                };
-                tokens.extend(self.text_tokens(".", span));
-                // At most five places after the point (tex.web § 103).
-                tokens.push(self.unknown_text(Unk::Class(TextClass::DIGIT, true, Some(5), &[]), span));
+                let num = if level == Some(RegKind::Dimen) { self.abs.take() } else { width };
+                let mut tokens = self.printed_dimen(num, span);
                 tokens.extend(self.text_tokens(unit, span));
                 if level != Some(RegKind::Dimen) && parts != (false, false) {
                     tokens.push(self.glue_tail(parts, unit, span));
@@ -1246,7 +1242,9 @@ impl Machine<'_> {
                 // register prints (tex.web § 465 prints both alike).
                 None => self.digits_in(Num::range(value::WORD_MIN, value::WORD_MAX), span),
             },
-            Some(Value::Unknown) | None if level.is_some() => self.unknown_number(None, 1, span),
+            Some(Value::Unknown) | None if level.is_some() => {
+                self.digits_in(Num::range(value::WORD_MIN, value::WORD_MAX), span)
+            }
             Some(value) => {
                 let text = value.render();
                 self.text_tokens(&text, span)
@@ -1261,9 +1259,7 @@ impl Machine<'_> {
     fn glue_tail(&mut self, (stretch, shrink): (bool, bool), unit: &str, span: Span) -> Token {
         let part = |me: &mut Self, keyword: &str| {
             let mut text = me.text_tokens(&format!(" {keyword} "), span);
-            text.extend(me.unknown_number(None, crate::engine::value::UNIT, span));
-            text.extend(me.text_tokens(".", span));
-            text.push(me.unknown_text(Unk::Class(TextClass::DIGIT, true, Some(5), &[]), span));
+            text.extend(me.printed_dimen(None, span));
             let units = [unit, "fil", "fill", "filll"].iter().map(|u| Rc::from(me.text_tokens(u, span))).collect();
             text.push(me.one_of(units, span));
             text
@@ -1275,45 +1271,29 @@ impl Machine<'_> {
         self.one_of(texts, span)
     }
 
-    /// An unknown value in `num` as `\the` prints it, its integer part the
-    /// value over `unit`: digits, after a `-` where the value is negative.
-    /// A sign it may or may not have makes the first character unknown (a
-    /// digit or `-`). An integer part of at least 1 begins with a digit 1-9,
-    /// else its digits have no leading zero (tex.web §§ 103, 104,
-    /// [`crate::analysis::machine::LEAD_MARK`]).
-    /// The integer part has at most the digits of the largest value: of
-    /// 2^31 - 1 for a count, 16383 for a dimension (tex.web §§ 65, 103).
-    fn unknown_number(&mut self, num: Option<crate::engine::value::Num>, unit: i64, span: Span) -> Vec<Token> {
-        let max = num
-            .map_or(if unit == 1 { crate::engine::value::MAX_INT } else { crate::engine::value::MAX_DIMEN }, |n| {
-                n.lo.unsigned_abs().max(n.hi.unsigned_abs()) as i64
-            });
-        let len = (max / unit).checked_ilog10().unwrap_or(0) + 1;
-        let rest = |me: &mut Self, len: u32| {
-            (len > 0).then(|| me.unknown_text(Unk::Class(TextClass::DIGIT, false, Some(len), &[]), span))
-        };
-        let digits = |me: &mut Self, nonzero: bool| match nonzero {
+    /// A dimension in `num` (any when `None`) as `\the` prints it, up to
+    /// its unit: typed digits of its integer part, a point, at most five
+    /// digits (tex.web § 103). A negative value prints `-` first, also
+    /// where its integer part is 0, so a straddling interval's typed
+    /// integer part reaches below `-1` ([`Machine::digit_arms`]' `-` arm
+    /// spells `-0`).
+    fn printed_dimen(&mut self, num: Option<Num>, span: Span) -> Vec<Token> {
+        let unit = crate::engine::value::UNIT;
+        let n = num.unwrap_or(Num::range(-crate::engine::value::MAX_DIMEN, crate::engine::value::MAX_DIMEN));
+        let mut tokens = match n.hi < 0 {
             true => {
-                let mut tokens = vec![Token::new(Tok::Chr(crate::engine::tex::UNKNOWN_NONZERO, Catcode::Other), span)];
-                tokens.extend(rest(me, len - 1));
-                tokens
+                let mut t = self.text_tokens("-", span);
+                t.extend(self.digits_in(Num::range(-n.hi / unit, -n.lo / unit), span));
+                t
             }
-            false => vec![me.lead_digits(true, len, span)],
+            false => {
+                let lo = if n.lo < 0 { -((-n.lo + unit - 1) / unit) } else { n.lo / unit };
+                self.digits_in(Num::range(lo, n.hi / unit), span)
+            }
         };
-        match num {
-            Some(n) if n.lo >= 0 => digits(self, n.lo >= unit),
-            Some(n) if n.hi < 0 => {
-                let mut tokens = vec![Token::new(Tok::Chr('-', Catcode::Other), span)];
-                tokens.extend(digits(self, n.hi <= -unit));
-                tokens
-            }
-            // After a `-`, every digit is still to come.
-            _ => {
-                let mut tokens = vec![Token::new(Tok::Chr(crate::engine::tex::UNKNOWN_CHAR, Catcode::Other), span)];
-                tokens.push(self.lead_digits(false, len, span));
-                tokens
-            }
-        }
+        tokens.extend(self.text_tokens(".", span));
+        tokens.push(self.unknown_text(Unk::Class(TextClass::DIGIT, true, Some(5), &[]), span));
+        tokens
     }
 
     /// Unknown text in place of what an expandable primitive yields.
@@ -2112,7 +2092,11 @@ impl Machine<'_> {
         if let Some(&(reg, stamp)) = self.scratch.digits_of_reg.get(&sym)
             && self.env.stamp_of(reg) == stamp
         {
-            self.refine_value(reg, value);
+            self.refine_value(reg, value.clone());
+        }
+        // The whole of a one-place number: what it is, the number is.
+        if let Some((whole, 1, 0, 1)) = self.typed_slice(sym) {
+            self.refine_value(whole, value);
         }
         true
     }
@@ -2963,14 +2947,13 @@ impl Machine<'_> {
             [true, false].map(|empty| (0..texts.len()).filter(|&i| texts[i].is_empty() == empty).collect()).into();
         let full: Vec<Rc<[Token]>> = texts.into_iter().filter(|x| !x.is_empty()).collect();
         self.split_one_of_groups(t, t.span, &groups, |m, arm| {
-            match (arm, &full[..]) {
-                (0, _) | (_, []) => {}
-                (_, [one]) => m.unread_all(one),
-                (_, texts) => {
-                    let token = m.one_of(texts.to_vec(), t.span);
-                    m.unread(token);
-                }
-            }
+            let text: Rc<[Token]> = match (arm, &full[..]) {
+                (0, _) | (_, []) => Rc::from([]),
+                (_, [one]) => one.clone(),
+                (_, texts) => Rc::from([m.one_of(texts.to_vec(), t.span)]),
+            };
+            m.narrow_one_of_copies(t, &text);
+            m.unread_all(&text);
             true
         })
     }
@@ -2983,7 +2966,7 @@ impl Machine<'_> {
         let full = self.unknown_text(Unk::Class(class, true, self.text_len(t), &[]), t.span);
         self.split(sym, t.span, 2, |m, arm| {
             let to = (arm == 1).then_some(full);
-            m.narrow_pending(t, to);
+            m.narrow_pending(t, to.as_slice(), false);
             if let Some(full) = to {
                 m.unread(full);
             }

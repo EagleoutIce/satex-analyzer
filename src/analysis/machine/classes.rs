@@ -241,7 +241,9 @@ impl Machine<'_> {
                 (Some(num), true) => crate::engine::scan::first_digits(num).into_iter().map(other).collect(),
                 _ => ('0'..='9').map(other).collect(),
             };
-            if num.is_none_or(|n| n.lo < 0) {
+            // Only a whole number that may be negative begins with `-`: a
+            // later place, a fraction or a rest ([`Unk::Class`]) is digits.
+            if num.is_some_and(|n| n.lo < 0) {
                 chars.push(other('-'));
             }
             let several = num.is_none_or(|n| n.lo < 0 || n.hi > 9);

@@ -188,6 +188,20 @@ fixtures! {
     pgfmath_parses_a_random_count_below_twenty("pgfmath_count_small", "main.tex");
     pgfmath_parses_a_random_count_of_five_digits("pgfmath_count_wide", "main.tex");
     pgfmath_parses_a_signed_random_count_and_adds("pgfmath_count_signed", "main.tex");
+    /// `\the` of a box width nothing bounds prints typed digits, a point,
+    /// fraction digits and `pt`: pgfmath reads it without taking the
+    /// octal arm (exec.rs `printed_dimen`).
+    pgfmath_parses_a_printed_box_width("pgfmath_printed_box_width", "main.tex");
+    /// A number before an operator and a printed width after it: the parser
+    /// walks the width digit by digit with `+` on its stack. Bug: the one
+    /// digit arm kept the whole number's token, so a join brought back its
+    /// interval and a token that spells many digits stood as one character.
+    pgfmath_adds_to_a_printed_width("pgfmath_adds_to_a_printed_width", "main.tex");
+    /// A `-` before typed digits: the number's `-` arm reads its magnitude.
+    pgfmath_negates_a_box_width("pgfmath_negated_box_width", "main.tex");
+    /// A box width read back and doubled: the sign and the first digit of
+    /// the result stay typed through pgfmath's second parse.
+    pgfmath_reparses_a_box_width_times_two("pgfmath_reparse_box_width_times_two", "main.tex");
     tikz_figure_with_math_nodes_t3("tikz_t3", "main.tex");
     tikz_figure_with_fit_node_in_resizebox_b("tikz_fit_b", "main.tex");
     tikz_picture_in_resizebox_v2("tikz_resizebox_v2", "main.tex");

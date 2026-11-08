@@ -67,14 +67,20 @@ fn places(num: Num, (k, i, j): (u32, u32, u32)) -> Num {
     }
 }
 
+/// What a number in `num` that may be negative spells after its `-`.
+/// It includes 0: a dimension in (-1pt, 0) prints `-0.`
+/// (`printed_dimen`).
+pub(crate) fn magnitude(num: Num) -> Num {
+    Num::range(0.max(num.hi.saturating_neg()), num.lo.saturating_neg())
+}
+
 /// The digits a number in `num` may begin with, after its `-` when it is
 /// negative: those of its non-negative part and of the magnitudes of its
 /// negative part.
 pub(crate) fn first_digits(num: Num) -> Vec<char> {
     let mut out: Vec<char> = Vec::new();
     if num.lo < 0 {
-        let negative = Num::range(1.max(num.hi.saturating_neg()), num.lo.saturating_neg());
-        out.extend(first_digits(negative));
+        out.extend(first_digits(magnitude(num)));
         if num.hi < 0 {
             return out;
         }
@@ -1078,17 +1084,18 @@ impl Machine<'_> {
     pub(crate) fn digit_arms(&mut self, whole: Sym, num: Num, span: Span) -> Vec<(Num, Vec<Token>)> {
         let mut arms = Vec::new();
         if num.lo < 0 {
-            let magnitude = Num::range(1.max(num.hi.saturating_neg()), num.lo.saturating_neg());
             let mut text = self.text_tokens("-", span);
-            text.extend(self.digits_in(magnitude, span));
-            arms.push((Num::range(num.lo, num.hi.min(-1)), text));
+            text.extend(self.digits_in(magnitude(num), span));
+            arms.push((Num::range(num.lo, num.hi.min(0)), text));
         }
         // One digit, never `0` where the number excludes it.
         if num.hi >= 0
             && num.lo <= 9
             && let Some(one) = Num::without_zero(num.lo.max(0), num.hi.min(9), num.excludes_zero())
         {
-            arms.push((one, vec![Token::new(Tok::Cs(whole), span)]));
+            // One place by its name: a join brings back the whole token's
+            // interval, which no longer spells one digit.
+            arms.push((one, vec![self.slice_token(whole, one, (1, 0, 1), span)]));
         }
         // Several digits: the first place and the rest, an arm per length,
         // the last allowed one open until a read needs where it ends.

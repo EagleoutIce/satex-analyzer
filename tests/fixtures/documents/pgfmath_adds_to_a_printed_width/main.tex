@@ -1,0 +1,7 @@
+\documentclass{article}
+\usepackage{pgf}
+\setbox2\hbox{\the\pdfrandomseed}
+\begin{document}
+\pgfmathparse{1+\the\wd2}
+\gdef\SatexReachedEnd{}
+\end{document}
