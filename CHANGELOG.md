@@ -6,10 +6,14 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
-<!-- reviewed: bf50fd5 -->
+<!-- reviewed: a1b1ede -->
 
 ### Analysis
 
+- `fix` **Undecided mode stays one mode.** Arms of a mode split meet again in one mode, and token list sets survive widening, so a joined `\fi` no longer starts false loops. [`0da79ed`](https://github.com/EagleoutIce/satex-analyzer/commit/0da79ed) [`71c673d`](https://github.com/EagleoutIce/satex-analyzer/commit/71c673d)
+- `fix` **Typed numbers stay typed through pgfmath.** Digits, signs and printed dimensions keep their type, and copies of one number compare equal. [`4536f7f`](https://github.com/EagleoutIce/satex-analyzer/commit/4536f7f) [`cde8a60`](https://github.com/EagleoutIce/satex-analyzer/commit/cde8a60) [`4084ec7`](https://github.com/EagleoutIce/satex-analyzer/commit/4084ec7)
+- `fix` **Float lists keep their names, and value scans over unknown text no longer cut paths early.** [`29bd2bb`](https://github.com/EagleoutIce/satex-analyzer/commit/29bd2bb) [`93e8242`](https://github.com/EagleoutIce/satex-analyzer/commit/93e8242) [`9336d57`](https://github.com/EagleoutIce/satex-analyzer/commit/9336d57) [`601f0a7`](https://github.com/EagleoutIce/satex-analyzer/commit/601f0a7)
+- `fix` **A build that falls back to an earlier run says so** in its report. [`57a6b6b`](https://github.com/EagleoutIce/satex-analyzer/commit/57a6b6b)
 - `fix` **A number parser over an unknown value stops walking its digits.** A macro's runs on known values teach what it leaves; a run that keeps forking ends with that effect, each value of its type, named `call-learned-effect` (`analysis.assume_call_learned_effect`, `limits.call_learn_after`, `limits.call_learn_forks`). `\\pgfmathparse` needs no rule or stub. Rounded nodes and arrows of unknown size end clean.
 - `fix` **A penalty in a formula keeps the formula's size.** siunitx 3.6 sets `\nobreak` inside math, so every `\qty` had an unknown width, and pictures around one raised false pgfmath errors. [`da70671`](https://github.com/EagleoutIce/satex-analyzer/commit/da70671)
 - `fix` **No crash when every arm of a choice is refuted.** The run counted its fork off twice. [`bf50fd5`](https://github.com/EagleoutIce/satex-analyzer/commit/bf50fd5)
@@ -21,10 +25,16 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### VS Code
 
+- `fix` **A server the client gave up on restarts.** [`096dc93`](https://github.com/EagleoutIce/satex-analyzer/commit/096dc93)
 - `fix` **Findings no longer flicker while an analysis runs.** Those a later pass or more precision can change stay hidden until the run ends, then swap in once. Findings over the source text show at once and stay. `satex.findings.whileAnalyzing` is `hide` (default), `keep` or `mark`. A run a budget stopped never replaces findings, its own join them, marked as unfinished.
 
 ### Playground
 
+- `feat` **The draw pad can be resized**, is centred, and its size stays in the link. [`190bf16`](https://github.com/EagleoutIce/satex-analyzer/commit/190bf16)
+- `feat` **Hover lists fetched packages, and dialogs have an another-tip button.** [`149d779`](https://github.com/EagleoutIce/satex-analyzer/commit/149d779) [`ef9b92c`](https://github.com/EagleoutIce/satex-analyzer/commit/ef9b92c)
+- `fix` **The header keeps its menu until the links fit.** Lists use their own icon, and go-to-definition works after downloads. [`28837d2`](https://github.com/EagleoutIce/satex-analyzer/commit/28837d2) [`b55e95f`](https://github.com/EagleoutIce/satex-analyzer/commit/b55e95f)
+- `fix` **`\begin` completion keeps the arguments already written.** [`0ba4807`](https://github.com/EagleoutIce/satex-analyzer/commit/0ba4807)
+- `fix` **The style prompt moved under lints.** [`03ad504`](https://github.com/EagleoutIce/satex-analyzer/commit/03ad504)
 - `feat` **Compile works on the web playground.** pdfTeX runs in the browser, with TeX Live 2026 files fetched on demand and kept. The hosts are set under Settings, Compile, or turned off. `satex gui` keeps using your own TeX.
 - `feat` **Loading banners show tips**, a new one every 20 s, from a list checked against the docs and the code.
 - `fix` **The version loses its star when only docs or CI changed since the release.** It follows what the site ships, not the commit count.
