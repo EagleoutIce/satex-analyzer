@@ -6,15 +6,15 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
-<!-- reviewed: 31d41cf -->
+<!-- reviewed: 37a5812 -->
 
 ### Playground
 
-- `perf` **Package caches replay in every document.** A package loaded at `\begin{document}`, like graphics' epstopdf-base, was rebuilt in the browser for every example.
+- `perf` **Package caches replay in every document.** A package loaded at `\begin{document}`, like graphics' epstopdf-base, was rebuilt in the browser for every example. [`1fbd322`](https://github.com/EagleoutIce/satex-analyzer/commit/1fbd322)
 
 ### Site and docs
 
-- `fix` **The site deploys again**, with its playground tests running.
+- `fix` **The site deploys again**, with its playground tests running. [`d2c8c13`](https://github.com/EagleoutIce/satex-analyzer/commit/d2c8c13) [`6702be3`](https://github.com/EagleoutIce/satex-analyzer/commit/6702be3) [`7ab2503`](https://github.com/EagleoutIce/satex-analyzer/commit/7ab2503) [`37a5812`](https://github.com/EagleoutIce/satex-analyzer/commit/37a5812)
 
 ## v0.2.0 (2026-11-07)
 
