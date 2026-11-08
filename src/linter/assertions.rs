@@ -16,7 +16,9 @@ compares two TeX numbers (`\\thepage < 5`, `\\value{section} >= 2`) or two
 dimensions when one has a unit (`\\wd0 <= 3cm`), with `<`, `<=`, `=`, `!=`,
 `>=` or `>`.  It may also be a TeX conditional such as `\\ifdefined\\foo`.
 `and`, `or` and `not` combine tests.  `\\the<counter>` is the counter's value,
-however `\\pagenumbering` prints it.";
+however `\\pagenumbering` prints it.
+
+See [Assertions](#assertions).";
 
 pub static RULES: &[Rule] = &[
     Rule {
@@ -27,7 +29,9 @@ pub static RULES: &[Rule] = &[
         explanation: "\
 The condition of `%\\satex@assert` is false on a path that approximated
 nothing, so a run of the document reaches it false.  The finding names the
-values the condition read there.",
+values the condition read there.
+
+See [Assertions](#assertions).",
         references: &[],
         fixes: &[],
         engines: &[],
@@ -41,7 +45,9 @@ values the condition read there.",
         explanation: "\
 The condition of `%\\satex@assert` is neither true on every path nor false on
 an exact one: a value it reads is not known, a path approximated, or no path
-reads the assertion.  `%\\satex@assume` can narrow what it reads.",
+reads the assertion.  `%\\satex@assume` can narrow what it reads.
+
+See [Assertions](#assertions).",
         references: &[],
         fixes: &[],
         engines: &[],
@@ -55,7 +61,9 @@ reads the assertion.  `%\\satex@assume` can narrow what it reads.",
         explanation: "\
 The condition of `%\\satex@assert` is true on every path that reads it.  The
 paths cover every run of the document, so the property holds, under the
-assumptions the run reports.",
+assumptions the run reports.
+
+See [Assertions](#assertions).",
         references: &[],
         fixes: &[],
         engines: &[],
@@ -69,7 +77,9 @@ assumptions the run reports.",
         explanation: "\
 `%\\satex@assume` drops the paths where its condition is false and narrows the
 registers it compares on the others.  What the run proves after it holds for
-the runs where the assumption does.",
+the runs where the assumption does.
+
+See [Assertions](#assertions).",
         references: &[],
         fixes: &[],
         engines: &[],
