@@ -266,6 +266,8 @@ fn record(cx: &Cx, e: &Entry, all: &[Entry], keys: &[&str], family: &[String]) -
         "more": more,
         "forms": forms,
         "uses": format!("Declared at `{}:{}`. {uses}", e.elsewhere.as_ref().map_or(cx.path, |(f, _)| f.as_str()), e.span.line),
+        "sites": super::sites(e.uses.iter().map(|(l, f, _)| (f.as_str(), *l))),
+        "facets": { "declared by": format!("\\{}", e.head), "type": summary(&["type"]).unwrap_or_else(|| "main".into()) },
         "actions": actions,
     })
 }

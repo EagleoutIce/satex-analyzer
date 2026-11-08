@@ -956,3 +956,20 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
   assert.equal(L.show(Math.round(2 * cm), 'mm'), '20mm');
   assert.ok(Math.abs(L.to('1in', 'cm') - 2.54) < 1e-9);
 }
+
+// The filters every manager shares (views.js `passes`): chips of one group are alternatives, groups narrow, words narrow.
+// Intuition: the glossary's "acronym" and "entry" chips are two answers to one question, so picking both shows both; "used" is another
+// question and narrows. Before, the bibliography alone had this rule inline and the glossary and index had no chips at all.
+{
+  const { passes, hue } = self.satexViews;
+  const rows = [{ t: 'acronym', used: true, s: 'cpu central processing unit' }, { t: 'entry', used: false, s: 'tex the typesetting system' }, { t: 'symbol', used: true, s: 'pi 3.14' }];
+  const chip = (id, group, test) => ({ id, group, test });
+  const chips = [chip('t:acronym', 'type', (r) => r.t === 'acronym'), chip('t:entry', 'type', (r) => r.t === 'entry'), chip('used', undefined, (r) => r.used)];
+  const shown = (q, on) => rows.filter((r) => passes(r, q, chips, new Set(on), r.s)).map((r) => r.t);
+  assert.deepEqual(shown('', []), ['acronym', 'entry', 'symbol'], 'no chip, no word: every row');
+  assert.deepEqual(shown('', ['t:acronym', 't:entry']), ['acronym', 'entry'], 'two chips of a group are alternatives');
+  assert.deepEqual(shown('', ['t:acronym', 't:entry', 'used']), ['acronym'], 'another group narrows');
+  assert.deepEqual(shown('typesetting system', ['t:entry']), ['entry'], 'every word must occur');
+  assert.deepEqual(shown('nothing', []), []);
+  assert.equal(hue('Article'), hue('article'), 'a kind keeps its colour in every manager, whatever its case');
+}

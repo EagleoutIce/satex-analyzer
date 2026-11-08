@@ -1015,6 +1015,7 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .cache-dialog.view-dialog { height: fit-content; max-height: 90vh; width: min(40rem, calc(100vw - 1rem)); }
 .view-body { padding: 1rem; overflow: auto; }
 /* the drawing canvas: wide, its own panel scrolls, tools and footer stay */
+.cache-dialog.view-dialog:has(.tv-md) { width: min(84rem, calc(100vw - 1rem)); } .tv:has(.tv-md) { max-width: none !important; }
 .cache-dialog.view-dialog:has(.tv-draw) { width: min(76rem, calc(100vw - 1rem)); } .view-body:has(> .tv > .tv-draw) { overflow: hidden; }
 .sig-active { color: var(--accent); text-decoration: underline; }
 .cm-tooltip.cm-completionInfo .cm-item-card { max-width: 28rem; font-size: .85rem; }

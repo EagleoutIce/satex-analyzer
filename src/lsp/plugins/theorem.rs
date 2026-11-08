@@ -334,6 +334,8 @@ fn render(cx: &Cx, all: &[Kind]) -> Option<Json> {
             "badge": begins.is_empty().then_some("unused"),
             "search": format!("{} {} {numbering} {} {}", k.env, k.head, found.join(" "), places.join(" ")),
             "uses": if places.is_empty() { format!("Defined at `{}:{}`. No instance.", file_name(k.span), k.span.line) } else { format!("Defined at `{}:{}`. Instances: {}", file_name(k.span), k.span.line, places.join(" · ")) },
+            "sites": super::sites(begins.iter().map(|b| (cx.path, *b))),
+            "facets": { "numbering": numbering },
             "sort": { "name": k.env, "line": format!("{:06}", k.span.line), "uses": format!("{:06}", begins.len()) },
             "fields": fields,
             "forms": forms,

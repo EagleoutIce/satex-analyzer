@@ -149,7 +149,7 @@ fn references(cx: &Cx, loads: &[Load], dbs: &[Db]) -> Json {
             items.push(json!({
                 "key": e.key, "type": e.kind, "file": db.path, "line": e.line, "uri": path_uri(&db.path).as_str(),
                 "author": author.replace(['{', '}'], ""), "year": e.year, "title": e.title,
-                "cited": cited.len(), "places": places(&cited),
+                "cited": cited.len(), "places": places(&cited), "sites": super::sites(cited.iter().map(|(f, l)| (f.as_str(), *l))),
                 "node": node,
                 "missing": crate::linter::bibdb::missing(e, &model),
                 "undefined": crate::linter::bibdb::undefined(e, dbs, &model),
@@ -358,6 +358,7 @@ fn bibitem(cx: &Cx, l: &List, i: &Item) -> Json {
         "sort": { "key": i.key, "author": shown, "year": year, "title": shown, "cited": format!("{:06}", cited.len()) },
         "fields": fields,
         "uses": format!("`\\bibitem` at `{}:{}`. {}", cx.path, cx.doc.pos(i.at).line, places(&cited)),
+        "sites": super::sites(cited.iter().map(|(f, l)| (f.as_str(), *l))),
         "actions": [{ "title": format!("Delete {}", i.key), "edit": edit_of(cx.path, vec![put(cx.doc, from, to, "")]), "disabled": reason, "danger": true }],
     })
 }

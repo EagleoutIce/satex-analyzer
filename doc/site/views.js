@@ -99,6 +99,125 @@
     return acc;
   };
 
+  // ---- the layout every manager shares (bibliography, glossary, index, theorems): search, chips with counts, a list,
+  // a draggable divider and the selected row's detail. One component, so the managers look and work alike.
+  /** A kind's badge colour: a hue from its name, the same in every view. */
+  const hue = (type) => [...String(type).toLowerCase()].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+  /** Whether `row` shows: every word of `q` is in `hay`, and of each group of the chips `on` one holds (chips of a group are alternatives). */
+  const passes = (row, q, chips, on, hay) => {
+    const groups = new Map();
+    for (const c of chips) if (on.has(c.id)) groups.set(c.group ?? c.id, [...(groups.get(c.group ?? c.id) ?? []), c]);
+    return [...groups.values()].every((cs) => cs.some((c) => c.test(row))) && String(q).toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
+  };
+  const MD = { key: 'satex-md-width', start: 35, min: 18, max: 70 };
+  const mdWidth = () => { try { const v = Number(localStorage.getItem(MD.key)); return v >= MD.min && v <= MD.max ? v : MD.start; } catch { return MD.start; } };
+  /** A list and its detail side by side; `o`: `rows`, `chips` ({id, group, html, title, test}), `hay(row)`, `sorts` ({id, label, key}), `row(r)`
+   * ({kind, title, sub, flags}), `head` (column names), `selected`, `show(row, pane)` filling the detail, `none` (the empty detail's text), `leave()` (false keeps the selection). */
+  function masterDetail(o) {
+    const node = el('div', 'tv-md'), left = el('div', 'tv-md-left'), right = el('div', 'tv-md-right'), bar = el('div', 'tv-md-bar');
+    const search = Object.assign(el('input', 'tv-input'), { placeholder: o.placeholder ?? 'search', spellcheck: false, value: o.query ?? '' });
+    search.ariaLabel = 'search';
+    const head = el('div', 'tv-md-head'), chipBox = el('div', 'tv-md-chips'), scroll = el('div', 'tv-md-rows');
+    scroll.tabIndex = 0;
+    scroll.ariaLabel = o.label ?? 'entries';
+    let sel = o.selected ?? null, rows = [], down = false;
+    const on = new Set(), by = el('select', 'tv-input', (o.sorts ?? []).map((k) => `<option value="${esc(k.id)}">${esc(k.label)}</option>`).join(''));
+    by.ariaLabel = 'sort by';
+    const dir = Object.assign(el('button', 'tv-md-dir', '↑'), { type: 'button', title: 'sort direction', onclick: () => { down = !down; dir.textContent = down ? '↓' : '↑'; draw(); } });
+    head.append(search);
+    if (o.sorts?.length > 1) head.append(by, dir);
+    for (const c of o.chips ?? []) {
+      const n = o.rows.filter(c.test).length;
+      if (!n) continue;
+      const b = Object.assign(el('button', 'tv-chip', `${c.html} <span class="tv-n">${n}</span>`), { type: 'button', title: c.title ?? '' });
+      b.setAttribute('aria-pressed', 'false');
+      b.onclick = () => { on.has(c.id) ? on.delete(c.id) : on.add(c.id); b.setAttribute('aria-pressed', String(on.has(c.id))); draw(); };
+      chipBox.append(b);
+    }
+    left.append(head, chipBox, scroll);
+    const draw = () => {
+      const sort = o.sorts?.find((k) => k.id === by.value) ?? o.sorts?.[0];
+      rows = o.rows.filter((r) => passes(r, search.value, o.chips ?? [], on, o.hay(r)));
+      if (sort) rows.sort((a, b) => sort.key(a).localeCompare(sort.key(b), undefined, { numeric: true, sensitivity: 'base' }) * (down ? -1 : 1));
+      const kinds = !!o.head?.[0];
+      const table = el('table', 'tv-md-table', `<thead><tr>${kinds ? `<th class="k">${esc(o.head[0])}</th>` : ''}<th>${esc(o.head?.[1] ?? 'Entry')}</th></tr></thead>`);
+      const body = el('tbody');
+      for (const r of rows.slice(0, 500)) {
+        const d = o.row(r), tr = el('tr', r === sel ? 'on' : '');
+        tr.innerHTML = `${kinds ? `<td class="k">${d.kind ? `<span class="tv-type" style="--h:${hue(d.kind)}" title="${esc(d.kind)}">${esc(d.kind)}</span>` : ''}</td>` : ''}<td class="m" title="${esc([d.title, d.sub].filter(Boolean).join(': '))}"><b>${esc(d.title)}</b>${d.flags ?? ''}${d.sub ? `<small>${esc(d.sub)}</small>` : ''}</td>`;
+        tr.onclick = () => pick(r);
+        body.append(tr);
+      }
+      table.append(body);
+      scroll.replaceChildren(rows.length ? table : el('div', 'tv-md-empty', 'Nothing matches.'));
+    };
+    const show = () => sel ? o.show(sel, right) : right.replaceChildren(el('div', 'tv-md-empty', o.none ?? 'Select an entry.'));
+    const pick = async (r) => {
+      if (r === sel) return;
+      if (o.leave && !(await o.leave())) return;
+      sel = r;
+      draw();
+      show();
+      scroll.querySelector('tr.on')?.scrollIntoView({ block: 'nearest' });
+    };
+    scroll.onkeydown = (e) => {
+      const i = rows.indexOf(sel);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const r = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))]; if (r) pick(r); }
+      if (e.key === 'Enter') { e.preventDefault(); right.querySelector('input, textarea')?.focus(); }
+    };
+    search.oninput = by.onchange = draw;
+    search.onkeydown = (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); scroll.focus(); if (!sel && rows[0]) pick(rows[0]); } };
+    // the divider: dragged, or moved by the arrow keys; its place is kept (the same in every manager)
+    let pct = mdWidth();
+    const set = (v, keep) => {
+      pct = Math.min(MD.max, Math.max(MD.min, v));
+      node.style.setProperty('--md-w', `${pct}%`);
+      bar.setAttribute('aria-valuenow', String(Math.round(pct)));
+      if (keep) try { localStorage.setItem(MD.key, String(Math.round(pct))); } catch {}
+    };
+    Object.assign(bar, { tabIndex: 0, title: 'Drag or use the arrow keys to resize; double-click resets' });
+    for (const [k, v] of Object.entries({ role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'list width', 'aria-valuemin': MD.min, 'aria-valuemax': MD.max })) bar.setAttribute(k, v);
+    bar.onpointerdown = (e) => {
+      bar.setPointerCapture(e.pointerId);
+      const r = node.getBoundingClientRect();
+      bar.onpointermove = (ev) => set((ev.clientX - r.left) / r.width * 100);
+      bar.onpointerup = () => { bar.onpointermove = bar.onpointerup = null; set(pct, true); };
+    };
+    bar.onkeydown = (e) => {
+      const to = { ArrowLeft: pct - (e.shiftKey ? 10 : 2), ArrowRight: pct + (e.shiftKey ? 10 : 2), Home: MD.min, End: MD.max }[e.key];
+      if (to != null) { e.preventDefault(); set(to, true); }
+    };
+    bar.ondblclick = () => set(MD.start, true);
+    set(pct);
+    node.append(left, bar, right);
+    return { node, search, right, scroll, bar, selected: () => sel, rows: () => rows, draw, pick, show, start: () => { draw(); show(); setTimeout(() => (sel ? scroll : search).focus(), 0); } };
+  }
+  /** Every use of a thing, from the run (`sites`: {file, line}), each with its source line and a link that opens it: the one view all managers show. */
+  function usesView(sites, ctx, what = 'Uses', none = 'Not used.') {
+    const box = el('section', 'tv-uses-view');
+    box.append(el('div', 'tv-h', `${what} (${sites.length})`));
+    if (!sites.length) return box.append(el('div', 'tv-muted', none)), box;
+    const rows = [...sites].sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line).map((u) => {
+      const text = String(ctx.snippet?.(u.file, u.line) ?? '').trim().slice(0, 200);
+      const row = el('div', 'tv-use', `<a class="place" href="#" data-path="${esc(u.file)}" data-line="${u.line}" title="open ${esc(u.file)} at line ${u.line}">${esc(String(u.file).split('/').pop())}:${u.line}</a><code>${esc(text)}</code>`);
+      row.dataset.hay = `${u.file}:${u.line} ${text}`.toLowerCase();
+      return row;
+    });
+    const list = el('div', 'tv-uses-list');
+    list.append(...rows);
+    // a place opens in the editor: the manager steps aside
+    list.onclick = (e) => { if (e.target.closest('a.place')) ctx.close?.(); };
+    if (rows.length > 6) {
+      const find = Object.assign(el('input', 'tv-input'), { placeholder: 'filter the uses', spellcheck: false, ariaLabel: 'filter the uses' });
+      find.oninput = () => rows.forEach((r) => { r.hidden = !find.value.toLowerCase().split(/\s+/).every((w) => r.dataset.hay.includes(w)); });
+      box.append(find);
+    }
+    box.append(list);
+    return box;
+  }
+  /** What a detail keeps out of the way until asked for. */
+  const fold = (title, ...nodes) => { const d = el('details', 'tv-fold', `<summary>${esc(title)}</summary>`); d.append(...nodes.filter(Boolean)); return d; };
+
   /** Chips a group of defined colors shows before its `+N`. */
   const BAND = 10;
   const RENDER = {
@@ -135,41 +254,33 @@
       setTimeout(() => input.focus(), 0);
       return box;
     },
-    // a manager: searchable, sortable records; each opens to its fields (edited through edit
-    // templates, `${value}` the new text), a table and actions; `add` is a form of templates
+    // a manager (bibliography, glossary, index, theorems): the shared master/detail list; each record opens to
+    // its uses, its fields (edited through edit templates, `${value}` the new text), a table and actions; `add` is a form of templates
     records: (s, view, ctx) => {
       const box = el('div', 'tv-records');
-      const head = el('div', 'tv-row');
-      const input = Object.assign(el('input', 'tv-input'), { placeholder: s.placeholder ?? 'search', spellcheck: false, ariaLabel: s.placeholder ?? 'search', value: s.query ?? '' });
-      const sort = el('select', 'tv-input', (s.sorts ?? []).map((k) => `<option>${esc(k)}</option>`).join(''));
-      sort.ariaLabel = 'sort by';
-      head.append(input);
-      if (s.sorts?.length > 1) head.append(sort);
-      const list = el('div', 'tv-list');
-      // exactly one record is open for editing: the focused one, else the first
-      let open = s.items.find((r) => r.title === s.focus) ?? s.items[0] ?? null;
+      const sitesOf = (r) => r.sites ?? [];
+      // what the run reports of each record sets the chips: every facet with two values or more, and which are used
+      const facets = [...new Set(s.items.flatMap((r) => Object.keys(r.facets ?? {})))];
+      const values = (f) => [...new Set(s.items.map((r) => r.facets?.[f]).filter(Boolean))].sort();
+      const chips = facets.flatMap((f) => values(f).length > 1 ? values(f).map((v) => ({ id: `${f}:${v}`, group: f, html: esc(v), title: f, test: (r) => r.facets?.[f] === v })) : [])
+        .concat([{ id: 'used', html: 'used', test: (r) => sitesOf(r).length > 0 }, { id: 'unused', html: 'unused', test: (r) => !sitesOf(r).length }]);
+      const first = (r) => Object.values(r.facets ?? {})[0];
+      const md = masterDetail({
+        label: s.title ?? 'records', placeholder: s.placeholder ?? 'search', query: s.query, rows: s.items, chips, head: [first(s.items[0] ?? {}) ? 'Kind' : '', 'Entry'],
+        hay: (r) => (r.search ?? r.title).toLowerCase(),
+        sorts: (s.sorts ?? []).map((k) => ({ id: k, label: k, key: (r) => String(r.sort?.[k] ?? r.title) })),
+        row: (r) => ({ kind: first(r), title: r.title, sub: r.detail, flags: r.badge ? `<span class="tv-flag">${esc(r.badge)}</span>` : '' }),
+        selected: s.items.find((r) => r.title === s.focus) ?? s.items[0] ?? null, none: s.empty ?? 'nothing found',
+        show: (r, pane) => pane.replaceChildren(record(r)),
+      });
       // what the manager shows again after an Apply: the search and the open record
-      const kept = () => ({ q: input.value, open: open?.title });
-      const draw = () => {
-        const q = input.value.trim().toLowerCase(), by = sort.value;
-        const hit = (r) => !q || q.split(/\s+/).every((w) => (r.search ?? r.title).toLowerCase().includes(w));
-        const key = (r) => String(r.sort?.[by] ?? r.title).toLowerCase();
-        const rows = s.items.filter(hit).sort((a, b) => key(a).localeCompare(key(b), undefined, { numeric: true }));
-        list.replaceChildren(...rows.slice(0, 300).map((r) => {
-          const item = el('div', 'tv-record' + (open === r ? ' on' : ''));
-          const b = el('button', 'tv-choice tv-line', `<b>${esc(r.title)}</b><span>${esc(r.detail ?? '')}</span>${r.badge ? `<em class="tv-badge">${esc(r.badge)}</em>` : ''}`);
-          b.type = 'button';
-          b.title = [r.title, r.detail].filter(Boolean).join(': ');
-          b.ariaExpanded = String(open === r);
-          b.onclick = () => { if (open !== r) { open = r; draw(); } };
-          item.append(b);
-          if (open === r) item.append(record(r));
-          return item;
-        }));
-        if (!rows.length) list.append(el('div', 'tv-text', `<p>${esc(s.empty ?? 'nothing found')}</p>`));
-      };
+      const kept = () => ({ q: md.search.value, open: md.selected()?.title });
       const record = (r) => {
         const body = el('div', 'tv-body');
+        body.append(el('div', 'tv-md-title', `<b>${esc(r.title)}</b>${r.detail ? `<span class="tv-muted">${esc(r.detail)}</span>` : ''}`));
+        // every use, from the run: one view for all managers; a place opens in the editor and the manager steps aside
+        if (r.sites) body.append(usesView(r.sites, ctx));
+        else if (r.uses) body.append(Object.assign(el('div', 'tv-text tv-uses', ctx.markdown(r.uses)), { onclick: (e) => { if (e.target.closest('a.place')) ctx.close?.(); } }));
         // an emptied field with a `remove` edit goes; the others write their value, snapshots (`print`) printed together
         const saved = (fs, vals) => fs.some((f) => f.print) ? { nodes: fs.flatMap((f) => chosen(f, { value: vals[f.name] }).nodes ?? []) } : merge(fs.map((f) => !vals[f.name].trim() && f.remove ? f.remove : filled(f.edit, { value: vals[f.name] })));
         if (r.fields?.length) body.append(form(r.fields, r.save ?? 'Save', (vals, changed) => saved(r.fields.filter((f) => changed.has(f.name)), vals)));
@@ -177,9 +288,8 @@
         if (r.more) body.append(form([{ name: 'name', label: 'new field', value: '', placeholder: 'field name', options: r.more.names, check: ['required', 'key', 'unique'], taken: (r.fields ?? []).map((f) => f.name) }, { name: 'value', value: '', placeholder: 'value', check: ['required', r.more.check ?? 'tex'] }], r.more.title, (vals) => filled(r.more.edit, vals)));
         for (const f of r.forms ?? []) body.append(form(f.fields, f.title, (vals) => chosen(f, vals), f.note));
         if (r.why) body.append(el('div', 'tv-text', `<p>${esc(r.why)}</p>`));
-        // a place opens in the editor: the manager steps aside
-        if (r.uses) body.append(Object.assign(el('div', 'tv-text tv-uses', ctx.markdown(r.uses)), { onclick: (e) => { if (e.target.closest('a.place')) ctx.close?.(); } }));
         if (r.table?.rows.length) body.append(RENDER.table(r.table));
+        // deleting is kept, but behind the uses: what a record is used by comes first
         if (r.actions?.length) {
           const acts = el('div', 'tv-actions');
           for (const a of r.actions) {
@@ -190,9 +300,8 @@
             b.onclick = () => ctx.apply(a.edit, kept());
             acts.append(b);
           }
-          body.append(acts);
           const why = r.actions.filter((a) => a.disabled || a.note).map((a) => `${a.title}: ${a.disabled ?? a.note}`);
-          if (why.length) body.append(el('div', 'tv-text', why.map((w) => `<p>${esc(w)}</p>`).join('')));
+          body.append(fold(r.actions.some((a) => a.danger) ? 'Delete…' : 'More actions', acts, why.length ? el('div', 'tv-text', why.map((w) => `<p>${esc(w)}</p>`).join('')) : null));
         }
         return body;
       };
@@ -237,12 +346,9 @@
         };
         return f;
       };
-      input.oninput = draw;
-      sort.onchange = draw;
-      draw();
       // closing with a field typed in and not written asks first
       ctx.guard?.(() => [...box.querySelectorAll('[data-was]')].some((i) => i.value !== i.dataset.was));
-      box.append(head, list);
+      box.append(md.node);
       // a kind that `insert`s writes at the editor's cursor: only where the page has one
       const kinds = s.add ? (s.add.kinds ?? [s.add]).filter((k) => !k.insert || ctx.insert) : [];
       if (kinds.length) {
@@ -257,7 +363,7 @@
         show();
         box.append(more);
       }
-      setTimeout(() => input.focus(), 0);
+      md.start();
       return box;
     },
     converter: (s, view, ctx) => {
@@ -2433,10 +2539,35 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-band { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; } .tv-band-name { flex: 0 0 100%; font-size: .72rem; color: var(--tv-muted); } .tv-band-name small { opacity: .7; }
 .tv-more { padding-left: .5rem; color: var(--tv-muted); }
 .tv-chip i { width: .9rem; height: .9rem; border-radius: 50%; border: 1px solid #8886; }
-.tv-records { display: grid; gap: .5rem; } .tv-records > .tv-list { max-height: 60vh; }
-.tv-record.on { border: 1px solid var(--tv-border); border-radius: 8px; background: var(--tv-sunk); }
-.tv-record > .tv-choice { width: 100%; } .tv-line { display: grid; grid-template-columns: minmax(4rem, max-content) minmax(0, 1fr) auto; align-items: baseline; gap: .8rem; }
-.tv-line > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: inherit; font-size: .8rem; } .tv-record.on > .tv-line { cursor: default; } .tv-record > .tv-choice b { font-weight: 600; } .tv-badge { font-style: normal; font-weight: 400; font-size: .7rem; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--tv-border); color: var(--tv-muted); }
+.tv-md { --md-w: 35%; display: grid; grid-template-columns: var(--md-w) .7rem minmax(0, 1fr); height: min(66vh, 38rem); min-height: 20rem; min-width: 0; }
+.tv-md-left, .tv-md-right { display: flex; flex-direction: column; gap: .45rem; min-width: 0; min-height: 0; } .tv-md-right { overflow: auto; }
+.tv-md-bar { cursor: col-resize; touch-action: none; position: relative; outline: none; }
+.tv-md-bar::before { content: ''; position: absolute; inset: 0 auto 0 50%; width: 1px; background: var(--tv-border); transition: background .12s, width .12s; }
+.tv-md-bar:hover::before, .tv-md-bar:focus-visible::before { width: 3px; margin-left: -1px; background: var(--tv-accent); }
+.tv-md-head { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; } .tv-md-head > input { flex: 1 1 8rem; } .tv-md-head > select { width: auto; flex: 0 1 auto; }
+.tv-md-dir { font: inherit; border: 1px solid var(--tv-border); border-radius: 6px; background: none; color: var(--tv-muted); cursor: pointer; padding: .2rem .5rem; }
+.tv-md-chips { display: flex; flex-wrap: wrap; gap: .25rem; } .tv-md-chips:empty { display: none; }
+.tv-chip { font: inherit; font-size: .74rem; padding: .08rem .45rem; border-radius: 999px; border: 1px solid var(--tv-border); background: none; color: var(--tv-muted); cursor: pointer; }
+.tv-chip[aria-pressed=true] { background: color-mix(in srgb, var(--tv-accent) 16%, transparent); border-color: var(--tv-accent); color: var(--tv-fg); } .tv-chip .tv-n { opacity: .7; }
+.tv-type { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; font-size: .7rem; font-weight: 600; padding: .02rem .4rem; border-radius: 4px; white-space: nowrap;
+  color: hsl(var(--h) 55% 32%); background: hsl(var(--h) 70% 90%); }
+:root[data-theme=dark] .tv-type, .vscode-dark .tv-type { color: hsl(var(--h) 70% 82%); background: hsl(var(--h) 35% 24%); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme=light]) .tv-type { color: hsl(var(--h) 70% 82%); background: hsl(var(--h) 35% 24%); } }
+.tv-md-rows { flex: 1; min-height: 0; overflow: auto; outline: none; } .tv-md-rows:focus-visible tr.on td:first-child { box-shadow: inset 2px 0 var(--tv-accent); }
+.tv-md-table { display: table; margin: 0; width: 100%; border-collapse: collapse; font-size: .82rem; table-layout: fixed; }
+.tv-md-table th { position: sticky; top: 0; z-index: 1; background: var(--tv-bg); text-align: left; font-weight: 600; padding: .25rem .4rem; color: var(--tv-muted); font-size: .74rem; border-bottom: 1px solid var(--tv-border); }
+.tv-md-table :is(th, td) { border-width: 0 0 1px; border-style: solid; }
+.tv-md-table th.k, .tv-md-table td.k { width: 6rem; } .tv-md-table td { padding: .3rem .4rem; border-bottom: 1px solid color-mix(in srgb, var(--tv-border) 50%, transparent); vertical-align: top; overflow: hidden; }
+.tv-md-table td.m { white-space: nowrap; text-overflow: ellipsis; } .tv-md-table td.m small { display: block; overflow: hidden; text-overflow: ellipsis; color: var(--tv-muted); }
+.tv-md-table tbody tr { cursor: pointer; } .tv-md-table tbody tr:hover { background: color-mix(in srgb, var(--tv-accent) 6%, transparent); } .tv-md-table tr.on { background: color-mix(in srgb, var(--tv-accent) 16%, transparent); }
+.tv-flag { font-size: .66rem; padding: 0 .3rem; border-radius: 4px; margin-left: .25rem; background: var(--tv-sunk); color: var(--tv-muted); } .tv-flag.warn { background: color-mix(in srgb, #e0a000 22%, transparent); color: inherit; }
+.tv-md-empty { color: var(--tv-muted); padding: 1rem; text-align: center; } .tv-md-title { display: flex; flex-wrap: wrap; gap: .2rem .6rem; align-items: baseline; } .tv-md-title b { font-size: 1rem; }
+.tv-uses-view { display: grid; gap: .3rem; } .tv-uses-list { display: grid; max-height: 11rem; overflow: auto; border-radius: 6px; background: var(--tv-sunk); }
+.tv-use { display: grid; grid-template-columns: minmax(5rem, max-content) minmax(0, 1fr); gap: .6rem; padding: .2rem .5rem; align-items: baseline; font-size: .8rem; } .tv-use[hidden] { display: none; }
+.tv-use code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tv-muted); font-size: .76rem; } .tv-use + .tv-use { border-top: 1px solid color-mix(in srgb, var(--tv-border) 50%, transparent); }
+.tv-fold > summary { cursor: pointer; font-size: .82rem; color: var(--tv-muted); } .tv-fold[open] { display: grid; gap: .4rem; }
+@media (max-width: 760px) { .tv-md { grid-template-columns: minmax(0, 1fr); height: auto; } .tv-md-bar { display: none; } .tv-md-rows { max-height: 40vh; flex: none; } .tv-md-right { overflow: visible; padding-top: .6rem; border-top: 1px solid var(--tv-border); margin-top: .6rem; } }
+.tv-records { display: grid; gap: .5rem; }
 .tv-body { display: grid; gap: .6rem; padding: .3rem .6rem .7rem; min-width: 0; } .tv-body .tv-table { font-size: .8rem; display: block; overflow-x: auto; }
 .tv-form { display: grid; gap: .4rem; } .tv-field { display: grid; grid-template-columns: 7rem 1fr; gap: .5rem; align-items: center; font-size: .8rem; color: var(--tv-muted); }
 .tv-field textarea { min-height: 3.2rem; resize: vertical; } .tv-field .tv-input { font-family: ui-monospace, monospace; font-size: .82rem; }
@@ -2549,5 +2680,5 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
       return (last = bag.pop());
     };
   }
-  self.satexViews = { tipBag, render, RENDER, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, page: { pageOf, pageBox, pageNodes, headerOf, headerCalls, headerNodes }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  self.satexViews = { tipBag, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, page: { pageOf, pageBox, pageNodes, headerOf, headerCalls, headerNodes }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();

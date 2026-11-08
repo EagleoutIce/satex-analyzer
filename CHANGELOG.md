@@ -38,6 +38,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `feat` **Compile works on the web playground.** pdfTeX runs in the browser, with TeX Live 2026 files fetched on demand and kept. The hosts are set under Settings, Compile, or turned off. `satex gui` keeps using your own TeX.
 - `feat` **Loading banners show tips**, a new one every 20 s, from a list checked against the docs and the code.
 - `fix` **The version loses its star when only docs or CI changed since the release.** It follows what the site ships, not the commit count.
+- `feat` **One layout for the bibliography, glossary, index and theorem managers.** Search, filter chips with counts, a list that fills its pane, a draggable divider (arrow keys too, 35% by default, remembered) and the entry's detail. The glossary's chips separate entry commands (`\newglossaryentry`, `\newacronym`) and glossary types.
+- `feat` **Inspect every use of an entry.** The detail of an entry lists each use with file, line and source line, and a click opens it. Delete moved behind the uses, in a fold.
 - `perf` **Package caches replay in every document.** A package loaded at `\begin{document}`, like graphics' epstopdf-base, was rebuilt in the browser for every example. [`1fbd322`](https://github.com/EagleoutIce/satex-analyzer/commit/1fbd322)
 
 ### Site and docs

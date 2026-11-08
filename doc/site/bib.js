@@ -9,8 +9,7 @@
   const button = (label, onclick, cls = '') => Object.assign(el('button', `tv-button ${cls}`, esc(label)), { type: 'button', onclick });
 
   // ---- the model, no page needed (views.test.mjs)
-  /** A type's badge colour: a hue from its name, the same in every view. */
-  const hue = (type) => [...String(type).toLowerCase()].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+  const { hue, passes, masterDetail, usesView, fold } = self.satexViews;
   /** The fields of an entry's snapshot, and the names written bare. */
   const keysOf = (node) => node.args[1].keys ??= [];
   const bareOf = (node) => node.args[1].bare ??= [];
@@ -38,13 +37,10 @@
     doi: (r) => !!get(r.node, 'doi'), url: (r) => !!get(r.node, 'url'), constants: (r) => r.constants.length > 0, undefined: (r) => r.undefined.length > 0,
   };
   const STATUS_LABEL = { cited: 'cited', uncited: 'uncited', missing: 'missing fields', duplicates: 'duplicates', doi: 'DOI', url: 'URL', constants: '@string users', undefined: 'undefined @string' };
-  function matches(r, q, on) {
-    const types = on.filter((f) => f.startsWith('type:')), status = on.filter((f) => !f.startsWith('type:'));
-    if (types.length && !types.includes(`type:${r.type}`)) return false;
-    if (status.some((f) => !STATUS[f]?.(r))) return false;
-    const hay = [r.key, r.type, r.author, r.year, r.title, ...keysOf(r.node).map((k) => k.value)].join(' ').toLowerCase();
-    return String(q).toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
-  }
+  /** A filter chip by its id: a type (alternatives to each other) or a status (each one narrows). */
+  const chipOf = (f) => f.startsWith('type:') ? { id: f, group: 'type', test: (r) => `type:${r.type}` === f } : { id: f, test: STATUS[f] };
+  const hay = (r) => [r.key, r.type, r.author, r.year, r.title, ...keysOf(r.node).map((k) => k.value)].join(' ').toLowerCase();
+  const matches = (r, q, on) => passes(r, q, on.map(chipOf), new Set(on), hay(r));
   const SORTS = { author: (r) => r.author, year: (r) => r.year, title: (r) => r.title, key: (r) => r.key, cited: (r) => String(r.cited).padStart(6, '0') };
   /** What a text names to fetch: a DOI, an arXiv id (fetched by its DataCite DOI), else a URL. */
   function identify(text) {
@@ -77,29 +73,11 @@
 
   // ---- the view
   const STYLE = `
-.cache-dialog.view-dialog:has(.tv-refs) { width: min(84rem, calc(100vw - 1rem)); } .tv:has(.tv-refs) { max-width: none !important; }
-.tv-refs { display: grid; gap: .6rem; min-width: min(60rem, 100%); }
+.tv-refs { display: grid; gap: .6rem; min-width: 0; }
 .tv-refs-tabs { display: flex; gap: .3rem; align-items: center; border-bottom: 1px solid var(--tv-border); }
 .tv-refs-tabs > button { font: inherit; padding: .35rem .8rem; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--tv-muted); cursor: pointer; }
 .tv-refs-tabs > button[aria-selected=true] { color: var(--tv-fg); border-bottom-color: var(--tv-accent); font-weight: 600; } .tv-refs-tabs .tv-muted { margin-left: auto; font-size: .8rem; }
-.tv-refs-main { display: grid; grid-template-columns: minmax(22rem, 1.15fr) minmax(22rem, 1fr); gap: .8rem; min-height: 0; }
-.tv-refs-left, .tv-refs-right { display: grid; gap: .45rem; align-content: start; min-width: 0; }
-.tv-refs-chips { display: flex; flex-wrap: wrap; gap: .25rem; }
-.tv-chip { font: inherit; font-size: .74rem; padding: .08rem .45rem; border-radius: 999px; border: 1px solid var(--tv-border); background: none; color: var(--tv-muted); cursor: pointer; }
-.tv-chip[aria-pressed=true] { background: color-mix(in srgb, var(--tv-accent) 16%, transparent); border-color: var(--tv-accent); color: var(--tv-fg); }
-.tv-type { display: inline-block; font-size: .7rem; font-weight: 600; padding: .02rem .4rem; border-radius: 4px; white-space: nowrap;
-  color: hsl(var(--h) 55% 32%); background: hsl(var(--h) 70% 90%); }
-:root[data-theme=dark] .tv-type, .vscode-dark .tv-type { color: hsl(var(--h) 70% 82%); background: hsl(var(--h) 35% 24%); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme=light]) .tv-type { color: hsl(var(--h) 70% 82%); background: hsl(var(--h) 35% 24%); } }
-.tv-refs-list { max-height: 58vh; overflow: auto; border: 1px solid var(--tv-border); border-radius: 8px; outline: none; }
-.tv-refs-list:focus-visible { border-color: var(--tv-accent); }
-.tv-refs-list table { width: 100%; border-collapse: collapse; font-size: .82rem; table-layout: fixed; }
-.tv-refs-list th { position: sticky; top: 0; background: var(--tv-sunk); text-align: left; font-weight: 600; padding: .3rem .4rem; cursor: pointer; user-select: none; color: var(--tv-muted); }
-.tv-refs-list th[aria-sort] { color: var(--tv-fg); } .tv-refs-list td { padding: .25rem .4rem; border-top: 1px solid color-mix(in srgb, var(--tv-border) 50%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tv-refs-list tr { cursor: pointer; } .tv-refs-list tbody tr:hover { background: color-mix(in srgb, var(--tv-accent) 6%, transparent); }
-.tv-refs-list tr.on { background: color-mix(in srgb, var(--tv-accent) 16%, transparent); } .tv-refs-list td small { color: var(--tv-muted); font-family: ui-monospace, monospace; }
-.tv-flag { font-size: .66rem; padding: 0 .3rem; border-radius: 4px; margin-left: .25rem; background: var(--tv-sunk); color: var(--tv-muted); }
-.tv-flag.warn { background: color-mix(in srgb, #e0a000 22%, transparent); color: inherit; }
+.tv-refs-left { display: grid; gap: .45rem; align-content: start; min-width: 0; }
 .tv-refs-head { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; } .tv-refs-head input { flex: 1; min-width: 8rem; }
 .tv-refs-head select { width: auto; }
 .tv-refs-fields { display: grid; grid-template-columns: 7.5rem 1fr auto; gap: .25rem .4rem; align-items: start; }
@@ -120,8 +98,7 @@
 .tv-refs-drop textarea { min-height: 6rem; font-family: ui-monospace, monospace; font-size: .8rem; }
 .tv-refs-consts { width: 100%; border-collapse: collapse; font-size: .84rem; } .tv-refs-consts td, .tv-refs-consts th { text-align: left; padding: .25rem .4rem; border-top: 1px solid color-mix(in srgb, var(--tv-border) 50%, transparent); }
 .tv-refs-consts tr.on { background: color-mix(in srgb, var(--tv-accent) 14%, transparent); } .tv-refs-consts .tv-input { width: 9rem; }
-.tv-link { font: inherit; border: 0; background: none; color: var(--tv-accent); cursor: pointer; padding: 0; text-decoration: underline dotted; }
-@media (max-width: 760px) { .tv-refs-main { grid-template-columns: 1fr; } }`;
+.tv-link { font: inherit; border: 0; background: none; color: var(--tv-accent); cursor: pointer; padding: 0; text-decoration: underline dotted; }`;
 
   function references(s, view, ctx) {
     if (!document.getElementById('tv-refs-style')) document.head.append(Object.assign(document.createElement('style'), { id: 'tv-refs-style', textContent: STYLE }));
@@ -139,7 +116,7 @@
       const n = Object.values(r?.edits?.changes ?? {}).flat().length;
       if (!n) return say((r?.notes ?? []).join('; ') || 'no changes');
       dirty = false;
-      ctx.apply(r.edits, { q: search.value, open: selected?.key });
+      ctx.apply(r.edits, { q: search.value, open: md.selected()?.key });
     };
     const fail = (e) => say(String(e?.message ?? e));
 
@@ -167,70 +144,33 @@
       box.insertBefore(el('div', 'tv-refs-note warn', `<span><b>${esc(t.name)}</b> is loaded twice (${esc(t.file.split('/').pop())}:${t.line}): every entry is read twice. The lint <code>duplicate-bibliography-load</code> drops the second load.</span>`), tabs.nextSibling);
     }
 
-    // ---- entries: list and editor
-    const main = el('div', 'tv-refs-main'), left = el('div', 'tv-refs-left'), right = el('div', 'tv-refs-right');
-    main.append(left, right);
-    panes.entries.append(main);
-    const head = el('div', 'tv-refs-head');
-    const search = Object.assign(el('input', 'tv-input'), { placeholder: 'search author, title, year, key, any field', spellcheck: false, value: s.query ?? '' });
-    search.ariaLabel = 'search';
-    head.append(search);
-    const chips = el('div', 'tv-refs-chips');
-    const on = new Set();
-    const count = (f) => s.items.filter((r) => f.startsWith('type:') ? `type:${r.type}` === f : STATUS[f](r)).length;
-    const chip = (f, html) => {
-      const c = Object.assign(el('button', 'tv-chip', html), { type: 'button' });
-      c.setAttribute('aria-pressed', 'false');
-      c.onclick = () => { on.has(f) ? on.delete(f) : on.add(f); c.setAttribute('aria-pressed', String(on.has(f))); draw(); };
-      chips.append(c);
-    };
-    for (const t of [...new Set(s.items.map((r) => r.type))].sort()) chip(`type:${t}`, `<span class="tv-type" style="--h:${hue(t)}">${esc(t)}</span> ${count(`type:${t}`)}`);
-    for (const f of Object.keys(STATUS)) if (count(f)) chip(f, `${esc(STATUS_LABEL[f])} ${count(f)}`);
-    const list = el('div', 'tv-refs-list');
-    list.tabIndex = 0;
-    list.ariaLabel = 'entries';
-    left.append(head, chips, list);
-    let by = 'author', down = false, rows = [];
-    let selected = s.items.find((r) => r.key === s.focus) ?? null;
+    // ---- entries: the shared list and detail (views.js `masterDetail`), the editor of the selected entry on the right
     let dirty = false;
-    const draw = () => {
-      rows = s.items.filter((r) => matches(r, search.value, [...on])).sort((a, b) => String(SORTS[by](a)).localeCompare(String(SORTS[by](b)), undefined, { numeric: true, sensitivity: 'base' }) * (down ? -1 : 1));
-      const th = (k, label, w) => `<th data-sort="${k}" style="width:${w}"${by === k ? ` aria-sort="${down ? 'descending' : 'ascending'}"` : ''}>${label}${by === k ? (down ? ' ▾' : ' ▴') : ''}</th>`;
-      const table = el('table', '', `<thead><tr><th style="width:6.4rem">Type</th>${th('author', 'Author', '24%')}${th('year', 'Year', '3.4rem')}${th('title', 'Title', 'auto')}</tr></thead>`);
-      const body = el('tbody');
-      for (const r of rows.slice(0, 500)) {
-        const tr = el('tr', r === selected ? 'on' : '');
-        const flags = [!r.cited && '<span class="tv-flag">uncited</span>', r.missing.length && '<span class="tv-flag warn" title="missing required fields">missing</span>',
-          r.duplicates.length && '<span class="tv-flag warn">duplicate</span>', r.undefined.length && '<span class="tv-flag warn">@string?</span>'].filter(Boolean).join('');
-        tr.innerHTML = `<td><span class="tv-type" style="--h:${hue(r.type)}">${esc(r.type)}</span></td><td title="${esc(r.author)}">${esc(r.author)}</td><td>${esc(r.year)}</td><td title="${esc(r.title)}">${esc(r.title)}<br><small>${esc(r.key)}</small>${flags}</td>`;
-        tr.onclick = () => pick(r);
-        body.append(tr);
-      }
-      table.append(body);
-      for (const h of table.querySelectorAll('th[data-sort]')) h.onclick = () => { down = by === h.dataset.sort ? !down : false; by = h.dataset.sort; draw(); };
-      list.replaceChildren(rows.length ? table : el('div', 'tv-refs-empty', 'No entry matches.'));
-    };
-    const pick = async (r) => {
-      if (r === selected) return;
-      if (dirty && D?.discard && !(await D.discard(box.closest('dialog') ?? box))) return;
-      selected = r;
-      dirty = false;
-      draw();
-      editor();
-      list.querySelector('tr.on')?.scrollIntoView({ block: 'nearest' });
-    };
-    list.onkeydown = (e) => {
-      const i = rows.indexOf(selected);
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const r = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))]; if (r) pick(r); }
-      if (e.key === 'Enter') { e.preventDefault(); right.querySelector('input, textarea')?.focus(); }
-    };
-    search.oninput = draw;
-    search.onkeydown = (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); list.focus(); if (!selected && rows[0]) pick(rows[0]); } };
+    const chips = [...new Set(s.items.map((r) => r.type))].sort().map((t) => ({ ...chipOf(`type:${t}`), html: `<span class="tv-type" style="--h:${hue(t)}">${esc(t)}</span>` }))
+      .concat(Object.keys(STATUS).map((f) => ({ ...chipOf(f), html: esc(STATUS_LABEL[f]) })));
+    const md = masterDetail({
+      label: 'entries', placeholder: 'search author, title, year, key, any field', query: s.query, rows: s.items, chips, head: ['Type', 'Entry'], hay,
+      sorts: Object.entries(SORTS).map(([id, key]) => ({ id, label: id, key: (r) => String(key(r)) })),
+      row: (r) => ({
+        kind: r.type, title: r.title, sub: [r.author, r.year, r.key].filter(Boolean).join(' · '),
+        flags: [!r.cited && '<span class="tv-flag">uncited</span>', r.missing.length && '<span class="tv-flag warn" title="missing required fields">missing</span>',
+          r.duplicates.length && '<span class="tv-flag warn">duplicate</span>', r.undefined.length && '<span class="tv-flag warn">@string?</span>'].filter(Boolean).join(''),
+      }),
+      selected: s.items.find((r) => r.key === s.focus) ?? s.items[0] ?? null, none: s.items.length ? 'Select an entry.' : 'No entries yet: import some.',
+      leave: async () => {
+        if (dirty && D?.discard && !(await D.discard(box.closest('dialog') ?? box))) return false;
+        dirty = false;
+        return true;
+      },
+      show: () => editor(),
+    });
+    const right = md.right, search = md.search, pick = md.pick;
+    panes.entries.append(md.node);
 
     // the detail editor of the selected entry
     const editor = (kept = null) => {
-      const r = selected;
-      if (!r) return right.replaceChildren(el('div', 'tv-refs-empty', s.items.length ? 'Select an entry.' : 'No entries yet: import some.'));
+      const r = md.selected();
+      if (!r) return md.show();
       const draft = kept ?? structuredClone(r.node);
       const was = JSON.stringify(r.node);
       const changed = () => { dirty = JSON.stringify(draft) !== was; save.disabled = !dirty || bad(); revert.disabled = !dirty; };
@@ -251,8 +191,9 @@
       convert.disabled = true;
       type.onchange = () => { convert.disabled = type.value === r.type || dirty; };
       top.append(Object.assign(el('span', 'tv-type', esc(r.type)), { style: `--h:${hue(r.type)}` }), key, type, convert);
-      const where = el('div', 'tv-muted tv-uses', ctx.markdown(`In \`${r.file.split('/').pop()}:${r.line}\`. ${r.places}`));
+      const where = el('div', 'tv-muted tv-uses', ctx.markdown(`In \`${r.file.split('/').pop()}:${r.line}\`.`));
       where.onclick = (e) => { if (e.target.closest('a.place')) ctx.close?.(); };
+      const uses = usesView(r.sites ?? [], ctx, 'Cited', 'Not cited.');
       const notes = el('div');
       if (r.missing.length) notes.append(el('div', 'tv-refs-note warn', `<span>@${esc(r.type)} requires ${r.missing.map((m) => `<b>${esc(m)}</b>`).join(', ')} (${esc(s.style)}).</span>`));
       if (r.undefined.length) notes.append(el('div', 'tv-refs-note warn', `<span>No <code>@string</code> defines ${r.undefined.map((m) => `<b>${esc(m)}</b>`).join(', ')}.</span>`));
@@ -323,12 +264,13 @@
       const save = button('Save', () => ask({ bib: 'print', file: r.file, nodes: [draft] }).then(write, fail), 'tv-primary');
       const revert = button('Revert', () => { dirty = false; editor(); });
       const dblp = button('Check with dblp', () => sync([r]).then((rows) => results(rows, right), fail));
+      // deleting stays, behind the uses: what cites an entry is shown first
       const del = button(`Delete ${r.key}`, () => ask({ bib: 'print', file: r.file, nodes: [{ ...r.node, drop: true }] }).then(write, fail), 'tv-danger');
       del.disabled = r.cited > 0;
       del.title = r.cited ? `cited ${r.cited} times` : '';
-      acts.append(save, revert, dblp, del);
+      acts.append(save, revert, dblp);
       const rebuild = () => editor(draft);
-      right.replaceChildren(top, keyMsg, where, notes, grid, add, addMsg, acts, consts);
+      right.replaceChildren(top, keyMsg, where, uses, notes, grid, add, addMsg, acts, fold('Delete…', del, ...(r.cited ? [el('div', 'tv-muted', `Cited ${r.cited} times: inspect the uses above first.`)] : [])), consts);
       changed();
     };
 
@@ -476,12 +418,10 @@
     panes.import.append(el('div', 'tv-refs-left'));
     panes.import.firstChild.append(line, drop, opts, el('p', 'tv-muted', 'Nothing is sent anywhere until you click. A record that matches an entry (by key, DOI or title) updates it: new fields are checked, changed values are not, so no local edit is lost unasked.'), out);
 
-    draw();
-    editor();
+    md.start();
     drawConstants();
     show('entries');
     ctx.guard?.(() => dirty);
-    setTimeout(() => (selected ? list : search).focus(), 0);
     return box;
   }
 

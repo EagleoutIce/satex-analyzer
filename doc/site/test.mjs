@@ -862,6 +862,25 @@ async function browser() {
       await send('Page.navigate', { url: base + 'play/index.html' });
       await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 180000);
       });
+      await section('managers', async () => {
+      // Intuition: the bibliography, glossary and index managers are one layout (search, chips, list, divider, detail), so each is checked
+      // on the thesis example for the same facts. The bug pinned: the bibliography's list sat in an inner frame that did not fill its pane
+      // at 35%, the glossary and index were accordions that looked unlike it, and delete stood where the uses should be inspected.
+      await send('Page.navigate', { url: base + 'play/index.html?managers#thesis.tex' });
+      await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 180000);
+      for (const kind of ['bibliography', 'glossary', 'index']) {
+        await until(`return document.getElementById('lsp-status').textContent !== 'checking…' && await self.satexOpen({ widget: 'manager', at: '${kind}' })`, 180000);
+        await until(`return !!document.querySelector('#play-view[open] .tv-md')`, 30000);
+        await sleep(400);
+        const f = await js(`const md = document.querySelector('#play-view .tv-md'); if (!md) return null;
+          const l = md.querySelector('.tv-md-left').getBoundingClientRect().width, w = md.getBoundingClientRect().width, t = md.querySelector('.tv-md-table'), rows = md.querySelector('.tv-md-rows');
+          return { pct: l / w * 100, fills: !!t && Math.abs(t.getBoundingClientRect().width - rows.clientWidth) < 2, selected: md.querySelectorAll('tbody tr.on').length, search: !!md.querySelector('input[aria-label=search]'),
+            bar: !!md.querySelector('.tv-md-bar[role=separator][tabindex="0"]'), uses: document.querySelectorAll('#play-view .tv-use').length, danger: document.querySelectorAll('#play-view .tv-actions > .tv-danger:not(.tv-fold *)').length };`);
+        check(`${kind} manager: shared layout, list 35%, table fills, a selection, uses listed, delete folded`, f && Math.abs(f.pct - 35) < 3 && f.fills && f.selected === 1 && f.search && f.bar && f.uses >= 1 && !f.danger, JSON.stringify(f));
+        await shot(`manager-${kind}`);
+        await js(`document.getElementById('play-view').close()`);
+      }
+      });
       await section('settings', async () => {
       // a satex.yaml key set in the settings dialog reaches the run: `clock` fixes what \\year reads
       await open('clock', '\\documentclass{article}\n\\begin{document}\nYear \\the\\year.\n\\end{document}\n');

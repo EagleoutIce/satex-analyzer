@@ -1869,6 +1869,8 @@
       // the server prints a view's edited snapshots (src/lsp/snapshot.rs)
       print: (nodes) => lsp('satex/dialogApply', { textDocument: { uri: t.target }, kind: 'snapshot', nodes }),
       close: () => closeView(),
+      // a use's source line (the uses list of every manager)
+      snippet: (file, line) => state.texts[Object.keys(state.texts).find((n) => path(n) === file || n === file || file.endsWith('/' + n)) ?? '']?.split('\n')[line - 1] ?? '',
       guard: (dirty) => viewGuards.push(dirty),
       // a history's final body, stepped through: the trace of one of its calls
       trace: (name) => traceCall(name),

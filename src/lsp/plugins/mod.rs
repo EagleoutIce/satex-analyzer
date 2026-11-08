@@ -588,6 +588,17 @@ pub(super) fn button(action: &CodeAction) -> Json {
     json!({ "title": action.title, "edits": edits.unwrap_or_default() })
 }
 
+/// Where a record is used, as the views' uses list reads it: `file` and `line` of each place, once.
+pub(super) fn sites<'a>(places: impl IntoIterator<Item = (&'a str, u32)>) -> Json {
+    let mut out: Vec<(&str, u32)> = Vec::new();
+    for p in places {
+        if !out.contains(&p) {
+            out.push(p);
+        }
+    }
+    Json::Array(out.into_iter().map(|(file, line)| json!({ "file": file, "line": line })).collect())
+}
+
 /// A WorkspaceEdit of `edits` on the file `path`, as views write them.
 pub(super) fn edit_of(path: &str, edits: Vec<lsp_types::TextEdit>) -> Json {
     json!({ "changes": { super::handlers::path_uri(path).as_str(): edits } })

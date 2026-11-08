@@ -280,6 +280,8 @@ fn record(cx: &Cx, uses: &[Use], path: &[String]) -> Json {
         "sort": { "term": path.iter().map(|l| sort_of(l).to_lowercase()).collect::<Vec<_>>().join("\u{1}"), "uses": format!("{:06}", 999_999 - below.len()) },
         "forms": forms,
         "uses": format!("Used at {}", places.join(" · ")),
+        "sites": super::sites(below.iter().map(|u| (u.file.as_str(), u.line))),
+        "facets": { "level": if n > 1 { "subentry" } else { "term" } },
         "why": (!editable).then_some("Some calls stand in another file: open it to edit them."),
         "table": { "columns": ["below", "format", "where"], "rows": rows },
         "actions": actions,
