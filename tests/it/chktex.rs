@@ -1839,3 +1839,14 @@ fn a_symbol_named_by_document_text_is_not_the_documents_character() {
     let found = findings(&analysis, "wrong-quote-character");
     assert!(found.is_empty(), "{found:?}");
 }
+
+/// A length in an undefined command's options is code nobody could read: with
+/// `\\node` undefined, `below=3.5mm` is set as text, yet it is no quantity to
+/// hand to siunitx. The same length in a sentence stays a finding.
+#[test]
+fn a_length_after_an_undefined_command_is_no_hand_set_quantity() {
+    let source = "\\documentclass{article}\n\\begin{document}\n\\node[below=3.5mm] at(a) {b};\n\nIt moved 7\\,mm away.\n\\end{document}\n";
+    let Some(doc) = on_disk("undefined-hand-set", source, true) else { return };
+    let found = findings(&doc.analysis, "hand-set-quantity");
+    assert_eq!(found.len(), 1, "only the sentence: {found:?}");
+}

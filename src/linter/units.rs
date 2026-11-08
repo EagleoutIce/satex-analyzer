@@ -95,6 +95,7 @@ fn hand_set_quantity(report: &mut Report) {
         // length no real run does), in the document's own text, not a count.
         .filter(|q| {
             q.certain
+                && !view.code_at(q.span)
                 && document(q.span.file)
                 && document(q.unit_span.file)
                 && !q.within.iter().any(|file| packages.contains(file))
