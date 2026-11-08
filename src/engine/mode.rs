@@ -4356,6 +4356,18 @@ impl Machine<'_> {
             return;
         }
         n.scripted = None;
+        // A penalty in inline math is no atom and has no size (tex.web § 730);
+        // below 10000 it is a breakpoint of the formula.
+        if let (Item::Penalty(p), Modes::MATH, None) = (&item, self.mode, &n.script) {
+            n.math_breaks = match p {
+                Some(10000..) => n.math_breaks,
+                Some(0..) => n.math_breaks.saturating_add(1),
+                _ => u32::MAX,
+            };
+            n.pushed(p.map_or(Last::UNKNOWN, Last::Penalty));
+            self.natural = Some(n);
+            return;
+        }
         // A box in inline math is an ordinary atom (tex.web §§ 1076, 736):
         // the character before it takes its italic correction (§ 755), and
         // two ordinary atoms have no space between them (§ 764).

@@ -8509,12 +8509,14 @@ will look undefined",
             )) => true,
             // Glue and kerns, `\mskip` and `\mkern` in math units, are no
             // atoms: `append_item` adds their width (tex.web §§ 732, 761).
+            // A penalty is none either and has no width (§ 730).
             // `\unskip`, `\unkern` and `\unpenalty` take an item away or
             // nothing, which `remove_item` follows (tex.web § 1105).
             Meaning::Primitive(
                 P::Typeset(
                     crate::engine::builtins::Typeset::Glue
                     | crate::engine::builtins::Typeset::Dimen
+                    | crate::engine::builtins::Typeset::Number
                     | crate::engine::builtins::Typeset::Plain,
                 )
                 | P::Mode(crate::engine::builtins::ModeCmd::Horizontal(crate::engine::builtins::Material::Glue)),

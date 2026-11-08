@@ -1048,6 +1048,29 @@ fn unkern_in_inline_math_widens_its_size() {
     assert!(undefined(&analysis, "nonzero"));
 }
 
+/// A penalty in inline math is no atom and has no width (tex.web § 730),
+/// so the formula keeps its size: siunitx 3.6 puts `\nobreak` between a
+/// quantity's number and unit inside math, and an unknown width there sent
+/// pgfmath parsing a node's anchors over unknown text. The expectations are
+/// what pdflatex printed for the same source.
+#[test]
+fn a_penalty_in_inline_math_keeps_its_size() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\def\m#1{\setbox0\hbox{#1}\typeout{mark \the\wd0}}
+\m{$1\nobreak\,m$}\m{$1\penalty10000 m$}\m{$\nobreak$}\m{$a\penalty0 +b$}\m{$a+\penalty-50 b$}
+\end{document}",
+    );
+    assert_eq!(
+        marks(&analysis),
+        ["mark 15.44678pt", "mark 13.78015pt", "mark 0.0pt", "mark 21.79968pt", "mark 21.79968pt"]
+    );
+}
+
 /// An inline formula's size with scripts: a braced one-character script, a
 /// box nucleus (tex.web § 756 uses the box's height and depth), and a
 /// `\color` whatsit inside the script. The expectations are what pdflatex
