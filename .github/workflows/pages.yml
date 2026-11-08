@@ -71,7 +71,13 @@ jobs:
 
       # The semantics pages export the Lean declarations; lake fetches the pinned toolchain.
       - name: Install Lean
-        run: curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+        # GitHub's downloads answer 504 now and then.
+        run: |
+          for wait in 15 60 120 0; do
+            curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none && break
+            [ "$wait" != 0 ] || exit 1
+            sleep "$wait"
+          done
 
       - uses: actions/checkout@v5
       # The checkout belongs to another user than the container's root: git refuses it otherwise.
