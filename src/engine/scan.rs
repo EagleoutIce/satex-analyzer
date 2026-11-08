@@ -1996,7 +1996,9 @@ impl Machine<'_> {
 /// length keeps nothing of their bound, so a read takes them whole.
 pub(crate) fn unbounded_digits(num: Num) -> bool {
     let any = |lo: i64, hi: i64| lo <= 9 && hi >= 1_000_000_000;
-    any(num.lo.max(1), num.hi) && (num.lo >= 0 || any(num.hi.min(-1).saturating_neg(), num.lo.saturating_neg()))
+    let positive = num.hi < 1 || any(num.lo.max(1), num.hi);
+    let negative = num.lo >= 0 || any(num.hi.min(-1).saturating_neg(), num.lo.saturating_neg());
+    num.lo < num.hi && positive && negative
 }
 
 #[cfg(test)]

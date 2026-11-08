@@ -1284,4 +1284,28 @@ fn digits_of_any_length_stay_one_argument_above_any_small_bound() {
           \edef\x{\the\count1}\def\f#1#2\end{\gdef\got{#1}\gdef\rest{#2}}\expandafter\f\x\end",
     );
     assert!(!with_code(&analysis, "digits-read-as-one-token").is_empty());
+    // A number with only a negative side has any length too.
+    let negative = analyze(
+        r"\count1=\pdflastypos \ifnum\count1>0 \count1=0 \fi
+          \edef\x{\the\count1}\def\f#1#2\end{\gdef\got{#1}\gdef\rest{#2}}\expandafter\f\x\end",
+    );
+    assert!(!with_code(&negative, "digits-read-as-one-token").is_empty());
+}
+
+/// Intuition: a printed number is one `-` at most, first, then digits. No `--` can start in it, so
+/// a scan for `--` over it finds only the delimiter after it.
+/// Bug: the scan asked whether the number may hold a `-` and cut the argument inside it. hyperref
+/// substitutes `---` and `--` in every PDF string, so a negative page number lost its class there:
+/// any text that may hold `\`, and `\HyPsd@DoConvert` then ran into its own end.
+/// `-` alone stays possible.
+#[test]
+fn no_double_dash_starts_in_a_printed_number() {
+    let args = |delimiter: &str| {
+        analyze(&format!(
+            r"\count1=\pdflastypos \ifnum\count1>0 \count1=0 \fi \edef\x{{\the\count1}}
+              \def\f#1{delimiter}#2\end{{\gdef\one{{#1}}\gdef\two{{#2}}}}\expandafter\f\x{delimiter}\end"
+        ))
+    };
+    assert_eq!(body(&args("--"), "two"), "");
+    assert_ne!(body(&args("-"), "two"), "");
 }
