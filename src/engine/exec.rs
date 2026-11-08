@@ -1985,6 +1985,18 @@ impl Machine<'_> {
         (sym, arm(true), arm(false))
     }
 
+    /// Macros one text on every path: one definition, or the same tokens
+    /// where all that is unknown is typed digits. Such a token is one number
+    /// on a path: copies of it are equal, other unknown text need not be.
+    fn one_text(&self, p: &Rc<MacroDef>, q: &Rc<MacroDef>) -> bool {
+        let one_number = |t: &Token| {
+            t.cs().is_none_or(|s| {
+                !self.is_unknown_marker(s) || self.name(s).starts_with(crate::engine::scan::TYPED_DIGITS)
+            })
+        };
+        Rc::ptr_eq(p, q) || (p == q && p.replacement_text.iter().all(one_number))
+    }
+
     /// tex.web § 507 for one member meaning of each `\ifx` operand:
     /// `None` where unknown text leaves it open.
     fn ifx_pair(&self, x: &Meaning, y: &Meaning) -> Option<bool> {
@@ -1993,7 +2005,7 @@ impl Machine<'_> {
             // tex.web § 507: undefined equals undefined only.
             (Meaning::Undefined, _) | (_, Meaning::Undefined) => Some(x == y),
             (Meaning::Macro(p), Meaning::Macro(q)) => {
-                if Rc::ptr_eq(p, q) {
+                if self.one_text(p, q) {
                     return Some(true);
                 }
                 if !self.has_unknown(&p.replacement_text) && !self.has_unknown(&q.replacement_text) {
@@ -3146,7 +3158,7 @@ impl Machine<'_> {
                 let vague = |m: &Meaning, me: &Self| {
                     !one_macro && m.as_macro().is_some_and(|m| me.has_unknown(&m.replacement_text))
                 };
-                let same_macro = matches!((&ma, &mb), (Meaning::Macro(x), Meaning::Macro(y)) if Rc::ptr_eq(x, y));
+                let same_macro = matches!((&ma, &mb), (Meaning::Macro(x), Meaning::Macro(y)) if self.one_text(x, y));
                 // Macros whose texts cannot be as long as each other, or begin
                 // alike, differ whatever their unknown parts stand for.
                 let bodies_differ = match (&ma, &mb) {

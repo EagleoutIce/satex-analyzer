@@ -1251,3 +1251,37 @@ fn a_mode_split_after_a_joined_fi_is_no_loop() {
     assert!(with_code(&a, "recursion-widened").is_empty(), "{:?}", with_code(&a, "recursion-widened"));
     assert!(crate::support::defined(&a, "inbox") && crate::support::defined(&a, "after"));
 }
+
+/// Intuition: `\the` of a register gives one token of typed digits that stands for one number,
+/// so two `\edef`s from that token hold equal texts on every path.
+/// Bug: `\ifx` called them undecided, as any two texts with unknown parts. hyperref's
+/// `\HyPsd@RemoveBraces` compares such copies per character and then ran its brace arm on a page
+/// number, in a loop that a cut ended, with false runaway arguments behind it.
+/// A changed register prints another number: that test must stay open.
+#[test]
+fn copies_of_a_typed_number_are_one_text() {
+    let analysis = analyze(
+        r"\count1=\pdflastypos \ifnum\count1<4 \count1=4 \fi
+          \edef\x{\the\count1}\edef\a{\x x}\edef\b{\x x}
+          \ifx\a\b \gdef\same{}\else \gdef\differ{}\fi
+          \edef\c{\the\count1}\count1=\pdflastxpos \ifnum\count1<4 \count1=4 \fi \edef\d{\the\count1}
+          \ifx\c\d \gdef\mayequal{}\else \gdef\maydiffer{}\fi",
+    );
+    let names = names(&analysis);
+    assert!(names.contains(&"same".to_string()), "{names:?}");
+    assert!(!names.contains(&"differ".to_string()), "{names:?}");
+    assert!(names.contains(&"mayequal".to_string()) && names.contains(&"maydiffer".to_string()), "{names:?}");
+}
+
+/// Intuition: a number with a lower bound under ten and no upper bound can have any spelling
+/// length, so a split by length keeps nothing of its bound, whatever that lower bound is.
+/// Bug: only a lower bound of at most 1 counted as any length: a page number known to be at
+/// least 4 split into ten paths per read, and the joined arms lost its digits.
+#[test]
+fn digits_of_any_length_stay_one_argument_above_any_small_bound() {
+    let analysis = analyze(
+        r"\count1=\pdflastypos \ifnum\count1<4 \count1=4 \fi
+          \edef\x{\the\count1}\def\f#1#2\end{\gdef\got{#1}\gdef\rest{#2}}\expandafter\f\x\end",
+    );
+    assert!(!with_code(&analysis, "digits-read-as-one-token").is_empty());
+}

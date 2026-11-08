@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{hyperref}
+\makeatletter
+\begin{document}
+\c@page=\pdflastypos\relax
+\ifnum\c@page<4 \c@page=4 \fi
+x\clearpage
+y\clearpage
+\gdef\SatexReachedEnd{}
+\end{document}

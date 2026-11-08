@@ -228,6 +228,11 @@ fixtures! {
     /// build run wrote: the read loop takes each line exactly, so no note
     /// text runs as code inside it.
     notecolumn_notes_read_back("notecolumn_read_back", "main.tex");
+    /// Intuition: a shipout runs `\pdfstringdef` on `\thepage`, and a page number nothing bounds
+    /// above is still digits. Bug: hyperref's string pipeline (`\HyPsd@RemoveBraces`, then
+    /// `\HyPsd@DoConvert`) reported runaway arguments that pdflatex never has; a note column's second
+    /// run gets its page numbers this way.
+    hyperref_page_number_nothing_bounds("hyperref_unknown_page", "mwe.tex");
     /// An arrow tip toward a point with an unknown coordinate.
     tikz_arrow_to_an_unknown_point("tikz_arrow_to_unknown_point", "mwe.tex");
     /// An undefined name in a node's formula: the node's size must stay known.

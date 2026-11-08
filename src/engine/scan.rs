@@ -1979,7 +1979,7 @@ impl Machine<'_> {
 /// Digits of any length (a 32-bit value nothing bounds): a split by
 /// length keeps nothing of their bound, so a read takes them whole.
 pub(crate) fn unbounded_digits(num: Num) -> bool {
-    let any = |lo: i64, hi: i64| lo <= 1 && hi >= 1_000_000_000;
+    let any = |lo: i64, hi: i64| lo <= 9 && hi >= 1_000_000_000;
     any(num.lo.max(1), num.hi) && (num.lo >= 0 || any(num.hi.min(-1).saturating_neg(), num.lo.saturating_neg()))
 }
 
