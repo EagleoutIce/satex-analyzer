@@ -2942,7 +2942,23 @@ impl<'a> Machine<'a> {
             // A budget stopped it: no other run, and the last one that ran
             // to its end says more than this one.
             if analysis.exhausted {
-                break complete.take().unwrap_or(analysis);
+                let Some(mut earlier) = complete.take() else { break analysis };
+                // Not a green: the file table may differ, so said at no place.
+                earlier.limits.append(&mut analysis.limits);
+                earlier.exhausted = true;
+                earlier.facts.diagnostics.push(crate::analysis::facts::Diagnostic {
+                    severity: Severity::Imprecision,
+                    code: "budget-exhausted",
+                    message: format!(
+                        "build run {run} stopped at a budget; what follows is run {} of the build, which read an older state of the build's files",
+                        run - 1
+                    ),
+                    span: Span::default(),
+                    count: 1,
+                    origin: None,
+                    after: 0,
+                });
+                break earlier;
             }
             let took = elapsed(checkpoints) - before;
             if cfg.limits.seconds > 0 && elapsed(checkpoints) + took > budget {

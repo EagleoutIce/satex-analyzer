@@ -3513,6 +3513,46 @@ fn char_generate_of_an_unknown_code_closes_its_csname() {
     assert!(stopped.is_empty(), "{:?}", stopped.iter().map(|d| &d.message).collect::<Vec<_>>());
 }
 
+/// Intuition: a build whose second run stops at a budget reports its first run, which read no
+/// `.aux`: what it says about the document is an older state, and must say so.
+/// Bug: the fallback dropped every trace of the stopped run, so a test or a user saw a clean run
+/// (`documents::notecolumn_notes_read_back` was green without reading its notes back).
+#[test]
+fn a_build_that_fell_back_to_an_earlier_run_says_so() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-build-fallback-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("spin.tex");
+    // Ten calls per level: what only the second run does, with the label read.
+    let name = |n: u8| format!("\\lv{}", char::from(b'a' + n));
+    let levels: String =
+        (1..6).map(|n| format!("\\def{}{{{}}}", name(n), format!("{} ", name(n - 1)).repeat(10))).collect();
+    let source = format!(
+        "\\documentclass{{article}}\\def{}{{\\relax}}{levels}\\begin{{document}}\\ref{{s}}\\makeatletter
+\\@ifundefined{{r@s}}{{}}{{{}}}\\makeatother\\section{{S}}\\label{{s}}\\end{{document}}\n",
+        name(0),
+        name(5)
+    );
+    std::fs::write(&path, &source).unwrap();
+    // The budget lets the first run end, as it did alone, and stops the second.
+    let mut cfg = crate::support::config();
+    cfg.limits.build_runs = 1;
+    let first = Machine::analyze(&source, Some(&path), &cfg);
+    cfg.limits.build_runs = 5;
+    cfg.limits.steps = first.steps + first.steps / 100;
+    let analysis = Machine::analyze(&source, Some(&path), &cfg);
+    assert_eq!(analysis.written_runs.len(), 2, "the second run is the one that stops");
+    assert!(analysis.exhausted);
+    assert!(analysis.limits.iter().any(|l| l.key == "steps"), "{:?}", analysis.limits);
+    assert!(
+        analysis.facts.diagnostics.iter().any(|d| d.code == "budget-exhausted" && d.message.contains("build run 2")),
+        "{:?}",
+        analysis.facts.diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
 /// The build's runs (challenge 11): a run writes its own `.aux`, and the
 /// next reads it back, so a reference finds its label. A run that read
 /// nothing a changed line defines needs no second one.
