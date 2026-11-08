@@ -564,11 +564,9 @@ analysis:
 #! affects: precision, soundness
 #! example: `shell_escape: full`
 #! example: `\write18{date > now.tex}` runs, so `\input{now}` reads its output
-# TEMPORARY effect summaries: satex does not follow these macros' internals.
-# Each is said once per run as an `assumption`. Remove when the internals run.
-stubs:
-  \includegraphics: { args: "som", result: box }
-  \xinttheexpr: { until: \relax, result: { text: number } }
+# Your own effect summaries, for a macro you do not want followed: none by
+# default, SaTeX runs the real code. Each is said once per run as an `assumption`.
+stubs: {}
 
 interaction: nonstopmode  # the engine's -interaction: batchmode … errorstopmode
   #! affects: precision
