@@ -1591,6 +1591,7 @@ impl Machine<'_> {
             join_hooks: _,
             at_join: _,
             fi_mark: _,
+            mode_split: _,
             dropping: _,
             dropping_possible: _,
             dropping_breaks: _,

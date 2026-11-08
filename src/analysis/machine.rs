@@ -2010,6 +2010,9 @@ pub struct Machine<'a> {
     /// stack depth below it: paths that closed the same one and stand at
     /// one place join there whatever else tells them apart.
     pub(crate) fi_mark: Option<(Span, usize, bool)>,
+    /// The mode split the running path is an arm of: arms that stand at one
+    /// place in one mode join, whatever conditionals one of them closed since.
+    pub(crate) mode_split: Option<(Span, usize)>,
     /// A certain TeX error the running command raised: under
     /// `analysis.assume_compiles` its path is no run of the document.
     pub(crate) dropping: Option<String>,
@@ -2173,6 +2176,7 @@ struct PathState {
     scans: Vec<Accum>,
     at_join: Option<JoinAt>,
     fi_mark: Option<(Span, usize, bool)>,
+    mode_split: Option<(Span, usize)>,
     approximated: bool,
     /// An error a nested drive's path raised: it is the enclosing
     /// command's run's to drop or contain ([`Machine::explore`]).
@@ -2723,6 +2727,7 @@ impl<'a> Machine<'a> {
             join_hooks: Vec::new(),
             at_join: None,
             fi_mark: None,
+            mode_split: None,
             dropping: None,
             dropping_possible: false,
             dropping_breaks: false,
@@ -12522,6 +12527,7 @@ will look undefined",
             scans: self.scans.clone(),
             at_join: self.at_join,
             fi_mark: self.fi_mark,
+            mode_split: self.mode_split,
             approximated: self.approximated,
             dropping: (self.dropping.clone(), self.dropping_possible, self.dropping_breaks, self.dropping_nested),
             cut_taint: self.cut_taint,
@@ -12570,6 +12576,7 @@ will look undefined",
         self.scans = state.scans;
         self.at_join = state.at_join;
         self.fi_mark = state.fi_mark;
+        self.mode_split = state.mode_split;
         self.approximated = state.approximated;
         (self.dropping, self.dropping_possible, self.dropping_breaks, self.dropping_nested) = state.dropping;
         self.cut_taint = state.cut_taint;

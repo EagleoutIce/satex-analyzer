@@ -1156,6 +1156,15 @@ impl Machine<'_> {
 
     /// tex.web § 323 `begin_token_list` of `\everypar` and relatives.
     fn insert_every(&mut self, name: &str, span: Span) {
+        // Paths joined with different lists hold them all: a path for each.
+        let sym = self.intern(name);
+        if let Some(lists) = self.env.value(sym).token_lists().filter(|l| l.len() > 1) {
+            self.split(sym, span, lists.len(), |m, arm| {
+                let Some(list) = lists.get(arm) else { return false };
+                m.refine_value(sym, Value::Toks(list.clone()));
+                true
+            });
+        }
         match self.every(name) {
             Some(tokens) if !tokens.is_empty() => {
                 let sym = self.intern(name);
@@ -1188,6 +1197,7 @@ impl Machine<'_> {
             m.mode = modes;
             // They came through one `\fi`, but meet only once in one mode.
             m.fi_mark = m.fi_mark.map(|(at, depth, _)| (at, depth, true));
+            m.mode_split = Some((token.span, m.conds.len()));
             m.unread(token);
             true
         })

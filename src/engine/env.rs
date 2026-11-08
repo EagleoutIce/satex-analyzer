@@ -2282,7 +2282,12 @@ pub fn widen_slot(
             (Some((a, p)), Some((b, q))) if a == b => Value::Num { quantity: a, num: p.widen(&p.join(&q)) },
             // Token lists keep their common ends around typed text, whose
             // class only grows: a pgfmath stack keeps its braces.
-            _ => toks.map_or(Value::Unknown, Value::Toks),
+            // A few token lists stay a set, each one read on its own path.
+            _ => match toks {
+                Some(toks) => Value::Toks(toks),
+                None if joined.value.token_lists().is_some_and(|l| l.len() > 1) => joined.value,
+                None => Value::Unknown,
+            },
         };
     }
     Some(joined)

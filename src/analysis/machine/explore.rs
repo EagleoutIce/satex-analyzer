@@ -3508,14 +3508,19 @@ fn partner(parked: &[Config], config: &Config, apart: &dyn Fn(&Config, &Config) 
             && parked[i].state.fi_mark == config.state.fi_mark
             && (config.state.fi_mark.is_none_or(|m| !m.2) || parked[i].state.mode == config.state.mode)
     };
+    // Arms of one mode split, once in one mode (see `Machine::mode_split`).
+    let arms = |i: usize| {
+        config.state.mode_split.is_some()
+            && parked[i].state.mode_split == config.state.mode_split
+            && parked[i].state.mode == config.state.mode
+    };
     let file = key.places.iter().all(|p| matches!(p, Place::File(..) | Place::Pseudo(..)));
     let merge = here.len() >= PARTITIONS || file;
     // Arms of a digit split wait for as many paths as the split made.
     let own = |i: usize| file || here.len() >= apart(&parked[i], config);
-    here.iter()
-        .copied()
-        .find(|&i| parked[i].tag == *tag && own(i))
-        .or_else(|| here.iter().copied().find(|&i| same_code(&parked[i].tag, tag) && own(i) && (merge || fi(i))))
+    here.iter().copied().find(|&i| parked[i].tag == *tag && own(i)).or_else(|| {
+        here.iter().copied().find(|&i| same_code(&parked[i].tag, tag) && own(i) && (merge || fi(i) || arms(i)))
+    })
 }
 
 /// The arms the next run of a command takes: the last choice with an arm
