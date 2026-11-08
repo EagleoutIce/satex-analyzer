@@ -1011,7 +1011,8 @@ choices each place makes (a conditional, a name of several meanings) are
 counted while one source line is read, over all paths and replays. Past
 `limits.site_forks` of them the expansion above the line is cut as the
 guard cuts it (`site-forks-widened`): what it assigned is unknown, and the line
-reads on after an unknown token.
+reads on after an unknown token. A choice inside a value scan is not
+counted: its arms join where the scan ends, and they may hold what ends the number.
 Every count and limit is in steps or
 choices, never in seconds, so the result does not depend on the machine.
 A drive whose paths were all dropped before the input ended (none of them

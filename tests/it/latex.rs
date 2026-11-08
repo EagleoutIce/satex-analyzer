@@ -4564,3 +4564,32 @@ fn a_here_float_set_by_the_output_routine_keeps_its_caption() {
         assert!(marked.iter().any(|m| m == want), "{want} missing in {marked:?}");
     }
 }
+
+/// Paths that part inside one line of a package and join again leave it
+/// at rest: a joined token list is no call on the stack (`within`) and
+/// counts what it holds (`held_tokens`). Those two counters kept the
+/// parted lists, so no later line could be a checkpoint and tagpdf, read
+/// whole in every run, cost 80 million steps instead of 20.
+#[test]
+fn a_package_stays_cacheable_past_a_line_that_joined_paths() {
+    if !installed() {
+        return;
+    }
+    let root = crate::support::tmp_root().join(format!("satex-join-rest-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let hex = "\\int_to_Hex:n{\\int_rand:n {16777215}}";
+    std::fs::write(
+        root.join("joinrest.sty"),
+        format!("\\ProvidesExplPackage{{joinrest}}{{2020-01-01}}{{1}}{{x}}\n\\str_const:Ne \\c_x_str {{ {hex} {hex} }}\n\\exp_args:NNe \\str_set_convert:Nnnn \\l_tmpa_str {{\\c_x_str}}{{default}}{{utf8/string}}\n\\bool_new:N \\g_x_bool\n"),
+    )
+    .unwrap();
+    let source = "\\documentclass{article}\\usepackage{joinrest}\\begin{document}x\\end{document}\n";
+    let path = root.join("main.tex");
+    std::fs::write(&path, source).unwrap();
+    let cfg = crate::support::warm_config("join-rest");
+    satex::analysis::machine::Machine::analyze(source, Some(&path), &cfg);
+    let warm = satex::analysis::machine::Machine::analyze(source, Some(&path), &cfg);
+    let state = warm.package_caches.iter().find(|(name, ..)| name == "joinrest").map(|(.., state)| state.clone());
+    assert_eq!(state.as_deref(), Some("cached"));
+    std::fs::remove_dir_all(root).ok();
+}

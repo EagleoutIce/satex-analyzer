@@ -8317,7 +8317,8 @@ will look undefined",
     /// does what they may do). Whether it is past.
     pub(crate) fn hot_site(&mut self, site: Span) -> bool {
         let limit = self.limits.site_forks;
-        if limit == 0 || self.budget.is_some() {
+        // A choice inside a value scan: its arms join where the scan ends.
+        if limit == 0 || self.budget.is_some() || self.scanning > 0 {
             return false;
         }
         let key = (self.guard_key(self.position_span()), site);
