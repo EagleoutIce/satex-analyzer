@@ -4430,7 +4430,8 @@
       loads.clear();
       idle();
       status.textContent = `${plural(entries.length, 'package')} fetched in ${secs(performance.now() - t)}`;
-      status.title = label;
+      const largest = [...entries].sort((a, b) => b.size - a.size).map((e) => `${e.label}: ${size(e.size)}`);
+      status.title = [`${size(entries.reduce((n, e) => n + e.size, 0))} for this document:`, ...largest].join('\n');
     }
     status.dataset.packages = [...fetchedPackages.keys()].join(' ');
     loadedList.push(...entries.map((e) => `${e.label} ${size(e.size)}`));
