@@ -44,7 +44,7 @@ It differs from the web playground in four ways:
 - The project's files are the files in `DIR`. Hidden and git-ignored files are left out. Edits are saved to the files as you type.
 - The TeX packages are those installed on your computer, found by kpathsea. Nothing is downloaded.
 - The language server is the native `satex`, not the WebAssembly build. It is faster and reads the project's `satex.yaml`.
-- Compile builds the PDF with your TeX, in a copy of the project under the cache directory.
+- Compile builds the PDF with your TeX, in a copy of the project under the cache directory. The web playground's Compile runs pdfTeX in the browser, with TeX Live files fetched on demand.
 
 `satex gui` prints the address and opens it in the default browser. `--no-open` only prints it. `--port N` picks the port, 8800 by default, or the next free one above it.
 The terminal names the document each run analyzes. The language server's messages go to `satex-gui.log` in the cache directory. `-v` prints them in the terminal instead.

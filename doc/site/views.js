@@ -2537,5 +2537,17 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
       (st.paired?.names?.length ? `<div class="ds-sec"><b>paired by a join</b><span>${st.paired.names.map(cs).join(' ')} · ${st.paired.arms} arms</span></div>` : '') +
       (cats ? `<div class="ds-sec"><b>catcodes ahead</b><span>${cats}</span></div>` : '');
   };
-  self.satexViews = { render, RENDER, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, page: { pageOf, pageBox, pageNodes, headerOf, headerCalls, headerNodes }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  /** The next tip each call: the list in random order, none again until all were shown, never the same twice in a row. */
+  function tipBag(tips, random = Math.random) {
+    let bag = [], last = null;
+    return () => {
+      if (!bag.length) {
+        bag = [...tips];
+        for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(random() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; }
+        if (bag.length > 1 && bag.at(-1) === last) bag.unshift(bag.pop());
+      }
+      return (last = bag.pop());
+    };
+  }
+  self.satexViews = { tipBag, render, RENDER, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, page: { pageOf, pageBox, pageNodes, headerOf, headerCalls, headerNodes }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();

@@ -1,11 +1,52 @@
 // The view models of views.js that need no page: node doc/site/views.test.mjs
 import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 globalThis.self = globalThis;
 createRequire(import.meta.url)('./lengths.js');
 createRequire(import.meta.url)('./snapshot.js');
 createRequire(import.meta.url)('./views.js');
+// Tips (tips.json): each stays true, its evidence still stands where it says.
+{
+  const tips = JSON.parse(readFileSync(new URL('./tips.json', import.meta.url), 'utf8'));
+  assert.ok(tips.length >= 50, 'a collection of at least 50');
+  assert.equal(new Set(tips.map((t) => t[0])).size, tips.length, 'no tip twice');
+  assert.ok(tips.filter((t) => t[0].includes('satex gui')).length >= 3, 'a few name the local playground');
+  for (const [text, file, evidence] of tips) {
+    assert.ok(readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8').includes(evidence), `${text}: no "${evidence}" in ${file}`);
+    assert.ok(text.length <= 105 && !text.includes(';'), `${text}: short, no semicolon`);
+    assert.ok(!/\bsatex\b(?![^`]*`)/.test(text.replace(/`[^`]*`/g, '')), `${text}: the text says SaTeX, not satex`);
+  }
+  // no repeat until the list is done, also across a reshuffle: a tip never follows itself
+  let seed = 7;
+  const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const bag = self.satexViews.tipBag(tips.map((t) => t[0]), random), shown = Array.from({ length: tips.length * 4 }, bag);
+  for (let i = 0; i < 4; i++) assert.equal(new Set(shown.slice(i * tips.length, (i + 1) * tips.length)).size, tips.length, 'one round shows each once');
+  assert.ok(shown.every((t, i) => t !== shown[i - 1]));
+}
+
+// Compile in the browser: a build's message names where it looked, and where else it can run.
+{
+  globalThis.location = { host: 'example.org' };
+  createRequire(import.meta.url)('./tex.js');
+  const { advice, parseLog } = self.satexTex;
+  const run = (over) => ({ asked: ['tex.example', 'example.org'], dead: [], failed: [], biblatex: false, ...over });
+  const missing = "! LaTeX Error: File `x.sty' not found.";
+  const asked = advice(missing, run(), 'pdftex');
+  assert.ok(asked.includes('x.sty') && asked.includes('tex.example, this site') && asked.includes('satex-gui'), asked);
+  const down = advice(missing, run({ dead: ['tex.example'], failed: ['x.sty'] }), 'pdftex');
+  assert.ok(/No answer from tex\.example/.test(down) && down.includes('satex-gui'), down);
+  const off = advice(missing, run({ asked: [] }), 'pdftex');
+  assert.ok(/Downloads are off/.test(off) && off.includes('satex-gui'), off);
+  assert.equal(advice('all fine', run(), 'pdftex'), '', 'a clean build says nothing');
+  assert.ok(/pdfTeX only/.test(advice('', run(), 'luatex')));
+  // a log's error lands on its project file, one from a TeX Live file on the main file
+  const records = parseLog("(./sub.tex\n./sub.tex:3: Undefined control sequence.\n)\n/tmp/texlive_remote/26_x.sty:9: Oops\n", new Set(['main.tex', 'sub.tex']), 'main.tex');
+  assert.deepEqual(records.map((r) => [r.path, r.line, r.severity]), [['sub.tex', 3, 'error'], ['main.tex', 9, 'error']]);
+  delete globalThis.location;
+}
+
 const { parse, emit, mermaidIn, mermaidOut, importMermaid } = self.satexViews.drawing;
 
 // a picture: nodes and an arrow edited, a loop and a plain path kept as they are

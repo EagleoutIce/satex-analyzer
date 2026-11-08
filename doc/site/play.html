@@ -102,11 +102,19 @@
     <dialog id="play-config" class="cache-dialog" aria-labelledby="cfg-title">
       <header><h3 id="cfg-title">Settings</h3><button type="button" class="ghost small icon hd-feedback" id="cfg-feedback" title="Send feedback on the settings" aria-label="feedback on the settings"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.5h5M5.5 8.5h3"/></svg></button><button type="button" class="ghost small" id="cfg-close" aria-label="close">✕</button></header>
       <p class="muted cache-note">Here you configure how SaTeX analyzes the documents in the playground. These are the same settings a <code>satex.yaml</code> holds. A change applies to every run here and travels with the link you share.</p>
-      <div class="lib-bar cfg-bar"><span id="cfg-tabs" class="lib-kinds" role="group" aria-label="which settings"><button type="button" class="lib-kind" data-tab="core" aria-pressed="true">Core</button><button type="button" class="lib-kind" data-tab="plugins" aria-pressed="false">Plugins</button><button type="button" class="lib-kind" data-tab="yaml" aria-pressed="false">YAML</button></span>
+      <div class="lib-bar cfg-bar"><span id="cfg-tabs" class="lib-kinds" role="group" aria-label="which settings"><button type="button" class="lib-kind" data-tab="core" aria-pressed="true">Core</button><button type="button" class="lib-kind" data-tab="plugins" aria-pressed="false">Plugins</button><button type="button" class="lib-kind" data-tab="compile" aria-pressed="false">Compile</button><button type="button" class="lib-kind" data-tab="yaml" aria-pressed="false">YAML</button></span>
         <label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
         <input type="search" id="cfg-search" placeholder="Search settings: clock, limits, @changed…" aria-label="search the settings"></label></div>
       <div id="cfg-filters" class="lib-kinds cfg-filters" role="group" aria-label="filters"></div>
       <ul id="cfg-list" class="cache-scroll cfg-list"></ul>
+      <div id="cfg-tex" class="cache-scroll cfg-tex" hidden>
+        <p class="muted">Where Compile looks for a TeX file on this static site. First the browser's cache and its core tree, then these addresses in order. A 404 or a host that does not answer moves on to the next. This list stays in your browser and does not travel with a link. Under <code class="satex-gui">satex gui</code>, Compile uses your own TeX and none of this.</p>
+        <label class="ts-toggle cfg-tex-on"><span>Download TeX files on demand</span><input type="checkbox" id="cfg-tex-on" role="switch"></label>
+        <label class="cfg-tex-label" for="cfg-tex-hosts">One address per line. <code>{name}</code> is the file, <code>{format}</code> its kpathsea format. A path without a host is this site's.</label>
+        <textarea id="cfg-tex-hosts" class="cfg-yaml" rows="5" spellcheck="false"></textarea>
+        <p class="muted" id="cfg-tex-say" role="status"></p>
+        <p><button type="button" class="small ghost" id="cfg-tex-reset">Back to this site's list</button></p>
+      </div>
       <div id="cfg-yaml-ed" class="cfg-yed" aria-label="the changed settings as satex.yaml" hidden></div>
       <textarea id="cfg-yaml" class="cfg-yaml" spellcheck="false" aria-label="the changed settings as satex.yaml" hidden></textarea>
       <footer><span id="cfg-total" class="muted"></span><label class="ts-toggle" title="hide each setting's description and example until its row is clicked"><span>compact</span><input type="checkbox" id="cfg-compact" role="switch"></label><label class="ts-toggle" title="dev mode: a trace shows the abstract domains at each step (paths, stacks, bindings), and the editor menu offers “Inspect state here”"><span>dev mode</span><input type="checkbox" id="cfg-dev" role="switch"></label><button type="button" class="small ghost" id="cfg-reset">Reset all</button><button type="button" class="small ghost" id="cfg-reset-view" title="Forget the kept view: panels, tabs, cursor places, zoom, dialog places. Edits and settings stay.">Reset view</button></footer></dialog>
@@ -168,4 +176,5 @@
 <script src="{{root}}{{bibjs}}" defer></script>
 <script src="{{root}}{{dialogsjs}}" defer></script>
 <script src="{{root}}{{layersjs}}" defer></script>
+<script src="{{root}}{{texjs}}" defer></script>
 <script src="{{root}}{{playjs}}" defer></script>

@@ -1,0 +1,17 @@
+What the playground's Compile runs in the browser, and under which terms.
+SaTeX itself is MIT licensed. These parts are separate programs and data, shipped unmodified.
+
+BusyTeX build of TeX Live 2026 (busytex.wasm, busytex.engine.js)
+  Source: https://github.com/TeXlyre/texlyre-busytex-build/tree/__BUILD__
+  Based on https://github.com/busytex/busytex (MIT).
+  The build's changes are AGPL-3.0, the full text follows below.
+  pdfTeX and the other TeX Live programs in the binary keep their licences: mostly GPL.
+  Their sources: https://github.com/TeX-Live/texlive-source
+
+TeX Live files (tex-core.bin.gz): TeX Live's own terms follow below. See https://www.tug.org/texlive/LICENSE.TL.
+
+pdf.js (pdf.min.mjs, pdf.worker.min.mjs): Apache-2.0, the full text follows below. Source: https://github.com/mozilla/pdf.js
+
+Files outside that core come on demand from the sources set under Settings, Compile. By default: https://texlive2026.texlyre.org/, a TeX Live package server run by the TeXlyre project, then play/texfiles on this site.
+
+The licence texts follow: AGPL-3.0, Apache-2.0, TeX Live.

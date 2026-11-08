@@ -79,7 +79,10 @@ jobs:
             sleep "$wait"
           done
 
+      # With the tags: build.py stars the version when what the site ships differs from the release's tag.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       # The checkout belongs to another user than the container's root: git refuses it otherwise.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 

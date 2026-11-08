@@ -28,6 +28,23 @@
   });
   try { const note = sessionStorage.getItem('satex-note'); if (note) { sessionStorage.removeItem('satex-note'); setTimeout(() => self.satexToast?.(note) ?? console.warn(note), 2000); } } catch {}
   window.satexTypeList = manifest.completion?.types;
+  /** Whether this site's build has the browser's TeX. `satex gui` compiles with the machine's. */
+  const TEX_ON = !!manifest.tex && !manifest.local;
+  /** A tip's text as markup: `code` as code, `satex gui` standing out. */
+  const tipHtml = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]).replace(/`([^`]+)`/g, (_, c) => `<code${c.startsWith('satex gui') ? ' class="satex-gui"' : ''}>${c}</code>`);
+  const tipNext = self.satexViews.tipBag(manifest.tips ?? []);
+  /** How long one tip stays. */
+  const TIP_MS = 20000;
+  /** A loading banner's tip, the next one every `TIP_MS` while it is on the page. No live region: nobody asked to hear them. */
+  function tipHost() {
+    const host = Object.assign(document.createElement('p'), { className: 'sx-tip' }), text = Object.assign(document.createElement('span'), { className: 'sx-tip-text' });
+    host.innerHTML = '<b>Tip</b> ';
+    host.append(text);
+    const show = () => { text.innerHTML = tipHtml(tipNext()); text.classList.remove('sx-tip-in'); void text.offsetWidth; text.classList.add('sx-tip-in'); };
+    show();
+    const timer = setInterval(() => { if (!host.isConnected) clearInterval(timer); else if (host.offsetParent !== null) show(); }, TIP_MS);
+    return host;
+  }
   const base = new URL(manifest.root, document.baseURI).href;
   const [tabs, args, button, status, output, lspStatus, list, count, cmd, kernelBox, toastBox, ctxMenu, treeBox, examplesBox] =
     ['play-tabs', 'play-args', 'play-run', 'play-status', 'play-output', 'lsp-status', 'lsp-diagnostics', 'lsp-count',
@@ -2749,11 +2766,34 @@
   };
   /** A key's sub-group: a profile's own name, or the second part of a key of three or more. */
   const subOf = (k) => { const p = k.key.split('.'); return p.length >= 3 || (p[0] === 'profiles' && p.length === 2) ? p[1] : null; };
+  /** The Compile tab: this viewer's package sources, kept in the browser. An address without `{name}` is not kept. */
+  function texSettings() {
+    const kept = texKept(), on = $('cfg-tex-on'), hosts = $('cfg-tex-hosts');
+    on.checked = !kept.off;
+    if (document.activeElement !== hosts) hosts.value = texList().join('\n');
+    hosts.disabled = !on.checked;
+    $('cfg-tex-say').textContent = on.checked ? (kept.hosts ? 'Your own list, in this browser only.' : "This site's list.") : 'Compile uses only the core tree and the browser\'s cache.';
+  }
+  function texSave() {
+    const lines = $('cfg-tex-hosts').value.split('\n').map((l) => l.trim()).filter(Boolean), bad = lines.find((l) => !l.includes('{name}') || !/^(https?:\/\/[^\s/{]+\/|[\w.-]+\/)\S*$/.test(l));
+    if (bad) { $('cfg-tex-say').textContent = `Not kept: ${bad} needs {name} and a host or a path of this site.`; return; }
+    const same = lines.join('\n') === (TEX.sources ?? []).join('\n'), off = !$('cfg-tex-on').checked;
+    self.satexStore.set('tex-sources', off || !same ? { ...(off ? { off } : {}), ...(same ? {} : { hosts: lines }) } : null);
+    texSettings();
+    if (!pdf && pdfBody.querySelector('.no-server')) pdfBody.querySelector('.no-server').innerHTML = browserTex();
+  }
+  $('cfg-tex-on').onchange = texSave;
+  $('cfg-tex-hosts').oninput = texSave;
+  $('cfg-tex-reset').onclick = () => { self.satexStore.set('tex-sources', null); $('cfg-tex-hosts').value = texList().join('\n'); texSave(); };
+  if (!TEX_ON) $('cfg-tabs').querySelector('[data-tab=compile]').hidden = true;
   async function configShow() {
     const all = withOverrides(await configLoad()), q = $('cfg-search').value.trim().toLowerCase();
     for (const t of $('cfg-tabs').querySelectorAll('[data-tab]')) t.setAttribute('aria-pressed', String(t.dataset.tab === (cfgYaml ? 'yaml' : cfgTab)));
     $('cfg-yaml').hidden = $('cfg-yaml-ed').hidden = true;
     $('cfg-list').hidden = cfgYaml;
+    $('cfg-tex').hidden = cfgYaml || cfgTab !== 'compile';
+    if (!$('cfg-tex').hidden) { $('cfg-list').hidden = $('cfg-filters').hidden = true; $('cfg-search').closest('label').hidden = true; texSettings(); return; }
+    $('cfg-search').closest('label').hidden = false;
     if (cfgYaml) {
       const v = await yamlEditor(), box = v ? $('cfg-yaml-ed') : $('cfg-yaml'), text = configYamlOf({ ...yamlDefaults(all), ...configSet });
       box.hidden = false;
@@ -3463,6 +3503,7 @@
     $('trace-note').textContent = `The call at ${at.file}:${at.line}:${at.col}, as the run expanded it.`;
     const t0 = performance.now();
     traceBody.innerHTML = `<div class="tr-live"><p class="muted" id="trace-live">Tracing: starting the run…</p>${self.satexProgress.html(null, 'tracing')}</div>`;
+    traceBody.querySelector('.tr-live').append(tipHost());
     let last = {};
     const draw = () => {
       const live = $('trace-live'), d = last;
@@ -4495,8 +4536,9 @@
     writtenPick.set(name, b.dataset.view !== undefined ? [b.dataset.view === 'final' ? 'final' : +b.dataset.view, alt] : [view, +b.dataset.alt]);
     writtenShow();
   });
-  /* PDF: Compile builds the project with the TeX of the machine serving the playground (`cargo playground`,
-   * src/cli/gui/compile.rs). The request and the SyncTeX parse run in a worker of their own,
+  /* PDF: Compile builds the project with the TeX of the machine serving the playground (`satex gui`,
+   * src/cli/gui/compile.rs). On a static host pdfTeX runs in the browser instead (tex.js).
+   * The request and the SyncTeX parse run in a worker of their own,
    * so the analysis stays responsive. Pages come as images; SyncTeX links them to the source both ways. */
   const COMPILE = `${location.origin}/__satex/compile`;
   /** The compile worker's code: posts the build, fetches and parses its SyncTeX data and the words of its pages. */
@@ -4571,8 +4613,14 @@
       return out;
     };
     const text = async (url, gzip) => { const r = await fetch(url); return gzip ? new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).text() : r.text(); };
-    self.onmessage = async ({ data: { url, request, timeout } }) => {
+    self.onmessage = async ({ data: { url, request, timeout, answer: built, gz } }) => {
       try {
+        // the browser's build: only its SyncTeX data is left to read
+        if (built) {
+          if (gz) built.boxes = parse(await new Response(new Blob([gz]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
+          self.postMessage(built);
+          return;
+        }
         const answer = await (await fetch(url, { method: 'POST', body: JSON.stringify(request), signal: AbortSignal.timeout(timeout) })).json();
         if (answer.synctex) answer.boxes = parse(await text(`${url}/${answer.base}${answer.synctex}`, true));
         if (answer.words) answer.wordList = words(await text(`${url}/${answer.base}${answer.words}`));
@@ -4594,7 +4642,20 @@
       if (pdfWarming) pdfWatchSetup(); else if (!pdfBusy) pdfStatus.textContent = 'ready';
     }).catch(() => {}), 3000);
   }
-  const NO_SERVER = 'This needs the playground server (<code>cargo playground</code>): it runs the machine\'s TeX. Everything else here keeps working without it.';
+  /** The browser's TeX of this site, when its build could fetch one. `satex gui` builds with the machine's. */
+  const TEX = manifest.tex && Object.fromEntries(Object.entries(manifest.tex).map(([k, v]) => [k, ['worker', 'engine', 'wasm', 'core', 'pdfjs', 'pdfWorker', 'notice'].includes(k) ? new URL(/** @type {string} */ (v), base).href : v]));
+  const GUI = '<code class="satex-gui">satex gui</code>';
+  const NO_TEX = `Compiling needs ${GUI}: it runs your TeX, on your folder. Everything else here keeps working without it.`;
+  /** Where Compile looks for TeX files, for this viewer: the list set in Settings, else the site's. Off: none. */
+  const texKept = () => self.satexStore.get('tex-sources') ?? {};
+  const texList = () => texKept().hosts ?? TEX?.sources ?? [];
+  /** The addresses asked, in order. A relative one is this site's. */
+  const texSources = () => texKept().off ? [] : texList().map((t) => /^https?:/.test(t) ? t : base + t);
+  const browserTex = () => {
+    const hosts = [...new Set(texSources().map((t) => self.satexTex.hostName(new URL(t.split('{')[0]).host)))];
+    return `Compile runs pdfTeX in this browser: about ${Math.round((TEX.wasmSize / 2.5 + TEX.coreSize) / 1048576)} MiB the first time, kept by the browser after that. ${hosts.length ? `A TeX Live file beyond that comes from ${escape(hosts.join(', then '))}, which sees the file's name.` : 'Downloads are off in Settings, so it has only that core.'} <a href="${TEX.notice}" target="_blank" rel="noopener">Licences</a>. ${GUI} builds with your own TeX and packages.`;
+  };
+  const pdfWhere = (up) => up ? "this machine's TeX" : 'pdfTeX in this browser';
   /** Whether the server answers, asked cheaply (its compile endpoint's status page) and not for the sake of a build. */
   let serverUp = false;
   async function probeServer() {
@@ -4607,12 +4668,14 @@
       if (!serverUp && !pdfBusy) pdfStatus.textContent = pdfWarming ? pdfStatus.textContent : 'ready';
       if (!serverUp && pdfBody.querySelector('.no-server')) pdfBody.innerHTML = '<p class="muted">Compile shows the PDF here.</p>';
     } else if (!pdfBusy) {
-      pdfBody.innerHTML = pdf ? pdfBody.innerHTML : `<p class="muted no-server">${NO_SERVER}</p>`;
-      pdfStatus.textContent = 'needs the playground server';
+      if (!pdf) pdfBody.innerHTML = `<p class="muted no-server">${TEX ? browserTex() : NO_TEX}</p>`;
+      if (TEX) { if (!pdf && !pdfStatus.textContent) pdfStatus.textContent = 'ready'; }
+      else pdfStatus.innerHTML = `needs ${GUI}`;
     }
     serverUp = up;
-    pdfButtons.forEach((b) => { b.disabled = !up; b.title = up ? "Build the project with this machine's TeX and show the PDF (Ctrl+S)" : 'Needs the playground server'; });
-    if (up) pdfAutoKeep();
+    pdfButtons.forEach((b) => { b.disabled = !up && !TEX; });
+    pdfAutoKeep();
+    if (!up && !TEX) pdfButtons.forEach((b) => { b.title = 'Needs satex gui'; });
     return up;
   }
   const pdfServer = probeServer();
@@ -4665,10 +4728,10 @@
     }
     return b64s.get(bytes);
   };
-  /** The project as the server builds it: its texts and the images it holds. */
-  const pdfFiles = () => ({
+  /** The project as it is built: its texts and the images it holds, these as the builder takes them. */
+  const pdfFiles = (image = (d) => ({ b64: base64(d) })) => ({
     ...Object.fromEntries(state.files.filter((n) => n in state.texts && !(n in state.ro)).map((n) => [n, state.texts[n]])),
-    ...Object.fromEntries(Object.entries(state.bins).map(([n, d]) => [n, { b64: base64(d) }])),
+    ...Object.fromEntries(Object.entries(state.bins).map(([n, d]) => [n, image(d)])),
   });
   /** The settings of the playground's runs (the kernel's and Settings'), as the `KEY=VALUE` of each `--set`. */
   const pdfSets = () => { const f = [...manifest.kernels[state.kernel].args, ...configFlags()]; return f.filter((_, i) => f[i - 1] === '--set'); };
@@ -4682,10 +4745,11 @@
     const supersedes = pdfBusy && !cached && (pdfRunning?.root !== wanted.root || pdfRunning?.dir !== wanted.dir);
     if (supersedes) pdfStop();
     if (pdfBusy) { if (!cached) { pdfQueued = [slice, false, alone, true]; $('play-pdf').classList.add('pdf-running'); pdfStatus.textContent = pdfWarming ? 'compiling once the compile server has finished its setup…' : 'compiling next, once the build under way ends…'; flare([pdfStatus], true); } return; }
-    if (!cached) { $('play-pdf').classList.add('pdf-running'); pdfStatus.textContent = 'compiling: asking the compile server…'; }
-    if (!(await pdfServer) && !(await probeServer())) {
+    if (!cached) { $('play-pdf').classList.add('pdf-running'); pdfStatus.textContent = 'compiling…'; }
+    const onServer = (await pdfServer) || (await probeServer());
+    if (!onServer && (cached || !TEX)) {
       $('play-pdf').classList.remove('pdf-running');
-      if (!cached) { pdfStatus.innerHTML = `<span class="x-err">${NO_SERVER_SHORT}</span>`; toast(NO_SERVER_SHORT); }
+      if (!cached) { pdfStatus.innerHTML = `<span class="x-err">${NO_TEX}</span>`; toast('Compiling needs satex gui, which this page cannot reach.'); }
       return;
     }
     if (pdfBusy) { if (!cached) pdfQueued = [slice, false, alone, true]; return; }
@@ -4694,10 +4758,11 @@
     const at = `${state.file === root ? '' : `${state.file}:`}${p.line + 1}:${p.character + 1}`;
     pdfWorker ??= new Worker(URL.createObjectURL(new Blob([`(${compileWorkerMain})()`], { type: 'text/javascript' })));
     const start = performance.now(), what = slice ? `slice at ${at}` : root;
+    let step = '';
     const tick = cached ? 0 : setInterval(() => {
-      const why = `${pdfWarming ? "waiting for the compile server's setup, then compiling" : 'compiling'} ${what}: ${secs(performance.now() - start)}${pdfQueued ? ' · one more queued' : ''}`;
+      const why = `${pdfWarming ? "waiting for the compile server's setup, then compiling" : 'compiling'} ${what}: ${secs(performance.now() - start)}${step && ` · ${step}`}${pdfQueued ? ' · one more queued' : ''}`;
       pdfStatus.textContent = why;
-      pdfWait(why);
+      pdfWait(why, performance.now() - start > TIP_AFTER_MS);
     }, 100);
     pdfTick = tick;
     pdfBusy = true;
@@ -4718,15 +4783,24 @@
       if (data.none || cached && pdf?.slice) pdfStatus.textContent = pdfSummary;
       else {
         pdfSummary = data.error ? '' : `${what} in ${data.cached ? 'cache' : secs(performance.now() - start)}`;
+        for (const url of Object.values(pdf?.blobs ?? {})) URL.revokeObjectURL(/** @type {string} */ (url));
         pdf = { ...data, slice, root, dir };
         pdfShow();
         pdfOwner();
         pdfLoaded(!data.error && !(data.records ?? []).some((r) => r.severity === 'error'));
         // a failed request may be the server gone: say so plainly
-        if (data.error) probeServer().then((up) => { if (!up) { pdfStatus.textContent = 'needs the playground server'; toast('Compiling needs the playground server'); } });
+        if (data.error && !TEX) probeServer().then((up) => { if (!up) { pdfStatus.innerHTML = `needs ${GUI}`; toast('Compiling needs satex gui'); } });
       }
       if (next) compile(...next);
     };
+    if (!onServer) {
+      const parser = pdfWorker;
+      const files = alone === null ? pdfFiles((d) => d) : { [root]: alone };
+      self.satexTex.build(TEX, files, root, manifest.kernels[state.kernel].engine ?? manifest.kernels[state.kernel].id, (said) => { step = said; }, texSources())
+        .catch((e) => ({ answer: { browser: true, error: `The browser's TeX stopped: ${e?.message ?? e}`, note: `${GUI} builds with your own TeX and packages.` }, gz: null }))
+        .then(({ answer, gz }) => parser.postMessage({ answer, gz }));
+      return;
+    }
     pdfWorker.postMessage({ url: COMPILE, timeout: COMPILE_MS, request: { main: root, files: alone === null ? pdfFiles() : { [root]: alone }, sets: pdfSets(), ...(slice ? { at } : {}), ...(cached ? { cached } : {}), ...(supersedes ? { supersedes } : {}) } });
   }
   /** The build under way (its root and project) and its status timer. */
@@ -4735,6 +4809,7 @@
   function pdfStop() {
     pdfWorker?.terminate();
     pdfWorker = null;
+    self.satexTex?.stop();
     clearInterval(pdfTick);
     pdfWait(null);
     pdfBusy = false;
@@ -4742,9 +4817,9 @@
     pdfQueued = null;
   }
   /** Why the PDF pane waits, in full, with a spinner: in the bar naming whose PDF it is, else a bar of its own. */
-  function pdfWait(text) {
+  function pdfWait(text, tip = false) {
     let el = pdfBody.querySelector('.pdf-wait');
-    if (text === null) { (el?.closest('.pdf-wait-bar') ?? el)?.remove(); return; }
+    if (text === null) { pdfBody.querySelector('.pdf-owner .sx-tip')?.remove(); (el?.closest('.pdf-wait-bar') ?? el)?.remove(); return; }
     if (!el) {
       el = document.createElement('span');
       el.className = 'pdf-wait';
@@ -4753,10 +4828,12 @@
       if (owner) owner.append(el); else { const bar = document.createElement('p'); bar.className = 'pdf-owner pdf-wait-bar'; bar.append(el); pdfBody.prepend(bar); }
     }
     el.textContent = text;
+    if (tip && !el.parentElement.querySelector('.sx-tip')) el.after(tipHost());
   }
+  /** A build this short shows no tip: it would only flash. */
+  const TIP_AFTER_MS = 1500;
   /** How long a build may take before the page gives up on it: the server's own limit is shorter. */
   const COMPILE_MS = 600000;
-  const NO_SERVER_SHORT = 'Compiling needs the playground server (cargo playground), which this page cannot reach.';
   /** The PDF is of one project and root: after a switch it dims, says whose it is, and takes no clicks, until a build of this one replaces it. */
   function pdfOwner() {
     const el = $('play-pdf'), other = !!pdf && (pdf.dir !== state.dir || (!pdf.slice && pdf.root !== (state.root ?? state.file)));
@@ -4764,7 +4841,7 @@
     el.classList.toggle('pdf-other', other);
     pdfBody.querySelector('.pdf-owner')?.remove();
     if (other) pdfBody.insertAdjacentHTML('afterbegin', `<p class="pdf-owner">Built for ${escape(pdf.root)}${pdf.dir !== state.dir ? ' of another project' : ''}. <button type="button" class="small">Compile ${escape(state.root ?? state.file)}</button></p>`);
-    if (became && pdfAuto.on && serverUp) compile(false, false, null, true);
+    if (became && pdfAuto.on && (serverUp || TEX)) compile(false, false, null, true);
   }
   /** A build asked for while one runs (the newest only), and what the last build said. */
   var pdfQueued = null, pdfSummary = '';
@@ -4777,7 +4854,7 @@
   const pdfAutoKeep = () => {
     $('pdf-auto-list').querySelectorAll('input').forEach((i) => { i.checked = +i.value === (pdfAuto.on ? pdfAuto.delay : 0); });
     $('pdf-compile').classList.toggle('auto', pdfAuto.on);
-    $('pdf-compile').title = pdfAuto.on ? `Automatic compile is on: a build ${pdfAuto.delay / 1000} s after the edits rest. Click to build now (Ctrl+S)` : "Build the project with this machine's TeX and show the PDF (Ctrl+S)";
+    $('pdf-compile').title = pdfAuto.on ? `Automatic compile is on: a build ${pdfAuto.delay / 1000} s after the edits rest. Click to build now (Ctrl+S)` : `Build the project with ${pdfWhere(serverUp)} and show the PDF (Ctrl+S)`;
     try { localStorage.setItem('satex-pdf-auto', JSON.stringify({ on: pdfAuto.on, delay: pdfAuto.delay })); } catch {}
   };
   pdfAutoKeep();
@@ -4826,7 +4903,7 @@
     pdfLine = '';
     pdfBack.length = 0;
     pdfBackButton.hidden = true;
-    const records = (pdf.records ?? []).sort(pdfOrder), file = (n) => `${COMPILE}/${pdf.base}${n}`, pages = pdf.pages ?? [];
+    const records = (pdf.records ?? []).sort(pdfOrder), file = (n) => pdf.blobs?.[n] ?? `${COMPILE}/${pdf.base}${n}`, pages = pdf.pages ?? [];
     const errors = records.filter((r) => r.severity === 'error').length, all = pdfRuns();
     const runs = all.filter(pdfBuilds), shows = all.filter((r) => !pdfBuilds(r));
     // the title line: what the build gave, its views, its files as one zip
@@ -4845,12 +4922,12 @@
     $('pdf-views').innerHTML = views.map(tab).join('');
     pdfViewsSel.innerHTML = views.map(([id, label, n]) => `<option value="${id}"${id === pdfView ? ' selected' : ''}>${label}${n !== '' ? ` (${n})` : ''}</option>`).join('');
     pdfViewsSel.classList.toggle('pdf-err', !!errors);
-    pdfBody.innerHTML = (pdf.error ? `<p class="pdf-head x-err">${escape(pdf.error)}</p>` : '')
+    pdfBody.innerHTML = (pdf.error ? `<p class="pdf-head x-err">${escape(pdf.error)}</p>` : '') + (pdf.note ? `<p class="pdf-head pdf-note">${pdf.note}</p>` : '')
       + `<div class="pdf-pages" data-view="pages">${pdf.slice ? '<div class="pdf-sep" role="separator"><b class="pdf-badge">slice</b><span>not the full build</span></div>' : ''}${pdfFrames(pages).map((g, frame) => { frame += 1; const html = g.map((i) => `<div class="pdf-page" data-page="${i + 1}"><img src="${file(pages[i])}" alt="page ${i + 1}" draggable="false">${pdfLinks(i + 1)}</div>`).join(''); return g.length < 2 ? html : `<div class="pdf-frame" data-step="${g.length - 1}"><div class="pdf-frame-bar" role="group" aria-label="overlay steps"><span><b>frame ${frame}</b> · step <b class="pdf-step">${g.length}/${g.length}</b></span><button type="button" class="small ghost icon" data-step="-1" title="Previous step" aria-label="previous step">&#x2039;</button><button type="button" class="small ghost icon" data-step="1" title="Next step" aria-label="next step">&#x203A;</button></div>${html}</div>`; }).join('') || '<p class="muted">No pages.</p>'}</div>`
       + `<div class="pdf-text" data-view="messages">${records.length ? `<ul class="diagnostics pdf-records">${records.map(pdfRecord).join('')}</ul>` : '<p class="muted">The log has no error or warning.</p>'}</div>`
       + `<div class="pdf-text pdf-log" data-view="log">${(pdf.logs ? Object.entries(pdf.logs).map(([n, t]) => log(escape(n), t)).join('') : log('TeX log', pdf.log)) + log('Console: what satex compile and latexmk printed', pdf.stderr) || '<p class="muted">The build wrote no log.</p>'}</div>`
-      + `<div class="pdf-text" data-view="files"><p class="muted">What the build wrote beside the sources. Each opens in a new tab, ↓ saves it. <a href="${escape(zip.href)}" download="${escape(zip.download)}">All of them with the sources as compiled, as one zip</a>.</p><ul class="pdf-cmds">${(pdf.outputs ?? []).map((o) => `<li><a href="${file(o.name)}" target="_blank" rel="noopener">${escape(o.name)}</a> <a href="${file(o.name)}" download="${escape(o.name.split('/').pop())}" title="save ${escape(o.name)}" aria-label="save ${escape(o.name)}">↓</a> <span class="muted">${size(o.size)}</span></li>`).join('')}</ul></div>`
-      + `<div class="pdf-text" data-view="commands"><p class="muted">Run in a fresh directory on this machine${pdfSetsShown()}. <code>satex compile</code> runs latexmk where it is installed, else the engine, and reads the project's latexmkrc and satex.yaml.</p>`
+      + `<div class="pdf-text" data-view="files"><p class="muted">What the build wrote beside the sources. Each opens in a new tab, ↓ saves it.${pdf.base ? ` <a href="${escape(zip.href)}" download="${escape(zip.download)}">All of them with the sources as compiled, as one zip</a>.` : ''}</p><ul class="pdf-cmds">${(pdf.outputs ?? []).map((o) => `<li><a href="${file(o.name)}" target="_blank" rel="noopener">${escape(o.name)}</a> <a href="${file(o.name)}" download="${escape(o.name.split('/').pop())}" title="save ${escape(o.name)}" aria-label="save ${escape(o.name)}">↓</a> <span class="muted">${size(o.size)}</span></li>`).join('')}</ul></div>`
+      + `<div class="pdf-text" data-view="commands"><p class="muted">${pdf.browser ? `Run in this browser by pdfTeX, with TeX Live 2026. No latexmkrc, no programs through shell escape. ${pdf.asked?.length ? `Asked in order: ${escape(pdf.asked.join(', '))}.` : 'Downloads are off.'} ${(pdf.from ?? []).map(([h, n]) => `${plural(n, 'file')} newly fetched from ${escape(h)}.`).join(' ')} ${pdf.dead?.length ? `No answer from ${escape(pdf.dead.join(', '))}.` : ''} ${GUI} builds with your own TeX and packages.` : `Run in a fresh directory on this machine${pdfSetsShown()}. <code>satex compile</code> runs latexmk where it is installed, else the engine, and reads the project's latexmkrc and satex.yaml.`}</p>`
       + `<ol class="pdf-cmds">${runs.map(pdfCommand).join('')}</ol>`
       + (shows.length ? `<details class="pdf-shows"><summary class="muted">How the playground shows the build (${shows.length})</summary><ol class="pdf-cmds">${shows.map(pdfCommand).join('')}</ol></details>` : '') + '</div>';
     pdfViewShow();
@@ -4869,7 +4946,7 @@
   /** One command run, with its exit and time; one `satex compile` ran shows as its. */
   const pdfCommand = (r) => `<li${r.status ? ' class="x-err"' : ''}><code>$ ${escape(r.command)}</code>${r.inner ? ' <span class="muted">(by satex compile)</span>' : ` <span class="muted">${r.error ? escape(r.error) : `exit ${r.status ?? '?'}${r.ms != null ? `, ${secs(r.ms)}` : ''}`}</span>`}</li>`;
   /** The build's own commands (`satex compile` and what it ran) apart from the tools the playground shows the PDF with. */
-  const pdfBuilds = (r) => r.inner || / compile( |$)/.test(r.command);
+  const pdfBuilds = (r) => r.inner || pdf.browser || / compile( |$)/.test(r.command);
   const pdfSetsShown = () => { const sets = pdfSets(); return sets.length ? `, with the playground's settings: ${sets.map((x) => `<code>--set ${escape(x)}</code>`).join(' ')}` : ''; };
   /** The view of the build shown: `pages`, `messages`, `log` or `commands`. */
   let pdfView = 'pages';
@@ -6008,6 +6085,7 @@
   }
   /** The compile server's PNG of a PDF's first page, else null: a static host has no renderer. */
   async function pdfPage(data) {
+    if (!serverUp && TEX) return self.satexTex.firstPage(TEX, data).catch(() => null);
     const r = await fetch(`${COMPILE}/render`, { method: 'POST', body: data }).catch(() => null);
     return r?.ok && /image/.test(r.headers.get('content-type') ?? '') ? URL.createObjectURL(await r.blob()) : null;
   }
@@ -6401,9 +6479,10 @@
       const logo = document.querySelector('header .brand img')?.cloneNode(), version = document.querySelector('header a.version')?.textContent.trim() ?? '';
       boot.el.innerHTML = `<div class="boot-card"><div class="boot-logo"></div><p class="boot-title"></p><p class="muted boot-version">SaTeX ${escape(version)}</p>`
         + `<ol class="boot-stages">${BOOT.map(([n, label]) => `<li data-stage="${n}">${label}</li>`).join('')}</ol>`
-        + `<span class="boot-bar" role="progressbar" aria-label="loading" aria-valuemin="0" aria-valuemax="100">${BOOT.map(([, , w]) => `<i style="flex-grow:${w * 100}"><b></b></i>`).join('')}</span><p class="muted boot-text" aria-live="polite"></p>`
+        + `<span class="boot-bar" role="progressbar" aria-label="loading" aria-valuemin="0" aria-valuemax="100">${BOOT.map(([, , w]) => `<i style="flex-grow:${w * 100}"><b></b></i>`).join('')}</span><p class="muted boot-text" aria-live="polite"></p><div class="boot-tip"></div>`
         + '<button type="button" class="small ghost boot-hide" title="keep loading in the background">Hide</button></div>';
       if (logo) boot.el.querySelector('.boot-logo').append(logo);
+      boot.el.querySelector('.boot-tip').append(tipHost());
       boot.el.querySelector('.boot-hide').onclick = bootClose;
       document.body.append(boot.el);
     }

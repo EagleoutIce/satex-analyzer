@@ -9,7 +9,7 @@ files` says the samples and the offered packages read, and its caches from `sate
     build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site-out
 """
 
-import argparse, contextlib, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, tempfile, threading, time, tomllib, urllib.parse
+import argparse, contextlib, io, tarfile, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, tempfile, threading, time, tomllib, urllib.parse
 from pathlib import Path
 
 import semantics as sem
@@ -311,12 +311,20 @@ def emit_local(out, name, data):
     return path
 
 
+# What makes up the site's playground and analyzer. Tests beside the site's sources ship nothing.
+SHIPPED = ["src", "build.rs", "Cargo.lock", "samples", "doc/site", ":(exclude)doc/site/*test.mjs", ":(exclude)doc/site/chaos.mjs"]
+
+
 def version(cargo):
-    """The crate's version, starred when the build is not that release: a later or changed tree."""
-    tag = subprocess.run(["git", "describe", "--tags", "--dirty"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
-    if tag == f"v{cargo['version']}":
+    """The crate's version, starred when what the site ships differs from that release's tag.
+    Only `SHIPPED` counts: the release's changelog, docs and CI earn no star. No tag here: a star."""
+    git = lambda *a: subprocess.run(["git", *a], cwd=ROOT, capture_output=True, text=True)
+    tag = f"v{cargo['version']}"
+    changed = git("diff", "--name-only", tag, "--", *SHIPPED)
+    if changed.returncode == 0 and not changed.stdout.strip():
         return cargo["version"], "this release"
-    return f"{cargo['version']}*", f"pre-release: built from {tag or 'an untagged tree'}, not the release itself"
+    described = git("describe", "--tags", "--dirty").stdout.strip()
+    return f"{cargo['version']}*", f"pre-release: built from {described or 'an untagged tree'}, not the release itself"
 
 
 def pages():
@@ -1195,6 +1203,118 @@ def examples(satex, work, project):
     return f'<div class="tabs" role="tablist">{"".join(tabs)}{tab}</div>' + "\n".join([*panels, panel]), dict(map(live, spec))
 
 
+# The browser's TeX (tex-worker.js): BusyTeX's pdfTeX and pdf.js, pinned by digest and fetched at build time.
+# Upstream licences are collected in play/tex-NOTICE.txt beside them.
+TEX_BUILD = "46ebb6216a5c1fe63dd1dc885831d1a8cef2dc86"
+TEX_RELEASE = f"https://github.com/TeXlyre/texlyre-busytex-build/releases/download/build_wasm_{TEX_BUILD}_31802832436_1/"
+TEX_FILES = {
+    "busytex.js": (TEX_RELEASE + "busytex.js", "875b87795162cb26b15bd93cffa2e8739bcb900d623ab904029b39402508a1a4"),
+    "busytex.wasm": (TEX_RELEASE + "busytex.wasm", "8d1988fc58cd1611c3cbd6bd986c3e607e5ff44f1d94252207ff7aae4cee72e0"),
+    "basic.tar.gz": (TEX_RELEASE + "texlive-basic.tar.gz", "e6f32ef14c518c8d5461ca9d28549b8a5ffe36fda6cc88c74af17c619a78c72a"),
+    "pdftex.map": ("https://github.com/TeXlyre/texlyre-busytex-build/releases/download/texlive-full-2026.1.0/pdftex.map", "fa308280648c0cd8bb271b3526f176d975801f16fb7cb33fa2ebfa5414163252"),
+    "LICENSE": (f"https://raw.githubusercontent.com/TeXlyre/texlyre-busytex-build/{TEX_BUILD}/LICENSE", "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef"),
+    "pdfjs.tgz": ("https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-6.5.438.tgz", "7461aefcd27c4ef0dd76f9ca5760f09466eb6b3f934432670c12132e7b3d6faa"),
+}
+# The package sources Compile asks by default, in order (`SATEX_TEX_SOURCES`, one per line, overrides them at build time):
+# TeXlyre's TeX Live 2026 server, then this site's own mirror of the packages it offers.
+TEX_SOURCES = ["https://texlive2026.texlyre.org/{format}/{name}", "play/texfiles/{name}"]
+TEX_TIMEOUT_MS = 8000
+TEX_NOT_MIRRORED = re.compile(r"\.(bin|satex-docs|lua|otf|ttf|pdf|txt|md|json|html)$|/(README|LICENSE|CHANGES)[^/]*$")
+TEX_MAP = "texmf-var/fonts/map/pdftex/updmap/pdftex.map"
+# What the site does not ship of TeX Live's basic tree: other engines, sources, fonts past Computer Modern.
+# The package server has all of it.
+TEX_LEFT_OUT = re.compile(r"""^(
+    fonts/(afm|opentype|source|sfd|misc|pk|truetype)/
+    | fonts/type1/(?!public/amsfonts/(cm|cmextra|symbols|latxfont)/)
+    | tex/(luatex|lualatex|xelatex|xetex|optex|context|fontinst|plain|latex-dev)/
+    | tex/generic/(hyph-utf8|unicode-data|hyphen|ruhyphen|ukrhyph)/
+    | tex/latex/texfindpkg/ | texmf-var/luatex-cache/ | texmf-var/web2c/(xetex|luatex|luahbtex|tex)/
+    | texmf-var/fonts/map/(dvips|dvipdfmx)/ | bibtex/bib/ | scripts/ | doc/
+    | .*\.lua$ | .*/latexrelease\.sty$
+)""", re.X)
+
+
+def tex_core(tar, pdftex_map):
+    """The TeX Live files the site ships, as `[[path, size]…]` and their bytes one after the other, with the full font map."""
+    files, blob = [], bytearray()
+    with tarfile.open(fileobj=io.BytesIO(tar)) as t:
+        for m in t:
+            _, tree, rest = m.name.partition("texmf-dist/")
+            if m.isfile() and tree and not TEX_LEFT_OUT.match(rest) and rest != TEX_MAP:
+                data = t.extractfile(m).read()
+                files.append([f"/texlive/texmf-dist/{rest}", len(data)])
+                blob += data
+    files.append([f"/texlive/texmf-dist/{TEX_MAP}", len(pdftex_map)])
+    return files, bytes(blob + pdftex_map)
+
+
+def tex_mirror(out, tables, packages, core, pdftex_map):
+    """`play/texfiles/NAME`: the pdfTeX files of the packages the playground offers, flat, the first of a name kept,
+    and the Type 1 fonts and encodings the font map names for their metrics. What the core has stays out.
+    The second source of Compile, on the site's own host. Its bytes in all."""
+    have, size = {Path(p).name for p, _ in core}, 0
+    keep = out / "play/texfiles"
+    keep.mkdir(parents=True, exist_ok=True)
+    def write(name, data):
+        nonlocal size
+        if name not in have and "/" not in name:
+            have.add(name)
+            size += len(data)
+            (keep / name).write_bytes(data)
+    sets = [files for (kernel, _, _), files in zip(KERNELS, tables) if kernel == "pdftex"] + [files for kernel, _, files, _ in packages if kernel == "pdftex"]
+    metrics = {Path(p).name for p, _ in core if p.endswith(".tfm")}
+    for files in sets:
+        for path, data in files.items():
+            if path.startswith("/texmf.bundle/") and not TEX_NOT_MIRRORED.search(path):
+                write(Path(path).name, data)
+                if path.endswith(".tfm"):
+                    metrics.add(Path(path).name)
+    fonts = set()
+    for line in pdftex_map.decode("latin-1").splitlines():
+        if line.split(" ", 1)[0] + ".tfm" in metrics:
+            fonts.update(re.findall(r"<+\[?([\w.-]+\.(?:pfb|enc))", line))
+    fonts = sorted(fonts - have)
+    for at in range(0, len(fonts), 200):
+        for path in proc(["kpsewhich", *fonts[at:at + 200]], capture_output=True, text=True).stdout.split():
+            write(Path(path).name, Path(path).read_bytes())
+    print(f"playground: site mirror of TeX files: {sum(1 for _ in keep.iterdir())} files, {size / 2**20:.0f} MiB", file=sys.stderr)
+
+
+def browser_tex(out, work, tables, packages):
+    """The manifest's `tex`, or None when a download fails: Compile on a static host then says it has none."""
+    keep = work / "browser-tex"
+    keep.mkdir(parents=True, exist_ok=True)
+    def obtain(name):
+        url, want = TEX_FILES[name]
+        path = keep / f"{want}-{name}"
+        if not path.exists():
+            # the release host answers 504 at times: curl retries, `site-work` keeps what landed
+            data = subprocess.run(["curl", "-fsSL", "--retry", "4", "--retry-all-errors", "--max-time", "300", url], capture_output=True, check=True).stdout
+            got = hashlib.sha256(data).hexdigest()
+            if got != want:
+                raise ValueError(f"{url}: digest {got}, not {want}")
+            path.write_bytes(data)
+        return path.read_bytes()
+    try:
+        engine, wasm, tar, map_, licence, pdfjs = map(obtain, TEX_FILES)
+    except (OSError, ValueError, subprocess.CalledProcessError) as e:
+        print(f"::warning::playground: no browser TeX, Compile on this site says so: {e}", file=sys.stderr)
+        return None
+    files, blob = tex_core(tar, map_)
+    packed = gzip.compress(blob, 9, mtime=0)
+    tex_mirror(out, tables, packages, files, map_)
+    with tarfile.open(fileobj=io.BytesIO(pdfjs)) as t:
+        lib, worker, pdfjs_licence = (t.extractfile(f"package/{n}").read() for n in ("legacy/build/pdf.min.mjs", "legacy/build/pdf.worker.min.mjs", "LICENSE"))
+    with tarfile.open(fileobj=io.BytesIO(tar)) as t:
+        terms = b"".join(t.extractfile(f"build/texlive-basic/{n}").read() + b"\n" for n in ("LICENSE.TL", "LICENSE.CTAN"))
+    notice = (SITE / "tex-NOTICE.txt").read_bytes().replace(b"__BUILD__", TEX_BUILD.encode())
+    return {"worker": emit(out, "play/tex-worker.js", (SITE / "tex-worker.js").read_bytes()),
+            "engine": emit(out, "play/busytex.engine.js", engine), "wasm": emit(out, "play/busytex.wasm", wasm), "wasmSize": len(wasm),
+            "core": emit(out, "play/tex-core.bin.gz", packed), "coreSize": len(packed), "files": files,
+            "pdfjs": emit(out, "play/pdf.min.mjs", lib), "pdfWorker": emit(out, "play/pdf.worker.min.mjs", worker),
+            "notice": emit(out, "play/tex-NOTICE.txt", b"\n\n".join((notice, licence, pdfjs_licence, terms))), "sources": os.environ.get("SATEX_TEX_SOURCES", "\n".join(TEX_SOURCES)).split(), "timeoutMs": TEX_TIMEOUT_MS}
+
+
 def playground(satex, wasm, work, out):
     offered = package_names()
     # mining the manuals needs no bundle: it runs beside the caches and the rest
@@ -1265,6 +1385,7 @@ def playground(satex, wasm, work, out):
         "js": emit_local(out, "play/satex.js", (wasm / "satex.js").read_bytes()),
         "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
         "kernels": kernels, "packages": extra, "preload": first_download(), "unavailable": UNAVAILABLE, "queries": queries, "queryAbout": query_about, "filtered": filtered, "rules": rules,
+        "tex": browser_tex(out, work, tables, packages), "tips": [t[0] for t in json.loads((SITE / "tips.json").read_text())],
         "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
         "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(), "plugins": plugins(), "typePlugins": tiles,
         "symbols": emit(out, "play/symbols.json", json.dumps({**table, "glyphs": emit(out, "play/glyphs.bin.gz", gzip.compress(table["glyphs"], 9, mtime=0)),
@@ -1629,6 +1750,7 @@ def main():
         "lengthsjs": emit(out, "lengths.js", (SITE / "lengths.js").read_bytes()),
         "snapshotjs": emit(out, "snapshot.js", (SITE / "snapshot.js").read_bytes()),
         "viewsjs": emit(out, "views.js", (SITE / "views.js").read_bytes()),
+        "texjs": emit(out, "tex.js", (SITE / "tex.js").read_bytes()),
         "bibjs": emit(out, "bib.js", (SITE / "bib.js").read_bytes()),
         "dialogsjs": emit(out, "dialogs.js", (SITE / "dialogs.js").read_bytes()),
         "layersjs": emit(out, "layers.js", (SITE / "layers.js").read_bytes()),
@@ -1876,7 +1998,7 @@ def showcase(out, live):
 
 
 # what a showcase capture shows: the playground's code and style, besides its example and its entry
-SHOT_SOURCES = ("playground.js", "lengths.js", "snapshot.js", "views.js", "bib.js", "dialogs.js", "layers.js", "draw.js", "site.js", "style.css", "play.html", "showcase/capture.mjs")
+SHOT_SOURCES = ("tex.js", "playground.js", "lengths.js", "snapshot.js", "views.js", "bib.js", "dialogs.js", "layers.js", "draw.js", "site.js", "style.css", "play.html", "showcase/capture.mjs")
 
 
 def recapture(out):

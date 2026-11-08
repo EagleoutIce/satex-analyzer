@@ -883,9 +883,9 @@ async function browser() {
       await js(`document.getElementById('cfg-reset').click(); document.getElementById('play-config').close()`);
       });
       await section('pdflinks', async () => {
-      // the compiled PDF's links (only with the compile server of `cargo playground`): areas over the pages,
+      // the compiled PDF's links (with the local server's TeX, or the browser's on a static host): areas over the pages,
       // an internal one scrolls to its target and moves the editor there, Back returns, a URL opens a new tab
-      if (!await js(`return fetch('/__satex/compile').then((r) => r.ok && r.json()).then((j) => !!j?.compile).catch(() => false)`)) return console.log('skip: no compile server for the PDF links');
+      if (await js(`return document.getElementById('pdf-compile').disabled`)) return console.log('skip: no TeX to compile with');
       await open('links', '\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\\section{Intro}\\label{a}\nSee \\ref{b} and \\url{https://example.org}.\n\\newpage\n\\section{Two}\\label{b}\nBack to \\ref{a}.\n\\end{document}\n');
       await js(`document.querySelector('.side-tabs [data-panel=play-pdf]').click(); document.getElementById('pdf-compile').click()`);
       const built = await until(`return document.querySelectorAll('.pdf-page').length === 2 && document.querySelectorAll('.pdf-page img').length === [...document.querySelectorAll('.pdf-page img')].filter((i) => i.naturalWidth).length`, 180000);

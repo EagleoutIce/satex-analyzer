@@ -2258,3 +2258,20 @@ pre.out-block { position: relative; } pre.out-block .out-cmd { color: var(--acce
 pre.out-block .out-omit { color: var(--muted); font-style: italic; } pre.out-block .out-loc { color: var(--c5); }
 pre.out-block .out-meta { position: absolute; right: .7rem; bottom: .35rem; font: .68rem system-ui, sans-serif; color: var(--muted); opacity: 0; transition: opacity var(--quick); pointer-events: none; }
 pre.out-block:hover .out-meta { opacity: .85; }
+
+/* a loading banner's tip: its height holds three lines, whichever tip it shows, so nothing shifts */
+.sx-tip { margin: 0; min-height: calc(3 * 1.4em); max-width: 40rem; font-size: .78rem; line-height: 1.4; color: var(--muted); text-wrap: pretty; }
+.sx-tip > b { color: var(--accent); font-weight: 600; margin-right: .25em; }
+.sx-tip code { font-size: .95em; }
+.sx-tip-in { animation: sx-tip-in .4s var(--ease); }
+@keyframes sx-tip-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .sx-tip-in { animation: none; } }
+.boot-tip { width: 100%; margin-top: .25rem; padding-top: .55rem; border-top: 1px solid var(--border); }
+.pdf-owner .sx-tip { margin-top: .25rem; }
+.tr-live .sx-tip { margin-top: .25rem; }
+/* what only the local server can do: named so it is found */
+.satex-gui { padding: .05em .4em; border-radius: 5px; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); font-weight: 600; white-space: nowrap; }
+.pdf-note { margin: 0; padding: .5rem .6rem; border-bottom: 1px solid var(--border); font-size: .85rem; }
+.cfg-tex { padding: .6rem 1rem; font-size: .85rem; overflow-x: hidden; box-sizing: border-box; width: 100%; } .cfg-tex p { margin: .4rem 0; }
+.cfg-tex-on { display: inline-flex; margin: .3rem 0 .5rem; } .cfg-tex-label { display: block; margin-bottom: .25rem; }
+.cfg-tex textarea { display: block; width: 100%; max-width: 100%; margin: 0; min-height: 7rem; box-sizing: border-box; }

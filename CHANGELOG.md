@@ -24,6 +24,9 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat` **Compile works on the web playground.** pdfTeX runs in the browser, with TeX Live 2026 files fetched on demand and kept. The hosts are set under Settings, Compile, or turned off. `satex gui` keeps using your own TeX.
+- `feat` **Loading banners show tips**, a new one every 20 s, from a list checked against the docs and the code.
+- `fix` **The version loses its star when only docs or CI changed since the release.** It follows what the site ships, not the commit count.
 - `perf` **Package caches replay in every document.** A package loaded at `\begin{document}`, like graphics' epstopdf-base, was rebuilt in the browser for every example. [`1fbd322`](https://github.com/EagleoutIce/satex-analyzer/commit/1fbd322)
 
 ### Site and docs

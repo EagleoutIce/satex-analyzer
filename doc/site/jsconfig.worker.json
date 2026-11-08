@@ -12,6 +12,7 @@
   },
   "files": [
     "worker.d.ts",
-    "worker.js"
+    "worker.js",
+    "tex-worker.js"
   ]
 }
