@@ -1112,7 +1112,7 @@ A parenthesis takes the space of the text around it, never of the text inside it
 
 The rule reads the characters the run set, skips math, where `f(x)` is right, and reports a space inside the parentheses only where a real space token became glue. A missing space is the noisier half, because `word(s)` is ordinary English, so those findings come as notes.
 
-Code shown as text is not prose. The rule skips text in the typewriter family (`\ttdefault`) and a call: a `(` right after a name, around a list of single words or nothing, as in `plot(x, y)` or `c(1, 2, 3)`.
+Code shown as text is not prose. The rule skips text in the typewriter family (`\ttdefault`) and a call: a `(` right after a name, around a list of single words or nothing, as in `plot(x, y)` or `c(1, 2, 3)`. What an undefined command or environment leaves behind is unknown code as well, so every prose rule skips it: the command's arguments and the rest of its statement or line, an environment's body up to its `\end`.
 
 Fix by moving the space to the other side of the parenthesis.
 

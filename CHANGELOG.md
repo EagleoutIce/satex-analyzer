@@ -13,6 +13,10 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `fix` **A penalty in a formula keeps the formula's size.** siunitx 3.6 sets `\nobreak` inside math, so every `\qty` had an unknown width, and pictures around one raised false pgfmath errors. [`da70671`](https://github.com/EagleoutIce/satex-analyzer/commit/da70671)
 - `fix` **No crash when every arm of a choice is refuted.** The run counted its fork off twice. [`bf50fd5`](https://github.com/EagleoutIce/satex-analyzer/commit/bf50fd5)
 
+### Lints
+
+- `fix` **Prose rules skip what undefined commands leave behind.** A TeX file opened without its preamble no longer gets spacing findings on `\node (a)at(b)` or inside an undefined environment. [`5d61ec1`](https://github.com/EagleoutIce/satex-analyzer/commit/5d61ec1)
+
 ### Playground
 
 - `perf` **Package caches replay in every document.** A package loaded at `\begin{document}`, like graphics' epstopdf-base, was rebuilt in the browser for every example. [`1fbd322`](https://github.com/EagleoutIce/satex-analyzer/commit/1fbd322)
