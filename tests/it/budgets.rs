@@ -223,7 +223,9 @@ fn document_metadata_warm() {
 
 #[test]
 fn tagpdf_warm() {
-    let source = "\\documentclass{article}\n\\usepackage{tagpdf}\n\\begin{document}\nx\n\\end{document}\n";
+    // tagpdf needs the PDF management `\\DocumentMetadata` starts: without it pdflatex fails too.
+    let source =
+        "\\DocumentMetadata{}\n\\documentclass{article}\n\\usepackage{tagpdf}\n\\begin{document}\nx\n\\end{document}\n";
     if let Some(steps) = warm_steps("tagpdf-warm", source) {
         within("tagpdf warm", steps, WARM_TAGPDF);
     }
