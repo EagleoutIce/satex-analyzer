@@ -1979,7 +1979,7 @@ fn with_doc_or<T>(
 /// What `old` probed of names the package code defines, by name, in
 /// `new`, made of the same preamble and loads: such a name means at the
 /// preamble's end and at the start what it meant there. Probes at the end,
-/// and of names the document defines, are its own.
+/// and of names the document defines, stay as `new` has them.
 fn carry_probes(old: &Analysis, new: &Analysis) {
     let loads = |a: &Analysis| a.facts.loads.iter().map(|l| l.name.clone()).collect::<Vec<_>>();
     if loads(old) != loads(new) {

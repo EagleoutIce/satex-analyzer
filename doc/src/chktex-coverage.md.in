@@ -10,7 +10,7 @@ Every satex rule names the warning it follows, and each row below links to the r
 
 Source: ChkTeX 1.7.9 manual, § 8.
 
-"chktex enables it" is chktex's own default, from that manual: whether the warning is reported without `-w`. "satex enables it" is a different question answered from a different place, `satex.yaml`'s `lint_off`, and the two can and do disagree: a rule chktex is silent about by default may fire in satex, and a rule chktex reports by default may be off for some [profile](Configuration#profiles). See [Configuration](Configuration#profiles) for what the profiles are and what each one is for.
+"chktex enables it" is the default chktex ships, from that manual: whether the warning is reported without `-w`. "satex enables it" is a different question answered from a different place, `satex.yaml`'s `lint_off`, and the two can and do disagree: a rule chktex is silent about by default may fire in satex, and a rule chktex reports by default may be off for some [profile](Configuration#profiles). See [Configuration](Configuration#profiles) for what the profiles are and what each one is for.
 
 {{chktex}}
 

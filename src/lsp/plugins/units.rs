@@ -197,7 +197,7 @@ fn converted(sp: i64, name: &str, decimals: u8) -> (String, i64) {
     (format!("{s}{name}"), off)
 }
 
-/// Units most lengths are read in; the rest are TeX's own.
+/// Units most lengths are read in; the rest are the other TeX units.
 const EVERYDAY: [&str; 4] = ["pt", "mm", "cm", "in"];
 /// Cells of the to-scale bar.
 const BAR: usize = 20;

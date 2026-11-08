@@ -32,7 +32,7 @@ unattended builds run). In `\batchmode` and `\nonstopmode` a `\read` from
 the terminal is a fatal error that ends the job ([tex.web § 484][tw-484]). LaTeX's
 prompt for a missing file (`\@missingfileerror`) is such a read.
 
-The engine's own errors are recovered as tex.web recovers them, never by
+SaTeX recovers the errors TeX itself raises the way tex.web does, never by
 widening: a `\csname` that meets an unexpandable token has its `\endcsname`
 inserted and the token read again ([§ 373][tw-373]), an extra `\endcsname`,
 `\else` or `\fi` is ignored (§§ 510, 1135), a missing number is zero
@@ -42,6 +42,11 @@ call. Each is raised as the error TeX prints (`raised-error`, like
 `\errmessage`) and counted: the hundredth error in one paragraph ends the
 run, as it does in every TeX mode but errorstopmode ([§ 82][tw-82]), and a
 paragraph's end clears the count (§ 1096).
+
+```tex
+\iftrue a\fi\fi   % the second \fi is ignored (§ 510)
+\count1=a         % missing number: 0 is used, `a` is typeset (§ 446)
+```
 
 ## 2. Category codes
 
@@ -105,6 +110,13 @@ of the line and moves to state `N`. State `S` is entered after any control
 word, including a one-letter one, and after a control symbol whose character
 has category 10 (the control space `\ `, or `\~` under expl3), but after no other
 control symbol. ([*TeXbook*][texbook] ch. 8, [tex.web § 303][tw-303], [§§ 343][tw-343]–[354][tw-354], [§ 240][tw-240].)
+
+```tex
+\def\a{x}\a  y   % the blanks after \a are skipped (state S): xy
+a
+                  % a blank line is state N at its end: \par
+b
+```
 
 A CRLF pair is one line ending, not two. **[abstraction]** TeX proper reads a
 file line by line and never sees the line terminator. `satex` reads a
@@ -244,8 +256,8 @@ Everything else is executed by the stomach.
   or function prints with `tex.print`/`sprint`/`tprint`/`cprint`/`write` is
   read after it returns. `token.put_next` puts tokens back at once.
   (*LuaTeX manual*, "Lua general", "The token library", "The tex library".)
-  * `string`, `table`, `math`, `utf8` and `coroutine` are Lua's own. The
-    engine's libraries are Rust effects on the machine: the token library's
+  * `string`, `table`, `math`, `utf8` and `coroutine` run as the stock Lua 5.3
+    libraries. The engine's libraries are Rust effects on the machine: the token library's
     scanners, `get_next`, `put_next`, `new`, `create`, `is_defined`,
     `get_macro`, `set_macro`, `set_char`, `set_lua` (local unless
     `"global"`, unexpandable if `"protected"`) and token fields, `tex.count`
@@ -386,20 +398,40 @@ and `$$`…`$$`), by `\left`…`\right`, by a box constructor (`\hbox`, `\vbox`,
 `\vtop`, `\vcenter`), by an alignment entry, and by the output routine and
 inserts. Each records its kind on the save stack, and a closer of the wrong
 kind is an error: `}` ends every group but a `\begingroup`, `$` or `\left`
-one, `\endgroup` only a `\begingroup` one. ([tex.web § 269][tw-269] (the group codes,
+one, `\endgroup` only a `\begingroup` one.
+
+```tex
+\bgroup x\egroup        % plain TeX: \let\bgroup={ and \let\egroup=}
+\begingroup x\endgroup
+\begingroup x}          % error: only \endgroup closes a \begingroup group
+```
+
+([tex.web § 269][tw-269] (the group codes,
 `cur_group` [§ 271][tw-271]), [§ 1063][tw-1063], [§ 1069][tw-1069], [§ 1085][tw-1085], [§ 1100][tw-1100], [§ 1145][tw-1145], *The TeXbook*, ch. 24.)
 
 Every non-global assignment is undone when the group closes.
 `\aftergroup⟨token⟩` keeps the token back and inserts it just after the group
 ends, in the order the `\aftergroup`s were given. ([tex.web § 326][tw-326].)
+
+```tex
+\def\x{a}
+{\def\x{b}\aftergroup\x}   % \x is restored first, so the inserted \x gives a
+```
+
 `\aftergroup` and `\afterassignment` are two commands, so a `\let` copy waits
-for what the command it copied waits for and not for what its own name says.
-expl3 reaches `\aftergroup` only through copies, as `\tex_aftergroup:D` and
-`\group_insert_after:N`. ([tex.web § 265][tw-265].) `\global` sets the
-value at the outermost level. The save-stack entries already pushed for that
-name are not removed, they are discarded instead of restored when the group
-ends, which is why alternating local and global assignments to one name make
-the save stack grow. ([tex.web § 279][tw-279], [§ 283][tw-283], [*TeX by Topic*][tex-by-topic], "Save size".)
+for what the command it copied waits for and not for what the copy's name
+suggests. expl3 reaches `\aftergroup` only through copies, as `\tex_aftergroup:D` and
+`\group_insert_after:N`. ([tex.web § 265][tw-265].)
+
+`\global` sets the value at the outermost level. The save-stack entries
+already pushed for that name are not removed, they are discarded instead of
+restored when the group ends, which is why alternating local and global
+assignments to one name make the save stack grow. ([tex.web § 279][tw-279], [§ 283][tw-283], [*TeX by Topic*][tex-by-topic], "Save size".)
+
+```tex
+\def\x{0}
+{\def\x{1}\gdef\x{2}\def\x{3}}   % \x is 2: the entry saved before \gdef is discarded
+```
 
 Some assignments ignore grouping entirely: `\globaldefs` forces every
 assignment global when positive and makes `\global` a no-op when negative, and
@@ -667,20 +699,28 @@ signature is only compared with this (`expl3-signature-mismatch`).
 
 A name can mean different things at different places in a run beyond the
 preamble/document split (§ "Several definitions" in the wiki): `\item`
-outside any list is the kernel's own error, inside `enumerate` or `itemize`
-(both built on `\trivlist`) it typesets one. Every recorded definition
-carries the environment stack in force where it was made, `\@currenvir`
-generalized to however deeply the run had nested, tracked the same way as
-`\begin{document}`'s own boundary (§ 9's `document_depth`), read from the
-run's own `\begin`/`\end` occurrences, never from a table of environment
-names. `explain` groups a name's definitions by that context: two made in
-different places with the same replacement text are one meaning, shown
-under every context that holds it. Two with different text are two. A name
-never redefined can still differ by context when what it calls does: the
-error a real use in the run raised there (found the same way `raised-error`
-finds one, § lint) stands in for the meaning. Without a real use in that
-context, the meaning falls back to what probing the command turns up
-instead.
+outside any list raises the kernel's error, inside `enumerate` or `itemize`
+(both built on `\trivlist`) it typesets one.
+
+```tex
+\item a                               % "Lonely \item": the kernel's error
+\begin{itemize}\item a\end{itemize}   % a list item
+```
+
+Every recorded definition carries the environment stack in force where it
+was made, `\@currenvir` generalized to however deeply the run had nested.
+The stack is tracked the same way as the document's boundary (§ 9's
+`document_depth`), read from the `\begin`/`\end` the run executes, never
+from a table of environment names. `explain` groups a name's definitions by
+that context: two made in different places with the same replacement text
+are one meaning, shown under every context that holds it. Two with different
+text are two.
+
+A name never redefined can still differ by context when what it calls does:
+the error a real use in the run raised there (found the same way
+`raised-error` finds one, § lint) stands in for the meaning. Without a real
+use in that context, the meaning falls back to what probing the command turns
+up instead.
 
 ## 14. Where `satex` is not exact
 

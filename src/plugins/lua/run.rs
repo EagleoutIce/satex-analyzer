@@ -3,7 +3,7 @@
 //! `token.set_lua` names run for real.  The engine's libraries (`token`,
 //! `tex`, `texio`, `kpse`, `lfs`, `status`, `lua`, `callback`, `unicode`)
 //! are Rust functions over the machine; `string`, `table`, `math`, `utf8`
-//! and `coroutine` are Lua's own.  There is no `io`, `os` or `debug`, and
+//! and `coroutine` are the stock Lua libraries.  There is no `io`, `os` or `debug`, and
 //! no file access beyond kpathsea lookups, `lfs.attributes` and loading
 //! modules.
 //!
