@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { LanguageClient, State, StreamInfo } from 'vscode-languageclient/node';
 import { openDialog } from './dialogs';
+import { Revive } from './revive';
 import { peers, uninstallCommand, yields } from './peers';
 import { Actions } from './sidebar';
 import { Findings, Mode, moved, Range } from './findings';
@@ -239,6 +240,7 @@ export function activate(context: vscode.ExtensionContext): void {
                 },
             },
         });
+    const revive = new Revive(() => { trace.appendLine('satex: the server stopped; starting it again'); void client?.restart(); }, 60_000);
     const working = (work: Work) => {
         bar.working(work);
         findings.status(work);
@@ -280,7 +282,9 @@ export function activate(context: vscode.ExtensionContext): void {
         client.onNotification('satex/status', working),
         client.onNotification('satex/settled', async (p: { uri: string; diagnostics: never[] }) =>
             findings.settled(p.uri, await client?.protocol2CodeConverter.asDiagnostics(p.diagnostics) ?? [])),
-        client.onDidChangeState(e => bar.down(e.newState === State.Stopped)));
+        // the client gives up on a server that closed five times in three minutes: try again after a minute
+        client.onDidChangeState(e => { bar.down(e.newState === State.Stopped); revive.stopped(e.newState === State.Stopped); }),
+        { dispose: () => revive.dispose() });
     checkTeX();
     void client.start();
     void harmonize(context);
