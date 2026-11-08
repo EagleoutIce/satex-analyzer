@@ -131,6 +131,14 @@ const MAX_MAG: i64 = 32768;
 /// tex.web § 442: an improper alphabetic constant counts as `0`.
 const IMPROPER_ALPHABETIC: i64 = '0' as i64;
 
+/// The largest character code the input encoding may give.
+fn char_top() -> i64 {
+    match crate::engine::source::encoding() {
+        crate::project::config::Encoding::Bytes => 255,
+        crate::project::config::Encoding::Utf8 => 0x10_FFFF,
+    }
+}
+
 /// tex.web § 102 (`round_decimals`): `.d₁d₂…dₖ` in units of 2^-16.
 fn round_decimals(digits: &[i64]) -> i64 {
     let mut a = 0;
@@ -557,6 +565,13 @@ impl Machine<'_> {
                 (self.abs, self.abs_exact, self.abs_from) = (Some(codes), exact, None);
                 None
             }
+            // Unknown text: its first character, of any code. The rest is the
+            // reader's assumption (`one-of-read-as-one-token`), not an improper name.
+            None if self.is_unknown(token) => {
+                self.scan_optional_x_space();
+                (self.abs, self.abs_exact, self.abs_from) = (Some(Num::range(0, char_top())), None, None);
+                None
+            }
             None => {
                 self.unread(token);
                 Some(IMPROPER_ALPHABETIC)
@@ -578,11 +593,7 @@ impl Machine<'_> {
         if let Tok::Chr(c, _) = token.tok
             && crate::engine::tex::is_unknown_char(c)
         {
-            let top = match crate::engine::source::encoding() {
-                crate::project::config::Encoding::Bytes => 255,
-                crate::project::config::Encoding::Utf8 => 0x10_FFFF,
-            };
-            let codes = crate::engine::tex::unknown_number_chars(c).map_or(Num::range(0, top), |s| {
+            let codes = crate::engine::tex::unknown_number_chars(c).map_or(Num::range(0, char_top()), |s| {
                 s.chars().map(|d| Num::exact(d as i64)).reduce(|a, b| a.join(&b)).expect("digits")
             });
             return Some((codes, None));
@@ -812,6 +823,10 @@ impl Machine<'_> {
 
     /// tex.web § 446: "Missing number, treated as zero".
     fn missing_number(&mut self, at: Option<Token>) -> Option<i64> {
+        // A widened conditional's arms may have held the digits: unknown, no error.
+        if self.scan_undecided {
+            return None;
+        }
         let span = at.map(|t| t.span).unwrap_or_default();
         let seen = at.map_or_else(
             || "the end of the input".into(),

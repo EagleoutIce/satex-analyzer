@@ -1446,6 +1446,64 @@ mod document_metadata {
     }
 }
 
+/// The gaps of a run: what it could not follow.
+fn gaps_of(analysis: &satex::analysis::machine::Analysis) -> Vec<(&str, String)> {
+    let unsupported =
+        |d: &&satex::analysis::facts::Diagnostic| d.severity == satex::analysis::facts::Severity::Unsupported;
+    analysis.facts.diagnostics.iter().filter(unsupported).map(|d| (d.code, d.message.clone())).collect()
+}
+
+/// A character of unknown text under `` ` `` has some code. It is no
+/// improper constant: that made it 48 with the name read again, and
+/// `\numexpr` ended there and left its `+1\relax` as text.
+#[test]
+fn the_code_of_a_character_of_unknown_text_is_unknown() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\n\\edef\\u{\\romannumeral\\pdfuniformdeviate 100000}\n\\edef\\v{\\expandafter\\the\\expandafter\\numexpr\\expandafter`\\u+1\\relax}\n\\begin{document}\nx\n\\end{document}\n",
+    );
+    assert_eq!(gaps_of(&analysis), Vec::new());
+    assert!(body(&analysis, "v").contains("unknown digits"), "{}", body(&analysis, "v"));
+}
+
+/// tagpdf's namespace id in small: a string of unknown hex digits run
+/// through `\str_set_convert:Nnnn`, whose loops read it a character at a
+/// time and are summarized. What each step can only over-approximate
+/// must not become an error: a widened `\if` in `\int_div_truncate:nn`
+/// left the operand of its `/` unknown, not missing, and a `\fi:` in the
+/// body scan a cut gave up closes nothing the scan did not open: the
+/// `\if_meaning:w` around `\__kernel_tl_gset:Nx` stays for its own `\fi:`.
+#[test]
+fn converting_a_string_of_unknown_hex_digits_leaves_no_gap() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\n\\ExplSyntaxOn\n\\str_const:Ne \\c_x_str { \\int_to_Hex:n{\\int_rand:n {65535}} }\n\\exp_args:NNe \\str_set_convert:Nnnn \\l_tmpa_str {\\c_x_str}{default}{utf8/string}\n\\ExplSyntaxOff\n\\begin{document}\nx\n\\end{document}\n",
+    );
+    assert_eq!(gaps_of(&analysis), Vec::new());
+}
+
+/// The separators `\__fp_randint_split_o:Nw` writes stand in the arms of
+/// its `\if_meaning:w`, inside the `\int_value:w` scan they end. Past the
+/// site's budget that `\if` was skipped, and with it the separators:
+/// `\__fp_randint_wide_aux:w` ran away and the number was `1\par`. What
+/// code in the arms leaves now follows the value as unknown text.
+#[test]
+fn a_widened_if_in_a_number_scan_leaves_text_after_the_number() {
+    if !installed() {
+        return;
+    }
+    let mut cfg = crate::support::config();
+    cfg.limits.site_forks = 1;
+    let source = "\\documentclass{article}\n\\ExplSyntaxOn\n\\tl_gset:Ne \\g_a_tl { \\int_rand:n {16777215} }\n\\ExplSyntaxOff\n\\begin{document}\nx\n\\end{document}\n";
+    let analysis = satex::analysis::machine::Machine::analyze(source, None, &cfg);
+    assert_eq!(gaps_of(&analysis), Vec::new());
+    assert!(body(&analysis, "g_a_tl").contains("unknown digits"), "{}", body(&analysis, "g_a_tl"));
+}
+
 /// `\int_rand:n` over a range wider than `\c__kernel_randint_max_int`
 /// (131071) goes through expl3's wide path, where `\tex_uniformdeviate:D`
 /// hands `\__fp_randint_split_o:Nw` text satex cannot know and its

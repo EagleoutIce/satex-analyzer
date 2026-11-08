@@ -2510,6 +2510,8 @@ impl Machine<'_> {
         let plain = arms.iter().flatten().all(|t| t.cs().is_none());
         if self.scanning > 0 {
             self.scan_undecided = true;
+            // Code in an arm may end the number: what it leaves follows the scan.
+            self.scratch.scan_left |= !plain;
         } else if plain {
             let texts: Vec<&[Token]> = arms.iter().map(Vec::as_slice).collect();
             let left = self.unknown_text(Unk::Of(&texts), span);
@@ -3435,10 +3437,11 @@ impl Machine<'_> {
     /// unknown (see [`Machine::scanning`]).
     pub(crate) fn scanning_value<T>(&mut self, scan: impl FnOnce(&mut Self) -> Option<T>) -> Option<T> {
         let outer = std::mem::take(&mut self.scan_undecided);
+        let outer_left = std::mem::take(&mut self.scratch.scan_left);
         self.scanning += 1;
         let value = scan(self);
         self.scanning -= 1;
-        let undecided = self.scan_undecided;
+        let (undecided, left) = (self.scan_undecided, std::mem::replace(&mut self.scratch.scan_left, outer_left));
         // The enclosing scan learns of it; past the outermost, the value said it.
         self.scan_undecided = (outer || undecided) && self.scanning > 0;
         if undecided {
@@ -3446,6 +3449,9 @@ impl Machine<'_> {
             // not the only thing the value may be.
             self.abs = None;
             self.abs_exact = None;
+            if left {
+                self.unread_unknown(self.position_span());
+            }
             None
         } else {
             value

@@ -1136,6 +1136,8 @@ pub(crate) struct Accum {
     pub(crate) number: Option<(Option<i64>, Option<crate::engine::value::Num>)>,
     /// The input levels where the scan began: its text is above them.
     base: usize,
+    /// The conditionals open where the scan began.
+    conds: usize,
 }
 
 impl Accum {
@@ -1178,7 +1180,7 @@ impl Accum {
     /// One built from `toks`, standing as this one does.
     pub(crate) fn with(&self, toks: Vec<Token>) -> Accum {
         let (depth, done, number, base) = (self.depth, self.done, self.number, self.base);
-        Accum { chunks: Vec::new(), tail: toks, depth, done, name: None, number, base }
+        Accum { conds: self.conds, chunks: Vec::new(), tail: toks, depth, done, name: None, number, base }
     }
 
     /// The name a name scan built: what stands around its unknown part
@@ -1448,6 +1450,8 @@ type SiteRuns = Vec<(u64, Option<Rc<MacroDef>>)>;
 /// replayed alike ([`Machine::end_cacheable_load`]).
 #[derive(Clone, Default)]
 pub(crate) struct Scratch {
+    /// A widened conditional's code may leave text past the value being scanned.
+    pub(crate) scan_left: bool,
     /// The call whose arguments are being read, and the typed rests each
     /// call site put back after taking a delimiter to end inside unknown
     /// text ([`Machine::unread_rest`]): the same site meeting its own rest
@@ -2131,7 +2135,6 @@ struct PathState {
     within: Rc<Vec<(Sym, NodeId)>>,
     env_stack: Rc<Vec<Sym>>,
     packages: Rc<Vec<(Sym, Vec<String>)>>,
-    held_tokens: usize,
     align_state: i64,
     cell_base: Option<i64>,
     section: Option<Rc<str>>,
@@ -8686,7 +8689,7 @@ will look undefined",
     /// Run `acc`'s scan as paths ([`Machine::scan_as_paths`]).
     pub(crate) fn scan_paths(&mut self, unit: Unit, acc: Accum) -> Accum {
         let depth = self.scans.len();
-        self.scans.push(Accum { base: self.text_levels(), ..acc });
+        self.scans.push(Accum { base: self.text_levels(), conds: self.conds.len(), ..acc });
         self.drive(unit, |m| m.scans.get(depth).is_none_or(|a| a.done));
         let acc = self.scans.get(depth).cloned().unwrap_or_default();
         self.scans.truncate(depth);
@@ -8776,7 +8779,7 @@ will look undefined",
     /// Text a cut gave up, standing for one unknown token. In a scan of
     /// text the cut loop may read the scan's text to its end: the scan
     /// holds the token, and its text is read unexpanded to its end, its
-    /// `\fi`s beyond its own conditionals closing what is open.
+    /// `\fi`s beyond its own conditionals closing what opened since it began.
     pub(crate) fn read_unknown(&mut self, span: Span) {
         let unknown = self.unknown_text(Unk::Any, span);
         let body = matches!(self.unit, Unit::Body { .. });
@@ -8784,10 +8787,11 @@ will look undefined",
             return self.push_tokens(Rc::from(vec![unknown]));
         };
         acc.tail.push(unknown);
-        let (base, mut depth) = (acc.base, acc.depth);
+        let (base, own, mut depth) = (acc.base, acc.conds, acc.depth);
         let (mut pops, mut closers) = (0, Vec::new());
         let closed = self.skip_unknown_text(body, &mut depth, &mut pops, &mut closers, |m| m.text_levels() >= base);
-        for _ in 0..pops {
+        // Past the scan's own a `\fi` is the cut code's: what was open before stays.
+        for _ in 0..pops.min(self.conds.len().saturating_sub(own)) {
             self.pop_conditional();
         }
         // A `}` closing a brace the scan made before the cut is its own:
@@ -12486,7 +12490,6 @@ will look undefined",
             within: self.within.clone(),
             env_stack: self.env_stack.clone(),
             packages: self.packages.clone(),
-            held_tokens: self.held_tokens,
             align_state: self.align_state,
             cell_base: self.cell_base,
             section: self.section.clone(),
@@ -12563,6 +12566,12 @@ will look undefined",
         self.parted_by = state.parted_by;
         self.conds = state.conds;
         self.within = state.within;
+        // A joined list ([`Machine::widen_input`]) is no call any more.
+        let calls =
+            self.input.iter().filter(|f| matches!(f, Frame::Tokens { expanding: Some(_), upper: false, .. })).count();
+        if self.within.len() > calls {
+            Rc::make_mut(&mut self.within).truncate(calls);
+        }
         self.env_stack = state.env_stack;
         self.packages = state.packages;
         self.quantity = state.quantity;
@@ -12590,7 +12599,14 @@ will look undefined",
         if self.call_recs.is_empty() {
             self.env.log_reads(false);
         }
-        self.held_tokens = state.held_tokens;
+        // Joined lists hold what they hold now ([`Machine::widen_input`]).
+        self.held_tokens = (self.input.iter())
+            .map(|f| match f {
+                Frame::Returned(tokens) => tokens.len(),
+                Frame::Tokens { held, .. } => *held,
+                _ => 0,
+            })
+            .sum();
         self.align_state = state.align_state;
         self.cell_base = state.cell_base;
         self.section = state.section;

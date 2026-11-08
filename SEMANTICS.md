@@ -904,6 +904,9 @@ on, and it never invents a meaning.
   `\ht`/`\dp` of an `\hbox` and `\wd` of a `\vbox` of unknown size
   are at least zero ([tex.web §§ 649][tw-649], [668][tw-668]), and a known factor times a
   dimension in an interval keeps the interval.
+  A character of unknown text after `` ` `` has an unknown code, no improper
+  constant. An operand a widened conditional may have written is unknown,
+  not missing, and code in its arms leaves unknown text after the value.
   The digits of an unknown number (`\the`,
   `\number`, `\romannumeral` of an unknown quantity) are unknown text to a
   scan and to `\csname`, but a character of category 12 to `\ifx`, `\if`,
@@ -1008,7 +1011,8 @@ choices each place makes (a conditional, a name of several meanings) are
 counted while one source line is read, over all paths and replays. Past
 `limits.site_forks` of them the expansion above the line is cut as the
 guard cuts it (`site-forks-widened`): what it assigned is unknown, and the line
-reads on after an unknown token. Every count and limit is in steps or
+reads on after an unknown token.
+Every count and limit is in steps or
 choices, never in seconds, so the result does not depend on the machine.
 A drive whose paths were all dropped before the input ended (none of them
 a run of the document as followed, so an approximation on the way went
