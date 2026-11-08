@@ -63,11 +63,11 @@ jobs:
     container: texlive/texlive:latest
     steps:
       # Lua and LPeg are compiled from C; pandoc renders the Markdown,
-      # pdftocairo turns the logo into SVG.
+      # pdftocairo turns the logo into SVG, the encoders make the showcase's AVIF, WebP and MP4.
       - name: Install the build tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends build-essential git xz-utils ca-certificates python3 pandoc poppler-utils curl
+          apt-get install -y --no-install-recommends build-essential git xz-utils ca-certificates python3 pandoc poppler-utils curl ffmpeg webp libavif-bin
 
       # The semantics pages export the Lean declarations; lake fetches the pinned toolchain.
       - name: Install Lean

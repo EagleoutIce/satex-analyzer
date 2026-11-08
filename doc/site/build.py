@@ -1792,7 +1792,9 @@ def showcase(out, live):
     derived_dir.mkdir(parents=True, exist_ok=True)
     recipes = {
         "avif": lambda i, o: ["avifenc", "-q", "60", "-s", "4", "-j", "1", str(i), str(o)],
-        "webp": lambda i, o: ["magick", str(i), "-quality", "80", "-define", "webp:method=6", str(o)],
+        # ImageMagick 7, else libwebp's own encoder (Debian ships no `magick`)
+        "webp": lambda i, o: ["magick", str(i), "-quality", "80", "-define", "webp:method=6", str(o)] if shutil.which("magick")
+        else ["cwebp", "-quiet", "-q", "80", "-m", "6", str(i), "-o", str(o)],
         "mp4": lambda i, o: ["ffmpeg", "-y", "-loglevel", "error", "-i", str(i), "-c:v", "libx264", "-crf", "27", "-preset", "slow",
                              "-profile:v", "high", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", str(o)],
     }
