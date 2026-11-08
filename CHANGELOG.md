@@ -8,6 +8,14 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 <!-- reviewed: 31d41cf -->
 
+### Playground
+
+- `perf` **Package caches replay in every document.** A package loaded at `\begin{document}`, like graphics' epstopdf-base, was rebuilt in the browser for every example.
+
+### Site and docs
+
+- `fix` **The site deploys again**, with its playground tests running.
+
 ## v0.2.0 (2026-11-07)
 
 Sound and usable on real documents: joins, loops and caches that keep the analysis precise and ending, the playground and `satex gui`, editor widgets and managers, VS Code and IntelliJ plugins, latexmk builds.

@@ -1492,7 +1492,7 @@ impl Machine<'_> {
         }
     }
 
-    fn job_name(&mut self) -> String {
+    pub(crate) fn job_name(&self) -> String {
         let path = self.out.file_name(self.out.main_file).to_string();
         // tex.web § 532: a job read from no file is `texput`.
         if path == crate::analysis::machine::NO_FILE {

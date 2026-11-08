@@ -1794,3 +1794,29 @@ fn a_package_read_after_a_name_of_unknown_spelling_is_not_served_the_plain_answe
     assert!(!defined(&cold, "wpseen") && !undefined(&cold, "wpseen"), "a fresh read leaves it open");
     assert!(!defined(&warm, "wpseen") && !undefined(&warm, "wpseen"), "{:?}", warm.package_caches);
 }
+
+/// A package loaded once the aux file is open (graphics loads epstopdf-base
+/// at `\begin{document}`) replays in a document of another name: the files
+/// written so far count by their name past `\jobname`. Keyed by `a.aux`,
+/// the playground rebuilt epstopdf-base for every example but the one the
+/// bundle was built with.
+#[test]
+fn a_package_loaded_after_the_aux_opened_replays_under_another_job_name() {
+    if !installed() {
+        return;
+    }
+    let dir = project("job-name");
+    std::fs::write(dir.join("late.sty"), "\\ProvidesPackage{late}[2020/01/01 v1]\n\\def\\latemacro{}\n")
+        .expect("late.sty");
+    let source =
+        "\\documentclass{article}\n\\AtBeginDocument{\\RequirePackage{late}}\n\\begin{document}x\\end{document}\n";
+    let cfg = latex(&dir);
+    let named = |job: &str| {
+        let path = dir.join(format!("{job}.tex"));
+        std::fs::write(&path, source).expect("document");
+        Machine::analyze(source, Some(&path), &cfg)
+    };
+    assert_eq!(served(&named("a"), "late"), Some(false));
+    let other = named("b");
+    assert_eq!(served(&other, "late"), Some(true), "{:?}", other.package_caches);
+}

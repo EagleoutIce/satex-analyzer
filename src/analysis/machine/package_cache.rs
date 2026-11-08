@@ -1315,15 +1315,25 @@ impl Machine<'_> {
             hash.put(&(self.long_argument, self.runaway, self.out.document_depth, self.docstrip));
             parts.push(("prefixes and flags".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             hash.put(&self.section.as_deref());
+            parts.push(("section".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             let mut streams: Vec<_> = self.streams.iter().collect();
             streams.sort_by_key(|(n, _)| **n);
             hash.put(&streams);
-            let mut outputs: Vec<_> = self.outputs.iter().collect();
+            parts.push(("open read streams".into(), std::mem::replace(&mut hash, Fnv::new()).0));
+            // by name past the job's own (`\jobname.aux`): a package loaded once the aux is open
+            // replays in any document
+            let job = format!("{}.", self.job_name());
+            let mut outputs: Vec<_> = self
+                .outputs
+                .iter()
+                .map(|(n, t)| (n.strip_prefix(&job).map_or(n.clone(), |rest| format!("\\jobname.{rest}")), t))
+                .collect();
             outputs.sort();
             hash.put(&outputs);
+            parts.push(("files written".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             hash.put(&*self.pending);
             hash.put(&self.docstrip_dir.as_ref().map(|d| roots.canonical(d)));
-            parts.push(("section and streams".into(), std::mem::replace(&mut hash, Fnv::new()).0));
+            parts.push(("deferred writes and docstrip".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             let mut pinned: Vec<Sym> = self.pinned.iter().copied().collect();
             pinned.sort();
             hash.put(&pinned);
