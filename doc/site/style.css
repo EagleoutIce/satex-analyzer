@@ -2268,6 +2268,12 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .sx-tip { margin: 0; min-height: calc(3 * 1.4em); max-width: 40rem; font-size: .78rem; line-height: 1.4; color: var(--muted); text-wrap: pretty; }
 .sx-tip > b { color: var(--accent); font-weight: 600; margin-right: .25em; }
 .sx-tip code { font-size: .95em; }
+.sx-tip-more { display: flex; align-items: flex-start; gap: .5rem; max-width: none; min-height: calc(4 * 1.4em); margin: .3rem 1rem; }
+.sx-tip-more > .sx-tip-text { flex: 1; min-width: 0; }
+.sx-tip-more > b { margin-right: 0; }
+@media (max-width: 480px) { .sx-tip-more { min-height: calc(5 * 1.4em); } }
+.fb-form .sx-tip-more { margin-inline: 0; }
+.sx-tip-btn { flex: none; margin-left: auto; white-space: nowrap; }
 .sx-tip-in { animation: sx-tip-in .4s var(--ease); }
 @keyframes sx-tip-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .sx-tip-in { animation: none; } }

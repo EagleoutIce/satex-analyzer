@@ -35,13 +35,18 @@
   const tipNext = self.satexViews.tipBag(manifest.tips ?? []);
   /** How long one tip stays. */
   const TIP_MS = 20000;
-  /** A loading banner's tip, the next one every `TIP_MS` while it is on the page. No live region: nobody asked to hear them. */
-  function tipHost() {
+  /** A tip line: on a loading banner the next one every `TIP_MS` while it is on the page, in a dialog (`more`) only its "Another tip" button changes it. No live region: nobody asked to hear them. */
+  function tipHost(more = false) {
     const host = Object.assign(document.createElement('p'), { className: 'sx-tip' }), text = Object.assign(document.createElement('span'), { className: 'sx-tip-text' });
     host.innerHTML = '<b>Tip</b> ';
     host.append(text);
     const show = () => { text.innerHTML = tipHtml(tipNext()); text.classList.remove('sx-tip-in'); void text.offsetWidth; text.classList.add('sx-tip-in'); };
     show();
+    if (more) {
+      host.classList.add('sx-tip-more');
+      host.append(Object.assign(document.createElement('button'), { type: 'button', className: 'ghost small sx-tip-btn', ariaLabel: 'Another tip', title: 'Another tip', textContent: 'Another tip', onclick: show }));
+      return host;
+    }
     const timer = setInterval(() => { if (!host.isConnected) clearInterval(timer); else if (host.offsetParent !== null) show(); }, TIP_MS);
     return host;
   }
@@ -6454,10 +6459,12 @@
       issue(plugin ? `[${plugin}] ` : '[plugin request] ', `${versionLine()}${plugin ? `\nPlugin: ${plugin}\nAt: ${where}` : ''}\n\n${f.what.value.trim()}${snip}\n`);
       dlg.close();
     };
+    dlg.querySelector('.fb-actions').before(tipHost(true));
     dlg.showModal();
     dlg.querySelector('textarea').focus();
   }
   const cursorLine = () => { const text = editor?.text() ?? '', [c] = editor?.cursor() ?? [0]; return text.slice(0, c).split('\n').length - 1; };
+  $('play-config').querySelector('.cache-note').after(tipHost(true));
   $('view-feedback').onclick = () => feedback(viewPlugin, cursorLine());
   $('lib-feedback').onclick = () => feedback('library');
   $('cfg-feedback').onclick = () => feedback('settings');
