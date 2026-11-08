@@ -15,6 +15,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `fix` **An editor never offers to turn off `clones`.** Copied code is a finding to act on, not the project's style. [`1cdd3cc`](https://github.com/EagleoutIce/satex-analyzer/commit/1cdd3cc)
 - `fix` **Prose rules skip what undefined commands leave behind.** A TeX file opened without its preamble no longer gets spacing findings on `\node (a)at(b)` or inside an undefined environment. [`5d61ec1`](https://github.com/EagleoutIce/satex-analyzer/commit/5d61ec1)
 
 ### Playground
@@ -23,6 +24,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site and docs
 
+- `fix` **The benchmark page shows summaries.** Each release runs its benchmark, totals compare the documents both releases ran, and pdfTeX comes first. [`9322ee0`](https://github.com/EagleoutIce/satex-analyzer/commit/9322ee0) [`5e39b65`](https://github.com/EagleoutIce/satex-analyzer/commit/5e39b65) [`4c5e651`](https://github.com/EagleoutIce/satex-analyzer/commit/4c5e651)
 - `fix` **The site deploys again**, with its playground tests running. [`d2c8c13`](https://github.com/EagleoutIce/satex-analyzer/commit/d2c8c13) [`6702be3`](https://github.com/EagleoutIce/satex-analyzer/commit/6702be3) [`7ab2503`](https://github.com/EagleoutIce/satex-analyzer/commit/7ab2503) [`37a5812`](https://github.com/EagleoutIce/satex-analyzer/commit/37a5812)
 
 ## v0.2.0 (2026-11-07)
