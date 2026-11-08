@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   check:
@@ -145,6 +146,12 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: ${{ steps.notes.outputs.path == '' }}
+
+      # A release made with this token starts no `release` workflow: only a dispatch does.
+      - name: Benchmark the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run bench.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f version="$GITHUB_REF_NAME"
 
   crate:
     name: Publish to crates.io

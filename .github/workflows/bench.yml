@@ -3,13 +3,12 @@ name: Bench
 # Wall time, memory, steps and forks of the benchmark documents (benches/docs.txt),
 # one entry per release in doc/site/bench/data.json, shown on the site's
 # Benchmarks page.
+# The release workflow dispatches it on the tag.
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       version:
-        description: 'Label of the entry (default: the tag, or "unreleased")'
+        description: 'Label of the entry (default: "unreleased")'
         required: false
 
 permissions:
@@ -38,8 +37,6 @@ jobs:
           apt-get install -y --no-install-recommends build-essential git ca-certificates python3 gh
 
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.release.tag_name || github.ref }}
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -52,7 +49,7 @@ jobs:
       - name: Benchmark
         id: bench
         env:
-          VERSION: ${{ inputs.version || github.event.release.tag_name || 'unreleased' }}
+          VERSION: ${{ inputs.version || 'unreleased' }}
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           echo "version=${VERSION#v}" >> "$GITHUB_OUTPUT"
