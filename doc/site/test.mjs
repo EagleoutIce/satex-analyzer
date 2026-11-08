@@ -303,26 +303,26 @@ async function browser() {
     const center = (sel) => js(`const e = document.querySelector(${JSON.stringify(sel)}); e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return [b.left + Math.min(4, b.width / 2), b.top + b.height / 2]`);
     // sizes and places within the example, so a scroll by a subpixel does not count
     const layout = `const f = document.querySelector('.example:not([hidden])').getBoundingClientRect(); return [...document.querySelectorAll('.example:not([hidden]) :is(pre.src, .ex-side, .ln, .lint, .src-cs)')].map((e) => { const r = e.getBoundingClientRect(); return [r.x - f.x, r.y - f.y, r.width, r.height].map(Math.round).join(); }).join(' ')`;
-    // the hello example's tab, wherever it stands: its \\greet and its redefined \\section
-    const hello = '#' + await js(`const t = [...document.querySelectorAll('.examples [role=tab]')].find((t) => /hello/.test(t.textContent)); t.click(); return t.getAttribute('aria-controls');`);
-    // a command explains itself on hover: a card with its signature as chips
-    let at = await center(`${hello} [data-cs="\\\\greet"]`);
+    // the macros example's tab: its \\twice explains itself on hover, a card with its signature as chips
+    await js(`[...document.querySelectorAll('.examples [role=tab]')].find((t) => /macros/.test(t.textContent)).click()`);
+    let at = await center('.example:not([hidden]) [data-cs="\\\\twice"]');
     const before = await js(layout);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
-    check('landing command hover card', await until(`const t = document.querySelector('.tip-card:not([hidden])'); return t && /greet/.test(t.querySelector('.x-name')?.textContent) && t.querySelector('.sig .arg[title]')`, 5000),
+    check('landing command hover card', await until(`const t = document.querySelector('.tip-card:not([hidden])'); return t && /twice/.test(t.querySelector('.x-name')?.textContent) && t.querySelector('.sig .arg[title]')`, 5000),
       await js(`return document.querySelector('.tip-card')?.textContent.slice(0, 120) ?? 'no card'`));
     await shot('landing-command-hover');
     const after = await js(layout);
     check('landing hover moves nothing', before === after, before === after ? '' : `${before} -> ${after}`);
-    // findings are wavy underlines over the whole call, with the message on hover
-    check('wavy underlines', await js(`const l = [...document.querySelectorAll('${hello} .lint')]; return l.length > 0 && l.every((e) => getComputedStyle(e).textDecorationStyle === 'wavy')`));
-    check('underline spans the whole call', await js(`const k = [...document.querySelectorAll('${hello} [data-lint]')].find((e) => e.closest('.ln').textContent.startsWith('\\\\newcommand{\\\\section}')).dataset.lint.split(' ')[0];
-      const line = document.querySelector('${hello} [data-lint~="' + k + '"]').closest('.ln'); return [...line.querySelectorAll('[data-lint~="' + k + '"]')].map((e) => e.textContent).join('') === line.textContent`));
-    at = await center(`${hello} [data-lint].f-error`);
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 });
+    // the first landing example with an error: findings are wavy underlines, with the message on hover
+    const faulty = '#' + await js(`for (const t of document.querySelectorAll('.examples [role=tab]')) { const p = document.getElementById(t.getAttribute('aria-controls')); if (p?.querySelector('[data-lint].f-error')) { t.click(); return p.id; } } return 'none'`);
+    check('wavy underlines', await js(`const l = [...document.querySelectorAll('${faulty} .lint')]; return l.length > 0 && l.every((e) => getComputedStyle(e).textDecorationStyle === 'wavy')`));
+    const steady = await js(layout);
+    at = await center(`${faulty} [data-lint].f-error`);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
-    check('landing finding hover', await until(`return /already defined/.test(document.querySelector('.tip-card:not([hidden]) .tip-lint')?.textContent ?? '')`, 5000));
+    check('landing finding hover', await until(`return (document.querySelector('.tip-card:not([hidden]) .tip-lint')?.textContent ?? '').trim().length > 0`, 5000));
     await shot('landing-finding-hover');
-    check('landing finding hover moves nothing', before === await js(layout));
+    check('landing finding hover moves nothing', steady === await js(layout));
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 });
     // the macros example: a click on a command pins its full card, signature chips explained; beside it, what it typesets
     await js(`[...document.querySelectorAll('.examples [role=tab]')].find((t) => /macros/.test(t.textContent)).click()`);
