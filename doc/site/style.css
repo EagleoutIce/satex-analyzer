@@ -53,16 +53,16 @@ h1 { font-size: 1.9rem; margin-top: .5rem; }
 .top { padding: .7rem 0; display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
 .brand img { height: 30px; display: block; transition: opacity var(--quick); }
 .brand:hover img { opacity: .75; }
-.version { color: var(--muted); font-size: .8rem; border: 1px solid var(--border); border-radius: var(--r-pill); padding: 0 .55rem; }
+.version { color: var(--muted); font-size: .8rem; border: 1px solid var(--border); border-radius: var(--r-pill); padding: 0 .55rem; white-space: nowrap; flex: none; }
 .top nav { display: flex; gap: 1.1rem; flex-wrap: wrap; margin-left: auto; font-weight: 400; }
 /* header links read as text, the accent only on hover */
 .top nav a { color: var(--fg); padding: .15rem .1rem; border-bottom: 2px solid transparent; transition: color var(--quick), border-color var(--quick); }
 .top nav a:hover, .top nav a:focus-visible { color: var(--accent); text-decoration: none; }
 .top nav a.icon { display: inline-flex; align-items: center; }
 .top nav a.icon svg { width: 1.25rem; height: 1.25rem; fill: currentColor; }
-/* a phone: logo, theme and a menu button; the links open as a panel under the header */
+/* where the links do not fit: logo, theme and a menu button; the links open as a panel under the header */
 .menu-btn { display: none; }
-@media (max-width: 40rem) {
+@media (max-width: 52rem) {
   .top { position: relative; flex-wrap: nowrap; }
   .top .version { display: none; }
   .top #theme { margin-left: auto; }
