@@ -3,12 +3,15 @@ name: Bench
 # Wall time, memory, steps and forks of the benchmark documents (benches/docs.txt),
 # one entry per release in doc/site/bench/data.json, shown on the site's
 # Benchmarks page.
-# The release workflow dispatches it on the tag.
+# The release workflow dispatches it for the tag, from main: a tag's copy of this file never changes.
 on:
   workflow_dispatch:
     inputs:
       version:
         description: 'Label of the entry (default: "unreleased")'
+        required: false
+      ref:
+        description: 'What to measure (default: the branch this runs on)'
         required: false
 
 permissions:
@@ -26,7 +29,7 @@ env:
 jobs:
   bench:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 300
     container: texlive/texlive:latest
     outputs:
       version: ${{ steps.bench.outputs.version }}
@@ -34,9 +37,11 @@ jobs:
       - name: Install the build tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends build-essential git ca-certificates python3 gh
+          apt-get install -y --no-install-recommends build-essential git ca-certificates python3
 
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

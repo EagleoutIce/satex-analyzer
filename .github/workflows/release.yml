@@ -151,7 +151,7 @@ jobs:
       - name: Benchmark the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run bench.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f version="$GITHUB_REF_NAME"
+        run: gh workflow run bench.yml --repo "$GITHUB_REPOSITORY" --ref main -f ref="$GITHUB_REF_NAME" -f version="$GITHUB_REF_NAME"
 
   crate:
     name: Publish to crates.io
