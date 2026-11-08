@@ -17,6 +17,7 @@ The extension lives in `editors/vscode/`. Other editors: [IntelliJ](intellij.md)
 - With LaTeX Workshop installed, satex offers once to turn its chktex linting off, so a finding is not reported twice.
 - `satex: Trace Expansion Here` (`satex.traceAtCursor`): traces what the selection, or the control sequence at the cursor, expands to at that position and shows the steps beside the editor.
 - `satex: Compile` (`satex.compile`): builds the root document, streams the build output to the "satex build" channel and shows the findings as diagnostics.
+- Widgets sit where you are. A code lens above each table, figure and plugin view says `Edit table…`, `Edit image…` or `Edit placement…`. A tabular without rows has one too. The same entries are code actions (`Ctrl+.`) and hover links. A type plugin switches its lens off in `satex.yaml` (`type_plugins`). `satex: Open Widget…` lists them all.
 
 ## Requirements
 

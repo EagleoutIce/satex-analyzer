@@ -5684,3 +5684,29 @@ fn accepting_an_environment_keeps_what_was_typed() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// An empty tabular is the time to want the grid: `\begin{tabular}{ll}`, a blank line, `\end{tabular}`
+/// still has a lens, a dialog and a hover link. Pins "where is the table widget?" on a table without rows.
+#[test]
+fn an_empty_table_has_its_widget() {
+    let text =
+        "\\documentclass{article}\n\n\\begin{document}\n\\begin{tabular}{ll}\n\n\\end{tabular}\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("empty-table", text, &[]);
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].clone();
+    let lens = (lenses.as_array().unwrap().iter()).find(|l| l["command"]["title"] == "Edit table…");
+    let lens = lens.unwrap_or_else(|| panic!("{lenses}"));
+    assert_eq!(lens["range"]["start"]["line"], 3);
+    let id =
+        server.request("satex/dialog", json!({ "textDocument": { "uri": uri }, "position": lens["range"]["start"] }));
+    let view = server.response(id)["result"].clone();
+    assert_eq!(view["kind"], "table", "{view}");
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 3, "character": 3 } }),
+    );
+    let hover = server.response(id)["result"].clone();
+    assert!(hover["contents"]["value"].as_str().unwrap().contains("command:satex.openDialog"), "{hover}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
