@@ -17,7 +17,5 @@ latex::document_metadata::lifting_the_bound_leaves_the_report_as_it_is
 documents::notecolumn_slnc_at_cleardoublepage_koma
 documents::notecolumn_notes_read_back
 termination::convergence::tikz_nodes_of_unknown_width
-# Regressed by exempting value scans from site_forks: missing-number past the bound at expl3-code.tex \__bool_choose:NNN.
-budgets::tagpdf_warm
 # Open since the pgfmath round: the surviving arms run away at \pgfmath@parse@stop.
 documents::pgfmath_parses_a_printed_box_width

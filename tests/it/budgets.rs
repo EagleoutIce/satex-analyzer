@@ -210,7 +210,8 @@ fn warm_steps(name: &str, source: &str) -> Option<u64> {
 /// What a warm run of a short document may run, its loads replayed. A
 /// replay leaves the lists as the read did, so what the loads put on the
 /// main vertical list is worked through again: the cold run's cost.
-const WARM_TAGPDF: u64 = 1_510_000;
+// With `\DocumentMetadata`, what tagpdf needs: as `WARM_METADATA`, its management is what costs.
+const WARM_TAGPDF: u64 = 19_400_000;
 const WARM_METADATA: u64 = 19_340_000;
 
 #[test]
