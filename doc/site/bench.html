@@ -103,6 +103,7 @@
   const docs = [...new Set(data.flatMap(e => e.runs.map(r => r.doc)))];
   const fill = (id, items) => $(id).replaceChildren(...items.map(([v, t]) => Object.assign(html("option"), { value: v, textContent: t })));
   fill("b-kernel", kernels.map(k => [k, k]));
+  $("b-kernel").value = kernels.includes("pdftex") ? "pdftex" : kernels[0];
   fill("b-version", data.map((e, i) => [i, `${e.version} (${e.date})`]).reverse());
   $("b-version").value = data.length - 1;
   const colorOf = k => `var(${SERIES[k % SERIES.length]})`;
