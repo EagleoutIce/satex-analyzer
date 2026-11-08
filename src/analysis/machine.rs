@@ -8098,7 +8098,13 @@ will look undefined",
     /// path goes on, kept with TeX's recovery if it is the last, and each drop
     /// is reported (`assumed-compiles`). Whether so.
     pub(crate) fn refute_library_fault(&mut self, text: &str, opener: Span) -> bool {
-        let refuted = self.may_refute(opener) && self.took_unknown_arm();
+        let unknown_arm = self.took_unknown_arm();
+        self.refute_if(unknown_arm, text, opener)
+    }
+
+    /// [`Self::refute_library_fault`] on a path known to rest on an approximation.
+    pub(crate) fn refute_if(&mut self, approximated: bool, text: &str, opener: Span) -> bool {
+        let refuted = self.may_refute(opener) && approximated;
         if refuted {
             self.dropping = Some(text.to_string());
             self.dropping_possible = false;
