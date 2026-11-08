@@ -2808,7 +2808,7 @@ impl Machine<'_> {
     /// the `\if…` to its `\fi`.
     fn close_conditional(&mut self, at: Span) {
         self.scratch.cond_gaps.remove(&(self.conds.len(), at));
-        self.fi_mark = Some((at, self.conds.len()));
+        self.fi_mark = Some((at, self.conds.len(), false));
         if let Some(line) = self.source_extent(at) {
             self.out.graph.note_extent(at, line);
         }

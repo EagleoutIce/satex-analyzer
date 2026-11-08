@@ -2267,6 +2267,9 @@ pub fn widen_slot(
             _ => match texts() {
                 Some(mut texts) if texts.len() == 1 => (texts.pop().expect("one text"), None),
                 Some(texts) => (Meaning::Unknown, Some(texts.into())),
+                // Macros that take arguments are code, whose texts no pass makes
+                // up: the set stays what the join kept, each read with its arguments.
+                None if takes_arguments(&joined) => (joined.meaning.clone(), joined.may.clone()),
                 None => hull_meaning(&joined, typed, reach, sets.text_names),
             },
         };
@@ -2283,6 +2286,13 @@ pub fn widen_slot(
         };
     }
     Some(joined)
+}
+
+/// Whether `b` is a set of meanings, each a macro with parameters.
+fn takes_arguments(b: &Binding) -> bool {
+    b.may
+        .as_deref()
+        .is_some_and(|may| may.iter().all(|m| m.as_macro().is_some_and(|d| !d.parameter_text.items.is_empty())))
 }
 
 /// Whether every meaning `b` may have is a parameterless macro whose text

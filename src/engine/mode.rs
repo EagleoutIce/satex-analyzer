@@ -1186,6 +1186,8 @@ impl Machine<'_> {
         self.split(by, token.span, 2, move |m, arm| {
             let Some(&modes) = parts.get(arm) else { return false };
             m.mode = modes;
+            // They came through one `\fi`, but meet only once in one mode.
+            m.fi_mark = m.fi_mark.map(|(at, depth, _)| (at, depth, true));
             m.unread(token);
             true
         })

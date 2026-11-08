@@ -2006,7 +2006,7 @@ pub struct Machine<'a> {
     /// The conditional the running path closed last, by its `\if…` and the
     /// stack depth below it: paths that closed the same one and stand at
     /// one place join there whatever else tells them apart.
-    pub(crate) fi_mark: Option<(Span, usize)>,
+    pub(crate) fi_mark: Option<(Span, usize, bool)>,
     /// A certain TeX error the running command raised: under
     /// `analysis.assume_compiles` its path is no run of the document.
     pub(crate) dropping: Option<String>,
@@ -2169,7 +2169,7 @@ struct PathState {
     reader: Option<NodeId>,
     scans: Vec<Accum>,
     at_join: Option<JoinAt>,
-    fi_mark: Option<(Span, usize)>,
+    fi_mark: Option<(Span, usize, bool)>,
     approximated: bool,
     /// An error a nested drive's path raised: it is the enclosing
     /// command's run's to drop or contain ([`Machine::explore`]).
