@@ -5623,3 +5623,64 @@ fn a_stopped_run_keeps_the_findings_of_the_last_whole_one() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// `text` once the completion item `label` offered at `line`:`character` is accepted: its text edit
+/// and additional edits applied, snippet stops removed.
+fn accept(server: &mut Server, uri: &str, text: &str, line: u32, character: u32, label: &str) -> String {
+    let items = complete(server, uri, line, character);
+    let item = items
+        .iter()
+        .find(|i| i["label"] == label)
+        .unwrap_or_else(|| panic!("{label} not offered: {:?}", labels(&items)));
+    let lines: Vec<&str> = text.split('\n').collect();
+    let offset = |p: &Value| {
+        lines[..p["line"].as_u64().unwrap() as usize].iter().map(|s| s.len() + 1).sum::<usize>()
+            + p["character"].as_u64().unwrap() as usize
+    };
+    let mut edits: Vec<(usize, usize, String)> = item["additionalTextEdits"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(item["textEdit"].as_object().map(|_| &item["textEdit"]))
+        .map(|e| (offset(&e["range"]["start"]), offset(&e["range"]["end"]), e["newText"].as_str().unwrap().to_string()))
+        .collect();
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let stops = regex::Regex::new(r"\$(\d|\{\d\})").unwrap();
+    let mut out = text.to_string();
+    for (from, to, new) in edits {
+        out.replace_range(from..to, &stops.replace_all(&new, ""));
+    }
+    out
+}
+
+/// Accepting an environment name never loses what is around it. Closing: `\end{ta` after
+/// `\begin{tabular}{ll}` keeps `{ll}` (with or without arguments, `[ht]`, `{5cm}`). Opening: a
+/// `\begin{tab}` whose `{ll}` is already written gets its `\end` behind those arguments, not
+/// between name and arguments, which left `{ll}` on the `\end{tabular}` line and the
+/// `\begin` without its specification.
+#[test]
+fn accepting_an_environment_keeps_what_was_typed() {
+    let head = "\\documentclass{article}\n\\begin{document}\n";
+    let tail = "\n\\end{document}\n";
+    // (the lines, the cursor's line within them and its column, the item, the lines after accepting)
+    let cases: [(&str, u32, u32, &str, &str); 9] = [
+        ("\\begin{tabular}{ll}\n\\end{ta", 1, 7, "tabular", "\\begin{tabular}{ll}\n\\end{tabular}"),
+        ("\\begin{tabular}{ll}\n\\end{", 1, 5, "tabular", "\\begin{tabular}{ll}\n\\end{tabular}"),
+        ("\\begin{tabular}{ll}\n\\end{ta}", 1, 7, "tabular", "\\begin{tabular}{ll}\n\\end{tabular}"),
+        ("\\begin{minipage}{5cm}\n\\end{mi", 1, 7, "minipage", "\\begin{minipage}{5cm}\n\\end{minipage}"),
+        ("\\begin{table}[ht]\n\\end{ta", 1, 7, "table", "\\begin{table}[ht]\n\\end{table}"),
+        ("\\begin{center}\n\\end{ce", 1, 7, "center", "\\begin{center}\n\\end{center}"),
+        ("\\begin{tab}{ll}", 0, 10, "tabular", "\\begin{tabular}{ll}\n\\end{tabular}"),
+        ("\\begin{min}{5cm}", 0, 10, "minipage", "\\begin{minipage}{5cm}\n\\end{minipage}"),
+        ("\\begin{tab}[ht]", 0, 10, "table", "\\begin{table}[ht]\n\\end{table}"),
+    ];
+    for (body, row, col, label, want) in cases {
+        let text = format!("{head}{body}{tail}");
+        let (mut server, uri, _, dir) = open_loaded("keepargs", &text);
+        let line = head.matches('\n').count() as u32 + row;
+        let out = accept(&mut server, &uri, &text, line, col, label);
+        assert_eq!(out, format!("{head}{want}{tail}"), "{body:?}");
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

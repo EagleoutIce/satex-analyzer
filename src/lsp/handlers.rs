@@ -1923,8 +1923,19 @@ fn environment_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, po
                 start: to_lsp(doc, Pos::new(pos.line, pos.col - typed)),
                 end: to_lsp(doc, Pos::new(pos.line, pos.col + close as u32)),
             };
-            let args: String = (1..=environment_arguments(analysis, &env)).map(|i| format!("{{${i}}}")).collect();
-            let new_text = format!("{env}}}{args}\n{body}\n\\end{{{env}}}");
+            // Arguments already written after the name stay where they are: the `\end` goes
+            // behind them, on the next line, and no placeholder is added.
+            let written = after[close as usize..].trim_start().starts_with(['{', '[']);
+            let new_text = if written {
+                let end = Pos::new(pos.line, pos.col + after.chars().count() as u32);
+                let at = to_lsp(doc, end);
+                it.additional_text_edits =
+                    Some(vec![TextEdit { range: Range { start: at, end: at }, new_text: format!("\n\\end{{{env}}}") }]);
+                format!("{env}}}")
+            } else {
+                let args: String = (1..=environment_arguments(analysis, &env)).map(|i| format!("{{${i}}}")).collect();
+                format!("{env}}}{args}\n{body}\n\\end{{{env}}}")
+            };
             it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
             it.insert_text_format = Some(InsertTextFormat::SNIPPET);
         }
