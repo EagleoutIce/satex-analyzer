@@ -1596,6 +1596,9 @@ pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
             "message": plain(record.get("message").unwrap_or(&Json::Null)),
             "data": { "rule": code, "category": record.get("category"), "fix": record.get("fix"), "applicability": record.get("applicability"), "group": record.get("group") },
         });
+        if crate::linter::settled(&code) {
+            diagnostic["data"]["settled"] = true.into();
+        }
         if crate::linter::number(&code).is_some() {
             diagnostic["codeDescription"] = serde_json::json!({ "href": crate::linter::url(&code) });
         }

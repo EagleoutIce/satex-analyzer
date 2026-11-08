@@ -67,14 +67,16 @@
         "satex.findings.whileAnalyzing": {
           "type": "string",
           "enum": [
+            "hide",
             "keep",
             "mark"
           ],
           "enumDescriptions": [
+            "Show only findings no pass can change until the analysis ends. The status bar says the analysis runs.",
             "Keep the last complete findings until the new ones are ready.",
             "Keep them, their source saying they may change."
           ],
-          "default": "keep",
+          "default": "hide",
           "description": "What the Problems view shows of satex's findings while a newer analysis runs."
         },
         "satex.server.maxCores": {

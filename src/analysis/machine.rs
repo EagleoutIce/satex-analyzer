@@ -62,8 +62,8 @@ pub(crate) use classes::decide;
 mod calls;
 mod checkpoint;
 pub mod directive;
-pub use checkpoint::Checkpoints;
 pub(crate) use checkpoint::setup_key;
+pub use checkpoint::{BetweenRuns, Checkpoints};
 pub(crate) mod explore;
 mod inspect;
 mod package_cache;
@@ -3051,6 +3051,9 @@ impl<'a> Machine<'a> {
             for (at, text, _) in changed {
                 crate::project::overlay::set(&at, text);
                 placed.push(at);
+            }
+            if let Some(hear) = &checkpoints.between_runs {
+                hear(&analysis);
             }
             run += 1;
             complete = Some(analysis);

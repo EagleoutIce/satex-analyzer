@@ -5534,6 +5534,42 @@ fn a_multi_pass_document_never_drops_a_finding_it_publishes_again() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Intuition: a build's unfinished run already knows what no later pass changes, so that alone
+/// comes early, on its own channel. `publishDiagnostics` stays complete, and a run's end is heard
+/// after its findings, so a client hiding the rest swaps once.
+/// Bug pinned: the status overtook the findings, so the old set came back before the new one.
+#[test]
+fn settled_findings_come_early_and_the_end_comes_after_the_findings() {
+    let text = "\\documentclass{article}\n\\begin{document}\n% TODO note\n\\tableofcontents\n\\section{One}\n\\ref{never}\n\\end{document}\n";
+    let (mut server, uri, _, dir) =
+        open_loaded("settled", "\\documentclass{article}\n\\begin{document}\n\\end{document}\n");
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+    );
+    let mut early: Option<Value> = None;
+    let published = loop {
+        let msg = server.read();
+        if msg["method"] == "satex/settled" && msg["params"]["uri"] == uri.as_str() {
+            early = Some(msg["params"]["diagnostics"].clone());
+        } else if msg["method"] == "textDocument/publishDiagnostics" && msg["params"]["version"] == 2 {
+            break msg["params"]["diagnostics"].clone();
+        } else if msg["method"] == "satex/status" && msg["params"]["text"].as_str().is_none_or(str::is_empty) {
+            assert!(early.is_none(), "the run's end before its findings: {msg}");
+        }
+    };
+    let early = early.expect("a second pass follows the first");
+    assert!(early.to_string().contains("TODO") && !early.to_string().contains("{never}"), "{early}");
+    let of = |needle: &str| {
+        published.as_array().unwrap().iter().find(|d| d["message"].to_string().contains(needle)).cloned()
+    };
+    assert_eq!(of("TODO").expect("the marker")["data"]["settled"], true, "{published}");
+    assert!(of("{never}").expect("the reference")["data"].get("settled").is_none(), "{published}");
+    let _ = server.notification("satex/status");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// Intuition: a run that a budget stopped read part of the document, so it knows nothing about the
 /// rest. What the whole run before it found stays, marked as unfinished, and the views stay those
 /// of the whole run. The next whole run replaces it all.

@@ -20,7 +20,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### VS Code
 
-- `fix` **Findings stay while an analysis runs.** The Problems view keeps the last complete result until the new one is ready, then swaps once. `satex.findings.whileAnalyzing` is now `keep` or `mark`. A run a budget stopped never replaces findings, its own join them, marked as unfinished.
+- `fix` **Findings no longer flicker while an analysis runs.** Those a later pass or more precision can change stay hidden until the run ends, then swap in once. Findings over the source text show at once and stay. `satex.findings.whileAnalyzing` is `hide` (default), `keep` or `mark`. A run a budget stopped never replaces findings, its own join them, marked as unfinished.
 
 ### Playground
 

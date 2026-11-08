@@ -7,7 +7,8 @@ import { LanguageClient, State, StreamInfo } from 'vscode-languageclient/node';
 import { openDialog } from './dialogs';
 import { peers, uninstallCommand, yields } from './peers';
 import { Actions } from './sidebar';
-import { analyzingAfter, STALE, Status, Work } from './status';
+import { Findings, Mode, moved, Range } from './findings';
+import { STALE, Status, Work } from './status';
 import { Steps, TraceEvent } from './steps';
 import { library } from './library';
 import { settings } from './settings';
@@ -216,25 +217,18 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     binaryPath = binary;
     const bar = (status ??= new Status());
-    // The findings stay in the Problems view until a complete run replaces them. A run in progress never
-    // takes them away. `satex.findings.whileAnalyzing`: `mark` makes them say that they may change meanwhile.
-    const published = new Map<string, [vscode.Uri, vscode.Diagnostic[]]>();
-    let analyzing = false;
-    const marking = () => vscode.workspace.getConfiguration('satex').get<string>('findings.whileAnalyzing') === 'mark';
-    const shown = (diagnostics: vscode.Diagnostic[]): vscode.Diagnostic[] => {
-        if (!analyzing || !marking()) { return diagnostics; }
-        return diagnostics.map(d => Object.assign(new vscode.Diagnostic(d.range, d.message, d.severity),
-            { code: d.code, tags: d.tags, relatedInformation: d.relatedInformation, data: (d as { data?: unknown }).data, source: STALE }));
-    };
+    // What the Problems view shows while a run goes (`satex.findings.whileAnalyzing`).
+    const findings = new Findings<vscode.Diagnostic>(
+        () => vscode.workspace.getConfiguration('satex').get<Mode>('findings.whileAnalyzing', 'hide'),
+        d => Object.assign(new vscode.Diagnostic(d.range, d.message, d.severity),
+            { code: d.code, tags: d.tags, relatedInformation: d.relatedInformation, data: (d as { data?: unknown }).data, source: STALE }),
+        (uri, diagnostics) => client?.diagnostics?.set(vscode.Uri.parse(uri), diagnostics));
     client = new LanguageClient(
         'satex', 'satex', () => startServer(binary),
         {
             documentSelector: ['latex', 'tex', 'bibtex'].map(language => ({ language })),
             middleware: {
-                handleDiagnostics: (uri, diagnostics, next) => {
-                    published.set(uri.toString(), [uri, diagnostics]);
-                    next(uri, shown(diagnostics));
-                },
+                handleDiagnostics: (uri, diagnostics) => findings.publish(uri.toString(), diagnostics),
                 // a hover's "Edit table…" link runs `satex.openDialog`; the units hover's values write themselves (`satex.applyEdit`)
                 provideHover: async (document, position, token, next) => {
                     const hover = await next(document, position, token);
@@ -247,14 +241,16 @@ export function activate(context: vscode.ExtensionContext): void {
         });
     const working = (work: Work) => {
         bar.working(work);
-        const now = analyzingAfter(work, analyzing);
-        if (now === analyzing) { return; }
-        analyzing = now;
-        if (!marking()) { return; }
-        for (const [uri, diagnostics] of published.values()) { client?.diagnostics?.set(uri, shown(diagnostics)); }
+        findings.status(work);
     };
+    // An edit moves what is held back as the editor moves what it shows.
+    const edited = vscode.workspace.onDidChangeTextDocument(e => findings.move(e.document.uri.toString(), d => {
+        const range = e.contentChanges.reduce<Range>(moved, d.range);
+        d.range = new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character);
+        return d;
+    }));
     context.subscriptions.push(
-        trace, build, buildDiagnostics, bar, { dispose: () => { status = undefined; } }, steps,
+        trace, build, buildDiagnostics, bar, edited, { dispose: () => { status = undefined; } }, steps,
         command('satex.traceNext', () => steps.move(1)),
         command('satex.tracePrevious', () => steps.move(-1)),
         command('satex.tracePick', () => steps.pick()),
@@ -282,6 +278,8 @@ export function activate(context: vscode.ExtensionContext): void {
         command('satex.openWidget', () => widgets(client)),
         command('satex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
         client.onNotification('satex/status', working),
+        client.onNotification('satex/settled', async (p: { uri: string; diagnostics: never[] }) =>
+            findings.settled(p.uri, await client?.protocol2CodeConverter.asDiagnostics(p.diagnostics) ?? [])),
         client.onDidChangeState(e => bar.down(e.newState === State.Stopped)));
     checkTeX();
     void client.start();

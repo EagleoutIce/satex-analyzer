@@ -205,6 +205,9 @@ fn opens_document(mouth: &Mouth) -> bool {
     two_lines.contains("\\begin{document}")
 }
 
+/// What hears a build's unfinished run.
+pub type BetweenRuns = Box<dyn Fn(&Analysis)>;
+
 /// The checkpoints of one document's last run, and what they rest on.
 pub struct Checkpoints<'a> {
     cfg: &'a Config,
@@ -220,6 +223,8 @@ pub struct Checkpoints<'a> {
     pub resumed: Option<(String, u32)>,
     /// When the build's first run had its kernel: every run's `limits.seconds` counts from it.
     pub build_started: Option<std::time::Instant>,
+    /// Hears each run of a build that another run follows.
+    pub between_runs: Option<BetweenRuns>,
 }
 
 impl<'a> Checkpoints<'a> {
@@ -233,6 +238,7 @@ impl<'a> Checkpoints<'a> {
             every: EVERY,
             resumed: None,
             build_started: None,
+            between_runs: None,
         }
     }
 

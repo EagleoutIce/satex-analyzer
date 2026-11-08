@@ -8,11 +8,6 @@ export function isOurs(d: vscode.Diagnostic): boolean {
 /** The source a finding carries while a newer analysis runs: the Problems view says it may change. */
 export const STALE = 'satex · analyzing…';
 
-/** Whether a newer analysis runs once `work` is heard: a hover's trial run neither starts nor ends one. */
-export function analyzingAfter(work: Work, was: boolean): boolean {
-    return work.phase === 'probe' ? was : Boolean(work.text);
-}
-
 /** What the server does now (`satex/status`): `text` empty when idle. */
 export interface Work {
     text: string;
@@ -107,6 +102,9 @@ export class Status implements vscode.Disposable {
             const done = total ? ` ${Math.min(100, Math.floor((reached ?? 0) * 100 / total))}%` : '';
             this.item.text = `$(sync~spin) satex: ${this.busy.text}${done}`;
             this.item.tooltip = explain(this.busy);
+            if (this.busy.phase !== 'probe' && vscode.workspace.getConfiguration('satex').get('findings.whileAnalyzing') === 'hide') {
+                this.item.tooltip.appendMarkdown('\n\nThe analysis is still running: findings that may change are hidden until it ends.');
+            }
             this.item.command = 'satex.caches';
         } else {
             const counts = errors + warnings > 0 ? ` $(error) ${errors} $(warning) ${warnings}` : ' $(check)';

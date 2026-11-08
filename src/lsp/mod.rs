@@ -127,16 +127,16 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
     // must be answered under the symlink (#17).
     let named = client_roots(&params);
     let root = named.first().cloned().unwrap_or(root);
-    // What the engine is doing (`caching pdftex kernel`), for the editor's
-    // status bar: `satex/status` with a `progress::Status`, `text` empty when idle.
-    let status = connection.sender.clone();
-    crate::util::progress::listen(Some(Box::new(move |now: &crate::util::progress::Status| {
-        let note = Notification::new("satex/status".into(), now);
-        let _ = status.send(Message::Notification(note));
-    })));
-
     let (engine_tx, engine_rx) = crossbeam_channel::unbounded::<EngineMsg>();
     let (outbox, outbox_rx) = crossbeam_channel::unbounded::<Notification>();
+    // What the engine is doing (`caching pdftex kernel`), for the editor's status bar:
+    // `satex/status` with a `progress::Status`, `text` empty when idle. In line with the
+    // diagnostics, so a run's end is heard after its findings.
+    let status = outbox.clone();
+    crate::util::progress::listen(Some(Box::new(move |now: &crate::util::progress::Status| {
+        let _ = status.send(Notification::new("satex/status".into(), now));
+    })));
+
     let debounce = Duration::from_millis(cfg.lsp.debounce_ms.max(1));
     let hovers = Hovers::default();
     let engine_hovers = hovers.clone();
@@ -294,7 +294,9 @@ fn main_loop(
                     }
                 }
                 Ok(note) => {
-                    if let Ok(params) = serde_json::from_value::<PublishDiagnosticsParams>(note.params.clone()) {
+                    if note.method == "textDocument/publishDiagnostics"
+                        && let Ok(params) = serde_json::from_value::<PublishDiagnosticsParams>(note.params.clone())
+                    {
                         let rules = params.diagnostics.iter().filter_map(|d| Some((d.range, d.data.as_ref()?.get("rule")?.as_str()?.to_string())));
                         findings.insert(params.uri.clone(), rules.collect());
                     }
@@ -321,6 +323,10 @@ fn refreshes(params: &Json) -> Vec<&'static str> {
         .filter_map(|(feature, method)| takes(feature).then_some(method))
         .collect()
 }
+
+/// The findings of a build's unfinished run that no later run changes: `{uri, diagnostics, version}`.
+/// `publishDiagnostics` stays for complete results, so a client that does not know this keeps those.
+const SETTLED_NOTIFICATION: &str = "satex/settled";
 
 /// The engine's notification naming the rules that may be the project's style.
 const STYLE_NOTIFICATION: &str = "satex/styleCandidates";
@@ -985,7 +991,7 @@ impl Engine {
         let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
         let orphan = self.orphans.contains(&canonical(path));
         let (mut published, candidates) = self.serving(|engine| {
-            let records = engine.unsilenced(handlers::findings(analysis));
+            let records = unsilenced(&engine.silenced, handlers::findings(analysis));
             let candidates = crate::linter::style_candidates(&records, &analysis.settings.lints.style_prompt);
             (publish(&mut engine.actions, analysis, &records, path, &open), candidates)
         });
@@ -1081,15 +1087,36 @@ impl Engine {
         true
     }
 
+    /// What a build tells the editor between its runs ([`SETTLED_NOTIFICATION`]).
+    fn between_runs(&self, root: &Path) -> crate::analysis::machine::BetweenRuns {
+        let (outbox, silenced, root) = (self.outbox.clone(), self.silenced.clone(), root.to_path_buf());
+        let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).collect();
+        Box::new(move |analysis| {
+            let records = unsilenced(&silenced, handlers::settled_findings(analysis));
+            let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
+            for params in publish(&mut HashMap::default(), analysis, &records, &root, &open) {
+                let _ = outbox.send(Notification::new(SETTLED_NOTIFICATION.into(), params));
+            }
+        })
+    }
+
+    /// The engine rests. After a stopped run a newer one follows, so the findings stay held back.
+    fn rest(&self) {
+        if self.cancelled && !self.dirty.is_empty() {
+            crate::util::progress::tell(crate::util::progress::Status {
+                text: "analysis follows".into(),
+                phase: "pending".into(),
+                ..Default::default()
+            });
+        } else {
+            crate::util::progress::idle();
+        }
+    }
+
     fn send_diagnostics(&self, published: Vec<PublishDiagnosticsParams>) {
         for params in published {
             let _ = self.outbox.send(Notification::new("textDocument/publishDiagnostics".into(), params));
         }
-    }
-
-    fn unsilenced(&self, mut records: Vec<crate::queries::query::Record>) -> Vec<crate::queries::query::Record> {
-        records.retain(|r| !self.silenced.iter().any(|c| r.get("code").and_then(Json::as_str) == Some(c)));
-        records
     }
 
     /// Sends the style candidates not asked about yet in this session.
@@ -1117,7 +1144,7 @@ impl Engine {
             let analyzed: Vec<(PathBuf, Rc<Analysis>)> =
                 self.docs.values().filter_map(|d| Some((d.path.clone(), d.analysis.clone()?))).collect();
             for (path, analysis) in analyzed {
-                let records = self.unsilenced(handlers::findings(&analysis));
+                let records = unsilenced(&self.silenced, handlers::findings(&analysis));
                 let mut published = publish(&mut self.actions, &analysis, &records, &path, &open);
                 let versions: Vec<(PathBuf, i32)> = self.docs.values().map(|d| (d.path.clone(), d.version)).collect();
                 for p in &mut published {
@@ -1241,21 +1268,18 @@ impl Engine {
         };
         #[cfg(target_os = "emscripten")]
         let stale: Box<dyn Fn() -> bool> = Box::new(wasm::cancelled);
+        let between_runs = self.between_runs(root);
         let (analysis, cancelled) = crate::analysis::probe::cancellable(stale, || {
             self.serving(|engine| {
                 let cfg = engine.cfg;
                 match discovery::is_document(&source) {
                     // The build's files (`.aux`, the `.bbl`) stay for the next run.
-                    true => Machine::build(
-                        engine
-                            .checkpoints
-                            .entry(key.clone())
-                            .or_insert_with(|| crate::analysis::machine::Checkpoints::new(cfg)),
-                        &source,
-                        root,
-                        cfg,
-                        true,
-                    ),
+                    true => {
+                        let checkpoints = (engine.checkpoints.entry(key.clone()))
+                            .or_insert_with(|| crate::analysis::machine::Checkpoints::new(cfg));
+                        checkpoints.between_runs = Some(between_runs);
+                        Machine::build(checkpoints, &source, root, cfg, true)
+                    }
                     false => Machine::analyze(&source, Some(root), cfg),
                 }
             })
@@ -1895,7 +1919,7 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
             Ok(msg) => engine.step(msg),
             Err(RecvTimeoutError::Timeout) => engine.flush(),
         }
-        crate::util::progress::idle();
+        engine.rest();
     }
 }
 
@@ -1903,6 +1927,14 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
 fn version_of(versions: &[(PathBuf, i32)], uri: &Uri) -> Option<i32> {
     let path = handlers::uri_to_path(uri)?;
     versions.iter().find(|(p, _)| crate::project::paths::same_file(p, &path)).map(|(_, v)| *v)
+}
+
+fn unsilenced(
+    silenced: &[String],
+    mut records: Vec<crate::queries::query::Record>,
+) -> Vec<crate::queries::query::Record> {
+    records.retain(|r| !silenced.iter().any(|c| r.get("code").and_then(Json::as_str) == Some(c)));
+    records
 }
 
 /// The source of findings a budget-stopped run stands behind: they may still change.

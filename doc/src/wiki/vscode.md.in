@@ -34,7 +34,7 @@ The platform-specific packages bundle the matching `satex` binary. The universal
 | `satex.server.maxCores` | CPU cores the server may use on Linux, through its cgroup (`2`, 0 for no cap). |
 | `satex.server.niceness` | Scheduling priority of the server (`10`). Higher yields more to the editor. |
 | `satex.server.cgroup` | On Linux, enforce the memory and core limits in a systemd user scope (`true`). |
-| `satex.findings.whileAnalyzing` | `keep` or `mark`: the last complete findings stay while a newer analysis runs. `mark` makes them say they may change. |
+| `satex.findings.whileAnalyzing` | What the Problems view shows while an analysis runs. `hide` (default): only findings no pass can change, the rest once the run ends, and the status bar says it runs. `keep`: the last complete findings. `mark`: those, saying they may change. |
 | `satex.rootFile` | Root document, relative to the workspace folder. Empty: the active file. Used by the trace and compile commands. |
 | `satex.trace.server` | `off`, `messages` or `verbose`: trace the language server communication. |
 

@@ -3047,7 +3047,16 @@ pub fn document_symbols(analysis: &Analysis, path: &str, doc: &Text) -> Option<V
 /// `lint`'s findings in the document's own files. Precision notes are the
 /// analysis's, not the document's: an editor hides them.
 pub fn findings(analysis: &Analysis) -> Vec<Record> {
-    crate::linter::lint_document(analysis)
+    of_document(crate::linter::lint_document(analysis))
+}
+
+/// [`findings`] that no later pass and no more precision changes.
+pub fn settled_findings(analysis: &Analysis) -> Vec<Record> {
+    of_document(crate::linter::lint_settled(analysis))
+}
+
+fn of_document(records: Vec<Record>) -> Vec<Record> {
+    records
         .into_iter()
         .filter(|r| r.get("origin").and_then(Json::as_str) == Some("document"))
         .filter(|r| r.get("category").and_then(Json::as_str) != Some("precision"))

@@ -566,15 +566,29 @@ impl<'a> Report<'a> {
 }
 
 pub fn lint(analysis: &Analysis) -> Vec<Record> {
-    crate::analysis::probe::within_run(analysis.started, || lint_run(analysis, false))
+    crate::analysis::probe::within_run(analysis.started, || lint_run(analysis, false, |_| true))
+}
+
+/// The rules that read only the files' text and which of it is verbatim. Neither a later pass nor
+/// more precision changes that, under the assumption that no build file decides what is verbatim.
+const OF_THE_TEXT: [&str; 3] = ["clones", "comment-marker", "user-pattern"];
+
+/// Whether a finding of `code` stands whatever the rest of the run finds out.
+pub fn settled(code: &str) -> bool {
+    OF_THE_TEXT.contains(&code)
+}
+
+/// [`lint_document`] of the rules [`settled`] holds for: they may read an unfinished build.
+pub fn lint_settled(analysis: &Analysis) -> Vec<Record> {
+    crate::analysis::probe::within_run(analysis.started, || lint_run(analysis, true, |r| settled(r.code)))
 }
 
 /// [`lint`]'s findings in the document's own files (`origin` `document`), the others never built.
 pub fn lint_document(analysis: &Analysis) -> Vec<Record> {
-    crate::analysis::probe::within_run(analysis.started, || lint_run(analysis, true))
+    crate::analysis::probe::within_run(analysis.started, || lint_run(analysis, true, |_| true))
 }
 
-fn lint_run(analysis: &Analysis, document: bool) -> Vec<Record> {
+fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rule) -> bool) -> Vec<Record> {
     let mut out = Vec::new();
     let sources = fix::Sources::default();
     crate::util::progress::bar("lint: the text as set", 0, 2, (0, 0), (0, 0), None, &[]);
@@ -582,8 +596,9 @@ fn lint_run(analysis: &Analysis, document: bool) -> Vec<Record> {
     crate::util::progress::bar("lint: what the run defined and used", 1, 2, (0, 0), (0, 0), None, &[]);
     let index = Index::of(analysis);
     let mut raised: crate::fixed::HashSet<usize> = crate::fixed::HashSet::default();
-    let rules: Vec<&Rule> =
-        all().filter(|rule| !analysis.settings.lint_off.iter().any(|c| c == rule.code || c == rule.number())).collect();
+    let rules: Vec<&Rule> = all()
+        .filter(|rule| wanted(rule) && !analysis.settings.lint_off.iter().any(|c| c == rule.code || c == rule.number()))
+        .collect();
     // The rules get the run's `limits.seconds` again: those past it are not run, and said so.
     let seconds = analysis.settings.limits.seconds;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
