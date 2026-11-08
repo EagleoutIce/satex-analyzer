@@ -1102,15 +1102,18 @@
       float: '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><rect x="5" y="5" width="6" height="3.2" rx=".6"/><path d="M5 10.8h6"/>',
       tikz: '<circle cx="4" cy="11.5" r="1.6"/><circle cx="12" cy="4.5" r="1.6"/><path d="M5.3 10.4l5.4-4.8"/>',
       forest: '<circle cx="8" cy="3.8" r="1.5"/><circle cx="4" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><path d="M7.2 5.1L4.8 10.6M8.8 5.1l2.4 5.5"/>',
+      list: '<path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><circle cx="2.8" cy="4" r=".8"/><circle cx="2.8" cy="8" r=".8"/><circle cx="2.8" cy="12" r=".8"/>',
       widget: '<path d="M3 5h10M3 11h10"/><circle cx="6" cy="5" r="1.5"/><circle cx="10.5" cy="11" r="1.5"/>',
     };
+    /** The managers of a whole list of names: a list icon and "Open the <list>", not the settings sliders. */
+    const MANAGERS = new Set(['glossary', 'bibliography', 'index', 'theorem']);
     class WidgetMark extends view.GutterMarker {
       constructor(items) { super(); this.items = items; }
       eq(o) { return o.items.length === this.items.length && o.items.every((x, i) => x.key === this.items[i].key); }
       toDOM() {
         const [first] = this.items, more = this.items.length > 1;
-        const icon = first.css ? `<span class="cm-wdot" style="background:${first.css}"></span>` : `<svg viewBox="0 0 16 16">${WIDGET_ICON[first.kind] ?? WIDGET_ICON.widget}</svg>`;
-        return Object.assign(document.createElement('span'), { className: 'cm-wmark' + (more ? ' more' : ''), innerHTML: icon, title: this.items.map((x) => x.title).join('\n') + (more ? '\nclick: choose' : '') });
+        const icon = first.css ? `<span class="cm-wdot" style="background:${first.css}"></span>` : `<svg viewBox="0 0 16 16">${WIDGET_ICON[MANAGERS.has(first.kind) ? 'list' : first.kind] ?? WIDGET_ICON.widget}</svg>`;
+        return Object.assign(document.createElement('span'), { className: 'cm-wmark' + (more ? ' more' : ''), innerHTML: icon, title: this.items.map((x) => MANAGERS.has(x.kind) ? `Open the ${x.kind}` : x.title).join('\n') + (more ? '\nclick: choose' : '') });
       }
     }
     /** The widgets per line: `{kind, title, key, open}` from the lenses and the color swatches. */
@@ -1284,6 +1287,7 @@
         hovered = { ...c, hull: was.hull };
         tips.card.show({ left: a.left, top: a.top, right: b.right, bottom: Math.max(a.bottom, b.bottom) }, c.html);
       },
+      forget: () => resolves.clear(),
       lenses: (list) => ev.dispatch({ effects: lensSet.of(list.map((l) => [lineOf(doc(), l.range.start.line).from, l]).sort((a, b) => a[0] - b[0])) }),
       colors: (list) => ev.dispatch({ effects: swatches.of(list.map(([p, css]) => [at(doc(), p), css]).filter(([a]) => a != null && a <= doc().length)) }),
       heat: (lines) => ev.dispatch({ effects: heatSet.of(lines?.size ? { lines, most: Math.max(...lines.values()) } : null) }),
@@ -1989,7 +1993,11 @@
     sync();
     const r = await definitionAt(editor.text(), editor.position());
     const locs = (Array.isArray(r) ? r : r ? [r] : []).map((l) => /** @type {[URL, any]} */ ([new URL(l.uri ?? l.targetUri), (l.range ?? l.targetSelectionRange).start]));
-    if (!locs.length) return toast('No definition found');
+    if (!locs.length) {
+      // the run is provisional while packages download: their commands are not defined yet, so the answer comes with the next run
+      if (provisional) { toast('Packages are still loading: the definition opens once the check ran again', null); afterRun = () => { toast.off(); definition(x, y); }; return; }
+      return toast('No definition found');
+    }
     const open = ([url, start]) => url.protocol === 'file:' ? openPlace(decodeURIComponent(url.pathname), start) : window.open(url.href, '_blank', 'noopener');
     if (locs.length === 1) return open(locs[0]);
     showMenu(locs.map((l) => [l[0].protocol === 'file:' ? `${decodeURIComponent(l[0].pathname).split('/').pop()}:${l[1].line + 1}` : l[0].href, '', () => open(l)]), x, y);
@@ -6701,6 +6709,8 @@
     if (p.uri === uri()) provisional = [...new Set([...absent, ...inFlight])].map((id) => PACKAGES.get(id)?.label ?? id).join(', ');
     // what was answered from the last run meanwhile is asked again of this one
     explanations.clear(); scopeAsked.clear(); explained = ''; explainSoon();
+    // a word the last run could not resolve (a package still downloading) is asked again of this one
+    defIndex.clear(); editor?.forget?.();
     show(p.uri, p.diagnostics, p.version);
     typeset(p.uri, p.version); // tagged with this run's version: `show` sets the shown one only after its code-action round trip
     outline();

@@ -31,6 +31,9 @@ impl TypePlugin for Glossary {
     fn enabled(&self, cfg: &TypePlugins) -> bool {
         cfg.glossary.enabled
     }
+    fn opened_by(&self) -> Option<(&'static [&'static str], &'static str)> {
+        Some((&["printglossaries", "printglossary", "printnoidxglossaries", "newglossaryentry"], "Manage glossary…"))
+    }
     fn view(&self, cx: &Cx, _hit: &Hit) -> Option<Json> {
         let mut v = self.manage(cx)?;
         v["sections"][0]["focus"] = json!(cx.at.item.typed.trim());

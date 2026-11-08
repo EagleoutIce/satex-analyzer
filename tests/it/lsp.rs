@@ -5710,3 +5710,32 @@ fn an_empty_table_has_its_widget() {
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// Go to definition on a package command and on the key it takes, and the glossary's list opened
+/// from its print command. `\gls` has no definition site the page can show when only the package's
+/// own file defines it, and the key `graph` must reach its `\newglossaryentry`. The print command
+/// carries the same lens as the index's, whose gutter icon is the list, not the settings sliders.
+#[test]
+fn definition_reaches_a_package_command_and_its_key() {
+    let text = GLOSSARY.replace("\\end{document}", "\\printnoidxglossaries\n\\end{document}");
+    let (mut server, uri, dir) = open_set("glsdef", &text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 6, 9);
+    let place =
+        |r: &Value| r[0]["uri"].as_str().unwrap_or_default().to_string() + &r[0]["range"]["start"]["line"].to_string();
+    let cmd = at(&mut server, &uri, "textDocument/definition", 6, 4);
+    assert!(place(&cmd).contains("glossaries.sty"), "{cmd}");
+    let key = at(&mut server, &uri, "textDocument/definition", 6, 8);
+    assert!(place(&key).ends_with("main.tex2"), "{key}");
+    let id = server.request("textDocument/codeLens", json!({ "textDocument": { "uri": uri } }));
+    let lenses = server.response(id)["result"].clone();
+    assert!(
+        lenses
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|l| l["command"]["title"] == "Manage glossary…" && l["command"]["arguments"][2] == "glossary"),
+        "{lenses}"
+    );
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
