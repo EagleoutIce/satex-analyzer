@@ -681,6 +681,7 @@
   },
   {
    "name": "glossary",
+   "budget": 300000,
    "file": "thesis.tex",
    "title": "Glossary, index, bibliography",
    "caption": "Browse the entries your document defines, with their fields and every use.",
