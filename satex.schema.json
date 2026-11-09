@@ -2763,7 +2763,7 @@
             "precision",
             "speed"
           ],
-          "x-example": "0: every float's `\\ifdim` takes its first arm; 1000: a short paper stays exact"
+          "x-example": "0: every float's `\\ifdim` takes its first arm, 1000: a short paper stays exact"
         },
         "paths": {
           "default": 16,

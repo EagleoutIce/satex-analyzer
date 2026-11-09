@@ -1820,3 +1820,18 @@ fn a_package_loaded_after_the_aux_opened_replays_under_another_job_name() {
     let other = named("b");
     assert_eq!(served(&other, "late"), Some(true), "{:?}", other.package_caches);
 }
+
+/// A load in a paragraph runs in that mode: what a load in vertical mode
+/// stored does not stand for it, nor the other way round.
+/// Real: a document with text before its `\usepackage` lost its pages to
+/// an entry another document had stored.
+#[test]
+fn a_package_loaded_in_a_paragraph_stays_out_of_the_cache() {
+    if !installed() {
+        return;
+    }
+    let dir = project("in-paragraph");
+    assert_eq!(served(&run(&dir, &preamble("")), "outer"), Some(false));
+    assert_eq!(served(&run(&dir, &preamble("text")), "outer"), None);
+    assert_eq!(served(&run(&dir, &preamble("")), "outer"), Some(true));
+}

@@ -928,7 +928,7 @@ limits:
     #! example: a `\clearpage` whose output routine forks without end is cut, and the next line is read
   output_forks: 0  # how many choices in output routines may part paths in a run before analysis.assume_page_one_arm applies
     #! affects: precision, speed
-    #! example: 0: every float's `\ifdim` takes its first arm; 1000: a short paper stays exact
+    #! example: 0: every float's `\ifdim` takes its first arm, 1000: a short paper stays exact
   call_rec_depth: 64  # how many nested calls are recorded to be learned from or summarized
     #! affects: precision, speed
     #! example: a call nested deeper is never summarized

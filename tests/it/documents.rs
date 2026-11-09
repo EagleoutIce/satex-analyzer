@@ -54,6 +54,8 @@ fn check_within(id: &str, main: &str, also: &[&str], allowed: &[&str], budget: u
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch").join(format!("documents-{id}")),
     ));
     crate::support::seed_kernel(&cfg);
+    // A cut fails the fixture: an open one must not hold up the suite.
+    cfg.limits.seconds = satex::project::config::Limits::default().seconds;
     let analysis = Machine::analyze(&source, Some(&path), &cfg);
     let mut failures = Vec::new();
     // every path reaches the end: one that ended early leaves the marker only maybe defined

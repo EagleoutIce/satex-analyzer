@@ -96,7 +96,7 @@ variable-definition  \pkgcls@targetdate                                         
 use                  @                                                             paper.tex  @ paper.tex:1:1
 use                  11pt                                                          paper.tex  @ paper.tex:1:1
 macro-call           \value                                                        paper.tex  @ paper.tex:0:0
-… 539 more lines omitted
+… 531 more lines omitted
 ```
 
 ## diagnostics
@@ -105,13 +105,13 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 
 ```text
 $ satex query diagnostics -f samples/paper.tex
-severity     code                          count  message              file            
-assumption   forced-page-breaks            1      the page may fill …  paper.tex       @ paper.tex:56:13
-imprecision  call-summarized               1      a call with unknow…  latex.ltx       @ latex.ltx:21098:3
-imprecision  recursion-widened             1      \ifdim decides a l…  latex.ltx       @ latex.ltx:21105:3
-imprecision  recursion-widened             1      \@failedlist decid…  latex.ltx       @ latex.ltx:21102:22
-imprecision  recursion-widened             1      \ifdim decides a l…  latex.ltx       @ latex.ltx:20584:3
-… 13 more lines omitted
+severity    code                count  message                         file            
+assumption  forced-page-breaks  1      the page may fill here, and p…  paper.tex       @ paper.tex:56:13
+assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:21194:8
+assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:9338:7
+assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:20715:3
+assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:20717:7
+… 1 more line omitted
 ```
 
 ## distribution
@@ -333,7 +333,7 @@ variable-definition  \ifdraft                   while expanding at 3:1       pap
 variable-definition  \drafttrue                 while expanding at 3:1       paper.tex  @ paper.tex:3:7
 variable-definition  \draftfalse                while expanding at 3:1       paper.tex  @ paper.tex:3:7
 macro-call           \usepackage                while expanding at 1:1       paper.tex  @ paper.tex:4:1
-… 116 more lines omitted
+… 114 more lines omitted
 ```
 
 ## trace
@@ -400,6 +400,7 @@ The text satex computes the document typesets, one row per paragraph, then the n
 $ satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex
 3:25  paragraph  ⟦f⟧wide, {empty page|page started}
 6:15  page  page 1
+assumption  page-one-arm
 assumption  clock-assumed
 ```
 

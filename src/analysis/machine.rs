@@ -2959,7 +2959,7 @@ impl<'a> Machine<'a> {
                     severity: Severity::Imprecision,
                     code: "budget-exhausted",
                     message: format!(
-                        "build run {run} stopped at a budget; what follows is run {} of the build, which read an older state of the build's files",
+                        "build run {run} stopped at a budget. This report is of run {} of the build, which read an older state of the build's files",
                         run - 1
                     ),
                     span: Span::default(),

@@ -10,6 +10,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **Note columns clear.** A call summary no longer stands for a call that reads another value than its first runs did, so `\clearnotecolumns` ends instead of setting hundreds of pages. A package loaded inside a paragraph stays out of the package cache.
 - `feat` **Long documents reach their end.** Where floats and page parts land is now assumed past a budget instead of split per arm (`analysis.assume_page_one_arm`, reported as `page-one-arm`), so a thesis no longer runs the output routine once per float arm.
 - `fix` **A cut no longer forgets a chapter.** A nesting cut inside `\include` widened all the chapter defined, and macros with arguments stayed known through a widening.
 - `fix` **The line guard reads on.** A line that overruns its budget again is skipped and the run goes on; it stops only with no line left, or after `limits.line_overruns` cuts.
@@ -35,6 +36,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat` **One layout for list managers.** The bibliography, glossary and index views share a resizable list and detail, and every entry shows its uses in one search view. Removing an entry moved into a fold.
+- `feat` **Tips in the console bar.** The closed console's line shows tips while the page is visible.
 - `feat` **The draw pad can be resized**, is centred, and its size stays in the link. [`190bf16`](https://github.com/EagleoutIce/satex-analyzer/commit/190bf16)
 - `feat` **Hover lists fetched packages, and dialogs have an another-tip button.** [`149d779`](https://github.com/EagleoutIce/satex-analyzer/commit/149d779) [`ef9b92c`](https://github.com/EagleoutIce/satex-analyzer/commit/ef9b92c)
 - `fix` **The header keeps its menu until the links fit.** Lists use their own icon, and go-to-definition works after downloads. [`28837d2`](https://github.com/EagleoutIce/satex-analyzer/commit/28837d2) [`b55e95f`](https://github.com/EagleoutIce/satex-analyzer/commit/b55e95f)

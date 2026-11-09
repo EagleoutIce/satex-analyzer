@@ -57,6 +57,8 @@ pub(crate) struct CallRec {
 struct Run {
     writes: Vec<(Sym, Option<Binding>)>,
     reads: Vec<Sym>,
+    /// What the names it read but did not write hold, to tell a later call that reads otherwise.
+    read_values: Vec<(Sym, Option<Binding>)>,
     args: Rc<[Vec<Token>]>,
     /// It closed the group around its call (`\\endgroup` of a `\\begingroup`
     /// its caller opened).
@@ -244,11 +246,34 @@ impl Machine<'_> {
                 .iter()
                 .flat_map(|r| &r.reads)
                 .any(|&sym| self.env.slot(sym).is_some_and(|b| self.imprecise(b)));
-        if !unknown {
+        if !unknown || runs.runs.iter().any(|r| self.reads_otherwise(r)) {
             return false;
         }
         self.apply_summary(key, key.1, arguments);
         true
+    }
+
+    /// The precise values among the names a run read and left alone.
+    fn read_values(&self, reads: &[Sym], writes: &[(Sym, Option<Binding>)]) -> Vec<(Sym, Option<Binding>)> {
+        let held = |&sym: &Sym| {
+            Some((sym, self.env.slot_at(sym.0))).filter(|(_, b)| b.as_ref().is_some_and(|b| !self.imprecise(b)))
+        };
+        reads
+            .iter()
+            .filter(|&&sym| !self.is_unknown_marker(sym) && !writes.iter().any(|w| w.0 == sym))
+            .filter_map(held)
+            .collect()
+    }
+
+    /// A name the run read precisely now holds another precise value: the
+    /// call can decide otherwise than the run did, as a note column reading
+    /// its page, so the run says nothing about it.
+    fn reads_otherwise(&self, run: &Run) -> bool {
+        let differs = |(sym, b): &(Sym, Option<Binding>)| {
+            let now = self.env.slot_at(sym.0);
+            now.as_ref().is_some_and(|n| !self.imprecise(n)) && !crate::engine::env::same_slot(&now, b)
+        };
+        run.read_values.iter().any(differs)
     }
 
     fn apply_summary(&mut self, key: CallKey, span: Span, arguments: &[Vec<Token>]) {
@@ -401,7 +426,8 @@ impl Machine<'_> {
                 entry.runs.clear();
                 continue;
             }
-            let run = Run { writes, reads, args: rec.args, closes: false, peeks: false };
+            let read_values = self.read_values(&reads, &writes);
+            let run = Run { writes, reads, read_values, args: rec.args, closes: false, peeks: false };
             self.call_runs.get_mut(&rec.key).expect("entry").runs.push(run);
         }
         if self.call_recs.is_empty() {
@@ -440,7 +466,14 @@ impl Machine<'_> {
             entry.runs.clear();
             return;
         }
-        entry.runs.push(Run { writes, reads: Vec::new(), args: rec.args.clone(), closes, peeks });
+        entry.runs.push(Run {
+            writes,
+            reads: Vec::new(),
+            read_values: Vec::new(),
+            args: rec.args.clone(),
+            closes,
+            peeks,
+        });
         if entry.runs.len() == k {
             let runs = std::mem::take(&mut entry.runs);
             let names = |r: &Run| r.writes.iter().map(|w| w.0).collect::<Vec<_>>();

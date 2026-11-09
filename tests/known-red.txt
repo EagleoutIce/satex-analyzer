@@ -1,7 +1,6 @@
 # Failing tests with an open root (see ~/satex-plan.md): CI runs and reports them, a new failure fails it.
 budgets::pgfmath_parse_of_typed_numbers
 documents::notecolumn_loop_over_slnc_file
-documents::notecolumn_slnc_on_master_thesis_title_page
 documents::rounding_an_unknown_dimension_ends_bounded
 documents::tcolorbox_of_unknown_height_keeps_its_anchors_local
 documents::tikz_bend_to_a_point_of_unknown_width_closes_the_picture

@@ -1237,6 +1237,8 @@ impl Machine<'_> {
                 "it is loaded under a conditional"
             } else if self.env.depth() != 0 {
                 "it is loaded inside a group"
+            } else if self.mode != crate::engine::mode::Modes::VERTICAL {
+                "it is loaded inside a paragraph or a box"
             } else if !self.held.is_empty() || self.edef_depth != 0 || self.scanning != 0 {
                 "it is loaded from inside an expansion"
             } else if !self.testing.is_empty() || self.pdf_string {
