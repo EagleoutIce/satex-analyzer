@@ -1288,11 +1288,11 @@ impl Machine<'_> {
         let mut tokens = match n.hi < 0 {
             true => {
                 let mut t = self.text_tokens("-", span);
-                t.extend(self.digits_in(Num::range(-n.hi / unit, -n.lo / unit), span));
+                t.extend(self.digits_in(Num::range(n.hi.saturating_neg() / unit, n.lo.saturating_neg() / unit), span));
                 t
             }
             false => {
-                let lo = if n.lo < 0 { -((-n.lo + unit - 1) / unit) } else { n.lo / unit };
+                let lo = n.lo.div_euclid(unit);
                 self.digits_in(Num::range(lo, n.hi / unit), span)
             }
         };
