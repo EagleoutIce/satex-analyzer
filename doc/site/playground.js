@@ -50,6 +50,9 @@
     const timer = setInterval(() => { if (!host.isConnected) clearInterval(timer); else if (host.offsetParent !== null) show(); }, TIP_MS);
     return host;
   }
+  // The console's bar says what it is, then shows tips while the page is visible.
+  const termTip = document.querySelector('.term-sub');
+  if (termTip && manifest.tips?.length) setInterval(() => { if (!document.hidden) { termTip.innerHTML = `<b>Tip</b> ${tipHtml(tipNext())}`; termTip.classList.remove('sx-tip-in'); void termTip.offsetWidth; termTip.classList.add('sx-tip-in'); } }, TIP_MS);
   const base = new URL(manifest.root, document.baseURI).href;
   const [tabs, args, button, status, output, lspStatus, list, count, cmd, kernelBox, toastBox, ctxMenu, treeBox, examplesBox] =
     ['play-tabs', 'play-args', 'play-run', 'play-status', 'play-output', 'lsp-status', 'lsp-diagnostics', 'lsp-count',
