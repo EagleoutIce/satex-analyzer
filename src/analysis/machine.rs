@@ -10669,10 +10669,15 @@ will look undefined",
             // One of several texts: the argument is that text's first token.
             Some(t) if self.one_of_matters(t) => match self.split_one_of(t) {
                 true => self.read_undelimited(),
-                // No more paths may part here: the token stands for its
-                // texts as one argument, and said so. Its texts stay known
-                // (unknown text instead would cut every scan they are in),
-                // and the parameters after it are read as not in step.
+                // No more paths may part here: the argument is one of the
+                // texts' first arguments, the rest one of their rests, both
+                // still known. Unpaired, so it over-approximates.
+                false if let Some((head, rest)) = self.one_of_first(t) => {
+                    self.unread_all(&rest);
+                    head
+                }
+                // A text with no first argument of its own: the token stands
+                // for its texts as one argument, and said so.
                 false => {
                     self.diagnose(
                         Severity::Assumption,
@@ -10803,7 +10808,16 @@ will look undefined",
             first = chars.get(arm).copied();
             true
         }) {
-            return Some(t);
+            // No more paths may part: one character of the class, the rest
+            // put back. Braces or names may make the first more: read whole.
+            let head = if spaces { class.without(TextClass::SPACE) } else { class };
+            if head.meets(TextClass::new(TextClass::BRACE.0 | TextClass::CS.0)) {
+                return Some(t);
+            }
+            if let Some(rest) = rest {
+                self.unread(rest);
+            }
+            return Some(self.unknown_text(Unk::Class(head, true, Some(1), &[]), t.span));
         }
         let first = first?;
         if let Some(rest) = rest {
@@ -12971,6 +12985,44 @@ will look undefined",
                 .collect()
         };
         texts.iter().map(|x| chars(x)).collect()
+    }
+
+    /// The undelimited argument of each text one-of token `t` stands for
+    /// and the rest after it, each side one text or a one-of token. `None`
+    /// where a text has no argument of its own: empty, spaces only, or
+    /// beginning with `}` or an unmatched `{`.
+    fn one_of_first(&mut self, t: Token) -> Option<(Vec<Token>, Vec<Token>)> {
+        let texts = self.one_of_members(t)?;
+        let mut heads: Vec<Rc<[Token]>> = Vec::new();
+        let mut rests: Vec<Rc<[Token]>> = Vec::new();
+        for text in &texts {
+            let start = text.iter().position(|x| !x.is_cat(Catcode::Space))?;
+            let end = match text[start] {
+                x if x.is_cat(Catcode::End) => return None,
+                x if x.is_cat(Catcode::Begin) => {
+                    let mut depth = 0i32;
+                    start
+                        + text[start..].iter().position(|x| {
+                            depth += i32::from(x.is_cat(Catcode::Begin)) - i32::from(x.is_cat(Catcode::End));
+                            depth == 0
+                        })?
+                }
+                _ => start,
+            };
+            let braced = text[start].is_cat(Catcode::Begin);
+            let head = &text[start + usize::from(braced)..end + usize::from(!braced)];
+            for (side, part) in [(&mut heads, head), (&mut rests, &text[end + 1..])] {
+                if !side.iter().any(|x| explore::same_text(x, part)) {
+                    side.push(part.into());
+                }
+            }
+        }
+        let one = |m: &mut Self, side: Vec<Rc<[Token]>>| match &side[..] {
+            [only] => only.to_vec(),
+            _ => vec![m.one_of(side, t.span)],
+        };
+        let head = one(self, heads);
+        Some((head, one(self, rests)))
     }
 
     /// Whether a token for one of several texts may not stand for one

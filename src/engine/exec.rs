@@ -1327,12 +1327,11 @@ impl Machine<'_> {
         for &t in body {
             if self.has_unknown(&[t]) {
                 flush(self, &mut run, &mut out);
-                // One of several known texts prints as one of their spellings.
-                let spelled: Option<Vec<Vec<Token>>> = self.one_of_members(t).and_then(|members| {
-                    members.iter().map(|m| self.text_known(m).map(|text| self.text_tokens(&text, t.span))).collect()
-                });
-                if let Some(texts) = spelled {
-                    out.push(self.one_of(texts.into_iter().map(Rc::from).collect(), t.span));
+                // One of several texts prints as one of their spellings, each
+                // spelled as far as it is known.
+                if let Some(members) = self.one_of_members(t) {
+                    let texts = members.iter().map(|m| Rc::from(self.detokenize_known_runs(m))).collect();
+                    out.push(self.one_of(texts, t.span));
                     continue;
                 }
                 out.push(self.printed(t, false, t.span));

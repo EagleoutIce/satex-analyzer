@@ -67,6 +67,36 @@ fn a_colour_mix_is_no_undefined_colour() {
     assert!(f.is_empty(), "{f:?}");
 }
 
+/// A mix of unknown percentage makes the color spec text that is one of several, or typed text,
+/// past the paths one command may part into. `\@gobbletwo` in `\XC@clean` once took such a
+/// token whole as its second argument, so the spec came out empty and `\c@lor@@rgb`'s delimited
+/// scan read the rest of the document to its end: `missing-end`. An undelimited argument takes
+/// the first token and puts the rest back.
+/// `\colorlet` sanitizes the spec with `\meaning`: a spec that is one of
+/// several exact triples (the mix of an unknown percentage after a loop's
+/// paths join) was printed as untyped text. Its components then split into
+/// arms TeX never takes, one with a single number, and `\c@lor@@rgb` read
+/// that one past the document's end. Each text is now printed apart.
+#[test]
+fn a_colour_mix_in_a_loop_keeps_the_document_end() {
+    if !installed() {
+        return;
+    }
+    let body = "\\foreach \\i in {1,2} {\\pgfmathsetmacro{\\w}{1+\\pdfuniformdeviate 5}\\colorlet{c\\i}{blue!\\w!red}}";
+    let f = findings("unknown-mix-loop", "missing-end", "\\usepackage{tikz}", body);
+    assert!(f.is_empty(), "{f:?}");
+}
+
+#[test]
+fn a_colour_mix_of_unknown_percentage_keeps_the_document_end() {
+    if !installed() {
+        return;
+    }
+    let body = "\\edef\\w{\\the\\numexpr1+\\pdfuniformdeviate 5\\relax}\\color{blue!\\w!red}x";
+    let f = findings("unknown-mix", "missing-end", "\\usepackage{xcolor}", body);
+    assert!(f.is_empty(), "{f:?}");
+}
+
 #[test]
 fn a_defined_colour_never_read_back_is_reported() {
     if !installed() {
