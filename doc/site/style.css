@@ -711,6 +711,7 @@ details.more[open] > summary { margin-bottom: .3rem; }
 .term.folded .term-bar svg { transform: rotate(-90deg); }
 .term-title { font: 600 .74rem ui-monospace, Menlo, monospace; letter-spacing: .02em; }
 .term-sub { font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term-sub code { font-size: inherit; line-height: inherit; padding: 0; background: none; }
 #play-termbody[hidden] { display: none; }
 .term-out { display: flex; flex-direction: column; height: var(--h, 14rem); max-height: 70vh; border-bottom: 1px solid var(--border); }
 .term-grip { flex: none; margin: 0; height: 5px; }
