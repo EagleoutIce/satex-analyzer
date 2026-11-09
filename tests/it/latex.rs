@@ -4739,3 +4739,17 @@ fn a_learned_effect_can_be_switched_off() {
     cfg.analysis.assume_call_learned_effect = false;
     assert_eq!(learned(&Machine::analyze(&source, None, &cfg)), 0);
 }
+
+/// A missing `.tex` file asks for a name like a missing package does. The
+/// prompt counts as answered with Return, so what follows still runs.
+/// Real: a thesis ended without a word at the first file its class lost.
+#[test]
+fn a_missing_input_file_does_not_end_the_run() {
+    if !crate::support::installed() {
+        return;
+    }
+    let analysis = crate::support::analyze_latex(
+        "\\documentclass{article}\\batchmode\\input{no-such-file}\\begin{document}x\\gdef\\Done{}\\end{document}",
+    );
+    assert!(crate::support::defined(&analysis, "Done"), "the run stopped at the prompt");
+}

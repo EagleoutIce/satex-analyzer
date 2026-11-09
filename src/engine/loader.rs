@@ -295,7 +295,9 @@ fn exact_file(dir: &Path, rel: &str, fs: Fs) -> Option<PathBuf> {
 
 fn candidates(name: &str, kind: LoadKind) -> Vec<String> {
     let mut candidates: Vec<String> = Vec::with_capacity(4);
-    if Path::new(name).extension().is_some() {
+    // `.tex`, LaTeX's empty file for a Return at a missing file's prompt, has no extension to `Path`.
+    let dotted = Path::new(name).file_name().is_some_and(|f| f.as_encoded_bytes().first() == Some(&b'.'));
+    if dotted || Path::new(name).extension().is_some() {
         candidates.push(name.to_string());
     }
     for extension in extensions(kind) {
@@ -307,6 +309,13 @@ fn candidates(name: &str, kind: LoadKind) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// LaTeX reads `.tex` after a Return at a missing file's prompt: without
+    /// it found, the prompt asks again forever.
+    #[test]
+    fn a_name_that_is_only_an_extension_is_itself_a_candidate() {
+        assert_eq!(candidates(".tex", LoadKind::Input)[0], ".tex");
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("satex-loader-{name}"));

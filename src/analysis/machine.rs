@@ -13252,11 +13252,12 @@ will look undefined",
         const MARKER: &str = "LaTeX Error: File `";
         let Some((_, rest)) = text.split_once(MARKER) else { return };
         let Some((file, _)) = rest.split_once("' not found") else { return };
+        // Whatever the file, the prompt is answered with Return: the run goes on.
+        self.missing_prompt = true;
         if !file.ends_with(".cls") && !file.ends_with(".sty") {
             return;
         }
         let file = file.to_string();
-        self.missing_prompt = true;
         self.note_missing_file(&file, "was not found", at);
     }
 

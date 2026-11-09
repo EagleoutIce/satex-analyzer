@@ -57,7 +57,7 @@ pub(crate) struct CallRec {
 struct Run {
     writes: Vec<(Sym, Option<Binding>)>,
     reads: Vec<Sym>,
-    /// What the names it read but did not write hold, to tell a later call that reads otherwise.
+    /// What the counts it read but did not write hold, to tell a later call that reads otherwise.
     read_values: Vec<(Sym, Option<Binding>)>,
     args: Rc<[Vec<Token>]>,
     /// It closed the group around its call (`\\endgroup` of a `\\begingroup`
@@ -253,21 +253,19 @@ impl Machine<'_> {
         true
     }
 
-    /// The precise values among the names a run read and left alone.
+    /// The precise values among the count registers a run read and left
+    /// alone: the page, a counter, what a decision compares.
     fn read_values(&self, reads: &[Sym], writes: &[(Sym, Option<Binding>)]) -> Vec<(Sym, Option<Binding>)> {
+        let count = |sym: Sym| self.name(sym).strip_prefix(super::REGISTER).is_some_and(|n| n.starts_with("count"));
         let held = |&sym: &Sym| {
             Some((sym, self.env.slot_at(sym.0))).filter(|(_, b)| b.as_ref().is_some_and(|b| !self.imprecise(b)))
         };
-        reads
-            .iter()
-            .filter(|&&sym| !self.is_unknown_marker(sym) && !writes.iter().any(|w| w.0 == sym))
-            .filter_map(held)
-            .collect()
+        reads.iter().filter(|&&sym| count(sym) && !writes.iter().any(|w| w.0 == sym)).filter_map(held).collect()
     }
 
-    /// A name the run read precisely now holds another precise value: the
-    /// call can decide otherwise than the run did, as a note column reading
-    /// its page, so the run says nothing about it.
+    /// A count the run read now holds another precise value: the call can
+    /// decide otherwise than the run did, as a note column reading its
+    /// page, so the run says nothing about it.
     fn reads_otherwise(&self, run: &Run) -> bool {
         let differs = |(sym, b): &(Sym, Option<Binding>)| {
             let now = self.env.slot_at(sym.0);

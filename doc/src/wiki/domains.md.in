@@ -352,7 +352,7 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 | --- | --- |
 | key | the macro's definition, the call site, the control sequences in its arguments |
 | record | the first `limits.call_summary_after` (2) runs over unknown operands run the real body and record the names written and read. Runs over known operands are not recorded. Calls a scan expands are not recorded either. |
-| apply | from the third call, if an operand is unknown text or a meaning set: the recorded writes are joined, widened (`widen_slot`) and assigned. The body is skipped. One `call-summarized` imprecision per key. A name the runs read as a precise value and now holding another precise one means the call runs for real: `\clearnotecolumns` waits for a note column that reads its page. |
+| apply | from the third call, if an operand is unknown text or a meaning set: the recorded writes are joined, widened (`widen_slot`) and assigned. The body is skipped. One `call-summarized` imprecision per key. A count register the runs read and now holding another precise value means the call runs for real: `\clearnotecolumns` waits for a note column that reads its page. |
 | relate | a name every run left as the same text of its own arguments' typed numbers (slices spelling one whole count as it) gets that text of this call's numbers, not the widened join. `\pgfmath@bgroup@strip` of a new number thus keeps it whole and typed. |
 | never | runs that read on in the file, change a catcode, leave a group, conditional or mode, add to a list, write different names, accumulate (`x` then `x…`), update a name they read (a stack push), or leave code rather than data. Such a key always runs the real body. |
 
