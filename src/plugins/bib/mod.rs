@@ -220,6 +220,25 @@ fn first_letter(s: &str) -> &str {
 }
 
 /// A TeX-safe field value: the characters TeX reads as syntax escaped.
+/// The letter a name or title sorts under, past braces and accents:
+/// `{\\"O}sterle` sorts under `O`, not under a `{` no argument could close.
+fn sort_initial(text: &str) -> String {
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                let mut rest = chars.clone();
+                if rest.next().is_some_and(|n| !n.is_alphabetic()) {
+                    chars = rest;
+                }
+            }
+            c if c.is_alphanumeric() => return c.to_uppercase().to_string(),
+            _ => {}
+        }
+    }
+    String::new()
+}
+
 pub(crate) fn safe(value: &str) -> String {
     let mut out = String::new();
     let mut prev = ' ';
@@ -341,7 +360,7 @@ fn biber_bbl(entries: &[&Entry], list: &str) -> String {
             }
             out.push_str("      }\n");
             if sortinit.is_empty() {
-                sortinit = who[0].0.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+                sortinit = sort_initial(&who[0].0);
             }
             let all = hash(&who.iter().map(|(f, g)| format!("{f},{g}")).collect::<Vec<_>>().join(";")); // not prose
             out.push_str(&format!("      \\strng{{namehash}}{{{all}}}\n      \\strng{{fullhash}}{{{all}}}\n"));
@@ -355,10 +374,7 @@ fn biber_bbl(entries: &[&Entry], list: &str) -> String {
             }
         }
         if sortinit.is_empty() {
-            sortinit = field(e, &["title"])
-                .and_then(|t| t.chars().next())
-                .map(|c| c.to_uppercase().to_string())
-                .unwrap_or_default();
+            sortinit = field(e, &["title"]).map(sort_initial).unwrap_or_default();
         }
         out.push_str(&format!(
             "      \\field{{sortinit}}{{{sortinit}}}\n      \\field{{sortinithash}}{{{}}}\n",
@@ -389,6 +405,16 @@ fn count_lines(text: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A name that starts with a braced accent must not put its brace into
+    /// `\\field{sortinit}`: the `.bbl` would never close it.
+    #[test]
+    fn a_braced_accent_sorts_under_its_letter() {
+        assert_eq!(sort_initial("{\\\"O}sterle"), "O");
+        assert_eq!(sort_initial("{van} Berg"), "V");
+        assert_eq!(sort_initial("\\AA ngstr"), "A");
+        assert_eq!(sort_initial("{}"), "");
+    }
 
     #[test]
     fn entries_carry_what_completion_shows() {
