@@ -10,6 +10,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **A stuck path inside a command.** It ends that path only: the paths waiting outside go on (`\pgfmathparse{\the\wd2}` reached no end).
 - `fix` **Colors of unknown mix.** An undelimited argument read from text that is one of several takes the first argument of each and puts the rest back. `\color{blue!\w!red}` with an unknown `\w` no longer swallows the rest of the document. `\meaning` of text that is one of several prints each, so `\colorlet` in a loop keeps the color exact.
 - `fix` **Calls by unknown names.** A macro reached by a name of unknown spelling no longer takes the code behind its call as arguments. That code could redefine `\let` on a path and turn the rest of the document into data.
 - `fix` **Long exact loops.** A loop over known values is no longer cut as spinning. Its cut made names look undefined later on.

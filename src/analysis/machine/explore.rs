@@ -538,8 +538,9 @@ impl Machine<'_> {
                 }
                 Some(Next::None) => false,
                 // The one path left is no run: it is never where the
-                // analysis ends while input is left.
-                None if paths.fork.is_none() => match self.infeasible && self.halted && self.input_left() {
+                // analysis ends while input is left. Inside a command it
+                // is the enclosing path that is none, which its drive drops.
+                None if paths.fork.is_none() => match self.infeasible && self.halted && self.input_left() && !nested {
                     true => {
                         self.read_on_dropped(Vec::new());
                         continue;
