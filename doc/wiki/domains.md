@@ -535,13 +535,21 @@ This is the named assumption `call-learned-effect` (`analysis.assume_call_learne
 
 One check bounds every run, whatever the precision: `Machine::check_budget` charges every step (token read, driver pass, replay) to the source line being read, summed over all paths. A replayed package charges no line.
 
-| Overrun of `limits.line_steps` | Effect |
+| Overrun of the line's budget | Effect |
 | --- | --- |
 | first | the expansion unwinds, what it wrote widens to typed unknowns, an unknown token stands for its output, the line reads on (`line-budget-cut`) |
-| second | the rest of the line is skipped (`stalled-line-skipped`) |
-| third | the run stops (`budget-exhausted`) |
+| later | the rest of the line is skipped (`stalled-line-skipped`), and the run goes on with the next line |
+| later, no line to skip to | the run stops (`budget-exhausted`) |
 
-So a run spends at most `3 × limits.line_steps` per line, plus a constant. Every bound is a fixed count, never a share of the total budget, so cuts land in the same places.
+A line's budget is `limits.line_steps` in the preamble, where a line loads a package, and at most `limits.text_line_steps` in the body, where it typesets. A file holds finitely many lines, so a run spends a bounded amount per line read, plus a constant. Every bound is a fixed count, never a share of the total budget, so cuts land in the same places.
+
+### Pages: one arm past a budget
+
+A float of unknown height parts the output routine at every `\ifdim` that tries to place it. Followed, the routine ran once per arm of every float, tens of paths stood side by side inside one shipout, and a thesis never ended. Widening there was no better: it made what the routine wrote unknown, fonts and file lists included.
+
+So where floats and page parts land is assumed, not followed. Past `limits.output_forks` choices in a run (0 by default), a choice undecided inside an output routine, or in the text of a `\clearpage` around one, takes its first arm and parts no path: a float fits where it is tried, a loop around a page clear ends (`analysis.assume_page_one_arm`, reported as `page-one-arm`). What the other arms would do is not followed, so an error only they raise is not reported.
+
+Calls nested deeper than `limits.call_rec_depth` are neither learned from nor summarized: the record stack is shared between paths, so its length is the cost of a call. A choice inside a value scan counts against `limits.site_forks` times `limits.scan_site_factor`: a scan's arms join where it ends, but a walker over unknown text forks per token.
 
 Rules that keep cuts sound and convergent:
 

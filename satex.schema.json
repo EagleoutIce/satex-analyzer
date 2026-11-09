@@ -64,6 +64,17 @@
           ],
           "x-example": "off: a group a package leaves open is followed into the document"
         },
+        "assume_page_one_arm": {
+          "default": true,
+          "description": "assume a choice undecided while a page is made may take one arm: where floats and page parts land is not followed",
+          "type": "boolean",
+          "x-affects": [
+            "precision",
+            "soundness",
+            "speed"
+          ],
+          "x-example": "off: every `\\ifdim` of a float's unknown height parts the output routine"
+        },
         "assume_unknown_char_catcode": {
           "default": true,
           "description": "assume a \\catcode of a character satex could not pin down never changes a structural one",
@@ -2471,6 +2482,17 @@
           ],
           "x-example": "1 ends `\\pgfmathparse{\\the\\wd0}` at its first undecided digit"
         },
+        "call_rec_depth": {
+          "default": 64,
+          "description": "how many nested calls are recorded to be learned from or summarized",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "a call nested deeper is never summarized"
+        },
         "call_summary_after": {
           "default": 2,
           "description": "after this many runs of one call, a call with unknown arguments reuses their result instead of running. 0 = never",
@@ -2646,6 +2668,17 @@
           "minimum": 0,
           "type": "integer"
         },
+        "line_overruns": {
+          "default": 16,
+          "description": "overruns of one line's budget before the run stops",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "a line that stays stuck after this many cuts ends the run"
+        },
         "line_steps": {
           "default": 100000000,
           "description": "how long one source line may run before what it does is approximated and reading goes on. 0 = no limit",
@@ -2721,6 +2754,17 @@
           ],
           "x-example": "`memory: 2GiB` stops a runaway run before it slows the machine"
         },
+        "output_forks": {
+          "default": 0,
+          "description": "how many choices in output routines may part paths in a run before analysis.assume_page_one_arm applies",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "0: every float's `\\ifdim` takes its first arm; 1000: a short paper stays exact"
+        },
         "paths": {
           "default": 16,
           "description": "how many alternative paths satex keeps at once before merging the oldest two. Higher is more precise and slower",
@@ -2767,7 +2811,7 @@
           "x-example": "a loop over an unsupported primitive stops after 8 rounds"
         },
         "replay_steps": {
-          "default": 1000000,
+          "default": 50000,
           "description": "how long satex may rerun a line the document wrote to a file, to learn the labels in it",
           "minimum": 0,
           "type": "integer",
@@ -2786,6 +2830,17 @@
             "memory"
           ],
           "x-example": "a group with millions of `\\def` stops here"
+        },
+        "scan_site_factor": {
+          "default": 16,
+          "description": "site_forks inside a value scan, as a factor: its arms join where the scan ends",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "expl3's walker over an unknown file name widens instead of forking per token without end"
         },
         "seconds": {
           "default": 300,
@@ -2828,6 +2883,17 @@
             "speed"
           ],
           "x-example": "a 1000-page thesis with TikZ may need more"
+        },
+        "text_line_steps": {
+          "default": 0,
+          "description": "the same once the document's body has begun, where a line typesets rather than loads. 0 = as line_steps",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "a `\\clearpage` whose output routine forks without end is cut, and the next line is read"
         },
         "text_names": {
           "default": 64,

@@ -861,12 +861,16 @@ fn new_redefines(report: &mut Report) {
         (analysis.facts.defs.iter())
             .any(|d| d.name == def.name && d.node <= def.node && d.span == def.span && !std::ptr::eq(d, def))
     };
-    for def in analysis.facts.defs.iter().filter(|d| d.redefines && d.spelled && d.certain && !rerun(d)) {
+    let made = analysis.facts.defs.iter().filter(|d| d.redefines && d.spelled && d.certain);
+    for def in made.filter(|d| !rerun(d)) {
         let Some(&(_, span, call)) = calls.get(calls.partition_point(|c| c.0 <= def.node).wrapping_sub(1)) else {
             continue;
         };
         let command = analysis.interner.name(call);
-        if !command.starts_with("new") || !seen.insert((span, def.name)) {
+        // Made inside that call: a plain `\\def` after it is the document's, and
+        // while a class loads every definition runs inside some macro.
+        let inside = def.via.map(|v| analysis.interner.name(v)).is_some_and(|v| v == command || v == "e@alloc");
+        if !command.starts_with("new") || !inside || !seen.insert((span, def.name)) {
             continue;
         }
         let name = analysis.interner.name(def.name);

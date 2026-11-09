@@ -472,7 +472,9 @@ fn the_sample_paper_breaks_its_pages_where_pdflatex_does() {
     std::fs::write(dir.join("paper.tex"), paper).unwrap();
     let out = crate::support::satex()
         .current_dir(&dir)
+        // Page breaks are the point here: no assumed float placement.
         .args(["query", "typeset", "-f", "paper.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .args(["--set", "analysis.assume_page_one_arm=false"])
         .output()
         .expect("satex runs");
     let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");

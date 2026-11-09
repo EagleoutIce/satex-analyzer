@@ -45,8 +45,8 @@ pub(crate) struct CallRec {
     site: bool,
     /// Open groups, many counted as one.
     depth: usize,
-    /// The undecided choices met in this run.
-    forks: u32,
+    /// [`Machine::learn_forks`] when the run began.
+    forks_at: u64,
     /// What it runs: a definition's runs teach, by code, not by name.
     code: Rc<crate::engine::tex::MacroDef>,
 }
@@ -181,7 +181,8 @@ impl Machine<'_> {
         if site {
             runs.active += 1;
         }
-        if site || learn {
+        // Deeper calls learn nothing: each path shares this stack, so its length is the cost of a call.
+        if (site || learn) && self.call_recs.len() < usize::from(self.limits.call_rec_depth) {
             if self.call_recs.is_empty() {
                 self.env.log_reads(false);
                 self.env.log_reads(true);
@@ -205,7 +206,7 @@ impl Machine<'_> {
                 below: self.input.last().map(frame_mark),
                 site,
                 depth: self.env.depth(),
-                forks: 0,
+                forks_at: self.learn_forks,
                 code: code.clone(),
             };
             crate::push_shared(&mut self.call_recs, rec);
@@ -420,7 +421,7 @@ impl Machine<'_> {
         let k = usize::from(self.limits.call_learn_after);
         let entry = self.call_runs.entry(key).or_default();
         entry.code.get_or_insert_with(|| rec.code.clone());
-        if entry.leaky || entry.runs.len() >= k || rec.forks > 0 {
+        if entry.leaky || entry.runs.len() >= k || self.learn_forks > rec.forks_at {
             return;
         }
         let same_args = |a: &[Vec<Token>], b: &[Vec<Token>]| {
@@ -469,15 +470,13 @@ impl Machine<'_> {
         if self.call_recs.is_empty() || !self.learns() {
             return false;
         }
-        for rec in Rc::make_mut(&mut self.call_recs) {
-            rec.forks += 1;
-        }
+        self.learn_forks += 1;
         let k = usize::from(self.limits.call_learn_after);
         let after = self.limits.call_learn_forks;
         let at = self.call_recs.iter().position(|rec| {
             let learned = self.call_runs.get(&learned_key(&rec.code)).filter(|r| !r.leaky && r.runs.len() >= k);
             !rec.leaky
-                && rec.forks >= after
+                && self.learn_forks - rec.forks_at >= u64::from(after)
                 && learned.is_some()
                 && !self.input.iter().skip(rec.base).any(|f| matches!(f, super::Frame::Boundary))
         });

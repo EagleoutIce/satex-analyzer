@@ -788,6 +788,50 @@ fn a_float_after_the_title_page_stays_bounded() {
     check_within("thesis_notebook_a4", "float_after_title.tex", &[], &[], FLOAT_AFTER_TITLE_STEPS);
 }
 
+/// Past `limits.output_forks` an undecided choice in the output routine takes
+/// its first arm: one path through floats of unknown height, the end reached,
+/// and the assumption named. A run that split there ran the routine per arm of
+/// every float, and a thesis never ended. Off, it does not say so.
+#[test]
+fn a_choice_while_a_page_is_made_takes_one_arm_past_its_budget() {
+    if !installed() {
+        return;
+    }
+    let root = dir("page_one_arm");
+    let path = root.join("main.tex");
+    let source = std::fs::read_to_string(&path).expect("fixture source");
+    let run = |one: bool| {
+        let mut cfg = crate::support::discover(&root);
+        cfg.limits.output_forks = 0;
+        cfg.analysis.assume_page_one_arm = one;
+        Machine::analyze(&source, Some(&path), &cfg)
+    };
+    let (on, off) = (run(true), run(false));
+    let named = |a: &Analysis| a.facts.diagnostics.iter().any(|d| d.code == "page-one-arm");
+    assert!(defined(&on, "SatexReachedEnd"));
+    assert!(named(&on));
+    assert!(!named(&off));
+    assert!(on.peak_paths <= off.peak_paths, "{} > {}", on.peak_paths, off.peak_paths);
+}
+
+/// A nesting cut gives up what the runaway expansion assigned, not what the
+/// document's text read inside the command around it (`\\include` around a
+/// chapter). Widening that made every name of a chapter unknown on the next
+/// `\\clearpage`, and a thesis never ended.
+#[test]
+fn a_nesting_cut_keeps_what_the_text_read_before_it_assigned() {
+    if !installed() {
+        return;
+    }
+    let root = dir("nesting_cut_in_input");
+    let path = root.join("main.tex");
+    let source = std::fs::read_to_string(&path).expect("fixture source");
+    let cfg = crate::support::discover(&root);
+    let analysis = Machine::analyze(&source, Some(&path), &cfg);
+    assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "nesting-widened"));
+    assert!(defined(&analysis, "SameAsBefore"), "{}", crate::support::presence(&analysis, "SameAsBefore"));
+}
+
 #[test]
 fn thesis_class_with_notebook_figure_a4() {
     check_within("thesis_notebook_a4", "main.tex", &[], &[], NOTEBOOK_A4_STEPS);

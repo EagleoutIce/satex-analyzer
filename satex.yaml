@@ -536,6 +536,9 @@ analysis:
   assume_forced_page_breaks: true  # assume pages break only where a penalty forces it
     #! affects: precision, soundness
     #! example: off: `\thepage` after a long paragraph may also be one more
+  assume_page_one_arm: true  # assume a choice undecided while a page is made may take one arm: where floats and page parts land is not followed
+    #! affects: precision, soundness, speed
+    #! example: off: every `\ifdim` of a float's unknown height parts the output routine
   assume_messages_output_only: true  # assume wrapping a message for the terminal or log changes nothing but the text written
     #! affects: precision, soundness
     #! example: off: a message over unknown text is wrapped a path per way it may break into lines
@@ -920,7 +923,22 @@ limits:
   line_steps: 100000000  # how long one source line may run before what it does is approximated and reading goes on. 0 = no limit
     #! affects: precision, speed
     #! example: a line whose `\foreach` runs forever is cut, and the next line is read
-  replay_steps: 1000000  # how long satex may rerun a line the document wrote to a file, to learn the labels in it
+  text_line_steps: 0  # the same once the document's body has begun, where a line typesets rather than loads. 0 = as line_steps
+    #! affects: precision, speed
+    #! example: a `\clearpage` whose output routine forks without end is cut, and the next line is read
+  output_forks: 0  # how many choices in output routines may part paths in a run before analysis.assume_page_one_arm applies
+    #! affects: precision, speed
+    #! example: 0: every float's `\ifdim` takes its first arm; 1000: a short paper stays exact
+  call_rec_depth: 64  # how many nested calls are recorded to be learned from or summarized
+    #! affects: precision, speed
+    #! example: a call nested deeper is never summarized
+  line_overruns: 16  # overruns of one line's budget before the run stops
+    #! affects: precision, speed
+    #! example: a line that stays stuck after this many cuts ends the run
+  scan_site_factor: 16  # site_forks inside a value scan, as a factor: its arms join where the scan ends
+    #! affects: precision, speed
+    #! example: expl3's walker over an unknown file name widens instead of forking per token without end
+  replay_steps: 50000  # how long satex may rerun a line the document wrote to a file, to learn the labels in it
     #! affects: precision, speed
     #! example: a huge `\write` to the `.aux` is read without its labels past this
   seconds: 300  # most seconds one run may take, a safety net. 0 for no limit

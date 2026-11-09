@@ -1,0 +1,6 @@
+\def\expected{x}
+\def\run{\input{part}\def\a{\number\a}\a}
+\run
+\ifx\kept\expected \def\SameAsBefore{}\fi
+\gdef\SatexReachedEnd{}
+\end

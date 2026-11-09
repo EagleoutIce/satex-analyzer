@@ -10,6 +10,10 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `feat` **Long documents reach their end.** Where floats and page parts land is now assumed past a budget instead of split per arm (`analysis.assume_page_one_arm`, reported as `page-one-arm`), so a thesis no longer runs the output routine once per float arm.
+- `fix` **A cut no longer forgets a chapter.** A nesting cut inside `\include` widened all the chapter defined, and macros with arguments stayed known through a widening.
+- `fix` **The line guard reads on.** A line that overruns its budget again is skipped and the run goes on; it stops only with no line left, or after `limits.line_overruns` cuts.
+- `perf` **Much less work per path switch and written line.** Replaying a written line is capped at 50 000 steps, value scans over unknown text fork a bounded number of times, and paths meet without building their whole key.
 - `fix` **Undecided mode stays one mode.** Arms of a mode split meet again in one mode, and token list sets survive widening, so a joined `\fi` no longer starts false loops. [`0da79ed`](https://github.com/EagleoutIce/satex-analyzer/commit/0da79ed) [`71c673d`](https://github.com/EagleoutIce/satex-analyzer/commit/71c673d)
 - `fix` **Typed numbers stay typed through pgfmath.** Digits, signs and printed dimensions keep their type, and copies of one number compare equal. [`4536f7f`](https://github.com/EagleoutIce/satex-analyzer/commit/4536f7f) [`cde8a60`](https://github.com/EagleoutIce/satex-analyzer/commit/cde8a60) [`4084ec7`](https://github.com/EagleoutIce/satex-analyzer/commit/4084ec7)
 - `fix` **Float lists keep their names, and value scans over unknown text no longer cut paths early.** [`29bd2bb`](https://github.com/EagleoutIce/satex-analyzer/commit/29bd2bb) [`93e8242`](https://github.com/EagleoutIce/satex-analyzer/commit/93e8242) [`9336d57`](https://github.com/EagleoutIce/satex-analyzer/commit/9336d57) [`601f0a7`](https://github.com/EagleoutIce/satex-analyzer/commit/601f0a7)
@@ -20,6 +24,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `fix` **False errors after `\newif` and next to colors are gone.** `new-redefines` no longer blames a `\new…` call for a plain `\def` after it, and `undefined-color` needs an error that names the color.
 - `fix` **An editor never offers to turn off `clones`.** Copied code is a finding to act on, not the project's style. [`1cdd3cc`](https://github.com/EagleoutIce/satex-analyzer/commit/1cdd3cc)
 - `fix` **Prose rules skip what undefined commands leave behind.** A TeX file opened without its preamble no longer gets spacing findings on `\node (a)at(b)` or inside an undefined environment. [`5d61ec1`](https://github.com/EagleoutIce/satex-analyzer/commit/5d61ec1)
 

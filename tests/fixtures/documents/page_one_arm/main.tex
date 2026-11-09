@@ -1,0 +1,13 @@
+\documentclass{article}
+\newlength\unk
+\setlength\unk{\pdfuniformdeviate 100000sp}
+\begin{document}
+\begin{figure}[t]\rule{1cm}{\unk}\caption{a}\end{figure}
+Text one.
+\begin{figure}[t]\rule{1cm}{\unk}\caption{b}\end{figure}
+\clearpage
+\begin{figure}[t]\rule{1cm}{\unk}\caption{c}\end{figure}
+Text two.
+\clearpage
+\gdef\SatexReachedEnd{}
+\end{document}

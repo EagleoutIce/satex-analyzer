@@ -314,6 +314,12 @@ impl Machine<'_> {
         if arms < 2 {
             return (arms == 1).then_some(0);
         }
+        if !needed
+            && self.script.len() <= self.choices.len()
+            && let Some(arm) = self.page_arm(span)
+        {
+            return Some(arm);
+        }
         if !self.cutting() && self.learned_cut() {
             return None;
         }
@@ -342,6 +348,40 @@ impl Machine<'_> {
         }
         self.choices.push(Choice { span, by, arms, arm, joined: false });
         Some(arm)
+    }
+
+    /// Under `analysis.assume_page_one_arm`, a choice that decides how a page
+    /// is made takes its first arm and parts no path, past `limits.output_forks`
+    /// such choices in the run: a float fits where it is
+    /// tried, a loop around a page clear ends. Where floats and page parts land
+    /// decides little else, and following every arm ran the output routine once
+    /// per arm of every float, widening all it wrote. What the other arms would
+    /// do is not followed: a named assumption, reported once per site.
+    fn page_arm(&mut self, span: Span) -> Option<usize> {
+        if !self.cfg.analysis.assume_page_one_arm {
+            return None;
+        }
+        if !self.output_active() && !self.clearing_page() {
+            return None;
+        }
+        if self.out.output_forks < self.limits.output_forks {
+            return None;
+        }
+        self.diagnose(
+            Severity::Assumption,
+            "page-one-arm",
+            span,
+            "an undecided choice while a page is made takes its first arm: floats fit, loops around a page end"
+                .to_string(),
+        );
+        Some(0)
+    }
+
+    /// Whether `\\clearpage`'s own text is still being read: `within` also holds
+    /// calls whose text ran out.
+    fn clearing_page(&self) -> bool {
+        let Some(clear) = self.out.interner.lookup("clearpage") else { return false };
+        self.input.iter().any(|f| matches!(f, Frame::Tokens { expanding: Some(s), .. } if *s == clear))
     }
 
     /// The arm [`Machine::branch`] gave does not exist, nor any after it:
@@ -713,7 +753,7 @@ impl Machine<'_> {
     }
 
     /// Whether a file is still being read and the budget is not spent.
-    fn input_left(&self) -> bool {
+    pub(super) fn input_left(&self) -> bool {
         !self.out.exhausted && self.input.iter().any(|f| matches!(f, Frame::File { mouth, .. } if !mouth.ending()))
     }
 
@@ -2026,6 +2066,9 @@ impl Machine<'_> {
     /// it) are at different passes of its read: apart until the statement
     /// is over (`usize::MAX`).
     fn digits_apart(&self, a: &Config, b: &Config) -> usize {
+        if self.scratch.split_digits.is_empty() {
+            return 0;
+        }
         let differing = a.env.differing(&b.env);
         let texts = |c: &Config, sym: Sym| {
             let b = c.env.changed(sym);
@@ -2042,7 +2085,13 @@ impl Machine<'_> {
 
     /// The running path joins a parked one at its place ([`partner`]).
     fn meet(&mut self, paths: &mut Paths, fork: &Fork) {
-        if paths.parked.iter().any(|p| p.key.progress == self.place_progress()) {
+        // Cheap first: the full key costs a path's whole state, per step.
+        let (progress, conds, groups) = (self.place_progress(), self.conds.len(), self.env.groups().len());
+        if paths
+            .parked
+            .iter()
+            .any(|p| p.key.progress == progress && p.key.conds.len() == conds && p.key.groups.len() == groups)
+        {
             let live = Config::new(self.save_path(), self.env.path(fork), false);
             if partner(&paths.parked, &live, &|a, b| self.digits_apart(a, b)).is_some() {
                 let joined = self.absorb(paths, fork, live, true);
@@ -2220,7 +2269,9 @@ impl Machine<'_> {
         let (a, b) = (live_frames(a), live_frames(b));
         // Paths at different places of one number's spelling are at
         // different passes of its read: one only once it is read.
-        if self.digits_read(frames_text(&a)) != self.digits_read(frames_text(&b)) {
+        // Levels at one place hold one text.
+        let same = a.iter().zip(&b).take_while(|(x, y)| place(x) == place(y)).count();
+        if self.digits_read(frames_text(&a[same..])) != self.digits_read(frames_text(&b[same..])) {
             return None;
         }
         let now = (self.conds.len(), self.env.group_id(), self.env.assignments);

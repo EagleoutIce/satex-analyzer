@@ -172,7 +172,7 @@ struct Mark {
 /// per group, which is what `\begingroup` and `}` do.
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Env {
-    slots: crate::fixed::Chunked<Option<Binding>>,
+    pub slots: crate::fixed::Chunked<Option<Binding>>,
     /// The group level each slot's binding was made at, 0 for level one
     /// (tex.web § 221 `eq_level`). A local assignment saves the old binding
     /// only once per level (§ 277). A `\global` one is made at level one, so
@@ -337,7 +337,7 @@ impl Fork {
 /// What one path did to the bindings, relative to its [`Fork`].
 #[derive(Clone)]
 pub struct PathEnv {
-    slots: Changed,
+    pub slots: Changed,
     journal: Journal,
     marks: Rc<Vec<Mark>>,
     corr: Option<Rc<Corr>>,
@@ -2906,7 +2906,10 @@ pub fn unknown_runs(text: &[Token], typed: &Typed) -> std::rc::Rc<[Token]> {
 /// of its meanings, else any meaning.
 fn widened(mut binding: Binding, typed: &Typed, limit: usize) -> Binding {
     binding.value = Value::Unknown;
-    if matches!(binding.meaning, Meaning::Macro(_)) || binding.may.is_some() {
+    // Macros that take arguments are code, whose texts no pass makes up ([`widen_slot`]).
+    let code = |m: &Meaning| m.as_macro().is_some_and(|d| !d.parameter_text.items.is_empty());
+    let keeps = binding.may.as_deref().map_or(code(&binding.meaning), |may| may.iter().all(code));
+    if !keeps && (matches!(binding.meaning, Meaning::Macro(_)) || binding.may.is_some()) {
         (binding.meaning, binding.may) = hull_meaning(&binding, typed, Reach::Havoc, limit);
     }
     binding.certain = false;

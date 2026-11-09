@@ -1522,6 +1522,7 @@ impl Machine<'_> {
             unknown: _,
             call_runs: _,
             call_recs: _,
+            learn_forks: _,
             guard_seen: _,
             job_ended: _,
             // Set only where the main file ends, which no cached load reads.

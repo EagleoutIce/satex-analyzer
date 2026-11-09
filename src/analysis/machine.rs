@@ -1813,6 +1813,8 @@ pub struct Machine<'a> {
     call_runs: HashMap<calls::CallKey, calls::CallRuns>,
     /// Calls being recorded, innermost last.
     call_recs: Rc<Vec<calls::CallRec>>,
+    /// Undecided choices this path made: a call's own are those since its record.
+    learn_forks: u64,
     guard_seen: GuardSeen,
     /// This path ran `\end` (tex.web § 1054), not off the end of its input.
     pub(crate) job_ended: bool,
@@ -2186,6 +2188,8 @@ struct PathState {
     dropping: (Option<String>, bool, bool, bool),
     cut_taint: Option<usize>,
     call_recs: Rc<Vec<calls::CallRec>>,
+    /// Undecided choices this path made: a call's own are those since its record.
+    learn_forks: u64,
     guard_seen: GuardSeen,
     job_ended: bool,
     ran_off: Option<Span>,
@@ -2334,6 +2338,8 @@ type HeldCharges = (HashMap<GuardKey, (u64, u8)>, HashMap<(GuardKey, Span), u32>
 /// line, and how often that line overran `limits.line_steps`.
 #[derive(Clone, Default)]
 struct LineGuard {
+    /// The line after which the document's body has begun.
+    body: Option<GuardKey>,
     /// The step the last check charged up to.
     step: u64,
     lines: HashMap<GuardKey, (u64, u8)>,
@@ -2664,6 +2670,7 @@ impl<'a> Machine<'a> {
             unknown,
             call_runs: HashMap::default(),
             call_recs: Rc::default(),
+            learn_forks: 0,
             guard_seen: GuardSeen::default(),
             job_ended: false,
             ran_off: None,
@@ -7853,6 +7860,10 @@ will look undefined",
             0 => 0,
             n => (n >> (2 * stage)).max(1),
         };
+        limits.text_line_steps = match base.text_line_steps {
+            0 => 0,
+            n => (n >> (2 * stage)).max(1),
+        };
         self.env.sets = set_limits(limits);
         // Reported when the run ends: a replayed command rolls back what it
         // diagnosed, and this must not be rolled back with it.
@@ -8227,7 +8238,7 @@ will look undefined",
     /// An expansion nested deeper than satex follows: its assignments become
     /// unknown, its pending lists are dropped, and the run reads on.
     fn abandon_nesting(&mut self) {
-        let balanced = Self::closed_note(self.give_up_lists(false, false));
+        let balanced = Self::closed_note(self.give_up_lists(false, true));
         let (file, line) = self.position();
         self.diagnose(
             Severity::Unsupported,
@@ -8271,15 +8282,28 @@ will look undefined",
     /// skipped; a third time, or with no line left to skip, the run stops.
     /// A path parked on the line before a cut takes it when it runs again.
     /// Whether the run stopped.
+    /// LaTeX's own test: `\\@nodocument` is `\\relax` once the body began.
+    fn in_preamble(&mut self) -> bool {
+        let name = self.intern("@nodocument");
+        matches!(self.env.meaning(name), Meaning::Macro(_))
+    }
+
     fn guard_line(&mut self) -> bool {
         let spent = self.out.steps.saturating_sub(self.guard.step);
         self.guard.step = self.out.steps;
-        let limit = self.limits.line_steps;
+        let at = self.position_span();
+        let key = self.guard_key(at);
+        // `\\begin{document}`'s own line still runs the end-of-preamble hooks.
+        if self.guard.body.is_none() && at.file == self.out.main_file && !self.in_preamble() {
+            self.guard.body = Some(key);
+        }
+        let limit = match (self.limits.line_steps, self.limits.text_line_steps) {
+            (line, text) if text > 0 && line > 0 && self.guard.body.is_some_and(|b| b != key) => line.min(text),
+            (line, _) => line,
+        };
         if limit == 0 || self.budget.is_some() || self.halted {
             return false;
         }
-        let at = self.position_span();
-        let key = self.guard_key(at);
         let entry = self.guard.lines.entry(key).or_default();
         entry.0 += spent;
         if entry.0 > self.guard.peak {
@@ -8316,7 +8340,10 @@ will look undefined",
             );
         }
         let skipped = level >= 2 && self.skip_line(at);
-        if !behind && (level >= 3 || (level == 2 && !skipped)) {
+        // The cut gives up the lists, so a file with text left reads on. A line
+        // that stays stuck after `line_overruns` cuts ends the run: the hard bound.
+        let stuck = !skipped && !self.input_left() || u32::from(level) >= self.limits.line_overruns;
+        if !behind && level >= 2 && stuck {
             self.halted = true;
             self.out.exhausted = true;
             self.diagnose(
@@ -8343,8 +8370,10 @@ will look undefined",
     /// does what they may do). Whether it is past.
     pub(crate) fn hot_site(&mut self, site: Span) -> bool {
         let limit = self.limits.site_forks;
-        // A choice inside a value scan: its arms join where the scan ends.
-        if limit == 0 || self.budget.is_some() || self.scanning > 0 {
+        // A choice inside a value scan may fork more: its arms join where the scan ends.
+        // A walker over unknown text forks per token, so even there the count is bounded.
+        let limit = if self.scanning > 0 { limit.saturating_mul(self.limits.scan_site_factor) } else { limit };
+        if limit == 0 || self.budget.is_some() {
             return false;
         }
         let key = (self.guard_key(self.position_span()), site);
@@ -9650,7 +9679,10 @@ will look undefined",
             return false;
         }
         let of = |this: &Self, name: Sym| match &this.env.slot(name).map(|b| &b.meaning) {
-            Some(Meaning::Macro(m)) => this.has_unknown(&m.replacement_text),
+            Some(Meaning::Macro(m)) => {
+                this.has_unknown(&m.replacement_text)
+                    || m.replacement_text.iter().any(|t| t.cs().is_some_and(|c| this.name(c).starts_with(ONE_OF_NAMES)))
+            }
             Some(Meaning::Unknown) => true,
             _ => false,
         };
@@ -12575,6 +12607,7 @@ will look undefined",
             dropping: (self.dropping.clone(), self.dropping_possible, self.dropping_breaks, self.dropping_nested),
             cut_taint: self.cut_taint,
             call_recs: self.call_recs.clone(),
+            learn_forks: self.learn_forks,
             guard_seen: self.guard_seen,
             job_ended: self.job_ended,
             ran_off: self.ran_off,
@@ -12630,6 +12663,7 @@ will look undefined",
         (self.dropping, self.dropping_possible, self.dropping_breaks, self.dropping_nested) = state.dropping;
         self.cut_taint = state.cut_taint;
         self.call_recs = state.call_recs;
+        self.learn_forks = state.learn_forks;
         self.guard_seen = state.guard_seen;
         self.job_ended = state.job_ended;
         self.ran_off = state.ran_off;

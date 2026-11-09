@@ -28,10 +28,22 @@ pub struct Limits {
     /// Steps the run may spend while it reads one source line (the
     /// innermost file's line; a cache replay is charged to no line) before
     /// the expansion above that line is cut: what it wrote is widened, an
-    /// unknown token stands for the rest, and the line reads on. A second overrun skips the rest of the line, a
-    /// third stops the run. The termination guard: the run spends at most
-    /// 3 times this per line read. 0 turns it off.
+    /// unknown token stands for the rest, and the line reads on. Every later
+    /// overrun skips the rest of the line; the run stops only with no line
+    /// left to skip to. The termination guard. 0 turns it off.
     pub line_steps: u64,
+    /// [`Limits::line_steps`] once the document's body has begun, where a line
+    /// typesets rather than loads. 0: the same.
+    pub text_line_steps: u64,
+    /// `site_forks` inside a value scan, as a factor: its arms join where the scan ends.
+    pub scan_site_factor: u32,
+    /// How many nested calls are recorded to be learned from or summarized.
+    pub call_rec_depth: u16,
+    /// Choices in output routines a run parts paths for before
+    /// `analysis.assume_page_one_arm` applies.
+    pub output_forks: u64,
+    /// Overruns of one line's budget before the run stops: the hard bound of the guard.
+    pub line_overruns: u32,
     /// Steps a line a run wrote may take where satex replays it to see
     /// what it names (labels, keys). Past them that line names nothing.
     pub replay_steps: u64,
@@ -201,6 +213,11 @@ impl Limits {
             "expansion_depth" => self.expansion_depth.into(),
             "site_expansions" => self.site_expansions.into(),
             "line_steps" => self.line_steps,
+            "text_line_steps" => self.text_line_steps,
+            "scan_site_factor" => self.scan_site_factor.into(),
+            "call_rec_depth" => self.call_rec_depth.into(),
+            "output_forks" => self.output_forks,
+            "line_overruns" => self.line_overruns.into(),
             "probe_steps" => self.probe_steps,
             "replay_steps" => self.replay_steps,
             "repeat_failures" => self.repeat_failures.into(),
@@ -265,9 +282,14 @@ impl Default for Limits {
             // Measured: the heaviest line of a long thesis takes 34-67M
             // steps (about 30 s); a stuck line costs at most 3 times this.
             line_steps: 100_000_000,
+            text_line_steps: 0,
+            call_rec_depth: 64,
+            scan_site_factor: 16,
+            output_forks: 0,
+            line_overruns: 16,
             // Measured: a `\newlabel` or `\@writefile` line takes a few
             // thousand steps; one of unknown text may take any number.
-            replay_steps: 1_000_000,
+            replay_steps: 50_000,
             // Measured: the kernel's own `\if` chains report a handful of
             // the same gap while they are still making progress, and no
             // document needed more than a few before the path repeated
@@ -1565,6 +1587,8 @@ pub struct AnalysisConfig {
     /// `\newpage`, `\end`). `false` also follows a page break wherever the
     /// page may have filled, one path each way.
     pub assume_forced_page_breaks: bool,
+    /// A choice undecided while a page is made takes one arm ([`crate::analysis::machine::Machine`]'s `page_arm`).
+    pub assume_page_one_arm: bool,
     /// Assumes formatting a message for the terminal or log (expl3's
     /// `\iow_wrap:nnnN`) changes nothing but the text it writes. A message over
     /// unknown text then writes unknown text, on one path, reported as an
@@ -1591,6 +1615,7 @@ impl Default for AnalysisConfig {
             assume_packages_close_groups: true,
             assume_environment: true,
             assume_forced_page_breaks: true,
+            assume_page_one_arm: true,
             assume_messages_output_only: true,
             assume_unknown_char_catcode: true,
             assume_call_learned_effect: true,
