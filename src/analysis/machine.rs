@@ -1457,6 +1457,8 @@ pub(crate) struct Scratch {
     /// text ([`Machine::unread_rest`]): the same site meeting its own rest
     /// again (a recursion that peels it) forks as one loop head per pair.
     pub(crate) arg_site: Option<Span>,
+    /// The macro being called goes by a name of unknown spelling.
+    pub(crate) family_call: bool,
     pub(crate) split_rests: HashMap<(Span, Tok), u16>,
     /// The marks of one-of arguments used more than once
     /// ([`Machine::mark_one_choice`]).
@@ -9922,6 +9924,7 @@ will look undefined",
         let at = m.replacement_text.first().map_or(span, |t| t.span);
         let site = self.scratch.arg_site.replace(at);
         let outer_reading = self.reading.replace(span);
+        self.scratch.family_call = self.is_unknown_name(sym);
         let mut arguments = self.read_arguments(&m);
         self.mark_one_choice(&m, &mut arguments);
         self.reading = outer_reading;
@@ -11833,6 +11836,9 @@ will look undefined",
     fn match_parameter_text(&mut self, text: &ParameterText) -> Vec<Vec<Token>> {
         let mut args: Vec<Vec<Token>> = vec![Vec::new(); text.arity as usize];
         let mut i = 0;
+        // A call by a name of unknown spelling may reach a macro of more
+        // parameters than it was written for: its list ends its arguments.
+        let levels = std::mem::take(&mut self.scratch.family_call).then(|| self.live_levels());
         // Set once an undelimited parameter read unknown text, which is one
         // token standing for any number: where the call's later parameters
         // begin is not known from there on (tex.web § 392).
@@ -11999,7 +12005,10 @@ will look undefined",
                         arg
                     } else if last && text.brace_end {
                         self.read_before_group()
-                    } else if let Some(at) = fuzzy {
+                    } else if let Some(at) =
+                        fuzzy.or_else(|| levels.filter(|&n| self.live_levels() < n).map(|_| self.position_span()))
+                    {
+                        fuzzy = Some(at);
                         // The token may be anywhere in the unknown text.
                         self.scan_abandoned = true;
                         vec![match hole {

@@ -10,6 +10,10 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **Calls by unknown names.** A macro reached by a name of unknown spelling no longer takes the code behind its call as arguments. That code could redefine `\let` on a path and turn the rest of the document into data.
+- `fix` **Long exact loops.** A loop over known values is no longer cut as spinning. Its cut made names look undefined later on.
+- `fix` **LuaTeX's PDF commands.** `\pdfvariable` reads as a quantity, `\pdfextension` reads its operands, and `\pdffeedback` is a query.
+- `fix` **Box sizes.** `\ ` in math keeps a box's width, and `\unhbox` keeps whether the last node is a ligature.
 - `perf` **Long bibliographies.** A walk over a key list of unknown text ends after `limits.rest_splits` splits, and a path save no longer copies the list of wildcard names.
 - `fix` **A lost formula ends.** A `$` that finds no formula to close leaves math mode, so the `\par` behind it no longer loops.
 - `fix` **Note columns clear.** A call summary no longer stands for a call that reads another value than its first runs did, so `\clearnotecolumns` ends instead of setting hundreds of pages. A package loaded inside a paragraph stays out of the package cache.

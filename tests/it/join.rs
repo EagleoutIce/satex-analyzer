@@ -1145,6 +1145,22 @@ fn a_name_read_from_a_family_keeps_the_meanings_it_was_given() {
     assert!(names(&analysis).contains(&"inarm".to_string()));
 }
 
+/// A call by a name of unknown spelling may reach a macro of more parameters
+/// than the call was written for (`\pgf@colmarshal` holds a color command with
+/// its values). Taking the code behind the list as arguments would drop that
+/// code and run it as data: it could redefine `\let`, and did.
+#[test]
+fn a_call_by_an_unknown_name_ends_with_the_list_it_stands_in() {
+    let analysis = analyze(
+        r"\expandafter\def\csname fami\endcsname#1{}
+          \expandafter\def\csname famii\endcsname#1#2#3{}
+          \count255=\pdfuniformdeviate 100000 \relax
+          \edef\call{\expandafter\noexpand\csname fam\romannumeral\count255\endcsname{x}}
+          \call\def\after{}\relax",
+    );
+    assert_eq!(crate::support::presence(&analysis, "after"), "1");
+}
+
 /// A list of names an undecided loop appends to (a float queue), past
 /// the exact set a join keeps: joined, it still holds only the names it
 /// may, so running it with `\elt` runs `\elt` on them, never unknown code.
