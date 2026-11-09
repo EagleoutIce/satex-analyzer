@@ -587,7 +587,7 @@ impl Machine<'_> {
                     None => self.append_item(crate::engine::mode::Item::Unknown),
                 }
             }
-            P::Pdf(op) => crate::analysis::observe::pdf(self, op, span),
+            P::Pdf(op) => crate::analysis::observe::pdf(self, op, by, span),
             P::Relax | P::Typeset(_) => {}
             // An engine primitive satex doesn't interpret. Does nothing, but
             // records the gap so unmodeled effects are on record.
@@ -1191,7 +1191,7 @@ impl Machine<'_> {
                 return Vec::new();
             }
         };
-        let level = self.internal_level(&self.env.meaning(sym));
+        let level = self.read_level(sym);
         // Only the interval this quantity leaves may type its digits.
         self.abs = None;
         let value = self.internal_quantity(sym, span);

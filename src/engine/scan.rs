@@ -363,12 +363,47 @@ impl Machine<'_> {
         }
     }
 
+    /// [`Machine::internal_level`] of a quantity about to be read. LuaTeX's
+    /// `\pdfvariable` has its level in the name it scans.
+    pub(crate) fn read_level(&mut self, sym: Sym) -> Option<RegKind> {
+        let meaning = self.env.meaning(sym);
+        match meaning.prim() {
+            Some(Primitive::Pdf(crate::engine::builtins::PdfOp::Variable)) => Some(self.pdf_variable_level()),
+            _ => self.internal_level(&meaning),
+        }
+    }
+
+    /// LuaTeX manual, "PDF variables": the name after `\pdfvariable`, and
+    /// the level of the variable it names.
+    pub(crate) fn pdf_variable_level(&mut self) -> RegKind {
+        const DIMENS: [&str; 6] = ["horigin", "vorigin", "linkmargin", "destmargin", "threadmargin", "xformmargin"];
+        const TEXTS: [&str; 6] = ["pageattr", "pageresources", "pagesattr", "xformattr", "xformresources", "trailerid"];
+        if DIMENS.iter().any(|k| self.scan_keyword(k)) {
+            return RegKind::Dimen;
+        }
+        if TEXTS.iter().any(|k| self.scan_keyword(k)) {
+            return RegKind::Toks;
+        }
+        self.skip_letters();
+        RegKind::Count
+    }
+
+    /// Reads a keyword of no interest.
+    pub(crate) fn skip_letters(&mut self) {
+        while let Some(t) = self.next_token() {
+            if !matches!(t.tok, Tok::Chr(_, Catcode::Letter)) {
+                self.unread(t);
+                break;
+            }
+        }
+    }
+
     /// `scan_something_internal` (tex.web § 413) on a token already read:
     /// `None` when it is not an internal quantity, otherwise its level and
     /// its value, if known.
     fn scan_internal(&mut self, token: Token) -> Option<(RegKind, Option<Value>)> {
         let sym = token.cs().or_else(|| self.active_cs(token))?;
-        let level = self.internal_level(&self.env.meaning(sym))?;
+        let level = self.read_level(sym)?;
         // tex.web § 413: a token list where a number is due is "Missing
         // number", a zero dimension, and the token is read again.
         if level == RegKind::Toks {

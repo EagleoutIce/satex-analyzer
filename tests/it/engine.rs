@@ -481,6 +481,67 @@ fn directlua_consumes_its_body_instead_of_reading_it_as_tex() {
     assert!(lua[0].contains("tex.print"), "the Lua body was not kept: {lua:?}");
 }
 
+/// `\pdfvariable ⟨name⟩` is an internal quantity too, not only an assignment:
+/// the kernel's shipout kerns by `-\pdfvariable horigin` on LuaTeX. It was
+/// read as "Missing number" at every `\begin{document}`.
+#[test]
+fn a_pdf_variable_is_a_quantity_of_the_level_its_name_says() {
+    let analysis = analyze_with(
+        Engine::LuaTeX,
+        r"\setbox0\hbox{\kern-\pdfvariable horigin \relax}
+          \pdfvariable vorigin=1in
+          \count1=\pdfvariable compresslevel \relax
+          \edef\printed{\the\pdfvariable horigin}
+          \def\after{reached}",
+    );
+    assert!(defined(&analysis, "after"));
+    let missing = |a: &Analysis| a.facts.diagnostics.iter().filter(|d| d.code == "missing-number").count();
+    assert_eq!(missing(&analysis), 0, "a variable read as a number");
+    let toks = analyze_with(Engine::LuaTeX, r"\count1=\pdfvariable pageattr \relax \def\after{reached}");
+    assert!(missing(&toks) > 0, "a token list where a number is due must stay an error");
+}
+
+/// `\pdfextension colorstack` and its kin are pdfTeX's commands: their
+/// operands are no text. They were left in the input, so xcolor's `\color`
+/// in a LuaTeX preamble typeset `push`: a false "Missing \begin{document}".
+#[test]
+fn a_pdf_extension_reads_its_operands_as_pdftex_does() {
+    let analysis = analyze_with(
+        Engine::LuaTeX,
+        r"\everypar{\def\typeset{}}
+          \pdfextension colorstack 0 push{0 g 0 G}
+          \pdfextension colorstack 0 pop\relax
+          \pdfextension startlink attr{/C[0 0 0]} goto name{a}
+          \pdfextension endlink\relax
+          \pdfextension dest name{a} xyz
+          \pdfextension outline goto name{a} count 1 {t}
+          \pdfextension refobj 1
+          \pdfextension save\relax
+          \pdfextension setmatrix{1 0 0 1}
+          \pdfextension restore\relax
+          \def\after{reached}",
+    );
+    assert!(defined(&analysis, "after"));
+    assert!(!defined(&analysis, "typeset"), "an operand was typeset");
+}
+
+/// `\pdffeedback ⟨name⟩` expands to what pdfTeX's `\pdf⟨name⟩` gives. It was no
+/// quantity at all: microtype's `\fontdimen6\font=\pdffeedback fontsize\font`
+/// was "Missing number" at every font on LuaTeX.
+#[test]
+fn a_pdf_feedback_is_a_query_of_the_name_it_reads() {
+    let analysis = analyze_with(
+        Engine::LuaTeX,
+        r"\font\f=cmr10 \dimen1=\pdffeedback fontsize\f
+          \count1=\pdffeedback lastobj \relax
+          \edef\link{\pdffeedback lastlink}
+          \def\after{reached}",
+    );
+    assert!(defined(&analysis, "after"));
+    let missing: Vec<_> = analysis.facts.diagnostics.iter().filter(|d| d.code == "missing-number").collect();
+    assert!(missing.is_empty(), "{missing:?}");
+}
+
 #[test]
 fn a_lua_body_that_opens_a_group_does_not_leave_one_open() {
     let analysis = analyze_with(Engine::LuaTeX, r"\directlua{if x then y end}\def\after{reached}");

@@ -383,6 +383,8 @@ pub enum Convert {
     PdfFontName,
     PdfFontObjNum,
     PdfFontSize,
+    /// LuaTeX's `\pdffeedback ⟨name⟩`: pdfTeX's `\pdf⟨name⟩`.
+    Feedback,
     PageRef,
     XFormName,
     InsertHt,
@@ -1667,7 +1669,7 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
             lastsavedimageresourcepages lastxpos lastypos leftghost letcharcode linedir
              localleftbox localrightbox luatexbanner luatexrevision mathdir
              mathoption mathstyle nohrule novrule pagedir  pardir
-             pdffeedback protrusionboundary rightghost saveboxresource
+             protrusionboundary rightghost saveboxresource
             savepos textdir  toksapp tokspre tpack useboxresource
             useimageresource vpack wordboundary xtoksapp xtokspre"
             .split_whitespace()
@@ -2026,6 +2028,7 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     }
     if matches!(engine, Engine::LuaTeX) {
         put(it, "pdfextension", P::Pdf(PdfOp::Extension));
+        put(it, "pdffeedback", P::Convert(Convert::Feedback));
         put(it, "pdfvariable", P::Pdf(PdfOp::Variable));
     }
 
@@ -2825,6 +2828,7 @@ fn convert_verdict(c: Convert) -> Judgment {
         }
         C::Uchar { .. } => at!(V::Exact, "tex.web, eTeX and XeTeX's character and category-code construction rules"),
         C::PdfFontSize => at!(V::Exact, "the font's real design size"),
+        C::Feedback => at!(V::Approximated, "pdfTeX's query of that name, or a number in the object table"),
         C::PdfFontName | C::PdfFontObjNum => at!(V::Approximated, "widens to Unknown. No PDF font object is built"),
         C::ColorStackInit => at!(
             V::Approximated,

@@ -2333,6 +2333,9 @@ impl Machine<'_> {
             // `\unvbox`, sees (§§ 1105, 1110).
             if matches!(kind, BoxState::HBox | BoxState::VBox) {
                 self.set_box_last(register, n.tail[0]);
+                if let Some(ligature) = n.ligature {
+                    self.set_box_slot(register, "lig", Value::Int(ligature.into()));
+                }
             }
         } else if nest.placed {
             let own = self.gather_chars(nest.from, now);
@@ -2780,6 +2783,8 @@ impl Machine<'_> {
                     _ => None,
                 };
                 let last = self.box_last(n);
+                let ligature = n.map(|n| self.intern(&format!("\u{4}box.lig.{n}")));
+                let ligature = ligature.and_then(|key| self.env.value(key).as_int());
                 let line = self.box_line(n);
                 let calm = self.box_calm(n);
                 let list = n.and_then(|k| {
@@ -2853,6 +2858,7 @@ impl Machine<'_> {
                         && let Some(n) = &mut self.natural
                     {
                         n.tail[0] = last;
+                        n.ligature = ligature.and_then(|l| u32::try_from(l).ok());
                     }
                     // § 1110: the box's items, not the one item it stood for.
                     if let (Some(n), Some(held)) = (&mut self.natural, held) {
@@ -6465,6 +6471,7 @@ impl Machine<'_> {
         // The type of a node only `\lastnodetype` tells apart.
         let node = if let Last::Node(t) = last { Value::Int(t.into()) } else { Value::Unknown };
         self.set_box_slot(register, "node", node);
+        self.set_box_slot(register, "lig", Value::Unknown);
     }
 
     /// Whether register `n`'s list holds no forced break.

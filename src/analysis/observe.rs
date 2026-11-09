@@ -1216,7 +1216,7 @@ pub fn accent(m: &mut Machine, span: Span) -> Option<i64> {
 /// (`\pdfliteral [shipout] [direct|page] ⟨general text⟩`, `\pdfobj
 /// [useobjnum n] [stream [attr ⟨general text⟩]] [file] ⟨general text⟩`) and
 /// the LuaTeX manual gives for `\pdfextension literal` and `obj`.
-pub fn pdf(m: &mut Machine, op: PdfOp, span: Span) {
+pub fn pdf(m: &mut Machine, op: PdfOp, by: Sym, span: Span) {
     let op = match op {
         PdfOp::Extension if m.scan_keyword("literal") => PdfOp::Literal,
         PdfOp::Extension if m.scan_keyword("obj") => PdfOp::Object,
@@ -1226,29 +1226,37 @@ pub fn pdf(m: &mut Machine, op: PdfOp, span: Span) {
         // LuaTeX manual, "PDF variables": a name, then the value its kind
         // takes; the value is the backend's, not the run's.
         PdfOp::Variable => {
-            const DIMENS: [&str; 6] = ["horigin", "vorigin", "linkmargin", "destmargin", "threadmargin", "xformmargin"];
-            const TEXTS: [&str; 6] =
-                ["pageattr", "pageresources", "pagesattr", "xformattr", "xformresources", "trailerid"];
-            if DIMENS.iter().any(|k| m.scan_keyword(k)) {
-                m.read_equals();
-                m.scan_dimen();
-            } else if TEXTS.iter().any(|k| m.scan_keyword(k)) {
-                m.read_equals();
-                drop(m.read_general_text());
-            } else {
-                while let Some(t) = m.next_token() {
-                    if !matches!(t.tok, Tok::Chr(_, Catcode::Letter)) {
-                        m.unread(t);
-                        break;
-                    }
-                }
-                m.read_equals();
-                m.scan_number();
+            let level = m.pdf_variable_level();
+            m.read_equals();
+            match level {
+                RegKind::Dimen => drop(m.scan_dimen()),
+                RegKind::Toks => drop(m.read_general_text()),
+                _ => drop(m.scan_number()),
             }
             return;
         }
         PdfOp::Extension => {
-            const TEXTS: [(&str, usize); 7] = [
+            use crate::engine::builtins::Syntax as S;
+            // `\pdfextension ⟨name⟩` is pdfTeX's `\pdf⟨name⟩`, syntax and all.
+            const COMMANDS: [(&str, S); 8] = [
+                ("colorstack", S::PdfColorStack),
+                ("startlink", S::PdfStartLink),
+                ("annot", S::PdfAnnot),
+                ("dest", S::PdfDest),
+                ("outline", S::PdfOutline),
+                ("startthread", S::PdfThread),
+                ("thread", S::PdfThread),
+                ("refobj", S::Numbers(1)),
+            ];
+            const BARE: [&str; 4] = ["endlink", "endthread", "save", "restore"];
+            if let Some(&(_, syntax)) = COMMANDS.iter().find(|(k, _)| m.scan_keyword(k)) {
+                return m.obey_command(syntax, by, span);
+            }
+            if BARE.iter().any(|k| m.scan_keyword(k)) {
+                return;
+            }
+            const TEXTS: [(&str, usize); 8] = [
+                ("setmatrix", 1),
                 ("glyphtounicode", 2),
                 ("catalog", 1),
                 ("names", 1),

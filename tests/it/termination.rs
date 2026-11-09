@@ -94,6 +94,29 @@ fn cfg(steps: u64) -> Config {
     cfg
 }
 
+/// A loop on known values runs as TeX runs it, however long one source line
+/// holds it: a `pgfplotstable` row predicate re-walks its rows, quadratic in
+/// the rows, and was cut as "spinning", which poisoned the rest of the run.
+/// A loop that never ends still ends at the line budget.
+#[test]
+fn a_long_assigning_loop_on_known_values_is_not_cut() {
+    let prelude = crate::support::PRELUDE;
+    let mut config = cfg(50_000_000);
+    config.limits.site_expansions = 64;
+    let rounds = 32 * config.limits.site_expansions;
+    let source = format!(
+        r"{prelude}\def\walk{{\advance\count1 by 1 \ifnum\count1<{rounds} \expandafter\walk\fi}}\walk
+          \ifnum\count1={rounds} \def\exact{{}}\else \def\cut{{}}\fi"
+    );
+    let analysis = Machine::analyze(&source, None, &config);
+    assert!(crate::support::defined(&analysis, "exact"), "the loop was cut");
+    assert!(!crate::support::maybe_defined(&analysis, "cut"), "the loop was cut");
+
+    let endless =
+        Machine::analyze(&format!(r"{prelude}\def\spin{{\advance\count1 by 1 \spin}}\spin"), None, &cfg(1_000_000));
+    assert!(!endless.facts.diagnostics.is_empty(), "the endless loop was not reported");
+}
+
 /// One gap at one place, however often the path reaches it, is counted to
 /// `limits.repeat_failures` and no further: the expansion is then given up
 /// and widened, because a path that fails at a site fails there again on

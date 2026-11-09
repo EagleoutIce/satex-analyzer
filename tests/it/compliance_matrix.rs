@@ -604,6 +604,7 @@ fn convert(name: &str, c: Convert) -> Result<Template, &'static str> {
         Convert::EtexRevision | Convert::PdftexRevision | Convert::PdftexBanner | Convert::XetexRevision => plain(""),
         Convert::CreationDate | Convert::NormalDeviate => plain(""),
         Convert::UniformDeviate => plain(" 1"),
+        Convert::Feedback => Err("LuaTeX's, which the probing engine does not have"),
         Convert::FontName => plain("\\nullfont"),
         Convert::FontId => plain("\\nullfont"),
         Convert::StrCmp => plain("{ab}{ac}"),

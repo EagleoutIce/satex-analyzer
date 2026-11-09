@@ -8596,7 +8596,9 @@ will look undefined",
                     | crate::engine::builtins::Typeset::Number
                     | crate::engine::builtins::Typeset::Plain,
                 )
-                | P::Mode(crate::engine::builtins::ModeCmd::Horizontal(crate::engine::builtins::Material::Glue)),
+                | P::Mode(crate::engine::builtins::ModeCmd::Horizontal(
+                    crate::engine::builtins::Material::Glue | crate::engine::builtins::Material::Space,
+                )),
             ) => true,
             // A whatsit is no atom and has no size (tex.web § 730).
             Meaning::Primitive(
@@ -10079,7 +10081,7 @@ will look undefined",
         // A recursion that assigns every round evades `repeats`: count reading
         // on alone (tex.web § 366); 16 is measured.
         let never_read = self.limits.site_expansions.saturating_mul(16);
-        let spinning = unread > never_read;
+        let spinning = self.approximated && unread > never_read;
         if depth >= self.limits.expansion_depth || visits > self.limits.site_expansions || stuck || spinning {
             // Without the counts: the same cut met again is one finding.
             let reason = if depth >= self.limits.expansion_depth {

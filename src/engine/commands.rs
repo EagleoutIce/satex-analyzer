@@ -1578,7 +1578,7 @@ impl Machine<'_> {
         }
     }
 
-    fn obey_command(&mut self, syntax: Syntax, by: Sym, span: Span) {
+    pub(crate) fn obey_command(&mut self, syntax: Syntax, by: Sym, span: Span) {
         match syntax {
             Syntax::Nothing | Syntax::Whatsit | Syntax::NonScript => {}
             // `\displaylimits` is what an operator has unless told
@@ -2117,6 +2117,24 @@ impl Machine<'_> {
             C::PdfFontName | C::PdfFontObjNum => {
                 self.scan_font_ident();
                 None
+            }
+            C::Feedback => {
+                const QUERIES: [(&str, Convert); 7] = [
+                    ("fontsize", C::PdfFontSize),
+                    ("fontname", C::PdfFontName),
+                    ("fontobjnum", C::PdfFontObjNum),
+                    ("pageref", C::PageRef),
+                    ("xformname", C::XFormName),
+                    ("creationdate", C::CreationDate),
+                    ("colorstackinit", C::ColorStackInit),
+                ];
+                if let Some(&(_, query)) = QUERIES.iter().find(|(k, _)| self.scan_keyword(k)) {
+                    return self.convert(query, span);
+                }
+                // `lastobj`, `lastlink`, `lastannot`, `retval`: indices of the object table.
+                self.skip_letters();
+                let table = crate::engine::value::Num::range(0, crate::engine::value::MAX_DIMEN);
+                return self.digits_in(table, span);
             }
             C::StrCmp => {
                 let a = self.expanded_general_text();

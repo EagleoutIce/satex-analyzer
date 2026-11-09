@@ -2624,6 +2624,28 @@ fn if_tells_a_control_sequence_from_char_256() {
 
 /// An image is its PDF page's crop box, else its media box (the pdfTeX
 /// manual, "Graphics"): pdflatex gives 10.0375pt square.
+/// `\ ` in math is glue, no atom (tex.web § 1045), as `\hskip` is. It lost the
+/// box's width instead: `~` in a TikZ node's formula left the node's size
+/// unknown, and every path drawn from that node forked in pgfmath.
+/// pdflatex: 9.0486pt.
+#[test]
+fn a_control_space_in_math_keeps_the_width() {
+    assert_eq!(article_sizes(r"\setbox0\hbox{$x\ $}\xdef\out{\the\wd0}"), "9.0486pt");
+}
+
+/// `\unhbox` uncovers the box's last node (tex.web § 1110), and whether a
+/// character node is a ligature comes along. It was forgotten, so microtype's
+/// probe on LuaTeX (`\unhbox … \ifnum\lastnodetype=7`) forked at each token of
+/// every list item. pdflatex: 0, then 7.
+#[test]
+fn unboxing_keeps_whether_the_last_node_is_a_ligature() {
+    let probe = |text: &str| {
+        article_sizes(&format!(r"\setbox0\hbox{{{text}}}\setbox1\hbox{{\unhbox0 \xdef\out{{\the\lastnodetype}}}}"))
+    };
+    assert_eq!(probe("F"), "0");
+    assert_eq!(probe("fi"), "7");
+}
+
 #[test]
 fn a_pdf_image_has_its_page_size() {
     let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/documents/includegraphics/title-banner-image.pdf");
