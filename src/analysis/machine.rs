@@ -1457,7 +1457,7 @@ pub(crate) struct Scratch {
     /// text ([`Machine::unread_rest`]): the same site meeting its own rest
     /// again (a recursion that peels it) forks as one loop head per pair.
     pub(crate) arg_site: Option<Span>,
-    pub(crate) split_rests: HashSet<(Span, Tok)>,
+    pub(crate) split_rests: HashMap<(Span, Tok), u16>,
     /// The marks of one-of arguments used more than once
     /// ([`Machine::mark_one_choice`]).
     pub(crate) one_choice: HashSet<(Span, Tok)>,
@@ -11291,7 +11291,7 @@ will look undefined",
             let own_rest = (unknown_text && depth == 0)
                 .then_some(self.scratch.arg_site)
                 .flatten()
-                .filter(|&site| self.scratch.split_rests.contains(&(site, t.tok)));
+                .filter(|&site| self.scratch.split_rests.contains_key(&(site, t.tok)));
             // The argument read so far ends in the delimiter's first `j`
             // tokens and the text may begin with the rest (tex.web § 392):
             // the delimiter ends in it, a path each way. Text too short for
@@ -11345,7 +11345,17 @@ will look undefined",
                 // texts ends it: the rest of the text is read next.
                 let ends = match depth == 0 && unknown_text {
                     true => match (own_rest, t.cs()) {
-                        (Some(site), Some(rest)) => self.branch(rest, 2, site),
+                        // Forced convergence: past its budget a walk over this
+                        // rest finds no more delimiters in it.
+                        (Some(site), Some(_))
+                            if self.scratch.split_rests[&(site, t.tok)] >= self.limits.rest_splits =>
+                        {
+                            Some(1)
+                        }
+                        (Some(site), Some(rest)) => {
+                            *self.scratch.split_rests.get_mut(&(site, t.tok)).expect("own rest") += 1;
+                            self.branch(rest, 2, site)
+                        }
                         _ => self.branch(self.unknown, 2, t.span),
                     },
                     false => None,
@@ -13766,7 +13776,7 @@ fn skip_keyword(tokens: &[Token], i: &mut usize, keyword: &str) -> bool {
 /// known text before and after the unknown part: `\csname MT@inh@\x\endcsname`
 /// may be `\MT@inh@…` but never `\@nil`.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct Wild(Vec<Pattern>);
+pub(crate) struct Wild(#[serde(with = "crate::fixed::shared")] Rc<Vec<Pattern>>);
 
 /// Names of a known prefix and suffix around unknown text, digits alone
 /// where `digits`. They may be `\relax`, and where `real` one of
@@ -13849,8 +13859,9 @@ impl Wild {
 
     fn put(&mut self, new: Pattern) {
         // The same names: their meanings join.
-        if let Some(old) =
-            self.0.iter_mut().find(|p| (&p.prefix, &p.suffix, p.digits) == (&new.prefix, &new.suffix, new.digits))
+        if let Some(old) = Rc::make_mut(&mut self.0)
+            .iter_mut()
+            .find(|p| (&p.prefix, &p.suffix, p.digits) == (&new.prefix, &new.suffix, new.digits))
         {
             old.meanings = join_may(old.may(), new.may());
             old.real = old.meanings.as_ref().is_none_or(|m| !m.is_empty());
@@ -13859,8 +13870,8 @@ impl Wild {
         if self.0.iter().any(|p| p.covers(&new)) {
             return;
         }
-        self.0.retain(|p| !new.covers(p));
-        self.0.push(new);
+        Rc::make_mut(&mut self.0).retain(|p| !new.covers(p));
+        Rc::make_mut(&mut self.0).push(new);
         if self.0.len() > Self::MAX {
             // What every pattern shares still covers every one of them.
             let mut all = self.0[0].clone();
@@ -13882,7 +13893,7 @@ impl Wild {
                 all.meanings = join_may(all.may(), q.may());
                 all.real |= q.real;
             }
-            self.0 = vec![all];
+            self.0 = Rc::new(vec![all]);
         }
     }
 
@@ -13899,7 +13910,7 @@ impl Wild {
     }
 
     pub(crate) fn union(&mut self, other: &Wild) {
-        for p in &other.0 {
+        for p in other.0.iter() {
             self.put(p.clone());
         }
     }
@@ -13907,7 +13918,7 @@ impl Wild {
     /// Each family's meanings, `hull` where it gives one: a widening, so
     /// texts written per record read do not grow the set with the input.
     pub(crate) fn widen(&mut self, hull: impl Fn(&[Meaning]) -> Option<Meaning>) {
-        for p in &mut self.0 {
+        for p in Rc::make_mut(&mut self.0) {
             if let Some(h) = p.meanings.as_deref().and_then(&hull) {
                 p.meanings = Some(Rc::from([h]));
             }
@@ -14336,7 +14347,7 @@ impl Machine<'_> {
         if len != Some(0) && (class != TextClass::EMPTY || !cs.is_empty()) {
             let rest = self.unknown_text(Unk::Class(class, false, len, &cs), span);
             if let Some(site) = self.scratch.arg_site {
-                self.scratch.split_rests.insert((site, rest.tok));
+                self.scratch.split_rests.entry((site, rest.tok)).or_default();
             }
             self.unread(rest);
         }

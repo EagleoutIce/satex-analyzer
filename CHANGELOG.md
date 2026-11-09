@@ -10,6 +10,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `perf` **Long bibliographies.** A walk over a key list of unknown text ends after `limits.rest_splits` splits, and a path save no longer copies the list of wildcard names.
+- `fix` **A lost formula ends.** A `$` that finds no formula to close leaves math mode, so the `\par` behind it no longer loops.
 - `fix` **Note columns clear.** A call summary no longer stands for a call that reads another value than its first runs did, so `\clearnotecolumns` ends instead of setting hundreds of pages. A package loaded inside a paragraph stays out of the package cache.
 - `feat` **Long documents reach their end.** Where floats and page parts land is now assumed past a budget instead of split per arm (`analysis.assume_page_one_arm`, reported as `page-one-arm`), so a thesis no longer runs the output routine once per float arm.
 - `fix` **A cut no longer forgets a chapter.** A nesting cut inside `\include` widened all the chapter defined, and macros with arguments stayed known through a widening.

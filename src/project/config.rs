@@ -112,6 +112,9 @@ pub struct Limits {
     /// arguments reuses their merged result instead of running again.
     /// `\pgfmathparse{\x}` with an unknown `\x` is then one step. 0 never does.
     pub call_summary_after: u16,
+    /// How often a macro that peels unknown text may split one rest it put
+    /// back at a delimiter before the rest counts as holding no more.
+    pub rest_splits: u16,
     /// How many runs on different arguments teach what a definition's
     /// calls leave, with `analysis.assume_call_learned_effect`. 0 never.
     pub call_learn_after: u16,
@@ -233,6 +236,7 @@ impl Limits {
             "recursion_depth" => self.recursion_depth.into(),
             "loop_heads" => self.loop_heads.into(),
             "call_summary_after" => self.call_summary_after.into(),
+            "rest_splits" => self.rest_splits.into(),
             "call_learn_after" => self.call_learn_after.into(),
             "call_learn_forks" => self.call_learn_forks.into(),
             "may_run_depth" => self.may_run_depth.into(),
@@ -313,6 +317,7 @@ impl Default for Limits {
             recursion_depth: 100,
             loop_heads: 512,
             call_summary_after: 2,
+            rest_splits: 8,
             call_learn_after: 2,
             call_learn_forks: 2,
             may_run_depth: 3,

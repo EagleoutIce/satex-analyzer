@@ -517,6 +517,8 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 | relate | a name every run left as the same text of its own arguments' typed numbers (slices spelling one whole count as it) gets that text of this call's numbers, not the widened join. `\pgfmath@bgroup@strip` of a new number thus keeps it whole and typed. |
 | never | runs that read on in the file, change a catcode, leave a group, conditional or mode, add to a list, write different names, accumulate (`x` then `x…`), update a name they read (a stack push), or leave code rather than data. Such a key always runs the real body. |
 
+A macro that peels unknown text at a delimiter puts the rest back and splits it again on the next level. Past `limits.rest_splits` (8) splits of one rest at one site, that rest holds no more delimiters, so the walk ends.
+
 ### Learned effects: what a definition's runs teach
 
 A parser's walk over an unknown number forks at each digit, and no digit model ends that. Its runs on other values already show what it leaves, and each is a run of the real code. So a run of a definition that keeps forking stops walking and leaves what those runs left. A call whose operands are known forks nowhere, so it always runs for real. An unknown operand reached through a register, a macro or `\the` is found where it first decides something, with no look at the arguments.
@@ -639,6 +641,7 @@ The `limits:` settings in `satex.yaml` trade precision for a bounded search ([`s
 | [`limits.recursion_depth`](Configuration#configurable-limits-for-the-analysis) | 100 | How deep a macro that calls itself while an `\if` is undecided is followed before the recursion is assumed to end there. |
 | [`limits.loop_heads`](Configuration#configurable-limits-for-the-analysis) | 512 | How many loops one run remembers with their merged states. Past them the oldest is forgotten, and summarized when it comes back. |
 | [`limits.call_summary_after`](Configuration#configurable-limits-for-the-analysis) | 2 | After this many runs of one call at one place, a call with unknown arguments reuses their merged result instead of running again. `\pgfmathparse{\x}` with an unknown `\x` is then one step. 0 never does. |
+| [`limits.rest_splits`](Configuration#configurable-limits-for-the-analysis) | 8 | How often a macro that peels unknown text may split one rest it put back at a delimiter before the rest counts as holding no more. |
 | [`limits.call_learn_after`](Configuration#configurable-limits-for-the-analysis) | 2 | How many runs on different arguments teach what a definition's calls leave, with `analysis.assume_call_learned_effect`. 0 never. |
 | [`limits.call_learn_forks`](Configuration#configurable-limits-for-the-analysis) | 2 | How many undecided choices a run of a definition that was taught may meet before it ends with the learned effect. |
 | [`limits.meaning_set`](Configuration#configurable-limits-for-the-analysis) | 8 | How many possible meanings a name keeps after branches merge. Past them its meaning is unknown. |

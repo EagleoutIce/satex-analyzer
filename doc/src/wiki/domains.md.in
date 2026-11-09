@@ -356,6 +356,8 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 | relate | a name every run left as the same text of its own arguments' typed numbers (slices spelling one whole count as it) gets that text of this call's numbers, not the widened join. `\pgfmath@bgroup@strip` of a new number thus keeps it whole and typed. |
 | never | runs that read on in the file, change a catcode, leave a group, conditional or mode, add to a list, write different names, accumulate (`x` then `x…`), update a name they read (a stack push), or leave code rather than data. Such a key always runs the real body. |
 
+A macro that peels unknown text at a delimiter puts the rest back and splits it again on the next level. Past `limits.rest_splits` (8) splits of one rest at one site, that rest holds no more delimiters, so the walk ends.
+
 ### Learned effects: what a definition's runs teach
 
 A parser's walk over an unknown number forks at each digit, and no digit model ends that. Its runs on other values already show what it leaves, and each is a run of the real code. So a run of a definition that keeps forking stops walking and leaves what those runs left. A call whose operands are known forks nowhere, so it always runs for real. An unknown operand reached through a register, a macro or `\the` is found where it first decides something, with no look at the arguments.

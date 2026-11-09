@@ -1796,6 +1796,7 @@ const PRECISION_LIMITS: &[&str] = &[
     "recursion_depth",
     "loop_heads",
     "call_summary_after",
+    "rest_splits",
     "call_learn_after",
     "call_learn_forks",
     "meaning_set",

@@ -2821,6 +2821,17 @@
           ],
           "x-example": "a huge `\\write` to the `.aux` is read without its labels past this"
         },
+        "rest_splits": {
+          "default": 8,
+          "description": "how often a macro peeling unknown text may split a rest it put back, before that rest holds no more delimiters",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "kvsetkeys walking a key list of unknown text"
+        },
         "save_stack": {
           "default": 2000000,
           "description": "most assignments one group may have to undo, about 200 MB",

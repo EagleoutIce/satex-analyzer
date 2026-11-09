@@ -2502,7 +2502,14 @@ impl Machine<'_> {
         }
         // tex.web § 1193: a `$` that meets another group in math is `off_save`.
         if self.mode.within(Modes::ANY_MATH) {
-            return self.close_group(GroupKind::Math { display: self.mode == Modes::DISPLAY_MATH }, token);
+            let depth = self.env.depth();
+            self.close_group(GroupKind::Math { display: self.mode == Modes::DISPLAY_MATH }, token);
+            // A join lost the formula's group: this `$` closed nothing, and the
+            // `\\par` waiting behind it would ask for it forever.
+            if self.env.depth() == depth && self.mode.within(Modes::ANY_MATH) {
+                self.mode = Modes::HORIZONTAL;
+            }
+            return;
         }
         if self.horizontal_material(token) {
             return;

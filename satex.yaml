@@ -987,6 +987,9 @@ limits:
   call_summary_after: 2  # after this many runs of one call, a call with unknown arguments reuses their result instead of running. 0 = never
     #! affects: precision, speed
     #! example: `\pgfmathparse{\x}` with unknown `\x` reuses what earlier calls did
+  rest_splits: 8  # how often a macro peeling unknown text may split a rest it put back, before that rest holds no more delimiters
+    #! affects: precision, speed
+    #! example: kvsetkeys walking a key list of unknown text
   call_learn_after: 2  # after this many runs on different arguments, what a macro leaves is known to its calls that fork on unknown values. 0 = never
     #! affects: precision, speed
     #! example: two `\pgfmathparse` on numbers teach that `\pgfmathresult` holds a number
