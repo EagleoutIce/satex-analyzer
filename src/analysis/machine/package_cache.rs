@@ -3250,7 +3250,10 @@ impl Machine<'_> {
             let _ = std::fs::remove_file(&temporary);
             return None;
         }
-        crate::util::progress::done(&format!("cached {}", rec.label), rec.started.elapsed());
+        // A load that waits for a nested one is stored in parts: said once, when it ends.
+        if !suspend {
+            crate::util::progress::done(&format!("cached {}", rec.label), rec.started.elapsed());
+        }
         crate::caches::format::save_hashes(dir, self.cfg.limits.cache_size.as_u64());
         crate::caches::format::prune_family(
             dir,

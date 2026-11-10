@@ -2553,11 +2553,14 @@ pub struct Project {
     /// are ignored, like `root = true` in `.editorconfig`. `--config` and
     /// `--set` still apply.
     pub ignore_other_configs: bool,
+    /// The root document, relative to the project directory: what a run starts
+    /// from when none is named, over a `% !TeX root` line and every guess.
+    pub root: Option<PathBuf>,
 }
 
 impl Default for Project {
     fn default() -> Self {
-        Project { frozen: Vec::new(), freeze_other_repositories: true, ignore_other_configs: false }
+        Project { frozen: Vec::new(), freeze_other_repositories: true, ignore_other_configs: false, root: None }
     }
 }
 

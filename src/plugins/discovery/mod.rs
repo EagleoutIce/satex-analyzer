@@ -208,6 +208,10 @@ pub fn scan_with(root: &Path, threads: usize) -> Discovery {
     ] {
         list.sort();
     }
+    // `project.root` in `satex.yaml` names the root over every guess.
+    if let Some(named) = crate::project::config::Config::discover(root).project.root {
+        found.declared_root = Some(root.join(named));
+    }
     if found.build.iter().any(|path| path.ends_with(super::l3build::FILE))
         && let Some(config) = super::l3build::L3build::read(root)
     {
@@ -270,7 +274,11 @@ impl Discovery {
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
         let folder = self.root.file_name().and_then(|s| s.to_str()).unwrap_or_default();
-        let hinted = self.build.iter().any(|b| head_of(b).contains(name)) || head_of(path).contains("% arara:");
+        // Only the project's own build files name its root: a vendored
+        // bundle's `build.lua` names that bundle's examples.
+        let top = |b: &&PathBuf| b.parent().is_some_and(|d| d == self.root || d.as_os_str().is_empty());
+        let hinted =
+            self.build.iter().filter(top).any(|b| head_of(b).contains(name)) || head_of(path).contains("% arara:");
         (!hinted, path.components().count(), stem != "main", stem != folder, path.to_path_buf())
     }
 
@@ -376,6 +384,26 @@ impl Discovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A vendored bundle's `build.lua` names its own examples: only the
+    /// project's top-level build files hint at the root, so the thesis at the
+    /// top wins. `project.root` in `satex.yaml` names it over every guess.
+    #[test]
+    fn a_vendored_build_file_names_no_root() {
+        let dir = std::env::temp_dir().join(format!("satex-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let bundle = dir.join("vendor/bundle");
+        std::fs::create_dir_all(&bundle).unwrap();
+        let doc = "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
+        std::fs::write(dir.join("thesis.tex"), doc).unwrap();
+        std::fs::write(dir.join("other.tex"), doc).unwrap();
+        std::fs::write(bundle.join("example.tex"), doc).unwrap();
+        std::fs::write(bundle.join("build.lua"), "typesetfiles = {\"example.tex\"}\n").unwrap();
+        assert_eq!(scan(&dir).root_document(), Some(dir.join("other.tex")));
+        std::fs::write(dir.join("satex.yaml"), "project:\n  root: thesis.tex\n").unwrap();
+        assert_eq!(scan(&dir).root_document(), Some(dir.join("thesis.tex")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn finds_the_documents_of_a_project() {

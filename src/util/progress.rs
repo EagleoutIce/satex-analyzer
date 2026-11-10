@@ -182,11 +182,7 @@ pub fn bar(
     };
     let run = RUN.load(std::sync::atomic::Ordering::Relaxed);
     let label = clip(&if run > 1 { format!("run {run}: {label}") } else { label.to_string() }, LABEL);
-    let count = |n: u64| match n {
-        1_000_000.. => format!("{:.1}M", n as f64 / 1e6),
-        10_000.. => format!("{:.1}k", n as f64 / 1e3),
-        _ => n.to_string(),
-    };
+    let count = |n: u64| if n < 10_000 { n.to_string() } else { compact(n) };
     let lines = match lines {
         (0, _) => String::new(),
         (all, 0) => format!(" {} lines", count(all)),
@@ -452,4 +448,15 @@ mod tests {
         assert_eq!(super::fit(line, 20), line);
         assert_eq!(super::fit(line, 6), "\x1b[1mabc\x1b[0m \x1b]8;;file:///x\x1b\\de\x1b[0m\x1b]8;;\x1b\\");
     }
+}
+
+/// `n` in thousands (`k`), millions (`M`) or billions (`B`), one decimal: `1.2B`.
+pub fn compact(n: u64) -> String {
+    let (value, unit) = match n {
+        1_000_000_000.. => (n as f64 / 1e9, "B"),
+        1_000_000.. => (n as f64 / 1e6, "M"),
+        1_000.. => (n as f64 / 1e3, "k"),
+        _ => return n.to_string(),
+    };
+    format!("{value:.1}{unit}").replace(&format!(".0{unit}"), unit)
 }

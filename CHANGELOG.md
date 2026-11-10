@@ -41,6 +41,11 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 - `fix` **A penalty in a formula keeps the formula's size.** siunitx 3.6 sets `\nobreak` inside math, so every `\qty` had an unknown width, and pictures around one raised false pgfmath errors. [`da70671`](https://github.com/EagleoutIce/satex-analyzer/commit/da70671)
 - `fix` **No crash when every arm of a choice is refuted.** The run counted its fork off twice. [`bf50fd5`](https://github.com/EagleoutIce/satex-analyzer/commit/bf50fd5)
 
+### CLI
+
+- `fix` **The right root document.** Only the project's top-level build files (`latexmkrc`, `Makefile`, `build.lua`, …) hint at the root: a vendored bundle's `build.lua` no longer makes its example the root. `project.root` in `satex.yaml` names the root over every guess.
+- `fix` **Progress that moves.** The bar redraws every 2048 steps, not on their exact multiples, which a jump over skipped; counts read `1.2B`; a package stored in parts is reported cached once.
+
 ### Lints
 
 - `fix` **No tie asked before a citation that prints a name.** `missing-nonbreaking-space` leaves `\citeauthor`, `\textcite`, `\citet` and their kin alone: they print words of the sentence.

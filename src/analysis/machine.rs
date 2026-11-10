@@ -311,15 +311,7 @@ impl Analysis {
 }
 
 fn compact_count(n: u64) -> String {
-    match n {
-        0..1_000 => n.to_string(),
-        1_000..1_000_000 => format!("{:.1}k", n as f64 / 1e3),
-        1_000_000..1_000_000_000 => format!("{:.1}M", n as f64 / 1e6),
-        _ => format!("{:.1}G", n as f64 / 1e9),
-    }
-    .replace(".0k", "k")
-    .replace(".0M", "M")
-    .replace(".0G", "G")
+    crate::util::progress::compact(n)
 }
 
 /// Everything a run produced: the ending [`Env`] and [`CatcodeTable`], the
@@ -7080,7 +7072,21 @@ will look undefined",
         if self.line_defined.is_some() {
             return;
         }
-        if self.out.steps.is_multiple_of(2048) {
+        // Steps jump by more than one (a replay, a summary): every 2048th
+        // step on, not on its exact multiple, or the bar stands still.
+        thread_local! {
+            static NEXT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        }
+        let steps = self.out.steps;
+        let due = NEXT.with(|next| {
+            let at = next.get();
+            let due = steps >= at || at > steps + 4096;
+            if due {
+                next.set(steps + 2048);
+            }
+            due
+        });
+        if due {
             let probing = self.probe.as_ref().map(|w| w.sym);
             let (label, frame, phase) = match (self.format_progress, self.recording_package()) {
                 (Some(frame), _) => (format!("caching {} kernel", self.out.plugins.engine.as_str()), frame, "format"),
@@ -13543,12 +13549,6 @@ will look undefined",
         mouth.text_since(line, 1).contains(stem.as_str()).then_some(Span { file: mouth.file, line, col: 1 })
     }
 
-    /// A load request for a file the kernel has already loaded: latex.ltx's
-    /// `\@onefilewithoptions` asks `\@ifl@aded\@currext\@currname` and, for
-    /// a file it has, compares the options with `\@onefilewithoptions@clashchk`
-    /// instead of reading it.  The request is a load all the same.
-    fn note_repeated_load(&mut self, sym: Sym, arguments: &[Vec<Token>]) {
-        let is = |args: &[Token], name: &str| matches!(args, [t] if t.cs().is_some_and(|s| self.out.interner.name(s) == name));
     /// Whether the file read now holds `name`'s text from the line of `at`
     /// on: a name package code builds by `\csname` carries the span of the
     /// call that made it, not text of the file. Unknown when the file is no
@@ -13565,6 +13565,12 @@ will look undefined",
             .unwrap_or(true)
     }
 
+    /// A load request for a file the kernel has already loaded: latex.ltx's
+    /// `\@onefilewithoptions` asks `\@ifl@aded\@currext\@currname` and, for
+    /// a file it has, compares the options with `\@onefilewithoptions@clashchk`
+    /// instead of reading it.  The request is a load all the same.
+    fn note_repeated_load(&mut self, sym: Sym, arguments: &[Vec<Token>]) {
+        let is = |args: &[Token], name: &str| matches!(args, [t] if t.cs().is_some_and(|s| self.out.interner.name(s) == name));
         match self.name(sym) {
             "@ifl@aded" if arguments.len() == 2 && is(&arguments[0], "@currext") && is(&arguments[1], "@currname") => {
                 let text = |m: &Self, cs: &str| {
