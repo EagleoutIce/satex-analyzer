@@ -8,5 +8,5 @@
     "moduleResolution": "bundler",
     "lib": ["es2024", "dom", "dom.iterable"]
   },
-  "files": ["dom.d.ts", "lengths.ts", "snapshot.ts", "layers.ts"]
+  "files": ["dom.d.ts", "lengths.ts", "snapshot.ts", "layers.ts", "views.ts"]
 }

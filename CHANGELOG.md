@@ -70,7 +70,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 ### Site and docs
 
 - `fix` **Showcase cards show whole captures.** A card's picture is no longer cut at its bottom or right edge, and on a phone the pictures no longer move up and down while the page scrolls.
-- `feat` **Typed site scripts.** The site's lengths, snapshot and layers scripts are strict TypeScript, built by esbuild for the pages, the VS Code views and `cargo playground --dev`.
+- `feat` **Typed site scripts.** The site's widgets (views, lengths, snapshot, layers) are strict TypeScript, built by esbuild for the pages, the VS Code views and `cargo playground --dev`.
 - `fix` **The benchmark page shows summaries.** Each release runs its benchmark, totals compare the documents both releases ran, and pdfTeX comes first. [`9322ee0`](https://github.com/EagleoutIce/satex-analyzer/commit/9322ee0) [`5e39b65`](https://github.com/EagleoutIce/satex-analyzer/commit/5e39b65) [`4c5e651`](https://github.com/EagleoutIce/satex-analyzer/commit/4c5e651)
 - `fix` **The site deploys again**, with its playground tests running. [`d2c8c13`](https://github.com/EagleoutIce/satex-analyzer/commit/d2c8c13) [`6702be3`](https://github.com/EagleoutIce/satex-analyzer/commit/6702be3) [`7ab2503`](https://github.com/EagleoutIce/satex-analyzer/commit/7ab2503) [`37a5812`](https://github.com/EagleoutIce/satex-analyzer/commit/37a5812)
 

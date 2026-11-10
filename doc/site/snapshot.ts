@@ -10,12 +10,12 @@ declare global {
   /** A call or environment of the source as the server read it. */
   interface SnapNode {
     kind: string; name: string; star: boolean; args: SnapArg[]; range: unknown; text: string; at?: unknown; line?: boolean; drop?: boolean;
-    package?: string | null; body?: string; [field: string]: unknown;
+    package?: { name: string; options: string } | null; body?: string; [field: string]: unknown;
   }
   /** What a view hands the snapshot code: the server's printer and the edit applier. */
   interface SnapCtx {
     print(nodes: SnapNode[]): Promise<{ edits?: unknown[]; notes?: string[] } | undefined>;
-    apply(edits: unknown[], kept?: unknown): void;
+    apply(edits: unknown, kept?: unknown): void;
   }
   interface Window {
     satexSnapshot: {
@@ -25,7 +25,7 @@ declare global {
       text(node: SnapNode, open: string, i?: number): string | undefined;
       keys(open: string, kv?: [string, string | null][]): SnapArg;
       arg(open: string, t: string): SnapArg;
-      call(name: string, args: SnapArg[], at: unknown, package_?: string | null): SnapNode;
+      call(name: string, args: SnapArg[], at: unknown, package_?: { name: string; options: string } | null): SnapNode;
       drop<N extends object>(node: N): N & { drop: true }; same(a: unknown, b: unknown): boolean;
       fill(form: { nodes: SnapNode[]; fills: [string, number, number | null, string | null][] }, vals: Record<string, string>): SnapNode[];
       write(ctx: SnapCtx, nodes: SnapNode[], say: (m: string) => void, kept?: unknown): Promise<void>;
@@ -56,7 +56,7 @@ declare global {
   const keys = (open: string, kv: [string, string | null][] = []): SnapArg => ({ open, inner: null, keys: kv.map(([key, value]) => ({ key, value: value === '' ? null : value })), text: '' });
   const arg = (open: string, t: string): SnapArg => ({ open, inner: null, text: t });
   /** A new call at `at` on a line of its own; `package` loads it when the run does not define it. */
-  const call = (name: string, args: SnapArg[], at: unknown, package_: string | null = null): SnapNode => ({ kind: 'call', name, star: false, args, range: null, text: '', at, line: true, drop: false, package: package_ });
+  const call = (name: string, args: SnapArg[], at: unknown, package_: { name: string; options: string } | null = null): SnapNode => ({ kind: 'call', name, star: false, args, range: null, text: '', at, line: true, drop: false, package: package_ });
   /** `node` to be removed. */
   const drop = <N extends object>(node: N) => ({ ...node, drop: true as const });
   /** Whether two snapshots differ in what the printer writes. */
