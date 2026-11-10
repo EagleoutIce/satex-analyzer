@@ -2212,6 +2212,9 @@ pub struct Lints {
     pub microtype_available: MicrotypeAvailable,
     pub ellipsis_dots: EllipsisDots,
     pub table_rules: TableRules,
+    pub itemize_numbered: ItemizeNumbered,
+    pub itemize_described: ItemizeDescribed,
+    pub package_successor: PackageSuccessor,
     pub clones: Clones,
     /// When an editor asks whether a frequent finding is the project's style.
     pub style_prompt: StylePrompt,
@@ -2285,6 +2288,64 @@ pub struct TableRules {
 impl Default for TableRules {
     fn default() -> TableRules {
         TableRules { rows: 3 }
+    }
+}
+
+/// `lints.itemize-numbered:` in `satex.yaml`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ItemizeNumbered {
+    /// Items a list needs for its hand-written numbers to matter.
+    pub items: usize,
+}
+
+impl Default for ItemizeNumbered {
+    fn default() -> ItemizeNumbered {
+        ItemizeNumbered { items: 2 }
+    }
+}
+
+/// `lints.itemize-described:` in `satex.yaml`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ItemizeDescribed {
+    /// Items a list needs to read as a description.
+    pub items: usize,
+    /// Letters every label shows for it to count as words, not a symbol.
+    pub letters: usize,
+}
+
+impl Default for ItemizeDescribed {
+    fn default() -> ItemizeDescribed {
+        ItemizeDescribed { items: 2, letters: 4 }
+    }
+}
+
+/// `lints.package-successor:` in `satex.yaml`: packages a successor continues.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PackageSuccessor {
+    pub successors: Vec<Successor>,
+}
+
+/// One package, the package that continues it, and what moving changes.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Successor {
+    pub package: String,
+    pub successor: String,
+    pub changes: String,
+}
+
+impl Default for PackageSuccessor {
+    fn default() -> PackageSuccessor {
+        // wrapfig2's manual, § 2 and § 4 (v7.0.2, 2025-03-01).
+        let wrapfig = Successor {
+            package: "wrapfig".into(),
+            successor: "wrapfig2".into(),
+            changes: "`wrapfigure` and `wraptable` keep their arguments; a final `*` makes the line count a correction, and `wraptext` wraps framed text. wrapfig2 needs a LaTeX kernel from 2019 on, loads xparse, xfp, etoolbox, float, xcolor, pict2e and xkeyval, and redefines `\\setfontsize`".into(),
+        };
+        PackageSuccessor { successors: vec![wrapfig] }
     }
 }
 

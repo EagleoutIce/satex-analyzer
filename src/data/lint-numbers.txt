@@ -123,3 +123,6 @@ C052 bibliography-entry-missing-field
 C053 undefined-bibliography-string
 S055 uncited-bibliography-entry
 A003 unread-document
+S056 itemize-numbered
+S057 itemize-described
+S058 package-successor
