@@ -1602,6 +1602,7 @@ impl Machine<'_> {
             dropping_nested: _,
             keep_errors: _,
             approximated: _,
+            blind: _,
             cut_taint: _,
             gap_depth: _,
             // Part of tree root.

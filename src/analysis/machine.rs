@@ -1465,6 +1465,9 @@ pub(crate) struct Scratch {
     pub(crate) arg_site: Option<Span>,
     /// The macro being called goes by a name of unknown spelling.
     pub(crate) family_call: bool,
+    /// The test just read a box whose kind the run does not know: its arms
+    /// rest on contents the run cannot see.
+    pub(crate) blind_box: bool,
     pub(crate) split_rests: HashMap<(Span, Tok), u16>,
     /// The marks of one-of arguments used more than once
     /// ([`Machine::mark_one_choice`]).
@@ -2048,6 +2051,9 @@ pub struct Machine<'a> {
     /// The running path approximated since the paths parted: its errors
     /// are not certain.
     pub(crate) approximated: bool,
+    /// The running path took an arm of a box test whose box it cannot see
+    /// into: a library fault on it is no run (`analysis.assume_compiles`).
+    pub(crate) blind: bool,
     /// Set by a cut ([`crate::analysis::machine::explore`]): the input depth of the
     /// file under the token lists the cut left after its `\unknown`. Those
     /// lists were arguments the dropped code may have taken, so what TeX
@@ -2194,6 +2200,7 @@ struct PathState {
     fi_mark: Option<(Span, usize, bool)>,
     mode_split: Option<(Span, usize)>,
     approximated: bool,
+    blind: bool,
     /// An error a nested drive's path raised: it is the enclosing
     /// command's run's to drop or contain ([`Machine::explore`]).
     dropping: (Option<String>, bool, bool, bool),
@@ -2758,6 +2765,7 @@ impl<'a> Machine<'a> {
             dropping_nested: false,
             keep_errors: false,
             approximated: false,
+            blind: false,
             cut_taint: None,
             gap_depth: None,
             started: std::time::Instant::now(),
@@ -10077,7 +10085,8 @@ will look undefined",
         }
         if self.runaway != Runaway::No {
             let text = format!("Paragraph ended before \\{} was complete", self.name(sym));
-            self.refute_library_fault(&text, span);
+            let unknown_arm = self.blind || self.took_unknown_arm();
+            self.refute_if(unknown_arm, &text, span);
         }
         let runaway = std::mem::take(&mut self.runaway);
         if runaway != Runaway::No {
@@ -12772,6 +12781,7 @@ will look undefined",
             fi_mark: self.fi_mark,
             mode_split: self.mode_split,
             approximated: self.approximated,
+            blind: self.blind,
             dropping: (self.dropping.clone(), self.dropping_possible, self.dropping_breaks, self.dropping_nested),
             cut_taint: self.cut_taint,
             call_recs: self.call_recs.clone(),
@@ -12828,6 +12838,7 @@ will look undefined",
         self.fi_mark = state.fi_mark;
         self.mode_split = state.mode_split;
         self.approximated = state.approximated;
+        self.blind = state.blind;
         (self.dropping, self.dropping_possible, self.dropping_breaks, self.dropping_nested) = state.dropping;
         self.cut_taint = state.cut_taint;
         self.call_recs = state.call_recs;

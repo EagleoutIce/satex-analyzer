@@ -4831,3 +4831,40 @@ fn a_missing_input_file_does_not_end_the_run() {
     );
     assert!(crate::support::defined(&analysis, "Done"), "the run stopped at the prompt");
 }
+
+/// `\LT@get@widths` walks the last row back with `\unskip` and `\lastbox`
+/// until no box is left. satex does not know how many cells the row holds,
+/// so each `\ifhbox` is undecided, and the arm with one box more than the
+/// columns ran `\LT@max@sel` on an empty `\@tempa`. That arm rests on a box
+/// the run cannot see: longtable compiles, so it is no run of the document.
+/// The bug: a plain two-column longtable was a "Paragraph ended" error.
+#[test]
+fn a_longtable_walks_its_row_without_a_runaway() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\\usepackage{longtable}\\begin{document}\n\\begin{longtable}{ll}\na & X \\\\\n\\end{longtable}\n\\gdef\\Done{}\\end{document}",
+    );
+    assert!(defined(&analysis, "Done"));
+    let bad: Vec<_> = codes(&analysis).into_iter().filter(|c| c.contains("error") || c.contains("runaway")).collect();
+    assert!(bad.is_empty(), "{bad:?}");
+}
+
+/// A longtable with `\endfirsthead` and `\endhead` under `array` replays
+/// the saved row (`\LT@save@row`, one `\LT@entry` per column) at each
+/// chunk end. TeX's row has exactly the columns, so `\LT@entry`'s `&`
+/// never comes extra. The bug: satex met `extra-alignment-tab` at
+/// longtable.sty's `\LT@entry`, and a thesis's later `tikzpicture` lost
+/// its group. Open root: the row walk's paths with fewer or more cells.
+#[test]
+fn a_longtable_with_heads_has_no_extra_tab() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\\usepackage{array}\\usepackage{longtable}\\begin{document}\n\\begin{longtable}{ll}\na & B \\\\\n\\endfirsthead\na & B \\\\\n\\endhead\nc & X \\\\\n\\end{longtable}\n\\gdef\\Done{}\\end{document}",
+    );
+    assert!(defined(&analysis, "Done"));
+    assert_eq!(broken_gaps(&analysis), Vec::<String>::new());
+}

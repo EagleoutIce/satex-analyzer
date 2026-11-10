@@ -9,3 +9,5 @@ documents::nested_tcolorbox_of_unknown_height_keeps_its_anchors_local
 documents::pictures_around_a_tcolorbox_keep_their_anchors_local
 # Regressed by the mode split work (2026-11-08), root open: paths and cost after a mode split.
 termination::convergence::tikz_nodes_of_unknown_width
+# Open (2026-11-10, simon agent): longtable row walk leaves rows of other widths; extra-alignment-tab at \LT@entry.
+latex::a_longtable_with_heads_has_no_extra_tab

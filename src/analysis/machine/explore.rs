@@ -472,7 +472,7 @@ impl Machine<'_> {
             }
             self.lone = paths.fork.is_none();
             if self.lone && paths.top {
-                self.approximated = false;
+                (self.approximated, self.blind) = (false, false);
             }
             let (live_before, steps_before) = (paths.parked.len(), self.out.steps);
             let next = if finished { None } else { Some(self.explore(&mut paths, true)) };
@@ -3059,6 +3059,7 @@ impl Machine<'_> {
         }
         x.material |= y.material;
         x.approximated |= y.approximated;
+        x.blind |= y.blind;
         x.ran_off = x.ran_off.or(y.ran_off);
         // An error raised on every joined path is the join's: a path
         // without one is a run, its recovery the other's.

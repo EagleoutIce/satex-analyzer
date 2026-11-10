@@ -2459,9 +2459,11 @@ impl Machine<'_> {
         self.record_with(Step::Condition, by, span, || Some("undecided"));
         self.note_conditional(by, span, None);
         self.note_test_end(span);
+        let blind = std::mem::take(&mut self.scratch.blind_box);
         let Some(arm) = self.branch(by, 2, span) else {
             return self.widen_conditional(by, span, base);
         };
+        self.blind |= blind;
         let holds = arm == 0;
         if let Some((modes, narrow, switch)) = learn {
             // The switch is `\iftrue` where the test holds: names a join
@@ -3106,6 +3108,7 @@ impl Machine<'_> {
                 let n = self.scan_box_number()?;
                 let state = self.box_state(n);
                 if state == crate::engine::mode::BoxState::Unknown {
+                    self.scratch.blind_box = true;
                     return None;
                 }
                 Some(match self.name(self.env.identity(operands[0])) {
