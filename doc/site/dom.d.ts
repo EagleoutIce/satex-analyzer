@@ -9,7 +9,7 @@ interface EventTarget extends Loose {}
 interface Element extends Loose {}
 interface Node { contains(other: EventTarget | null): boolean; data?: string; replaceWith?(...nodes: (Node | string)[]): void; classList?: DOMTokenList }
 // What the pages share through `window`.
-interface Window { satexTypeList: any; SATEX_FILES: any; satexTypes: any; satexCards: any; siteCM: any; siteTex: any; siteDark: any; satexHealth: any; satexKill: any; satexLayers: any; satexStore: any; satexDialogs: any; [name: `satex${string}`]: any }
+interface Window { satexTypeList: any; SATEX_FILES: any; satexTypes: any; satexCards: any; siteCM: any; siteTex: any; siteDark: any; satexHealth: any; satexKill: any; satexStore: any; satexDialogs: any; [name: `satex${string}`]: any }
 interface Event { key?: string; inputType?: string }
 interface Navigator { connection?: { saveData?: boolean; effectiveType?: string } }
 interface Uint8ArrayConstructor { fromBase64?(text: string): Uint8Array }

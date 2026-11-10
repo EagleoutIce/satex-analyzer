@@ -96,6 +96,7 @@ jobs:
           node-version: 22
       - name: Type-check the site's scripts
         run: |
+          npx --yes -p typescript@5.9.3 tsc -p doc/site/tsconfig.json
           npx --yes -p typescript@5.9.3 tsc -p doc/site/jsconfig.json
           npx --yes -p typescript@5.9.3 tsc -p doc/site/jsconfig.worker.json
 

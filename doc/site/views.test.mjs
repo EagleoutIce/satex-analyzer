@@ -1,12 +1,12 @@
 // The view models of views.js that need no page: node doc/site/views.test.mjs
-import { createRequire } from 'node:module';
+import { load } from './load.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 globalThis.self = globalThis;
-createRequire(import.meta.url)('./lengths.js');
-createRequire(import.meta.url)('./snapshot.js');
-createRequire(import.meta.url)('./views.js');
+load('./lengths.js');
+load('./snapshot.js');
+load('./views.js');
 // Tips (tips.json): each stays true, its evidence still stands where it says.
 {
   const tips = JSON.parse(readFileSync(new URL('./tips.json', import.meta.url), 'utf8'));
@@ -29,7 +29,7 @@ createRequire(import.meta.url)('./views.js');
 // Compile in the browser: a build's message names where it looked, and where else it can run.
 {
   globalThis.location = { host: 'example.org' };
-  createRequire(import.meta.url)('./tex.js');
+  load('./tex.js');
   const { advice, parseLog } = self.satexTex;
   const run = (over) => ({ asked: ['tex.example', 'example.org'], dead: [], failed: [], biblatex: false, ...over });
   const missing = "! LaTeX Error: File `x.sty' not found.";
@@ -413,7 +413,7 @@ assert.equal(F.parse('no tree here'), null);
 console.log('ok views.test.mjs');
 
 // the table dialog's model (dialogs.js): merges, CSV/JSON round trips, paste
-createRequire(import.meta.url)('./dialogs.js');
+load('./dialogs.js');
 const T = self.satexDialogs.table;
 const cell = (text) => ({ text, span: 1, spec: '' });
 const grid = () => ({
@@ -551,7 +551,7 @@ console.log('table model: ok');
   globalThis.matchMedia ??= () => ({ matches: false, addEventListener() {} });
   globalThis.location ??= { href: 'http://localhost/' };
   // the page's own wiring fails without a page; the cards are set before it
-  try { createRequire(import.meta.url)('./site.js'); } catch {}
+  try { load('./site.js'); } catch {}
   const { notation, typesetView, withKeys, keyTitle } = self.satexCards;
   const N = (s) => `${s}`, M = (m) => N(`\u0003${m}`);
   // booktabs: the rule after the last row borders that row across every column; a cell of leaders alone is a rule over that column
@@ -655,7 +655,7 @@ console.log('table model: ok');
 
 // the console's hover (cli.js): each word of a command line as the command tree names it
 {
-  createRequire(import.meta.url)('./cli.js');
+  load('./cli.js');
   const { at, card } = self.satexCli;
   const fix = { id: 'fix', long: 'fix', takes_value: false, help: 'Apply the safe fixes' };
   const format = { id: 'format', long: 'format', takes_value: true, possible_values: ['text', 'json'], defaults: ['text'], help: 'Output format' };
@@ -674,7 +674,7 @@ console.log('table model: ok');
   assert.equal(at(tree, 'satex lint --nope', 12), null);
 }
 // the layers of both viewers (layers.js): one catalogue, grouped alike, kept per viewer
-createRequire(import.meta.url)('./layers.js');
+load('./layers.js');
 const layers = self.satexLayers;
 const TYPESET = ['envs', 'keys', 'boxes', 'glue', 'ligs', 'findings', 'maybe'], PDF = ['envs', 'keys', 'glue', 'geometry', 'figures', 'findings', 'bad'];
 assert.deepEqual(layers.groups(TYPESET), [['structure', 'Structure', ['envs', 'keys']], ['layout', 'Layout', ['boxes', 'glue', 'ligs']], ['analysis', 'Analysis', ['findings', 'maybe']]]);
@@ -846,7 +846,7 @@ assert.deepEqual(layers.groups(['grid', 'glue', 'geometry']), [['layout', 'Layou
 
 // the bibliography manager's model (bib.js): bare values, filters, what to fetch, an import's choices
 {
-  createRequire(import.meta.url)('./bib.js');
+  load('./bib.js');
   const { hue, isBare, setField, matches, identify, chosen, joined } = self.satexBib;
   assert.equal(hue('article'), hue('article'), 'a type keeps its colour');
   assert.notEqual(hue('article'), hue('inproceedings'));

@@ -204,11 +204,25 @@ pub fn page(site: &Path, src: Option<&Path>, patch: impl FnOnce(&mut serde_json:
 }
 
 /// With `src` (doc/site): a hashed asset (`style-0123456789ab.css`) read
-/// from its source (`src/style.css`).
+/// from its source (`src/style.css`), a script's `.ts` source transpiled
+/// by esbuild as `build.py` does.
 pub fn source(path: &str, src: &Path) -> Option<(String, Vec<u8>)> {
     let name = path.rsplit('/').next()?;
     let (stem, ext) = name.split_once('.')?;
-    let file: PathBuf = src.join(format!("{}.{ext}", hashed(stem).unwrap_or(stem)));
+    let stem = hashed(stem).unwrap_or(stem);
+    let ts = src.join(format!("{stem}.ts"));
+    if ext == "js" && ts.is_file() {
+        let local = src.join("../../editors/vscode/node_modules/.bin/esbuild");
+        let tool =
+            std::env::var_os("ESBUILD").map_or(if local.is_file() { local } else { "esbuild".into() }, PathBuf::from);
+        let out = std::process::Command::new(tool)
+            .args(["--loader=ts", "--format=iife", "--log-level=error"])
+            .stdin(std::fs::File::open(&ts).ok()?)
+            .output()
+            .ok()?;
+        return out.status.success().then(|| (name.to_string(), out.stdout));
+    }
+    let file: PathBuf = src.join(format!("{stem}.{ext}"));
     (matches!(ext, "css" | "js") && file.is_file()).then(|| (name.to_string(), std::fs::read(file).unwrap_or_default()))
 }
 

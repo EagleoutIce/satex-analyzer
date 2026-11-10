@@ -241,6 +241,17 @@ def esbuild():
     return ESBUILD or None
 
 
+def script(name):
+    """A site script as the browser runs it: the `.js` file, or its `.ts` source transpiled by esbuild (types stripped, one IIFE)."""
+    ts = SITE / (Path(name).stem + ".ts")
+    if not ts.is_file():
+        return (SITE / name).read_bytes()
+    tool = esbuild()
+    if not tool:
+        sys.exit(f"esbuild is needed to transpile {ts.name}")
+    return subprocess.run([tool, "--loader=ts", "--format=iife", "--log-level=error"], input=ts.read_bytes(), capture_output=True, check=True).stdout
+
+
 def minify_js(code, name):
     """(minified code, source map) of a script, or (code, None) without esbuild. The map embeds the source."""
     tool = esbuild()
@@ -1308,7 +1319,7 @@ def browser_tex(out, work, tables, packages):
     with tarfile.open(fileobj=io.BytesIO(tar)) as t:
         terms = b"".join(t.extractfile(f"build/texlive-basic/{n}").read() + b"\n" for n in ("LICENSE.TL", "LICENSE.CTAN"))
     notice = (SITE / "tex-NOTICE.txt").read_bytes().replace(b"__BUILD__", TEX_BUILD.encode())
-    return {"worker": emit(out, "play/tex-worker.js", (SITE / "tex-worker.js").read_bytes()),
+    return {"worker": emit(out, "play/tex-worker.js", script("tex-worker.js")),
             "engine": emit(out, "play/busytex.engine.js", engine), "wasm": emit(out, "play/busytex.wasm", wasm), "wasmSize": len(wasm),
             "core": emit(out, "play/tex-core.bin.gz", packed), "coreSize": len(packed), "files": files,
             "pdfjs": emit(out, "play/pdf.min.mjs", lib), "pdfWorker": emit(out, "play/pdf.worker.min.mjs", worker),
@@ -1742,18 +1753,18 @@ def main():
     assets = {name: emit(out, "favicon.png" if name == "favpng" else f"logo-{name}.svg", data) for name, data in svgs.items()}
     assets |= {
         "css": emit(out, "style.css", (SITE / "style.css").read_bytes()),
-        "sitejs": emit(out, "site.js", (SITE / "site.js").read_bytes()),
-        "clijs": emit(out, "cli.js", (SITE / "cli.js").read_bytes()),
-        "cmjs": emit(out, "codemirror.js", (SITE / "codemirror.js").read_bytes()),
-        "playjs": emit(out, "play/playground.js", (SITE / "playground.js").read_bytes()),
-        "drawjs": emit(out, "draw.js", (SITE / "draw.js").read_bytes()),
-        "lengthsjs": emit(out, "lengths.js", (SITE / "lengths.js").read_bytes()),
-        "snapshotjs": emit(out, "snapshot.js", (SITE / "snapshot.js").read_bytes()),
-        "viewsjs": emit(out, "views.js", (SITE / "views.js").read_bytes()),
-        "texjs": emit(out, "tex.js", (SITE / "tex.js").read_bytes()),
-        "bibjs": emit(out, "bib.js", (SITE / "bib.js").read_bytes()),
-        "dialogsjs": emit(out, "dialogs.js", (SITE / "dialogs.js").read_bytes()),
-        "layersjs": emit(out, "layers.js", (SITE / "layers.js").read_bytes()),
+        "sitejs": emit(out, "site.js", script("site.js")),
+        "clijs": emit(out, "cli.js", script("cli.js")),
+        "cmjs": emit(out, "codemirror.js", script("codemirror.js")),
+        "playjs": emit(out, "play/playground.js", script("playground.js")),
+        "drawjs": emit(out, "draw.js", script("draw.js")),
+        "lengthsjs": emit(out, "lengths.js", script("lengths.js")),
+        "snapshotjs": emit(out, "snapshot.js", script("snapshot.js")),
+        "viewsjs": emit(out, "views.js", script("views.js")),
+        "texjs": emit(out, "tex.js", script("tex.js")),
+        "bibjs": emit(out, "bib.js", script("bib.js")),
+        "dialogsjs": emit(out, "dialogs.js", script("dialogs.js")),
+        "layersjs": emit(out, "layers.js", script("layers.js")),
     }
     table = pages()
     nav = sidebar(table)
@@ -2011,7 +2022,7 @@ def recapture(out):
     spec, img = json.loads((SITE / "showcase/shots.json").read_text()), ROOT / "doc/site/showcase/img"
     keys_file = img / "keys.json"
     keys = json.loads(keys_file.read_text()) if keys_file.exists() else {}
-    ui = b"".join((SITE / f).read_bytes() for f in SHOT_SOURCES)
+    ui = b"".join(script(f) if f.endswith(".js") else (SITE / f).read_bytes() for f in SHOT_SOURCES)
     source = lambda s: next((d / s["file"] for d in (EXAMPLES, ROOT / "samples") if (d / s["file"]).exists()), None)
     key = lambda s: digest(ui + json.dumps(s, sort_keys=True).encode() + source(s).read_bytes())
     # an entry whose example is not there yet (a feature still to come) waits
@@ -2095,7 +2106,7 @@ def offline(out):
     packages = sorted(manifest["packages"], key=lambda p: (p["id"] not in first, p["id"]))
     more = [[e["bundle"], e["size"]] for e in [*manifest["kernels"][1:], *packages]]
     listing = {"core": core, "more": more}
-    version = digest(json.dumps(listing).encode() + page.encode() + (SITE / "sw.js").read_bytes())
+    version = digest(json.dumps(listing).encode() + page.encode() + script("sw.js"))
     (out / "play/offline.json").write_text(json.dumps({"version": version, **listing}))
     (out / "play/sw.js").write_text(minify_script((SITE / "sw.js").read_text().replace("__VERSION__", version)))
     print(f"playground: offline {len(core)} files to start, {len(more)} bundles, {sum(m[1] for m in more) / 2**20:.0f} MiB gz more", file=sys.stderr)
