@@ -2,9 +2,6 @@
 // the VS Code webview. A view is `{plugin, title, sections: [{kind, …}]}`; each kind has a
 // renderer in `RENDER`, and edits go back through `ctx.apply(edits)` as LSP TextEdits.
 export {};
-type Rgb = number[];
-/** A record the server sent (`satex/view` JSON, shaped by the Rust plugins and validated there): its fields are read by name. */
-interface Rec { [field: string]: any }
 /** Where a relative node stands: `dir` its side(s), `of` the node, `dist` a gap, `centers` tikz's `of=` form, `shift` `at (n)`. */
 interface Place { dir: number[]; of: string; centers?: boolean; dist?: string; shift?: boolean; opt?: string | null }
 /** A statement of a picture: code kept as written, a node, a matrix, an edge or a layer mark. Only the fields of its `type` are set.
@@ -42,9 +39,12 @@ interface Env {
 }
 /** The new options and place of a moved node. */
 interface Moved { opts: string[]; place: Place | null; at: boolean; x?: number; y?: number; hint: string }
-interface Edit { range: unknown; newText: string }
-interface WorkEdit { changes: Record<string, Edit[]> }
+type Rgb = number[];
 declare global {
+  /** A record the server sent (`satex/view` JSON, shaped by the Rust plugins and validated there): its fields are read by name. */
+  interface Rec { [field: string]: any }
+  interface Edit { range: unknown; newText: string }
+  interface WorkEdit { changes: Record<string, Edit[]> }
   /** What a host (playground, webview) gives a view. */
   interface ViewCtx extends SnapCtx {
     close?(): void; guard?(dirty: () => boolean): void; markdown(md: string): string; snippet?(file: string, line: number): string | undefined;

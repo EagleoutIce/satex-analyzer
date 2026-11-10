@@ -6,7 +6,7 @@ declare global {
   /** A key of a key list; `value` null is a bare key. */
   interface SnapKey { key: string; value: string | null }
   /** An argument as the server read it. */
-  interface SnapArg { open: string; inner: unknown; text: string; keys?: SnapKey[] }
+  interface SnapArg { open: string; inner: unknown; text: string; keys?: SnapKey[]; bare?: string[] }
   /** A call or environment of the source as the server read it. */
   interface SnapNode {
     kind: string; name: string; star: boolean; args: SnapArg[]; range: unknown; text: string; at?: unknown; line?: boolean; drop?: boolean;
@@ -14,7 +14,7 @@ declare global {
   }
   /** What a view hands the snapshot code: the server's printer and the edit applier. */
   interface SnapCtx {
-    print(nodes: SnapNode[]): Promise<{ edits?: unknown[]; notes?: string[] } | undefined>;
+    print(payload: unknown): Promise<{ edits?: unknown; notes?: string[]; error?: string } | undefined>;
     apply(edits: unknown, kept?: unknown): void;
   }
   interface Window {
@@ -75,7 +75,7 @@ declare global {
     return out;
   }
   /** `nodes` printed by the server (`ctx.print`) and written (`kept`: what a manager shows again); else `say` gets its notes. */
-  const write = (ctx: SnapCtx, nodes: SnapNode[], say: (m: string) => void, kept?: unknown) => ctx.print(nodes).catch((e: Error): { edits?: unknown[]; notes?: string[] } => ({ notes: [String(e?.message ?? e)] }))
-    .then((r) => { if (r?.edits?.length) ctx.apply(r.edits, kept); else say((r?.notes ?? []).join('; ') || 'no changes'); });
+  const write = (ctx: SnapCtx, nodes: SnapNode[], say: (m: string) => void, kept?: unknown) => ctx.print(nodes).catch((e: Error): { edits?: unknown; notes?: string[] } => ({ notes: [String(e?.message ?? e)] }))
+    .then((r) => { if ((r?.edits as unknown[] | undefined)?.length) ctx.apply(r!.edits, kept); else say((r?.notes ?? []).join('; ') || 'no changes'); });
   self.satexSnapshot = { list, get, set, setKeys, text, keys, arg, call, drop, same, fill, write };
 })();
