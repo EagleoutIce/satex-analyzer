@@ -966,6 +966,7 @@
    * The smallest edit that puts relative node `n` near (x, y): its relation at a new distance, a
    * small shift, a relation to the nearest node before it, else `at`. Distances snap to `grid`. A
    * node without a relation gets one to the nearest node before it (`right=1cm of a`), else `at`.
+   * With `env.keep` it never leaves its neighbours: `at` only when no node comes before it.
    * `{opts, place, at, x?, y?, hint}`.
    */
   function relocate(n, x, y, env) {
@@ -1022,6 +1023,8 @@
     if (near && env.exact && !(env.exact(n) && env.exact(near))) return shifted(near);
     const q2 = near && rel(near, centers);
     if (q2) return { ...put(bare, q2.p, q2.extra), hint: hint(q2) };
+    // kept relative (`env.keep`): a shift from the nearest node reaches any place
+    if (near && env.keep) return shifted(near);
     return { opts: bare.filter((o) => o !== n.place?.opt), place: null, at: true, x: sn(x), y: sn(y), hint: `at (${fmt(sn(x))}, ${fmt(sn(y))})` };
   }
   // anchors: the compass points a shape has, as directions
@@ -1150,6 +1153,9 @@
     const pref = { relative: !!s.relative, ...gridPref(s.grid || 0.5) };
     // relative placement: moved and new nodes are written relative to a neighbour, not `at`
     const relMode = () => !!pref.relative;
+    // nodes locked relative (by name, kept per viewer): a drag never writes them `at`
+    const locked = new Set(Array.isArray(pref.locked) ? pref.locked : []);
+    const keep = (n) => relMode() || locked.has(n.name);
     const step = () => pref.step || 0, snapping = () => pref.snap && step() > 0;
     const colors = new Map((R.colors ?? []).map((c) => [c.name, c.hex]));
     const defined = (R.colors ?? []).filter((c) => c.hex).map((c) => ({ name: c.name, rgb: [1, 3, 5].map((i) => parseInt(c.hex.slice(i, i + 2), 16) / 255) }));
@@ -1352,7 +1358,7 @@
     const relate = (n) => {
       const by = new Map(nodes().map((o) => [o.name, o]));
       const earlier = own().filter((o) => !o.cell && o !== n && state.items.indexOf(o) < state.items.indexOf(n));
-      const r = relocate({ ...n, place: null }, n.x, n.y, { ...env(), by, earlier });
+      const r = relocate({ ...n, place: null }, n.x, n.y, { ...env(), by, earlier, keep: true });
       Object.assign(n, r);
       touch(n);
       return r;
@@ -1372,12 +1378,12 @@
         const tx = nx + x - x0, ty = ny + y - y0;
         if (!moved && Math.hypot(x - x0, y - y0) < 0.05) return;
         moved = true;
-        if ((n.place || relMode()) && !m) {
+        if ((n.place || keep(n)) && !m) {
           // relative: the smallest edit of its placement
           const by = new Map(nodes().map((o) => [o.name, o]));
           const earlier = own().filter((o) => state.items.indexOf(o.parent ?? o) < state.items.indexOf(n));
           Object.assign(n, before);
-          const r = relocate(n, tx, ty, { ...env(), by, earlier });
+          const r = relocate(n, tx, ty, { ...env(), by, earlier, keep: keep(n) });
           Object.assign(n, r);
           hint = r.hint;
         } else {
@@ -1608,7 +1614,21 @@
       const handled = (o) => isShape(o) || o === it.place?.opt || tipsOf(o) || SHIFTS.includes(kv(o)[0]) || shapeKeys.has(kv(o)[0]);
       const head = el('div', 'tv-row');
       head.append(el('b', 'tv-muted', esc(it.type === 'edge' ? `${it.from} ${it.arrow === '-' ? '--' : it.arrow} ${it.to}` : `(${it.name})${it.parent ? ` in matrix (${it.parent.name})` : ''}`)));
-      if (it.place) head.append(el('span', 'tv-muted', esc(`placed ${it.place.opt}: drag to change`)));
+      if (it.place) head.append(el('span', 'tv-muted', esc(`placed ${it.place.opt ?? `at (${it.place.of}) shifted`}: drag to change`)));
+      if (it.type !== 'edge' && !it.parent && !it.cell) {
+        // the lock: this node stays relative to a neighbour, whatever the global toggle says
+        const lock = Object.assign(el('label', 'tv-muted', '<input type="checkbox"> keep relative'), { title: 'Drags write this node relative to a neighbour, never at (x,y)' });
+        lock.firstChild.checked = keep(it);
+        lock.firstChild.disabled = relMode();
+        lock.firstChild.onchange = () => {
+          if (lock.firstChild.checked) locked.add(it.name); else locked.delete(it.name);
+          pref.locked = [...locked];
+          saveGrid();
+          if (lock.firstChild.checked && it.at) { relate(it); done(); }
+          fields();
+        };
+        head.append(lock);
+      }
       side.append(head, grid);
       if (it.type === 'edge') {
         row('label', input(it.label, 'label on the arrow', (v) => { it.label = v; }));
@@ -1700,8 +1720,9 @@
     const relRow = el('div', 'tv-row tv-relative');
     const relBox = Object.assign(el('label', 'tv-muted', '<input type="checkbox"> place nodes relative to a neighbour'), { title: 'Moved and new nodes are written as right=1cm of a (positioning), not at (x,y)' });
     relBox.firstChild.checked = relMode();
-    relBox.firstChild.onchange = () => { pref.relative = relBox.firstChild.checked; saveGrid(); };
     const relAll = el('button', 'tv-button', 'Make all relative');
+    // on, the toggle enforces: every node at (x,y) is made relative at once
+    relBox.firstChild.onchange = () => { pref.relative = relBox.firstChild.checked; saveGrid(); if (pref.relative) relAll.onclick(); else fields(); };
     relAll.type = 'button';
     relAll.title = 'Write every node at (x,y) relative to the nearest node before it, distances on the grid';
     relAll.onclick = () => {

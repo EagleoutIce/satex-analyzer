@@ -51,6 +51,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat` **Nodes kept relative.** In the TikZ widget a node can be locked relative to its neighbours: a drag writes a shift from the nearest node, never `at (x,y)`. Turning on relative placement makes every node relative at once.
 - `feat` **One layout for list managers.** The bibliography, glossary and index views share a resizable list and detail, and every entry shows its uses in one search view. Removing an entry moved into a fold.
 - `feat` **Tips in the console bar.** The closed console's line shows tips while the page is visible.
 - `feat` **The draw pad can be resized**, is centred, and its size stays in the link. [`190bf16`](https://github.com/EagleoutIce/satex-analyzer/commit/190bf16)

@@ -293,6 +293,10 @@ assert.equal(back.dir, 'TD');
   assert.deepEqual(D.relocate(nc, 3.2, -2.1, env([na, nb], [na, nb])).opts, ['above right=0.5cm and 2cm of b'], 'borders apart: a diagonal reads any place');
   const free = D.relocate(nd, 3.2, -2.1, env([na, nb], [na, nb]));
   assert.deepEqual([free.opts, free.at, free.x, free.y, free.place], [[], true, 3, -2, null]);
+  // kept relative (a locked node, or the global toggle): where no relation reads the place, a shift from the nearest node does
+  const kept = D.relocate(nd, 3.2, -2.1, { ...env([na, nb], [na, nb]), keep: true });
+  assert.deepEqual([kept.at, kept.place.of, kept.place.shift], [false, 'b', true]);
+  assert.deepEqual(D.relPos({ opts: kept.opts, place: kept.place }, nb, env([])), [3, -2], 'TikZ puts it where it was dropped, on the grid');
   // written back and read back: the node as placed
   Object.assign(nc, D.relocate(nc, 4.1, 0.1, env([na])), { dirty: true });
   const back2 = D.parse(D.emit(rel)).items[2];
