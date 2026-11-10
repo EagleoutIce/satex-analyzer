@@ -49,6 +49,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `fix` **Braced names in the generated bibliography.** A corporate author (`{{GCC Development Team}}`) or a braced particle (`Alexander {von Rhein}`) is split only outside braces, as BibTeX splits it: the `.bbl` satex writes no longer leaves a `\name` argument open.
 - `fix` **No tie asked before a citation that prints a name.** `missing-nonbreaking-space` leaves `\citeauthor`, `\textcite`, `\citet` and their kin alone: they print words of the sentence.
 - `fix` **Month constants with biblatex.** `undefined-bibliography-string` no longer reports `jun`: biber predefines the months, and the style lookup now finds `plain.bst` where BibTeX keeps it.
 - `fix` **Names a package builds per call are no dead definitions.** A sankey node's flags or a citation package's per-key macros were reported at every call.

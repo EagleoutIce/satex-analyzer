@@ -179,18 +179,41 @@ pub fn virtual_bbl(entries: &[&Entry], datalist: Option<&str>, natbib: bool) -> 
 
 /// The `Last, First and …` names of a field, as (family, given).
 pub(crate) fn names(value: &str) -> Vec<(String, String)> {
-    value
-        .split(" and ")
+    // BibTeX splits names and their parts only outside braces: `{GCC
+    // Development Team}` is one family name, `Alexander {von Rhein}` a
+    // first name and one family part.
+    top_split(value, " and ")
+        .into_iter()
         .map(str::trim)
         .filter(|n| !n.is_empty())
-        .map(|n| match n.split_once(',') {
-            Some((last, first)) => (last.trim().to_string(), first.trim().to_string()),
-            None => match n.rsplit_once(' ') {
-                Some((first, last)) => (last.to_string(), first.trim().to_string()),
+        .map(|n| match top_split(n, ",").as_slice() {
+            [last, first, ..] => (last.trim().to_string(), first.trim().to_string()),
+            _ => match top_split(n, " ").last().filter(|last| last.len() < n.len()) {
+                Some(last) => (last.to_string(), n[..n.len() - last.len()].trim().to_string()),
                 None => (n.to_string(), String::new()),
             },
         })
         .collect()
+}
+
+/// `text` split at each `sep` outside braces.
+fn top_split<'a>(text: &'a str, sep: &str) -> Vec<&'a str> {
+    let (mut parts, mut depth, mut start, mut escaped) = (Vec::new(), 0i32, 0, false);
+    for (i, c) in text.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            _ if depth == 0 && i >= start && text[i..].starts_with(sep) => {
+                parts.push(&text[start..i]);
+                start = i + sep.len();
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[start.min(text.len())..]);
+    parts
 }
 
 /// A name part's first letter as TeX reads it: a brace group or an accent
@@ -427,6 +450,23 @@ mod tests {
             ("Donald E. Knuth", "Literate Programming", "1984")
         );
         assert_eq!((e[1].key.as_str(), e[1].title.as_str(), e[1].year.as_str()), ("lamport", "\\LaTeX", "1994"));
+    }
+
+    /// BibTeX splits names only outside braces: a corporate author is one
+    /// family name and a braced particle stays with it. Splitting inside
+    /// left `\\name` arguments unbalanced, so the `.bbl` never closed them.
+    #[test]
+    fn braced_names_split_outside_braces() {
+        let pair = |f: &str, g: &str| (f.to_string(), g.to_string());
+        assert_eq!(names("{GCC Development Team}"), [pair("{GCC Development Team}", "")]);
+        assert_eq!(
+            names("Alexander {von Rhein} and Th{\\\"u}m, Thomas"),
+            [pair("{von Rhein}", "Alexander"), pair("Th{\\\"u}m", "Thomas")]
+        );
+        assert_eq!(names("{Smith and Sons}, Ltd"), [pair("{Smith and Sons}", "Ltd")]);
+        let e = entries("@misc{k, author = {{GCC Development Team}}, title = {T}}").remove(0);
+        let bbl = biber_bbl(&[&e], "x");
+        assert_eq!(bbl.matches('{').count(), bbl.matches('}').count(), "{bbl}");
     }
 
     #[test]
