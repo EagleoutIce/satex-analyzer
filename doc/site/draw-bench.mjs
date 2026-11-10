@@ -1,17 +1,19 @@
-// Benchmark for the /draw recogniser (doc/site/draw.js).
+// Benchmark for the /draw recogniser (doc/site/draw.ts).
 // Run:  node doc/site/draw-bench.mjs   (from the repo root; site served on 127.0.0.1:8000)
 // Needs playwright-core (PW=dir with node_modules) and a Chromium (CHROME=path).
 // Env: ONLY=a,b  run these shapes | TOP=n print top n rows | SWEEP=file.json {label: DRAW overrides}
-//      PKGS=all every package on | PORT=8000 | JS=path of draw.js to inject (default doc/site/draw.js) | CSS=style.css to serve | OUT=results json
+//      PKGS=all every package on | PORT=8000 | JS=path of a transpiled draw.js to inject (default: doc/site/draw.ts transpiled) | CSS=style.css to serve | OUT=results json
 // Output: one line per shape, a summary (top1/3/5/10, median rank, per category),
 //         and target/scratch/draw-bench.json for comparing runs.
 import fs from 'fs';
+import { execFileSync } from 'child_process';
 const HOME = process.env.HOME;
 const { chromium } = await import(
   (process.env.PW ?? HOME + '/.local/share/pw/node_modules') + '/playwright-core/index.mjs'
 );
 const only = process.env.ONLY, outFile = process.env.OUT ?? 'target/scratch/draw-bench.json';
-const js = fs.readFileSync(process.env.JS ?? 'doc/site/draw.js', 'utf8');
+const js = process.env.JS ? fs.readFileSync(process.env.JS, 'utf8')
+  : execFileSync(process.env.ESBUILD || 'esbuild', ['--loader=ts', '--format=iife', '--log-level=error'], { input: fs.readFileSync('doc/site/draw.ts') }).toString();
 const css = fs.readFileSync(process.env.CSS ?? 'doc/site/style.css', 'utf8') +
   (fs.existsSync('target/scratch/draw-extra.css')
     ? fs.readFileSync('target/scratch/draw-extra.css', 'utf8')
@@ -848,7 +850,7 @@ if (n) {
   fs.writeFileSync(
     outFile,
     JSON.stringify(
-      { date: new Date().toISOString(), js: process.env.JS ?? 'doc/site/draw.js', results },
+      { date: new Date().toISOString(), js: process.env.JS ?? 'doc/site/draw.ts', results },
       null,
       1,
     ),

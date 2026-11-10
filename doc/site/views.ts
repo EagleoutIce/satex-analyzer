@@ -378,7 +378,7 @@ const satexViews = (() => {
           lab.append(i);
           (d.more ? fold! : f).append(lab);
           // the server's checks of the field (dialogs.js `check`), the message under it
-          return [d, i, d.choices ? null : self.satexDialogs.guard(i, d.check ?? ['balanced'], d.taken ?? [])];
+          return [d, i, d.choices ? null : self.satexDialogs.guard(i, d.check ?? ['balanced'], d.taken ?? [])] as [Rec, HTMLInputElement, ReturnType<Window['satexDialogs']['guard']> | null];
         });
         if (fold) f.append(fold);
         if (note) f.append(el('div', 'tv-text tv-note', `<p>${esc(note)}</p>`));
@@ -1640,7 +1640,7 @@ const satexViews = (() => {
       const more = [...picStyles(), ...docStyles.filter((d: Rec) => !d.deleted)].filter((x) => !have.has(x.name)).map((x) => ({ name: x.name, type: 'flag' }));
       return [...(R.keys ?? []), ...more];
     };
-    const props = (o: Rec) => D?.properties?.({ keys: keyList(), colors: [...colors.keys()], nodes: nodes().map((n) => n.name), css, commit: done, ...o }) ?? el('span');
+    const props = (o: { get: () => string[]; set: (l: string[]) => void; skip?: (o: string) => unknown; label?: string }) => D?.properties?.({ keys: keyList() as PropKey[], colors: [...colors.keys()], nodes: nodes().map((n) => n.name), css, commit: done, ...o }) ?? el('span');
     // the selection's inspector: a node's text and shape, an arrow's label, tips and anchors, the
     // layer of either; every other key in the property editor
     function fields() {

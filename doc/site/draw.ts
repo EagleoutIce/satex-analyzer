@@ -4,6 +4,38 @@
 // names in force as [name, package] pairs, `pick(name, package, use)` what a result's button does; with
 // `usepackage`, a second button also hands it the `\\usepackage{…}` line (`use`) a name not loaded needs.
 // Without a `document` (the page alone) nothing is "not loaded".
+export {};
+type Canvas = HTMLCanvasElement;
+/** The outline features of a drawing or glyph: outline points, their distance map, log aspect, dots, centre-line cells, their distances,
+ * their spread, the outline hash and the holes (count, centre x, y, solidity). */
+type Feat = [Uint16Array, Uint8Array, number, number, Uint16Array, Uint8Array, Float32Array, number, number[]];
+/** A bitmap symbol: size and packed bits. */
+interface Bitmap { w: number; h: number; bits: Uint8Array }
+/** A symbol of the table (build.py `symbols`): its character, name, class, package and bitmap when no font sets it. */
+interface Sym {
+  ch: string; code: number; name: string; cls: string; about?: string; pkg: string; i: number; cat?: string; bm: number; bitmap?: Bitmap; font: number; text: string;
+  url?: string; keys?: { key: string; stem: string; plain: boolean };
+}
+interface SymFont { family: string; url?: string; ready: null; bitmaps?: boolean; face?: Promise<FontFace> }
+interface SymTable { weight?: Record<string, number>; bitmaps: Bitmap[]; blanks: number; categories: string[]; fonts: SymFont[]; rows: Sym[]; error?: string; setters?: Map<string, number> }
+/** A ranked row: the symbol, its place in the table, the row it follows and its score. */
+interface Ranked { s: Sym; i: number; head: number; score: number }
+/** The latest search: what the filters left, how it scored, and the matcher's answer. */
+interface Current {
+  id: number; table: SymTable; wanted: Sym[]; ranked: Map<Sym, number>; source: Map<string, string>; force: Set<string>; words: string[]; f: Feat | null;
+  byCh?: Map<string, Sym[]>; shown?: boolean;
+}
+interface Answer { id: number; idx: Int32Array; score: Float32Array; head: Int32Array; pending: boolean }
+/** A listed row for grouping look-alikes. */
+interface LookRow { i: number; key: string; stem: string; plain: boolean; l: Feat | null | undefined; order: number }
+/** A match request, its share of the rows as typed arrays. */
+interface Req { id: number; want: Int32Array; mul: Float32Array; add: Float32Array; f: Feat; flips?: Feat[]; fresh?: boolean }
+/** What the page gives the matcher. */
+interface DrawOptions {
+  root: HTMLElement; base: string; symbols: string; inForce?: () => Promise<string[][]>; pick?: (name: string, pkg: string | null, use?: string) => void;
+  label?: string; usepackage?: boolean; document?: boolean;
+}
+declare global { interface Window { satexDraw: (o: DrawOptions) => Rec } }
 self.satexDraw = (
   {
     root,
@@ -14,11 +46,11 @@ self.satexDraw = (
     label = 'Insert',
     usepackage = false,
     document: doc = true,
-  },
+  }: DrawOptions,
 ) => {
-  const esc = (s) =>
-    String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : /(s|ch)$/.test(w) ? 'es' : 's'}`;
+  const esc = (s: unknown) =>
+    String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c as '&']);
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : /(s|ch)$/.test(w) ? 'es' : 's'}`;
   // The candidates (build.py `symbols`) are unicode-math's table and the icon packages' commands, each
   // drawn in the font that sets it. The drawing and each glyph are cut to their ink, scaled into one
   // square with their aspect kept, and reduced to their outline: a filled icon and a drawn outline
@@ -76,13 +108,14 @@ self.satexDraw = (
     more: 30,
     pad: [96, 16],
   };
-  const $ = (id) => root.querySelector(`#${id}`);
-  const pad = $('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true });
-  let drawTable = null, drawn = false;
+  type Tune = typeof DRAW;
+  const $ = <T extends HTMLElement = HTMLElement>(id: string) => root.querySelector<T>(`#${id}`)!;
+  const pad = $<HTMLCanvasElement>('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true })!;
+  let drawTable: Promise<SymTable> | null = null, drawn = false;
   // the filters and the packages chosen apart from the default, kept in the address (`?kind=symbol&pkgs=-twemojis+emoji`)
   // so a link or a reload brings them back, and in this browser for the next visit
   const query = new URLSearchParams(location.search);
-  const drawFilter = {
+  const drawFilter: Record<string, any> = {
     from: 'all',
     kind: query.get('kind') ?? '',
     mode: query.get('mode') ?? '',
@@ -93,9 +126,9 @@ self.satexDraw = (
   const zoomApply = () => root.style.setProperty('--draw-zoom', String(Math.min(3, Math.max(0.5, drawFilter.zoom))));
   zoomApply();
   // the popup's pad: a width in px (`?drawpad=240`, so Copy link keeps it), centred in its box, resized by the grip
-  const grip = $('draw-size');
+  const grip = root.querySelector<HTMLElement>('#draw-size');
   if (grip) {
-    const box = pad.closest('.draw-box'), [lo, step] = DRAW.pad, stacked = () => getComputedStyle(box).flexDirection === 'column';
+    const box = pad.closest('.draw-box')!, [lo, step] = DRAW.pad, stacked = () => getComputedStyle(box).flexDirection === 'column';
     const room = () => { const s = getComputedStyle(box); return box.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight); };
     const hi = () => Math.max(lo, Math.floor(stacked() ? room() : room() * 0.6));
     const sync = () => {
@@ -107,7 +140,7 @@ self.satexDraw = (
       if (drawFilter.pad) q.set('drawpad', String(drawFilter.pad)); else q.delete('drawpad');
       history.replaceState(null, '', `${location.pathname}${q.size ? `?${q}` : ''}${location.hash}`);
     };
-    const set = (w) => {
+    const set = (w: number) => {
       drawFilter.pad = w ? Math.round(Math.min(hi(), Math.max(lo, w))) : 0;
       if (drawFilter.pad) root.style.setProperty('--draw-w', `${drawFilter.pad}px`); else root.style.removeProperty('--draw-w');
       sync(); keep();
@@ -123,19 +156,19 @@ self.satexDraw = (
     };
     grip.onkeydown = (e) => {
       const w = pad.getBoundingClientRect().width, n = step * (e.shiftKey ? 3 : 1);
-      const to = { ArrowRight: w + n, ArrowUp: w + n, ArrowLeft: w - n, ArrowDown: w - n, Home: lo, End: hi() }[e.key];
+      const to = ({ ArrowRight: w + n, ArrowUp: w + n, ArrowLeft: w - n, ArrowDown: w - n, Home: lo, End: hi() } as Record<string, number>)[e.key];
       if (to == null && e.key !== 'Enter') return;
-      e.preventDefault(); set(e.key === 'Enter' ? 0 : to);
+      e.preventDefault(); set(e.key === 'Enter' ? 0 : to!);
     };
   }
-  let chosen = {};
+  let chosen: Record<string, boolean> = {};
   try {
     chosen = JSON.parse(localStorage.getItem('satex-draw-pkgs') ?? '{}');
   } catch {}
-  for (const m of (query.get('pkgs') ?? '').matchAll(/([+-])([^+-]+)/g)) chosen[m[2]] = m[1] === '+';
+  for (const m of (query.get('pkgs') ?? '').matchAll(/([+-])([^+-]+)/g)) chosen[m[2]!] = m[1] === '+';
   // a package only pictures stand for starts off too (its fonts set nothing to match crisply), unless DRAW.on names it or it is relied on (DRAW.trusted)
-  const pictured = new Set();
-  const used = (p) => chosen[p] ?? (DRAW.on.includes(p) || !(DRAW.off.includes(p) || pictured.has(p)));
+  const pictured = new Set<string>();
+  const used = (p: string) => chosen[p] ?? (DRAW.on.includes(p) || !(DRAW.off.includes(p) || pictured.has(p)));
   const remember = () => {
     const q = new URLSearchParams(location.search);
     for (const k of ['kind', 'mode', 'shape']) {
@@ -154,7 +187,7 @@ self.satexDraw = (
       localStorage.setItem('satex-draw-pkgs', JSON.stringify(chosen));
     } catch {}
   };
-  const choose = (ps, on) => {
+  const choose = (ps: string[], on: boolean) => {
     for (const p of ps) chosen[p] = on;
     remember();
   };
@@ -163,12 +196,12 @@ self.satexDraw = (
    * `fontSet` takes the loaded fonts, `pause()` yields between batches, `now()` is the clock.
    * Messages in: `init` (the fonts, rows and bitmaps), `match` (a drawing's features and the rows to rank),
    * `tune` (new settings). Messages out: `ranked`, best first, again after each batch of glyphs measured. */
-  const engine = (DRAW, mk, post, fontSet, pause, now) => {
-    const scratch = {};
+  const engine = (DRAW: Tune, mk: (w: number, h: number) => Canvas, post: (m: Rec, transfer?: Transferable[]) => void, fontSet: FontFaceSet, pause: () => Promise<void>, now: () => number) => {
+    const scratch: { small?: Canvas; whole?: Canvas; glyph?: Canvas } = {};
     /** The ink of `canvas` as [outline points, distance map, aspect, dots], or null without ink. */
-    function features(canvas) {
+    function features(canvas: Canvas): Feat | null {
       const { width: w, height: h } = canvas,
-        data = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+        data = canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, w, h).data;
       let x0 = w, y0 = h, x1 = -1, y1 = -1;
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
@@ -183,14 +216,14 @@ self.satexDraw = (
       if (x1 < 0) return null;
       const n = DRAW.side,
         small = (scratch.small ??= mk(n, n)),
-        c = small.getContext('2d', { willReadFrequently: true });
+        c = small.getContext('2d', { willReadFrequently: true })!;
       c.clearRect(0, 0, n, n);
       const bw = x1 - x0 + 1, bh = y1 - y0 + 1, k = (n - 4) / Math.max(bw, bh);
       c.drawImage(canvas, x0, y0, bw, bh, (n - bw * k) / 2, (n - bh * k) / 2, bw * k, bh * k);
       const px = c.getImageData(0, 0, n, n).data, ink = new Uint8Array(n * n);
       for (let i = 0; i < n * n; i++) ink[i] = px[i * 4 + 3] > 64 ? 1 : 0;
-      const on = (x, y) => x >= 0 && y >= 0 && x < n && y < n && ink[y * n + x];
-      const points = [];
+      const on = (x: number, y: number) => x >= 0 && y >= 0 && x < n && y < n && ink[y * n + x];
+      const points: number[] = [];
       for (let y = 0; y < n; y++) {
         for (let x = 0; x < n; x++) {
           if (on(x, y) && !(on(x - 1, y) && on(x + 1, y) && on(x, y - 1) && on(x, y + 1))) {
@@ -199,7 +232,7 @@ self.satexDraw = (
         }
       }
       // dots by their size on the whole canvas, not after the cut: a glyph of two dots (`¨`) keeps them
-      const whole = (scratch.whole ??= mk(n, n)), wc = whole.getContext('2d', { willReadFrequently: true });
+      const whole = (scratch.whole ??= mk(n, n)), wc = whole.getContext('2d', { willReadFrequently: true })!;
       wc.clearRect(0, 0, n, n);
       wc.drawImage(canvas, 0, 0, w, h, 0, 0, n, n);
       const wp = wc.getImageData(0, 0, n, n).data, wink = new Uint8Array(n * n);
@@ -218,11 +251,11 @@ self.satexDraw = (
         distances(bones, n),
         spread(bones, n),
         hash >>> 0,
-        [...DRAW.close.map((r) => holes(px, n, r)).reduce((a, b) => (b[0] > a[0] ? b : a)), solidity(ink, bw * k * bh * k)],
+        [...DRAW.close.map((r) => holes(px, n, r)).reduce((a, b) => (b[0]! > a[0]! ? b : a)), solidity(ink, bw * k * bh * k)],
       ];
     }
     /** How much of its box the ink fills, 0 to 1: a drawn outline little, a filled shape most. */
-    function solidity(ink, area) {
+    function solidity(ink: Uint8Array, area: number) {
       let on = 0;
       for (const v of ink) on += v;
       return on / Math.max(1, area);
@@ -230,8 +263,8 @@ self.satexDraw = (
     /** The background the outside does not reach (a loop's inside, `o`, the bowl of `p`): its pieces of at least DRAW.hole cells
      * as [count, centre x, centre y], a piece under DRAW.big cells counting as its share of one (an eye of a skull less than a bowl), the centre in shares of the square. Faint ink counts, so a thin drawn loop stays closed,
      * and the ink grows by `r` cells first, so a loop drawn with a gap closes too (of DRAW.close's growths, the one with the most holes counts). */
-    function holes(px, n, r) {
-      const at = new Uint8Array(n * n), stack = [];
+    function holes(px: Uint8ClampedArray, n: number, r: number): number[] {
+      const at = new Uint8Array(n * n), stack: number[] = [];
       for (let i = 0; i < n * n; i++) {
         if (px[i * 4 + 3] > 16) {
           const x = i % n, y = (i - x) / n;
@@ -240,12 +273,12 @@ self.satexDraw = (
           }
         }
       }
-      const fill = (s) => {
+      const fill = (s: number) => {
         let c = 0, sx = 0, sy = 0;
         stack.push(s);
         at[s] = 1;
         while (stack.length) {
-          const i = stack.pop(), x = i % n, y = (i - x) / n;
+          const i = stack.pop()!, x = i % n, y = (i - x) / n;
           c++;
           sx += x;
           sy += y;
@@ -283,8 +316,8 @@ self.satexDraw = (
       return area ? [count, sx / area / n, sy / area / n] : [0, 0.5, 0.5];
     }
     /** The centre lines of `ink` (Zhang-Suen thinning) as cell indices: a thick stroke and a thin one have the same. */
-    function thin(ink, n) {
-      const a = Uint8Array.from(ink), drop = [];
+    function thin(ink: Uint8Array, n: number) {
+      const a = Uint8Array.from(ink), drop: number[] = [];
       for (let again = true; again;) {
         again = false;
         for (let pass = 0; pass < 2; pass++) {
@@ -302,8 +335,8 @@ self.satexDraw = (
                 q6 = a[i - 1],
                 q7 = a[i - n - 1];
               const b = q0 + q1 + q2 + q3 + q4 + q5 + q6 + q7;
-              const cross = (!q0 && q1) + (!q1 && q2) + (!q2 && q3) + (!q3 && q4) + (!q4 && q5) +
-                (!q5 && q6) + (!q6 && q7) + (!q7 && q0);
+              const cross = +(!q0 && !!q1) + +(!q1 && !!q2) + +(!q2 && !!q3) + +(!q3 && !!q4) + +(!q4 && !!q5) +
+                +(!q5 && !!q6) + +(!q6 && !!q7) + +(!q7 && !!q0);
               if (b < 2 || b > 6 || cross !== 1) continue;
               if (
                 pass ? q0 * q2 * q6 === 0 && q0 * q4 * q6 === 0 : q0 * q2 * q4 === 0 && q2 * q4 * q6 === 0
@@ -314,13 +347,13 @@ self.satexDraw = (
           if (drop.length) again = true;
         }
       }
-      const out = [];
+      const out: number[] = [];
       for (let i = 0; i < n * n; i++) if (a[i]) out.push(i);
       return Uint16Array.from(out);
     }
     /** Where the centre lines lie and which way they run, coarsely: their cells spread bilinearly over a DRAW.grid square grid,
      * each into the DRAW.bins directions of a line (from its neighbours), as shares of the whole. */
-    function spread(bones, n) {
+    function spread(bones: Uint16Array, n: number) {
       const g = DRAW.grid,
         t = DRAW.bins,
         d = new Float32Array(g * g * t),
@@ -363,10 +396,10 @@ self.satexDraw = (
       return d;
     }
     /** Each cell's distance to the nearest point, by two chamfer passes (3 along, 4 across). */
-    function distances(points, n) {
+    function distances(points: Iterable<number>, n: number) {
       const d = new Uint8Array(n * n).fill(255);
       for (const p of points) d[p] = 0;
-      const relax = (i, j, cost) => {
+      const relax = (i: number, j: number, cost: number) => {
         if (d[j] + cost < d[i]) d[i] = d[j] + cost;
       };
       for (let y = 0; y < n; y++) {
@@ -394,15 +427,15 @@ self.satexDraw = (
       return d;
     }
     /** The ink's pieces no wider or taller than `DRAW.dot` cells of the whole canvas: an `x` with two dots has two. */
-    function dots(ink, n) {
+    function dots(ink: Uint8Array, n: number) {
       const seen = new Uint8Array(n * n);
       let count = 0;
       for (let s = 0; s < n * n; s++) {
         if (!ink[s] || seen[s]) continue;
-        const stack = [s], box = [n, n, 0, 0];
+        const stack = [s], box = [n, n, 0, 0] as [number, number, number, number];
         seen[s] = 1;
         while (stack.length) {
-          const i = stack.pop(), x = i % n, y = (i - x) / n;
+          const i = stack.pop()!, x = i % n, y = (i - x) / n;
           box[0] = Math.min(box[0], x);
           box[1] = Math.min(box[1], y);
           box[2] = Math.max(box[2], x);
@@ -422,63 +455,63 @@ self.satexDraw = (
       return count;
     }
     /** How far apart two centre-line spreads are: half the sum of their differences, 0 to 1. */
-    function shape(a, b) {
+    function shape(a: Float32Array, b: Float32Array) {
       let share = 0;
-      for (let i = 0; i < a.length; i++) share += Math.abs(a[i] - b[i]);
+      for (let i = 0; i < a.length; i++) share += Math.abs(a[i]! - b[i]!);
       return share / 2;
     }
     /** A cheap bound on `apart`, to pick the shapes worth measuring in full: how far the spreads and the aspects are. */
-    function roughly(a, b) {
+    function roughly(a: Feat, b: Feat) {
       return shape(a[6], b[6]) + DRAW.aspect * Math.abs(a[2] - b[2]) + loops(a[8], b[8]) / DRAW.orient;
     }
     /** How far apart two shapes' features are: 0 for the same outline. */
-    function apart([pa, da, aa, ka, sa, ea, ha, , oa], [pb, db, ab, kb, sb, eb, hb, , ob]) {
+    function apart([pa, da, aa, ka, sa, ea, ha, , oa]: Feat, [pb, db, ab, kb, sb, eb, hb, , ob]: Feat) {
       let ab_ = 0, ba = 0, sab = 0, sba = 0;
-      for (const p of pa) ab_ += db[p];
-      for (const p of pb) ba += da[p];
-      for (const p of sa) sab += eb[p];
-      for (const p of sb) sba += ea[p];
+      for (const p of pa) ab_ += db[p]!;
+      for (const p of pb) ba += da[p]!;
+      for (const p of sa) sab += eb[p]!;
+      for (const p of sb) sba += ea[p]!;
       const edge = DRAW.outline * (ab_ / pa.length + ba / pb.length) / 3,
         bone = DRAW.stroke * (sab / sa.length + sba / sb.length) / 3;
       return (DRAW.either ? Math.min(edge, bone) : edge + bone) + DRAW.aspect * Math.abs(aa - ab) +
         DRAW.dots * Math.min(3, Math.abs(ka - kb)) + DRAW.orient * shape(ha, hb) + loops(oa, ob);
     }
     /** How far apart two shapes' holes are: their numbers (relatively: 0 or 1 hole differ more than 3 or 4) and where they sit when both have some. */
-    function loops(a, b) {
+    function loops(a: number[], b: number[]) {
       // a filled shape (a flag, a black square) shows no hole its drawn outline would: its holes say nothing
       if (a[3] > DRAW.solid || b[3] > DRAW.solid) return 0;
       return DRAW.holes * Math.abs(a[0] - b[0]) / Math.max(1, a[0], b[0]) +
         (a[0] && b[0] ? DRAW.where * Math.hypot(a[1] - b[1], a[2] - b[2]) : 0);
     }
     /** A bitmap symbol as a canvas: its pixels in the alpha channel, at its own size. */
-    function bitmapCanvas({ w, h, bits }) {
-      const c = mk(w, h), g = c.getContext('2d', { willReadFrequently: true }), img = g.createImageData(w, h);
-      for (let i = 0; i < w * h; i++) img.data[i * 4 + 3] = (bits[i >> 3] >> (7 - (i & 7))) & 1 ? 255 : 0;
+    function bitmapCanvas({ w, h, bits }: Bitmap) {
+      const c = mk(w, h), g = c.getContext('2d', { willReadFrequently: true })!, img = g.createImageData(w, h);
+      for (let i = 0; i < w * h; i++) img.data[i * 4 + 3] = (bits[i >> 3]! >> (7 - (i & 7))) & 1 ? 255 : 0;
       g.putImageData(img, 0, 0);
       return c;
     }
-    let fonts = [],
-      rows = [],
-      bitmaps = [],
-      feats = [],
-      req = null,
+    let fonts: { family: string; url: string | null }[] = [],
+      rows: [number, string, number][] = [],
+      bitmaps: Bitmap[] = [],
+      feats: (Feat | null | undefined)[] = [],
+      req: Req | null = null,
       deadline = 0,
       busy = false,
       sent = 0,
       spent = 0,
       part = [0, 1];
-    const faces = [];
+    const faces: Promise<unknown>[] = [];
     const face = (
-      i,
-    ) => (faces[i] ??= fonts[i].url == null
+      i: number,
+    ) => (faces[i] ??= fonts[i]!.url == null
       ? Promise.resolve()
-      : new FontFace(fonts[i].family, `url(${fonts[i].url})`).load().then((f) => {
+      : new FontFace(fonts[i]!.family, `url(${fonts[i]!.url})`).load().then((f) => {
         fontSet.add(f);
       }));
     /** A glyph drawn and measured: `ch` in the font `family`, or the bitmap `b` set as big as a font's glyph is, its longer side at DRAW.bitmap of the canvas. */
-    function sample(family, ch, b) {
+    function sample(family: string, ch: string, b?: Bitmap) {
       const g = (scratch.glyph ??= mk(DRAW.glyph, DRAW.glyph)),
-        c = g.getContext('2d', { willReadFrequently: true });
+        c = g.getContext('2d', { willReadFrequently: true })!;
       c.clearRect(0, 0, g.width, g.height);
       if (b) {
         const k = DRAW.glyph * DRAW.bitmap / Math.max(b.w, b.h);
@@ -491,24 +524,24 @@ self.satexDraw = (
       return features(g);
     }
     /** The glyphs of `list` (row numbers, all of one font) measured. */
-    function measure(i, list) {
-      for (const j of list) feats[j] = sample(fonts[i].family, rows[j][1], bitmaps[rows[j][2]]);
+    function measure(i: number, list: number[]) {
+      for (const j of list) feats[j] = sample(fonts[i]!.family, rows[j]![1], bitmaps[rows[j]![2]]);
     }
     /** The wanted rows measured so far, ranked: `score` is the distance times the row's `mul` plus its `add`; a picture seen twice points at its first. */
-    function rank(done) {
+    function rank(done: boolean) {
       const t = (sent = now());
-      const { id, want, mul, add } = req;
-      let pool = [];
+      const { id, want, mul, add } = req!;
+      let pool: number[] = [];
       for (let k = 0; k < want.length; k++) if (feats[want[k]]) pool.push(k);
       if (pool.length > DRAW.shortlist) {
-        const bounds = pool.map((k) => [k, closest(feats[want[k]], roughly, DRAW.flip / DRAW.orient)]);
+        const bounds = pool.map((k): [number, number] => [k, closest(feats[want[k]!]!, roughly, DRAW.flip / DRAW.orient)]);
         pool = bounds.sort((a, b) => a[1] - b[1]).slice(0, DRAW.shortlist).map((a) => a[0]);
       }
-      const best = pool.map((k) => [want[k], closest(feats[want[k]], apart, DRAW.flip) * mul[k] + add[k]]);
+      const best = pool.map((k): [number, number] => [want[k]!, closest(feats[want[k]!]!, apart, DRAW.flip) * mul[k]! + add[k]!]);
       best.sort((a, b) => a[1] - b[1]);
       const first = new Map(), head = new Int32Array(best.length);
       best.forEach(([i], k) => {
-        head[k] = first.get(feats[i][7]) ?? first.set(feats[i][7], i).get(feats[i][7]);
+        head[k] = first.get(feats[i]![7]) ?? first.set(feats[i]![7], i).get(feats[i]![7])!;
       });
       const idx = Int32Array.from(best, (b) => b[0]), score = Float32Array.from(best, (b) => b[1]);
       post({
@@ -517,15 +550,15 @@ self.satexDraw = (
         idx,
         score,
         head,
-        pending: !done && now() < deadline && want.some((i) => feats[i] === undefined),
+        pending: !done && now() < deadline && want.some((i: number) => feats[i] === undefined),
       }, [idx.buffer, score.buffer, head.buffer]);
       spent = now() - t;
     }
     /** How far glyph `g` is from the drawing by `measure`: as drawn, or mirrored at `penalty` more
      * (an orientation misremembered: `\` for `/`, `⊃` for `⊂`). */
-    function closest(g, measure, penalty) {
-      let best = measure(req.f, g);
-      for (const f of req.flips ?? []) best = Math.min(best, measure(f, g) + penalty);
+    function closest(g: Feat, measure: (a: Feat, b: Feat) => number, penalty: number) {
+      let best = measure(req!.f, g);
+      for (const f of req!.flips ?? []) best = Math.min(best, measure(f, g) + penalty);
       return best;
     }
     /** Measures what the request wants, a batch at a time, until all is or DRAW.refine has passed; every DRAW.again ms (or four times what a ranking took) it ranks again. */
@@ -534,9 +567,9 @@ self.satexDraw = (
       busy = true;
       try {
         while (req && now() < deadline) {
-          const todo = req.want.filter((i) => feats[i] === undefined);
+          const todo = (req.want as Int32Array).filter((i) => feats[i] === undefined);
           if (!todo.length) break;
-          const i = rows[todo[0]][0], batch = todo.filter((j) => rows[j][0] === i).slice(0, DRAW.batch);
+          const i = rows[todo[0]!]![0], batch = Array.from(todo.filter((j) => rows[j]![0] === i)).slice(0, DRAW.batch);
           try {
             await face(i);
             measure(i, batch);
@@ -551,7 +584,7 @@ self.satexDraw = (
       }
       if (req) rank(true);
     }
-    const on = (m) => {
+    const on = (m: Rec) => {
       if (m.type === 'init') {
         ({ fonts, rows, bitmaps } = m), (part = m.part ?? [0, 1]), (feats = new Array(rows.length));
       } else if (m.type === 'tune') Object.assign(DRAW, m.draw);
@@ -559,17 +592,17 @@ self.satexDraw = (
       else if (m.type === 'match') {
         if (m.fresh || !req) deadline = now() + DRAW.refine;
         // this matcher's share of the rows: every n-th, so each font's glyphs are spread over the matchers
-        const mine = [];
-        m.want.forEach((j, k) => {
+        const mine: number[] = [];
+        m.want.forEach((j: number, k: number) => {
           if (j % part[1] === part[0]) mine.push(k);
         });
         req = {
-          ...m,
+          ...(m as Req),
           want: Int32Array.from(mine, (k) => m.want[k]),
           mul: Float32Array.from(mine, (k) => m.mul[k]),
           add: Float32Array.from(mine, (k) => m.add[k]),
         };
-        for (const i of new Set(m.want.filter((j) => feats[j] === undefined).map((j) => rows[j][0]))) {
+        for (const i of new Set<number>(m.want.filter((j: number) => feats[j] === undefined).map((j: number) => rows[j]![0]))) {
           face(i).catch(() => {});
         }
         rank(false);
@@ -578,11 +611,11 @@ self.satexDraw = (
     };
     return { on, features, apart, bitmapCanvas, sample };
   };
-  const mkDoc = (w, h) => Object.assign(document.createElement('canvas'), { width: w, height: h });
+  const mkDoc = (w: number, h: number) => Object.assign(document.createElement('canvas'), { width: w, height: h });
   const idle = () =>
-    new Promise((
+    new Promise<void>((
       done,
-    ) => (self.requestIdleCallback
+    ) => ('requestIdleCallback' in self
       ? requestIdleCallback(() => done(), { timeout: 30 })
       : setTimeout(done, 0))
     );
@@ -590,9 +623,9 @@ self.satexDraw = (
   const { features, apart, bitmapCanvas, sample } = local;
   // the matching runs in a worker; without one (no OffscreenCanvas, no fonts in workers) the same engine runs here, between frames
   // several workers share the glyphs, each its every n-th row; their rankings merge as they come
-  const last = {};
-  let workers = [];
-  const send = (m) => {
+  const last: Record<string, Rec> = {};
+  let workers: Worker[] = [];
+  const send = (m: Rec) => {
     if (m.type === 'stop') delete last.match;
     else if (m.type !== 'tune') last[m.type] = m;
     if (workers.length) {
@@ -623,31 +656,31 @@ self.satexDraw = (
     workers = [];
   }
   /** The symbol table; each font's glyphs are measured once a candidate in it is wanted. */
-  async function symbolsLoad() {
+  async function symbolsLoad(): Promise<SymTable> {
     drawTable ??= fetch(`${base}${symbols}`).then((r) => r.json()).then(
-      async ({ fonts, rows, glyphs, weight, categories = [], kinds = {} }) => {
+      async ({ fonts, rows, glyphs, weight, categories = [], kinds = {} }: { fonts: string[]; rows: [number, string, string, string, number, string, number | null][]; glyphs: string; weight: Record<string, number>; categories?: string[]; kinds?: Record<string, number> }) => {
         // symbols no font sets are bitmaps (w, h, then 1 bit per pixel), one after the other in a gzipped file: the last "font"
-        const bitmaps = [],
+        const bitmaps: Bitmap[] = [],
           bytes = new Uint8Array(
             await new Response(
-              (await fetch(`${base}${glyphs}`)).body.pipeThrough(new DecompressionStream('gzip')),
+              (await fetch(`${base}${glyphs}`)).body!.pipeThrough(new DecompressionStream('gzip')),
             ).arrayBuffer(),
           );
-        const end = (at) => at + 2 + Math.ceil(bytes[at] * bytes[at + 1] / 8);
+        const end = (at: number) => at + 2 + Math.ceil(bytes[at]! * bytes[at + 1]! / 8);
         for (let at = 0; at < bytes.length; at = end(at)) {
-          bitmaps.push({ w: bytes[at], h: bytes[at + 1], bits: bytes.subarray(at + 2, end(at)) });
+          bitmaps.push({ w: bytes[at]!, h: bytes[at + 1]!, bits: bytes.subarray(at + 2, end(at)) });
         }
-        const kept = rows.filter((r) => r[6] == null || !blank(bitmaps[r[6]]));
+        const kept = rows.filter((r) => r[6] == null || !blank(bitmaps[r[6]]!));
         return {
           weight,
           bitmaps,
           blanks: rows.length - kept.length,
           categories,
-          fonts: [...fonts.map((url, i) => ({ family: `satex-sym-${i}`, url, ready: null })), {
+          fonts: [...fonts.map((url, i): SymFont => ({ family: `satex-sym-${i}`, url, ready: null })), {
             bitmaps: true,
             ready: null,
-          }],
-          rows: kept.map(([code, name, cls, about, font, pkg, bitmap], i) => ({
+          } as SymFont],
+          rows: kept.map(([code, name, cls, about, font, pkg, bitmap], i): Sym => ({
             ch: bitmap == null ? String.fromCodePoint(code) : `#${bitmap}`,
             code,
             name,
@@ -655,9 +688,9 @@ self.satexDraw = (
             about,
             pkg,
             i,
-            cat: categories[kinds[name]],
+            cat: categories[kinds[name]!],
             bm: bitmap ?? -1,
-            bitmap: bitmaps[bitmap],
+            bitmap: bitmap == null ? undefined : bitmaps[bitmap],
             font: bitmap == null ? font : fonts.length,
             // the name, its camel-case words (`faSkullCrossbones`: fa skull crossbones) and what it is
             text: `${name.replace(/^\\/, '')} ${
@@ -683,12 +716,12 @@ self.satexDraw = (
         bitmaps: t.bitmaps,
       });
       return t;
-    }).catch((e) => ({ fonts: [], rows: [], error: String(e?.message ?? e) }));
+    }).catch((e) => ({ fonts: [], rows: [], error: String(e?.message ?? e) }) as unknown as SymTable);
     return drawTable;
   }
   /** A font's face, loaded once: rows drawn in it show their glyphs as soon as it is in. */
-  function faceReady(table, i) {
-    const font = table.fonts[i];
+  function faceReady(table: SymTable, i: number) {
+    const font = table.fonts[i]!;
     if (font.bitmaps) return Promise.resolve();
     font.face ??= new FontFace(font.family, `url(${base}${font.url})`).load().then((face) => {
       document.fonts.add(face);
@@ -697,9 +730,9 @@ self.satexDraw = (
     return font.face;
   }
   /** A row's glyph: its character in its font, or its bitmap as the mask of a box in the text colour. */
-  const glyph = (s, table) => {
+  const glyph = (s: Sym, table: SymTable) => {
     if (!s.bitmap) {
-      return `<span class="draw-glyph" style="font-family: '${table.fonts[s.font].family}'">${
+      return `<span class="draw-glyph" style="font-family: '${table.fonts[s.font]!.family}'">${
         esc(s.ch)
       }</span>`;
     }
@@ -714,7 +747,7 @@ self.satexDraw = (
   const ALPHABET = /^\\(?:m(?:up|it|bf|sans|tt|scr|frak|bb)+|Bbb)(?=[A-Za-z])/;
   // a letter or digit one can type ranks after the symbols: no one draws an `L` to find it
   const prior = (
-    s,
+    s: Sym,
   ) => (/^[A-Za-z0-9]$/.test(s.ch)
     ? DRAW.typed
     : ALPHABET.test(s.name)
@@ -724,26 +757,26 @@ self.satexDraw = (
     : s.bitmap
     ? DRAW.plain + (s.name.includes('{') ? DRAW.call : 0)
     : 0);
-  const drawKind = (s) => (s.cls === 'alpha' ? 'letter' : 'symbol');
+  const drawKind = (s: Sym) => (s.cls === 'alpha' ? 'letter' : 'symbol');
   /** Whether `s` is of the kind the filter asks: a letter, a symbol, or one of the symbol list's categories. */
-  const kindMatches = (s, kind) => {
+  const kindMatches = (s: Sym, kind: string) => {
     if (!kind) return true;
     if (kind.startsWith('cat:')) return s.cat === kind.slice(4);
     return drawKind(s) === kind;
   };
   /** How many pixels of a bitmap are set. */
-  const inked = (b) => b.bits.reduce((n, byte) => n + POPCOUNT[byte], 0);
+  const inked = (b: Bitmap) => b.bits.reduce((n, byte) => n + POPCOUNT[byte]!, 0);
   const POPCOUNT = Uint8Array.from({ length: 256 }, (_, k) => k.toString(2).replaceAll('0', '').length);
   /** A bitmap that missed its symbol when cut from the list's page: a speck, or a sliver thinner than its length. */
-  const blank = (b) => {
+  const blank = (b: Bitmap) => {
     const ink = inked(b);
     return ink < DRAW.speck || (Math.min(b.w, b.h) <= 2 && ink < Math.max(b.w, b.h));
   };
   /** The symbol list's categories as further kinds in the kind filter, by name; none of fewer than DRAW.kinds symbols. */
-  function categoriesShow(table) {
-    const count = new Map();
+  function categoriesShow(table: SymTable) {
+    const count = new Map<string, number>();
     for (const s of table.rows) if (s.cat) count.set(s.cat, (count.get(s.cat) ?? 0) + 1);
-    const select = $('draw-filters')?.querySelector('select[data-f="kind"]');
+    const select = root.querySelector<HTMLElement>('#draw-filters')?.querySelector<HTMLSelectElement>('select[data-f="kind"]');
     if (!select || !count.size) return;
     const kept = [...count].filter(([, n]) => n >= DRAW.kinds);
     const options = kept.sort((a, b) => a[0].localeCompare(b[0], 'en')).map(([c, n]) =>
@@ -755,9 +788,9 @@ self.satexDraw = (
     );
     select.value = drawFilter.kind;
   }
-  const drawMode = (s) => (s.cls === 'icon' || s.cls === 'text' || s.cls === 'other' ? 'text' : 'math');
+  const drawMode = (s: Sym) => (s.cls === 'icon' || s.cls === 'text' || s.cls === 'other' ? 'text' : 'math');
   /** Whether `a` and `b` are at most one edit apart. */
-  const near = (a, b) => {
+  const near = (a: string, b: string) => {
     if (Math.abs(a.length - b.length) > 1) return false;
     let i = 0, j = 0, edits = 0;
     while (i < a.length && j < b.length) {
@@ -777,7 +810,7 @@ self.satexDraw = (
     return edits + (a.length - i) + (b.length - j) <= 1;
   };
   /** The `@` filters of the search, as the settings dialog's: name -> [what it lets through, test of a symbol by its value]. */
-  const SEARCH_FILTERS = {
+  const SEARCH_FILTERS: Record<string, [string, (s: Sym, v: string) => boolean]> = {
     math: ['math mode', (s) => drawMode(s) === 'math'],
     text: ['text mode', (s) => drawMode(s) === 'text'],
     symbol: ['symbols', (s) => drawKind(s) === 'symbol'],
@@ -788,10 +821,10 @@ self.satexDraw = (
     cat: ['a symbol list category, as in @cat:arrows', (s, v) => !!s.cat && s.cat.toLowerCase().includes(v)],
   };
   /** The search text as plain words and the tests of its `@name` or `@name:value` filters; an unknown filter stays a word. */
-  function searchParse(text) {
-    const tests = [], words = [];
+  function searchParse(text: string) {
+    const tests: ((s: Sym) => boolean)[] = [], words: string[] = [];
     for (const w of text.trim().toLowerCase().split(/\s+/).filter(Boolean)) {
-      const [, name, value = ''] = w.match(/^@([a-z]+)(?::(.*))?$/) ?? [];
+      const [, name = '', value = ''] = w.match(/^@([a-z]+)(?::(.*))?$/) ?? [];
       const f = SEARCH_FILTERS[name];
       if (f && (value || !['pkg', 'cat'].includes(name))) tests.push((s) => f[1](s, value));
       else words.push(...w.replace(/^\\/, '').split(/[\-_]+/).filter(Boolean));
@@ -799,20 +832,20 @@ self.satexDraw = (
     return { words, tests };
   }
   /** The filters the last word of the search (one that starts with `@`) completes to, with what each does. */
-  function searchHints(text) {
+  function searchHints(text: string): string[][] {
     const typing = text.match(/(?:^|\s)(@\S*)$/)?.[1]?.toLowerCase();
     if (typing == null) return [];
     return Object.entries(SEARCH_FILTERS).map(([n, [about]]) => [`@${n}${['pkg', 'cat'].includes(n) ? ':' : ''}`, about])
       .filter(([f]) => f.startsWith(typing) && f !== typing);
   }
   const searchShow = () => {
-    const hints = searchHints($('draw-search').value);
+    const hints = searchHints($<HTMLInputElement>('draw-search').value);
     $('draw-hints').hidden = !hints.length;
     $('draw-hints').innerHTML = hints.map(([f, about]) => `<button type="button" class="lib-kind" data-filter="${esc(f)}" title="${esc(about)}">${esc(f)}</button>`).join('');
   };
   /** How well the search words name a symbol, lower better, or null: the name itself first, then a word
    * the name or description starts, then one inside a word, then one a letter off (a typo). */
-  const named = (s, words) => {
+  const named = (s: Sym, words: string[]): number | null => {
     const bare = s.name.replace(/^\\/, '').toLowerCase();
     if (words.length === 1 && bare === words[0]) return -2;
     let rank = 0;
@@ -828,9 +861,9 @@ self.satexDraw = (
     return rank;
   };
   /** Whether every word of the search names the package: inside its name, or (from four letters) spread over it. */
-  const packageNamed = (pkg, words) => {
+  const packageNamed = (pkg: string, words: string[]) => {
     const p = pkg.toLowerCase().replace(/\.cls$/, ''),
-      spread = (w) => {
+      spread = (w: string) => {
         let i = 0;
         for (const c of p) if (c === w[i]) i++;
         return i === w.length;
@@ -838,8 +871,8 @@ self.satexDraw = (
     return words.every((w) => p.includes(w) || (w.length > 3 && spread(w)));
   };
   /** The packages' list: each with its count of symbols, a box to leave it out; all or none at once. */
-  function packagesShow(table) {
-    const counts = new Map();
+  function packagesShow(table: SymTable) {
+    const counts = new Map<string, number>();
     for (const s of table.rows) counts.set(s.pkg, (counts.get(s.pkg) ?? 0) + 1);
     const list = [...counts].sort((a, b) => a[0].localeCompare(b[0], 'en', { sensitivity: 'base' }));
     $('draw-pkgs').textContent = 'packages';
@@ -861,10 +894,10 @@ self.satexDraw = (
     total.textContent = [...meta, took].filter(Boolean).join(' · ');
   };
   /** The table's size, and how many symbols the filters leave. */
-  function totals(table, shown, searched) {
+  function totals(table: SymTable, shown: number, searched: boolean) {
     packagesShow(table);
     const pkgs = new Set(table.rows.map((s) => s.pkg)), on = [...pkgs].filter(used).length;
-    const short = (n) => (n >= 1e4 ? `${Math.round(n / 1e3)}k` : n.toLocaleString('en'));
+    const short = (n: number) => (n >= 1e4 ? `${Math.round(n / 1e3)}k` : n.toLocaleString('en'));
     const of = shown < table.rows.length
       ? `${short(shown)} of ${short(table.rows.length)}`
       : short(table.rows.length);
@@ -874,23 +907,23 @@ self.satexDraw = (
     ];
     metaShow();
   }
-  let matching = 0, started = 0, limit = DRAW.shown, current = null, result = null;
+  let matching = 0, started = 0, limit = DRAW.shown, current: Current | null = null, result: Answer | null = null;
   /** The candidates for the drawing and the search: what the filters and the words leave is sent to the matcher,
    * which answers best first now and again as more glyphs are measured. */
   async function drawMatch(fresh = true) {
     const mine = fresh ? ++matching : matching, list = $('draw-list'), f = features(pad);
     const flips = f ? [mirrored(pad, -1, 1), mirrored(pad, 1, -1)] : [];
-    const { words, tests } = searchParse($('draw-search').value);
+    const { words, tests } = searchParse($<HTMLInputElement>('draw-search').value);
     if (fresh) {
       started = performance.now();
       limit = DRAW.more;
     }
     // every package's symbols show at once: the document's names, which wait for its run, follow
     const asked = inForce(), table = await symbolsLoad();
-    let names = drawFilter.from === 'all' ? await Promise.race([asked, Promise.resolve(null)]) : await asked;
+    let names: string[][] | null = drawFilter.from === 'all' ? await Promise.race([asked, Promise.resolve(null)]) : await asked;
     if (names === null) {
       names = [];
-      asked.then(() => mine === matching && drawMatch(false));
+      asked.then(() => { mine === matching && drawMatch(false); });
     }
     if (mine !== matching) return;
     if (!table.rows.length) {
@@ -900,8 +933,8 @@ self.satexDraw = (
       return;
     }
     // "this document": the names in force in its run, nothing a package it does not load defines
-    const source = new Map(names), force = new Set(source.keys());
-    const ranked = new Map();
+    const source = new Map(names as [string, string][]), force = new Set(source.keys());
+    const ranked = new Map<Sym, number>();
     const wanted = table.rows.filter((s) => {
       if (drawFilter.from !== 'all' && !force.has(s.name)) return false;
       if (!used(s.pkg)) return false;
@@ -931,12 +964,12 @@ self.satexDraw = (
     // the more a package is relied on (build.py `established`), the lower its symbols score
     // the more packages and names set a glyph, the more it is used: a little lower for each, up to five
     const setters =
-      (table.setters ??= table.rows.reduce((m, x) => m.set(x.ch, (m.get(x.ch) ?? 0) + 1), new Map()));
-    const trust = (s) =>
+      (table.setters ??= table.rows.reduce((m, x) => m.set(x.ch, (m.get(x.ch) ?? 0) + 1), new Map<string, number>()));
+    const trust = (s: Sym) =>
       (1 - DRAW.known * (table.weight?.[s.pkg] ?? 0)) *
       (1 - DRAW.alias * Math.min(5, (setters.get(s.ch) ?? 1) - 1));
     // the established packages' symbols are measured first, so they show at once
-    const first = wanted.map((s, k) => [s, -(table.weight?.[s.pkg] ?? 0), k]).sort((a, b) =>
+    const first = wanted.map((s, k): [Sym, number, number] => [s, -(table.weight?.[s.pkg] ?? 0), k]).sort((a, b) =>
       a[1] - b[1] || a[2] - b[2]
     ).map((a) => a[0]);
     send({
@@ -951,19 +984,19 @@ self.satexDraw = (
         first,
         (s) => (force.has(s.name) ? 1 : DRAW.foreign) * (s.bitmap ? DRAW.pixel : 1) * trust(s),
       ),
-      add: Float32Array.from(first, (s) => (ranked.get(s) * 0.05 + prior(s)) * trust(s)),
+      add: Float32Array.from(first, (s) => (ranked.get(s)! * 0.05 + prior(s)) * trust(s)),
     });
   }
   /** The features of `canvas` mirrored: `sx` -1 left to right, `sy` -1 top to bottom. */
-  function mirrored(canvas, sx, sy) {
-    const m = mkDoc(canvas.width, canvas.height), g = m.getContext('2d', { willReadFrequently: true });
+  function mirrored(canvas: Canvas, sx: number, sy: number) {
+    const m = mkDoc(canvas.width, canvas.height), g = m.getContext('2d', { willReadFrequently: true })!;
     g.setTransform(sx, 0, 0, sy, sx < 0 ? canvas.width : 0, sy < 0 ? canvas.height : 0);
     g.drawImage(canvas, 0, 0);
     return features(m);
   }
   /** The matcher's answer for the latest request: shown unless it is older. */
-  const shares = new Map();
-  function arrive(m) {
+  const shares = new Map<string | number, any>();
+  function arrive(m: Rec) {
     if (m.type !== 'ranked' || m.id !== current?.id) return;
     if (shares.get('id') !== m.id) {
       shares.clear();
@@ -972,7 +1005,7 @@ self.satexDraw = (
     shares.set(m.part ?? 0, m);
     // the workers' shares as one ranking, best first
     const all = [...shares.values()].filter((x) => typeof x === 'object');
-    const order = all.flatMap((x) => Array.from(x.idx, (i, k) => [i, x.score[k], x.head[k]])).sort((a, b) =>
+    const order = all.flatMap((x) => Array.from<number, number[]>(x.idx, (i, k) => [i, x.score[k], x.head[k]])).sort((a, b) =>
       a[1] - b[1]
     );
     result = {
@@ -994,12 +1027,12 @@ self.satexDraw = (
   addEventListener('resize', fit);
   // a letter's own forms: its name, upright and italic (`\lambda`, `\muplambda`); any other prefix
   // (`\mbf`, `\Bbb`, `\text`, `\var`) makes a style or a variant
-  const plainStyle = (name) => name.replace(/^\\(?:mup|mit)?/, '') === kin(name, false);
+  const plainStyle = (name: string) => name.replace(/^\\(?:mup|mit)?/, '') === kin(name, false);
   /** How far apart two listed rows look, or null while either is not measured. */
-  const lookDistance = (a, b) => (a.l && b.l ? apart(a.l, b.l) : null);
+  const lookDistance = (a: LookRow, b: LookRow) => (a.l && b.l ? apart(a.l, b.l) : null);
   /** Whether `row` joins the row `lead` leads: a glyph that looks the same, a letter's own forms,
    * or a name of the same stem (case and doubling aside) that looks near; both measured. */
-  const belongs = (lead, row) => {
+  const belongs = (lead: LookRow, row: LookRow) => {
     const d = lookDistance(lead, row);
     if (d !== null && d < DRAW.same) return true;
     if (lead.stem === row.stem && lead.plain && row.plain) return true;
@@ -1007,24 +1040,24 @@ self.satexDraw = (
     return d < DRAW.akin;
   };
   /** A package's CTAN page: the kernel's is latex-base, a TikZ library's that of pgf. */
-  const ctan = (p) =>
+  const ctan = (p: string) =>
     `https://ctan.org/pkg/${
       p === 'kernel' ? 'latex-base' : p.replace(/^tikzlibrary.*/, 'pgf').replace(/\.(cls|sty|code\.tex)$/, '')
     }`;
-  const pkgLink = (p) => `<a href="${esc(ctan(p))}" target="_blank" rel="noopener">${esc(p)}</a>`;
+  const pkgLink = (p: string) => `<a href="${esc(ctan(p))}" target="_blank" rel="noopener">${esc(p)}</a>`;
   /** A name's stem: no alphabet, `var`, side or size prefix, case, doubling or plural (`\upuparrows`, `\Uparrow`: uparrow). */
-  const kin = (name, fold = true) =>
+  const kin = (name: string, fold = true) =>
     name.replace(ALPHABET, '\\').replace(/^\\/, '').replace(/^(?:var|big|small|text|math)+(?=[a-z])/i, '')
       .replace(/\{.*$/, '').replace(/^./, (c) => (fold ? c.toLowerCase() : c)).replace(/^(.{2,}?)\1/, '$1')
       .replace(/(?<=..)s$/, '');
   // each listed glyph measured here as well, once its font is in, to find the rows that look alike
-  const looks = new Map();
+  const looks = new Map<number, Feat | null | undefined>();
   let soon = 0;
-  const look = (s, table) => {
+  const look = (s: Sym, table: SymTable) => {
     if (!looks.has(s.i)) {
       looks.set(s.i, null);
       faceReady(table, s.font).then(() => {
-        looks.set(s.i, sample(table.fonts[s.font].family, s.ch, s.bitmap));
+        looks.set(s.i, sample(table.fonts[s.font]!.family, s.ch, s.bitmap));
         soon ||= requestAnimationFrame(() => {
           soon = 0;
           if (current) render();
@@ -1034,28 +1067,28 @@ self.satexDraw = (
     return looks.get(s.i);
   };
   /** The ranking as rows, best first. */
-  function rankedRows(table) {
-    return Array.from(result.idx, (i, k) => ({ s: table.rows[i], i, head: result.head[k], score: result.score[k] }));
+  function rankedRows(table: SymTable): Ranked[] {
+    return Array.from(result!.idx, (i, k) => ({ s: table.rows[i]!, i, head: result!.head[k]!, score: result!.score[k]! }));
   }
   /** The rows of the groups worth showing: the first DRAW.least groups, then those whose lead scores within DRAW.within.
    * The bound is absolute, so a symbol shows by how near it is, never by what else the packages chosen bring;
    * a group's members show with it, however far each one alone. */
-  function nearEnough(best) {
-    const leads = new Map();
+  function nearEnough(best: Ranked[]) {
+    const leads = new Map<number, boolean>();
     for (const b of best) if (b.head === b.i) leads.set(b.i, leads.size < DRAW.least || b.score <= DRAW.within);
     return best.filter((b) => leads.get(b.head));
   }
   /** A symbol's name keys, worked out once: its stem with and without case (`kin`), and whether it is a letter's own form. */
-  const nameKeys = (s) => (s.keys ??= { key: kin(s.name), stem: kin(s.name, false), plain: plainStyle(s.name) });
+  const nameKeys = (s: Sym) => (s.keys ??= { key: kin(s.name), stem: kin(s.name, false), plain: plainStyle(s.name) });
   /** Rows of one picture follow its first, and so do its look-alikes (`belongs`); the first 3 × limit are measured for it.
    * A row is only held against the leads it could join: the measured ones, and those of its stem. */
-  function joinLookAlikes(best, table) {
-    const measuredLeads = [], byStem = new Map();
+  function joinLookAlikes(best: Ranked[], table: SymTable) {
+    const measuredLeads: LookRow[] = [], byStem = new Map<string, LookRow[]>();
     let measured = 0, order = 0;
     return best.map((b) => {
       if (b.head !== b.i) return b;
       const l = measured++ < 3 * limit ? look(b.s, table) : null;
-      const row = { i: b.i, ...nameKeys(b.s), l, order: order++ };
+      const row: LookRow = { i: b.i, ...nameKeys(b.s), l, order: order++ };
       const stemLeads = byStem.get(row.stem) ?? [];
       const candidates = l ? [...measuredLeads, ...stemLeads] : stemLeads;
       const lead = candidates.filter((a) => belongs(a, row)).sort((a, c) => a.order - c.order)[0];
@@ -1072,55 +1105,55 @@ self.satexDraw = (
   /** A row's names, each with the symbols that set it: the row's own name first, then the name in force,
    * then the most relied-on package's, then the shortest. Its own name is one of its glyph, or one whose
    * stem keeps the case (`\beta` for `\mupbeta`, never `\uparrow` for `⇑`). */
-  function namesOf(s, twins, wanted, table, force) {
+  function namesOf(s: Sym, twins: Sym[], wanted: Sym[], table: SymTable, force: Set<string>) {
     const chs = new Set([s, ...twins].map((x) => x.ch));
-    const own = (x) => x.ch === s.ch || nameKeys(x).stem === nameKeys(s).stem;
-    const weight = (x) => table.weight?.[x.pkg] ?? 0;
-    current.byCh ??= Map.groupBy(wanted, (x) => x.ch);
-    const all = [...chs].flatMap((ch) => current.byCh.get(ch) ?? []);
+    const own = (x: Sym) => x.ch === s.ch || nameKeys(x).stem === nameKeys(s).stem;
+    const weight = (x: Sym) => table.weight?.[x.pkg] ?? 0;
+    current!.byCh ??= Map.groupBy(wanted, (x) => x.ch);
+    const all = [...chs].flatMap((ch) => current!.byCh!.get(ch) ?? []);
     all.sort((a, b) =>
-      own(b) - own(a) || force.has(b.name) - force.has(a.name) || weight(b) - weight(a) ||
+      +own(b) - +own(a) || +force.has(b.name) - +force.has(a.name) || weight(b) - weight(a) ||
       a.name.length - b.name.length
     );
     return [...Map.groupBy(all, (x) => x.name).values()];
   }
   /** The HTML of the list's rows, for one rendering. */
-  function rowView(table, source, force) {
-    const icon = ICON[label] ?? ICON.Insert;
-    const from = (x) => source.get(x.name) ?? x.pkg;
-    const missing = (x) => doc && !force.has(x.name);
-    const off = (x) => (missing(x) ? ' draw-off' : '');
-    const loaded = (pkg) => [...source.values()].includes(pkg) || pkg === 'kernel';
-    const button = (cls, attrs, title, body) =>
+  function rowView(table: SymTable, source: Map<string, string>, force: Set<string>) {
+    const icon = (ICON as Record<string, string>)[label] ?? ICON.Insert;
+    const from = (x: Sym) => source.get(x.name) ?? x.pkg;
+    const missing = (x: Sym) => doc && !force.has(x.name);
+    const off = (x: Sym) => (missing(x) ? ' draw-off' : '');
+    const loaded = (pkg: string) => [...source.values()].includes(pkg) || pkg === 'kernel';
+    const button = (cls: string, attrs: string, title: string, body: string) =>
       `<button type="button" class="pill ${cls}"${attrs} title="${esc(title)}" aria-label="${
         esc(title)
       }">${body}</button>`;
-    const chip = (x) => {
+    const chip = (x: Sym) => {
       if (force.has(x.name)) {
         return `<code class="cs-ref" data-cs="${esc(x.name)}" tabindex="0">${esc(x.name)}</code>`;
       }
       return `<code class="draw-name${off(x)}" data-sym="${x.i}" tabindex="0">${esc(x.name)}</code>`;
     };
     // a name's packages: the first three, then how many more
-    const pkgs = (xs) => {
+    const pkgs = (xs: Sym[]) => {
       const p = [...new Set(xs.map(from))];
       const more = p.length > 3 ? ` +${p.length - 3}` : '';
-      return p.slice(0, 3).map(pkgLink).join(', ') + more;
+      return p.slice(0, 3).map((x) => pkgLink(x)).join(', ') + more;
     };
-    const put = (x, title = `${label} ${x.name}`, body = icon, extra = '') =>
+    const put = (x: Sym, title = `${label} ${x.name}`, body = icon, extra = '') =>
       button('draw-put', ` data-name="${esc(x.name)}" data-pkg="${esc(from(x))}"${extra}`, title, body);
-    const like = (x) =>
+    const like = (x: Sym) =>
       button('draw-like', ` data-like="${x.i}"`, `Symbols that look like ${x.name}`, ICON.like);
     // the packages that draw the name visibly apart, each glyph labelled with its package
-    const fonts = (xs) => {
+    const fonts = (xs: Sym[]) => {
       const shown = [look(xs[0], table)];
-      const apartFromShown = (x) => {
+      const apartFromShown = (x: Sym) => {
         const l = look(x, table);
         if (!l || !shown[0] || shown.some((m) => m && apart(m, l) < DRAW.same)) return false;
         shown.push(l);
         return true;
       };
-      const labelled = (x) =>
+      const labelled = (x: Sym) =>
         glyph(x, table).replace(
           'class="draw-glyph',
           `title="${esc(`${x.name} in ${from(x)}`)}" class="draw-glyph`,
@@ -1129,19 +1162,19 @@ self.satexDraw = (
         xs.slice(1).filter(apartFromShown).slice(0, DRAW.fonts).map(labelled).join('')
       }</span>`;
     };
-    const category = (xs) => {
+    const category = (xs: Sym[]) => {
       const cat = xs.find((x) => x.cat)?.cat;
       if (!cat) return '';
       const title = `its table in the Comprehensive LaTeX Symbol List: show only ${cat}`;
       return `<button type="button" class="draw-cat" data-cat="${esc(cat)}" title="${esc(title)}">${esc(cat)}</button>`;
     };
     // a row's buttons; where the list is narrow, behind one toggle (style.css) that shows them
-    const actions = (buttons) => {
+    const actions = (buttons: string) => {
       const toggle = '<button type="button" class="pill draw-acts-toggle" aria-expanded="false" ' +
         'title="Actions" aria-label="Actions">⋯</button>';
       return `<span class="draw-acts">${toggle}${buttons}</span>`;
     };
-    const variant = (xs, hidden) => {
+    const variant = (xs: Sym[], hidden: boolean) => {
       const x = xs[0];
       const note = missing(x) ? ', not loaded' : '';
       const where = `<span class="lib-pkg${off(x)}">${pkgs(xs)}${note}</span>`;
@@ -1150,14 +1183,14 @@ self.satexDraw = (
       return `<li${hidden ? ' hidden' : ''}>${glyph(x, table)}${what}${acts}</li>`;
     };
     // the row's other names of its glyph: behind a pill, the first DRAW.few at once
-    const aliasList = (aliases) => {
+    const aliasList = (aliases: Sym[][]) => {
       const rest = aliases.length - DRAW.few;
       const restButton = `<button type="button" class="ghost small" data-rest="1">show ${rest} more</button>`;
       const more = rest > 0 ? `<li class="draw-more-rest">${restButton}</li>` : '';
       const items = aliases.map((xs, k) => variant(xs, k >= DRAW.few)).join('');
       return `<ul class="draw-more" hidden>${items}${more}</ul>`;
     };
-    const aliasPill = (aliases) => {
+    const aliasPill = (aliases: Sym[][]) => {
       const title = aliases.map((xs) => `${xs[0].name} (${[...new Set(xs.map(from))].join(', ')})`).join(
         '\n',
       );
@@ -1167,12 +1200,12 @@ self.satexDraw = (
       }">${text}</button>`;
     };
     // its look-alikes: their glyphs in a strip under it, each opening its name, packages and buttons
-    const alikeStrip = (alike, s) => {
+    const alikeStrip = (alike: Sym[][], s: Sym) => {
       // the closest first, DRAW.few at once and the rest behind a "…"
-      const l0 = look(s, table), gap = (xs) => (l0 && look(xs[0], table) ? apart(l0, look(xs[0], table)) : Infinity);
-      alike = alike.map((xs) => [xs, gap(xs)]).sort((a, b) => a[1] - b[1]).map(([xs]) => xs);
-      const tip = (xs) => `${xs[0].name} (${[...new Set(xs.map(from))].join(', ')})`;
-      const button = (xs, k) => {
+      const l0 = look(s, table), gap = (xs: Sym[]) => (l0 && look(xs[0]!, table) ? apart(l0, look(xs[0]!, table)!) : Infinity);
+      alike = alike.map((xs): [Sym[], number] => [xs, gap(xs)]).sort((a, b) => a[1] - b[1]).map(([xs]) => xs);
+      const tip = (xs: Sym[]) => `${xs[0].name} (${[...new Set(xs.map(from))].join(', ')})`;
+      const button = (xs: Sym[], k: number) => {
         const name = `<span class="draw-alike-name">${esc(xs[0].name)}</span>`;
         const attrs = `data-alike="${k}" aria-pressed="false" title="${esc(`${tip(xs)}: copy`)}"`;
         const hidden = k >= DRAW.few ? ' hidden' : '';
@@ -1186,11 +1219,11 @@ self.satexDraw = (
       return { strip: `<span class="draw-alike">${alike.map(button).join('')}${more}</span>`, info: `<ul class="draw-more draw-alike-info">${info}</ul>` };
     };
     // under the name, one line for both: the name's glyphs in other packages, then its look-alikes
-    const under = (fontGlyphs, strip) => {
+    const under = (fontGlyphs: string, strip: string) => {
       if (!fontGlyphs.includes('draw-glyph') && !strip) return '';
       return `<div class="draw-under">${fontGlyphs}${strip}</div>`;
     };
-    const row = (s, [[main, ...same], ...others]) => {
+    const row = (s: Sym, [[main, ...same], ...others]: [Sym[], ...Sym[][]]) => {
       const mine = [main, ...same];
       const aliases = others.filter((xs) => xs[0].ch === s.ch);
       const alike = others.filter((xs) => xs[0].ch !== s.ch);
@@ -1215,24 +1248,24 @@ self.satexDraw = (
   }
   /** The list: one row per picture, best first, from the latest ranking. */
   function render() {
-    const { id: mine, table, wanted, ranked, source, force, words, f } = current;
+    const { id: mine, table, wanted, ranked, source, force, words, f } = current!;
     const list = $('draw-list');
-    let best;
+    let best: Ranked[];
     if (f) {
       // nothing measured yet: the list stays as it was
       if (!result || (!result.idx.length && result.pending)) return;
       best = rankedRows(table);
     } else {
-      best = wanted.map((s) => ({ s, i: s.i, head: s.i, score: ranked.get(s) + s.name.length / 100 }));
+      best = wanted.map((s) => ({ s, i: s.i, head: s.i, score: ranked.get(s)! + s.name.length / 100 }));
       best.sort((a, b) => a.score - b.score);
     }
     best = joinLookAlikes(best, table);
     if (f) best = nearEnough(best);
-    const twins = new Map();
+    const twins = new Map<number, Sym[]>();
     for (const { s, i, head } of best) if (head !== i) twins.set(head, [...(twins.get(head) ?? []), s]);
     const view = rowView(table, source, force);
-    const seen = new Set(), shownFonts = new Set();
-    const rows = [];
+    const seen = new Set<string>(), shownFonts = new Set<number>();
+    const rows: string[] = [];
     let glyphs = 0;
     for (const { s, i, head } of best) {
       if (head !== i || seen.has(s.ch)) continue;
@@ -1240,7 +1273,7 @@ self.satexDraw = (
       if (glyphs++ >= limit) continue;
       const names = namesOf(s, twins.get(i) ?? [], wanted, table, force);
       for (const x of names.flat()) shownFonts.add(x.font);
-      rows.push(view.row(s, names));
+      rows.push(view.row(s, names as [Sym[], ...Sym[][]]));
     }
     if (glyphs > limit) {
       rows.push(
@@ -1260,9 +1293,9 @@ self.satexDraw = (
           : 'No symbol or package matches.'
       }</li>`;
     // how long the drawing took to rank: first results, then the full ranking once every font is measured
-    const ms = Math.round(performance.now() - started), pending = f && result.pending;
-    if (!current.shown) {
-      current.shown = true;
+    const ms = Math.round(performance.now() - started), pending = f && result!.pending;
+    if (!current!.shown) {
+      current!.shown = true;
       list.dataset.first = String(ms);
     }
     if (!pending) list.dataset.full = String(ms);
@@ -1284,7 +1317,7 @@ self.satexDraw = (
   };
   /** A name not in force: its card from the table, with the package that defines it. */
   $('draw-list').addEventListener('mouseover', async (e) => {
-    const el = e.target.closest('[data-sym]');
+    const el = (e.target as HTMLElement).closest('[data-sym]');
     if (!el) return;
     const s = (await symbolsLoad()).rows[+el.dataset.sym];
     const does = [s.about, s.bitmap ? '' : `U+${s.code.toString(16).toUpperCase().padStart(4, '0')}`].filter(
@@ -1303,13 +1336,13 @@ self.satexDraw = (
     } else el.title = `${s.name}: ${does}, ${s.pkg}`;
   });
   $('draw-list').addEventListener('mouseout', (e) => {
-    if (e.target.closest('[data-sym]')) self.satexTip?.card.hide(150);
+    if ((e.target as HTMLElement).closest('[data-sym]')) self.satexTip?.card.hide(150);
   });
   // a glyph under the mouse, large in a card of its own, centred on it
   const zoom = Object.assign(document.createElement('div'), { className: 'draw-zoom', hidden: true });
   root.append(zoom);
   $('draw-list').addEventListener('mouseover', (e) => {
-    const g = e.target.closest('.draw-glyph');
+    const g = (e.target as HTMLElement).closest('.draw-glyph');
     if (!g) return;
     const b = g.getBoundingClientRect();
     zoom.replaceChildren(g.cloneNode(true));
@@ -1317,7 +1350,7 @@ self.satexDraw = (
     zoom.hidden = false;
   });
   $('draw-list').addEventListener('mouseout', (e) => {
-    if (e.target.closest('.draw-glyph')) zoom.hidden = true;
+    if ((e.target as HTMLElement).closest('.draw-glyph')) zoom.hidden = true;
   });
   $('draw-list').addEventListener('scroll', () => {
     zoom.hidden = true;
@@ -1325,14 +1358,14 @@ self.satexDraw = (
   {
     // the strokes are kept: a change of theme draws them again in its ink
     // or a symbol's glyph, set large on the pad by its "similar" button: the drawing that finds its look-alikes
-    let ink = [], stamp = null;
+    let ink: number[][][] = [], stamp: { ch: string; bitmap?: Bitmap; family: string } | null = null;
     const paint = () => {
       pen.clearRect(0, 0, pad.width, pad.height);
       const w = pad.width, color = getComputedStyle(pad).color;
       if (stamp?.bitmap) {
         const m = bitmapCanvas(stamp.bitmap),
           t = mkDoc(m.width, m.height),
-          g = t.getContext('2d'),
+          g = t.getContext('2d')!,
           k = w * 0.6 / Math.max(m.width, m.height);
         g.drawImage(m, 0, 0);
         Object.assign(g, { globalCompositeOperation: 'source-in', fillStyle: color }).fillRect(
@@ -1358,7 +1391,7 @@ self.satexDraw = (
       });
       for (const st of ink) {
         pen.beginPath();
-        st.forEach((p, k) => (k ? pen.lineTo(...p) : pen.moveTo(...p)));
+        st.forEach((p, k) => (k ? pen.lineTo(p[0]!, p[1]!) : pen.moveTo(p[0]!, p[1]!)));
         pen.stroke();
       }
     };
@@ -1374,8 +1407,8 @@ self.satexDraw = (
       attributeFilter: ['data-theme'],
     });
     matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', paint);
-    let last = null;
-    const at = (e) => {
+    let last: number[] | null = null;
+    const at = (e: PointerEvent) => {
       const b = pad.getBoundingClientRect();
       return [(e.clientX - b.left) * pad.width / b.width, (e.clientY - b.top) * pad.height / b.height];
     };
@@ -1395,10 +1428,10 @@ self.satexDraw = (
         strokeStyle: getComputedStyle(pad).color,
       });
       pen.beginPath();
-      pen.moveTo(...last);
-      pen.lineTo(...p);
+      pen.moveTo(last[0]!, last[1]!);
+      pen.lineTo(p[0]!, p[1]!);
       pen.stroke();
-      ink.at(-1).push(p);
+      ink.at(-1)!.push(p);
       last = p;
     });
     pad.addEventListener('pointerup', () => {
@@ -1406,13 +1439,13 @@ self.satexDraw = (
       if (drawn) drawMatch();
     });
     $('draw-clear').onclick = clear;
-    $('draw-search').closest('.draw-top').insertAdjacentHTML('afterend', '<div id="draw-hints" class="lib-kinds draw-filters" role="group" aria-label="search filters" hidden></div>');
+    $('draw-search').closest('.draw-top')!.insertAdjacentHTML('afterend', '<div id="draw-hints" class="lib-kinds draw-filters" role="group" aria-label="search filters" hidden></div>');
     $('draw-search').addEventListener('input', () => {
       searchShow();
       drawMatch();
     });
     $('draw-hints').addEventListener('click', (e) => {
-      const f = e.target.closest('[data-filter]')?.dataset.filter, input = $('draw-search');
+      const f = (e.target as HTMLElement).closest('[data-filter]')?.dataset.filter, input = $('draw-search');
       if (!f) return;
       input.value = `${input.value.replace(/@\S*$/, '')}${f}${f.endsWith(':') ? '' : ' '}`;
       input.focus();
@@ -1431,7 +1464,7 @@ self.satexDraw = (
         moon = '<path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z"/>';
       const mark = () => {
         theme.setAttribute('aria-pressed', String(dark()));
-        theme.querySelector('svg').innerHTML = dark() ? sun : moon;
+        theme.querySelector('svg')!.innerHTML = dark() ? sun : moon;
       };
       mark();
       theme.onclick = () => {
@@ -1454,7 +1487,7 @@ self.satexDraw = (
     $('draw-help').onclick = (e) => {
       const html = `<div class="draw-about">${$('draw-about').innerHTML}</div>`;
       if (self.satexTip) {
-        self.satexTip.card.show(e.currentTarget, html);
+        self.satexTip.card.show((e.currentTarget as HTMLElement), html);
         self.satexTip.card.el.dataset.pin = '1';
         return;
       }
@@ -1470,7 +1503,7 @@ self.satexDraw = (
       pop.togglePopover();
     };
     // the filters as dropdowns in the bar beside the search: kind, mode, glyph source, then the packages
-    const FILTERS = [['kind', 'any kind', [['symbol', 'symbols'], ['letter', 'letters']]], [
+    const FILTERS: [string, string, string[][]][] = [['kind', 'any kind', [['symbol', 'symbols'], ['letter', 'letters']]], [
       'mode',
       'any mode',
       [['math', 'math'], ['text', 'text']],
@@ -1488,13 +1521,13 @@ self.satexDraw = (
       'beforeend',
       '<span class="draw-pkg-wrap"><button type="button" class="lib-kind" id="draw-pkgs" aria-expanded="false" aria-controls="draw-pkg-list">packages</button><div id="draw-pkg-list" class="draw-pkg-list" hidden></div></span>',
     );
-    const packagesOpen = (open) => {
+    const packagesOpen = (open: boolean) => {
       $('draw-pkg-list').hidden = !open;
       $('draw-pkgs').setAttribute('aria-expanded', String(open));
     };
     $('draw-pkgs').addEventListener('click', () => packagesOpen($('draw-pkg-list').hidden));
     document.addEventListener('click', (e) => {
-      if (!e.target.closest('.draw-pkg-wrap')) packagesOpen(false);
+      if (!(e.target as HTMLElement).closest('.draw-pkg-wrap')) packagesOpen(false);
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !$('draw-pkg-list').hidden) {
@@ -1503,57 +1536,57 @@ self.satexDraw = (
       }
     });
     $('draw-pkg-list').addEventListener('change', (e) => {
-      const p = e.target.dataset.pkg;
+      const p = (e.target as HTMLElement).dataset.pkg;
       if (p == null) return;
-      choose([p], e.target.checked);
+      choose([p], (e.target as HTMLElement).checked);
       drawMatch();
     });
     $('draw-pkg-list').addEventListener('click', async (e) => {
-      const b = e.target.closest('[data-all]');
+      const b = (e.target as HTMLElement).closest('[data-all]');
       if (!b) return;
       const table = await symbolsLoad();
-      choose(new Set(table.rows.map((s) => s.pkg)), b.dataset.all === '1');
+      choose([...new Set(table.rows.map((s) => s.pkg))], b.dataset.all === '1');
       drawMatch();
       packagesShow(table);
     });
     $('draw-filters').addEventListener('change', (e) => {
-      const f = e.target.dataset?.f;
+      const f = (e.target as HTMLElement).dataset?.f;
       if (!f) return;
-      drawFilter[f] = e.target.value;
+      drawFilter[f] = (e.target as HTMLElement).value;
       remember();
       drawMatch();
     });
     /** A moment's "copied" on what was pressed. */
-    const flash = (el) => {
+    const flash = (el: Element) => {
       el.classList.add('copied');
       setTimeout(() => el.classList.remove('copied'), 1200);
     };
     /** Only the symbols of `kind`: the kind filter set to it, as if chosen there. */
-    const kindChoose = (kind) => {
+    const kindChoose = (kind: string) => {
       drawFilter.kind = kind;
-      $('draw-filters').querySelector('select[data-f="kind"]').value = kind;
+      $('draw-filters').querySelector<HTMLSelectElement>('select[data-f="kind"]')!.value = kind;
       remember();
       drawMatch();
     };
     $('draw-list').addEventListener('click', async (e) => {
-      if (e.target.closest('[data-more]')) {
+      if ((e.target as HTMLElement).closest('[data-more]')) {
         limit += DRAW.more;
         if (current) render();
         return;
       }
-      const rest = e.target.closest('[data-rest]');
+      const rest = (e.target as HTMLElement).closest('[data-rest]');
       if (rest) {
-        for (const li of rest.closest('ul').querySelectorAll('li[hidden]')) li.hidden = false;
-        rest.parentElement.remove();
+        for (const li of rest.closest('ul')!.querySelectorAll<HTMLElement>('li[hidden]')) li.hidden = false;
+        rest.parentElement!.remove();
         return;
       }
-      const g = e.target.closest('li > .draw-glyph');
+      const g = (e.target as HTMLElement).closest('li > .draw-glyph');
       if (g) {
-        g.parentElement.querySelector(':scope > .draw-acts .draw-put')?.click();
+        g.parentElement!.querySelector<HTMLElement>(':scope > .draw-acts .draw-put')?.click();
         flash(g);
         return;
       }
-      const alike = e.target.closest('[data-like]');
+      const alike = (e.target as HTMLElement).closest('[data-like]');
       if (alike) {
         const table = await symbolsLoad(), s = table.rows[+alike.dataset.like];
         await faceReady(table, s.font).catch(() => {});
@@ -1566,41 +1599,41 @@ self.satexDraw = (
         drawMatch();
         return;
       }
-      const more = e.target.closest('.draw-more-pill');
+      const more = (e.target as HTMLElement).closest('.draw-more-pill');
       if (more) {
         const open = more.getAttribute('aria-expanded') !== 'true';
         more.setAttribute('aria-expanded', String(open));
-        more.closest('li').querySelector('.draw-more').hidden = !open;
+        more.closest('li')!.querySelector<HTMLElement>('.draw-more')!.hidden = !open;
         return;
       }
-      const toggle = e.target.closest('.draw-acts-toggle');
+      const toggle = (e.target as HTMLElement).closest('.draw-acts-toggle');
       if (toggle) {
         const open = toggle.getAttribute('aria-expanded') !== 'true';
         toggle.setAttribute('aria-expanded', String(open));
-        toggle.parentElement.classList.toggle('open', open);
+        toggle.parentElement!.classList.toggle('open', open);
         return;
       }
-      const restAlike = e.target.closest('[data-alike-rest]');
+      const restAlike = (e.target as HTMLElement).closest('[data-alike-rest]');
       if (restAlike) {
-        for (const b of restAlike.parentElement.querySelectorAll('.draw-alike-glyph[hidden]')) b.hidden = false;
+        for (const b of restAlike.parentElement!.querySelectorAll<HTMLElement>('.draw-alike-glyph[hidden]')) b.hidden = false;
         restAlike.remove();
         return;
       }
-      const shown = e.target.closest('[data-alike]');
+      const shown = (e.target as HTMLElement).closest('[data-alike]');
       if (shown) {
-        const info = shown.closest('li').querySelector(`.draw-alike-info > li[data-k="${shown.dataset.alike}"]`);
+        const info = shown.closest('li')!.querySelector<HTMLElement>(`.draw-alike-info > li[data-k="${shown.dataset.alike}"]`)!;
         shown.setAttribute('aria-pressed', 'true');
         info.hidden = false;
         info.querySelector(':scope > .draw-acts .draw-put')?.click();
         flash(shown);
         return;
       }
-      const cat = e.target.closest('[data-cat]');
+      const cat = (e.target as HTMLElement).closest('[data-cat]');
       if (cat) {
         kindChoose(`cat:${cat.dataset.cat}`);
         return;
       }
-      const b = e.target.closest('.draw-put');
+      const b = (e.target as HTMLElement).closest('.draw-put');
       if (!b) return;
       pick(b.dataset.name, b.dataset.pkg, b.dataset.use ?? null);
       // a moment's ✓ on the button that did it
@@ -1609,7 +1642,7 @@ self.satexDraw = (
     });
   }
   symbolsLoad();
-  const tune = (cfg) => {
+  const tune = (cfg: Partial<Tune>) => {
     Object.assign(DRAW, cfg);
     send({ type: 'tune', draw: cfg });
   };
