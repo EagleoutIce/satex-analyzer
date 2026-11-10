@@ -6972,6 +6972,21 @@ will look undefined",
             );
             return;
         }
+        // Text the guard skipped may have held the closers the end needed:
+        // the analysis' end, not the document's.
+        if let Some(skip) = self.out.facts.diagnostics.iter().find(|d| d.code == "stalled-line-skipped") {
+            let (span, name) = (skip.span, self.out.short_name(skip.span.file).to_string());
+            self.diagnose(
+                Severity::Unsupported,
+                "analysis-ended-early",
+                span,
+                format!(
+                    "analysis ended early: text skipped at {name}:{} may have held what reaches the {end}",
+                    span.line
+                ),
+            );
+            return;
+        }
         let (lines, last) = (source.lines().count().max(1) as u32, source.lines().last().unwrap_or_default());
         let span = Span { file: self.out.main_file, line: lines, col: last.chars().count() as u32 + 1 };
         self.diagnose(
@@ -10134,8 +10149,19 @@ will look undefined",
                 // and nothing was written since, so this round reads what
                 // the last did and stacks the same again (tex.web § 366).
                 let stacked = under == Some(site.shape) && levels > site.levels && site.effective == effective;
-                let grew = outside && (stacked || site.shape == shape && nest != site.nest);
-                site.deeper = if grew { site.deeper + 1 } else { 0 };
+                // Met at a shallower scan than the last round: nested scans
+                // unwinding (l3fp's `\__fp_fixed_div_int_pack:Nw` closing one
+                // `\numexpr` each), which ends with the scans. The count is
+                // kept, so a recursion that dips between rounds still counts.
+                let unwinding = self.step_depth < site.scans;
+                let grew = outside && !unwinding && (stacked || site.shape == shape && nest != site.nest);
+                site.deeper = if grew {
+                    site.deeper + 1
+                } else if unwinding {
+                    site.deeper
+                } else {
+                    0
+                };
                 let same = site.shape == shape
                     && nest == site.nest
                     && (site.effective == effective || rewritten)
@@ -13505,7 +13531,12 @@ will look undefined",
             Frame::File { mouth, .. } => Some(mouth),
             _ => None,
         })?;
-        let (line, _) = mouth.position();
+        let (mut line, _) = mouth.position();
+        // A request whose look for `[date]` read the line's end stands at the
+        // start of the next line: it is the line before's.
+        if line > 1 && mouth.text_since(line, 1).trim().is_empty() {
+            line -= 1;
+        }
         mouth.text_since(line, 1).contains(stem.as_str()).then_some(Span { file: mouth.file, line, col: 1 })
     }
 

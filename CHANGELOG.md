@@ -10,6 +10,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **Exponentials and powers of l3fp.** `exp`, `ln` and `^` in `\fp_eval:n` give TeX's values: dividing digits that repeat (`1/10`) was cut as an endless recursion, though its nested scans unwind. tikz-sankey diagrams run in a tenth of the steps, and a thesis with two of them reaches its end.
+- `fix` **No false missing end after a skipped line.** When the guard skipped the rest of a stuck line, the end of the analysis is reported as such, not as a document without `\end{document}`.
 - `fix` **Raised boxes in math.** `\raise` and `\lower` in inline math keep the formula's size: a TikZ picture inside a math node has its width, and a graph of such nodes no longer forks.
 - `feat` **Unread parts are errors.** The new lint `unread-document` (A003) reports every file the document names that the run never read, and a scan that read past the document's end. Before, they were silent in `satex lint`.
 - `perf` **Written lines and fonts.** A line read back from the `.aux` file that stops at its budget leaves nothing behind for the next line, and files are looked up by path in a map: a thesis with many labels runs in a third of the time.

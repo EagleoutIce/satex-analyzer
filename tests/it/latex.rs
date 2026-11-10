@@ -1299,6 +1299,49 @@ x
     assert_eq!(last_body(&analysis, "l_my_tl"), "[3][0][0][0][1][1e9999][1e-9999][0][0]");
 }
 
+/// `exp`, `ln` and `^` divide by an integer block by block: each block's
+/// `\__fp_fixed_div_int_pack:Nw` runs as one `\numexpr` of a nest closes,
+/// with the same arguments when the digits repeat (`1/10`) and the last
+/// block's rest left unread under it.  That looked like a recursion stacking
+/// itself deeper each round, so the call was cut and every such value came
+/// back unknown, then derailed the parser (tikz-sankey's layout ran 100M
+/// steps a line). The scans unwind, so the chain ends. `pdflatex`:
+/// `[2.718281828459045][0.6931471805599453][8][0.512][1000{0000}…]`.
+#[test]
+fn exponentials_divide_by_repeating_digits() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\fp_new:N \l_my_fp
+\tl_new:N \l_my_tl
+\cs_new_protected:Npn \myshow:n #1
+  {
+    \fp_set:Nn \l_my_fp {#1}
+    \tl_put_right:Ne \l_my_tl { [ \fp_to_tl:N \l_my_fp ] }
+  }
+\ExplSyntaxOff
+\begin{document}
+\ExplSyntaxOn
+\myshow:n { exp(1) }
+\myshow:n { ln(2) }
+\myshow:n { 2 ^ 3 }
+\myshow:n { .8 ^ 3 }
+\tl_put_right:Ne \l_my_tl
+  { [ \__fp_fixed_div_int:wwN {10000}{0000}{0000}{0000}{0000}{0000} \__fp_sep: 10 \__fp_sep: \use:n ] }
+\ExplSyntaxOff
+x
+\end{document}",
+    );
+    assert_eq!(unsupported(&analysis), Vec::<String>::new());
+    assert_eq!(
+        last_body(&analysis, "l_my_tl"),
+        "[2.718281828459045][0.6931471805599453][8][0.512][1000{0000}{0000}{0000}{0000}{0000}\\__fp_sep: ]"
+    );
+}
+
 /// siunitx compares each of its unit symbols against the engine's output at
 /// `\begin{document}`, which sets a floating point multiplier for every one:
 /// the five lines below were the smallest document that showed the defect.
