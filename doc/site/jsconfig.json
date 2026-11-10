@@ -15,6 +15,7 @@
   },
   "files": [
     "dom.d.ts",
+    "site.d.ts",
     "site.js",
     "playground.js"
   ]
