@@ -420,6 +420,7 @@ Every domain joins the same way: **hull plus bounded union**. Keep the exact mem
 A join that is not widened keeps its arms paired (`Corr`, [`src/engine/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/engine/env.rs)): per arm, the bindings of the names that differ. pgfmath's operation stack and its top differ together. Joined apart, a later split pairs `neg` with a stack that never held it (a false missing number).
 
 - Learning one paired name narrows the others to the arms that allow it. An undecided test of a joined switch teaches each arm the switch's value (`\iftrue` where it holds), so the names paired with it follow.
+- An expanding scan (`\edef`, `\expanded`) that expands paired names settles them at its end: when every arm gives the same text, with each name's text in its place, that text is the result (two float lists copied together hold the float once). Each expanded on its own, the copies would pair arms no run has. Arms that differ keep one token per name: a common start and end around one token for either middle would cut a macro's argument apart.
 - A name written after the join leaves the pairing. Past `limits.join_arms` arms, the name with the most bindings leaves first.
 - Arms only remove combinations no arm had, so the join stays sound.
 
@@ -502,7 +503,6 @@ Where `satex` does not yet reach the invariant:
 | paths in different modes joined at `\fi` | a vertical-mode and a horizontal-mode path join their lists as one, so text set after the join may be lost on both. Red test `differential::text_past_a_par_ending_a_paragraph_on_one_path_is_set_on_every_path`. |
 | a definition site first run before the document starts or in a cached load | counted as the first path's: a later run on that path replaces the text another path gave it there. |
 | a list of names widened where no pass is checked (`Reach::Havoc`) | holds only the names seen, as the class hull holds only the classes seen: a pass not run that adds another name is not covered |
-| lists a join paired, copied by one `\edef` | each copy is its own one-of token, so arms the pairing rules out come back: a float in `\@freelist` twice or not at all. An error on such an arm (`Float(s) lost`) is reported as if certain. Red test `join::paired_lists_copied_together_keep_their_pairing`. |
 
 ## Soundness invariant
 

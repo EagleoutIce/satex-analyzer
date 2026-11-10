@@ -3091,6 +3091,7 @@ impl Machine<'_> {
         // What the scans in flight made: each is the common beginning and
         // end of both, and one token for either of what lies between.
         for (p, q) in x.scans.iter_mut().zip(&y.scans) {
+            p.paired.retain(|l| q.paired.contains(l));
             if let Some(joined) = self.join_accum(p, q, widen, span) {
                 *p = joined;
                 growth.parts.push("scan");

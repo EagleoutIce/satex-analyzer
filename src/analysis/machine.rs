@@ -1138,6 +1138,9 @@ pub(crate) struct Accum {
     base: usize,
     /// The conditionals open where the scan began.
     conds: usize,
+    /// Where it holds the expansion of a name a join left paired, and the
+    /// name ([`Machine::settle_paired`]).
+    pub(crate) paired: Vec<(usize, Sym, Tok)>,
 }
 
 impl Accum {
@@ -1160,6 +1163,7 @@ impl Accum {
         let mut text = self.to_vec();
         text.truncate(len);
         text.push(unknown);
+        self.paired.retain(|&(at, ..)| at < len);
         (self.chunks, self.tail) = (vec![Rc::from(text)], Vec::new());
     }
 
@@ -1180,7 +1184,17 @@ impl Accum {
     /// One built from `toks`, standing as this one does.
     pub(crate) fn with(&self, toks: Vec<Token>) -> Accum {
         let (depth, done, number, base) = (self.depth, self.done, self.number, self.base);
-        Accum { conds: self.conds, chunks: Vec::new(), tail: toks, depth, done, name: None, number, base }
+        Accum {
+            conds: self.conds,
+            chunks: Vec::new(),
+            tail: toks,
+            depth,
+            done,
+            name: None,
+            number,
+            base,
+            paired: Vec::new(),
+        }
     }
 
     /// The name a name scan built: what stands around its unknown part
@@ -8744,7 +8758,58 @@ will look undefined",
     /// [`Machine::drive`], what it made so far on the path ([`Accum`]), so
     /// the arms of a choice inside it join where they meet again.
     fn scan_as_paths(&mut self, unit: Unit) -> Vec<Token> {
-        self.scan_paths(unit, Accum::default()).to_vec()
+        let acc = self.scan_paths(unit, Accum::default());
+        self.settle_paired(acc.to_vec(), &acc.paired)
+    }
+
+    /// Text holding the expansions of names a join left paired (`Corr` in
+    /// [`crate::engine::env`]): each made on its own, they would pair
+    /// arms no run has. Where every arm gives the same text, with each
+    /// such name's inert text (it would expand no further) in its place,
+    /// that text. Else each name stays its own one-of token.
+    pub(crate) fn settle_paired(&mut self, text: Vec<Token>, links: &[(usize, Sym, Tok)]) -> Vec<Token> {
+        let inert = |m: &Self, t: &Token| match t.tok {
+            Tok::Cs(s) => !matches!(m.env.meaning(s), Meaning::Unknown | Meaning::Undefined) && !m.expandable(s),
+            Tok::Chr(_, c) => c != Catcode::Active,
+            _ => false,
+        };
+        // An arm's text, if inert and one the token made at `tok` holds:
+        // a name written during the scan has other arms.
+        let plain = |m: &Self, b: &Option<Binding>, tok: Tok| {
+            let d = b.as_ref()?.meaning.as_macro()?;
+            let Tok::Cs(made) = tok else { return None };
+            let made = m.env.slot(made)?.may.as_ref()?;
+            let held = made
+                .iter()
+                .any(|x| x.as_macro().is_some_and(|x| explore::same_text(&x.replacement_text, &d.replacement_text)));
+            (held
+                && d.parameter_text.items.is_empty()
+                && !d.parameter_text.brace_end
+                && d.replacement_text.iter().all(|t| inert(m, t)))
+            .then(|| d.replacement_text.clone())
+        };
+        let cols: Vec<(usize, Vec<Rc<[Token]>>)> = links
+            .iter()
+            .filter(|&&(at, _, tok)| text.get(at).is_some_and(|t| t.tok == tok))
+            .filter_map(|&(at, sym, tok)| {
+                let arms = self.env.arms(sym).iter().map(|b| plain(self, b, tok)).collect::<Option<Vec<_>>>()?;
+                (!arms.is_empty()).then_some((at, arms))
+            })
+            .collect();
+        let body = |k: usize| -> Vec<Token> {
+            let at = |i| cols.iter().find(|c| c.0 == i).map(|c| &c.1[k]);
+            text.iter()
+                .enumerate()
+                .flat_map(|(i, t)| at(i).map_or(std::slice::from_ref(t), |a| &a[..]))
+                .copied()
+                .collect()
+        };
+        let rows = cols.first().map_or(0, |c| c.1.len());
+        if rows == 0 {
+            return text;
+        }
+        let first = body(0);
+        if (1..rows).all(|k| explore::same_text(&body(k), &first)) { first } else { text }
     }
 
     /// Run `acc`'s scan as paths ([`Machine::scan_as_paths`]).
@@ -9071,6 +9136,13 @@ will look undefined",
             Meaning::Unknown => {
                 self.approximated = true;
                 let text = self.one_of_texts(sym, token.span);
+                // Paired by a join: the scan settles it per arm at its end.
+                if self.cfg.arm_joins
+                    && !self.env.arms(sym).is_empty()
+                    && let Some(acc) = self.scans.last_mut().filter(|a| a.name.is_none() && a.number.is_none())
+                {
+                    acc.paired.push((acc.len() + out.len(), sym, text.tok));
+                }
                 out.push(text);
             }
             Meaning::Undefined if self.may_be_defined(sym) => out.push(self.unknown_text(Unk::Any, token.span)),
