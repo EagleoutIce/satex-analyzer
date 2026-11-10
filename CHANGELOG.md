@@ -10,6 +10,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **Rounded corners at unknown points.** A loop summary no longer gives a waiting path the code of another program point: `\pgfprocessround` raises no false errors.
 - `fix` **Joins of code.** Paths whose code is bound apart are no longer joined into one, and a call summary no longer carries an old call's numbers. `\let` to text that is one of several takes the meanings of its first tokens. pgfmath on random counts is exact again and cheaper.
 - `fix` **Paired lists.** An `\edef` of names a join kept paired (a float on the top list or deferred) holds their one text where every arm agrees.
 - `fix` **A stuck path inside a command.** It ends that path only: the paths waiting outside go on (`\pgfmathparse{\the\wd2}` reached no end).

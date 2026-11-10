@@ -687,6 +687,17 @@ fn rounding_an_unknown_dimension_ends_bounded() {
     }
 }
 
+/// `\pgfprocessround` over corners at unknown points raises nothing. Bug: a
+/// pass covered by the summary of pgfmath's `atan2` loop widened the paths
+/// past it toward the summary, so the dispatching `\next` after
+/// `\let\next=\pgfprocess@specialround` also meant
+/// `\pgfprocess@@findrightcoordinates`, the head's: it read 9 arguments
+/// past the path's end (missing-number, illegal-unit).
+#[test]
+fn rounding_corners_at_unknown_points_raises_nothing() {
+    check("round_unknown_dimension", "round_unknown.tex", &[]);
+}
+
 /// Capabilities: typesetting feedback, global state, termination.
 /// `\clearnotecolumns` loops over `\clearpage` while a note may be left:
 /// the paths must not grow with the number of notes in the `.slnc` file.

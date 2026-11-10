@@ -2304,9 +2304,14 @@ pub fn widen_slot(
 
 /// Whether `b` is a set of meanings, each a macro with parameters.
 fn takes_arguments(b: &Binding) -> bool {
-    b.may
-        .as_deref()
-        .is_some_and(|may| may.iter().all(|m| m.as_macro().is_some_and(|d| !d.parameter_text.items.is_empty())))
+    b.may.is_some() && is_code(b)
+}
+
+/// Every meaning `b` may have is a macro that takes arguments: code, whose
+/// texts no pass makes up ([`widen_slot`]).
+pub fn is_code(b: &Binding) -> bool {
+    let code = |m: &Meaning| m.as_macro().is_some_and(|d| !d.parameter_text.items.is_empty());
+    b.may.as_deref().map_or(code(&b.meaning), |may| may.iter().all(code))
 }
 
 /// Whether every meaning `b` may have is a parameterless macro whose text
@@ -2915,10 +2920,7 @@ pub fn unknown_runs(text: &[Token], typed: &Typed) -> std::rc::Rc<[Token]> {
 /// of its meanings, else any meaning.
 fn widened(mut binding: Binding, typed: &Typed, limit: usize) -> Binding {
     binding.value = Value::Unknown;
-    // Macros that take arguments are code, whose texts no pass makes up ([`widen_slot`]).
-    let code = |m: &Meaning| m.as_macro().is_some_and(|d| !d.parameter_text.items.is_empty());
-    let keeps = binding.may.as_deref().map_or(code(&binding.meaning), |may| may.iter().all(code));
-    if !keeps && (matches!(binding.meaning, Meaning::Macro(_)) || binding.may.is_some()) {
+    if !is_code(&binding) && (matches!(binding.meaning, Meaning::Macro(_)) || binding.may.is_some()) {
         (binding.meaning, binding.may) = hull_meaning(&binding, typed, Reach::Havoc, limit);
     }
     binding.certain = false;

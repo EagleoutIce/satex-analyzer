@@ -162,6 +162,9 @@ struct Loop {
     /// pass writes under names the widening opened (`\csname a\the\n`)
     /// is only met by running it.
     rerun: bool,
+    /// The assignment count when summarized: a later write on a path the
+    /// summary went on to comes after every pass ([`Machine::end_covered`]).
+    summed: u64,
     /// What the text scan the drive runs had made at the entry.
     made: Option<usize>,
 }
@@ -1227,6 +1230,7 @@ impl Machine<'_> {
                     entry: here.env.clone(),
                     joined,
                     rerun: false,
+                    summed: 0,
                     made: here.state.scans.last().filter(|a| a.name.is_none() && a.number.is_none()).map(Accum::len),
                 });
                 keep_last(&mut paths.loops, self.limits.loop_heads);
@@ -1592,6 +1596,7 @@ impl Machine<'_> {
         // have met a head to widen at (each deeper in conditionals or
         // groups), so their join only lists what they held so far.
         summarized.joined = here.clone_config();
+        summarized.summed = self.env.assignments;
         let began = summarized.entry.clone();
         let written = here.env.differing_over(&began, |s| Some(self.env.at_fork(fork, s)));
         paths.stopped.push(summarized);
@@ -1671,8 +1676,20 @@ impl Machine<'_> {
                 i => &paths.done[i - n - m],
             };
             let ended = c.ended;
+            let carries = c.state.summary_of.contains(&id) && c.key.groups.len() <= here.key.groups.len();
             self.resume_config(fork, c.clone_config());
-            self.env.widen(&written, Some((&summary, fork)), &crate::engine::env::typed!(self, syms));
+            // The path the summary went on to comes after every pass: code it
+            // wrote since (a dispatching `\next`) holds there, never the
+            // pass's. In a group opened since, the saved code is older: it widens.
+            let after = paths.stopped[l].summed;
+            let data: Vec<Sym> = (written.iter().copied())
+                .filter(|&s| {
+                    !carries
+                        || self.env.stamp_of(s) <= after
+                        || !self.env.slot(s).is_some_and(crate::engine::env::is_code)
+                })
+                .collect();
+            self.env.widen(&data, Some((&summary, fork)), &crate::engine::env::typed!(self, syms));
             self.mint();
             self.wild.union(&here.state.wild);
             let c = Config::new(self.save_path(), self.env.path(fork), ended);
