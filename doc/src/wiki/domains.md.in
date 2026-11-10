@@ -461,6 +461,7 @@ Joining pending code into unknown text keeps what it may do (`may_run`): undefin
 
 - Differing input joins as shared text around one token for either part. Each part must be whole: balanced braces, conditionals closed (`whole`).
 - Only data joins that way. Paths whose pending code differs never join until a common point. Code differs only between passes of one loop.
+- The same code is not the same when the paths bind its names apart. Two paths of one parser whose `\pgfmath@parse@next` reads the next token in two of its states stand at different points: past `limits.alike` they wait on, not joined (`reads_alike`). Joined, the token and the text it reads lost their pairing, and the parse read a `+` as a number.
 - A path raising an error with an exact cause (a certainly undefined name) is dropped: the document is assumed to compile. Library code that redefines `\fi` drops its path too. One rule decides every such refutation (`may_refute`): only a fault library code opened, never during a probe or once no path compiles (errors kept).
 - A scan library code opened that runs past the main file's end on a path that is kept says the analysis ended early (`analysis-ended-early`), not that the document lacks its end. A chapter's end, or a refuted path, hides no `missing-end`.
 - A cut keeps the lists holding the document's own text, and one in an output routine ends only the routine (tex.web § 1100).

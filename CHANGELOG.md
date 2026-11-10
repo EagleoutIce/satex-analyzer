@@ -10,6 +10,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **Joins of code.** Paths whose code is bound apart are no longer joined into one, and a call summary no longer carries an old call's numbers. `\let` to text that is one of several takes the meanings of its first tokens. pgfmath on random counts is exact again and cheaper.
 - `fix` **Paired lists.** An `\edef` of names a join kept paired (a float on the top list or deferred) holds their one text where every arm agrees.
 - `fix` **A stuck path inside a command.** It ends that path only: the paths waiting outside go on (`\pgfmathparse{\the\wd2}` reached no end).
 - `fix` **Colors of unknown mix.** An undelimited argument read from text that is one of several takes the first argument of each and puts the rest back. `\color{blue!\w!red}` with an unknown `\w` no longer swallows the rest of the document. `\meaning` of text that is one of several prints each, so `\colorlet` in a loop keeps the color exact.

@@ -376,6 +376,15 @@ impl PathEnv {
         out
     }
 
+    /// Whether this path and `other` bind `sym` alike: neither changed
+    /// it, or both to the same.
+    pub fn binds_alike(&self, other: &PathEnv, sym: Sym) -> bool {
+        match (self.slots.get(&sym.0), other.slots.get(&sym.0)) {
+            (Some((x, _)), Some((y, _))) => same_slot(x, y),
+            (x, y) => x.is_none() && y.is_none(),
+        }
+    }
+
     /// How many slots the path changed since its fork.
     pub fn len(&self) -> usize {
         self.slots.size()

@@ -781,17 +781,9 @@ impl Machine<'_> {
             self.unread_all(&again);
             return;
         }
-        let meaning = match source.tok {
-            Tok::Cs(src) => self.env.meaning(src),
-            // tex.web § 1221: an active character is an `eqtb` entry like a
-            // control sequence, so `\let` copies its current meaning.
-            Tok::Chr(c, Catcode::Active) => {
-                let src = self.active_sym(c);
-                self.env.meaning(src)
-            }
-            Tok::Chr(c, cat) => Meaning::Char(c, cat),
-            Tok::Param(_) => Meaning::Unknown,
-        };
+        // Past the split, one of its texts' first tokens: one of their meanings.
+        let firsts = self.one_of_members(source).map(|texts| self.first_meanings(&texts));
+        let meaning = if firsts.is_some() { Meaning::Unknown } else { self.token_meaning(source) };
         if future {
             self.unread(source);
             if let Some(h) = held {
@@ -827,8 +819,8 @@ impl Machine<'_> {
         // `\let` copies the whole meaning. A name a join left one of several
         // meanings stays one of them.
         let may = match source.tok {
-            Tok::Cs(src) => self.env.slot(src).and_then(|b| b.may.clone()).or_else(|| self.typed_meanings(src)),
-            _ => None,
+            Tok::Cs(_) if let Some(firsts) = firsts => firsts,
+            _ => self.let_may(source),
         };
         let node = self.define(name, meaning, by, DefMode::Declare, span);
         if let Some(may) = may.filter(|_| !self.unknown_text_name(name))
@@ -852,6 +844,53 @@ impl Machine<'_> {
         }
     }
 
+    /// What `\let` copies of `t` (tex.web § 1221): an active character is an
+    /// `eqtb` entry like a control sequence, so its current meaning.
+    fn token_meaning(&mut self, t: Token) -> Meaning {
+        match t.tok {
+            Tok::Cs(src) => self.env.meaning(src),
+            Tok::Chr(c, Catcode::Active) => {
+                let src = self.active_sym(c);
+                self.env.meaning(src)
+            }
+            Tok::Chr(c, cat) => Meaning::Char(c, cat),
+            Tok::Param(_) => Meaning::Unknown,
+        }
+    }
+
+    /// The meanings a join, or a typed name, left the name `t`.
+    fn let_may(&self, t: Token) -> Option<Rc<[Meaning]>> {
+        let src = t.cs()?;
+        self.env.slot(src).and_then(|b| b.may.clone()).or_else(|| self.typed_meanings(src))
+    }
+
+    /// The meanings one token taken from one of `texts` may have: those of
+    /// their first tokens. `None` where one is not known (an empty text,
+    /// an unknown meaning).
+    fn first_meanings(&mut self, texts: &[Rc<[Token]>]) -> Option<Rc<[Meaning]>> {
+        let mut out: Vec<Meaning> = Vec::new();
+        for text in texts {
+            let first = *text.first()?;
+            let meanings = match self.one_of_members(first) {
+                Some(nested) => self.first_meanings(&nested)?.to_vec(),
+                None => match self.let_may(first) {
+                    Some(may) => may.to_vec(),
+                    None if first.cs().is_some_and(|s| self.is_unknown_marker(s)) => return None,
+                    None => vec![self.token_meaning(first)],
+                },
+            };
+            for m in meanings {
+                if m == Meaning::Unknown {
+                    return None;
+                }
+                if !out.contains(&m) {
+                    out.push(m);
+                }
+            }
+        }
+        Some(out.into())
+    }
+
     /// One step of expansion, as `\expandafter` asks. An unexpandable token
     /// stays where it is (tex.web § 367).
     pub(crate) fn expand_once(&mut self) {
@@ -873,6 +912,11 @@ impl Machine<'_> {
                     && !self.read_noexpanded(token)
                     && !self.joined_unexpandable(sym) =>
             {
+                // Meanings besides plain macros: a path per meaning.
+                if self.joined_texts(sym).is_none() && self.split_meaning(sym, token.span) {
+                    self.unread(token);
+                    return self.expand_once();
+                }
                 let unknown = self.one_of_texts(sym, token.span);
                 self.unread(unknown);
             }
@@ -903,14 +947,20 @@ impl Machine<'_> {
     /// several parameterless macros, a token holding their texts as its
     /// meanings. Otherwise unknown text.
     pub(crate) fn one_of_texts(&mut self, sym: Sym, span: Span) -> Token {
-        let may = self.env.slot(sym).and_then(|b| b.may.clone());
-        let plain = may.as_ref().is_some_and(|may| {
-            may.iter()
-                .all(|m| m.as_macro().is_some_and(|m| m.parameter_text.items.is_empty() && !m.parameter_text.brace_end))
-        });
-        let (Some(may), true) = (may, plain) else { return self.unknown_text(Unk::Any, span) };
-        let texts = may.iter().filter_map(|m| m.as_macro().map(|m| m.replacement_text.clone())).collect();
-        self.one_of(texts, span)
+        match self.joined_texts(sym) {
+            Some(texts) => self.one_of(texts, span),
+            None => self.unknown_text(Unk::Any, span),
+        }
+    }
+
+    /// The texts of the parameterless macros a join left `sym`; `None`
+    /// where it may mean anything else.
+    fn joined_texts(&self, sym: Sym) -> Option<Vec<Rc<[Token]>>> {
+        let may = self.env.slot(sym)?.may.as_ref()?;
+        may.iter()
+            .map(|m| m.as_macro().filter(|m| m.parameter_text.items.is_empty() && !m.parameter_text.brace_end))
+            .map(|m| m.map(|m| m.replacement_text.clone()))
+            .collect()
     }
 
     /// Expand a gullet primitive and put its characters back. Swallowing them

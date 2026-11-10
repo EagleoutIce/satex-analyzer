@@ -249,8 +249,7 @@ impl Machine<'_> {
         if !unknown || runs.runs.iter().any(|r| self.reads_otherwise(r)) {
             return false;
         }
-        self.apply_summary(key, key.1, arguments);
-        true
+        self.apply_summary(key, key.1, arguments)
     }
 
     /// The precise values among the count registers a run read and left
@@ -274,7 +273,9 @@ impl Machine<'_> {
         run.read_values.iter().any(differs)
     }
 
-    fn apply_summary(&mut self, key: CallKey, span: Span, arguments: &[Vec<Token>]) {
+    /// `false` when a run wrote a typed number of its own arguments that
+    /// this call's do not hold: that number is not this call's.
+    fn apply_summary(&mut self, key: CallKey, span: Span, arguments: &[Vec<Token>]) -> bool {
         let runs = std::mem::take(&mut self.call_runs.get_mut(&key).expect("recorded").runs);
         let mut syms: Vec<Sym> = runs.iter().flat_map(|r| r.writes.iter().map(|w| w.0)).collect();
         syms.sort_unstable();
@@ -295,6 +296,21 @@ impl Machine<'_> {
             alike.then(|| theirs.iter().zip(&here).filter_map(|(a, b)| Some(((*a)?, (*b)?))).collect())
         };
         let maps: Option<Vec<Vec<(Sym, Sym)>>> = runs.iter().map(to).collect();
+        // A write that names a number of its run's arguments this call's do not hold.
+        let foreign = |r: &Run, b: &Option<Binding>| {
+            let theirs = numbers(&r.args);
+            let Some(b) = b else { return false };
+            let toks = match &b.value {
+                crate::engine::value::Value::Toks(t) => &t[..],
+                _ => &[],
+            };
+            let macros = std::iter::once(&b.meaning).chain(b.may.iter().flat_map(|m| m.iter()));
+            (macros.filter_map(|m| m.as_macro()).flat_map(|d| d.replacement_text.iter()).chain(toks))
+                .filter_map(|t| t.cs())
+                .map(|s| self.typed_slice(s).map_or(s, |c| c.0))
+                .any(|s| theirs.contains(&Some(s)) && !here.contains(&Some(s)))
+        };
+        let mut refused = false;
         for &sym in &syms {
             let now = self.env.slot_at(sym.0);
             let of = |r: &Run| r.writes.iter().find(|w| w.0 == sym).map_or_else(|| now.clone(), |w| w.1.clone());
@@ -315,6 +331,10 @@ impl Machine<'_> {
                     continue;
                 }
             }
+            if runs.iter().any(|r| foreign(r, &of(r))) {
+                refused = true;
+                break;
+            }
             let mut acc = of(&runs[0]);
             for r in &runs[1..] {
                 let next = of(r);
@@ -331,6 +351,10 @@ impl Machine<'_> {
                 b.certain = false;
                 writes.push((sym, b));
             }
+        }
+        if refused {
+            self.call_runs.get_mut(&key).expect("recorded").runs = runs;
+            return false;
         }
         self.mint();
         for (sym, b) in writes {
@@ -353,6 +377,7 @@ impl Machine<'_> {
                 "a call with unknown operands met again here: what it does is the join of its first runs".to_string(),
             );
         }
+        true
     }
 
     /// A read is about to take a token from frame `self.input.len() - 1`:

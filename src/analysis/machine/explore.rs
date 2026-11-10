@@ -2186,7 +2186,7 @@ impl Machine<'_> {
         while paths.parked.len() > bound && i < paths.parked.len() {
             let joined = (i + 1..paths.parked.len()).find_map(|j| {
                 let (a, b) = (&paths.parked[i], &paths.parked[j]);
-                if (a.crowded && b.crowded) || !alike(a, b) {
+                if (a.crowded && b.crowded) || !alike(a, b) || !self.reads_alike(a, b) {
                     return None;
                 }
                 let input = self.widen_input(&a.state.input, &b.state.input, span, false, false)?;
@@ -2214,6 +2214,24 @@ impl Machine<'_> {
             span,
             format!("more than {bound} paths waited. Those at one point were joined"),
         );
+    }
+
+    /// Whether the code two paths read before their inputs part means the
+    /// same on both. Code whose names the paths bind apart (a parser's
+    /// `\next` in two of its states) reads what follows at different
+    /// points of one run: those paths are not one.
+    fn reads_alike(&self, a: &Config, b: &Config) -> bool {
+        let (x, y) = (live_frames(&a.state.input), live_frames(&b.state.input));
+        let ahead: Vec<&Frame> =
+            x.iter().rev().zip(y.iter().rev()).take_while(|(p, q)| place(p) == place(q)).map(|(p, _)| *p).collect();
+        if ahead.len() == x.len() && x.len() == y.len() {
+            return true;
+        }
+        frames_text(&ahead).all(|t| {
+            t.cs().is_none_or(|s| {
+                self.typed_text_of(*t).is_some() || self.one_of_members(*t).is_some() || a.env.binds_alike(&b.env, s)
+            })
+        })
     }
 
     /// Two texts whose differing ends hold closers or openers of braces or

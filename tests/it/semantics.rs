@@ -3220,6 +3220,23 @@ mod model_deviations {
         assert!(open || got.iter().any(|b| b == "T"), "{got:?}");
     }
 
+    /// `\futurelet` onto a one-of token past `limits.choices`: the name
+    /// means one of the texts' first tokens, here letters, so `\ifcat\noexpand`
+    /// sees a letter. Bug: `\let` copied the token's own meanings, macros
+    /// holding the texts, so the test saw a control sequence (pgfmath took
+    /// `\pgfmathresult+40` for a count register, missing-number).
+    #[test]
+    fn futurelet_onto_a_one_of_means_its_first_tokens() {
+        let analysis = run(
+            "\\ifodd\\pdfuniformdeviate 2 \\toks0={ab}\\else\\toks0={c}\\fi
+             %\\satex@configure{limits.choices=0}
+             \\def\\test{\\ifcat\\noexpand\\t\\relax\\def\\R{cs}\\else\\def\\R{letter}\\fi}
+             \\expandafter\\futurelet\\expandafter\\t\\expandafter\\test\\the\\toks0 ",
+            |_| {},
+        );
+        assert_eq!(bodies(&analysis), ["letter"]);
+    }
+
     /// R2-5: a box may be wider than `\maxdimen` (hpack does not check,
     /// tex.web § 656), and a count takes its width as it is (§ 461
     /// checks dimensions only): the sum is no top.
