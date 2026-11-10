@@ -1,0 +1,8 @@
+\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{graphs}
+% A graph node whose math holds a picture: tikz sets it with \raise.
+\begin{document}
+\begin{tikzpicture}\graph {a -> "$\tikz\node{x};$"};\end{tikzpicture}
+\gdef\SatexReachedEnd{}
+\end{document}

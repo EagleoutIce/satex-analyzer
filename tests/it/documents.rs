@@ -393,6 +393,10 @@ fixtures! {
     tikz_centered_text_width_node_with_rounded_corners("tikz_centered_text_width_node", "main.tex");
     /// A bent path to a signal node holding centered `~~~~`: a known size.
     tikz_bend_to_signal_node_with_tildes("tikz_bend_to_signal_node", "main.tex");
+    /// A picture in a graph node's math: `\raise` of its box in a formula
+    /// keeps the formula's size. It lost it, and the arrow to a node of
+    /// unknown width forked the pgfmath operator stack 10k times.
+    tikz_graph_node_with_a_picture_in_math("tikz_graph_nested_math_picture", "main.tex");
 }
 
 // Termination: every loop point is summarized at most once per entry cap,

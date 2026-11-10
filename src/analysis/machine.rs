@@ -8665,13 +8665,17 @@ will look undefined",
             Meaning::Primitive(P::Mode(
                 crate::engine::builtins::ModeCmd::MathStyle(_) | crate::engine::builtins::ModeCmd::MathChoice,
             )) => true,
-            // A box is an ordinary atom, whose size `append_item` adds.
-            Meaning::Primitive(P::Mode(crate::engine::builtins::ModeCmd::Box(
-                crate::engine::builtins::BoxCmd::HBox
-                | crate::engine::builtins::BoxCmd::VBox
-                | crate::engine::builtins::BoxCmd::VTop
-                | crate::engine::builtins::BoxCmd::VCenter,
-            ))) => true,
+            // A box is an ordinary atom, whose size `append_item` adds, also
+            // raised or lowered (tex.web § 1076).
+            Meaning::Primitive(P::Mode(
+                crate::engine::builtins::ModeCmd::Box(
+                    crate::engine::builtins::BoxCmd::HBox
+                    | crate::engine::builtins::BoxCmd::VBox
+                    | crate::engine::builtins::BoxCmd::VTop
+                    | crate::engine::builtins::BoxCmd::VCenter,
+                )
+                | crate::engine::builtins::ModeCmd::Shift { vertical: true },
+            )) => true,
             Meaning::Primitive(p) => crate::engine::builtins::expandable(p) || crate::engine::builtins::assignment(p),
             Meaning::Register(kind, _) => {
                 !matches!(kind, crate::engine::tex::RegKind::MathChar | crate::engine::tex::RegKind::UMathChar)

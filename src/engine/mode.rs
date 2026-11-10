@@ -3903,10 +3903,15 @@ impl Machine<'_> {
     }
 
     /// tex.web § 653 and § 670: a shifted box raises the height and lowers
-    /// the depth of a horizontal list, and widens a vertical one.
+    /// the depth of a horizontal list, and widens a vertical one. In a
+    /// formula it is packed alone (§ 720 `clean_box`, § 653).
     fn shifted(&self, [w, h, d]: [Dim; 3], shift: Dim) -> [Dim; 3] {
+        let (hs, ds) = (h.reduced_by(shift), d.extended_by(shift));
         match self.list_kind() {
-            Some(true) => [w, h.reduced_by(shift), d.extended_by(shift)],
+            Some(true) => [w, hs, ds],
+            _ if !self.mode.is_empty() && self.mode.within(Modes::ANY_MATH) => {
+                [w, hs.at_least_zero(), ds.at_least_zero()]
+            }
             _ => [w.extended_by(shift), h, d],
         }
     }
