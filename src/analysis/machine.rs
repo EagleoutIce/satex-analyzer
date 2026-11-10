@@ -2008,6 +2008,9 @@ pub struct Machine<'a> {
     pub(crate) name_token: Option<Token>,
     /// [`Machine::project_file`] per file: 0 not asked, 1 no, 2 yes.
     own_files: Vec<u8>,
+    /// `out.files` by path ([`Machine::file_index`]): a font's metrics are
+    /// looked up per space.
+    file_ids: HashMap<PathBuf, usize>,
     /// The step the last typed digits were made at, and how many then: their
     /// names, so a name never depends on how many names the run interned.
     pub(crate) digits_made: (u64, u32),
@@ -2748,6 +2751,7 @@ impl<'a> Machine<'a> {
             reading_command: false,
             name_token: None,
             own_files: Vec::new(),
+            file_ids: HashMap::default(),
             digits_made: (0, 0),
             gaps_raised: 0,
             tex_errors: 0,
@@ -6780,9 +6784,12 @@ will look undefined",
 
     /// Run `text` as a file of its own, `@` a letter as it is while
     /// `\document` reads the `.aux` file: the names it defined that are
-    /// still defined.
+    /// still defined. A line stopped by its budget leaves its input,
+    /// conditionals and groups behind: dropped, or every later line
+    /// would run on under them.
     pub fn run_line(&mut self, text: &str) -> Vec<String> {
         let file = self.register_file("\u{2}line".into(), LoadKind::Input);
+        let (input, conds, groups) = (self.input.len(), self.conds.len(), self.env.group_level());
         self.catcodes.set('@', Catcode::Letter);
         self.line_defined = Some(Vec::new());
         self.input.push(Frame::File {
@@ -6800,11 +6807,19 @@ will look undefined",
         self.run();
         self.budget = None;
         let defined = self.line_defined.take().unwrap_or_default();
-        defined
+        let defined: Vec<_> = defined
             .into_iter()
             .filter(|&sym| self.env.is_defined(sym))
             .map(|sym| self.out.interner.name(sym).to_string())
-            .collect()
+            .collect();
+        while self.input.len() > input {
+            self.input.pop();
+        }
+        self.drop_conditionals(conds);
+        while self.env.group_level() > groups {
+            self.env.pop_group(&mut self.catcodes);
+        }
+        defined
     }
 
     /// Run `sym` on `text` read from a file of its own, until the main loop
@@ -13127,8 +13142,12 @@ will look undefined",
     }
 
     /// The file of this run at `path`, compared by components (`a//b` is `a/b`).
+    /// The index is used while it covers every file once.
     pub(crate) fn file_index(&self, path: &str) -> Option<usize> {
-        self.out.files.iter().position(|f| std::path::Path::new(&f.path) == std::path::Path::new(path))
+        if self.file_ids.len() == self.out.files.len() {
+            return self.file_ids.get(Path::new(path)).copied();
+        }
+        self.out.files.iter().position(|f| Path::new(&f.path) == Path::new(path))
     }
 
     pub fn register_file(&mut self, path: String, kind: LoadKind) -> FileId {
@@ -13139,6 +13158,12 @@ will look undefined",
             true => std::path::Path::new(&path).components().collect::<PathBuf>().to_string_lossy().into_owned(),
             false => path,
         };
+        if self.file_ids.len() != self.out.files.len() {
+            self.file_ids.clear();
+            for (i, f) in self.out.files.iter().enumerate() {
+                self.file_ids.entry(PathBuf::from(&f.path)).or_insert(i);
+            }
+        }
         if let Some(i) = self.file_index(&path) {
             return i as FileId;
         }
@@ -13155,6 +13180,7 @@ will look undefined",
             }
             short = qualified_name(&path);
         }
+        self.file_ids.insert(PathBuf::from(&path), self.out.files.len());
         self.out.files.push(FileInfo { path, kind, short });
         self.out.entry.push(None);
         (self.out.files.len() - 1) as FileId

@@ -1587,6 +1587,7 @@ impl Machine<'_> {
             counter_namespace: _,
             name_token: _,
             own_files: _,
+            file_ids: _,
             digits_made: _,
             gaps_raised: _,
             tex_errors: _,

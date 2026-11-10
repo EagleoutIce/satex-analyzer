@@ -11,6 +11,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 ### Analysis
 
 - `feat` **Unread parts are errors.** The new lint `unread-document` (A003) reports every file the document names that the run never read, and a scan that read past the document's end. Before, they were silent in `satex lint`.
+- `perf` **Written lines and fonts.** A line read back from the `.aux` file that stops at its budget leaves nothing behind for the next line, and files are looked up by path in a map: a thesis with many labels runs in a third of the time.
 - `perf` **Call summaries of large tables.** A summary looks up each run's writes by name, and a call's shape is checked once, not at every meeting: pgfplotstable no longer stalls a run.
 - `fix` **Rounded corners at unknown points.** A loop summary no longer gives a waiting path the code of another program point: `\pgfprocessround` raises no false errors.
 - `fix` **Joins of code.** Paths whose code is bound apart are no longer joined into one, and a call summary no longer carries an old call's numbers. `\let` to text that is one of several takes the meanings of its first tokens. pgfmath on random counts is exact again and cheaper.
