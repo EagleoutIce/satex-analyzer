@@ -6385,7 +6385,10 @@ will look undefined",
                 Tok::Chr(c, Catcode::Active) => self.active_sym(c) == name,
                 _ => false,
             };
-            named && self.own_file(t.span.file) && !self.carried.foreign_names.contains(&(name, t.span))
+            named
+                && self.own_file(t.span.file)
+                && !self.carried.foreign_names.contains(&(name, t.span))
+                && self.written_since(t.span, name)
         });
         let (redefines, relative) = match self.redefines_hint.take() {
             Some((hinted, before)) if hinted == name => before,
@@ -13546,6 +13549,22 @@ will look undefined",
     /// instead of reading it.  The request is a load all the same.
     fn note_repeated_load(&mut self, sym: Sym, arguments: &[Vec<Token>]) {
         let is = |args: &[Token], name: &str| matches!(args, [t] if t.cs().is_some_and(|s| self.out.interner.name(s) == name));
+    /// Whether the file read now holds `name`'s text from the line of `at`
+    /// on: a name package code builds by `\csname` carries the span of the
+    /// call that made it, not text of the file. Unknown when the file is no
+    /// longer read.
+    fn written_since(&self, at: Span, name: Sym) -> bool {
+        let text = self.out.interner.name(name);
+        self.input
+            .iter()
+            .rev()
+            .find_map(|frame| match frame {
+                Frame::File { mouth, .. } if mouth.file == at.file => Some(mouth.text_since(at.line, 1).contains(text)),
+                _ => None,
+            })
+            .unwrap_or(true)
+    }
+
         match self.name(sym) {
             "@ifl@aded" if arguments.len() == 2 && is(&arguments[0], "@currext") && is(&arguments[1], "@currname") => {
                 let text = |m: &Self, cs: &str| {

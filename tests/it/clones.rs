@@ -10,6 +10,7 @@ use satex::queries::query::Record;
 const FIGURES: &str = "\
 \\begin{figure}[ht]\\centering\\includegraphics[width=.8\\linewidth]{example-image-a}\\caption{Alpha results}\\label{fig:a}\\end{figure}
 \\begin{figure}[ht]\\centering\\includegraphics[width=.7\\linewidth]{example-image-b}\\caption{Beta results}\\label{fig:b}\\end{figure}
+\\begin{figure}[ht]\\centering\\includegraphics[width=.6\\linewidth]{example-image-c}\\caption{Gamma results}\\label{fig:c}\\end{figure}
 ";
 
 /// A table, and `extra` after its header row.
@@ -74,8 +75,9 @@ fn errors(analysis: &Analysis) -> Vec<String> {
     codes
 }
 
-/// Two figures that differ in width, file, caption and label: one finding
-/// with four holes, and its fix gives a document with no new errors.
+/// Three figures that differ in width, file, caption and label: one finding
+/// with four holes, and its fix gives a document with no new errors. (Two
+/// such figures save less text than a macro's eight arguments cost.)
 #[test]
 fn figures_differing_in_values_get_one_macro() {
     if !installed() {
@@ -92,10 +94,10 @@ fn figures_differing_in_values_get_one_macro() {
     let text = message(finding);
     for hole in [
         "4 places",
-        "`width` (.8 / .7)",
-        "(example-image-a / example-image-b)",
-        "(Alpha results / Beta results)",
-        "(fig:a / fig:b)",
+        "`width` (.8 / .7 / .6)",
+        "(example-image-a / example-image-b / example-image-c)",
+        "(Alpha results / Beta results / Gamma results)",
+        "(fig:a / fig:b / fig:c)",
     ] {
         assert!(text.contains(hole), "{hole} missing: {text}");
     }
@@ -109,11 +111,12 @@ fn figures_differing_in_values_get_one_macro() {
     assert!(fixed.contains("\\newcommand{\\figureblock}[4]{\\begin{figure}[ht]"), "{fixed}");
     assert!(fixed.contains("\\figureblock{.8}{example-image-a}{Alpha results}{fig:a}"), "{fixed}");
     assert!(fixed.contains("\\figureblock{.7}{example-image-b}{Beta results}{fig:b}"), "{fixed}");
+    assert!(fixed.contains("\\figureblock{.6}{example-image-c}{Gamma results}{fig:c}"), "{fixed}");
     let again = Machine::analyze(&fixed, Some(std::path::Path::new(&main)), &cfg);
     assert_eq!(errors(&again), before, "{fixed}");
     assert!(clones(&again).is_empty(), "{fixed}");
-    // Both labels are still set: the macro does what the copies did.
-    for label in ["fig:a", "fig:b"] {
+    // The labels are still set: the macro does what the copies did.
+    for label in ["fig:a", "fig:b", "fig:c"] {
         assert!(again.facts.occurrences.iter().any(|o| o.key == label), "{label} lost: {fixed}");
     }
     drop(project);
@@ -164,9 +167,10 @@ fn library_code_is_never_read() {
     assert!(found.is_empty(), "{found:?}");
 }
 
-/// Ten numbers differ: the finding stands, but no macro takes ten parameters.
+/// Ten numbers differ: no macro takes ten parameters, so the copy is no
+/// clone to report (it was shown as one, with a fix nobody could apply).
 #[test]
-fn more_holes_than_parameters_get_no_edits() {
+fn more_holes_than_parameters_are_no_clone() {
     if !installed() {
         return;
     }
@@ -180,11 +184,32 @@ fn more_holes_than_parameters_get_no_edits() {
     };
     let body = format!("{}\n{}", tabular([1, 2, 3, 4, 5, 6, 7, 8, 9, 0]), tabular([0, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
     let found = found("many", &document("", &body), Clones::default());
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// A macro must save text: a long block with one short value in two places
+/// does; a short line with three values in two places costs more in
+/// arguments than it shares, and is no clone.
+#[test]
+fn a_clone_must_save_more_than_its_arguments_cost() {
+    if !installed() {
+        return;
+    }
+    let low = Clones { min_tokens: 8, ..Clones::default() };
+    let long = |v: &str| {
+        format!(
+            "\\begin{{center}}\n\\fbox{{\\textbf{{Result}} of the \\emph{{first}} experiment: {v}}}\n\\end{{center}}\n"
+        )
+    };
+    let found = self::found("long", &document("", &format!("{}\nText.\n\n{}", long("A"), long("B"))), low.clone());
     assert_eq!(found.len(), 1, "{found:?}");
-    let holes = message(&found[0]).split(" / ").count() - 1;
-    assert!(found[0].get("edits").is_none(), "{found:?}");
-    let fix = found[0]["fix"].as_str().unwrap_or_default();
-    assert!(fix.contains(&format!("{holes} parameters, more than 9")), "{fix}");
+    let short = |a: &str, b: &str, c: &str| format!("\\textbf{{{a}}} and \\emph{{{b}}} or {c}.\n");
+    let found = self::found(
+        "short",
+        &document("", &format!("{}\nText.\n\n{}", short("a", "b", "c"), short("x", "y", "z"))),
+        low,
+    );
+    assert!(found.is_empty(), "{found:?}");
 }
 
 #[test]

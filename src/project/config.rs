@@ -1069,10 +1069,13 @@ area! {
     Ties {
         /// Commands a tie belongs in front of.
         before: Vec<String> = strs(&[r"\ref", r"\pageref", r"\eqref", r"\cite"]),
-        /// References that set the name before the number themselves.
+        /// References that set the name before the number themselves, and
+        /// citations that print words of the sentence: an author, a title, a year.
         naming: Vec<String> = strs(&[
             r"\cref", r"\Cref", r"\crefrange", r"\Crefrange", r"\cpageref", r"\Cpageref", r"\autoref",
             r"\vref", r"\Vref", r"\vrefrange", r"\nameref", r"\Nameref",
+            r"\citeauthor", r"\Citeauthor", r"\textcite", r"\Textcite", r"\citetitle", r"\Citetitle",
+            r"\citeyear", r"\citedate", r"\citet", r"\Citet", r"\citealt", r"\Citealt", r"\citealp", r"\Citealp",
         ]),
         /// Commands no space goes in front of, beside `\label`.
         unspaced: Vec<String> = strs(&[r"\index"]),
@@ -2248,6 +2251,12 @@ pub struct Clones {
     pub seed: usize,
     /// How many later places with the same window one place is compared with.
     pub partners: usize,
+    /// Characters a macro must save to be worth it: the shared text each
+    /// further place drops, less `parameter-cost` per argument at every call.
+    pub min_saved: usize,
+    /// Characters one argument costs at a call: its braces, its value's
+    /// reading, the reader's lookup of what it means.
+    pub parameter_cost: usize,
 }
 
 /// Which part of the document [`Clones`] reads.
@@ -2273,6 +2282,8 @@ impl Default for Clones {
             min_occurrences: 2,
             seed: 8,
             partners: 32,
+            min_saved: 20,
+            parameter_cost: 12,
         }
     }
 }

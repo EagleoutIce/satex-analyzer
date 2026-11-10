@@ -297,3 +297,28 @@ fn et_al_before_a_lowercase_word_wants_a_word_space_unless_frenchspacing() {
     assert_eq!(replacements(&found), [r"\ "], "{found:?}");
     assert!(french.is_empty(), "{french:?}");
 }
+
+/// `\citeauthor` and `\textcite` print words of the sentence, a name: a line
+/// may break before them, so no tie is asked for. A bare `\cite` still gets one.
+#[test]
+fn no_tie_before_a_citation_that_prints_a_name() {
+    let body = "\\usepackage{biblatex}\n\\addbibresource{refs.bib}\n\\begin{document}\n\
+                As described by \\citeauthor{knuth84}~\\cite{knuth84} and by \\textcite{kp81}, see \\cite{kp81}.\n\
+                \\end{document}\n";
+    let found = records("naming-cite", body, BIB, "missing-nonbreaking-space");
+    if !crate::support::installed() {
+        return;
+    }
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(replacements(&found), ["~"]);
+}
+
+/// biber predefines the month constants as BibTeX's styles do; with biblatex
+/// the `.aux` names `biblatex.bst`, which defines none, so `jun` was reported.
+#[test]
+fn biblatex_knows_the_month_constants() {
+    let bib = "@article{koop17, author = {A. Koop}, title = {T}, journal = {J}, year = {2017}, month = jun}\n";
+    let body = "\\usepackage{biblatex}\n\\addbibresource{refs.bib}\n\\begin{document}\n\\cite{koop17}\n\\printbibliography\n\\end{document}\n";
+    let found = records("months", body, bib, "undefined-bibliography-string");
+    assert!(found.is_empty(), "{found:?}");
+}

@@ -65,10 +65,21 @@ pub fn of(analysis: &Analysis, path: &str) -> Model {
             let dm = biblatex.and_then(|l| l.path.as_deref()).and_then(|p| Path::new(p).parent());
             let mut m = read(dm.map(|d| d.join("blx-dm.def"))).map(|t| datamodel(&t)).unwrap_or_default();
             // biber predefines BibTeX's month constants: those of the standard styles
-            m.macros = installed("plain.bst").map(|t| bst(&t).macros).unwrap_or_default();
+            m.macros = read(style_file(analysis, path, "plain.bst", None)).map(|t| bst(&t).macros).unwrap_or_default();
             m
         }
     };
+    // biber predefines BibTeX's month constants: with biblatex the `.aux`
+    // names `biblatex.bst`, which defines none of them
+    if analysis.facts.loads.iter().any(|l| l.name == "biblatex")
+        && let Some(months) = read(style_file(analysis, path, "plain.bst", None)).map(|t| bst(&t).macros)
+    {
+        for (name, value) in months {
+            if !model.macros.iter().any(|m| m.0.eq_ignore_ascii_case(&name)) {
+                model.macros.push((name, value));
+            }
+        }
+    }
     // datatypes and aliases: the installation's biblatex, whatever the style
     if model.datatypes.is_empty()
         && let Some(text) = installed("blx-dm.def")

@@ -492,7 +492,9 @@ fn dead_definition(report: &mut Report) {
         .facts
         .defs
         .iter()
-        .filter(|def| def.certain && def.stated && def.mac.is_some() && index.own_definition(def))
+        // A name package code builds per call (`\\cite`'s keys, a sankey
+        // node's flags) is no definition the document wrote.
+        .filter(|def| def.certain && def.stated && def.spelled && def.mac.is_some() && index.own_definition(def))
         .collect();
     // Grouped by name, as the report is ordered.  Only a name defined twice
     // can have a definition nothing reads.

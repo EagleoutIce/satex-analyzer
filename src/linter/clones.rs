@@ -39,9 +39,14 @@ A clone shares at least `min_tokens` tokens, and its values take at most
 Library code is never read. Two of the document's macros with the same body
 are reported too.
 
+A clone is reported only when a macro saves text: the shared characters each
+further place drops must exceed `parameter_cost` (12) per argument at every
+call by `min_saved` (20).  Two places of a short line with three values are
+no clone; fifty characters with one short value are.  A clone needing more
+than `max_parameters` (TeX allows 9) is not reported at all.
+
 Fix by defining one macro with a parameter per hole and using it at every
-place. The fix writes it when there are at most `max_parameters` holes (TeX
-allows 9). It is unsafe: the macro's name is a guess.",
+place. It is unsafe: the macro's name is a guess.",
     references: &[],
     fixes: &[Applicability::Unsafe],
     engines: &[],
@@ -722,6 +727,18 @@ fn finding(
             hole.iter().zip(places.iter()).map(|(&h, &p)| slice(region(search, p, h)).trim().to_string()).collect()
         })
         .collect();
+    // Worth a macro only when it saves text: the shared characters each
+    // further place drops, less an argument per hole at every call.
+    let cfg = search.cfg;
+    let (n, k) = (group.holes.len(), places.len());
+    let first = places[0];
+    let block = slice((u[first.0 as usize].file, u[first.0 as usize].start, u[first.1 as usize - 1].end));
+    let varying: usize = values.iter().map(|vals| vals[0].chars().count()).sum();
+    let shared = block.chars().filter(|c| !c.is_whitespace()).count().saturating_sub(varying);
+    let saved = (k - 1) * shared;
+    if n > cfg.max_parameters.min(9) || saved < cfg.min_saved + k * n * cfg.parameter_cost {
+        return;
+    }
     let shown = |v: &str| match v.chars().count() {
         0 => "nothing".to_string(),
         n if n > 24 => format!("{}…", v.chars().take(24).collect::<String>().replace('\n', " ")),
@@ -765,14 +782,6 @@ fn macro_fix(
     let u = search.u;
     let places = &group.places;
     let n = group.holes.len();
-    let most = search.cfg.max_parameters.min(9);
-    if n > most {
-        return Fix::new(
-            format!("define one macro for the {} places: it would take {n} parameters, more than {most}", places.len()),
-            Applicability::Unsafe,
-            None,
-        );
-    }
     // The macro's name, from the block's first environment or command.
     let analysis = report.analysis();
     let base: String = (places[0].0..places[0].1)

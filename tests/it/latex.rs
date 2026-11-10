@@ -4631,6 +4631,37 @@ fn a_provided_fallback_is_never_dead() {
     assert!(dead.is_empty(), "{dead:?}");
 }
 
+/// A package that builds a name per call (`\csname` from a key the call
+/// gets) redefines it at every call: the document wrote none of those
+/// definitions, so none is dead. The sankey package's per-node flags and a
+/// citation package's per-key macros were reported at every call.
+#[test]
+fn names_a_package_builds_per_call_are_never_dead() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\makeatletter
+\newcommand\flag[1]{\expandafter\gdef\csname my@flag@#1\endcsname{set}}
+\makeatother
+\begin{filecontents*}[overwrite]{flags.sty}
+\ProvidesPackage{flags}
+\newcommand\pkgflag[1]{\expandafter\gdef\csname pkg@flag@#1\endcsname{set}}
+\end{filecontents*}
+\usepackage{flags}
+\begin{document}
+\pkgflag{a}
+\pkgflag{a}
+\end{document}",
+    );
+    let dead: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("dead-definition"))
+        .collect();
+    assert!(dead.is_empty(), "{dead:?}");
+}
+
 /// A here-float the output routine puts on its own list (`\box\@currbox` in `\@addtocurcol`)
 /// reaches the page with that list: its caption is typeset, not lost to the next box built.
 #[test]
