@@ -2012,10 +2012,10 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
   /* a soft light from the top: the window floats on it, no hard frame */
   background: radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%), color-mix(in srgb, var(--accent) 2%, var(--sunk));
   border: 1px solid color-mix(in srgb, var(--fg) 6%, transparent); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 6%, transparent); }
-/* a card: one 4:3 stage, the window inset alike on all sides, its capture filling it from the top left */
+/* a card: one 4:3 stage, the window inset alike on all sides, its capture whole in it, never cut */
 .cards .shot-stage { display: flex; aspect-ratio: 4 / 3; max-height: calc(30vh + 2 * var(--s24)); }
 .cards .shot-win { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.cards .shot-win picture { flex: 1; min-height: 0; } .cards .shot-win img { height: 100%; object-fit: cover; object-position: left top; }
+.cards .shot-win picture { flex: 1; min-height: 0; } .cards .shot-win img { height: 100%; object-fit: contain; object-position: center top; }
 .shot-wide .shot-win { width: 100%; }
 /* the window: the capture itself, cut out with rounded corners and a soft shadow */
 .shot-win { position: relative; display: block; border-radius: var(--r-card); overflow: hidden; background: var(--panel); transform: translate3d(0, var(--lift, 0px), 0);
@@ -2032,7 +2032,7 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 .shot-stack > .shot-win { grid-area: 1 / 1; }
 /* a stack on a ring card fills the card: both windows the card's height, the back one peeking out on the left */
 .cards .shot-stage:has(> .shot-stack) { display: block; } .cards .shot-stack { --dx: 18%; --dy: var(--s12); height: 100%; box-sizing: border-box; }
-.cards .shot-stack > .shot-win { min-height: 0; height: 100%; } .cards .shot-stack > .shot-win img { height: 100%; object-fit: cover; object-position: left top; }
+.cards .shot-stack > .shot-win { min-height: 0; height: 100%; } .cards .shot-stack > .shot-win img { height: 100%; object-fit: contain; object-position: center top; }
 .shot-stack > .shot-win:first-child { translate: calc(-1 * var(--dx)) calc(-1 * var(--dy)); opacity: .9; }
 /* where SaTeX runs: one card, a row per editor with what it gets, how to set it up and where to read more */
 .editors { display: grid; grid-template-columns: max-content max-content minmax(0, 1fr) max-content; margin: 0 0 var(--s48); padding: var(--s4) var(--s16); list-style: none;
@@ -2051,7 +2051,7 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 /* the frame in focus lifts a little and glows: the one that plays */
 .shot-win { transition: transform .5s var(--ease), box-shadow .5s var(--ease); }
 .shot-focus .shot-win { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent), 0 4px 10px #10141e1a, 0 26px 60px -14px color-mix(in srgb, var(--accent) 45%, #10141e66); }
-@media (prefers-reduced-motion: no-preference) { .shot-focus .shot-win { --hover: -1px; } }
+@media (prefers-reduced-motion: no-preference) and (min-width: 48rem) { .shot-focus .shot-win { --hover: -1px; } }
 .shot-play { display: none; position: absolute; right: .6rem; bottom: .6rem; z-index: 2; width: 2.2rem; height: 2.2rem; min-width: 0; padding: 0; border-radius: var(--r-pill); border: 1px solid var(--border); background: color-mix(in srgb, var(--panel) 85%, transparent); color: var(--fg); font-size: .8rem; cursor: pointer; box-shadow: var(--shadow); }
 @media (prefers-reduced-motion: reduce) { .shot-play { display: grid; place-items: center; } }
 .shot-dark { display: none !important; }
@@ -2071,8 +2071,13 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 .shot figcaption p { margin: 0 0 var(--s12); color: var(--muted); text-wrap: pretty; }
 .shot-try { font-weight: 600; font-size: .92rem; }
 .shot-try:hover { text-decoration: none; } .shot-try:hover::after { content: ""; }
+/* on a phone the frames stand still: they fade in, nothing moves up or down */
 @media (prefers-reduced-motion: no-preference) {
-  .shot.pending .shot-stage, .shot.pending figcaption { opacity: 0; transform: translateY(1.4rem); }
+  .shot.pending .shot-stage, .shot.pending figcaption { opacity: 0; }
+  .shot .shot-stage, .shot figcaption { transition: opacity .7s var(--ease); }
+}
+@media (prefers-reduced-motion: no-preference) and (min-width: 48rem) {
+  .shot.pending .shot-stage, .shot.pending figcaption { transform: translateY(1.4rem); }
   .shot .shot-stage, .shot figcaption { transition: opacity .7s var(--ease), transform .7s var(--ease); }
   .shot figcaption { transition-delay: .08s; }
   .shot-stage:hover .shot-win { --hover: -2px; }

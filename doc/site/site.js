@@ -1903,7 +1903,9 @@
         s.style.setProperty('--lift', `${(Math.max(-1, Math.min(1, mid)) * -4).toFixed(1)}px`);
       }
     };
-    addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(drift); } }, { passive: true });
+    // a phone scrolls with the frames still
+    const wide = matchMedia('(min-width: 48rem)');
+    addEventListener('scroll', () => { if (!queued && wide.matches) { queued = true; requestAnimationFrame(drift); } }, { passive: true });
   }
 
   // The showcase's cards on a ring: the card in front is the largest, the others turn away to both sides
