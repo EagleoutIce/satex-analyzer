@@ -2354,7 +2354,7 @@ impl Default for PackageSuccessor {
         let wrapfig = Successor {
             package: "wrapfig".into(),
             successor: "wrapfig2".into(),
-            changes: "`wrapfigure` and `wraptable` keep their arguments; a final `*` makes the line count a correction, and `wraptext` wraps framed text. wrapfig2 needs a LaTeX kernel from 2019 on, loads xparse, xfp, etoolbox, float, xcolor, pict2e and xkeyval, and redefines `\\setfontsize`".into(),
+            changes: "`wrapfigure` and `wraptable` keep their arguments. A final `*` makes the line count a correction, and `wraptext` wraps framed text. wrapfig2 needs a LaTeX kernel from 2019 on, loads xparse, xfp, etoolbox, float, xcolor, pict2e and xkeyval, and redefines `\\setfontsize`".into(),
         };
         PackageSuccessor { successors: vec![wrapfig] }
     }

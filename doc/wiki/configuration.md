@@ -1151,6 +1151,8 @@ profiles:
 
 `project.ignore_other_configs` (default `false`): Whether the `satex.yaml` files above this one and the global one are ignored, like `root = true` in `.editorconfig`. `--config` and `--set` still apply.
 
+`project.root`: The root document, relative to the project directory: what a run starts from when none is named, over a `% !TeX root` line and every guess.
+
 A rule's own settings live under `lints.⟨code⟩`.
 
 `lints.unused-definition.report_public` (default `true`): Whether the rule also reports a name with no `@` and no expl3-style `module_function:signature`. The package and class profiles turn it off, since such a name is the package's public interface, and the caller, not this run, is the one to use it.
@@ -1195,6 +1197,10 @@ A rule's own settings live under `lints.⟨code⟩`.
 
 `lints.clones.partners` (default `32`): How many later places with the same window one place is compared with.
 
+`lints.clones.min_saved` (default `20`): Characters a macro must save to be worth it: the shared text each further place drops, less `parameter-cost` per argument at every call.
+
+`lints.clones.parameter_cost` (default `12`): Characters one argument costs at a call: its braces, its value's reading, the reader's lookup of what it means.
+
 ## Search paths
 
 `TEXINPUTS` and `BIBINPUTS` (plus `BSTINPUTS`, `TFMFONTS`, `ENCFONTS`, passed on to `kpsewhich`) come from, first wins: the environment, the `latexmkrc` (`ensure_path`, `$ENV{…}`), the Makefile (`export`, inline), then `paths.*` in `satex.yaml`. kpathsea syntax applies (`:`, `//`, an empty component for the default). Relative entries resolve against the build's directory. `satex --version` shows each value and its source.
@@ -1203,7 +1209,7 @@ A rule's own settings live under `lints.⟨code⟩`.
 
 ## The clock
 
-`clock` sets `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L5240)).
+`clock` sets `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L5240)).
 
 | Value | Meaning |
 | --- | --- |

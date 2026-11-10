@@ -42,7 +42,7 @@ are reported too.
 A clone is reported only when a macro saves text: the shared characters each
 further place drops must exceed `parameter_cost` (12) per argument at every
 call by `min_saved` (20).  Two places of a short line with three values are
-no clone; fifty characters with one short value are.  A clone needing more
+no clone. Fifty characters with one short value are.  A clone needing more
 than `max_parameters` (TeX allows 9) is not reported at all.
 
 Fix by defining one macro with a parameter per hole and using it at every

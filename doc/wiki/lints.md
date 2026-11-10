@@ -14,7 +14,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 
 | no. | code | kind | engine | quick fix | summary | origin |
 | --- | --- | --- | --- | --- | --- | --- |
-| C001 | [`already-defined`](#already-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | `\newcommand` redefines an existing name | — |
+| C001 | [`already-defined`](#already-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | `\newcommand` redefines an existing name | — |
 | C043 | [`assertion-refuted`](#assertion-refuted) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | an assertion fails on a run of the document | — |
 | C002 | [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a BibTeX command biblatex replaces stops the run | — |
 | C003 | [`build-bibliography-disabled`](#build-bibliography-disabled) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | the document has a bibliography, but the build never runs BibTeX or biber | — |
@@ -106,11 +106,14 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | S052 | [`hand-written-author`](#hand-written-author) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | an author name typed before a citation that prints it from the bibliography | — |
 | S051 | [`hand-written-reference`](#hand-written-reference) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a number typed after a reference name, where `\ref` would keep it right | — |
 | S033 | [`inconsistent-precision`](#inconsistent-precision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | the numbers of a table column give different numbers of decimals | — |
+| S057 | [`itemize-described`](#itemize-described) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | an `itemize` labels its items with words | — |
+| S056 | [`itemize-numbered`](#itemize-numbered) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | an `itemize` numbers its items by hand | — |
 | S034 | [`math-punctuation`](#math-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | punctuation sits on the wrong side of a formula | <a class="from" href="Chktex-Coverage" title="follows chktex warning 40">chktex 40</a> |
 | S035 | [`math-shift-dollars`](#math-shift-dollars) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | display math opened with `$$` where LaTeX spells it \[ | <a class="from" href="Chktex-Coverage" title="follows chktex warning 45, 46">chktex 45, 46</a> |
 | S036 | [`microtype-available`](#microtype-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex, luatex">pdftex, luatex</span> | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | the engine can protrude characters and expand fonts, but microtype is not loaded | — |
 | S037 | [`numbers-not-aligned`](#numbers-not-aligned) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | a table column of numbers does not line them up at their decimal mark | — |
 | S038 | [`ot1-font-encoding`](#ot1-font-encoding) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex">pdftex</span> | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | accented letters are built with `\accent` because the text is set in OT1 | — |
+| S058 | [`package-successor`](#package-successor) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | the document loads a package that a successor continues | — |
 | S039 | [`prefer-cleveref`](#prefer-cleveref) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a name written before `\ref` that cleveref prints by itself | — |
 | S040 | [`primitive-tex-command`](#primitive-tex-command) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a plain TeX primitive is used where LaTeX has its own interface | <a class="from" href="Chktex-Coverage" title="follows chktex warning 41">chktex 41</a> |
 | S041 | [`quote-ligature`](#quote-ligature) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | three quotation marks in a row set a double and a single mark with nothing between them | <a class="from" href="Chktex-Coverage" title="follows chktex warning 23">chktex 23</a> |
@@ -130,6 +133,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | P004 | [`recursive-macro`](#recursive-macro) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | — | a macro calls itself, directly or through others | — |
 | P005 | [`unused-dependency`](#unused-dependency) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | the dependency file lists a TeX Live package no file of the run comes from | — |
 | P006 | [`unused-package`](#unused-package) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> | a loaded package defines nothing the document uses | — |
+| A003 | [`unread-document`](#unread-document) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-precision">precision</span> | — | — | the analysis did not read all of the document | — |
 | A001 | [`analysis-imprecision`](#analysis-imprecision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-precision">precision</span> | — | — | the analysis had to widen | — |
 | A002 | [`assertion-unknown`](#assertion-unknown) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-precision">precision</span> | — | — | an assertion could not be decided | — |
 
@@ -191,9 +195,9 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 `S` marks a safe fix, `U` an unsafe one. A rule with both has findings of each kind: the fix is safe where it cannot change what the document means and unsafe where it might. Each finding names its own kind.
 
 <div class="fold">
-<h3 class="fold-head">60 rules with quick fixes</h3>
+<h3 class="fold-head">63 rules with quick fixes</h3>
 
-* C001 [`already-defined`](#already-defined) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\newcommand` redefines an existing name
+* C001 [`already-defined`](#already-defined) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> `\newcommand` redefines an existing name
 * C002 [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a BibTeX command biblatex replaces stops the run
 * C047 [`missing-end`](#missing-end) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> the document ends without `\bye` or `\end{document}`
 * C011 [`not-defined`](#not-defined) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> `\renewcommand` targets a name that does not exist
@@ -236,9 +240,12 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 * S032 [`hand-set-quantity`](#hand-set-quantity) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a number and its unit are set by hand where siunitx would set them
 * S052 [`hand-written-author`](#hand-written-author) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> an author name typed before a citation that prints it from the bibliography
 * S051 [`hand-written-reference`](#hand-written-reference) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a number typed after a reference name, where `\ref` would keep it right
+* S057 [`itemize-described`](#itemize-described) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> an `itemize` labels its items with words
+* S056 [`itemize-numbered`](#itemize-numbered) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> an `itemize` numbers its items by hand
 * S035 [`math-shift-dollars`](#math-shift-dollars) <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> display math opened with `$$` where LaTeX spells it \[
 * S036 [`microtype-available`](#microtype-available) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> the engine can protrude characters and expand fonts, but microtype is not loaded
 * S038 [`ot1-font-encoding`](#ot1-font-encoding) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> accented letters are built with `\accent` because the text is set in OT1
+* S058 [`package-successor`](#package-successor) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> the document loads a package that a successor continues
 * S039 [`prefer-cleveref`](#prefer-cleveref) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a name written before `\ref` that cleveref prints by itself
 * S040 [`primitive-tex-command`](#primitive-tex-command) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> a plain TeX primitive is used where LaTeX has its own interface
 * S041 [`quote-ligature`](#quote-ligature) <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span> three quotation marks in a row set a double and a single mark with nothing between them
@@ -265,13 +272,13 @@ One group per category, each with its first rules. A group's button shows the re
 
 ### already-defined
 
-<p class="badges"><code class="num" title="rule number">C001</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
+<p class="badges"><code class="num" title="rule number">C001</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
 
 **`\newcommand` redefines an existing name**
 
-`\newcommand` refuses to redefine and raises `Command … already defined`.
+`\newcommand` refuses to redefine and raises `Command … already defined`. The finding names the definition it ran into: the package that made it, or its place in the document.
 
-Fix with `\renewcommand` if the redefinition is intended, or pick another name.
+The same definition again is no conflict: `\providecommand` keeps the first, and the fix uses it. A package's command is that package's: `\renewcommand` overrides it where the package uses it too (amsmath's `\text` inside its own math), so another name is often the better fix. Else use `\renewcommand` if the redefinition is intended, or pick another name.
 
 See [source2e § ltdefns.dtx](https://ctan.org/pkg/source2e).
 
@@ -373,13 +380,13 @@ See [Assertions](#assertions).
 
 **the run is still in math mode where the text ends**
 
-A `$` that is never closed leaves TeX in math mode. The next `\par` makes TeX report `Missing $ inserted` and close the formula itself ([tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L20410) `insert_dollar_sign`), and everything up to there is set as mathematics.
+A `$` that is never closed leaves TeX in math mode. The next `\par` makes TeX report `Missing $ inserted` and close the formula itself ([tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L20410) `insert_dollar_sign`), and everything up to there is set as mathematics.
 
 The rule reports what the interpreter already saw: the `missing-dollar` diagnostic it raised, or, where no `\par` followed, a last character still carrying a math mode (unless a limit stopped the run before the text's end). It reports one finding, never both.
 
 Fix by closing the formula.
 
-See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L20410).
+See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L20410).
 
 ### missing-end
 
@@ -564,13 +571,13 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 **`\left`, `\right` or `\middle` is followed by a brace or a math shift**
 
-`\left`, `\right` and `\middle` scan a delimiter: one character with a `\delcode`, or one control sequence made by `\delimiter` ([tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L22057)). A `{`, a `}` or a `$` is none of those, so TeX reports `Missing delimiter (. inserted)` and sets nothing.
+`\left`, `\right` and `\middle` scan a delimiter: one character with a `\delcode`, or one control sequence made by `\delimiter` ([tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L22057)). A `{`, a `}` or a `$` is none of those, so TeX reports `Missing delimiter (. inserted)` and sets nothing.
 
 The rule asks what each command means rather than matching its name, so it covers `\middle` and any `\let` alias, which chktex's name list does not.
 
 Fix by writing `\{` and `\}` for brace delimiters, or `\left.` where no delimiter is wanted.
 
-See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L22057).
+See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L22057).
 
 ### duplicate-bibliography-entry
 
@@ -742,7 +749,7 @@ See [pdftex § 8.9.8](https://ctan.org/pkg/pdftex).
 
 **a PDF literal opens marked content or a graphics state that is never closed**
 
-`\pdfliteral` and `\special{pdf:…}` (what ocgx2, ocg-p and pdfbase use to write raw PDF) drop `q`/`Q` and `BMC`/`BDC`/`EMC` straight into the page's content stream. `q`/`Q` save and restore the graphics state: color, line width, the current transform. `BMC`/`BDC`/`EMC` bracket marked content, an optional content group among them. Both have to nest within the page ([PDF 32000](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf), [§§ 8](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L316), [4](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L231), [2](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L131), [14](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L463), [6](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L279)). One left open leaks its state into everything typeset after it. A viewer may also just reject the page.
+`\pdfliteral` and `\special{pdf:…}` (what ocgx2, ocg-p and pdfbase use to write raw PDF) drop `q`/`Q` and `BMC`/`BDC`/`EMC` straight into the page's content stream. `q`/`Q` save and restore the graphics state: color, line width, the current transform. `BMC`/`BDC`/`EMC` bracket marked content, an optional content group among them. Both have to nest within the page ([PDF 32000](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf), [§§ 8](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L316), [4](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L231), [2](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L131), [14](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L463), [6](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L279)). One left open leaks its state into everything typeset after it. A viewer may also just reject the page.
 
 satex does not break pages into content streams itself, so it checks the order the run executes the literals in.
 
@@ -938,7 +945,7 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 </div>
 
 <div class="fold" id="category-style">
-<h3 class="fold-head"><b>style</b> (55 rules)</h3>
+<h3 class="fold-head"><b>style</b> (58 rules)</h3>
 
 ### accent-on-dotted-letter
 
@@ -1086,7 +1093,7 @@ satex compares each character's `\f@shape` against the kernel's `\itdefault` and
 
 Fix by writing `\/` after the last slanted character.
 
-See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L21365).
+See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L21365).
 
 ### missing-nonbreaking-space
 
@@ -1096,11 +1103,11 @@ See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https:/
 
 A reference should not begin a line on its own, so a tie belongs in front of it. `~` is an interword space TeX may not break at ([The TeXbook, chapter 14](https://ctan.org/pkg/texbook)).
 
-The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L20358)).
+The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L20358)).
 
 Fix by writing `Figure~\ref{fig:one}`.
 
-See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L20358).
+See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L20358).
 
 ### parenthesis-spacing
 
@@ -1138,13 +1145,13 @@ See [chktex 32](https://www.nongnu.org/chktex/), [chktex 33](https://www.nongnu.
 
 **a period set the wrong width of space for the sentence around it**
 
-How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000. Under `\frenchspacing` a period sets 1000 too, so nothing is reported.
+How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000. Under `\frenchspacing` a period sets 1000 too, so nothing is reported.
 
 So `etc. and` gets a sentence space and `the ABC. Next` a word space, both the wrong way round. The rule reads the characters the run set and reports only where a real space token became glue. A lowercase word counts as the sentence running on only when the source writes it right after the space, in the same line and group, unless the word before the period is a listed abbreviation.
 
 Fix by writing `etc.\ and`, or `the ABC\@. Next`.
 
-See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.org/chktex/), [tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L20114).
+See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.org/chktex/), [tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L20114).
 
 ### space-before-command
 
@@ -1168,11 +1175,11 @@ See [chktex 24](https://www.nongnu.org/chktex/), [chktex 42](https://www.nongnu.
 
 Punctuation belongs against the word it follows. A space in front of a comma or a period is glue, and the reader sees it on the page.
 
-The rule reports only a real space token that became glue in horizontal mode ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L20358)). A thin space a language package inserts before `:` comes from that package's own code, which the run keeps out of the text, so French typography is not reported.
+The rule reports only a real space token that became glue in horizontal mode ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L20358)). A thin space a language package inserts before `:` comes from that package's own code, which the run keeps out of the text, so French typography is not reported.
 
 Fix by deleting the space.
 
-See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L20358).
+See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L20358).
 
 ### stray-italic-correction
 
@@ -1180,13 +1187,13 @@ See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://githu
 
 **a repeated italic correction, or one in front of a period or comma**
 
-`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook)). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L21365)), and one in front of a period or a comma (chktex 28).
+`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook)). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L21365)), and one in front of a period or a comma (chktex 28).
 
 satex reads the characters the document set, so it sees through a closing brace: in `\textit{word\/}.` the next character set is the period.
 
 Fix by deleting the `\/`.
 
-See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L21365).
+See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L21365).
 
 ### unknown-suppress-code
 
@@ -1246,13 +1253,13 @@ See [chktex 18](https://www.nongnu.org/chktex/), [chktex 19](https://www.nongnu.
 
 **the italic correction is zero here, so `\/` changes nothing**
 
-`\/` appends a kern as wide as the italic correction the font gives the last character on the current list ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L21365)). Where that correction is zero the `\/` does nothing.
+`\/` appends a kern as wide as the italic correction the font gives the last character on the current list ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L21365)). Where that correction is zero the `\/` does nothing.
 
 Every character carries the font it was set in ([fntguide § 2](https://ctan.org/pkg/fntguide)), and satex reads the correction out of that font's TFM. That is a measurement, where chktex decides from a list of command names. In math, and after a space, the kern is zero whatever the font.
 
 Fix by deleting the `\/`.
 
-See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L21365), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook).
+See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L21365), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook).
 
 ### build-bibliography-unneeded
 
@@ -1302,7 +1309,9 @@ The rule reads the document's own files token by token, as TeX reads them, with 
 
 A clone shares at least `min_tokens` tokens, and its values take at most `max_value_share` of it, so paragraphs and lists of items are no clones. Library code is never read. Two of the document's macros with the same body are reported too.
 
-Fix by defining one macro with a parameter per hole and using it at every place. The fix writes it when there are at most `max_parameters` holes (TeX allows 9). It is unsafe: the macro's name is a guess.
+A clone is reported only when a macro saves text: the shared characters each further place drops must exceed `parameter_cost` (12) per argument at every call by `min_saved` (20). Two places of a short line with three values are no clone. Fifty characters with one short value are. A clone needing more than `max_parameters` (TeX allows 9) is not reported at all.
+
+Fix by defining one macro with a parameter per hole and using it at every place. It is unsafe: the macro's name is a guess.
 
 ### comment-marker
 
@@ -1338,7 +1347,7 @@ See [lmodern § Latin Modern](https://ctan.org/pkg/lm), [fntguide § 5](https://
 
 **the document sets quotation marks by hand instead of loading csquotes**
 
-`\enquote{…}` sets the marks the current language wants, nests an inner quotation inside an outer one, and keeps one spelling for the whole document ([csquotes](https://ctan.org/pkg/csquotes) [§§ 3](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L195), [1](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L95)).
+`\enquote{…}` sets the marks the current language wants, nests an inner quotation inside an outer one, and keeps one spelling for the whole document ([csquotes](https://ctan.org/pkg/csquotes) [§§ 3](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L195), [1](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L95)).
 
 The rule fires where the run set quotation marks itself and csquotes is not loaded. Apostrophes inside a word and primes in math do not count.
 
@@ -1386,7 +1395,7 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 **a number and its unit are set by hand where siunitx would set them**
 
-`2ms` sets the number and the unit as one word, so the line may break between them and the unit is italic in math. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§§ 5](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L268), [4](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L231), [3](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L195)) asks for a non-breaking space and an upright unit, and [siunitx](https://ctan.org/pkg/siunitx) does both.
+`2ms` sets the number and the unit as one word, so the line may break between them and the unit is italic in math. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§§ 5](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L268), [4](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L231), [3](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L195)) asks for a non-breaking space and an upright unit, and [siunitx](https://ctan.org/pkg/siunitx) does both.
 
 The rule reads what the run typeset: a digit run followed by letters with no space token between them, where the unit is an SI symbol and the document set it itself.
 
@@ -1436,6 +1445,22 @@ See [The LaTeX Companion § 2.4](https://ctan.org/pkg/tlc3-examples), [cleveref 
 
 See [siunitx § 4.6](https://ctan.org/pkg/siunitx).
 
+### itemize-described
+
+<p class="badges"><code class="num" title="rule number">S057</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
+
+**an `itemize` labels its items with words**
+
+An `itemize` whose every `\item[…]` names its item in words is a `description`: that list sets each label in bold and hangs the text after it, where `itemize` squeezes a long label into the space of a bullet. A label counts as words with at least `lints.itemize-described.letters` (4) letters, set or not by a command, and no digit.
+
+### itemize-numbered
+
+<p class="badges"><code class="num" title="rule number">S056</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
+
+**an `itemize` numbers its items by hand**
+
+`\item[1.]`, `\item[2.]`, … in an `itemize` count by hand what `enumerate` counts itself: an item added or moved leaves the numbers wrong, and `\label` cannot refer to them. The fix turns the list into an `enumerate` and drops the labels. Labels of another shape (`(a)`, `iii)`) or a count that does not start at 1 keep their look with [enumitem](https://ctan.org/pkg/enumitem)'s `label` and `start` keys, and a count that goes on from the list before with its `resume`. A list of fewer items than `lints.itemize-numbered.items` (2) is left alone.
+
 ### math-punctuation
 
 <p class="badges"><code class="num" title="rule number">S034</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 40">chktex 40</a></p>
@@ -1482,7 +1507,7 @@ See [microtype § 1](https://ctan.org/pkg/microtype), [pdftex § \pdfprotrudecha
 
 **a table column of numbers does not line them up at their decimal mark**
 
-A column of numbers is read by comparing them, which works when each digit stands under the digit of the same place: the units under the units, the decimal marks under each other. An `l` or `c` column sets numbers of different lengths ragged, and an `r` column lines up only numbers with as many decimals. [siunitx](https://ctan.org/pkg/siunitx)'s `S` column aligns them at the decimal mark ([§§ 7](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L290), [12](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L430) of its manual). Its header, not a number, goes in braces: `{Time}`.
+A column of numbers is read by comparing them, which works when each digit stands under the digit of the same place: the units under the units, the decimal marks under each other. An `l` or `c` column sets numbers of different lengths ragged, and an `r` column lines up only numbers with as many decimals. [siunitx](https://ctan.org/pkg/siunitx)'s `S` column aligns them at the decimal mark ([§§ 7](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L290), [12](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L430) of its manual). Its header, not a number, goes in braces: `{Time}`.
 
 The rule reads the table's source: a column whose cells below the header are all numbers, three or more, set in a column that does not align them.
 
@@ -1501,6 +1526,16 @@ Every character carries the encoding it was set in, so a document whose default 
 Fix by loading `\usepackage[T1]{fontenc}`.
 
 See [source2e § ot1enc.def](https://ctan.org/pkg/source2e), [fntguide § 5](https://ctan.org/pkg/fntguide), [The TeXbook, appendix H](https://ctan.org/pkg/texbook).
+
+### package-successor
+
+<p class="badges"><code class="num" title="rule number">S058</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix changes the meaning, only --unsafe-fixes applies it">U</span></p>
+
+**the document loads a package that a successor continues**
+
+Some packages live on in a fork or a successor that keeps their interface and adds to it: `wrapfig2` continues `wrapfig`. The rule names the successor and what moving to it changes, and its fix loads the successor in the package's place. It stays quiet where the move would break: when another package loads the old one too (wrapfig2 refuses to load next to wrapfig), when the successor is loaded already, or when it is not installed.
+
+The pairs are data, not code: `lints.package-successor.successors` lists each package, its successor and what changes, and a project adds its own or clears the list.
 
 ### prefer-cleveref
 
@@ -1564,13 +1599,13 @@ See [chktex 38](https://www.nongnu.org/chktex/).
 
 **a macro body picked up a space from an unescaped line end**
 
-Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L7326)).
+Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L7326)).
 
-The finding follows the modes the run read that space in ([§ 1043](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L20358): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been. Only a space that a character, box or rule follows in its list is reported. The glue that ends a paragraph goes ([§ 816](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L16066)), and glue before it only widens the end of the last line. One an `\unskip` takes is gone too ([§ 1105](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L21264)), as at `\end{center}`.
+The finding follows the modes the run read that space in ([§ 1043](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L20358): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been. Only a space that a character, box or rule follows in its list is reported. The glue that ends a paragraph goes ([§ 816](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L16066)), and glue before it only widens the end of the last line. One an `\unskip` takes is gone too ([§ 1105](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L21264)), as at `\end{center}`.
 
 Fix by writing `%` at the end of that line.
 
-See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L7326), [tex.web § 816](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L16066), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L20358).
+See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L7326), [tex.web § 816](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L16066), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L20358).
 
 ### table-rules
 
@@ -1578,7 +1613,7 @@ See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/a9a9dca1143
 
 **a table is ruled with vertical rules or `\hline`**
 
-[booktabs](https://ctan.org/pkg/booktabs) gives a table three rules of different weights, `\toprule`, `\midrule` and `\bottomrule`, with space around them, and asks for no vertical rules at all ([§ 2](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L131) of its manual): the columns are separated by their space, and `\hline` sets every rule alike and too close to the text. A table of fewer rows than `lints.table-rules.rows` (3) is left alone.
+[booktabs](https://ctan.org/pkg/booktabs) gives a table three rules of different weights, `\toprule`, `\midrule` and `\bottomrule`, with space around them, and asks for no vertical rules at all ([§ 2](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L131) of its manual): the columns are separated by their space, and `\hline` sets every rule alike and too close to the text. A table of fewer rows than `lints.table-rules.rows` (3) is left alone.
 
 See [booktabs § 2](https://ctan.org/pkg/booktabs).
 
@@ -1600,7 +1635,7 @@ See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
 
 **every number of a table column carries the same unit**
 
-A unit repeated in every cell of a column says the same thing on each line and pushes the numbers out of alignment. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§§ 5](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L268), [4](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L231), [1](https://github.com/TeX-Live/texlive-source/blob/a9a9dca114301dac0eb0063f1e5ab0f27e90a3f0/texk/web2c/tex.web#L95)) heads such a column with the quantity and its unit, as `Time / ms`. With [siunitx](https://ctan.org/pkg/siunitx), `{Time / \unit{ms}}` over an `S` column of bare numbers.
+A unit repeated in every cell of a column says the same thing on each line and pushes the numbers out of alignment. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§§ 5](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L268), [4](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L231), [1](https://github.com/TeX-Live/texlive-source/blob/2d46cbc90b9920fde91712deea77da0836891873/texk/web2c/tex.web#L95)) heads such a column with the quantity and its unit, as `Time / ms`. With [siunitx](https://ctan.org/pkg/siunitx), `{Time / \unit{ms}}` over an `S` column of bare numbers.
 
 See [SI brochure § 5.4.1](https://www.bipm.org/en/publications/si-brochure), [siunitx § \unit](https://ctan.org/pkg/siunitx).
 
@@ -1736,7 +1771,17 @@ Fix, if the package really is unused, by deleting the `\usepackage`: it is read 
 </div>
 
 <div class="fold" id="category-precision">
-<h3 class="fold-head"><b>precision</b> (2 rules)</h3>
+<h3 class="fold-head"><b>precision</b> (3 rules)</h3>
+
+### unread-document
+
+<p class="badges"><code class="num" title="rule number">A003</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-precision">precision</span></p>
+
+**the analysis did not read all of the document**
+
+A file the document's own `\input`, `\include` or `\subfile` names exists but the run never read it, or a scan read on past the document's end. Every finding about what that part defines, typesets or references is then missing, and findings that something is never defined or never used may be wrong.
+
+There is nothing to fix in the document: this is a gap of the analysis. Report it. Raising the limits in `satex.yaml` may close it.
 
 ### analysis-imprecision
 

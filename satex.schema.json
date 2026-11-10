@@ -1656,7 +1656,21 @@
                 "\\Vref",
                 "\\vrefrange",
                 "\\nameref",
-                "\\Nameref"
+                "\\Nameref",
+                "\\citeauthor",
+                "\\Citeauthor",
+                "\\textcite",
+                "\\Textcite",
+                "\\citetitle",
+                "\\Citetitle",
+                "\\citeyear",
+                "\\citedate",
+                "\\citet",
+                "\\Citet",
+                "\\citealt",
+                "\\Citealt",
+                "\\citealp",
+                "\\Citealp"
               ],
               "description": "references that set the name in front of the number themselves, so no tie goes before them",
               "items": {
@@ -3099,6 +3113,11 @@
                 "output"
               ]
             },
+            "min_saved": {
+              "default": 20,
+              "minimum": 0,
+              "type": "integer"
+            },
             "min_tokens": {
               "default": 40,
               "description": "tokens a clone must share, its differing values not counted",
@@ -3108,6 +3127,11 @@
                 "output"
               ],
               "x-example": "two copies of `\\begin{itemize}\\item A\\end{itemize}` are too short"
+            },
+            "parameter_cost": {
+              "default": 12,
+              "minimum": 0,
+              "type": "integer"
             },
             "partners": {
               "default": 32,
@@ -3192,6 +3216,31 @@
           },
           "type": "object"
         },
+        "itemize-described": {
+          "properties": {
+            "items": {
+              "default": 2,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "letters": {
+              "default": 4,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "itemize-numbered": {
+          "properties": {
+            "items": {
+              "default": 2,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
         "microtype-available": {
           "properties": {
             "characters": {
@@ -3203,6 +3252,37 @@
                 "output"
               ],
               "x-example": "a one-paragraph letter never gets microtype-available"
+            }
+          },
+          "type": "object"
+        },
+        "package-successor": {
+          "properties": {
+            "successors": {
+              "default": [
+                {
+                  "changes": "`wrapfigure` and `wraptable` keep their arguments. A final `*` makes the line count a correction, and `wraptext` wraps framed text. wrapfig2 needs a LaTeX kernel from 2019 on, loads xparse, xfp, etoolbox, float, xcolor, pict2e and xkeyval, and redefines `\\setfontsize`",
+                  "package": "wrapfig",
+                  "successor": "wrapfig2"
+                }
+              ],
+              "items": {
+                "maxProperties": 1,
+                "minProperties": 1,
+                "properties": {
+                  "changes": {
+                    "type": "string"
+                  },
+                  "package": {
+                    "type": "string"
+                  },
+                  "successor": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
             }
           },
           "type": "object"
@@ -4123,7 +4203,8 @@
             "output"
           ],
           "x-example": "a parent folder's lint_off no longer applies here"
-        }
+        },
+        "root": {}
       },
       "type": "object"
     },

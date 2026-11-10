@@ -55,7 +55,7 @@ plugins: 48 in 11 kinds
   build system        5  latexmk, make, tectonic, arara, l3build
   tools               7  biber, bibtex, makeindex, xindy, makeglossaries, dvips, ps2pdf
   magic comments      3  % !TeX, % !BIB, % arara:
-… 17 more lines omitted
+… 16 more lines omitted
 ```
 
 <details>
@@ -311,11 +311,14 @@ info      style        S032    hand-set-quantity                 a number and it
 info      style        S052    hand-written-author               an author name typed before a citation that prints i…  
 info      style        S051    hand-written-reference            a number typed after a reference name, where `\ref` …  
 info      style        S033    inconsistent-precision            the numbers of a table column give different numbers…  
+info      style        S057    itemize-described                 an `itemize` labels its items with words               
+info      style        S056    itemize-numbered                  an `itemize` numbers its items by hand                 
 info      style        S034    math-punctuation                  punctuation sits on the wrong side of a formula        
 info      style        S035    math-shift-dollars                display math opened with `$$` where LaTeX spells it …  
 info      style        S036    microtype-available               the engine can protrude characters and expand fonts,…  
 info      style        S037    numbers-not-aligned               a table column of numbers does not line them up at t…  
 info      style        S038    ot1-font-encoding                 accented letters are built with `\accent` because th…  
+info      style        S058    package-successor                 the document loads a package that a successor contin…  
 info      style        S039    prefer-cleveref                   a name written before `\ref` that cleveref prints by…  
 info      style        S040    primitive-tex-command             a plain TeX primitive is used where LaTeX has its ow…  
 info      style        S041    quote-ligature                    three quotation marks in a row set a double and a si…  
@@ -335,6 +338,7 @@ info      performance  P003    preamble-cost                     the preamble co
 info      performance  P004    recursive-macro                   a macro calls itself, directly or through others       
 info      performance  P005    unused-dependency                 the dependency file lists a TeX Live package no file…  
 info      performance  P006    unused-package                    a loaded package defines nothing the document uses     
+error     precision    A003    unread-document                   the analysis did not read all of the document          
 info      precision    A001    analysis-imprecision              the analysis had to widen                              
 info      precision    A002    assertion-unknown                 an assertion could not be decided                      
 ```
@@ -557,7 +561,7 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 $ satex cache
 cache
   source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
-  holds 197802 definitions
+  holds 197803 definitions
   state cached
 … 3 more lines omitted
 ```
