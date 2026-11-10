@@ -110,6 +110,9 @@ pub(crate) struct CallRuns {
     /// conditionals or the mode changed: never summarized.
     leaky: bool,
     reported: bool,
+    /// The number of runs the shape checks last passed with: they read
+    /// whole texts, so a call met again is not checked again.
+    shaped: Option<usize>,
     /// Runs of it being recorded now.
     active: usize,
     /// The code a learned entry is keyed by the place of: held, so that
@@ -227,18 +230,23 @@ impl Machine<'_> {
         // may write yet another. That, and the shape checks, hold for good:
         // a call refused once is never looked at again.
         let names = |r: &Run| r.writes.iter().map(|w| w.0).collect::<Vec<_>>();
-        let same = runs.runs.windows(2).all(|w| names(&w[0]) == names(&w[1]));
+        let checked = runs.shaped == Some(runs.runs.len());
+        let same = checked || runs.runs.windows(2).all(|w| names(&w[0]) == names(&w[1]));
         if !same
-            || runs
-                .runs
-                .windows(2)
-                .any(|w| accumulates(&w[0], &w[1]) || updates(&w[0], &w[1]) || self.folds_code(&w[0], &w[1]))
+            || !checked
+                && runs
+                    .runs
+                    .windows(2)
+                    .any(|w| accumulates(&w[0], &w[1]) || updates(&w[0], &w[1]) || self.folds_code(&w[0], &w[1]))
         {
             let runs = self.call_runs.get_mut(&key).expect("recorded");
             runs.leaky = true;
             runs.runs.clear();
             return false;
         }
+        let len = runs.runs.len();
+        self.call_runs.get_mut(&key).expect("recorded").shaped = Some(len);
+        let runs = self.call_runs.get(&key).expect("recorded");
         // An operand is unknown: an argument, or a name the runs read.
         let unknown = arguments.iter().any(|a| self.has_unknown(a))
             || runs
@@ -311,9 +319,12 @@ impl Machine<'_> {
                 .any(|s| theirs.contains(&Some(s)) && !here.contains(&Some(s)))
         };
         let mut refused = false;
+        let index: Vec<std::collections::HashMap<Sym, &Option<Binding>>> =
+            runs.iter().map(|r| r.writes.iter().map(|(s, b)| (*s, b)).collect()).collect();
+        let at = |r: &Run| runs.iter().position(|q| std::ptr::eq(q, r)).expect("a run of these");
         for &sym in &syms {
             let now = self.env.slot_at(sym.0);
-            let of = |r: &Run| r.writes.iter().find(|w| w.0 == sym).map_or_else(|| now.clone(), |w| w.1.clone());
+            let of = |r: &Run| index[at(r)].get(&sym).map_or_else(|| now.clone(), |&b| b.clone());
             // Every run wrote the same text of its own arguments' numbers:
             // this call writes it of its own.
             if let Some(maps) = &maps
@@ -508,6 +519,7 @@ impl Machine<'_> {
             entry.leaky = !alike;
             if alike {
                 entry.runs = runs;
+                entry.shaped = None;
             }
         }
     }
@@ -725,7 +737,7 @@ impl Machine<'_> {
     /// a stack, a meaning. Their join would be text that may run as
     /// anything, or name anything, so they are not joined. Data is a number,
     /// or text of letters, others and spaces under one parameter text.
-    fn folds_code(&self, a: &Run, b: &Run) -> bool {
+    fn folds_code<'a>(&self, a: &'a Run, b: &'a Run) -> bool {
         let data = |t: &[Token]| {
             t.iter().all(|t| match t.tok {
                 crate::engine::tex::Tok::Chr(_, c) => {
@@ -743,11 +755,13 @@ impl Machine<'_> {
         let numeric = |v: &crate::engine::value::Value| {
             !matches!(v, crate::engine::value::Value::Toks(_) | crate::engine::value::Value::Unknown)
         };
-        let of = |r: &Run, sym: Sym| {
-            r.writes.iter().find(|w| w.0 == sym).map_or_else(|| self.env.slot_at(sym.0), |w| w.1.clone())
+        let index = |r: &'a Run| r.writes.iter().map(|(s, b)| (*s, b)).collect::<std::collections::HashMap<_, _>>();
+        let (ia, ib) = (index(a), index(b));
+        let of = |i: &std::collections::HashMap<Sym, &Option<Binding>>, sym: Sym| {
+            i.get(&sym).map_or_else(|| self.env.slot_at(sym.0), |&b| b.clone())
         };
         a.writes.iter().chain(&b.writes).any(|&(sym, _)| {
-            let (x, y) = (of(a, sym), of(b, sym));
+            let (x, y) = (of(&ia, sym), of(&ib, sym));
             if crate::engine::env::same_slot(&x, &y) {
                 return false;
             }
