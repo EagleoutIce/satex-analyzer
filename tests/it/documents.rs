@@ -548,6 +548,39 @@ fn loop_entry_met_deeper_keeps_caller_groups() {
     assert_eq!((count(&a, "endless-loop"), count(&a, "mismatched-group")), (0, 0));
 }
 
+/// A chapter line of long `\loop`s overruns the line budget twice, inside
+/// `\include{ch1}`. Each cut drops the loop it stands in, even though its
+/// lists hold the document's loop body, so no loop runs on past its cut
+/// and no conditional it opened stays open. `\include`'s own `\fi` and
+/// resets then run in a sound state, and the later chapters are read.
+/// The bug: the cut kept `\iterate`'s list (library code holding the
+/// document's text) as the document's command, mid-command, so the loop
+/// ran on, `\include`'s `\fi` came extra and later file names were garbage.
+#[test]
+fn cut_inside_include_reads_the_later_chapters() {
+    if !installed() {
+        return;
+    }
+    let root = dir("cut_inside_include");
+    let path = root.join("main.tex");
+    let source = std::fs::read_to_string(&path).expect("fixture source");
+    let a = Machine::analyze(&source, Some(&path), &crate::support::discover(&root));
+    for name in ["SatexReachedEnd", "ReadSecond", "ReadThird"] {
+        assert!(defined(&a, name), "\\{name} is {}", crate::support::presence(&a, name));
+    }
+    assert!(read(&a, "ch2") && read(&a, "ch3"));
+    // Only the cuts' own warnings: no `extra-fi`, no garbage file names.
+    let bad: Vec<_> = a
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Warning)
+        .filter(|d| d.code != "stalled-line-skipped")
+        .map(|d| format!("{} {}", d.code, d.message))
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
 fixtures! {
     local_package_after_rounded_node_in_box_is_read("input_after_rounded_node", "mwe.tex", "zzlocal.sty");
     /// Capabilities: typesetting feedback, unknown inputs, termination.

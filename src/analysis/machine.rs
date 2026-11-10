@@ -7472,7 +7472,8 @@ will look undefined",
                 "That makes 100 errors; please try again: TeX would stop here (tex.web § 82); satex gives up the expansion and reads on".into(),
             );
             self.tex_errors = 0;
-            self.give_up_lists(false, false);
+            // The command the document called keeps its closing code (`\\include`).
+            self.give_up_lists(false, true);
         }
     }
 
@@ -8008,9 +8009,12 @@ will look undefined",
     /// text instead. Returns the groups and conditionals closed.
     /// With `called`, down to the first list of library code that holds
     /// the document's text: a command the document called reads on, so its
-    /// closers and resets stay (`\include` resets `\@auxout`).
+    /// closers and resets stay (`\include` resets `\@auxout`). Never the
+    /// list the cut command reads: its rest is mid-command.
     fn give_up_lists(&mut self, own: bool, called: bool) -> (usize, usize) {
         let mut at = None;
+        // The list the cut command read from is cut mid-command: it goes.
+        let mut reading = true;
         loop {
             let pending = match self.input.last() {
                 Some(Frame::Pseudo { .. }) if !own => Vec::new(),
@@ -8020,14 +8024,17 @@ will look undefined",
                 },
             };
             let mine = pending.iter().filter(|&&f| self.own_file(f)).count();
-            if (own && mine > 0) || (called && mine > 0 && mine < pending.len()) {
+            if own && mine > 0 {
                 break;
             }
-            // A list entered before the document's text was last read
-            // called that text (`\include` around a chapter): it reads on.
-            if called && matches!(self.input.last(), Some(Frame::Tokens { at, .. }) if at.2 < self.doc_mark) {
+            // Below it, a list entered before the document's text was last
+            // read called that text (`\include` around a chapter), and so
+            // does library code holding it: it reads on.
+            let entered = matches!(self.input.last(), Some(Frame::Tokens { at, .. }) if at.2 < self.doc_mark);
+            if called && !reading && (entered || mine > 0 && mine < pending.len()) {
                 break;
             }
+            reading &= self.input.last().is_some_and(read_out);
             // tex.web § 1100: the output routine ends as a unit, and what
             // called the page builder reads on.
             let output = matches!(self.input.last(), Some(Frame::Tokens { expanding: Some(s), upper: false, .. }) if *s == self.output_sym)
