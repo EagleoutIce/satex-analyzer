@@ -4203,6 +4203,10 @@ fn a_new_declaration_that_redefines_a_command_is_reported() {
     // a plain `\def` right after a `\newif` is the document's, not the call's
     let after = "\\documentclass{article}\n\\def\\val{a}\n\\newif\\iffancy\n\\def\\val{b}\n\\begin{document}\nx\n\\end{document}\n";
     assert!(named(after).is_empty());
+    // a register declared again as one of its kind (two tables' `\newcount\shownrows`): LaTeX
+    // takes it silently, the name only moves to a fresh register
+    let again = "\\documentclass{article}\n\\newcount\\rows\n\\newcount\\rows\n\\newcount\\section\n\\begin{document}\nx\n\\end{document}\n";
+    assert_eq!(named(again), ["section"]);
 }
 
 /// A heading written to the table of contents is a sectioning unit, a part

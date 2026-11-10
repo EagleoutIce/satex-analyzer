@@ -870,7 +870,11 @@ fn new_redefines(report: &mut Report) {
         // Made inside that call: a plain `\\def` after it is the document's, and
         // while a class loads every definition runs inside some macro.
         let inside = def.via.map(|v| analysis.interner.name(v)).is_some_and(|v| v == command || v == "e@alloc");
-        if !command.starts_with("new") || !inside || !seen.insert((span, def.name)) {
+        // A register declared again as one of its kind loses nothing but a register.
+        let before =
+            (analysis.facts.defs.iter()).filter(|d| d.name == def.name && d.node < def.node).max_by_key(|d| d.node);
+        let same_kind = before.is_some_and(|d| d.by == def.by && d.mac.is_none() && def.mac.is_none());
+        if !command.starts_with("new") || !inside || same_kind || !seen.insert((span, def.name)) {
             continue;
         }
         let name = analysis.interner.name(def.name);

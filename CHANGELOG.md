@@ -41,6 +41,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `fix` **Registers declared twice.** `new-redefines` no longer reports a register declared again as one of its kind (`\newcount\rows` in two tables): LaTeX takes it silently.
 - `fix` **False errors after `\newif` and next to colors are gone.** `new-redefines` no longer blames a `\new…` call for a plain `\def` after it, and `undefined-color` needs an error that names the color.
 - `fix` **An editor never offers to turn off `clones`.** Copied code is a finding to act on, not the project's style. [`1cdd3cc`](https://github.com/EagleoutIce/satex-analyzer/commit/1cdd3cc)
 - `fix` **Prose rules skip what undefined commands leave behind.** A TeX file opened without its preamble no longer gets spacing findings on `\node (a)at(b)` or inside an undefined environment. [`5d61ec1`](https://github.com/EagleoutIce/satex-analyzer/commit/5d61ec1)
