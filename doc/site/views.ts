@@ -41,8 +41,6 @@ interface Env {
 interface Moved { opts: string[]; place: Place | null; at: boolean; x?: number; y?: number; hint: string }
 type Rgb = number[];
 declare global {
-  /** A record the server sent (`satex/view` JSON, shaped by the Rust plugins and validated there): its fields are read by name. */
-  interface Rec { [field: string]: any }
   interface Edit { range: unknown; newText: string }
   interface WorkEdit { changes: Record<string, Edit[]> }
   /** What a host (playground, webview) gives a view. */

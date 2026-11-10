@@ -16,9 +16,11 @@ const base = process.argv[2] ?? 'http://localhost:8000/';
 const bytes = async (url) => base.startsWith('file:') ? readFileSync(fileURLToPath(base + url)) : new Uint8Array(await (await fetch(base + url)).arrayBuffer());
 const text = async (url) => new TextDecoder().decode(await bytes(url));
 const load = async (url, code) => {
-  const module = { exports: {} };
-  new Function('module', 'exports', 'require', '__dirname', '__filename', code ?? await text(url))(
-    module, module.exports, createRequire(import.meta.url), '/', '/x.js');
+  const module = globalThis.module = { exports: {} };
+  try {
+    new Function('module', 'exports', 'require', '__dirname', '__filename', code ?? await text(url))(
+      module, module.exports, createRequire(import.meta.url), '/', '/x.js');
+  } finally { delete globalThis.module; }
   return module.exports;
 };
 let failed = false;

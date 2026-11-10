@@ -1,8 +1,8 @@
 // The engine of worker.js over a stand-in for the Emscripten module: node doc/site/worker.test.mjs
-import { createRequire } from 'node:module';
+import { loadModule } from './load.mjs';
 import assert from 'node:assert/strict';
 
-const SatexEngine = createRequire(import.meta.url)('./worker.js');
+const SatexEngine = loadModule('./worker.js');
 
 // A file system that keeps what a boot wrote and the times set on it.
 const boots = [];

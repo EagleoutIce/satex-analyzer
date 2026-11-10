@@ -166,7 +166,7 @@ pub fn bind(port: u16) -> Result<std::net::TcpListener, String> {
 
 /// The playground page `site/play/index.html` with its manifest changed by
 /// `patch`. With `src` (doc/site), the page's body is `src/play.html` and
-/// the worker `src/worker.js`, so a source edit shows without a site build.
+/// the worker `src/worker.ts` (transpiled), so a source edit shows without a site build.
 pub fn page(site: &Path, src: Option<&Path>, patch: impl FnOnce(&mut serde_json::Value)) -> Option<Vec<u8>> {
     let built = std::fs::read_to_string(site.join("play/index.html")).ok()?;
     let marker = "id=\"satex-play\" type=\"application/json\">";
@@ -174,7 +174,7 @@ pub fn page(site: &Path, src: Option<&Path>, patch: impl FnOnce(&mut serde_json:
     let end = m + built[m..].find("</script>")?;
     let mut manifest: serde_json::Value = serde_json::from_str(&built[m..end].replace("<\\/", "</")).ok()?;
     if let Some(src) = src {
-        manifest["worker"] = std::fs::read_to_string(src.join("worker.js")).ok()?.into();
+        manifest["worker"] = String::from_utf8(source("worker.js", src)?.1).ok()?.into();
     }
     patch(&mut manifest);
     let json = manifest.to_string().replace("</", "<\\/");

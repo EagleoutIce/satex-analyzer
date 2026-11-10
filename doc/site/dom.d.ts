@@ -13,3 +13,5 @@ interface Window { satexTypeList: any; SATEX_FILES: any; satexTypes: any; satexH
 interface Event { key?: string; inputType?: string }
 interface Navigator { connection?: { saveData?: boolean; effectiveType?: string } }
 interface Uint8ArrayConstructor { fromBase64?(text: string): Uint8Array }
+/** A record the server sent (`satex/view` JSON, shaped by the Rust plugins and validated there): its fields are read by name. */
+interface Rec { [field: string]: any }

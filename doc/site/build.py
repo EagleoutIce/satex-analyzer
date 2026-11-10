@@ -1848,7 +1848,7 @@ def main():
         manifest, shown, live = ({"symbols": ""}, "", {}) if args.docs_only else playground(args.satex.resolve(), args.wasm.resolve(), work, out)
         written = pages_done.result()
     save_listings()
-    manifest["worker"] = minify_script((SITE / "worker.js").read_text())
+    manifest["worker"] = minify_script(script("worker.js").decode())
     readme = (ROOT / "README.md").read_text()
     md = lambda text: rewrite(markdown(text), "README.md", table, homepage, repo, out, "")
     parts = {"intro": md(intro(readme)), "install": md(install(readme)), "examples": shown,

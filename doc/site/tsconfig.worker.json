@@ -9,5 +9,5 @@
     "types": [],
     "lib": ["es2024", "webworker"]
   },
-  "files": ["worker.d.ts", "tex-worker.ts"]
+  "files": ["worker.d.ts", "worker.ts", "tex-worker.ts"]
 }
