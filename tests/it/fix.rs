@@ -213,6 +213,8 @@ fn option_clash_moves_the_options_to_the_first_load() {
 fix_cases! {
     package_after_preamble_moves_into_the_preamble("after-preamble", "\\documentclass{article}\n\\begin{document}\n\\usepackage[hyphens]{url}\nx\n\\end{document}\n", "package-after-preamble", true, "\\documentclass{article}\n\\usepackage[hyphens]{url}\n\\begin{document}\nx\n\\end{document}\n");
     already_defined_becomes_renewcommand("already-defined", "\\documentclass{article}\n\\newcommand{\\foo}{a}\n\\newcommand{\\foo}{b}\n\\begin{document}\n\\foo\n\\end{document}\n".to_string(), "already-defined", true, "\\documentclass{article}\n\\newcommand{\\foo}{a}\n\\renewcommand{\\foo}{b}\n\\begin{document}\n\\foo\n\\end{document}\n");
+    /// The same definition again needs no `\renew…`: `\providecommand` keeps the first, safely.
+    same_definition_again_becomes_providecommand("already-defined-same", "\\documentclass{article}\n\\newcommand{\\foo}[1]{(#1)}\n\\newcommand{\\foo}[1]{ (#1) }\n\\begin{document}\n\\foo{x}\n\\end{document}\n".to_string(), "already-defined", false, "\\documentclass{article}\n\\newcommand{\\foo}[1]{(#1)}\n\\providecommand{\\foo}[1]{ (#1) }\n\\begin{document}\n\\foo{x}\n\\end{document}\n");
     not_defined_becomes_newcommand("not-defined", "\\documentclass{article}\n\\renewcommand*{\\foo}{a}\n\\begin{document}\n\\foo\n\\end{document}\n", "not-defined", false, "\\documentclass{article}\n\\newcommand*{\\foo}{a}\n\\begin{document}\n\\foo\n\\end{document}\n");
     environment_mismatch_names_the_open_environment("env-mismatch", "\\documentclass{article}\n\\begin{document}\n\\begin{center}\nx\n\\end{flushleft}\n\\end{document}\n", "environment-mismatch", true, "\\documentclass{article}\n\\begin{document}\n\\begin{center}\nx\n\\end{center}\n\\end{document}\n");
     a_solo_end_is_deleted("env-solo", format!("\\documentclass{{article}}\n\\end{{center}}\n{BODY}"), "environment-mismatch", true, &format!("\\documentclass{{article}}\n{BODY}"));
@@ -629,4 +631,24 @@ fn a_context_document_is_not_held_to_latex_conventions() {
         assert!(records.is_empty(), "{code}: {records:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// A name a package defined is named with the package and its line, and the
+/// fix warns that overriding it changes the package's own uses: amsmath's
+/// `\text` is what `\newcommand{\text}` most often runs into.
+#[test]
+fn a_package_s_command_is_named_with_its_package() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\usepackage{amsmath}\n\\newcommand{\\text}[1]{#1}\n\\begin{document}\nx\n\\end{document}\n";
+    let dir = project("already-defined-package", &[("doc.tex", source)]);
+    let path = dir.join("doc.tex");
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let analysis = Machine::analyze(source, Some(&path), &cfg);
+    let record =
+        satex::linter::lint(&analysis).into_iter().find(|r| r["code"] == "already-defined").expect("a finding");
+    let message = record["message"].as_str().unwrap_or_default();
+    assert!(message.starts_with("\\text is already defined by amstext (amstext.sty:"), "{message}");
+    assert!(record["fix"].as_str().unwrap_or_default().contains("pick another name"), "{record:?}");
 }

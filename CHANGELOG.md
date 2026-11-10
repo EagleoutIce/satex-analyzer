@@ -43,6 +43,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
+- `feat` **Clearer `already defined` findings.** `already-defined` names the definition a `\newcommand` ran into, by package and line. The same definition again is fixed with `\providecommand`, safely, and a package's command gets the warning that overriding it changes the package's own uses.
 - `feat` **Lists that pick the wrong environment.** `itemize-numbered` finds an `itemize` whose items count by hand (`\item[1.]`, `\item[(b)]`) and turns it into an `enumerate`, with enumitem's `label`, `start` or `resume` where the default labels differ. `itemize-described` turns one labelled with words into a `description`.
 - `feat` **Packages a successor continues.** `package-successor` names the successor of a loaded package and what moving changes, and its fix loads the successor in its place: `wrapfig` to `wrapfig2`. It stays quiet where another package loads the old one. The pairs are data in `lints.package-successor.successors`.
 - `fix` **Registers declared twice.** `new-redefines` no longer reports a register declared again as one of its kind (`\newcount\rows` in two tables): LaTeX takes it silently.

@@ -230,10 +230,16 @@ Fix by giving all the options to the first load, or by using
         summary: "`\\newcommand` redefines an existing name",
         explanation: "\
 `\\newcommand` refuses to redefine and raises `Command … already defined`.
+The finding names the definition it ran into: the package that made it, or
+its place in the document.
 
-Fix with `\\renewcommand` if the redefinition is intended, or pick another name.",
+The same definition again is no conflict: `\\providecommand` keeps the first,
+and the fix uses it.  A package's command is that package's: `\\renewcommand`
+overrides it where the package uses it too (amsmath's `\\text` inside its own
+math), so another name is often the better fix.  Else use `\\renewcommand` if
+the redefinition is intended, or pick another name.",
         references: &[Ref { source: Source::Source2e, at: "ltdefns.dtx" }],
-        fixes: &[Applicability::Unsafe],
+        fixes: &[Applicability::Safe, Applicability::Unsafe],
         engines: &[],
         run: already_defined,
     },
@@ -893,13 +899,8 @@ fn already_defined(report: &mut Report) {
             report.add_doubted(span, &name, format!("{name} is already defined"), &cause);
             continue;
         }
-        let edits = renamed(report, span, "new", "renew");
-        report.add_fix(
-            span,
-            &name,
-            format!("{name} is already defined"),
-            Fix::new(format!("use `\\renewcommand{{{name}}}` instead"), Applicability::Unsafe, edits),
-        );
+        let (message, fix) = refusal(report, span, &name, format!("{name} is already defined"));
+        report.add_fix(span, &name, message, fix);
     }
     let analysis = report.analysis();
     let refused: Vec<(Span, String, Option<String>)> = analysis
@@ -915,14 +916,77 @@ fn already_defined(report: &mut Report) {
             report.add_doubted(span, &name, message, &cause);
             continue;
         }
+        let (message, fix) = refusal(report, span, &name, message);
+        report.add_fix(span, &name, message, fix);
+    }
+}
+
+/// What a refused `\newcommand{name}` at `span` meets: the definition it ran
+/// into, named by its package or place, and the fix that fits it. The same
+/// definition again needs no `\renew…` (`\providecommand` keeps it); one a
+/// package made is that package's, and overriding it changes the package too.
+fn refusal(report: &Report, span: Span, name: &str, message: String) -> (String, Fix) {
+    let analysis = report.analysis();
+    let sym = analysis.interner.lookup(name.trim_start_matches('\\'));
+    let before = sym.and_then(|sym| {
+        (analysis.facts.defs.iter())
+            .filter(|d| d.name == sym && d.span != span && d.mac.is_some())
+            .max_by_key(|d| d.node)
+    });
+    let Some(before) = before else {
         let edits = renamed(report, span, "new", "renew");
-        report.add_fix(
-            span,
-            &name,
+        return (message, Fix::new(format!("use `\\renewcommand{{{name}}}` instead"), Applicability::Unsafe, edits));
+    };
+    let file = analysis.files.get(before.span.file as usize).map_or("?", |f| f.short.as_str());
+    let place = format!("{file}:{}", before.span.line);
+    let owner = before.package.map(|p| analysis.interner.name(p).to_string());
+    let message = match &owner {
+        Some(package) => format!("{message} by {package} ({place})"),
+        None => format!("{message} at {place}"),
+    };
+    let same = before.mac.as_ref().zip(new_definition(report, span)).is_some_and(|(m, (arity, body))| {
+        let old = crate::engine::tex::detokenize(&m.replacement_text, &analysis.interner);
+        let bare = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+        usize::from(m.arity()) == arity && bare(&old) == bare(&body)
+    });
+    if same {
+        let edits = renamed(report, span, "new", "provide");
+        return (
             message,
-            Fix::new(format!("use `\\renewcommand{{{name}}}` instead"), Applicability::Unsafe, edits),
+            Fix::new(
+                format!("the definition is the same: use `\\providecommand{{{name}}}`"),
+                Applicability::Safe,
+                edits,
+            ),
         );
     }
+    let edits = renamed(report, span, "new", "renew");
+    let how = match owner {
+        Some(package) => format!(
+            "pick another name, or use `\\renewcommand{{{name}}}` to override {package}'s, which changes it where {package} uses it too"
+        ),
+        None => format!("use `\\renewcommand{{{name}}}` if the redefinition is intended, or pick another name"),
+    };
+    (message, Fix::new(how, Applicability::Unsafe, edits))
+}
+
+/// The arity and body text a `\newcommand{name}[n][default]{body}` at `span` gives.
+fn new_definition(report: &Report, span: Span) -> Option<(usize, String)> {
+    let (_, text) = report.edits().text(span.file)?;
+    let mut scan = crate::linter::fix::Scan::at(
+        &text,
+        crate::linter::fix::Pos::new(span.line, span.col),
+        crate::engine::tex::CatcodeTable::latex(),
+    )?;
+    scan.advance()?;
+    scan.star();
+    scan.argument()?;
+    let arity = scan.optional().map_or(Some(0), |g| text.slice(g.inner_start, g.inner_end)?.trim().parse().ok())?;
+    if arity > 0 {
+        scan.optional();
+    }
+    let body = scan.group()?;
+    Some((arity, text.slice(body.inner_start, body.inner_end)?.to_string()))
 }
 
 /// The defining command at `span` with its `from` prefix turned into `to`.
