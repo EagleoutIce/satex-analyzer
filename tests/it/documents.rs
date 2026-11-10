@@ -742,6 +742,26 @@ fn rounding_corners_at_unknown_points_raises_nothing() {
     check("round_unknown_dimension", "round_unknown.tex", &[]);
 }
 
+/// Forks an arrow to a node of unknown width may take: on 2026-11-10 it
+/// took 2.7k (`\draw`) and 10.2k (`\graph`). Letting a running arm join
+/// once no arm of its split waits elsewhere gave 1.4k and 1.6k.
+const ARROW_FORKS: u64 = 2_000;
+
+/// An arrow to a node of unknown width ends at the node's border:
+/// `\pgfpointnormalised` runs `atan2` on the unknown coordinates, whose
+/// digits split into arms. Bug: an arm waited at a `\fi` for as many arms
+/// as the split made, though the others had ended or joined on the way, so
+/// paths piled up till the statement's end: a false `\else` outside a
+/// conditional (pgfcorepathusage 168), and the graph form ran out of steps.
+#[test]
+fn arrow_to_a_node_of_unknown_width_joins_its_digit_arms() {
+    for main in ["draw.tex", "graph.tex"] {
+        let Some(a) = check("arrow_to_unknown_width_node", main, &[]) else { return };
+        assert_eq!(count(&a, "caused-library-error"), 0, "{main}: a false error");
+        assert!(a.forks <= ARROW_FORKS, "{main}: {} forks", a.forks);
+    }
+}
+
 /// Capabilities: typesetting feedback, global state, termination.
 /// `\clearnotecolumns` loops over `\clearpage` while a note may be left:
 /// the paths must not grow with the number of notes in the `.slnc` file.

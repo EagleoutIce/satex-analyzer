@@ -1,0 +1,7 @@
+\documentclass{article}
+\usepackage{tikz}
+\begin{document}
+% A node of unknown width: the arrow ends at its border.
+\begin{tikzpicture}\node (a) {a}; \node (b) at (2,0) {\hbox to\pdfuniformdeviate 100000sp{}}; \draw[->] (a) -- (b);\end{tikzpicture}
+\gdef\SatexReachedEnd{}
+\end{document}
