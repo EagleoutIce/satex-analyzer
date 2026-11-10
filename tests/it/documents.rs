@@ -561,7 +561,8 @@ fixtures! {
     read_loop_has_a_budget_per_data_line("read_loop_line_budget", "mwe.tex");
 }
 
-/// A project file that exists is either read or said not to be.
+/// A project file that exists is either read or said not to be, and the
+/// lint says so too: a run that left a chapter unread was silent there.
 #[test]
 fn include_is_read_or_said_unread() {
     if !installed() {
@@ -574,6 +575,12 @@ fn include_is_read_or_said_unread() {
     let analysis = Machine::analyze(&source, Some(&path), &cfg);
     let unread = count(&analysis, "file-not-read");
     assert!(read(&analysis, "ch2") != (unread > 0), "read {} unread {unread}", read(&analysis, "ch2"));
+    let said = |a: &Analysis| satex::linter::lint(a).iter().filter(|r| r["code"] == "unread-document").count();
+    assert_eq!(said(&analysis), unread, "the lint names each unread file");
+    // A file named in text no run reads stays unread: the lint must say so.
+    let skipped = source.replace("\\include{ch2}", "\\iffalse\\include{ch2}\\fi");
+    let analysis = Machine::analyze(&skipped, Some(&path), &cfg);
+    assert_eq!((count(&analysis, "file-not-read"), said(&analysis)), (1, 1));
 }
 
 fixtures! {

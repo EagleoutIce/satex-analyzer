@@ -23,6 +23,24 @@ Fix by naming what the file expects in `load.expect`, or by loading it with
         run: expected_load,
     },
     Rule {
+        code: "unread-document",
+        category: Category::Precision,
+        severity: Severity::Error,
+        summary: "the analysis did not read all of the document",
+        explanation: "\
+A file the document's own `\\input`, `\\include` or `\\subfile` names exists but
+the run never read it, or a scan read on past the document's end.  Every finding
+about what that part defines, typesets or references is then missing, and
+findings that something is never defined or never used may be wrong.
+
+There is nothing to fix in the document: this is a gap of the analysis.  Report
+it.  Raising the limits in `satex.yaml` may close it.",
+        references: &[],
+        fixes: &[],
+        engines: &[],
+        run: unread_document,
+    },
+    Rule {
         code: "analysis-imprecision",
         category: Category::Precision,
         severity: Severity::Info,
@@ -53,6 +71,17 @@ fn expected_load(report: &mut Report) {
         .collect();
     for (span, message) in found {
         report.add(span, "expected-load", message, None);
+    }
+}
+
+/// Each part of the document the run did not read, at the place that names it.
+fn unread_document(report: &mut Report) {
+    let found: Vec<_> = (report.analysis.facts.diagnostics.iter())
+        .filter(|d| matches!(d.code, "file-not-read" | "analysis-ended-early"))
+        .map(|d| (d.span, d.message.clone()))
+        .collect();
+    for (span, message) in found {
+        report.add(span, "unread-document", message, None);
     }
 }
 

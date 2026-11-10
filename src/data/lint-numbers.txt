@@ -122,3 +122,4 @@ C051 duplicate-bibliography-work
 C052 bibliography-entry-missing-field
 C053 undefined-bibliography-string
 S055 uncited-bibliography-entry
+A003 unread-document
