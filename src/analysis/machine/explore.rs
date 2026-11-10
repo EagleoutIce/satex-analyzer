@@ -3071,12 +3071,19 @@ impl Machine<'_> {
         }
         // What each loop's last pass began with: the larger, so a pass
         // counts as shrinking only below both.
+        // Indexed: every loop a run met keeps its entry, thousands in a
+        // thesis, and a search per entry made each join quadratic.
         if y.loop_bounds != x.loop_bounds {
             let bounds = Rc::make_mut(&mut x.loop_bounds);
+            let mut at: crate::fixed::LookupMap<_, usize> =
+                bounds.iter().enumerate().map(|(i, (l, _))| (*l, i)).collect();
             for &(id, b) in y.loop_bounds.iter() {
-                match bounds.iter_mut().find(|(l, _)| *l == id) {
-                    Some(e) => e.1 = e.1.max(b),
-                    None => bounds.push((id, b)),
+                match at.get(&id) {
+                    Some(&i) => bounds[i].1 = bounds[i].1.max(b),
+                    None => {
+                        at.insert(id, bounds.len());
+                        bounds.push((id, b));
+                    }
                 }
             }
         }
