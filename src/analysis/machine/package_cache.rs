@@ -1805,6 +1805,7 @@ impl Machine<'_> {
         // then, so no two processes wait on each other. A cache already there is read without
         // waiting: a hit must not queue behind other readers.
         let outermost = self.package_capture.is_none() && self.suspended.is_empty() && self.building.is_none();
+        self.drop_call_recs();
         self.suspend_recording();
         self.cacheable_load = Some(id);
         self.guard.held = (std::mem::take(&mut self.guard.lines), std::mem::take(&mut self.guard.forks));

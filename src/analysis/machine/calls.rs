@@ -677,6 +677,20 @@ impl Machine<'_> {
     fn imprecise(&self, b: &Binding) -> bool {
         b.may.is_some() || matches!(&b.meaning, Meaning::Macro(d) if self.has_unknown(&d.replacement_text))
     }
+    /// Drops every open call recording at the start or end of a cacheable
+    /// load. A replayed load runs none of these calls, so a read load must
+    /// keep nothing from them either, or cold and warm runs differ.
+    pub(crate) fn drop_call_recs(&mut self) {
+        for rec in std::mem::take(Rc::make_mut(&mut self.call_recs)) {
+            if rec.site
+                && let Some(entry) = self.call_runs.get_mut(&rec.key)
+            {
+                entry.active = entry.active.saturating_sub(1);
+            }
+        }
+        self.env.log_reads(false);
+    }
+
     /// Marks all running call recordings as unusable: they read text that is not
     /// theirs, or changed state a summary cannot replay.
     pub(crate) fn leak_call_recs(&mut self) {

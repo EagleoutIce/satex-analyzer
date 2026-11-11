@@ -193,6 +193,43 @@ fn a_run_without_the_format_cache_and_one_with_it_agree() {
     assert!(loaded.format.as_ref().is_some_and(|f| f.cached), "the third run installed the cached kernel");
 }
 
+/// Packages required from an `\input` file, then transformations of
+/// unknown scale inverted: `\pgfmathreciprocal@` forks on unknown values,
+/// so its calls may end with the effect its other runs taught
+/// (`analysis.assume_call_learned_effect`). A read load runs the calls
+/// open around it (each `\RequirePackage`), a replayed one does not, so
+/// what those records taught must not outlive the load's edges: in a
+/// thesis preamble the cold run applied learned effects the warm one never
+/// had (36.7k against 33.3k forks). This small case agreed before too; it
+/// guards that learning stays independent of the cache.
+const LEARNED: &str = "\\documentclass{article}\n\\input{mods.tex}\n\\begin{document}\n\
+\\pgftransformcm{\\pdfuniformdeviate 3}{0}{0}{2}{\\pgfpointorigin}\\pgftransforminvert\n\
+\\pgftransformcm{2}{0}{0}{\\pdfuniformdeviate 3}{\\pgfpointorigin}\\pgftransforminvert\n\
+\\pgftransformcm{\\pdfuniformdeviate 5}{0}{0}{\\pdfuniformdeviate 7}{\\pgfpointorigin}\\pgftransforminvert\n\
+\\end{document}\n";
+
+const MODS: &str = "\\RequirePackage{xcolor}\n\\RequirePackage{etoolbox}\n\\RequirePackage{tikz}\n";
+
+#[test]
+fn learned_call_effects_do_not_depend_on_the_package_cache() {
+    if !installed() {
+        return;
+    }
+    let dir = seeded("learned");
+    std::fs::write(dir.join("mods.tex"), MODS).expect("mods.tex");
+    let cold = run(&dir, LEARNED);
+    let warm = run(&dir, LEARNED);
+    same_rows(&cold, &warm, "learned effects");
+    assert_eq!(cold.forks, warm.forks, "the same undecided choices, read or replayed");
+    assert!(
+        warm.package_caches
+            .iter()
+            .any(|(name, .., state)| name == "pgfcore" && satex::analysis::machine::cache_served(state)),
+        "pgfcore was replayed: {:?}",
+        warm.package_caches
+    );
+}
+
 #[test]
 fn a_gap_inside_a_package_survives_being_cached() {
     if !installed() {

@@ -10,6 +10,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **Cold and warm caches agree.** Calls open across the start or end of a cached package load are no longer recorded. A replayed load runs none of them, so a run with an empty package cache and one with a full cache now learn the same call effects and report the same.
 - `fix` **An unknown number equals itself.** `\int_case:nn` ends its list with the value as its own sentinel. Comparing an unknown number with itself was undecided, so the false arm read past the list: false library errors for `\int_case:nn`, `\int_to_alph:n` and their kin on unknown values. A test whose two sides read the same register or number now decides by the constants added to it.
 - `fix` **Preamble lines no longer pile up open calls.** To learn what a preamble line defines, satex runs it in a side machine. A line its step budget stopped left its calls counted as open. After 512 such lines every call of the same macro (often `\hook_use:n`) was cut as a runaway recursion and defined nothing.
 - `fix` **No false runaway in every `longtable`.** longtable walks its last row back with `\lastbox`, and satex cannot see that list: the arm with one box more than the columns ran `\LT@max@sel` on nothing, a path TeX never takes. An undecided box test on a box of unknown kind now marks its path, and the runaway there is refuted as in other library code.

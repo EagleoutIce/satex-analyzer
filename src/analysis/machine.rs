@@ -4180,6 +4180,7 @@ will look undefined",
     pub(crate) fn end_cacheable_load(&mut self) {
         self.cacheable_load = None;
         (self.guard.lines, self.guard.forks) = std::mem::take(&mut self.guard.held);
+        self.drop_call_recs();
         self.forget_settled_calls();
         self.scratch = Scratch::default();
         #[cfg(test)]
