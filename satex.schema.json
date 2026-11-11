@@ -2694,7 +2694,7 @@
           "x-example": "a line that stays stuck after this many cuts ends the run"
         },
         "line_steps": {
-          "default": 100000000,
+          "default": 500000000,
           "description": "how long one source line may run before what it does is approximated and reading goes on. 0 = no limit",
           "minimum": 0,
           "type": "integer",

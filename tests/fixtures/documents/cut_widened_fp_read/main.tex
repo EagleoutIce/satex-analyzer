@@ -1,0 +1,12 @@
+\documentclass{article}
+\begin{document}
+\begin{figure}
+\ExplSyntaxOn
+\fp_zero:N \l_tmpa_fp
+\prg_replicate:nn { 300 } { \fp_set:Nn \l_tmpa_fp { ( \l_tmpa_fp + 1.5 ) * 0.5 } }
+\fp_use:N \l_tmpa_fp
+\ExplSyntaxOff
+\caption{X}
+\end{figure}
+\gdef\SatexReachedEnd{}
+\end{document}

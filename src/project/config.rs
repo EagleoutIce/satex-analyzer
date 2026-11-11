@@ -285,7 +285,7 @@ impl Default for Limits {
             site_expansions: 16_384,
             // Measured: the heaviest line of a long thesis takes 34-67M
             // steps (about 30 s); a stuck line costs at most 3 times this.
-            line_steps: 100_000_000,
+            line_steps: 500_000_000,
             text_line_steps: 0,
             call_rec_depth: 64,
             scan_site_factor: 16,

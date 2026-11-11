@@ -937,7 +937,7 @@ limits:
   site_expansions: 16384  # how often one place may expand without reading further before it is given up
     #! affects: precision, speed
     #! example: a loop that never consumes input stops here
-  line_steps: 100000000  # how long one source line may run before what it does is approximated and reading goes on. 0 = no limit
+  line_steps: 500000000  # how long one source line may run before what it does is approximated and reading goes on. 0 = no limit
     #! affects: precision, speed
     #! example: a line whose `\foreach` runs forever is cut, and the next line is read
   text_line_steps: 0  # the same once the document's body has begun, where a line typesets rather than loads. 0 = as line_steps

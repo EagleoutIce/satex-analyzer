@@ -11,6 +11,8 @@ use satex::engine::builtins::OccKind;
 /// Steps a fixture may take.
 const STEP_BUDGET: u64 = 20_000_000;
 /// Target 20M; measured 43.2M on 2026-11-04 (rerun-checked), see plan.
+/// Three of the fixture's line budgets (1M): the cut line, the lines after it, slack.
+const CUT_LIBRARY_STEPS: u64 = 3_000_000;
 const NOTEBOOK_A4_STEPS: u64 = 53_952_069;
 /// Target 20M; measured 44.2M on 2026-11-04 (rerun-checked), see plan.
 const FLOAT_AFTER_TITLE_STEPS: u64 = 55_299_093;
@@ -583,6 +585,60 @@ fn cut_inside_include_reads_the_later_chapters() {
         .map(|d| format!("{} {}", d.code, d.message))
         .collect();
     assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// A line of 300 `\fp_set:Nn` runs past the line budget inside a figure,
+/// so it is cut while l3fp's parser holds the document's `1.5` and `0.5`
+/// as data. The cut drops the whole call: only a list that called the
+/// document's text (`\include`) reads on. The bug: a library list was kept
+/// for merely holding document tokens, so satex read on in the middle of
+/// `\__fp_parse:n` with its outer calls gone, and the parser ran over the
+/// leftovers for thousands of forks and false library errors (a tikz-sankey
+/// diagram past the budget took 164k forks).
+#[test]
+fn cut_inside_library_call_drops_the_call() {
+    if !installed() {
+        return;
+    }
+    let root = dir("cut_inside_library_call");
+    let path = root.join("main.tex");
+    let source = std::fs::read_to_string(&path).expect("fixture source");
+    let a = Machine::analyze(&source, Some(&path), &crate::support::discover(&root));
+    assert!(defined(&a, "SatexReachedEnd"), "{}", crate::support::presence(&a, "SatexReachedEnd"));
+    assert_eq!(count(&a, "caused-library-error"), 0, "{:#?}", codes(&a));
+    let steps = a.steps - a.load_steps;
+    assert!(steps < CUT_LIBRARY_STEPS, "{steps} analysis steps, budget {CUT_LIBRARY_STEPS}");
+}
+
+/// [`cut_inside_library_call_drops_the_call`], then `\fp_use:N` of the fp
+/// variable the cut widened. Its hull is text of a class, with none of
+/// l3fp's delimiters, so `\__fp_to_decimal:w` runs away to the end of the
+/// file on every arm, each refuted as an arm over unknown text: no path
+/// is left, `\end{document}` was eaten, and `missing-end` is false. Open
+/// root: a widened structured value (fp, seq) read by its own parser.
+#[test]
+fn cut_widened_fp_read_back_reaches_the_end() {
+    if !installed() {
+        return;
+    }
+    let root = dir("cut_widened_fp_read");
+    let path = root.join("main.tex");
+    let source = std::fs::read_to_string(&path).expect("fixture source");
+    let a = Machine::analyze(&source, Some(&path), &crate::support::discover(&root));
+    assert!(defined(&a, "SatexReachedEnd"), "{}", crate::support::presence(&a, "SatexReachedEnd"));
+    assert_eq!(count(&a, "missing-end"), 0, "{:#?}", codes(&a));
+}
+
+/// The diagnostic codes of `a` with their counts, for failure messages.
+fn codes(a: &Analysis) -> Vec<String> {
+    let mut seen: Vec<(&str, usize)> = Vec::new();
+    for d in &a.facts.diagnostics {
+        match seen.iter_mut().find(|s| s.0 == d.code) {
+            Some(s) => s.1 += 1,
+            None => seen.push((&d.code, 1)),
+        }
+    }
+    seen.iter().map(|(c, n)| format!("{c} x{n}")).collect()
 }
 
 fixtures! {

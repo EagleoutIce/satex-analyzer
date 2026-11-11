@@ -8038,11 +8038,11 @@ will look undefined",
     /// with them, so otherwise the file's next `}` or `\fi` would close one of
     /// their levels instead of its own (tex.web § 336 balances a file end the
     /// same way). With `own`, stop at the first list that still holds the
-    /// document's text. With `called`, stop at the first library list that
-    /// holds the document's text: a command the document called continues, so
-    /// its closers and resets stay (`\include` resets `\@auxout`). The list
-    /// the cut command reads from always goes, since its rest is mid-command.
-    /// Returns the groups and conditionals closed.
+    /// document's text. With `called`, stop at the first list entered before
+    /// the document's text was last read: a command the document called
+    /// continues, so its closers and resets stay (`\include` resets
+    /// `\@auxout`). The list the cut command reads from always goes, since its
+    /// rest is mid-command. Returns the groups and conditionals closed.
     fn give_up_lists(&mut self, own: bool, called: bool) -> (usize, usize) {
         let mut at = None;
         // The list the cut command read from is cut mid-command, so it always goes.
@@ -8061,9 +8061,10 @@ will look undefined",
             }
             // A list below it that was entered before the document's text was
             // last read is a caller of that text (`\include` around a chapter),
-            // as is library code holding it. It continues.
+            // so it continues. Library code that merely holds document tokens as
+            // data (a name or number passed down) is mid-call and is dropped.
             let entered = matches!(self.input.last(), Some(Frame::Tokens { at, .. }) if at.2 < self.doc_mark);
-            if called && !reading && (entered || mine > 0 && mine < pending.len()) {
+            if called && !reading && entered {
                 break;
             }
             reading &= self.input.last().is_some_and(read_out);
@@ -11375,12 +11376,14 @@ will look undefined",
                           mark: &Option<SourceMark>,
                           fuzzy: Option<Span>|
          -> Vec<Token> {
-            // Joined where the document goes on, such a path would carry
-            // what library code did on no run into it. Past a refused fork
-            // (`fuzzy`) the argument may have ended sooner: a run, kept.
+            // Under `assume_compiles` such a path is no run of the document:
+            // it is dropped if another path continues. If it is the last one,
+            // it continues with the text given back, so the run never ends
+            // here. Past a refused fork (`fuzzy`) the argument may have ended
+            // sooner, so the path is a run and is kept.
             if m.cfg.compiles() && m.probe.is_none() && fuzzy.is_none() {
-                m.no_arm();
-                return Vec::new();
+                m.dropping = Some(format!("a delimited argument begun in library code ran on to {end}"));
+                (m.dropping_possible, m.dropping_breaks) = (false, true);
             }
             m.give_back(out, k, mark.as_ref());
             m.runaway = Runaway::No;

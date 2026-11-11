@@ -1,0 +1,3 @@
+# The replicate line runs past the line budget, so it is cut inside l3fp code.
+limits:
+  line_steps: 1000000
