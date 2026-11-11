@@ -1434,13 +1434,9 @@ carried! {
     pub(crate) passes_joined: u32,
     /// The files the `\read` streams are open on, by stream number.
     pub(crate) stream_paths: HashMap<i64, String>,
-    /// The furthest line the progress bar saw read by `\read` in each file.
-    pub(crate) stream_lines: HashMap<String, u64>,
     /// The stream a `\read` last took a line from, its line, its length and
     /// the step it was read at: shown under the progress bar while it is read.
     pub(crate) stream_read: Option<(i64, usize, usize, u64)>,
-    /// The furthest line the progress bar saw read in each file.
-    pub(crate) lines_seen: HashMap<FileId, u32>,
     /// The serial of the last rest made ([`Machine::unknown_text`]).
     pub(crate) rest_serial: u32,
     /// The last control sequence a call took from a project file as an
@@ -1773,6 +1769,14 @@ pub struct Machine<'a> {
     pub(crate) skip_log: Option<Vec<Token>>,
     /// Lines the kernel and package caches stood for instead of reading.
     pub(crate) cached_lines: u64,
+    /// The step count at which the progress bar is drawn next. Per machine,
+    /// so a run samples its lines at the same steps whatever ran before it.
+    pub(crate) progress_next: u64,
+    /// The furthest line the progress bar saw read in each file, and by
+    /// `\read` in each data file. Display only: no analysis state, so a run
+    /// gives the same result however often the bar is drawn.
+    pub(crate) lines_seen: HashMap<FileId, u32>,
+    pub(crate) stream_lines: HashMap<String, u64>,
     /// While the format builds: its file's input frame.
     format_progress: Option<usize>,
     /// Tokens the input stack currently holds, so that deep nesting of large
@@ -2675,6 +2679,9 @@ impl<'a> Machine<'a> {
             budget: None,
             format_progress: None,
             cached_lines: 0,
+            progress_next: 0,
+            lines_seen: HashMap::default(),
+            stream_lines: HashMap::default(),
             held_tokens: 0,
             align_state: 0,
             cell_base: None,
@@ -7085,19 +7092,10 @@ will look undefined",
         }
         // Steps jump by more than one (a replay, a summary): every 2048th
         // step on, not on its exact multiple, or the bar stands still.
-        thread_local! {
-            static NEXT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-        }
         let steps = self.out.steps;
-        let due = NEXT.with(|next| {
-            let at = next.get();
-            let due = steps >= at || at > steps + 4096;
-            if due {
-                next.set(steps + 2048);
-            }
-            due
-        });
+        let due = steps >= self.progress_next || self.progress_next > steps + 4096;
         if due {
+            self.progress_next = steps + 2048;
             let probing = self.probe.as_ref().map(|w| w.sym);
             let (label, frame, phase) = match (self.format_progress, self.recording_package()) {
                 (Some(frame), _) => (format!("caching {} kernel", self.out.plugins.engine.as_str()), frame, "format"),
@@ -7137,7 +7135,7 @@ will look undefined",
             for f in &self.input {
                 if let Frame::File { mouth, .. } = f {
                     let here = mouth.here();
-                    let seen = self.carried.lines_seen.entry(here.file).or_default();
+                    let seen = self.lines_seen.entry(here.file).or_default();
                     *seen = (*seen).max(here.line);
                 }
             }
@@ -7145,11 +7143,11 @@ will look undefined",
             if let Some((stream, at, _, _)) = self.carried.stream_read
                 && let Some(path) = self.carried.stream_paths.get(&stream)
             {
-                let seen = self.carried.stream_lines.entry(path.clone()).or_default();
+                let seen = self.stream_lines.entry(path.clone()).or_default();
                 *seen = (*seen).max(at as u64);
             }
-            let lines: u64 = self.carried.lines_seen.values().map(|&l| u64::from(l)).sum::<u64>()
-                + self.carried.stream_lines.values().sum::<u64>()
+            let lines: u64 = self.lines_seen.values().map(|&l| u64::from(l)).sum::<u64>()
+                + self.stream_lines.values().sum::<u64>()
                 + self.cached_lines;
             let lines = (lines, self.cached_lines);
             // The innermost file, when it is another than the job's own.
@@ -7186,7 +7184,7 @@ will look undefined",
                 phase: phase.into(),
                 file: if file.starts_with('\u{2}') { String::new() } else { file.clone() },
                 line: line.into(),
-                files: (self.carried.lines_seen.len() + self.carried.stream_lines.len()) as u64,
+                files: (self.lines_seen.len() + self.stream_lines.len()) as u64,
                 lines: lines.0,
                 cached: lines.1,
                 reached: read as u64,

@@ -1672,6 +1672,9 @@ impl Machine<'_> {
             scan_starts: _,
             scan_cut: _,
             cached_lines: _,
+            progress_next: _,
+            lines_seen: _,
+            stream_lines: _,
             // Only a cell compares them, and no package loaded in a group
             // (as a cell is) is cached.
             align_state: _,

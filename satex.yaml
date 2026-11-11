@@ -118,7 +118,7 @@ conventions:  # how TeX is usually written, where the text alone does not say
       #! affects: output
       #! example: `before+: ['\autocite']`
       #! example: Section `\autocite{x}` then asks for `Section~\autocite{x}`
-    naming: ['\cref', '\Cref', '\crefrange', '\Crefrange', '\cpageref', '\Cpageref', '\autoref', '\vref', '\Vref', '\vrefrange', '\nameref', '\Nameref']  # references that set the name in front of the number themselves, so no tie goes before them
+    naming: ['\cref', '\Cref', '\crefrange', '\Crefrange', '\cpageref', '\Cpageref', '\autoref', '\vref', '\Vref', '\vrefrange', '\nameref', '\Nameref', '\citeauthor', '\Citeauthor', '\textcite', '\Textcite', '\citetitle', '\Citetitle', '\citeyear', '\citedate', '\citet', '\Citet', '\citealt', '\Citealt', '\citealp', '\Citealp']  # references that set the name in front of the number themselves, so no tie goes before them
       #! affects: output
       #! example: `naming+: ['\zcref']`
     unspaced: ['\index']  # commands no space may stand in front of, beside \label

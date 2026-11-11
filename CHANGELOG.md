@@ -10,6 +10,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **Drawing the progress bar changes nothing.** The lines it counts were kept with the analysis, so a package cache read and its replay could differ in them. They are display only now, and each run draws at its own steps.
 - `fix` **No false missing end after a library scan.** A library argument over unknown text that read past the end of the main file at `\end{document}` now ends the analysis as such, not as a document without `\end{document}`.
 - `fix` **A runaway library argument no longer ends the run.** A delimited argument begun in library code that ran on through the document is dropped only when another path goes on. As the last path it continues with the document text given back, so a widened value read back after a cut reaches the end.
 - `fix` **Big diagrams are no longer cut.** `limits.line_steps` is now 500M (was 100M): one line with a TikZ diagram of many nodes runs 100M to 200M steps, and a cut there cost far more than it saved.
