@@ -94,6 +94,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # build.py transpiles the site's TypeScript with esbuild.
+      - name: Install esbuild
+        run: |
+          npm install --no-save --prefix "$RUNNER_TEMP/esbuild" esbuild@0.25.12
+          echo "ESBUILD=$RUNNER_TEMP/esbuild/node_modules/.bin/esbuild" >> "$GITHUB_ENV"
       - name: Type-check the site's scripts
         run: |
           npx --yes -p typescript@5.9.3 tsc -p doc/site/tsconfig.json
