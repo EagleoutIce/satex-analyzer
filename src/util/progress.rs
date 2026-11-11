@@ -463,16 +463,6 @@ pub fn clear() {
     bars.draw(&mut std::io::stderr().lock());
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn a_line_is_cut_to_the_width_without_counting_escapes() {
-        let line = "\x1b[1mabc\x1b[0m \x1b]8;;file:///x\x1b\\defgh\x1b]8;;\x1b\\";
-        assert_eq!(super::fit(line, 20), line);
-        assert_eq!(super::fit(line, 6), "\x1b[1mabc\x1b[0m \x1b]8;;file:///x\x1b\\de\x1b[0m\x1b]8;;\x1b\\");
-    }
-}
-
 /// `n` in thousands (`k`), millions (`M`) or billions (`B`), one decimal: `1.2B`.
 pub fn compact(n: u64) -> String {
     let (value, unit) = match n {
@@ -482,4 +472,14 @@ pub fn compact(n: u64) -> String {
         _ => return n.to_string(),
     };
     format!("{value:.1}{unit}").replace(&format!(".0{unit}"), unit)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_line_is_cut_to_the_width_without_counting_escapes() {
+        let line = "\x1b[1mabc\x1b[0m \x1b]8;;file:///x\x1b\\defgh\x1b]8;;\x1b\\";
+        assert_eq!(super::fit(line, 20), line);
+        assert_eq!(super::fit(line, 6), "\x1b[1mabc\x1b[0m \x1b]8;;file:///x\x1b\\de\x1b[0m\x1b]8;;\x1b\\");
+    }
 }

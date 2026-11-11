@@ -635,7 +635,7 @@ fn codes(a: &Analysis) -> Vec<String> {
     for d in &a.facts.diagnostics {
         match seen.iter_mut().find(|s| s.0 == d.code) {
             Some(s) => s.1 += 1,
-            None => seen.push((&d.code, 1)),
+            None => seen.push((d.code, 1)),
         }
     }
     seen.iter().map(|(c, n)| format!("{c} x{n}")).collect()
