@@ -56,21 +56,32 @@ impl Bars {
         self.drawn = 0;
     }
 
-    /// Draw every bar, leaving the cursor at the end of the last one. A
-    /// line is cut to the terminal's width: one that wrapped would leave
-    /// the erase above one row short.
+    /// Draw every bar, leaving the cursor at the end of the last one. The
+    /// frame is built in one buffer and overwrites the old lines in place
+    /// (clearing only their rest), inside a synchronized update, so the
+    /// terminal never shows a half-drawn or empty frame. A line is cut to the
+    /// terminal's width: one that wrapped would leave the next frame one row short.
     fn draw(&mut self, out: &mut impl Write) {
-        self.erase(out);
         let width = terminal_size::terminal_size_of(std::io::stderr()).map_or(80, |(w, _)| w.0 as usize);
         let all: Vec<&String> = self.lines.iter().flat_map(|(_, lines)| lines).collect();
+        let mut frame = String::from("\x1b[?2026h");
+        if self.drawn > 1 {
+            frame.push_str(&format!("\x1b[{}A", self.drawn - 1));
+        }
         // Wrapping off while the bars are drawn (DECAWM): where the width
         // was misreported, a long line is clipped at the margin instead of
-        // wrapping onto a row the next erase does not reach.
-        let _ = write!(out, "\x1b[?7l");
+        // wrapping onto a row the next frame does not reach.
+        frame.push_str("\r\x1b[?7l");
         for (i, line) in all.iter().enumerate() {
-            let _ = write!(out, "{}{}", if i > 0 { "\n" } else { "" }, fit(line, width.saturating_sub(1)));
+            if i > 0 {
+                frame.push('\n');
+            }
+            frame.push_str(&fit(line, width.saturating_sub(1)));
+            frame.push_str("\x1b[K");
         }
-        let _ = write!(out, "\x1b[?7h");
+        // Rows the last frame had and this one has not.
+        frame.push_str("\x1b[J\x1b[?7h\x1b[?2026l");
+        let _ = out.write_all(frame.as_bytes());
         self.drawn = all.len();
         let _ = out.flush();
     }
@@ -154,6 +165,14 @@ pub struct Sub {
 static RUN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 static RUNS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 
+/// Package caches this process loaded instead of reading the package.
+static CACHES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// One more package cache was loaded: the bar counts them.
+pub fn cache_loaded() {
+    CACHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub fn set_run(run: u32, runs: u32) {
     RUN.store(run, std::sync::atomic::Ordering::Relaxed);
     RUNS.store(runs, std::sync::atomic::Ordering::Relaxed);
@@ -188,7 +207,11 @@ pub fn bar(
         (all, 0) => format!(" {} lines", count(all)),
         (all, cached) => format!(" {} lines ({} cached)", count(all), count(cached)),
     };
-    let tokens = if steps.0 > 0 { format!(" {} steps", count(steps.0)) } else { String::new() };
+    let caches = match CACHES.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => String::new(),
+        n => format!(" {n} caches loaded"),
+    };
+    let tokens = if steps.0 > 0 { format!("{caches} {} steps", count(steps.0)) } else { caches };
     let here = if steps.1 >= 100_000 { format!(" {} on this line", count(steps.1)) } else { String::new() };
     let clock =
         format!("{lines}{tokens}{}", clock.map(|(spent, limit)| format!(" {spent}/{limit}s")).unwrap_or_default());

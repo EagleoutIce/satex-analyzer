@@ -11412,6 +11412,12 @@ will look undefined",
                 // a run TeX would stop with an error: never the document's.
                 if let Some(k) = source_at.filter(|_| self.runaway == Runaway::FileEnded) {
                     let span = out[k].span;
+                    // Past the main file's end the document's end was read as
+                    // an argument, not run: that is where the analysis ends.
+                    if !self.input.iter().any(|f| matches!(f, Frame::File { .. })) {
+                        let opener = self.scan_starts.last().map_or(span, |s| s.2);
+                        self.ran_off.get_or_insert(opener);
+                    }
                     return gives_back(self, &mut out, k, span, "the end of the file", &mark, fuzzy);
                 }
                 break;

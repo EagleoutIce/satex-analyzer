@@ -2052,6 +2052,7 @@ impl Machine<'_> {
                 crate::util::progress::note!("satex: {name} from its cache in {:?}", started.elapsed());
             }
             self.out.package_caches.push((name.to_string(), cache_text, "cached".into()));
+            crate::util::progress::cache_loaded();
             return end;
         }
         if let Some(why) = &reason {

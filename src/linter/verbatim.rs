@@ -245,8 +245,14 @@ pub fn code(analysis: &Analysis, sources: &Sources) -> Bodies {
         true => verbatims(analysis, &files(analysis, sources)),
         false => Verbatims::default(),
     };
+    // Undefined commands and those `lints.quiet-arguments` names: their
+    // arguments are read as code, not prose.
+    let quiet = &analysis.settings.lints.quiet_arguments.commands;
     let commands = (analysis.facts.expansions.iter())
-        .filter(|e| matches!(e.meaning, MeaningKind::Undefined | MeaningKind::UndefinedApproximated))
+        .filter(|e| {
+            matches!(e.meaning, MeaningKind::Undefined | MeaningKind::UndefinedApproximated)
+                || quiet.iter().any(|q| analysis.interner.name(e.name) == q)
+        })
         .map(|e| (e.span, None));
     let environments = (analysis.facts.occurrences.iter())
         .filter(|o| o.kind == OccKind::Message)

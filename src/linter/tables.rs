@@ -358,20 +358,25 @@ fn numbers_not_aligned(report: &mut Report) {
 
 fn inconsistent_precision(report: &mut Report) {
     for table in tables(report) {
-        for (column, _, numbers, at, _) in number_columns(&table, &report.analysis().settings.conventions.tables) {
+        for (column, kind, numbers, at, _) in number_columns(&table, &report.analysis().settings.conventions.tables) {
             let places = numbers.iter().map(|n| n.decimals.unwrap_or(0));
             let (low, high) = (places.clone().min().unwrap_or(0), places.max().unwrap_or(0));
             if low == high {
                 continue;
             }
-            report.add(
-                span_at(&table, at),
-                "tabular",
-                format!(
-                    "numeric column {column} mixes {low} to {high} decimal places: give every number one precision"
+            // An `S` column prints each number as written unless told to round,
+            // so the fix is one option, not editing every cell.
+            let (message, fix) = match kind {
+                'S' => (
+                    format!("`S` column {column} prints its numbers as written, with {low} to {high} decimal places"),
+                    "let siunitx round them: `\\sisetup{round-mode = places, round-precision = 2}`, or `S[round-mode = places]` for this column".to_string(),
                 ),
-                Some("round them by hand, or let siunitx `S` round with `round-mode = places`".to_string()),
-            );
+                _ => (
+                    format!("numeric column {column} mixes {low} to {high} decimal places: give every number one precision"),
+                    "round them by hand, or let siunitx `S` round with `round-mode = places`".to_string(),
+                ),
+            };
+            report.add(span_at(&table, at), "tabular", message, Some(fix));
         }
     }
 }

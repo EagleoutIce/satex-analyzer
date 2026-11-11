@@ -3287,6 +3287,26 @@
           },
           "type": "object"
         },
+        "quiet-arguments": {
+          "properties": {
+            "commands": {
+              "default": [
+                "todo",
+                "missingfigure",
+                "href",
+                "lstinputlisting",
+                "lstinline",
+                "inputminted",
+                "mintinline"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
         "style-prompt": {
           "description": "an editor asks whether a rule the project breaks often is its style",
           "properties": {

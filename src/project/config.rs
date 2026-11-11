@@ -2219,8 +2219,27 @@ pub struct Lints {
     pub itemize_described: ItemizeDescribed,
     pub package_successor: PackageSuccessor,
     pub clones: Clones,
+    pub quiet_arguments: QuietArguments,
     /// When an editor asks whether a frequent finding is the project's style.
     pub style_prompt: StylePrompt,
+}
+
+/// `lints.quiet-arguments:` in `satex.yaml`: commands whose arguments the
+/// typographic rules skip, as they do verbatim text. A note to oneself
+/// (`\todo`) or a listing's title and options are no prose to polish.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct QuietArguments {
+    /// Command names without the backslash.
+    pub commands: Vec<String>,
+}
+
+impl Default for QuietArguments {
+    fn default() -> QuietArguments {
+        // `href`: its text names what the link points to, such as lines of an online file.
+        let names = ["todo", "missingfigure", "href", "lstinputlisting", "lstinline", "inputminted", "mintinline"];
+        QuietArguments { commands: names.map(String::from).to_vec() }
+    }
 }
 
 /// `lints.clones:` in `satex.yaml`: which repeated blocks of the source are worth a macro.

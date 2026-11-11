@@ -10,6 +10,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Analysis
 
+- `fix` **No false missing end after a library scan.** A library argument over unknown text that read past the end of the main file at `\end{document}` now ends the analysis as such, not as a document without `\end{document}`.
 - `fix` **A runaway library argument no longer ends the run.** A delimited argument begun in library code that ran on through the document is dropped only when another path goes on. As the last path it continues with the document text given back, so a widened value read back after a cut reaches the end.
 - `fix` **Big diagrams are no longer cut.** `limits.line_steps` is now 500M (was 100M): one line with a TikZ diagram of many nodes runs 100M to 200M steps, and a cut there cost far more than it saved.
 - `fix` **Cold and warm caches agree.** Calls open across the start or end of a cached package load are no longer recorded. A replayed load runs none of them, so a run with an empty package cache and one with a full cache now learn the same call effects and report the same.
@@ -51,11 +52,14 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### CLI
 
+- `fix` **The progress bars no longer flicker.** Each frame is drawn at once over the last one, inside a synchronized update, and the bar counts the package caches loaded.
 - `fix` **The right root document.** Only the project's top-level build files (`latexmkrc`, `Makefile`, `build.lua`, …) hint at the root: a vendored bundle's `build.lua` no longer makes its example the root. `project.root` in `satex.yaml` names the root over every guess.
 - `fix` **Progress that moves.** The bar redraws every 2048 steps, not on their exact multiples, which a jump over skipped; counts read `1.2B`; a package stored in parts is reported cached once.
 
 ### Lints
 
+- `feat` **Quiet arguments.** `lints.quiet-arguments.commands` names commands whose arguments the typographic rules skip, as they skip verbatim text. Defaults: `\todo`, `\missingfigure`, `\href`, `\lstinputlisting`, `\lstinline`, `\inputminted`, `\mintinline`.
+- `fix` **Precision in `S` columns.** `inconsistent-precision` on a siunitx `S` column names the one option that rounds it (`round-mode = places`), not every cell.
 - `fix` **Braced names in the generated bibliography.** A corporate author (`{{GCC Development Team}}`) or a braced particle (`Alexander {von Rhein}`) is split only outside braces, as BibTeX splits it: the `.bbl` satex writes no longer leaves a `\name` argument open.
 - `fix` **No tie asked before a citation that prints a name.** `missing-nonbreaking-space` leaves `\citeauthor`, `\textcite`, `\citet` and their kin alone: they print words of the sentence.
 - `fix` **Month constants with biblatex.** `undefined-bibliography-string` no longer reports `jun`: biber predefines the months, and the style lookup now finds `plain.bst` where BibTeX keeps it.
@@ -93,6 +97,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site and docs
 
+- `fix` **Before and after shots no longer cover each other.** The quick-fix card shows both windows at two thirds of its width.
 - `fix` **Showcase cards show whole captures.** A card's picture is no longer cut at its bottom or right edge, and on a phone the pictures no longer move up and down while the page scrolls.
 - `feat` **Typed site scripts.** The site's widgets, dialogs, draw pad and TeX runner are strict TypeScript, built by esbuild for the pages, the VS Code views and `cargo playground --dev`.
 - `fix` **The benchmark page shows summaries.** Each release runs its benchmark, totals compare the documents both releases ran, and pdfTeX comes first. [`9322ee0`](https://github.com/EagleoutIce/satex-analyzer/commit/9322ee0) [`5e39b65`](https://github.com/EagleoutIce/satex-analyzer/commit/5e39b65) [`4c5e651`](https://github.com/EagleoutIce/satex-analyzer/commit/4c5e651)
