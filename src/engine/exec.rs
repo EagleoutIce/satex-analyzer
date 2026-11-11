@@ -5488,6 +5488,13 @@ impl Machine<'_> {
     ) -> Option<bool> {
         self.narrowing = None;
         let relation = relation?;
+        // Both sides read the same register or typed number, each plus a constant.
+        // That source holds one value on this path, so the constants decide.
+        if let (Some((x, kx, cx)), Some((y, ky, cy))) = (from_a, from_b)
+            && (x, kx) == (y, ky)
+        {
+            return Num::exact(cx).compare(relation, &Num::exact(cy));
+        }
         // A register a join left a set of values or intervals is decided
         // member by member: every pair of members gives the same answer.
         let members = |exact: &Option<Vec<i64>>, from: Option<From>, whole: Option<Num>| {

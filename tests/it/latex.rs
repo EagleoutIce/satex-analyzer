@@ -4890,3 +4890,20 @@ fn lines_stopped_inside_a_call_leave_no_open_expansion() {
     }
     assert_eq!(sandbox.run_line("\\wrap{}"), vec!["made".to_string()]);
 }
+
+/// `\int_case:nn` ends its list with the value itself as a sentinel, so the
+/// last test compares an unknown number with itself. Both sides read one
+/// number, so the test is true. It was undecided, and the false arm ran past
+/// the list into `\s__int_mark`: false library errors for every
+/// `\int_case:nn` and `\int_to_alph:n` of an unknown value.
+#[test]
+fn a_number_compared_with_itself_is_equal() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\n\\ExplSyntaxOn\n\\tl_set:Nx \\l_tmpa_tl { \\int_eval:n { \\pdfuniformdeviate 8 + 1 } }\n\\tl_set:Nx \\l_tmpb_tl { \\int_case:nn { \\l_tmpa_tl } { {50}{a} } }\n\\tl_set:Nx \\l_tmpb_tl { \\int_to_alph:n { \\l_tmpa_tl + 1 } }\n\\ExplSyntaxOff\n\\begin{document}\nx\n\\end{document}\n",
+    );
+    let errors: Vec<String> = codes(&analysis).into_iter().filter(|c| c.contains("error")).collect();
+    assert!(errors.is_empty(), "{errors:?}");
+}
