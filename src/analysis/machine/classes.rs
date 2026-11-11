@@ -30,7 +30,7 @@ pub(crate) struct TokenClass {
 pub(crate) type Operand = (u32, u8);
 pub(crate) const CONTROL_SEQUENCE: Operand = (0x11_0000, 16);
 
-/// No token: the unit of [`TokenClass::join`].
+/// The class of no token at all. Joining it with a class changes nothing.
 impl Default for TokenClass {
     fn default() -> Self {
         Self { chars: Vec::new(), text: TextClass::EMPTY, cs: Some(Vec::new()), empty: false, several: false }
@@ -210,7 +210,8 @@ impl Machine<'_> {
                 if text.is_empty() {
                     class.empty = true;
                 }
-                // A repetition holds itself: its own tokens are the rest.
+                // A repetition lists itself as a member. Skip that member and
+                // classify the other tokens.
                 let mut may_be_empty = true;
                 for x in text.iter().filter(|x| x.tok != t.tok) {
                     let c = self.class_at(*x, first, depth + 1);
@@ -227,7 +228,8 @@ impl Machine<'_> {
             }
             return class;
         }
-        // Plain unknown digits may be signed: the character they mean.
+        // Untyped unknown digits may carry a sign, so the first character
+        // is any character of category other.
         if sym == self.unknown_digits || sym == self.unknown_more {
             let chars = vec![(crate::engine::tex::UNKNOWN_CHAR as u32, Catcode::Other)];
             let text = TextClass::DIGIT;
@@ -235,14 +237,15 @@ impl Machine<'_> {
         }
         if self.name(sym).starts_with(crate::engine::scan::TYPED_DIGITS) {
             let other = |c: char| (c as u32, Catcode::Other);
-            // A slice from place 0 spells a number with no leading zero.
+            // Only a slice that starts at the first digit has a known first
+            // digit: the number has no leading zero.
             let num = self.typed_digits_of(sym).filter(|_| self.typed_slice(sym).is_none_or(|(.., i, _)| i == 0));
             let mut chars: Vec<(u32, Catcode)> = match (num, first) {
                 (Some(num), true) => crate::engine::scan::first_digits(num).into_iter().map(other).collect(),
                 _ => ('0'..='9').map(other).collect(),
             };
-            // Only a whole number that may be negative begins with `-`: a
-            // later place, a fraction or a rest ([`Unk::Class`]) is digits.
+            // Only a whole number that may be negative can start with `-`.
+            // Later digits, fractions and rests ([`Unk::Class`]) are plain digits.
             if num.is_some_and(|n| n.lo < 0) {
                 chars.push(other('-'));
             }

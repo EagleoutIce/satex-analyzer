@@ -94,13 +94,13 @@ struct Atom {
 }
 
 impl Machine<'_> {
-    /// Runs the directives the reader passed in the document's own file
-    /// before `token`, which is read again after them.
+    /// Runs the directives the reader passed in a user's file before
+    /// `token`. `token` is put back and read after them.
     pub(super) fn run_directives(&mut self, token: Token) -> bool {
         self.restore_settings();
-        // A look-ahead or an argument may have read past the comment: the
-        // directive still comes before what is read next.
-        // Looked at shared first: taking a frame to write copies it.
+        // A lookahead or an argument may have read past the comment, but the
+        // directive still runs before the next token. Check read-only first,
+        // since a mutable borrow of a shared frame copies it.
         let none = |f: &Frame| matches!(f, Frame::File { mouth, .. } if mouth.directives.is_empty());
         if self.input.iter().rev().find(|f| matches!(f, Frame::File { .. })).is_none_or(none) {
             return false;
@@ -117,8 +117,8 @@ impl Machine<'_> {
         true
     }
 
-    /// A file ends with directives the main loop has not reached yet: the
-    /// file that read it runs them next, the main file's run now.
+    /// A file ended with directives the main loop has not run yet. Hand them
+    /// to the enclosing file, or run them now at the end of the main file.
     pub(super) fn pass_directives_on(&mut self, mouth: &mut Mouth) {
         if mouth.directives.is_empty() {
             return;
@@ -140,7 +140,7 @@ impl Machine<'_> {
         })
     }
 
-    /// Directives in text a conditional skips: no run reads them there.
+    /// Directives in text a false conditional skips. They are reported as skipped, not run.
     pub(super) fn skip_directives(&mut self) {
         let Some(Frame::File { mouth, .. }) = self.input.last_mut() else { return };
         if mouth.directives.is_empty() {
@@ -154,7 +154,7 @@ impl Machine<'_> {
         }
     }
 
-    /// A group a `%\satex@configure` changed the settings in has ended.
+    /// Restores the settings of each group that a `%\satex@configure` changed and that has ended.
     fn restore_settings(&mut self) {
         while let Some((depth, ..)) = self.settings_scopes.last()
             && self.env.depth() < *depth
@@ -249,12 +249,12 @@ impl Machine<'_> {
         if self.settings_scopes.last().is_none_or(|(d, ..)| *d < depth) {
             self.settings_scopes.push((depth, self.cfg.clone(), self.limits.clone()));
         }
-        // The limits in force may be lowered already ([`Machine::degrade`]):
-        // only a changed limit replaces them.
+        // The current limits may already be lowered ([`Machine::degrade`]).
+        // Replace them only when the directive changed a limit.
         if cfg.limits != self.cfg.limits {
             self.limits = cfg.limits.clone();
         }
-        // `\year` and its kin read the clock from here on: `clock=unknown` makes them any date.
+        // `\year` and friends read the clock from now on. `clock=unknown` makes them any date.
         let clock = cfg.clock != self.cfg.clock;
         self.cfg = Cow::Owned(cfg);
         if clock {
@@ -363,8 +363,8 @@ impl Machine<'_> {
         (result, rest)
     }
 
-    /// Whether this path approximated nothing: what fails on it fails in
-    /// some run of the document.
+    /// Whether this path is exact (approximated nothing). A failure on an exact
+    /// path happens in a real run of the document.
     fn exact_path(&mut self) -> bool {
         !self.approximated && !self.after_cut() && !self.took_unknown_arm()
     }

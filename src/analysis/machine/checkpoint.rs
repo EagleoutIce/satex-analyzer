@@ -1,8 +1,7 @@
-//! Checkpoints of a document's run, for analyzing it again after an edit:
-//! the run takes its whole state now and then while it reads the user's
-//! files, and a later run of the same document resumes from the last one
-//! whose input is unchanged. Everything a checkpoint saw is the same, so the
-//! resumed run is the full run from there on.
+//! Checkpoints make re-analysis after an edit fast. While a run reads the
+//! user's files, it saves its whole state from time to time. The next run of
+//! the same document resumes from the last checkpoint whose input has not
+//! changed. That gives the same result as a full run.
 
 use super::explore::Drive;
 use super::{Analysis, Frame, Machine};
@@ -13,23 +12,23 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-/// Steps between two checkpoints at first; more than [`KEPT`] of them
-/// thin out and double it.
+/// Initial number of steps between checkpoints. When more than [`KEPT`]
+/// exist, every other one is dropped and the spacing doubles.
 const EVERY: u64 = 1 << 23;
 const KEPT: usize = 8;
-/// In the body, between two of its top-level lines (a frame, a paragraph): steps
-/// between checkpoints are this share of the current spacing.
+/// In the document body, a checkpoint may also be taken between top-level
+/// lines (a frame, a paragraph) after this fraction of the spacing.
 const BODY_SHARE: u64 = 8;
 
-/// A run's whole state at a line start of a user's file, its paths joined.
+/// The whole state of a run at the start of a line in a user's file, with all paths joined.
 struct Checkpoint<'a> {
     machine: Machine<'a>,
     drive: Drive,
-    /// How many entries of [`Checkpoints::log`] it read.
+    /// Number of entries of [`Checkpoints::log`] read up to this checkpoint.
     reads: usize,
-    /// Taken where the last edit began, or just before: kept while the list thins out.
+    /// Taken at or just before the last edit. Never dropped when the list thins out.
     pinned: bool,
-    /// The last one before the edit's line so far: the next one on the way replaces it.
+    /// The latest checkpoint on the way to the edit's line. The next one on the way replaces it.
     toward: bool,
 }
 
@@ -45,23 +44,23 @@ struct Taking<'a> {
     log: Vec<crate::project::overlay::Read>,
     every: u64,
     next: u64,
-    /// The steps at the last one.
+    /// Step count at the last checkpoint.
     last: u64,
-    /// Whether this run pinned one for its edit yet.
+    /// Whether this run already pinned a checkpoint for its edit.
     pinned: bool,
-    /// Lines from the last one on the way to the edit's line to that line.
+    /// Distance in lines from the last checkpoint on the way to the edit's line.
     toward: u32,
-    /// Whether `\begin{document}` had been read at the last one.
+    /// Whether `\begin{document}` had been read at the last checkpoint.
     document: bool,
-    /// The file and line where the last edit began: a checkpoint is due
-    /// there, for the next edit, which is likely near.
+    /// File and line where the last edit began. The next edit is likely
+    /// nearby, so a checkpoint is taken there.
     edit: Option<Edit>,
 }
 
 /// A file, and the line where it changed.
 type Edit = (PathBuf, u32);
 
-/// A copy of a run is no run that takes checkpoints.
+/// A cloned machine does not take checkpoints.
 impl Clone for Taker<'_> {
     fn clone(&self) -> Self {
         Taker::default()
@@ -69,45 +68,44 @@ impl Clone for Taker<'_> {
 }
 
 impl Taker<'_> {
-    /// The drive a resumed run goes on with, once.
+    /// The drive a resumed run continues with. Returned only once.
     pub(super) fn resume(&mut self) -> Option<Drive> {
         self.resume.take().map(|d| *d)
     }
 }
 
 impl Machine<'_> {
-    /// Whether the run stands where a checkpoint is due: reading a user's
-    /// file at a line start, in no scan, past the steps
-    /// since the last one or just into the document.
+    /// Whether to take a checkpoint now. Only at a line start in a user's file,
+    /// outside any scan, and when enough steps passed or the document just began.
     pub(super) fn checkpoint_due(&self) -> bool {
         let Some(taking) = &self.checkpoints.on else { return false };
         let Some((mouth, lookahead)) = reading_file(&self.input) else { return false };
         let document = self.out.document_depth.is_some();
         let gap = self.edit_gap(taking, mouth);
         let edit = gap == Some(0);
-        // before the line that opens the document reads the `.aux` a rerun changed
+        // Before `\begin{document}`, which reads the `.aux` that a rerun may change.
         let opens = !document && opens_document(mouth);
         let since = self.out.steps - taking.last;
-        // On the way to the edit's line, each time half as far from it as the last (a few per run):
-        // the next edit, likely there again, resumes at the last line start before it.
+        // Approaching the edit's line, take one each time the distance halves.
+        // The next edit is likely there again and resumes close to it.
         let toward = gap.is_some_and(|g| g > 0 && g.saturating_mul(2) <= taking.toward);
-        // A top-level line of the body (a frame, a paragraph): an edit there resumes close by.
+        // Top-level lines of the body (a frame, a paragraph), so an edit there resumes close by.
         let top = || {
             since >= taking.every / BODY_SHARE
                 && self.out.document_depth.is_some_and(|d| usize::from(d) == self.env.group_level())
                 && !self.env.many_groups()
         };
         let due = self.out.steps >= taking.next || document != taking.document || edit || opens || toward || top();
-        // not while a path through an undecided conditional runs: a resume there numbers its meanings anew
+        // Not while a path through an undecided conditional runs: resuming there would number its meanings anew.
         if self.halted || !due || self.env.forking() {
             return false;
         }
-        // a preamble command's lookahead (`\@ifnextchar[`) holds the next line's first token
+        // A lookahead in the preamble (`\@ifnextchar[`) may hold the next line's first token.
         let settled = match lookahead {
             true => opens,
             false => mouth.line_mark().is_some_and(|m| !m.ended),
         };
-        // Below the file, what TeX reads after it: `\include` goes on after its file.
+        // Not inside `\include`: TeX continues reading after the included file.
         !self.input.iter().any(|f| matches!(f, Frame::Boundary))
             && settled
             && self.project_file(mouth.file)
@@ -117,7 +115,7 @@ impl Machine<'_> {
             && self.recording_package().is_none()
     }
 
-    /// Keeps the run's state, with `drive`, as a checkpoint.
+    /// Saves the run's state and `drive` as a checkpoint.
     pub(super) fn take_checkpoint(&mut self, drive: Drive) {
         let machine = self.clone();
         let (steps, document) = (self.out.steps, self.out.document_depth.is_some());
@@ -139,7 +137,8 @@ impl Machine<'_> {
                 reading_file(&self.input).map(|(m, _)| m.position())
             );
         }
-        // The first for this run's edit unpins the last edit's; one on the way replaces the one before.
+        // The first checkpoint for this edit unpins the previous edit's.
+        // A checkpoint on the way to the edit replaces the previous one on the way.
         if pinned && !taking.pinned {
             taking.list.iter_mut().for_each(|c| c.pinned = false);
             taking.pinned = true;
@@ -151,7 +150,7 @@ impl Machine<'_> {
         }
         taking.list.push(Checkpoint { machine, drive, reads: taking.log.len(), pinned, toward });
         if taking.list.len() > KEPT {
-            // Every other one goes; the last one and the pinned one stay.
+            // Drop every other one. The last and the pinned ones stay.
             let mut n = taking.list.len();
             taking.list.retain(|c| {
                 n -= 1;
@@ -162,8 +161,8 @@ impl Machine<'_> {
         (taking.next, taking.last, taking.document) = (steps + taking.every, steps, document);
     }
 
-    /// Lines from the run's place to the last edit's line in its file, 0 at or past it;
-    /// `None` elsewhere or without one.
+    /// Lines from the current position to the last edit's line, 0 at or past it.
+    /// `None` when there is no edit or it is in another file.
     fn edit_gap(&self, taking: &Taking, mouth: &Mouth) -> Option<u32> {
         let (path, line) = taking.edit.as_ref()?;
         (Path::new(&self.out.files[usize::from(mouth.file)].path) == path)
@@ -171,9 +170,8 @@ impl Machine<'_> {
     }
 }
 
-/// The file the run reads, under tokens a lookahead gave back, and whether there are any.
-/// A token list read to its end (a macro's last token run) is read no more: TeX drops it
-/// at the next read.
+/// The file being read and whether a lookahead put tokens back above it.
+/// Token lists already read to their end are skipped: TeX drops them at the next read.
 fn reading_file(input: &super::Input) -> Option<(&Mouth, bool)> {
     let mut lookahead = false;
     for frame in input.iter().rev() {
@@ -188,8 +186,8 @@ fn reading_file(input: &super::Input) -> Option<(&Mouth, bool)> {
     None
 }
 
-/// Whether `\begin{document}` stands on the line `mouth` is on or the next one: a
-/// lookahead from this line (`\usepackage`'s `\@ifnextchar`) may read past the next line's start.
+/// Whether `\begin{document}` is on the current line or the next one. A lookahead
+/// (`\usepackage`'s `\@ifnextchar`) may read past the start of the next line.
 fn opens_document(mouth: &Mouth) -> bool {
     let source = mouth.source();
     let line_start = source[..mouth.offset().min(source.len())].iter().rposition(|&c| c == '\n').map_or(0, |i| i + 1);
@@ -205,25 +203,25 @@ fn opens_document(mouth: &Mouth) -> bool {
     two_lines.contains("\\begin{document}")
 }
 
-/// What hears a build's unfinished run.
+/// Callback for each run of a build that is followed by another run.
 pub type BetweenRuns = Box<dyn Fn(&Analysis)>;
 
-/// The checkpoints of one document's last run, and what they rest on.
+/// The checkpoints of a document's last run, and the inputs they depend on.
 pub struct Checkpoints<'a> {
     cfg: &'a Config,
-    /// The document, and what its run read before its first line.
+    /// The document path and a hash of what the run read before its first line.
     setup: Option<(PathBuf, u64)>,
     list: Vec<Checkpoint<'a>>,
     /// The files the run read or looked for, in order.
     log: Vec<crate::project::overlay::Read>,
-    /// The document's text at the last run: where it changed is the edit's line.
+    /// The document's text at the last run, compared to find the edited line.
     source: String,
     every: u64,
-    /// The line the last run resumed at, if it did.
+    /// The line the last run resumed at, if it resumed.
     pub resumed: Option<(String, u32)>,
-    /// When the build's first run had its kernel: every run's `limits.seconds` counts from it.
+    /// When the build's first run started. `limits.seconds` counts from here for every run.
     pub build_started: Option<std::time::Instant>,
-    /// Hears each run of a build that another run follows.
+    /// Called after each run of a build that is followed by another run.
     pub between_runs: Option<BetweenRuns>,
 }
 
@@ -247,14 +245,14 @@ impl<'a> Checkpoints<'a> {
         self.log.iter().map(|r| r.path.clone()).collect()
     }
 
-    /// Checkpoints at most every `steps` steps, not [`EVERY`].
+    /// Use `steps` instead of [`EVERY`] as the initial spacing.
     pub fn every(self, steps: u64) -> Self {
         Checkpoints { every: steps.max(1), ..self }
     }
 
-    /// `source`, the document at `path`, analyzed: resumed from the last
-    /// checkpoint whose input is still the same, else from the start.
-    /// Either way the analysis is that of a full run.
+    /// Analyzes `source`, the document at `path`. Resumes from the last
+    /// checkpoint whose input is unchanged, else starts from the beginning.
+    /// The result is the same as a full run either way.
     pub fn analyze(&mut self, source: &str, path: &Path) -> Analysis {
         let (_run, _entered) = crate::analysis::budget::Run::start();
         let setup = Some((path.to_path_buf(), setup_key(self.cfg, source, path)));
@@ -266,7 +264,7 @@ impl<'a> Checkpoints<'a> {
         let clock = std::time::Instant::now();
         let (resumed, edit) = self.resume(source);
         let resumed_in = clock.elapsed();
-        // The document's own first changed line says best where the edit is.
+        // The first changed line of the document is the best guess for the edit.
         let changed = first_changed_line(&std::mem::replace(&mut self.source, source.to_string()), source);
         crate::project::overlay::log(true);
         let (mut m, id) = match resumed {
@@ -305,7 +303,7 @@ impl<'a> Checkpoints<'a> {
         if let Some(taking) = m.checkpoints.on.take() {
             (self.list, self.log, self.every) = (taking.list, taking.log, taking.every);
         }
-        // Reads past the last checkpoint: no resume rests on them, the build's reruns do.
+        // Reads after the last checkpoint. No resume depends on them, but the build's reruns do.
         self.log.extend(crate::project::overlay::log(false));
         let (clock, verbose) = (std::time::Instant::now(), self.cfg.verbose >= 2);
         let analysis = m.conclude(id, source);
@@ -321,9 +319,9 @@ impl<'a> Checkpoints<'a> {
         analysis
     }
 
-    /// The machine of the last checkpoint that still holds, made to read
-    /// the files as they are now, and the main file's id; and where an
-    /// open file of a later one changed first.
+    /// The machine of the last checkpoint that is still valid, set up to read
+    /// the files as they are now, with the main file's id. Also returns where
+    /// a file open in a later, invalid checkpoint first changed.
     fn resume(&mut self, source: &str) -> (Option<(Machine<'a>, crate::engine::tex::FileId)>, Option<Edit>) {
         let (mut holds, mut edit) = (HashMap::default(), None);
         while let Some(checkpoint) = self.list.pop() {
@@ -333,12 +331,12 @@ impl<'a> Checkpoints<'a> {
                     let at = reading_file(&m.input).map(|(m, _)| m.position());
                     crate::util::progress::note!("satex: checkpoint at {at:?} does not hold: {changed:?}");
                 }
-                // Where in the file is known best from a checkpoint that read in it.
+                // Keep the furthest changed line any invalid checkpoint found.
                 edit = edit.into_iter().chain(changed).max_by_key(|(_, line)| *line);
                 continue;
             }
-            // `limits.seconds` bounds the build: a resumed run has what the
-            // runs before it left (it only stops one, never steers it).
+            // `limits.seconds` bounds the whole build, so a resumed run gets only
+            // the time the earlier runs left. The limit only stops a run, it never changes its result.
             m.started = self.build_started.unwrap_or_else(std::time::Instant::now);
             m.checkpoints.resume = Some(Box::new(drive));
             crate::engine::source::set_encoding(m.out.plugins.engine.encoding());
@@ -358,9 +356,9 @@ impl<'a> Checkpoints<'a> {
     }
 }
 
-/// Makes every path of `m` and `drive` read its files as they are now, if
-/// each file `log` read is the same and those still open begin with what
-/// was read of them; else where such a file changed, when that is known.
+/// Points every path of `m` and `drive` at the current file contents.
+/// Succeeds if each file in `log` is unchanged and each open file still starts
+/// with what was read of it. Otherwise returns where a file changed, if known.
 fn reread(
     m: &mut Machine,
     drive: &mut Drive,
@@ -380,23 +378,23 @@ fn reread(
             })
             .collect()
     };
-    // A file every path that may run still reads: what they read of it is
-    // checked below, by its prefix. Any other was read through by a path.
+    // Files that every live path still has open are checked by prefix below.
+    // Every other file was read to its end by some path, so it must be unchanged.
     let mut live = inputs.iter().filter(|(_, live)| *live).map(|(i, _)| files(i));
     let mut open = live.next().unwrap_or_default();
     for other in live {
         open.retain(|f| other.contains(f));
     }
-    // The document itself is in no log: a path past its end read all of it.
+    // The main file is not in the log. If no path has it open, it was read to its end.
     if !open.contains(&main) {
         return Err(None);
     }
-    // Read once: a file opened again was read through before.
+    // Only files opened once count as open. A file opened again was read to its end before.
     let reads = |path: &PathBuf| log.iter().filter(|r| !r.probe && r.path == *path).count();
     let open: Vec<&PathBuf> = open.into_iter().map(|f| &paths[usize::from(f)]).filter(|p| reads(p) <= 1).collect();
     for read in log.iter().filter(|r| r.probe || !open.contains(&&r.path)) {
         if !*holds.entry((read.path.clone(), read.probe)).or_insert_with(|| read.holds()) {
-            // Changed somewhere: the next run takes a checkpoint at its start.
+            // Changed: the next run takes a checkpoint at the file's start.
             return Err((!read.probe).then(|| (read.path.clone(), 1)));
         }
     }
@@ -412,8 +410,8 @@ fn reread(
                 false if crate::project::literate::Literate::of(path).is_some() => return None,
                 false => crate::engine::source::decode_counted(&crate::project::overlay::read_bytes(path).ok()?).0,
             };
-            // One of several texts: which one the path read is its choice, so
-            // it reads the file again from its start.
+            // A file with several alternative texts: which one a path read is
+            // its own choice, so it rereads the file from the start.
             (super::texts_of(&text).len() < 2).then(|| Mouth::file(&text, file))
         });
         let now = now.as_ref().ok_or_else(|| Some((paths[usize::from(file)].clone(), 1)))?;
@@ -434,9 +432,9 @@ fn first_changed_line(was: &str, now: &str) -> Option<u32> {
     Some(same as u32 + 1)
 }
 
-/// What a run reads before the document's first line, besides the
-/// configuration: the project around it, and what the whole source says
-/// at once (magic comments, the kernel it asks for, a `%&` format line).
+/// A hash of what a run reads before the document's first line, besides
+/// the configuration: the project around it, magic comments, the requested
+/// kernel, and a `%&` format line.
 pub(crate) fn setup_key(cfg: &Config, source: &str, path: &Path) -> u64 {
     let base = path
         .parent()
