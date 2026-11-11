@@ -7333,10 +7333,10 @@ will look undefined",
 
     /// One token from the input.  Returns `false` at end of input or budget.
     pub fn step(&mut self) -> bool {
-        // A scan that expands what makes it scan again (`\def\a{\number\a}`) nests
-        // without end; TeX runs out of input stack there (tex.web § 321, "TeX
-        // capacity exceeded"), and so does the run. The stack grows down, and a
-        // level's cost varies with the path to it, so bound stack bytes too, not just count.
+        // A scan that expands what makes it scan again (`\def\a{\number\a}`)
+        // nests without end. TeX runs out of input stack there (tex.web § 321,
+        // "TeX capacity exceeded"), and so does the run. The cost per level
+        // varies, so bound the stack bytes too, not just the depth.
         let marker = 0u8;
         let here = std::hint::black_box(std::ptr::addr_of!(marker)) as usize;
         if self.step_depth == 0 {
@@ -7347,12 +7347,11 @@ will look undefined",
             None => self.stack_base.saturating_sub(here) > MAX_STACK_BYTES,
         };
         if self.step_depth >= MAX_NESTING || deep {
-            // satex's own nesting bound, not the document's: the expansion
-            // that nests too deeply is given up like a stalled loop, and the
-            // run reads on.
-            // Unwind: returning `false` ends this nested step, so the caller
-            // one level up goes on. Going on at this depth would give up
-            // again on every step.
+            // This is satex's own nesting bound, not the document's. The
+            // expansion that nests too deeply is given up like a stalled loop,
+            // and the run continues. Returning `false` ends this nested step,
+            // so the caller one level up continues; staying at this depth
+            // would give up again on every step.
             self.abandon_nesting();
             return false;
         }
@@ -7374,8 +7373,8 @@ will look undefined",
             .unwrap_or_default()
     }
 
-    /// The limit `limits.<key>` cut the run at `at`: recorded once per key,
-    /// with how often, so that a run can say which to raise.
+    /// Records that limit `limits.<key>` cut the run at `at`. Once per key,
+    /// with a count, so the run can say which limit to raise.
     pub(crate) fn limit_reached(&mut self, key: &'static str, at: Span) {
         if let Some(hit) = self.out.limits.iter_mut().find(|h| h.key == key) {
             hit.count += 1;
@@ -7391,8 +7390,8 @@ will look undefined",
         );
     }
 
-    /// A cut is about to push its `\unknown` over the token lists it kept:
-    /// they stay tainted until the file under them is read again.
+    /// Called before a cut pushes its `\unknown` over the token lists it kept.
+    /// Those lists stay tainted until the file below them is read again.
     pub(crate) fn taint_after_cut(&mut self) {
         self.leak_call_recs();
         let file = self
@@ -7421,30 +7420,29 @@ will look undefined",
         }
     }
 
-    /// A TeX error the running path raises on state nothing approximated,
-    /// or with a cause that is `exact` whatever was approximated (a name
-    /// certainly undefined): under `analysis.assume_compiles` the path is
-    /// infeasible and dropped ([`Machine::explore`]).
+    /// A TeX error on a path that approximated nothing, or with a cause that
+    /// is exact regardless (a name certainly undefined). Under
+    /// `analysis.assume_compiles` the path is infeasible and dropped
+    /// ([`Machine::explore`]).
     ///
-    /// An error the path reached only past an approximation may not be
-    /// TeX's: it is a possible error, and its path is dropped the same way
-    /// where another path approximated nothing ([`Machine::explore`]),
-    /// so what it left open (a group, a conditional, an argument scan that
-    /// ran to its file's end) does not decide how the paths without one
-    /// read on. Where no path goes on without an error, the dropped ones run
-    /// on and TeX's recovery applies ([`Machine::settle`]).
+    /// An error reached only after an approximation may not be real. It is a
+    /// possible error, and its path is dropped the same way if another path is
+    /// exact ([`Machine::explore`]). So what it left open (a group, a
+    /// conditional, an argument scan that ran to its file's end) does not
+    /// affect the paths without the error. If no path continues without an
+    /// error, the dropped ones continue with TeX's recovery ([`Machine::settle`]).
     pub(crate) fn certain_error(&mut self, text: &str, exact: bool, span: Span) {
         if !self.halted && !self.reading_format() && self.dropping.is_none() && self.may_refute(span) {
             let certain = exact
                 || (self.scratch.approximations == self.scratch.approximations_at_command
                     && !self.approximated
                     && !self.after_cut());
-            // A message that prints unknown text was made from it.
+            // A message that prints unknown text was built from approximated state.
             let certain = certain && !text.contains('\u{2}');
-            // An error the document's own text makes is kept, possible or
-            // certain: it is the one to report and fix. So is a certain one
-            // library code raises while the document is read. Only library
-            // code is assumed to compile.
+            // Keep errors from the document's own text, possible or certain:
+            // they are the ones to report and fix. Also keep certain errors
+            // that library code raises while the document is read. Only
+            // library code is assumed to compile.
             if certain && !self.reading_library() {
                 return;
             }
@@ -7458,12 +7456,12 @@ will look undefined",
         }
     }
 
-    /// Where an error or message is raised against: the command of the
-    /// document's text that reached it, which may stand inside the argument
-    /// of the file call (a frame's body), else that call.
+    /// The place an error or message is reported at: the command in the
+    /// document's text that led to it, which may be inside the argument of
+    /// the file call (a frame's body), else that call.
     pub(crate) fn raised_at(&self, span: Span) -> Span {
         let Some((_, call)) = self.file_call else { return span };
-        // the latest of the call, the document command it ran, and the document's own text it set
+        // The latest of: the call, the document command it ran, and the document text it set.
         [self.project_site, self.typed_at]
             .into_iter()
             .flatten()
@@ -7472,23 +7470,23 @@ will look undefined",
             .unwrap_or(call)
     }
 
-    /// One of the engine's own errors, `text` as TeX prints it: raised
-    /// against the document command that reached it, like `\errmessage`.
+    /// Raises one of the engine's own errors, `text` as TeX prints it, at the
+    /// document command that led to it, like `\errmessage`.
     fn tex_error(&mut self, text: &str, span: Span) {
         if self.probe.is_some() || self.halted {
             return;
         }
         let at = self.raised_at(span);
         self.note_raised(text, at);
-        // Reported as `\errmessage`'s errors are (`raised-error`).
+        // Reported like `\errmessage` errors (`raised-error`).
         self.occurrence(OccKind::Message, text.to_string(), Some("errmessage".to_string()), at);
         self.count_error(at);
     }
 
-    /// tex.web § 82 `error`: one more error. The count is per paragraph
-    /// (§ 1096 clears it). TeX ends the run at the hundredth. satex ends only
-    /// the expansion it is in, like a stalled loop, and reads on from the
-    /// file: errors its own approximations raised must not end the analysis
+    /// tex.web § 82 `error`: counts one more error. The count is per paragraph
+    /// (§ 1096 clears it), and TeX ends the run at the hundredth. satex ends
+    /// only the current expansion, like a stalled loop, and continues from the
+    /// file. Errors caused by its own approximations must not end the analysis
     /// of a document TeX compiles, and a loop of real errors still ends.
     pub(crate) fn count_error(&mut self, at: Span) {
         if self.probe.is_some() || self.halted {
@@ -7506,7 +7504,7 @@ will look undefined",
                 "That makes 100 errors; please try again: TeX would stop here (tex.web § 82); satex gives up the expansion and reads on".into(),
             );
             self.tex_errors = 0;
-            // The command the document called keeps its closing code (`\\include`).
+            // The document's command keeps its closing code (`\\include`).
             self.give_up_lists(false, true);
         }
     }
@@ -7525,13 +7523,12 @@ will look undefined",
         self.diagnose(Severity::Warning, "extra-right-brace", t.span, format!("Argument{of} has an extra }}"));
     }
 
-    /// An unmatched `}` an argument scan meets in text a cut left after its
-    /// `\unknown` ([`Machine::after_cut`]): the summarized code may have
-    /// taken the `{` it closes as an argument, so this is no engine error.
-    /// The call is dropped and `\par }` read next, as TeX's recovery
-    /// (§ 395) leaves it, but without the error. The `}` is given back.
-    /// What the scan read goes back as the argument, for
-    /// [`Machine::loosen_lost_closers`]: the call is dropped with it.
+    /// An argument scan meets an unmatched `}` in text a cut left after its
+    /// `\unknown` ([`Machine::after_cut`]). The summarized code may have taken
+    /// the matching `{` as an argument, so this is not an engine error. As in
+    /// TeX's recovery (§ 395), the call is dropped and `\par }` is read next,
+    /// but no error is raised. The `}` is put back. What the scan read is
+    /// returned as the argument, for [`Machine::loosen_lost_closers`].
     fn cut_right_brace(&mut self, at: Span, read: Vec<Token>) -> Vec<Token> {
         let par = self.intern("par");
         self.unread(Token::new(Tok::Cs(par), at));
@@ -7546,10 +7543,10 @@ will look undefined",
         read
     }
 
-    /// A call dropped in text a cut left ([`Machine::cut_right_brace`])
-    /// took `dropped` with it. A `\fi` there closing a conditional open
-    /// below may have been TeX's, or the cut code's: each such level may
-    /// be closed or still open, so it stands for any number (`many`).
+    /// A call dropped in text a cut left ([`Machine::cut_right_brace`]) took
+    /// `dropped` with it. A `\fi` in it that closes a conditional opened below
+    /// may be TeX's or the cut code's, so each such level may be closed or
+    /// still open, and stands for any number (`many`).
     fn loosen_lost_closers(&mut self, arguments: &[Vec<Token>], delimiters: &[Tok], at: Span) {
         let (mut depth, mut lost) = (0usize, 0usize);
         for &tok in arguments.iter().flatten().map(|t| &t.tok).chain(delimiters) {
@@ -8035,19 +8032,19 @@ will look undefined",
         true
     }
 
-    /// Give up every token list being read, down to the file, and close
-    /// what their text opened ([`Machine::close_since`]): its closers went
-    /// with it, so the file's next `}`/`\fi` would close one of its levels
-    /// instead of its own (tex.web § 336 balances a file end the same way).
-    /// With `own`, down to the first list that still holds the document's
-    /// text instead. Returns the groups and conditionals closed.
-    /// With `called`, down to the first list of library code that holds
-    /// the document's text: a command the document called reads on, so its
-    /// closers and resets stay (`\include` resets `\@auxout`). Never the
-    /// list the cut command reads: its rest is mid-command.
+    /// Drops every token list being read, down to the file, and closes what
+    /// their text opened ([`Machine::close_since`]). Their closers are dropped
+    /// with them, so otherwise the file's next `}` or `\fi` would close one of
+    /// their levels instead of its own (tex.web § 336 balances a file end the
+    /// same way). With `own`, stop at the first list that still holds the
+    /// document's text. With `called`, stop at the first library list that
+    /// holds the document's text: a command the document called continues, so
+    /// its closers and resets stay (`\include` resets `\@auxout`). The list
+    /// the cut command reads from always goes, since its rest is mid-command.
+    /// Returns the groups and conditionals closed.
     fn give_up_lists(&mut self, own: bool, called: bool) -> (usize, usize) {
         let mut at = None;
-        // The list the cut command read from is cut mid-command: it goes.
+        // The list the cut command read from is cut mid-command, so it always goes.
         let mut reading = true;
         loop {
             let pending = match self.input.last() {
@@ -8061,16 +8058,16 @@ will look undefined",
             if own && mine > 0 {
                 break;
             }
-            // Below it, a list entered before the document's text was last
-            // read called that text (`\include` around a chapter), and so
-            // does library code holding it: it reads on.
+            // A list below it that was entered before the document's text was
+            // last read is a caller of that text (`\include` around a chapter),
+            // as is library code holding it. It continues.
             let entered = matches!(self.input.last(), Some(Frame::Tokens { at, .. }) if at.2 < self.doc_mark);
             if called && !reading && (entered || mine > 0 && mine < pending.len()) {
                 break;
             }
             reading &= self.input.last().is_some_and(read_out);
-            // tex.web § 1100: the output routine ends as a unit, and what
-            // called the page builder reads on.
+            // tex.web § 1100: the output routine ends as a unit, and the code
+            // that called the page builder continues.
             let output = matches!(self.input.last(), Some(Frame::Tokens { expanding: Some(s), upper: false, .. }) if *s == self.output_sym)
                 && self.output_active();
             at = explore::lower(at, self.input.last());
@@ -8080,32 +8077,32 @@ will look undefined",
             }
         }
         self.mark_cut_scans();
-        // Nothing dropped: the cut readers still left the expansions since the
-        // document's last token unfinished, so only their writes are unknown.
+        // Nothing dropped. The cut still left the expansions since the
+        // document's last token unfinished, so only their writes become unknown.
         let Some(at) = at else {
             self.widen_since(self.doc_mark);
             return (0, 0);
         };
-        // A cut keeps the groups its region opened open (`resync`).
+        // A cut leaves the groups its region opened open (`resync`).
         let closed = self.close_since(at, called);
-        // What the dropped calls assigned and the closed groups left holds
-        // anything of its kind; values the groups gave back stay.
+        // What the dropped calls assigned and the closed groups left becomes
+        // unknown; values the groups restored stay.
         self.widen_since(at.2);
         closed
     }
 
-    /// Close the conditionals above `at.0` and the groups opened after
-    /// group `at.1`, as their closers would (tex.web §§ 281-283, 496);
-    /// what they put back that was written since assignment `at.2` is
-    /// widened ([`crate::engine::env::Env::close_since`]). Returns the groups and conditionals
-    /// closed.
+    /// Closes the conditionals above `at.0` and the groups opened after group
+    /// `at.1`, as their closers would (tex.web §§ 281-283, 496). Restored
+    /// values that were written after assignment `at.2` are widened
+    /// ([`crate::engine::env::Env::close_since`]). Returns the groups and
+    /// conditionals closed.
     pub(crate) fn close_since(&mut self, at: (usize, u64, u64), keep_many: bool) -> (usize, usize) {
         let conds = self.conds.len().saturating_sub(at.0);
         for _ in 0..conds {
             self.pop_conditional();
         }
-        // A list's group gives back the modes around it (tex.web § 1085);
-        // what the dropped text would have put on the list is unknown.
+        // A list's group restores the surrounding modes (tex.web § 1085). What
+        // the dropped text would have added to the list is unknown.
         let span = self.position_span();
         let mut groups = 0;
         loop {
@@ -8123,10 +8120,9 @@ will look undefined",
         (groups, conds)
     }
 
-    /// A group closed without its closer being read: it gives back the
-    /// modes around its list, whose contents are unknown (tex.web § 1085),
-    /// and an output routine ends with it, the rest of its list unread
-    /// (§ 1100).
+    /// A group closed without reading its closer. It restores the modes
+    /// around its list, whose contents are unknown (tex.web § 1085), and an
+    /// output routine ends with it, the rest of its list unread (§ 1100).
     pub(crate) fn group_dropped(&mut self, nest: Option<crate::engine::mode::Nest>, span: Span) {
         if let Some(n) = nest.filter(|n| n.code == Some(crate::engine::mode::group::OUTPUT)) {
             self.end_output(n, span);
@@ -8143,8 +8139,8 @@ will look undefined",
     }
 
     /// tex.web § 1100: the output routine ends as one unit. The rest of its
-    /// list is flushed, and the conditionals it opened close with it: a cut
-    /// inside it may have dropped their `\fi`, never to be read.
+    /// list is flushed, and the conditionals it opened close with it, since a
+    /// cut inside it may have dropped their `\fi`.
     pub(crate) fn end_output(&mut self, nest: crate::engine::mode::Nest, span: Span) {
         let sym = self.intern("output");
         let list = self.input.iter().rposition(|f| matches!(f, Frame::Tokens { expanding: Some(s), .. } if *s == sym));
@@ -8166,24 +8162,24 @@ will look undefined",
         }
     }
 
-    /// A scan begins: where the input stands, read levels not counted.
+    /// Called when a scan begins: records the input depth, not counting used-up levels.
     pub(crate) fn scan_begin(&mut self) -> usize {
         let n = self.live_levels();
         self.scan_starts.push((n, false, self.read_at));
         self.scan_starts.len() - 1
     }
 
-    /// `analysis.assume_compiles` judges a fault opened at `opener`: only
-    /// library code is assumed to compile, never the document's own text.
+    /// Whether `analysis.assume_compiles` applies to a fault opened at
+    /// `opener`. Only library code is assumed to compile, never the document's text.
     fn may_refute(&mut self, opener: Span) -> bool {
         self.cfg.compiles() && self.probe.is_none() && !self.keep_errors && !self.own_file(opener.file)
     }
 
-    /// A fault library code opened at `opener` (a scan that runs away) on
-    /// an arm over unknown text: under `analysis.assume_compiles` the arm is
-    /// refuted, whatever error it raised before. It is dropped while another
-    /// path goes on, kept with TeX's recovery if it is the last, and each drop
-    /// is reported (`assumed-compiles`). Whether so.
+    /// A fault opened by library code at `opener` (a runaway scan) on an arm
+    /// over unknown text. Under `analysis.assume_compiles` the arm is refuted,
+    /// whatever error it raised before: it is dropped while another path
+    /// continues, or kept with TeX's recovery if it is the last. Each drop is
+    /// reported (`assumed-compiles`). Returns whether it was refuted.
     pub(crate) fn refute_library_fault(&mut self, text: &str, opener: Span) -> bool {
         let unknown_arm = self.took_unknown_arm();
         self.refute_if(unknown_arm, text, opener)
@@ -8200,9 +8196,9 @@ will look undefined",
         refuted
     }
 
-    /// A scan library code opened at `at` ran to the end of the document's
-    /// file: refuted on an arm over unknown text, else a possible library
-    /// error [`Machine::certain_error`] judges.
+    /// A scan opened by library code at `at` ran to the end of the document's
+    /// file. Refuted on an arm over unknown text, else a possible library
+    /// error that [`Machine::certain_error`] judges.
     fn library_runaway(&mut self, text: &str, at: Span) {
         if !self.refute_library_fault(text, at) {
             self.certain_error(text, false, at);
@@ -8210,13 +8206,13 @@ will look undefined",
         }
     }
 
-    /// The input levels, read levels not counted.
+    /// The input depth, not counting used-up levels.
     fn live_levels(&self) -> usize {
         self.input.len() - self.input.iter().rev().take_while(|f| read_out(f)).count()
     }
 
-    /// The expansions left to read: a list shared into an expansion
-    /// ([`Frame::Tokens`] `upper`) counts with it.
+    /// The number of expansions left to read. A list that is part of a
+    /// multi-list expansion ([`Frame::Tokens`] `upper`) counts with it.
     fn text_levels(&self) -> usize {
         let (mut n, mut live) = (0, false);
         for f in self.input.iter() {
@@ -8229,13 +8225,13 @@ will look undefined",
         n + usize::from(live)
     }
 
-    /// A scan ends: whether a cut dropped the text it began in. Its reads
-    /// then found the input ended, as at the budget, so it holds what it
-    /// read before the cut, and the rest is unknown.
+    /// Called when a scan ends: whether a cut dropped the text it began in.
+    /// Its reads then found the input ended, as at the budget, so it keeps
+    /// what it read before the cut and the rest is unknown.
     pub(crate) fn scan_end(&mut self, id: usize) -> bool {
         let cut = self.scan_starts.get(id).is_some_and(|s| s.1);
         self.scan_starts.truncate(id);
-        // The scans it ran in read on: their text is still there.
+        // The enclosing scans continue: their text is still there.
         self.scan_cut = self.scan_starts.iter().any(|s| s.1);
         if cut {
             let at = self.position_span();
@@ -8258,7 +8254,7 @@ will look undefined",
         }
     }
 
-    /// The note a give-up adds for what [`Machine::give_up_lists`] closed.
+    /// The note added to a diagnostic for what [`Machine::give_up_lists`] closed.
     fn closed_note((groups, closed): (usize, usize)) -> String {
         match (groups, closed) {
             (0, 0) => String::new(),
@@ -8268,19 +8264,19 @@ will look undefined",
         }
     }
 
-    /// Where the innermost file being read stands on the input stack.
+    /// The input stack index of the innermost file being read.
     pub(crate) fn file_level(&self) -> Option<usize> {
         self.input.iter().rposition(|f| matches!(f, Frame::File { .. } | Frame::Pseudo { .. }))
     }
 
-    /// A possible `error` library code raised on a path that approximated,
-    /// with no exact path beside it: TeX's recovery would read on into the
-    /// caller's text. The call is summarized instead: its pending lists go,
-    /// down to the file or a list holding the document's text, what it
-    /// assigned is unknown, and an unknown token stands for the rest.
+    /// A possible `error` raised by library code on an approximated path, with
+    /// no exact path beside it. TeX's recovery would continue into the caller's
+    /// text. Instead the call is summarized: its pending lists are dropped down
+    /// to the file or a list holding the document's text, what it assigned
+    /// becomes unknown, and an unknown token stands for the rest.
     pub(crate) fn contain_fault(&mut self, error: &str, file: Option<usize>) {
-        // Nothing of the call's code is left to read (its file ended, its
-        // lists are done, put-back tokens aside): TeX's recovery is all.
+        // None of the call's code is left to read (its file ended and its lists
+        // are used up, apart from put-back tokens), so TeX's recovery is all there is.
         if self.file_level() < file {
             return;
         }
@@ -8308,7 +8304,7 @@ will look undefined",
     }
 
     /// An expansion nested deeper than satex follows: its assignments become
-    /// unknown, its pending lists are dropped, and the run reads on.
+    /// unknown, its pending lists are dropped, and the run continues.
     fn abandon_nesting(&mut self) {
         let balanced = Self::closed_note(self.give_up_lists(false, true));
         let (file, line) = self.position();
@@ -8322,8 +8318,8 @@ will look undefined",
         );
     }
 
-    /// The rest of the line at `at` is dropped, said as a warning: whether
-    /// there was one.
+    /// Drops the rest of the line at `at` and warns about it. Returns whether
+    /// anything was left on the line.
     pub(crate) fn skip_line(&mut self, at: Span) -> bool {
         let Some(i) = self.input.iter().rposition(|f| matches!(f, Frame::File { .. })) else { return false };
         let Frame::File { mouth, .. } = &mut self.input[i] else { return false };
@@ -8346,14 +8342,14 @@ will look undefined",
         (at.file, at.line, stream, line)
     }
 
-    /// The termination guard, met on every check whatever path, scan or
-    /// replay the step is in: the steps since the last check go to the
-    /// source line read now (and the line `\read` took last), over all paths. Past `limits.line_steps`
-    /// there, the expansion above the line is cut (as a skipped region, read
-    /// on with an unknown token); past it again, the rest of the line is
-    /// skipped; a third time, or with no line left to skip, the run stops.
-    /// A path parked on the line before a cut takes it when it runs again.
-    /// Whether the run stopped.
+    /// The termination guard. It runs on every check, whatever path, scan or
+    /// replay the step is in. The steps since the last check are charged to
+    /// the source line being read (and the line `\read` took last), summed
+    /// over all paths. Past `limits.line_steps`, the expansion above the line
+    /// is cut (skipped, and continued with an unknown token). Past it again,
+    /// the rest of the line is skipped. A third time, or with no line left to
+    /// skip, the run stops. A path parked on the line before a cut gets the
+    /// cut when it runs again. Returns whether the run stopped.
     /// LaTeX's own test: `\\@nodocument` is `\\relax` once the body began.
     fn in_preamble(&mut self) -> bool {
         let name = self.intern("@nodocument");
@@ -8365,7 +8361,7 @@ will look undefined",
         self.guard.step = self.out.steps;
         let at = self.position_span();
         let key = self.guard_key(at);
-        // `\\begin{document}`'s own line still runs the end-of-preamble hooks.
+        // The line of `\\begin{document}` still runs the end-of-preamble hooks.
         if self.guard.body.is_none() && at.file == self.out.main_file && !self.in_preamble() {
             self.guard.body = Some(key);
         }
@@ -8412,8 +8408,8 @@ will look undefined",
             );
         }
         let skipped = level >= 2 && self.skip_line(at);
-        // The cut gives up the lists, so a file with text left reads on. A line
-        // that stays stuck after `line_overruns` cuts ends the run: the hard bound.
+        // The cut drops the lists, so a file with text left continues. A line
+        // still stuck after `line_overruns` cuts ends the run: the hard bound.
         let stuck = !skipped && !self.input_left() || u32::from(level) >= self.limits.line_overruns;
         if !behind && level >= 2 && stuck {
             self.halted = true;
@@ -8430,20 +8426,21 @@ will look undefined",
         false
     }
 
-    /// The choices made at `site` while this source line is read, as
-    /// [`Machine::hot_site`] counts them.
+    /// The number of choices made at `site` while this source line is read,
+    /// as [`Machine::hot_site`] counts them.
     pub(crate) fn site_forked(&self, site: Span) -> u32 {
         self.guard.forks.get(&(self.guard_key(self.position_span()), site)).copied().unwrap_or(0)
     }
 
-    /// A choice at `site`: counted per source line, over all paths and
-    /// replays. Past `limits.site_forks` no path parts there again: the
-    /// caller widens instead (an undecided conditional skips its arms and
-    /// does what they may do). Whether it is past.
+    /// Counts a choice at `site`, per source line, over all paths and replays.
+    /// Past `limits.site_forks` no path forks there again and the caller
+    /// widens instead (an undecided conditional skips its arms and applies
+    /// what they may do). Returns whether the limit is passed.
     pub(crate) fn hot_site(&mut self, site: Span) -> bool {
         let limit = self.limits.site_forks;
-        // A choice inside a value scan may fork more: its arms join where the scan ends.
-        // A walker over unknown text forks per token, so even there the count is bounded.
+        // A choice inside a value scan may fork more, since its arms join where
+        // the scan ends. A walker over unknown text forks per token, so even
+        // there the count is bounded.
         let limit = if self.scanning > 0 { limit.saturating_mul(self.limits.scan_site_factor) } else { limit };
         if limit == 0 || self.budget.is_some() {
             return false;
@@ -8470,7 +8467,7 @@ will look undefined",
         true
     }
 
-    /// The region past a size limit is cut ([`Machine::cut`]), said once.
+    /// Cuts the region past a size limit ([`Machine::cut`]) and reports it once.
     fn cut_region(&mut self, key: &'static str) {
         if !self.guard_seen.cut {
             let at = self.region.span;
@@ -8486,31 +8483,32 @@ will look undefined",
         self.cut();
     }
 
-    /// Unwind to the main loop, which reads on after an unknown token
-    /// ([`Machine::resync`]). Met again before that, the unwinding is cut there.
+    /// Unwinds to the main loop, which continues after an unknown token
+    /// ([`Machine::resync`]). If called again before that, it resyncs right there.
     fn cut(&mut self) {
         if std::mem::replace(&mut self.guard_seen.cut, true) {
             self.resync();
         }
     }
 
-    /// Cut where the run stands and read on at once ([`Machine::resync`]).
+    /// Cuts where the run is and continues right away ([`Machine::resync`]).
     pub(super) fn resync_now(&mut self) {
         self.guard_seen.cut = true;
         self.resync();
     }
 
-    /// The main loop reads on after a skipped region: what was assigned since
-    /// the last source token is unknown, the token lists left are dropped
-    /// down to the file, and categories changed since are their old or new
-    /// one; changes the skipped rest would make are assumed not made.
+    /// The main loop continues after a skipped region. What was assigned
+    /// since the last source token becomes unknown, the remaining token lists
+    /// are dropped down to the file, and categories changed since are either
+    /// their old or new value. Changes the skipped rest would make are assumed
+    /// not made.
     fn resync(&mut self) {
         self.guard_seen.call_cut = None;
         self.leak_call_recs();
         let output = self.output_active();
         // Groups the skipped expansion opened stand for any number of them
-        // (P6): its rest may close them or open more. Giving up the lists
-        // below leaves them open.
+        // (P6), since its rest may close them or open more. Dropping the
+        // lists leaves them open.
         let from = self.region.depth.min(self.env.depth());
         if self.env.depth() > from && !self.env.many_since(from) {
             self.diagnose(
@@ -8521,14 +8519,14 @@ will look undefined",
             );
         }
         self.give_up_lists(false, true);
-        // An output routine's text flows nowhere: no unknown token for it.
+        // An output routine's text goes nowhere, so it gets no unknown token.
         if std::mem::take(&mut self.guard_seen.cut) && !(output && !self.output_active()) {
             let at = self.position_span();
             let unknown = self.unknown_text(Unk::Any, at);
             self.push_tokens(Rc::from(vec![unknown]));
         }
-        // A category the skipped expansion changed is its old one or the
-        // one it set (P6): the rest of the expansion may or may not put it back.
+        // A category the skipped expansion changed is either its old value or
+        // the one it set (P6): the rest of the expansion may or may not restore it.
         let changed = std::mem::take(&mut self.region.catcodes);
         for &(c, cat, may) in &changed {
             let now = self.catcodes.cats(c);
@@ -8545,9 +8543,9 @@ will look undefined",
                 format!("a skipped expansion changed the category of {chars:?}; each is its old one or the one set, and later changes the cut skipped are assumed not made"),
             );
         }
-        // Lines the skipped rest would write are not known (P6). Their top,
-        // a line of unknown text in every file open for writing, would make
-        // each later read of it unknown; so it is an assumption, said here.
+        // Lines the skipped rest would write are unknown (P6). Adding a line of
+        // unknown text to every file open for writing would make each later read
+        // unknown, so instead this is an assumption and is reported.
         if !self.stream_files.is_empty() {
             self.diagnose(
                 Severity::Assumption,

@@ -149,11 +149,11 @@ pub enum Value {
         quantity: Quantity,
         hull: Box<GlueHull>,
     },
-    /// A few values of one kind this may be, in a fixed order: exact ones
-    /// up to `limits.value_set`, or intervals and hulls among them up to
-    /// `limits.interval_set`. This is TeX's one set lift ([`Value::join`]),
-    /// for every kind above. Read as a value it is unknown, as a
-    /// [`Value::Num`] is.
+    /// A small set of possible values of one kind, in a fixed order: up to
+    /// `limits.value_set` exact values, or up to `limits.interval_set` when
+    /// intervals are among them. This is the one set lift for every kind
+    /// above ([`Value::join`]). Read as a plain value it is unknown, like a
+    /// [`Value::Num`].
     OneOf(Rc<[Value]>),
     /// A recorded vertical list, as `\vsplit` and the page builder read it
     /// (tex.web §§ 968-979, 1012-1014): its items, its marks' texts by index.
@@ -192,8 +192,8 @@ impl Num {
         Num { lo: lo.min(hi), hi: hi.max(lo), nz: false }
     }
 
-    /// `[lo, hi]`, without 0 where `nz`: an end at 0 moves in, and the bit
-    /// stays only while 0 lies inside. `None` when nothing is left.
+    /// `[lo, hi]`, excluding 0 when `nz`. An end at 0 moves inward, and `nz`
+    /// is kept only while 0 lies strictly inside. `None` when empty.
     pub fn without_zero(lo: i64, hi: i64, nz: bool) -> Option<Num> {
         let lo = if nz && lo == 0 { 1 } else { lo };
         let hi = if nz && hi == 0 { -1 } else { hi };
@@ -288,8 +288,8 @@ impl Num {
             .collect();
         let (mut lo, mut hi, mut err, mut any, mut wrapped) = (i64::MAX, i64::MIN, false, false, false);
         for c in combos(&pts) {
-            // An overflowing corner leaves the values up to the bound
-            // between it and the others attainable.
+            // If a corner overflows, every value between the other corners
+            // and the bound is still reachable.
             let Some(v) = ideal(&c) else {
                 (err, any, lo, hi) = (true, true, range.0, range.1);
                 continue;
@@ -353,7 +353,7 @@ impl Num {
             '>' if self.hi <= other.lo => Some(false),
             '=' if self.lo == self.hi && other.lo == other.hi && self.lo == other.lo => Some(true),
             '=' if self.hi < other.lo || self.lo > other.hi => Some(false),
-            // A number told apart from 0, compared with 0.
+            // A number known to be nonzero, compared with 0.
             '=' if (self.excludes_zero() && *other == Num::exact(0))
                 || (other.excludes_zero() && *self == Num::exact(0)) =>
             {
@@ -368,9 +368,8 @@ impl Num {
         (self.lo == self.hi).then_some(self.lo % 2 != 0)
     }
 
-    /// What `self relation bound` being `holds` leaves of `self`: the
-    /// narrowing a test teaches the arm it chooses. `None` when no value
-    /// satisfies it.
+    /// Narrows `self` to the values where `self relation bound` is `holds`.
+    /// This is what a test teaches the arm it takes. `None` when no value fits.
     pub fn narrow(&self, relation: char, bound: i64, holds: bool) -> Option<Num> {
         let (lo, hi) = match (relation, holds) {
             ('<', true) => (self.lo, self.hi.min(bound.saturating_sub(1))),
@@ -378,14 +377,14 @@ impl Num {
             ('>', true) => (self.lo.max(bound.saturating_add(1)), self.hi),
             ('>', false) => (self.lo, self.hi.min(bound)),
             ('=', true) => (bound.max(self.lo), bound.min(self.hi)),
-            // Not the bound: an end at it moves in.
+            // Not equal to the bound: an end at the bound moves inward.
             ('=', false) => (
                 if self.lo == bound { self.lo.saturating_add(1) } else { self.lo },
                 if self.hi == bound { self.hi.saturating_sub(1) } else { self.hi },
             ),
             _ => (self.lo, self.hi),
         };
-        // Not 0: told apart from it from now on.
+        // Known to be nonzero from now on.
         let nz = self.nz || (relation == '=' && !holds && bound == 0);
         Num::without_zero(lo, hi, nz)
     }

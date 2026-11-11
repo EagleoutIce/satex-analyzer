@@ -164,7 +164,7 @@ struct Mark {
     nest: Option<Nest>,
     /// Which group this is: ids grow with every opening.
     id: u64,
-    /// It stands for any number of such groups, none too (a widened stack).
+    /// Whether it stands for any number of such groups, including none (a widened stack).
     many: bool,
 }
 
@@ -179,28 +179,28 @@ pub struct Env {
     /// it survives the saving group's end (§ 283).
     level: crate::fixed::Chunked<u32>,
     journal: Journal,
-    /// Shared with the forks and paths that saw it: a fork per command
-    /// copies a pointer, and only a group opened or closed copies the stack.
+    /// Shared with the forks and paths that saw it. A fork only copies a
+    /// pointer; opening or closing a group copies the stack.
     marks: Rc<Vec<Mark>>,
     /// The last group id given out.
     group_ids: u64,
-    /// While a path through an undecided conditional runs, every slot it
-    /// changes, with what the slot held before, so that the next path can
-    /// start from the same bindings. One entry per slot and fork: the
-    /// first change under a fork saves what its rewind restores, and the
-    /// entry names the slot's previous entry, put back on rewind.
+    /// While a path through an undecided conditional runs, records every slot
+    /// it changes with the slot's previous binding, so the next path can start
+    /// from the same bindings. One entry per slot and fork: the first change
+    /// under a fork saves what rewinding restores, and links to the slot's
+    /// previous entry, which rewinding puts back.
     trail: Vec<(u32, Option<Binding>, u32, u32, u64)>,
     /// Per slot, its latest trail entry, `NONE` for none.
     trailed: crate::fixed::Chunked<u32>,
     /// Per open fork, the fewest groups the running path stood in since.
     lows: Vec<usize>,
-    /// Per open fork, innermost last: where its trail begins, and the
-    /// slots changed since it as they stand now.
+    /// Per open fork, innermost last: where its trail begins, and the current
+    /// bindings of the slots changed since.
     floors: Vec<usize>,
     changed: Vec<Changed>,
     forks: usize,
-    /// Forks several paths went on from, which a load's record of what
-    /// it wrote does not follow.
+    /// Forks that several paths continued from. A package load's record of
+    /// what it wrote does not follow them.
     paths: usize,
     /// Names assigned since [`Env::clear_recent`], for widening a loop that
     /// does not end to every state it could have left.
@@ -225,12 +225,11 @@ pub struct Env {
     /// Assignments made so far: a loop that assigns is changing state, which
     /// a loop that only re-expands itself is not.
     pub assignments: u64,
-    /// Writes that changed what a name or register holds, and other
-    /// state a later read may see (catcodes, `\\read`): equal counts
-    /// mean an unchanged state.
+    /// Count of writes that changed a name or register, or other state a later
+    /// read may see (catcodes, `\\read`). Equal counts mean unchanged state.
     pub effective: u64,
-    /// The part of `effective` that a write to a slot made, each one
-    /// logged in `recent`: the rest is state no slot holds.
+    /// The part of `effective` made by slot writes (each logged in `recent`).
+    /// The rest is state that no slot holds.
     pub slot_changes: u64,
     /// How large a set of meanings or values a join keeps.
     pub sets: SetLimits,
@@ -241,11 +240,11 @@ pub struct Env {
     /// While calls are recorded: every name read, in order.
     logging: std::cell::Cell<bool>,
     read_log: std::cell::RefCell<Vec<u32>>,
-    /// The log passed [`READ_LOG`] and stopped: it reaches back nowhere.
+    /// Whether the log passed [`READ_LOG`] and stopped, so it is incomplete.
     log_full: std::cell::Cell<bool>,
 }
 
-/// How many reads the log holds: a call that reads more is no summary.
+/// How many reads the log holds. A call that reads more cannot be summarized.
 pub const READ_LOG: usize = 1 << 22;
 
 /// Which part of a binding a read looked at.
@@ -256,8 +255,8 @@ pub enum ReadKind {
     Meaning,
     /// The value a register or parameter holds.
     Value,
-    /// What assigning a value keeps: the binding apart from its value, an
-    /// empty slot counting as a new register slot.
+    /// What assigning a value keeps: the binding without its value (an empty
+    /// slot counts as a new register slot).
     Kept,
     /// Only whether the name has a meaning.
     Defined,
@@ -284,10 +283,9 @@ impl ReadKind {
 }
 
 /// Reads recorded while a package cache is captured. Per slot: which parts
-/// were read while still holding their pre-load value, and which parts the
-/// load has since overwritten, so a later read of them owes nothing to
-/// before. A group end restores what the parts held, and whether that was
-/// pre-load.
+/// were read while they still held their value from before the load, and
+/// which parts the load has overwritten since (a later read of those does
+/// not depend on the state before the load). A group end restores both.
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct Reads {
     read: LookupMap<u32, u8>,
@@ -298,29 +296,29 @@ struct Reads {
     /// Journal position, slot, and what was written of it when the journal
     /// saved it.
     saved: Vec<(usize, u32, u8)>,
-    /// Slots whose text the load copied a text from before it into: a read
-    /// of them reads that text, however the load has written them since.
+    /// Slots into which the load copied text from before the load. A read of
+    /// them depends on that text, however the load wrote them since.
     carrying: LookupSet<u32>,
-    /// The slot whose meaning is being copied through, which a read of its
-    /// meaning then is.
+    /// The slot whose meaning is being copied through. A read of its meaning
+    /// counts as that copy.
     copying: Option<u32>,
     /// Slots assigned since the segment began, and of those, the ones whose
     /// text holds what the slot held then, where and how long.
     touched: LookupSet<u32>,
     splices: LookupMap<u32, (usize, usize)>,
-    /// Read parts a `\csname` added that a whole overwrite before any other
-    /// read makes moot (`\cs_gset:cpn`): the effect is the same either way.
+    /// Read parts added by a `\csname` that become irrelevant if the whole
+    /// meaning is overwritten before any other read (`\cs_gset:cpn`).
     moot: LookupMap<u32, u8>,
 }
 
-/// The save stack as it stood where paths split: groups can open and close
-/// on one path only, so it is copied rather than trailed.
+/// The save stack at the point where paths split. Groups can open and close
+/// on one path only, so the stack is copied rather than trailed.
 #[derive(Clone)]
 pub struct Fork {
     trail: usize,
     /// Its index in [`Env::floors`].
     level: usize,
-    /// Several paths went on from it ([`Env::part`]).
+    /// Whether several paths continued from it ([`Env::part`]).
     parted: bool,
     journal: Journal,
     marks: Rc<Vec<Mark>>,
@@ -341,22 +339,21 @@ pub struct PathEnv {
     journal: Journal,
     marks: Rc<Vec<Mark>>,
     corr: Option<Rc<Corr>>,
-    /// The fewest groups the path stood in since the fork: the groups up
-    /// to there, and what they saved before it, are the fork's.
+    /// The fewest groups the path was in since the fork. The groups up to
+    /// there, and what they saved before the fork, belong to the fork.
     low: usize,
 }
 
 impl PathEnv {
-    /// The names this path and `other` bind differently, both taken from
-    /// their one fork: what one of them changed that the other does not
-    /// hold.
+    /// The names this path and `other` (from the same fork) bind differently:
+    /// what one changed that the other does not hold.
     pub fn differing(&self, other: &PathEnv) -> Vec<Sym> {
         self.differing_over(other, |_| None)
     }
 
-    /// As [`PathEnv::differing`], a name only one path changed compared
-    /// with what it held at the fork (`base`, when known): changed back to
-    /// the same binding, it does not differ.
+    /// Like [`PathEnv::differing`], but a name only one path changed is
+    /// compared with its binding at the fork (`base`, when known). If it was
+    /// changed back to the same binding, it does not differ.
     pub fn differing_over(&self, other: &PathEnv, base: impl Fn(u32) -> Option<Option<Binding>>) -> Vec<Sym> {
         let differs = |k: &u32, b: &Option<Binding>| base(*k).is_none_or(|old| !same_slot(&old, b));
         let mut out: Vec<Sym> = (self.slots.iter())
@@ -376,8 +373,8 @@ impl PathEnv {
         out
     }
 
-    /// Whether this path and `other` bind `sym` alike: neither changed
-    /// it, or both to the same.
+    /// Whether this path and `other` bind `sym` alike: neither changed it, or
+    /// both changed it to the same binding.
     pub fn binds_alike(&self, other: &PathEnv, sym: Sym) -> bool {
         match (self.slots.get(&sym.0), other.slots.get(&sym.0)) {
             (Some((x, _)), Some((y, _))) => same_slot(x, y),
@@ -427,8 +424,8 @@ impl Env {
         }
     }
 
-    /// The primitive `sym` is a copy of, or `sym` itself.  A copy that has
-    /// since been given a meaning that is no primitive is itself again.
+    /// The primitive `sym` is a copy of, or `sym` itself. A copy that has
+    /// since been given a non-primitive meaning counts as itself again.
     pub fn identity(&self, sym: Sym) -> Sym {
         match self.aliases.get(&sym) {
             Some(&original) if matches!(self.get(sym).map(|b| &b.meaning), Some(Meaning::Primitive(_))) => original,
@@ -472,8 +469,8 @@ impl Env {
         self.slots.get(sym.0 as usize).and_then(|s| s.as_ref())
     }
 
-    /// Every name that currently has a binding: a sweep over a family of
-    /// names, such as the registers a number satex could not pin down.
+    /// Every name that currently has a binding. Used to sweep a family of
+    /// names, such as all registers when a register number is unknown.
     pub fn bound(&self) -> Vec<Sym> {
         self.slots.iter().enumerate().filter(|(_, s)| s.is_some()).map(|(i, _)| Sym(i as u32)).collect()
     }
@@ -555,8 +552,8 @@ impl Env {
         if reads.dirty_seen.insert(sym) {
             reads.dirty.push(sym);
         }
-        // A path through an undecided conditional is rewound for the next
-        // one, so what it writes is no reason to stop recording reads.
+        // A path through an undecided conditional is rewound before the next,
+        // so its writes are no reason to stop recording reads.
         if self.paths == 0 {
             *reads.written.entry(sym).or_insert(0) |= bits;
         }
@@ -603,14 +600,14 @@ impl Env {
         self.reads.borrow_mut().copying = sym.map(|s| s.0);
     }
 
-    /// Whether a read of `sym`'s meaning reads something from before the
-    /// load: it was not written, or it holds a text copied from then.
+    /// Whether reading `sym`'s meaning depends on the state before the load:
+    /// it was not written since, or it holds text copied from that state.
     pub fn meaning_fresh(&self, sym: Sym) -> bool {
         let reads = self.reads.borrow();
         !self.meaning_written(sym) || reads.carrying.contains(&sym.0)
     }
 
-    /// `sym` now holds a text from before the load.
+    /// Records that `sym` now holds text from before the load.
     pub fn note_carrying(&self, sym: Sym) {
         if self.tracking.get() {
             self.reads.borrow_mut().carrying.insert(sym.0);
@@ -627,9 +624,9 @@ impl Env {
         out
     }
 
-    /// Where the text `sym` held when the segment began stands in its text
-    /// now, when it does: `sym` was not assigned since (at 0, the whole
-    /// `len`), or only by copying it.
+    /// Where the text `sym` held at the segment's start sits in its current
+    /// text, if it does: `sym` was not assigned since (at 0, the whole `len`),
+    /// or only by copying it.
     pub fn splice_of(&self, sym: Sym, len: usize) -> Option<(usize, usize)> {
         let reads = self.reads.borrow();
         match reads.splices.get(&sym.0) {
@@ -639,7 +636,7 @@ impl Env {
         }
     }
 
-    /// Where a copy put that text, when one did and nothing assigned since.
+    /// Where a copy put that text, if one did and nothing was assigned since.
     pub fn splice(&self, sym: Sym) -> Option<(usize, usize)> {
         self.reads.borrow().splices.get(&sym.0).copied()
     }
@@ -721,8 +718,8 @@ impl Env {
         }
     }
 
-    /// The meaning, for a reader that tells a macro from anything else but
-    /// not one macro from another: a macro's text is not read.
+    /// The meaning, for a reader that only distinguishes macros from other
+    /// meanings. A macro's text does not count as read.
     pub fn shape(&self, sym: Sym) -> Meaning {
         self.log_read(sym);
         if self.tracking.get() {
@@ -773,8 +770,8 @@ impl Env {
         !matches!(self.slot(sym).map(|b| &b.meaning), None | Some(Meaning::Undefined))
     }
 
-    /// Whether `sym` has a meaning on every path: a join that left it
-    /// undefined on one, or a meaning past every set, is only maybe defined.
+    /// Whether `sym` has a meaning on every path. If a join left it undefined
+    /// on one path, or its meaning is beyond every set, it is only maybe defined.
     pub fn surely_defined(&self, sym: Sym) -> bool {
         self.is_defined(sym)
             && self.slot(sym).is_none_or(|b| match b.may.as_deref() {
@@ -783,8 +780,8 @@ impl Env {
             })
     }
 
-    /// Slots that hold a meaning, which is what a format cache stores: a
-    /// rebuild and a cache hit then report the same number.
+    /// Number of slots that hold a meaning, which is what a format cache
+    /// stores, so a rebuild and a cache hit report the same number.
     pub fn meaning_count(&self) -> usize {
         self.slots
             .iter()
@@ -811,8 +808,8 @@ impl Env {
         self.marks.len()
     }
 
-    /// The group level TeX reports, at least: more by any number when a
-    /// group stands for many (the second value).
+    /// The lowest group level TeX could report, and whether it may be higher
+    /// by any number because a group stands for many.
     pub fn group_level(&self) -> usize {
         self.marks.iter().filter(|m| !m.many).count()
     }
@@ -827,10 +824,10 @@ impl Env {
         self.marks.last().is_some_and(|m| m.many)
     }
 
-    /// The innermost group stands for any number of groups and a closer
-    /// meets it. `more`: one of them closes, and it stays; what they saved
-    /// may hold anything, as the closing one may have saved it. Else there
-    /// are none: it goes, and its saves belong to the group below.
+    /// A closer meets an innermost group that stands for any number of groups.
+    /// With `more`, one of them closes and the entry stays, and what they saved
+    /// becomes unknown, since the closing one may have saved it. Otherwise
+    /// there are none: the entry goes, and its saves move to the group below.
     pub fn unfold(&mut self, more: bool, catcodes: &mut CatcodeTable, typed: &Typed) {
         let Some(mark) = self.marks.last().cloned() else { return };
         self.effective += 1;
@@ -856,8 +853,8 @@ impl Env {
         crate::push_shared(&mut self.marks, one);
     }
 
-    /// The slots `saved` names, written deeper than the groups now open,
-    /// count as written in the innermost: a group opened later saves them.
+    /// The slots in `saved`, written deeper than the groups now open, count as
+    /// written in the innermost group, so a group opened later saves them.
     fn clamp_levels(&mut self, saved: &[Entry]) {
         let level = self.marks.len() as u32;
         for entry in saved {
@@ -872,8 +869,8 @@ impl Env {
         }
     }
 
-    /// The groups from `from` up as one that stands for any number of
-    /// them, when all are plain and alike; whether they were.
+    /// Collapses the groups from `from` up into one that stands for any number
+    /// of them, if all are plain and alike. Returns whether it did.
     pub fn many_since(&mut self, from: usize) -> bool {
         let Some(first) = self.marks.get(from).cloned() else { return true };
         let alike = |m: &Mark| {
@@ -985,9 +982,9 @@ impl Env {
         self.slot(sym)?.value.num()
     }
 
-    /// What a test taught a path of a register: that its value is `value`.
-    /// Not an assignment, so the save stack is not told.
-    /// `keep`: which arms of [`Env::arms`] may hold it.
+    /// Records what a test taught a path about a register: its value is
+    /// `value`. Not an assignment, so the save stack is not involved. `keep`
+    /// says which arms of [`Env::arms`] may hold it.
     pub fn refine_value(&mut self, sym: Sym, value: Value, keep: &[bool]) {
         self.effective += 1;
         let i = sym.0 as usize;
@@ -999,9 +996,8 @@ impl Env {
         self.changed(i);
     }
 
-    /// Assign a value, keeping the rest of the binding: this reads nothing
-    /// of the old value, only what is kept (an empty slot keeps what a new
-    /// register slot has).
+    /// Assigns a value and keeps the rest of the binding. It reads only the
+    /// kept parts, not the old value (an empty slot gets a new register slot's parts).
     pub fn set_value(&mut self, sym: Sym, value: Value, global: bool) {
         self.effective += 1;
         self.slot_changes += 1;
@@ -1017,9 +1013,9 @@ impl Env {
         self.set_tracked(sym, binding, global, ReadKind::Value.bit());
     }
 
-    /// Change a value where it stands, saving nothing: TeX's `box(n):=null`
-    /// (tex.web § 1079), which a group that saved the register undoes and
-    /// one that did not keeps.
+    /// Changes a value in place without saving it: TeX's `box(n):=null`
+    /// (tex.web § 1079). A group that saved the register undoes it at its end;
+    /// otherwise it stays.
     pub fn set_value_in_place(&mut self, sym: Sym, value: Value) {
         self.effective += 1;
         self.slot_changes += 1;
@@ -1069,11 +1065,11 @@ impl Env {
         }
     }
 
-    /// Close the innermost group if it was opened after group `id`, as
-    /// `\endgroup` would (tex.web §§ 281-283), unless a math group, or with
-    /// `keep_many` one that stands for any number (it may stay open). A value
-    /// it puts back that was itself written since assignment `since` may
-    /// hold anything: the dropped text would have run on and written again.
+    /// Closes the innermost group if it was opened after group `id`, as
+    /// `\endgroup` would (tex.web §§ 281-283). Not a math group, and with
+    /// `keep_many` not one that stands for many (it may stay open). A value it
+    /// restores that was itself written after assignment `since` becomes
+    /// unknown, since the dropped text would have written it again.
     /// Returns whether it closed.
     pub fn close_since(
         &mut self,
@@ -1180,8 +1176,8 @@ impl Env {
         }
     }
 
-    /// The bindings as they stand, with no save stack: a sandbox run starts
-    /// from them and cannot undo past them.
+    /// The current bindings without a save stack. A sandbox run starts from
+    /// them and cannot undo past them.
     pub fn snapshot(&self) -> Env {
         Env {
             slots: self.slots.clone(),
@@ -1206,9 +1202,9 @@ impl Env {
         while self.journal.len() > to {
             let entry = self.journal.pop().expect("journal length checked");
             if self.tracking.get() {
-                // What a group puts back is what the parts held before, and
-                // it came from before the load exactly when it did then;
-                // entry by entry, as a binding made global since stays.
+                // The group end restores what the parts held before, including
+                // whether it came from before the load. Entry by entry, since a
+                // binding made global in between stays.
                 let at = self.journal.len();
                 let mut reads = self.reads.borrow_mut();
                 while let Some(&(saved, sym, written)) = reads.saved.last().filter(|(saved, ..)| *saved >= at) {
@@ -1276,8 +1272,8 @@ impl Env {
         self.recent_from = self.assignments;
     }
 
-    /// The names written after assignment `at`, sorted, each once, a write
-    /// undone since too; `None` when the log was cleared since.
+    /// The names written after assignment `at`, sorted and deduplicated,
+    /// including writes undone since. `None` when the log was cleared since.
     pub fn written_since(&self, at: u64) -> Option<Vec<Sym>> {
         if self.recent_from > at {
             return None;
@@ -1292,9 +1288,9 @@ impl Env {
         self.recent.len()
     }
 
-    /// The names assigned since `recent_len` was `from`, each once; all of
-    /// them when the list was cleared since.
-    /// A write a group end or a rewind undid since is left out.
+    /// The names assigned since `recent_len` was `from`, each once (all of them
+    /// if the list was cleared since). Writes undone by a group end or a
+    /// rewind are left out.
     pub fn recent_since(&self, from: usize) -> Vec<Sym> {
         let from = if from > self.recent.len() { 0 } else { from };
         let mut syms: Vec<(u32, u64)> =
@@ -1315,19 +1311,19 @@ impl Env {
     /// The names written after assignment `mark` since [`Env::clear_recent`],
     /// each once.
     pub fn written_after(&self, mark: u64) -> Vec<Sym> {
-        // The stamps, not `recent`: a widening clears that, and a later cut
-        // may reach back past it.
+        // Use the stamps, not `recent`: a widening clears `recent`, and a later
+        // cut may reach back further.
         self.stamp.iter().enumerate().filter(|&(_, &at)| at > mark).map(|(i, _)| Sym(i as u32)).collect()
     }
 
-    /// `syms` may hold anything of their kind. With `toward`, each is
-    /// joined with what `toward` holds and widened (an accumulator stays
-    /// typed); a name `toward` never wrote may hold anything.
+    /// Makes `syms` hold anything of their kind. With `toward`, each is joined
+    /// with what `toward` holds and widened instead (an accumulator stays
+    /// typed). A name `toward` never wrote becomes fully unknown.
     pub fn widen(&mut self, syms: &[Sym], toward: Option<(&PathEnv, &Fork)>, typed: &Typed) {
         for &sym in syms {
             let i = sym.0 as usize;
-            // What the other path holds: its own write, or the fork's
-            // binding it kept (a token list's braces survive the widening).
+            // What the other path holds: its own write, or the fork's binding
+            // it kept (so a token list's braces survive the widening).
             let Some(theirs) = toward.map(|(t, fork)| match t.slots.get(&sym.0) {
                 Some((b, _)) => b.clone(),
                 None => self.at_fork(fork, sym.0),
@@ -1368,15 +1364,15 @@ impl Env {
         self.stamp[i] = self.assignments;
     }
 
-    /// `sym` may hold anything, at the group level it was last written at:
-    /// a group end still puts back what it saved, and a local write never
-    /// becomes a global one (`binding.global` only says some write was).
+    /// Makes `sym` hold anything, at the group level of its last write. A
+    /// group end still restores what it saved, and a local write never becomes
+    /// global (`binding.global` only says that some write was global).
     fn widen_in_place(&mut self, sym: Sym, typed: &Typed) {
         let i = sym.0 as usize;
         let Some(Some(binding)) = self.slots.get(i).cloned() else { return };
         let binding = widened(binding, typed, self.sets.text_names);
-        // A slot already as wide as it gets is not written: widening it
-        // again changes nothing a later read could see.
+        // Skip a slot that is already fully wide: widening it again changes
+        // nothing a later read could see.
         if same_slot(&self.slots[i], &Some(binding.clone())) {
             return;
         }
@@ -1442,8 +1438,8 @@ impl Env {
     pub fn unfork(&mut self, fork: Fork) {
         self.forks -= 1;
         self.paths -= usize::from(fork.parted);
-        // What the paths left differently from the fork is written now: a
-        // later read owes it to the load, and its segment carries it.
+        // Write now what the paths left different from the fork: a later read
+        // depends on the load for it, and the load's segment must carry it.
         if fork.parted && self.paths == 0 && self.tracking.get() {
             for k in fork.trail..self.trail.len() {
                 let sym = self.trail[k].0;
@@ -1471,8 +1467,8 @@ impl Env {
         }
     }
 
-    /// What `sym` held when `fork` was made: the first change since saved
-    /// it on the trail, or nothing changed it.
+    /// What `sym` held when `fork` was made: from the trail if it changed
+    /// since, else its current binding.
     pub fn at_fork(&self, fork: &Fork, sym: u32) -> Option<Binding> {
         let (mut e, mut first) = (self.trailed.get(sym as usize).copied().unwrap_or(NONE), None);
         while e != NONE && e as usize >= fork.trail {
@@ -1506,8 +1502,8 @@ impl Env {
             self.trailed[sym as usize] = prev;
             popped.push(sym);
         }
-        // Nothing changed since the fork; an outer fork sees a slot as it
-        // stands, or unchanged when the change was after this fork.
+        // Nothing changed since the fork. An outer fork sees a slot as it is
+        // now, or unchanged if the change came after this fork.
         self.floors.truncate(fork.level + 1);
         self.changed.truncate(fork.level + 1);
         self.lows.truncate(fork.level + 1);
@@ -1542,13 +1538,13 @@ impl Env {
         RESUMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         RESUME_SLOTS.fetch_add(path.slots.size() as u64, std::sync::atomic::Ordering::Relaxed);
 
-        // The fork's own map is the path's, shared: rebuilt per resume, every
-        // head and parked path would hold a copy of its own.
+        // Share the path's map as the fork's own map. Rebuilding it per resume
+        // would give every head and parked path its own copy.
         let own = (self.changed.len() == fork.level + 1).then(|| self.changed.pop()).flatten();
         self.corr = None;
         for (sym, (slot, saved)) in path.slots.iter() {
             let i = *sym as usize;
-            // A name the path left as the fork has it is not written since.
+            // A name the path left as the fork has it does not count as written.
             if self.level[i] == *saved && same_slot(&self.slots[i], slot) {
                 continue;
             }
@@ -1570,11 +1566,10 @@ impl Env {
         self.corr = path.corr.clone();
     }
 
-    /// `paths`, each a path from `fork`, made paths from where the running
-    /// path stands, so that `fork` can close: a name the running path
-    /// changed since and a path did not holds there what `fork` saw. The
-    /// bindings stay as the running path has them. False when the running
-    /// path changed nothing since `fork`.
+    /// Rebases `paths` (each from `fork`) onto the running path's current
+    /// state, so `fork` can close. For a name the running path changed but a
+    /// path did not, that path gets what `fork` saw. The bindings stay as the
+    /// running path has them. False when the running path changed nothing since `fork`.
     pub fn rebase(&mut self, fork: &Fork, paths: &mut [&mut PathEnv]) -> bool {
         self.effective += 1;
         let live = self.path(fork);
@@ -1582,9 +1577,9 @@ impl Env {
             return false;
         }
         self.rewind(fork);
-        // What `fork` saw of each name the running path changed, built once
-        // and shared: each path lays its own changes over it, so the cost is
-        // the names plus each path's changes, not their product.
+        // Build once what `fork` saw of each name the running path changed, and
+        // share it. Each path lays its own changes over it, so the cost is the
+        // number of names plus each path's changes, not their product.
         let mut seen = Changed::new();
         for sym in live.slots.keys() {
             self.grow(Sym(*sym));
@@ -1592,7 +1587,7 @@ impl Env {
             seen.insert_mut(*sym, (self.slots[i].clone(), self.level[i]));
         }
         for path in paths.iter_mut() {
-            // Whichever is smaller is laid over the other.
+            // Lay the smaller map over the larger.
             if path.slots.size() * 2 <= seen.size() {
                 let mut slots = seen.clone();
                 for (sym, slot) in path.slots.iter() {
@@ -1617,9 +1612,9 @@ impl Env {
         self.slots.get(sym as usize).cloned().flatten()
     }
 
-    /// Continue as if `sym` held `slot`: a state at a loop head joined with
-    /// what the loop reached there, which holds more than this path knows.
-    /// Not an assignment, so the save stack is not told.
+    /// Continues as if `sym` held `slot`, e.g. a loop head's state joined with
+    /// what the loop reached there, which is more than this path knows. Not an
+    /// assignment, so the save stack is not involved.
     pub fn assume(&mut self, sym: u32, slot: Option<Binding>) {
         self.effective += 1;
         let i = sym as usize;
@@ -1629,9 +1624,8 @@ impl Env {
         self.changed(i);
     }
 
-    /// What a path has learned of a name that holds one of several
-    /// meanings: that it holds `meaning`.  Not an assignment, so the save
-    /// stack is not told.
+    /// Records that a name with several possible meanings holds `meaning` on
+    /// this path. Not an assignment, so the save stack is not involved.
     /// `keep` as for [`Env::refine_value`].
     pub fn refine(&mut self, sym: Sym, meaning: Meaning, keep: &[bool]) {
         self.effective += 1;
@@ -1644,8 +1638,8 @@ impl Env {
         self.changed(i);
     }
 
-    /// [`Env::refine`] to one of `members`: still several, the name keeps
-    /// them as its meanings.
+    /// [`Env::refine`] to the meanings in `members`. If several remain, the
+    /// name keeps them as its meaning set.
     pub fn refine_to(&mut self, sym: Sym, members: &[Meaning], keep: &[bool]) {
         match members {
             [one] => self.refine(sym, one.clone(), keep),
@@ -1653,7 +1647,7 @@ impl Env {
         }
     }
 
-    /// [`Env::refine_to`], `members` kept as a set even when one: the
+    /// [`Env::refine_to`], but `members` stays a set even with one member: the
     /// texts a one-of token still stands for.
     pub fn refine_may(&mut self, sym: Sym, members: &[Meaning], keep: &[bool]) {
         self.effective += 1;
@@ -1672,8 +1666,8 @@ impl Env {
         groups(&self.marks)
     }
 
-    /// Give `sym` a meaning its name determines, so that it is the same on
-    /// every path and no rewind undoes it.
+    /// Gives `sym` a meaning determined by its name, the same on every path
+    /// and never undone by a rewind.
     pub fn constant(&mut self, sym: Sym, binding: Binding) {
         self.effective += 1;
         self.grow(sym);
@@ -1681,20 +1675,20 @@ impl Env {
         self.unpair(i);
         self.slots[i] = Some(Binding { global: true, ..binding });
         self.level[i] = 0;
-        // Not journaled, so no path rewinds it: written on every path.
+        // Not journaled, so no rewind undoes it: it holds on every path.
         let paths = std::mem::take(&mut self.paths);
         self.note_write(sym.0, ReadKind::Meaning.bit() | ReadKind::Value.bit());
         self.paths = paths;
     }
 
-    /// Least upper bound of two paths from `fork` that stand in the same
-    /// groups. A name they left with different meanings has one of them.
-    /// `after[i]` is the `\aftergroup` tokens of group `i` where they differ
-    /// (tex.web § 326). With `widen`, a slot that grows holds anything of its
-    /// kind, as [`Reach`] allows. With `paired`, the arms stay paired ([`Corr`]) in the names
-    /// the widening left as their join. Also returns the names the bound
-    /// holds more of than `a`, and whether its waiting tokens grew. The
-    /// bindings are left as `fork` saw them.
+    /// Least upper bound of two paths from `fork` in the same groups. A name
+    /// with different meanings on the two paths gets the set of both.
+    /// `after[i]` holds the joined `\aftergroup` tokens of group `i` where they
+    /// differ (tex.web § 326). With `widen`, a slot that grows becomes anything
+    /// of its kind, as [`Reach`] allows. With `paired`, the arms stay paired
+    /// ([`Corr`]) in the names the widening left as their join. Also returns the
+    /// names where the bound holds more than `a`, and whether its waiting tokens
+    /// grew. The bindings are left as `fork` saw them.
     pub fn join_paths(
         &mut self,
         fork: &Fork,
@@ -1709,7 +1703,7 @@ impl Env {
         touched.sort_unstable();
         touched.dedup();
         let mut grown = Vec::new();
-        // `a`'s map, shared where the join keeps its binding.
+        // Start from `a`'s map, shared where the join keeps `a`'s binding.
         let mut slots = a.slots.clone();
         let (mut apart, mut lost) = (Vec::new(), Vec::new());
         for sym in touched {
@@ -1723,9 +1717,9 @@ impl Env {
                 true => (self.settle(a, old, typed), self.settle(b, new, typed)),
                 false => (old, new),
             };
-            // A group end puts back what either path saved (tex.web § 283
-            // keeps only what both made global).
-            // A level past the joined groups is one only `b` stood in.
+            // A group end restores what either path saved (tex.web § 283: only
+            // what both made global is kept). A level beyond the joined groups
+            // is one only `b` was in.
             let level = x.max(y).min(a.marks.len() as u32);
             let joined = join(old.clone(), new, self.sets, Some(typed));
             let joined = match widen {
@@ -1758,7 +1752,7 @@ impl Env {
                     !(mark.after.len() == text.len() && mark.after.iter().zip(text).all(|(x, y)| x.tok == y.tok));
                 mark.after = text.clone();
             }
-            // What the groups saved of the nest is joined like the bindings.
+            // Join what the groups saved of the semantic nest like the bindings.
             mark.nest = match (mark.nest, other.nest) {
                 (Some(x), Some(y)) => Some(x.join(y)),
                 (x, y) => x.or(y),
@@ -1770,9 +1764,9 @@ impl Env {
         (PathEnv { slots, journal, marks: Rc::new(marks), low, corr }, grown, waiting)
     }
 
-    /// `binding` as path `p` holds it: a one-of token `p` narrowed to one
-    /// text ([`Env::refine_may`]) is that text, so arms that took
-    /// different texts join as texts, not as the token both still hold.
+    /// `binding` as path `p` holds it. A one-of token that `p` narrowed to one
+    /// text ([`Env::refine_may`]) becomes that text, so arms that took different
+    /// texts join as texts, not as the token both still hold.
     fn settle(&self, p: &PathEnv, binding: Option<Binding>, typed: &Typed) -> Option<Binding> {
         let text = |t: &Token| -> Option<Rc<[Token]>> {
             let sym = t.cs()?;
