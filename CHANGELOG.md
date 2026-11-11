@@ -98,6 +98,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Site and docs
 
+- `fix` **Picking a case of a maybe-typeset text works.** The case is chosen with a row of buttons in the chip instead of a dropdown, which closed again at once and looked out of place.
 - `fix` **Before and after shots no longer cover each other.** The quick-fix card shows both windows at two thirds of its width.
 - `fix` **Showcase cards show whole captures.** A card's picture is no longer cut at its bottom or right edge, and on a phone the pictures no longer move up and down while the page scrolls.
 - `feat` **Typed site scripts.** The site's widgets, dialogs, draw pad and TeX runner are strict TypeScript, built by esbuild for the pages, the VS Code views and `cargo playground --dev`.

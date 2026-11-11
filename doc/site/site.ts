@@ -926,8 +926,8 @@ interface Stream {
     // one case at a time: either arm, or every path
     const now = armsPicked.get(c.on) ?? 'both';
     return `<span class="ts-switch" data-on="${esc(c.on)}" title="${esc(maybeTip(c))}. Pick a case to see its text"><span class="ts-switch-q">maybe</span><code>${esc(name)}</code>` +
-      `<select class="ts-pick" aria-label="the case of ${esc(name)}">` +
-      ['both', 'true', 'false'].map((a, i) => `<option value="${a}"${a === now ? ' selected' : ''} title="${esc(arm[a])}">${esc(i ? label(i - 1) : 'every path')}</option>`).join('') + '</select></span>';
+      `<span class="ts-pick" role="group" aria-label="the case of ${esc(name)}">` +
+      ['both', 'true', 'false'].map((a, i) => `<button type="button" data-arm="${a}" aria-pressed="${a === now}" title="${esc(arm[a])}">${esc(i ? label(i - 1) : 'all')}</button>`).join('') + '</span></span>';
   }).join('');
   const maybeTip = (c: Rec) => `may be typeset: depends on ${c.test || c.parted || c.mark} (line ${c.line}), which the run could not decide`;
   /** Each paragraph's environments opened since the last paragraph (`envOpen`) and closed after it (`envClose`). */
@@ -1074,7 +1074,7 @@ interface Stream {
     sheet.textContent = [...armsPicked].map(([id, a]) => `.typeset .ts-choice[data-on=${q(id)}] > .ts-arm-${a === 'true' ? 'false' : 'true'} { display: none; } ` +
       `.typeset .ts-choice[data-on=${q(id)}] > .ts-arm:is(*, :empty, :not(:empty))::before, .typeset .ts-choice[data-on=${q(id)}] > .ts-arm:is(*, :empty)::after { content: none; } ` +
       `.typeset .ts-choice[data-on=${q(id)}] > .ts-arm { opacity: 1; }`).join('\n');
-    document.querySelectorAll<HTMLSelectElement>(`.ts-switch[data-on=${q(on)}] select`).forEach((sel) => { sel.value = arm; });
+    document.querySelectorAll<HTMLElement>(`.ts-switch[data-on=${q(on)}] button[data-arm]`).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.arm === arm)));
   }
   /** The view's cards answer their steppers and diff switches; once per container. */
   function typesetWire(root: HTMLElement) {
@@ -1090,17 +1090,14 @@ interface Stream {
       if (diff) box.innerHTML = stepDiff(k > 1 ? stepWords(steps[k - 2]) : [], stepWords(steps[k - 1]));
     };
     root.addEventListener('click', (e) => {
-      if ((e.target as Element).closest?.('.ts-switch select')) { e.stopPropagation(); return; }
+      const pick = (e.target as Element).closest?.<HTMLElement>('.ts-switch button[data-arm]');
+      if (pick) { e.stopPropagation(); pickArm(pick.closest<HTMLElement>('.ts-switch')!.dataset.on!, pick.dataset.arm!); return; }
       const b = (e.target as Element).closest?.('.ts-stepper button');
       if (!b) return;
       e.stopPropagation();
       const card = b.closest<HTMLElement>('.ts-card')!;
       card.dataset.step = (b as HTMLElement).dataset.step;
       show(card);
-    });
-    root.addEventListener('change', (e) => {
-      const pick = (e.target as Element).closest?.<HTMLSelectElement>('.ts-switch select');
-      if (pick) pickArm(pick.closest<HTMLElement>('.ts-switch')!.dataset.on!, pick.value);
     });
     root.addEventListener('change', (e) => { const card = (e.target as Element).closest?.('.ts-diff-toggle') && (e.target as Element).closest<HTMLElement>('.ts-card'); if (card) show(card); });
     root.addEventListener('keydown', (e) => {

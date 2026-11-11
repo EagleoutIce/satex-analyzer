@@ -1979,8 +1979,12 @@ body:not(.show-lenses) .cm-lens-line { display: none; }
 .typeset .ts-choice > .ts-arm-false:empty::before { content: "|"; margin: 0 .3em; color: var(--muted); }
 .typeset .ts-switch { display: inline-flex; align-items: baseline; gap: .15rem; margin-right: .4rem; padding: 0 .3rem; border-radius: 4px; font: .66rem ui-monospace, Menlo, monospace; color: var(--c3, #c80); background: color-mix(in srgb, var(--c3, #c80) 12%, transparent); vertical-align: .1em; }
 .typeset .ts-switch code { font: inherit; margin-right: .2rem; } .typeset .ts-switch-q { margin-right: .25rem; font-style: italic; opacity: .8; } .typeset .ts-switch button { font: inherit; padding: 0 .3rem; border: 0; border-radius: 3px; background: none; color: inherit; cursor: pointer; }
-.typeset .ts-switch .ts-pick { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid color-mix(in srgb, var(--c3, #c80) 45%, var(--border)); border-radius: 3px; padding: 0 .15rem; cursor: pointer; }
-.typeset .ts-switch .ts-pick option { color: var(--fg); background: var(--panel); }
+.typeset .ts-switch .ts-pick { display: inline-flex; border: 1px solid color-mix(in srgb, var(--c3, #c80) 40%, var(--border)); border-radius: 999px; overflow: hidden; vertical-align: baseline; }
+.typeset .ts-switch .ts-pick button { all: unset; cursor: pointer; font: inherit; font-size: .85em; line-height: 1.5; padding: 0 .5em; color: var(--muted); white-space: nowrap; }
+.typeset .ts-switch .ts-pick button + button { border-left: 1px solid color-mix(in srgb, var(--c3, #c80) 25%, var(--border)); }
+.typeset .ts-switch .ts-pick button:hover { color: var(--fg); background: color-mix(in srgb, var(--c3, #c80) 10%, transparent); }
+.typeset .ts-switch .ts-pick button[aria-pressed="true"] { color: var(--fg); background: color-mix(in srgb, var(--c3, #c80) 22%, var(--panel)); }
+.typeset .ts-switch .ts-pick button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .typeset:not(.show-maybe) :is(.ts-choice, .ts-switch) { display: none; }
 /* landing showcase: the playground's widgets as captured by showcase/capture.mjs, one image per theme, each in a
    window frame (CSS, so it follows the theme and costs no bytes). The big ones reach into the page margin, alternating sides */
