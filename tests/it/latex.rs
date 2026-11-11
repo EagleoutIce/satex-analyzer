@@ -4868,3 +4868,25 @@ fn a_longtable_with_heads_has_no_extra_tab() {
     assert!(defined(&analysis, "Done"));
     assert_eq!(broken_gaps(&analysis), Vec::<String>::new());
 }
+
+/// The preamble observer runs each line in one sandbox and drops what a line
+/// its budget stopped left on the input. The calls it dropped must stop
+/// counting as open: they once stayed counted, so after `expansion_depth`
+/// lines stopped inside `\wrap`, the next `\wrap` was cut as a runaway
+/// recursion and its `\gdef` never ran.
+#[test]
+fn lines_stopped_inside_a_call_leave_no_open_expansion() {
+    if !installed() {
+        return;
+    }
+    let analysis =
+        analyze("\\documentclass{article}\n\\def\\wrap#1{#1\\gdef\\made{}}\n\\begin{document}\n\\end{document}\n");
+    let mut cfg = crate::support::config();
+    (cfg.limits.replay_steps, cfg.limits.expansion_depth) = (2_000, 8);
+    let state = satex::analysis::probe::State::Preamble;
+    let mut sandbox = Machine::sandbox(&cfg, &analysis, state).expect("a preamble state");
+    for _ in 0..=cfg.limits.expansion_depth {
+        sandbox.run_line("\\wrap{\\count255=0 \\loop\\advance\\count255 1 \\ifnum\\count255<100000 \\repeat}");
+    }
+    assert_eq!(sandbox.run_line("\\wrap{}"), vec!["made".to_string()]);
+}

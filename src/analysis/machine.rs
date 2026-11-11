@@ -4944,9 +4944,9 @@ will look undefined",
             }
             &Frame::Tokens { expanding, held, upper, .. } => {
                 self.held_tokens = self.held_tokens.saturating_sub(held);
-                // § 1025: the output routine's text read to its end with its
-                // group still open (a cut dropped the closing brace): the
-                // routine ends with its text, before what called it reads on.
+                // § 1025: the output routine's text is used up but its group is
+                // still open (a cut dropped the closing brace). End the routine
+                // with its text, before the caller continues.
                 if !self.ending_output && expanding == Some(self.output_sym) && !upper && self.output_active() {
                     let nests: Vec<_> = self.env.nests().collect();
                     let output = nests
@@ -4962,8 +4962,7 @@ will look undefined",
                         *n = n.saturating_sub(1);
                     }
                     Rc::make_mut(&mut self.within).pop();
-                    // The expansion the call started is over, so the call has
-                    // read everything it reads.
+                    // The call's expansion is over, so it has read all its input.
                     if self.call_shape.as_deref().is_some_and(|(.., depth)| self.within.len() < *depth) {
                         self.finish_shape();
                     }
@@ -5051,7 +5050,7 @@ will look undefined",
             .take(3)
             .map(|(kind, span)| format!("{} at {}:{}", opened_by(*kind), self.out.short_name(span.file), span.line))
             .collect();
-        // Assumed, as of a package that is done: its groups end with it.
+        // Assumption: a finished package closes the groups it opened.
         self.diagnose(
             Severity::Assumption,
             "unbalanced-file",
@@ -5060,13 +5059,14 @@ will look undefined",
         );
     }
 
-    /// tex.web § 325: before anything goes back into the input, used-up token lists
-    /// are ended, so a macro whose expansion is over no longer counts as expanding.
-    /// A loop that re-expands its result with `\expandafter` does not nest.
+    /// tex.web § 325: before anything is pushed back into the input, used-up
+    /// token lists are popped, so a macro whose expansion is over no longer
+    /// counts as expanding. A loop that re-expands its result with
+    /// `\expandafter` therefore does not nest.
     fn end_used_up_lists(&mut self) {
-        // A pseudo file stays until a read meets its end (tex.web § 362).
-        // The open output's text stays too: its `}` may be the token given
-        // back, and closes from there (§ 1100); a read past it ends the group.
+        // A pseudo file stays until a read reaches its end (tex.web § 362).
+        // The open output routine's text stays too: its `}` may be the token
+        // put back, which closes the group from there (§ 1100).
         while let Some(Frame::Tokens { toks, pos, expanding, upper, .. }) = self.input.last()
             && *pos >= toks.len()
             && *expanding != Some(self.pseudo_file)
@@ -5076,16 +5076,16 @@ will look undefined",
         }
     }
 
-    /// `\noexpand`'s give-back (tex.web § 369): `token` goes back behind the
+    /// `\noexpand`'s put-back (tex.web § 369): `token` goes back behind the
     /// `dont_expand` marker, so its next read acts as `\relax` (§ 358). A
-    /// look-ahead TeX does not make uses it to leave a marked token as it was.
+    /// lookahead that TeX does not make uses it to leave a marked token as it was.
     pub fn unread_noexpanded(&mut self, token: Token) {
         self.unread(token);
         self.unread(Token::new(Tok::Cs(self.dont_expand), token.span));
     }
 
     /// `back_input` (tex.web § 325). A token read from behind `\noexpand`'s
-    /// marker goes back without it: the marker is consumed by the read, so
+    /// marker goes back without the marker, since the read consumed it. So
     /// `\count1=1\noexpand\x` expands `\x` afterwards.
     pub fn unread(&mut self, token: Token) {
         self.count_brace(&token, -1);
@@ -5103,9 +5103,10 @@ will look undefined",
         }
     }
 
-    /// Note where a token given back stood. One entry per position: text a primitive
-    /// produces stands where its operand did (tex.web § 465, `\string`), so `\string`
-    /// gives back a whole name at one span; counting those would push out the peeked positions.
+    /// Records where a put-back token came from, one entry per position. Text a
+    /// primitive produces has its operand's span (tex.web § 465, `\string`), so
+    /// `\string` puts back a whole name at one span. Counting each token would
+    /// push out the positions of real peeks.
     fn note_given_back(&mut self, span: Span) {
         if self.recent_file_spans.contains(&span) {
             return;
@@ -5123,7 +5124,7 @@ will look undefined",
         for t in tokens {
             self.count_brace(t, -1);
         }
-        // Given back by a keyword scan (tex.web § 407): still the file's.
+        // Put back by a keyword scan (tex.web § 407): still counts as the file's.
         let last_file = self.last_file;
         for t in tokens.iter().filter(|t| last_file == Some(t.span.file)) {
             self.note_given_back(t.span);
@@ -5136,7 +5137,7 @@ will look undefined",
         }
     }
 
-    /// Where the file a read takes its next token from stands, when no list
+    /// The position of the file the next read takes from, when no token list
     /// is left above it, with `at` tokens of the scan read.
     fn source_mark(&self, at: usize) -> Option<SourceMark> {
         let level = self.input.iter().rposition(|f| !read_out(f))?;
@@ -5145,9 +5146,9 @@ will look undefined",
         Some(SourceMark { at, level, mouth, eof_seen, progress: self.source_progress, lines: self.lines_read })
     }
 
-    /// What a scan that gave up read from `out[k]` on goes back. The file
-    /// text among it, read since `mark`, the file reads again instead: the
-    /// path stands where one that never read it does.
+    /// Puts back what an abandoned scan read from `out[k]` on. File text read
+    /// since `mark` is reread from the file instead, so the path ends up where
+    /// a path that never read it would be.
     fn give_back(&mut self, out: &mut Vec<Token>, k: usize, mark: Option<&SourceMark>) {
         let tail = out.split_off(k);
         let read = mark.map_or(0, |m| (k + tail.len()).saturating_sub(m.at).min(tail.len()));
@@ -5170,8 +5171,8 @@ will look undefined",
         self.unread_all(&tail[..split]);
     }
 
-    /// tex.web §§ 325, 347, 357: an explicit brace read counts `by` toward
-    /// `align_state`, one given back `-by`.
+    /// tex.web §§ 325, 347, 357: reading an explicit brace adds `by` to
+    /// `align_state`, putting one back adds `-by`.
     pub(crate) fn count_brace(&mut self, token: &Token, by: i64) {
         match token.tok {
             Tok::Chr(_, Catcode::Begin) => self.align_state += by,
@@ -5201,13 +5202,13 @@ will look undefined",
         self.input.push(Frame::Tokens { toks, pos: 0, expanding: None, held, upper: false, at });
     }
 
-    /// A token list TeX inserts on its own, such as `\everypar` (tex.web
-    /// § 323 `begin_token_list`): what it expands is its doing, not the
-    /// doing of the macro whose text set it off.
+    /// Pushes a token list TeX inserts on its own, such as `\everypar`
+    /// (tex.web § 323 `begin_token_list`). What it expands is attributed to
+    /// the list, not to the macro whose text triggered it.
     pub(crate) fn push_inserted(&mut self, sym: Sym, toks: Rc<[Token]>, span: Span) {
         let node = self.force_reference(sym, span);
-        // The list is read here, so this spot depends on the call that set it,
-        // however often the name is rewritten.
+        // The list is read here, so this place depends on the call that set
+        // it, however often the name is rewritten.
         for def in self.env.link_defs(sym) {
             self.out.graph.add_raw_edge(node, def, EdgeKind::READS);
             if let Some(maker) = self.out.graph.maker(def) {
@@ -5225,8 +5226,8 @@ will look undefined",
         }
     }
 
-    /// [`Machine::push_tokens`] for an expansion standing on several lists,
-    /// in reading order: held as one, or not at all.
+    /// [`Machine::push_tokens`] for an expansion made of several lists, in
+    /// reading order. Either all are pushed (and held as one) or none.
     fn push_parts(&mut self, mut parts: Vec<(Rc<[Token]>, usize)>, sym: Sym) {
         parts.retain(|(toks, _)| !toks.is_empty());
         let held: usize = parts.iter().map(|(_, n)| n).sum();
@@ -5247,8 +5248,8 @@ will look undefined",
 
     pub(crate) fn push_pseudo(&mut self, mut mouth: Box<Mouth>, at: Span, eof: Rc<[Token]>) {
         self.end_used_up_lists();
-        // A pseudo file asks for its first line, so a pending `\endinput`
-        // takes that line away and the pseudo file is empty (etex.ch § 362).
+        // A pseudo file reads its first line right away, so a pending
+        // `\endinput` removes that line and the pseudo file is empty (etex.ch § 362).
         if self.take_pending_eof() {
             mouth.inherit_eof(true);
         }
@@ -6785,11 +6786,12 @@ will look undefined",
         Some(m)
     }
 
-    /// Run `text` as a file of its own, `@` a letter as it is while
-    /// `\document` reads the `.aux` file: the names it defined that are
-    /// still defined. A line stopped by its budget leaves its input,
-    /// conditionals and groups behind: dropped, or every later line
-    /// would run on under them.
+    /// Runs `text` as a file of its own, with `@` a letter as while
+    /// `\document` reads the `.aux` file, and returns the names it defined
+    /// that are still defined. A line stopped by its budget leaves input,
+    /// conditionals and groups behind. They are dropped, or every later line
+    /// would run inside them. Frames go through `pop_frame`, which also
+    /// stops counting their calls as open.
     pub fn run_line(&mut self, text: &str) -> Vec<String> {
         let file = self.register_file("\u{2}line".into(), LoadKind::Input);
         let (input, conds, groups) = (self.input.len(), self.conds.len(), self.env.group_level());
@@ -6816,7 +6818,7 @@ will look undefined",
             .map(|sym| self.out.interner.name(sym).to_string())
             .collect();
         while self.input.len() > input {
-            self.input.pop();
+            self.pop_frame();
         }
         self.drop_conditionals(conds);
         while self.env.group_level() > groups {
@@ -9937,6 +9939,21 @@ will look undefined",
         self.record_with(Step::Widen, sym, span, || Some("recursion"));
         if self.cfg.verbose >= 4 {
             crate::util::progress::note!("satex: call \\{} at {span:?} cut: {reason}", self.name(sym));
+            if self.cfg.verbose >= 5 && nested {
+                // Print the open expansions, innermost first, with repeats counted, to show what a nesting cycles through.
+                let mut chain: Vec<(Sym, usize)> = Vec::new();
+                for f in &self.input {
+                    if let Frame::Tokens { expanding: Some(s), .. } = f {
+                        match chain.last_mut() {
+                            Some((last, n)) if last == s => *n += 1,
+                            _ => chain.push((*s, 1)),
+                        }
+                    }
+                }
+                let text: Vec<String> =
+                    chain.iter().rev().take(60).map(|(s, n)| format!("\\{}×{n}", self.name(*s))).collect();
+                crate::util::progress::note!("satex:   open, innermost first: {}", text.join(" "));
+            }
         }
         self.diagnose(
             Severity::Imprecision,
@@ -9944,10 +9961,11 @@ will look undefined",
             span,
             format!("\\{}: {reason}; what it would expand to and what it would assign are not known", self.name(sym)),
         );
-        // A recursion that nests is cut where it began, never past a
-        // file: what its rounds stacked would run only once it returned,
-        // which it never does. Nesting past `expansion_depth` is also a
-        // limit. A site that repeats is summarized, as a loop is.
+        // A nesting recursion is cut back to where it began, but never past
+        // the current file. The text its rounds stacked up would only run
+        // after it returned, which it never does. Hitting `expansion_depth`
+        // is also reported as a limit. A call site that repeats without
+        // nesting is summarized like a loop.
         if key == "expansion_depth" {
             self.limit_reached(key, span);
         }
@@ -9962,9 +9980,9 @@ will look undefined",
         }
         self.approximated = true;
         self.scratch.summarized.insert(span);
-        // The rounds not run would write what the rounds run wrote: only
-        // the names written since this recursion began are widened. A
-        // write before it, or one a closed group undid, is not the call's.
+        // The skipped rounds would write the same names as the rounds that ran,
+        // so widen only the names written since the recursion began. Writes
+        // before it, or undone by a closed group, are not the call's.
         let mark = self.expansion_sites.get(&(span, sym)).map_or(0, |site| site.recent);
         self.widen_since(mark);
         self.taint_after_cut();
@@ -10006,22 +10024,23 @@ will look undefined",
             return;
         }
 
-        // Widening decided before the arguments are read: a tail-recursive
-        // loop would otherwise have its next iteration's tokens eaten by a
-        // call that is then abandoned, and the rest of the file with them.
+        // Decide on widening before reading the arguments. Otherwise a cut
+        // tail-recursive loop would have already consumed the next round's
+        // tokens, and with them the rest of the file.
         self.end_used_up_lists();
         let depth = self.expanding.get(sym.0 as usize).copied().unwrap_or(0);
-        // The count holds only while the source stands still; else a tripped
-        // site stays tripped (it once stopped `\DeclareMathSymbol` after 32).
+        // The repeat count only counts while the source position does not move.
+        // Otherwise a site that tripped once would stay tripped (it once stopped
+        // `\DeclareMathSymbol` after 32 calls).
         let site = self
             .expansion_sites
             .get(&(span, sym))
             .filter(|site| site.progress == self.site_progress())
             .map_or(0, |site| site.repeats);
-        // One call site open more than `recursion_depth` times at once on a
-        // path that approximated: a recursion over unknown values that nests
-        // rather than reads on, which no round ends. On known values it runs
-        // as TeX runs it.
+        // On an approximated path, a call site open more than `recursion_depth`
+        // times at once is a recursion over unknown values that nests instead
+        // of reading on, and no round would end it. With known values it runs
+        // as in TeX.
         let rounds = usize::from(self.limits.recursion_depth);
         if usize::from(depth) > rounds && self.approximated {
             let graph = &self.out.graph;
