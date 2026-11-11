@@ -9937,7 +9937,7 @@ will look undefined",
         self.record_with(Step::Widen, sym, span, || Some("recursion"));
         if self.cfg.verbose >= 4 {
             crate::util::progress::note!("satex: call \\{} at {span:?} cut: {reason}", self.name(sym));
-            if self.cfg.verbose >= 5 && nested {
+            {
                 // Print the open expansions, innermost first, with repeats counted, to show what a nesting cycles through.
                 let mut chain: Vec<(Sym, usize)> = Vec::new();
                 for f in &self.input {
@@ -10129,10 +10129,10 @@ will look undefined",
                     self.name(sym)
                 );
             }
-            // tex.web § 396: the call is dropped. Only `\par` in a macro not
-            // `\long` says so; `\outer` was reported where it was met.
+            // tex.web § 396: the call is dropped. Only a `\par` in a non-`\long`
+            // macro reports it here; `\outer` was reported where it was met.
             if runaway == Runaway::Cut {
-                // Its arguments and the delimiters matched before the last.
+                // The delimiters of the arguments read before the last one.
                 let last = u8::try_from(arguments.len()).unwrap_or(u8::MAX);
                 let items =
                     m.parameter_text.items.iter().take_while(|i| !matches!(i, ParamItem::Param(k, _) if *k >= last));
@@ -10165,9 +10165,9 @@ will look undefined",
         let unknown_operands = arguments.iter().any(|a| self.has_unknown(a));
 
         let depth = self.expanding.get(sym.0 as usize).copied().unwrap_or(0);
-        // What this expansion was handed, against what the last one here
-        // was: a recursion that keeps re-entering the same site without
-        // reading on is only running out if this is getting smaller.
+        // Compare this expansion's arguments with the last one at this site. A
+        // recursion that re-enters the same site without reading further only
+        // terminates if its arguments get smaller.
         let size: usize = arguments.iter().map(Vec::len).sum();
         let below = self.expansion_sites.get(&(span, sym)).map_or(usize::MAX, |site| site.levels);
         let (shape, levels, under) = self.call_shape_hash(&arguments, below);
@@ -10179,14 +10179,14 @@ will look undefined",
             Some(site) => {
                 self.undo.push(Undo::Site((span, sym), *site));
                 let outside = nest.0 >= site.nest.0 && nest.1 >= site.nest.1;
-                // Deeper on the input stack: the last round's input is all
-                // still there, unread, under what that round left on top,
-                // and nothing was written since, so this round reads what
-                // the last did and stacks the same again (tex.web § 366).
+                // Deeper on the input stack, with the last round's input still
+                // unread below what that round left on top, and nothing written
+                // since: this round reads what the last one did and stacks the
+                // same again (tex.web § 366).
                 let stacked = under == Some(site.shape) && levels > site.levels && site.effective == effective;
-                // Met at a shallower scan than the last round: nested scans
-                // unwinding (l3fp's `\__fp_fixed_div_int_pack:Nw` closing one
-                // `\numexpr` each), which ends with the scans. The count is
+                // At a shallower scan than the last round: nested scans are
+                // unwinding (l3fp's `\__fp_fixed_div_int_pack:Nw` closes one
+                // `\numexpr` each time), which ends with the scans. The count is
                 // kept, so a recursion that dips between rounds still counts.
                 let unwinding = self.step_depth < site.scans;
                 let grew = outside && !unwinding && (stacked || site.shape == shape && nest != site.nest);
@@ -10209,8 +10209,8 @@ will look undefined",
             }
             None => (true, 1, 0, 0),
         };
-        // A state seen before repeats forever (tex.web § 366): the path ends
-        // if another waits, else it is summarized and the run goes on.
+        // A state seen before repeats forever (tex.web § 366). The path ends if
+        // another one waits; otherwise it is summarized and the run continues.
         if self.limits.cycle_after > 0 && cycled >= u32::from(self.limits.cycle_after) {
             let alone = !self.on_paths() || self.waiting == 0;
             self.diagnose(
@@ -10225,27 +10225,28 @@ will look undefined",
             }
             return;
         }
-        // The same arguments and input, only deeper in conditionals or
-        // groups each time: every round repeats the last, so none ends it.
+        // Same arguments and input, only deeper in conditionals or groups each
+        // time: every round repeats the last, so none ends it.
         let nesting = deeper > u32::from(self.limits.widen_after);
-        // Re-entry with an abandoned scan and no shrinking argument looks in
-        // the same place again: widen at `recursion_depth`, not the site bound.
+        // A re-entry with an abandoned scan and no shrinking argument looks in
+        // the same place again, so widen at `recursion_depth`, not the site bound.
         let rounds = u32::from(self.limits.recursion_depth);
-        // A quark (`\q_nil`) expands to itself: a fixed point, cut at `rounds`.
+        // A quark (`\q_nil`) expands to itself: a fixed point, cut after `rounds`.
         let self_fixed_point = arguments.is_empty()
             && m.replacement_text.len() == 1
             && matches!(m.replacement_text[0].tok, Tok::Cs(s) if s == sym);
-        // `abandoned` cuts even while shrinking: the guessed split's remainder
-        // can shrink forever (a corrupted `array` column preamble).
+        // `abandoned` cuts even while the arguments shrink: the remainder of a
+        // guessed split can shrink forever (a corrupted `array` column preamble).
         let stuck = nesting
             || (abandoned && visits > rounds && visits <= self.limits.site_expansions)
             || (self_fixed_point && !shrinking && visits > rounds && visits <= self.limits.site_expansions);
-        // A recursion that assigns every round evades `repeats`: count reading
-        // on alone (tex.web § 366); 16 is measured.
+        // A recursion that assigns in every round escapes `repeats`, so also
+        // count rounds that read nothing new (tex.web § 366). The factor 16 was
+        // measured.
         let never_read = self.limits.site_expansions.saturating_mul(16);
         let spinning = self.approximated && unread > never_read;
         if depth >= self.limits.expansion_depth || visits > self.limits.site_expansions || stuck || spinning {
-            // Without the counts: the same cut met again is one finding.
+            // No counts in the message, so the same cut met again is one finding.
             let reason = if depth >= self.limits.expansion_depth {
                 "re-entered past limits.expansion_depth".to_string()
             } else if spinning {
@@ -10268,16 +10269,16 @@ will look undefined",
             return;
         }
 
-        // The detail is what this very definition inserts: later ones under
-        // the same name must not stand in for it.
+        // The detail is what this exact definition inserts; later definitions
+        // of the same name must not replace it.
         let interner = &self.out.interner;
         let inserts = (self.cfg.trace)
             .then(|| substitute(&m, &arguments, 512).map(|b| crate::engine::tex::detokenize(&b, interner)))
             .flatten();
         self.record_with(Step::Expand, sym, span, || inserts);
-        // The budget bounds what an expansion adds. Arguments it was handed
-        // were already there (a `filecontents` line read from the file is
-        // one argument, however long), and each `#n` copies one.
+        // The budget bounds what an expansion adds. Its arguments were already
+        // in the input (a `filecontents` line read from the file is one
+        // argument, however long), and each `#n` copies one.
         let handed: usize = arguments.iter().map(Vec::len).max().unwrap_or(0);
         let copies = m.replacement_text.iter().filter(|t| matches!(t.tok, Tok::Param(_))).count();
         let limit = self.cfg.limits.expansion_tokens.saturating_add(handed.saturating_mul(copies));
@@ -10293,9 +10294,9 @@ will look undefined",
         };
         self.end_used_up_lists();
         self.bump_expanding(sym, 1);
-        // A call is read on behalf of the last call read from the file until
-        // the file is read again: what an expansion leaves behind for the
-        // main loop is still that call's doing.
+        // Until the file is read again, everything is attributed to the last
+        // call read from the file: what an expansion leaves for the main loop
+        // is still that call's doing.
         if self.out.graph.reader.is_none() {
             self.out.graph.set_reader(Some(node));
         }
@@ -10316,7 +10317,7 @@ will look undefined",
             self.project_call = Some((sym, first.span));
         }
         if self.cfg.record_arguments {
-            // Only arguments the document wrote: library calls would fill
+            // Only arguments the document wrote. Library calls would fill
             // `limits.vertices` before the document is read.
             for argument in arguments.iter().filter(|a| !a.is_empty()) {
                 let first = argument[0];
