@@ -1,11 +1,23 @@
 name: VS Code extension
 
+# The webviews take their scripts from doc/site (scripts/media.mjs), so a change there builds the
+# packages too; only a tag publishes them.
 on:
   pull_request:
     paths:
       - 'editors/vscode/**'
+      - 'doc/site/*.ts'
+      - 'doc/site/*.js'
+      - 'satex.schema.json'
       - '.github/workflows/vscode.yml'
   push:
+    branches: [main]
+    paths:
+      - 'editors/vscode/**'
+      - 'doc/site/*.ts'
+      - 'doc/site/*.js'
+      - 'satex.schema.json'
+      - '.github/workflows/vscode.yml'
     tags:
       - 'v*'
 
@@ -89,6 +101,7 @@ jobs:
   publish:
     name: Publish
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # Trusted publishing: an OIDC token instead of stored ones, for both registries.
     permissions:
