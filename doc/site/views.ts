@@ -47,6 +47,7 @@ declare global {
   interface ViewCtx extends SnapCtx {
     close?(): void; guard?(dirty: () => boolean): void; markdown(md: string): string; snippet?(file: string, line: number): string | undefined;
     insert?(text: string): void; fetch?(url: string, accept?: string): Promise<{ status: number; type: string; text: string }>;
+    trace?(name: string): void;
   }
   interface Window { satexViews: typeof satexViews }
 }
@@ -1918,6 +1919,72 @@ const satexViews = (() => {
     fields();
     return root;
   }
+  // ---- a command's definition history (src/lsp/plugins/history.rs): newest first, then other paths
+  /** One event as text: what changed the text, its state, the copy it made, the calls its body holds. */
+  const historyEvent = (e: Rec) => {
+    const c = e.change, tick = (t: unknown) => `\`${t}\``;
+    const change = !c ? '' : c.kind === 'replaces' ? `replaces ${tick(c.removed)} by ${tick(c.added)}` : c.kind === 'removes' ? `removes ${tick(c.removed)}`
+      : c.kind === 'same' ? 'keeps the text' : `${c.kind} ${tick(c.added)}`;
+    return {
+      by: e.by ?? '', at: e.file && e.line ? `${e.path ?? e.file}:${e.line}` : '', owner: e.owner ?? '', state: e.state ?? '', change,
+      copies: e.copies ? { name: e.copies.name, at: `${e.copies.path ?? e.copies.file}:${e.copies.line}`, by: e.copies.by } : null,
+      calls: (e.calls ?? []).map((k: Rec) => ({ name: k.name, note: k.holds ? `holds ${k.holds} of ${k.at}` : '' })),
+      when: (e.when ?? []).join(' and '), local: !!e.local,
+    };
+  };
+  function history(s: Rec, ctx: ViewCtx) {
+    const box = el('div', 'tv-history'), trail = [s.name];
+    let pretty = true;
+    const of = (n: string): Rec | undefined => (n === s.name ? s.history : s.histories?.[n]);
+    const tick = (t: string) => esc(t).replace(/`([^`]*)`/g, '<code>$1</code>');
+    // a name with a history here opens it, others are plain
+    const cs = (n: string) => (of(n) && n !== trail.at(-1) ? `<button type="button" class="tv-hist-cs" data-cs="${esc(n)}" title="its definition history">${esc(n)}</button>` : `<code>${esc(n)}</code>`);
+    const event = (e: Rec) => {
+      const v = historyEvent(e), text = pretty && e.pretty ? e.pretty : e.body;
+      const row = el('div', 'tv-hist-event');
+      row.dataset.state = v.state;
+      row.innerHTML = `<div class="tv-hist-head"><span class="tv-hist-state">${esc(v.state)}</span> <code>${esc(v.by)}</code>${v.at ? ` ${place(v.at)}` : ''}${v.owner ? ` <span class="tv-muted">${esc(v.owner)}</span>` : ''}${v.local ? ' <span class="tv-muted">local to a group</span>' : ''}</div>` +
+        (v.when ? `<div class="tv-hist-when">when ${tick(v.when)}</div>` : '') +
+        (v.change ? `<div class="tv-hist-change">${tick(v.change)}</div>` : '') +
+        (v.copies ? `<div class="tv-hist-copy">copies ${cs(v.copies.name)} as ${esc(v.copies.by)} made it at ${place(v.copies.at)}</div>` : '') +
+        (text != null ? (text === '' ? '<div class="tv-muted">empty</div>' : `<pre class="tv-hist-body"><code>${esc(text)}</code></pre>`) : '') +
+        (v.calls.length ? `<div class="tv-hist-calls"><span class="tv-muted">calls</span> ${v.calls.map((k: Rec) => cs(k.name) + (k.note ? ` <span class="tv-muted">(${esc(k.note)})</span>` : '')).join(' ')}</div>` : '');
+      return row;
+    };
+    const draw = () => {
+      const name = trail.at(-1)!, h: Rec = of(name) ?? { entries: [], other: [] }, all = [...h.entries, ...h.other];
+      const nav = el('div', 'tv-hist-nav', trail.map((n: string, i: number) => (i < trail.length - 1 ? `<button type="button" class="tv-hist-cs" data-back="${i}">${esc(n)}</button> ›` : `<b><code>${esc(n)}</code></b>`)).join(' '));
+      const tools = el('div', 'tv-actions');
+      if (all.some((e: Rec) => e.pretty)) {
+        const b = el('button', 'tv-button', pretty ? 'Show raw' : 'Pretty print');
+        b.type = 'button';
+        b.title = pretty ? 'each body as one line, as TeX shows it' : 'one statement per line, groups and conditionals indented';
+        b.onclick = () => { pretty = !pretty; draw(); };
+        tools.append(b);
+      }
+      if (ctx.trace) {
+        const b = el('button', 'tv-button tv-primary', `Trace a call of ${esc(name)}`);
+        b.type = 'button';
+        b.onclick = () => { ctx.close?.(); ctx.trace!(name); };
+        tools.append(b);
+      }
+      const parts = [nav, tools, el('div', 'tv-h', 'Newest first')];
+      parts.push(...h.entries.map(event));
+      if (!h.entries.length) parts.push(el('div', 'tv-text', `<p>The run recorded no definition of ${esc(name)} on the path that ends here.</p>`));
+      if (h.earlier) parts.push(el('div', 'tv-text', `<p>${h.earlier} earlier events not shown.</p>`));
+      if (h.other?.length || h.undefined_elsewhere) parts.push(el('div', 'tv-h', 'On other paths'));
+      parts.push(...(h.other ?? []).map(event));
+      if (h.undefined_elsewhere) parts.push(el('div', 'tv-text', `<p>${esc(name)} is undefined on some paths.</p>`));
+      box.replaceChildren(...parts);
+    };
+    box.onclick = (e: MouseEvent) => {
+      const t = e.target as HTMLElement, b = t.closest<HTMLElement>('[data-cs], [data-back]');
+      if (b?.dataset.cs) { trail.push(b.dataset.cs); draw(); } else if (b) { trail.length = +b.dataset.back! + 1; draw(); } else if (t.closest('a.place')) ctx.close?.();
+    };
+    draw();
+    return box;
+  }
+  RENDER.history = (s, _view, ctx) => history(s, ctx);
   RENDER.drawing = drawing;
 
   // trees (forest plugin): the bracket notation `[content, options [child] …]` after the
@@ -2694,7 +2761,12 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-sheet text.tv-page-field { fill: var(--tv-fg); font-style: italic; } .tv-page-mp { fill: none; stroke: var(--tv-muted); stroke-width: .5; stroke-dasharray: 2 2; }
 .tv-sheet text.tv-page-label { fill: var(--tv-muted); font-family: ui-sans-serif, system-ui, sans-serif; } .tv-sheet text.tv-page-big { fill: var(--tv-fg); font-weight: 600; }
 @media (max-width: 640px) { .tv-page-main { grid-template-columns: 1fr; } }
-.tv-hint { margin-right: auto; align-self: center; } .tv-foot { justify-content: flex-end; align-items: center; } .tv-foot .tv-muted { margin-right: auto; }`;
+.tv-hint { margin-right: auto; align-self: center; } .tv-foot { justify-content: flex-end; align-items: center; } .tv-foot .tv-muted { margin-right: auto; }.tv-history { display: grid; gap: .5rem; } .tv-hist-nav { font-size: .85rem; } .tv-hist-event { border-left: 3px solid var(--tv-border); padding: .2rem 0 .2rem .6rem; display: grid; gap: .2rem; }
+.tv-hist-event[data-state="in force"], .tv-hist-event[data-state="in force on another path"] { border-left-color: var(--tv-accent); }
+.tv-hist-state { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--tv-muted); } .tv-hist-when, .tv-hist-change, .tv-hist-copy, .tv-hist-calls { font-size: .82rem; } .tv-hist-change code { white-space: pre; }
+.tv-hist-body { margin: 0; padding: .4rem .5rem; background: var(--tv-sunk); border-radius: 6px; overflow-x: auto; max-height: 18rem; font-size: .8rem; }
+.tv-hist-cs { font: inherit; font-family: ui-monospace, monospace; font-size: .85em; padding: 0 .25rem; border: 1px solid var(--tv-border); border-radius: 4px; background: var(--tv-sunk); color: var(--tv-accent); cursor: pointer; }
+`;
 
   /** Renders `view` into `container`; `ctx.apply(edits)` writes, `ctx.markdown(md)` makes HTML. */
   function render(view: Rec, container: Element, ctx: Partial<ViewCtx> & Pick<SnapCtx, 'print' | 'apply'>) {
@@ -2754,6 +2826,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
       return (last = bag.pop());
     };
   }
-  return { tipBag, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, page: { pageOf, pageBox, pageNodes, headerOf, headerCalls, headerNodes }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { tipBag, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, page: { pageOf, pageBox, pageNodes, headerOf, headerCalls, headerNodes }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;
