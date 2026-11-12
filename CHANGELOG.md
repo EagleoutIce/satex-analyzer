@@ -6,6 +6,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
+## v0.2.2 (2026-11-12)
+
 ### VS Code
 
 - `fix` **No restart loop when memory runs out.** The server's cgroup capped memory at exactly its own budget, so the kernel killed it before the budget could end the run cleanly, and the extension started it again every minute, each time with a "memory shortage" notice. The cgroup now leaves half again as much headroom, and a server that keeps dying is revived at most three times, with longer pauses. [`28cfe0d`](https://github.com/EagleoutIce/satex-analyzer/commit/28cfe0d)
