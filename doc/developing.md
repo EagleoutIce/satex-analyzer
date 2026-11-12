@@ -44,14 +44,17 @@ cargo test --profile fast --test it -- latex::cloud   # tests whose name contain
 
 | tier | runs | use it |
 | --- | --- | --- |
-| `quick` | tests under 1 s, the cheapest test of every module, tests not measured yet | after every edit |
+| `changed` | the tests `tests/changed-map.txt` maps `git diff HEAD` and untracked files to (`tests/it/<m>.rs` to `<m>::`), last failures first, cheap before dear; a `src/` path without a rule adds `quick` | after every edit |
+| `quick` | tests under 1 s, the cheapest test of every module, tests not measured yet | when nothing maps, or a broad check |
 | `fast` | all but `tests/slow.txt` and `tests/known-red.txt`, plus the unit tests | before a commit |
 | `slow` | `tests/slow.txt` | before a push |
 | `reds` | each known red alone, says which turned green | after a root fix |
 | `measure` | fast and slow with timings, rewrites `tests/times.txt` and `tests/slow.txt` | when tests were added or got slower |
 
 ```sh
-scripts/test-tier.sh quick                # the edit loop
+scripts/test-tier.sh changed              # the edit loop: what the diff touches
+FAIL_FAST=1 scripts/test-tier.sh changed  # stop after the first batch with a failure
+scripts/test-tier.sh quick                # a broad cheap check
 scripts/test-tier.sh fast latex:: join::  # only tests whose name contains a filter
 scripts/test-tier.sh fast -- --nocapture  # libtest arguments after --
 ```
@@ -62,6 +65,10 @@ Run the tier script itself outside a slot, or it runs all shards in its own.
 All shards share the suite's caches in `target/scratch/test-cache`, so the kernel and every package are built once.
 A shard killed by the OOM killer reruns its unfinished tests, then one at a time, and names what still does not finish.
 `scripts/precommit.sh` runs `fast` and then `slow`.
+Per edit run `changed`, before a commit `fast`, and for everything `scripts/regress.sh` (the full suite, `cargo test --profile fast --test it` alone also works).
+Every tier run records its failures in `target/scratch/last-failed.txt`, and the next run starts with those tests.
+`FAIL_FAST=1` (always with `changed`) runs the rest in a cheap and then a dear batch and stops after the first batch that fails.
+Add a rule to `tests/changed-map.txt` when a `src/` directory has a smaller set of modules that covers it.
 
 Integration tests live in `tests/it/<area>.rs`, one module per area, collected by `tests/it/main.rs` into a single `it` binary.
 `cargo test` links one test binary and libtest schedules every test across all cores instead of running 49 small binaries sequentially.

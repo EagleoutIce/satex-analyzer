@@ -1,32 +1,33 @@
-# scripts/regress.sh --changed: a changed path (bash glob, first match wins) -> test filters (cargo test name filters).
-# `all` means run the full mode.  A src/ path with no rule runs everything.  tests/it/<m>.rs maps to <m>:: by itself.
-src/lsp/*          lsp:: completions:: positions:: rename::
-src/query.rs       lsp:: completions:: queries::
-src/roles.rs       lsp:: completions:: rename::
-src/lint/*         chktex:: build_lints:: fix::
-src/cmd/*          profiles:: install:: format_flags::
-src/plugin/*       profiles:: docs::
-src/bin/*          docs:: install::
-src/render.rs      docs::
-src/preview.rs     docs::
-src/pdfbox.rs      compile::
-src/linebreak.rs   compile:: tex_compliance::
-src/tfm.rs         fonts:: compile::
-src/otf.rs         fonts::
-src/hyph.rs        compile::
-src/literate.rs    literate::
-src/package_cache.rs package_cache:: cache_agreement:: cache_semantics::
-src/distribution.rs distribution_guard:: no_installation::
-src/rename.rs      rename::
-src/timing.rs      budgets::
-src/progress.rs    budgets::
-src/config.rs      profiles:: format_flags::
-src/machine/*      documents:: budgets:: termination:: no_hang:: monotonicity:: semantics:: join:: latex::
-src/machine.rs     documents:: budgets:: termination:: no_hang:: monotonicity:: semantics:: join:: latex::
-src/exec.rs        documents:: budgets:: termination:: no_hang:: semantics:: primitives::
-src/builtins.rs    primitives:: semantics:: tex_semantics:: engine::
-src/value.rs       semantics:: join:: termination:: monotonicity::
-src/budget.rs      budgets:: no_hang:: limits::
-Cargo.toml         all
-Cargo.lock         all
-build.rs           all
+# Changed path (bash glob, first match wins) -> test filters (name substrings).
+# Used by scripts/test-tier.sh changed and scripts/regress.sh --changed.
+# `all` means the full mode.  tests/it/<m>.rs maps to <m>:: by itself.
+# A src/ path with no rule: regress.sh runs everything, test-tier.sh changed runs the quick tier.
+src/lsp/*             lsp:: completions:: positions:: rename::
+src/queries/rename.rs rename::
+src/queries/*         lsp:: completions:: queries:: docs::
+src/linter/*          chktex:: build_lints:: fix:: lists:: colors:: clones:: units:: assertions::
+src/cli/*             profiles:: install:: format_flags::
+src/plugins/*         profiles:: docs:: l3build:: lua::
+src/bin/*             docs:: install::
+src/engine/pdfbox.rs  compile::
+src/engine/linebreak.rs compile:: tex_compliance::
+src/engine/tfm.rs     fonts:: compile::
+src/engine/otf.rs     fonts::
+src/engine/hyph.rs    compile::
+src/project/literate.rs literate::
+src/project/config.rs profiles:: format_flags::
+src/project/paths.rs  paths::
+src/analysis/machine/package_cache.rs package_cache:: cache_agreement:: cache_semantics::
+src/analysis/budget.rs budgets:: no_hang:: limits::
+src/analysis/roles.rs lsp:: completions:: rename::
+src/caches/*          package_cache:: cache_agreement:: cache_semantics:: document_cache:: distribution_guard::
+src/util/timing.rs    budgets::
+src/util/progress.rs  budgets::
+src/engine/builtins.rs primitives:: semantics:: tex_semantics:: engine::
+src/engine/value.rs   semantics:: join:: termination:: monotonicity::
+src/engine/exec.rs    documents:: budgets:: termination:: no_hang:: semantics:: primitives::
+src/analysis/machine/* documents:: budgets:: termination:: no_hang:: monotonicity:: semantics:: join:: latex::
+src/analysis/machine.rs documents:: budgets:: termination:: no_hang:: monotonicity:: semantics:: join:: latex::
+Cargo.toml            all
+Cargo.lock            all
+build.rs              all
