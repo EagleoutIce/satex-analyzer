@@ -8,6 +8,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat` **The text set so far, at every trace step.** A step of the trace shows the paragraph as set up to it, so after an `\else` you read what that arm typeset (`Hello, abab`); `satex trace` gives it as `set_so_far`. [`b92d718`](https://github.com/EagleoutIce/satex-analyzer/commit/b92d718)
 - `fix` **The definition history shows again.** A later edit had dropped its view, so the dialog for a command's history opened empty in the playground and in VS Code. [`0ddb302`](https://github.com/EagleoutIce/satex-analyzer/commit/0ddb302)
 
 ### VS Code
