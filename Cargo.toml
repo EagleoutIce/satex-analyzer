@@ -1,6 +1,6 @@
 [package]
 name = "satex-analyzer"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.89"
 description = "Static analyzer for TeX/LaTeX: lints, explains, slices and caches documents by interpreting the real kernel"
