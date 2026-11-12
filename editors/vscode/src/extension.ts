@@ -6,6 +6,7 @@ import * as path from 'path';
 import { LanguageClient, State, StreamInfo } from 'vscode-languageclient/node';
 import { openDialog } from './dialogs';
 import { Revive } from './revive';
+import { cgroupMax } from './memory';
 import { peers, uninstallCommand, yields } from './peers';
 import { Actions } from './sidebar';
 import { Findings, Mode, moved, Range } from './findings';
@@ -133,11 +134,12 @@ function startServer(binary: string): Promise<StreamInfo> {
     // How long an analysis may run is the project's `limits.seconds` (satex.yaml), not a second setting here.
     const args = ['lsp', ...(memory ? ['--max-memory', memory] : [])];
     // On Linux a cgroup caps the server whatever it does: memory without swap and two cores, so
-    // the editor and the desktop stay usable. The in-process budget above still ends a run cleanly first.
+    // the editor and the desktop stay usable. It sits above the in-process budget, which ends a run cleanly first.
     const cores = config.get<number>('server.maxCores', 2);
-    const capped = process.platform === 'linux' && config.get<boolean>('server.cgroup', true) && memory
+    const capped = process.platform === 'linux' && config.get<boolean>('server.cgroup', true) && memory && cgroupMax(memory)
         && !spawnSync('systemd-run', ['--user', '--version']).error;
-    const limits = ['-p', `MemoryMax=${memory.replace(/iB$/, '')}`, '-p', 'MemorySwapMax=0', ...(cores > 0 ? ['-p', `CPUQuota=${cores * 100}%`] : [])];
+    const max = memory ? cgroupMax(memory) : undefined;
+    const limits = ['-p', `MemoryMax=${max}`, '-p', 'MemorySwapMax=0', ...(cores > 0 ? ['-p', `CPUQuota=${cores * 100}%`] : [])];
     const [command, argv] = capped ? ['systemd-run', ['--user', '--scope', '--quiet', ...limits, binary, ...args]] : [binary, args];
     const child = spawn(command, argv);
     if (child.pid !== undefined) {
