@@ -6,6 +6,12 @@ use std::process::Command;
 fn main() {
     lua();
     lpeg();
+    // Windows gives the main thread 1 MiB; a cold kernel build nests deeper.
+    // 8 MiB as on Linux (RUST_MIN_STACK covers only spawned threads).
+    let cfg = |k: &str| std::env::var(k).unwrap_or_default();
+    if cfg("CARGO_CFG_TARGET_OS") == "windows" && cfg("CARGO_CFG_TARGET_ENV") == "msvc" {
+        println!("cargo:rustc-link-arg-bins=/STACK:8388608");
+    }
     // The playground's status callback (src/lsp/wasm.rs).
     if std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "emscripten") {
         let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lsp/wasm-status.js");
