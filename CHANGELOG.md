@@ -13,6 +13,11 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 ### Build and infrastructure
 
 - `fix` **No stack overflow on Windows.** The Windows binary had 1 MiB of main stack, too little for building the LaTeX kernel cache; it now has 8 MiB, as on Linux. [`9029e53`](https://github.com/EagleoutIce/satex-analyzer/commit/9029e53)
+- `fix` **The site names the new release.** A release starts the site build on `main`, where the Pages deployment is allowed; a build from the tag was refused. [`e6b2357`](https://github.com/EagleoutIce/satex-analyzer/commit/e6b2357)
+
+### Site and docs
+
+- `docs` **Plainer claims on the home page.** The rotating lines read as sentences, the option card no longer looks like a menu, and the build runs come in one by one. [`d8cb335`](https://github.com/EagleoutIce/satex-analyzer/commit/d8cb335)
 
 ## v0.2.1 (2026-11-12)
 
