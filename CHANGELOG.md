@@ -6,6 +6,10 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
+### Playground
+
+- `fix` **The definition history shows again.** A later edit had dropped its view, so the dialog for a command's history opened empty in the playground and in VS Code. [`0ddb302`](https://github.com/EagleoutIce/satex-analyzer/commit/0ddb302)
+
 ### VS Code
 
 - `fix` **Windows packages of the extension again.** Packaging on Windows stopped at the webview scripts (it ran `esbuild` as a program, a `.cmd` there), so neither 0.2.1 nor 0.2.2 published the extension. [`802cbdf`](https://github.com/EagleoutIce/satex-analyzer/commit/802cbdf)
