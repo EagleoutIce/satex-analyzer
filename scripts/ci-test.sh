@@ -59,7 +59,9 @@ gated() {
 
 if [[ "${1-}" == quick ]]; then
     shift
-    gated quick cargo test --locked --profile "$profile" --no-fail-fast --test it -- "$@"
+    # Known reds run in `reds` only: an open one may hang.
+    skips=(); while read -r t; do skips+=(--skip "$t"); done < <(grep -v '^#' tests/known-red.txt | sed '/^$/d')
+    gated quick cargo test --locked --profile "$profile" --no-fail-fast --test it -- "$@" "${skips[@]}"
     exit
 fi
 if [[ "${1-}" == compliance ]]; then

@@ -9,6 +9,7 @@ documents::nested_tcolorbox_of_unknown_height_keeps_its_anchors_local
 documents::pictures_around_a_tcolorbox_keep_their_anchors_local
 # Open (2026-11-10, simon agent): longtable row walk leaves rows of other widths; extra-alignment-tab at \LT@entry.
 latex::a_longtable_with_heads_has_no_extra_tab
-# Open (2026-11-12): reverted the cut and runaway changes of 0ad3030 (they made the next two hang in CI); root open.
+# Open (2026-11-12): the cut and runaway changes of 0ad3030 are reverted (they hung CI); these three need them, root open.
 termination::convergence::tikz_nodes_of_unknown_width
 documents::cut_widened_fp_read_back_reaches_the_end
+documents::cut_inside_library_call_drops_the_call

@@ -6,7 +6,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
-<!-- reviewed: 27dfde9 -->
+<!-- reviewed: 6d48920 -->
 
 ## v0.2.1 (2026-11-12)
 
