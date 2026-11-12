@@ -14,8 +14,9 @@
   <div class="bench-tiles">
     <details class="bench-tile wide" open><summary>Releases</summary><div class="table-scroll"><table id="b-releases" class="long bench-table"></table></div></details>
     <details class="bench-tile wide" open><summary>Selected release</summary><div id="b-cards" class="bench-cards"></div></details>
+    <details class="bench-tile wide" open><summary>Per engine</summary><div id="b-engines"></div><p class="muted small">The selected release against the one before, over the documents both read to the end.</p></details>
     <details class="bench-tile" open><summary>Time per phase and release</summary><div id="b-phase-chart"></div><p id="b-stage-legend" class="bench-legend"></p><p class="muted small">Discovery finds the TeX tree. The format is the kernel satex reads or builds. The document phase is the mouth and stomach reading and executing every file. Hooks and lint follow. Other is the rest of the wall time. Summed over the documents every release ran.</p></details>
-    <details class="bench-tile" open><summary>Precision per release</summary><div id="b-prec-chart"></div><p id="b-prec-legend" class="bench-legend"></p><p class="muted small">Spots where satex over-approximates, fewer is better. Summed over the documents every release ran.</p></details>
+    <details class="bench-tile" open><summary>Precision per release</summary><div id="b-prec-chart"></div><p id="b-prec-legend" class="bench-legend"></p><p class="muted small">Spots where satex over-approximates, fewer is better. Summed over the documents every release read to the end, so reading further never counts against a release.</p></details>
     <details class="bench-tile wide" open><summary>Over releases</summary><div id="b-charts" class="bench-charts"></div><p id="b-legend" class="bench-legend"></p></details>
     <details class="bench-tile wide"><summary>Time per phase and document</summary><div id="b-stages" class="bench-stages"></div></details>
     <details class="bench-tile wide"><summary>Every document and kernel</summary><p class="muted small">Click a header to sort. A dash means the release predates that number.</p><div class="table-scroll"><table id="b-table" class="long bench-table docs"></table></div></details>
@@ -115,7 +116,9 @@
     const total = METRICS[metric][0] === "Peak memory" ? Math.max(0, ...docsNow.map(r => value(r, metric))) : sum(now, docsNow);
     const box = html("div", "bench-card");
     box.append(html("small", "", title), html("b", "", docsNow.length ? METRICS[metric][2](total) : "-"));
-    const common = before ? docsNow.filter(r => runOf(before, r.doc, kernel) && value(runOf(before, r.doc, kernel), metric) != null) : [];
+    const both = before ? docsNow.filter(r => runOf(before, r.doc, kernel) && value(runOf(before, r.doc, kernel), metric) != null) : [];
+    // compared where both releases read to the end, if there are such documents
+    const read = both.filter(r => r.end && runOf(before, r.doc, kernel).end), common = read.length ? read : both;
     const delta = html("span", "delta", before ? "no earlier value" : "first release");
     if (common.length) {
       const peak = metric === "peak";
@@ -127,6 +130,40 @@
     }
     box.append(delta);
     return box;
+  }
+
+  /** One row per engine: its documents, how many the release read to the end, and the totals against the release before. */
+  function engines(i) {
+    const now = data[i], before = data[i - 1];
+    const cols = [["Time", r => r.wall, seconds, true], ["Steps", r => r.steps, fmt, true], ["Imprecise", r => diag(r, "imprecision"), fmt, true],
+      ["Unsupported", r => diag(r, "unsupported"), fmt, true], ["Assumed", r => diag(r, "assumption"), fmt, true], ["Findings", r => r.findings, fmt, false]];
+    const t = html("table", "bench-table"), head = html("tr");
+    for (const h of ["Engine", "Documents", "Read to the end", ...cols.map(c => c[0])]) head.append(html("th", "", h));
+    t.append(head);
+    for (const k of kernels) {
+      const runs = now.runs.filter(r => r.kernel === k);
+      if (!runs.length) continue;
+      const tr = html("tr");
+      tr.append(html("td", "", k), html("td", "", String(runs.length)), html("td", "", `${runs.filter(r => r.end).length} of ${runs.length}`));
+      const both = before ? runs.filter(r => r.end && runOf(before, r.doc, k)?.end) : [];
+      for (const [, get, f, lower] of cols) {
+        const sum = (e, list) => list.reduce((s, r) => { const v = get(runOf(e, r.doc, k)); return v == null ? s : (s ?? 0) + v; }, null);
+        const all = sum(now, runs), td = html("td", "", f(all));
+        if (both.length) {
+          const a = sum(now, both), b = sum(before, both);
+          if (a != null && b) {
+            const pct = (a - b) / b * 100;
+            if (Math.abs(pct) >= 0.5) {
+              const d = html("small", `delta ${lower ? (pct < 0 ? "better" : "worse") : ""}`, ` ${pct > 0 ? "+" : ""}${pct.toFixed(0)}%`);
+              td.append(d);
+            }
+          }
+        }
+        tr.append(td);
+      }
+      t.append(tr);
+    }
+    $("b-engines").replaceChildren(t);
   }
 
   function cards(kernel, i) {
@@ -202,7 +239,7 @@
 
   function charts(kernel) {
     $("b-charts").replaceChildren(...["wall", "peak", "steps", "expansions", "forks", "paths", "imprecise", "findings"].map(m => lineChart(m, kernel)));
-    $("b-legend").textContent = `Totals over the ${common(kernel).size} documents every release ran, the largest for peak memory.`;
+    $("b-legend").textContent = `Totals over the ${common(kernel).size} documents ${commonWord(kernel)}, the largest for peak memory.`;
   }
 
   const COLUMNS = [["Document", r => short(r.doc), "text"], ["Kernel", r => r.kernel, "text"], ["Time", r => r.wall, seconds],
@@ -250,7 +287,14 @@
 
   const ROWS = [["Wall time", "wall", true], ["Peak memory", "peak", true], ["Steps", "steps", true], ["Expansions", "expansions", true], ["Forks", "forks", true], ["Imprecise", "imprecise", true], ["Findings", "findings", false], ["Rules", "rules", false]];
   /** The documents every release ran: a new document never reads as a regression. */
-  const common = kernel => new Set(docs.filter(d => data.every(e => runOf(e, d, kernel))));
+  // The documents every release read to the end: a release that reads further finds more, so a
+  // document only one release finished would read as a regression. Without one, those every release ran.
+  const common = kernel => {
+    const ran = docs.filter(d => data.every(e => runOf(e, d, kernel)));
+    const read = ran.filter(d => data.every(e => runOf(e, d, kernel).end));
+    return new Set(read.length ? read : ran);
+  };
+  const commonWord = kernel => docs.some(d => data.every(e => runOf(e, d, kernel)?.end)) ? "every release read to the end" : "every release ran";
   const total = (entry, kernel, m, among) => {
     const runs = entry.runs.filter(r => r.kernel === kernel && (!among || among.has(r.doc)));
     const vs = runs.map(r => m === "rules" ? r.stats?.rules : value(r, m)).filter(v => v != null);
@@ -326,7 +370,7 @@
   function draw() {
     const kernel = $("b-kernel").value, i = +$("b-version").value;
     $("b-note").textContent = data.length === 1 ? `One release so far (${data[0].version}). The charts fill in as releases are benchmarked.` : `${data.length} releases, ${docs.length} documents.`;
-    releases(kernel); cards(kernel, i); phases(kernel); stages(kernel, i); charts(kernel); table(i); csv(i);
+    releases(kernel); cards(kernel, i); engines(i); phases(kernel); stages(kernel, i); charts(kernel); table(i); csv(i);
   }
   const last = data.at(-1);
   $("b-badge").textContent = `v${last.version} · ${last.date} · ${last.commit}`;
