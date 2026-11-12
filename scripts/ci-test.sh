@@ -14,6 +14,7 @@
 # only in `reds` (non-blocking, time-boxed: an open one may hang), where one
 # that passes is named so the list shrinks.  A known-red test that tests/green-baseline.txt records
 # as once green is flagged "REGRESSION": it broke, it was not always open.
+# tests/known-red-tl<year>.txt lists reds of one TeX Live only; they count as known there.
 # Logs go to ${CI_LOG_DIR:-target}; passing document and budget tests append
 # their analysis steps to steps-<name>.txt there (scripts/regress.sh reads them).
 set -euo pipefail
@@ -42,7 +43,10 @@ gated() {
     set -e
     local failed known new
     failed=$(sed -n 's/^test \(.*\) \.\.\. FAILED$/\1/p' "$log" | LC_ALL=C sort -u)
-    known=$(grep -v '^#' tests/known-red.txt | LC_ALL=C sort -u)
+    # Plus the reds of this TeX Live only (tests/known-red-tl<year>.txt).
+    local tl
+    tl=$(tex --version 2>/dev/null | sed -n 's/.*TeX Live \([0-9]\{4\}\).*/\1/p' | head -1)
+    known=$(cat tests/known-red.txt ${tl:+$(ls tests/known-red-tl"$tl".txt 2>/dev/null)} | grep -v '^#' | LC_ALL=C sort -u)
     new=$(comm -23 <(printf '%s\n' "$failed" | sed '/^$/d') <(printf '%s\n' "$known"))
     while read -r t; do
         if [[ -n "$t" ]] && grep -q "^test $t \.\.\. ok$" "$log"; then echo "known red passes now, drop it from tests/known-red.txt: $t"; fi

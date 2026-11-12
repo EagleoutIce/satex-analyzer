@@ -1,0 +1,3 @@
+# Red with TeX Live 2026 only (scripts/ci-test.sh adds this list when `tex --version` says 2026); green with TL2025.
+# Open (2026-11-12): the newer l3kernel's flag code cuts with repeated-failure 5 times; root open.
+latex::an_error_in_the_document_is_recovered_like_tex
