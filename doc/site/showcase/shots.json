@@ -602,7 +602,7 @@
    "name": "explain",
    "file": "colors.tex",
    "title": "Explanations",
-   "caption": "Find out where a command comes from, what it takes and what it expands to.",
+   "caption": "Where a command is defined, its arguments, and its expansion.",
    "steps": [
     {
      "eval": "document.querySelector('[data-panel=play-explain]').click(); __xy('\\\\textcolor{brand}', 3)",

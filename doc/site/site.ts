@@ -1826,8 +1826,8 @@ interface Stream {
     const WRAPS: Record<string, [RegExp, string | ((w: string) => string)][]> = {
       peek: [[/(<a [^>]*>Ti<i class="tk">k<\/i>Zpingus<\/a>)/, `<span class="claim-host">$1${peek}</span>`]],
       branch: [[/branches/, `<span class="claim-fork">${arm('up')}<span class="claim-base">branches</span>${arm('down')}</span>`]],
-      // the word gives way to an option a package reads, in brackets; the sketch under it says what it changes
-      options: [[/options/, '<span class="claim-opt claim-anchor"><span>options</span><code>colorlinks</code></span>']],
+      // the card hangs under the word: the option, the switch it sets, what that changes
+      options: [[/options/, '<span class="claim-anchor">options</span>']],
       // the word a hover card opens on: where a command comes from, what changed it, the line that loads that
       origin: [[/command/, '<span class="claim-hov claim-anchor">command</span>']],
       diff: [[/yesterday/, tag('claim-ok', '✓')], [/today/, tag('claim-bad', '✗')]],
@@ -1869,13 +1869,14 @@ interface Stream {
       const mock = effects[shown] === 'complete' && offered.length
         ? offered.map((r) => `<li><code class="usage">${usage(r.effective, typesOf(r)).html}</code><span>${esc(r.file ?? r.path ?? '')}</span></li>`).join('') : mocks[shown];
       if (!mock || !chip) return wrapped;
-      line.insertAdjacentHTML('beforeend', `<ul class="claim-complete${chip.matches('.claim-hov') ? ' claim-card' : ''}" aria-hidden="true">${mock}</ul>`);
+      line.insertAdjacentHTML('beforeend', `<ul class="claim-complete${chip.matches('.claim-hov') ? ' claim-card' : ''}${effects[shown] === 'complete' ? '' : ' claim-plain'}" aria-hidden="true">${mock}</ul>`);
       // under its chip, as far as the line leaves room
       const box = line.lastElementChild as HTMLElement;
       box.style.marginLeft = `${Math.max(0, Math.min(chip.offsetLeft, line.clientWidth - box.offsetWidth))}px`;
       return true;
     };
     // appear (typed), act (SHOWS_AFTER), settle (the hold): the same beat for every claim
+    // the run cards come one by one (style.css), so their claim stays longer
     const SHOWS_AFTER = 700, HOLD = 3400;
     const fits = () => { for (const u of line.querySelectorAll<HTMLElement>('.claim-fix')) { const [from, to] = [...u.children].map((s) => s.getBoundingClientRect().width); u.style.setProperty('--from', `${from}px`); u.style.setProperty('--to', `${to}px`); } };
     const settle = () => {
@@ -1883,7 +1884,7 @@ interface Stream {
         fits();
         if (effect() || line.querySelector('.claim-fix')) requestAnimationFrame(() => line.classList.add('shows'));
         fit();
-        timer = setTimeout(() => paused || show((shown + 1) % knows.length), HOLD);
+        timer = setTimeout(() => paused || show((shown + 1) % knows.length), effects[shown] === 'runs' ? HOLD + 2200 : HOLD);
       }, SHOWS_AFTER);
     };
     const show = (i: number) => {
