@@ -44,6 +44,21 @@ jobs:
       - run: npm run compile
       - run: npx vsce package --no-dependencies --out satex-universal.vsix
 
+  # The packaging step on Windows without the release builds: it broke there unseen (0.2.1, 0.2.2).
+  check-windows:
+    name: Compile on Windows
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+      - run: npm run compile
+
   build:
     name: Build ${{ matrix.target }}
     if: startsWith(github.ref, 'refs/tags/v')
