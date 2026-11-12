@@ -6,6 +6,10 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
+### Build and infrastructure
+
+- `fix` **No stack overflow on Windows.** The Windows binary had 1 MiB of main stack, too little for building the LaTeX kernel cache; it now has 8 MiB, as on Linux. [`9029e53`](https://github.com/EagleoutIce/satex-analyzer/commit/9029e53)
+
 ## v0.2.1 (2026-11-12)
 
 ### Analysis
@@ -105,7 +109,6 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Build and infrastructure
 
-- `fix` **No stack overflow on Windows.** The Windows binary had 1 MiB of main stack, too little for building the LaTeX kernel cache; it now has 8 MiB, as on Linux. [`9029e53`](https://github.com/EagleoutIce/satex-analyzer/commit/9029e53)
 - `fix` **The site builds in CI again.** The Pages job installs esbuild, which turns the site's TypeScript into scripts.
 
 ## v0.2.0 (2026-11-07)
